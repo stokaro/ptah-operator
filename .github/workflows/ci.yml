@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOFLAGS: -mod=readonly
+
+jobs:
+  support-matrix:
+    name: Build Kubernetes support matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Validate support metadata and export matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  verify:
+    name: Verify source and generated files
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Verify Kubernetes support window
+        run: go run ./hack/verify-kubernetes-support.go
+      - name: Run project verification
+        run: make verify
+
+  kubernetes-smoke:
+    name: Kubernetes ${{ matrix.minor }} smoke
+    needs: [support-matrix, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.support-matrix.outputs.matrix) }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install kind
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install "sigs.k8s.io/kind@${{ matrix.kind_version }}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Install matching kubectl
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/bin"
+          mkdir -p "$install_dir"
+          base_url="https://dl.k8s.io/release/v${{ matrix.kubernetes_version }}/bin/linux/amd64"
+          curl --fail --location --silent --show-error --output "$install_dir/kubectl" "$base_url/kubectl"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
+          echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
+          chmod 0755 "$install_dir/kubectl"
+          echo "$install_dir" >> "$GITHUB_PATH"
+      - name: Exercise registered APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cluster_name="ptah-${{ matrix.minor_slug }}"
+          cleanup() {
+            kind delete cluster --name "$cluster_name"
+          }
+          trap cleanup EXIT
+
+          kind create cluster --name "$cluster_name" --image "${{ matrix.node_image }}" --wait 120s
+
+          server_version="$(kubectl version -o json | jq -r '.serverVersion.gitVersion')"
+          case "$server_version" in
+            "v${{ matrix.minor }}."*) ;;
+            *)
+              echo "expected Kubernetes ${{ matrix.minor }}.x, got $server_version" >&2
+              exit 1
+              ;;
+          esac
+
+          kubectl apply --server-side --force-conflicts -f config/crd/bases/
+          kubectl wait --for=condition=Established --timeout=60s \
+            crd/ptahschemas.operator.ptah.dev \
+            crd/ptahschemaplans.operator.ptah.dev \
+            crd/ptahschemaapprovals.operator.ptah.dev
+
+          actual_resources="$(kubectl api-resources --api-group=operator.ptah.dev -o name | sort)"
+          expected_resources="$(printf '%s\n' \
+            ptahschemaapprovals.operator.ptah.dev \
+            ptahschemaplans.operator.ptah.dev \
+            ptahschemas.operator.ptah.dev)"
+          test "$actual_resources" = "$expected_resources"

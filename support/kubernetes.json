@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "policy": "upstream-active-minors",
+  "windowSize": 3,
+  "lastVerified": "2026-08-31",
+  "kindVersion": "v0.32.0",
+  "releases": [
+    {
+      "minor": "1.35",
+      "nodeImage": "kindest/node:v1.35.5@sha256:ce977ae6d65918d0b58a5f8b5e940429c2ce42fa3a5619ec2bbc60b949c0ac95"
+    },
+    {
+      "minor": "1.36",
+      "nodeImage": "kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
+    },
+    {
+      "minor": "1.37",
+      "nodeImage": "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
+    }
+  ]
+}
