@@ -1,0 +1,58 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/stokaro/ptah-operator
+  tag: latest
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+execution:
+  # Both execution images are required and must include @sha256:<64 hex>.
+  executorImage: ""
+  runnerImage: ""
+  ptahVersion: "v0.3.0"
+
+leaderElection: true
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+metrics:
+  bindAddress: ":8080"
+  service:
+    enabled: true
+    port: 8080
+
+webhook:
+  port: 9443
+  timeoutSeconds: 5
+  failurePolicy: Fail
+  existingSecret: ""
+
+approverClusterRole:
+  create: true
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

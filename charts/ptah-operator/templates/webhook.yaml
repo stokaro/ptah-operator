@@ -1,0 +1,90 @@
+{{- $fullname := include "ptah-operator.fullname" . -}}
+{{- $secretName := default (printf "%s-webhook-cert" $fullname) .Values.webhook.existingSecret -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
+{{- $caBundle := "" -}}
+{{- $tlsCrt := "" -}}
+{{- $tlsKey := "" -}}
+{{- if $existing -}}
+{{- $caBundle = index $existing.data "ca.crt" -}}
+{{- $tlsCrt = index $existing.data "tls.crt" -}}
+{{- $tlsKey = index $existing.data "tls.key" -}}
+{{- else if .Values.webhook.existingSecret -}}
+{{- fail "webhook.existingSecret does not exist or cannot be read" -}}
+{{- else -}}
+{{- $ca := genCA (printf "%s-ca" $fullname) 3650 -}}
+{{- $service := printf "%s-webhook" $fullname -}}
+{{- $dnsNames := list $service (printf "%s.%s" $service .Release.Namespace) (printf "%s.%s.svc" $service .Release.Namespace) (printf "%s.%s.svc.cluster.local" $service .Release.Namespace) -}}
+{{- $cert := genSignedCert $service nil $dnsNames 825 $ca -}}
+{{- $caBundle = $ca.Cert | b64enc -}}
+{{- $tlsCrt = $cert.Cert | b64enc -}}
+{{- $tlsKey = $cert.Key | b64enc -}}
+{{- end -}}
+{{- if not .Values.webhook.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  ca.crt: {{ $caBundle }}
+  tls.crt: {{ $tlsCrt }}
+  tls.key: {{ $tlsKey }}
+---
+{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ $fullname }}-approval
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+webhooks:
+  - name: mapproval.operator.ptah.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    reinvocationPolicy: Never
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    clientConfig:
+      caBundle: {{ $caBundle }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $fullname }}-webhook
+        path: /mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval
+        port: 443
+    rules:
+      - apiGroups: ["operator.ptah.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE"]
+        resources: ["ptahschemaapprovals"]
+        scope: Namespaced
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ $fullname }}-approval
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+webhooks:
+  - name: vapproval.operator.ptah.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    clientConfig:
+      caBundle: {{ $caBundle }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $fullname }}-webhook
+        path: /validate-operator-ptah-dev-v1alpha1-ptahschemaapproval
+        port: 443
+    rules:
+      - apiGroups: ["operator.ptah.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ptahschemaapprovals"]
+        scope: Namespaced

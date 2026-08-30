@@ -1,0 +1,68 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ptah-operator.fullname" . }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["operator.ptah.dev"]
+    resources: ["ptahschemas"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["operator.ptah.dev"]
+    resources: ["ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["operator.ptah.dev"]
+    resources: ["ptahschemaplans"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: ["operator.ptah.dev"]
+    resources: ["ptahschemaapprovals"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "ptah-operator.fullname" . }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "ptah-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ptah-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- if .Values.approverClusterRole.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "ptah-operator.fullname" . }}-approver
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["operator.ptah.dev"]
+    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["operator.ptah.dev"]
+    resources: ["ptahschemaapprovals"]
+    verbs: ["create"]
+{{- end }}

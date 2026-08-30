@@ -1,0 +1,10 @@
+/bin/
+/dist/
+/cover.out
+/coverage/
+/.idea/
+/.vscode/
+.DS_Store
+*.test
+*.prof
+*.log
