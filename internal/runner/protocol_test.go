@@ -3,9 +3,16 @@ package runner
 import (
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
+
+type shortWriter struct{}
+
+func (shortWriter) Write(content []byte) (int, error) {
+	return len(content) - 1, nil
+}
 
 func TestFrameRoundTripFromMixedLogs(t *testing.T) {
 	t.Parallel()
@@ -91,5 +98,19 @@ func TestFrameRejectsMissingMalformedOversizedAndMismatchedBindings(t *testing.T
 	}
 	if _, err := ParseResultFor(frame, result.Operation, "different-id"); !errors.Is(err, ErrMalformedFrame) {
 		t.Fatalf("ParseResultFor(ID mismatch) error = %v, want ErrMalformedFrame", err)
+	}
+}
+
+func TestWriteFrameRejectsShortWrite(t *testing.T) {
+	t.Parallel()
+
+	result := Result{
+		ProtocolVersion: ProtocolVersion,
+		Operation:       OperationResolve,
+		OperationID:     "resolve-short-write",
+		ChildExitCode:   0,
+	}
+	if err := WriteFrame(shortWriter{}, result); !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("WriteFrame() error = %v, want io.ErrShortWrite", err)
 	}
 }

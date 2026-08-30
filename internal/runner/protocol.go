@@ -123,8 +123,14 @@ func WriteFrame(w io.Writer, result Result) error {
 	if err != nil {
 		return err
 	}
-	_, err = w.Write(frame)
-	return err
+	written, err := w.Write(frame)
+	if err != nil {
+		return err
+	}
+	if written != len(frame) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 func ParseResult(logs []byte) (Result, error) {

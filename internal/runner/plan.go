@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,6 +23,12 @@ func reconstructPlan(planDir, expectedDigest string, maxBytes int64) ([]byte, st
 	}
 	if maxBytes <= 0 {
 		maxBytes = DefaultMaxPlanBytes
+	}
+	// bytes.Buffer is indexed by int, and the extra byte below is used to
+	// detect a file that grows after it is inspected.
+	maximumBufferBytes := int64(^uint(0) >> 1)
+	if maxBytes >= maximumBufferBytes {
+		maxBytes = maximumBufferBytes - 1
 	}
 	expected, err := parseSHA256Digest(expectedDigest)
 	if err != nil {
@@ -57,16 +64,30 @@ func reconstructPlan(planDir, expectedDigest string, maxBytes int64) ([]byte, st
 		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			return nil, "", fmt.Errorf("plan chunk %q resolves outside the plan directory", entry.Name())
 		}
-		info, err := os.Stat(resolvedChunk)
+		chunkFile, err := os.Open(resolvedChunk)
+		if err != nil {
+			return nil, "", fmt.Errorf("open plan chunk %q", entry.Name())
+		}
+		info, err := chunkFile.Stat()
 		if err != nil || !info.Mode().IsRegular() {
+			_ = chunkFile.Close()
 			return nil, "", fmt.Errorf("plan chunk %q is not a regular file", entry.Name())
 		}
-		if info.Size() > maxBytes-int64(plan.Len()) {
+		remaining := maxBytes - int64(plan.Len())
+		if info.Size() > remaining {
+			_ = chunkFile.Close()
 			return nil, "", fmt.Errorf("reconstructed plan exceeds %d bytes", maxBytes)
 		}
-		chunk, err := os.ReadFile(resolvedChunk)
+		chunk, err := io.ReadAll(io.LimitReader(chunkFile, remaining+1))
 		if err != nil {
+			_ = chunkFile.Close()
 			return nil, "", fmt.Errorf("read plan chunk %q", entry.Name())
+		}
+		if err := chunkFile.Close(); err != nil {
+			return nil, "", fmt.Errorf("close plan chunk %q", entry.Name())
+		}
+		if int64(len(chunk)) > remaining {
+			return nil, "", fmt.Errorf("reconstructed plan exceeds %d bytes", maxBytes)
 		}
 		_, _ = plan.Write(chunk)
 		chunkCount++

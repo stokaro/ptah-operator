@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"encoding/json"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -23,23 +25,88 @@ type Redactor struct {
 
 func NewRedactor(environment []string) Redactor {
 	values := environmentMap(environment)
-	seen := make(map[string]struct{}, len(protectedEnvironmentKeys))
-	secrets := make([]string, 0, len(protectedEnvironmentKeys))
+	seen := make(map[string]struct{}, len(protectedEnvironmentKeys)*4)
+	secrets := make([]string, 0, len(protectedEnvironmentKeys)*4)
+	addSecret := func(value string) {
+		if value == "" {
+			return
+		}
+		for _, representation := range secretRepresentations(value) {
+			if representation == "" {
+				continue
+			}
+			if _, ok := seen[representation]; ok {
+				continue
+			}
+			seen[representation] = struct{}{}
+			secrets = append(secrets, representation)
+		}
+	}
 	for _, key := range protectedEnvironmentKeys {
 		value := values[key]
-		if value == "" {
-			continue
+		addSecret(value)
+		if key == EnvDatabaseURL || key == EnvDevelopmentDatabaseURL {
+			for _, credential := range databaseURLCredentials(value) {
+				addSecret(credential)
+			}
 		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		secrets = append(secrets, value)
 	}
 	sort.Slice(secrets, func(i, j int) bool {
 		return len(secrets[i]) > len(secrets[j])
 	})
 	return Redactor{secrets: secrets}
+}
+
+func secretRepresentations(value string) []string {
+	representations := []string{value}
+	if encoded, err := json.Marshal(value); err == nil && len(encoded) >= 2 {
+		representations = append(representations, string(encoded[1:len(encoded)-1]))
+	}
+	representations = append(representations, url.QueryEscape(value), url.PathEscape(value))
+	return representations
+}
+
+func databaseURLCredentials(rawDatabaseURL string) []string {
+	parsed, err := url.Parse(rawDatabaseURL)
+	if err != nil {
+		return nil
+	}
+	credentials := make([]string, 0, 4)
+	if parsed.User != nil {
+		if password, present := parsed.User.Password(); present {
+			credentials = append(credentials, password)
+		}
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return credentials
+	}
+	for key, values := range query {
+		normalizedKey := normalizeIdentityKey(key)
+		if secretLikeKey(normalizedKey) {
+			credentials = append(credentials, values...)
+		}
+		if normalizedKey == "options" {
+			credentials = append(credentials, secretOptions(values)...)
+		}
+	}
+	return credentials
+}
+
+func secretOptions(values []string) []string {
+	var credentials []string
+	assignments, err := optionAssignments(values)
+	if err != nil {
+		// A malformed option string is rejected by target identity validation.
+		// Retain the whole value as a conservative redaction fallback.
+		return append(credentials, values...)
+	}
+	for _, assignment := range assignments {
+		if secretLikeKey(normalizeIdentityKey(assignment.key)) {
+			credentials = append(credentials, assignment.value)
+		}
+	}
+	return credentials
 }
 
 func (r Redactor) Redact(value string) string {

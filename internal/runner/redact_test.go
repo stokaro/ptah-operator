@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -43,5 +44,32 @@ func TestSanitizedCapturedTextRemainsBoundedWhenMarkersExpand(t *testing.T) {
 	got, dropped := sanitizedCapturedText([]byte("xxxx"), redactor, false, 4)
 	if len(got) > 4 || strings.Contains(got, "x") || dropped == 0 {
 		t.Fatalf("sanitizedCapturedText() = %q, dropped %d", got, dropped)
+	}
+}
+
+func TestRedactorRemovesStandaloneAndEscapedCredentialsFromDatabaseURLs(t *testing.T) {
+	t.Parallel()
+
+	databaseURL := "postgres://app:db%40password@db.example/app?password=query%40password&schema=public"
+	token := "registry\"token\\line\n"
+	redactor := NewRedactor([]string{
+		EnvDatabaseURL + "=" + databaseURL,
+		EnvOCIToken + "=" + token,
+	})
+	escapedToken, err := json.Marshal(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := strings.Join([]string{
+		"db@password",
+		"query@password",
+		"postgres://app:db%40password@db.example/app?schema=public&password=query%40password",
+		string(escapedToken[1 : len(escapedToken)-1]),
+	}, " ")
+	got := redactor.Redact(input)
+	for _, secret := range []string{"db@password", "db%40password", "query@password", "query%40password", string(escapedToken[1 : len(escapedToken)-1])} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("Redact() retained credential representation %q in %q", secret, got)
+		}
 	}
 }

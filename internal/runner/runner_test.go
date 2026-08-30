@@ -507,6 +507,50 @@ func TestTargetIdentityDigestIgnoresPasswordRotationButBindsEndpointAndDatabase(
 	}
 }
 
+func TestTargetIdentityDigestPreservesEncodedPathAndRepeatedScopeOrder(t *testing.T) {
+	t.Parallel()
+
+	encodedSlash, err := TargetIdentityDigest("postgres://db.example/db%2Ftenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	literalSlash, err := TargetIdentityDigest("postgres://db.example/db/tenant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encodedSlash == literalSlash {
+		t.Fatal("encoded and literal database path separators produced the same target identity")
+	}
+
+	firstThenSecond, err := TargetIdentityDigest("postgres://db.example/app?search_path=first&search_path=second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondThenFirst, err := TargetIdentityDigest("postgres://db.example/app?search_path=second&search_path=first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstThenSecond == secondThenFirst {
+		t.Fatal("reordered repeated scope values produced the same target identity")
+	}
+}
+
+func TestTargetIdentityDigestPreservesQuotedOptionValues(t *testing.T) {
+	t.Parallel()
+
+	fooBar, err := TargetIdentityDigest(`postgres://db.example/app?options=-c%20search_path%3D%22foo%20bar%22`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fooBaz, err := TargetIdentityDigest(`postgres://db.example/app?options=-c%20search_path%3D%22foo%20baz%22`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fooBar == fooBaz {
+		t.Fatal("different quoted scope values produced the same target identity")
+	}
+}
+
 func databaseEnvironment(operationID string) []string {
 	return []string{
 		envOperationID + "=" + operationID,
