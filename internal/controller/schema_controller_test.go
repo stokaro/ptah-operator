@@ -48,6 +48,15 @@ func (l staticLogs) Read(context.Context, string, string, string) ([]byte, error
 	return append([]byte(nil), l.content...), nil
 }
 
+func TestSetupRejectsInvalidLockNamespace(t *testing.T) {
+	t.Parallel()
+
+	reconciler := &SchemaReconciler{LockNamespace: ""}
+	if err := reconciler.SetupWithManager(nil); err == nil {
+		t.Fatal("SetupWithManager() accepted an empty target lock namespace")
+	}
+}
+
 func TestPendingSchemaClaimsResolveBeforeCreatingJob(t *testing.T) {
 	t.Parallel()
 	schema := schemaFixture()
@@ -156,6 +165,94 @@ func TestFailedApplyWithMissingFrameForcesReadOnlyObservation(t *testing.T) {
 	}
 }
 
+func TestApplyInputsChangedAfterDispatchRemainOutcomeUnknown(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhaseApplying
+	schema.Status.Target.IdentityDigest = testDigest
+	schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{Fingerprint: testDigest, ContentDigest: testDigest}
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationApply, ID: testDigest, InputFingerprint: testDigest,
+		JobName: "apply-job", JobUID: "job-uid", StartedAt: metav1.NewTime(time.Now().Add(-time.Minute)), Attempt: 1,
+	}
+	bindActiveInput(t, schema)
+	// A suspend request increments generation after the mutating Job already
+	// exists. The stale claim must not be treated like an undispatched plan.
+	schema.Generation++
+	schema.Spec.Suspend = true
+	job, pod := terminalWorkload(schema, batchv1.JobComplete)
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, job, pod)
+	reconciler.Locks = targetlock.New(api, api, nil)
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status.ActiveOperation != nil || actual.Status.Phase != operatorv1alpha1.PhaseVerifyingConvergence {
+		t.Fatalf("changed-input apply status = %#v", actual.Status)
+	}
+	condition := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionApplying)
+	if condition == nil || condition.Reason != "OutcomeUnknown" {
+		t.Fatalf("Applying condition = %#v", condition)
+	}
+}
+
+func TestApplyLockCoordinatesTheSameTargetAcrossSchemaNamespaces(t *testing.T) {
+	t.Parallel()
+
+	first := schemaFixture()
+	first.Namespace = "team-a"
+	first.UID = "schema-a-uid"
+	first.Status.Target.IdentityDigest = testDigest
+	first.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationApply, ID: "operation-a",
+	}
+	second := first.DeepCopy()
+	second.Namespace = "team-b"
+	second.Name = "second"
+	second.UID = "schema-b-uid"
+	second.Status.ActiveOperation.ID = "operation-b"
+
+	reconciler, api := fakeReconciler(t, staticLogs{})
+	reconciler.Locks = targetlock.New(api, api, nil)
+	acquired, _, err := reconciler.acquireApplyLock(context.Background(), first)
+	if err != nil {
+		t.Fatalf("acquire first target lock: %v", err)
+	}
+	if !acquired {
+		t.Fatal("first target lock was not acquired")
+	}
+	acquired, requeueAfter, err := reconciler.acquireApplyLock(context.Background(), second)
+	if err != nil {
+		t.Fatalf("acquire contending target lock: %v", err)
+	}
+	if acquired || requeueAfter <= 0 {
+		t.Fatalf("cross-namespace target lock = acquired %t, requeue %s; want contention", acquired, requeueAfter)
+	}
+
+	leases := &coordinationv1.LeaseList{}
+	if err := api.List(context.Background(), leases, client.InNamespace(reconciler.LockNamespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases.Items) != 1 {
+		t.Fatalf("coordination namespace contains %d target Leases, want 1", len(leases.Items))
+	}
+	for _, namespace := range []string{first.Namespace, second.Namespace} {
+		local := &coordinationv1.LeaseList{}
+		if err := api.List(context.Background(), local, client.InNamespace(namespace)); err != nil {
+			t.Fatal(err)
+		}
+		if len(local.Items) != 0 {
+			t.Fatalf("schema namespace %q contains target Leases", namespace)
+		}
+	}
+}
+
 func TestPostApplyObserveClaimPreservesConvergencePhase(t *testing.T) {
 	t.Parallel()
 	schema := schemaFixture()
@@ -176,6 +273,43 @@ func TestPostApplyObserveClaimPreservesConvergencePhase(t *testing.T) {
 	if actual.Status.Phase != operatorv1alpha1.PhaseVerifyingConvergence ||
 		actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationObserve {
 		t.Fatalf("post-apply observation claim = %#v", actual.Status)
+	}
+}
+
+func TestAlwaysPolicyMakesSafePlanReadyWithoutClaimingApprovalIsRequired(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+	plan := &operatorv1alpha1.PtahSchemaPlan{Spec: operatorv1alpha1.PtahSchemaPlanSpec{Destructive: false}}
+
+	setPlanPolicyStatus(schema, plan)
+
+	if schema.Status.Phase != operatorv1alpha1.PhaseReadyToApply {
+		t.Fatalf("phase = %q, want ReadyToApply", schema.Status.Phase)
+	}
+	condition := findCondition(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired)
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "NotRequired" {
+		t.Fatalf("ApprovalRequired condition = %#v", condition)
+	}
+}
+
+func TestAlwaysPolicyStillRequiresApprovalForDestructivePlan(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+	schema.Spec.Policy.AllowDestructive = true
+	plan := &operatorv1alpha1.PtahSchemaPlan{Spec: operatorv1alpha1.PtahSchemaPlanSpec{Destructive: true}}
+
+	setPlanPolicyStatus(schema, plan)
+
+	if schema.Status.Phase != operatorv1alpha1.PhaseAwaitingApproval {
+		t.Fatalf("phase = %q, want AwaitingApproval", schema.Status.Phase)
+	}
+	condition := findCondition(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired)
+	if condition == nil || condition.Status != metav1.ConditionTrue {
+		t.Fatalf("ApprovalRequired condition = %#v", condition)
 	}
 }
 
@@ -221,11 +355,16 @@ func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (
 	}
 	api := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&operatorv1alpha1.PtahSchema{}, &operatorv1alpha1.PtahSchemaPlan{}, &operatorv1alpha1.PtahSchemaApproval{}, &batchv1.Job{}).
+		WithIndex(&operatorv1alpha1.PtahSchemaApproval{}, approvalSchemaIndex, func(object client.Object) []string {
+			approval := object.(*operatorv1alpha1.PtahSchemaApproval)
+			return []string{approval.Spec.SchemaRef.Name}
+		}).
 		WithObjects(objects...).Build()
 	clock := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	reconciler := &SchemaReconciler{
 		Client: api, APIReader: api, Scheme: scheme, Logs: logs, Jobs: fakeJobs{},
-		Clock: func() time.Time { return clock },
+		LockNamespace: "ptah-system",
+		Clock:         func() time.Time { return clock },
 	}
 	return reconciler, api
 }

@@ -28,7 +28,7 @@ const (
 )
 
 // ReconciliationPhase is the externally visible state-machine phase.
-// +kubebuilder:validation:Enum=Pending;Resolving;Verifying;Observing;Planning;AwaitingApproval;Blocked;Applying;VerifyingConvergence;InSync;Suspended;Failed
+// +kubebuilder:validation:Enum=Pending;Resolving;Verifying;Observing;Planning;ReadyToApply;AwaitingApproval;Blocked;Applying;VerifyingConvergence;InSync;Suspended;Failed
 type ReconciliationPhase string
 
 const (
@@ -37,6 +37,7 @@ const (
 	PhaseVerifying            ReconciliationPhase = "Verifying"
 	PhaseObserving            ReconciliationPhase = "Observing"
 	PhasePlanning             ReconciliationPhase = "Planning"
+	PhaseReadyToApply         ReconciliationPhase = "ReadyToApply"
 	PhaseAwaitingApproval     ReconciliationPhase = "AwaitingApproval"
 	PhaseBlocked              ReconciliationPhase = "Blocked"
 	PhaseApplying             ReconciliationPhase = "Applying"

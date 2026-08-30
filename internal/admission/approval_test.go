@@ -63,6 +63,70 @@ func TestApprovalCreateRejectsStalePlan(t *testing.T) {
 	}
 }
 
+func TestApprovalCreateHydratesDerivedPlanBindings(t *testing.T) {
+	t.Parallel()
+
+	handler, approval := readyFixture(t, true, true)
+	approval.Spec.ArtifactDigest = ""
+	approval.Spec.TargetIdentityDigest = ""
+	approval.Spec.ActualStateFingerprint = ""
+	approval.Spec.DesiredStateFingerprint = ""
+	approval.Spec.PolicyFingerprint = ""
+	approval.Spec.VerificationPolicyDigest = ""
+	approval.Spec.PtahVersion = ""
+	approval.Spec.ExecutorImage = ""
+	approval.Spec.RunnerImage = ""
+	approval.Spec.RunnerProtocolVersion = 0
+	request := requestFor(t, approval, admissionv1.Create)
+	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+
+	response := handler.Handle(context.Background(), request)
+	if !response.Allowed {
+		t.Fatalf("Handle() denied minimal exact-plan approval: %#v", response.Result)
+	}
+	patchJSON, err := json.Marshal(response.Patches)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"sha256:artifact", "sha256:target", "sha256:actual", "sha256:desired",
+		"sha256:policy", "v0.3.0", "example.invalid/ptah@sha256:executor",
+		"example.invalid/operator@sha256:runner", "runnerProtocolVersion",
+	} {
+		if !containsJSON(patchJSON, want) {
+			t.Fatalf("hydration patch %s does not contain %q", patchJSON, want)
+		}
+	}
+}
+
+func TestApprovalCreateRejectsConflictingDerivedBinding(t *testing.T) {
+	t.Parallel()
+
+	handler, approval := readyFixture(t, true, true)
+	approval.Spec.ArtifactDigest = "sha256:different"
+	request := requestFor(t, approval, admissionv1.Create)
+	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+
+	response := handler.Handle(context.Background(), request)
+	if response.Allowed {
+		t.Fatal("Handle() silently replaced a conflicting approval binding")
+	}
+}
+
+func TestApprovalCreateRequiresExplicitPlanFingerprint(t *testing.T) {
+	t.Parallel()
+
+	handler, approval := readyFixture(t, true, true)
+	approval.Spec.PlanFingerprint = ""
+	request := requestFor(t, approval, admissionv1.Create)
+	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+
+	response := handler.Handle(context.Background(), request)
+	if response.Allowed {
+		t.Fatal("Handle() accepted an approval without an explicit plan fingerprint")
+	}
+}
+
 func TestApprovalUpdateRejectsSpecMutation(t *testing.T) {
 	t.Parallel()
 

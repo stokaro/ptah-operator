@@ -236,8 +236,8 @@ func newLocker(t *testing.T, clock *fakeClock) (*targetlock.Locker, client.Clien
 func lockRequest(target, operation string) targetlock.Request {
 	sum := sha256.Sum256([]byte(target))
 	return targetlock.Request{
-		Namespace:            "database-ops",
-		TargetIdentityDigest: "sha256:" + hex.EncodeToString(sum[:]),
+		CoordinationNamespace: "ptah-system",
+		TargetIdentityDigest:  "sha256:" + hex.EncodeToString(sum[:]),
 		Holder: targetlock.Holder{
 			SchemaUID:   types.UID("c78d1c70-8f66-4c07-a49b-4ee621dc2280"),
 			OperationID: operation,
@@ -264,7 +264,7 @@ func getLease(t *testing.T, kubeClient client.Client, request targetlock.Request
 		t.Fatalf("LeaseName() error = %v", err)
 	}
 	lease := &coordinationv1.Lease{}
-	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: request.Namespace, Name: name}, lease); err != nil {
+	if err := kubeClient.Get(context.Background(), client.ObjectKey{Namespace: request.CoordinationNamespace, Name: name}, lease); err != nil {
 		t.Fatalf("Get(Lease) error = %v", err)
 	}
 	return lease

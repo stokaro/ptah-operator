@@ -10,11 +10,13 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -24,6 +26,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/controller"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
+	"github.com/stokaro/ptah-operator/internal/telemetry"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -39,6 +42,7 @@ func main() {
 	var executorImage string
 	var runnerImage string
 	var ptahVersion string
+	var targetLockNamespace string
 	var webhookCertDir string
 	var webhookPort int
 
@@ -48,6 +52,7 @@ func main() {
 	flag.StringVar(&executorImage, "executor-image", "", "content-addressed Ptah executor image")
 	flag.StringVar(&runnerImage, "runner-image", "", "content-addressed operator runner image")
 	flag.StringVar(&ptahVersion, "ptah-version", "", "Ptah CLI version bound into plans")
+	flag.StringVar(&targetLockNamespace, "target-lock-namespace", os.Getenv("POD_NAMESPACE"), "shared namespace for database target Leases")
 	flag.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs", "directory containing tls.crt and tls.key")
 	flag.IntVar(&webhookPort, "webhook-port", 9443, "approval webhook TLS port")
 	zapOptions := zap.Options{Development: false}
@@ -60,6 +65,10 @@ func main() {
 	builder := workload.Builder{ExecutorImage: executorImage, RunnerImage: runnerImage, PtahVersion: ptahVersion}
 	if err := builder.Validate(); err != nil {
 		log.Error(err, "invalid immutable execution configuration")
+		os.Exit(1)
+	}
+	if problems := validation.IsDNS1123Label(targetLockNamespace); len(problems) != 0 {
+		log.Error(fmt.Errorf("target lock namespace is invalid: %s", problems[0]), "invalid coordination configuration")
 		os.Exit(1)
 	}
 
@@ -90,13 +99,16 @@ func main() {
 		log.Error(err, "create Kubernetes clientset")
 		os.Exit(1)
 	}
+	operatorMetrics := telemetry.New(ctrlmetrics.Registry)
 	reconciler := &controller.SchemaReconciler{
 		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), Scheme: manager.GetScheme(),
-		Recorder: manager.GetEventRecorderFor("ptah-schema-controller"),
-		Logs:     controller.ClientsetPodLogs{Client: clientset},
-		Jobs:     builder,
-		Plans:    planstore.Store{Client: manager.GetClient(), Reader: manager.GetAPIReader()},
-		Locks:    targetlock.New(manager.GetAPIReader(), manager.GetClient(), nil),
+		Recorder:      manager.GetEventRecorderFor("ptah-schema-controller"),
+		Logs:          controller.ClientsetPodLogs{Client: clientset},
+		Jobs:          builder,
+		Plans:         planstore.Store{Client: manager.GetClient(), Reader: manager.GetAPIReader()},
+		Locks:         targetlock.New(manager.GetAPIReader(), manager.GetClient(), nil),
+		LockNamespace: targetLockNamespace,
+		Telemetry:     operatorMetrics,
 	}
 	if err := reconciler.SetupWithManager(manager); err != nil {
 		log.Error(err, "register PtahSchema controller")

@@ -4,12 +4,18 @@
 {{- $caBundle := "" -}}
 {{- $tlsCrt := "" -}}
 {{- $tlsKey := "" -}}
-{{- if $existing -}}
-{{- $caBundle = index $existing.data "ca.crt" -}}
-{{- $tlsCrt = index $existing.data "tls.crt" -}}
-{{- $tlsKey = index $existing.data "tls.key" -}}
-{{- else if .Values.webhook.existingSecret -}}
-{{- fail "webhook.existingSecret does not exist or cannot be read" -}}
+{{- if .Values.webhook.existingSecret -}}
+{{- if .Values.webhook.caBundle -}}
+{{- $caBundle = .Values.webhook.caBundle | b64enc -}}
+{{- else if $existing -}}
+{{- $caBundle = required "webhook.existingSecret must contain ca.crt" (index $existing.data "ca.crt") -}}
+{{- else -}}
+{{- fail "webhook.caBundle is required when webhook.existingSecret cannot be read" -}}
+{{- end -}}
+{{- else if $existing -}}
+{{- $caBundle = required "generated webhook Secret must contain ca.crt" (index $existing.data "ca.crt") -}}
+{{- $tlsCrt = required "generated webhook Secret must contain tls.crt" (index $existing.data "tls.crt") -}}
+{{- $tlsKey = required "generated webhook Secret must contain tls.key" (index $existing.data "tls.key") -}}
 {{- else -}}
 {{- $ca := genCA (printf "%s-ca" $fullname) 3650 -}}
 {{- $service := printf "%s-webhook" $fullname -}}

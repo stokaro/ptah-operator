@@ -50,6 +50,7 @@ spec:
             - --executor-image={{ .Values.execution.executorImage }}
             - --runner-image={{ .Values.execution.runnerImage }}
             - --ptah-version={{ required "execution.ptahVersion is required" .Values.execution.ptahVersion }}
+            - --target-lock-namespace={{ default .Release.Namespace .Values.coordination.namespace }}
           ports:
             - name: metrics
               containerPort: 8080

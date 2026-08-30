@@ -18,6 +18,11 @@ execution:
 
 leaderElection: true
 
+coordination:
+  # Leave empty to use the Helm release namespace. Every operator instance
+  # that can reach the same databases must use the same namespace.
+  namespace: ""
+
 serviceAccount:
   create: true
   name: ""
@@ -48,7 +53,12 @@ webhook:
   port: 9443
   timeoutSeconds: 5
   failurePolicy: Fail
+  # Name of a pre-provisioned kubernetes.io/tls Secret. The Secret must also
+  # contain ca.crt. Set caBundle to render the chart without cluster lookup.
   existingSecret: ""
+  # PEM-encoded CA certificate for existingSecret. Leave empty during a
+  # connected Helm install to read ca.crt from that Secret.
+  caBundle: ""
 
 approverClusterRole:
   create: true

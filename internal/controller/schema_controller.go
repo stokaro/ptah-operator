@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -36,6 +37,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
+	"github.com/stokaro/ptah-operator/internal/telemetry"
 )
 
 const (
@@ -67,10 +69,29 @@ type SchemaReconciler struct {
 	Jobs      JobBuilder
 	Plans     planstore.Store
 	Locks     *targetlock.Locker
-	Clock     func() time.Time
+	// LockNamespace is one shared coordination namespace for every managed
+	// PtahSchema, including schemas that live in different namespaces.
+	LockNamespace string
+	Clock         func() time.Time
+	Telemetry     telemetry.Observer
 }
 
-func (r *SchemaReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
+func (r *SchemaReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
+	defer func() {
+		if r.Telemetry == nil {
+			return
+		}
+		if err != nil {
+			r.Telemetry.ObserveReconciliation(telemetry.ReconciliationFailed)
+			r.Telemetry.ObserveFailure(telemetry.FailureStageController, telemetry.FailureInfrastructure)
+			return
+		}
+		r.Telemetry.ObserveReconciliation(telemetry.ReconciliationSucceeded)
+	}()
+	return r.reconcile(ctx, request)
+}
+
+func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	schema := &operatorv1alpha1.PtahSchema{}
 	reader := r.APIReader
 	if reader == nil {
@@ -112,7 +133,7 @@ func (r *SchemaReconciler) Reconcile(ctx context.Context, request ctrl.Request) 
 		return r.claim(ctx, schema, operatorv1alpha1.OperationObserve)
 	case operatorv1alpha1.PhasePlanning:
 		return r.claim(ctx, schema, operatorv1alpha1.OperationPlan)
-	case operatorv1alpha1.PhaseAwaitingApproval, operatorv1alpha1.PhaseBlocked:
+	case operatorv1alpha1.PhaseReadyToApply, operatorv1alpha1.PhaseAwaitingApproval, operatorv1alpha1.PhaseBlocked:
 		return r.reconcileApproval(ctx, schema)
 	case operatorv1alpha1.PhaseInSync:
 		if !due(schema.Status.NextReconciliationTime, now) {
@@ -157,10 +178,12 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 			}
 		}
 		before := schema.DeepCopy()
+		operation := schema.Status.ActiveOperation
 		schema.Status.ActiveOperation = nil
 		if err := r.patchStatus(ctx, before, schema); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
+		r.observeOperation(operation, telemetry.OperationCanceled)
 	}
 	return ctrl.Result{}, r.removeActiveFinalizer(ctx, schema)
 }
@@ -210,6 +233,15 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				}
 				return r.verificationPolicyChanged(ctx, schema, err)
 			}
+			if planRequiresApproval(schema, plan) {
+				valid, err := r.ensureCurrentApproval(ctx, schema, plan)
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+				if !valid {
+					return r.approvalBecameInvalid(ctx, schema)
+				}
+			}
 		}
 		if r.Jobs == nil {
 			return ctrl.Result{}, fmt.Errorf("Job builder is not configured")
@@ -233,6 +265,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return ctrl.Result{}, err
 		}
 		r.event(schema, corev1.EventTypeNormal, "OperationStarted", "%s Job %s started", operation.Type, job.Name)
+		if operation.Type == operatorv1alpha1.OperationApply && r.Telemetry != nil {
+			r.Telemetry.ObserveApply(telemetry.ApplyStarted)
+		}
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
 	if err != nil {
@@ -265,6 +300,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if err := r.releaseApplyLock(ctx, schema); err != nil {
 				return ctrl.Result{}, err
 			}
+			// Once an Apply Job exists, a mutation may have started even when
+			// its formerly exact inputs became stale. Never classify that case
+			// like an undispatched read-only operation: force fresh observation
+			// before any later plan can run.
+			return r.finishUncertainApply(ctx, schema, job, currentErr)
 		}
 		_ = r.markJobHarvested(ctx, job)
 		return r.discardStaleOperation(ctx, schema, currentErr)
@@ -283,7 +323,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			if err := r.releaseApplyLock(ctx, schema); err != nil {
 				return ctrl.Result{}, err
 			}
-			return r.finishUncertainApply(ctx, schema, job, fmt.Errorf("apply result is uncertain: %w", parseErr))
+			failure := parseErr
+			if failure == nil {
+				failure = fmt.Errorf("Apply Job did not complete successfully")
+			}
+			return r.finishUncertainApply(ctx, schema, job, fmt.Errorf("apply result is uncertain: %w", failure))
 		}
 		if parseErr != nil {
 			return r.retryOperation(ctx, schema, job, fmt.Errorf("read %s result: %w", operation.Type, parseErr))
@@ -321,6 +365,8 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 
 func (r *SchemaReconciler) consumeResult(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, result runner.Result) (ctrl.Result, error) {
 	before := schema.DeepCopy()
+	operation := schema.Status.ActiveOperation
+	var observedDrift *bool
 	now := metav1.NewTime(r.now())
 	schema.Status.LastAttemptTime = &now
 	schema.Status.ObservedGeneration = schema.Generation
@@ -374,6 +420,7 @@ func (r *SchemaReconciler) consumeResult(ctx context.Context, schema *operatorv1
 		if result.TargetIdentityDigest == "" || result.ObservedStateFingerprint == "" {
 			return r.retryOperation(ctx, schema, job, fmt.Errorf("observation lacks credential-free target evidence"))
 		}
+		observedDrift = ptr(report.Drift)
 		wasVerifying := schema.Status.Phase == operatorv1alpha1.PhaseVerifyingConvergence
 		schema.Status.Target = operatorv1alpha1.TargetStatus{
 			Engine:                   schema.Spec.Target.Engine,
@@ -427,19 +474,7 @@ func (r *SchemaReconciler) consumeResult(ctx context.Context, schema *operatorv1
 			return ctrl.Result{}, err
 		}
 		schema.Status.Plan = currentPlanStatus(published, now)
-		if published.Spec.Destructive && !schema.Spec.Policy.AllowDestructive {
-			schema.Status.Phase = operatorv1alpha1.PhaseBlocked
-			setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "DestructiveChangesDisabled", "Plan contains destructive changes and policy disallows them")
-			setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "PolicyBlocked", "Plan is blocked by destructive-change policy")
-		} else if schema.Spec.Policy.Apply == operatorv1alpha1.ApplyPolicyNever {
-			schema.Status.Phase = operatorv1alpha1.PhaseBlocked
-			setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "ApplyDisabled", "Policy records plans but does not apply them")
-			setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ApplyDisabled", "Plan is ready but apply is disabled")
-		} else {
-			schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
-			setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "PlanReady", "An exact immutable plan is ready for approval")
-			setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "AwaitingApproval", "Plan is waiting for approval")
-		}
+		setPlanPolicyStatus(schema, published)
 		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, "Published", "Exact plan bytes are stored in immutable chunks")
 	case operatorv1alpha1.OperationApply:
 		// A successful process is evidence only. Convergence is established by
@@ -453,6 +488,19 @@ func (r *SchemaReconciler) consumeResult(ctx context.Context, schema *operatorv1
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
+	if r.Telemetry != nil {
+		if observedDrift != nil {
+			outcome := telemetry.DriftInSync
+			if *observedDrift {
+				outcome = telemetry.DriftDetected
+			}
+			r.Telemetry.ObserveDrift(schema.Spec.Target.Engine, outcome)
+		}
+		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+			r.Telemetry.ObserveApply(telemetry.ApplyCompleted)
+		}
+	}
+	r.observeOperation(operation, telemetry.OperationSucceeded)
 	_ = r.markJobHarvested(ctx, job)
 	if err := r.removeActiveFinalizer(ctx, schema); err != nil {
 		return ctrl.Result{}, err
@@ -483,8 +531,8 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 		return r.waitBlocked(ctx, schema, "ApplyDisabled", "Policy records plans but does not apply them")
 	}
 
-	requiresApproval := schema.Spec.Policy.Apply != operatorv1alpha1.ApplyPolicyAlways || plan.Spec.Destructive
-	if requiresApproval {
+	requiresApproval := planRequiresApproval(schema, plan)
+	if requiresApproval && schema.Status.Plan.Approval == nil {
 		approval, err := r.findApproval(ctx, schema, plan)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -505,14 +553,20 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 		if err := r.patchStatus(ctx, before, schema); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.markApprovalConsumed(ctx, approval); err != nil {
-			return ctrl.Result{}, err
-		}
 		fresh := &operatorv1alpha1.PtahSchema{}
 		if err := r.directReader().Get(ctx, client.ObjectKeyFromObject(schema), fresh); err != nil {
 			return ctrl.Result{}, err
 		}
 		schema = fresh
+	}
+	if requiresApproval {
+		valid, err := r.ensureCurrentApproval(ctx, schema, plan)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !valid {
+			return r.approvalBecameInvalid(ctx, schema)
+		}
 	}
 	return r.claim(ctx, schema, operatorv1alpha1.OperationApply)
 }
@@ -591,6 +645,9 @@ func (r *SchemaReconciler) retryOperation(ctx context.Context, schema *operatorv
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
+	if r.Telemetry != nil {
+		r.Telemetry.ObserveFailure(telemetry.StageForOperation(operation.Type), telemetry.FailureOperation)
+	}
 	_ = r.markJobHarvested(ctx, job)
 	r.event(schema, corev1.EventTypeWarning, "OperationFailed", "%s", bounded(failure.Error(), 512))
 	return ctrl.Result{RequeueAfter: failureRetry(schema)}, nil
@@ -598,6 +655,7 @@ func (r *SchemaReconciler) retryOperation(ctx context.Context, schema *operatorv
 
 func (r *SchemaReconciler) finishUncertainApply(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, failure error) (ctrl.Result, error) {
 	before := schema.DeepCopy()
+	operation := schema.Status.ActiveOperation
 	schema.Status.ActiveOperation = nil
 	schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
 	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, "OutcomeUnknown", "Apply outcome is uncertain; only read-only observation is permitted")
@@ -606,6 +664,11 @@ func (r *SchemaReconciler) finishUncertainApply(ctx context.Context, schema *ope
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
+	if r.Telemetry != nil {
+		r.Telemetry.ObserveApply(telemetry.ApplyUncertain)
+		r.Telemetry.ObserveFailure(telemetry.FailureStageApply, telemetry.FailureUncertain)
+	}
+	r.observeOperation(operation, telemetry.OperationUncertain)
 	_ = r.markJobHarvested(ctx, job)
 	if err := r.removeActiveFinalizer(ctx, schema); err != nil {
 		return ctrl.Result{}, err
@@ -615,6 +678,7 @@ func (r *SchemaReconciler) finishUncertainApply(ctx context.Context, schema *ope
 }
 
 func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operatorv1alpha1.PtahSchema, failure error) (ctrl.Result, error) {
+	operation := schema.Status.ActiveOperation
 	if schema.Status.ActiveOperation != nil && schema.Status.ActiveOperation.Type == operatorv1alpha1.OperationApply {
 		if err := r.releaseApplyLock(ctx, schema); err != nil {
 			return ctrl.Result{}, err
@@ -629,6 +693,15 @@ func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operato
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
+	if r.Telemetry != nil {
+		stage := telemetry.FailureStagePlan
+		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+			stage = telemetry.FailureStageApply
+			r.Telemetry.ObserveApply(telemetry.ApplyStale)
+		}
+		r.Telemetry.ObserveFailure(stage, telemetry.FailureStaleInput)
+	}
+	r.observeOperation(operation, telemetry.OperationStale)
 	if err := r.removeActiveFinalizer(ctx, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -636,6 +709,7 @@ func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operato
 }
 
 func (r *SchemaReconciler) verificationPolicyChanged(ctx context.Context, schema *operatorv1alpha1.PtahSchema, failure error) (ctrl.Result, error) {
+	operation := schema.Status.ActiveOperation
 	if schema.Status.ActiveOperation != nil && schema.Status.ActiveOperation.Type == operatorv1alpha1.OperationApply {
 		if err := r.releaseApplyLock(ctx, schema); err != nil {
 			return ctrl.Result{}, err
@@ -652,6 +726,13 @@ func (r *SchemaReconciler) verificationPolicyChanged(ctx context.Context, schema
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
+	if r.Telemetry != nil {
+		r.Telemetry.ObserveFailure(telemetry.FailureStageVerify, telemetry.FailurePolicyChanged)
+		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+			r.Telemetry.ObserveApply(telemetry.ApplyStale)
+		}
+	}
+	r.observeOperation(operation, telemetry.OperationStale)
 	if err := r.removeActiveFinalizer(ctx, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -667,11 +748,19 @@ func (r *SchemaReconciler) operationFailure(ctx context.Context, schema *operato
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
+	if r.Telemetry != nil {
+		stage := telemetry.FailureStageController
+		if schema.Status.ActiveOperation != nil {
+			stage = telemetry.StageForOperation(schema.Status.ActiveOperation.Type)
+		}
+		r.Telemetry.ObserveFailure(stage, telemetry.FailureConfiguration)
+	}
 	return ctrl.Result{RequeueAfter: failureRetry(schema)}, nil
 }
 
 func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema, failure error) (ctrl.Result, error) {
 	before := schema.DeepCopy()
+	operation := schema.Status.ActiveOperation
 	schema.Status.ActiveOperation = nil
 	schema.Status.Plan = nil
 	schema.Status.Source.Verified = false
@@ -681,6 +770,17 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
+	if r.Telemetry != nil {
+		stage := telemetry.FailureStageController
+		if operation != nil {
+			stage = telemetry.StageForOperation(operation.Type)
+			if operation.Type == operatorv1alpha1.OperationApply {
+				r.Telemetry.ObserveApply(telemetry.ApplyStale)
+			}
+		}
+		r.Telemetry.ObserveFailure(stage, telemetry.FailureStaleInput)
+	}
+	r.observeOperation(operation, telemetry.OperationStale)
 	if err := r.removeActiveFinalizer(ctx, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -751,6 +851,7 @@ func (r *SchemaReconciler) findApproval(ctx context.Context, schema *operatorv1a
 		return nil, fmt.Errorf("list plan approvals: %w", err)
 	}
 	sort.Slice(list.Items, func(i, j int) bool { return list.Items[i].CreationTimestamp.Before(&list.Items[j].CreationTimestamp) })
+	var staleCandidate *operatorv1alpha1.PtahSchemaApproval
 	for i := range list.Items {
 		candidate := &operatorv1alpha1.PtahSchemaApproval{}
 		if err := r.directReader().Get(ctx, client.ObjectKeyFromObject(&list.Items[i]), candidate); err != nil {
@@ -759,19 +860,72 @@ func (r *SchemaReconciler) findApproval(ctx context.Context, schema *operatorv1a
 			}
 			return nil, err
 		}
-		if meta.IsStatusConditionTrue(candidate.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed) || candidate.DeletionTimestamp != nil {
+		if meta.IsStatusConditionTrue(candidate.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed) ||
+			meta.IsStatusConditionTrue(candidate.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) || candidate.DeletionTimestamp != nil {
 			continue
 		}
 		if approvalMatches(candidate, schema, plan) {
 			return candidate, nil
 		}
+		if staleCandidate == nil {
+			staleCandidate = candidate
+		}
+	}
+	// A valid approval always wins regardless of historical backlog. Clean up
+	// at most one stale object per reconciliation to bound API writes and Events.
+	if staleCandidate != nil {
+		if err := r.markApprovalStale(ctx, staleCandidate); err != nil {
+			return nil, err
+		}
 	}
 	return nil, nil
 }
 
-func (r *SchemaReconciler) markApprovalConsumed(ctx context.Context, approval *operatorv1alpha1.PtahSchemaApproval) error {
+func (r *SchemaReconciler) markApprovalStale(ctx context.Context, approval *operatorv1alpha1.PtahSchemaApproval) error {
+	if meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) {
+		return nil
+	}
 	before := approval.DeepCopy()
 	approval.Status.ObservedGeneration = approval.Generation
+	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
+		Type: operatorv1alpha1.ConditionApprovalAccepted, Status: metav1.ConditionFalse,
+		Reason: "PlanNoLongerCurrent", Message: "The approval does not match the current immutable plan",
+		ObservedGeneration: approval.Generation, LastTransitionTime: metav1.NewTime(r.now()),
+	})
+	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
+		Type: operatorv1alpha1.ConditionApprovalStale, Status: metav1.ConditionTrue,
+		Reason: "PlanNoLongerCurrent", Message: "The approved plan is no longer current and cannot be applied",
+		ObservedGeneration: approval.Generation, LastTransitionTime: metav1.NewTime(r.now()),
+	})
+	if err := r.Client.Status().Patch(ctx, approval, client.MergeFrom(before)); err != nil {
+		return fmt.Errorf("mark approval stale: %w", err)
+	}
+	r.event(approval, corev1.EventTypeWarning, "ApprovalStale", "The approved immutable plan is no longer current")
+	if r.Telemetry != nil {
+		r.Telemetry.ObserveApproval(telemetry.ApprovalStale)
+	}
+	return nil
+}
+
+func (r *SchemaReconciler) markApprovalConsumed(ctx context.Context, approval *operatorv1alpha1.PtahSchemaApproval) error {
+	stale := meta.FindStatusCondition(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalStale)
+	if meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalAccepted) &&
+		meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed) &&
+		stale != nil && stale.Status == metav1.ConditionFalse {
+		return nil
+	}
+	before := approval.DeepCopy()
+	approval.Status.ObservedGeneration = approval.Generation
+	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
+		Type: operatorv1alpha1.ConditionApprovalAccepted, Status: metav1.ConditionTrue,
+		Reason: "CurrentPlan", Message: "The approval exactly matches the current immutable plan",
+		ObservedGeneration: approval.Generation, LastTransitionTime: metav1.NewTime(r.now()),
+	})
+	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
+		Type: operatorv1alpha1.ConditionApprovalStale, Status: metav1.ConditionFalse,
+		Reason: "CurrentPlan", Message: "The approved plan is current",
+		ObservedGeneration: approval.Generation, LastTransitionTime: metav1.NewTime(r.now()),
+	})
 	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
 		Type: operatorv1alpha1.ConditionApprovalConsumed, Status: metav1.ConditionTrue,
 		Reason: "ApplyClaimed", Message: "The exact plan was claimed for one apply operation",
@@ -781,6 +935,62 @@ func (r *SchemaReconciler) markApprovalConsumed(ctx context.Context, approval *o
 		return fmt.Errorf("mark approval consumed: %w", err)
 	}
 	return nil
+}
+
+func (r *SchemaReconciler) ensureCurrentApproval(ctx context.Context, schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) (bool, error) {
+	if schema.Status.Plan == nil || schema.Status.Plan.Approval == nil {
+		return false, nil
+	}
+	recorded := schema.Status.Plan.Approval
+	approval := &operatorv1alpha1.PtahSchemaApproval{}
+	if err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: recorded.Name}, approval); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read accepted approval: %w", err)
+	}
+	if approval.UID != recorded.UID || approval.DeletionTimestamp != nil ||
+		meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) ||
+		!approvalMatches(approval, schema, plan) || !recordedApprovalMatches(recorded, approval) {
+		return false, nil
+	}
+	if err := r.markApprovalConsumed(ctx, approval); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (r *SchemaReconciler) approvalBecameInvalid(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
+	operation := schema.Status.ActiveOperation
+	if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+		if err := r.releaseApplyLock(ctx, schema); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	before := schema.DeepCopy()
+	if schema.Status.Plan != nil {
+		schema.Status.Plan.Approval = nil
+	}
+	schema.Status.ActiveOperation = nil
+	schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
+	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "ApprovalRevoked", "The recorded approval is missing, replaced, or no longer matches the current plan")
+	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, "ApprovalRevoked", "No Apply Job was started with the invalid approval")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "AwaitingApproval", "The current plan requires a new approval")
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return ctrl.Result{}, err
+	}
+	if r.Telemetry != nil {
+		if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+			r.Telemetry.ObserveApply(telemetry.ApplyStale)
+			r.Telemetry.ObserveFailure(telemetry.FailureStageApply, telemetry.FailureStaleInput)
+		}
+	}
+	r.observeOperation(operation, telemetry.OperationStale)
+	if err := r.removeActiveFinalizer(ctx, schema); err != nil {
+		return ctrl.Result{}, err
+	}
+	r.event(schema, corev1.EventTypeWarning, "ApprovalRevoked", "The recorded approval became invalid before the Apply Job was created")
+	return ctrl.Result{RequeueAfter: interval(schema)}, nil
 }
 
 func (r *SchemaReconciler) waitBlocked(ctx context.Context, schema *operatorv1alpha1.PtahSchema, reason, message string) (ctrl.Result, error) {
@@ -871,7 +1081,7 @@ func (r *SchemaReconciler) acquireApplyLock(ctx context.Context, schema *operato
 		return false, 0, fmt.Errorf("apply target lock inputs are incomplete")
 	}
 	result, err := r.Locks.Acquire(ctx, targetlock.Request{
-		Namespace: schema.Namespace, TargetIdentityDigest: schema.Status.Target.IdentityDigest,
+		CoordinationNamespace: r.LockNamespace, TargetIdentityDigest: schema.Status.Target.IdentityDigest,
 		Holder:   targetlock.Holder{SchemaUID: schema.UID, OperationID: operation.ID},
 		Duration: leaseDuration(schema),
 	})
@@ -896,7 +1106,7 @@ func (r *SchemaReconciler) releaseApplyLock(ctx context.Context, schema *operato
 		return nil
 	}
 	if err := r.Locks.Release(ctx, targetlock.Request{
-		Namespace: schema.Namespace, TargetIdentityDigest: schema.Status.Target.IdentityDigest,
+		CoordinationNamespace: r.LockNamespace, TargetIdentityDigest: schema.Status.Target.IdentityDigest,
 		Holder:   targetlock.Holder{SchemaUID: schema.UID, OperationID: schema.Status.ActiveOperation.ID},
 		Duration: leaseDuration(schema),
 	}); err != nil {
@@ -912,7 +1122,78 @@ func (r *SchemaReconciler) patchStatus(ctx context.Context, before, after *opera
 	if err := r.Client.Status().Patch(ctx, after, client.MergeFrom(before)); err != nil {
 		return fmt.Errorf("update PtahSchema status: %w", err)
 	}
+	r.observeStatusTransitions(before, after)
 	return nil
+}
+
+func (r *SchemaReconciler) observeStatusTransitions(before, after *operatorv1alpha1.PtahSchema) {
+	newPlan := planChanged(before.Status.Plan, after.Status.Plan)
+	if newPlan && after.Status.Plan != nil && r.Telemetry != nil {
+		r.Telemetry.ObservePlan(after.Spec.Target.Engine, after.Status.Plan.Destructive)
+	}
+	approvalRequired := meta.IsStatusConditionTrue(after.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired)
+	if conditionBecame(before.Status.Conditions, after.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "") ||
+		newPlan && approvalRequired {
+		r.event(after, corev1.EventTypeNormal, "ApprovalRequired", "The current immutable plan requires approval")
+		if r.Telemetry != nil {
+			r.Telemetry.ObserveApproval(telemetry.ApprovalRequired)
+		}
+	}
+	if approvalChanged(before.Status.Plan, after.Status.Plan) {
+		r.event(after, corev1.EventTypeNormal, "ApprovalAccepted", "An authenticated approval was accepted for the current immutable plan")
+		if r.Telemetry != nil {
+			r.Telemetry.ObserveApproval(telemetry.ApprovalAccepted)
+		}
+	}
+	if planInvalidated(before.Status.Plan, after.Status.Plan) {
+		r.event(after, corev1.EventTypeWarning, "PlanStale", "The immutable plan became stale and will not be applied")
+	}
+	if conditionBecame(before.Status.Conditions, after.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, "PolicyChanged") {
+		r.event(after, corev1.EventTypeWarning, "VerificationPolicyInvalidated", "Verification policy no longer matches the plan; artifact and plan verification were invalidated")
+	}
+}
+
+func (r *SchemaReconciler) observeOperation(operation *operatorv1alpha1.ActiveOperationStatus, outcome telemetry.OperationOutcome) {
+	if r.Telemetry == nil || operation == nil || operation.StartedAt.IsZero() {
+		return
+	}
+	r.Telemetry.ObserveOperation(operation.Type, outcome, r.now().Sub(operation.StartedAt.Time))
+}
+
+func planChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {
+	if after == nil {
+		return false
+	}
+	return before == nil || before.UID != after.UID || before.Fingerprint != after.Fingerprint
+}
+
+func planInvalidated(before, after *operatorv1alpha1.CurrentPlanStatus) bool {
+	if before == nil {
+		return false
+	}
+	return after == nil || before.UID != after.UID || before.Fingerprint != after.Fingerprint
+}
+
+func approvalChanged(before, after *operatorv1alpha1.CurrentPlanStatus) bool {
+	if after == nil || after.Approval == nil {
+		return false
+	}
+	return before == nil || before.Approval == nil || before.Approval.UID != after.Approval.UID
+}
+
+func conditionBecame(before, after []metav1.Condition, conditionType string, status metav1.ConditionStatus, reason string) bool {
+	afterCondition := meta.FindStatusCondition(after, conditionType)
+	if afterCondition == nil || afterCondition.Status != status || reason != "" && afterCondition.Reason != reason {
+		return false
+	}
+	beforeCondition := meta.FindStatusCondition(before, conditionType)
+	if beforeCondition == nil {
+		return true
+	}
+	if beforeCondition.Status != status {
+		return true
+	}
+	return reason != "" && beforeCondition.Reason != reason
 }
 
 func (r *SchemaReconciler) operationInputFingerprint(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.OperationType) (string, error) {
@@ -944,6 +1225,9 @@ func (r *SchemaReconciler) event(object client.Object, eventType, reason, messag
 }
 
 func (r *SchemaReconciler) SetupWithManager(manager ctrl.Manager) error {
+	if problems := k8svalidation.IsDNS1123Label(r.LockNamespace); len(problems) != 0 {
+		return fmt.Errorf("target lock namespace is invalid: %s", problems[0])
+	}
 	if r.Client == nil {
 		r.Client = manager.GetClient()
 	}
@@ -1054,6 +1338,36 @@ func approvalMatches(approval *operatorv1alpha1.PtahSchemaApproval, schema *oper
 		approval.Spec.PtahVersion == plan.Spec.PtahVersion && approval.Spec.ExecutorImage == plan.Spec.ExecutorImage &&
 		approval.Spec.RunnerImage == plan.Spec.RunnerImage && approval.Spec.RunnerProtocolVersion == plan.Spec.RunnerProtocolVersion &&
 		!approval.Spec.ApprovedAt.IsZero() && approval.Spec.Approver.Username != "" && approval.Spec.AdmissionRequestUID != ""
+}
+
+func recordedApprovalMatches(recorded *operatorv1alpha1.ConsumedApprovalStatus, approval *operatorv1alpha1.PtahSchemaApproval) bool {
+	return recorded.Name == approval.Name && recorded.UID == approval.UID &&
+		recorded.ApprovedAt.Time.Equal(approval.Spec.ApprovedAt.Time) && reflect.DeepEqual(recorded.Approver, approval.Spec.Approver)
+}
+
+func planRequiresApproval(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) bool {
+	return schema.Spec.Policy.Apply != operatorv1alpha1.ApplyPolicyAlways || plan.Spec.Destructive
+}
+
+func setPlanPolicyStatus(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) {
+	switch {
+	case plan.Spec.Destructive && !schema.Spec.Policy.AllowDestructive:
+		schema.Status.Phase = operatorv1alpha1.PhaseBlocked
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "DestructiveChangesDisabled", "Plan contains destructive changes and policy disallows them")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "PolicyBlocked", "Plan is blocked by destructive-change policy")
+	case schema.Spec.Policy.Apply == operatorv1alpha1.ApplyPolicyNever:
+		schema.Status.Phase = operatorv1alpha1.PhaseBlocked
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "ApplyDisabled", "Policy records plans but does not apply them")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ApplyDisabled", "Plan is ready but apply is disabled")
+	case planRequiresApproval(schema, plan):
+		schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "PlanReady", "An exact immutable plan is ready for approval")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "AwaitingApproval", "Plan is waiting for approval")
+	default:
+		schema.Status.Phase = operatorv1alpha1.PhaseReadyToApply
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "NotRequired", "Policy permits this non-destructive plan without a separate approval")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ApplyPending", "The exact plan is ready to apply automatically")
+	}
 }
 
 func policyFingerprint(schema *operatorv1alpha1.PtahSchema) (string, error) {

@@ -74,6 +74,9 @@ func (h *ApprovalHandler) Handle(ctx context.Context, req cradmission.Request) c
 
 	if h.Mutate {
 		h.stampIdentity(approval, req.UserInfo, req.UID)
+		if err := h.hydrateDerivedBindings(ctx, approval); err != nil {
+			return denialFor(err)
+		}
 		if err := h.validateBinding(ctx, approval); err != nil {
 			return denialFor(err)
 		}
@@ -91,6 +94,67 @@ func (h *ApprovalHandler) Handle(ctx context.Context, req cradmission.Request) c
 		return denialFor(err)
 	}
 	return cradmission.Allowed("approval is bound to the current immutable plan")
+}
+
+// hydrateDerivedBindings removes error-prone transcription from an approval
+// without weakening its explicit decision. The approver must name immutable
+// schema and plan UIDs plus the exact plan fingerprint. Every other binding is
+// copied from that plan only when omitted; a conflicting value is refused
+// rather than silently corrected.
+func (h *ApprovalHandler) hydrateDerivedBindings(
+	ctx context.Context,
+	approval *operatorv1alpha1.PtahSchemaApproval,
+) error {
+	if strings.TrimSpace(approval.Spec.SchemaRef.Name) == "" || approval.Spec.SchemaRef.UID == "" {
+		return fmt.Errorf("approval must explicitly identify the schema name and UID")
+	}
+	if strings.TrimSpace(approval.Spec.PlanRef.Name) == "" || approval.Spec.PlanRef.UID == "" {
+		return fmt.Errorf("approval must explicitly identify the plan name and UID")
+	}
+	if strings.TrimSpace(approval.Spec.PlanFingerprint) == "" {
+		return fmt.Errorf("approval must explicitly identify the plan fingerprint")
+	}
+
+	plan := &operatorv1alpha1.PtahSchemaPlan{}
+	if err := h.Reader.Get(ctx, client.ObjectKey{Namespace: approval.Namespace, Name: approval.Spec.PlanRef.Name}, plan); err != nil {
+		return fmt.Errorf("read referenced plan for approval defaults: %w", err)
+	}
+	if plan.UID != approval.Spec.PlanRef.UID {
+		return fmt.Errorf("referenced plan UID does not match; the plan was replaced")
+	}
+	if plan.Spec.SchemaRef != approval.Spec.SchemaRef {
+		return fmt.Errorf("approval schema reference does not match the plan")
+	}
+	if approval.Spec.PlanFingerprint != plan.Spec.Fingerprint {
+		return fmt.Errorf("approval plan fingerprint does not match the immutable plan")
+	}
+
+	bindings := []struct {
+		name  string
+		value *string
+		want  string
+	}{
+		{"artifact digest", &approval.Spec.ArtifactDigest, plan.Spec.ArtifactDigest},
+		{"target identity digest", &approval.Spec.TargetIdentityDigest, plan.Spec.TargetIdentityDigest},
+		{"actual state fingerprint", &approval.Spec.ActualStateFingerprint, plan.Spec.ActualStateFingerprint},
+		{"desired state fingerprint", &approval.Spec.DesiredStateFingerprint, plan.Spec.DesiredStateFingerprint},
+		{"policy fingerprint", &approval.Spec.PolicyFingerprint, plan.Spec.PolicyFingerprint},
+		{"verification policy digest", &approval.Spec.VerificationPolicyDigest, plan.Spec.VerificationPolicyDigest},
+		{"Ptah version", &approval.Spec.PtahVersion, plan.Spec.PtahVersion},
+		{"executor image", &approval.Spec.ExecutorImage, plan.Spec.ExecutorImage},
+		{"runner image", &approval.Spec.RunnerImage, plan.Spec.RunnerImage},
+	}
+	for _, binding := range bindings {
+		if *binding.value != "" && *binding.value != binding.want {
+			return fmt.Errorf("approval %s conflicts with the immutable plan", binding.name)
+		}
+		*binding.value = binding.want
+	}
+	if approval.Spec.RunnerProtocolVersion != 0 && approval.Spec.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
+		return fmt.Errorf("approval runner protocol version conflicts with the immutable plan")
+	}
+	approval.Spec.RunnerProtocolVersion = plan.Spec.RunnerProtocolVersion
+	return nil
 }
 
 func (h *ApprovalHandler) stampIdentity(

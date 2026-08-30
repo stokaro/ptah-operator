@@ -64,13 +64,17 @@ type Holder struct {
 }
 
 // Request contains the complete inputs needed to acquire or release a target
-// lock. TargetIdentityDigest must be an OCI-style SHA-256 digest computed from
-// a credential-free target identity.
+// lock. CoordinationNamespace must be common to all managed resources, while
+// TargetIdentityDigest must be an OCI-style SHA-256 digest computed from a
+// credential-free target identity.
 type Request struct {
-	Namespace            string
-	TargetIdentityDigest string
-	Holder               Holder
-	Duration             time.Duration
+	// CoordinationNamespace is shared by every resource that may address the
+	// same database. Using the schema's own namespace here would permit two
+	// namespaces to apply concurrently to one target.
+	CoordinationNamespace string
+	TargetIdentityDigest  string
+	Holder                Holder
+	Duration              time.Duration
 }
 
 // Contention describes a live lock held by a different operation. It does not
@@ -124,9 +128,9 @@ func (l *Locker) Acquire(ctx context.Context, request Request) (AcquireResult, e
 
 	for range maxAttempts {
 		lease := &coordinationv1.Lease{}
-		err = l.reader.Get(ctx, client.ObjectKey{Namespace: request.Namespace, Name: validated.leaseName}, lease)
+		err = l.reader.Get(ctx, client.ObjectKey{Namespace: request.CoordinationNamespace, Name: validated.leaseName}, lease)
 		if apierrors.IsNotFound(err) {
-			lease = newLease(request.Namespace, validated, l.now())
+			lease = newLease(request.CoordinationNamespace, validated, l.now())
 			if err = l.writer.Create(ctx, lease); err == nil {
 				return AcquireResult{Acquired: true}, nil
 			}
@@ -174,7 +178,7 @@ func (l *Locker) Release(ctx context.Context, request Request) error {
 
 	for range maxAttempts {
 		lease := &coordinationv1.Lease{}
-		err = l.reader.Get(ctx, client.ObjectKey{Namespace: request.Namespace, Name: validated.leaseName}, lease)
+		err = l.reader.Get(ctx, client.ObjectKey{Namespace: request.CoordinationNamespace, Name: validated.leaseName}, lease)
 		if apierrors.IsNotFound(err) {
 			return nil
 		}
@@ -211,8 +215,8 @@ func (l *Locker) validate(request Request) (validatedRequest, error) {
 	if l == nil || l.reader == nil || l.writer == nil || l.clock == nil {
 		return validatedRequest{}, fmt.Errorf("%w: locker is not initialized", ErrInvalidRequest)
 	}
-	if problems := validation.IsDNS1123Label(request.Namespace); len(problems) != 0 {
-		return validatedRequest{}, fmt.Errorf("%w: namespace is invalid", ErrInvalidRequest)
+	if problems := validation.IsDNS1123Label(request.CoordinationNamespace); len(problems) != 0 {
+		return validatedRequest{}, fmt.Errorf("%w: coordination namespace is invalid", ErrInvalidRequest)
 	}
 	leaseName, err := LeaseName(request.TargetIdentityDigest)
 	if err != nil {
