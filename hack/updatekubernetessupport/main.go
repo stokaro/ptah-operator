@@ -169,9 +169,11 @@ func fetch(ctx context.Context, client *http.Client, rawURL, token string) ([]by
 	}
 	request.Header.Set("Accept", "application/vnd.github+json, text/plain")
 	request.Header.Set("User-Agent", "ptah-operator-kubernetes-support-updater")
-	if token != "" && strings.EqualFold(parsedURL.Hostname(), "api.github.com") {
-		request.Header.Set("Authorization", "Bearer "+token)
+	if strings.EqualFold(parsedURL.Hostname(), "api.github.com") {
 		request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
 	}
 
 	response, err := client.Do(request)
