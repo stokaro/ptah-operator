@@ -666,6 +666,20 @@ for recovery_marker in \
 	'did not contract after Secret recreation'; do
 	grep -F -- "$recovery_marker" "$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
 done
+for helm_lookup_marker in \
+	"E2E_CHART_PACKAGE=\$CHART_PACKAGE" \
+	"E2E_TEST_NAMESPACE=\$TEST_NAMESPACE" \
+	'generate_upgrade_ca mutating' \
+	'generate_upgrade_ca approval-validating' \
+	'generate_upgrade_ca pod-validating' \
+	'assert_entry_bundle mutatingwebhookconfiguration' \
+	'assert_entry_bundle validatingwebhookconfiguration' \
+	'--reuse-values --wait --timeout 5m' \
+	"caBundle for \${webhook_name} gained another entry" \
+	'assert_approval_admission_callable "after the Helm upgrade"'; do
+	grep -F -- "$helm_lookup_marker" "$ROOT_DIR/hack/e2e-kind.sh" \
+		"$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
+done
 for per_entry_marker in \
 	'"mutating"' \
 	'"approvalValidating"' \

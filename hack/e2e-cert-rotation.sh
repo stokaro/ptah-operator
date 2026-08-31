@@ -4,7 +4,9 @@ set -eu
 
 KUBECONFIG_FILE=${E2E_KUBECONFIG:?E2E_KUBECONFIG is required}
 OPERATOR_NAMESPACE=${E2E_OPERATOR_NAMESPACE:?E2E_OPERATOR_NAMESPACE is required}
+TEST_NAMESPACE=${E2E_TEST_NAMESPACE:?E2E_TEST_NAMESPACE is required}
 HELM_RELEASE=${E2E_HELM_RELEASE:?E2E_HELM_RELEASE is required}
+CHART_PACKAGE=${E2E_CHART_PACKAGE:?E2E_CHART_PACKAGE is required}
 
 fail() {
 	printf 'e2e certificate rotation: %s\n' "$*" >&2
@@ -26,6 +28,115 @@ resource_name() {
 		fail "expected exactly one ${kind} for component ${component}"
 	printf '%s\n' "${names#*/}"
 }
+
+webhook_bundle() {
+	kind=$1
+	configuration=$2
+	webhook_name=$3
+	kubectl --kubeconfig "$KUBECONFIG_FILE" get "$kind" "$configuration" -o json |
+		jq -r --arg name "$webhook_name" '
+          [.webhooks[] | select(.name == $name) | .clientConfig.caBundle] |
+          if length == 1 then .[0] else empty end
+        '
+}
+
+generate_upgrade_ca() {
+	name=$1
+	key_file=$UPGRADE_WORK_DIR/${name}.key
+	certificate_file=$UPGRADE_WORK_DIR/${name}.pem
+	if ! openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+		-subj "/CN=ptah-e2e-${name}" \
+		-addext 'basicConstraints=critical,CA:TRUE,pathlen:0' \
+		-addext 'keyUsage=critical,keyCertSign,cRLSign' \
+		-keyout "$key_file" -out "$certificate_file" >/dev/null 2>&1; then
+		fail "could not generate the ${name} Helm-upgrade CA fixture"
+	fi
+	rm -f -- "$key_file"
+	if ! openssl verify -CAfile "$certificate_file" "$certificate_file" >/dev/null 2>&1; then
+		fail "the ${name} Helm-upgrade CA fixture is not a valid self-signed root"
+	fi
+	printf '%s\n' "$certificate_file"
+}
+
+build_overlap_bundle() {
+	name=$1
+	certificate_file=$2
+	bundle_file=$UPGRADE_WORK_DIR/${name}-overlap.pem
+	if ! {
+		printf '%s' "$OLD_CA" | openssl base64 -d -A
+		printf '\n'
+		cat "$certificate_file"
+	} >"$bundle_file"; then
+		fail "could not build the ${name} Helm-upgrade CA overlap"
+	fi
+	if [ "$(grep -c '^-----BEGIN CERTIFICATE-----$' "$bundle_file")" -ne 2 ] ||
+		! openssl crl2pkcs7 -nocrl -certfile "$bundle_file" >/dev/null 2>&1; then
+		fail "the ${name} Helm-upgrade CA overlap is not exactly two valid certificates"
+	fi
+	openssl base64 -A -in "$bundle_file"
+}
+
+assert_entry_bundle() {
+	kind=$1
+	configuration=$2
+	webhook_name=$3
+	entry_certificate=$4
+	foreign_certificate_a=$5
+	foreign_certificate_b=$6
+	observed_bundle=$(webhook_bundle "$kind" "$configuration" "$webhook_name")
+	[ -n "$observed_bundle" ] || fail "could not read caBundle for ${webhook_name}"
+	observed_file=$UPGRADE_WORK_DIR/observed-${webhook_name}.pem
+	if ! printf '%s' "$observed_bundle" | openssl base64 -d -A >"$observed_file"; then
+		fail "caBundle for ${webhook_name} is not valid base64"
+	fi
+	if [ "$(grep -c '^-----BEGIN CERTIFICATE-----$' "$observed_file")" -ne 2 ] ||
+		! openssl crl2pkcs7 -nocrl -certfile "$observed_file" >/dev/null 2>&1; then
+		fail "caBundle for ${webhook_name} is not exactly two valid certificates"
+	fi
+	if ! openssl verify -CAfile "$observed_file" "$CURRENT_CA_FILE" >/dev/null 2>&1; then
+		fail "caBundle for ${webhook_name} dropped the current serving root"
+	fi
+	if ! openssl verify -CAfile "$observed_file" "$entry_certificate" >/dev/null 2>&1; then
+		fail "caBundle for ${webhook_name} dropped its entry-local root"
+	fi
+	for foreign_certificate in "$foreign_certificate_a" "$foreign_certificate_b"; do
+		if openssl verify -CAfile "$observed_file" "$foreign_certificate" >/dev/null 2>&1; then
+			fail "caBundle for ${webhook_name} gained another entry's root"
+		fi
+	done
+}
+
+assert_approval_admission_callable() {
+	stage=$1
+	if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$TEST_NAMESPACE" \
+		patch ptahschemaapproval e2e-approval --type=merge \
+		-p '{"metadata":{"annotations":{"operator.ptah.dev/certificate-upgrade-probe":"true"}}}' \
+		--dry-run=server -o name >/dev/null; then
+		fail "approval admission was not callable ${stage}"
+	fi
+}
+
+[ -f "$KUBECONFIG_FILE" ] || fail "E2E_KUBECONFIG does not name a file"
+[ -f "$CHART_PACKAGE" ] || fail "E2E_CHART_PACKAGE does not name the packaged chart"
+command -v openssl >/dev/null 2>&1 || fail "OpenSSL is required"
+
+UPGRADE_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-cert-upgrade.XXXXXX")
+chmod 700 "$UPGRADE_WORK_DIR"
+cleanup_upgrade_files() {
+	status=$?
+	trap - EXIT HUP INT TERM
+	case "$UPGRADE_WORK_DIR" in
+	"${TMPDIR:-/tmp}"/ptah-operator-cert-upgrade.*) rm -rf -- "$UPGRADE_WORK_DIR" ;;
+	*)
+		printf 'e2e certificate rotation: refusing to remove unexpected work directory %s\n' \
+			"$UPGRADE_WORK_DIR" >&2
+		status=1
+		;;
+	esac
+	exit "$status"
+}
+trap cleanup_upgrade_files EXIT
+trap 'exit 130' HUP INT TERM
 
 DEPLOYMENT=$(resource_name deployment controller)
 ROTATOR_DEPLOYMENT=$(resource_name deployment certificate-rotation)
@@ -63,12 +174,7 @@ if [ "$(kubectl --kubeconfig "$KUBECONFIG_FILE" auth can-i \
 	fail "manager ServiceAccount can read the webhook Secret"
 fi
 
-GUARD_ERROR=$(mktemp "${TMPDIR:-/tmp}/ptah-operator-secret-guard.XXXXXX")
-cleanup_guard_error() {
-	rm -f -- "$GUARD_ERROR"
-}
-trap cleanup_guard_error EXIT
-trap 'exit 130' HUP INT TERM
+GUARD_ERROR=$UPGRADE_WORK_DIR/secret-guard.err
 if kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${ROTATOR_SERVICE_ACCOUNT}" \
 	create secret generic ptah-rotator-unauthorized \
@@ -110,6 +216,56 @@ fi
 if [ -z "$OLD_CERT" ] || [ "$OLD_CERT" = null ]; then
 	fail "generated webhook Secret has no serving certificate"
 fi
+
+# Exercise Helm's live lookup path while the generated Secret exists. Every
+# managed entry begins with the serving root plus a distinct valid local root;
+# the upgrade must preserve that exact trust partition without cross-copying.
+CURRENT_CA_FILE=$UPGRADE_WORK_DIR/current-ca.pem
+if ! printf '%s' "$OLD_CA" | openssl base64 -d -A >"$CURRENT_CA_FILE" ||
+	! openssl verify -CAfile "$CURRENT_CA_FILE" "$CURRENT_CA_FILE" >/dev/null 2>&1; then
+	fail "generated webhook Secret ca.crt is not a valid self-signed root"
+fi
+MUTATING_UPGRADE_CA=$(generate_upgrade_ca mutating)
+APPROVAL_UPGRADE_CA=$(generate_upgrade_ca approval-validating)
+POD_UPGRADE_CA=$(generate_upgrade_ca pod-validating)
+MUTATING_OVERLAP=$(build_overlap_bundle mutating "$MUTATING_UPGRADE_CA")
+APPROVAL_OVERLAP=$(build_overlap_bundle approval-validating "$APPROVAL_UPGRADE_CA")
+POD_OVERLAP=$(build_overlap_bundle pod-validating "$POD_UPGRADE_CA")
+
+kubectl --kubeconfig "$KUBECONFIG_FILE" get \
+	mutatingwebhookconfiguration "$MUTATING_CONFIGURATION" -o json |
+	jq --arg bundle "$MUTATING_OVERLAP" '
+      (.webhooks[] | select(.name == "mapproval.operator.ptah.dev") | .clientConfig.caBundle) = $bundle
+    ' |
+	kubectl --kubeconfig "$KUBECONFIG_FILE" replace -f - >/dev/null
+kubectl --kubeconfig "$KUBECONFIG_FILE" get \
+	validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" -o json |
+	jq --arg approval "$APPROVAL_OVERLAP" --arg pod "$POD_OVERLAP" '
+      (.webhooks[] | select(.name == "vapproval.operator.ptah.dev") | .clientConfig.caBundle) = $approval |
+      (.webhooks[] | select(.name == "vpodintent.operator.ptah.dev") | .clientConfig.caBundle) = $pod
+    ' |
+	kubectl --kubeconfig "$KUBECONFIG_FILE" replace -f - >/dev/null
+
+assert_entry_bundle mutatingwebhookconfiguration "$MUTATING_CONFIGURATION" \
+	mapproval.operator.ptah.dev "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
+assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
+	vapproval.operator.ptah.dev "$APPROVAL_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$POD_UPGRADE_CA"
+assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
+	vpodintent.operator.ptah.dev "$POD_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA"
+assert_approval_admission_callable "before the Helm upgrade"
+
+if ! helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
+	--namespace "$OPERATOR_NAMESPACE" --reuse-values --wait --timeout 5m >/dev/null; then
+	fail "packaged-chart upgrade failed during live certificate lookup"
+fi
+
+assert_entry_bundle mutatingwebhookconfiguration "$MUTATING_CONFIGURATION" \
+	mapproval.operator.ptah.dev "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
+assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
+	vapproval.operator.ptah.dev "$APPROVAL_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$POD_UPGRADE_CA"
+assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
+	vpodintent.operator.ptah.dev "$POD_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA"
+assert_approval_admission_callable "after the Helm upgrade"
 
 # Corrupt ca.crt while leaving the serving leaf and key intact. One malformed
 # webhook entry proves that recovery filters candidates independently and can
@@ -254,4 +410,4 @@ if printf '%s' "$RECREATE_LOGS" | grep -Eiq -- 'PRIVATE[ _-]?KEY|-----BEGIN [A-Z
 	fail "missing-Secret recovery logs contain private key material"
 fi
 
-printf '%s\n' 'e2e certificate rotation: PASS corrupt-CA and deleted-Secret recovery with exact guarded creation'
+printf '%s\n' 'e2e certificate rotation: PASS live Helm lookup, corrupt-CA recovery, and exact guarded recreation'

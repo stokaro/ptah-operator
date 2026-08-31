@@ -16,7 +16,7 @@ The exact patch versions in this table are test environments, not a restriction 
 
 ## Source of truth
 
-[`support/kubernetes.json`](../support/kubernetes.json) is the machine-readable source of truth. It records the ordered minor window, the kind version, digest-pinned multi-architecture node images, and the UTC date on which live upstream metadata was last checked. CI builds its matrix directly from this file; it does not maintain a second version list.
+[`support/kubernetes.json`](../support/kubernetes.json) is the machine-readable source of truth. It records the ordered minor window, the kind version, digest-pinned multi-architecture node images, and the UTC date of the last persisted upstream-verification checkpoint. CI builds its matrix directly from this file; it does not maintain a second version list.
 
 The Helm `kubeVersion` range is a derived, packaged value because a chart cannot read a repository file after publication. Run this guard after changing support metadata:
 
