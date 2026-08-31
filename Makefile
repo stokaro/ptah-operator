@@ -5,7 +5,7 @@ CONTROLLER_GEN_VERSION ?= v0.21.0
 DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 
-.PHONY: all build test test-race vet fmt-check generate manifests verify docker-build
+.PHONY: all build test test-race vet fmt-check generate manifests verify verify-kubernetes-support verify-release docker-build e2e-static e2e
 
 all: verify build
 
@@ -32,9 +32,23 @@ generate:
 manifests:
 	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
 		crd:maxDescLen=0 paths=./api/... output:crd:artifacts:config=config/crd/bases
+	@mkdir -p charts/ptah-operator/crds
+	@cp config/crd/bases/*.yaml charts/ptah-operator/crds/
 
-verify: fmt-check generate manifests vet test
-	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases
+verify: fmt-check generate manifests verify-kubernetes-support verify-release e2e-static vet test
+	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds
+
+verify-kubernetes-support:
+	$(GO) run ./hack/verify-kubernetes-support.go
+
+verify-release:
+	$(GO) run ./hack/releaseverify
 
 docker-build:
 	docker --context $(DOCKER_CONTEXT) build --tag $(IMG) .
+
+e2e-static:
+	./hack/e2e-static.sh
+
+e2e:
+	DOCKER_CONTEXT="$(DOCKER_CONTEXT)" ./hack/e2e-kind.sh

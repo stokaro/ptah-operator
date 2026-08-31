@@ -13,9 +13,11 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/stokaro/ptah-operator/internal/plancontract"
 )
 
-const DefaultMaxPlanBytes int64 = 64 << 20
+const DefaultMaxPlanBytes int64 = plancontract.MaxExecutableBytes
 
 func reconstructPlan(planDir, expectedDigest string, maxBytes int64) ([]byte, string, error) {
 	if planDir == "" {

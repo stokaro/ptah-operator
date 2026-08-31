@@ -67,6 +67,17 @@ func secretRepresentations(value string) []string {
 }
 
 func databaseURLCredentials(rawDatabaseURL string) []string {
+	if looksLikeMySQLNetworkDSN(rawDatabaseURL) {
+		parsed, err := parseMySQLNetworkDSN(rawDatabaseURL)
+		if err != nil {
+			return nil
+		}
+		credentials := make([]string, 0, 4)
+		if parsed.password != "" {
+			credentials = append(credentials, conservativeCredentialForms(parsed.password)...)
+		}
+		return append(credentials, databaseQueryCredentials(parsed.queryText)...)
+	}
 	parsed, err := url.Parse(rawDatabaseURL)
 	if err != nil {
 		return nil
@@ -77,10 +88,26 @@ func databaseURLCredentials(rawDatabaseURL string) []string {
 			credentials = append(credentials, password)
 		}
 	}
-	query, err := url.ParseQuery(parsed.RawQuery)
-	if err != nil {
-		return credentials
+	return append(credentials, databaseQueryCredentials(parsed.RawQuery)...)
+}
+
+func conservativeCredentialForms(value string) []string {
+	forms := []string{value}
+	if decoded, err := url.PathUnescape(value); err == nil && decoded != value {
+		forms = append(forms, decoded)
 	}
+	if decoded, err := url.QueryUnescape(value); err == nil && decoded != value {
+		forms = append(forms, decoded)
+	}
+	return forms
+}
+
+func databaseQueryCredentials(rawQuery string) []string {
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return nil
+	}
+	credentials := make([]string, 0, 4)
 	for key, values := range query {
 		normalizedKey := normalizeIdentityKey(key)
 		if secretLikeKey(normalizedKey) {

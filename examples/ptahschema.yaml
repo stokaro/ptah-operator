@@ -6,6 +6,9 @@ metadata:
 spec:
   target:
     engine: PostgreSQL
+    # Every resource that can mutate this physical database, including through
+    # another DNS alias, proxy, or credential, must use this exact non-secret key.
+    coordinationKey: production/application-primary
     urlFrom:
       name: application-database
       key: url

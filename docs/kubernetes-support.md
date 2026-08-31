@@ -1,6 +1,6 @@
 # Kubernetes support
 
-Ptah Operator supports the three minor Kubernetes release branches that the Kubernetes project currently maintains. Every pull request and the weekly default-branch run execute the same API smoke suite against a real cluster for each supported minor; a version is not part of the supported window unless its matrix job is required and green.
+Ptah Operator supports the three minor Kubernetes release branches that the Kubernetes project currently maintains. Every pull request and the weekly default-branch run execute the same complete PostgreSQL and MySQL reconciliation lifecycle against a real cluster for each supported minor; a version is not part of the supported window unless its matrix job is required and green.
 
 The current window is:
 
@@ -42,4 +42,4 @@ If no reproducible cluster image exists yet, the window does not move on an unte
 
 Patch-level image refreshes are independent from minor-window changes. Automation should periodically inspect official kind releases, open a pull request that changes only `kindVersion`, `lastVerified`, and affected `nodeImage` values, and let the full matrix validate the update. A tag alone is not accepted: the manifest requires the registry digest so a later tag mutation cannot change CI silently.
 
-The smoke matrix establishes CRDs on each Kubernetes API server and verifies the served resources. Database and reconciliation end-to-end suites use the same generated matrix as they are added; they must not introduce a private list of Kubernetes versions.
+The matrix installs the chart, serves the CRDs, and exercises OCI resolution and verification, observation, planning, approval, application, failure recovery, and post-apply convergence. The suite must consume the generated matrix and must not introduce a private list of Kubernetes versions.

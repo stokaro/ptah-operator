@@ -39,8 +39,8 @@ Key safety properties:
 
 ## Install from this checkout
 
-The manager, runner, and Ptah executor images must be selected explicitly. The
-execution images are required to use immutable `@sha256:` references.
+The manager, runner, and Ptah executor images must be selected explicitly. All
+three are required to use immutable SHA-256 references.
 
 ```sh
 helm upgrade --install ptah-operator ./charts/ptah-operator \
@@ -66,13 +66,18 @@ kubectl -n application create secret generic application-database \
   --from-literal=url='<database-url>'
 kubectl -n application create configmap ptah-verification-policy \
   --from-file=policy.yaml=examples/verification-policy.yaml
+kubectl -n application patch configmap ptah-verification-policy \
+  --type=merge -p '{"immutable":true}'
 kubectl apply -f examples/ptahschema.yaml
 kubectl -n application get ptahschema application -w
 ```
 
 Replace every placeholder in the example first. For private registries, add a
 same-namespace `registryAuthFrom` reference; the API supports environment-key
-Secrets and standard Docker config JSON Secrets.
+Secrets and standard Docker config JSON Secrets. Verification-policy
+ConfigMaps must be immutable. To change a policy, create a new ConfigMap name
+and update the schema reference; delete-and-recreate is intentionally not
+treated as the same policy.
 
 ## Documentation
 
@@ -81,6 +86,8 @@ Secrets and standard Docker config JSON Secrets.
 - [Exact-plan approvals](docs/approvals.md)
 - [Operations and failure recovery](docs/operations.md)
 - [Kubernetes support policy](docs/kubernetes-support.md)
+- [Database support and privileges](docs/database-support.md)
+- [Releases and provenance](docs/releases.md)
 
 `PtahMigration` is deliberately not folded into `PtahSchema`. A future
 versioned-migration controller can reuse the OCI transport, credential

@@ -50,7 +50,7 @@ webhooks:
   - name: mapproval.operator.ptah.dev
     admissionReviewVersions: ["v1"]
     sideEffects: None
-    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    failurePolicy: Fail
     matchPolicy: Equivalent
     reinvocationPolicy: Never
     timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
@@ -78,7 +78,7 @@ webhooks:
   - name: vapproval.operator.ptah.dev
     admissionReviewVersions: ["v1"]
     sideEffects: None
-    failurePolicy: {{ .Values.webhook.failurePolicy }}
+    failurePolicy: Fail
     matchPolicy: Equivalent
     timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
     clientConfig:

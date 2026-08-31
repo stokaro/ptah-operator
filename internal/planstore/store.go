@@ -19,14 +19,15 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/plancontract"
 )
 
 const (
 	// ChunkBytes leaves headroom below the Kubernetes object-size limit.
-	ChunkBytes = 512 * 1024
+	ChunkBytes = plancontract.ChunkBytes
 	// MaxChunks bounds projected-volume fan-out and API-server load.
-	MaxChunks    = 64
-	MaxPlanBytes = ChunkBytes * MaxChunks
+	MaxChunks    = plancontract.MaxChunks
+	MaxPlanBytes = int(plancontract.MaxExecutableBytes)
 
 	ChunkDataKey = "chunk"
 	LabelPlan    = "operator.ptah.dev/plan"

@@ -24,6 +24,21 @@ const (
 	EnvPlanDir = "PTAH_PLAN_DIR"
 	// EnvExpectedPlanContentDigest binds apply to exact reconstructed bytes.
 	EnvExpectedPlanContentDigest = "PTAH_EXPECTED_PLAN_CONTENT_DIGEST"
+	// EnvExpectedTargetIdentityDigest binds apply to the credential-free target
+	// route identity observed before the plan was created and approved.
+	EnvExpectedTargetIdentityDigest = "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST"
+	// EnvCoordinationDigest binds every database operation to a user-declared
+	// physical database realm without exposing its plaintext coordination key.
+	EnvCoordinationDigest = "PTAH_COORDINATION_DIGEST"
+	// EnvExpectedCoordinationDigest binds Apply to the realm approved in its
+	// immutable plan independently from the operation claim.
+	EnvExpectedCoordinationDigest = "PTAH_EXPECTED_COORDINATION_DIGEST"
+	// EnvDispatchNotAfter is the absolute last instant at which an Apply Pod may
+	// dispatch its mutating child, even if an orphaned Pod was scheduled late.
+	EnvDispatchNotAfter = "PTAH_DISPATCH_NOT_AFTER"
+	// EnvExecutionNotAfter is the absolute deadline enforced on the mutating
+	// child process after dispatch.
+	EnvExecutionNotAfter = "PTAH_EXECUTION_NOT_AFTER"
 	// EnvDatabaseURL carries the target database credential to the child only.
 	EnvDatabaseURL = "PTAH_DB_URL"
 	// EnvDevelopmentDatabaseURL carries an optional development database credential.
@@ -34,41 +49,62 @@ const (
 	EnvOCIToken = "PTAH_OCI_TOKEN"
 	// EnvSchemaFile supplies the desired schema to drift and plan operations.
 	EnvSchemaFile = "PTAH_SCHEMA_FILE"
+	// EnvExpectedDatabaseEngine selects the supported fingerprint-probe dialect
+	// without deriving it from a credential-bearing database URL.
+	EnvExpectedDatabaseEngine = "PTAH_EXPECTED_DATABASE_ENGINE"
 
-	envOperationID          = EnvOperationID
-	envRequestedReference   = EnvRequestedReference
-	envResolvedReference    = EnvResolvedReference
-	envVerificationPolicy   = EnvVerificationPolicy
-	envExpectedArtifactType = EnvExpectedArtifactType
-	envPlanDir              = EnvPlanDir
-	envExpectedPlanDigest   = EnvExpectedPlanContentDigest
-	envDatabaseURL          = EnvDatabaseURL
-	envSchemaFile           = EnvSchemaFile
+	envOperationID            = EnvOperationID
+	envRequestedReference     = EnvRequestedReference
+	envResolvedReference      = EnvResolvedReference
+	envVerificationPolicy     = EnvVerificationPolicy
+	envExpectedArtifactType   = EnvExpectedArtifactType
+	envPlanDir                = EnvPlanDir
+	envExpectedPlanDigest     = EnvExpectedPlanContentDigest
+	envExpectedTargetDigest   = EnvExpectedTargetIdentityDigest
+	envCoordinationDigest     = EnvCoordinationDigest
+	envExpectedCoordination   = EnvExpectedCoordinationDigest
+	envDispatchNotAfter       = EnvDispatchNotAfter
+	envExecutionNotAfter      = EnvExecutionNotAfter
+	envDatabaseURL            = EnvDatabaseURL
+	envSchemaFile             = EnvSchemaFile
+	envExpectedDatabaseEngine = EnvExpectedDatabaseEngine
 )
 
 // Inputs are the runner-specific environment values used to construct one of
 // the fixed Ptah commands. Normal Ptah environment variables remain in Env.
 type Inputs struct {
-	OperationID               string
-	RequestedReference        string
-	ResolvedReference         string
-	VerificationPolicyPath    string
-	ExpectedArtifactType      string
-	PlanDir                   string
-	ExpectedPlanContentDigest string
-	PlanPath                  string
+	OperationID                string
+	RequestedReference         string
+	ResolvedReference          string
+	VerificationPolicyPath     string
+	ExpectedArtifactType       string
+	PlanDir                    string
+	ExpectedPlanContentDigest  string
+	ExpectedTargetDigest       string
+	CoordinationDigest         string
+	ExpectedCoordinationDigest string
+	DispatchNotAfter           string
+	ExecutionNotAfter          string
+	ExpectedDatabaseEngine     string
+	PlanPath                   string
 }
 
 func InputsFromEnvironment(environment []string) Inputs {
 	values := environmentMap(environment)
 	return Inputs{
-		OperationID:               values[envOperationID],
-		RequestedReference:        values[envRequestedReference],
-		ResolvedReference:         values[envResolvedReference],
-		VerificationPolicyPath:    values[envVerificationPolicy],
-		ExpectedArtifactType:      values[envExpectedArtifactType],
-		PlanDir:                   values[envPlanDir],
-		ExpectedPlanContentDigest: values[envExpectedPlanDigest],
+		OperationID:                values[envOperationID],
+		RequestedReference:         values[envRequestedReference],
+		ResolvedReference:          values[envResolvedReference],
+		VerificationPolicyPath:     values[envVerificationPolicy],
+		ExpectedArtifactType:       values[envExpectedArtifactType],
+		PlanDir:                    values[envPlanDir],
+		ExpectedPlanContentDigest:  values[envExpectedPlanDigest],
+		ExpectedTargetDigest:       values[envExpectedTargetDigest],
+		CoordinationDigest:         values[envCoordinationDigest],
+		ExpectedCoordinationDigest: values[envExpectedCoordination],
+		DispatchNotAfter:           values[envDispatchNotAfter],
+		ExecutionNotAfter:          values[envExecutionNotAfter],
+		ExpectedDatabaseEngine:     values[envExpectedDatabaseEngine],
 	}
 }
 
@@ -110,6 +146,12 @@ func childEnvironment(environment []string) []string {
 		EnvExpectedArtifactType,
 		EnvPlanDir,
 		EnvExpectedPlanContentDigest,
+		EnvExpectedTargetIdentityDigest,
+		EnvCoordinationDigest,
+		EnvExpectedCoordinationDigest,
+		EnvDispatchNotAfter,
+		EnvExecutionNotAfter,
+		EnvExpectedDatabaseEngine,
 	)
 }
 
@@ -132,13 +174,13 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 		}
 		spec.Args = []string{"oci", "resolve", inputs.RequestedReference, "--format", "json"}
 	case OperationVerify:
-		if err := validateReference(inputs.RequestedReference, "requested reference"); err != nil {
+		if err := validateReference(inputs.ResolvedReference, "resolved reference"); err != nil {
 			return CommandSpec{}, err
 		}
 		if inputs.VerificationPolicyPath == "" {
 			return CommandSpec{}, errors.New("verification policy path is empty")
 		}
-		spec.Args = []string{"oci", "verify", inputs.RequestedReference, "--policy", inputs.VerificationPolicyPath, "--format", "json"}
+		spec.Args = []string{"oci", "verify", inputs.ResolvedReference, "--policy", inputs.VerificationPolicyPath, "--format", "json"}
 	case OperationObserve:
 		spec.Args = []string{"schema", "drift", "--format", "json"}
 	case OperationPlan:
@@ -152,10 +194,6 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 		return CommandSpec{}, fmt.Errorf("unsupported operation %q", operation)
 	}
 	return spec, nil
-}
-
-func buildInspectSchemaCommand(ptahBinary string) CommandSpec {
-	return CommandSpec{Path: ptahBinary, Args: []string{"schema", "inspect", "--format", "json"}}
 }
 
 func buildInspectArtifactCommand(ptahBinary, resolvedReference string) (CommandSpec, error) {

@@ -58,11 +58,11 @@ jobs:
       - name: Run project verification
         run: make verify
 
-  kubernetes-smoke:
-    name: Kubernetes ${{ matrix.minor }} smoke
+  kubernetes-e2e:
+    name: Kubernetes ${{ matrix.minor }} full lifecycle
     needs: [support-matrix, verify]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -74,7 +74,18 @@ jobs:
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
-          cache: false
+          cache-dependency-path: go.sum
+      - name: Check out pinned Ptah executor source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: stokaro/ptah
+          ref: 044287f93d7f606a33541ca32affdaa0d20b9cb1
+          path: .e2e/ptah
+          fetch-depth: 1
+      - name: Stage pinned Ptah source outside the operator build context
+        run: |
+          mv "$GITHUB_WORKSPACE/.e2e/ptah" "$RUNNER_TEMP/ptah"
+          rmdir "$GITHUB_WORKSPACE/.e2e"
       - name: Install kind
         shell: bash
         run: |
@@ -93,36 +104,46 @@ jobs:
           echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
           chmod 0755 "$install_dir/kubectl"
           echo "$install_dir" >> "$GITHUB_PATH"
-      - name: Exercise registered APIs
+      - name: Configure explicit Docker context
+        id: docker-context
         shell: bash
         run: |
           set -euo pipefail
-          cluster_name="ptah-${{ matrix.minor_slug }}"
-          cleanup() {
-            kind delete cluster --name "$cluster_name"
-          }
-          trap cleanup EXIT
+          sudo apt-get update
+          sudo apt-get install --yes apache2-utils openssh-server
 
-          kind create cluster --name "$cluster_name" --image "${{ matrix.node_image }}" --wait 120s
+          ssh_key="$RUNNER_TEMP/ptah-e2e-ssh"
+          known_hosts="$RUNNER_TEMP/ptah-e2e-known-hosts"
+          install -d -m 0700 "$HOME/.ssh"
+          ssh-keygen -q -t ed25519 -N '' -f "$ssh_key"
+          install -m 0600 "$ssh_key.pub" "$HOME/.ssh/authorized_keys"
+          sudo systemctl restart ssh
+          ssh-keyscan -H 127.0.0.1 > "$known_hosts"
+          {
+            printf '%s\n' 'Host ptah-ci-docker'
+            printf '%s\n' '  HostName 127.0.0.1'
+            printf '  User %s\n' "$USER"
+            printf '  IdentityFile %s\n' "$ssh_key"
+            printf '%s\n' '  IdentitiesOnly yes'
+            printf '%s\n' '  StrictHostKeyChecking yes'
+            printf '  UserKnownHostsFile %s\n' "$known_hosts"
+          } > "$HOME/.ssh/config"
+          chmod 0600 "$HOME/.ssh/config"
 
-          server_version="$(kubectl version -o json | jq -r '.serverVersion.gitVersion')"
-          case "$server_version" in
-            "v${{ matrix.minor }}."*) ;;
-            *)
-              echo "expected Kubernetes ${{ matrix.minor }}.x, got $server_version" >&2
-              exit 1
-              ;;
-          esac
-
-          kubectl apply --server-side --force-conflicts -f config/crd/bases/
-          kubectl wait --for=condition=Established --timeout=60s \
-            crd/ptahschemas.operator.ptah.dev \
-            crd/ptahschemaplans.operator.ptah.dev \
-            crd/ptahschemaapprovals.operator.ptah.dev
-
-          actual_resources="$(kubectl api-resources --api-group=operator.ptah.dev -o name | sort)"
-          expected_resources="$(printf '%s\n' \
-            ptahschemaapprovals.operator.ptah.dev \
-            ptahschemaplans.operator.ptah.dev \
-            ptahschemas.operator.ptah.dev)"
-          test "$actual_resources" = "$expected_resources"
+          context_name="ptah-ci-${{ matrix.minor_slug }}"
+          docker context create "$context_name" --docker host=ssh://ptah-ci-docker
+          docker --context "$context_name" info >/dev/null
+          printf 'name=%s\n' "$context_name" >> "$GITHUB_OUTPUT"
+      - name: Run complete operator lifecycle
+        env:
+          DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
+          E2E_DIRECT_HOST_ACCESS: "1"
+          E2E_PTAH_REVISION: 044287f93d7f606a33541ca32affdaa0d20b9cb1
+          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
+          E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}
+          KIND_NODE_IMAGE: ${{ matrix.node_image }}
+          K8S_VERSION: ${{ matrix.kubernetes_version }}
+        run: make e2e
+      - name: Remove explicit Docker context
+        if: always() && steps.docker-context.outputs.name != ''
+        run: docker context rm --force "${{ steps.docker-context.outputs.name }}"

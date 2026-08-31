@@ -2,8 +2,11 @@ replicaCount: 2
 
 image:
   repository: ghcr.io/stokaro/ptah-operator
-  tag: latest
+  tag: "0.1.0"
+  # Mutable tags are available only through the explicit test-only escape
+  # below. Production and ordinary installs must supply digest.
   digest: ""
+  allowMutableTag: false
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -52,7 +55,6 @@ metrics:
 webhook:
   port: 9443
   timeoutSeconds: 5
-  failurePolicy: Fail
   # Name of a pre-provisioned kubernetes.io/tls Secret. The Secret must also
   # contain ca.crt. Set caBundle to render the chart without cluster lookup.
   existingSecret: ""

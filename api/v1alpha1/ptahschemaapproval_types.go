@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // ApprovalIdentity is stamped from the authenticated admission request. The
@@ -19,21 +20,27 @@ type PtahSchemaApprovalSpec struct {
 	SchemaRef ImmutableObjectReference `json:"schemaRef"`
 	PlanRef   ImmutableObjectReference `json:"planRef"`
 
-	PlanFingerprint          string `json:"planFingerprint"`
-	ArtifactDigest           string `json:"artifactDigest"`
-	TargetIdentityDigest     string `json:"targetIdentityDigest"`
-	ActualStateFingerprint   string `json:"actualStateFingerprint"`
-	DesiredStateFingerprint  string `json:"desiredStateFingerprint"`
-	PolicyFingerprint        string `json:"policyFingerprint"`
-	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
-	PtahVersion              string `json:"ptahVersion"`
-	ExecutorImage            string `json:"executorImage"`
-	RunnerImage              string `json:"runnerImage"`
-	RunnerProtocolVersion    int32  `json:"runnerProtocolVersion"`
+	PlanFingerprint          string    `json:"planFingerprint"`
+	ArtifactDigest           string    `json:"artifactDigest"`
+	CoordinationDigest       string    `json:"coordinationDigest"`
+	TargetIdentityDigest     string    `json:"targetIdentityDigest"`
+	ActualStateFingerprint   string    `json:"actualStateFingerprint"`
+	DesiredStateFingerprint  string    `json:"desiredStateFingerprint"`
+	PolicyFingerprint        string    `json:"policyFingerprint"`
+	VerificationPolicyUID    types.UID `json:"verificationPolicyUID"`
+	VerificationPolicyDigest string    `json:"verificationPolicyDigest"`
+	PtahVersion              string    `json:"ptahVersion"`
+	ExecutorImage            string    `json:"executorImage"`
+	RunnerImage              string    `json:"runnerImage"`
+	RunnerProtocolVersion    int32     `json:"runnerProtocolVersion"`
 
-	Approver            ApprovalIdentity `json:"approver"`
-	ApprovedAt          metav1.Time      `json:"approvedAt"`
-	AdmissionRequestUID string           `json:"admissionRequestUID"`
+	Approver   ApprovalIdentity `json:"approver"`
+	ApprovedAt metav1.Time      `json:"approvedAt"`
+	// MutationRequestUID records the mutating AdmissionReview that stamped the
+	// authenticated identity. Kubernetes creates a distinct AdmissionReview UID
+	// for the later validating webhook, so the validator checks this field is
+	// present while matching identity against its own authenticated UserInfo.
+	MutationRequestUID string `json:"mutationRequestUID"`
 }
 
 // PtahSchemaApprovalStatus tells an approver whether the exact binding was
@@ -62,7 +69,7 @@ type PtahSchemaApproval struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   PtahSchemaApprovalSpec   `json:"spec,omitempty"`
+	Spec   PtahSchemaApprovalSpec   `json:"spec"`
 	Status PtahSchemaApprovalStatus `json:"status,omitempty"`
 }
 

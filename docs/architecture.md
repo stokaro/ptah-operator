@@ -16,25 +16,42 @@ the controller.
 
 ## State machine
 
-One persisted `status.activeOperation` is the serialization point:
+One persisted `status.activeOperation` is the ordinary serialization point:
 
 1. **Resolve** records the immutable digest behind the requested OCI reference.
 2. **Verify** evaluates the selected policy and independently inspects the
    digest-pinned artifact type.
-3. **Observe** fetches the verified schema by digest and compares it with the
-   live database.
-4. **Plan** publishes exact plan bytes when drift exists.
+3. **Observe** fetches the verified schema by digest and validates a raw,
+   read-only drift report. The report's schema details stay inside the runner;
+   status receives only a digest, dialect, counts, and severity summary.
+4. **Plan** performs two independent native scoped plans while holding the
+   database-realm Lease. It accepts only byte-identical results, then makes the
+   native Apply path parse and dry-run those exact bytes. A no-change result is
+   the authoritative convergence proof; changed bytes are published.
 5. **Approval** waits for an immutable resource when policy requires one;
    safe `Always` plans instead become `ReadyToApply` without an approval event.
 6. **Apply** reconstructs and hashes the published bytes immediately before
    executing the exact plan.
-7. **Observe** runs again and is the only transition that can establish
-   convergence.
+7. **Observe and Plan** run again under the original Apply Lease. Only a new,
+   coherent no-change plan can establish convergence.
 
 The controller writes the operation claim before it creates a deterministic
-Job. After a restart it reads the claim and Job rather than planning a second
-operation. A terminal Job is retained until its result is harvested; only then
-does the controller add a bounded cleanup TTL.
+Job. Apply has a second persisted dispatch boundary immediately before its only
+permitted Job create attempt. After a restart, a dispatched Apply with a
+missing or replaced Job is outcome-unknown and is never recreated.
+
+`status.pendingObservation` is a separate durable safety claim. It snapshots
+the applied plan, key-free target Secret selector, coordination digest,
+observation policy, Apply holder, and Lease duration until a same-target
+read-only observation completes. It takes
+priority over phase changes, ordinary retries, and newer desired generations.
+A namespace-wide exact-owner Pod scan binds Apply attempts by Job name and UID,
+not mutable labels. A late or duplicate Apply Pod blocks proof while active and
+invalidates any proof already in flight. At most eight Pod UIDs plus the total
+attempt count are retained as bounded evidence.
+A terminal Job remains the active operation until the controller has both read
+its result and successfully scheduled its bounded cleanup TTL. A transient API
+or RBAC failure therefore retries the transition instead of orphaning the Job.
 
 ## Immutable bindings
 
@@ -42,7 +59,8 @@ does the controller add a bounded cleanup TTL.
 
 - schema name and UID;
 - desired artifact digest;
-- credential-free database target identity;
+- stable database coordination-realm digest;
+- credential-free database route identity;
 - observed and desired state fingerprints;
 - reconciliation policy and verification-policy bytes;
 - Ptah version and digest-pinned executor image;
@@ -78,15 +96,51 @@ selectors in the Job Pod.
 ## Concurrency
 
 The per-resource operation claim prevents two Jobs for one `PtahSchema`.
-Database-level apply coordination uses an owner-neutral Lease keyed by the full
-SHA-256 target identity. All schemas use one configurable coordination
-namespace, so resources in different namespaces still contend for the same
-database target. Different future Ptah resource kinds can use the same Lease
-contract.
+Database-level apply coordination uses an owner-neutral Lease keyed by a
+SHA-256 digest of a versioned tuple containing the normalized engine and exact
+`spec.target.coordinationKey`. The required key is a non-secret, stable name
+for one physical database realm. Every resource that can mutate that database
+must use the same key, including resources that connect through different DNS
+aliases, proxies, or credentials. The plaintext key remains in spec; status,
+plans, approvals, Jobs, and Leases carry only its digest.
 
-The Lease complements the database advisory lock used by Ptah. Its lifetime is
-long enough to cover the maximum Job deadline and a manager outage. Apply
-revalidates the plan after acquiring the Lease.
+The URL-derived `targetIdentityDigest` is a separate redirect guard within one
+plan lifecycle. It binds the effective route, database name, username, role,
+SQL namespace/search path, semantic session options, and non-secret transport
+and authentication policy immediately before Apply. PostgreSQL TLS mode,
+channel binding, required authentication, protocol policy, and certificate
+paths are bound; MySQL TLS mode, plaintext fallback switches, authentication
+mechanisms, and server public-key selection are bound. Password bytes and
+connection timing controls do not enter this digest, so credential rotation
+and liveness tuning remain possible. Certificate or CA bytes can rotate behind
+an unchanged bound path without authorizing a transport downgrade. Default
+ports, PostgreSQL route overrides, and equivalent spellings of the same IP
+address are normalized. DNS absolute-name markers, address families, and MySQL
+database-name casing are preserved;
+ambiguous repeated scope parameters and multi-endpoint targets are rejected. A
+route alias need not produce the same identity because cross-resource
+serialization comes from the explicit coordination realm rather than an
+unverifiable DNS inference.
+
+All schemas use one configurable coordination namespace, so resources in
+different namespaces still contend for the same database target. Different
+future Ptah resource kinds can use the same Lease contract.
+
+The Lease complements the database advisory lock used by Ptah. Its immutable
+duration covers the maximum Job deadline plus grace. The same holder is
+renewed through post-Apply proof, including retry delays. If Job creation or
+identity is uncertain, read-only proof waits for a complete Lease duration so
+a possibly unobserved mutating Pod cannot overlap it. Apply reconstructs the
+exact plan and revalidates the target after acquiring the Lease.
+
+Raw drift is intentionally advisory: its selector language is not reused as a
+planning scope, and its details never authorize Apply. The authoritative Plan
+uses the exact `spec.policy.exclude` scope twice, requires byte identity, and
+then passes those bytes through the native Apply parser in dry-run mode. Apply
+recognizes a stale-plan refusal only when the strict native diagnostic names
+the reconstructed plan's source fingerprint; that typed refusal is
+pre-mutation, while every other Apply failure after dispatch remains
+outcome-unknown.
 
 ## OCI schemas and future migrations
 
@@ -97,7 +151,7 @@ types with different lifecycle semantics. They should share only mechanisms:
 - registry authentication and custom transport trust;
 - artifact verification and type enforcement;
 - fixed Job construction and result framing;
-- database target identity and cross-kind Lease coordination.
+- database coordination realms, route identity guards, and cross-kind Leases.
 
 A schema answers “what should the database look like?” and is reconciled by
 observation and direct exact plans. A migration stream answers “which ordered

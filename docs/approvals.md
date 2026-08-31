@@ -22,6 +22,20 @@ kubectl -n application get ptahschema application \
 kubectl -n application get ptahschemaplan <plan-name> -o yaml
 ```
 
+The plan resource contains immutable chunk names and digests; exact SQL is in
+those controller-owned ConfigMaps. The built-in approver ClusterRole does not
+grant cluster-wide ConfigMap access. Before review, a namespace administrator
+must grant `get` on every current chunk name to the approver. Start from the
+[least-privilege Role template](../examples/approver-plan-reader-role.yaml),
+copy all `.spec.chunks[*].name` values into `resourceNames`, and bind that Role
+only to the reviewer. Replace the Role for the next plan. A broader Role that
+can read every ConfigMap in an application namespace is easier to operate but
+also exposes unrelated configuration.
+
+After access is granted, verify every chunk against its recorded digest and
+review the chunks in ascending `.spec.chunks[*].index` order. An approval of
+hashes without inspecting the referenced SQL is not an independent review.
+
 Fill those values in the approval and use server-side dry run to inspect the
 object after authenticated identity and derived bindings are stamped:
 
@@ -32,11 +46,14 @@ kubectl apply -f examples/approval.yaml
 
 Creation is rejected if the plan is already stale, its immutable storage is
 not committed, the verification-policy ConfigMap changed, or a supplied
-derived field conflicts. Updates cannot change `spec`; create a new approval
-for a new plan.
+derived field conflicts. Creation is also rejected unless the schema is
+currently waiting for exactly one approval and no operation or recorded
+approval already owns that decision. Concurrent duplicates are retired, and
+the accepted approval is consumed only at the persisted Apply dispatch
+boundary. Updates cannot change `spec`; create a new approval for a new plan.
 
 The chart's optional approver ClusterRole grants read access to schemas and
-plans plus create access to approvals, but it has no binding. Bind approval
-permission only to authenticated identities that are independent from routine
-desired-state writers. Namespace-scoped Roles are preferable in multi-tenant
-clusters.
+plan metadata plus create access to approvals, but it has no binding and no
+ConfigMap permission. Bind approval permission only to authenticated identities
+that are independent from routine desired-state writers, and grant plan-chunk
+access separately in each application namespace.

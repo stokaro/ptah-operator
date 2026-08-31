@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -25,6 +24,8 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
@@ -88,7 +89,6 @@ const (
 var (
 	imageDigestPattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 	sha256Pattern      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-	pinnedOCIPattern   = regexp.MustCompile(`^oci://[^[:space:]@]+@sha256:([0-9a-f]{64})$`)
 )
 
 // Builder contains immutable execution-component bindings. Both images must
@@ -205,15 +205,18 @@ func (b Builder) Build(
 	annotations[AnnotationInputFingerprint] = operation.InputFingerprint
 	annotations[AnnotationPtahVersion] = b.PtahVersion
 
-	deadline := schema.Spec.Execution.ActiveDeadlineSeconds
-	if deadline == 0 {
-		deadline = defaultActiveDeadlineSeconds
+	deadline := activeDeadlineSeconds(schema)
+	if operation.Type == operatorv1alpha1.OperationApply && operation.ExecutionNotAfter != nil {
+		deadline = int64(operation.ExecutionNotAfter.Sub(operation.StartedAt.Time) / time.Second)
 	}
 	backoffLimit := int32(0)
 	falseValue := false
 	trueValue := true
 	nonRootID := int64(65532)
 	terminationGrace := int64(30)
+	if operation.Type == operatorv1alpha1.OperationApply && operation.TerminationGracePeriodSeconds > 0 {
+		terminationGrace = operation.TerminationGracePeriodSeconds
+	}
 	fsGroupPolicy := corev1.FSGroupChangeOnRootMismatch
 	resources := *schema.Spec.Execution.Resources.DeepCopy()
 	initContainers := []corev1.Container{{
@@ -227,7 +230,7 @@ func (b Builder) Build(
 		VolumeMounts:    []corev1.VolumeMount{{Name: runnerVolumeName, MountPath: "/runner"}},
 	}}
 	if operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan {
-		fetch, fetchVolumes, err := b.schemaFetch(schema, resources, &falseValue, &trueValue, &nonRootID)
+		fetch, fetchVolumes, err := b.schemaFetch(schema, operation, resources, &falseValue, &trueValue, &nonRootID)
 		if err != nil {
 			return nil, err
 		}
@@ -238,6 +241,7 @@ func (b Builder) Build(
 
 	controller := true
 	blockDeletion := true
+	podReplacementPolicy := batchv1.Failed
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:   schema.Namespace,
@@ -256,9 +260,11 @@ func (b Builder) Build(
 		Spec: batchv1.JobSpec{
 			BackoffLimit:          &backoffLimit,
 			ActiveDeadlineSeconds: &deadline,
+			PodReplacementPolicy:  &podReplacementPolicy,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: copyMap(labels), Annotations: copyMap(annotations)},
 				Spec: corev1.PodSpec{
+					ActiveDeadlineSeconds:         &deadline,
 					AutomountServiceAccountToken:  &falseValue,
 					EnableServiceLinks:            &falseValue,
 					ServiceAccountName:            schema.Spec.Execution.ServiceAccountName,
@@ -281,6 +287,8 @@ func (b Builder) Build(
 						Command:         []string{runnerPath},
 						Args: []string{
 							"--ptah-binary", ptahBinaryPath,
+							"--max-result-bytes", strconv.FormatInt(runner.DefaultMaxResultBytes, 10),
+							"--max-plan-bytes", strconv.FormatInt(runner.DefaultMaxPlanBytes, 10),
 							"--operation", strings.ToLower(string(operation.Type)),
 						},
 						WorkingDir:      workPath,
@@ -328,15 +336,60 @@ func (i buildInput) validate() error {
 		if _, err := validatedResolvedReference(i.schema); err != nil {
 			return err
 		}
+		if i.operation.VerificationPolicyUID == "" || !sha256Pattern.MatchString(i.operation.VerificationPolicyDigest) {
+			return errors.New("verify operation requires an immutable verification policy binding")
+		}
 		return validatePolicyReference(i.schema.Spec.Desired.VerificationPolicyFrom)
 	case operatorv1alpha1.OperationObserve, operatorv1alpha1.OperationPlan:
 		if i.plan != nil {
 			return fmt.Errorf("%s operation cannot carry a plan", i.operation.Type)
 		}
-		_, err := validatedVerifiedSource(i.schema)
-		return err
+		if i.operation.Target == nil || i.operation.Target.URLFrom.Name == "" || i.operation.Target.URLFrom.Key == "" {
+			return fmt.Errorf("%s operation requires an immutable target Secret binding", i.operation.Type)
+		}
+		if i.operation.Source == nil {
+			return fmt.Errorf("%s operation requires immutable artifact access", i.operation.Type)
+		}
+		if err := validateArtifactAccessBinding(*i.operation.Source); err != nil {
+			return err
+		}
+		if !sha256Pattern.MatchString(i.operation.CoordinationDigest) {
+			return fmt.Errorf("%s operation requires a valid coordination binding", i.operation.Type)
+		}
+		if i.operation.Type == operatorv1alpha1.OperationPlan &&
+			(i.operation.LeaseDurationSeconds < 5 || i.operation.LeaseDurationSeconds > 86460) {
+			return errors.New("plan operation lease duration is outside the supported range")
+		}
+		return nil
 	case operatorv1alpha1.OperationApply:
-		return validateApplyPlan(i.schema, i.plan)
+		if err := validateApplyPlan(i.schema, i.plan); err != nil {
+			return err
+		}
+		if i.operation.Target == nil || i.operation.Target.URLFrom.Name == "" || i.operation.Target.URLFrom.Key == "" {
+			return errors.New("apply operation requires an immutable target Secret binding")
+		}
+		if !sha256Pattern.MatchString(i.operation.CoordinationDigest) ||
+			i.operation.CoordinationDigest != i.plan.Spec.CoordinationDigest {
+			return errors.New("apply operation coordination digest does not match the immutable plan")
+		}
+		if i.operation.TargetIdentityDigest != i.plan.Spec.TargetIdentityDigest {
+			return errors.New("apply operation target identity does not match the immutable plan")
+		}
+		if i.operation.LeaseDurationSeconds < 5 || i.operation.LeaseDurationSeconds > 86460 {
+			return errors.New("apply operation lease duration is outside the supported range")
+		}
+		if i.operation.StartedAt.IsZero() {
+			return errors.New("apply operation requires an immutable start time")
+		}
+		if i.operation.DispatchNotAfter == nil || i.operation.ExecutionNotAfter == nil ||
+			!i.operation.DispatchNotAfter.After(i.operation.StartedAt.Time) ||
+			i.operation.ExecutionNotAfter.Before(i.operation.DispatchNotAfter) ||
+			i.operation.TerminationGracePeriodSeconds < 1 || i.operation.TerminationGracePeriodSeconds > 300 ||
+			i.operation.ExecutionNotAfter.Add(time.Duration(i.operation.TerminationGracePeriodSeconds)*time.Second).
+				After(i.operation.StartedAt.Add(time.Duration(i.operation.LeaseDurationSeconds)*time.Second)) {
+			return errors.New("apply operation requires a valid immutable execution horizon")
+		}
+		return nil
 	default:
 		return fmt.Errorf("unsupported operation %q", i.operation.Type)
 	}
@@ -363,7 +416,13 @@ func (i buildInput) dataPlane() (
 	if mainUsesRegistry {
 		environment = append(environment, literalEnv("PTAH_PLAIN_HTTP", strconv.FormatBool(i.schema.Spec.Desired.Transport.PlainHTTP)))
 		var err error
-		environment, volumes, mounts, err = addRegistryAccess(i.schema, environment, volumes, mounts)
+		environment, volumes, mounts, err = addRegistryAccess(
+			i.schema.Spec.Desired.RegistryAuthFrom,
+			i.schema.Spec.Desired.Transport,
+			environment,
+			volumes,
+			mounts,
+		)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -383,28 +442,40 @@ func (i buildInput) dataPlane() (
 		volumes = append(volumes, policyVolume(i.schema.Spec.Desired.VerificationPolicyFrom))
 		mounts = append(mounts, corev1.VolumeMount{Name: policyVolumeName, MountPath: "/verification", ReadOnly: true})
 	case operatorv1alpha1.OperationObserve:
+		target := *i.operation.Target
 		environment = append(environment,
-			databaseEnv(runner.EnvDatabaseURL, i.schema.Spec.Target.URLFrom),
+			databaseEnv(runner.EnvDatabaseURL, target.URLFrom),
+			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
+			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
 			literalEnv(runner.EnvSchemaFile, sourceFilePath),
-			literalEnv("PTAH_CONNECT_TIMEOUT", durationOrDefault(i.schema.Spec.Execution.ConnectTimeout.Duration, 10*time.Second)),
-			literalEnv("PTAH_SEVERITY", stringOrDefault(i.schema.Spec.Policy.DriftSeverity, "all")),
+			literalEnv("PTAH_CONNECT_TIMEOUT", durationOrDefault(i.operation.ObservationConnectTimeout.Duration, 10*time.Second)),
+			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(i.operation.ObservationLockTimeout.Duration, 30*time.Second)),
+			literalEnv("PTAH_SEVERITY", stringOrDefault(i.operation.ObservationSeverity, "all")),
 		)
-		if len(i.schema.Spec.Policy.Ignore) > 0 {
-			environment = append(environment, literalEnv("PTAH_IGNORE", encodeStringArray(i.schema.Spec.Policy.Ignore)))
-		}
 	case operatorv1alpha1.OperationPlan:
+		target := *i.operation.Target
 		environment = append(environment,
-			databaseEnv(runner.EnvDatabaseURL, i.schema.Spec.Target.URLFrom),
+			databaseEnv(runner.EnvDatabaseURL, target.URLFrom),
+			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
+			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
 			literalEnv(runner.EnvSchemaFile, sourceFilePath),
-			literalEnv("PTAH_CONNECT_TIMEOUT", durationOrDefault(i.schema.Spec.Execution.ConnectTimeout.Duration, 10*time.Second)),
+			literalEnv("PTAH_CONNECT_TIMEOUT", durationOrDefault(i.operation.ObservationConnectTimeout.Duration, 10*time.Second)),
+			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(i.operation.ObservationLockTimeout.Duration, 30*time.Second)),
 		)
-		if i.schema.Spec.Dev != nil {
-			environment = append(environment, databaseEnv(runner.EnvDevelopmentDatabaseURL, i.schema.Spec.Dev.URLFrom))
+		if i.operation.ObservationDev != nil {
+			environment = append(environment, databaseEnv(runner.EnvDevelopmentDatabaseURL, i.operation.ObservationDev.URLFrom))
 		}
-		if len(i.schema.Spec.Policy.Exclude) > 0 {
-			environment = append(environment, literalEnv("PTAH_EXCLUDE", encodeStringArray(i.schema.Spec.Policy.Exclude)))
+		if len(i.operation.ObservationExclude) > 0 {
+			environment = append(environment, literalEnv("PTAH_EXCLUDE", encodeStringArray(i.operation.ObservationExclude)))
 		}
 	case operatorv1alpha1.OperationApply:
+		target := operatorv1alpha1.DatabaseTargetBinding{
+			Engine:  i.schema.Spec.Target.Engine,
+			URLFrom: i.schema.Spec.Target.URLFrom,
+		}
+		if i.operation.Target != nil {
+			target = *i.operation.Target
+		}
 		projections, err := planstore.VolumeSources(i.plan)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("build plan projection: %w", err)
@@ -419,9 +490,15 @@ func (i buildInput) dataPlane() (
 		})
 		mounts = append(mounts, corev1.VolumeMount{Name: planVolumeName, MountPath: planPath, ReadOnly: true})
 		environment = append(environment,
-			databaseEnv(runner.EnvDatabaseURL, i.schema.Spec.Target.URLFrom),
+			databaseEnv(runner.EnvDatabaseURL, target.URLFrom),
+			literalEnv(runner.EnvExpectedDatabaseEngine, string(target.Engine)),
+			literalEnv(runner.EnvCoordinationDigest, i.operation.CoordinationDigest),
 			literalEnv(runner.EnvPlanDir, planPath),
 			literalEnv(runner.EnvExpectedPlanContentDigest, i.plan.Spec.ContentDigest),
+			literalEnv(runner.EnvExpectedCoordinationDigest, i.plan.Spec.CoordinationDigest),
+			literalEnv(runner.EnvExpectedTargetIdentityDigest, i.plan.Spec.TargetIdentityDigest),
+			literalEnv(runner.EnvDispatchNotAfter, i.operation.DispatchNotAfter.UTC().Format(time.RFC3339Nano)),
+			literalEnv(runner.EnvExecutionNotAfter, i.operation.ExecutionNotAfter.UTC().Format(time.RFC3339Nano)),
 			literalEnv("PTAH_CONNECT_TIMEOUT", durationOrDefault(i.schema.Spec.Execution.ConnectTimeout.Duration, 10*time.Second)),
 			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(i.schema.Spec.Policy.LockTimeout.Duration, 30*time.Second)),
 			literalEnv("PTAH_TX_MODE", stringOrDefault(i.schema.Spec.Policy.TransactionMode, "file")),
@@ -439,28 +516,35 @@ func (i buildInput) dataPlane() (
 // into a bounded shared volume.
 func (b Builder) schemaFetch(
 	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.ActiveOperationStatus,
 	resources corev1.ResourceRequirements,
 	falseValue, trueValue *bool,
 	nonRootID *int64,
 ) (corev1.Container, []corev1.Volume, error) {
-	resolved, err := validatedVerifiedSource(schema)
+	source, err := schemaFetchBinding(schema, operation)
 	if err != nil {
 		return corev1.Container{}, nil, err
 	}
 	environment := []corev1.EnvVar{
 		literalEnv("HOME", fetchWorkPath),
 		literalEnv("TMPDIR", fetchWorkPath),
-		literalEnv("PTAH_PLAIN_HTTP", strconv.FormatBool(schema.Spec.Desired.Transport.PlainHTTP)),
+		literalEnv("PTAH_PLAIN_HTTP", strconv.FormatBool(source.Transport.PlainHTTP)),
 	}
 	volumes := []corev1.Volume{
-		{Name: sourceVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: quantity(sourceVolumeBytes)}}},
-		{Name: fetchWorkVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: quantity(fetchWorkVolumeBytes)}}},
+		{Name: sourceVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(sourceVolumeBytes)}},
+		{Name: fetchWorkVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(fetchWorkVolumeBytes)}},
 	}
 	mounts := []corev1.VolumeMount{
 		{Name: sourceVolumeName, MountPath: sourcePath},
 		{Name: fetchWorkVolumeName, MountPath: fetchWorkPath},
 	}
-	environment, registryVolumes, registryMounts, err := addRegistryAccess(schema, environment, nil, nil)
+	environment, registryVolumes, registryMounts, err := addRegistryAccess(
+		source.RegistryAuthFrom,
+		source.Transport,
+		environment,
+		nil,
+		nil,
+	)
 	if err != nil {
 		return corev1.Container{}, nil, err
 	}
@@ -472,7 +556,7 @@ func (b Builder) schemaFetch(
 		Image:           b.ExecutorImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{ptahBinaryPath},
-		Args:            []string{"schema", "pull", resolved, "--out", sourceFilePath},
+		Args:            []string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath},
 		WorkingDir:      fetchWorkPath,
 		Env:             environment,
 		Resources:       resources,
@@ -481,14 +565,53 @@ func (b Builder) schemaFetch(
 	}, volumes, nil
 }
 
-func addRegistryAccess(
+func schemaFetchBinding(
 	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.ActiveOperationStatus,
+) (operatorv1alpha1.OCIArtifactAccessBinding, error) {
+	if (operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) && operation.Source != nil {
+		source := *operation.Source.DeepCopy()
+		if err := validateArtifactAccessBinding(source); err != nil {
+			return operatorv1alpha1.OCIArtifactAccessBinding{}, err
+		}
+		if pending := schema.Status.PendingObservation; pending != nil && source.Digest != pending.Plan.ArtifactDigest {
+			return operatorv1alpha1.OCIArtifactAccessBinding{}, errors.New("post-apply artifact access does not match the applied plan")
+		}
+		return source, nil
+	}
+	resolved, err := validatedVerifiedSource(schema)
+	if err != nil {
+		return operatorv1alpha1.OCIArtifactAccessBinding{}, err
+	}
+	source := operatorv1alpha1.OCIArtifactAccessBinding{
+		ResolvedReference: resolved,
+		Digest:            schema.Status.Source.Digest,
+	}
+	if schema.Spec.Desired.RegistryAuthFrom != nil {
+		source.RegistryAuthFrom = schema.Spec.Desired.RegistryAuthFrom.DeepCopy()
+	}
+	schema.Spec.Desired.Transport.DeepCopyInto(&source.Transport)
+	if err := validateArtifactAccessBinding(source); err != nil {
+		return operatorv1alpha1.OCIArtifactAccessBinding{}, err
+	}
+	return source, nil
+}
+
+func validateArtifactAccessBinding(source operatorv1alpha1.OCIArtifactAccessBinding) error {
+	if err := ocireference.ValidatePinned(source.ResolvedReference, source.Digest); err != nil {
+		return errors.New("artifact access binding must contain a matching immutable SHA-256 reference")
+	}
+	return nil
+}
+
+func addRegistryAccess(
+	auth *operatorv1alpha1.RegistryAuthSource,
+	transport operatorv1alpha1.OCITransportSpec,
 	environment []corev1.EnvVar,
 	volumes []corev1.Volume,
 	mounts []corev1.VolumeMount,
 ) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount, error) {
-	source := schema.Spec.Desired
-	if auth := source.RegistryAuthFrom; auth != nil {
+	if auth != nil {
 		if strings.TrimSpace(auth.Name) == "" {
 			return nil, nil, nil, errors.New("registry auth Secret name is required")
 		}
@@ -521,7 +644,7 @@ func addRegistryAccess(
 		}
 	}
 
-	if ca := source.Transport.CAFrom; ca != nil {
+	if ca := transport.CAFrom; ca != nil {
 		if ca.Name == "" || ca.Key == "" {
 			return nil, nil, nil, errors.New("registry CA ConfigMap name and key are required")
 		}
@@ -538,7 +661,7 @@ func addRegistryAccess(
 		environment = append(environment, literalEnv("PTAH_OCI_CA_FILE", caFilePath))
 	}
 
-	if tls := source.Transport.ClientCertificateFrom; tls != nil {
+	if tls := transport.ClientCertificateFrom; tls != nil {
 		if tls.Name == "" {
 			return nil, nil, nil, errors.New("registry client-certificate Secret name is required")
 		}
@@ -590,6 +713,9 @@ func validateSchema(schema *operatorv1alpha1.PtahSchema) error {
 	if schema.Spec.Target.URLFrom.Name == "" || schema.Spec.Target.URLFrom.Key == "" {
 		return errors.New("target Secret name and key are required")
 	}
+	if _, err := schemaCoordinationDigest(schema); err != nil {
+		return err
+	}
 	if schema.Spec.Execution.ActiveDeadlineSeconds != 0 &&
 		(schema.Spec.Execution.ActiveDeadlineSeconds < 30 || schema.Spec.Execution.ActiveDeadlineSeconds > 86400) {
 		return errors.New("active deadline must be between 30 and 86400 seconds")
@@ -620,10 +746,7 @@ func validateOperation(operation operatorv1alpha1.ActiveOperationStatus) error {
 }
 
 func validateRequestedReference(reference string) error {
-	parsed, err := url.Parse(reference)
-	if err != nil || parsed.Scheme != "oci" || parsed.Host == "" || parsed.Path == "" ||
-		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
-		strings.TrimSpace(reference) != reference || strings.ContainsAny(reference, " \t\r\n") {
+	if _, err := ocireference.Parse(reference); err != nil {
 		return errors.New("requested schema reference must be an OCI reference without credentials, whitespace, or query data")
 	}
 	return nil
@@ -631,13 +754,12 @@ func validateRequestedReference(reference string) error {
 
 func validatedResolvedReference(schema *operatorv1alpha1.PtahSchema) (string, error) {
 	reference := schema.Status.Source.ResolvedReference
-	matches := pinnedOCIPattern.FindStringSubmatch(reference)
-	if len(matches) != 2 {
-		return "", errors.New("resolved schema reference must be pinned by a lowercase SHA-256 digest")
-	}
-	digest := "sha256:" + matches[1]
-	if schema.Status.Source.Digest != digest {
-		return "", errors.New("resolved schema reference does not match the recorded source digest")
+	if err := ocireference.ValidateResolution(
+		schema.Status.Source.RequestedReference,
+		reference,
+		schema.Status.Source.Digest,
+	); err != nil {
+		return "", errors.New("resolved schema reference must bind the requested repository and recorded SHA-256 digest")
 	}
 	return reference, nil
 }
@@ -692,6 +814,13 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 	if schema.Status.Plan == nil {
 		return errors.New("schema has no current plan binding")
 	}
+	coordinationDigest, err := schemaCoordinationDigest(schema)
+	if err != nil {
+		return err
+	}
+	if coordinationDigest != plan.Spec.CoordinationDigest {
+		return errors.New("apply plan coordination key is stale")
+	}
 	current := schema.Status.Plan
 	applyPolicy := schema.Spec.Policy.Apply
 	if applyPolicy == "" {
@@ -710,10 +839,12 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 	if current.Name != plan.Name || current.UID != plan.UID ||
 		current.Fingerprint != plan.Spec.Fingerprint || current.ContentDigest != plan.Spec.ContentDigest ||
 		current.ArtifactDigest != plan.Spec.ArtifactDigest ||
+		current.CoordinationDigest != plan.Spec.CoordinationDigest ||
 		current.TargetIdentityDigest != plan.Spec.TargetIdentityDigest ||
 		current.ActualStateFingerprint != plan.Spec.ActualStateFingerprint ||
 		current.DesiredStateFingerprint != plan.Spec.DesiredStateFingerprint ||
 		current.PolicyFingerprint != plan.Spec.PolicyFingerprint ||
+		current.VerificationPolicyUID != plan.Spec.VerificationPolicyUID ||
 		current.VerificationPolicyDigest != plan.Spec.VerificationPolicyDigest ||
 		current.PtahVersion != plan.Spec.PtahVersion || current.ExecutorImage != plan.Spec.ExecutorImage ||
 		current.RunnerImage != plan.Spec.RunnerImage || current.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion ||
@@ -721,14 +852,28 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 		return errors.New("apply plan is not the schema current plan")
 	}
 	if plan.Spec.ArtifactDigest != schema.Status.Source.Digest ||
-		plan.Spec.TargetIdentityDigest != schema.Status.Target.IdentityDigest ||
-		plan.Spec.ActualStateFingerprint != schema.Status.Target.ObservedStateFingerprint {
+		plan.Spec.VerificationPolicyUID != schema.Status.Source.VerificationPolicyUID ||
+		plan.Spec.VerificationPolicyDigest != schema.Status.Source.VerificationPolicyDigest ||
+		plan.Spec.CoordinationDigest != schema.Status.Target.CoordinationDigest ||
+		plan.Spec.TargetIdentityDigest != schema.Status.Target.IdentityDigest {
 		return errors.New("apply plan source or target binding is stale")
 	}
-	if !sha256Pattern.MatchString(plan.Spec.ContentDigest) || !sha256Pattern.MatchString(plan.Spec.Fingerprint) {
+	if !sha256Pattern.MatchString(plan.Spec.ContentDigest) || !sha256Pattern.MatchString(plan.Spec.Fingerprint) ||
+		!sha256Pattern.MatchString(plan.Spec.CoordinationDigest) {
 		return errors.New("apply plan has an invalid digest binding")
 	}
 	return nil
+}
+
+func schemaCoordinationDigest(schema *operatorv1alpha1.PtahSchema) (string, error) {
+	digest, err := fingerprint.DatabaseCoordinationDigest(
+		string(schema.Spec.Target.Engine),
+		schema.Spec.Target.CoordinationKey,
+	)
+	if err != nil {
+		return "", fmt.Errorf("derive database coordination digest: %w", err)
+	}
+	return digest, nil
 }
 
 func policyVolume(selector corev1.ConfigMapKeySelector) corev1.Volume {
@@ -745,8 +890,15 @@ func policyVolume(selector corev1.ConfigMapKeySelector) corev1.Volume {
 
 func baseVolumes() []corev1.Volume {
 	return []corev1.Volume{
-		{Name: runnerVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: quantity(runnerVolumeBytes)}}},
-		{Name: workVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: quantity(workVolumeBytes)}}},
+		{Name: runnerVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(runnerVolumeBytes)}},
+		{Name: workVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(workVolumeBytes)}},
+	}
+}
+
+func memoryVolume(size int64) *corev1.EmptyDirVolumeSource {
+	return &corev1.EmptyDirVolumeSource{
+		Medium:    corev1.StorageMediumMemory,
+		SizeLimit: quantity(size),
 	}
 }
 
@@ -806,6 +958,18 @@ func encodeStringArray(values []string) string {
 func shortLabelHash(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:8])
+}
+
+// OperationIDLabelValue returns the bounded label value placed on every Pod
+// for one full operation ID. Controllers must still verify AnnotationOperationID
+// after selecting by this collision-resistant hash.
+func OperationIDLabelValue(value string) string { return shortLabelHash(value) }
+
+func activeDeadlineSeconds(schema *operatorv1alpha1.PtahSchema) int64 {
+	if schema.Spec.Execution.ActiveDeadlineSeconds > 0 {
+		return schema.Spec.Execution.ActiveDeadlineSeconds
+	}
+	return defaultActiveDeadlineSeconds
 }
 
 func quantity(bytes int64) *resource.Quantity {

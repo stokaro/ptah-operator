@@ -2,8 +2,13 @@ package runner
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -18,11 +23,17 @@ func TestFrameRoundTripFromMixedLogs(t *testing.T) {
 	t.Parallel()
 
 	wanted := Result{
-		ProtocolVersion: ProtocolVersion,
-		Operation:       OperationObserve,
-		OperationID:     "observe-42",
-		ChildExitCode:   1,
-		Stdout:          `{"drift":true}`,
+		ProtocolVersion:      ProtocolVersion,
+		Operation:            OperationObserve,
+		OperationID:          "observe-42",
+		ChildExitCode:        0,
+		CoordinationDigest:   "sha256:" + strings.Repeat("9", 64),
+		TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
+		DriftReportDigest:    "sha256:" + strings.Repeat("7", 64),
+		ObservedDialect:      "postgres",
+		ObservedDrift:        true,
+		HighestDriftSeverity: "warning",
+		DriftFindingCount:    1,
 	}
 	frame, err := MarshalFrame(wanted)
 	if err != nil {
@@ -35,7 +46,7 @@ func TestFrameRoundTripFromMixedLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseResultFor() error = %v", err)
 	}
-	if got != wanted {
+	if !reflect.DeepEqual(got, wanted) {
 		t.Fatalf("ParseResultFor() = %#v, want %#v", got, wanted)
 	}
 }
@@ -44,11 +55,14 @@ func TestFrameRejectsTruncationAndDigestMismatch(t *testing.T) {
 	t.Parallel()
 
 	result := Result{
-		ProtocolVersion: ProtocolVersion,
-		Operation:       OperationPlan,
-		OperationID:     "plan-7",
-		ChildExitCode:   0,
-		Stdout:          "payload-original",
+		ProtocolVersion:    ProtocolVersion,
+		Operation:          OperationPlan,
+		OperationID:        "plan-7",
+		ChildExitCode:      0,
+		Stdout:             "payload-original",
+		CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+		PlanContentDigest:  "sha256:" + strings.Repeat("8", 64),
+		PlanOutcome:        PlanOutcomeChanges,
 	}
 	frame, err := MarshalFrame(result)
 	if err != nil {
@@ -80,11 +94,14 @@ func TestFrameRejectsMissingMalformedOversizedAndMismatchedBindings(t *testing.T
 	}
 
 	result := Result{
-		ProtocolVersion: ProtocolVersion,
-		Operation:       OperationResolve,
-		OperationID:     "resolve-1",
-		ChildExitCode:   0,
-		Stdout:          strings.Repeat("x", 128),
+		ProtocolVersion:    ProtocolVersion,
+		Operation:          OperationPlan,
+		OperationID:        "plan-1",
+		ChildExitCode:      0,
+		Stdout:             strings.Repeat("x", 128),
+		CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+		PlanContentDigest:  "sha256:" + strings.Repeat("8", 64),
+		PlanOutcome:        PlanOutcomeChanges,
 	}
 	frame, err := MarshalFrame(result)
 	if err != nil {
@@ -108,9 +125,90 @@ func TestWriteFrameRejectsShortWrite(t *testing.T) {
 		ProtocolVersion: ProtocolVersion,
 		Operation:       OperationResolve,
 		OperationID:     "resolve-short-write",
-		ChildExitCode:   0,
+		ChildExitCode:   -1,
+		Error:           &ResultError{Code: "test_error", Message: "test error"},
 	}
 	if err := WriteFrame(shortWriter{}, result); !errors.Is(err, io.ErrShortWrite) {
 		t.Fatalf("WriteFrame() error = %v, want io.ErrShortWrite", err)
 	}
+}
+
+func TestMarshalFrameRejectsPayloadAboveParserCap(t *testing.T) {
+	// Keep this serial because it intentionally constructs a multi-megabyte
+	// worst-case escaped payload.
+	result := Result{
+		ProtocolVersion:    ProtocolVersion,
+		Operation:          OperationPlan,
+		OperationID:        "plan-oversized-frame",
+		ChildExitCode:      0,
+		Stdout:             strings.Repeat("<", int(DefaultMaxPlanBytes)+(1<<20)),
+		CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+		PlanContentDigest:  "sha256:" + strings.Repeat("8", 64),
+		PlanOutcome:        PlanOutcomeChanges,
+	}
+	if _, err := MarshalFrame(result); !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("MarshalFrame() error = %v, want ErrFrameTooLarge", err)
+	}
+}
+
+func TestParserRejectsImpossibleSuccessfulResultShapes(t *testing.T) {
+	t.Parallel()
+
+	digest := "sha256:" + strings.Repeat("9", 64)
+	tests := []struct {
+		name   string
+		result Result
+	}{
+		{
+			name: "apply without mutation boundary",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationApply, OperationID: "apply-no-mutation",
+				ChildExitCode: 0, CoordinationDigest: digest},
+		},
+		{
+			name: "apply with nonzero exit",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationApply, OperationID: "apply-nonzero",
+				ChildExitCode: 2, CoordinationDigest: digest, MutationStarted: true},
+		},
+		{
+			name: "apply success marked uncertain",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationApply, OperationID: "apply-uncertain",
+				ChildExitCode: 0, CoordinationDigest: digest, MutationStarted: true, Uncertain: true},
+		},
+		{
+			name: "apply success with truncation",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationApply, OperationID: "apply-truncated",
+				ChildExitCode: 0, CoordinationDigest: digest, MutationStarted: true,
+				Truncation: &TruncationMetadata{Stderr: true, StderrBytesDropped: 1}},
+		},
+		{
+			name: "apply success with native output",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationApply, OperationID: "apply-output",
+				ChildExitCode: 0, CoordinationDigest: digest, MutationStarted: true, Stdout: "protected SQL"},
+		},
+		{
+			name: "read-only success with nonzero exit",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-nonzero",
+				ChildExitCode: 1},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			frame := handcraftedIntegrityValidFrame(t, test.result)
+			if _, err := ParseResultFor(frame, test.result.Operation, test.result.OperationID); !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("ParseResultFor() error = %v, want ErrMalformedFrame", err)
+			}
+		})
+	}
+}
+
+func handcraftedIntegrityValidFrame(t *testing.T, result Result) []byte {
+	t.Helper()
+	payload, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal(result) error = %v", err)
+	}
+	digest := sha256.Sum256(payload)
+	return []byte(fmt.Sprintf("%s%d %s\n%s%s\n", frameHeader, len(payload), hex.EncodeToString(digest[:]), payload, frameFooter))
 }

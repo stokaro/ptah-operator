@@ -7,11 +7,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
 
-const prefix = "sha256:"
+const (
+	prefix                      = "sha256:"
+	coordinationContractVersion = 1
+)
+
+var coordinationKeyPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$`)
 
 // DigestBytes returns an OCI-style SHA-256 digest for exact bytes.
 func DigestBytes(data []byte) string {
@@ -27,6 +33,41 @@ func DigestCanonicalJSON(value any) (string, error) {
 		return "", fmt.Errorf("marshal fingerprint input: %w", err)
 	}
 	return DigestBytes(data), nil
+}
+
+// DatabaseCoordinationDigest returns the credential-free identity used to
+// serialize mutations for one user-declared physical database realm. The key
+// is deliberately absent from the returned value and must never be copied to
+// status. It is a stable non-secret identifier, not an authentication secret.
+func DatabaseCoordinationDigest(engine, coordinationKey string) (string, error) {
+	canonicalEngine, err := canonicalDatabaseEngine(engine)
+	if err != nil {
+		return "", err
+	}
+	if !coordinationKeyPattern.MatchString(coordinationKey) {
+		return "", fmt.Errorf("coordination key must be 1-253 lowercase ASCII characters using letters, digits, '.', '_', ':', '/', or '-'")
+	}
+
+	return DigestCanonicalJSON(struct {
+		ContractVersion int    `json:"contract_version"`
+		Engine          string `json:"engine"`
+		CoordinationKey string `json:"coordination_key"`
+	}{
+		ContractVersion: coordinationContractVersion,
+		Engine:          canonicalEngine,
+		CoordinationKey: coordinationKey,
+	})
+}
+
+func canonicalDatabaseEngine(engine string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(engine)) {
+	case "postgres", "postgresql", "pgx":
+		return "postgresql", nil
+	case "mariadb", "mysql":
+		return "mysql", nil
+	default:
+		return "", fmt.Errorf("unsupported database engine")
+	}
 }
 
 // NormalizeSet trims, de-duplicates, and sorts an order-independent string set.
@@ -54,10 +95,12 @@ type PlanBinding struct {
 	SchemaUID                string `json:"schema_uid"`
 	PlanContentDigest        string `json:"plan_content_digest"`
 	ArtifactDigest           string `json:"artifact_digest"`
+	CoordinationDigest       string `json:"coordination_digest"`
 	TargetIdentityDigest     string `json:"target_identity_digest"`
 	ActualStateFingerprint   string `json:"actual_state_fingerprint"`
 	DesiredStateFingerprint  string `json:"desired_state_fingerprint"`
 	PolicyFingerprint        string `json:"policy_fingerprint"`
+	VerificationPolicyUID    string `json:"verification_policy_uid"`
 	VerificationPolicyDigest string `json:"verification_policy_digest"`
 	PtahVersion              string `json:"ptah_version"`
 	ExecutorImage            string `json:"executor_image"`
@@ -74,10 +117,12 @@ func (b PlanBinding) Fingerprint() (string, error) {
 		"schema UID":                 b.SchemaUID,
 		"plan content digest":        b.PlanContentDigest,
 		"artifact digest":            b.ArtifactDigest,
+		"coordination digest":        b.CoordinationDigest,
 		"target identity digest":     b.TargetIdentityDigest,
 		"actual state fingerprint":   b.ActualStateFingerprint,
 		"desired state fingerprint":  b.DesiredStateFingerprint,
 		"policy fingerprint":         b.PolicyFingerprint,
+		"verification policy UID":    b.VerificationPolicyUID,
 		"verification policy digest": b.VerificationPolicyDigest,
 		"Ptah version":               b.PtahVersion,
 		"executor image":             b.ExecutorImage,

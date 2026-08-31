@@ -8,6 +8,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -278,7 +279,7 @@ func TestCurrentApprovalRecoveryRevalidatesTheObject(t *testing.T) {
 		schema, plan, approval := currentApprovalFixture()
 		reconciler, api := fakeReconciler(t, staticLogs{}, approval)
 
-		valid, err := reconciler.ensureCurrentApproval(context.Background(), schema, plan)
+		valid, err := reconciler.ensureCurrentApproval(context.Background(), schema, plan, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -299,7 +300,7 @@ func TestCurrentApprovalRecoveryRevalidatesTheObject(t *testing.T) {
 	t.Run("rejects deleted object", func(t *testing.T) {
 		schema, plan, _ := currentApprovalFixture()
 		reconciler, _ := fakeReconciler(t, staticLogs{})
-		valid, err := reconciler.ensureCurrentApproval(context.Background(), schema, plan)
+		valid, err := reconciler.ensureCurrentApproval(context.Background(), schema, plan, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -312,7 +313,7 @@ func TestCurrentApprovalRecoveryRevalidatesTheObject(t *testing.T) {
 		schema, plan, approval := currentApprovalFixture()
 		approval.UID = "replacement-uid"
 		reconciler, api := fakeReconciler(t, staticLogs{}, approval)
-		valid, err := reconciler.ensureCurrentApproval(context.Background(), schema, plan)
+		valid, err := reconciler.ensureCurrentApproval(context.Background(), schema, plan, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -359,15 +360,56 @@ func TestFindApprovalPrefersCurrentMatchBeforeStaleCleanup(t *testing.T) {
 	}
 }
 
+func TestFindApprovalMarksConsumedDecisionStaleForNewPlan(t *testing.T) {
+	t.Parallel()
+
+	schema, plan, approval := currentApprovalFixture()
+	reconciler, api := fakeReconciler(t, staticLogs{}, approval)
+	if err := reconciler.markApprovalConsumed(context.Background(), approval); err != nil {
+		t.Fatal(err)
+	}
+
+	freshPlan := plan.DeepCopy()
+	freshPlan.Name = "fresh-plan"
+	freshPlan.UID = "fresh-plan-uid"
+	freshPlan.Spec.Fingerprint = "sha256:fresh-plan"
+	actual, err := reconciler.findApproval(context.Background(), schema, freshPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != nil {
+		t.Fatalf("findApproval() reused consumed approval %#v", actual)
+	}
+
+	updated := &operatorv1alpha1.PtahSchemaApproval{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(approval), updated); err != nil {
+		t.Fatal(err)
+	}
+	if !conditionIs(updated.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed, metav1.ConditionTrue) ||
+		!conditionIs(updated.Status.Conditions, operatorv1alpha1.ConditionApprovalStale, metav1.ConditionTrue) ||
+		!conditionIs(updated.Status.Conditions, operatorv1alpha1.ConditionApprovalAccepted, metav1.ConditionFalse) {
+		t.Fatalf("historical approval conditions = %#v", updated.Status.Conditions)
+	}
+	stale := meta.FindStatusCondition(updated.Status.Conditions, operatorv1alpha1.ConditionApprovalStale)
+	if stale == nil || stale.Reason != "PlanNoLongerCurrent" {
+		t.Fatalf("stale condition = %#v", stale)
+	}
+}
+
 func TestInvalidApprovalClearsApplyClaimWithoutStartingAJob(t *testing.T) {
 	t.Parallel()
 	schema, _, _ := currentApprovalFixture()
 	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Target.CoordinationDigest = testCoordinationDigest
 	schema.Status.Target.IdentityDigest = testDigest
 	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
 		Type: operatorv1alpha1.OperationApply, ID: testDigest, JobName: "apply-job",
 		StartedAt: metav1.NewTime(time.Date(2026, 8, 30, 11, 59, 0, 0, time.UTC)), Attempt: 1,
+		CoordinationDigest: testCoordinationDigest, TargetIdentityDigest: testDigest,
+		LeaseDurationSeconds: 960, LeaseEpoch: testLeaseEpoch,
 	}
+	target := databaseTargetBinding(schema.Spec.Target)
+	schema.Status.ActiveOperation.Target = &target
 	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
 	reconciler.Locks = targetlock.New(api, api, nil)
 	reconciler.LockNamespace = "operator-locks"
@@ -375,8 +417,12 @@ func TestInvalidApprovalClearsApplyClaimWithoutStartingAJob(t *testing.T) {
 	observations := &telemetryObservation{}
 	reconciler.Recorder = recorder
 	reconciler.Telemetry = observations
+	current := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), current); err != nil {
+		t.Fatal(err)
+	}
 
-	if _, err := reconciler.approvalBecameInvalid(context.Background(), schema); err != nil {
+	if _, err := reconciler.approvalBecameInvalid(context.Background(), current); err != nil {
 		t.Fatal(err)
 	}
 	actual := &operatorv1alpha1.PtahSchema{}
@@ -407,8 +453,9 @@ func currentApprovalFixture() (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.P
 			SchemaRef:   operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
 			Fingerprint: "sha256:plan", ArtifactDigest: "sha256:artifact", TargetIdentityDigest: "sha256:target",
 			ActualStateFingerprint: "sha256:actual", DesiredStateFingerprint: "sha256:desired",
-			PolicyFingerprint: "sha256:policy", VerificationPolicyDigest: "sha256:verification-policy",
-			PtahVersion: "v0.3.0", ExecutorImage: "example.invalid/ptah@sha256:executor",
+			PolicyFingerprint: "sha256:policy", VerificationPolicyUID: testPolicyUID,
+			VerificationPolicyDigest: "sha256:verification-policy",
+			PtahVersion:              "v0.3.0", ExecutorImage: "example.invalid/ptah@sha256:executor",
 			RunnerImage: "example.invalid/operator@sha256:runner", RunnerProtocolVersion: 1,
 		},
 	}
@@ -420,10 +467,11 @@ func currentApprovalFixture() (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.P
 			PlanFingerprint: plan.Spec.Fingerprint, ArtifactDigest: plan.Spec.ArtifactDigest,
 			TargetIdentityDigest: plan.Spec.TargetIdentityDigest, ActualStateFingerprint: plan.Spec.ActualStateFingerprint,
 			DesiredStateFingerprint: plan.Spec.DesiredStateFingerprint, PolicyFingerprint: plan.Spec.PolicyFingerprint,
+			VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
 			VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest, PtahVersion: plan.Spec.PtahVersion,
 			ExecutorImage: plan.Spec.ExecutorImage, RunnerImage: plan.Spec.RunnerImage,
 			RunnerProtocolVersion: plan.Spec.RunnerProtocolVersion, Approver: approver, ApprovedAt: approvedAt,
-			AdmissionRequestUID: "admission-request-uid",
+			MutationRequestUID: "admission-request-uid",
 		},
 	}
 	schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{

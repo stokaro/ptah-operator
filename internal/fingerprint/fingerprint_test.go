@@ -1,6 +1,7 @@
 package fingerprint_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
@@ -21,6 +22,52 @@ func TestNormalizeSet(t *testing.T) {
 	}
 }
 
+func TestDatabaseCoordinationDigestBindsEngineAndExactKey(t *testing.T) {
+	t.Parallel()
+
+	postgres, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/payments-primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, alias := range []string{"postgres", "postgresql", "pgx"} {
+		aliasDigest, err := fingerprint.DatabaseCoordinationDigest(alias, "prod/payments-primary")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if aliasDigest != postgres {
+			t.Fatalf("engine alias %q produced %q, want %q", alias, aliasDigest, postgres)
+		}
+	}
+
+	mysql, err := fingerprint.DatabaseCoordinationDigest("MySQL", "prod/payments-primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherKey, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/payments-replica")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mysql == postgres || otherKey == postgres {
+		t.Fatal("engine or exact coordination-key change retained the digest")
+	}
+	if strings.Contains(postgres, "payments-primary") {
+		t.Fatal("coordination digest exposed the plaintext key")
+	}
+}
+
+func TestDatabaseCoordinationDigestRejectsNonCanonicalKey(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"", " production", "production ", "Production", "prod key", strings.Repeat("a", 254)} {
+		if _, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", key); err == nil {
+			t.Fatalf("DatabaseCoordinationDigest accepted %q", key)
+		}
+	}
+	if _, err := fingerprint.DatabaseCoordinationDigest("SQLite", "production"); err == nil {
+		t.Fatal("DatabaseCoordinationDigest accepted an unsupported engine")
+	}
+}
+
 func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 	t.Parallel()
 
@@ -29,10 +76,12 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 		SchemaUID:                "schema-uid",
 		PlanContentDigest:        "sha256:plan",
 		ArtifactDigest:           "sha256:artifact",
+		CoordinationDigest:       "sha256:coordination",
 		TargetIdentityDigest:     "sha256:target",
 		ActualStateFingerprint:   "sha256:actual",
 		DesiredStateFingerprint:  "sha256:desired",
 		PolicyFingerprint:        "sha256:policy",
+		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: "sha256:verification",
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.invalid/ptah@sha256:executor",
@@ -45,18 +94,20 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 	}
 
 	mutations := map[string]func(*fingerprint.PlanBinding){
-		"schema":       func(v *fingerprint.PlanBinding) { v.SchemaUID += "-new" },
-		"plan":         func(v *fingerprint.PlanBinding) { v.PlanContentDigest += "-new" },
-		"artifact":     func(v *fingerprint.PlanBinding) { v.ArtifactDigest += "-new" },
-		"target":       func(v *fingerprint.PlanBinding) { v.TargetIdentityDigest += "-new" },
-		"actual":       func(v *fingerprint.PlanBinding) { v.ActualStateFingerprint += "-new" },
-		"desired":      func(v *fingerprint.PlanBinding) { v.DesiredStateFingerprint += "-new" },
-		"policy":       func(v *fingerprint.PlanBinding) { v.PolicyFingerprint += "-new" },
-		"verification": func(v *fingerprint.PlanBinding) { v.VerificationPolicyDigest += "-new" },
-		"version":      func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
-		"executor":     func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
-		"runner":       func(v *fingerprint.PlanBinding) { v.RunnerImage += "-new" },
-		"protocol":     func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
+		"schema":           func(v *fingerprint.PlanBinding) { v.SchemaUID += "-new" },
+		"plan":             func(v *fingerprint.PlanBinding) { v.PlanContentDigest += "-new" },
+		"artifact":         func(v *fingerprint.PlanBinding) { v.ArtifactDigest += "-new" },
+		"coordination":     func(v *fingerprint.PlanBinding) { v.CoordinationDigest += "-new" },
+		"target":           func(v *fingerprint.PlanBinding) { v.TargetIdentityDigest += "-new" },
+		"actual":           func(v *fingerprint.PlanBinding) { v.ActualStateFingerprint += "-new" },
+		"desired":          func(v *fingerprint.PlanBinding) { v.DesiredStateFingerprint += "-new" },
+		"policy":           func(v *fingerprint.PlanBinding) { v.PolicyFingerprint += "-new" },
+		"verification UID": func(v *fingerprint.PlanBinding) { v.VerificationPolicyUID += "-new" },
+		"verification":     func(v *fingerprint.PlanBinding) { v.VerificationPolicyDigest += "-new" },
+		"version":          func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
+		"executor":         func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
+		"runner":           func(v *fingerprint.PlanBinding) { v.RunnerImage += "-new" },
+		"protocol":         func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
 	}
 	for name, mutate := range mutations {
 		name, mutate := name, mutate

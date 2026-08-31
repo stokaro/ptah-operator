@@ -49,8 +49,6 @@ spec:
             properties:
               actualStateFingerprint:
                 type: string
-              admissionRequestUID:
-                type: string
               approvedAt:
                 format: date-time
                 type: string
@@ -70,9 +68,13 @@ spec:
                 type: object
               artifactDigest:
                 type: string
+              coordinationDigest:
+                type: string
               desiredStateFingerprint:
                 type: string
               executorImage:
+                type: string
+              mutationRequestUID:
                 type: string
               planFingerprint:
                 type: string
@@ -109,14 +111,17 @@ spec:
                 type: string
               verificationPolicyDigest:
                 type: string
+              verificationPolicyUID:
+                type: string
             required:
             - actualStateFingerprint
-            - admissionRequestUID
             - approvedAt
             - approver
             - artifactDigest
+            - coordinationDigest
             - desiredStateFingerprint
             - executorImage
+            - mutationRequestUID
             - planFingerprint
             - planRef
             - policyFingerprint
@@ -126,6 +131,7 @@ spec:
             - schemaRef
             - targetIdentityDigest
             - verificationPolicyDigest
+            - verificationPolicyUID
             type: object
             x-kubernetes-validations:
             - message: an approval is immutable; create a new approval instead
@@ -172,6 +178,8 @@ spec:
                 format: int64
                 type: integer
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true

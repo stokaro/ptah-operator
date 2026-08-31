@@ -14,6 +14,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 )
@@ -42,15 +43,15 @@ func TestBuildCredentialAndInputIsolationByOperation(t *testing.T) {
 		},
 		{
 			operation: operatorv1alpha1.OperationObserve,
-			want:      []string{"PTAH_DB_URL", "PTAH_SCHEMA_FILE", "PTAH_IGNORE", "PTAH_SEVERITY"},
+			want:      []string{"PTAH_DB_URL", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST", "PTAH_SCHEMA_FILE", "PTAH_LOCK_TIMEOUT", "PTAH_SEVERITY"},
 			absent: []string{
 				"PTAH_DEV_URL", "PTAH_REQUESTED_REFERENCE", "PTAH_VERIFICATION_POLICY", "PTAH_PLAN_DIR",
-				"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_PLAIN_HTTP",
+				"PTAH_IGNORE", "PTAH_EXCLUDE", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_PLAIN_HTTP",
 			},
 		},
 		{
 			operation: operatorv1alpha1.OperationPlan,
-			want:      []string{"PTAH_DB_URL", "PTAH_DEV_URL", "PTAH_SCHEMA_FILE", "PTAH_EXCLUDE"},
+			want:      []string{"PTAH_DB_URL", "PTAH_COORDINATION_DIGEST", "PTAH_DEV_URL", "PTAH_SCHEMA_FILE", "PTAH_EXCLUDE"},
 			absent: []string{
 				"PTAH_REQUESTED_REFERENCE", "PTAH_VERIFICATION_POLICY", "PTAH_PLAN_DIR",
 				"PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN", "PTAH_OCI_REGISTRY", "PTAH_PLAIN_HTTP",
@@ -59,7 +60,7 @@ func TestBuildCredentialAndInputIsolationByOperation(t *testing.T) {
 		{
 			operation: operatorv1alpha1.OperationApply,
 			plan:      plan,
-			want:      []string{"PTAH_DB_URL", "PTAH_PLAN_DIR", "PTAH_EXPECTED_PLAN_CONTENT_DIGEST", "PTAH_LOCK_TIMEOUT", "PTAH_TX_MODE"},
+			want:      []string{"PTAH_DB_URL", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST", "PTAH_PLAN_DIR", "PTAH_EXPECTED_PLAN_CONTENT_DIGEST", "PTAH_EXPECTED_COORDINATION_DIGEST", "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST", "PTAH_DISPATCH_NOT_AFTER", "PTAH_LOCK_TIMEOUT", "PTAH_TX_MODE"},
 			absent: []string{
 				"PTAH_DEV_URL", "PTAH_SCHEMA_FILE", "PTAH_REQUESTED_REFERENCE", "PTAH_RESOLVED_REFERENCE",
 				"PTAH_VERIFICATION_POLICY", "PTAH_OCI_USERNAME", "PTAH_OCI_PASSWORD", "PTAH_OCI_TOKEN",
@@ -89,6 +90,80 @@ func TestBuildCredentialAndInputIsolationByOperation(t *testing.T) {
 			}
 			assertSecretReferencesOnly(t, job)
 		})
+	}
+}
+
+func TestBuildPinsRunnerSizeContractForEveryOperation(t *testing.T) {
+	t.Parallel()
+
+	builder := builderFixture()
+	schema := schemaFixture()
+	plan := planFixture(schema, builder)
+	wantPrefix := []string{
+		"--ptah-binary", ptahBinaryPath,
+		"--max-result-bytes", "8388608",
+		"--max-plan-bytes", "8388608",
+		"--operation",
+	}
+	for _, operation := range []operatorv1alpha1.OperationType{
+		operatorv1alpha1.OperationResolve,
+		operatorv1alpha1.OperationVerify,
+		operatorv1alpha1.OperationObserve,
+		operatorv1alpha1.OperationPlan,
+		operatorv1alpha1.OperationApply,
+	} {
+		operation := operation
+		t.Run(string(operation), func(t *testing.T) {
+			t.Parallel()
+			var operationPlan *operatorv1alpha1.PtahSchemaPlan
+			if operation == operatorv1alpha1.OperationApply {
+				operationPlan = plan.DeepCopy()
+			}
+			job, err := builder.Build(schema.DeepCopy(), operationFixture(operation), operationPlan)
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			args := job.Spec.Template.Spec.Containers[0].Args
+			want := append(append([]string(nil), wantPrefix...), strings.ToLower(string(operation)))
+			if !reflect.DeepEqual(args, want) {
+				t.Fatalf("runner args = %q, want %q", args, want)
+			}
+		})
+	}
+}
+
+func TestBuildUsesOnlyBoundedMemoryBackedEmptyDirs(t *testing.T) {
+	t.Parallel()
+
+	builder := builderFixture()
+	schema := schemaFixture()
+	plan := planFixture(schema, builder)
+	for _, test := range []struct {
+		operation operatorv1alpha1.OperationType
+		plan      *operatorv1alpha1.PtahSchemaPlan
+	}{
+		{operation: operatorv1alpha1.OperationResolve},
+		{operation: operatorv1alpha1.OperationObserve},
+		{operation: operatorv1alpha1.OperationPlan},
+		{operation: operatorv1alpha1.OperationApply, plan: plan},
+	} {
+		job, err := builder.Build(schema.DeepCopy(), operationFixture(test.operation), test.plan)
+		if err != nil {
+			t.Fatalf("Build(%s) error = %v", test.operation, err)
+		}
+		found := 0
+		for _, volume := range job.Spec.Template.Spec.Volumes {
+			if volume.EmptyDir == nil {
+				continue
+			}
+			found++
+			if volume.EmptyDir.Medium != corev1.StorageMediumMemory || volume.EmptyDir.SizeLimit == nil || volume.EmptyDir.SizeLimit.Sign() <= 0 {
+				t.Errorf("%s volume %s EmptyDir = %#v, want bounded memory", test.operation, volume.Name, volume.EmptyDir)
+			}
+		}
+		if found < 2 {
+			t.Errorf("%s Job has %d work EmptyDirs, want at least runner and work", test.operation, found)
+		}
 	}
 }
 
@@ -131,29 +206,120 @@ func TestBuildDatabaseOperationsUseOnlyVerifiedPinnedSource(t *testing.T) {
 		t.Fatalf("main source mount = %#v, want read-only %s", mainMount, sourcePath)
 	}
 
-	for name, mutate := range map[string]func(*operatorv1alpha1.PtahSchema){
-		"mutable reference": func(schema *operatorv1alpha1.PtahSchema) {
-			schema.Status.Source.ResolvedReference = schema.Spec.Desired.OCIRef
+	for name, mutate := range map[string]func(*operatorv1alpha1.ActiveOperationStatus){
+		"mutable reference": func(operation *operatorv1alpha1.ActiveOperationStatus) {
+			operation.Source.ResolvedReference = "oci://registry.example/acme/orders:mutable"
 		},
-		"digest mismatch": func(schema *operatorv1alpha1.PtahSchema) {
-			schema.Status.Source.Digest = digest('9')
-		},
-		"not verified": func(schema *operatorv1alpha1.PtahSchema) {
-			schema.Status.Source.Verified = false
-		},
-		"wrong artifact type": func(schema *operatorv1alpha1.PtahSchema) {
-			schema.Status.Source.ArtifactType = dataplane.MigrationArtifactType
+		"digest mismatch": func(operation *operatorv1alpha1.ActiveOperationStatus) {
+			operation.Source.Digest = digest('9')
 		},
 	} {
 		name, mutate := name, mutate
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			invalid := schemaFixture()
-			mutate(invalid)
-			if _, err := builder.Build(invalid, operationFixture(operatorv1alpha1.OperationObserve), nil); err == nil {
+			invalid := operationFixture(operatorv1alpha1.OperationObserve)
+			mutate(&invalid)
+			if _, err := builder.Build(schemaFixture(), invalid, nil); err == nil {
 				t.Fatal("Build() accepted an unsafe database source")
 			}
 		})
+	}
+}
+
+func TestBuildRejectsInvalidCoordinationKey(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"", "Production/orders", "production orders"} {
+		key := key
+		t.Run(key, func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			schema.Spec.Target.CoordinationKey = key
+			if _, err := builderFixture().Build(schema, operationFixture(operatorv1alpha1.OperationResolve), nil); err == nil ||
+				!strings.Contains(err.Error(), "coordination") {
+				t.Fatalf("Build() error = %v, want fail-closed coordination-key rejection", err)
+			}
+		})
+	}
+}
+
+func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
+	t.Parallel()
+	schema := schemaFixture()
+	originalSource := operatorv1alpha1.OCIArtifactAccessBinding{
+		ResolvedReference: schema.Status.Source.ResolvedReference,
+		Digest:            schema.Status.Source.Digest,
+		RegistryAuthFrom:  schema.Spec.Desired.RegistryAuthFrom.DeepCopy(),
+	}
+	schema.Spec.Desired.Transport.DeepCopyInto(&originalSource.Transport)
+	schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+		Outcome:            operatorv1alpha1.PendingObservationApplySucceeded,
+		Plan:               operatorv1alpha1.CurrentPlanStatus{ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: testCoordinationDigest()},
+		CoordinationDigest: testCoordinationDigest(),
+		Source:             originalSource,
+		Target: operatorv1alpha1.DatabaseTargetBinding{
+			Engine: operatorv1alpha1.DatabaseEnginePostgreSQL,
+			URLFrom: corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "applied-target"}, Key: "dsn",
+			},
+		},
+		Exclude: []string{"archive.*"}, DriftSeverity: "all",
+	}
+	schema.Spec.Target.URLFrom.Name = "new-generation-target"
+	schema.Spec.Desired.RegistryAuthFrom = &operatorv1alpha1.RegistryAuthSource{
+		Name: "new-generation-registry", Mode: operatorv1alpha1.RegistryAuthEnvironment,
+	}
+	schema.Spec.Desired.Transport = operatorv1alpha1.OCITransportSpec{
+		PlainHTTP: false,
+		CAFrom: &corev1.ConfigMapKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "new-generation-ca"}, Key: "ca.pem",
+		},
+		ClientCertificateFrom: &operatorv1alpha1.TLSSecretReference{Name: "new-generation-client"},
+	}
+	schema.Spec.Policy.Exclude = []string{"new-generation-exclude"}
+	schema.Spec.Policy.DriftSeverity = "destructive"
+
+	active := operationFixture(operatorv1alpha1.OperationObserve)
+	active.Target = &schema.Status.PendingObservation.Target
+	active.Source = schema.Status.PendingObservation.Source.DeepCopy()
+	active.CoordinationDigest = schema.Status.PendingObservation.CoordinationDigest
+	active.ObservationExclude = append([]string(nil), schema.Status.PendingObservation.Exclude...)
+	active.ObservationSeverity = schema.Status.PendingObservation.DriftSeverity
+	job, err := builderFixture().Build(schema, active, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database := requireEnv(t, job, "PTAH_DB_URL")
+	if database.ValueFrom == nil || database.ValueFrom.SecretKeyRef == nil ||
+		database.ValueFrom.SecretKeyRef.Name != "applied-target" || database.ValueFrom.SecretKeyRef.Key != "dsn" {
+		t.Fatalf("post-apply database binding = %#v", database.ValueFrom)
+	}
+	if _, ok := envMap(job)["PTAH_EXCLUDE"]; ok {
+		t.Fatal("raw post-Apply observation unexpectedly received managed-scope exclusions")
+	}
+	if got := requireEnv(t, job, "PTAH_SEVERITY").Value; got != "all" {
+		t.Fatalf("PTAH_SEVERITY = %q, want persisted policy", got)
+	}
+	if got := requireEnv(t, job, runner.EnvCoordinationDigest).Value; got != testCoordinationDigest() {
+		t.Fatalf("coordination digest = %q, want persisted proof binding", got)
+	}
+	fetch := requireContainer(t, job.Spec.Template.Spec.InitContainers, fetchContainerName)
+	if !reflect.DeepEqual(fetch.Args, []string{"schema", "pull", originalSource.ResolvedReference, "--out", sourceFilePath}) {
+		t.Fatalf("post-apply source fetch args = %q, want persisted reference", fetch.Args)
+	}
+	fetchEnvironment := containerEnvMap(fetch)
+	for _, name := range []string{"PTAH_OCI_USERNAME", runner.EnvOCIPassword, runner.EnvOCIToken, "PTAH_OCI_REGISTRY"} {
+		environment := fetchEnvironment[name]
+		if environment.ValueFrom == nil || environment.ValueFrom.SecretKeyRef == nil ||
+			environment.ValueFrom.SecretKeyRef.Name != originalSource.RegistryAuthFrom.Name {
+			t.Fatalf("post-apply %s source = %#v, want persisted registry Secret", name, environment.ValueFrom)
+		}
+	}
+	if got := requireVolume(t, job, caVolumeName).ConfigMap.Name; got != originalSource.Transport.CAFrom.Name {
+		t.Fatalf("post-apply CA source = %q, want persisted ConfigMap", got)
+	}
+	if got := requireVolume(t, job, tlsVolumeName).Secret.SecretName; got != originalSource.Transport.ClientCertificateFrom.Name {
+		t.Fatalf("post-apply client certificate source = %q, want persisted Secret", got)
 	}
 }
 
@@ -174,7 +340,9 @@ func TestBuildObserveAndPlanSeparateRegistryAndDatabaseCredentials(t *testing.T)
 					DockerConfigJSONKey: corev1.DockerConfigJsonKey,
 				}
 			}
-			job, err := builderFixture().Build(schema, operationFixture(operation), nil)
+			active := operationFixture(operation)
+			active.Source.RegistryAuthFrom = schema.Spec.Desired.RegistryAuthFrom.DeepCopy()
+			job, err := builderFixture().Build(schema, active, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -258,6 +426,12 @@ func TestBuildApplyProjectsExactCommittedPlan(t *testing.T) {
 	if got := requireEnv(t, job, "PTAH_EXPECTED_PLAN_CONTENT_DIGEST").Value; got != plan.Spec.ContentDigest {
 		t.Fatalf("expected plan digest = %q, want %q", got, plan.Spec.ContentDigest)
 	}
+	if got := requireEnv(t, job, "PTAH_EXPECTED_TARGET_IDENTITY_DIGEST").Value; got != plan.Spec.TargetIdentityDigest {
+		t.Fatalf("expected target digest = %q, want %q", got, plan.Spec.TargetIdentityDigest)
+	}
+	if got := requireEnv(t, job, runner.EnvExpectedCoordinationDigest).Value; got != plan.Spec.CoordinationDigest {
+		t.Fatalf("expected coordination digest = %q, want %q", got, plan.Spec.CoordinationDigest)
+	}
 	if got := job.Annotations[AnnotationPlanFingerprint]; got != plan.Spec.Fingerprint {
 		t.Fatalf("plan fingerprint annotation = %q, want %q", got, plan.Spec.Fingerprint)
 	}
@@ -287,9 +461,9 @@ func TestBuildApplyRejectsStaleBindings(t *testing.T) {
 			},
 		},
 		{
-			name: "target moved",
+			name: "coordination key changed",
 			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, _ *Builder) {
-				schema.Status.Target.ObservedStateFingerprint = digest('8')
+				schema.Spec.Target.CoordinationKey = "prod/team-a/orders-through-another-route"
 			},
 		},
 		{
@@ -341,10 +515,16 @@ func TestBuildHardensEveryContainerAndPod(t *testing.T) {
 	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 600 {
 		t.Fatalf("activeDeadlineSeconds = %v, want 600", job.Spec.ActiveDeadlineSeconds)
 	}
+	if job.Spec.PodReplacementPolicy == nil || *job.Spec.PodReplacementPolicy != batchv1.Failed {
+		t.Fatalf("podReplacementPolicy = %v, want Failed", job.Spec.PodReplacementPolicy)
+	}
 	if job.Spec.TTLSecondsAfterFinished != nil {
 		t.Fatal("TTL must remain unset until the controller harvests logs")
 	}
 	pod := job.Spec.Template.Spec
+	if pod.ActiveDeadlineSeconds == nil || *pod.ActiveDeadlineSeconds != 600 {
+		t.Fatalf("Pod activeDeadlineSeconds = %v, want 600", pod.ActiveDeadlineSeconds)
+	}
 	if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
 		t.Fatal("service account token must not be mounted")
 	}
@@ -373,7 +553,12 @@ func TestBuildHardensEveryContainerAndPod(t *testing.T) {
 	if main.Image != builder.ExecutorImage || !reflect.DeepEqual(main.Command, []string{runnerPath}) {
 		t.Fatalf("main image/command = %q %q", main.Image, main.Command)
 	}
-	if !reflect.DeepEqual(main.Args, []string{"--ptah-binary", ptahBinaryPath, "--operation", "plan"}) {
+	if !reflect.DeepEqual(main.Args, []string{
+		"--ptah-binary", ptahBinaryPath,
+		"--max-result-bytes", "8388608",
+		"--max-plan-bytes", "8388608",
+		"--operation", "plan",
+	}) {
 		t.Fatalf("main args = %q", main.Args)
 	}
 	for _, container := range []corev1.Container{init, pod.InitContainers[1], main} {
@@ -389,6 +574,32 @@ func TestBuildHardensEveryContainerAndPod(t *testing.T) {
 	if len(job.OwnerReferences) != 1 || job.OwnerReferences[0].UID != schema.UID ||
 		job.OwnerReferences[0].Controller == nil || !*job.OwnerReferences[0].Controller {
 		t.Fatalf("schema owner reference = %#v", job.OwnerReferences)
+	}
+}
+
+func TestApplyPodCarriesIndependentAbsoluteAndRuntimeDeadlines(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	builder := builderFixture()
+	plan := planFixture(schema, builder)
+	operation := operationFixture(operatorv1alpha1.OperationApply)
+	job, err := builder.Build(schema, operation, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 600 {
+		t.Fatalf("Job activeDeadlineSeconds = %#v, want 600", job.Spec.ActiveDeadlineSeconds)
+	}
+	if job.Spec.Template.Spec.ActiveDeadlineSeconds == nil || *job.Spec.Template.Spec.ActiveDeadlineSeconds != 600 {
+		t.Fatalf("orphan-safe Pod activeDeadlineSeconds = %#v, want 600", job.Spec.Template.Spec.ActiveDeadlineSeconds)
+	}
+	wantNotAfter := operation.StartedAt.Add(600 * time.Second).UTC().Format(time.RFC3339Nano)
+	if got := requireEnv(t, job, runner.EnvDispatchNotAfter).Value; got != wantNotAfter {
+		t.Fatalf("dispatch deadline = %q, want %q", got, wantNotAfter)
+	}
+	if operation.LeaseDurationSeconds <= int32(*job.Spec.Template.Spec.ActiveDeadlineSeconds) {
+		t.Fatalf("Lease duration %d does not cover Pod deadline %d plus grace", operation.LeaseDurationSeconds, *job.Spec.Template.Spec.ActiveDeadlineSeconds)
 	}
 }
 
@@ -505,7 +716,8 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "orders", UID: types.UID("schema-uid")},
 		Spec: operatorv1alpha1.PtahSchemaSpec{
 			Target: operatorv1alpha1.DatabaseTargetSpec{
-				Engine: operatorv1alpha1.DatabaseEnginePostgreSQL,
+				Engine:          operatorv1alpha1.DatabaseEnginePostgreSQL,
+				CoordinationKey: "prod/team-a/orders-primary",
 				URLFrom: corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "database"},
 					Key:                  "url",
@@ -544,7 +756,6 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 			}},
 			Policy: operatorv1alpha1.ReconciliationPolicy{
 				DriftSeverity:   "destructive",
-				Ignore:          []string{"audit.*", "table,with-comma"},
 				Exclude:         []string{"archive.*", "column,with-comma"},
 				LockTimeout:     metav1.Duration{Duration: 12 * time.Second},
 				TransactionMode: "all",
@@ -559,14 +770,18 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 		},
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			Source: operatorv1alpha1.SchemaSourceStatus{
-				ResolvedReference: "oci://registry.example/acme/orders@" + artifactDigest,
-				Digest:            artifactDigest,
-				ArtifactType:      dataplane.SchemaArtifactType,
-				Verified:          true,
+				RequestedReference:       "oci://registry.example/acme/orders:stable",
+				ResolvedReference:        "oci://registry.example/acme/orders@" + artifactDigest,
+				Digest:                   artifactDigest,
+				ArtifactType:             dataplane.SchemaArtifactType,
+				Verified:                 true,
+				VerificationPolicyUID:    "verification-policy-uid",
+				VerificationPolicyDigest: digest('5'),
 			},
 			Target: operatorv1alpha1.TargetStatus{
-				IdentityDigest:           digest('b'),
-				ObservedStateFingerprint: digest('c'),
+				CoordinationDigest: testCoordinationDigest(),
+				IdentityDigest:     digest('b'),
+				DriftReportDigest:  digest('c'),
 			},
 		},
 	}
@@ -581,12 +796,56 @@ func builderFixture() Builder {
 }
 
 func operationFixture(operation operatorv1alpha1.OperationType) operatorv1alpha1.ActiveOperationStatus {
-	return operatorv1alpha1.ActiveOperationStatus{
+	schema := schemaFixture()
+	active := operatorv1alpha1.ActiveOperationStatus{
 		Type:             operation,
 		ID:               "operation-01",
 		InputFingerprint: digest('f'),
+		StartedAt:        metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)),
 		Attempt:          1,
 	}
+	if operation == operatorv1alpha1.OperationVerify {
+		active.VerificationPolicyUID = schema.Status.Source.VerificationPolicyUID
+		active.VerificationPolicyDigest = schema.Status.Source.VerificationPolicyDigest
+	}
+	if operation == operatorv1alpha1.OperationObserve || operation == operatorv1alpha1.OperationPlan {
+		active.CoordinationDigest = schema.Status.Target.CoordinationDigest
+		active.TargetIdentityDigest = schema.Status.Target.IdentityDigest
+		active.Target = &operatorv1alpha1.DatabaseTargetBinding{
+			Engine:  schema.Spec.Target.Engine,
+			URLFrom: *schema.Spec.Target.URLFrom.DeepCopy(),
+		}
+		active.Source = &operatorv1alpha1.OCIArtifactAccessBinding{
+			ResolvedReference: schema.Status.Source.ResolvedReference,
+			Digest:            schema.Status.Source.Digest,
+			RegistryAuthFrom:  schema.Spec.Desired.RegistryAuthFrom.DeepCopy(),
+		}
+		schema.Spec.Desired.Transport.DeepCopyInto(&active.Source.Transport)
+		active.ObservationExclude = append([]string(nil), schema.Spec.Policy.Exclude...)
+		active.ObservationSeverity = schema.Spec.Policy.DriftSeverity
+		active.ObservationDev = schema.Spec.Dev.DeepCopy()
+		active.ObservationConnectTimeout = schema.Spec.Execution.ConnectTimeout
+		active.ObservationLockTimeout = schema.Spec.Policy.LockTimeout
+		if operation == operatorv1alpha1.OperationPlan {
+			active.LeaseDurationSeconds = 660
+		}
+	}
+	if operation == operatorv1alpha1.OperationApply {
+		active.CoordinationDigest = testCoordinationDigest()
+		active.TargetIdentityDigest = digest('b')
+		active.Target = &operatorv1alpha1.DatabaseTargetBinding{
+			Engine: operatorv1alpha1.DatabaseEnginePostgreSQL,
+			URLFrom: corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: "database"}, Key: "url",
+			},
+		}
+		active.LeaseDurationSeconds = 660
+		dispatchNotAfter := metav1.NewTime(active.StartedAt.Add(600 * time.Second))
+		active.DispatchNotAfter = &dispatchNotAfter
+		active.ExecutionNotAfter = dispatchNotAfter.DeepCopy()
+		active.TerminationGracePeriodSeconds = 30
+	}
+	return active
 }
 
 func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operatorv1alpha1.PtahSchemaPlan {
@@ -604,10 +863,12 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 			ContentDigest:            digest('2'),
 			Size:                     9,
 			ArtifactDigest:           schema.Status.Source.Digest,
+			CoordinationDigest:       schema.Status.Target.CoordinationDigest,
 			TargetIdentityDigest:     schema.Status.Target.IdentityDigest,
-			ActualStateFingerprint:   schema.Status.Target.ObservedStateFingerprint,
+			ActualStateFingerprint:   digest('c'),
 			DesiredStateFingerprint:  digest('3'),
 			PolicyFingerprint:        digest('4'),
+			VerificationPolicyUID:    schema.Status.Source.VerificationPolicyUID,
 			VerificationPolicyDigest: digest('5'),
 			PtahVersion:              builder.PtahVersion,
 			ExecutorImage:            builder.ExecutorImage,
@@ -640,10 +901,12 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 		Fingerprint:              plan.Spec.Fingerprint,
 		ContentDigest:            plan.Spec.ContentDigest,
 		ArtifactDigest:           plan.Spec.ArtifactDigest,
+		CoordinationDigest:       plan.Spec.CoordinationDigest,
 		TargetIdentityDigest:     plan.Spec.TargetIdentityDigest,
 		ActualStateFingerprint:   plan.Spec.ActualStateFingerprint,
 		DesiredStateFingerprint:  plan.Spec.DesiredStateFingerprint,
 		PolicyFingerprint:        plan.Spec.PolicyFingerprint,
+		VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
 		VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
 		PtahVersion:              plan.Spec.PtahVersion,
 		ExecutorImage:            plan.Spec.ExecutorImage,
@@ -660,6 +923,14 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 }
 
 func digest(character byte) string { return "sha256:" + strings.Repeat(string(character), 64) }
+
+func testCoordinationDigest() string {
+	digest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/team-a/orders-primary")
+	if err != nil {
+		panic(err)
+	}
+	return digest
+}
 
 func envMap(job *batchv1.Job) map[string]corev1.EnvVar {
 	result := make(map[string]corev1.EnvVar)

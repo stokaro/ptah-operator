@@ -35,8 +35,10 @@ app.kubernetes.io/component: controller
 {{- define "ptah-operator.managerImage" -}}
 {{- if .Values.image.digest -}}
 {{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
-{{- else -}}
+{{- else if .Values.image.allowMutableTag -}}
 {{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
+{{- else -}}
+{{- fail "image.digest must pin the manager with sha256:<64 lowercase hex>; image.allowMutableTag is test-only" -}}
 {{- end -}}
 {{- end -}}
 

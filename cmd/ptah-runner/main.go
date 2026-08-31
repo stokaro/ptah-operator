@@ -19,6 +19,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	flags.SetOutput(stderr)
 	ptahBinary := flags.String("ptah-binary", "ptah", "path to the Ptah executable")
 	maxResultBytes := flags.Int64("max-result-bytes", runner.DefaultMaxResultBytes, "maximum retained bytes for each child output stream")
+	maxPlanBytes := flags.Int64("max-plan-bytes", runner.DefaultMaxPlanBytes, "maximum complete executable plan bytes")
 	operationFlag := flags.String("operation", "", "operation: resolve, verify, observe, plan, or apply")
 	installTo := flags.String("install-to", "", "copy this executable to the fixed Job runner path")
 	if err := flags.Parse(arguments); err != nil {
@@ -56,11 +57,24 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 		_, _ = fmt.Fprintln(stderr, "ptah-runner: max-result-bytes must be positive")
 		return 2
 	}
+	if *maxPlanBytes <= 0 {
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: max-plan-bytes must be positive")
+		return 2
+	}
+	if *maxResultBytes > runner.DefaultMaxResultBytes || *maxPlanBytes > runner.DefaultMaxPlanBytes {
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: byte limits exceed the supported execution contract")
+		return 2
+	}
+	if (operation == runner.OperationPlan || operation == runner.OperationApply) && *maxPlanBytes > *maxResultBytes {
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: max-plan-bytes must not exceed max-result-bytes")
+		return 2
+	}
 
 	result := runner.Run(ctx, runner.Config{
 		Operation:      operation,
 		PtahBinary:     *ptahBinary,
 		MaxResultBytes: *maxResultBytes,
+		MaxPlanBytes:   *maxPlanBytes,
 		Environment:    environment,
 		Diagnostics:    stderr,
 	})

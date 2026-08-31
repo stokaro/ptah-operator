@@ -3,7 +3,9 @@ package planstore
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -16,6 +18,7 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
 func TestPublishAndLoadRoundTrip(t *testing.T) {
@@ -37,6 +40,52 @@ func TestPublishAndLoadRoundTrip(t *testing.T) {
 	}
 	if len(published.Spec.Chunks) < 2 {
 		t.Fatal("test plan was not chunked")
+	}
+}
+
+func TestExecutablePlanSizeBoundary(t *testing.T) {
+	// Keep this serial: publishing the exact supported limit intentionally
+	// retains multiple full-size copies while fake API objects are verified.
+	content := bytes.Repeat([]byte("<"), MaxPlanBytes-1)
+	content = append(content, '\n')
+	schema, desired, chunks := fixture(t, content)
+	if len(chunks) != MaxChunks {
+		t.Fatalf("exact-limit chunks = %d, want %d", len(chunks), MaxChunks)
+	}
+	store := fakeStore(t, schema)
+	published, err := store.Publish(context.Background(), desired, chunks)
+	if err != nil {
+		t.Fatalf("Publish(exact limit) error = %v", err)
+	}
+	loaded, err := store.Load(context.Background(), published)
+	if err != nil {
+		t.Fatalf("Load(exact limit) error = %v", err)
+	}
+	if !bytes.Equal(loaded, content) {
+		t.Fatal("Load(exact limit) changed plan bytes")
+	}
+
+	oversized := append(append([]byte(nil), content...), 'x')
+	if _, _, err := Prepare(schema, desired.Spec, oversized); err == nil || !strings.Contains(err.Error(), "maximum") {
+		t.Fatalf("Prepare(limit+1) error = %v, want maximum-size refusal", err)
+	}
+}
+
+func TestChunkLeavesKubernetesBase64TransportHeadroom(t *testing.T) {
+	t.Parallel()
+
+	_, plan, _ := fixture(t, []byte("small plan"))
+	plan.UID = "plan-uid"
+	ref := plan.Spec.Chunks[0]
+	ref.Size = int32(ChunkBytes)
+	chunk := bytes.Repeat([]byte{0xff}, ChunkBytes)
+	ref.Digest = fingerprint.DigestBytes(chunk)
+	encoded, err := json.Marshal(desiredChunk(plan, ref, chunk))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) >= 1<<20 {
+		t.Fatalf("JSON/base64 encoded maximum chunk = %d bytes, want metadata headroom below 1 MiB", len(encoded))
 	}
 }
 
@@ -85,19 +134,25 @@ func TestLoadRejectsReplacedChunk(t *testing.T) {
 func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaPlan, [][]byte) {
 	t.Helper()
 	schema := &operatorv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "app", UID: "schema-uid"}}
+	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest("PostgreSQL", "prod/team-a/app")
+	if err != nil {
+		t.Fatal(err)
+	}
 	spec := operatorv1alpha1.PtahSchemaPlanSpec{
 		ContractVersion:          1,
 		SchemaRef:                operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
 		ArtifactDigest:           "sha256:artifact",
+		CoordinationDigest:       coordinationDigest,
 		TargetIdentityDigest:     "sha256:target",
 		ActualStateFingerprint:   "sha256:actual",
 		DesiredStateFingerprint:  "sha256:desired",
 		PolicyFingerprint:        "sha256:policy",
+		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: "sha256:verification",
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.invalid/ptah@sha256:executor",
 		RunnerImage:              "example.invalid/operator@sha256:runner",
-		RunnerProtocolVersion:    1,
+		RunnerProtocolVersion:    int32(runner.ProtocolVersion),
 		Dialect:                  "postgresql",
 		StatementCount:           1,
 	}
@@ -107,17 +162,18 @@ func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *opera
 		SchemaUID:                string(schema.UID),
 		PlanContentDigest:        spec.ContentDigest,
 		ArtifactDigest:           spec.ArtifactDigest,
+		CoordinationDigest:       spec.CoordinationDigest,
 		TargetIdentityDigest:     spec.TargetIdentityDigest,
 		ActualStateFingerprint:   spec.ActualStateFingerprint,
 		DesiredStateFingerprint:  spec.DesiredStateFingerprint,
 		PolicyFingerprint:        spec.PolicyFingerprint,
+		VerificationPolicyUID:    string(spec.VerificationPolicyUID),
 		VerificationPolicyDigest: spec.VerificationPolicyDigest,
 		PtahVersion:              spec.PtahVersion,
 		ExecutorImage:            spec.ExecutorImage,
 		RunnerImage:              spec.RunnerImage,
 		RunnerProtocolVersion:    spec.RunnerProtocolVersion,
 	}
-	var err error
 	spec.Fingerprint, err = binding.Fingerprint()
 	if err != nil {
 		t.Fatal(err)

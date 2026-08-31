@@ -73,3 +73,46 @@ func TestRedactorRemovesStandaloneAndEscapedCredentialsFromDatabaseURLs(t *testi
 		}
 	}
 }
+
+func TestRedactorRemovesMySQLNetworkDSNCredentials(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		databaseURL string
+		secrets     []string
+	}{
+		{
+			name:        "TCP",
+			databaseURL: "mysql://app:tcp%40secret%2Fvalue@tcp(db.example:3306)/app?password=query%40secret",
+			secrets:     []string{"tcp@secret/value", "tcp%40secret%2Fvalue", "query@secret", "query%40secret"},
+		},
+		{
+			name:        "unix socket",
+			databaseURL: "app:unix%20secret@unix(/var/run/mysql.sock)/app?token=query%2Ftoken",
+			secrets:     []string{"unix secret", "unix%20secret", "unix+secret", "query/token", "query%2Ftoken"},
+		},
+		{
+			name:        "raw driver password delimiters",
+			databaseURL: "app:p?%@/)ss@tcp(db.example:3306)/app?parseTime=true",
+			secrets:     []string{"p?%@/)ss", "p%3F%25%40%2F%29ss"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			redactor := NewRedactor([]string{EnvDatabaseURL + "=" + test.databaseURL})
+			input := strings.Join(append([]string{test.databaseURL}, test.secrets...), " ")
+			got := redactor.Redact(input)
+			for _, secret := range append(test.secrets, test.databaseURL) {
+				if strings.Contains(got, secret) {
+					t.Fatalf("Redact() retained MySQL credential representation %q in %q", secret, got)
+				}
+			}
+			if !strings.Contains(got, RedactionMarker) {
+				t.Fatalf("Redact() = %q, want redaction marker", got)
+			}
+		})
+	}
+}

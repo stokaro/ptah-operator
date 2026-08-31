@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
@@ -35,10 +36,27 @@ func TestRunUsesConfiguredBinaryAndResultLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseResultFor() error = %v, stdout = %q", err, stdout.String())
 	}
-	if result.Stdout != "oci res" {
-		t.Fatalf("stdout payload = %q, want configured 7-byte capture", result.Stdout)
+	if result.Stdout != "" {
+		t.Fatalf("stdout payload = %q, want no native Resolve output", result.Stdout)
 	}
 	if result.Error == nil || result.Error.Code != "output_truncated" || result.Truncation == nil || !result.Truncation.Stdout {
 		t.Fatalf("result = %#v, want output truncation metadata", result)
+	}
+}
+
+func TestRunRejectsIncoherentPlanFlags(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := run(
+		context.Background(),
+		[]string{"--max-result-bytes", "7", "--max-plan-bytes", "8", "--operation", "plan"},
+		&stdout,
+		&stderr,
+		nil,
+	)
+	if exitCode != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), "must not exceed") {
+		t.Fatalf("run() = exit %d, stdout %q, stderr %q", exitCode, stdout.String(), stderr.String())
 	}
 }

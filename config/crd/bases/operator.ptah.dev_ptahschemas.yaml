@@ -605,10 +605,20 @@ spec:
                     type: object
                   connectTimeout:
                     default: 10s
+                    maxLength: 32
                     type: string
+                    x-kubernetes-validations:
+                    - message: connectTimeout must be between 1s and 10m
+                      rule: duration(self) >= duration('1s') && duration(self) <=
+                        duration('10m')
                   failureRetryInterval:
                     default: 30s
+                    maxLength: 32
                     type: string
+                    x-kubernetes-validations:
+                    - message: failureRetryInterval must be between 5s and 1h
+                      rule: duration(self) >= duration('5s') && duration(self) <=
+                        duration('1h')
                   imagePullSecrets:
                     items:
                       properties:
@@ -680,7 +690,11 @@ spec:
                 type: object
               interval:
                 default: 10m
+                maxLength: 32
                 type: string
+                x-kubernetes-validations:
+                - message: interval must be between 10s and 24h
+                  rule: duration(self) >= duration('10s') && duration(self) <= duration('24h')
               policy:
                 properties:
                   allowDestructive:
@@ -701,17 +715,21 @@ spec:
                     type: string
                   exclude:
                     items:
+                      maxLength: 256
+                      minLength: 1
+                      pattern: ^[^\p{Z}\x00-\x20\x7f\x{0085}](?:[^\x00-\x1f\x7f]*[^\p{Z}\x00-\x20\x7f\x{0085}])?$
                       type: string
                     maxItems: 128
                     type: array
-                  ignore:
-                    items:
-                      type: string
-                    maxItems: 128
-                    type: array
+                    x-kubernetes-list-type: set
                   lockTimeout:
                     default: 30s
+                    maxLength: 32
                     type: string
+                    x-kubernetes-validations:
+                    - message: lockTimeout must be between 1s and 10m
+                      rule: duration(self) >= duration('1s') && duration(self) <=
+                        duration('10m')
                   transactionMode:
                     default: file
                     enum:
@@ -725,6 +743,11 @@ spec:
                 type: boolean
               target:
                 properties:
+                  coordinationKey:
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$
+                    type: string
                   engine:
                     enum:
                     - PostgreSQL
@@ -744,6 +767,7 @@ spec:
                     type: object
                     x-kubernetes-map-type: atomic
                 required:
+                - coordinationKey
                 - engine
                 - urlFrom
                 type: object
@@ -751,6 +775,29 @@ spec:
             - desired
             - target
             type: object
+            x-kubernetes-validations:
+            - message: execution.connectTimeout must not exceed execution.activeDeadlineSeconds
+              rule: '!has(self.execution) || !has(self.execution.connectTimeout) ||
+                !has(self.execution.activeDeadlineSeconds) || duration(self.execution.connectTimeout).getMilliseconds()
+                <= self.execution.activeDeadlineSeconds * 1000'
+            - message: policy.lockTimeout must not exceed execution.activeDeadlineSeconds
+              rule: '!has(self.policy) || !has(self.policy.lockTimeout) || !has(self.execution)
+                || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds()
+                <= self.execution.activeDeadlineSeconds * 1000'
+            - message: target.urlFrom must name a required Secret key
+              rule: self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size()
+                > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)
+            - message: desired.verificationPolicyFrom must name a required ConfigMap
+                key
+              rule: self.desired.verificationPolicyFrom.name.size() > 0 && self.desired.verificationPolicyFrom.key.size()
+                > 0 && (!has(self.desired.verificationPolicyFrom.optional) || !self.desired.verificationPolicyFrom.optional)
+            - message: dev.urlFrom must name a required Secret key
+              rule: '!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size()
+                > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))'
+            - message: desired.transport.caFrom must name a required ConfigMap key
+              rule: '!has(self.desired.transport.caFrom) || (self.desired.transport.caFrom.name.size()
+                > 0 && self.desired.transport.caFrom.key.size() > 0 && (!has(self.desired.transport.caFrom.optional)
+                || !self.desired.transport.caFrom.optional))'
           status:
             properties:
               activeOperation:
@@ -758,6 +805,16 @@ spec:
                   attempt:
                     format: int32
                     type: integer
+                  coordinationDigest:
+                    type: string
+                  dispatchNotAfter:
+                    format: date-time
+                    type: string
+                  dispatchStarted:
+                    type: boolean
+                  executionNotAfter:
+                    format: date-time
+                    type: string
                   id:
                     type: string
                   inputFingerprint:
@@ -766,9 +823,151 @@ spec:
                     type: string
                   jobUID:
                     type: string
+                  leaseContinuityLost:
+                    type: boolean
+                  leaseDurationSeconds:
+                    format: int32
+                    maximum: 86460
+                    minimum: 5
+                    type: integer
+                  leaseEpoch:
+                    type: string
+                  observationConnectTimeout:
+                    type: string
+                  observationDev:
+                    properties:
+                      urlFrom:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            default: ""
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - urlFrom
+                    type: object
+                  observationExclude:
+                    items:
+                      type: string
+                    type: array
+                  observationLockTimeout:
+                    type: string
+                  observationSeverity:
+                    type: string
+                  source:
+                    properties:
+                      digest:
+                        type: string
+                      registryAuthFrom:
+                        properties:
+                          dockerConfigJSONKey:
+                            default: .dockerconfigjson
+                            type: string
+                          mode:
+                            default: Environment
+                            enum:
+                            - Environment
+                            - DockerConfigJSON
+                            type: string
+                          name:
+                            type: string
+                          passwordKey:
+                            default: password
+                            type: string
+                          registryKey:
+                            default: registry
+                            type: string
+                          tokenKey:
+                            default: token
+                            type: string
+                          usernameKey:
+                            default: username
+                            type: string
+                        required:
+                        - name
+                        type: object
+                        x-kubernetes-validations:
+                        - message: dockerConfigJSONKey is required in DockerConfigJSON
+                            mode
+                          rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
+                      resolvedReference:
+                        type: string
+                      transport:
+                        properties:
+                          caFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          clientCertificateFrom:
+                            properties:
+                              certificateKey:
+                                default: tls.crt
+                                type: string
+                              name:
+                                type: string
+                              privateKeyKey:
+                                default: tls.key
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          plainHTTP:
+                            default: false
+                            type: boolean
+                        type: object
+                    required:
+                    - digest
+                    - resolvedReference
+                    type: object
                   startedAt:
                     format: date-time
                     type: string
+                  target:
+                    properties:
+                      engine:
+                        enum:
+                        - PostgreSQL
+                        - MySQL
+                        type: string
+                      urlFrom:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            default: ""
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - engine
+                    - urlFrom
+                    type: object
+                  targetIdentityDigest:
+                    type: string
+                  terminationGracePeriodSeconds:
+                    format: int64
+                    maximum: 300
+                    minimum: 1
+                    type: integer
                   type:
                     enum:
                     - Resolve
@@ -776,6 +975,10 @@ spec:
                     - Observe
                     - Plan
                     - Apply
+                    type: string
+                  verificationPolicyDigest:
+                    type: string
+                  verificationPolicyUID:
                     type: string
                 required:
                 - attempt
@@ -791,6 +994,8 @@ spec:
                     type: string
                   completedAt:
                     format: date-time
+                    type: string
+                  coordinationDigest:
                     type: string
                   executorImage:
                     type: string
@@ -808,6 +1013,7 @@ spec:
                 required:
                 - artifactDigest
                 - completedAt
+                - coordinationDigest
                 - executorImage
                 - planFingerprint
                 - ptahVersion
@@ -863,6 +1069,298 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              pendingLockRelease:
+                properties:
+                  coordinationDigest:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  leaseDurationSeconds:
+                    format: int32
+                    maximum: 86460
+                    minimum: 5
+                    type: integer
+                  leaseEpoch:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                  operationID:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                required:
+                - coordinationDigest
+                - leaseDurationSeconds
+                - leaseEpoch
+                - operationID
+                type: object
+              pendingObservation:
+                properties:
+                  applyGeneration:
+                    format: int64
+                    type: integer
+                  applyJobName:
+                    maxLength: 253
+                    type: string
+                  applyJobUID:
+                    type: string
+                  applyOperationID:
+                    type: string
+                  applyPodCount:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  applyPodUIDs:
+                    items:
+                      type: string
+                    maxItems: 8
+                    type: array
+                  connectTimeout:
+                    type: string
+                  coordinationDigest:
+                    type: string
+                  dev:
+                    properties:
+                      urlFrom:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            default: ""
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - urlFrom
+                    type: object
+                  driftSeverity:
+                    type: string
+                  exclude:
+                    items:
+                      type: string
+                    type: array
+                  leaseDurationSeconds:
+                    format: int32
+                    maximum: 86460
+                    minimum: 5
+                    type: integer
+                  leaseEpoch:
+                    type: string
+                  lockTimeout:
+                    type: string
+                  observeAfter:
+                    format: date-time
+                    type: string
+                  outcome:
+                    enum:
+                    - ApplySucceeded
+                    - OutcomeUnknown
+                    type: string
+                  plan:
+                    properties:
+                      actualStateFingerprint:
+                        type: string
+                      approval:
+                        properties:
+                          approvedAt:
+                            format: date-time
+                            type: string
+                          approver:
+                            properties:
+                              groups:
+                                items:
+                                  type: string
+                                maxItems: 64
+                                type: array
+                              uid:
+                                type: string
+                              username:
+                                type: string
+                            required:
+                            - username
+                            type: object
+                          name:
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - approvedAt
+                        - approver
+                        - name
+                        - uid
+                        type: object
+                      artifactDigest:
+                        type: string
+                      contentDigest:
+                        type: string
+                      coordinationDigest:
+                        type: string
+                      createdAt:
+                        format: date-time
+                        type: string
+                      desiredStateFingerprint:
+                        type: string
+                      destructive:
+                        type: boolean
+                      executorImage:
+                        type: string
+                      fingerprint:
+                        type: string
+                      name:
+                        type: string
+                      policyFingerprint:
+                        type: string
+                      ptahVersion:
+                        type: string
+                      runnerImage:
+                        type: string
+                      runnerProtocolVersion:
+                        format: int32
+                        type: integer
+                      statementCount:
+                        format: int32
+                        type: integer
+                      targetIdentityDigest:
+                        type: string
+                      uid:
+                        type: string
+                      verificationPolicyDigest:
+                        type: string
+                      verificationPolicyUID:
+                        type: string
+                    required:
+                    - actualStateFingerprint
+                    - artifactDigest
+                    - contentDigest
+                    - coordinationDigest
+                    - createdAt
+                    - desiredStateFingerprint
+                    - destructive
+                    - executorImage
+                    - fingerprint
+                    - name
+                    - policyFingerprint
+                    - ptahVersion
+                    - runnerImage
+                    - runnerProtocolVersion
+                    - statementCount
+                    - targetIdentityDigest
+                    - uid
+                    - verificationPolicyDigest
+                    - verificationPolicyUID
+                    type: object
+                  planRequired:
+                    type: boolean
+                  source:
+                    properties:
+                      digest:
+                        type: string
+                      registryAuthFrom:
+                        properties:
+                          dockerConfigJSONKey:
+                            default: .dockerconfigjson
+                            type: string
+                          mode:
+                            default: Environment
+                            enum:
+                            - Environment
+                            - DockerConfigJSON
+                            type: string
+                          name:
+                            type: string
+                          passwordKey:
+                            default: password
+                            type: string
+                          registryKey:
+                            default: registry
+                            type: string
+                          tokenKey:
+                            default: token
+                            type: string
+                          usernameKey:
+                            default: username
+                            type: string
+                        required:
+                        - name
+                        type: object
+                        x-kubernetes-validations:
+                        - message: dockerConfigJSONKey is required in DockerConfigJSON
+                            mode
+                          rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
+                      resolvedReference:
+                        type: string
+                      transport:
+                        properties:
+                          caFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          clientCertificateFrom:
+                            properties:
+                              certificateKey:
+                                default: tls.crt
+                                type: string
+                              name:
+                                type: string
+                              privateKeyKey:
+                                default: tls.key
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          plainHTTP:
+                            default: false
+                            type: boolean
+                        type: object
+                    required:
+                    - digest
+                    - resolvedReference
+                    type: object
+                  target:
+                    properties:
+                      engine:
+                        enum:
+                        - PostgreSQL
+                        - MySQL
+                        type: string
+                      urlFrom:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            default: ""
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - engine
+                    - urlFrom
+                    type: object
+                required:
+                - applyGeneration
+                - applyOperationID
+                - coordinationDigest
+                - leaseDurationSeconds
+                - outcome
+                - plan
+                - source
+                - target
+                type: object
               phase:
                 enum:
                 - Pending
@@ -916,6 +1414,8 @@ spec:
                     type: string
                   contentDigest:
                     type: string
+                  coordinationDigest:
+                    type: string
                   createdAt:
                     format: date-time
                     type: string
@@ -947,10 +1447,13 @@ spec:
                     type: string
                   verificationPolicyDigest:
                     type: string
+                  verificationPolicyUID:
+                    type: string
                 required:
                 - actualStateFingerprint
                 - artifactDigest
                 - contentDigest
+                - coordinationDigest
                 - createdAt
                 - desiredStateFingerprint
                 - destructive
@@ -965,6 +1468,7 @@ spec:
                 - targetIdentityDigest
                 - uid
                 - verificationPolicyDigest
+                - verificationPolicyUID
                 type: object
               source:
                 properties:
@@ -986,6 +1490,8 @@ spec:
                     type: integer
                   verificationPolicyDigest:
                     type: string
+                  verificationPolicyUID:
+                    type: string
                   verified:
                     type: boolean
                   verifiedAt:
@@ -994,9 +1500,13 @@ spec:
                 type: object
               target:
                 properties:
+                  coordinationDigest:
+                    type: string
                   driftFindingCount:
                     format: int32
                     type: integer
+                  driftReportDigest:
+                    type: string
                   engine:
                     enum:
                     - PostgreSQL
@@ -1009,10 +1519,10 @@ spec:
                   lastObservedAt:
                     format: date-time
                     type: string
-                  observedStateFingerprint:
-                    type: string
                 type: object
             type: object
+        required:
+        - spec
         type: object
     served: true
     storage: true

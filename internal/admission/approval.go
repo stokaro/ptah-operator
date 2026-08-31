@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/policy"
 )
 
@@ -87,7 +89,7 @@ func (h *ApprovalHandler) Handle(ctx context.Context, req cradmission.Request) c
 		return cradmission.PatchResponseFromRaw(req.Object.Raw, mutated)
 	}
 
-	if err := identityMatchesRequest(approval.Spec, req.UserInfo, req.UID); err != nil {
+	if err := identityMatchesRequest(approval.Spec, req.UserInfo); err != nil {
 		return cradmission.Denied(err.Error())
 	}
 	if err := h.validateBinding(ctx, approval); err != nil {
@@ -135,6 +137,7 @@ func (h *ApprovalHandler) hydrateDerivedBindings(
 		want  string
 	}{
 		{"artifact digest", &approval.Spec.ArtifactDigest, plan.Spec.ArtifactDigest},
+		{"coordination digest", &approval.Spec.CoordinationDigest, plan.Spec.CoordinationDigest},
 		{"target identity digest", &approval.Spec.TargetIdentityDigest, plan.Spec.TargetIdentityDigest},
 		{"actual state fingerprint", &approval.Spec.ActualStateFingerprint, plan.Spec.ActualStateFingerprint},
 		{"desired state fingerprint", &approval.Spec.DesiredStateFingerprint, plan.Spec.DesiredStateFingerprint},
@@ -144,6 +147,10 @@ func (h *ApprovalHandler) hydrateDerivedBindings(
 		{"executor image", &approval.Spec.ExecutorImage, plan.Spec.ExecutorImage},
 		{"runner image", &approval.Spec.RunnerImage, plan.Spec.RunnerImage},
 	}
+	if approval.Spec.VerificationPolicyUID != "" && approval.Spec.VerificationPolicyUID != plan.Spec.VerificationPolicyUID {
+		return fmt.Errorf("approval verification policy UID conflicts with the immutable plan")
+	}
+	approval.Spec.VerificationPolicyUID = plan.Spec.VerificationPolicyUID
 	for _, binding := range bindings {
 		if *binding.value != "" && *binding.value != binding.want {
 			return fmt.Errorf("approval %s conflicts with the immutable plan", binding.name)
@@ -172,22 +179,23 @@ func (h *ApprovalHandler) stampIdentity(
 		Groups:   normalizedGroups(user.Groups),
 	}
 	approval.Spec.ApprovedAt = metav1.NewTime(clock.Now().UTC())
-	approval.Spec.AdmissionRequestUID = string(requestUID)
+	approval.Spec.MutationRequestUID = string(requestUID)
 }
 
 func identityMatchesRequest(
 	spec operatorv1alpha1.PtahSchemaApprovalSpec,
 	user authenticationv1.UserInfo,
-	requestUID types.UID,
 ) error {
 	if strings.TrimSpace(user.Username) == "" {
 		return fmt.Errorf("authenticated approval username is empty")
 	}
 	if spec.Approver.Username != strings.TrimSpace(user.Username) ||
 		spec.Approver.UID != strings.TrimSpace(user.UID) ||
-		!reflect.DeepEqual(spec.Approver.Groups, normalizedGroups(user.Groups)) ||
-		spec.AdmissionRequestUID != string(requestUID) {
+		!slices.Equal(spec.Approver.Groups, normalizedGroups(user.Groups)) {
 		return fmt.Errorf("reserved approver identity fields do not match the authenticated request")
+	}
+	if strings.TrimSpace(spec.MutationRequestUID) == "" {
+		return fmt.Errorf("approval identity was not stamped by the mutating admission webhook")
 	}
 	if spec.ApprovedAt.IsZero() {
 		return fmt.Errorf("approvedAt was not stamped by the admission webhook")
@@ -251,20 +259,40 @@ func (h *ApprovalHandler) validateBinding(
 		schema.Status.Plan.Fingerprint != plan.Spec.Fingerprint {
 		return fmt.Errorf("referenced plan is no longer current for the schema")
 	}
+	if schema.Status.Phase != operatorv1alpha1.PhaseAwaitingApproval {
+		return fmt.Errorf("referenced schema is not awaiting approval")
+	}
+	if !meta.IsStatusConditionTrue(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired) {
+		return fmt.Errorf("referenced schema does not currently require approval")
+	}
+	if schema.Status.ActiveOperation != nil {
+		return fmt.Errorf("referenced schema has an active operation")
+	}
+	if schema.Status.Plan.Approval != nil {
+		return fmt.Errorf("referenced plan already has a recorded approval")
+	}
 
 	if err := approvalMatchesPlan(approval.Spec, plan.Spec); err != nil {
 		return err
 	}
+	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(
+		string(schema.Spec.Target.Engine),
+		schema.Spec.Target.CoordinationKey,
+	)
+	if err != nil {
+		return fmt.Errorf("derive current database coordination digest: %w", err)
+	}
 	if schema.Status.Source.Digest != plan.Spec.ArtifactDigest ||
-		schema.Status.Target.IdentityDigest != plan.Spec.TargetIdentityDigest ||
-		schema.Status.Target.ObservedStateFingerprint != plan.Spec.ActualStateFingerprint {
+		coordinationDigest != plan.Spec.CoordinationDigest ||
+		schema.Status.Target.CoordinationDigest != plan.Spec.CoordinationDigest ||
+		schema.Status.Target.IdentityDigest != plan.Spec.TargetIdentityDigest {
 		return fmt.Errorf("schema source or target changed after the plan was generated")
 	}
-	policyDigest, err := policy.ConfigMapDigest(ctx, h.Reader, namespace, schema.Spec.Desired.VerificationPolicyFrom)
+	policyBinding, err := policy.ConfigMapBinding(ctx, h.Reader, namespace, schema.Spec.Desired.VerificationPolicyFrom)
 	if err != nil {
 		return err
 	}
-	if policyDigest != plan.Spec.VerificationPolicyDigest {
+	if policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
 		return fmt.Errorf("verification policy changed after the plan was generated")
 	}
 	return nil
@@ -281,6 +309,7 @@ func approvalMatchesPlan(
 	}{
 		{"plan fingerprint", approval.PlanFingerprint, plan.Fingerprint},
 		{"artifact digest", approval.ArtifactDigest, plan.ArtifactDigest},
+		{"coordination digest", approval.CoordinationDigest, plan.CoordinationDigest},
 		{"target identity digest", approval.TargetIdentityDigest, plan.TargetIdentityDigest},
 		{"actual state fingerprint", approval.ActualStateFingerprint, plan.ActualStateFingerprint},
 		{"desired state fingerprint", approval.DesiredStateFingerprint, plan.DesiredStateFingerprint},
@@ -289,6 +318,9 @@ func approvalMatchesPlan(
 		{"Ptah version", approval.PtahVersion, plan.PtahVersion},
 		{"executor image", approval.ExecutorImage, plan.ExecutorImage},
 		{"runner image", approval.RunnerImage, plan.RunnerImage},
+	}
+	if approval.VerificationPolicyUID == "" || approval.VerificationPolicyUID != plan.VerificationPolicyUID {
+		return fmt.Errorf("approval verification policy UID does not match the immutable plan")
 	}
 	for _, check := range checks {
 		if strings.TrimSpace(check.got) == "" || check.got != check.want {

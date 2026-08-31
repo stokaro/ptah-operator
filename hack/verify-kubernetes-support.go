@@ -230,7 +230,10 @@ func verifyWorkflow(path string) error {
 	required := []string{
 		"go run ./hack/verify-kubernetes-support.go -output=matrix",
 		"fromJSON(needs.support-matrix.outputs.matrix)",
-		"kind create cluster --name \"$cluster_name\" --image \"${{ matrix.node_image }}\"",
+		"DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}",
+		"KIND_NODE_IMAGE: ${{ matrix.node_image }}",
+		"K8S_VERSION: ${{ matrix.kubernetes_version }}",
+		"run: make e2e",
 	}
 	for _, marker := range required {
 		if !strings.Contains(workflow, marker) {
