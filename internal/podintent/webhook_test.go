@@ -234,6 +234,33 @@ func TestValidationHandlerAllowsExactJobTrackingFinalizerCleanupAfterOperationCl
 	}
 }
 
+func TestValidationHandlerAllowsFinalizerCleanupWithServerLifecycleMetadata(t *testing.T) {
+	t.Parallel()
+
+	handler, pod := validationHandlerFixture(t)
+	api := handler.Reader.(client.Client)
+	job := &batchv1.Job{}
+	if err := api.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: pod.OwnerReferences[0].Name}, job); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.Delete(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	original := pod.DeepCopy()
+	pod.Finalizers = nil
+	pod.ResourceVersion = "server-prepared-resource-version"
+	pod.Generation++
+	now := metav1.Now()
+	grace := int64(0)
+	pod.DeletionTimestamp = &now
+	pod.DeletionGracePeriodSeconds = &grace
+	pod.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "kube-controller-manager"}}
+	response := handler.Handle(context.Background(), podUpdateRequest(t, original, pod))
+	if !response.Allowed {
+		t.Fatalf("Handle() denied Job finalizer cleanup after server lifecycle preparation: %#v", response.Result)
+	}
+}
+
 func TestValidationHandlerRejectsFinalizerCleanupWithSpecMutation(t *testing.T) {
 	t.Parallel()
 

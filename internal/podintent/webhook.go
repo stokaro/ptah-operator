@@ -320,6 +320,17 @@ func exactJobTrackingFinalizerRemoval(oldPod, newPod *corev1.Pod, subresource st
 	oldCopy := oldPod.DeepCopy()
 	newCopy := newPod.DeepCopy()
 	oldCopy.Finalizers = append([]string(nil), wantFinalizers...)
+	// A finalizer patch is admitted after generic API machinery has prepared
+	// the candidate object. Resource bookkeeping and deletion lifecycle fields
+	// can therefore differ even though the Job controller changed only its
+	// tracking finalizer. Normalize only those server-owned fields; keep the
+	// complete Pod spec, status, labels, annotations, and ownership graph under
+	// exact comparison so cleanup cannot disguise an execution-intent change.
+	oldCopy.ResourceVersion = newCopy.ResourceVersion
+	oldCopy.Generation = newCopy.Generation
+	oldCopy.ManagedFields = newCopy.ManagedFields
+	oldCopy.DeletionTimestamp = newCopy.DeletionTimestamp
+	oldCopy.DeletionGracePeriodSeconds = newCopy.DeletionGracePeriodSeconds
 	return apiequality.Semantic.DeepEqual(oldCopy, newCopy)
 }
 

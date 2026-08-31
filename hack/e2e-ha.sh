@@ -278,11 +278,13 @@ assert_lease_identity "$lease_uid"
 
 k -n "$HA_TEST_NAMESPACE" delete ptahschema "$HA_SCHEMA" --wait=false >/dev/null
 k -n "$HA_TEST_NAMESPACE" delete job "$operation_job" \
-	--cascade=foreground --wait=true --timeout=90s >/dev/null
+	--cascade=background --wait=true --timeout=30s >/dev/null
+k -n "$HA_TEST_NAMESPACE" wait --for=delete pod \
+	-l "batch.kubernetes.io/job-name=${operation_job}" --timeout=60s
 remaining_operation_pods=$(k -n "$HA_TEST_NAMESPACE" get pods \
 	-l "batch.kubernetes.io/job-name=${operation_job}" -o name)
 [ -z "$remaining_operation_pods" ] ||
-	fail "foreground Job deletion left operation Pods: $remaining_operation_pods"
+	fail "background Job deletion left orphan operation Pods: $remaining_operation_pods"
 k -n "$HA_TEST_NAMESPACE" wait --for=delete ptahschema/"$HA_SCHEMA" --timeout=60s
 k delete namespace "$HA_TEST_NAMESPACE" --wait=true --timeout=120s >/dev/null
 

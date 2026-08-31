@@ -81,6 +81,13 @@ grep -F -- '--target operator' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 grep -F -- '--target fixture' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 grep -F 'the controller image contains the test-only OCI publisher' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 grep -F 'the isolated fixture image contains an operator binary' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
+for packaged_chart_marker in \
+	"go -C \"\$ROOT_DIR\" run ./hack/chartpackage" \
+	"helm show chart \"\$CHART_PACKAGE\"" \
+	"\"\$CHART_PACKAGE\" \\" \
+	'installing release-form chart'; do
+	grep -F -- "$packaged_chart_marker" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
+done
 grep -F 'LeaderElectionNamespace: targetLockNamespace' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
 grep -F 'ptah-operator.operator.ptah.dev' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
 for ha_marker in \
@@ -90,8 +97,9 @@ for ha_marker in \
 	'leader Pod failover did not increment leaseTransitions' \
 	'wait_for_admitted_operation_pod' \
 	'operator.ptah.dev/admission-snapshot-digest' \
-	'--cascade=foreground' \
-	'foreground Job deletion left operation Pods' \
+	'--cascade=background' \
+	'wait --for=delete pod' \
+	'background Job deletion left orphan operation Pods' \
 	'admitted post-failover operation'; do
 	grep -F -- "$ha_marker" "$ROOT_DIR/hack/e2e-ha.sh" >/dev/null
 done

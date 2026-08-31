@@ -64,7 +64,7 @@ is_pinned_image() {
 	printf '%s\n' "$1" | grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$'
 }
 
-for command_name in docker kind kubectl helm jq ssh git tar awk sed grep tr cut cksum mktemp date sleep curl htpasswd; do
+for command_name in docker kind kubectl helm jq ssh git go tar awk sed grep tr cut cksum mktemp date sleep curl htpasswd; do
 	require_command "$command_name"
 done
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
@@ -251,6 +251,7 @@ REGISTRY_NETRC_FILE=$WORK_DIR/registry.netrc
 REGISTRY_PASSWORD_FILE=$WORK_DIR/registry.password
 REGISTRY_CREDENTIALS_FILE=$WORK_DIR/registry-credentials.json
 IMAGE_AUDIT_ARCHIVE=$WORK_DIR/image-audit.tar
+CHART_PACKAGE_DIR=$WORK_DIR/chart-package
 CLUSTER_CREATED=0
 IMAGE_CREATED=0
 IMAGE_AUDIT_CONTAINER_CREATED=0
@@ -398,6 +399,30 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
+
+chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")
+[ -n "$chart_version" ] || fail "Helm chart version is missing"
+chart_source_epoch=$(git -C "$ROOT_DIR" show -s --format=%ct HEAD)
+printf '%s\n' "$chart_source_epoch" | grep -Eq '^[0-9]+$' ||
+	fail "source commit does not have a valid release epoch"
+printf 'e2e: reproducibly packaging Helm chart %s\n' "$chart_version"
+go -C "$ROOT_DIR" run ./hack/chartpackage \
+	-epoch "$chart_source_epoch" -destination "$CHART_PACKAGE_DIR"
+CHART_PACKAGE="$CHART_PACKAGE_DIR/ptah-operator-${chart_version}.tgz"
+[ -f "$CHART_PACKAGE" ] || fail "release chart package was not created: $CHART_PACKAGE"
+packaged_chart_metadata=$(helm show chart "$CHART_PACKAGE")
+packaged_chart_name=$(printf '%s\n' "$packaged_chart_metadata" |
+	awk '$1 == "name:" {print $2}')
+packaged_chart_version=$(printf '%s\n' "$packaged_chart_metadata" |
+	awk '$1 == "version:" {print $2}')
+[ "$packaged_chart_name" = ptah-operator ] ||
+	fail "packaged chart name is $packaged_chart_name, want ptah-operator"
+[ "$packaged_chart_version" = "$chart_version" ] ||
+	fail "packaged chart version is $packaged_chart_version, want $chart_version"
+CHART_PACKAGE_DIGEST=$(sha256 <"$CHART_PACKAGE")
+chart_asset=${CHART_PACKAGE##*/}
+printf 'e2e: installing release-form chart %s (%s)\n' \
+	"$chart_asset" "$CHART_PACKAGE_DIGEST"
 
 mkdir -p "$DOCKER_CLI_CONFIG"
 unset DOCKER_HOST
@@ -671,7 +696,7 @@ E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
 
 printf 'e2e: installing Helm release %s/%s\n' "$OPERATOR_NAMESPACE" "$HELM_RELEASE"
 helm --kubeconfig "$KUBECONFIG_FILE" upgrade --install "$HELM_RELEASE" \
-	"$ROOT_DIR/charts/ptah-operator" \
+	"$CHART_PACKAGE" \
 	--namespace "$OPERATOR_NAMESPACE" \
 	--create-namespace \
 	--wait \
