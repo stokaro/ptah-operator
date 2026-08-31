@@ -20,7 +20,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	k8svalidation "k8s.io/apimachinery/pkg/util/validation"
-	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -3319,8 +3318,8 @@ func validateJobIntent(actual, expected *batchv1.Job, schema *operatorv1alpha1.P
 
 	actualCopy := actual.DeepCopy()
 	expectedCopy := expected.DeepCopy()
-	clientgoscheme.Scheme.Default(actualCopy)
-	clientgoscheme.Scheme.Default(expectedCopy)
+	normalizeSupportedServiceAccountAlias(&actualCopy.Spec.Template.Spec)
+	normalizeSupportedServiceAccountAlias(&expectedCopy.Spec.Template.Spec)
 	if actualCopy.Spec.TTLSecondsAfterFinished != nil && *actualCopy.Spec.TTLSecondsAfterFinished == jobCleanupTTLSeconds {
 		actualCopy.Spec.TTLSecondsAfterFinished = expectedCopy.Spec.TTLSecondsAfterFinished
 	}
@@ -3334,6 +3333,19 @@ func validateJobIntent(actual, expected *batchv1.Job, schema *operatorv1alpha1.P
 		return fmt.Errorf("Job workload spec does not match the immutable operation intent")
 	}
 	return nil
+}
+
+func normalizeSupportedServiceAccountAlias(spec *corev1.PodSpec) {
+	if spec == nil {
+		return
+	}
+	serviceAccountName := spec.ServiceAccountName
+	if serviceAccountName == "" {
+		serviceAccountName = spec.DeprecatedServiceAccount
+	}
+	if spec.DeprecatedServiceAccount == serviceAccountName {
+		spec.DeprecatedServiceAccount = ""
+	}
 }
 
 func normalizeGeneratedJobSelector(job *batchv1.Job) error {

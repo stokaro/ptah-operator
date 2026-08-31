@@ -156,6 +156,50 @@ func TestBuildBindsPersistedAdmissionSnapshotDigest(t *testing.T) {
 	}
 }
 
+func TestBuildBindsStableKubernetesAPIDefaults(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	operation := operationFixture(operatorv1alpha1.OperationResolve)
+	job, err := builderFixture().Build(schema, operation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Spec.Parallelism == nil || *job.Spec.Parallelism != 1 ||
+		job.Spec.Completions == nil || *job.Spec.Completions != 1 {
+		t.Fatalf("Job cardinality defaults are not explicit: %#v", job.Spec)
+	}
+	if job.Spec.CompletionMode == nil || *job.Spec.CompletionMode != batchv1.NonIndexedCompletion ||
+		job.Spec.Suspend == nil || *job.Spec.Suspend ||
+		job.Spec.ManualSelector == nil || *job.Spec.ManualSelector {
+		t.Fatalf("Job execution defaults are not explicit: %#v", job.Spec)
+	}
+	if job.Spec.Template.Spec.DNSPolicy != corev1.DNSClusterFirst ||
+		job.Spec.Template.Spec.SchedulerName != corev1.DefaultSchedulerName {
+		t.Fatalf("PodSpec defaults are not explicit: %#v", job.Spec.Template.Spec)
+	}
+	containers := append([]corev1.Container(nil), job.Spec.Template.Spec.InitContainers...)
+	containers = append(containers, job.Spec.Template.Spec.Containers...)
+	for _, container := range containers {
+		if container.TerminationMessagePath != corev1.TerminationMessagePathDefault ||
+			container.TerminationMessagePolicy != corev1.TerminationMessageReadFile {
+			t.Fatalf("container %q defaults are not explicit: %#v", container.Name, container)
+		}
+	}
+	for _, volume := range job.Spec.Template.Spec.Volumes {
+		switch {
+		case volume.Secret != nil && volume.Secret.DefaultMode == nil:
+			t.Fatalf("Secret volume %q has no explicit default mode", volume.Name)
+		case volume.ConfigMap != nil && volume.ConfigMap.DefaultMode == nil:
+			t.Fatalf("ConfigMap volume %q has no explicit default mode", volume.Name)
+		case volume.Projected != nil && volume.Projected.DefaultMode == nil:
+			t.Fatalf("projected volume %q has no explicit default mode", volume.Name)
+		case volume.DownwardAPI != nil && volume.DownwardAPI.DefaultMode == nil:
+			t.Fatalf("downward API volume %q has no explicit default mode", volume.Name)
+		}
+	}
+}
+
 func TestBuildUsesOnlyBoundedMemoryBackedEmptyDirs(t *testing.T) {
 	t.Parallel()
 

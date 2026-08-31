@@ -276,6 +276,9 @@ operation_job=$(wait_for_admitted_operation_pod "$ha_schema_uid")
 assert_active_leader_metric "$second_holder"
 assert_lease_identity "$lease_uid"
 
+k -n "$HA_TEST_NAMESPACE" delete ptahschema "$HA_SCHEMA" --wait=false >/dev/null
+k -n "$HA_TEST_NAMESPACE" delete job "$operation_job" --wait=true --timeout=30s >/dev/null
+k -n "$HA_TEST_NAMESPACE" wait --for=delete ptahschema/"$HA_SCHEMA" --timeout=60s
 k delete namespace "$HA_TEST_NAMESPACE" --wait=true --timeout=120s >/dev/null
 
 printf '%s\n' 'e2e HA: PASS one Lease, exact RBAC, Pod failover, and admitted post-failover operation'

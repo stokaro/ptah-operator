@@ -320,7 +320,62 @@ func (b Builder) Build(
 			},
 		},
 	}
+	bindStableAPIDefaults(job)
 	return job, nil
+}
+
+// bindStableAPIDefaults makes the immutable Job intent independent of
+// kube-apiserver defaulting. These values are stable across the supported
+// Kubernetes window and are security-relevant inputs to intent comparison.
+func bindStableAPIDefaults(job *batchv1.Job) {
+	one := int32(1)
+	falseValue := false
+	completionMode := batchv1.NonIndexedCompletion
+	job.Spec.Parallelism = &one
+	job.Spec.Completions = &one
+	job.Spec.CompletionMode = &completionMode
+	job.Spec.Suspend = &falseValue
+	job.Spec.ManualSelector = &falseValue
+
+	template := &job.Spec.Template.Spec
+	if template.DNSPolicy == "" {
+		template.DNSPolicy = corev1.DNSClusterFirst
+	}
+	if template.SchedulerName == "" {
+		template.SchedulerName = corev1.DefaultSchedulerName
+	}
+	for i := range template.InitContainers {
+		bindContainerAPIDefaults(&template.InitContainers[i])
+	}
+	for i := range template.Containers {
+		bindContainerAPIDefaults(&template.Containers[i])
+	}
+	for i := range template.Volumes {
+		volume := &template.Volumes[i]
+		switch {
+		case volume.Secret != nil && volume.Secret.DefaultMode == nil:
+			mode := int32(corev1.SecretVolumeSourceDefaultMode)
+			volume.Secret.DefaultMode = &mode
+		case volume.ConfigMap != nil && volume.ConfigMap.DefaultMode == nil:
+			mode := int32(corev1.ConfigMapVolumeSourceDefaultMode)
+			volume.ConfigMap.DefaultMode = &mode
+		case volume.Projected != nil && volume.Projected.DefaultMode == nil:
+			mode := int32(corev1.ProjectedVolumeSourceDefaultMode)
+			volume.Projected.DefaultMode = &mode
+		case volume.DownwardAPI != nil && volume.DownwardAPI.DefaultMode == nil:
+			mode := int32(corev1.DownwardAPIVolumeSourceDefaultMode)
+			volume.DownwardAPI.DefaultMode = &mode
+		}
+	}
+}
+
+func bindContainerAPIDefaults(container *corev1.Container) {
+	if container.TerminationMessagePath == "" {
+		container.TerminationMessagePath = corev1.TerminationMessagePathDefault
+	}
+	if container.TerminationMessagePolicy == "" {
+		container.TerminationMessagePolicy = corev1.TerminationMessageReadFile
+	}
 }
 
 type buildInput struct {
