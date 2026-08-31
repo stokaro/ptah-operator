@@ -207,6 +207,7 @@ ROTATOR_UID_AFTER_RECREATE=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERAT
 
 recreate_deadline=$(($(date +%s) + 660))
 RECREATED_SECRET_JSON=
+recreate_ready=0
 while [ "$(date +%s)" -lt "$recreate_deadline" ]; do
 	if RECREATED_SECRET_JSON=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 		get secret "$SECRET_NAME" -o json 2>/dev/null); then
@@ -222,13 +223,14 @@ while [ "$(date +%s)" -lt "$recreate_deadline" ]; do
 				.metadata.labels == {($label): "true"} and
 				(.data | keys | sort) == ["ca.crt", "ca.key", "tls.crt", "tls.key"]
 			' >/dev/null; then
+			recreate_ready=1
 			break
 		fi
 	fi
 	sleep 2
 done
-[ -n "${RECREATED_CA:-}" ] && [ "$RECREATED_CA" != "$NEW_CA" ] ||
-	fail "certificate rotator did not recreate the deleted Secret with new CA material"
+[ "$recreate_ready" -eq 1 ] ||
+	fail "certificate rotator did not recreate the deleted Secret with the exact recovery contract"
 
 kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
 	deployment "$DEPLOYMENT" --timeout=5m >/dev/null ||

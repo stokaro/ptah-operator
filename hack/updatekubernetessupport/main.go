@@ -43,6 +43,7 @@ const (
 	chartRelativePath      = "charts/ptah-operator/Chart.yaml"
 	docsRelativePath       = "docs/kubernetes-support.md"
 	windowSize             = 3
+	verificationRefreshAge = 21 * 24 * time.Hour
 	maximumResponseBytes   = 16 << 20
 	requestTimeout         = 30 * time.Second
 	docsBeginMarker        = "<!-- BEGIN GENERATED KUBERNETES SUPPORT -->"
@@ -259,13 +260,35 @@ func buildUpdatePlan(current supportManifest, stableContents, kindContents []byt
 	}
 
 	next := current
-	next.LastVerified = verificationDate.Format("2006-01-02")
 	next.KindVersion = kindVersion
 	next.Releases = make([]release, 0, len(targets))
 	for _, minor := range targets {
 		next.Releases = append(next.Releases, release{Minor: minor, NodeImage: images[minor].image})
 	}
+	lastVerified, err := time.Parse("2006-01-02", current.LastVerified)
+	if err != nil {
+		return updatePlan{}, fmt.Errorf("parse current lastVerified: %w", err)
+	}
+	verificationAge := verificationDate.Sub(lastVerified)
+	if verificationAge < 0 {
+		return updatePlan{}, fmt.Errorf("current lastVerified %s is after update date %s", current.LastVerified, verificationDate.Format("2006-01-02"))
+	}
+	if !sameSupportBundle(current, next) || verificationAge >= verificationRefreshAge {
+		next.LastVerified = verificationDate.Format("2006-01-02")
+	}
 	return updatePlan{manifest: next, oldest: targets[0], newest: targets[len(targets)-1]}, nil
+}
+
+func sameSupportBundle(left, right supportManifest) bool {
+	if left.KindVersion != right.KindVersion || len(left.Releases) != len(right.Releases) {
+		return false
+	}
+	for index := range left.Releases {
+		if left.Releases[index] != right.Releases[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func selectKindRelease(published []githubRelease, targets []string) (string, map[string]imageCandidate, error) {

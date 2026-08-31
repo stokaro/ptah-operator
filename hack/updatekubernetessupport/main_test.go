@@ -100,6 +100,50 @@ func TestBuildUpdatePlanRequiresOneCompatibleKindRelease(t *testing.T) {
 	}
 }
 
+func TestBuildUpdatePlanCheckpointsFreshnessWithoutWeeklyChurn(t *testing.T) {
+	t.Parallel()
+	digest := func(character string) string { return strings.Repeat(character, 64) }
+	published := []githubRelease{{
+		TagName: "v0.32.0",
+		Body: strings.Join([]string{
+			"kindest/node:v1.35.5@sha256:" + digest("1"),
+			"kindest/node:v1.36.1@sha256:" + digest("2"),
+			"kindest/node:v1.37.0@sha256:" + digest("3"),
+		}, "\n"),
+	}}
+	kindContents, _ := json.Marshal(published)
+	current := supportManifest{
+		SchemaVersion: 1,
+		Policy:        "upstream-active-minors",
+		WindowSize:    windowSize,
+		LastVerified:  "2026-08-01",
+		KindVersion:   "v0.32.0",
+		Releases: []release{
+			{Minor: "1.35", NodeImage: "kindest/node:v1.35.5@sha256:" + digest("1")},
+			{Minor: "1.36", NodeImage: "kindest/node:v1.36.1@sha256:" + digest("2")},
+			{Minor: "1.37", NodeImage: "kindest/node:v1.37.0@sha256:" + digest("3")},
+		},
+	}
+
+	date, _ := time.Parse("2006-01-02", "2026-08-20")
+	plan, err := buildUpdatePlan(current, []byte("v1.37.4"), kindContents, date)
+	if err != nil {
+		t.Fatalf("buildUpdatePlan(day 19) error = %v", err)
+	}
+	if plan.manifest.LastVerified != "2026-08-01" {
+		t.Fatalf("day-19 lastVerified = %q, want unchanged", plan.manifest.LastVerified)
+	}
+
+	date, _ = time.Parse("2006-01-02", "2026-08-22")
+	plan, err = buildUpdatePlan(current, []byte("v1.37.4"), kindContents, date)
+	if err != nil {
+		t.Fatalf("buildUpdatePlan(day 21) error = %v", err)
+	}
+	if plan.manifest.LastVerified != "2026-08-22" {
+		t.Fatalf("day-21 lastVerified = %q, want freshness checkpoint", plan.manifest.LastVerified)
+	}
+}
+
 func TestImagesFromReleaseRejectsAmbiguousDigest(t *testing.T) {
 	t.Parallel()
 	targets := map[string]struct{}{"1.37": {}}

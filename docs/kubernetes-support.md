@@ -24,7 +24,7 @@ The Helm `kubeVersion` range is a derived, packaged value because a chart cannot
 go run ./hack/verify-kubernetes-support.go
 ```
 
-The command performs no network requests. It fails when the manifest is malformed, minors are not consecutive, an image is not digest-pinned to the matching minor, the chart range differs, automation no longer consumes the generated matrix, or `lastVerified` is in the future or more than 35 UTC days old. The updater runs weekly, so the inclusive 35-day grace period provides five weekly update opportunities before the next day becomes stale. Tests inject a fixed validation date with `-now YYYY-MM-DD`; ordinary CI always uses the current UTC date.
+The command performs no network requests. It fails when the manifest is malformed, minors are not consecutive, an image is not digest-pinned to the matching minor, the chart range differs, automation no longer consumes the generated matrix, or `lastVerified` is in the future or more than 35 UTC days old. The updater runs weekly. It proposes any support-bundle change immediately and records a date-only verification checkpoint after 21 days, leaving three weekly opportunities to merge that checkpoint before the next day after the 35-day limit becomes stale. Tests inject a fixed validation date with `-now YYYY-MM-DD`; ordinary CI always uses the current UTC date.
 
 Live discovery is deliberately separate:
 
