@@ -795,9 +795,9 @@ spec:
               rule: '!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size()
                 > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))'
             - message: desired.transport.caFrom must name a required ConfigMap key
-              rule: '!has(self.desired.transport) || !has(self.desired.transport.caFrom) || (self.desired.transport.caFrom.name.size()
-                > 0 && self.desired.transport.caFrom.key.size() > 0 && (!has(self.desired.transport.caFrom.optional)
-                || !self.desired.transport.caFrom.optional))'
+              rule: '!has(self.desired.transport) || !has(self.desired.transport.caFrom)
+                || (self.desired.transport.caFrom.name.size() > 0 && self.desired.transport.caFrom.key.size()
+                > 0 && (!has(self.desired.transport.caFrom.optional) || !self.desired.transport.caFrom.optional))'
           status:
             properties:
               activeOperation:
