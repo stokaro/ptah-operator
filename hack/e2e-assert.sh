@@ -205,6 +205,7 @@ POLICY_NAME=e2e-verification-policy
 POLICY_KEY=policy.yaml
 SCHEMA_NAME=e2e-suspended-schema
 PLAN_NAME=e2e-plan
+PLAN_CHUNK_NAME=e2e-plan-chunk-0
 APPROVAL_NAME=e2e-approval
 
 k -n "$TEST_NAMESPACE" create configmap "$POLICY_NAME" \
@@ -212,6 +213,7 @@ k -n "$TEST_NAMESPACE" create configmap "$POLICY_NAME" \
 	--dry-run=client -o json | jq '.immutable = true' | k create -f - >/dev/null
 k -n "$TEST_NAMESPACE" get configmap "$POLICY_NAME" -o json |
 	jq -e '.immutable == true' >/dev/null || fail "verification policy ConfigMap is mutable"
+policy_uid=$(k -n "$TEST_NAMESPACE" get configmap "$POLICY_NAME" -o jsonpath='{.metadata.uid}')
 policy_digest="sha256:$(sha256_file "${ROOT_DIR}/testdata/e2e/verification-policy.yaml")"
 
 schema_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-schema.XXXXXX")
@@ -322,7 +324,7 @@ schema_generation=$(k -n "$TEST_NAMESPACE" get ptahschema "$SCHEMA_NAME" -o json
 
 plan_fingerprint=sha256:1111111111111111111111111111111111111111111111111111111111111111
 artifact_digest=sha256:2222222222222222222222222222222222222222222222222222222222222222
-content_digest=sha256:3333333333333333333333333333333333333333333333333333333333333333
+content_digest=sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881
 coordination_digest=sha256:a039cc1dcc29e539b94d48451d5b4b5fa2b2eebc7927f5c4e106679b98479725
 target_digest=sha256:4444444444444444444444444444444444444444444444444444444444444444
 actual_fingerprint=sha256:5555555555555555555555555555555555555555555555555555555555555555
@@ -334,6 +336,7 @@ created_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 jq -n \
 	--arg namespace "$TEST_NAMESPACE" \
 	--arg name "$PLAN_NAME" \
+	--arg chunkName "$PLAN_CHUNK_NAME" \
 	--arg schemaName "$SCHEMA_NAME" \
 	--arg schemaUID "$schema_uid" \
 	--arg fingerprint "$plan_fingerprint" \
@@ -344,6 +347,7 @@ jq -n \
 	--arg actualFingerprint "$actual_fingerprint" \
 	--arg desiredFingerprint "$desired_fingerprint" \
 	--arg policyFingerprint "$policy_fingerprint" \
+	--arg verificationPolicyUID "$policy_uid" \
 	--arg verificationPolicyDigest "$policy_digest" \
 	--arg ptahVersion "$PTAH_VERSION" \
 	--arg executorImage "$EXECUTOR_IMAGE" \
@@ -351,19 +355,32 @@ jq -n \
   {
     apiVersion: "operator.ptah.dev/v1alpha1",
     kind: "PtahSchemaPlan",
-    metadata: {namespace: $namespace, name: $name},
+    metadata: {
+      namespace: $namespace,
+      name: $name,
+      labels: {"operator.ptah.dev/schema": $schemaName},
+      ownerReferences: [{
+        apiVersion: "operator.ptah.dev/v1alpha1",
+        kind: "PtahSchema",
+        name: $schemaName,
+        uid: $schemaUID,
+        controller: true,
+        blockOwnerDeletion: true
+      }]
+    },
     spec: {
       contractVersion: 1,
       schemaRef: {name: $schemaName, uid: $schemaUID},
       fingerprint: $fingerprint,
       contentDigest: $contentDigest,
-      size: 0,
+      size: 1,
       artifactDigest: $artifactDigest,
       coordinationDigest: $coordinationDigest,
       targetIdentityDigest: $targetDigest,
       actualStateFingerprint: $actualFingerprint,
       desiredStateFingerprint: $desiredFingerprint,
       policyFingerprint: $policyFingerprint,
+      verificationPolicyUID: $verificationPolicyUID,
       verificationPolicyDigest: $verificationPolicyDigest,
       ptahVersion: $ptahVersion,
       executorImage: $executorImage,
@@ -372,18 +389,58 @@ jq -n \
       dialect: "postgres",
       destructive: false,
       statementCount: 0,
-      chunks: []
+      chunks: [{
+        name: $chunkName,
+        key: "chunk",
+        index: 0,
+        digest: $contentDigest,
+        size: 1
+      }]
     }
   }' >"$plan_file"
 k create -f "$plan_file" >/dev/null
 plan_uid=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$PLAN_NAME" -o jsonpath='{.metadata.uid}')
 plan_generation=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$PLAN_NAME" -o jsonpath='{.metadata.generation}')
 
+jq -n \
+	--arg namespace "$TEST_NAMESPACE" \
+	--arg name "$PLAN_CHUNK_NAME" \
+	--arg planName "$PLAN_NAME" \
+	--arg schemaName "$SCHEMA_NAME" \
+	--arg planUID "$plan_uid" '
+  {
+    apiVersion: "v1",
+    kind: "ConfigMap",
+    metadata: {
+      namespace: $namespace,
+      name: $name,
+      labels: {
+        "operator.ptah.dev/plan": $planName,
+        "operator.ptah.dev/schema": $schemaName
+      },
+      ownerReferences: [{
+        apiVersion: "operator.ptah.dev/v1alpha1",
+        kind: "PtahSchemaPlan",
+        name: $planName,
+        uid: $planUID,
+        controller: true,
+        blockOwnerDeletion: true
+      }]
+    },
+    immutable: true,
+    binaryData: {chunk: "eA=="}
+  }' | k create -f - >/dev/null
+plan_chunk_uid=$(k -n "$TEST_NAMESPACE" get configmap "$PLAN_CHUNK_NAME" \
+	-o jsonpath='{.metadata.uid}')
+
 plan_status=$(jq -n \
 	--argjson observedGeneration "$plan_generation" \
+	--arg chunkName "$PLAN_CHUNK_NAME" \
+	--arg chunkUID "$plan_chunk_uid" \
 	--arg now "$created_at" '
   {status: {
     observedGeneration: $observedGeneration,
+    publishedChunks: [{name: $chunkName, uid: $chunkUID, index: 0}],
     conditions: [{
       type: "Ready",
       status: "True",
@@ -408,6 +465,7 @@ schema_status=$(jq -n \
 	--arg driftReportDigest "$drift_report_digest" \
 	--arg desiredFingerprint "$desired_fingerprint" \
 	--arg policyFingerprint "$policy_fingerprint" \
+	--arg verificationPolicyUID "$policy_uid" \
 	--arg verificationPolicyDigest "$policy_digest" \
 	--arg ptahVersion "$PTAH_VERSION" \
 	--arg executorImage "$EXECUTOR_IMAGE" \
@@ -432,7 +490,11 @@ schema_status=$(jq -n \
         lastTransitionTime: $now
       }
     ],
-    source: {digest: $artifactDigest},
+    source: {
+      digest: $artifactDigest,
+      verificationPolicyUID: $verificationPolicyUID,
+      verificationPolicyDigest: $verificationPolicyDigest
+    },
     target: {
       engine: "PostgreSQL",
       coordinationDigest: $coordinationDigest,
@@ -450,6 +512,7 @@ schema_status=$(jq -n \
       actualStateFingerprint: $actualFingerprint,
       desiredStateFingerprint: $desiredFingerprint,
       policyFingerprint: $policyFingerprint,
+      verificationPolicyUID: $verificationPolicyUID,
       verificationPolicyDigest: $verificationPolicyDigest,
       ptahVersion: $ptahVersion,
       executorImage: $executorImage,
@@ -497,6 +560,7 @@ k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
 		--arg actualFingerprint "$actual_fingerprint" \
 		--arg desiredFingerprint "$desired_fingerprint" \
 		--arg policyFingerprint "$policy_fingerprint" \
+		--arg verificationPolicyUID "$policy_uid" \
 		--arg verificationPolicyDigest "$policy_digest" \
 		--arg ptahVersion "$PTAH_VERSION" \
 		--arg executorImage "$EXECUTOR_IMAGE" \
@@ -510,6 +574,7 @@ k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
       .spec.actualStateFingerprint == $actualFingerprint and
       .spec.desiredStateFingerprint == $desiredFingerprint and
       .spec.policyFingerprint == $policyFingerprint and
+      .spec.verificationPolicyUID == $verificationPolicyUID and
       .spec.verificationPolicyDigest == $verificationPolicyDigest and
       .spec.ptahVersion == $ptahVersion and
       .spec.executorImage == $executorImage and

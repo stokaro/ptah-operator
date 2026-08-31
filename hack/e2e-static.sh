@@ -90,8 +90,18 @@ for ha_marker in \
 	'leader Pod failover did not increment leaseTransitions' \
 	'wait_for_admitted_operation_pod' \
 	'operator.ptah.dev/admission-snapshot-digest' \
+	'--cascade=foreground' \
+	'foreground Job deletion left operation Pods' \
 	'admitted post-failover operation'; do
-	grep -F "$ha_marker" "$ROOT_DIR/hack/e2e-ha.sh" >/dev/null
+	grep -F -- "$ha_marker" "$ROOT_DIR/hack/e2e-ha.sh" >/dev/null
+done
+for approval_plan_marker in \
+	"policy_uid=\$(k -n \"\$TEST_NAMESPACE\" get configmap" \
+	"verificationPolicyUID: \$verificationPolicyUID" \
+	"publishedChunks: [{name: \$chunkName, uid: \$chunkUID, index: 0}]" \
+	"\"operator.ptah.dev/plan\": \$planName" \
+	'binaryData: {chunk: "eA=="}'; do
+	grep -F -- "$approval_plan_marker" "$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
 done
 grep -F 'unset REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 if grep -F 'E2E_REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" \
