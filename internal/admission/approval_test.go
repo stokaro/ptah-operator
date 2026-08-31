@@ -11,6 +11,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -202,15 +203,42 @@ func TestApprovalCreateDoesNotResolvePlanAcrossNamespaces(t *testing.T) {
 		Name: foreignPlan.Name,
 		UID:  foreignPlan.UID,
 	}
-	request := requestFor(t, approval, admissionv1.Create)
-	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
-
-	response := handler.Handle(ctx, request)
-	if response.Allowed || response.Result == nil || response.Result.Code != http.StatusNotFound {
-		t.Fatalf("Handle() response = %#v, want namespace-local plan NotFound", response.Result)
+	lookups := []struct {
+		name string
+		run  func(*operatorv1alpha1.PtahSchemaApproval) error
+	}{
+		{name: "hydrate derived bindings", run: func(candidate *operatorv1alpha1.PtahSchemaApproval) error {
+			return handler.hydrateDerivedBindings(ctx, candidate)
+		}},
+		{name: "validate binding", run: func(candidate *operatorv1alpha1.PtahSchemaApproval) error {
+			return handler.validateBinding(ctx, candidate)
+		}},
 	}
-	if !strings.Contains(response.Result.Message, foreignPlan.Name) {
-		t.Fatalf("Handle() response = %#v, want missing local plan name", response.Result)
+	for _, lookup := range lookups {
+		err := lookup.run(approval.DeepCopy())
+		if !apierrors.IsNotFound(err) || !strings.Contains(err.Error(), foreignPlan.Name) {
+			t.Fatalf("%s error = %v, want missing namespace-local plan", lookup.name, err)
+		}
+	}
+
+	user := authenticationv1.UserInfo{Username: "alice"}
+	for _, mutate := range []bool{true, false} {
+		handler.Mutate = mutate
+		candidate := approval.DeepCopy()
+		if !mutate {
+			candidate.Spec.Approver = operatorv1alpha1.ApprovalIdentity{Username: user.Username}
+			candidate.Spec.ApprovedAt = metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+			candidate.Spec.MutationRequestUID = "mutating-review-uid"
+		}
+		request := requestFor(t, candidate, admissionv1.Create)
+		request.UserInfo = user
+		response := handler.Handle(ctx, request)
+		if response.Allowed || response.Result == nil || response.Result.Code != http.StatusNotFound {
+			t.Fatalf("Handle(mutate=%t) response = %#v, want namespace-local plan NotFound", mutate, response.Result)
+		}
+		if !strings.Contains(response.Result.Message, foreignPlan.Name) {
+			t.Fatalf("Handle(mutate=%t) response = %#v, want missing local plan name", mutate, response.Result)
+		}
 	}
 	retained := &operatorv1alpha1.PtahSchemaPlan{}
 	if err := apiClient.Get(ctx, client.ObjectKeyFromObject(foreignPlan), retained); err != nil {
