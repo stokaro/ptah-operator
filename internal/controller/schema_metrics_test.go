@@ -237,6 +237,69 @@ func TestConsumedApprovalRecordsAcceptedAndCurrentConditions(t *testing.T) {
 	}
 }
 
+func TestLaterObservationStalesRecordedConsumedApprovalWithoutErasingDispatchEvidence(t *testing.T) {
+	t.Parallel()
+	schema, _, approval := currentApprovalFixture()
+	approval.Generation = 1
+	reconciler, api := fakeReconciler(t, staticLogs{}, approval)
+
+	if err := reconciler.markApprovalConsumed(context.Background(), approval); err != nil {
+		t.Fatalf("markApprovalConsumed() error = %v", err)
+	}
+	if err := reconciler.markRecordedApprovalStale(context.Background(), schema); err != nil {
+		t.Fatalf("markRecordedApprovalStale() error = %v", err)
+	}
+
+	actual := &operatorv1alpha1.PtahSchemaApproval{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(approval), actual); err != nil {
+		t.Fatal(err)
+	}
+	consumed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed)
+	if consumed == nil || consumed.Status != metav1.ConditionTrue || consumed.Reason != "DispatchCommitted" {
+		t.Fatalf("consumed condition = %#v, want durable DispatchCommitted evidence", consumed)
+	}
+	accepted := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionApprovalAccepted)
+	if accepted == nil || accepted.Status != metav1.ConditionFalse || accepted.Reason != "PlanNoLongerCurrent" {
+		t.Fatalf("accepted condition = %#v, want PlanNoLongerCurrent refusal", accepted)
+	}
+	stale := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionApprovalStale)
+	if stale == nil || stale.Status != metav1.ConditionTrue || stale.Reason != "PlanNoLongerCurrent" {
+		t.Fatalf("stale condition = %#v, want PlanNoLongerCurrent", stale)
+	}
+}
+
+func TestRecordedApprovalStaleIgnoresSameNameReplacementUID(t *testing.T) {
+	t.Parallel()
+	schema, _, replacement := currentApprovalFixture()
+	replacement.Generation = 1
+	replacement.UID = "replacement-approval-uid"
+	reconciler, api := fakeReconciler(t, staticLogs{}, replacement)
+
+	if err := reconciler.markApprovalConsumed(context.Background(), replacement); err != nil {
+		t.Fatalf("markApprovalConsumed() error = %v", err)
+	}
+	if err := reconciler.markRecordedApprovalStale(context.Background(), schema); err != nil {
+		t.Fatalf("markRecordedApprovalStale() error = %v", err)
+	}
+
+	actual := &operatorv1alpha1.PtahSchemaApproval{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(replacement), actual); err != nil {
+		t.Fatal(err)
+	}
+	consumed := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionApprovalConsumed)
+	if consumed == nil || consumed.Status != metav1.ConditionTrue || consumed.Reason != "DispatchCommitted" {
+		t.Fatalf("replacement consumed condition = %#v, want unchanged DispatchCommitted evidence", consumed)
+	}
+	accepted := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionApprovalAccepted)
+	if accepted == nil || accepted.Status != metav1.ConditionTrue || accepted.Reason != "CurrentPlan" {
+		t.Fatalf("replacement accepted condition = %#v, want unchanged current decision", accepted)
+	}
+	stale := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionApprovalStale)
+	if stale == nil || stale.Status != metav1.ConditionFalse || stale.Reason != "CurrentPlan" {
+		t.Fatalf("replacement stale condition = %#v, want unchanged current decision", stale)
+	}
+}
+
 func TestStaleApprovalIsReportedOnce(t *testing.T) {
 	t.Parallel()
 	approval := &operatorv1alpha1.PtahSchemaApproval{

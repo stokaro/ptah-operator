@@ -544,11 +544,13 @@ wait_for_approval() {
 	wait_approval=$1
 	wait_expression=$2
 	wait_description=$3
+	wait_expected_plan_uid=${4:-}
 	wait_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$wait_deadline" ]; do
 		audit_completed_jobs
 		if wait_object=$(k -n "$TEST_NAMESPACE" get ptahschemaapproval "$wait_approval" -o json 2>/dev/null); then
-			if printf '%s\n' "$wait_object" | jq -e "$wait_expression" >/dev/null; then
+			if printf '%s\n' "$wait_object" |
+				jq -e --arg expectedPlanUID "$wait_expected_plan_uid" "$wait_expression" >/dev/null; then
 				return 0
 			fi
 		fi
@@ -559,15 +561,21 @@ wait_for_approval() {
 
 assert_approval_consumed() {
 	consumed_approval=$1
+	consumed_plan_uid=$2
+	# shellcheck disable=SC2016 # jq variable is supplied by wait_for_approval.
 	wait_for_approval "$consumed_approval" '
+      .spec.planRef.uid == $expectedPlanUID and
       .status.observedGeneration == .metadata.generation and
       (.status.conditions | any(
-        .type == "Accepted" and .status == "True" and .reason == "CurrentPlan")) and
+        .type == "Accepted" and .status == "False" and
+        .reason == "PlanNoLongerCurrent")) and
       (.status.conditions | any(
         .type == "Consumed" and .status == "True" and .reason == "DispatchCommitted")) and
       (.status.conditions | any(
-        .type == "Stale" and .status == "False" and .reason == "CurrentPlan"))
-    ' "the exact approval to be accepted and consumed"
+        .type == "Stale" and .status == "True" and
+        .reason == "PlanNoLongerCurrent"))
+    ' "the exact consumed approval to retain its later-observation history" \
+		"$consumed_plan_uid"
 }
 
 wait_for_job() {
@@ -1857,7 +1865,7 @@ run_engine_lifecycle() {
 	wait_for_one_new_job "$lifecycle_schema" apply "$v1_apply_checkpoint"
 	wait_for_in_sync "$lifecycle_schema" "$digest_v1" \
 		"$v1_post_observe_checkpoint" "$v1_post_plan_checkpoint"
-	assert_approval_consumed "${lifecycle_schema}-v1"
+	assert_approval_consumed "${lifecycle_schema}-v1" "$plan_v1_uid"
 	assert_one_new_job "$lifecycle_schema" apply "$v1_apply_checkpoint"
 	assert_coordination_lease_boundary "$lifecycle_coordination_key" \
 		"$coordination_lease_checkpoint"
@@ -1925,7 +1933,7 @@ run_engine_lifecycle() {
 	wait_for_one_new_job "$lifecycle_schema" apply "$v3_apply_checkpoint"
 	wait_for_in_sync "$lifecycle_schema" "$digest_v3" \
 		"$v3_post_observe_checkpoint" "$v3_post_plan_checkpoint"
-	assert_approval_consumed "${lifecycle_schema}-v3"
+	assert_approval_consumed "${lifecycle_schema}-v3" "$plan_v3_uid"
 	assert_one_new_job "$lifecycle_schema" apply "$v3_apply_checkpoint"
 	assert_coordination_lease_boundary "$lifecycle_coordination_key" \
 		"$coordination_lease_checkpoint"

@@ -2120,7 +2120,12 @@ assert_approval_consumed() {
         .spec.planRef.uid == $planUID and
         (.status.conditions | any(
           .type == "Consumed" and .status == "True" and .reason == "DispatchCommitted")) and
-        (.status.conditions | any(.type == "Accepted" and .status == "True"))
+        (.status.conditions | any(
+          .type == "Accepted" and .status == "False" and
+          .reason == "PlanNoLongerCurrent")) and
+        (.status.conditions | any(
+          .type == "Stale" and .status == "True" and
+          .reason == "PlanNoLongerCurrent"))
       ' >/dev/null || fail "$consumed_approval was not durably consumed by the exact dispatched plan"
 }
 
