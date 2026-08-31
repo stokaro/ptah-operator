@@ -28,10 +28,13 @@ import (
 )
 
 const (
-	manifestPath = "support/kubernetes.json"
-	chartPath    = "charts/ptah-operator/Chart.yaml"
-	workflowPath = ".github/workflows/ci.yml"
-	docsPath     = "docs/kubernetes-support.md"
+	manifestPath       = "support/kubernetes.json"
+	chartPath          = "charts/ptah-operator/Chart.yaml"
+	workflowPath       = ".github/workflows/ci.yml"
+	updateWorkflowPath = ".github/workflows/update-kubernetes-support.yml"
+	docsPath           = "docs/kubernetes-support.md"
+
+	verificationMaxAgeDays = 35
 )
 
 var (
@@ -72,9 +75,14 @@ type parsedRelease struct {
 
 func main() {
 	output := flag.String("output", "verify", "output mode: verify, matrix, or helm-range")
+	nowValue := flag.String("now", "", "UTC date used for freshness validation (YYYY-MM-DD; defaults to today)")
 	flag.Parse()
 
-	manifest, parsed, err := loadAndValidateManifest(manifestPath)
+	now, err := validationDate(*nowValue)
+	if err != nil {
+		fatal(err)
+	}
+	manifest, parsed, err := loadAndValidateManifest(manifestPath, now)
 	if err != nil {
 		fatal(err)
 	}
@@ -84,6 +92,9 @@ func main() {
 		fatal(err)
 	}
 	if err := verifyWorkflow(workflowPath); err != nil {
+		fatal(err)
+	}
+	if err := verifyUpdateWorkflow(updateWorkflowPath); err != nil {
 		fatal(err)
 	}
 	if err := verifyDocumentation(docsPath, parsed); err != nil {
@@ -116,7 +127,19 @@ func main() {
 	}
 }
 
-func loadAndValidateManifest(path string) (supportManifest, []parsedRelease, error) {
+func validationDate(value string) (time.Time, error) {
+	if value == "" {
+		now := time.Now().UTC()
+		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC), nil
+	}
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("-now must use YYYY-MM-DD: %w", err)
+	}
+	return parsed, nil
+}
+
+func loadAndValidateManifest(path string, now time.Time) (supportManifest, []parsedRelease, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return supportManifest{}, nil, fmt.Errorf("read %s: %w", path, err)
@@ -147,8 +170,22 @@ func loadAndValidateManifest(path string) (supportManifest, []parsedRelease, err
 	if len(manifest.Releases) != manifest.WindowSize {
 		return supportManifest{}, nil, fmt.Errorf("%s: releases has %d entries, want windowSize %d", path, len(manifest.Releases), manifest.WindowSize)
 	}
-	if _, err := time.Parse("2006-01-02", manifest.LastVerified); err != nil {
+	lastVerified, err := time.Parse("2006-01-02", manifest.LastVerified)
+	if err != nil {
 		return supportManifest{}, nil, fmt.Errorf("%s: lastVerified must use YYYY-MM-DD: %w", path, err)
+	}
+	verificationAge := now.Sub(lastVerified)
+	if verificationAge < 0 {
+		return supportManifest{}, nil, fmt.Errorf("%s: lastVerified %s is after validation date %s", path, manifest.LastVerified, now.Format("2006-01-02"))
+	}
+	if verificationAge > verificationMaxAgeDays*24*time.Hour {
+		return supportManifest{}, nil, fmt.Errorf(
+			"%s: lastVerified %s is stale on %s (maximum age is %d days); run the scheduled support-window updater",
+			path,
+			manifest.LastVerified,
+			now.Format("2006-01-02"),
+			verificationMaxAgeDays,
+		)
 	}
 	if !kindVersion.MatchString(manifest.KindVersion) {
 		return supportManifest{}, nil, fmt.Errorf("%s: kindVersion %q is not a stable semantic version", path, manifest.KindVersion)
@@ -238,6 +275,30 @@ func verifyWorkflow(path string) error {
 	for _, marker := range required {
 		if !strings.Contains(workflow, marker) {
 			return fmt.Errorf("%s: missing dynamic support-window marker %q", path, marker)
+		}
+	}
+	return nil
+}
+
+func verifyUpdateWorkflow(path string) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	workflow := string(contents)
+	required := []string{
+		"schedule:",
+		"actions: write",
+		"contents: write",
+		"pull-requests: write",
+		"go run ./hack/updatekubernetessupport",
+		"go run ./hack/verify-kubernetes-support.go",
+		"gh pr create",
+		"gh workflow run ci.yml --ref \"$support_branch\"",
+	}
+	for _, marker := range required {
+		if !strings.Contains(workflow, marker) {
+			return fmt.Errorf("%s: missing scheduled support-window marker %q", path, marker)
 		}
 	}
 	return nil

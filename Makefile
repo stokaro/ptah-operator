@@ -5,7 +5,7 @@ CONTROLLER_GEN_VERSION ?= v0.21.0
 DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 
-.PHONY: all build test test-race vet fmt-check generate manifests verify verify-kubernetes-support verify-release docker-build e2e-static e2e
+.PHONY: all build test test-race vet fmt-check generate manifests verify verify-kubernetes-support update-kubernetes-support verify-release docker-build e2e-static e2e
 
 all: verify build
 
@@ -40,6 +40,10 @@ verify: fmt-check generate manifests verify-kubernetes-support verify-release e2
 
 verify-kubernetes-support:
 	$(GO) run ./hack/verify-kubernetes-support.go
+
+# This target performs live upstream discovery. Normal verification is offline.
+update-kubernetes-support:
+	$(GO) run ./hack/updatekubernetessupport
 
 verify-release:
 	$(GO) run ./hack/releaseverify
