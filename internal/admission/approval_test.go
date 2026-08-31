@@ -3,6 +3,7 @@ package admission
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -173,6 +175,49 @@ func TestApprovalCreateRequiresExplicitPlanFingerprint(t *testing.T) {
 	response := handler.Handle(context.Background(), request)
 	if response.Allowed {
 		t.Fatal("Handle() accepted an approval without an explicit plan fingerprint")
+	}
+}
+
+func TestApprovalCreateDoesNotResolvePlanAcrossNamespaces(t *testing.T) {
+	t.Parallel()
+
+	handler, approval := readyFixture(t, true, true)
+	apiClient, ok := handler.Reader.(client.Client)
+	if !ok {
+		t.Fatalf("fixture reader type %T does not implement client.Client", handler.Reader)
+	}
+	ctx := context.Background()
+	foreignPlan := &operatorv1alpha1.PtahSchemaPlan{}
+	if err := apiClient.Get(ctx, client.ObjectKey{Namespace: "team-a", Name: "app-plan"}, foreignPlan); err != nil {
+		t.Fatal(err)
+	}
+	foreignPlan.ResourceVersion = ""
+	foreignPlan.Namespace = "team-b"
+	foreignPlan.Name = "foreign-plan"
+	foreignPlan.UID = "foreign-plan-uid"
+	if err := apiClient.Create(ctx, foreignPlan); err != nil {
+		t.Fatal(err)
+	}
+	approval.Spec.PlanRef = operatorv1alpha1.ImmutableObjectReference{
+		Name: foreignPlan.Name,
+		UID:  foreignPlan.UID,
+	}
+	request := requestFor(t, approval, admissionv1.Create)
+	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+
+	response := handler.Handle(ctx, request)
+	if response.Allowed || response.Result == nil || response.Result.Code != http.StatusNotFound {
+		t.Fatalf("Handle() response = %#v, want namespace-local plan NotFound", response.Result)
+	}
+	if !strings.Contains(response.Result.Message, foreignPlan.Name) {
+		t.Fatalf("Handle() response = %#v, want missing local plan name", response.Result)
+	}
+	retained := &operatorv1alpha1.PtahSchemaPlan{}
+	if err := apiClient.Get(ctx, client.ObjectKeyFromObject(foreignPlan), retained); err != nil {
+		t.Fatalf("foreign plan was not retained: %v", err)
+	}
+	if retained.UID != foreignPlan.UID {
+		t.Fatalf("foreign plan UID = %q, want %q", retained.UID, foreignPlan.UID)
 	}
 }
 

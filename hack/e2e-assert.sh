@@ -32,6 +32,8 @@ for value_name in KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE FOREIGN_NAME
 	[ -n "$value" ] || fail "$value_name is required"
 done
 [ -f "$KUBECONFIG_FILE" ] || fail "E2E_KUBECONFIG does not name a file"
+[ "$TEST_NAMESPACE" != "$FOREIGN_NAMESPACE" ] ||
+	fail "E2E_TEST_NAMESPACE and E2E_FOREIGN_NAMESPACE must differ"
 
 k() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" "$@"
@@ -641,10 +643,25 @@ grep -Eiq 'immutable' "$error_file" ||
 
 printf '%s\n' 'e2e assertions: checking cross-namespace approval refusal'
 jq --arg namespace "$FOREIGN_NAMESPACE" \
-	'.metadata.namespace = $namespace | .metadata.name = "foreign-plan"' \
+	'.metadata.namespace = $namespace |
+	 .metadata.name = "foreign-plan" |
+	 del(.metadata.ownerReferences, .metadata.finalizers)' \
 	"$plan_file" >"$foreign_plan_file"
-k create -f "$foreign_plan_file" >/dev/null
-foreign_plan_uid=$(k -n "$FOREIGN_NAMESPACE" get ptahschemaplan foreign-plan -o jsonpath='{.metadata.uid}')
+foreign_plan_uid=$(k create -f "$foreign_plan_file" -o jsonpath='{.metadata.uid}')
+[ -n "$foreign_plan_uid" ] || fail "foreign plan was created without a UID"
+assert_foreign_plan_stable() {
+	k -n "$FOREIGN_NAMESPACE" get ptahschemaplan foreign-plan -o json |
+		jq -e --arg uid "$foreign_plan_uid" '
+          .metadata.uid == $uid and
+          .metadata.deletionTimestamp == null and
+          ((.metadata.ownerReferences // []) | length == 0) and
+          ((.metadata.finalizers // []) | length == 0)
+        ' >/dev/null || fail "foreign plan disappeared, changed, or entered deletion"
+}
+assert_foreign_plan_stable
+if k -n "$TEST_NAMESPACE" get ptahschemaplan foreign-plan >/dev/null 2>&1; then
+	fail "cross-namespace approval fixture unexpectedly has a local plan"
+fi
 jq \
 	--arg namespace "$TEST_NAMESPACE" \
 	--arg planName foreign-plan \
@@ -656,5 +673,10 @@ jq \
 	"$approval_file" >"$foreign_approval_file"
 expect_denied "cross-namespace approval" 'foreign-plan.*not found|not found.*foreign-plan' \
 	"$foreign_approval_file" "$error_file"
+assert_foreign_plan_stable
+if k -n "$TEST_NAMESPACE" get ptahschemaapproval e2e-cross-namespace-approval \
+	>/dev/null 2>&1; then
+	fail "cross-namespace approval refusal created an approval"
+fi
 
 printf '%s\n' 'e2e assertions: PASS control-plane contract'

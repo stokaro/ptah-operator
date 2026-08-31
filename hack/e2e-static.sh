@@ -211,7 +211,11 @@ for admission_marker in \
 	'a rejected managed-scope selector created an operation Job' \
 	'schema-name schema-uid plan-name plan-uid plan-fingerprint' \
 	'approval with a conflicting derived artifact binding' \
-	'approval with a conflicting derived protocol binding'; do
+	'approval with a conflicting derived protocol binding' \
+	'E2E_TEST_NAMESPACE and E2E_FOREIGN_NAMESPACE must differ' \
+	'del(.metadata.ownerReferences, .metadata.finalizers)' \
+	'foreign plan disappeared, changed, or entered deletion' \
+	'cross-namespace approval refusal created an approval'; do
 	grep -F "$admission_marker" "$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
 done
 for fault_marker in \
