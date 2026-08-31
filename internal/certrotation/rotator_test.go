@@ -304,6 +304,14 @@ func TestMissingSecretRecreationIsDisabledByDefault(t *testing.T) {
 	assertFinalBundles(t, client, config, old.caPEM)
 }
 
+func TestSecretCreateValidationExpressionHandlesOptionalGenerateName(t *testing.T) {
+	t.Parallel()
+	const want = "(!has(object.metadata.generateName) || object.metadata.generateName == '')"
+	if expression := compactCEL(secretCreateValidationExpression(testConfig())); !strings.Contains(expression, want) {
+		t.Fatalf("Secret CREATE validation expression = %q, want presence-safe generateName check %q", expression, want)
+	}
+}
+
 func TestMissingSecretGuardMustBeEstablishedBeforeCreate(t *testing.T) {
 	t.Parallel()
 	config := testConfig()
@@ -391,6 +399,105 @@ func TestMissingSecretRejectsBroadenedGuardContractBeforeCreate(t *testing.T) {
 					t.Fatalf("get guard binding: %v", err)
 				}
 				binding.Spec.MatchResources.NamespaceSelector = nil
+				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Update(
+					context.Background(), binding, metav1.UpdateOptions{},
+				); err != nil {
+					t.Fatalf("broaden guard binding: %v", err)
+				}
+			},
+		},
+		{
+			name: "non-empty policy namespace selector",
+			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
+				policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
+					context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
+				)
+				if err != nil {
+					t.Fatalf("get guard policy: %v", err)
+				}
+				policy.Spec.MatchConstraints.NamespaceSelector = &metav1.LabelSelector{
+					MatchLabels: map[string]string{"guard.ptah.dev/scope": "broadened"},
+				}
+				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Update(
+					context.Background(), policy, metav1.UpdateOptions{},
+				); err != nil {
+					t.Fatalf("broaden guard policy: %v", err)
+				}
+			},
+		},
+		{
+			name: "non-empty policy object selector",
+			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
+				policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
+					context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
+				)
+				if err != nil {
+					t.Fatalf("get guard policy: %v", err)
+				}
+				policy.Spec.MatchConstraints.ObjectSelector = &metav1.LabelSelector{
+					MatchLabels: map[string]string{"guard.ptah.dev/scope": "broadened"},
+				}
+				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Update(
+					context.Background(), policy, metav1.UpdateOptions{},
+				); err != nil {
+					t.Fatalf("broaden guard policy: %v", err)
+				}
+			},
+		},
+		{
+			name: "policy object selector match expression",
+			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
+				policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
+					context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
+				)
+				if err != nil {
+					t.Fatalf("get guard policy: %v", err)
+				}
+				policy.Spec.MatchConstraints.ObjectSelector = &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{{
+						Key:      "guard.ptah.dev/scope",
+						Operator: metav1.LabelSelectorOpExists,
+					}},
+				}
+				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Update(
+					context.Background(), policy, metav1.UpdateOptions{},
+				); err != nil {
+					t.Fatalf("broaden guard policy: %v", err)
+				}
+			},
+		},
+		{
+			name: "non-empty binding object selector",
+			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
+				binding, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
+					context.Background(), config.SecretCreatePolicyBindingName, metav1.GetOptions{},
+				)
+				if err != nil {
+					t.Fatalf("get guard binding: %v", err)
+				}
+				binding.Spec.MatchResources.ObjectSelector = &metav1.LabelSelector{
+					MatchLabels: map[string]string{"guard.ptah.dev/scope": "broadened"},
+				}
+				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Update(
+					context.Background(), binding, metav1.UpdateOptions{},
+				); err != nil {
+					t.Fatalf("broaden guard binding: %v", err)
+				}
+			},
+		},
+		{
+			name: "binding namespace selector match expression",
+			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
+				binding, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
+					context.Background(), config.SecretCreatePolicyBindingName, metav1.GetOptions{},
+				)
+				if err != nil {
+					t.Fatalf("get guard binding: %v", err)
+				}
+				binding.Spec.MatchResources.NamespaceSelector.MatchExpressions = []metav1.LabelSelectorRequirement{{
+					Key:      "guard.ptah.dev/scope",
+					Operator: metav1.LabelSelectorOpExists,
+				}}
 				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Update(
 					context.Background(), binding, metav1.UpdateOptions{},
 				); err != nil {
@@ -1025,6 +1132,8 @@ func installUnestablishedSecretCreateGuard(t *testing.T, client *fake.Clientset,
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
 			FailurePolicy: &failurePolicy,
 			MatchConstraints: &admissionregistrationv1.MatchResources{
+				NamespaceSelector: &metav1.LabelSelector{},
+				ObjectSelector:    &metav1.LabelSelector{},
 				ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{{
 					RuleWithOperations: admissionregistrationv1.RuleWithOperations{
 						Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
@@ -1055,6 +1164,7 @@ func installUnestablishedSecretCreateGuard(t *testing.T, client *fake.Clientset,
 				NamespaceSelector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{"kubernetes.io/metadata.name": config.Namespace},
 				},
+				ObjectSelector: &metav1.LabelSelector{},
 			},
 		},
 	}

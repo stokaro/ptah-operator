@@ -30,7 +30,7 @@ spec:
     - expression: >-
         object.metadata.name == '{{ $secretName }}' &&
         object.metadata.namespace == '{{ .Release.Namespace }}' &&
-        object.metadata.generateName == '' &&
+        (!has(object.metadata.generateName) || object.metadata.generateName == '') &&
         has(object.metadata.labels) &&
         object.metadata.labels ==
           {'operator.ptah.dev/generated-webhook-certificate': 'true'} &&

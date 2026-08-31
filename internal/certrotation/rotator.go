@@ -416,7 +416,8 @@ func validateSecretCreatePolicyContract(policy *admissionregistrationv1.Validati
 		return errors.New("policy contains unsupported parameters, audit annotations, or variables")
 	}
 	constraints := policy.Spec.MatchConstraints
-	if constraints == nil || constraints.NamespaceSelector != nil || constraints.ObjectSelector != nil ||
+	if constraints == nil || !emptyLabelSelector(constraints.NamespaceSelector) ||
+		!emptyLabelSelector(constraints.ObjectSelector) ||
 		len(constraints.ExcludeResourceRules) != 0 || len(constraints.ResourceRules) != 1 ||
 		(constraints.MatchPolicy != nil && *constraints.MatchPolicy != admissionregistrationv1.Equivalent) {
 		return errors.New("policy match constraints are not the exact Secret CREATE scope")
@@ -460,7 +461,7 @@ func validateSecretCreateBindingContract(
 		return errors.New("binding does not enforce only Deny for the configured policy")
 	}
 	resources := binding.Spec.MatchResources
-	if resources == nil || resources.NamespaceSelector == nil || resources.ObjectSelector != nil ||
+	if resources == nil || resources.NamespaceSelector == nil || !emptyLabelSelector(resources.ObjectSelector) ||
 		len(resources.ResourceRules) != 0 || len(resources.ExcludeResourceRules) != 0 ||
 		(resources.MatchPolicy != nil && *resources.MatchPolicy != admissionregistrationv1.Equivalent) ||
 		!maps.Equal(resources.NamespaceSelector.MatchLabels, map[string]string{"kubernetes.io/metadata.name": config.Namespace}) ||
@@ -470,11 +471,15 @@ func validateSecretCreateBindingContract(
 	return nil
 }
 
+func emptyLabelSelector(selector *metav1.LabelSelector) bool {
+	return selector == nil || len(selector.MatchLabels) == 0 && len(selector.MatchExpressions) == 0
+}
+
 func secretCreateValidationExpression(config Config) string {
 	return fmt.Sprintf(`
 		object.metadata.name == '%s' &&
 		object.metadata.namespace == '%s' &&
-		object.metadata.generateName == '' &&
+		(!has(object.metadata.generateName) || object.metadata.generateName == '') &&
 		has(object.metadata.labels) &&
 		object.metadata.labels == {'%s': '%s'} &&
 		(!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) &&

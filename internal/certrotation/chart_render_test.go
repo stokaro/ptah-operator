@@ -267,6 +267,7 @@ func assertSecretCreateGuard(
 	for _, required := range []string{
 		"object.metadata.name == '" + secretName + "'",
 		"object.metadata.namespace == '" + releaseNamespace + "'",
+		"(!has(object.metadata.generateName) || object.metadata.generateName == '')",
 		"object.metadata.labels ==",
 		"operator.ptah.dev/generated-webhook-certificate",
 		"object.metadata.annotations.size() == 0",
