@@ -11,8 +11,9 @@ import (
 
 // observedCABundles separates well-formed certificate bundles from damaged
 // entries. A damaged managed caBundle is repairable state, not a reason to
-// leave every managed webhook unusable. Its bytes are never copied into a
-// replacement trust bundle.
+// leave every managed webhook unusable. Malformed bytes are never copied
+// verbatim; independently parseable certificate candidates are tracked for
+// entry-local preservation or later authentication.
 type observedCABundles struct {
 	valid        [][]byte
 	certificates []*x509.Certificate

@@ -40,6 +40,13 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 		wantCARotated bool
 	}{
 		{name: "near-expiry serving certificate", now: baseTime.Add(25 * 24 * time.Hour)},
+		{
+			name: "near-expiry serving certificate in Opaque Secret",
+			now:  baseTime.Add(25 * 24 * time.Hour),
+			mutateSecret: func(secret *corev1.Secret) {
+				secret.Type = corev1.SecretTypeOpaque
+			},
+		},
 		{name: "expired serving certificate", now: baseTime.Add(31 * 24 * time.Hour)},
 		{
 			name: "legacy Secret without CA private key",
