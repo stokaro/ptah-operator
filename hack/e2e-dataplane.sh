@@ -1762,9 +1762,10 @@ assert_destructive_gate() {
 		-o jsonpath='{.spec.interval}')
 	[ "$gate_interval" = 10s ] ||
 		fail "$gate_schema destructive gate requires the harness's exact 10s interval"
-	[ -n "$gate_plan_name" ] && [ -n "$gate_plan_uid" ] &&
-		[ -n "$gate_plan_fingerprint" ] && [ -n "$gate_source_digest" ] ||
+	if [ -z "$gate_plan_name" ] || [ -z "$gate_plan_uid" ] ||
+		[ -z "$gate_plan_fingerprint" ] || [ -z "$gate_source_digest" ]; then
 		fail "$gate_schema destructive gate lacks its immutable starting evidence"
+	fi
 	gate_refresh_checkpoint=$WORK_DIR/${gate_schema}-destructive-gate-refresh.json
 	record_observed_jobs
 	jq -s --arg schema "$gate_schema" '
