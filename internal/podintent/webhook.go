@@ -300,6 +300,9 @@ func exactJobTrackingFinalizerRemoval(oldPod, newPod *corev1.Pod, subresource st
 	if oldPod == nil || newPod == nil || subresource != "" {
 		return false
 	}
+	if !podAllowsJobTrackingFinalizerCleanup(oldPod) && !podAllowsJobTrackingFinalizerCleanup(newPod) {
+		return false
+	}
 	oldOwner, oldOK := exactControllerReference(oldPod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job")
 	newOwner, newOK := exactControllerReference(newPod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job")
 	if !oldOK || !newOK || !apiequality.Semantic.DeepEqual(oldOwner, newOwner) {
@@ -332,6 +335,13 @@ func exactJobTrackingFinalizerRemoval(oldPod, newPod *corev1.Pod, subresource st
 	oldCopy.DeletionTimestamp = newCopy.DeletionTimestamp
 	oldCopy.DeletionGracePeriodSeconds = newCopy.DeletionGracePeriodSeconds
 	return apiequality.Semantic.DeepEqual(oldCopy, newCopy)
+}
+
+func podAllowsJobTrackingFinalizerCleanup(pod *corev1.Pod) bool {
+	if pod.DeletionTimestamp != nil {
+		return true
+	}
+	return pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 }
 
 func createAnnotationsMatch(

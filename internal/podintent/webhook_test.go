@@ -197,6 +197,7 @@ func TestValidationHandlerAllowsExactJobTrackingFinalizerCleanupWithoutLiveJob(t
 	t.Parallel()
 
 	handler, pod := validationHandlerFixture(t)
+	pod.Status.Phase = corev1.PodSucceeded
 	api := handler.Reader.(client.Client)
 	job := &batchv1.Job{}
 	if err := api.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: pod.OwnerReferences[0].Name}, job); err != nil {
@@ -217,6 +218,7 @@ func TestValidationHandlerAllowsExactJobTrackingFinalizerCleanupAfterOperationCl
 	t.Parallel()
 
 	handler, pod := validationHandlerFixture(t)
+	pod.Status.Phase = corev1.PodFailed
 	api := handler.Reader.(client.Client)
 	schema := &operatorv1alpha1.PtahSchema{}
 	if err := api.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: "app"}, schema); err != nil {
@@ -271,6 +273,26 @@ func TestValidationHandlerRejectsFinalizerCleanupWithSpecMutation(t *testing.T) 
 	response := handler.Handle(context.Background(), podUpdateRequest(t, original, pod))
 	if response.Allowed {
 		t.Fatal("Handle() allowed a spec mutation disguised as Job finalizer cleanup")
+	}
+}
+
+func TestValidationHandlerRejectsLiveJobTrackingFinalizerCleanup(t *testing.T) {
+	t.Parallel()
+
+	for _, phase := range []corev1.PodPhase{corev1.PodPending, corev1.PodRunning} {
+		phase := phase
+		t.Run(string(phase), func(t *testing.T) {
+			t.Parallel()
+
+			handler, pod := validationHandlerFixture(t)
+			pod.Status.Phase = phase
+			original := pod.DeepCopy()
+			pod.Finalizers = nil
+			response := handler.Handle(context.Background(), podUpdateRequest(t, original, pod))
+			if response.Allowed {
+				t.Fatalf("Handle() allowed Job tracking finalizer cleanup from a %s Pod", phase)
+			}
+		})
 	}
 }
 
