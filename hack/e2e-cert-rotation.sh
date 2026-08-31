@@ -40,9 +40,12 @@ DEPLOYMENT_JSON=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPAC
 SECRET_NAME=$(printf '%s' "$DEPLOYMENT_JSON" |
 	jq -r '.spec.template.spec.volumes[] | select(.name == "webhook-cert") | .secret.secretName')
 MANAGER_SERVICE_ACCOUNT=$(printf '%s' "$DEPLOYMENT_JSON" | jq -r '.spec.template.spec.serviceAccountName')
-[ -n "$SECRET_NAME" ] && [ "$SECRET_NAME" != null ] || fail "manager webhook Secret was not found"
-[ -n "$MANAGER_SERVICE_ACCOUNT" ] && [ "$MANAGER_SERVICE_ACCOUNT" != null ] ||
+if [ -z "$SECRET_NAME" ] || [ "$SECRET_NAME" = null ]; then
+	fail "manager webhook Secret was not found"
+fi
+if [ -z "$MANAGER_SERVICE_ACCOUNT" ] || [ "$MANAGER_SERVICE_ACCOUNT" = null ]; then
 	fail "manager ServiceAccount was not found"
+fi
 
 if [ "$(kubectl --kubeconfig "$KUBECONFIG_FILE" auth can-i \
 	--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${MANAGER_SERVICE_ACCOUNT}" \
@@ -74,8 +77,12 @@ OLD_CA=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get secret "$SECRET_NAME" -o jsonpath='{.data.ca\.crt}')
 OLD_CERT=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get secret "$SECRET_NAME" -o jsonpath='{.data.tls\.crt}')
-[ -n "$OLD_CA" ] && [ "$OLD_CA" != null ] || fail "generated webhook Secret has no CA certificate"
-[ -n "$OLD_CERT" ] && [ "$OLD_CERT" != null ] || fail "generated webhook Secret has no serving certificate"
+if [ -z "$OLD_CA" ] || [ "$OLD_CA" = null ]; then
+	fail "generated webhook Secret has no CA certificate"
+fi
+if [ -z "$OLD_CERT" ] || [ "$OLD_CERT" = null ]; then
+	fail "generated webhook Secret has no serving certificate"
+fi
 
 # A missing CA private key models a chart-generated Secret from an older
 # release. Removing only that field leaves the currently served certificate
