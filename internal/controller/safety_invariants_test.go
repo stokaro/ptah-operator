@@ -20,6 +20,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -783,6 +784,97 @@ func TestStalePlanEvidenceForcesFreshObservation(t *testing.T) {
 	}
 }
 
+func TestBlockedPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name           string
+		apply          operatorv1alpha1.ApplyPolicy
+		destructive    bool
+		approvalReason string
+	}{
+		{name: "destructive changes disabled", apply: operatorv1alpha1.ApplyPolicyAlways, destructive: true, approvalReason: "DestructiveChangesDisabled"},
+		{name: "apply disabled", apply: operatorv1alpha1.ApplyPolicyNever, approvalReason: "ApplyDisabled"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			policyBytes := "policy"
+			policyDigest := fingerprint.DigestBytes([]byte(policyBytes))
+			schema := schemaFixture()
+			schema.Spec.Interval = metav1.Duration{Duration: 8 * time.Minute}
+			schema.Spec.Policy.Apply = test.apply
+			schema.Spec.Policy.AllowDestructive = false
+			schema.Finalizers = []string{activeOperationFinalizer}
+			schema.Status.Phase = operatorv1alpha1.PhasePlanning
+			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+				ResolvedReference:        "oci://registry.example/team/schema@" + testDigest,
+				Digest:                   testDigest,
+				ArtifactType:             dataplane.SchemaArtifactType,
+				Verified:                 true,
+				VerificationPolicyUID:    testPolicyUID,
+				VerificationPolicyDigest: policyDigest,
+			}
+			schema.Status.Target = operatorv1alpha1.TargetStatus{
+				CoordinationDigest: testCoordinationDigest,
+				IdentityDigest:     testDigest,
+				DriftReportDigest:  safetyOtherDigest,
+			}
+			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+				Type:      operatorv1alpha1.OperationPlan,
+				ID:        "blocked-plan-operation",
+				JobName:   "blocked-plan-job",
+				JobUID:    "job-uid",
+				StartedAt: metav1.Now(),
+				Attempt:   1,
+			}
+			bindActiveInput(t, schema)
+			planDocument := safetyPlanDocument(t, "observed-state", test.destructive)
+			frame := safetyRunnerFrame(t, runner.Result{
+				ProtocolVersion:      runner.ProtocolVersion,
+				Operation:            runner.OperationPlan,
+				OperationID:          schema.Status.ActiveOperation.ID,
+				ChildExitCode:        0,
+				Stdout:               string(planDocument),
+				CoordinationDigest:   schema.Status.Target.CoordinationDigest,
+				TargetIdentityDigest: schema.Status.Target.IdentityDigest,
+				PlanContentDigest:    fingerprint.DigestBytes(planDocument),
+				PlanOutcome:          runner.PlanOutcomeChanges,
+			})
+			job, pod := terminalWorkload(schema, batchv1.JobComplete)
+			immutable := true
+			policyConfigMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: schema.Namespace,
+					Name:      schema.Spec.Desired.VerificationPolicyFrom.Name,
+					UID:       testPolicyUID,
+				},
+				Immutable: &immutable,
+				Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: policyBytes},
+			}
+			reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfigMap)
+			reconciler.Plans = planstore.Store{Client: api, Reader: api}
+
+			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if !result.Requeue {
+				t.Fatalf("Reconcile() result = %#v, want persisted blocked transition", result)
+			}
+			actual := safetyGetSchema(t, api, schema)
+			wantNext := reconciler.now().Add(schema.Spec.Interval.Duration)
+			approval := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired)
+			if actual.Status.ActiveOperation != nil || actual.Status.Phase != operatorv1alpha1.PhaseBlocked ||
+				actual.Status.Plan == nil || actual.Status.Plan.Destructive != test.destructive ||
+				actual.Status.NextReconciliationTime == nil ||
+				!actual.Status.NextReconciliationTime.Time.Equal(wantNext) ||
+				approval == nil || approval.Status != metav1.ConditionFalse || approval.Reason != test.approvalReason {
+				t.Fatalf("atomic blocked Plan status = %#v, want deadline %s and approval reason %s", actual.Status, wantNext, test.approvalReason)
+			}
+		})
+	}
+}
+
 func TestPolicyReplacementCannotProduceInSyncFromNoChangePlan(t *testing.T) {
 	t.Parallel()
 
@@ -1494,15 +1586,16 @@ func safetyAssertPendingProof(t *testing.T, schema *operatorv1alpha1.PtahSchema)
 	}
 }
 
-func safetyPlanDocument(t *testing.T, fromFingerprint string) []byte {
+func safetyPlanDocument(t *testing.T, fromFingerprint string, destructive ...bool) []byte {
 	t.Helper()
+	isDestructive := len(destructive) > 0 && destructive[0]
 	document, err := json.Marshal(map[string]any{
 		"format_version":   1,
 		"name":             "safety-plan",
 		"dialect":          "postgresql",
 		"from_fingerprint": fromFingerprint,
 		"to_fingerprint":   "desired-state",
-		"destructive":      false,
+		"destructive":      isDestructive,
 		"statements": []map[string]any{{
 			"sql": "CREATE TABLE safety_test (id bigint)", "severity": "safe", "reason": "test",
 		}},

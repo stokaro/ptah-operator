@@ -176,6 +176,13 @@ for lifecycle_marker in \
 		'assert_approval_consumed' \
 		'PlanNoLongerCurrent' \
 		'DestructiveChangesDisabled' \
+	'three complete scheduled blocked refresh cycles' \
+	'created: .metadata.creationTimestamp' \
+	'operation_rank' \
+	'did not preserve ordered interval-spaced blocked refresh cycles' \
+	'.status.nextReconciliationTime != null' \
+	'blocked refresh changed its current plan evidence' \
+	'immutable destructive plan changed during refresh' \
 	'audit_runtime_credentials' \
 	'create_admission_fixtures' \
 	'admission-snapshot-digest' \
@@ -285,7 +292,7 @@ done
 for durable_mysql_marker in \
 	'assert_mysql_destructive_refusal_durable' \
 	'all_new_jobs_complete' \
-	'three complete scheduled destructive refusals' \
+	'three complete scheduled blocked refresh cycles' \
 	'MySQL DROP INDEX did not remain durably blocked'; do
 	grep -F "$durable_mysql_marker" "$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
 done

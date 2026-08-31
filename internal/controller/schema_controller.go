@@ -175,16 +175,14 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	case operatorv1alpha1.PhaseReadyToApply, operatorv1alpha1.PhaseAwaitingApproval:
 		return r.reconcileApproval(ctx, schema)
 	case operatorv1alpha1.PhaseBlocked:
-		if artifactVerificationRefused(schema) {
-			if !due(schema.Status.NextReconciliationTime, now) {
-				return ctrl.Result{RequeueAfter: until(schema.Status.NextReconciliationTime, now)}, nil
-			}
-			// A refusal is a valid policy decision, not an infrastructure retry.
-			// Re-resolve at the ordinary cadence so a moved tag or changed policy
-			// gets a fresh decision without creating a hot loop.
-			return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+		if !due(schema.Status.NextReconciliationTime, now) {
+			return ctrl.Result{RequeueAfter: until(schema.Status.NextReconciliationTime, now)}, nil
 		}
-		return r.reconcileApproval(ctx, schema)
+		// Every blocked decision is periodically refreshed through the complete
+		// Resolve -> Verify -> Observe -> Plan pipeline. This observes moved tags,
+		// policy changes, and external database drift without discarding current
+		// evidence before the new resolution has been harvested.
+		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
 	case operatorv1alpha1.PhaseInSync:
 		if !due(schema.Status.NextReconciliationTime, now) {
 			return ctrl.Result{RequeueAfter: until(schema.Status.NextReconciliationTime, now)}, nil
@@ -960,11 +958,6 @@ func (r *SchemaReconciler) blockVerification(
 	return ctrl.Result{RequeueAfter: interval(schema)}, nil
 }
 
-func artifactVerificationRefused(schema *operatorv1alpha1.PtahSchema) bool {
-	condition := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
-	return condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "PolicyRefused"
-}
-
 func (r *SchemaReconciler) suspendUndispatchedOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	before := schema.DeepCopy()
@@ -1208,6 +1201,10 @@ func (r *SchemaReconciler) consumeResult(
 				}
 				schema.Status.Plan = currentPlanStatus(published, now)
 				setPlanPolicyStatus(schema, published)
+				if schema.Status.Phase == operatorv1alpha1.PhaseBlocked {
+					next := metav1.NewTime(now.Add(interval(schema)))
+					schema.Status.NextReconciliationTime = &next
+				}
 				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, "Published", "Exact plan bytes are stored in immutable chunks")
 			}
 		}
@@ -2261,12 +2258,15 @@ func (r *SchemaReconciler) approvalBecameInvalid(ctx context.Context, schema *op
 
 func (r *SchemaReconciler) waitBlocked(ctx context.Context, schema *operatorv1alpha1.PtahSchema, reason, message string) (ctrl.Result, error) {
 	before := schema.DeepCopy()
+	now := r.now()
+	next := metav1.NewTime(now.Add(interval(schema)))
 	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
+	schema.Status.NextReconciliationTime = &next
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, reason, message)
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: interval(schema)}, nil
+	return ctrl.Result{RequeueAfter: until(&next, now)}, nil
 }
 
 var (

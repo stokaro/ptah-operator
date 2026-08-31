@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -396,6 +397,24 @@ func TestVerificationPolicyRefusalBlocksWithoutHotRetry(t *testing.T) {
 	if unchanged.Status.ActiveOperation != nil {
 		t.Fatalf("blocked refusal claimed work before interval: %#v", unchanged.Status.ActiveOperation)
 	}
+
+	reconciler.Clock = func() time.Time { return unchanged.Status.NextReconciliationTime.Time }
+	result, err = reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("due blocked Reconcile() error = %v", err)
+	}
+	if !result.Requeue {
+		t.Fatalf("due blocked Reconcile() result = %#v, want Resolve claim", result)
+	}
+	refreshing := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), refreshing); err != nil {
+		t.Fatal(err)
+	}
+	if refreshing.Status.ActiveOperation == nil ||
+		refreshing.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+		refreshing.Status.Phase != operatorv1alpha1.PhaseResolving {
+		t.Fatalf("due verification-refusal refresh status = %#v", refreshing.Status)
+	}
 }
 
 func TestVerificationResultCannotOutrunPolicyConfigMapUpdate(t *testing.T) {
@@ -723,6 +742,171 @@ func TestAlwaysPolicyStillRequiresApprovalForDestructivePlan(t *testing.T) {
 	if condition == nil || condition.Status != metav1.ConditionTrue {
 		t.Fatalf("ApprovalRequired condition = %#v", condition)
 	}
+}
+
+func TestBlockedPolicyWaitsUntilPersistedRefreshDeadline(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+
+	for _, test := range []struct {
+		name        string
+		apply       operatorv1alpha1.ApplyPolicy
+		destructive bool
+	}{
+		{name: "destructive changes disabled", apply: operatorv1alpha1.ApplyPolicyAlways, destructive: true},
+		{name: "apply disabled", apply: operatorv1alpha1.ApplyPolicyNever},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			schema := blockedPolicySchema(test.apply, test.destructive)
+			next := metav1.NewTime(now.Add(4 * time.Minute))
+			schema.Status.NextReconciliationTime = &next
+			wantPlan := schema.Status.Plan.DeepCopy()
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+
+			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if result.Requeue || result.RequeueAfter != 4*time.Minute {
+				t.Fatalf("Reconcile() result = %#v, want persisted-deadline wait", result)
+			}
+			actual := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+				t.Fatal(err)
+			}
+			if actual.Status.ActiveOperation != nil || actual.Status.NextReconciliationTime == nil ||
+				!actual.Status.NextReconciliationTime.Time.Equal(next.Time) || !reflect.DeepEqual(actual.Status.Plan, wantPlan) {
+				t.Fatalf("blocked status changed before deadline: %#v", actual.Status)
+			}
+		})
+	}
+}
+
+func TestDueBlockedPolicyClaimsResolveWithoutClearingCurrentPlan(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+
+	for _, test := range []struct {
+		name        string
+		apply       operatorv1alpha1.ApplyPolicy
+		destructive bool
+	}{
+		{name: "destructive changes disabled", apply: operatorv1alpha1.ApplyPolicyAlways, destructive: true},
+		{name: "apply disabled", apply: operatorv1alpha1.ApplyPolicyNever},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			schema := blockedPolicySchema(test.apply, test.destructive)
+			dueAt := metav1.NewTime(now)
+			schema.Status.NextReconciliationTime = &dueAt
+			wantPlan := schema.Status.Plan.DeepCopy()
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+
+			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if !result.Requeue {
+				t.Fatalf("Reconcile() result = %#v, want Resolve claim", result)
+			}
+			actual := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+				t.Fatal(err)
+			}
+			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+				actual.Status.Phase != operatorv1alpha1.PhaseResolving || actual.Status.NextReconciliationTime != nil ||
+				!reflect.DeepEqual(actual.Status.Plan, wantPlan) {
+				t.Fatalf("due blocked refresh status = %#v", actual.Status)
+			}
+		})
+	}
+}
+
+func TestLegacyBlockedStatusWithoutDeadlineClaimsResolveImmediately(t *testing.T) {
+	t.Parallel()
+	schema := blockedPolicySchema(operatorv1alpha1.ApplyPolicyAlways, true)
+	wantPlan := schema.Status.Plan.DeepCopy()
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if !result.Requeue {
+		t.Fatalf("Reconcile() result = %#v, want immediate Resolve claim", result)
+	}
+	actual := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+		!reflect.DeepEqual(actual.Status.Plan, wantPlan) {
+		t.Fatalf("legacy blocked refresh status = %#v", actual.Status)
+	}
+}
+
+func TestWaitBlockedPersistsFutureRefreshDeadline(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	schema := schemaFixture()
+	schema.Spec.Interval = metav1.Duration{Duration: 7 * time.Minute}
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	current := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), current); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := reconciler.waitBlocked(context.Background(), current, "ApplyDisabled", "Policy records plans but does not apply them")
+	if err != nil {
+		t.Fatalf("waitBlocked() error = %v", err)
+	}
+	if result.Requeue || result.RequeueAfter != 7*time.Minute {
+		t.Fatalf("waitBlocked() result = %#v", result)
+	}
+	actual := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+		t.Fatal(err)
+	}
+	wantNext := now.Add(7 * time.Minute)
+	if actual.Status.Phase != operatorv1alpha1.PhaseBlocked || actual.Status.NextReconciliationTime == nil ||
+		!actual.Status.NextReconciliationTime.Time.Equal(wantNext) {
+		t.Fatalf("persisted blocked status = %#v, want deadline %s", actual.Status, wantNext)
+	}
+
+	restartResult, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+	if err != nil {
+		t.Fatalf("restart Reconcile() error = %v", err)
+	}
+	if restartResult.Requeue || restartResult.RequeueAfter != 7*time.Minute {
+		t.Fatalf("restart Reconcile() result = %#v, want persisted-deadline wait", restartResult)
+	}
+	afterRestart := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), afterRestart); err != nil {
+		t.Fatal(err)
+	}
+	if afterRestart.Status.ActiveOperation != nil || afterRestart.Status.NextReconciliationTime == nil ||
+		!afterRestart.Status.NextReconciliationTime.Time.Equal(wantNext) {
+		t.Fatalf("restart changed blocked deadline: %#v", afterRestart.Status)
+	}
+}
+
+func blockedPolicySchema(apply operatorv1alpha1.ApplyPolicy, destructive bool) *operatorv1alpha1.PtahSchema {
+	schema := schemaFixture()
+	schema.Spec.Interval = metav1.Duration{Duration: 10 * time.Minute}
+	schema.Spec.Policy.Apply = apply
+	schema.Spec.Policy.AllowDestructive = !destructive
+	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
+	schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{
+		Name: "blocked-plan", UID: "blocked-plan-uid", Fingerprint: testDigest,
+		ContentDigest: testDigest, ArtifactDigest: testDigest, Destructive: destructive,
+	}
+	if destructive {
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "PolicyBlocked", "Plan is blocked by destructive-change policy")
+	} else {
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ApplyDisabled", "Plan is ready but apply is disabled")
+	}
+	return schema
 }
 
 func schemaFixture() *operatorv1alpha1.PtahSchema {

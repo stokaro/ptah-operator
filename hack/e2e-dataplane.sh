@@ -194,6 +194,7 @@ record_observed_jobs() {
     .items[] | {
       uid: .metadata.uid,
       name: .metadata.name,
+      created: .metadata.creationTimestamp,
       schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
       operation: (.metadata.labels["operator.ptah.dev/operation"] // "")
     }
@@ -1753,32 +1754,101 @@ assert_periodic_noop() {
 assert_destructive_gate() {
 	gate_schema=$1
 	gate_apply_checkpoint=$2
+	gate_plan_name=$3
+	gate_plan_uid=$4
+	gate_plan_fingerprint=$5
+	gate_source_digest=$6
 	gate_interval=$(k -n "$TEST_NAMESPACE" get ptahschema "$gate_schema" \
 		-o jsonpath='{.spec.interval}')
 	[ "$gate_interval" = 10s ] ||
 		fail "$gate_schema destructive gate requires the harness's exact 10s interval"
-	gate_plan_checkpoint=$WORK_DIR/${gate_schema}-destructive-gate-plans.json
-	checkpoint_jobs "$gate_schema" plan "$gate_plan_checkpoint"
+	[ -n "$gate_plan_name" ] && [ -n "$gate_plan_uid" ] &&
+		[ -n "$gate_plan_fingerprint" ] && [ -n "$gate_source_digest" ] ||
+		fail "$gate_schema destructive gate lacks its immutable starting evidence"
+	gate_refresh_checkpoint=$WORK_DIR/${gate_schema}-destructive-gate-refresh.json
+	record_observed_jobs
+	jq -s --arg schema "$gate_schema" '
+      [.[] | select(.schema == $schema) | .uid] | sort
+    ' "$OBSERVED_JOBS_FILE" >"$gate_refresh_checkpoint"
 	gate_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$gate_deadline" ]; do
 		audit_completed_jobs
 		assert_no_new_jobs "$gate_schema" apply "$gate_apply_checkpoint"
-		gate_plan_count=$(new_job_count_since "$gate_schema" plan "$gate_plan_checkpoint")
-		if [ "$gate_plan_count" -ge 3 ] && \
-			all_new_jobs_complete "$gate_schema" plan "$gate_plan_checkpoint" 3; then
+		gate_resolve_count=$(new_job_count_since "$gate_schema" resolve "$gate_refresh_checkpoint")
+		gate_verify_count=$(new_job_count_since "$gate_schema" verify "$gate_refresh_checkpoint")
+		gate_observe_count=$(new_job_count_since "$gate_schema" observe "$gate_refresh_checkpoint")
+		gate_plan_count=$(new_job_count_since "$gate_schema" plan "$gate_refresh_checkpoint")
+		if [ "$gate_resolve_count" -ge 3 ] && [ "$gate_verify_count" -ge 3 ] && \
+			[ "$gate_observe_count" -ge 3 ] && [ "$gate_plan_count" -ge 3 ] && \
+			all_new_jobs_complete "$gate_schema" resolve "$gate_refresh_checkpoint" 3 && \
+			all_new_jobs_complete "$gate_schema" verify "$gate_refresh_checkpoint" 3 && \
+			all_new_jobs_complete "$gate_schema" observe "$gate_refresh_checkpoint" 3 && \
+			all_new_jobs_complete "$gate_schema" plan "$gate_refresh_checkpoint" 3; then
+			record_observed_jobs
+			jq -e -s \
+				--slurpfile before "$gate_refresh_checkpoint" \
+				--arg schema "$gate_schema" \
+				--argjson intervalSeconds 10 '
+              def new_since($before):
+                .uid as $uid | ($before[0] | index($uid)) == null;
+              def operation_rank:
+                if .operation == "resolve" then 0
+                elif .operation == "verify" then 1
+                elif .operation == "observe" then 2
+                else 3 end;
+              [.[] |
+                select(.schema == $schema) |
+                select(.operation == "resolve" or .operation == "verify" or
+                  .operation == "observe" or .operation == "plan") |
+                select(new_since($before))
+              ] | unique_by(.uid) | sort_by([.created, operation_rank]) as $new |
+              [$new[] | select(.operation == "resolve")] as $resolves |
+              ($resolves | length) >= 3 and
+              (($resolves[1].created | fromdateiso8601) -
+                ($resolves[0].created | fromdateiso8601) >= $intervalSeconds) and
+              (($resolves[2].created | fromdateiso8601) -
+                ($resolves[1].created | fromdateiso8601) >= $intervalSeconds) and
+              (($resolves[0].created) as $firstResolve |
+                ([$new[] | select(.created >= $firstResolve)][0:12] |
+                  map(.operation)) ==
+                ["resolve", "verify", "observe", "plan",
+                 "resolve", "verify", "observe", "plan",
+                 "resolve", "verify", "observe", "plan"])
+            ' "$OBSERVED_JOBS_FILE" >/dev/null ||
+				fail "$gate_schema did not preserve ordered interval-spaced blocked refresh cycles"
 			wait_for_schema "$gate_schema" '
           .status.phase == "Blocked" and .status.activeOperation == null and
           .status.pendingObservation == null and .status.pendingLockRelease == null and
+          .status.nextReconciliationTime != null and
           (.status.conditions | any(
             .type == "ApprovalRequired" and .status == "False" and
             .reason == "DestructiveChangesDisabled"))
-        ' "three complete scheduled destructive refusals"
+        ' "three complete scheduled blocked refresh cycles"
+			k -n "$TEST_NAMESPACE" get ptahschema "$gate_schema" -o json |
+				jq -e \
+					--arg plan "$gate_plan_name" \
+					--arg planUID "$gate_plan_uid" \
+					--arg fingerprint "$gate_plan_fingerprint" \
+					--arg digest "$gate_source_digest" '
+              .status.phase == "Blocked" and .status.source.digest == $digest and
+              .status.plan.name == $plan and .status.plan.uid == $planUID and
+              .status.plan.fingerprint == $fingerprint and
+              .status.plan.destructive == true
+            ' >/dev/null || fail "$gate_schema blocked refresh changed its current plan evidence"
+			k -n "$TEST_NAMESPACE" get ptahschemaplan "$gate_plan_name" -o json |
+				jq -e \
+					--arg uid "$gate_plan_uid" \
+					--arg fingerprint "$gate_plan_fingerprint" \
+					--arg digest "$gate_source_digest" '
+              .metadata.uid == $uid and .spec.fingerprint == $fingerprint and
+              .spec.artifactDigest == $digest and .spec.destructive == true
+            ' >/dev/null || fail "$gate_schema immutable destructive plan changed during refresh"
 			assert_no_new_jobs "$gate_schema" apply "$gate_apply_checkpoint"
 			return 0
 		fi
 		sleep 2
 	done
-	fail "$gate_schema did not complete three scheduled Plan refusals"
+	fail "$gate_schema did not complete three scheduled blocked refresh cycles"
 }
 
 assert_mysql_destructive_refusal_durable() {
@@ -1973,7 +2043,8 @@ run_engine_lifecycle() {
       (.status.conditions | any(.type == "Ready" and .status == "False"))
     ' "the destructive policy gate"
 	assert_no_new_jobs "$lifecycle_schema" apply "$destructive_apply_checkpoint"
-	assert_destructive_gate "$lifecycle_schema" "$destructive_apply_checkpoint"
+	assert_destructive_gate "$lifecycle_schema" "$destructive_apply_checkpoint" \
+		"$CURRENT_PLAN" "$CURRENT_PLAN_UID" "$CURRENT_PLAN_FINGERPRINT" "$digest_v4"
 	assert_database_column "$lifecycle_slug" note 1
 	assert_database_column "$lifecycle_slug" enabled 1
 	if [ "$lifecycle_slug" = mysql ]; then

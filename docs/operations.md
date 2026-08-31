@@ -247,7 +247,10 @@ approval is needed; `AwaitingApproval` means an exact approval is required.
 Every reconciliation interval resolves the requested reference again. A moved
 tag clears dependent plan and applied evidence, then repeats verification and
 observation against the new digest. An old approval cannot authorize the new
-plan.
+plan. This cadence also applies while a plan is `Blocked`: read-only
+verification, observation, and planning continue, the same immutable blocked
+plan returns as current when its inputs are unchanged, and no `Apply` Job is
+created.
 
 Registry failures are fail-closed. The last resolved digest remains visible as
 evidence, but the controller does not silently reinterpret a tag or apply a
