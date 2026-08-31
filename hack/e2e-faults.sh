@@ -16,6 +16,7 @@ REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
 FAULT_ACTIVE_DEADLINE_SECONDS=${E2E_FAULT_ACTIVE_DEADLINE_SECONDS:-7200}
 FAULT_BARRIER_SECONDS=${E2E_FAULT_BARRIER_SECONDS:-7800}
+FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS=${E2E_FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS:-45}
 SHARED_AUDITED_JOBS_FILE=${E2E_AUDITED_JOBS_FILE:-}
 SHARED_OBSERVED_JOBS_FILE=${E2E_OBSERVED_JOBS_FILE:-}
 
@@ -55,9 +56,6 @@ STATUS_RBAC_RULE_INDEX=
 STATUS_RBAC_ORIGINAL_VERBS=
 READ_WORKLOAD_BARRIER_ACTIVE=0
 READ_WORKLOAD_BARRIER_KEY=operator.ptah.dev/e2e-read-workload-barrier
-OWNED_POD_FINALIZER_POD=
-OWNED_POD_FINALIZER_UID=
-OWNED_POD_FINALIZER_VALUE=
 FOLLOW_LOG_PID=
 FOLLOW_LOG_FILE=
 FOLLOW_LOG_STATUS_FILE=
@@ -114,11 +112,20 @@ printf '%s\n' "$FAULT_ACTIVE_DEADLINE_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "E2E_FAULT_ACTIVE_DEADLINE_SECONDS must be a positive integer"
 printf '%s\n' "$FAULT_BARRIER_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "E2E_FAULT_BARRIER_SECONDS must be a positive integer"
+printf '%s\n' "$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
+	fail "E2E_FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS must be a positive integer"
 if [ "$FAULT_ACTIVE_DEADLINE_SECONDS" -lt 7200 ] || [ "$FAULT_ACTIVE_DEADLINE_SECONDS" -gt 86400 ]; then
 	fail "the fault Apply active deadline must be between 7200 and 86400 seconds"
 fi
 [ "$FAULT_BARRIER_SECONDS" -gt "$FAULT_ACTIVE_DEADLINE_SECONDS" ] ||
 	fail "the fault database barrier must outlive the Apply active deadline"
+if [ "$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS" -lt 30 ] ||
+	[ "$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS" -gt 120 ]; then
+	fail "the timeout acceptance Apply deadline must be between 30 and 120 seconds"
+fi
+minimum_timeout_seconds=$((FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS + 60))
+[ "$TIMEOUT_SECONDS" -ge "$minimum_timeout_seconds" ] ||
+	fail "E2E_TIMEOUT_SECONDS must leave at least 60 seconds after the timeout acceptance Apply deadline"
 
 k() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" "$@"
@@ -142,153 +149,11 @@ stop_pid() {
 	wait "$stop_target" >/dev/null 2>&1 || true
 }
 
-add_named_pod_finalizer() {
-	finalizer_pod=$1
-	finalizer_uid=$2
-	finalizer_value=$3
-	[ -z "$OWNED_POD_FINALIZER_POD" ] ||
-		fail "a test Pod finalizer is already owned by the fault harness"
-	OWNED_POD_FINALIZER_POD=$finalizer_pod
-	OWNED_POD_FINALIZER_UID=$finalizer_uid
-	OWNED_POD_FINALIZER_VALUE=$finalizer_value
-	finalizer_deadline=$(deadline_from_now)
-	while [ "$(date +%s)" -lt "$finalizer_deadline" ]; do
-		finalizer_object=$(k -n "$TEST_NAMESPACE" get pod "$finalizer_pod" -o json)
-		printf '%s\n' "$finalizer_object" | jq -e \
-			--arg uid "$finalizer_uid" \
-			--arg finalizer "$finalizer_value" '
-              .metadata.uid == $uid and
-              ((.metadata.finalizers // []) | index($finalizer) == null)
-            ' >/dev/null || fail "Pod $finalizer_pod changed identity or already has the test finalizer"
-		finalizer_rv=$(printf '%s\n' "$finalizer_object" | jq -er '.metadata.resourceVersion')
-		if printf '%s\n' "$finalizer_object" | jq -e '.metadata.finalizers == null' >/dev/null; then
-			finalizer_patch=$(jq -cn \
-				--arg rv "$finalizer_rv" \
-				--arg finalizer "$finalizer_value" '
-                  [
-                    {op: "test", path: "/metadata/resourceVersion", value: $rv},
-                    {op: "add", path: "/metadata/finalizers", value: [$finalizer]}
-                  ]
-                ')
-		else
-			finalizer_patch=$(jq -cn \
-				--arg rv "$finalizer_rv" \
-				--arg finalizer "$finalizer_value" '
-                  [
-                    {op: "test", path: "/metadata/resourceVersion", value: $rv},
-                    {op: "add", path: "/metadata/finalizers/-", value: $finalizer}
-                  ]
-                ')
-		fi
-		if k -n "$TEST_NAMESPACE" patch pod "$finalizer_pod" --type=json \
-			-p "$finalizer_patch" >/dev/null 2>&1; then
-			return 0
-		fi
-		sleep 1
-	done
-	fail "could not add only the named test finalizer to Pod $finalizer_pod"
-}
-
-remove_named_pod_finalizer() {
-	finalizer_pod=$1
-	finalizer_uid=$2
-	finalizer_value=$3
-	finalizer_deadline=$(deadline_from_now)
-	while [ "$(date +%s)" -lt "$finalizer_deadline" ]; do
-		finalizer_object=$(k -n "$TEST_NAMESPACE" get pod "$finalizer_pod" -o json)
-		printf '%s\n' "$finalizer_object" | jq -e --arg uid "$finalizer_uid" \
-			'.metadata.uid == $uid' >/dev/null || fail "Pod $finalizer_pod changed UID before finalizer release"
-		finalizer_index=$(printf '%s\n' "$finalizer_object" | jq -r \
-			--arg finalizer "$finalizer_value" '
-              [.metadata.finalizers // [] | to_entries[] |
-                select(.value == $finalizer) | .key] |
-              if length == 1 then .[0] else empty end
-            ')
-		[ -n "$finalizer_index" ] || fail "Pod $finalizer_pod lost or duplicated the named test finalizer"
-		finalizer_rv=$(printf '%s\n' "$finalizer_object" | jq -er '.metadata.resourceVersion')
-		finalizer_patch=$(jq -cn \
-			--arg rv "$finalizer_rv" \
-			--arg finalizer "$finalizer_value" \
-			--arg path "/metadata/finalizers/${finalizer_index}" '
-              [
-                {op: "test", path: "/metadata/resourceVersion", value: $rv},
-                {op: "test", path: $path, value: $finalizer},
-                {op: "remove", path: $path}
-              ]
-            ')
-		if k -n "$TEST_NAMESPACE" patch pod "$finalizer_pod" --type=json \
-			-p "$finalizer_patch" >/dev/null 2>&1; then
-			OWNED_POD_FINALIZER_POD=
-			OWNED_POD_FINALIZER_UID=
-			OWNED_POD_FINALIZER_VALUE=
-			return 0
-		fi
-		sleep 1
-	done
-	fail "could not remove only the named test finalizer from Pod $finalizer_pod"
-}
-
-cleanup_named_pod_finalizer() {
-	[ -n "$OWNED_POD_FINALIZER_POD" ] || return 0
-	cleanup_finalizer_attempt=0
-	while [ "$cleanup_finalizer_attempt" -lt 10 ]; do
-		cleanup_finalizer_attempt=$((cleanup_finalizer_attempt + 1))
-		cleanup_finalizer_object=$(k -n "$TEST_NAMESPACE" get pod \
-			"$OWNED_POD_FINALIZER_POD" -o json 2>/dev/null) || {
-			OWNED_POD_FINALIZER_POD=
-			OWNED_POD_FINALIZER_UID=
-			OWNED_POD_FINALIZER_VALUE=
-			return 0
-		}
-		if ! printf '%s\n' "$cleanup_finalizer_object" | jq -e \
-			--arg uid "$OWNED_POD_FINALIZER_UID" '.metadata.uid == $uid' >/dev/null; then
-			return 1
-		fi
-		cleanup_finalizer_index=$(printf '%s\n' "$cleanup_finalizer_object" | jq -r \
-			--arg finalizer "$OWNED_POD_FINALIZER_VALUE" '
-              [.metadata.finalizers // [] | to_entries[] |
-                select(.value == $finalizer) | .key] |
-              if length == 1 then .[0] else empty end
-            ')
-		if [ -z "$cleanup_finalizer_index" ]; then
-			OWNED_POD_FINALIZER_POD=
-			OWNED_POD_FINALIZER_UID=
-			OWNED_POD_FINALIZER_VALUE=
-			return 0
-		fi
-		cleanup_finalizer_rv=$(printf '%s\n' "$cleanup_finalizer_object" |
-			jq -er '.metadata.resourceVersion') || return 1
-		cleanup_finalizer_patch=$(jq -cn \
-			--arg rv "$cleanup_finalizer_rv" \
-			--arg finalizer "$OWNED_POD_FINALIZER_VALUE" \
-			--arg path "/metadata/finalizers/${cleanup_finalizer_index}" '
-              [
-                {op: "test", path: "/metadata/resourceVersion", value: $rv},
-                {op: "test", path: $path, value: $finalizer},
-                {op: "remove", path: $path}
-              ]
-            ') || return 1
-		if k -n "$TEST_NAMESPACE" patch pod "$OWNED_POD_FINALIZER_POD" --type=json \
-			-p "$cleanup_finalizer_patch" >/dev/null 2>&1; then
-			OWNED_POD_FINALIZER_POD=
-			OWNED_POD_FINALIZER_UID=
-			OWNED_POD_FINALIZER_VALUE=
-			return 0
-		fi
-		sleep 1
-	done
-	return 1
-}
-
 cleanup() {
 	status=$?
 	trap - EXIT HUP INT TERM
 	set +e
 	stop_pid "$FOLLOW_LOG_PID"
-	if ! cleanup_named_pod_finalizer; then
-		printf '%s\n' 'e2e faults: could not remove the named test Pod finalizer' >&2
-		status=1
-	fi
 	if [ -n "$WATCH_HEARTBEAT_STOP_FILE" ]; then
 		: >"$WATCH_HEARTBEAT_STOP_FILE"
 	fi
@@ -811,7 +676,7 @@ assert_fault_audit_complete() {
 	done
 }
 
-audit_protected_deleted_job() {
+audit_protected_terminal_job() {
 	protected_job_name=$1
 	protected_job_uid=$2
 	protected_pod_uid=$3
@@ -825,7 +690,7 @@ audit_protected_deleted_job() {
 	printf '%s\n' "$protected_job_object" >"$RESOURCE_FILE"
 	scan_fault_file "$RESOURCE_FILE" "protected terminal Job $protected_job_name"
 	grep -Fx "$protected_pod_uid" "$AUDITED_FAULT_PODS_FILE" >/dev/null ||
-		fail "protected Job $protected_job_name was terminal before its deleted Pod log stream was audited"
+		fail "protected Job $protected_job_name was terminal before its exact Pod log stream was audited"
 	record_audited_uid "$AUDITED_FAULT_JOBS_FILE" "$protected_job_uid"
 	record_audited_uid "$SHARED_AUDITED_JOBS_FILE" "$protected_job_uid"
 }
@@ -2080,6 +1945,12 @@ capture_uncertain_read_proof_pair() {
 	uncertain_lease_epoch=$9
 	uncertain_observe_checkpoint=${10}
 	uncertain_plan_checkpoint=${11}
+	uncertain_apply_pod_count=${12:-1}
+	case "$uncertain_apply_pod_count" in
+	0) uncertain_apply_pod_uids='[]' ;;
+	1) uncertain_apply_pod_uids=$(jq -cn --arg uid "$uncertain_apply_pod_uid" '[$uid]') ;;
+	*) fail "$uncertain_schema recovery proof has an unsupported Apply Pod evidence count" ;;
+	esac
 	[ "$READ_WORKLOAD_BARRIER_ACTIVE" -eq 1 ] ||
 		fail "$uncertain_schema recovery proof started without its scheduling barrier"
 	[ "$STATUS_RBAC_PAUSED" -eq 0 ] ||
@@ -2111,7 +1982,8 @@ capture_uncertain_read_proof_pair() {
 		--arg applyOperation "$uncertain_apply_operation" \
 		--arg applyJobName "$uncertain_apply_job_name" \
 		--arg applyJobUID "$uncertain_apply_job_uid" \
-		--arg applyPodUID "$uncertain_apply_pod_uid" \
+		--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
+		--argjson applyPodCount "$uncertain_apply_pod_count" \
 		--arg leaseEpoch "$uncertain_lease_epoch" '
       .status.activeOperation.type == "Observe" and
       .status.activeOperation.id == $observeOperation and
@@ -2121,8 +1993,8 @@ capture_uncertain_read_proof_pair() {
       .status.pendingObservation.applyOperationID == $applyOperation and
       .status.pendingObservation.applyJobName == $applyJobName and
       .status.pendingObservation.applyJobUID == $applyJobUID and
-      .status.pendingObservation.applyPodUIDs == [$applyPodUID] and
-      .status.pendingObservation.applyPodCount == 1 and
+      .status.pendingObservation.applyPodUIDs == $applyPodUIDs and
+      .status.pendingObservation.applyPodCount == $applyPodCount and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
       (.status.pendingObservation.planRequired // false) == false and
       .status.phase == "VerifyingConvergence" and .status.applied == null and
@@ -2163,7 +2035,8 @@ capture_uncertain_read_proof_pair() {
 		--arg applyOperation "$uncertain_apply_operation" \
 		--arg applyJobName "$uncertain_apply_job_name" \
 		--arg applyJobUID "$uncertain_apply_job_uid" \
-		--arg applyPodUID "$uncertain_apply_pod_uid" \
+		--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
+		--argjson applyPodCount "$uncertain_apply_pod_count" \
 		--arg leaseEpoch "$uncertain_lease_epoch" '
       .status.activeOperation.type == "Plan" and
       .status.activeOperation.id == $planOperation and
@@ -2173,8 +2046,8 @@ capture_uncertain_read_proof_pair() {
       .status.pendingObservation.applyOperationID == $applyOperation and
       .status.pendingObservation.applyJobName == $applyJobName and
       .status.pendingObservation.applyJobUID == $applyJobUID and
-      .status.pendingObservation.applyPodUIDs == [$applyPodUID] and
-      .status.pendingObservation.applyPodCount == 1 and
+      .status.pendingObservation.applyPodUIDs == $applyPodUIDs and
+      .status.pendingObservation.applyPodCount == $applyPodCount and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
       .status.pendingObservation.planRequired == true and
       .status.phase == "VerifyingConvergence" and .status.applied == null and
@@ -2422,6 +2295,8 @@ create_schema() {
 	schema_reference=$4
 	schema_coordination_key=$5
 	schema_failure_retry=${6:-5s}
+	schema_active_deadline=${7:-$FAULT_ACTIVE_DEADLINE_SECONDS}
+	schema_lock_timeout=${8:-60s}
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
 		--arg name "$schema_name" \
@@ -2432,7 +2307,8 @@ create_schema() {
 		--arg registrySecret "$REGISTRY_AUTH_SECRET" \
 		--arg pullSecret "$REGISTRY_PULL_SECRET" \
 		--arg failureRetry "$schema_failure_retry" \
-		--argjson activeDeadline "$FAULT_ACTIVE_DEADLINE_SECONDS" '
+		--arg lockTimeout "$schema_lock_timeout" \
+		--argjson activeDeadline "$schema_active_deadline" '
       {
         apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
         metadata: {namespace: $namespace, name: $name},
@@ -2452,7 +2328,7 @@ create_schema() {
           },
           policy: {
             apply: "OnApproval", allowDestructive: false, driftSeverity: "all",
-            lockTimeout: "60s", transactionMode: "file"
+            lockTimeout: $lockTimeout, transactionMode: "file"
           },
           interval: "1h",
           execution: {
@@ -2563,6 +2439,156 @@ wait_for_apply_pod() {
 		sleep 1
 	done
 	fail "timed out waiting for the running Apply Pod for $active_schema"
+}
+
+wait_for_blocked_apply_pod() {
+	blocked_apply_schema=$1
+	blocked_apply_deadline_seconds=$2
+	[ "$READ_WORKLOAD_BARRIER_ACTIVE" -eq 1 ] ||
+		fail "$blocked_apply_schema timeout Apply started without the scheduling barrier"
+	wait_for_schema "$blocked_apply_schema" '
+      .status.phase == "Applying" and
+      .status.activeOperation.type == "Apply" and
+      .status.activeOperation.dispatchStarted == true and
+      .status.activeOperation.jobUID != null and .status.activeOperation.jobUID != ""
+    ' "one dispatched Apply Job held behind the timeout scheduling barrier"
+	ACTIVE_OPERATION_ID=$(k -n "$TEST_NAMESPACE" get ptahschema "$blocked_apply_schema" \
+		-o jsonpath='{.status.activeOperation.id}')
+	ACTIVE_JOB_NAME=$(k -n "$TEST_NAMESPACE" get ptahschema "$blocked_apply_schema" \
+		-o jsonpath='{.status.activeOperation.jobName}')
+	ACTIVE_JOB_UID=$(k -n "$TEST_NAMESPACE" get ptahschema "$blocked_apply_schema" \
+		-o jsonpath='{.status.activeOperation.jobUID}')
+	k -n "$TEST_NAMESPACE" get job "$ACTIVE_JOB_NAME" -o json | jq -e \
+		--arg uid "$ACTIVE_JOB_UID" \
+		--arg schema "$blocked_apply_schema" \
+		--arg operationID "$ACTIVE_OPERATION_ID" \
+		--argjson deadline "$blocked_apply_deadline_seconds" '
+      .metadata.uid == $uid and
+      .metadata.labels["operator.ptah.dev/schema"] == $schema and
+      .metadata.labels["operator.ptah.dev/operation"] == "apply" and
+      .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      .spec.activeDeadlineSeconds == $deadline and
+      .spec.template.spec.activeDeadlineSeconds == $deadline and
+      .spec.parallelism == 1 and .spec.completions == 1 and
+      .spec.backoffLimit == 0 and .spec.podReplacementPolicy == "Failed"
+    ' >/dev/null ||
+		fail "$blocked_apply_schema timeout Apply Job lost its exact deadline or one-shot contract"
+
+	blocked_apply_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$blocked_apply_deadline" ]; do
+		maybe_audit_fault_runtime
+		blocked_apply_pods=$(k -n "$TEST_NAMESPACE" get pods \
+			-l "batch.kubernetes.io/controller-uid=${ACTIVE_JOB_UID}" -o json)
+		blocked_apply_count=$(printf '%s\n' "$blocked_apply_pods" | jq '.items | length')
+		[ "$blocked_apply_count" -le 1 ] ||
+			fail "$blocked_apply_schema created overlapping timeout Apply Pods"
+		if [ "$blocked_apply_count" -eq 1 ] && printf '%s\n' "$blocked_apply_pods" | jq -e \
+			--arg jobName "$ACTIVE_JOB_NAME" \
+			--arg jobUID "$ACTIVE_JOB_UID" \
+			--arg operationID "$ACTIVE_OPERATION_ID" \
+			--arg barrierKey "$READ_WORKLOAD_BARRIER_KEY" '
+          .items[0] as $pod |
+          $pod.metadata.deletionTimestamp == null and
+          $pod.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+          ($pod.metadata.ownerReferences // [] | length == 1 and
+            .[0].apiVersion == "batch/v1" and .[0].kind == "Job" and
+            .[0].name == $jobName and .[0].uid == $jobUID and .[0].controller == true) and
+          ($pod.spec.nodeName // "") == "" and $pod.status.phase == "Pending" and
+          ([ $pod.status.initContainerStatuses // [],
+             $pod.status.containerStatuses // [],
+             $pod.status.ephemeralContainerStatuses // [] ] | add |
+            all(.[]; .state.running == null and .state.terminated == null and
+              (.restartCount // 0) == 0)) and
+          all(($pod.spec.tolerations // [])[]; .key != $barrierKey)
+        ' >/dev/null; then
+			ACTIVE_POD_NAME=$(printf '%s\n' "$blocked_apply_pods" | jq -er '.items[0].metadata.name')
+			ACTIVE_POD_UID=$(printf '%s\n' "$blocked_apply_pods" | jq -er '.items[0].metadata.uid')
+			assert_read_workload_blocked "$ACTIVE_JOB_UID" \
+				"the exact timeout Apply Job for $blocked_apply_schema"
+			return 0
+		fi
+		sleep 1
+	done
+	fail "timed out waiting for the blocked Apply Pod for $blocked_apply_schema"
+}
+
+record_deadline_pending_pod_evidence() {
+	deadline_pod_name=$1
+	deadline_pod_uid=$2
+	deadline_job_name=$3
+	deadline_job_uid=$4
+	deadline_pod_object=$(k -n "$TEST_NAMESPACE" get pod "$deadline_pod_name" -o json)
+	printf '%s\n' "$deadline_pod_object" | jq -e \
+		--arg podUID "$deadline_pod_uid" \
+		--arg jobName "$deadline_job_name" \
+		--arg jobUID "$deadline_job_uid" '
+      .metadata.uid == $podUID and .metadata.deletionTimestamp == null and
+      (.metadata.ownerReferences // [] | length == 1 and
+        .[0].apiVersion == "batch/v1" and .[0].kind == "Job" and
+        .[0].name == $jobName and .[0].uid == $jobUID and .[0].controller == true) and
+      (.spec.nodeName // "") == "" and
+      ([.status.initContainerStatuses // [], .status.containerStatuses // [],
+        .status.ephemeralContainerStatuses // []] | add |
+        all(.[]; .state.running == null and .state.terminated == null and
+          (.restartCount // 0) == 0))
+    ' >/dev/null ||
+		fail "timeout Apply Pod $deadline_pod_name lacks exact never-started pre-deadline evidence"
+	printf '%s\n' "$deadline_pod_object" >"$RESOURCE_FILE"
+	scan_fault_file "$RESOURCE_FILE" "the exact never-started pre-deadline Apply Pod"
+	record_audited_uid "$AUDITED_FAULT_PODS_FILE" "$deadline_pod_uid"
+	: >"$RESOURCE_FILE"
+}
+
+wait_for_exact_pod_absence_without_audit() {
+	absent_pod_name=$1
+	absent_pod_uid=$2
+	absent_pod_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$absent_pod_deadline" ]; do
+		absent_pod_object=$(k -n "$TEST_NAMESPACE" get pod "$absent_pod_name" -o json 2>/dev/null || true)
+		[ -n "$absent_pod_object" ] || return 0
+		printf '%s\n' "$absent_pod_object" | jq -e \
+			--arg uid "$absent_pod_uid" '.metadata.uid == $uid' >/dev/null ||
+			fail "timeout Apply Pod $absent_pod_name was replaced before deletion completed"
+		sleep 1
+	done
+	fail "timed out waiting for timeout Apply Pod $absent_pod_name to be deleted"
+}
+
+wait_for_deadline_job_terminal_and_audit() {
+	deadline_terminal_name=$1
+	deadline_terminal_uid=$2
+	deadline_terminal_seconds=$3
+	deadline_terminal_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$deadline_terminal_deadline" ]; do
+		deadline_terminal_object=$(k -n "$TEST_NAMESPACE" get job "$deadline_terminal_name" -o json 2>/dev/null || true)
+		if [ -n "$deadline_terminal_object" ]; then
+			printf '%s\n' "$deadline_terminal_object" | jq -e \
+				--arg uid "$deadline_terminal_uid" '.metadata.uid == $uid' >/dev/null ||
+				fail "timeout Apply Job $deadline_terminal_name changed UID before terminal audit"
+			if printf '%s\n' "$deadline_terminal_object" | jq -e \
+				--arg uid "$deadline_terminal_uid" \
+				--argjson deadline "$deadline_terminal_seconds" '
+              ([.status.conditions // [] | .[] | select(
+                .type == "Failed" and .status == "True" and
+                .reason == "DeadlineExceeded")] | .[0]) as $condition |
+              .metadata.uid == $uid and
+              .spec.activeDeadlineSeconds == $deadline and
+              .spec.template.spec.activeDeadlineSeconds == $deadline and
+              .status.startTime != null and $condition != null and
+              (($condition.lastTransitionTime | fromdateiso8601) -
+                (.status.startTime | fromdateiso8601)) >= ($deadline - 1)
+            ' >/dev/null; then
+				printf '%s\n' "$deadline_terminal_object" >"$RESOURCE_FILE"
+				scan_fault_file "$RESOURCE_FILE" "the exact DeadlineExceeded Apply Job"
+				record_audited_uid "$AUDITED_FAULT_JOBS_FILE" "$deadline_terminal_uid"
+				record_audited_uid "$SHARED_AUDITED_JOBS_FILE" "$deadline_terminal_uid"
+				: >"$RESOURCE_FILE"
+				return 0
+			fi
+		fi
+		sleep 1
+	done
+	fail "timeout Apply Job $deadline_terminal_name never reached Failed/DeadlineExceeded"
 }
 
 assert_active_pod_ephemeral_container_rejected() {
@@ -3047,6 +3073,12 @@ assert_uncertain_apply_proof_history() {
 	unknown_apply_pod_uid=${10}
 	unknown_plan_mode=${11:-same-plan}
 	unknown_old_actual_fingerprint=${12:-}
+	unknown_apply_pod_count=${13:-1}
+	case "$unknown_apply_pod_count" in
+	0) unknown_apply_pod_uids='[]' ;;
+	1) unknown_apply_pod_uids=$(jq -cn --arg uid "$unknown_apply_pod_uid" '[$uid]') ;;
+	*) fail "$unknown_schema proof history has an unsupported Apply Pod evidence count" ;;
+	esac
 	unknown_final_schema=$WORK_DIR/${unknown_schema}-final-schema.json
 	unknown_fresh_plan=$WORK_DIR/${unknown_schema}-fresh-plan.json
 	k -n "$TEST_NAMESPACE" get ptahschema "$unknown_schema" -o json >"$unknown_final_schema"
@@ -3074,7 +3106,8 @@ assert_uncertain_apply_proof_history() {
 		--arg observeJobUID "$unknown_observe_job_uid" \
 		--arg planJobUID "$unknown_plan_job_uid" \
 		--arg freshPlanUID "$unknown_fresh_plan_uid" \
-		--arg applyPodUID "$unknown_apply_pod_uid" \
+		--argjson applyPodUIDs "$unknown_apply_pod_uids" \
+		--argjson applyPodCount "$unknown_apply_pod_count" \
 		--arg planMode "$unknown_plan_mode" \
 		--arg oldActual "$unknown_old_actual_fingerprint" \
 		--slurpfile jobs "$unknown_job_watch" \
@@ -3211,7 +3244,8 @@ assert_uncertain_apply_proof_history() {
 	      $apply.value.status.activeOperation.terminationGracePeriodSeconds == 30 and
 	      $origin.applyJobName == $apply.value.status.activeOperation.jobName and
 	      $origin.applyJobUID == $applyJobUID and
-	      $origin.applyPodUIDs == [$applyPodUID] and $origin.applyPodCount == 1 and
+	      $origin.applyPodUIDs == $applyPodUIDs and
+	      $origin.applyPodCount == $applyPodCount and
 	      $unknown.value.status.phase == "VerifyingConvergence" and
 	      $unknown.value.status.applied == null and
 	      $unknown.value.status.pendingLockRelease == null and
@@ -3518,10 +3552,15 @@ MYSQL_UNKNOWN_DB=e2e_fault_my_unknown
 MYSQL_UNKNOWN_SECRET=e2e-fault-my-unknown-db
 MYSQL_UNKNOWN_SCHEMA=e2e-fault-my-unknown
 MYSQL_UNKNOWN_APPROVAL=e2e-fault-my-unknown-approval
+MYSQL_TIMEOUT_DB=e2e_fault_my_timeout
+MYSQL_TIMEOUT_SECRET=e2e-fault-my-timeout-db
+MYSQL_TIMEOUT_SCHEMA=e2e-fault-my-timeout
+MYSQL_TIMEOUT_APPROVAL=e2e-fault-my-timeout-approval
 
 create_database postgresql "$PG_RESTART_DB" "$PG_RESTART_SECRET"
 create_database postgresql "$PG_PARALLEL_DB" "$PG_PARALLEL_SECRET"
 create_database mysql "$MYSQL_UNKNOWN_DB" "$MYSQL_UNKNOWN_SECRET"
+create_database mysql "$MYSQL_TIMEOUT_DB" "$MYSQL_TIMEOUT_SECRET"
 
 PG_RESTART_LEASES_BEFORE=$WORK_DIR/pg-restart-leases-before.json
 checkpoint_leases "$PG_RESTART_LEASES_BEFORE"
@@ -3555,6 +3594,20 @@ MYSQL_IDLE_LEASE_EPOCH=$LEASE_EPOCH
 MYSQL_PREFAULT_SCHEMA_FINGERPRINT=$(mysql_schema_fingerprint "$MYSQL_UNKNOWN_DB" | tr -d '[:space:]')
 printf '%s\n' "$MYSQL_PREFAULT_SCHEMA_FINGERPRINT" | grep -Eq '^[0-9a-f]{32}$' ||
 	fail "could not fingerprint the complete pre-fault MySQL schema and index state"
+
+MYSQL_TIMEOUT_LEASES_BEFORE=$WORK_DIR/mysql-timeout-leases-before.json
+checkpoint_leases "$MYSQL_TIMEOUT_LEASES_BEFORE"
+create_schema "$MYSQL_TIMEOUT_SCHEMA" MySQL "$MYSQL_TIMEOUT_SECRET" "$MYSQL_REFERENCE" \
+	e2e/fault/mysql-timeout 1h "$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS" 30s
+wait_for_plan "$MYSQL_TIMEOUT_SCHEMA"
+load_single_new_released_lease "$MYSQL_TIMEOUT_LEASES_BEFORE" \
+	"the Kubernetes-timeout schema's initial Plan target lock"
+MYSQL_TIMEOUT_IDLE_LEASE_NAME=$LEASE_NAME
+MYSQL_TIMEOUT_IDLE_LEASE_UID=$LEASE_UID
+MYSQL_TIMEOUT_IDLE_LEASE_EPOCH=$LEASE_EPOCH
+MYSQL_TIMEOUT_PREFAULT_SCHEMA_FINGERPRINT=$(mysql_schema_fingerprint "$MYSQL_TIMEOUT_DB" | tr -d '[:space:]')
+printf '%s\n' "$MYSQL_TIMEOUT_PREFAULT_SCHEMA_FINGERPRINT" | grep -Eq '^[0-9a-f]{32}$' ||
+	fail "could not fingerprint the pre-timeout MySQL schema and index state"
 PG_RESTART_OBSERVE_CHECKPOINT=$WORK_DIR/pg-restart-observe-checkpoint.json
 PG_RESTART_PLAN_CHECKPOINT=$WORK_DIR/pg-restart-plan-checkpoint.json
 PG_PARALLEL_OBSERVE_CHECKPOINT=$WORK_DIR/pg-parallel-observe-checkpoint.json
@@ -3574,6 +3627,71 @@ MYSQL_OBSERVE_CHECKPOINT=$WORK_DIR/mysql-uncertain-observe-checkpoint.json
 checkpoint_operation_watch "$MYSQL_UNKNOWN_SCHEMA" observe 1 "$MYSQL_OBSERVE_CHECKPOINT"
 MYSQL_PLAN_JOB_CHECKPOINT=$WORK_DIR/mysql-uncertain-plan-checkpoint.json
 checkpoint_operation_watch "$MYSQL_UNKNOWN_SCHEMA" plan 1 "$MYSQL_PLAN_JOB_CHECKPOINT"
+MYSQL_TIMEOUT_ORIGINAL_PLAN_UID=$(k -n "$TEST_NAMESPACE" get ptahschema \
+	"$MYSQL_TIMEOUT_SCHEMA" -o jsonpath='{.status.plan.uid}')
+[ -n "$MYSQL_TIMEOUT_ORIGINAL_PLAN_UID" ] ||
+	fail "Kubernetes-timeout schema did not persist its original plan UID"
+MYSQL_TIMEOUT_OBSERVE_CHECKPOINT=$WORK_DIR/mysql-timeout-observe-checkpoint.json
+MYSQL_TIMEOUT_PLAN_CHECKPOINT=$WORK_DIR/mysql-timeout-plan-checkpoint.json
+checkpoint_operation_watch "$MYSQL_TIMEOUT_SCHEMA" observe 1 "$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT"
+checkpoint_operation_watch "$MYSQL_TIMEOUT_SCHEMA" plan 1 "$MYSQL_TIMEOUT_PLAN_CHECKPOINT"
+assert_database_column mysql "$MYSQL_TIMEOUT_DB" fault_token 0
+
+printf '%s\n' 'e2e faults: forcing one real Kubernetes Apply Job deadline'
+start_read_workload_barrier
+create_approval "$MYSQL_TIMEOUT_SCHEMA" "$MYSQL_TIMEOUT_APPROVAL"
+wait_for_blocked_apply_pod "$MYSQL_TIMEOUT_SCHEMA" \
+	"$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS"
+MYSQL_TIMEOUT_OPERATION_ID=$ACTIVE_OPERATION_ID
+MYSQL_TIMEOUT_JOB_NAME=$ACTIVE_JOB_NAME
+MYSQL_TIMEOUT_JOB_UID=$ACTIVE_JOB_UID
+MYSQL_TIMEOUT_POD_NAME=$ACTIVE_POD_NAME
+MYSQL_TIMEOUT_POD_UID=$ACTIVE_POD_UID
+record_deadline_pending_pod_evidence "$MYSQL_TIMEOUT_POD_NAME" \
+	"$MYSQL_TIMEOUT_POD_UID" "$MYSQL_TIMEOUT_JOB_NAME" "$MYSQL_TIMEOUT_JOB_UID"
+wait_for_lease_reacquisition "$MYSQL_TIMEOUT_IDLE_LEASE_NAME" \
+	"$MYSQL_TIMEOUT_IDLE_LEASE_UID" "$MYSQL_TIMEOUT_IDLE_LEASE_EPOCH" \
+	"the Kubernetes-timeout Apply"
+MYSQL_TIMEOUT_LEASE_NAME=$LEASE_NAME
+MYSQL_TIMEOUT_LEASE_UID=$LEASE_UID
+MYSQL_TIMEOUT_LEASE_HOLDER=$LEASE_HOLDER
+MYSQL_TIMEOUT_LEASE_EPOCH=$LEASE_EPOCH
+wait_for_deadline_job_terminal_and_audit "$MYSQL_TIMEOUT_JOB_NAME" \
+	"$MYSQL_TIMEOUT_JOB_UID" "$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS"
+wait_for_exact_pod_absence_without_audit "$MYSQL_TIMEOUT_POD_NAME" \
+	"$MYSQL_TIMEOUT_POD_UID"
+capture_uncertain_read_proof_pair "$MYSQL_TIMEOUT_SCHEMA" \
+	"$MYSQL_TIMEOUT_OPERATION_ID" "$MYSQL_TIMEOUT_JOB_NAME" "$MYSQL_TIMEOUT_JOB_UID" \
+	"$MYSQL_TIMEOUT_POD_UID" "$MYSQL_TIMEOUT_LEASE_NAME" "$MYSQL_TIMEOUT_LEASE_UID" \
+	"$MYSQL_TIMEOUT_LEASE_HOLDER" "$MYSQL_TIMEOUT_LEASE_EPOCH" \
+	"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" 0
+MYSQL_TIMEOUT_RECOVERY_OBSERVE_UID=$UNCERTAIN_OBSERVE_JOB_UID
+MYSQL_TIMEOUT_RECOVERY_PLAN_UID=$UNCERTAIN_PLAN_JOB_UID
+wait_for_schema "$MYSQL_TIMEOUT_SCHEMA" '
+  .status.pendingObservation == null and .status.activeOperation == null and
+  .status.phase == "AwaitingApproval" and .status.plan.name != null and
+  .status.plan.approval == null and .status.applied == null and
+  .status.pendingLockRelease == null
+' "a fresh unapproved plan after the Kubernetes Apply Job deadline"
+MYSQL_TIMEOUT_FRESH_PLAN_UID=$(k -n "$TEST_NAMESPACE" get ptahschema \
+	"$MYSQL_TIMEOUT_SCHEMA" -o jsonpath='{.status.plan.uid}')
+[ -n "$MYSQL_TIMEOUT_FRESH_PLAN_UID" ] ||
+	fail "Kubernetes-timeout recovery did not publish an immutable fresh plan"
+assert_approval_consumed "$MYSQL_TIMEOUT_APPROVAL" "$MYSQL_TIMEOUT_ORIGINAL_PLAN_UID"
+[ "$(watch_added_uid_count "$MYSQL_TIMEOUT_SCHEMA" apply)" -eq 1 ] ||
+	fail "Kubernetes-timeout recovery replayed or replaced its Apply Job"
+[ "$(watch_added_pod_uid_count "$MYSQL_TIMEOUT_SCHEMA" apply)" -eq 1 ] ||
+	fail "Kubernetes-timeout recovery created a replacement Apply Pod"
+[ "$(watch_new_uid_count "$MYSQL_TIMEOUT_SCHEMA" observe "$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT")" -eq 1 ] ||
+	fail "Kubernetes-timeout recovery did not retain exactly one fresh Observe Job"
+[ "$(watch_new_uid_count "$MYSQL_TIMEOUT_SCHEMA" plan "$MYSQL_TIMEOUT_PLAN_CHECKPOINT")" -eq 1 ] ||
+	fail "Kubernetes-timeout recovery did not retain exactly one fresh Plan Job"
+MYSQL_TIMEOUT_POSTRECOVERY_SCHEMA_FINGERPRINT=$(mysql_schema_fingerprint \
+	"$MYSQL_TIMEOUT_DB" | tr -d '[:space:]')
+[ "$MYSQL_TIMEOUT_POSTRECOVERY_SCHEMA_FINGERPRINT" = \
+	"$MYSQL_TIMEOUT_PREFAULT_SCHEMA_FINGERPRINT" ] ||
+	fail "Kubernetes-timeout recovery changed the database before fresh approval"
+assert_database_column mysql "$MYSQL_TIMEOUT_DB" fault_token 0
 
 start_pg_barrier "$PG_RESTART_DB" e2e_fault_pg_restart_barrier
 start_pg_barrier "$PG_PARALLEL_DB" e2e_fault_pg_parallel_barrier
@@ -3667,20 +3785,20 @@ assert_mysql_apply_lock_wait "$MYSQL_UNKNOWN_DB"
 [ "$(watch_added_uid_count "$PG_PARALLEL_SCHEMA" apply)" -eq 1 ] || fail "manager restart created a second parallel PostgreSQL Apply Job"
 [ "$(watch_added_uid_count "$MYSQL_UNKNOWN_SCHEMA" apply)" -eq 1 ] || fail "manager restart created a second MySQL Apply Job"
 
-printf '%s\n' 'e2e faults: gracefully deleting one active Apply Pod'
+printf '%s\n' 'e2e faults: terminating one active Apply runner without deleting its Pod'
 audit_fault_runtime
-MYSQL_EVIDENCE_FINALIZER=operator.ptah.dev/e2e-retain-terminal-evidence
-add_named_pod_finalizer "$MYSQL_POD_NAME" "$MYSQL_POD_UID" \
-	"$MYSQL_EVIDENCE_FINALIZER"
 start_read_workload_barrier
 start_follow_logs "$TEST_NAMESPACE" "$MYSQL_POD_NAME" mysql-uncertain "$MYSQL_POD_UID"
-k -n "$TEST_NAMESPACE" delete pod "$MYSQL_POD_NAME" --grace-period=30 --wait=false >/dev/null
-finish_follow_logs "the deleted active MySQL Apply Pod logs through termination"
+# The API stream may close non-zero when signaling PID 1 tears down the same
+# container. Natural log EOF below is the authoritative termination proof.
+k -n "$TEST_NAMESPACE" exec pod/"$MYSQL_POD_NAME" -c ptah -- \
+	/bin/kill -TERM 1 >/dev/null 2>&1 || true
+finish_follow_logs "the signaled active MySQL Apply Pod logs through termination"
 stop_mysql_barrier
 wait_for_operation_job_terminal "$MYSQL_UNKNOWN_SCHEMA" apply
 [ "$TERMINAL_OPERATION_ID" = "$MYSQL_OPERATION_ID" ] ||
 	fail "uncertain MySQL Apply terminal Job changed its operation identity"
-audit_protected_deleted_job "$MYSQL_JOB_NAME" "$MYSQL_JOB_UID" "$MYSQL_POD_UID"
+audit_protected_terminal_job "$MYSQL_JOB_NAME" "$MYSQL_JOB_UID" "$MYSQL_POD_UID"
 wait_for_outcome_unknown_watch "$MYSQL_UNKNOWN_SCHEMA" "$MYSQL_OPERATION_ID"
 wait_for_one_new_watched_job "$MYSQL_UNKNOWN_SCHEMA" observe "$MYSQL_OBSERVE_CHECKPOINT" \
 	"a read-only Observe Job after the uncertain Apply"
@@ -3689,16 +3807,6 @@ MYSQL_RECOVERY_OBSERVE_UID=$(single_new_watched_job_uid \
 assert_read_workload_blocked "$MYSQL_RECOVERY_OBSERVE_UID" \
 	"the read-only Observe Job after the uncertain Apply"
 pause_controller_status_writes
-k -n "$TEST_NAMESPACE" get pod "$MYSQL_POD_NAME" -o json | jq -e \
-	--arg uid "$MYSQL_POD_UID" \
-	--arg finalizer "$MYSQL_EVIDENCE_FINALIZER" '
-    .metadata.uid == $uid and .metadata.deletionTimestamp != null and
-    ((.metadata.finalizers // []) | index($finalizer) != null) and
-    .status.phase == "Failed"
-  ' >/dev/null || fail "retained uncertain MySQL Pod lost its exact terminal evidence"
-remove_named_pod_finalizer "$MYSQL_POD_NAME" "$MYSQL_POD_UID" \
-	"$MYSQL_EVIDENCE_FINALIZER"
-wait_for_absence pod "$MYSQL_POD_NAME"
 stop_read_workload_barrier
 MYSQL_RECOVERY_OBSERVE_JOB=$(k -n "$TEST_NAMESPACE" get jobs \
 	-l "operator.ptah.dev/schema=${MYSQL_UNKNOWN_SCHEMA},operator.ptah.dev/operation=observe" \
@@ -3721,6 +3829,7 @@ printf '%s\n' "$MYSQL_HELD_OBSERVE" | jq -e \
 	--arg observeUID "$MYSQL_RECOVERY_OBSERVE_UID" \
 	--arg observeOperation "$FAULT_RESULT_OPERATION_ID" \
 	--arg applyOperation "$MYSQL_OPERATION_ID" \
+	--arg applyPodUID "$MYSQL_POD_UID" \
 	--arg leaseEpoch "$MYSQL_LEASE_EPOCH" '
     .status.activeOperation.type == "Observe" and
     .status.activeOperation.id == $observeOperation and
@@ -3728,6 +3837,8 @@ printf '%s\n' "$MYSQL_HELD_OBSERVE" | jq -e \
     .status.activeOperation.leaseEpoch == $leaseEpoch and
     .status.pendingObservation.outcome == "OutcomeUnknown" and
     .status.pendingObservation.applyOperationID == $applyOperation and
+    .status.pendingObservation.applyPodUIDs == [$applyPodUID] and
+    .status.pendingObservation.applyPodCount == 1 and
     .status.pendingObservation.leaseEpoch == $leaseEpoch and
     (.status.pendingObservation.planRequired // false) == false and
     .status.applied == null and .status.pendingLockRelease == null and
@@ -3770,6 +3881,7 @@ printf '%s\n' "$MYSQL_HELD_SCHEMA" | jq -e \
 	--arg planUID "$MYSQL_RECOVERY_PLAN_JOB_UID" \
 	--arg planOperation "$FAULT_RESULT_OPERATION_ID" \
 	--arg applyOperation "$MYSQL_OPERATION_ID" \
+	--arg applyPodUID "$MYSQL_POD_UID" \
 	--arg leaseEpoch "$MYSQL_LEASE_EPOCH" '
     .status.activeOperation.type == "Plan" and
     .status.activeOperation.id == $planOperation and
@@ -3777,6 +3889,8 @@ printf '%s\n' "$MYSQL_HELD_SCHEMA" | jq -e \
     .status.activeOperation.leaseEpoch == $leaseEpoch and
     .status.pendingObservation.outcome == "OutcomeUnknown" and
     .status.pendingObservation.applyOperationID == $applyOperation and
+    .status.pendingObservation.applyPodUIDs == [$applyPodUID] and
+    .status.pendingObservation.applyPodCount == 1 and
     .status.pendingObservation.leaseEpoch == $leaseEpoch and
     .status.pendingObservation.planRequired == true and
     .status.applied == null and .status.pendingLockRelease == null and
@@ -4405,6 +4519,21 @@ assert_database_column mysql "$MYSQL_UNKNOWN_DB" fault_token 0
 MYSQL_FINAL_SCHEMA_FINGERPRINT=$(mysql_schema_fingerprint "$MYSQL_UNKNOWN_DB" | tr -d '[:space:]')
 [ "$MYSQL_FINAL_SCHEMA_FINGERPRINT" = "$MYSQL_PREFAULT_SCHEMA_FINGERPRINT" ] ||
 	fail "uncertain MySQL Apply changed a column or index during the delayed-replay window"
+assert_approval_consumed "$MYSQL_TIMEOUT_APPROVAL" "$MYSQL_TIMEOUT_ORIGINAL_PLAN_UID"
+k -n "$TEST_NAMESPACE" get ptahschema "$MYSQL_TIMEOUT_SCHEMA" -o json |
+	jq -e '
+      .status.activeOperation == null and .status.pendingObservation == null and
+      .status.pendingLockRelease == null and .status.applied == null and
+      .status.phase == "AwaitingApproval" and
+      .status.plan.uid != null and .status.plan.approval == null
+    ' >/dev/null ||
+	fail "Kubernetes-timeout recovery later became active or rebound its consumed approval"
+MYSQL_TIMEOUT_FINAL_SCHEMA_FINGERPRINT=$(mysql_schema_fingerprint \
+	"$MYSQL_TIMEOUT_DB" | tr -d '[:space:]')
+[ "$MYSQL_TIMEOUT_FINAL_SCHEMA_FINGERPRINT" = \
+	"$MYSQL_TIMEOUT_PREFAULT_SCHEMA_FINGERPRINT" ] ||
+	fail "Kubernetes-timeout recovery changed the database during the delayed-replay window"
+assert_database_column mysql "$MYSQL_TIMEOUT_DB" fault_token 0
 
 audit_fault_runtime
 PG_DATABASE_SENTINEL_POD=$(k -n "$TEST_NAMESPACE" get pods \
@@ -4517,6 +4646,51 @@ fi
 	fail "the uncertain MySQL Apply was replayed during a later reconciliation"
 [ "$(watch_added_pod_uid_count "$MYSQL_UNKNOWN_SCHEMA" apply)" -eq 1 ] ||
 	fail "the uncertain MySQL Apply Job created a later replacement Pod"
+if [ "$(watch_added_uid_count "$MYSQL_TIMEOUT_SCHEMA" apply)" -ne 1 ] ||
+	[ "$(watch_added_pod_uid_count "$MYSQL_TIMEOUT_SCHEMA" apply)" -ne 1 ]; then
+	fail "Kubernetes-timeout Apply history contains a replacement or delayed replay"
+fi
+if [ "$(watch_new_uid_count "$MYSQL_TIMEOUT_SCHEMA" observe "$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT")" -ne 1 ] ||
+	[ "$(watch_new_uid_count "$MYSQL_TIMEOUT_SCHEMA" plan "$MYSQL_TIMEOUT_PLAN_CHECKPOINT")" -ne 1 ]; then
+	fail "Kubernetes-timeout recovery did not retain exactly one fresh Observe and Plan Job"
+fi
+snapshot_watch jobs
+jq -s -e \
+	--arg schema "$MYSQL_TIMEOUT_SCHEMA" \
+	--arg uid "$MYSQL_TIMEOUT_JOB_UID" \
+	--argjson deadline "$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS" '
+    ([.[] |
+       select(.type == "ADDED") |
+       select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
+       select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+       .object.metadata.uid] | unique) == [$uid] and
+    any(.[];
+      .object.metadata.uid == $uid and
+      .object.spec.activeDeadlineSeconds == $deadline and
+      .object.spec.template.spec.activeDeadlineSeconds == $deadline and
+      (.object.status.conditions // [] | any(
+        .type == "Failed" and .status == "True" and
+        .reason == "DeadlineExceeded")))
+  ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
+	fail "Kubernetes-timeout Apply history lost its exact DeadlineExceeded Job UID"
+snapshot_watch pods
+jq -s -e \
+	--arg schema "$MYSQL_TIMEOUT_SCHEMA" \
+	--arg uid "$MYSQL_TIMEOUT_POD_UID" '
+    ([.[] |
+       select(.type == "ADDED") |
+       select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
+       select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+       .object.metadata.uid] | unique) == [$uid] and
+    all(.[] | select(.object.metadata.uid == $uid);
+      (.object.spec.nodeName // "") == "" and
+      ([.object.status.initContainerStatuses // [],
+        .object.status.containerStatuses // [],
+        .object.status.ephemeralContainerStatuses // []] | add |
+        all(.[]; .state.running == null and .state.terminated == null and
+          (.restartCount // 0) == 0)))
+  ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
+	fail "Kubernetes-timeout Apply history lost its exact never-started original Pod UID"
 MANUAL_FINGERPRINT_FINAL=$(postgres_schema_fingerprint "$PG_MANUAL_DB" | tr -d '[:space:]')
 [ "$MANUAL_FINGERPRINT_FINAL" = "$MANUAL_FINGERPRINT_BEFORE" ] ||
 	fail "manual drift or its delayed read-only proof changed the database schema"
@@ -4585,6 +4759,11 @@ assert_uncertain_apply_proof_history "$MYSQL_UNKNOWN_SCHEMA" "$MYSQL_OPERATION_I
 	"$MYSQL_JOB_UID" "$MYSQL_LEASE_UID" "$MYSQL_LEASE_HOLDER" "$MYSQL_LEASE_EPOCH" \
 	"$MYSQL_RECOVERY_OBSERVE_UID" "$MYSQL_RECOVERY_PLAN_JOB_UID" "$MYSQL_FRESH_PLAN_UID" \
 	"$MYSQL_POD_UID"
+assert_uncertain_apply_proof_history "$MYSQL_TIMEOUT_SCHEMA" \
+	"$MYSQL_TIMEOUT_OPERATION_ID" "$MYSQL_TIMEOUT_JOB_UID" "$MYSQL_TIMEOUT_LEASE_UID" \
+	"$MYSQL_TIMEOUT_LEASE_HOLDER" "$MYSQL_TIMEOUT_LEASE_EPOCH" \
+	"$MYSQL_TIMEOUT_RECOVERY_OBSERVE_UID" "$MYSQL_TIMEOUT_RECOVERY_PLAN_UID" \
+	"$MYSQL_TIMEOUT_FRESH_PLAN_UID" "$MYSQL_TIMEOUT_POD_UID" same-plan "" 0
 assert_post_apply_proof_history "$PG_RESTART_SCHEMA" "$PG_OPERATION_ID" "$PG_JOB_UID" \
 	"$PG_LEASE_UID" "$PG_LEASE_HOLDER" "$PG_LEASE_EPOCH" \
 	"$PG_RESTART_PROOF_OBSERVE_JOB_UID" "$PG_RESTART_PROOF_PLAN_JOB_UID"
@@ -4597,4 +4776,4 @@ assert_no_overlapping_operation_jobs
 assert_fault_audit_complete
 record_fault_jobs_for_parent
 
-printf '%s\n' 'e2e faults: PASS watches, stale-plan preflight, native lock barriers, restart identity, uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms'
+printf '%s\n' 'e2e faults: PASS watches, Kubernetes deadline recovery, stale-plan preflight, native lock barriers, restart identity, uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms'
