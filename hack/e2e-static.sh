@@ -217,9 +217,11 @@ for fault_marker in \
 	'assert_no_overlapping_operation_jobs' \
 	'assert_no_overlapping_operation_pods' \
 	'assert_fault_audit_complete' \
-	'add_named_pod_finalizer' \
-	'remove_named_pod_finalizer' \
-	'cleanup_named_pod_finalizer' \
+	'FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS' \
+	'record_deadline_pending_pod_evidence' \
+	'wait_for_deadline_job_terminal_and_audit' \
+	'.reason == "DeadlineExceeded"' \
+	'Kubernetes-timeout recovery replayed or replaced its Apply Job' \
 	'start_read_workload_barrier' \
 	'assert_read_workload_blocked' \
 	'record_initial_job_list_for_parent' \
@@ -602,6 +604,14 @@ if grep -Eq '^kind: (Job|CronJob)$' "$ROTATOR_RENDER"; then
 	exit 1
 fi
 for rotator_marker in \
+	'kind: ValidatingAdmissionPolicy' \
+	'kind: ValidatingAdmissionPolicyBinding' \
+	'failurePolicy: Fail' \
+	'validationActions: [Deny]' \
+	'resources: ["secrets"]' \
+	'verbs: ["create"]' \
+	'operator.ptah.dev/generated-webhook-certificate' \
+	'certificate rotator Secret CREATE is outside its exact recovery contract' \
 	'--run-interval=6h' \
 	'--operation-timeout=15m' \
 	'--retry-initial=5s' \
@@ -613,6 +623,26 @@ for rotator_marker in \
 	'containerPort: 8081'; do
 	grep -F -- "$rotator_marker" "$ROTATOR_RENDER" >/dev/null
 done
+grep -F 'StartedChecker()' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
+for recovery_marker in \
+	'ptah-rotator-unauthorized' \
+	'--dry-run=server' \
+	'delete secret "$SECRET_NAME"' \
+	'operator.ptah.dev/generated-webhook-certificate' \
+	'did not contract after Secret recreation'; do
+	grep -F -- "$recovery_marker" "$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
+done
+for per_entry_marker in \
+	'"mutating"' \
+	'"approvalValidating"' \
+	'"podValidating"' \
+	'ptah-operator.webhookEntryCABundle'; do
+	grep -F -- "$per_entry_marker" "$ROOT_DIR/charts/ptah-operator/templates/webhook.yaml" >/dev/null
+done
+if grep -F 'longestExistingBundle' "$ROOT_DIR/charts/ptah-operator/templates/webhook.yaml" >/dev/null; then
+	printf '%s\n' 'e2e static: Helm webhook trust recovery selects or cross-copies a global bundle' >&2
+	exit 1
+fi
 
 if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 		--namespace ptah-e2e \
