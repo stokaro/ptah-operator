@@ -181,15 +181,39 @@ func TestValidationHandlerRejectsUpdateForDifferentPodUID(t *testing.T) {
 	}
 }
 
-func TestValidationHandlerAllowsBenignMetadataUpdate(t *testing.T) {
+func TestValidationHandlerRejectsMetadataExpansion(t *testing.T) {
 	t.Parallel()
 
-	handler, pod := validationHandlerFixture(t)
-	original := pod.DeepCopy()
-	pod.Annotations["kubernetes.io/benign-observation"] = "present"
-	response := handler.Handle(context.Background(), podUpdateRequest(t, original, pod))
-	if !response.Allowed {
-		t.Fatalf("Handle() denied a metadata-only update: %#v", response.Result)
+	tests := []struct {
+		name   string
+		mutate func(*corev1.Pod)
+	}{
+		{
+			name: "network policy label",
+			mutate: func(pod *corev1.Pod) {
+				pod.Labels["networking.example.com/database-access"] = "allowed"
+			},
+		},
+		{
+			name: "runtime security annotation",
+			mutate: func(pod *corev1.Pod) {
+				pod.Annotations["container.apparmor.security.beta.kubernetes.io/ptah"] = "unconfined"
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler, pod := validationHandlerFixture(t)
+			original := pod.DeepCopy()
+			test.mutate(pod)
+			response := handler.Handle(context.Background(), podUpdateRequest(t, original, pod))
+			if response.Allowed {
+				t.Fatal("Handle() allowed metadata expansion on a managed Pod")
+			}
+		})
 	}
 }
 

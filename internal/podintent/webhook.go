@@ -133,9 +133,12 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 			!createAnnotationsMatch(pod.Annotations, job.Spec.Template.Annotations, operationSnapshot(schema)) {
 			return cradmission.Denied("managed Pod metadata does not match the bound Job template")
 		}
-	} else if !containsStringMap(pod.Labels, job.Spec.Template.Labels) ||
+	} else if oldPod == nil ||
+		!apiequality.Semantic.DeepEqual(pod.Labels, oldPod.Labels) ||
+		!apiequality.Semantic.DeepEqual(pod.Annotations, oldPod.Annotations) ||
+		!containsStringMap(pod.Labels, job.Spec.Template.Labels) ||
 		!containsStringMap(pod.Annotations, job.Spec.Template.Annotations) {
-		return cradmission.Denied("managed Pod update changed bound Job metadata")
+		return cradmission.Denied("managed Pod update changed immutable metadata")
 	}
 	operation := schema.Status.ActiveOperation
 	if operation == nil || operation.AdmissionSnapshot == nil {
