@@ -125,12 +125,22 @@ jobs:
             "refs/heads/$default_branch:refs/remotes/origin/$default_branch"
           git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$default_branch"
           version="${GITHUB_REF_NAME#v}"
-          transaction="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          {
-            printf 'version=%s\n' "$version"
-            printf 'transaction=%s\n' "$transaction"
-            printf 'image-tag=tx-%s-%s\n' "$GITHUB_SHA" "$transaction"
-          } >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Require immutable release enforcement
+        id: immutability-preflight
+        env:
+          GH_TOKEN: ${{ secrets.IMMUTABLE_RELEASES_READ_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo 'IMMUTABLE_RELEASES_READ_TOKEN is required' >&2
+            exit 1
+          fi
+          settings="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/immutable-releases")"
+          [[ "$(jq -r '.enabled' <<<"$settings")" == true ]]
       - name: Inspect immutable release transaction
         id: transaction
         env:
@@ -146,18 +156,37 @@ jobs:
           if release_json="$(gh api \
             -H 'X-GitHub-Api-Version: 2026-03-10' \
             "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>"$error_file")"; then
-            release_state=recover
-            if [[ "$(jq -r '.draft' <<<"$release_json")" != true ]]; then
-              if [[ "$(jq -r '.immutable' <<<"$release_json")" != true ]]; then
+            jq -e '(.draft | type) == "boolean" and (.immutable | type) == "boolean"' \
+              <<<"$release_json" >/dev/null
+            draft="$(jq -r '.draft' <<<"$release_json")"
+            immutable="$(jq -r '.immutable' <<<"$release_json")"
+            jq -j '.body | strings' <<<"$release_json" > dist/release-state.txt
+            if [[ "$(sed -n '1p' dist/release-state.txt)" == state=prepared ]]; then
+              [[ "$draft" == true ]]
+              jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
+              mv dist/release-state.txt dist/release-journal.txt
+              state_flag=-journal
+              release_state=prepared
+            else
+              if [[ "$draft" == true ]]; then
+                release_state=recover
+              elif [[ "$immutable" == true ]]; then
+                release_state=published
+              else
                 echo "release $GITHUB_REF_NAME is published but not immutable; refusing recovery" >&2
                 exit 1
               fi
-              release_state=published
+              mv dist/release-state.txt dist/release-manifest.txt
+              state_flag=-manifest
             fi
-            jq -j '.body' <<<"$release_json" > dist/release-manifest.txt
+            if [[ "$release_state" == prepared ]]; then
+              state_path=dist/release-journal.txt
+            else
+              state_path=dist/release-manifest.txt
+            fi
             delay=2
             for attempt in {1..8}; do
-              if gh attestation verify dist/release-manifest.txt \
+              if gh attestation verify "$state_path" \
                 --repo "$GITHUB_REPOSITORY" \
                 --source-ref "$GITHUB_REF" \
                 --source-digest "$GITHUB_SHA" \
@@ -174,30 +203,126 @@ jobs:
             go run ./hack/releaseverify \
               -tag "$GITHUB_REF_NAME" \
               -source-sha "$GITHUB_SHA" \
-              -manifest dist/release-manifest.txt
-            printf 'mode=%s\n' "$release_state" >> "$GITHUB_OUTPUT"
+              "$state_flag" "$state_path"
           elif grep -Fq '(HTTP 404)' "$error_file"; then
-            printf 'mode=fresh\n' >> "$GITHUB_OUTPUT"
+            release_state=fresh
+            transaction="$GITHUB_RUN_ID"
+            image_tag="$IMAGE:tx-$GITHUB_SHA-$transaction"
+            {
+              printf 'state=prepared\n'
+              printf 'version=%s\n' '${{ steps.release.outputs.version }}'
+              printf 'source-repository=%s\n' "$GITHUB_REPOSITORY"
+              printf 'source-ref=%s\n' "$GITHUB_REF"
+              printf 'source-sha=%s\n' "$GITHUB_SHA"
+              printf 'transaction=%s\n' "$transaction"
+              printf 'image-tag=%s\n' "$image_tag"
+              printf 'chart-asset=ptah-operator-%s.tgz\n' '${{ steps.release.outputs.version }}'
+            } > dist/release-journal.txt
+            go run ./hack/releaseverify \
+              -tag "$GITHUB_REF_NAME" \
+              -source-sha "$GITHUB_SHA" \
+              -journal dist/release-journal.txt
           else
             cat "$error_file" >&2
             echo 'could not determine release state; refusing to publish' >&2
             exit 1
           fi
-      - name: Require immutable release enforcement
-        id: immutability-preflight
+          state_path=dist/release-manifest.txt
+          if [[ "$release_state" == fresh || "$release_state" == prepared ]]; then
+            state_path=dist/release-journal.txt
+          fi
+          field() {
+            sed -n "s/^$1=//p" "$state_path"
+          }
+          {
+            printf 'mode=%s\n' "$release_state"
+            printf 'transaction=%s\n' "$(field transaction)"
+            printf 'image-tag=%s\n' "$(field image-tag)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Attest prepared release journal
+        id: journal-attestation
+        if: steps.transaction.outputs.mode == 'fresh'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: dist/release-journal.txt
+      - name: Create prepared draft transaction
+        id: draft
+        if: steps.transaction.outputs.mode == 'fresh'
         env:
-          GH_TOKEN: ${{ secrets.IMMUTABLE_RELEASES_READ_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -z "$GH_TOKEN" ]]; then
-            echo 'IMMUTABLE_RELEASES_READ_TOKEN is required' >&2
+          go run ./hack/releaseverify \
+            -tag "$GITHUB_REF_NAME" \
+            -verify-tag-identity
+          delay=2
+          for attempt in {1..8}; do
+            if gh attestation verify dist/release-journal.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+            then
+              break
+            fi
+            if [[ "$attempt" == 8 ]]; then
+              exit 1
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --latest=false \
+            --notes-file dist/release-journal.txt \
+            --title "Ptah Operator ${{ steps.release.outputs.version }}"
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
+          jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
+          jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/prepared-release-body.txt"
+          cmp dist/release-journal.txt "$RUNNER_TEMP/prepared-release-body.txt"
+      - name: Inspect prepared image transaction anonymously
+        id: stage-inspect
+        if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          reference='${{ steps.transaction.outputs.image-tag }}'
+          raw_manifest="$RUNNER_TEMP/prepared-image-index.json"
+          error_file="$RUNNER_TEMP/prepared-image-error.txt"
+          if docker buildx imagetools inspect --raw "$reference" > "$raw_manifest" 2>"$error_file"; then
+            digest="sha256:$(sha256sum "$raw_manifest" | awk '{print $1}')"
+            checkpoint_error="$RUNNER_TEMP/prepared-image-checkpoint-error.txt"
+            if gh attestation verify "oci://$IMAGE@$digest" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              2>"$checkpoint_error"
+            then
+              {
+                printf 'reuse=true\n'
+                printf 'digest=%s\n' "$digest"
+              } >> "$GITHUB_OUTPUT"
+            else
+              cat "$checkpoint_error" >&2
+              echo 'prepared image has no authenticated build checkpoint; rebuilding it' >&2
+              printf 'reuse=false\n' >> "$GITHUB_OUTPUT"
+            fi
+          elif go run ./hack/releaseverify \
+            -registry-missing-error "$error_file" \
+            -registry-missing-reference "$reference"
+          then
+            printf 'reuse=false\n' >> "$GITHUB_OUTPUT"
+          else
+            cat "$error_file" >&2
+            echo 'could not determine prepared image state; refusing to rebuild' >&2
             exit 1
           fi
-          settings="$(gh api \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/immutable-releases")"
-          [[ "$(jq -r '.enabled' <<<"$settings")" == true ]]
       - name: Log in to GHCR
         id: registry-login
         if: steps.transaction.outputs.mode != 'published'
@@ -208,19 +333,29 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build image into transaction staging
         id: image
-        if: steps.transaction.outputs.mode == 'fresh'
+        if: >-
+          (steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared') &&
+          steps.stage-inspect.outputs.reuse != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ env.IMAGE }}:${{ steps.release.outputs.image-tag }}
+          tags: ${{ steps.transaction.outputs.image-tag }}
           provenance: mode=max
-          sbom: true
+          sbom: generator=docker.io/docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
           build-args: |
             VERSION=${{ steps.release.outputs.version }}
             REVISION=${{ github.sha }}
             SOURCE=https://github.com/${{ github.repository }}
+      - name: Attest exact build output checkpoint
+        id: build-checkpoint
+        if: steps.image.outcome == 'success' && steps.image.outputs.digest != ''
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
       - name: Reproducibly package chart
         id: chart-package
         shell: bash
@@ -238,16 +373,21 @@ jobs:
           set -euo pipefail
           manifest=dist/release-manifest.txt
           chart_path='${{ steps.chart-package.outputs.path }}'
-          if [[ '${{ steps.transaction.outputs.mode }}' == fresh ]]; then
+          mode='${{ steps.transaction.outputs.mode }}'
+          if [[ "$mode" == fresh || "$mode" == prepared ]]; then
+            image_digest='${{ steps.image.outputs.digest }}'
+            if [[ '${{ steps.stage-inspect.outputs.reuse }}' == true ]]; then
+              image_digest='${{ steps.stage-inspect.outputs.digest }}'
+            fi
             chart_asset_sha256="$(sha256sum "$chart_path" | awk '{print $1}')"
             {
               printf 'version=%s\n' '${{ steps.release.outputs.version }}'
               printf 'source-repository=%s\n' "$GITHUB_REPOSITORY"
               printf 'source-ref=%s\n' "$GITHUB_REF"
               printf 'source-sha=%s\n' "$GITHUB_SHA"
-              printf 'transaction=%s\n' '${{ steps.release.outputs.transaction }}'
-              printf 'image=%s@%s\n' "$IMAGE" '${{ steps.image.outputs.digest }}'
-              printf 'image-tag=%s:%s\n' "$IMAGE" '${{ steps.release.outputs.image-tag }}'
+              printf 'transaction=%s\n' '${{ steps.transaction.outputs.transaction }}'
+              printf 'image=%s@%s\n' "$IMAGE" "$image_digest"
+              printf 'image-tag=%s\n' '${{ steps.transaction.outputs.image-tag }}'
               printf 'chart-asset=%s\n' "$(basename "$chart_path")"
               printf 'chart-asset-sha256=%s\n' "$chart_asset_sha256"
             } > "$manifest"
@@ -271,18 +411,109 @@ jobs:
             printf 'image-repository=%s\n' "$(field image | sed 's/@sha256:.*//')"
             printf 'image-tag=%s\n' "$(field image-tag)"
           } >> "$GITHUB_OUTPUT"
+      - name: Verify staged image structure and build provenance
+        id: image-structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          reference="${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}"
+          image_dir="$RUNNER_TEMP/release-image"
+          mkdir -p "$image_dir"
+          docker buildx imagetools inspect --raw "$reference" > "$image_dir/index.json"
+          index_digest="sha256:$(sha256sum "$image_dir/index.json" | awk '{print $1}')"
+          [[ "$index_digest" == '${{ steps.artifacts.outputs.image-digest }}' ]]
+          docker buildx imagetools inspect --raw \
+            '${{ steps.artifacts.outputs.image-tag }}' > "$image_dir/tag-index.json"
+          cmp "$image_dir/index.json" "$image_dir/tag-index.json"
+
+          jq -e '
+            .schemaVersion == 2 and
+            (.mediaType == "application/vnd.oci.image.index.v1+json" or
+             .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json") and
+            (.manifests | length == 4) and
+            ([.manifests[] |
+              select(.platform.os == "linux" and
+                     (.platform.architecture == "amd64" or .platform.architecture == "arm64") and
+                     .annotations["vnd.docker.reference.type"] != "attestation-manifest")] |
+             map(.platform.os + "/" + .platform.architecture) | sort) ==
+              ["linux/amd64", "linux/arm64"] and
+            ([.manifests[] |
+              select(.annotations["vnd.docker.reference.type"] == "attestation-manifest")] |
+             length) == 2 and
+            ([.manifests[] |
+              select(.platform.os != "linux" and
+                     .annotations["vnd.docker.reference.type"] != "attestation-manifest")] |
+             length) == 0
+          ' "$image_dir/index.json" >/dev/null
+
+          source="https://github.com/$GITHUB_REPOSITORY"
+          version='${{ steps.release.outputs.version }}'
+          for platform in linux/amd64 linux/arm64; do
+            os="${platform%/*}"
+            architecture="${platform#*/}"
+            platform_digest="$(jq -er \
+              --arg os "$os" --arg architecture "$architecture" \
+              '.manifests[] |
+               select(.platform.os == $os and .platform.architecture == $architecture and
+                      .annotations["vnd.docker.reference.type"] != "attestation-manifest") |
+               .digest' "$image_dir/index.json")"
+            attestation_digest="$(jq -er --arg digest "$platform_digest" \
+              '.manifests[] |
+               select(.annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+                      .annotations["vnd.docker.reference.digest"] == $digest) |
+               .digest' "$image_dir/index.json")"
+            docker buildx imagetools inspect \
+              "${{ steps.artifacts.outputs.image-repository }}@$platform_digest" \
+              --format '{{json .}}' > "$image_dir/${architecture}-image.json"
+            jq -e \
+              --arg digest "$platform_digest" \
+              --arg os "$os" \
+              --arg architecture "$architecture" \
+              --arg source "$source" \
+              --arg revision "$GITHUB_SHA" \
+              --arg version "$version" '
+                .manifest.digest == $digest and
+                .image.os == $os and .image.architecture == $architecture and
+                .image.config.Labels["org.opencontainers.image.source"] == $source and
+                .image.config.Labels["org.opencontainers.image.revision"] == $revision and
+                .image.config.Labels["org.opencontainers.image.version"] == $version
+              ' "$image_dir/${architecture}-image.json" >/dev/null
+            docker buildx imagetools inspect --raw \
+              "${{ steps.artifacts.outputs.image-repository }}@$attestation_digest" \
+              > "$image_dir/${architecture}-attestation.json"
+            jq -e --arg digest "$platform_digest" '
+              .artifactType == "application/vnd.docker.attestation.manifest.v1+json" and
+              .subject.digest == $digest and
+              ([.layers[] |
+                select(.mediaType == "application/vnd.in-toto+json" and
+                       .annotations["in-toto.io/predicate-type"] == "https://spdx.dev/Document")] |
+               length) >= 1 and
+              ([.layers[] |
+                select(.mediaType == "application/vnd.in-toto+json" and
+                       .annotations["in-toto.io/predicate-type"] == "https://slsa.dev/provenance/v1")] |
+               length) == 1
+            ' "$image_dir/${architecture}-attestation.json" >/dev/null
+          done
+
+          docker buildx imagetools inspect "$reference" \
+            --format '{{json .Provenance}}' > "$image_dir/provenance.json"
+          go run ./hack/releaseverify \
+            -provenance "$image_dir/provenance.json" \
+            -provenance-source "$source" \
+            -provenance-revision "$GITHUB_SHA" \
+            -provenance-version "$version"
       - name: Attest release transaction assets
         id: asset-attestation
-        if: steps.transaction.outputs.mode == 'fresh'
+        if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
           subject-path: |
             ${{ steps.chart-package.outputs.path }}
             dist/release-manifest.txt
             dist/SHA256SUMS
-      - name: Create immutable draft transaction
-        id: draft
-        if: steps.transaction.outputs.mode == 'fresh'
+      - name: Commit final manifest to prepared draft
+        id: finalize-journal
+        if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -291,12 +522,35 @@ jobs:
           go run ./hack/releaseverify \
             -tag "$GITHUB_REF_NAME" \
             -verify-tag-identity
-          gh release create "$GITHUB_REF_NAME" \
+          delay=2
+          for attempt in {1..8}; do
+            if gh attestation verify dist/release-manifest.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+            then
+              break
+            fi
+            if [[ "$attempt" == 8 ]]; then
+              exit 1
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
+          jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
+          jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/prepared-body-before-finalize.txt"
+          cmp dist/release-journal.txt "$RUNNER_TEMP/prepared-body-before-finalize.txt"
+          gh release edit "$GITHUB_REF_NAME" \
             --draft \
-            --verify-tag \
-            --latest=false \
-            --notes-file dist/release-manifest.txt \
-            --title "Ptah Operator ${{ steps.release.outputs.version }}"
+            --notes-file dist/release-manifest.txt
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
+          jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
+          jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/finalized-release-body.txt"
+          cmp dist/release-manifest.txt "$RUNNER_TEMP/finalized-release-body.txt"
       - name: Authenticate exact transaction assets
         id: asset-auth
         env:
@@ -430,107 +684,13 @@ jobs:
             docker logout ghcr.io
           fi
           image_dir="$RUNNER_TEMP/release-image"
-          mkdir -p "$image_dir"
-          docker buildx imagetools inspect --raw "$reference" > "$image_dir/index.json"
-          index_digest="sha256:$(sha256sum "$image_dir/index.json" | awk '{print $1}')"
-          [[ "$index_digest" == '${{ steps.artifacts.outputs.image-digest }}' ]]
+          docker buildx imagetools inspect --raw "$reference" > "$image_dir/final-index.json"
+          final_digest="sha256:$(sha256sum "$image_dir/final-index.json" | awk '{print $1}')"
+          [[ "$final_digest" == '${{ steps.artifacts.outputs.image-digest }}' ]]
+          cmp "$image_dir/index.json" "$image_dir/final-index.json"
           docker buildx imagetools inspect --raw \
-            '${{ steps.artifacts.outputs.image-tag }}' > "$image_dir/tag-index.json"
-          cmp "$image_dir/index.json" "$image_dir/tag-index.json"
-
-          jq -e '
-            .schemaVersion == 2 and
-            (.mediaType == "application/vnd.oci.image.index.v1+json" or
-             .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json") and
-            (.manifests | length == 4) and
-            ([.manifests[] |
-              select(.platform.os == "linux" and
-                     (.platform.architecture == "amd64" or .platform.architecture == "arm64") and
-                     .annotations["vnd.docker.reference.type"] != "attestation-manifest")] |
-             map(.platform.os + "/" + .platform.architecture) | sort) ==
-              ["linux/amd64", "linux/arm64"] and
-            ([.manifests[] |
-              select(.annotations["vnd.docker.reference.type"] == "attestation-manifest")] |
-             length) == 2 and
-            ([.manifests[] |
-              select(.platform.os != "linux" and
-                     .annotations["vnd.docker.reference.type"] != "attestation-manifest")] |
-             length) == 0
-          ' "$image_dir/index.json" >/dev/null
-
-          source="https://github.com/$GITHUB_REPOSITORY"
-          version='${{ steps.release.outputs.version }}'
-          for platform in linux/amd64 linux/arm64; do
-            os="${platform%/*}"
-            architecture="${platform#*/}"
-            platform_digest="$(jq -er \
-              --arg os "$os" --arg architecture "$architecture" \
-              '.manifests[] |
-               select(.platform.os == $os and .platform.architecture == $architecture and
-                      .annotations["vnd.docker.reference.type"] != "attestation-manifest") |
-               .digest' "$image_dir/index.json")"
-            attestation_digest="$(jq -er --arg digest "$platform_digest" \
-              '.manifests[] |
-               select(.annotations["vnd.docker.reference.type"] == "attestation-manifest" and
-                      .annotations["vnd.docker.reference.digest"] == $digest) |
-               .digest' "$image_dir/index.json")"
-            docker buildx imagetools inspect \
-              "${{ steps.artifacts.outputs.image-repository }}@$platform_digest" \
-              --format '{{json .}}' > "$image_dir/${architecture}-image.json"
-            jq -e \
-              --arg digest "$platform_digest" \
-              --arg os "$os" \
-              --arg architecture "$architecture" \
-              --arg source "$source" \
-              --arg revision "$GITHUB_SHA" \
-              --arg version "$version" '
-                .manifest.digest == $digest and
-                .image.os == $os and .image.architecture == $architecture and
-                .image.config.Labels["org.opencontainers.image.source"] == $source and
-                .image.config.Labels["org.opencontainers.image.revision"] == $revision and
-                .image.config.Labels["org.opencontainers.image.version"] == $version
-              ' "$image_dir/${architecture}-image.json" >/dev/null
-            docker buildx imagetools inspect --raw \
-              "${{ steps.artifacts.outputs.image-repository }}@$attestation_digest" \
-              > "$image_dir/${architecture}-attestation.json"
-            jq -e --arg digest "$platform_digest" '
-              .artifactType == "application/vnd.docker.attestation.manifest.v1+json" and
-              .subject.digest == $digest and
-              ([.layers[] |
-                select(.mediaType == "application/vnd.in-toto+json" and
-                       .annotations["in-toto.io/predicate-type"] == "https://spdx.dev/Document")] |
-               length) >= 1 and
-              ([.layers[] |
-                select(.mediaType == "application/vnd.in-toto+json" and
-                       .annotations["in-toto.io/predicate-type"] == "https://slsa.dev/provenance/v1")] |
-               length) == 1
-            ' "$image_dir/${architecture}-attestation.json" >/dev/null
-          done
-
-          docker buildx imagetools inspect "$reference" \
-            --format '{{json .Provenance}}' > "$image_dir/provenance.json"
-          jq -e --arg source "$source" --arg revision "$GITHUB_SHA" --arg version "$version" '
-            . as $root |
-            ["linux/amd64", "linux/arm64"] | all(.[] as $platform;
-              $root[$platform].SLSA.buildDefinition.externalParameters.request.args["build-arg:SOURCE"] == $source and
-              $root[$platform].SLSA.buildDefinition.externalParameters.request.args["build-arg:REVISION"] == $revision and
-              $root[$platform].SLSA.buildDefinition.externalParameters.request.args["build-arg:VERSION"] == $version and
-              ($root[$platform].SLSA.buildDefinition.internalParameters.buildConfig.llbDefinition | length) > 0)
-          ' "$image_dir/provenance.json" >/dev/null
-          while IFS= read -r material_digest; do
-            jq -e --arg digest "$material_digest" '
-              . as $root |
-              ["linux/amd64", "linux/arm64"] | all(.[] as $platform;
-                ($root[$platform].SLSA.buildDefinition | tostring | contains($digest)))
-            ' "$image_dir/provenance.json" >/dev/null
-          done < <(awk '/^FROM / {
-            for (field = 1; field <= NF; field++) {
-              if ($field ~ /@sha256:/) {
-                sub(/^.*@/, "", $field)
-                print $field
-              }
-            }
-          }' Dockerfile)
+            '${{ steps.artifacts.outputs.image-tag }}' > "$image_dir/final-tag-index.json"
+          cmp "$image_dir/final-index.json" "$image_dir/final-tag-index.json"
       - name: Publish completed release transaction
         id: publish-release
         env:

@@ -8,52 +8,84 @@ Every `v<chart-version>` tag publishes one version-addressed release set:
 - GitHub build provenance for every downloadable asset;
 - the reproducibly packaged chart, a digest manifest, and SHA-256 checksums.
 
-The release workflow refuses a mismatched tag, mutable Docker build input,
-unpinned action, incomplete publish permission set, or manager image tag that
-differs from the chart version. It publishes no version or `latest` image alias.
+The release workflow refuses a mismatched tag, mutable external Docker image
+input, unpinned action, incomplete publish permission set, or manager image tag
+that differs from the chart version. It publishes no version or `latest` image
+alias.
 
 ## Publication transaction
 
-A fresh transaction pushes the image to the stable
-`ghcr.io/stokaro/ptah-operator` package under a collision-resistant
-`tx-<source-sha>-<run-id>-<attempt>` retention tag. The transaction tag is not a
-release identity and must never be consumed; the authenticated manifest records
-the digest reference. The image includes a maximal BuildKit provenance record
-and SBOM. Chart packaging normalizes all source timestamps to the source commit
-time and CI requires two independent packages to be byte-identical.
+A fresh transaction first creates and attests a minimal `state=prepared` journal
+that binds the tag, source commit, stable transaction ID, expected chart name,
+and exact `ghcr.io/stokaro/ptah-operator:tx-<source-sha>-<run-id>` retention tag.
+It stores those exact bytes as the body of an empty draft release and verifies
+the body before any registry push. A rerun keeps the run ID recorded in that
+journal; the attempt number is deliberately not part of the transaction
+identity.
 
-The workflow attests `release-manifest.txt`, stores the same authenticated bytes
-as the body of a draft release, and synchronizes the three release assets
-without replacing uploaded bytes. A failed upload may leave an empty `starter`
-asset; recovery deletes only that exact incomplete asset ID and uploads the
-journaled bytes again. Any uploaded mismatch, duplicate name, unexpected asset,
-or unknown state fails closed. Image signing, attestation, and anonymous digest
-pull verification all finish before the draft is published.
+After the prepared draft exists, the workflow anonymously inspects its exact
+retention tag. An existing raw manifest is reused only when its exact digest has
+an authenticated build checkpoint from this release workflow, repository, tag,
+and source commit. That checkpoint is created solely from the digest returned
+by a successful image-build action. A missing or uncheckpointed tag is rebuilt;
+the replacement cannot become reusable until the new build output has its own
+checkpoint. The registry's one-line missing response must name the exact tag
+that was inspected. An unavailable, multiline, or otherwise ambiguous response
+fails closed. The transaction tag is not a release identity and must never be
+consumed. The final authenticated manifest records the digest reference. The
+image includes a maximal BuildKit provenance record and SBOM. Chart packaging
+normalizes all source timestamps to the source commit time and CI requires two
+independent packages to be byte-identical.
+
+The workflow attests `release-manifest.txt`, compares the prepared draft body,
+then replaces that body with the same authenticated final manifest bytes before
+synchronizing the three release assets. It never replaces uploaded asset bytes.
+A failed upload may leave an empty `starter` asset; recovery deletes only that
+exact incomplete asset ID and uploads the journaled bytes again. Any uploaded
+mismatch, duplicate name, unexpected asset, or unknown state fails closed.
+Image signing, attestation, and anonymous digest pull verification all finish
+before the draft is published.
 
 The build boundary is versioned as data. Actions use audited commit pins,
 Buildx uses an exact version, and its BuildKit daemon image is selected by
-multi-architecture digest with the action's binary cache disabled. The manager
-binary is compiled in the digest-pinned Docker builder stage and runs on a
-digest-pinned non-root base. The publish job also disables the Go action cache;
-its small release verifiers and deterministic chart packager are rebuilt from
-the checked-out source and checksum-locked modules for every transaction.
+multi-architecture digest with the action's binary cache disabled. The BuildKit
+SBOM generator is also selected by digest rather than its mutable convenience
+tag. The manager binary is compiled in the digest-pinned Docker builder stage
+and runs on a digest-pinned non-root base. The publish job also disables the Go
+action cache; its small release verifiers and deterministic chart packager are
+rebuilt from the checked-out source and checksum-locked modules for every
+transaction.
 
-Rerunning a partially completed release never rebuilds its artifacts. It first
-authenticates the draft journal against the exact tag, source commit, and signer
-workflow, reproduces the chart bytes, and resumes missing additive steps. A
-published immutable release is a read-only recovery state: the workflow
-re-authenticates its tag, body, assets, image signature, image attestations, and
-anonymous image availability, then succeeds without mutation. A published but
-mutable release, a moved source tag, a mismatched asset, or an unavailable state
-check fails closed. No step uses asset replacement.
+Rerunning a partially completed release first authenticates either the prepared
+journal or final manifest against the exact tag, source commit, and signer
+workflow. From a prepared journal it reuses an existing staged digest only
+after verifying the exact build checkpoint described above; otherwise it
+rebuilds into the same transaction tag and checkpoints the action's returned
+digest. It reproduces the chart bytes deterministically and resumes missing
+additive steps. A published immutable release is a read-only recovery state:
+the workflow re-authenticates its tag, body, assets, image signature, image
+attestations, and anonymous image availability, then succeeds without mutation.
+A published but mutable release, a moved source tag, a mismatched asset, or an
+unavailable state check fails closed. No step uses asset replacement.
 
 Before publication, the image gate compares the transaction retention tag with
-the manifest-list digest recorded in the release journal. It requires exactly
-the `linux/amd64` and `linux/arm64` runtime manifests, validates source,
+the manifest-list digest recorded in the final release manifest. It requires
+exactly the `linux/amd64` and `linux/arm64` runtime manifests, validates source,
 revision, and version labels on each image, and binds each platform to its own
 SBOM and maximal BuildKit provenance attestation. The provenance must carry the
-release build arguments, detailed build graph, and every digest-pinned
-Dockerfile base material. The same gate runs during published recovery.
+release build arguments and detailed build graph. A single fail-closed parser
+enumerates external image inputs from case-insensitive Dockerfile instructions,
+line continuations, resolved `ARG` defaults, every `FROM`, every external
+`COPY --from`, and every external `RUN --mount` source. Unsupported parser
+constructs and unresolved or mutable references are rejected. The publish build
+arguments are structurally fixed so they cannot override an enumerated image
+reference. The pinned Dockerfile syntax frontend is an external input too. Every
+enumerated digest must occur as an exact SHA-256 value in each platform's
+structured `resolvedDependencies`; merely placing a digest string elsewhere in
+the predicate cannot satisfy the gate. The same exact material check separately
+requires the pinned SBOM generator digest. This structural and material
+verification finishes before the final image attestation or signature is
+created. The same gate runs during published recovery.
 
 Repository administrators must enable immutable releases before publishing the
 first version. This makes the published tag and assets platform-enforced

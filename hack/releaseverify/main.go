@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,21 +28,26 @@ var (
 	digestReferencePattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 	actionPinPattern       = regexp.MustCompile(`^[^[:space:]@]+@[0-9a-f]{40}$`)
 	commitPattern          = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	transactionPattern     = regexp.MustCompile(`^[1-9][0-9]*-[1-9][0-9]*$`)
-	fromPattern            = regexp.MustCompile(`^FROM(?:[[:space:]]+--platform=[^[:space:]]+)?[[:space:]]+([^[:space:]]+)`)
+	transactionPattern     = regexp.MustCompile(`^[1-9][0-9]*$`)
+	sha256DigestPattern    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	dockerArgumentPattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	dockerStagePattern     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
 	releaseRunSHA256       = map[string]string{
 		"smoke/verify-release":           "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
 		"smoke/chart-reproducibility":    "5db0f6150b5129d7be4c68067a3a3d47226a54bc31c38b0d5c72c9e062d290d4",
-		"publish/release":                "a056fb01f58446cfa404a8aaa769061362082ea41a0e7dbef63c00e361cc7f0c",
-		"publish/transaction":            "9e6bf973fe64871333c89135aa50b43e7c027e2565aff55ce4f1591421453833",
+		"publish/release":                "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
+		"publish/transaction":            "72cce0372380ba97e39ae01a383402b50b33122d24854487835b37572fc3c5e7",
 		"publish/immutability-preflight": "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
+		"publish/draft":                  "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
+		"publish/stage-inspect":          "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
 		"publish/chart-package":          "d5b44cddda0c6f79697af28047accd9cf48c7bde7e2e72826078ea9937b316a2",
-		"publish/artifacts":              "7ea27fb39b449c8f909f3ab35d974fb548efcb15d8e30279a825b99c614a48e2",
-		"publish/draft":                  "8986affda71bc677155e4e1f29e0bf110a3818b21d376690bbe984ed824e8c50",
+		"publish/artifacts":              "5812ca3f58b88b19f0879602e96c34e5ab27ad95e90ab5cbd6f46cbfb44dd000",
+		"publish/image-structure":        "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
+		"publish/finalize-journal":       "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
 		"publish/asset-auth":             "e1c7c1e7eefef128a64a883a73c56dab37d8f1dd24436daa84b7a077896ea8ee",
 		"publish/asset-sync":             "8ac2fce0ed0460b72eee90bb530e1c17da79ed62f4e54877a780bd8dbbc34e4e",
 		"publish/image-signature":        "e0b994a90bc38dd8019f4b4157a72e5f6cab1873f3bc1ca39b8ca41dcb023d5e",
-		"publish/final-verify":           "92ea4fd3c086415bac299fc75f3cee536aa04b6064958dd61faf9d26b15fff11",
+		"publish/final-verify":           "1ad635ea3d03dc718ecfff46a020a5bcfef28f5bb2b8932c5d3245e37286d843",
 		"publish/publish-release":        "3ff6501266556d3d352e9af3af8b7f2ea79db14ff5f474417b49a9686856de8e",
 	}
 )
@@ -50,25 +57,91 @@ const (
 	imageName      = "ghcr.io/stokaro/ptah-operator"
 	buildxVersion  = "v0.36.1"
 	buildkitImage  = "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
+	sbomDigest     = "sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
+	sbomGenerator  = "docker.io/docker/buildkit-syft-scanner:stable-1@" + sbomDigest
 	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "4a4e5e1a7d6167accb64700a35b351bf51f4a121128f757dd22091cf61c81a5d"
+	releaseWorkflowSHA256 = "4bb2c1bfdc49f99e2c68476bcdcba0d7b34110224f924b99cd63e57ef5e4f931"
 )
 
 func main() {
 	root := flag.String("root", ".", "repository root")
 	tag := flag.String("tag", "", "release tag to verify")
 	manifest := flag.String("manifest", "", "release manifest to verify")
+	journal := flag.String("journal", "", "prepared release journal to verify")
 	checksums := flag.String("checksums", "", "SHA256SUMS file to verify")
 	chart := flag.String("chart", "", "packaged chart to verify")
 	sourceSHA := flag.String("source-sha", "", "release source commit SHA")
 	verifyTagIdentity := flag.Bool("verify-tag-identity", false, "verify that the live GitHub tag still peels to GITHUB_SHA")
+	printDockerfileInputDigests := flag.Bool(
+		"print-dockerfile-input-digests",
+		false,
+		"print the canonical digest set for every external Dockerfile image input",
+	)
+	registryMissingError := flag.String(
+		"registry-missing-error",
+		"",
+		"verify that a registry inspection error explicitly reports a missing name or manifest",
+	)
+	registryMissingReference := flag.String(
+		"registry-missing-reference",
+		"",
+		"exact registry reference that was inspected for a missing manifest",
+	)
+	provenance := flag.String("provenance", "", "Buildx provenance JSON to verify")
+	provenanceSource := flag.String("provenance-source", "", "expected provenance SOURCE build argument")
+	provenanceRevision := flag.String("provenance-revision", "", "expected provenance REVISION build argument")
+	provenanceVersion := flag.String("provenance-version", "", "expected provenance VERSION build argument")
 	flag.Parse()
 
 	if err := verifyRepository(*root, *tag); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if *registryMissingError != "" || *registryMissingReference != "" {
+		if *registryMissingError == "" || *registryMissingReference == "" {
+			fmt.Fprintln(os.Stderr, "registry missing verification requires -registry-missing-error and -registry-missing-reference")
+			os.Exit(1)
+		}
+		if err := verifyRegistryMissingError(*registryMissingError, *registryMissingReference); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *printDockerfileInputDigests {
+		digests, err := repositoryDockerfileInputDigests(*root)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		for _, digest := range digests {
+			fmt.Println(digest)
+		}
+		return
+	}
+	if *provenance != "" || *provenanceSource != "" || *provenanceRevision != "" || *provenanceVersion != "" {
+		if *provenance == "" || *provenanceSource == "" || *provenanceRevision == "" || *provenanceVersion == "" {
+			fmt.Fprintln(os.Stderr, "provenance verification requires -provenance, -provenance-source, -provenance-revision, and -provenance-version")
+			os.Exit(1)
+		}
+		document, err := os.ReadFile(*provenance)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "read Buildx provenance:", err)
+			os.Exit(1)
+		}
+		digests, err := repositoryDockerfileInputDigests(*root)
+		if err == nil {
+			digests = append(digests, sbomDigest)
+			sort.Strings(digests)
+			err = verifyBuildProvenance(document, *provenanceSource, *provenanceRevision, *provenanceVersion, digests)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 	if *verifyTagIdentity {
 		apiURL := os.Getenv("GITHUB_API_URL")
@@ -88,16 +161,30 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if *manifest != "" || *checksums != "" || *chart != "" || *sourceSHA != "" {
-		if *manifest == "" || *tag == "" || *sourceSHA == "" {
-			fmt.Fprintln(os.Stderr, "manifest verification requires -manifest, -tag, and -source-sha")
+	if *manifest != "" || *journal != "" || *checksums != "" || *chart != "" || *sourceSHA != "" {
+		if *manifest == "" && *journal == "" || *tag == "" || *sourceSHA == "" {
+			fmt.Fprintln(os.Stderr, "release state verification requires -manifest or -journal, plus -tag and -source-sha")
+			os.Exit(1)
+		}
+		if *manifest != "" && *journal != "" {
+			fmt.Fprintln(os.Stderr, "-manifest and -journal are mutually exclusive")
 			os.Exit(1)
 		}
 		if (*checksums == "") != (*chart == "") {
 			fmt.Fprintln(os.Stderr, "-checksums and -chart must be supplied together")
 			os.Exit(1)
 		}
-		if err := verifyReleaseAssets(*manifest, *checksums, *chart, *tag, *sourceSHA); err != nil {
+		var err error
+		if *journal != "" {
+			if *checksums != "" || *chart != "" {
+				fmt.Fprintln(os.Stderr, "prepared journal verification does not accept -checksums or -chart")
+				os.Exit(1)
+			}
+			err = verifyPreparedJournal(*journal, *tag, *sourceSHA)
+		} else {
+			err = verifyReleaseAssets(*manifest, *checksums, *chart, *tag, *sourceSHA)
+		}
+		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -326,41 +413,120 @@ func goToolchain(module []byte) (string, error) {
 	return languageVersion, nil
 }
 
+type dockerfileInput struct {
+	Kind      string
+	Reference string
+	Line      int
+}
+
+type dockerfileInstruction struct {
+	Name string
+	Args string
+	Line int
+}
+
 func verifyDockerfile(document []byte, toolchain string) error {
+	_, err := dockerfileExternalInputs(document, toolchain)
+	return err
+}
+
+func dockerfileExternalInputs(document []byte, toolchain string) ([]dockerfileInput, error) {
 	lines := strings.Split(string(document), "\n")
 	if len(lines) == 0 || !strings.HasPrefix(lines[0], "# syntax=") {
-		return errors.New("Dockerfile must start with a digest-pinned syntax frontend")
+		return nil, errors.New("Dockerfile must start with a digest-pinned syntax frontend")
 	}
 	frontend := strings.TrimSpace(strings.TrimPrefix(lines[0], "# syntax="))
 	if !digestReferencePattern.MatchString(frontend) || !strings.HasPrefix(frontend, "docker/dockerfile:") {
-		return fmt.Errorf("Dockerfile syntax frontend %q is not digest-pinned", frontend)
+		return nil, fmt.Errorf("Dockerfile syntax frontend %q is not digest-pinned", frontend)
 	}
 
-	var references []string
-	scanner := bufio.NewScanner(strings.NewReader(string(document)))
-	for scanner.Scan() {
-		matches := fromPattern.FindStringSubmatch(strings.TrimSpace(scanner.Text()))
-		if len(matches) == 2 {
-			references = append(references, matches[1])
+	instructions, err := dockerfileInstructions(document)
+	if err != nil {
+		return nil, err
+	}
+	arguments := make(map[string]string)
+	stageRoots := make([]string, 0, 4)
+	stageNames := make(map[string]string)
+	inputs := make([]dockerfileInput, 0, 5)
+	inputs = append(inputs, dockerfileInput{Kind: "syntax frontend", Reference: frontend, Line: 1})
+	var firstStageRoot string
+	var finalStageRoot string
+
+	for _, instruction := range instructions {
+		switch instruction.Name {
+		case "arg":
+			name, value, hasValue, err := dockerfileArgument(instruction.Args, arguments)
+			if err != nil {
+				return nil, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
+			}
+			if hasValue {
+				arguments[name] = value
+			} else if _, inherited := arguments[name]; !inherited {
+				delete(arguments, name)
+			}
+		case "from":
+			reference, stageName, err := dockerfileFrom(instruction.Args, arguments)
+			if err != nil {
+				return nil, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
+			}
+			root := reference
+			if inheritedRoot, internal := stageNames[strings.ToLower(reference)]; internal {
+				root = inheritedRoot
+			} else {
+				if !digestReferencePattern.MatchString(reference) {
+					return nil, fmt.Errorf("Dockerfile line %d external FROM reference %q is not digest-pinned", instruction.Line, reference)
+				}
+				inputs = append(inputs, dockerfileInput{Kind: "FROM", Reference: reference, Line: instruction.Line})
+			}
+			if firstStageRoot == "" {
+				firstStageRoot = root
+			}
+			finalStageRoot = root
+			stageRoots = append(stageRoots, root)
+			if stageName != "" {
+				key := strings.ToLower(stageName)
+				if _, duplicate := stageNames[key]; duplicate {
+					return nil, fmt.Errorf("Dockerfile line %d repeats stage name %q", instruction.Line, stageName)
+				}
+				stageNames[key] = root
+			}
+		case "copy":
+			reference, found, err := dockerfileCopyFrom(instruction.Args, arguments)
+			if err != nil {
+				return nil, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
+			}
+			if !found || dockerfileInternalStage(reference, stageNames, len(stageRoots)) {
+				continue
+			}
+			if !digestReferencePattern.MatchString(reference) {
+				return nil, fmt.Errorf("Dockerfile line %d external COPY --from reference %q is not digest-pinned", instruction.Line, reference)
+			}
+			inputs = append(inputs, dockerfileInput{Kind: "COPY --from", Reference: reference, Line: instruction.Line})
+		case "run":
+			references, err := dockerfileRunMountFrom(instruction.Args, arguments)
+			if err != nil {
+				return nil, fmt.Errorf("Dockerfile line %d: %w", instruction.Line, err)
+			}
+			for _, reference := range references {
+				if dockerfileInternalStage(reference, stageNames, len(stageRoots)) {
+					continue
+				}
+				if !digestReferencePattern.MatchString(reference) {
+					return nil, fmt.Errorf("Dockerfile line %d external RUN --mount from reference %q is not digest-pinned", instruction.Line, reference)
+				}
+				inputs = append(inputs, dockerfileInput{Kind: "RUN --mount from", Reference: reference, Line: instruction.Line})
+			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	if len(references) < 2 {
-		return errors.New("Dockerfile must contain pinned builder and runtime stages")
-	}
-	for _, reference := range references {
-		if !digestReferencePattern.MatchString(reference) {
-			return fmt.Errorf("Dockerfile base image %q is not digest-pinned", reference)
-		}
+	if len(stageRoots) < 2 {
+		return nil, errors.New("Dockerfile must contain pinned builder and runtime stages")
 	}
 	wantBuilder := "golang:" + toolchain + "-alpine@"
-	if !strings.HasPrefix(references[0], wantBuilder) {
-		return fmt.Errorf("Dockerfile builder %q does not match Go toolchain %s", references[0], toolchain)
+	if !strings.HasPrefix(firstStageRoot, wantBuilder) {
+		return nil, fmt.Errorf("Dockerfile builder %q does not match Go toolchain %s", firstStageRoot, toolchain)
 	}
-	if !strings.HasPrefix(references[len(references)-1], "gcr.io/distroless/static-debian13:nonroot@") {
-		return fmt.Errorf("Dockerfile runtime %q is not the expected non-root image", references[len(references)-1])
+	if !strings.HasPrefix(finalStageRoot, "gcr.io/distroless/static-debian13:nonroot@") {
+		return nil, fmt.Errorf("Dockerfile runtime %q is not the expected non-root image", finalStageRoot)
 	}
 	for _, label := range []string{
 		"org.opencontainers.image.source",
@@ -368,10 +534,442 @@ func verifyDockerfile(document []byte, toolchain string) error {
 		"org.opencontainers.image.version",
 	} {
 		if !strings.Contains(string(document), label) {
-			return fmt.Errorf("Dockerfile is missing OCI label %s", label)
+			return nil, fmt.Errorf("Dockerfile is missing OCI label %s", label)
+		}
+	}
+	return inputs, nil
+}
+
+func dockerfileInstructions(document []byte) ([]dockerfileInstruction, error) {
+	if bytes.Contains(document, []byte("\r")) {
+		return nil, errors.New("Dockerfile must use LF line endings")
+	}
+	lines := strings.Split(string(document), "\n")
+	instructions := make([]dockerfileInstruction, 0, len(lines))
+	var logical strings.Builder
+	startLine := 0
+	continuing := false
+	directivesAllowed := true
+
+	flush := func() error {
+		text := strings.TrimSpace(logical.String())
+		logical.Reset()
+		if text == "" {
+			return errors.New("Dockerfile contains an empty continued instruction")
+		}
+		separator := strings.IndexAny(text, " \t")
+		name := text
+		arguments := ""
+		if separator >= 0 {
+			name = text[:separator]
+			arguments = strings.TrimSpace(text[separator+1:])
+		}
+		name = strings.ToLower(strings.TrimSpace(name))
+		if strings.Contains(arguments, "<<") {
+			return fmt.Errorf("Dockerfile line %d uses an unsupported heredoc", startLine)
+		}
+		instructions = append(instructions, dockerfileInstruction{Name: name, Args: arguments, Line: startLine})
+		return nil
+	}
+
+	for index, rawLine := range lines {
+		lineNumber := index + 1
+		leftTrimmed := strings.TrimLeft(rawLine, " \t")
+		if !continuing && (leftTrimmed == "" || strings.HasPrefix(leftTrimmed, "#")) {
+			comment := strings.TrimSpace(strings.TrimPrefix(leftTrimmed, "#"))
+			directive, _, hasValue := strings.Cut(comment, "=")
+			if directivesAllowed && hasValue && strings.EqualFold(strings.TrimSpace(directive), "escape") {
+				return nil, fmt.Errorf("Dockerfile line %d uses an unsupported escape directive", lineNumber)
+			}
+			continue
+		}
+		if continuing && (leftTrimmed == "" || strings.HasPrefix(leftTrimmed, "#")) {
+			continue
+		}
+		directivesAllowed = false
+		if !continuing {
+			startLine = lineNumber
+		} else {
+			rawLine = leftTrimmed
+		}
+
+		trimmedRight := strings.TrimRight(rawLine, " \t")
+		trailingBackslashes := 0
+		for cursor := len(trimmedRight) - 1; cursor >= 0 && trimmedRight[cursor] == '\\'; cursor-- {
+			trailingBackslashes++
+		}
+		continues := trailingBackslashes%2 == 1
+		if continues && len(trimmedRight) != len(rawLine) {
+			return nil, fmt.Errorf("Dockerfile line %d has whitespace after a continuation", lineNumber)
+		}
+		if continues {
+			logical.WriteString(trimmedRight[:len(trimmedRight)-1])
+			continuing = true
+			continue
+		}
+		logical.WriteString(rawLine)
+		continuing = false
+		if err := flush(); err != nil {
+			return nil, err
+		}
+	}
+	if continuing {
+		return nil, fmt.Errorf("Dockerfile line %d has an unterminated continuation", startLine)
+	}
+	return instructions, nil
+}
+
+func dockerfileArgument(text string, values map[string]string) (string, string, bool, error) {
+	text = strings.TrimSpace(text)
+	if text == "" || strings.ContainsAny(text, " \t") {
+		return "", "", false, errors.New("ARG must contain exactly one name or name=value binding")
+	}
+	name, value, hasValue := strings.Cut(text, "=")
+	if !dockerArgumentPattern.MatchString(name) {
+		return "", "", false, fmt.Errorf("ARG name %q is invalid", name)
+	}
+	if !hasValue {
+		return name, "", false, nil
+	}
+	expanded, err := expandDockerArguments(value, values)
+	if err != nil {
+		return "", "", false, fmt.Errorf("resolve ARG %s: %w", name, err)
+	}
+	return name, expanded, true, nil
+}
+
+func dockerfileFrom(text string, arguments map[string]string) (string, string, error) {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return "", "", errors.New("FROM has no image reference")
+	}
+	index := 0
+	seenPlatform := false
+	for index < len(fields) && strings.HasPrefix(fields[index], "--") {
+		if !strings.HasPrefix(strings.ToLower(fields[index]), "--platform=") || seenPlatform || len(fields[index]) == len("--platform=") {
+			return "", "", fmt.Errorf("FROM option %q is unsupported", fields[index])
+		}
+		seenPlatform = true
+		index++
+	}
+	if index >= len(fields) {
+		return "", "", errors.New("FROM has no image reference")
+	}
+	reference, err := expandDockerArguments(fields[index], arguments)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve FROM reference: %w", err)
+	}
+	if strings.ContainsAny(reference, "\"'`") {
+		return "", "", fmt.Errorf("FROM reference %q uses unsupported quoting", reference)
+	}
+	index++
+	stageName := ""
+	if index < len(fields) {
+		if index+2 != len(fields) || !strings.EqualFold(fields[index], "as") {
+			return "", "", errors.New("FROM must contain only an optional AS stage name after its image")
+		}
+		stageName = fields[index+1]
+		if !dockerStagePattern.MatchString(stageName) {
+			return "", "", fmt.Errorf("FROM stage name %q is invalid", stageName)
+		}
+	}
+	return reference, stageName, nil
+}
+
+func dockerfileCopyFrom(text string, arguments map[string]string) (string, bool, error) {
+	fields := strings.Fields(text)
+	var reference string
+	for _, field := range fields {
+		lower := strings.ToLower(field)
+		if lower == "--from" {
+			return "", false, errors.New("COPY --from must use the unambiguous --from=value form")
+		}
+		if !strings.HasPrefix(lower, "--from=") {
+			continue
+		}
+		if reference != "" {
+			return "", false, errors.New("COPY contains multiple --from references")
+		}
+		raw := field[len("--from="):]
+		if raw == "" {
+			return "", false, errors.New("COPY --from reference is empty")
+		}
+		expanded, err := expandDockerArguments(raw, arguments)
+		if err != nil {
+			return "", false, fmt.Errorf("resolve COPY --from reference: %w", err)
+		}
+		reference = expanded
+	}
+	return reference, reference != "", nil
+}
+
+func dockerfileRunMountFrom(text string, arguments map[string]string) ([]string, error) {
+	fields := strings.Fields(text)
+	references := make([]string, 0, 1)
+	for _, field := range fields {
+		if !strings.HasPrefix(field, "--") {
+			break
+		}
+		lower := strings.ToLower(field)
+		if lower == "--mount" {
+			return nil, errors.New("RUN --mount must use the unambiguous --mount=value form")
+		}
+		if !strings.HasPrefix(lower, "--mount=") {
+			continue
+		}
+		specification := field[len("--mount="):]
+		if specification == "" || strings.ContainsAny(specification, "\"'`") {
+			return nil, fmt.Errorf("RUN --mount specification %q is unsupported", specification)
+		}
+		var reference string
+		for _, option := range strings.Split(specification, ",") {
+			key, raw, found := strings.Cut(option, "=")
+			if !found || !strings.EqualFold(key, "from") {
+				continue
+			}
+			if reference != "" || raw == "" {
+				return nil, errors.New("RUN --mount must contain at most one non-empty from reference")
+			}
+			expanded, err := expandDockerArguments(raw, arguments)
+			if err != nil {
+				return nil, fmt.Errorf("resolve RUN --mount from reference: %w", err)
+			}
+			reference = expanded
+		}
+		if reference != "" {
+			references = append(references, reference)
+		}
+	}
+	return references, nil
+}
+
+func dockerfileInternalStage(reference string, stageNames map[string]string, stageCount int) bool {
+	if _, ok := stageNames[strings.ToLower(reference)]; ok {
+		return true
+	}
+	index, err := strconv.Atoi(reference)
+	return err == nil && index >= 0 && index < stageCount
+}
+
+func expandDockerArguments(text string, values map[string]string) (string, error) {
+	var result strings.Builder
+	for index := 0; index < len(text); {
+		if text[index] != '$' {
+			result.WriteByte(text[index])
+			index++
+			continue
+		}
+		index++
+		if index >= len(text) {
+			return "", errors.New("trailing $ is unresolved")
+		}
+		var name string
+		if text[index] == '{' {
+			end := strings.IndexByte(text[index+1:], '}')
+			if end < 0 {
+				return "", errors.New("unterminated ${...} reference")
+			}
+			end += index + 1
+			name = text[index+1 : end]
+			index = end + 1
+		} else {
+			start := index
+			for index < len(text) && (text[index] == '_' || text[index] >= '0' && text[index] <= '9' || text[index] >= 'A' && text[index] <= 'Z' || text[index] >= 'a' && text[index] <= 'z') {
+				index++
+			}
+			name = text[start:index]
+		}
+		if !dockerArgumentPattern.MatchString(name) {
+			return "", fmt.Errorf("Docker argument reference %q is unsupported", name)
+		}
+		value, ok := values[name]
+		if !ok {
+			return "", fmt.Errorf("Docker argument %s has no resolved default", name)
+		}
+		result.WriteString(value)
+	}
+	return result.String(), nil
+}
+
+func repositoryDockerfileInputDigests(root string) ([]string, error) {
+	dockerfile, err := os.ReadFile(filepath.Join(root, "Dockerfile"))
+	if err != nil {
+		return nil, fmt.Errorf("read Dockerfile: %w", err)
+	}
+	module, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return nil, fmt.Errorf("read go.mod: %w", err)
+	}
+	toolchain, err := goToolchain(module)
+	if err != nil {
+		return nil, err
+	}
+	inputs, err := dockerfileExternalInputs(dockerfile, toolchain)
+	if err != nil {
+		return nil, err
+	}
+	unique := make(map[string]struct{}, len(inputs))
+	for _, input := range inputs {
+		_, digest, found := strings.Cut(input.Reference, "@")
+		if !found || !strings.HasPrefix(digest, "sha256:") {
+			return nil, fmt.Errorf("Dockerfile line %d %s input %q has no canonical digest", input.Line, input.Kind, input.Reference)
+		}
+		unique[digest] = struct{}{}
+	}
+	digests := make([]string, 0, len(unique))
+	for digest := range unique {
+		digests = append(digests, digest)
+	}
+	sort.Strings(digests)
+	return digests, nil
+}
+
+func verifyRegistryMissingError(path, reference string) error {
+	document, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read registry inspection error: %w", err)
+	}
+	if reference == "" || strings.ContainsAny(reference, "\r\n\t ") {
+		return fmt.Errorf("registry inspection reference %q is invalid", reference)
+	}
+	message := strings.TrimSuffix(string(document), "\n")
+	if strings.ContainsAny(message, "\r\n") {
+		return errors.New("registry inspection error must contain exactly one line")
+	}
+	prefix := "ERROR: " + reference + ": "
+	if !strings.HasPrefix(message, prefix) {
+		return fmt.Errorf("registry inspection error is not bound to exact reference %q", reference)
+	}
+	detail := message[len(prefix):]
+	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(detail, "_", " "), "-", " "))
+	if normalized != "not found" && normalized != "manifest unknown" && normalized != "name unknown" &&
+		!strings.HasPrefix(normalized, "manifest unknown: ") && !strings.HasPrefix(normalized, "name unknown: ") {
+		return errors.New("registry inspection did not report an exact missing-manifest response")
+	}
+	return nil
+}
+
+type buildxProvenancePlatform struct {
+	SLSA struct {
+		BuildDefinition buildxBuildDefinition `json:"buildDefinition"`
+	} `json:"SLSA"`
+}
+
+type buildxBuildDefinition struct {
+	ExternalParameters struct {
+		Request struct {
+			Args map[string]json.RawMessage `json:"args"`
+		} `json:"request"`
+	} `json:"externalParameters"`
+	InternalParameters struct {
+		BuildConfig struct {
+			LLBDefinition json.RawMessage `json:"llbDefinition"`
+		} `json:"buildConfig"`
+	} `json:"internalParameters"`
+	ResolvedDependencies []buildxResolvedDependency `json:"resolvedDependencies"`
+}
+
+type buildxResolvedDependency struct {
+	URI    string            `json:"uri"`
+	Digest map[string]string `json:"digest"`
+}
+
+func verifyBuildProvenance(
+	document []byte,
+	source, revision, version string,
+	expectedDigests []string,
+) error {
+	if source == "" || !commitPattern.MatchString(revision) || !semanticVersionPattern.MatchString(version) {
+		return errors.New("Buildx provenance expectations are invalid")
+	}
+	if len(expectedDigests) == 0 {
+		return errors.New("Buildx provenance requires at least one expected Dockerfile input digest")
+	}
+	var platforms map[string]buildxProvenancePlatform
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	if err := decoder.Decode(&platforms); err != nil {
+		return fmt.Errorf("parse Buildx provenance: %w", err)
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return errors.New("parse Buildx provenance: trailing JSON data")
+	}
+	if len(platforms) != 2 {
+		return fmt.Errorf("Buildx provenance has %d platforms, expected 2", len(platforms))
+	}
+	wantArguments := map[string]string{
+		"build-arg:SOURCE":   source,
+		"build-arg:REVISION": revision,
+		"build-arg:VERSION":  version,
+	}
+	for _, platform := range []string{"linux/amd64", "linux/arm64"} {
+		entry, ok := platforms[platform]
+		if !ok {
+			return fmt.Errorf("Buildx provenance is missing platform %s", platform)
+		}
+		definition := entry.SLSA.BuildDefinition
+		for name, want := range wantArguments {
+			got, err := rawJSONString(definition.ExternalParameters.Request.Args[name])
+			if err != nil || got != want {
+				return fmt.Errorf("Buildx provenance platform %s argument %s is not %q", platform, name, want)
+			}
+		}
+		if !nonEmptyJSONCollection(definition.InternalParameters.BuildConfig.LLBDefinition) {
+			return fmt.Errorf("Buildx provenance platform %s has no detailed LLB definition", platform)
+		}
+		materials := make(map[string]struct{})
+		for _, dependency := range definition.ResolvedDependencies {
+			if dependency.URI == "" {
+				return fmt.Errorf("Buildx provenance platform %s contains a resolved dependency without a URI", platform)
+			}
+			for algorithm, value := range dependency.Digest {
+				if !strings.EqualFold(algorithm, "sha256") {
+					continue
+				}
+				digest := "sha256:" + strings.TrimPrefix(strings.ToLower(value), "sha256:")
+				if sha256DigestPattern.MatchString(digest) {
+					materials[digest] = struct{}{}
+				}
+			}
+		}
+		for _, digest := range expectedDigests {
+			if !sha256DigestPattern.MatchString(digest) {
+				return fmt.Errorf("expected Dockerfile input digest %q is invalid", digest)
+			}
+			if _, ok := materials[digest]; !ok {
+				return fmt.Errorf("Buildx provenance platform %s does not resolve Dockerfile input %s", platform, digest)
+			}
 		}
 	}
 	return nil
+}
+
+func rawJSONString(document json.RawMessage) (string, error) {
+	if len(document) == 0 {
+		return "", errors.New("JSON string is missing")
+	}
+	var value string
+	if err := json.Unmarshal(document, &value); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func nonEmptyJSONCollection(document json.RawMessage) bool {
+	if len(document) == 0 {
+		return false
+	}
+	var value any
+	if err := json.Unmarshal(document, &value); err != nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case []any:
+		return len(typed) > 0
+	case map[string]any:
+		return len(typed) > 0
+	default:
+		return false
+	}
 }
 
 type workflowDocument struct {
@@ -480,20 +1078,22 @@ func verifyWorkflowSemantics(document []byte) error {
 	}
 	if err := verifyStepContract("publish", publish.Steps,
 		[]string{
-			"checkout", "setup-go", "setup-buildx", "release", "transaction",
-			"immutability-preflight", "registry-login", "image", "chart-package", "artifacts",
-			"asset-attestation", "draft", "asset-auth", "asset-sync", "image-attestation",
-			"setup-cosign", "image-signature", "final-verify", "publish-release",
+			"checkout", "setup-go", "setup-buildx", "release", "immutability-preflight", "transaction",
+			"journal-attestation", "draft", "stage-inspect", "registry-login", "image", "build-checkpoint",
+			"chart-package", "artifacts", "image-structure", "asset-attestation", "finalize-journal", "asset-auth", "asset-sync",
+			"image-attestation", "setup-cosign", "image-signature", "final-verify", "publish-release",
 		},
 		map[string]string{
-			"checkout":          "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
-			"setup-go":          "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
-			"setup-buildx":      "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
-			"registry-login":    "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
-			"image":             "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
-			"asset-attestation": "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
-			"image-attestation": "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
-			"setup-cosign":      "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
+			"checkout":            "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+			"setup-go":            "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+			"setup-buildx":        "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
+			"registry-login":      "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
+			"image":               "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+			"journal-attestation": "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"build-checkpoint":    "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"asset-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"image-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"setup-cosign":        "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
 		}); err != nil {
 		return err
 	}
@@ -558,18 +1158,21 @@ func verifyWorkflowSemantics(document []byte) error {
 		value(image.With, "platforms") != "linux/amd64,linux/arm64" ||
 		value(image.With, "push") != "true" ||
 		value(image.With, "provenance") != "mode=max" ||
-		value(image.With, "sbom") != "true" ||
-		value(image.With, "tags") != "${{ env.IMAGE }}:${{ steps.release.outputs.image-tag }}" {
+		value(image.With, "sbom") != "generator="+sbomGenerator ||
+		value(image.With, "tags") != "${{ steps.transaction.outputs.image-tag }}" ||
+		value(image.With, "build-args") != "VERSION=${{ steps.release.outputs.version }}\nREVISION=${{ github.sha }}\nSOURCE=https://github.com/${{ github.repository }}\n" {
 		return errors.New("publish image step must push the staged multi-architecture SBOM/provenance build")
 	}
-	if image.If != "steps.transaction.outputs.mode == 'fresh'" {
-		return errors.New("publish image step must run only for a fresh release transaction")
+	if image.If != "(steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared') && steps.stage-inspect.outputs.reuse != 'true'" {
+		return errors.New("publish image step must build only a missing prepared transaction image")
 	}
 	for id, condition := range map[string]string{
-		"registry-login":  "steps.transaction.outputs.mode != 'published'",
-		"draft":           "steps.transaction.outputs.mode == 'fresh'",
-		"asset-sync":      "steps.transaction.outputs.mode != 'published'",
-		"image-signature": "steps.transaction.outputs.mode != 'published'",
+		"registry-login":   "steps.transaction.outputs.mode != 'published'",
+		"draft":            "steps.transaction.outputs.mode == 'fresh'",
+		"asset-sync":       "steps.transaction.outputs.mode != 'published'",
+		"image-signature":  "steps.transaction.outputs.mode != 'published'",
+		"stage-inspect":    "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'",
+		"finalize-journal": "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'",
 	} {
 		step, err := requireStep(steps, id)
 		if err != nil {
@@ -579,10 +1182,22 @@ func verifyWorkflowSemantics(document []byte) error {
 			return fmt.Errorf("release step %q must use condition %q", id, condition)
 		}
 	}
+	if err := verifyAttestationStep(steps, "journal-attestation", map[string]string{
+		"subject-path": "dist/release-journal.txt",
+	}, "steps.transaction.outputs.mode == 'fresh'"); err != nil {
+		return err
+	}
+	if err := verifyAttestationStep(steps, "build-checkpoint", map[string]string{
+		"subject-name":     "${{ env.IMAGE }}",
+		"subject-digest":   "${{ steps.image.outputs.digest }}",
+		"push-to-registry": "true",
+	}, "steps.image.outcome == 'success' && steps.image.outputs.digest != ''"); err != nil {
+		return err
+	}
 
 	if err := verifyAttestationStep(steps, "asset-attestation", map[string]string{
 		"subject-path": "${{ steps.chart-package.outputs.path }}\ndist/release-manifest.txt\ndist/SHA256SUMS\n",
-	}, "steps.transaction.outputs.mode == 'fresh'"); err != nil {
+	}, "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'"); err != nil {
 		return err
 	}
 	if err := verifyAttestationStep(steps, "image-attestation", map[string]string{
@@ -599,7 +1214,11 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := requireRunBindings(steps, "transaction",
 		"published but not immutable; refusing recovery",
 		"release_state=published",
+		"release_state=prepared",
+		"transaction=\"$GITHUB_RUN_ID\"",
+		"-journal dist/release-journal.txt",
 		"-verify-tag-identity",
+		".assets | length == 0",
 		"--source-ref \"$GITHUB_REF\"",
 		"--source-digest \"$GITHUB_SHA\"",
 		"--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\""); err != nil {
@@ -612,7 +1231,33 @@ func verifyWorkflowSemantics(document []byte) error {
 	}
 	if err := requireRunBindings(steps, "draft",
 		"gh release create", "--draft", "--latest=false",
-		"--notes-file dist/release-manifest.txt", "-verify-tag-identity"); err != nil {
+		"--notes-file dist/release-journal.txt", "gh attestation verify dist/release-journal.txt",
+		"-verify-tag-identity", ".assets | length == 0"); err != nil {
+		return err
+	}
+	if err := requireRunBindings(steps, "stage-inspect",
+		"imagetools inspect --raw", "steps.transaction.outputs.image-tag", "reuse=true",
+		"reuse=false", "refusing to rebuild", "gh attestation verify \"oci://$IMAGE@$digest\"",
+		"--source-ref \"$GITHUB_REF\"", "--source-digest \"$GITHUB_SHA\"",
+		"--signer-workflow \"$GITHUB_REPOSITORY/.github/workflows/release.yml\"",
+		"-registry-missing-error \"$error_file\"", "-registry-missing-reference \"$reference\""); err != nil {
+		return err
+	}
+	if err := requireRunBindings(steps, "image-structure",
+		"imagetools inspect --raw \"$reference\"", "steps.artifacts.outputs.image-tag",
+		"cmp \"$image_dir/index.json\" \"$image_dir/tag-index.json\"",
+		"[\"linux/amd64\", \"linux/arm64\"]", "vnd.docker.reference.digest",
+		"https://spdx.dev/Document", "https://slsa.dev/provenance/v1",
+		"org.opencontainers.image.source", "org.opencontainers.image.revision",
+		"org.opencontainers.image.version", "{{json .Provenance}}",
+		"-provenance \"$image_dir/provenance.json\"", "-provenance-source \"$source\"",
+		"-provenance-revision \"$GITHUB_SHA\"", "-provenance-version \"$version\""); err != nil {
+		return err
+	}
+	if err := requireRunBindings(steps, "finalize-journal",
+		"cmp dist/release-journal.txt", "gh release edit", "--notes-file dist/release-manifest.txt",
+		"gh attestation verify dist/release-manifest.txt", "cmp dist/release-manifest.txt",
+		"-verify-tag-identity", ".assets | length == 0"); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "asset-auth",
@@ -629,9 +1274,8 @@ func verifyWorkflowSemantics(document []byte) error {
 		"--certificate-identity \"$identity\"", "--source-ref \"$GITHUB_REF\"",
 		"--source-digest \"$GITHUB_SHA\"", "docker logout ghcr.io",
 		"imagetools inspect --raw \"$reference\"", "steps.artifacts.outputs.image-tag",
-		"linux/amd64", "linux/arm64", "vnd.docker.reference.digest",
-		"https://spdx.dev/Document", "https://slsa.dev/provenance/v1",
-		"org.opencontainers.image.revision", "build-arg:REVISION", "llbDefinition"); err != nil {
+		"cmp \"$image_dir/index.json\" \"$image_dir/final-index.json\"",
+		"cmp \"$image_dir/final-index.json\" \"$image_dir/final-tag-index.json\""); err != nil {
 		return err
 	}
 	if err := requireRunBindings(steps, "publish-release",
@@ -805,6 +1449,49 @@ func verifyReleaseAssets(manifestPath, checksumsPath, chartPath, tag, sourceSHA 
 	return nil
 }
 
+func verifyPreparedJournal(path, tag, sourceSHA string) error {
+	if !commitPattern.MatchString(sourceSHA) {
+		return fmt.Errorf("source SHA %q is not a full lowercase commit SHA", sourceSHA)
+	}
+	document, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read prepared release journal: %w", err)
+	}
+	if !bytes.HasSuffix(document, []byte("\n")) || bytes.Contains(document, []byte("\r")) {
+		return errors.New("prepared release journal must use newline-terminated LF records")
+	}
+	wantKeys := []string{
+		"state", "version", "source-repository", "source-ref", "source-sha",
+		"transaction", "image-tag", "chart-asset",
+	}
+	fields, err := exactRecords(document, wantKeys, "prepared release journal")
+	if err != nil {
+		return err
+	}
+	version := strings.TrimPrefix(tag, "v")
+	wantExact := map[string]string{
+		"state":             "prepared",
+		"version":           version,
+		"source-repository": repositoryName,
+		"source-ref":        "refs/tags/" + tag,
+		"source-sha":        sourceSHA,
+		"chart-asset":       "ptah-operator-" + version + ".tgz",
+	}
+	for key, want := range wantExact {
+		if fields[key] != want {
+			return fmt.Errorf("prepared release journal %s is %q, expected %q", key, fields[key], want)
+		}
+	}
+	if !transactionPattern.MatchString(fields["transaction"]) {
+		return errors.New("prepared release journal transaction identity is invalid")
+	}
+	wantImageTag := imageName + ":tx-" + sourceSHA + "-" + fields["transaction"]
+	if fields["image-tag"] != wantImageTag {
+		return fmt.Errorf("prepared release journal image-tag is %q, expected %q", fields["image-tag"], wantImageTag)
+	}
+	return nil
+}
+
 func parseReleaseManifest(path, tag, sourceSHA string) ([]byte, map[string]string, error) {
 	if !commitPattern.MatchString(sourceSHA) {
 		return nil, nil, fmt.Errorf("source SHA %q is not a full lowercase commit SHA", sourceSHA)
@@ -820,17 +1507,9 @@ func parseReleaseManifest(path, tag, sourceSHA string) ([]byte, map[string]strin
 		"version", "source-repository", "source-ref", "source-sha", "transaction",
 		"image", "image-tag", "chart-asset", "chart-asset-sha256",
 	}
-	fields := make(map[string]string, len(wantKeys))
-	lines := strings.Split(strings.TrimSuffix(string(document), "\n"), "\n")
-	if len(lines) != len(wantKeys) {
-		return nil, nil, fmt.Errorf("release manifest has %d records, expected %d", len(lines), len(wantKeys))
-	}
-	for index, line := range lines {
-		key, value, found := strings.Cut(line, "=")
-		if !found || key != wantKeys[index] || value == "" || strings.TrimSpace(value) != value {
-			return nil, nil, fmt.Errorf("release manifest record %d is invalid", index+1)
-		}
-		fields[key] = value
+	fields, err := exactRecords(document, wantKeys, "release manifest")
+	if err != nil {
+		return nil, nil, err
 	}
 	version := strings.TrimPrefix(tag, "v")
 	wantExact := map[string]string{
@@ -860,6 +1539,22 @@ func parseReleaseManifest(path, tag, sourceSHA string) ([]byte, map[string]strin
 		return nil, nil, fmt.Errorf("release manifest image-tag is %q, expected %q", fields["image-tag"], wantImageTag)
 	}
 	return document, fields, nil
+}
+
+func exactRecords(document []byte, wantKeys []string, kind string) (map[string]string, error) {
+	fields := make(map[string]string, len(wantKeys))
+	lines := strings.Split(strings.TrimSuffix(string(document), "\n"), "\n")
+	if len(lines) != len(wantKeys) {
+		return nil, fmt.Errorf("%s has %d records, expected %d", kind, len(lines), len(wantKeys))
+	}
+	for index, line := range lines {
+		key, value, found := strings.Cut(line, "=")
+		if !found || key != wantKeys[index] || value == "" || strings.TrimSpace(value) != value {
+			return nil, fmt.Errorf("%s record %d is invalid", kind, index+1)
+		}
+		fields[key] = value
+	}
+	return fields, nil
 }
 
 func exactDigest(reference, repository string) (string, error) {
