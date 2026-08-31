@@ -173,10 +173,16 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	case operatorv1alpha1.PhasePlanning:
 		return r.claim(ctx, schema, operatorv1alpha1.OperationPlan)
 	case operatorv1alpha1.PhaseReadyToApply, operatorv1alpha1.PhaseAwaitingApproval:
+		if due(schema.Status.NextReconciliationTime, now) {
+			// Refresh the complete evidence chain before considering even an exact
+			// approval or an automatic Apply. This prevents an expired plan from
+			// racing a moved tag or database drift discovered by reconciliation.
+			return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+		}
 		return r.reconcileApproval(ctx, schema)
 	case operatorv1alpha1.PhaseBlocked:
 		if !due(schema.Status.NextReconciliationTime, now) {
-			return ctrl.Result{RequeueAfter: until(schema.Status.NextReconciliationTime, now)}, nil
+			return requeueAtDeadline(schema.Status.NextReconciliationTime, r.now()), nil
 		}
 		// Every blocked decision is periodically refreshed through the complete
 		// Resolve -> Verify -> Observe -> Plan pipeline. This observes moved tags,
@@ -185,11 +191,11 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
 	case operatorv1alpha1.PhaseInSync:
 		if !due(schema.Status.NextReconciliationTime, now) {
-			return ctrl.Result{RequeueAfter: until(schema.Status.NextReconciliationTime, now)}, nil
+			return requeueAtDeadline(schema.Status.NextReconciliationTime, r.now()), nil
 		}
 	case operatorv1alpha1.PhaseFailed:
 		if !due(schema.Status.NextReconciliationTime, now) {
-			return ctrl.Result{RequeueAfter: until(schema.Status.NextReconciliationTime, now)}, nil
+			return requeueAtDeadline(schema.Status.NextReconciliationTime, r.now()), nil
 		}
 	}
 
@@ -426,17 +432,20 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		operation = schema.Status.ActiveOperation
 	}
-	if !schema.Spec.Suspend && schema.Status.Phase == operatorv1alpha1.PhaseFailed && !due(schema.Status.NextReconciliationTime, r.now()) {
-		wait := until(schema.Status.NextReconciliationTime, r.now())
-		if (operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) &&
-			schema.Status.PendingObservation != nil {
-			// Retry timers are user-configurable and may exceed the immutable
-			// Apply Lease. Renew the same holder while proof is pending.
-			if wait > maxLockContentionPoll {
-				wait = maxLockContentionPoll
+	if !schema.Spec.Suspend && schema.Status.Phase == operatorv1alpha1.PhaseFailed {
+		failedRetryTime := r.now()
+		if !due(schema.Status.NextReconciliationTime, failedRetryTime) {
+			result := requeueAtDeadline(schema.Status.NextReconciliationTime, failedRetryTime)
+			if (operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) &&
+				schema.Status.PendingObservation != nil {
+				// Retry timers are user-configurable and may exceed the immutable
+				// Apply Lease. Renew the same holder while proof is pending.
+				if result.RequeueAfter > maxLockContentionPoll {
+					result.RequeueAfter = maxLockContentionPoll
+				}
 			}
+			return result, nil
 		}
-		return ctrl.Result{RequeueAfter: wait}, nil
 	}
 
 	job := &batchv1.Job{}
@@ -1201,10 +1210,8 @@ func (r *SchemaReconciler) consumeResult(
 				}
 				schema.Status.Plan = currentPlanStatus(published, now)
 				setPlanPolicyStatus(schema, published)
-				if schema.Status.Phase == operatorv1alpha1.PhaseBlocked {
-					next := metav1.NewTime(now.Add(interval(schema)))
-					schema.Status.NextReconciliationTime = &next
-				}
+				next := metav1.NewTime(now.Add(interval(schema)))
+				schema.Status.NextReconciliationTime = &next
 				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, "Published", "Exact plan bytes are stored in immutable chunks")
 			}
 		}
@@ -1343,14 +1350,23 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 		if err != nil {
 			return ctrl.Result{}, err
 		}
+		now := r.now()
+		if schema.Status.Phase == operatorv1alpha1.PhaseAwaitingApproval &&
+			due(schema.Status.NextReconciliationTime, now) {
+			return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+		}
 		if approval == nil {
 			before := schema.DeepCopy()
+			if schema.Status.NextReconciliationTime == nil {
+				next := metav1.NewTime(now.Add(interval(schema)))
+				schema.Status.NextReconciliationTime = &next
+			}
 			schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
 			setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "Waiting", "Create an approval bound to the current plan fingerprint")
 			if err := r.patchStatus(ctx, before, schema); err != nil {
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: interval(schema)}, nil
+			return requeueAtDeadline(schema.Status.NextReconciliationTime, r.now()), nil
 		}
 		before := schema.DeepCopy()
 		schema.Status.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{
@@ -1373,10 +1389,25 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 			return r.approvalBecameInvalid(ctx, schema)
 		}
 	}
-	return r.claim(ctx, schema, operatorv1alpha1.OperationApply)
+	claimedAt := r.now()
+	if (schema.Status.Phase == operatorv1alpha1.PhaseReadyToApply ||
+		schema.Status.Phase == operatorv1alpha1.PhaseAwaitingApproval) &&
+		due(schema.Status.NextReconciliationTime, claimedAt) {
+		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+	}
+	return r.claimAt(ctx, schema, operatorv1alpha1.OperationApply, claimedAt)
 }
 
 func (r *SchemaReconciler) claim(ctx context.Context, schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.OperationType) (ctrl.Result, error) {
+	return r.claimAt(ctx, schema, operation, time.Time{})
+}
+
+func (r *SchemaReconciler) claimAt(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.OperationType,
+	claimedAt time.Time,
+) (ctrl.Result, error) {
 	if schema.Status.ActiveOperation != nil {
 		return ctrl.Result{Requeue: true}, nil
 	}
@@ -1405,9 +1436,12 @@ func (r *SchemaReconciler) claim(ctx context.Context, schema *operatorv1alpha1.P
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if claimedAt.IsZero() {
+		claimedAt = r.now()
+	}
 	active := &operatorv1alpha1.ActiveOperationStatus{
 		Type: operation, ID: id, InputFingerprint: inputFingerprint,
-		StartedAt: metav1.NewTime(r.now()), Attempt: 1,
+		StartedAt: metav1.NewTime(claimedAt), Attempt: 1,
 	}
 	if operation == operatorv1alpha1.OperationVerify {
 		active.VerificationPolicyUID = verificationPolicy.UID
@@ -2253,7 +2287,7 @@ func (r *SchemaReconciler) approvalBecameInvalid(ctx context.Context, schema *op
 		return ctrl.Result{}, err
 	}
 	r.event(schema, corev1.EventTypeWarning, "ApprovalRevoked", "The recorded approval became invalid before the Apply Job was created")
-	return ctrl.Result{RequeueAfter: interval(schema)}, nil
+	return requeueAtDeadline(schema.Status.NextReconciliationTime, r.now()), nil
 }
 
 func (r *SchemaReconciler) waitBlocked(ctx context.Context, schema *operatorv1alpha1.PtahSchema, reason, message string) (ctrl.Result, error) {
@@ -2266,7 +2300,7 @@ func (r *SchemaReconciler) waitBlocked(ctx context.Context, schema *operatorv1al
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: until(&next, now)}, nil
+	return requeueAtDeadline(&next, r.now()), nil
 }
 
 var (
@@ -3263,6 +3297,14 @@ func until(next *metav1.Time, now time.Time) time.Duration {
 		return 0
 	}
 	return next.Sub(now)
+}
+
+func requeueAtDeadline(next *metav1.Time, now time.Time) ctrl.Result {
+	remaining := until(next, now)
+	if remaining <= 0 {
+		return ctrl.Result{Requeue: true}
+	}
+	return ctrl.Result{RequeueAfter: remaining}
 }
 
 func jobTerminal(job *batchv1.Job) bool {

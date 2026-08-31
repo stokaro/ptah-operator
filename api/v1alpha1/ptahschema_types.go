@@ -293,7 +293,10 @@ type PtahSchemaStatus struct {
 
 	LastAttemptTime              *metav1.Time `json:"lastAttemptTime,omitempty"`
 	LastSuccessfulReconciliation *metav1.Time `json:"lastSuccessfulReconciliation,omitempty"`
-	NextReconciliationTime       *metav1.Time `json:"nextReconciliationTime,omitempty"`
+	// NextReconciliationTime is the durable earliest time for the next
+	// scheduled read-only reconciliation. Event-driven safety work may run
+	// sooner.
+	NextReconciliationTime *metav1.Time `json:"nextReconciliationTime,omitempty"`
 
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }

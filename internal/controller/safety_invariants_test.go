@@ -46,6 +46,23 @@ type failNthSchemaStatusPatchWriter struct {
 	client *failNthSchemaStatusPatchClient
 }
 
+type failFirstLeaseUpdateWriter struct {
+	client.Writer
+	failed bool
+}
+
+func (w *failFirstLeaseUpdateWriter) Update(
+	ctx context.Context,
+	object client.Object,
+	options ...client.UpdateOption,
+) error {
+	if _, ok := object.(*coordinationv1.Lease); ok && !w.failed {
+		w.failed = true
+		return errors.New("injected Lease update failure")
+	}
+	return w.Writer.Update(ctx, object, options...)
+}
+
 func (w *failNthSchemaStatusPatchWriter) Patch(
 	ctx context.Context,
 	object client.Object,
@@ -283,6 +300,89 @@ func TestPersistedTargetLockReleaseRecoversAfterManagerCrash(t *testing.T) {
 	}
 	if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != "" {
 		t.Fatalf("Lease holder = %#v, want empty", lease.Spec.HolderIdentity)
+	}
+}
+
+func TestApprovalRevocationLockReleaseSurvivesFailureAndRestart(t *testing.T) {
+	t.Parallel()
+
+	schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhaseApplying
+	next := metav1.NewTime(time.Date(2026, 8, 30, 12, 4, 0, 0, time.UTC))
+	schema.Status.NextReconciliationTime = &next
+	schema.Status.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{
+		Name: approval.Name, UID: approval.UID, Approver: approval.Spec.Approver, ApprovedAt: approval.Spec.ApprovedAt,
+	}
+	target := databaseTargetBinding(schema.Spec.Target)
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationApply, ID: "revoked-approval-apply", JobName: "revoked-approval-apply-job",
+		StartedAt: metav1.NewTime(time.Date(2026, 8, 30, 11, 59, 0, 0, time.UTC)), Attempt: 1,
+		CoordinationDigest: testCoordinationDigest, TargetIdentityDigest: testDigest, Target: &target,
+		LeaseDurationSeconds: 960, LeaseEpoch: testLeaseEpoch,
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, policyConfig)
+	failingWriter := &failFirstLeaseUpdateWriter{Writer: api}
+	reconciler.Locks = targetlock.New(api, failingWriter, nil)
+	current := safetyGetSchema(t, api, schema)
+
+	if _, err := reconciler.approvalBecameInvalid(context.Background(), current); err == nil {
+		t.Fatal("approvalBecameInvalid() succeeded despite injected Lease release failure")
+	}
+	if !failingWriter.failed {
+		t.Fatal("approvalBecameInvalid() did not attempt to release the held Lease")
+	}
+	persisted := safetyGetSchema(t, api, schema)
+	if persisted.Status.ActiveOperation != nil || persisted.Status.PendingLockRelease == nil ||
+		persisted.Status.Plan == nil || persisted.Status.Plan.Approval != nil ||
+		!safetyTimesEqual(persisted.Status.NextReconciliationTime, &next) {
+		t.Fatalf("failed release boundary was not durable: %#v", persisted.Status)
+	}
+	if !contains(persisted.Finalizers, activeOperationFinalizer) {
+		t.Fatal("failed release removed the active-operation finalizer")
+	}
+	if holder := safetyLeaseHolder(t, api, reconciler.LockNamespace, testCoordinationDigest); holder == "" {
+		t.Fatal("failed release cleared the held Lease")
+	}
+
+	restarted := *reconciler
+	restarted.Locks = targetlock.New(api, api, nil)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+	result, err := restarted.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("release restart Reconcile() error = %v", err)
+	}
+	if !result.Requeue {
+		t.Fatalf("release restart result = %#v, want finalizer-cleanup pass", result)
+	}
+	drained := safetyGetSchema(t, api, schema)
+	if drained.Status.PendingLockRelease != nil || !safetyTimesEqual(drained.Status.NextReconciliationTime, &next) {
+		t.Fatalf("restart did not drain only the release marker: %#v", drained.Status)
+	}
+	if holder := safetyLeaseHolder(t, api, restarted.LockNamespace, testCoordinationDigest); holder != "" {
+		t.Fatalf("restart left Lease holder %q", holder)
+	}
+
+	if _, err = restarted.Reconcile(context.Background(), request); !apierrors.IsConflict(err) {
+		t.Fatalf("finalizer cleanup Reconcile() error = %v, want optimistic-lock retry", err)
+	}
+	afterFinalizer := safetyGetSchema(t, api, schema)
+	if contains(afterFinalizer.Finalizers, activeOperationFinalizer) ||
+		!safetyTimesEqual(afterFinalizer.Status.NextReconciliationTime, &next) {
+		t.Fatalf("finalizer cleanup changed refresh state: %#v", afterFinalizer)
+	}
+
+	result, err = restarted.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("deadline restart Reconcile() error = %v", err)
+	}
+	if result.Requeue || result.RequeueAfter != 4*time.Minute {
+		t.Fatalf("finalizer restart result = %#v, want original refresh deadline", result)
+	}
+	completed := safetyGetSchema(t, api, schema)
+	if contains(completed.Finalizers, activeOperationFinalizer) || completed.Status.PendingLockRelease != nil ||
+		completed.Status.ActiveOperation != nil || !safetyTimesEqual(completed.Status.NextReconciliationTime, &next) {
+		t.Fatalf("restart cleanup changed refresh state: %#v", completed)
 	}
 }
 
@@ -784,17 +884,33 @@ func TestStalePlanEvidenceForcesFreshObservation(t *testing.T) {
 	}
 }
 
-func TestBlockedPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) {
+func TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
 		name           string
 		apply          operatorv1alpha1.ApplyPolicy
 		destructive    bool
+		phase          operatorv1alpha1.ReconciliationPhase
+		approvalStatus metav1.ConditionStatus
 		approvalReason string
 	}{
-		{name: "destructive changes disabled", apply: operatorv1alpha1.ApplyPolicyAlways, destructive: true, approvalReason: "DestructiveChangesDisabled"},
-		{name: "apply disabled", apply: operatorv1alpha1.ApplyPolicyNever, approvalReason: "ApplyDisabled"},
+		{
+			name: "destructive changes disabled", apply: operatorv1alpha1.ApplyPolicyAlways, destructive: true,
+			phase: operatorv1alpha1.PhaseBlocked, approvalStatus: metav1.ConditionFalse, approvalReason: "DestructiveChangesDisabled",
+		},
+		{
+			name: "apply disabled", apply: operatorv1alpha1.ApplyPolicyNever,
+			phase: operatorv1alpha1.PhaseBlocked, approvalStatus: metav1.ConditionFalse, approvalReason: "ApplyDisabled",
+		},
+		{
+			name: "approval required", apply: operatorv1alpha1.ApplyPolicyOnApproval,
+			phase: operatorv1alpha1.PhaseAwaitingApproval, approvalStatus: metav1.ConditionTrue, approvalReason: "PlanReady",
+		},
+		{
+			name: "automatic apply", apply: operatorv1alpha1.ApplyPolicyAlways,
+			phase: operatorv1alpha1.PhaseReadyToApply, approvalStatus: metav1.ConditionFalse, approvalReason: "NotRequired",
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -859,17 +975,17 @@ func TestBlockedPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
 			if !result.Requeue {
-				t.Fatalf("Reconcile() result = %#v, want persisted blocked transition", result)
+				t.Fatalf("Reconcile() result = %#v, want persisted plan-policy transition", result)
 			}
 			actual := safetyGetSchema(t, api, schema)
 			wantNext := reconciler.now().Add(schema.Spec.Interval.Duration)
 			approval := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired)
-			if actual.Status.ActiveOperation != nil || actual.Status.Phase != operatorv1alpha1.PhaseBlocked ||
+			if actual.Status.ActiveOperation != nil || actual.Status.Phase != test.phase ||
 				actual.Status.Plan == nil || actual.Status.Plan.Destructive != test.destructive ||
 				actual.Status.NextReconciliationTime == nil ||
 				!actual.Status.NextReconciliationTime.Time.Equal(wantNext) ||
-				approval == nil || approval.Status != metav1.ConditionFalse || approval.Reason != test.approvalReason {
-				t.Fatalf("atomic blocked Plan status = %#v, want deadline %s and approval reason %s", actual.Status, wantNext, test.approvalReason)
+				approval == nil || approval.Status != test.approvalStatus || approval.Reason != test.approvalReason {
+				t.Fatalf("atomic deferred Plan status = %#v, want phase %s, deadline %s, and approval reason %s", actual.Status, test.phase, wantNext, test.approvalReason)
 			}
 		})
 	}
@@ -987,10 +1103,467 @@ func TestPendingProofCompletesBeforeAChangedPolicyTakesEffect(t *testing.T) {
 	}
 }
 
+func TestAwaitingApprovalWaitsForPersistedRefreshDeadlineWithoutSliding(t *testing.T) {
+	t.Parallel()
+
+	schema, plan, _, policyConfig := safetyApprovalFixture(t)
+	next := metav1.NewTime(time.Date(2026, 8, 30, 12, 4, 0, 0, time.UTC))
+	schema.Status.NextReconciliationTime = &next
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, policyConfig)
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	reconciler.Clock = func() time.Time { return now }
+	wantPlan := safetyGetSchema(t, api, schema).Status.Plan.DeepCopy()
+	var firstResourceVersion string
+	var firstApprovalTransition metav1.Time
+
+	for reconciliation := 1; reconciliation <= 2; reconciliation++ {
+		result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+		if err != nil {
+			t.Fatalf("Reconcile() pass %d error = %v", reconciliation, err)
+		}
+		if result.Requeue || result.RequeueAfter != next.Sub(now) {
+			t.Fatalf("Reconcile() pass %d result = %#v, want persisted-deadline wait", reconciliation, result)
+		}
+		actual := safetyGetSchema(t, api, schema)
+		if actual.Status.ActiveOperation != nil || actual.Status.Phase != operatorv1alpha1.PhaseAwaitingApproval ||
+			actual.Status.NextReconciliationTime == nil || !actual.Status.NextReconciliationTime.Time.Equal(next.Time) ||
+			!reflect.DeepEqual(actual.Status.Plan, wantPlan) {
+			t.Fatalf("AwaitingApproval status changed before deadline on pass %d: %#v", reconciliation, actual.Status)
+		}
+		approvalRequired := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired)
+		if approvalRequired == nil || approvalRequired.Reason != "Waiting" {
+			t.Fatalf("ApprovalRequired condition on pass %d = %#v, want Waiting", reconciliation, approvalRequired)
+		}
+		if reconciliation == 1 {
+			firstResourceVersion = actual.ResourceVersion
+			firstApprovalTransition = approvalRequired.LastTransitionTime
+		} else if actual.ResourceVersion != firstResourceVersion ||
+			!approvalRequired.LastTransitionTime.Time.Equal(firstApprovalTransition.Time) {
+			t.Fatalf(
+				"unchanged wait mutated object: resourceVersion %q -> %q, approval transition %s -> %s",
+				firstResourceVersion, actual.ResourceVersion, firstApprovalTransition.Time, approvalRequired.LastTransitionTime.Time,
+			)
+		}
+		now = now.Add(time.Minute)
+	}
+}
+
+func TestExpiredAwaitingApprovalRefreshesBeforeExactApproval(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		setDeadline bool
+	}{
+		{name: "due deadline", setDeadline: true},
+		{name: "legacy missing deadline"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+			if test.setDeadline {
+				dueAt := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+				schema.Status.NextReconciliationTime = &dueAt
+			}
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, approval, policyConfig)
+			wantPlan := safetyGetSchema(t, api, schema).Status.Plan.DeepCopy()
+
+			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if !result.Requeue {
+				t.Fatalf("Reconcile() result = %#v, want Resolve claim", result)
+			}
+			actual := safetyGetSchema(t, api, schema)
+			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+				actual.Status.Phase != operatorv1alpha1.PhaseResolving || actual.Status.NextReconciliationTime != nil ||
+				!reflect.DeepEqual(actual.Status.Plan, wantPlan) || actual.Status.Plan.Approval != nil {
+				t.Fatalf("expired AwaitingApproval status = %#v, want preserved plan and Resolve before approval", actual.Status)
+			}
+			safetyAssertApprovalNotAuthorized(t, api, approval)
+		})
+	}
+}
+
+func TestReadyToApplyRestartRefreshesExpiredPlanBeforeAutomaticApply(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		setDeadline bool
+	}{
+		{name: "deadline reached while manager was down", setDeadline: true},
+		{name: "legacy missing deadline"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, plan, policyConfig := safetyReadyToApplyFixture(t)
+			if test.setDeadline {
+				dueAt := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+				schema.Status.NextReconciliationTime = &dueAt
+			}
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, policyConfig)
+			wantPlan := safetyGetSchema(t, api, schema).Status.Plan.DeepCopy()
+			restarted := *reconciler
+
+			result, err := restarted.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+			if err != nil {
+				t.Fatalf("restart Reconcile() error = %v", err)
+			}
+			if !result.Requeue {
+				t.Fatalf("restart Reconcile() result = %#v, want Resolve claim", result)
+			}
+			actual := safetyGetSchema(t, api, schema)
+			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+				actual.Status.Phase != operatorv1alpha1.PhaseResolving || actual.Status.NextReconciliationTime != nil ||
+				!reflect.DeepEqual(actual.Status.Plan, wantPlan) || actual.Status.Plan.Approval != nil {
+				t.Fatalf("expired automatic plan was authorized: %#v, want preserved plan and Resolve", actual.Status)
+			}
+		})
+	}
+}
+
+func TestReadyToApplyAuthorizationUsesOneDurableTimestamp(t *testing.T) {
+	t.Parallel()
+
+	deadline := time.Date(2026, 8, 30, 12, 1, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name               string
+		clockOffsets       []time.Duration
+		expectedOperation  operatorv1alpha1.OperationType
+		expectedStartedAt  time.Time
+		expectedClockCalls int
+	}{
+		{
+			name: "automatic Apply claimed before deadline", clockOffsets: []time.Duration{-2 * time.Second, -time.Second},
+			expectedOperation: operatorv1alpha1.OperationApply,
+			expectedStartedAt: deadline.Add(-time.Second), expectedClockCalls: 2,
+		},
+		{
+			name: "deadline reached at automatic Apply boundary", clockOffsets: []time.Duration{-time.Second, 0},
+			expectedOperation: operatorv1alpha1.OperationResolve,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, plan, policyConfig := safetyReadyToApplyFixture(t)
+			next := metav1.NewTime(deadline)
+			schema.Status.NextReconciliationTime = &next
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, policyConfig)
+			wantPlan := safetyGetSchema(t, api, schema).Status.Plan.DeepCopy()
+			clockCalls := 0
+			reconciler.Clock = func() time.Time {
+				clockCalls++
+				if clockCalls <= len(test.clockOffsets) {
+					return deadline.Add(test.clockOffsets[clockCalls-1])
+				}
+				return deadline
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if !result.Requeue {
+				t.Fatalf("Reconcile() result = %#v, want operation claim", result)
+			}
+			actual := safetyGetSchema(t, api, schema)
+			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != test.expectedOperation ||
+				actual.Status.NextReconciliationTime != nil || !reflect.DeepEqual(actual.Status.Plan, wantPlan) ||
+				actual.Status.Plan.Approval != nil {
+				t.Fatalf("automatic authorization boundary = %#v, want preserved plan and %s", actual.Status, test.expectedOperation)
+			}
+			if !test.expectedStartedAt.IsZero() &&
+				(!actual.Status.ActiveOperation.StartedAt.Time.Equal(test.expectedStartedAt) ||
+					!actual.Status.ActiveOperation.StartedAt.Time.Before(deadline) ||
+					clockCalls != test.expectedClockCalls) {
+				t.Fatalf(
+					"automatic Apply = started %s with %d clock calls, want %s with %d calls",
+					actual.Status.ActiveOperation.StartedAt.Time, clockCalls, test.expectedStartedAt, test.expectedClockCalls,
+				)
+			}
+		})
+	}
+}
+
+func TestAwaitingApprovalAuthorizationUsesOneDurableTimestamp(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name               string
+		recordedApproval   bool
+		clockOffsets       []time.Duration
+		expectedOperation  operatorv1alpha1.OperationType
+		expectedStartedAt  time.Time
+		expectedClockCalls int
+	}{
+		{
+			name: "exact approval reaches deadline before reservation", clockOffsets: []time.Duration{-time.Second, 0},
+			expectedOperation: operatorv1alpha1.OperationResolve,
+		},
+		{
+			name: "recorded approval persists its checked pre-deadline time", recordedApproval: true,
+			clockOffsets:      []time.Duration{-2 * time.Second, -time.Second},
+			expectedOperation: operatorv1alpha1.OperationApply,
+			expectedStartedAt: time.Date(2026, 8, 30, 12, 0, 59, 0, time.UTC), expectedClockCalls: 2,
+		},
+		{
+			name: "recorded approval reaches deadline at claim boundary", recordedApproval: true,
+			clockOffsets: []time.Duration{-time.Second, 0}, expectedOperation: operatorv1alpha1.OperationResolve,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+			deadline := time.Date(2026, 8, 30, 12, 1, 0, 0, time.UTC)
+			next := metav1.NewTime(deadline)
+			schema.Status.NextReconciliationTime = &next
+			if test.recordedApproval {
+				schema.Status.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{
+					Name: approval.Name, UID: approval.UID, Approver: approval.Spec.Approver, ApprovedAt: approval.Spec.ApprovedAt,
+				}
+			}
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, approval, policyConfig)
+			wantPlan := safetyGetSchema(t, api, schema).Status.Plan.DeepCopy()
+			clockCalls := 0
+			reconciler.Clock = func() time.Time {
+				clockCalls++
+				if clockCalls <= len(test.clockOffsets) {
+					return deadline.Add(test.clockOffsets[clockCalls-1])
+				}
+				return deadline
+			}
+
+			result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if !result.Requeue {
+				t.Fatalf("Reconcile() result = %#v, want operation claim", result)
+			}
+			actual := safetyGetSchema(t, api, schema)
+			if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != test.expectedOperation ||
+				actual.Status.NextReconciliationTime != nil ||
+				!reflect.DeepEqual(actual.Status.Plan, wantPlan) {
+				t.Fatalf("authorization boundary status = %#v, want preserved plan and %s", actual.Status, test.expectedOperation)
+			}
+			if !test.expectedStartedAt.IsZero() &&
+				(!actual.Status.ActiveOperation.StartedAt.Time.Equal(test.expectedStartedAt) ||
+					!actual.Status.ActiveOperation.StartedAt.Time.Before(deadline) ||
+					clockCalls != test.expectedClockCalls) {
+				t.Fatalf(
+					"Apply authorization = started %s with %d clock calls, want %s with %d calls",
+					actual.Status.ActiveOperation.StartedAt.Time, clockCalls, test.expectedStartedAt, test.expectedClockCalls,
+				)
+			}
+			if test.expectedOperation == operatorv1alpha1.OperationResolve {
+				safetyAssertApprovalNotAuthorized(t, api, approval)
+			}
+		})
+	}
+}
+
+func TestApprovalRevocationPreservesRefreshDeadlineAcrossRestart(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name          string
+		deadline      *metav1.Time
+		initialResult ctrl.Result
+	}{
+		{
+			name: "future deadline", deadline: ptrTime(metav1.NewTime(now.Add(4 * time.Minute))),
+			initialResult: ctrl.Result{RequeueAfter: 4 * time.Minute},
+		},
+		{name: "due deadline", deadline: ptrTime(metav1.NewTime(now)), initialResult: ctrl.Result{Requeue: true}},
+		{name: "legacy missing deadline", initialResult: ctrl.Result{Requeue: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+			if test.deadline != nil {
+				schema.Status.NextReconciliationTime = test.deadline.DeepCopy()
+			}
+			schema.Status.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{
+				Name: approval.Name, UID: approval.UID, Approver: approval.Spec.Approver, ApprovedAt: approval.Spec.ApprovedAt,
+			}
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, policyConfig)
+			current := safetyGetSchema(t, api, schema)
+
+			result, err := reconciler.approvalBecameInvalid(context.Background(), current)
+			if err != nil {
+				t.Fatalf("approvalBecameInvalid() error = %v", err)
+			}
+			if result != test.initialResult {
+				t.Fatalf("approvalBecameInvalid() result = %#v, want %#v", result, test.initialResult)
+			}
+			afterRevocation := safetyGetSchema(t, api, schema)
+			if afterRevocation.Status.Phase != operatorv1alpha1.PhaseAwaitingApproval ||
+				afterRevocation.Status.Plan == nil || afterRevocation.Status.Plan.Approval != nil ||
+				!safetyTimesEqual(afterRevocation.Status.NextReconciliationTime, test.deadline) {
+				t.Fatalf("approval revocation changed refresh evidence: %#v", afterRevocation.Status)
+			}
+
+			restarted := *reconciler
+			restartResult, err := restarted.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+			if err != nil {
+				t.Fatalf("restart Reconcile() error = %v", err)
+			}
+			afterRestart := safetyGetSchema(t, api, schema)
+			if test.deadline != nil && test.deadline.After(now) {
+				if restartResult != test.initialResult || afterRestart.Status.ActiveOperation != nil ||
+					!safetyTimesEqual(afterRestart.Status.NextReconciliationTime, test.deadline) {
+					t.Fatalf("restart slid future approval deadline: result %#v, status %#v", restartResult, afterRestart.Status)
+				}
+				return
+			}
+			if !restartResult.Requeue || afterRestart.Status.ActiveOperation == nil ||
+				afterRestart.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+				afterRestart.Status.NextReconciliationTime != nil {
+				t.Fatalf("restart did not refresh due approval state: result %#v, status %#v", restartResult, afterRestart.Status)
+			}
+		})
+	}
+}
+
+func safetyTimesEqual(first, second *metav1.Time) bool {
+	if first == nil || second == nil {
+		return first == nil && second == nil
+	}
+	return first.Time.Equal(second.Time)
+}
+
+func safetyAssertApprovalNotAuthorized(
+	t *testing.T,
+	api client.Client,
+	approval *operatorv1alpha1.PtahSchemaApproval,
+) {
+	t.Helper()
+
+	persisted := &operatorv1alpha1.PtahSchemaApproval{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(approval), persisted); err != nil {
+		t.Fatal(err)
+	}
+	for _, conditionType := range []string{
+		operatorv1alpha1.ConditionApprovalAccepted,
+		operatorv1alpha1.ConditionApprovalConsumed,
+	} {
+		if condition := findCondition(persisted.Status.Conditions, conditionType); condition != nil && condition.Status == metav1.ConditionTrue {
+			t.Fatalf("approval condition %s = %#v, want authorization untouched", conditionType, condition)
+		}
+	}
+}
+
+func TestRequeueAtDeadlineNeverReturnsAnEmptyDueResult(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	dueAt := metav1.NewTime(now)
+	future := metav1.NewTime(now.Add(2 * time.Minute))
+	for _, test := range []struct {
+		name   string
+		next   *metav1.Time
+		result ctrl.Result
+	}{
+		{name: "future", next: &future, result: ctrl.Result{RequeueAfter: 2 * time.Minute}},
+		{name: "due", next: &dueAt, result: ctrl.Result{Requeue: true}},
+		{name: "missing", result: ctrl.Result{Requeue: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if actual := requeueAtDeadline(test.next, now); actual != test.result {
+				t.Fatalf("requeueAtDeadline() = %#v, want %#v", actual, test.result)
+			}
+		})
+	}
+}
+
+func TestFailedActiveOperationUsesOneDeadlineSample(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	schema := schemaFixture()
+	schema.Status.Phase = operatorv1alpha1.PhaseFailed
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationResolve, ID: "failed-resolve", JobName: "failed-resolve-job", Attempt: 1,
+	}
+	next := metav1.NewTime(now.Add(time.Second))
+	schema.Status.NextReconciliationTime = &next
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	clockCalls := 0
+	reconciler.Clock = func() time.Time {
+		clockCalls++
+		if clockCalls == 1 {
+			return now
+		}
+		return next.Time
+	}
+
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.Requeue || result.RequeueAfter != time.Second || clockCalls != 1 {
+		t.Fatalf("failed-operation wait = %#v with %d clock calls, want 1s from one sample", result, clockCalls)
+	}
+	actual := safetyGetSchema(t, api, schema)
+	if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.ID != schema.Status.ActiveOperation.ID {
+		t.Fatalf("failed-operation wait changed active operation: %#v", actual.Status.ActiveOperation)
+	}
+}
+
 func TestApprovalReservationRequiresFreshGenerationPassBeforeApply(t *testing.T) {
 	t.Parallel()
 
+	schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+	next := metav1.NewTime(time.Date(2026, 8, 30, 12, 4, 0, 0, time.UTC))
+	schema.Status.NextReconciliationTime = &next
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, approval, policyConfig)
+
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+	if err != nil {
+		t.Fatalf("approval reservation Reconcile() error = %v", err)
+	}
+	if !result.Requeue {
+		t.Fatalf("approval reservation result = %#v, want a fresh pass", result)
+	}
+	actual := safetyGetSchema(t, api, schema)
+	if actual.Status.Plan == nil || actual.Status.Plan.Approval == nil {
+		t.Fatal("approval was not reserved")
+	}
+	if actual.Status.ActiveOperation != nil {
+		t.Fatalf("Apply was claimed in the approval reservation pass: %#v", actual.Status.ActiveOperation)
+	}
+	if actual.Status.NextReconciliationTime == nil || !actual.Status.NextReconciliationTime.Time.Equal(next.Time) {
+		t.Fatalf("approval reservation moved refresh deadline: %#v, want %s", actual.Status.NextReconciliationTime, next.Time)
+	}
+
+	actual.Spec.Desired.OCIRef = "oci://registry.example/team/schema:new"
+	actual.Generation++
+	if err := api.Update(context.Background(), actual); err != nil {
+		t.Fatalf("change desired generation: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
+		t.Fatalf("fresh-generation Reconcile() error = %v", err)
+	}
+	actual = safetyGetSchema(t, api, schema)
+	if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve {
+		t.Fatalf("changed generation claimed %#v, want Resolve before Apply", actual.Status.ActiveOperation)
+	}
+}
+
+func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaPlan, *operatorv1alpha1.PtahSchemaApproval, *corev1.ConfigMap) {
+	t.Helper()
+
 	schema := schemaFixture()
+	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyOnApproval
 	schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
 	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
 		ResolvedReference:        "oci://registry.example/team/schema@" + testDigest,
@@ -1001,8 +1574,9 @@ func TestApprovalReservationRequiresFreshGenerationPassBeforeApply(t *testing.T)
 		VerificationPolicyUID:    testPolicyUID,
 	}
 	schema.Status.Target = operatorv1alpha1.TargetStatus{
-		Engine:         schema.Spec.Target.Engine,
-		IdentityDigest: testDigest,
+		Engine:             schema.Spec.Target.Engine,
+		CoordinationDigest: testCoordinationDigest,
+		IdentityDigest:     testDigest,
 	}
 	policyBinding, err := policyFingerprint(schema)
 	if err != nil {
@@ -1016,6 +1590,7 @@ func TestApprovalReservationRequiresFreshGenerationPassBeforeApply(t *testing.T)
 			Fingerprint:              "sha256:plan",
 			ContentDigest:            testDigest,
 			ArtifactDigest:           schema.Status.Source.Digest,
+			CoordinationDigest:       schema.Status.Target.CoordinationDigest,
 			TargetIdentityDigest:     schema.Status.Target.IdentityDigest,
 			ActualStateFingerprint:   safetyOtherDigest,
 			DesiredStateFingerprint:  "sha256:desired",
@@ -1038,6 +1613,7 @@ func TestApprovalReservationRequiresFreshGenerationPassBeforeApply(t *testing.T)
 			PlanRef:                  operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID},
 			PlanFingerprint:          plan.Spec.Fingerprint,
 			ArtifactDigest:           plan.Spec.ArtifactDigest,
+			CoordinationDigest:       plan.Spec.CoordinationDigest,
 			TargetIdentityDigest:     plan.Spec.TargetIdentityDigest,
 			ActualStateFingerprint:   plan.Spec.ActualStateFingerprint,
 			DesiredStateFingerprint:  plan.Spec.DesiredStateFingerprint,
@@ -1058,35 +1634,17 @@ func TestApprovalReservationRequiresFreshGenerationPassBeforeApply(t *testing.T)
 		Immutable:  ptr(true),
 		Data:       map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: "policy"},
 	}
-	reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, approval, policyConfig)
+	return schema, plan, approval, policyConfig
+}
 
-	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
-	if err != nil {
-		t.Fatalf("approval reservation Reconcile() error = %v", err)
-	}
-	if !result.Requeue {
-		t.Fatalf("approval reservation result = %#v, want a fresh pass", result)
-	}
-	actual := safetyGetSchema(t, api, schema)
-	if actual.Status.Plan == nil || actual.Status.Plan.Approval == nil {
-		t.Fatal("approval was not reserved")
-	}
-	if actual.Status.ActiveOperation != nil {
-		t.Fatalf("Apply was claimed in the approval reservation pass: %#v", actual.Status.ActiveOperation)
-	}
+func safetyReadyToApplyFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.PtahSchemaPlan, *corev1.ConfigMap) {
+	t.Helper()
 
-	actual.Spec.Desired.OCIRef = "oci://registry.example/team/schema:new"
-	actual.Generation++
-	if err := api.Update(context.Background(), actual); err != nil {
-		t.Fatalf("change desired generation: %v", err)
-	}
-	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}); err != nil {
-		t.Fatalf("fresh-generation Reconcile() error = %v", err)
-	}
-	actual = safetyGetSchema(t, api, schema)
-	if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve {
-		t.Fatalf("changed generation claimed %#v, want Resolve before Apply", actual.Status.ActiveOperation)
-	}
+	schema, plan, _, policyConfig := safetyApprovalFixture(t)
+	schema.Spec.Policy.Apply = operatorv1alpha1.ApplyPolicyAlways
+	schema.Status.Phase = operatorv1alpha1.PhaseReadyToApply
+	schema.Status.Plan.Approval = nil
+	return schema, plan, policyConfig
 }
 
 func TestPostApplyObservationProofSurvivesInterruptions(t *testing.T) {

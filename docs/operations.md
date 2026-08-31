@@ -241,16 +241,28 @@ artifact. They are not inferred from an apply exit code. `ReadyToApply` means
 the `Always` policy accepted a non-destructive plan without claiming that an
 approval is needed; `AwaitingApproval` means an exact approval is required.
 `Blocked` distinguishes deliberate policy refusal from an execution failure.
+`ReadyToApply`, `AwaitingApproval`, and `Blocked` all retain a read-only refresh
+deadline so the cadence survives controller restarts. An eligible Apply can be
+reserved immediately before that deadline; once it is due, a fresh resolution
+and observation take priority over automatic policy or approval consumption.
+After policy and, when required, the exact recorded approval pass final
+validation, the controller captures one timestamp, checks it against that
+deadline, and stores the same value as the Apply operation's start time. That
+durable Apply claim is the one-shot authorization boundary: dispatch, lock
+contention, and controller restarts continue the claimed operation instead of
+letting a later timer reinterpret it.
 
 ## Mutable tags and registry outages
 
 Every reconciliation interval resolves the requested reference again. A moved
 tag clears dependent plan and applied evidence, then repeats verification and
 observation against the new digest. An old approval cannot authorize the new
-plan. This cadence also applies while a plan is `Blocked`: read-only
-verification, observation, and planning continue, the same immutable blocked
-plan returns as current when its inputs are unchanged, and no `Apply` Job is
-created.
+plan. This cadence also applies while a plan is ready to apply, waiting for
+approval, or `Blocked`: read-only verification, observation, and planning
+continue, the same immutable plan returns as current when its inputs are
+unchanged, and no `Apply` Job is created during the refresh. A moved tag or
+database drift observed by a due refresh therefore invalidates stale plan or
+approval evidence before mutation can begin.
 
 Registry failures are fail-closed. The last resolved digest remains visible as
 evidence, but the controller does not silently reinterpret a tag or apply a
