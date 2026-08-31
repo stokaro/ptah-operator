@@ -125,20 +125,50 @@ manager volume projects only `tls.crt` and `tls.key`; the CA certificate and CA
 private key never enter manager Pods. The manager ClusterRole has no Secret
 access. The rotator uses its own ServiceAccount with `get` and `update` limited
 by `resourceNames` to the one generated Secret, one precreated coordination
-Lease, and the exact mutating and validating webhook configurations. It can
-only list EndpointSlices in the release namespace because Kubernetes assigns
-their names dynamically and RBAC cannot constrain a list by label selector.
+Lease, and the exact mutating and validating webhook configurations. By
+default, `certificateRotation.recreateMissingSecret=false`: the chart grants no
+Secret `create`, renders no Secret-creation admission policy or binding, and
+grants no read access to those policy types. A deleted Secret therefore makes
+the rotator fail clearly and remain unready until an administrator restores it
+through a controlled Helm or GitOps operation.
+
+Set `certificateRotation.recreateMissingSecret=true` only when automatic
+deletion recovery is required. Secret `create` cannot be restricted by
+`resourceNames`, so this opt-in adds a namespace-wide RBAC verb plus a
+fail-closed `ValidatingAdmissionPolicy` and binding that limit the rotator
+ServiceAccount to one exact TLS Secret name, namespace, managed label, and four
+nonempty data fields. The rotator requires the policy's current generation to
+be type-checked, verifies the complete policy and binding structure, and runs
+negative server-side dry runs before using `create`.
+
+The single-release opt-in has a bootstrap tradeoff: Helm cannot atomically
+establish the admission policy and grant RBAC. A namespace-wide `create` grant
+can therefore exist briefly before policy enforcement is established. The
+rotator will not use the grant during that interval, but that runtime check
+cannot constrain a compromised ServiceAccount acting outside the rotator.
+Leaving the default disabled removes both the broad verb and this ordering
+window. The rotator can only list EndpointSlices in the release namespace
+because Kubernetes assigns their names dynamically and RBAC cannot constrain a
+list by label selector.
 
 Serving certificates rotate before `certificateRotation.renewalThreshold`.
 The CA rotates before its threshold, when it cannot safely issue a full-lived
-serving certificate, or when a legacy generated Secret has no `ca.key`. An
-expired certificate follows the same recovery path; the rotator talks to the
-Kubernetes API and probes webhook endpoints directly, so recovery never
-depends on a successful call through the expired admission webhook.
+serving certificate, when a legacy generated Secret has no `ca.key`, or when
+`ca.crt` is missing, malformed, or unrelated to the serving leaf. Candidate
+CAs from managed webhook entries are filtered certificate-by-certificate. A
+candidate is retained only when it signs the exact persisted leaf for every
+Service DNS name and every stable endpoint proves it is serving that byte-exact
+leaf. Unrelated roots are never copied between entries. An expired certificate
+follows the same recovery path; the rotator talks to the Kubernetes API and
+probes webhook endpoints directly, so recovery never depends on a successful
+call through the expired admission webhook.
 
 CA replacement is fail-closed and restart-safe:
 
-1. Both webhook configurations receive an overlapping old-plus-new CA bundle.
+1. Every exact managed webhook entry retains its own parseable prior
+   certificates and receives the next CA. A current signer may be shared only
+   after its signature and exact live-leaf identity are independently proved;
+   unauthenticated entry-local prior trust is never copied to another entry.
 2. One atomic Secret update replaces the serving certificate, serving key, CA,
    and CA key.
 3. The rotator lists the exact Service EndpointSlices, rejects empty, unready,
@@ -149,11 +179,27 @@ CA replacement is fail-closed and restart-safe:
 4. Only after that proof do both webhook configurations contract to the new CA.
 
 If the rotator stops between steps, its replacement expands both configurations
-to a common overlap, repeats proof for every stable endpoint, and then contracts
-trust. A timeout leaves overlapping trust in place. There is no interval in
-which the API server is configured to trust neither the old nor the new
-serving certificate. controller-runtime watches the projected `tls.crt` and
-`tls.key` files and reloads them without restarting the manager Pods.
+independently from each entry's own trust, repeats proof for every stable
+endpoint, and then contracts trust. A timeout leaves each entry's prior trust
+plus the authoritative CA in place. Ordinary rotation never configures the API
+server to trust neither the old nor the new serving certificate.
+controller-runtime watches the projected `tls.crt` and `tls.key` files and
+reloads them without restarting the manager Pods.
+
+A generated Secret containing valid material with an empty or `Opaque` type is
+normalized to `kubernetes.io/tls`. The no-rotation path updates only the Secret
+type and the four managed material fields before repairing trust; rotation
+paths normalize the type as part of their existing atomic material update.
+
+With missing-Secret recreation enabled, the rotator first appends a newly
+generated CA to each exact entry. It preserves every parseable certificate
+candidate from that entry even when neighboring bytes are malformed, without
+borrowing trust from another entry. It then recreates only the
+policy-constrained Secret, accepts an uncertain or racing create only after
+byte-exact read-back, proves the new leaf at every stable endpoint, and
+contracts every entry to the new CA. Admission remains fail-closed while Pods
+reload the recreated certificate. Manager readiness is tied to the webhook
+server's started checker rather than a process-only ping.
 
 The conservative defaults reconcile immediately at startup and every six
 hours, bound each reconciliation to 15 minutes, and retry failures with jittered

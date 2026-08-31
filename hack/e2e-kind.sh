@@ -709,6 +709,7 @@ helm --kubeconfig "$KUBECONFIG_FILE" upgrade --install "$HELM_RELEASE" \
 	--set-string execution.runnerImage="$E2E_RUNNER_IMAGE" \
 	--set-string execution.ptahVersion="$E2E_PTAH_VERSION" \
 	--set-string certificateRotation.interval="168h" \
+	--set certificateRotation.recreateMissingSecret=true \
 	--set replicaCount=2 \
 	--set podDisruptionBudget.enabled=false
 

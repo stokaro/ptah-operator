@@ -36,16 +36,11 @@ type secretState struct {
 	currentServingChainAuthentic bool
 	rotateCA                     bool
 	rotateServing                bool
+	normalizeSecret              bool
 }
 
 func inspectSecret(secret *corev1.Secret, config Config, now time.Time) (secretState, error) {
-	if secret.Type != "" && secret.Type != corev1.SecretTypeTLS {
-		return secretState{}, fmt.Errorf("type must be %q", corev1.SecretTypeTLS)
-	}
-	ca, normalizedCA, err := parseSingleCertificate(secret.Data[CACertificateKey])
-	if err != nil {
-		return secretState{}, fmt.Errorf("parse %s: %w", CACertificateKey, err)
-	}
+	ca, normalizedCA, caErr := parseSingleCertificate(secret.Data[CACertificateKey])
 	current := certificateMaterial{
 		caPEM:    normalizedCA,
 		caKeyPEM: append([]byte(nil), secret.Data[CAPrivateKeyKey]...),
@@ -58,7 +53,7 @@ func inspectSecret(secret *corev1.Secret, config Config, now time.Time) (secretS
 	if caKeyErr == nil {
 		current.caKey = caKey
 	}
-	rotateCA := caKeyErr != nil || !ca.IsCA || !publicKeysEqual(ca.PublicKey, signerPublicKey(caKey)) ||
+	rotateCA := caErr != nil || caKeyErr != nil || ca == nil || !ca.IsCA || !publicKeysEqual(ca.PublicKey, signerPublicKey(caKey)) ||
 		!certificateCurrentlyValid(ca, now) || !now.Add(config.RenewalThreshold).Before(ca.NotAfter)
 
 	leaf, leafErr := parseLeafAndKey(current.certPEM, current.keyPEM)
@@ -66,6 +61,12 @@ func inspectSecret(secret *corev1.Secret, config Config, now time.Time) (secretS
 		current.leaf = leaf
 	}
 	currentServingChainAuthentic := leafErr == nil && servingCertificateAuthentic(leaf, ca, requiredDNSNames(config))
+	if leafErr == nil && caErr == nil && !currentServingChainAuthentic {
+		// A well-formed but unrelated ca.crt is corrupted state. Preserve an
+		// authentic live signer from managed webhook bundles during a full CA
+		// replacement instead of issuing under an unrelated key.
+		rotateCA = true
+	}
 	rotateServing := leafErr != nil || !servingCertificateValid(leaf, ca, requiredDNSNames(config), now, config.RenewalThreshold)
 	if rotateServing && !rotateCA && !now.Add(config.ServingCertificateValidity).Before(ca.NotAfter) {
 		// Do not issue a replacement that outlives the current CA.
@@ -77,6 +78,7 @@ func inspectSecret(secret *corev1.Secret, config Config, now time.Time) (secretS
 		currentServingChainAuthentic: currentServingChainAuthentic,
 		rotateCA:                     rotateCA,
 		rotateServing:                rotateServing,
+		normalizeSecret:              secret.Type != corev1.SecretTypeTLS,
 	}, nil
 }
 

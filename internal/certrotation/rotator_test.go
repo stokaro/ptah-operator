@@ -9,8 +9,10 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"maps"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,8 +21,10 @@ import (
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
@@ -107,6 +111,57 @@ func TestNoopCurrentCertificateDoesNotProbeOrWrite(t *testing.T) {
 	}
 }
 
+func TestValidMaterialWithWrongSecretTypeIsNormalizedWithoutRotation(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	for _, secretType := range []corev1.SecretType{corev1.SecretTypeOpaque, ""} {
+		name := string(secretType)
+		if name == "" {
+			name = "empty"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			config := testConfig()
+			material := mustGenerateMaterial(t, now, config)
+			secret := secretForMaterial(config, material)
+			secret.Type = secretType
+			client := newTestClient(config, secret, material.caPEM, twoReadyEndpoints(config))
+			prober := &recordingProber{}
+			rotator := mustNewTestRotator(t, client, config, now, prober)
+
+			if err := rotator.Run(context.Background()); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+
+			updated := mustGetSecret(t, client, config)
+			if updated.Type != corev1.SecretTypeTLS {
+				t.Fatalf("normalized Secret type = %q, want %q", updated.Type, corev1.SecretTypeTLS)
+			}
+			if !secretContainsMaterial(updated, material) {
+				t.Fatal("normalization changed valid certificate material")
+			}
+			if got := prober.addresses(); len(got) != 0 {
+				t.Fatalf("normalization probed endpoints = %v, want none", got)
+			}
+			secretUpdates := 0
+			for _, action := range client.Actions() {
+				if action.GetVerb() != "update" {
+					continue
+				}
+				switch action.GetResource().Resource {
+				case "secrets":
+					secretUpdates++
+				case "mutatingwebhookconfigurations", "validatingwebhookconfigurations":
+					t.Fatalf("normalization unexpectedly updated %s", action.GetResource().Resource)
+				}
+			}
+			if secretUpdates != 1 {
+				t.Fatalf("Secret update count = %d, want 1", secretUpdates)
+			}
+		})
+	}
+}
+
 func TestMalformedManagedTrustIsRepairedFromAuthoritativeSecret(t *testing.T) {
 	t.Parallel()
 	config := testConfig()
@@ -156,6 +211,264 @@ func TestMalformedManagedTrustIsRepairedFromAuthoritativeSecret(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMalformedSecretCARecoversOnlyLiveAuthenticObservedRoot(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	original := mustGenerateMaterial(t, now, config)
+	unrelated := mustGenerateMaterial(t, now.Add(time.Minute), config)
+	secret := secretForMaterial(config, original)
+	secret.Data[CACertificateKey] = []byte("not a certificate")
+	mixed := append(append(append([]byte(nil), unrelated.caPEM...), original.caPEM...), []byte("trailing damage")...)
+	client := newTestClient(config, secret, original.caPEM, twoReadyEndpoints(config))
+	setManagedBundles(t, client, config, mixed, [][]byte{original.caPEM, original.caPEM})
+	assertCANotCopiedToValidatingUpdates(t, client, unrelated.caPEM)
+	prober := &recordingProber{}
+	rotator := mustNewTestRotator(t, client, config, now, prober)
+
+	if err := rotator.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	updated := mustGetSecret(t, client, config)
+	if bytes.Equal(updated.Data[CACertificateKey], original.caPEM) {
+		t.Fatal("recovery did not replace the malformed Secret CA")
+	}
+	assertFinalBundles(t, client, config, updated.Data[CACertificateKey])
+	requests := prober.probeRequests()
+	if !slices.ContainsFunc(requests, func(request probeRequest) bool {
+		return request.IdentityOnly && caBundlesEqual(request.CACertificatePEM, original.caPEM)
+	}) {
+		t.Fatal("recovery did not prove the authentic observed CA against the live exact leaf")
+	}
+}
+
+func TestMissingSecretIsRecreatedOnlyBehindEstablishedGuard(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
+	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
+	installEstablishedSecretCreateGuard(t, client, config)
+	installSecretCreateAdmission(t, client, config)
+	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
+
+	if err := rotator.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	created := mustGetSecret(t, client, config)
+	state, err := inspectSecret(created, config, now)
+	if err != nil {
+		t.Fatalf("inspect recreated Secret: %v", err)
+	}
+	if state.rotateCA || state.rotateServing {
+		t.Fatalf("recreated Secret still needs rotation: %+v", state)
+	}
+	if !maps.Equal(created.Labels, map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue}) {
+		t.Fatalf("recreated Secret labels = %v", created.Labels)
+	}
+	assertFinalBundles(t, client, config, state.current.caPEM)
+}
+
+func TestMissingSecretRecreationIsDisabledByDefault(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	config.RecreateMissingSecret = false
+	config.SecretCreatePolicyName = ""
+	config.SecretCreatePolicyBindingName = ""
+	config.SecretCreateServiceAccountName = ""
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
+	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
+	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
+
+	err := rotator.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "recreation is disabled") {
+		t.Fatalf("Run() error = %v, want disabled-recreation error", err)
+	}
+	for _, action := range client.Actions() {
+		if action.GetVerb() == "create" && action.GetResource().Resource == "secrets" {
+			t.Fatal("disabled missing-Secret recovery attempted CREATE")
+		}
+	}
+	assertFinalBundles(t, client, config, old.caPEM)
+}
+
+func TestMissingSecretGuardMustBeEstablishedBeforeCreate(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
+	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
+	installUnestablishedSecretCreateGuard(t, client, config)
+	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
+
+	err := rotator.Run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("not established")) {
+		t.Fatalf("Run() error = %v, want unestablished guard", err)
+	}
+	if _, getErr := client.CoreV1().Secrets(config.Namespace).Get(context.Background(), config.SecretName, metav1.GetOptions{}); !apierrors.IsNotFound(getErr) {
+		t.Fatalf("missing Secret was created without an established guard: %v", getErr)
+	}
+	assertFinalBundles(t, client, config, old.caPEM)
+}
+
+func TestMissingSecretGuardRejectsIndeterminateConditionBeforeCreate(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
+	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
+	installEstablishedSecretCreateGuard(t, client, config)
+	policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
+		context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get established Secret CREATE guard: %v", err)
+	}
+	policy.Status.Conditions = []metav1.Condition{{
+		Type:   "Ready",
+		Status: metav1.ConditionUnknown,
+	}}
+	if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().UpdateStatus(
+		context.Background(), policy, metav1.UpdateOptions{},
+	); err != nil {
+		t.Fatalf("set indeterminate Secret CREATE guard condition: %v", err)
+	}
+	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
+
+	err = rotator.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "is not true: Unknown") {
+		t.Fatalf("Run() error = %v, want indeterminate guard rejection", err)
+	}
+	for _, action := range client.Actions() {
+		if action.GetVerb() == "create" && action.GetResource().Resource == "secrets" {
+			t.Fatal("indeterminate guard reached a Secret CREATE request")
+		}
+	}
+}
+
+func TestMissingSecretRejectsBroadenedGuardContractBeforeCreate(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, *fake.Clientset, Config)
+	}{
+		{
+			name: "missing exact ServiceAccount match condition",
+			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
+				policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
+					context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
+				)
+				if err != nil {
+					t.Fatalf("get guard policy: %v", err)
+				}
+				policy.Spec.MatchConditions = nil
+				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Update(
+					context.Background(), policy, metav1.UpdateOptions{},
+				); err != nil {
+					t.Fatalf("broaden guard policy: %v", err)
+				}
+			},
+		},
+		{
+			name: "missing exact namespace selector",
+			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
+				binding, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
+					context.Background(), config.SecretCreatePolicyBindingName, metav1.GetOptions{},
+				)
+				if err != nil {
+					t.Fatalf("get guard binding: %v", err)
+				}
+				binding.Spec.MatchResources.NamespaceSelector = nil
+				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Update(
+					context.Background(), binding, metav1.UpdateOptions{},
+				); err != nil {
+					t.Fatalf("broaden guard binding: %v", err)
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			config := testConfig()
+			now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+			old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
+			client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
+			installEstablishedSecretCreateGuard(t, client, config)
+			test.mutate(t, client, config)
+			rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
+
+			err := rotator.Run(context.Background())
+			if err == nil || !bytes.Contains([]byte(err.Error()), []byte("guard")) {
+				t.Fatalf("Run() error = %v, want guard contract rejection", err)
+			}
+			for _, action := range client.Actions() {
+				if action.GetVerb() == "create" && action.GetResource().Resource == "secrets" {
+					t.Fatal("broadened guard reached a Secret CREATE request")
+				}
+			}
+		})
+	}
+}
+
+func TestConfigRejectsInvalidSecretCreateServiceAccountName(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	config.SecretCreateServiceAccountName = "Bad_Name"
+	if _, err := New(fake.NewClientset(), config); err == nil ||
+		!bytes.Contains([]byte(err.Error()), []byte("Secret CREATE ServiceAccount name")) {
+		t.Fatalf("New() error = %v, want invalid Secret CREATE ServiceAccount name", err)
+	}
+}
+
+func TestConfigRejectsSecretCreateGuardNamesWhenRecreationIsDisabled(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	config.RecreateMissingSecret = false
+	if _, err := New(fake.NewClientset(), config); err == nil ||
+		!strings.Contains(err.Error(), "must be empty") {
+		t.Fatalf("New() error = %v, want disabled guard-name rejection", err)
+	}
+}
+
+func TestMissingSecretCreateRaceNeverOverwritesDifferentMaterial(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
+	racing := mustGenerateMaterial(t, now.Add(time.Minute), config)
+	client := newTestClient(config, nil, old.caPEM, twoReadyEndpoints(config))
+	installEstablishedSecretCreateGuard(t, client, config)
+	installSecretCreateAdmission(t, client, config)
+	client.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		options := action.(interface{ GetCreateOptions() metav1.CreateOptions }).GetCreateOptions()
+		if len(options.DryRun) != 0 {
+			return false, nil, nil
+		}
+		if err := client.Tracker().Add(generatedSecret(config, racing)); err != nil {
+			t.Fatalf("seed racing Secret: %v", err)
+		}
+		return true, nil, apierrors.NewAlreadyExists(schema.GroupResource{Resource: "secrets"}, config.SecretName)
+	})
+	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
+
+	err := rotator.Run(context.Background())
+	if err == nil || !bytes.Contains([]byte(err.Error()), []byte("different material")) {
+		t.Fatalf("Run() error = %v, want different-material race", err)
+	}
+	observed := mustGetSecret(t, client, config)
+	if !secretContainsMaterial(observed, racing) {
+		t.Fatal("rotator overwrote the racing Secret")
+	}
+	if err := rotator.Run(context.Background()); err != nil {
+		t.Fatalf("race recovery Run() error = %v", err)
+	}
+	assertFinalBundles(t, client, config, racing.caPEM)
 }
 
 func TestExpiredCertificateRotationsRepairMalformedManagedTrust(t *testing.T) {
@@ -353,6 +666,84 @@ func TestInterruptedManagedEntryUpdateRecoversEveryNamedWebhook(t *testing.T) {
 	}
 	assertFinalBundles(t, client, config, current.caPEM)
 	assertProbedAddresses(t, prober.addresses(), "10.0.0.10:9443", "10.0.0.11:9443")
+}
+
+func TestTrustRepairDoesNotContractBeforeEndpointProof(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	config.ProbeTimeout = 15 * time.Millisecond
+	config.ProbeInterval = time.Millisecond
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	old := mustGenerateMaterial(t, now.Add(-time.Hour), config)
+	current := mustGenerateMaterial(t, now, config)
+	client := newTestClient(config, secretForMaterial(config, current), old.caPEM, twoReadyEndpoints(config))
+	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{err: errors.New("projection pending")})
+
+	if err := rotator.Run(context.Background()); err == nil {
+		t.Fatal("Run() unexpectedly succeeded without endpoint proof")
+	}
+	for name, bundle := range map[string][]byte{
+		"mutating":   mutatingBundle(t, client, config),
+		"validating": validatingBundle(t, client, config),
+	} {
+		if !caBundleContainsCertificate(bundle, old.caPEM) || !caBundleContainsCertificate(bundle, current.caPEM) {
+			t.Errorf("%s trust contracted before endpoint proof", name)
+		}
+		assertBundleCertificateCount(t, bundle, 2)
+	}
+}
+
+func TestCARotationPreservesEachEntryTrustUntilReplacementProof(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	config.ProbeTimeout = 15 * time.Millisecond
+	config.ProbeInterval = time.Millisecond
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	current := mustGenerateMaterial(t, now, config)
+	legacy := secretForMaterial(config, current)
+	delete(legacy.Data, CAPrivateKeyKey)
+	localMutating := mustGenerateMaterial(t, now.Add(time.Minute), config)
+	localValidatingA := mustGenerateMaterial(t, now.Add(2*time.Minute), config)
+	localValidatingB := mustGenerateMaterial(t, now.Add(3*time.Minute), config)
+	mutating := malformedBundleWithCertificates(t, current.caPEM, localMutating.caPEM)
+	validatingA := append(
+		[]byte("malformed prefix\n"),
+		malformedBundleWithCertificates(t, current.caPEM, localValidatingA.caPEM)...,
+	)
+	validatingB := malformedBundleWithCertificates(t, current.caPEM, localValidatingB.caPEM)
+	client := newTestClient(config, legacy, current.caPEM, twoReadyEndpoints(config))
+	setManagedBundles(t, client, config, mutating, [][]byte{validatingA, validatingB})
+	rotator := mustNewTestRotator(
+		t,
+		client,
+		config,
+		now,
+		&recordingProber{err: errors.New("replacement not loaded")},
+	)
+
+	if err := rotator.Run(context.Background()); err == nil {
+		t.Fatal("Run() unexpectedly succeeded without replacement endpoint proof")
+	}
+	nextCA := mustGetSecret(t, client, config).Data[CACertificateKey]
+	entries := managedEntryBundles(t, client, config)
+	wants := []certificateMaterial{localMutating, localValidatingA, localValidatingB}
+	for i, bundle := range entries {
+		for name, certificate := range map[string][]byte{
+			"current":     current.caPEM,
+			"replacement": nextCA,
+			"entry-local": wants[i].caPEM,
+		} {
+			if !caBundleContainsCertificate(bundle, certificate) {
+				t.Errorf("entry %d dropped %s trust before endpoint proof", i, name)
+			}
+		}
+		for otherIndex, other := range wants {
+			if otherIndex != i && caBundleContainsCertificate(bundle, other.caPEM) {
+				t.Errorf("entry %d copied trust from entry %d", i, otherIndex)
+			}
+		}
+		assertBundleCertificateCount(t, bundle, 3)
+	}
 }
 
 func TestMissingNamedWebhookStopsBeforeSecretTransition(t *testing.T) {
@@ -578,6 +969,131 @@ func (prober *recordingProber) addresses() []string {
 	return addresses
 }
 
+func (prober *recordingProber) probeRequests() []probeRequest {
+	prober.mu.Lock()
+	defer prober.mu.Unlock()
+	return slices.Clone(prober.requests)
+}
+
+func assertCANotCopiedToValidatingUpdates(t *testing.T, client *fake.Clientset, forbidden []byte) {
+	t.Helper()
+	checkBundle := func(bundle []byte) {
+		if caBundleContainsCertificate(bundle, forbidden) {
+			t.Error("rotator copied an unrelated observed CA into another managed entry")
+		}
+	}
+	client.PrependReactor("update", "validatingwebhookconfigurations", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		configuration := action.(k8stesting.UpdateAction).GetObject().(*admissionregistrationv1.ValidatingWebhookConfiguration)
+		for _, webhook := range configuration.Webhooks {
+			checkBundle(webhook.ClientConfig.CABundle)
+		}
+		return false, nil, nil
+	})
+}
+
+func installEstablishedSecretCreateGuard(t *testing.T, client *fake.Clientset, config Config) {
+	t.Helper()
+	installUnestablishedSecretCreateGuard(t, client, config)
+	policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
+		context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get test Secret CREATE guard: %v", err)
+	}
+	policy.Status.ObservedGeneration = policy.Generation
+	policy.Status.TypeChecking = &admissionregistrationv1.TypeChecking{}
+	if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().UpdateStatus(
+		context.Background(), policy, metav1.UpdateOptions{},
+	); err != nil {
+		t.Fatalf("establish test Secret CREATE guard: %v", err)
+	}
+}
+
+func installUnestablishedSecretCreateGuard(t *testing.T, client *fake.Clientset, config Config) {
+	t.Helper()
+	failurePolicy := admissionregistrationv1.Fail
+	scope := admissionregistrationv1.NamespacedScope
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: config.SecretCreatePolicyName, Generation: 1},
+		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
+			FailurePolicy: &failurePolicy,
+			MatchConstraints: &admissionregistrationv1.MatchResources{
+				ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{{
+					RuleWithOperations: admissionregistrationv1.RuleWithOperations{
+						Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+						Rule: admissionregistrationv1.Rule{
+							APIGroups: []string{""}, APIVersions: []string{"v1"},
+							Resources: []string{"secrets"}, Scope: &scope,
+						},
+					},
+				}},
+			},
+			MatchConditions: []admissionregistrationv1.MatchCondition{{
+				Name: "exact-certificate-rotator-service-account",
+				Expression: "request.userInfo.username == 'system:serviceaccount:" +
+					config.Namespace + ":" + config.SecretCreateServiceAccountName + "'",
+			}},
+			Validations: []admissionregistrationv1.Validation{{
+				Expression: secretCreateValidationExpression(config),
+				Message:    secretCreateGuardDenialMessage,
+			}},
+		},
+	}
+	binding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: config.SecretCreatePolicyBindingName},
+		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
+			PolicyName:        config.SecretCreatePolicyName,
+			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
+			MatchResources: &admissionregistrationv1.MatchResources{
+				NamespaceSelector: &metav1.LabelSelector{
+					MatchLabels: map[string]string{"kubernetes.io/metadata.name": config.Namespace},
+				},
+			},
+		},
+	}
+	if err := client.Tracker().Add(policy); err != nil {
+		t.Fatalf("add test Secret CREATE guard policy: %v", err)
+	}
+	if err := client.Tracker().Add(binding); err != nil {
+		t.Fatalf("add test Secret CREATE guard binding: %v", err)
+	}
+}
+
+func installSecretCreateAdmission(t *testing.T, client *fake.Clientset, config Config) {
+	t.Helper()
+	client.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		options := action.(interface{ GetCreateOptions() metav1.CreateOptions }).GetCreateOptions()
+		if len(options.DryRun) == 0 {
+			return false, nil, nil
+		}
+		secret := action.(k8stesting.CreateAction).GetObject().(*corev1.Secret)
+		if secretMatchesCreateContract(secret, config) {
+			return true, secret.DeepCopy(), nil
+		}
+		return true, nil, apierrors.NewForbidden(
+			schema.GroupResource{Resource: "secrets"},
+			secret.Name,
+			errors.New(secretCreateGuardDenialMessage),
+		)
+	})
+}
+
+func secretMatchesCreateContract(secret *corev1.Secret, config Config) bool {
+	if secret.Name != config.SecretName || secret.Namespace != config.Namespace ||
+		secret.GenerateName != "" || secret.Type != corev1.SecretTypeTLS ||
+		!maps.Equal(secret.Labels, map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue}) ||
+		len(secret.Annotations) != 0 || len(secret.OwnerReferences) != 0 || len(secret.Finalizers) != 0 ||
+		secret.Immutable != nil || len(secret.StringData) != 0 || len(secret.Data) != 4 {
+		return false
+	}
+	for _, key := range []string{CACertificateKey, CAPrivateKeyKey, corev1.TLSCertKey, corev1.TLSPrivateKeyKey} {
+		if len(secret.Data[key]) == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func testConfig() Config {
 	return Config{
 		Namespace:                      "ptah-system",
@@ -591,6 +1107,10 @@ func testConfig() Config {
 		ServiceNamespace:               "ptah-system",
 		EndpointPortName:               "https",
 		HolderIdentity:                 "job-a/uid-a",
+		SecretCreatePolicyName:         "ptah-cert-rotator",
+		SecretCreatePolicyBindingName:  "ptah-cert-rotator",
+		SecretCreateServiceAccountName: "ptah-cert-rotator",
+		RecreateMissingSecret:          true,
 		RenewalThreshold:               7 * 24 * time.Hour,
 		ServingCertificateValidity:     30 * 24 * time.Hour,
 		CACertificateValidity:          365 * 24 * time.Hour,
@@ -642,7 +1162,6 @@ func newTestClient(
 		})
 	}
 	objects := []runtime.Object{
-		secret,
 		&coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: config.LeaseName, Namespace: config.Namespace}},
 		&admissionregistrationv1.MutatingWebhookConfiguration{
 			ObjectMeta: metav1.ObjectMeta{Name: config.MutatingWebhookConfiguration},
@@ -657,6 +1176,9 @@ func newTestClient(
 			ObjectMeta: metav1.ObjectMeta{Name: config.ValidatingWebhookConfiguration},
 			Webhooks:   validatingWebhooks,
 		},
+	}
+	if secret != nil {
+		objects = append(objects, secret)
 	}
 	if endpointSlice != nil {
 		objects = append(objects, endpointSlice)
@@ -772,6 +1294,48 @@ func setManagedBundles(
 	); err != nil {
 		t.Fatalf("update ValidatingWebhookConfiguration: %v", err)
 	}
+}
+
+func malformedBundleWithCertificates(t *testing.T, bundles ...[]byte) []byte {
+	t.Helper()
+	combined, err := combineCABundles(bundles...)
+	if err != nil {
+		t.Fatalf("combine malformed-bundle certificate candidates: %v", err)
+	}
+	return append(combined, []byte("malformed suffix\n")...)
+}
+
+func managedEntryBundles(t *testing.T, client *fake.Clientset, config Config) [][]byte {
+	t.Helper()
+	mutating, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(
+		context.Background(), config.MutatingWebhookConfiguration, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get MutatingWebhookConfiguration: %v", err)
+	}
+	validating, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
+		context.Background(), config.ValidatingWebhookConfiguration, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get ValidatingWebhookConfiguration: %v", err)
+	}
+
+	mutatingByName := make(map[string][]byte, len(mutating.Webhooks))
+	for _, webhook := range mutating.Webhooks {
+		mutatingByName[webhook.Name] = webhook.ClientConfig.CABundle
+	}
+	validatingByName := make(map[string][]byte, len(validating.Webhooks))
+	for _, webhook := range validating.Webhooks {
+		validatingByName[webhook.Name] = webhook.ClientConfig.CABundle
+	}
+	bundles := make([][]byte, 0, len(config.MutatingWebhookNames)+len(config.ValidatingWebhookNames))
+	for _, name := range config.MutatingWebhookNames {
+		bundles = append(bundles, mutatingByName[name])
+	}
+	for _, name := range config.ValidatingWebhookNames {
+		bundles = append(bundles, validatingByName[name])
+	}
+	return bundles
 }
 
 func mutatingBundle(t *testing.T, client *fake.Clientset, config Config) []byte {

@@ -61,6 +61,21 @@ app.kubernetes.io/component: controller
 {{- "ptah-operator-admission" -}}
 {{- end -}}
 
+{{- define "ptah-operator.webhookEntryCABundle" -}}
+{{- $result := .newBundle -}}
+{{- $existingBundle := default "" .existingBundle -}}
+{{- if and .secretExists $existingBundle -}}
+{{- $result = $existingBundle -}}
+{{- else if $existingBundle -}}
+{{- $decoded := $existingBundle | b64dec -}}
+{{- $certificatePEM := `(?s)^[[:space:]]*(-----BEGIN CERTIFICATE-----[[:space:]]+[A-Za-z0-9+/=[:space:]]+-----END CERTIFICATE-----[[:space:]]*)+$` -}}
+{{- if regexMatch $certificatePEM $decoded -}}
+{{- $result = printf "%s%s" $decoded (.newBundle | b64dec) | b64enc -}}
+{{- end -}}
+{{- end -}}
+{{- $result -}}
+{{- end -}}
+
 {{- define "ptah-operator.managerImage" -}}
 {{- if .Values.image.digest -}}
 {{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}

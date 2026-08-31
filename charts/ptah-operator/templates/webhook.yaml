@@ -30,33 +30,27 @@
 {{- $tlsCrt = $cert.Cert | b64enc -}}
 {{- $tlsKey = $cert.Key | b64enc -}}
 {{- end -}}
-{{- $webhookCABundle := $caBundle -}}
+{{- $entryBundles := dict "mutating" $caBundle "approvalValidating" $caBundle "podValidating" $caBundle -}}
 {{- if not .Values.webhook.existingSecret -}}
-{{- $longestExistingBundle := "" -}}
 {{- $existingMutating := lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" $configurationName -}}
 {{- if $existingMutating -}}
 {{- range $existingMutating.webhooks -}}
 {{- if and (eq .name "mapproval.operator.ptah.dev") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
-{{- if gt (len .clientConfig.caBundle) (len $longestExistingBundle) -}}
-{{- $longestExistingBundle = .clientConfig.caBundle -}}
-{{- end -}}
+{{- $_ := set $entryBundles "mutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 {{- $existingValidating := lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $configurationName -}}
 {{- if $existingValidating -}}
 {{- range $existingValidating.webhooks -}}
-{{- if and (or (eq .name "vapproval.operator.ptah.dev") (eq .name "vpodintent.operator.ptah.dev")) .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
-{{- if gt (len .clientConfig.caBundle) (len $longestExistingBundle) -}}
-{{- $longestExistingBundle = .clientConfig.caBundle -}}
+{{- if and .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
+{{- if eq .name "vapproval.operator.ptah.dev" -}}
+{{- $_ := set $entryBundles "approvalValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
+{{- else if eq .name "vpodintent.operator.ptah.dev" -}}
+{{- $_ := set $entryBundles "podValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- end -}}
-{{- if and $existing (gt (len $longestExistingBundle) (len $webhookCABundle)) -}}
-{{- $webhookCABundle = $longestExistingBundle -}}
-{{- else if and (not $existing) $longestExistingBundle (ne $longestExistingBundle $caBundle) -}}
-{{- $webhookCABundle = printf "%s%s" ($longestExistingBundle | b64dec) ($caBundle | b64dec) | b64enc -}}
 {{- end -}}
 {{- end -}}
 {{- if not .Values.webhook.existingSecret }}
@@ -66,7 +60,7 @@ metadata:
   name: {{ $secretName }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "ptah-operator.labels" . | nindent 4 }}
+    operator.ptah.dev/generated-webhook-certificate: "true"
 type: kubernetes.io/tls
 data:
   ca.crt: {{ $caBundle }}
@@ -92,7 +86,7 @@ webhooks:
     reinvocationPolicy: Never
     timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
     clientConfig:
-      caBundle: {{ $webhookCABundle }}
+      caBundle: {{ index $entryBundles "mutating" }}
       service:
         namespace: {{ .Release.Namespace }}
         name: {{ $serviceName }}
@@ -119,7 +113,7 @@ webhooks:
     matchPolicy: Equivalent
     timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
     clientConfig:
-      caBundle: {{ $webhookCABundle }}
+      caBundle: {{ index $entryBundles "approvalValidating" }}
       service:
         namespace: {{ .Release.Namespace }}
         name: {{ $serviceName }}
@@ -146,7 +140,7 @@ webhooks:
             oldObject.metadata.ownerReferences.exists(ref,
               ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true))
     clientConfig:
-      caBundle: {{ $webhookCABundle }}
+      caBundle: {{ index $entryBundles "podValidating" }}
       service:
         namespace: {{ .Release.Namespace }}
         name: {{ $serviceName }}

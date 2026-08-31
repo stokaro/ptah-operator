@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,8 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+
+	"github.com/stokaro/ptah-operator/internal/certrotation"
 )
 
 const (
@@ -35,6 +38,9 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	configurationName := "ptah-operator-admission"
 
 	secret := mustObject(t, objects, "Secret", secretName)
+	if !maps.Equal(secret.GetLabels(), map[string]string{certrotation.GeneratedSecretLabel: certrotation.GeneratedSecretLabelValue}) {
+		t.Fatalf("generated Secret labels = %v, want only the recovery guard label", secret.GetLabels())
+	}
 	for _, key := range []string{"ca.crt", "ca.key", "tls.crt", "tls.key"} {
 		if _, found, err := unstructured.NestedString(secret.Object, "data", key); err != nil || !found {
 			t.Errorf("generated Secret data is missing %q", key)
@@ -50,12 +56,17 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 
 	role := mustObject(t, objects, "Role", rotatorName)
 	assertExactRule(t, role, "", "secrets", []string{secretName}, []string{"get", "update"})
+	assertNoResourceVerb(t, role, "", "secrets", "create")
 	assertExactRule(t, role, "coordination.k8s.io", "leases", []string{leaseName}, []string{"get", "update"})
 	assertExactRule(t, role, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
 
 	clusterRole := mustObject(t, objects, "ClusterRole", rotatorName)
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "mutatingwebhookconfigurations", []string{configurationName}, []string{"get", "update"})
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingwebhookconfigurations", []string{configurationName}, []string{"get", "update"})
+	assertNoResourceVerb(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicies", "get")
+	assertNoResourceVerb(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicybindings", "get")
+	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicy", rotatorName)
+	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicyBinding", rotatorName)
 	mustObject(t, objects, "Lease", leaseName)
 
 	rotatorDeployment := mustObject(t, objects, "Deployment", rotatorName)
@@ -87,6 +98,16 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 			t.Errorf("rotator args do not contain %q: %v", want, args)
 		}
 	}
+	for _, forbiddenPrefix := range []string{
+		"--recreate-missing-secret",
+		"--secret-create-policy-name=",
+		"--secret-create-policy-binding-name=",
+		"--secret-create-service-account-name=",
+	} {
+		if slices.ContainsFunc(args, func(arg string) bool { return strings.HasPrefix(arg, forbiddenPrefix) }) {
+			t.Errorf("rotator args unexpectedly contain %q: %v", forbiddenPrefix, args)
+		}
+	}
 	ports := container["ports"].([]any)
 	if len(ports) != 1 {
 		t.Fatalf("rotator ports = %d, want 1", len(ports))
@@ -102,11 +123,43 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	assertManagerTLSProjection(t, deployment, secretName)
 }
 
+func TestMissingSecretRecreationOptInRender(t *testing.T) {
+	t.Parallel()
+	objects := renderChart(t, "--set", "certificateRotation.recreateMissingSecret=true")
+	rotatorName := releaseName + "-ptah-operator-cert-rotator"
+	secretName := releaseName + "-ptah-operator-webhook-cert"
+
+	role := mustObject(t, objects, "Role", rotatorName)
+	assertExactRule(t, role, "", "secrets", nil, []string{"create"})
+	clusterRole := mustObject(t, objects, "ClusterRole", rotatorName)
+	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicies", []string{rotatorName}, []string{"get"})
+	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicybindings", []string{rotatorName}, []string{"get"})
+	assertSecretCreateGuard(t, objects, rotatorName, secretName)
+
+	deployment := mustObject(t, objects, "Deployment", rotatorName)
+	containers, _, err := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
+	if err != nil || len(containers) != 1 {
+		t.Fatalf("rotator Deployment containers = %d, want 1", len(containers))
+	}
+	args := stringSlice(containers[0].(map[string]any)["args"])
+	for _, want := range []string{
+		"--recreate-missing-secret=true",
+		"--secret-create-policy-name=" + rotatorName,
+		"--secret-create-policy-binding-name=" + rotatorName,
+		"--secret-create-service-account-name=" + rotatorName,
+	} {
+		if !slices.Contains(args, want) {
+			t.Errorf("rotator args do not contain %q: %v", want, args)
+		}
+	}
+}
+
 func TestExistingSecretDisablesBuiltInLifecycle(t *testing.T) {
 	t.Parallel()
 	objects := renderChart(t,
 		"--set-string", "webhook.existingSecret=external-webhook-cert",
 		"--set-string", "webhook.caBundle=external-ca",
+		"--set", "certificateRotation.recreateMissingSecret=true",
 	)
 	for _, object := range objects {
 		if object.GetLabels()["app.kubernetes.io/component"] == "certificate-rotation" {
@@ -122,7 +175,10 @@ func TestExistingSecretDisablesBuiltInLifecycle(t *testing.T) {
 
 func TestLongFullnameKeepsGeneratedNamesValid(t *testing.T) {
 	t.Parallel()
-	objects := renderChart(t, "--set-string", "fullnameOverride="+strings.Repeat("a", 120))
+	objects := renderChart(t,
+		"--set-string", "fullnameOverride="+strings.Repeat("a", 120),
+		"--set", "certificateRotation.recreateMissingSecret=true",
+	)
 	for _, object := range objects {
 		limit := 253
 		switch object.GetKind() {
@@ -144,6 +200,7 @@ func TestCertificateRotationValueValidation(t *testing.T) {
 		"certificateRotation.retryInitial=0s",
 		"certificateRotation.retryMax=0s",
 		"certificateRotation.healthPort=0",
+		"certificateRotation.recreateMissingSecret=not-a-boolean",
 		"webhook.existingSecret=Bad_Name",
 	} {
 		t.Run(setting, func(t *testing.T) {
@@ -151,6 +208,83 @@ func TestCertificateRotationValueValidation(t *testing.T) {
 				t.Fatalf("Helm accepted invalid value %q", setting)
 			}
 		})
+	}
+}
+
+func assertObjectAbsent(t *testing.T, objects []*unstructured.Unstructured, kind, name string) {
+	t.Helper()
+	for _, object := range objects {
+		if object.GetKind() == kind && object.GetName() == name {
+			t.Fatalf("rendered object %s/%s must be absent", kind, name)
+		}
+	}
+}
+
+func assertSecretCreateGuard(
+	t *testing.T,
+	objects []*unstructured.Unstructured,
+	guardName string,
+	secretName string,
+) {
+	t.Helper()
+	policy := mustObject(t, objects, "ValidatingAdmissionPolicy", guardName)
+	if failurePolicy, _, _ := unstructured.NestedString(policy.Object, "spec", "failurePolicy"); failurePolicy != "Fail" {
+		t.Fatalf("Secret CREATE guard failurePolicy = %q, want Fail", failurePolicy)
+	}
+	matchConditions, _, err := unstructured.NestedSlice(policy.Object, "spec", "matchConditions")
+	if err != nil || len(matchConditions) != 1 {
+		t.Fatalf("Secret CREATE guard matchConditions = %#v", matchConditions)
+	}
+	matchExpression := matchConditions[0].(map[string]any)["expression"].(string)
+	wantUsername := "system:serviceaccount:" + releaseNamespace + ":" + guardName
+	if !strings.Contains(matchExpression, wantUsername) {
+		t.Fatalf("Secret CREATE guard does not bind exact ServiceAccount %q", wantUsername)
+	}
+	validations, _, err := unstructured.NestedSlice(policy.Object, "spec", "validations")
+	if err != nil || len(validations) != 1 {
+		t.Fatalf("Secret CREATE guard validations = %#v", validations)
+	}
+	validation := validations[0].(map[string]any)
+	if validation["message"] != "certificate rotator Secret CREATE is outside its exact recovery contract" {
+		t.Fatalf("Secret CREATE guard denial message = %v", validation["message"])
+	}
+	expression := validation["expression"].(string)
+	for _, required := range []string{
+		"object.metadata.name == '" + secretName + "'",
+		"object.metadata.namespace == '" + releaseNamespace + "'",
+		"object.metadata.labels ==",
+		"operator.ptah.dev/generated-webhook-certificate",
+		"object.metadata.annotations.size() == 0",
+		"object.metadata.ownerReferences.size() == 0",
+		"object.metadata.finalizers.size() == 0",
+		"object.type == 'kubernetes.io/tls'",
+		"!has(object.immutable)",
+		"object.stringData.size() == 0",
+		"object.data.size() == 4",
+		"'ca.crt' in object.data",
+		"'ca.key' in object.data",
+		"'tls.crt' in object.data",
+		"'tls.key' in object.data",
+	} {
+		if !strings.Contains(expression, required) {
+			t.Errorf("Secret CREATE guard expression does not contain %q", required)
+		}
+	}
+
+	binding := mustObject(t, objects, "ValidatingAdmissionPolicyBinding", guardName)
+	if policyName, _, _ := unstructured.NestedString(binding.Object, "spec", "policyName"); policyName != guardName {
+		t.Fatalf("Secret CREATE guard binding policyName = %q, want %q", policyName, guardName)
+	}
+	actions, _, err := unstructured.NestedStringSlice(binding.Object, "spec", "validationActions")
+	if err != nil || !slices.Equal(actions, []string{"Deny"}) {
+		t.Fatalf("Secret CREATE guard validationActions = %v, want [Deny]", actions)
+	}
+	namespace, _, _ := unstructured.NestedString(
+		binding.Object,
+		"spec", "matchResources", "namespaceSelector", "matchLabels", "kubernetes.io/metadata.name",
+	)
+	if namespace != releaseNamespace {
+		t.Fatalf("Secret CREATE guard namespace = %q, want %q", namespace, releaseNamespace)
 	}
 }
 
@@ -266,11 +400,28 @@ func assertExactRule(
 		slices.Sort(gotVerbs)
 		slices.Sort(verbs)
 		if !slices.Equal(gotNames, resourceNames) || !slices.Equal(gotVerbs, verbs) {
-			t.Fatalf("%s/%s rule for %s has resourceNames=%v verbs=%v", object.GetKind(), object.GetName(), resource, gotNames, gotVerbs)
+			continue
 		}
 		return
 	}
-	t.Fatalf("%s/%s has no rule for %s/%s", object.GetKind(), object.GetName(), apiGroup, resource)
+	t.Fatalf("%s/%s has no exact rule for %s/%s with resourceNames=%v verbs=%v", object.GetKind(), object.GetName(), apiGroup, resource, resourceNames, verbs)
+}
+
+func assertNoResourceVerb(
+	t *testing.T,
+	object *unstructured.Unstructured,
+	apiGroup string,
+	resource string,
+	verb string,
+) {
+	t.Helper()
+	for _, rule := range objectRules(t, object) {
+		if slices.Contains(stringSlice(rule["apiGroups"]), apiGroup) &&
+			slices.Contains(stringSlice(rule["resources"]), resource) &&
+			slices.Contains(stringSlice(rule["verbs"]), verb) {
+			t.Fatalf("%s/%s unexpectedly grants %s on %s/%s", object.GetKind(), object.GetName(), verb, apiGroup, resource)
+		}
+	}
 }
 
 func assertManagerTLSProjection(t *testing.T, deployment *unstructured.Unstructured, secretName string) {

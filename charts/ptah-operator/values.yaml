@@ -80,6 +80,10 @@ certificateRotation:
   # Built-in management is automatically omitted when webhook.existingSecret
   # is set. The manager never receives Secret-read permission.
   enabled: true
+  # Opt in to recreating a deleted chart-generated Secret. This necessarily
+  # grants the rotator namespace-wide Secret CREATE in RBAC; a fail-closed
+  # admission policy narrows its use to the exact generated TLS Secret.
+  recreateMissingSecret: false
   interval: "6h"
   operationTimeout: "15m"
   retryInitial: "5s"

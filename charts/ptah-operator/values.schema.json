@@ -240,6 +240,7 @@
       "additionalProperties": false,
       "required": [
         "enabled",
+        "recreateMissingSecret",
         "interval",
         "operationTimeout",
         "retryInitial",
@@ -256,6 +257,9 @@
       ],
       "properties": {
         "enabled": {
+          "type": "boolean"
+        },
+        "recreateMissingSecret": {
           "type": "boolean"
         },
         "interval": {

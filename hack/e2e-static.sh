@@ -7,6 +7,7 @@ ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-static.XXXXXX")
 RENDERED_WEBHOOKS=$WORK_DIR/webhooks.yaml
 ROTATOR_RENDER=$WORK_DIR/rotator.yaml
+ROTATOR_RECREATE_RENDER=$WORK_DIR/rotator-recreate.yaml
 OBSOLETE_RENDER=$WORK_DIR/obsolete-webhooks.yaml
 OBSOLETE_ERROR=$WORK_DIR/obsolete-webhooks.err
 MUTABLE_MANAGER_ERROR=$WORK_DIR/mutable-manager.err
@@ -604,15 +605,7 @@ if grep -Eq '^kind: (Job|CronJob)$' "$ROTATOR_RENDER"; then
 	exit 1
 fi
 for rotator_marker in \
-	'kind: ValidatingAdmissionPolicy' \
-	'kind: ValidatingAdmissionPolicyBinding' \
-	'failurePolicy: Fail' \
-	'validationActions: [Deny]' \
-	'resources: ["secrets"]' \
-	'verbs: ["create"]' \
-	'operator.ptah.dev/generated-webhook-certificate' \
-	'certificate rotator Secret CREATE is outside its exact recovery contract' \
-	'--run-interval=6h' \
+		'--run-interval=6h' \
 	'--operation-timeout=15m' \
 	'--retry-initial=5s' \
 	'--retry-max=5m' \
@@ -623,11 +616,52 @@ for rotator_marker in \
 	'containerPort: 8081'; do
 	grep -F -- "$rotator_marker" "$ROTATOR_RENDER" >/dev/null
 done
+for default_forbidden_marker in \
+		'kind: ValidatingAdmissionPolicy' \
+		'kind: ValidatingAdmissionPolicyBinding' \
+		'verbs: ["create"]' \
+		'validatingadmissionpolicies' \
+		'validatingadmissionpolicybindings' \
+		'--recreate-missing-secret' \
+		'--secret-create-policy-name=' \
+		'--secret-create-policy-binding-name=' \
+		'--secret-create-service-account-name='; do
+	if grep -F -- "$default_forbidden_marker" "$ROTATOR_RENDER" >/dev/null; then
+		printf 'e2e static: default certificate lifecycle contains opt-in marker %s\n' \
+			"$default_forbidden_marker" >&2
+		exit 1
+	fi
+done
+
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--show-only templates/certificate-rotation.yaml \
+	--set certificateRotation.recreateMissingSecret=true \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	>"$ROTATOR_RECREATE_RENDER"
+for recreation_marker in \
+		'kind: ValidatingAdmissionPolicy' \
+		'kind: ValidatingAdmissionPolicyBinding' \
+		'failurePolicy: Fail' \
+		'validationActions: [Deny]' \
+		'verbs: ["create"]' \
+		'operator.ptah.dev/generated-webhook-certificate' \
+		'certificate rotator Secret CREATE is outside its exact recovery contract' \
+		'--recreate-missing-secret=true' \
+		'--secret-create-policy-name=' \
+		'--secret-create-policy-binding-name=' \
+		'--secret-create-service-account-name='; do
+	grep -F -- "$recreation_marker" "$ROTATOR_RECREATE_RENDER" >/dev/null
+done
 grep -F 'StartedChecker()' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
+grep -F -- '--set certificateRotation.recreateMissingSecret=true' \
+	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 for recovery_marker in \
 	'ptah-rotator-unauthorized' \
 	'--dry-run=server' \
-	'delete secret "$SECRET_NAME"' \
+	"delete secret \"\$SECRET_NAME\"" \
 	'operator.ptah.dev/generated-webhook-certificate' \
 	'did not contract after Secret recreation'; do
 	grep -F -- "$recovery_marker" "$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null

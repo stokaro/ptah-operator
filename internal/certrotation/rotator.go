@@ -8,12 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"slices"
+	"strings"
 	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
@@ -23,6 +26,11 @@ import (
 const (
 	CACertificateKey = "ca.crt"
 	CAPrivateKeyKey  = "ca.key"
+
+	GeneratedSecretLabel      = "operator.ptah.dev/generated-webhook-certificate"
+	GeneratedSecretLabelValue = "true"
+
+	secretCreateGuardDenialMessage = "certificate rotator Secret CREATE is outside its exact recovery contract"
 
 	defaultAcquireTimeout = 30 * time.Second
 	minimumLeaseDuration  = 30 * time.Second
@@ -44,6 +52,10 @@ type Config struct {
 	ServiceNamespace               string
 	EndpointPortName               string
 	HolderIdentity                 string
+	SecretCreatePolicyName         string
+	SecretCreatePolicyBindingName  string
+	SecretCreateServiceAccountName string
+	RecreateMissingSecret          bool
 
 	RenewalThreshold           time.Duration
 	ServingCertificateValidity time.Duration
@@ -118,6 +130,12 @@ func (r *Rotator) Run(ctx context.Context) (runErr error) {
 func (r *Rotator) reconcile(ctx context.Context) error {
 	secret, err := r.client.CoreV1().Secrets(r.config.Namespace).Get(ctx, r.config.SecretName, metav1.GetOptions{})
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			if !r.config.RecreateMissingSecret {
+				return fmt.Errorf("generated TLS Secret %q is missing and recreation is disabled", r.config.SecretName)
+			}
+			return r.recreateMissingSecret(ctx)
+		}
 		return fmt.Errorf("get generated TLS Secret %q: %w", r.config.SecretName, err)
 	}
 	state, err := inspectSecret(secret, r.config, r.now())
@@ -136,29 +154,57 @@ func (r *Rotator) reconcile(ctx context.Context) error {
 
 	switch {
 	case state.rotateCA:
-		return r.rotateCA(ctx, secret, state)
+		return r.rotateCA(ctx, secret, state, mutatingBundles, validatingBundles)
 	case state.rotateServing:
-		return r.rotateServingCertificate(ctx, secret, state, mutatingBundles, validatingBundles)
+		return r.rotateServingCertificate(ctx, secret, state)
 	default:
+		if state.normalizeSecret {
+			if err := r.updateSecret(ctx, secret, state.current); err != nil {
+				return fmt.Errorf("normalize generated TLS Secret type and material: %w", err)
+			}
+		}
 		return r.repairTrustBundles(ctx, state.current, mutatingBundles, validatingBundles)
 	}
 }
 
-func (r *Rotator) rotateCA(ctx context.Context, secret *corev1.Secret, state secretState) error {
+func (r *Rotator) rotateCA(
+	ctx context.Context,
+	secret *corev1.Secret,
+	state secretState,
+	mutatingBundles observedCABundles,
+	validatingBundles observedCABundles,
+) error {
+	trustedCurrentCA := []byte(nil)
+	if state.currentServingChainAuthentic {
+		trustedCurrentCA = state.current.caPEM
+	} else if state.current.leaf != nil {
+		candidateBundle, found, err := authenticServingCABundle(
+			mutatingBundles,
+			validatingBundles,
+			state.current.leaf,
+			requiredDNSNames(r.config),
+		)
+		if err != nil {
+			return fmt.Errorf("filter authentic serving-certificate CAs: %w", err)
+		}
+		if found {
+			if err := r.probeCertificateIdentity(ctx, candidateBundle, state.current.leaf); err != nil {
+				return fmt.Errorf("prove recovered CA signs the live serving certificate: %w", err)
+			}
+			trustedCurrentCA = candidateBundle
+		}
+	}
+
 	next, err := generateMaterial(r.random, r.now(), r.config)
 	if err != nil {
 		return fmt.Errorf("generate replacement CA and serving certificate: %w", err)
 	}
-	transitionCAs := [][]byte{next.caPEM}
-	if state.currentServingChainAuthentic {
-		transitionCAs = append([][]byte{state.current.caPEM}, transitionCAs...)
+	additions := [][]byte{next.caPEM}
+	if len(trustedCurrentCA) != 0 {
+		additions = append([][]byte{trustedCurrentCA}, additions...)
 	}
-	overlap, err := combineCABundles(transitionCAs...)
-	if err != nil {
-		return fmt.Errorf("build CA trust transition: %w", err)
-	}
-	if err := r.setBothBundles(ctx, overlap); err != nil {
-		return fmt.Errorf("publish overlapping CA trust: %w", err)
+	if err := r.publishPerEntryTransition(ctx, additions...); err != nil {
+		return fmt.Errorf("publish entry-local overlapping CA trust: %w", err)
 	}
 	if err := r.updateSecret(ctx, secret, next); err != nil {
 		return err
@@ -172,21 +218,51 @@ func (r *Rotator) rotateCA(ctx context.Context, secret *corev1.Secret, state sec
 	return nil
 }
 
+func (r *Rotator) recreateMissingSecret(ctx context.Context) error {
+	// Validate every named webhook before creating new material. A missing or
+	// retargeted entry must never be papered over by Secret recovery.
+	if _, err := r.readMutatingBundles(ctx); err != nil {
+		return err
+	}
+	if _, err := r.readValidatingBundles(ctx); err != nil {
+		return err
+	}
+	next, err := generateMaterial(r.random, r.now(), r.config)
+	if err != nil {
+		return fmt.Errorf("generate replacement material for missing TLS Secret: %w", err)
+	}
+	desired := generatedSecret(r.config, next)
+	if err := r.ensureSecretCreateGuard(ctx, desired); err != nil {
+		return err
+	}
+	if err := r.publishPerEntryTransition(ctx, next.caPEM); err != nil {
+		return fmt.Errorf("publish replacement trust before recreating TLS Secret: %w", err)
+	}
+	if err := r.createSecret(ctx, desired, next); err != nil {
+		return err
+	}
+	if err := r.probeCurrentCertificate(ctx, next); err != nil {
+		return err
+	}
+	if err := r.setBothBundles(ctx, next.caPEM); err != nil {
+		return fmt.Errorf("contract CA trust after recreated Secret proof: %w", err)
+	}
+	return nil
+}
 func (r *Rotator) rotateServingCertificate(
 	ctx context.Context,
 	secret *corev1.Secret,
 	state secretState,
-	mutatingBundles observedCABundles,
-	validatingBundles observedCABundles,
 ) error {
-	// Repair trust first. This also makes recovery safe when one configuration
-	// was modified independently before this run.
-	overlap, err := combineAnchoredCABundles(mutatingBundles, validatingBundles, state.current.caPEM)
-	if err != nil {
-		return fmt.Errorf("build serving-certificate trust precondition: %w", err)
-	}
-	if err := r.setBothBundles(ctx, overlap); err != nil {
+	// The CA does not change. Append it independently to each entry without
+	// dropping existing trust, then prove the current exact leaf before update.
+	if err := r.publishPerEntryTransition(ctx, state.current.caPEM); err != nil {
 		return fmt.Errorf("publish serving-certificate trust precondition: %w", err)
+	}
+	if state.currentServingChainAuthentic {
+		if err := r.probeCertificateIdentity(ctx, state.current.caPEM, state.current.leaf); err != nil {
+			return fmt.Errorf("prove current serving certificate before replacement: %w", err)
+		}
 	}
 
 	next, err := generateServingMaterial(r.random, r.now(), r.config, state.current)
@@ -214,11 +290,9 @@ func (r *Rotator) repairTrustBundles(
 	if mutatingBundles.allEqual(current.caPEM) && validatingBundles.allEqual(current.caPEM) {
 		return nil
 	}
-	overlap, err := combineAnchoredCABundles(mutatingBundles, validatingBundles, current.caPEM)
-	if err != nil {
-		return fmt.Errorf("build interrupted-transition trust bundle: %w", err)
-	}
-	if err := r.setBothBundles(ctx, overlap); err != nil {
+	// Append the Secret-authoritative CA independently to every entry while
+	// retaining that entry's existing trust until exact endpoint proof.
+	if err := r.publishPerEntryTransition(ctx, current.caPEM); err != nil {
 		return fmt.Errorf("repair interrupted CA trust transition: %w", err)
 	}
 	if err := r.probeCurrentCertificate(ctx, current); err != nil {
@@ -245,7 +319,7 @@ func (r *Rotator) updateSecret(ctx context.Context, previous *corev1.Secret, nex
 		// An API timeout may hide a successful write. Read back the exact four
 		// fields before classifying the transition as interrupted.
 		observed, getErr := r.client.CoreV1().Secrets(r.config.Namespace).Get(ctx, r.config.SecretName, metav1.GetOptions{})
-		if getErr == nil && secretContainsMaterial(observed, next) {
+		if getErr == nil && observed.Type == corev1.SecretTypeTLS && secretContainsMaterial(observed, next) {
 			return nil
 		}
 		if getErr != nil {
@@ -255,7 +329,275 @@ func (r *Rotator) updateSecret(ctx context.Context, previous *corev1.Secret, nex
 	}
 }
 
+func (r *Rotator) createSecret(ctx context.Context, desired *corev1.Secret, material certificateMaterial) error {
+	created, err := r.client.CoreV1().Secrets(r.config.Namespace).Create(ctx, desired, metav1.CreateOptions{})
+	if err == nil {
+		if exactGeneratedSecret(created, r.config, material) {
+			return nil
+		}
+		return errors.New("created generated TLS Secret differs from the exact recovery material")
+	}
+
+	// AlreadyExists and transport timeouts are both uncertain CREATE outcomes.
+	// Accept only a byte-exact read-back of this attempt. Never update or adopt
+	// different material created by another actor or racing rotator.
+	observed, getErr := r.client.CoreV1().Secrets(r.config.Namespace).Get(ctx, r.config.SecretName, metav1.GetOptions{})
+	if getErr == nil && exactGeneratedSecret(observed, r.config, material) {
+		return nil
+	}
+	if getErr != nil {
+		return fmt.Errorf("create missing generated TLS Secret: %w (read-back failed: %v)", err, getErr)
+	}
+	return fmt.Errorf("create missing generated TLS Secret: %w (read-back contains different material)", err)
+}
+
+func (r *Rotator) ensureSecretCreateGuard(ctx context.Context, desired *corev1.Secret) error {
+	policy, err := r.client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
+		ctx,
+		r.config.SecretCreatePolicyName,
+		metav1.GetOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("get generated-Secret CREATE guard policy %q: %w", r.config.SecretCreatePolicyName, err)
+	}
+	if err := validateSecretCreatePolicyContract(policy, r.config); err != nil {
+		return fmt.Errorf("generated-Secret CREATE guard policy contract: %w", err)
+	}
+	if policy.Status.ObservedGeneration != policy.Generation || policy.Status.TypeChecking == nil {
+		return errors.New("generated-Secret CREATE guard policy is not established for its current generation")
+	}
+	if len(policy.Status.TypeChecking.ExpressionWarnings) != 0 {
+		return errors.New("generated-Secret CREATE guard policy has type-checking warnings")
+	}
+	for _, condition := range policy.Status.Conditions {
+		if condition.Status != metav1.ConditionTrue {
+			return fmt.Errorf(
+				"generated-Secret CREATE guard policy condition %q is not true: %s",
+				condition.Type,
+				condition.Status,
+			)
+		}
+	}
+
+	binding, err := r.client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
+		ctx,
+		r.config.SecretCreatePolicyBindingName,
+		metav1.GetOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("get generated-Secret CREATE guard binding %q: %w", r.config.SecretCreatePolicyBindingName, err)
+	}
+	if err := validateSecretCreateBindingContract(binding, r.config); err != nil {
+		return fmt.Errorf("generated-Secret CREATE guard binding contract: %w", err)
+	}
+
+	attacks := secretCreateGuardAttacks(desired)
+	client := r.client.CoreV1().Secrets(r.config.Namespace)
+	for _, attack := range attacks {
+		_, err := client.Create(ctx, attack.secret, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+		if err == nil {
+			return fmt.Errorf("generated-Secret CREATE guard admitted %s", attack.name)
+		}
+		if !strings.Contains(err.Error(), secretCreateGuardDenialMessage) {
+			return fmt.Errorf("generated-Secret CREATE guard returned an unrecognized denial for %s: %w", attack.name, err)
+		}
+	}
+	if _, err := client.Create(ctx, desired, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}}); err != nil {
+		return fmt.Errorf("generated-Secret CREATE guard rejected the exact recovery object: %w", err)
+	}
+	return nil
+}
+
+func validateSecretCreatePolicyContract(policy *admissionregistrationv1.ValidatingAdmissionPolicy, config Config) error {
+	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
+		return errors.New("policy is not fail-closed")
+	}
+	if policy.Spec.ParamKind != nil || len(policy.Spec.AuditAnnotations) != 0 || len(policy.Spec.Variables) != 0 {
+		return errors.New("policy contains unsupported parameters, audit annotations, or variables")
+	}
+	constraints := policy.Spec.MatchConstraints
+	if constraints == nil || constraints.NamespaceSelector != nil || constraints.ObjectSelector != nil ||
+		len(constraints.ExcludeResourceRules) != 0 || len(constraints.ResourceRules) != 1 ||
+		(constraints.MatchPolicy != nil && *constraints.MatchPolicy != admissionregistrationv1.Equivalent) {
+		return errors.New("policy match constraints are not the exact Secret CREATE scope")
+	}
+	rule := constraints.ResourceRules[0]
+	if len(rule.ResourceNames) != 0 ||
+		!slices.Equal(rule.Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create}) ||
+		!slices.Equal(rule.APIGroups, []string{""}) ||
+		!slices.Equal(rule.APIVersions, []string{"v1"}) ||
+		!slices.Equal(rule.Resources, []string{"secrets"}) ||
+		rule.Scope == nil || *rule.Scope != admissionregistrationv1.NamespacedScope {
+		return errors.New("policy resource rule is not exactly namespaced core/v1 Secret CREATE")
+	}
+	wantIdentity := fmt.Sprintf(
+		"request.userInfo.username == 'system:serviceaccount:%s:%s'",
+		config.Namespace,
+		config.SecretCreateServiceAccountName,
+	)
+	if len(policy.Spec.MatchConditions) != 1 ||
+		policy.Spec.MatchConditions[0].Name != "exact-certificate-rotator-service-account" ||
+		compactCEL(policy.Spec.MatchConditions[0].Expression) != compactCEL(wantIdentity) {
+		return errors.New("policy does not match only the exact certificate rotator ServiceAccount")
+	}
+	if len(policy.Spec.Validations) != 1 {
+		return errors.New("policy must contain exactly one validation")
+	}
+	validation := policy.Spec.Validations[0]
+	if compactCEL(validation.Expression) != compactCEL(secretCreateValidationExpression(config)) ||
+		validation.Message != secretCreateGuardDenialMessage || validation.Reason != nil || validation.MessageExpression != "" {
+		return errors.New("policy validation is not the exact generated TLS Secret contract")
+	}
+	return nil
+}
+
+func validateSecretCreateBindingContract(
+	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
+	config Config,
+) error {
+	if binding.Spec.PolicyName != config.SecretCreatePolicyName || binding.Spec.ParamRef != nil ||
+		!slices.Equal(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
+		return errors.New("binding does not enforce only Deny for the configured policy")
+	}
+	resources := binding.Spec.MatchResources
+	if resources == nil || resources.NamespaceSelector == nil || resources.ObjectSelector != nil ||
+		len(resources.ResourceRules) != 0 || len(resources.ExcludeResourceRules) != 0 ||
+		(resources.MatchPolicy != nil && *resources.MatchPolicy != admissionregistrationv1.Equivalent) ||
+		!maps.Equal(resources.NamespaceSelector.MatchLabels, map[string]string{"kubernetes.io/metadata.name": config.Namespace}) ||
+		len(resources.NamespaceSelector.MatchExpressions) != 0 {
+		return errors.New("binding does not select only the exact release namespace")
+	}
+	return nil
+}
+
+func secretCreateValidationExpression(config Config) string {
+	return fmt.Sprintf(`
+		object.metadata.name == '%s' &&
+		object.metadata.namespace == '%s' &&
+		object.metadata.generateName == '' &&
+		has(object.metadata.labels) &&
+		object.metadata.labels == {'%s': '%s'} &&
+		(!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) &&
+		(!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
+		(!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&
+		object.type == 'kubernetes.io/tls' &&
+		!has(object.immutable) &&
+		(!has(object.stringData) || object.stringData.size() == 0) &&
+		object.data.size() == 4 &&
+		'ca.crt' in object.data && object.data['ca.crt'].size() > 0 &&
+		'ca.key' in object.data && object.data['ca.key'].size() > 0 &&
+		'tls.crt' in object.data && object.data['tls.crt'].size() > 0 &&
+		'tls.key' in object.data && object.data['tls.key'].size() > 0
+	`, config.SecretName, config.Namespace, GeneratedSecretLabel, GeneratedSecretLabelValue)
+}
+
+func compactCEL(expression string) string {
+	return strings.Join(strings.Fields(expression), " ")
+}
+
+type secretCreateGuardAttack struct {
+	name   string
+	secret *corev1.Secret
+}
+
+func secretCreateGuardAttacks(desired *corev1.Secret) []secretCreateGuardAttack {
+	differentName := desired.DeepCopy()
+	differentName.Name = "ptah-rotator-guard-probe"
+	if differentName.Name == desired.Name {
+		differentName.Name = "ptah-rotator-guard-probe-alt"
+	}
+	extraLabel := desired.DeepCopy()
+	extraLabel.Labels["operator.ptah.dev/uncontrolled"] = "true"
+	extraData := desired.DeepCopy()
+	extraData.Data["uncontrolled"] = []byte("x")
+	wrongType := desired.DeepCopy()
+	wrongType.Type = corev1.SecretTypeOpaque
+	annotation := desired.DeepCopy()
+	annotation.Annotations = map[string]string{"operator.ptah.dev/uncontrolled": "true"}
+	stringData := desired.DeepCopy()
+	stringData.StringData = map[string]string{"uncontrolled": "x"}
+	generatedName := desired.DeepCopy()
+	generatedName.Name = ""
+	generatedName.GenerateName = "ptah-rotator-guard-"
+	missingLabel := desired.DeepCopy()
+	missingLabel.Labels = nil
+	ownerReference := desired.DeepCopy()
+	controller := true
+	ownerReference.OwnerReferences = []metav1.OwnerReference{{
+		APIVersion: "v1", Kind: "ConfigMap", Name: "uncontrolled", UID: "uncontrolled", Controller: &controller,
+	}}
+	finalizer := desired.DeepCopy()
+	finalizer.Finalizers = []string{"operator.ptah.dev/uncontrolled"}
+	immutable := desired.DeepCopy()
+	immutableValue := false
+	immutable.Immutable = &immutableValue
+	missingKey := desired.DeepCopy()
+	delete(missingKey.Data, CACertificateKey)
+	emptyKey := desired.DeepCopy()
+	emptyKey.Data[CACertificateKey] = nil
+	return []secretCreateGuardAttack{
+		{name: "an unrelated Secret name", secret: differentName},
+		{name: "generateName", secret: generatedName},
+		{name: "a missing managed label", secret: missingLabel},
+		{name: "an extra label", secret: extraLabel},
+		{name: "an owner reference", secret: ownerReference},
+		{name: "a finalizer", secret: finalizer},
+		{name: "an explicit immutable field", secret: immutable},
+		{name: "an extra data field", secret: extraData},
+		{name: "a missing data field", secret: missingKey},
+		{name: "an empty data field", secret: emptyKey},
+		{name: "a non-TLS type", secret: wrongType},
+		{name: "an annotation", secret: annotation},
+		{name: "stringData", secret: stringData},
+	}
+}
+
+func generatedSecret(config Config, material certificateMaterial) *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      config.SecretName,
+			Namespace: config.Namespace,
+			Labels:    map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue},
+		},
+		Type: corev1.SecretTypeTLS,
+		Data: map[string][]byte{
+			CACertificateKey:        append([]byte(nil), material.caPEM...),
+			CAPrivateKeyKey:         append([]byte(nil), material.caKeyPEM...),
+			corev1.TLSCertKey:       append([]byte(nil), material.certPEM...),
+			corev1.TLSPrivateKeyKey: append([]byte(nil), material.keyPEM...),
+		},
+	}
+}
+
+func exactGeneratedSecret(secret *corev1.Secret, config Config, material certificateMaterial) bool {
+	return secret != nil &&
+		secret.Name == config.SecretName &&
+		secret.Namespace == config.Namespace &&
+		secret.Type == corev1.SecretTypeTLS &&
+		maps.Equal(secret.Labels, map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue}) &&
+		len(secret.Annotations) == 0 &&
+		len(secret.OwnerReferences) == 0 &&
+		len(secret.Finalizers) == 0 &&
+		secret.Immutable == nil &&
+		len(secret.StringData) == 0 &&
+		len(secret.Data) == 4 &&
+		secretContainsMaterial(secret, material)
+}
+
 func (r *Rotator) probeCurrentCertificate(ctx context.Context, material certificateMaterial) error {
+	return r.probeCertificate(ctx, material.caPEM, material.leaf, false)
+}
+
+func (r *Rotator) probeCertificateIdentity(ctx context.Context, caBundle []byte, leaf *x509.Certificate) error {
+	return r.probeCertificate(ctx, caBundle, leaf, true)
+}
+
+func (r *Rotator) probeCertificate(
+	ctx context.Context,
+	caBundle []byte,
+	leaf *x509.Certificate,
+	identityOnly bool,
+) error {
 	probeCtx, cancel := context.WithTimeout(ctx, r.config.ProbeTimeout)
 	defer cancel()
 	ticker := time.NewTicker(r.config.ProbeInterval)
@@ -268,8 +610,9 @@ func (r *Rotator) probeCurrentCertificate(ctx context.Context, material certific
 				err = r.probe.Probe(probeCtx, probeRequest{
 					Address:          net.JoinHostPort(endpoint.address, fmt.Sprintf("%d", endpoint.port)),
 					ServerName:       fmt.Sprintf("%s.%s.svc", r.config.ServiceName, r.config.ServiceNamespace),
-					CACertificatePEM: material.caPEM,
-					LeafCertificate:  material.leaf,
+					CACertificatePEM: caBundle,
+					LeafCertificate:  leaf,
+					IdentityOnly:     identityOnly,
 				})
 				if err != nil {
 					break
@@ -314,6 +657,120 @@ func (r *Rotator) setBothBundles(ctx context.Context, bundle []byte) error {
 		return errors.New("not every explicitly managed webhook contains the published CA bundle")
 	}
 	return nil
+}
+
+// publishPerEntryTransition appends authenticated additions to each exact
+// managed entry's own trust. Parseable certificates survive malformed
+// neighbors, trust is never copied between entries, and an entry with no
+// parseable certificate falls back to the authenticated additions alone.
+func (r *Rotator) publishPerEntryTransition(ctx context.Context, additions ...[]byte) error {
+	if len(additions) == 0 {
+		return errors.New("at least one CA transition addition is required")
+	}
+	if err := r.setMutatingPerEntryTransition(ctx, additions); err != nil {
+		return err
+	}
+	if err := r.setValidatingPerEntryTransition(ctx, additions); err != nil {
+		return err
+	}
+	mutating, err := r.readMutatingBundles(ctx)
+	if err != nil {
+		return fmt.Errorf("verify mutating per-entry CA transition: %w", err)
+	}
+	validating, err := r.readValidatingBundles(ctx)
+	if err != nil {
+		return fmt.Errorf("verify validating per-entry CA transition: %w", err)
+	}
+	for _, observed := range []observedCABundles{mutating, validating} {
+		if observed.invalidCount != 0 || len(observed.valid) != observed.total {
+			return errors.New("per-entry CA transition left a malformed managed bundle")
+		}
+		for _, bundle := range observed.valid {
+			for _, addition := range additions {
+				if !caBundleContainsAllCertificates(bundle, addition) {
+					return errors.New("per-entry CA transition did not publish every authenticated CA addition")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (r *Rotator) setMutatingPerEntryTransition(ctx context.Context, additions [][]byte) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		client := r.client.AdmissionregistrationV1().MutatingWebhookConfigurations()
+		configuration, err := client.Get(ctx, r.config.MutatingWebhookConfiguration, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		webhooks, err := managedMutatingWebhooks(configuration.Webhooks, r.config)
+		if err != nil {
+			return err
+		}
+		changed := false
+		for _, webhook := range webhooks {
+			transition, err := perEntryTransitionBundle(webhook.ClientConfig.CABundle, additions...)
+			if err != nil {
+				return err
+			}
+			if bytes.Equal(webhook.ClientConfig.CABundle, transition) {
+				continue
+			}
+			webhook.ClientConfig.CABundle = transition
+			changed = true
+		}
+		if !changed {
+			return nil
+		}
+		_, err = client.Update(ctx, configuration, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func (r *Rotator) setValidatingPerEntryTransition(ctx context.Context, additions [][]byte) error {
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		client := r.client.AdmissionregistrationV1().ValidatingWebhookConfigurations()
+		configuration, err := client.Get(ctx, r.config.ValidatingWebhookConfiguration, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		webhooks, err := managedValidatingWebhooks(configuration.Webhooks, r.config)
+		if err != nil {
+			return err
+		}
+		changed := false
+		for _, webhook := range webhooks {
+			transition, err := perEntryTransitionBundle(webhook.ClientConfig.CABundle, additions...)
+			if err != nil {
+				return err
+			}
+			if bytes.Equal(webhook.ClientConfig.CABundle, transition) {
+				continue
+			}
+			webhook.ClientConfig.CABundle = transition
+			changed = true
+		}
+		if !changed {
+			return nil
+		}
+		_, err = client.Update(ctx, configuration, metav1.UpdateOptions{})
+		return err
+	})
+}
+
+func perEntryTransitionBundle(existing []byte, additions ...[]byte) ([]byte, error) {
+	preserved := existing
+	if _, err := parseCertificateBundle(existing); err != nil {
+		candidates := certificateCandidates(existing)
+		if len(candidates) == 0 {
+			return combineCABundles(additions...)
+		}
+		preserved, err = encodeCertificateBundle(candidates)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return combineCABundles(append([][]byte{preserved}, additions...)...)
 }
 
 func (r *Rotator) readMutatingBundles(ctx context.Context) (observedCABundles, error) {
@@ -425,6 +882,22 @@ func validateConfig(config Config) error {
 		if problems := validation.IsDNS1123Label(value); len(problems) != 0 {
 			return fmt.Errorf("%s is invalid: %s", label, problems[0])
 		}
+	}
+	if config.RecreateMissingSecret {
+		for label, value := range map[string]string{
+			"Secret CREATE policy name":         config.SecretCreatePolicyName,
+			"Secret CREATE policy binding name": config.SecretCreatePolicyBindingName,
+		} {
+			if problems := validation.IsDNS1123Subdomain(value); len(problems) != 0 {
+				return fmt.Errorf("%s is invalid: %s", label, problems[0])
+			}
+		}
+		if problems := validation.IsDNS1123Label(config.SecretCreateServiceAccountName); len(problems) != 0 {
+			return fmt.Errorf("Secret CREATE ServiceAccount name is invalid: %s", problems[0])
+		}
+	} else if config.SecretCreatePolicyName != "" || config.SecretCreatePolicyBindingName != "" ||
+		config.SecretCreateServiceAccountName != "" {
+		return errors.New("Secret recreation guard names must be empty when missing-Secret recreation is disabled")
 	}
 	if err := validateWebhookNames("mutating", config.MutatingWebhookNames); err != nil {
 		return err

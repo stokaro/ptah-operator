@@ -4,6 +4,65 @@
 {{- $leaseName := include "ptah-operator.certRotationLeaseName" . -}}
 {{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
+{{- if .Values.certificateRotation.recreateMissingSecret }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $rotatorName }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certificate-rotation
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["secrets"]
+        scope: Namespaced
+  matchConditions:
+    - name: exact-certificate-rotator-service-account
+      expression: >-
+        request.userInfo.username ==
+        'system:serviceaccount:{{ .Release.Namespace }}:{{ $rotatorName }}'
+  validations:
+    - expression: >-
+        object.metadata.name == '{{ $secretName }}' &&
+        object.metadata.namespace == '{{ .Release.Namespace }}' &&
+        object.metadata.generateName == '' &&
+        has(object.metadata.labels) &&
+        object.metadata.labels ==
+          {'operator.ptah.dev/generated-webhook-certificate': 'true'} &&
+        (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) &&
+        (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
+        (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&
+        object.type == 'kubernetes.io/tls' &&
+        !has(object.immutable) &&
+        (!has(object.stringData) || object.stringData.size() == 0) &&
+        object.data.size() == 4 &&
+        'ca.crt' in object.data && object.data['ca.crt'].size() > 0 &&
+        'ca.key' in object.data && object.data['ca.key'].size() > 0 &&
+        'tls.crt' in object.data && object.data['tls.crt'].size() > 0 &&
+        'tls.key' in object.data && object.data['tls.key'].size() > 0
+      message: "certificate rotator Secret CREATE is outside its exact recovery contract"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $rotatorName }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certificate-rotation
+spec:
+  policyName: {{ $rotatorName }}
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ .Release.Namespace }}
+---
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -36,6 +95,14 @@ rules:
     resources: ["secrets"]
     resourceNames: [{{ $secretName | quote }}]
     verbs: ["get", "update"]
+  {{- if .Values.certificateRotation.recreateMissingSecret }}
+  # Kubernetes RBAC cannot scope CREATE by resourceName. The fail-closed
+  # ValidatingAdmissionPolicy above narrows this grant to one exact object and
+  # the rotator verifies that enforcement with server-side dry runs before use.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  {{- end }}
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     resourceNames: [{{ $leaseName | quote }}]
@@ -78,6 +145,12 @@ rules:
     resources: ["validatingwebhookconfigurations"]
     resourceNames: [{{ $configurationName | quote }}]
     verbs: ["get", "update"]
+  {{- if .Values.certificateRotation.recreateMissingSecret }}
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    resourceNames: [{{ $rotatorName | quote }}]
+    verbs: ["get"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -138,6 +211,12 @@ spec:
           args:
             - --namespace={{ .Release.Namespace }}
             - --secret-name={{ $secretName }}
+            {{- if .Values.certificateRotation.recreateMissingSecret }}
+            - --recreate-missing-secret=true
+            - --secret-create-policy-name={{ $rotatorName }}
+            - --secret-create-policy-binding-name={{ $rotatorName }}
+            - --secret-create-service-account-name={{ $rotatorName }}
+            {{- end }}
             - --lease-name={{ $leaseName }}
             - --mutating-webhook-configuration={{ $configurationName }}
             - --mutating-webhook-names=mapproval.operator.ptah.dev

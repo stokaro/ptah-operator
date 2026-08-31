@@ -15,6 +15,7 @@ import (
 // replacement trust bundle.
 type observedCABundles struct {
 	valid        [][]byte
+	certificates []*x509.Certificate
 	invalidCount int
 	total        int
 }
@@ -22,6 +23,7 @@ type observedCABundles struct {
 func observeCABundles(bundles ...[]byte) observedCABundles {
 	observed := observedCABundles{total: len(bundles)}
 	for _, bundle := range bundles {
+		observed.certificates = append(observed.certificates, certificateCandidates(bundle)...)
 		normalized, err := combineCABundles(bundle)
 		if err != nil {
 			observed.invalidCount++
@@ -30,6 +32,66 @@ func observeCABundles(bundles ...[]byte) observedCABundles {
 		observed.valid = append(observed.valid, normalized)
 	}
 	return observed
+}
+
+// authenticServingCABundle returns only certificates that directly
+// authenticate the persisted serving leaf and all required Service DNS names.
+// Candidate extraction is intentionally certificate-by-certificate: malformed
+// neighbors are ignored, but no candidate enters trust merely because another
+// certificate in the same bundle is authentic.
+func authenticServingCABundle(
+	mutating observedCABundles,
+	validating observedCABundles,
+	leaf *x509.Certificate,
+	requiredNames []string,
+) ([]byte, bool, error) {
+	candidates := make([][]byte, 0, len(mutating.certificates)+len(validating.certificates))
+	seen := make(map[[sha256.Size]byte]struct{})
+	for _, observed := range []observedCABundles{mutating, validating} {
+		for _, certificate := range observed.certificates {
+			if !servingCertificateAuthentic(leaf, certificate, requiredNames) {
+				continue
+			}
+			digest := sha256.Sum256(certificate.Raw)
+			if _, exists := seen[digest]; exists {
+				continue
+			}
+			seen[digest] = struct{}{}
+			candidates = append(candidates, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw}))
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, false, nil
+	}
+	bundle, err := combineCABundles(candidates...)
+	if err != nil {
+		return nil, false, err
+	}
+	return bundle, true, nil
+}
+
+// certificateCandidates extracts every independently parseable CERTIFICATE
+// PEM block while ignoring malformed and non-certificate neighbors. Callers
+// decide whether a candidate is merely preserved in its original entry or can
+// become authoritative after cryptographic and live-endpoint proof.
+func certificateCandidates(bundle []byte) []*x509.Certificate {
+	remaining := bundle
+	var certificates []*x509.Certificate
+	for len(remaining) != 0 {
+		block, rest := pem.Decode(remaining)
+		if block == nil {
+			break
+		}
+		remaining = rest
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err == nil {
+			certificates = append(certificates, certificate)
+		}
+	}
+	return certificates
 }
 
 func (observed observedCABundles) allEqual(expected []byte) bool {
@@ -44,43 +106,32 @@ func (observed observedCABundles) allEqual(expected []byte) bool {
 	return true
 }
 
-// combineAnchoredCABundles preserves only well-formed transition bundles that
-// contain the authoritative CA from the current Secret. This retains the old
-// CA during a restart of the two-phase transition without carrying forward an
-// unrelated or malformed trust root. The authoritative CA is always present
-// in the returned bundle, including when every observed entry is damaged.
-func combineAnchoredCABundles(
-	mutating observedCABundles,
-	validating observedCABundles,
-	authoritativeCA []byte,
-) ([]byte, error) {
-	candidates := make([][]byte, 0, len(mutating.valid)+len(validating.valid)+1)
-	for _, observed := range []observedCABundles{mutating, validating} {
-		for _, bundle := range observed.valid {
-			if caBundleContainsCertificate(bundle, authoritativeCA) {
-				candidates = append(candidates, bundle)
-			}
-		}
-	}
-	candidates = append(candidates, authoritativeCA)
-	return combineCABundles(candidates...)
+func caBundleContainsCertificate(bundle, wanted []byte) bool {
+	return caBundleContainsAllCertificates(bundle, wanted)
 }
 
-func caBundleContainsCertificate(bundle, wanted []byte) bool {
+func caBundleContainsAllCertificates(bundle, wanted []byte) bool {
 	certificates, err := parseCertificateBundle(bundle)
 	if err != nil {
 		return false
 	}
 	wantedCertificates, err := parseCertificateBundle(wanted)
-	if err != nil || len(wantedCertificates) != 1 {
+	if err != nil || len(wantedCertificates) == 0 {
 		return false
 	}
-	for _, certificate := range certificates {
-		if bytes.Equal(certificate.Raw, wantedCertificates[0].Raw) {
-			return true
+	for _, wantedCertificate := range wantedCertificates {
+		found := false
+		for _, certificate := range certificates {
+			if bytes.Equal(certificate.Raw, wantedCertificate.Raw) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func combineCABundles(bundles ...[]byte) ([]byte, error) {
@@ -127,6 +178,19 @@ func parseCertificateBundle(bundle []byte) ([]*x509.Certificate, error) {
 		remaining = bytes.TrimSpace(rest)
 	}
 	return certificates, nil
+}
+
+func encodeCertificateBundle(certificates []*x509.Certificate) ([]byte, error) {
+	var encoded bytes.Buffer
+	for _, certificate := range certificates {
+		if err := pem.Encode(&encoded, &pem.Block{Type: "CERTIFICATE", Bytes: certificate.Raw}); err != nil {
+			return nil, fmt.Errorf("encode preserved CA certificate: %w", err)
+		}
+	}
+	if encoded.Len() == 0 {
+		return nil, errors.New("CA bundle contains no parseable certificates")
+	}
+	return encoded.Bytes(), nil
 }
 
 func caBundlesEqual(left, right []byte) bool {

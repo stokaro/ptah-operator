@@ -156,7 +156,7 @@ func main() {
 		log.Error(err, "register health check")
 		os.Exit(1)
 	}
-	if err := manager.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+	if err := manager.AddReadyzCheck("webhook-started", manager.GetWebhookServer().StartedChecker()); err != nil {
 		log.Error(err, "register readiness check")
 		os.Exit(1)
 	}

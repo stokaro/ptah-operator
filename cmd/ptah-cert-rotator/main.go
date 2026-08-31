@@ -49,6 +49,10 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	var healthBindAddress string
 	flags.StringVar(&config.Namespace, "namespace", "", "namespace containing the generated TLS Secret and Lease")
 	flags.StringVar(&config.SecretName, "secret-name", "", "exact generated TLS Secret name")
+	flags.BoolVar(&config.RecreateMissingSecret, "recreate-missing-secret", false, "allow guarded recreation of a deleted generated TLS Secret")
+	flags.StringVar(&config.SecretCreatePolicyName, "secret-create-policy-name", "", "exact ValidatingAdmissionPolicy guarding generated TLS Secret recreation")
+	flags.StringVar(&config.SecretCreatePolicyBindingName, "secret-create-policy-binding-name", "", "exact ValidatingAdmissionPolicyBinding guarding generated TLS Secret recreation")
+	flags.StringVar(&config.SecretCreateServiceAccountName, "secret-create-service-account-name", "", "exact ServiceAccount subject guarded for generated TLS Secret recreation")
 	flags.StringVar(&config.LeaseName, "lease-name", "", "exact certificate rotation Lease name")
 	flags.StringVar(&config.MutatingWebhookConfiguration, "mutating-webhook-configuration", "", "exact MutatingWebhookConfiguration name")
 	flags.StringVar(&mutatingWebhookNames, "mutating-webhook-names", defaultMutatingWebhookNames, "comma-separated exact webhook entries to update")
