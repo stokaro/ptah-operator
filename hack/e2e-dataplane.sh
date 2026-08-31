@@ -17,7 +17,13 @@ MYSQL_IMAGE=${E2E_MYSQL_IMAGE:-}
 REGISTRY_IP=${E2E_REGISTRY_IP:-}
 REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
 REGISTRY_CREDENTIALS_FILE=${E2E_REGISTRY_CREDENTIALS_FILE:-}
-RECONCILE_INTERVAL=${E2E_RECONCILE_INTERVAL:-15s}
+RECONCILE_INTERVAL=${E2E_RECONCILE_INTERVAL:-1m}
+TAG_MOVE_INTERVAL=${E2E_TAG_MOVE_INTERVAL:-2m}
+APPROVAL_INTERVAL=${E2E_APPROVAL_INTERVAL:-5m}
+STALE_APPROVAL_INTERVAL=${E2E_STALE_APPROVAL_INTERVAL:-4m}
+QUIESCENT_INTERVAL=${E2E_QUIESCENT_INTERVAL:-30m}
+BLOCKED_REFRESH_SECONDS=${E2E_BLOCKED_REFRESH_SECONDS:-30}
+BLOCKED_REFRESH_INTERVAL=${BLOCKED_REFRESH_SECONDS}s
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
 ADMISSION_RUNTIME_CLASS=ptah-e2e-runtime
 ADMISSION_RUNTIME_TAINT=operator.ptah.dev/e2e-runtime
@@ -98,6 +104,21 @@ printf '%s\n' "$REGISTRY_IP" | grep -Eq '^[0-9]+(\.[0-9]+){3}$' ||
 	fail "E2E_REGISTRY_IP must be an IPv4 address on the kind Docker network"
 printf '%s\n' "$TIMEOUT_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "E2E_TIMEOUT_SECONDS must be a positive integer"
+printf '%s\n' "$BLOCKED_REFRESH_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
+	fail "E2E_BLOCKED_REFRESH_SECONDS must be a positive integer"
+[ "$BLOCKED_REFRESH_SECONDS" -ge 10 ] ||
+	fail "E2E_BLOCKED_REFRESH_SECONDS must be at least 10"
+[ "$RECONCILE_INTERVAL" != "$APPROVAL_INTERVAL" ] ||
+	fail "scheduled no-op interval must differ from approval interval"
+[ "$TAG_MOVE_INTERVAL" != "$RECONCILE_INTERVAL" ] ||
+	fail "tag-move interval must differ from scheduled no-op interval"
+[ "$STALE_APPROVAL_INTERVAL" != "$TAG_MOVE_INTERVAL" ] ||
+	fail "stale-approval interval must differ from tag-move interval"
+[ "$QUIESCENT_INTERVAL" != "$BLOCKED_REFRESH_INTERVAL" ] ||
+	fail "quiescent interval must differ from blocked refresh interval"
+minimum_gate_timeout=$((BLOCKED_REFRESH_SECONDS * 3 + 120))
+[ "$TIMEOUT_SECONDS" -ge "$minimum_gate_timeout" ] ||
+	fail "E2E_TIMEOUT_SECONDS must cover three blocked refresh intervals plus 120 seconds"
 
 k() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" "$@"
@@ -127,11 +148,14 @@ MYSQL_DESTRUCTIVE_PLAN=
 MYSQL_DESTRUCTIVE_PLAN_UID=
 MYSQL_DESTRUCTIVE_APPLY_CHECKPOINT=
 MYSQL_DESTRUCTIVE_DIGEST=
+PERIODIC_NOOP_CHECKPOINT=
 : >"$AUDITED_JOBS_FILE"
 : >"$OBSERVED_JOBS_FILE"
 RBAC_PAUSED=0
 RBAC_RULE_INDEX=
 RBAC_ORIGINAL_VERBS=
+RBAC_STATUS_API_GROUPS=
+RBAC_STATUS_RESOURCES=
 EPHEMERAL_SUBRESOURCE_TESTED=0
 
 mkdir -p "$WORK_DIR/go-cache"
@@ -612,6 +636,57 @@ checkpoint_jobs() {
     ' "$OBSERVED_JOBS_FILE" >"$checkpoint_file"
 }
 
+checkpoint_schema_jobs() {
+	checkpoint_schema=$1
+	checkpoint_file=$2
+	record_observed_jobs
+	jq -s \
+		--arg schema "$checkpoint_schema" '
+      [.[] | select(.schema == $schema) | .uid] | unique | sort
+    ' "$OBSERVED_JOBS_FILE" >"$checkpoint_file"
+}
+
+job_count_between_checkpoints() {
+	bounded_schema=$1
+	bounded_operation=$2
+	bounded_before=$3
+	bounded_after=$4
+	jq -s \
+		--slurpfile before "$bounded_before" \
+		--slurpfile after "$bounded_after" \
+		--arg schema "$bounded_schema" \
+		--arg operation "$bounded_operation" '
+      [.[] |
+        select(.schema == $schema and .operation == $operation) |
+        .uid as $uid |
+        select(($after[0] | index($uid)) != null and
+          ($before[0] | index($uid)) == null)] |
+      unique_by(.uid) | length
+    ' "$OBSERVED_JOBS_FILE"
+}
+
+assert_one_job_between_checkpoints() {
+	bounded_schema=$1
+	bounded_operation=$2
+	bounded_before=$3
+	bounded_after=$4
+	bounded_count=$(job_count_between_checkpoints "$bounded_schema" "$bounded_operation" \
+		"$bounded_before" "$bounded_after")
+	[ "$bounded_count" -eq 1 ] ||
+		fail "$bounded_schema created $bounded_count bounded $bounded_operation Jobs, expected exactly one"
+}
+
+assert_no_job_between_checkpoints() {
+	bounded_schema=$1
+	bounded_operation=$2
+	bounded_before=$3
+	bounded_after=$4
+	bounded_count=$(job_count_between_checkpoints "$bounded_schema" "$bounded_operation" \
+		"$bounded_before" "$bounded_after")
+	[ "$bounded_count" -eq 0 ] ||
+		fail "$bounded_schema created $bounded_count unexpected bounded $bounded_operation Jobs"
+}
+
 new_job_count_since() {
 	new_schema=$1
 	new_operation=$2
@@ -705,16 +780,32 @@ capture_one_new_job_result() {
 	result_operation=$2
 	result_checkpoint=$3
 	result_output=$4
+	result_after_checkpoint=${5:-}
 	record_observed_jobs
-	result_records=$(jq -c -s \
-		--slurpfile before "$result_checkpoint" \
-		--arg schema "$result_schema" \
-		--arg operation "$result_operation" '
+	if [ -n "$result_after_checkpoint" ]; then
+		result_records=$(jq -c -s \
+			--slurpfile before "$result_checkpoint" \
+			--slurpfile after "$result_after_checkpoint" \
+			--arg schema "$result_schema" \
+			--arg operation "$result_operation" '
+          [.[] |
+            select(.schema == $schema and .operation == $operation) |
+            .uid as $uid |
+            select(($after[0] | index($uid)) != null and
+              ($before[0] | index($uid)) == null)] |
+          unique_by(.uid)
+        ' "$OBSERVED_JOBS_FILE")
+	else
+		result_records=$(jq -c -s \
+			--slurpfile before "$result_checkpoint" \
+			--arg schema "$result_schema" \
+			--arg operation "$result_operation" '
       [.[] |
         select(.schema == $schema and .operation == $operation) |
         .uid as $uid | select(($before[0] | index($uid)) == null)] |
       unique_by(.uid)
-    ' "$OBSERVED_JOBS_FILE")
+	    ' "$OBSERVED_JOBS_FILE")
+	fi
 	result_count=$(printf '%s\n' "$result_records" | jq 'length')
 	[ "$result_count" -eq 1 ] ||
 		fail "$result_schema has $result_count new $result_operation Jobs, expected exactly one result"
@@ -811,20 +902,35 @@ wait_for_controller_status_authorization() {
 pause_controller_status_writes() {
 	[ "$RBAC_PAUSED" -eq 0 ] || fail "controller status-write RBAC is already paused"
 	rbac_role=$(k get clusterrole "$CONTROLLER_NAME" -o json)
-	RBAC_RULE_INDEX=$(printf '%s\n' "$rbac_role" | jq -r '
-    [.rules | to_entries[] |
-      select(.value.apiGroups == ["operator.ptah.dev"] and
-        (.value.resources | index("ptahschemas/status")) != null) | .key][0] // empty
-  ')
+	RBAC_RULE_INDEX=$(printf '%s\n' "$rbac_role" | jq -er '
+	    [.rules | to_entries[] |
+	      select(.value.apiGroups == ["operator.ptah.dev"] and
+	        (.value.resources | index("ptahschemas/status")) != null)] |
+	    if length == 1 then .[0].key
+	    else error("expected exactly one PtahSchema status rule") end
+	  ')
 	printf '%s\n' "$RBAC_RULE_INDEX" | grep -Eq '^[0-9]+$' ||
 		fail "could not identify the controller status-write ClusterRole rule"
 	RBAC_ORIGINAL_VERBS=$(printf '%s\n' "$rbac_role" |
 		jq -c --argjson index "$RBAC_RULE_INDEX" '.rules[$index].verbs')
-	rbac_patch=$(jq -nc --arg index "$RBAC_RULE_INDEX" '
-    [{op: "replace", path: ("/rules/" + $index + "/verbs"), value: ["get"]}]
-  ')
-	RBAC_PAUSED=1
+	RBAC_STATUS_API_GROUPS=$(printf '%s\n' "$rbac_role" |
+		jq -c --argjson index "$RBAC_RULE_INDEX" '.rules[$index].apiGroups')
+	RBAC_STATUS_RESOURCES=$(printf '%s\n' "$rbac_role" |
+		jq -c --argjson index "$RBAC_RULE_INDEX" '.rules[$index].resources')
+	rbac_patch=$(jq -nc \
+		--arg index "$RBAC_RULE_INDEX" \
+		--argjson apiGroups "$RBAC_STATUS_API_GROUPS" \
+		--argjson resources "$RBAC_STATUS_RESOURCES" \
+		--argjson verbs "$RBAC_ORIGINAL_VERBS" '
+	    [
+	      {op: "test", path: ("/rules/" + $index + "/apiGroups"), value: $apiGroups},
+	      {op: "test", path: ("/rules/" + $index + "/resources"), value: $resources},
+	      {op: "test", path: ("/rules/" + $index + "/verbs"), value: $verbs},
+	      {op: "replace", path: ("/rules/" + $index + "/verbs"), value: ["get"]}
+	    ]
+	  ')
 	k patch clusterrole "$CONTROLLER_NAME" --type=json -p "$rbac_patch" >/dev/null
+	RBAC_PAUSED=1
 	rbac_live_verbs=$(k get clusterrole "$CONTROLLER_NAME" -o json |
 		jq -c --argjson index "$RBAC_RULE_INDEX" '.rules[$index].verbs')
 	[ "$rbac_live_verbs" = '["get"]' ] ||
@@ -835,14 +941,34 @@ pause_controller_status_writes() {
 
 resume_controller_status_writes() {
 	[ "$RBAC_PAUSED" -eq 1 ] || return 0
+	rbac_role=$(k get clusterrole "$CONTROLLER_NAME" -o json) || return 1
+	resume_rule_index=$(printf '%s\n' "$rbac_role" | jq -er \
+		--argjson apiGroups "$RBAC_STATUS_API_GROUPS" \
+		--argjson resources "$RBAC_STATUS_RESOURCES" '
+	    [.rules | to_entries[] |
+	      select(.value.apiGroups == $apiGroups and .value.resources == $resources)] |
+	    if length == 1 then .[0].key
+	    else error("status rule identity changed while writes were paused") end
+	  ') || return 1
+	paused_verbs=$(printf '%s\n' "$rbac_role" |
+		jq -c --argjson index "$resume_rule_index" '.rules[$index].verbs') || return 1
+	[ "$paused_verbs" = '["get"]' ] || return 1
 	rbac_patch=$(jq -nc \
-		--arg index "$RBAC_RULE_INDEX" \
+		--arg index "$resume_rule_index" \
+		--argjson apiGroups "$RBAC_STATUS_API_GROUPS" \
+		--argjson resources "$RBAC_STATUS_RESOURCES" \
 		--argjson verbs "$RBAC_ORIGINAL_VERBS" '
-    [{op: "replace", path: ("/rules/" + $index + "/verbs"), value: $verbs}]
-  ')
+	    [
+	      {op: "test", path: ("/rules/" + $index + "/apiGroups"), value: $apiGroups},
+	      {op: "test", path: ("/rules/" + $index + "/resources"), value: $resources},
+	      {op: "test", path: ("/rules/" + $index + "/verbs"), value: ["get"]},
+	      {op: "replace", path: ("/rules/" + $index + "/verbs"), value: $verbs}
+	    ]
+	  ')
 	if ! k patch clusterrole "$CONTROLLER_NAME" --type=json -p "$rbac_patch" >/dev/null; then
 		return 1
 	fi
+	RBAC_RULE_INDEX=$resume_rule_index
 	rbac_live_verbs=$(k get clusterrole "$CONTROLLER_NAME" -o json |
 		jq -c --argjson index "$RBAC_RULE_INDEX" '.rules[$index].verbs') || return 1
 	[ "$rbac_live_verbs" = "$RBAC_ORIGINAL_VERBS" ] || return 1
@@ -1418,7 +1544,7 @@ create_schema_resource() {
 		--arg policy e2e-verification-policy \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
 		--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" \
-		--arg interval "$RECONCILE_INTERVAL" '
+		--arg interval "$APPROVAL_INTERVAL" '
     {
       apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
       metadata: {namespace: $namespace, name: $name},
@@ -1475,9 +1601,14 @@ assert_plan() {
 	plan_destructive=$5
 	plan_observe_checkpoint=$6
 	plan_job_checkpoint=$7
+	plan_after_checkpoint=${8:-}
 	wait_for_schema "$plan_schema" \
-		".status.source.digest == \"$plan_digest\" and .status.plan.name != null and (.status.phase == \"AwaitingApproval\" or .status.phase == \"Blocked\")" \
+		".status.source.digest == \"$plan_digest\" and .status.plan.name != null and .status.nextReconciliationTime != null and (.status.phase == \"AwaitingApproval\" or .status.phase == \"Blocked\")" \
 		"verified digest $plan_digest and a published plan"
+	if [ -n "$plan_after_checkpoint" ]; then
+		pause_controller_status_writes
+		checkpoint_schema_jobs "$plan_schema" "$plan_after_checkpoint"
+	fi
 	k -n "$TEST_NAMESPACE" get ptahschema "$plan_schema" -o json |
 		jq -e \
 			--arg reference "$plan_reference" \
@@ -1518,9 +1649,9 @@ assert_plan() {
 	plan_result_file="$WORK_DIR/${plan_schema}-changed-plan-result.json"
 	plan_document_file="$WORK_DIR/${plan_schema}-changed-plan.json"
 	capture_one_new_job_result "$plan_schema" observe "$plan_observe_checkpoint" \
-		"$observe_result_file"
+		"$observe_result_file" "$plan_after_checkpoint"
 	capture_one_new_job_result "$plan_schema" plan "$plan_job_checkpoint" \
-		"$plan_result_file"
+		"$plan_result_file" "$plan_after_checkpoint"
 
 	plan_schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$plan_schema" -o json)
 	printf '%s\n' "$plan_schema_object" | jq -e \
@@ -1570,12 +1701,13 @@ assert_convergence_result_pair() {
 	converged_schema=$1
 	converged_observe_checkpoint=$2
 	converged_plan_checkpoint=$3
+	converged_after_checkpoint=${4:-}
 	converged_observe_result="$WORK_DIR/${converged_schema}-converged-observe-result.json"
 	converged_plan_result="$WORK_DIR/${converged_schema}-converged-plan-result.json"
 	capture_one_new_job_result "$converged_schema" observe "$converged_observe_checkpoint" \
-		"$converged_observe_result"
+		"$converged_observe_result" "$converged_after_checkpoint"
 	capture_one_new_job_result "$converged_schema" plan "$converged_plan_checkpoint" \
-		"$converged_plan_result"
+		"$converged_plan_result" "$converged_after_checkpoint"
 	converged_schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$converged_schema" -o json)
 	printf '%s\n' "$converged_schema_object" | jq -e \
 		--slurpfile observe "$converged_observe_result" \
@@ -1725,29 +1857,134 @@ wait_for_in_sync() {
 
 assert_periodic_noop() {
 	noop_schema=$1
-	noop_resolve_checkpoint="$WORK_DIR/${noop_schema}-noop-resolve.json"
-	noop_verify_checkpoint="$WORK_DIR/${noop_schema}-noop-verify.json"
-	noop_observe_checkpoint="$WORK_DIR/${noop_schema}-noop-observe.json"
-	noop_plan_checkpoint="$WORK_DIR/${noop_schema}-noop-plan.json"
-	noop_apply_checkpoint="$WORK_DIR/${noop_schema}-noop-apply.json"
-	checkpoint_jobs "$noop_schema" resolve "$noop_resolve_checkpoint"
-	checkpoint_jobs "$noop_schema" verify "$noop_verify_checkpoint"
-	checkpoint_jobs "$noop_schema" observe "$noop_observe_checkpoint"
-	checkpoint_jobs "$noop_schema" plan "$noop_plan_checkpoint"
-	checkpoint_jobs "$noop_schema" apply "$noop_apply_checkpoint"
-	wait_for_one_new_job "$noop_schema" resolve "$noop_resolve_checkpoint"
-	wait_for_one_new_job "$noop_schema" verify "$noop_verify_checkpoint"
-	wait_for_one_new_job "$noop_schema" observe "$noop_observe_checkpoint"
-	wait_for_one_new_job "$noop_schema" plan "$noop_plan_checkpoint"
+	noop_checkpoint=$2
+	[ "$RBAC_PAUSED" -eq 0 ] || fail "periodic no-op proof requires active controller status writes"
+	[ -s "$noop_checkpoint" ] || fail "$noop_schema periodic no-op proof lacks a quiescent checkpoint"
+	wait_for_one_new_job "$noop_schema" resolve "$noop_checkpoint"
+	wait_for_one_new_job "$noop_schema" verify "$noop_checkpoint"
+	wait_for_one_new_job "$noop_schema" observe "$noop_checkpoint"
+	wait_for_one_new_job "$noop_schema" plan "$noop_checkpoint"
 	wait_for_schema "$noop_schema" '.status.phase == "InSync" and .status.activeOperation == null' \
 		"a completed periodic no-op observation"
-	assert_one_new_job "$noop_schema" resolve "$noop_resolve_checkpoint"
-	assert_one_new_job "$noop_schema" verify "$noop_verify_checkpoint"
-	assert_one_new_job "$noop_schema" observe "$noop_observe_checkpoint"
-	assert_one_new_job "$noop_schema" plan "$noop_plan_checkpoint"
-	assert_no_new_jobs "$noop_schema" apply "$noop_apply_checkpoint"
-	assert_convergence_result_pair "$noop_schema" "$noop_observe_checkpoint" \
-		"$noop_plan_checkpoint"
+	pause_controller_status_writes
+	noop_after_checkpoint="$WORK_DIR/${noop_schema}-noop-after.json"
+	checkpoint_schema_jobs "$noop_schema" "$noop_after_checkpoint"
+	for noop_operation in resolve verify observe plan; do
+		assert_one_job_between_checkpoints "$noop_schema" "$noop_operation" \
+			"$noop_checkpoint" "$noop_after_checkpoint"
+	done
+	assert_no_job_between_checkpoints "$noop_schema" apply \
+		"$noop_checkpoint" "$noop_after_checkpoint"
+	assert_convergence_result_pair "$noop_schema" "$noop_checkpoint" \
+		"$noop_checkpoint" "$noop_after_checkpoint"
+	audit_runtime_credentials
+}
+
+set_reconcile_interval_and_assert_noop() {
+	interval_schema=$1
+	interval_digest=$2
+	interval_value=$3
+	interval_keep_paused=${4:-false}
+	case "$interval_keep_paused" in
+	true | false) ;;
+	*) fail "interval keep-paused flag must be true or false" ;;
+	esac
+	previous_interval=$(k -n "$TEST_NAMESPACE" get ptahschema "$interval_schema" \
+		-o jsonpath='{.spec.interval}')
+	[ "$previous_interval" != "$interval_value" ] ||
+		fail "$interval_schema interval transition requires a distinct value"
+	if [ "$RBAC_PAUSED" -eq 0 ]; then
+		pause_controller_status_writes
+	fi
+	interval_checkpoint="$WORK_DIR/${interval_schema}-interval-before.json"
+	checkpoint_schema_jobs "$interval_schema" "$interval_checkpoint"
+	interval_patch=$(jq -nc --arg interval "$interval_value" \
+		'{spec: {interval: $interval}}')
+	k -n "$TEST_NAMESPACE" patch ptahschema "$interval_schema" --type=merge \
+		-p "$interval_patch" >/dev/null
+	resume_controller_status_writes || fail "could not restore controller status-write RBAC"
+	wait_for_one_new_job "$interval_schema" resolve "$interval_checkpoint"
+	wait_for_one_new_job "$interval_schema" verify "$interval_checkpoint"
+	wait_for_one_new_job "$interval_schema" observe "$interval_checkpoint"
+	wait_for_one_new_job "$interval_schema" plan "$interval_checkpoint"
+	wait_for_schema "$interval_schema" \
+		".status.observedGeneration == .metadata.generation and .status.phase == \"InSync\" and .status.source.digest == \"$interval_digest\" and .status.activeOperation == null" \
+		"one generation-triggered no-op cycle after selecting interval $interval_value"
+	actual_interval=$(k -n "$TEST_NAMESPACE" get ptahschema "$interval_schema" \
+		-o jsonpath='{.spec.interval}')
+	[ "$actual_interval" = "$interval_value" ] ||
+		fail "$interval_schema did not retain reconciliation interval $interval_value"
+	pause_controller_status_writes
+	interval_after_checkpoint="$WORK_DIR/${interval_schema}-interval-after.json"
+	checkpoint_schema_jobs "$interval_schema" "$interval_after_checkpoint"
+	for interval_operation in resolve verify observe plan; do
+		assert_one_job_between_checkpoints "$interval_schema" "$interval_operation" \
+			"$interval_checkpoint" "$interval_after_checkpoint"
+	done
+	assert_no_job_between_checkpoints "$interval_schema" apply \
+		"$interval_checkpoint" "$interval_after_checkpoint"
+	assert_convergence_result_pair "$interval_schema" "$interval_checkpoint" \
+		"$interval_checkpoint" "$interval_after_checkpoint"
+	audit_runtime_credentials
+	if [ "$interval_keep_paused" = false ]; then
+		PERIODIC_NOOP_CHECKPOINT="$WORK_DIR/${interval_schema}-periodic-noop-before.json"
+		checkpoint_schema_jobs "$interval_schema" "$PERIODIC_NOOP_CHECKPOINT"
+		resume_controller_status_writes || fail "could not restore controller status-write RBAC"
+	fi
+}
+
+suspend_schema_for_tag_move() {
+	move_schema=$1
+	move_interval=$2
+	move_writes_paused=$RBAC_PAUSED
+	move_patch=$(jq -nc --arg interval "$move_interval" \
+		'{spec: {suspend: true, interval: $interval}}')
+	k -n "$TEST_NAMESPACE" patch ptahschema "$move_schema" --type=merge \
+		-p "$move_patch" >/dev/null
+	if [ "$move_writes_paused" -eq 1 ]; then
+		resume_controller_status_writes || fail "could not restore controller status-write RBAC"
+	fi
+	wait_for_schema "$move_schema" '
+      .status.observedGeneration == .metadata.generation and
+      .status.phase == "Suspended" and .status.activeOperation == null and
+      .status.pendingObservation == null and .status.pendingLockRelease == null
+    ' "a quiescent suspension before moving the mutable tag"
+	actual_move_interval=$(k -n "$TEST_NAMESPACE" get ptahschema "$move_schema" \
+		-o jsonpath='{.spec.interval}')
+	[ "$actual_move_interval" = "$move_interval" ] ||
+		fail "$move_schema did not retain tag-move interval $move_interval"
+}
+
+resume_schema_after_tag_move() {
+	move_schema=$1
+	k -n "$TEST_NAMESPACE" patch ptahschema "$move_schema" --type=merge \
+		-p '{"spec":{"suspend":false}}' >/dev/null
+}
+
+prepare_blocked_refresh_cadence() {
+	blocked_schema=$1
+	suspend_schema_for_tag_move "$blocked_schema" "$BLOCKED_REFRESH_INTERVAL"
+	blocked_generation_checkpoint="$WORK_DIR/${blocked_schema}-blocked-generation-before.json"
+	checkpoint_schema_jobs "$blocked_schema" "$blocked_generation_checkpoint"
+	resume_schema_after_tag_move "$blocked_schema"
+	for blocked_operation in resolve verify observe plan; do
+		wait_for_one_new_job "$blocked_schema" "$blocked_operation" \
+			"$blocked_generation_checkpoint"
+	done
+	wait_for_schema "$blocked_schema" '
+      .status.observedGeneration == .metadata.generation and
+      .status.phase == "Blocked" and .status.activeOperation == null and
+      .status.pendingObservation == null and .status.pendingLockRelease == null and
+      .status.nextReconciliationTime != null
+    ' "the generation-triggered blocked refresh before scheduled cadence proof"
+	BLOCKED_GATE_CHECKPOINT="$WORK_DIR/${blocked_schema}-blocked-generation-after.json"
+	checkpoint_schema_jobs "$blocked_schema" "$BLOCKED_GATE_CHECKPOINT"
+	for blocked_operation in resolve verify observe plan; do
+		assert_one_job_between_checkpoints "$blocked_schema" "$blocked_operation" \
+			"$blocked_generation_checkpoint" "$BLOCKED_GATE_CHECKPOINT"
+	done
+	assert_no_job_between_checkpoints "$blocked_schema" apply \
+		"$blocked_generation_checkpoint" "$BLOCKED_GATE_CHECKPOINT"
 	audit_runtime_credentials
 }
 
@@ -1758,19 +1995,17 @@ assert_destructive_gate() {
 	gate_plan_uid=$4
 	gate_plan_fingerprint=$5
 	gate_source_digest=$6
+	gate_refresh_checkpoint=$7
 	gate_interval=$(k -n "$TEST_NAMESPACE" get ptahschema "$gate_schema" \
 		-o jsonpath='{.spec.interval}')
-	[ "$gate_interval" = 10s ] ||
-		fail "$gate_schema destructive gate requires the harness's exact 10s interval"
+	[ "$gate_interval" = "$BLOCKED_REFRESH_INTERVAL" ] ||
+		fail "$gate_schema destructive gate requires interval $BLOCKED_REFRESH_INTERVAL"
 	if [ -z "$gate_plan_name" ] || [ -z "$gate_plan_uid" ] ||
 		[ -z "$gate_plan_fingerprint" ] || [ -z "$gate_source_digest" ]; then
 		fail "$gate_schema destructive gate lacks its immutable starting evidence"
 	fi
-	gate_refresh_checkpoint=$WORK_DIR/${gate_schema}-destructive-gate-refresh.json
-	record_observed_jobs
-	jq -s --arg schema "$gate_schema" '
-      [.[] | select(.schema == $schema) | .uid] | sort
-    ' "$OBSERVED_JOBS_FILE" >"$gate_refresh_checkpoint"
+	[ -s "$gate_refresh_checkpoint" ] ||
+		fail "$gate_schema destructive gate lacks its atomic refresh checkpoint"
 	gate_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$gate_deadline" ]; do
 		audit_completed_jobs
@@ -1789,7 +2024,7 @@ assert_destructive_gate() {
 			jq -e -s \
 				--slurpfile before "$gate_refresh_checkpoint" \
 				--arg schema "$gate_schema" \
-				--argjson intervalSeconds 10 '
+				--argjson intervalSeconds "$BLOCKED_REFRESH_SECONDS" '
               def new_since($before):
                 .uid as $uid | ($before[0] | index($uid)) == null;
               def operation_rank:
@@ -1850,6 +2085,51 @@ assert_destructive_gate() {
 		sleep 2
 	done
 	fail "$gate_schema did not complete three scheduled blocked refresh cycles"
+}
+
+restore_blocked_refresh_cadence() {
+	restore_schema=$1
+	restore_plan_name=$2
+	restore_plan_uid=$3
+	restore_plan_fingerprint=$4
+	restore_source_digest=$5
+	suspend_schema_for_tag_move "$restore_schema" "$QUIESCENT_INTERVAL"
+	restore_before_checkpoint="$WORK_DIR/${restore_schema}-blocked-restore-before.json"
+	checkpoint_schema_jobs "$restore_schema" "$restore_before_checkpoint"
+	resume_schema_after_tag_move "$restore_schema"
+	for restore_operation in resolve verify observe plan; do
+		wait_for_one_new_job "$restore_schema" "$restore_operation" \
+			"$restore_before_checkpoint"
+	done
+	wait_for_schema "$restore_schema" '
+      .status.observedGeneration == .metadata.generation and
+      .status.phase == "Blocked" and .status.activeOperation == null and
+      .status.pendingObservation == null and .status.pendingLockRelease == null and
+      .status.nextReconciliationTime != null
+    ' "the quiescent blocked cadence restore"
+	pause_controller_status_writes
+	restore_after_checkpoint="$WORK_DIR/${restore_schema}-blocked-restore-after.json"
+	checkpoint_schema_jobs "$restore_schema" "$restore_after_checkpoint"
+	for restore_operation in resolve verify observe plan; do
+		assert_one_job_between_checkpoints "$restore_schema" "$restore_operation" \
+			"$restore_before_checkpoint" "$restore_after_checkpoint"
+	done
+	assert_no_job_between_checkpoints "$restore_schema" apply \
+		"$restore_before_checkpoint" "$restore_after_checkpoint"
+	k -n "$TEST_NAMESPACE" get ptahschema "$restore_schema" -o json |
+		jq -e \
+			--arg plan "$restore_plan_name" \
+			--arg planUID "$restore_plan_uid" \
+			--arg fingerprint "$restore_plan_fingerprint" \
+			--arg digest "$restore_source_digest" \
+			--arg interval "$QUIESCENT_INTERVAL" '
+          .spec.interval == $interval and .status.phase == "Blocked" and
+          .status.source.digest == $digest and .status.plan.name == $plan and
+          .status.plan.uid == $planUID and .status.plan.fingerprint == $fingerprint and
+          .status.plan.destructive == true
+        ' >/dev/null || fail "$restore_schema changed blocked evidence while restoring a quiet cadence"
+	audit_runtime_credentials
+	resume_controller_status_writes || fail "could not restore controller status-write RBAC"
 }
 
 assert_mysql_destructive_refusal_durable() {
@@ -1943,16 +2223,42 @@ run_engine_lifecycle() {
 	assert_job_isolation "$lifecycle_schema" "$lifecycle_secret" true
 	assert_database_column "$lifecycle_slug" name 1
 	assert_database_column "$lifecycle_slug" note 0
-	assert_periodic_noop "$lifecycle_schema"
+	set_reconcile_interval_and_assert_noop "$lifecycle_schema" "$digest_v1" \
+		"$RECONCILE_INTERVAL"
+	assert_periodic_noop "$lifecycle_schema" "$PERIODIC_NOOP_CHECKPOINT"
+	set_reconcile_interval_and_assert_noop "$lifecycle_schema" "$digest_v1" \
+		"$TAG_MOVE_INTERVAL" true
 
-	v2_observe_checkpoint="$WORK_DIR/${lifecycle_schema}-v2-observe.json"
-	v2_plan_checkpoint="$WORK_DIR/${lifecycle_schema}-v2-plan.json"
-	checkpoint_jobs "$lifecycle_schema" observe "$v2_observe_checkpoint"
-	checkpoint_jobs "$lifecycle_schema" plan "$v2_plan_checkpoint"
+	# Block only controller status writes before publishing. The PtahSchema
+	# generation stays unchanged, so the persisted timer is the sole trigger
+	# that can discover the moved tag after authorization is restored.
+	[ "$RBAC_PAUSED" -eq 1 ] || fail "scheduled tag proof lacks a status-write barrier"
+	scheduled_tag_generation=$(k -n "$TEST_NAMESPACE" get ptahschema "$lifecycle_schema" \
+		-o jsonpath='{.metadata.generation}')
 	digest_v2=$(publish_schema "$lifecycle_slug" v2 "$lifecycle_dialect" "$lifecycle_reference")
 	[ "$digest_v2" != "$digest_v1" ] || fail "$lifecycle_schema v2 did not move the mutable tag"
+	wait_for_schema "$lifecycle_schema" \
+		".metadata.generation == $scheduled_tag_generation and .status.observedGeneration == $scheduled_tag_generation and .status.phase == \"InSync\" and .status.source.digest == \"$digest_v1\" and .status.activeOperation == null and (.status.nextReconciliationTime | fromdateiso8601) <= now" \
+		"the persisted mutable-tag polling deadline to elapse without a spec change"
+	v2_checkpoint="$WORK_DIR/${lifecycle_schema}-v2-scheduled-before.json"
+	checkpoint_schema_jobs "$lifecycle_schema" "$v2_checkpoint"
+	resume_controller_status_writes || fail "could not restore controller status-write RBAC"
+	v2_after_checkpoint="$WORK_DIR/${lifecycle_schema}-v2-scheduled-after.json"
 	assert_plan "$lifecycle_schema" "$lifecycle_reference" "$digest_v2" "$lifecycle_dialect" false \
-		"$v2_observe_checkpoint" "$v2_plan_checkpoint"
+		"$v2_checkpoint" "$v2_checkpoint" "$v2_after_checkpoint"
+	for scheduled_tag_operation in resolve verify observe plan; do
+		assert_one_job_between_checkpoints "$lifecycle_schema" "$scheduled_tag_operation" \
+			"$v2_checkpoint" "$v2_after_checkpoint"
+	done
+	assert_no_job_between_checkpoints "$lifecycle_schema" apply \
+		"$v2_checkpoint" "$v2_after_checkpoint"
+	v2_generation=$(k -n "$TEST_NAMESPACE" get ptahschema "$lifecycle_schema" \
+		-o jsonpath='{.metadata.generation}')
+	v2_observed_generation=$(k -n "$TEST_NAMESPACE" get ptahschema "$lifecycle_schema" \
+		-o jsonpath='{.status.observedGeneration}')
+	[ "$v2_generation" = "$scheduled_tag_generation" ] &&
+		[ "$v2_observed_generation" = "$scheduled_tag_generation" ] ||
+		fail "$lifecycle_schema scheduled tag refresh depended on a spec generation change"
 	plan_v2=$CURRENT_PLAN
 	plan_v2_uid=$CURRENT_PLAN_UID
 	plan_v2_fingerprint=$CURRENT_PLAN_FINGERPRINT
@@ -1966,22 +2272,18 @@ run_engine_lifecycle() {
 	# available, then move the tag again. Restoring the exact original verbs
 	# makes the controller observe v3 before it can consume the v2 decision.
 	obsolete_approval="${lifecycle_schema}-obsolete"
-	stale_apply_checkpoint="$WORK_DIR/${lifecycle_schema}-stale-apply.json"
-	v3_observe_checkpoint="$WORK_DIR/${lifecycle_schema}-v3-observe.json"
-	v3_plan_checkpoint="$WORK_DIR/${lifecycle_schema}-v3-plan.json"
-	checkpoint_jobs "$lifecycle_schema" apply "$stale_apply_checkpoint"
-	checkpoint_jobs "$lifecycle_schema" observe "$v3_observe_checkpoint"
-	checkpoint_jobs "$lifecycle_schema" plan "$v3_plan_checkpoint"
-	pause_controller_status_writes
+	stale_checkpoint=$v2_after_checkpoint
 	create_exact_approval "$lifecycle_schema" "$plan_v2" "$obsolete_approval" \
 		"$lifecycle_coordination_key" "$lifecycle_coordination_digest"
 	digest_v3=$(publish_schema "$lifecycle_slug" v3 "$lifecycle_dialect" "$lifecycle_reference")
 	[ "$digest_v3" != "$digest_v2" ] || fail "$lifecycle_schema v3 did not move the mutable tag"
 	k -n "$TEST_NAMESPACE" patch ptahschema "$lifecycle_schema" --type=merge \
-		-p '{"spec":{"interval":"10s"}}' >/dev/null
+		-p "$(jq -nc --arg interval "$STALE_APPROVAL_INTERVAL" \
+			'{spec: {interval: $interval}}')" >/dev/null
 	resume_controller_status_writes || fail "could not restore controller status-write RBAC"
+	v3_after_checkpoint="$WORK_DIR/${lifecycle_schema}-v3-after.json"
 	assert_plan "$lifecycle_schema" "$lifecycle_reference" "$digest_v3" "$lifecycle_dialect" false \
-		"$v3_observe_checkpoint" "$v3_plan_checkpoint"
+		"$stale_checkpoint" "$stale_checkpoint" "$v3_after_checkpoint"
 	plan_v3=$CURRENT_PLAN
 	plan_v3_uid=$CURRENT_PLAN_UID
 	plan_v3_fingerprint=$CURRENT_PLAN_FINGERPRINT
@@ -1989,21 +2291,20 @@ run_engine_lifecycle() {
 	[ "$plan_v3_uid" != "$plan_v2_uid" ] || fail "$lifecycle_schema reused the v2 plan UID after a tag move"
 	[ "$plan_v3_fingerprint" != "$plan_v2_fingerprint" ] ||
 		fail "$lifecycle_schema reused the v2 fingerprint after a tag move"
+	assert_no_job_between_checkpoints "$lifecycle_schema" apply \
+		"$stale_checkpoint" "$v3_after_checkpoint"
+	resume_controller_status_writes || fail "could not restore controller status-write RBAC"
 	wait_for_approval "$obsolete_approval" \
 		'.status.conditions | any(.type == "Stale" and .status == "True" and .reason == "PlanNoLongerCurrent")' \
 		"the old exact approval to become stale"
-	assert_no_new_jobs "$lifecycle_schema" apply "$stale_apply_checkpoint"
+	assert_no_new_jobs "$lifecycle_schema" apply "$stale_checkpoint"
 	v3_apply_checkpoint="$WORK_DIR/${lifecycle_schema}-v3-apply.json"
-	v3_post_observe_checkpoint="$WORK_DIR/${lifecycle_schema}-v3-post-observe.json"
-	v3_post_plan_checkpoint="$WORK_DIR/${lifecycle_schema}-v3-post-plan.json"
-	checkpoint_jobs "$lifecycle_schema" apply "$v3_apply_checkpoint"
-	checkpoint_jobs "$lifecycle_schema" observe "$v3_post_observe_checkpoint"
-	checkpoint_jobs "$lifecycle_schema" plan "$v3_post_plan_checkpoint"
+	checkpoint_schema_jobs "$lifecycle_schema" "$v3_apply_checkpoint"
 	create_exact_approval "$lifecycle_schema" "$plan_v3" "${lifecycle_schema}-v3" \
 		"$lifecycle_coordination_key" "$lifecycle_coordination_digest"
 	wait_for_one_new_job "$lifecycle_schema" apply "$v3_apply_checkpoint"
 	wait_for_in_sync "$lifecycle_schema" "$digest_v3" \
-		"$v3_post_observe_checkpoint" "$v3_post_plan_checkpoint"
+		"$v3_apply_checkpoint" "$v3_apply_checkpoint"
 	assert_approval_consumed "${lifecycle_schema}-v3" "$plan_v3_uid"
 	assert_one_new_job "$lifecycle_schema" apply "$v3_apply_checkpoint"
 	assert_coordination_lease_boundary "$lifecycle_coordination_key" \
@@ -2015,16 +2316,15 @@ run_engine_lifecycle() {
 		assert_mysql_plain_index 1
 	fi
 
-	destructive_apply_checkpoint="$WORK_DIR/${lifecycle_schema}-destructive-apply.json"
-	v4_observe_checkpoint="$WORK_DIR/${lifecycle_schema}-v4-observe.json"
-	v4_plan_checkpoint="$WORK_DIR/${lifecycle_schema}-v4-plan.json"
-	checkpoint_jobs "$lifecycle_schema" apply "$destructive_apply_checkpoint"
-	checkpoint_jobs "$lifecycle_schema" observe "$v4_observe_checkpoint"
-	checkpoint_jobs "$lifecycle_schema" plan "$v4_plan_checkpoint"
+	suspend_schema_for_tag_move "$lifecycle_schema" "$APPROVAL_INTERVAL"
 	digest_v4=$(publish_schema "$lifecycle_slug" v4 "$lifecycle_dialect" "$lifecycle_reference")
 	[ "$digest_v4" != "$digest_v3" ] || fail "$lifecycle_schema v4 did not move the mutable tag"
+	destructive_apply_checkpoint="$WORK_DIR/${lifecycle_schema}-v4-before.json"
+	checkpoint_schema_jobs "$lifecycle_schema" "$destructive_apply_checkpoint"
+	resume_schema_after_tag_move "$lifecycle_schema"
+	v4_after_checkpoint="$WORK_DIR/${lifecycle_schema}-v4-after.json"
 	assert_plan "$lifecycle_schema" "$lifecycle_reference" "$digest_v4" "$lifecycle_dialect" true \
-		"$v4_observe_checkpoint" "$v4_plan_checkpoint"
+		"$destructive_apply_checkpoint" "$destructive_apply_checkpoint" "$v4_after_checkpoint"
 	if [ "$lifecycle_slug" = mysql ]; then
 		jq -e '
 		  .destructive == false and
@@ -2042,9 +2342,14 @@ run_engine_lifecycle() {
       .status.phase == "Blocked" and
       (.status.conditions | any(.type == "ApprovalRequired" and .status == "False" and .reason == "DestructiveChangesDisabled")) and
       (.status.conditions | any(.type == "Ready" and .status == "False"))
-    ' "the destructive policy gate"
-	assert_no_new_jobs "$lifecycle_schema" apply "$destructive_apply_checkpoint"
+	    ' "the destructive policy gate"
+	assert_no_job_between_checkpoints "$lifecycle_schema" apply \
+		"$destructive_apply_checkpoint" "$v4_after_checkpoint"
+	prepare_blocked_refresh_cadence "$lifecycle_schema"
 	assert_destructive_gate "$lifecycle_schema" "$destructive_apply_checkpoint" \
+		"$CURRENT_PLAN" "$CURRENT_PLAN_UID" "$CURRENT_PLAN_FINGERPRINT" "$digest_v4" \
+		"$BLOCKED_GATE_CHECKPOINT"
+	restore_blocked_refresh_cadence "$lifecycle_schema" \
 		"$CURRENT_PLAN" "$CURRENT_PLAN_UID" "$CURRENT_PLAN_FINGERPRINT" "$digest_v4"
 	assert_database_column "$lifecycle_slug" note 1
 	assert_database_column "$lifecycle_slug" enabled 1

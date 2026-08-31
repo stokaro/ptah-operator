@@ -172,17 +172,35 @@ for engine in postgresql mysql; do
 done
 for lifecycle_marker in \
 	'wait_for_in_sync' \
-		'assert_periodic_noop' \
-		'assert_approval_consumed' \
-		'PlanNoLongerCurrent' \
-		'DestructiveChangesDisabled' \
+	'assert_periodic_noop' \
+	'set_reconcile_interval_and_assert_noop' \
+	'checkpoint_schema_jobs' \
+	'job_count_between_checkpoints' \
+	'prepare_blocked_refresh_cadence' \
+	'restore_blocked_refresh_cadence' \
+	'E2E_APPROVAL_INTERVAL' \
+	'E2E_STALE_APPROVAL_INTERVAL' \
+	'E2E_TAG_MOVE_INTERVAL' \
+	'E2E_QUIESCENT_INTERVAL' \
+	'E2E_BLOCKED_REFRESH_SECONDS' \
+	'one generation-triggered no-op cycle after selecting interval' \
+	'suspend_schema_for_tag_move' \
+	'resume_schema_after_tag_move' \
+	'a quiescent suspension before moving the mutable tag' \
+	'assert_approval_consumed' \
+	'PlanNoLongerCurrent' \
+	'DestructiveChangesDisabled' \
 	'three complete scheduled blocked refresh cycles' \
+	'the quiescent blocked cadence restore' \
+	'changed blocked evidence while restoring a quiet cadence' \
 	'created: .metadata.creationTimestamp' \
 	'operation_rank' \
 	'did not preserve ordered interval-spaced blocked refresh cycles' \
 	'.status.nextReconciliationTime != null' \
 	'blocked refresh changed its current plan evidence' \
 	'immutable destructive plan changed during refresh' \
+	'the persisted mutable-tag polling deadline to elapse without a spec change' \
+	'scheduled tag refresh depended on a spec generation change' \
 	'audit_runtime_credentials' \
 	'create_admission_fixtures' \
 	'admission-snapshot-digest' \
@@ -202,6 +220,65 @@ for lifecycle_marker in \
 	'checkpoint_jobs'; do
 	grep -F "$lifecycle_marker" "$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
 done
+for reconciliation_cadence_marker in \
+	"RECONCILE_INTERVAL=\${E2E_RECONCILE_INTERVAL:-1m}" \
+	"TAG_MOVE_INTERVAL=\${E2E_TAG_MOVE_INTERVAL:-2m}" \
+	"APPROVAL_INTERVAL=\${E2E_APPROVAL_INTERVAL:-5m}" \
+	"STALE_APPROVAL_INTERVAL=\${E2E_STALE_APPROVAL_INTERVAL:-4m}" \
+	"QUIESCENT_INTERVAL=\${E2E_QUIESCENT_INTERVAL:-30m}" \
+	"BLOCKED_REFRESH_SECONDS=\${E2E_BLOCKED_REFRESH_SECONDS:-30}" \
+	"minimum_gate_timeout=\$((BLOCKED_REFRESH_SECONDS * 3 + 120))" \
+	"--arg interval \"\$APPROVAL_INTERVAL\"" \
+	"set_reconcile_interval_and_assert_noop \"\$lifecycle_schema\" \"\$digest_v1\"" \
+	"assert_periodic_noop \"\$lifecycle_schema\" \"\$PERIODIC_NOOP_CHECKPOINT\"" \
+	"suspend_schema_for_tag_move \"\$lifecycle_schema\" \"\$APPROVAL_INTERVAL\""; do
+	grep -F -- "$reconciliation_cadence_marker" \
+		"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
+done
+for atomic_checkpoint_function in assert_periodic_noop set_reconcile_interval_and_assert_noop; do
+	atomic_checkpoint_section=$(sed -n \
+		"/^${atomic_checkpoint_function}()/,/^}/p" \
+		"$ROOT_DIR/hack/e2e-dataplane.sh")
+	printf '%s\n' "$atomic_checkpoint_section" | grep -F 'checkpoint_schema_jobs' >/dev/null
+	if printf '%s\n' "$atomic_checkpoint_section" | grep -F 'checkpoint_jobs' >/dev/null; then
+		printf 'e2e static: %s uses non-atomic operation checkpoints\n' \
+			"$atomic_checkpoint_function" >&2
+		exit 1
+	fi
+done
+assert_plan_section=$(sed -n '/^assert_plan()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+for bounded_plan_marker in \
+	"plan_after_checkpoint=\${8:-}" \
+	'pause_controller_status_writes' \
+	"checkpoint_schema_jobs \"\$plan_schema\" \"\$plan_after_checkpoint\"" \
+	"\"\$observe_result_file\" \"\$plan_after_checkpoint\"" \
+	"\"\$plan_result_file\" \"\$plan_after_checkpoint\""; do
+	printf '%s\n' "$assert_plan_section" | grep -F "$bounded_plan_marker" >/dev/null
+done
+scheduled_tag_section=$(sed -n \
+	"/scheduled tag proof lacks a status-write barrier/,/plan_v2=\$CURRENT_PLAN/p" \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+for scheduled_tag_marker in \
+	'scheduled tag proof lacks a status-write barrier' \
+	'the persisted mutable-tag polling deadline to elapse without a spec change' \
+	"checkpoint_schema_jobs \"\$lifecycle_schema\" \"\$v2_checkpoint\"" \
+	'v2_after_checkpoint=' \
+	'assert_one_job_between_checkpoints' \
+	'resume_controller_status_writes' \
+	'scheduled tag refresh depended on a spec generation change'; do
+	printf '%s\n' "$scheduled_tag_section" | grep -F "$scheduled_tag_marker" >/dev/null
+done
+if printf '%s\n' "$scheduled_tag_section" |
+	grep -E 'patch ptahschema|resume_schema_after_tag_move' >/dev/null; then
+	printf '%s\n' 'e2e static: scheduled tag discovery contains a PtahSchema spec mutation' >&2
+	exit 1
+fi
+if printf '%s\n' "$scheduled_tag_section" |
+	grep -F "assert_one_new_job \"\$lifecycle_schema\"" >/dev/null; then
+	printf '%s\n' 'e2e static: scheduled tag discovery lacks an upper Job checkpoint' >&2
+	exit 1
+fi
 for protocol_script in e2e-dataplane.sh e2e-faults.sh; do
 	case "$protocol_script" in
 	e2e-dataplane.sh) converged_result_occurrences=1 ;;
