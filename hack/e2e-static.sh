@@ -6,9 +6,13 @@ unset CDPATH
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-static.XXXXXX")
 RENDERED_WEBHOOKS=$WORK_DIR/webhooks.yaml
+ROTATOR_RENDER=$WORK_DIR/rotator.yaml
 OBSOLETE_RENDER=$WORK_DIR/obsolete-webhooks.yaml
 OBSOLETE_ERROR=$WORK_DIR/obsolete-webhooks.err
 MUTABLE_MANAGER_ERROR=$WORK_DIR/mutable-manager.err
+LEADER_ELECTION_ERROR=$WORK_DIR/leader-election.err
+DEFAULT_RBAC_RENDER=$WORK_DIR/default-rbac.yaml
+SHARED_RBAC_RENDER=$WORK_DIR/shared-rbac.yaml
 CONTROLLER_JOB_FIXTURE=$WORK_DIR/controller-jobs.json
 PUBLISHER_JOB_FIXTURE=$WORK_DIR/publisher-job.json
 NEGATIVE_FIXTURE=$WORK_DIR/negative-job.json
@@ -54,11 +58,14 @@ grep -F './cmd/ptah' "$ROOT_DIR/test/e2e/Dockerfile.ptah" >/dev/null
 grep -Eq '^FROM .*@sha256:[0-9a-f]{64}' "$ROOT_DIR/test/e2e/Dockerfile.ptah"
 grep -F './cmd/manager' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null
 grep -F './cmd/ptah-runner' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null
+grep -F './cmd/ptah-cert-rotator' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null
 grep -F './test/e2e/handcraftoci' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null
 grep -F 'e2e-fixture' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 [ "$(grep -Ec '^FROM .*@sha256:[0-9a-f]{64}' "$ROOT_DIR/test/e2e/Dockerfile.operator")" -eq 3 ]
 operator_stage=$(sed -n '/ AS operator$/,/ AS fixture$/p' "$ROOT_DIR/test/e2e/Dockerfile.operator")
 printf '%s\n' "$operator_stage" | grep -F 'COPY --from=builder /out/manager /manager' >/dev/null
+printf '%s\n' "$operator_stage" |
+	grep -F 'COPY --from=builder /out/ptah-cert-rotator /ptah-cert-rotator' >/dev/null
 if printf '%s\n' "$operator_stage" | grep -F 'e2e-handcraft-oci' >/dev/null; then
 	printf '%s\n' 'e2e static: controller image stage contains the test-only OCI publisher' >&2
 	exit 1
@@ -66,7 +73,7 @@ fi
 fixture_stage=$(sed -n '/ AS fixture$/,$p' "$ROOT_DIR/test/e2e/Dockerfile.operator")
 printf '%s\n' "$fixture_stage" |
 	grep -F 'COPY --from=builder /out/e2e-handcraft-oci /e2e-handcraft-oci' >/dev/null
-if printf '%s\n' "$fixture_stage" | grep -Eq '/out/(manager|ptah-runner)'; then
+if printf '%s\n' "$fixture_stage" | grep -Eq '/out/(manager|ptah-runner|ptah-cert-rotator)'; then
 	printf '%s\n' 'e2e static: isolated fixture image stage contains an operator binary' >&2
 	exit 1
 fi
@@ -74,6 +81,18 @@ grep -F -- '--target operator' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 grep -F -- '--target fixture' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 grep -F 'the controller image contains the test-only OCI publisher' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 grep -F 'the isolated fixture image contains an operator binary' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
+grep -F 'LeaderElectionNamespace: targetLockNamespace' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
+grep -F 'ptah-operator.operator.ptah.dev' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
+for ha_marker in \
+	"assert_can_i no \"\$FOREIGN_NAMESPACE\"" \
+	'holder_is_ready_manager_pod' \
+	'manager leader Lease did not move to a ready replica' \
+	'leader Pod failover did not increment leaseTransitions' \
+	'wait_for_admitted_operation_pod' \
+	'operator.ptah.dev/admission-snapshot-digest' \
+	'admitted post-failover operation'; do
+	grep -F "$ha_marker" "$ROOT_DIR/hack/e2e-ha.sh" >/dev/null
+done
 grep -F 'unset REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 if grep -F 'E2E_REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" \
 	"$ROOT_DIR/hack/e2e-dataplane.sh" "$ROOT_DIR/hack/e2e-faults.sh" >/dev/null; then
@@ -138,14 +157,19 @@ for lifecycle_marker in \
 		'assert_approval_consumed' \
 		'PlanNoLongerCurrent' \
 		'DestructiveChangesDisabled' \
-		'audit_runtime_credentials' \
-		'registryAuthFrom' \
+	'audit_runtime_credentials' \
+	'create_admission_fixtures' \
+	'admission-snapshot-digest' \
+	'lacks exact LimitRange, ServiceAccount, RuntimeClass, or default-toleration admission' \
+	'registryAuthFrom' \
 		'coordinationKey' \
 		'.status.target.driftReportDigest != ""' \
 		'.spec.runnerProtocolVersion == 3' \
 		'e2e-faults.sh' \
 	'run_mysql_dsn_refusal' \
 	'audit_started_containers' \
+	'assert_active_pod_ephemeral_container_rejected' \
+	'/ephemeralcontainers' \
 	'unaudited nonterminal containers' \
 	'controller == true' \
 	'changed identity during its log audit' \
@@ -396,6 +420,98 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 fi
 grep -F 'image.digest must pin the manager' "$MUTABLE_MANAGER_ERROR" >/dev/null
 
+if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--set replicaCount=2 \
+	--set leaderElection=false \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string webhook.existingSecret=e2e-webhook-cert \
+	--set-string webhook.caBundle=e2e-ca \
+	>/dev/null 2>"$LEADER_ELECTION_ERROR"; then
+	printf '%s\n' 'e2e static: chart accepted multiple replicas without leader election' >&2
+	exit 1
+fi
+grep -F 'replicaCount' "$LEADER_ELECTION_ERROR" >/dev/null
+
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--show-only templates/rbac.yaml \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string webhook.existingSecret=e2e-webhook-cert \
+	--set-string webhook.caBundle=e2e-ca >"$DEFAULT_RBAC_RENDER"
+
+helm template ptah-e2e-ha "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e-ha \
+	--show-only templates/rbac.yaml \
+	--set-string coordination.namespace=ptah-e2e \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string webhook.existingSecret=e2e-webhook-cert \
+	--set-string webhook.caBundle=e2e-ca >"$SHARED_RBAC_RENDER"
+
+for rbac_render in "$DEFAULT_RBAC_RENDER" "$SHARED_RBAC_RENDER"; do
+	[ "$(grep -c '^kind: Role$' "$rbac_render")" -eq 1 ] || {
+		printf 'e2e static: %s does not render exactly one manager Lease Role\n' "$rbac_render" >&2
+		exit 1
+	}
+	[ "$(grep -c '^kind: RoleBinding$' "$rbac_render")" -eq 1 ] || {
+		printf 'e2e static: %s does not render exactly one manager Lease RoleBinding\n' "$rbac_render" >&2
+		exit 1
+	}
+	if awk '
+      /^kind: ClusterRole$/ {cluster_role = 1; next}
+      /^---$/ {cluster_role = 0}
+      cluster_role && /resources: \["leases"\]/ {found = 1}
+      END {exit found ? 0 : 1}
+    ' "$rbac_render"; then
+		printf 'e2e static: %s grants cluster-wide manager Lease access\n' "$rbac_render" >&2
+		exit 1
+	fi
+	lease_verbs=$(awk '
+      /resources: \["leases"\]/ {
+        if (getline > 0) print
+        exit
+      }
+    ' "$rbac_render" | tr -d '[:space:]')
+	[ "$lease_verbs" = 'verbs:["get","create","update"]' ] || {
+		printf 'e2e static: %s manager Lease verbs are not exact\n' "$rbac_render" >&2
+		exit 1
+	}
+done
+
+default_role_namespace=$(awk '
+  /^kind: Role$/ {role = 1; next}
+  role && /^  namespace:/ {print $2; exit}
+' "$DEFAULT_RBAC_RENDER")
+[ "$default_role_namespace" = ptah-e2e ] || {
+	printf 'e2e static: default manager Lease Role namespace = %s, want ptah-e2e\n' \
+		"$default_role_namespace" >&2
+	exit 1
+}
+shared_role_namespace=$(awk '
+  /^kind: Role$/ {role = 1; next}
+  role && /^  namespace:/ {print $2; exit}
+' "$SHARED_RBAC_RENDER")
+[ "$shared_role_namespace" = ptah-e2e ] || {
+	printf 'e2e static: shared manager Lease Role namespace = %s, want ptah-e2e\n' \
+		"$shared_role_namespace" >&2
+	exit 1
+}
+shared_subject_namespace=$(awk '
+  /^kind: RoleBinding$/ {binding = 1; next}
+  binding && /^    namespace:/ {print $2; exit}
+' "$SHARED_RBAC_RENDER")
+[ "$shared_subject_namespace" = ptah-e2e-ha ] || {
+	printf 'e2e static: cross-namespace Lease RoleBinding subject = %s, want ptah-e2e-ha\n' \
+		"$shared_subject_namespace" >&2
+	exit 1
+}
+
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 		--namespace ptah-e2e \
 		--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
@@ -403,13 +519,82 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca >"$RENDERED_WEBHOOKS"
+[ "$(grep -Fc 'resources: ["ptahschemas/finalizers", "ptahschemaplans/finalizers"]' \
+	"$RENDERED_WEBHOOKS")" -eq 1 ] || {
+	printf '%s\n' 'e2e static: rendered controller role lacks its exact owner-finalizer resources' >&2
+	exit 1
+}
+finalizer_verbs=$(awk '
+  index($0, "resources: [\"ptahschemas/finalizers\", \"ptahschemaplans/finalizers\"]") {
+    if (getline > 0) print
+    exit
+  }
+' "$RENDERED_WEBHOOKS" | tr -d '[:space:]')
+[ "$finalizer_verbs" = 'verbs:["update"]' ] || {
+	printf '%s\n' 'e2e static: rendered controller role lacks exact owner-finalizer update authorization' >&2
+	exit 1
+}
 [ "$(grep -c '^kind: MutatingWebhookConfiguration$' "$RENDERED_WEBHOOKS")" -eq 1 ]
 [ "$(grep -c '^kind: ValidatingWebhookConfiguration$' "$RENDERED_WEBHOOKS")" -eq 1 ]
-[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$RENDERED_WEBHOOKS")" -eq 2 ]
-if grep -Eq '^[[:space:]]*failurePolicy: (Ignore|FailOpen)$' "$RENDERED_WEBHOOKS"; then
-	printf '%s\n' 'e2e static: rendered approval webhooks are not fail-closed' >&2
+[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$RENDERED_WEBHOOKS")" -eq 3 ]
+grep -F 'name: vpodintent.operator.ptah.dev' "$RENDERED_WEBHOOKS" >/dev/null
+grep -F 'path: /validate-v1-pod-ptah-operation-intent' "$RENDERED_WEBHOOKS" >/dev/null
+grep -F 'resources: ["pods", "pods/ephemeralcontainers", "pods/resize"]' "$RENDERED_WEBHOOKS" >/dev/null
+grep -F 'operations: ["CREATE", "UPDATE"]' "$RENDERED_WEBHOOKS" >/dev/null
+grep -F 'name: job-owned-pod' "$RENDERED_WEBHOOKS" >/dev/null
+if grep -F 'objectSelector:' "$RENDERED_WEBHOOKS" >/dev/null; then
+	printf '%s\n' 'e2e static: Pod intent admission relies on a mutable object selector' >&2
 	exit 1
 fi
+grep -F -- '--default-tolerations-enabled=true' "$RENDERED_WEBHOOKS" >/dev/null
+grep -F -- '--extended-resource-toleration-enabled=false' "$RENDERED_WEBHOOKS" >/dev/null
+grep -F -- '--always-pull-images-enabled=false' "$RENDERED_WEBHOOKS" >/dev/null
+for admission_resource in \
+	'resources: ["serviceaccounts"]' \
+	'resources: ["limitranges"]' \
+	'resources: ["runtimeclasses"]' \
+	'resources: ["priorityclasses"]'; do
+	grep -F "$admission_resource" "$RENDERED_WEBHOOKS" >/dev/null
+done
+pods_verbs=$(awk '
+  index($0, "resources: [\"pods\"]") {
+    if (getline > 0) print
+    exit
+  }
+' "$RENDERED_WEBHOOKS" | tr -d '[:space:]')
+[ "$pods_verbs" = 'verbs:["get","list","watch"]' ] || {
+	printf '%s\n' 'e2e static: controller Pod RBAC exceeds read-only evidence access' >&2
+	exit 1
+}
+if grep -Eq '^[[:space:]]*failurePolicy: (Ignore|FailOpen)$' "$RENDERED_WEBHOOKS"; then
+	printf '%s\n' 'e2e static: rendered admission webhooks are not fail-closed' >&2
+	exit 1
+fi
+
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--show-only templates/certificate-rotation.yaml \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	>"$ROTATOR_RENDER"
+[ "$(grep -c '^kind: Deployment$' "$ROTATOR_RENDER")" -eq 1 ]
+if grep -Eq '^kind: (Job|CronJob)$' "$ROTATOR_RENDER"; then
+	printf '%s\n' 'e2e static: certificate rotator is blocked by Job Pod admission' >&2
+	exit 1
+fi
+for rotator_marker in \
+	'--run-interval=6h' \
+	'--operation-timeout=15m' \
+	'--retry-initial=5s' \
+	'--retry-max=5m' \
+	'--health-bind-address=:8081' \
+	'path: /healthz' \
+	'path: /readyz' \
+	'name: health' \
+	'containerPort: 8081'; do
+	grep -F -- "$rotator_marker" "$ROTATOR_RENDER" >/dev/null
+done
 
 if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 		--namespace ptah-e2e \
@@ -420,7 +605,7 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string webhook.caBundle=e2e-ca \
 	--set-string webhook.failurePolicy=Ignore \
 	>"$OBSOLETE_RENDER" 2>"$OBSOLETE_ERROR"; then
-	[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$OBSOLETE_RENDER")" -eq 2 ] || {
+	[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$OBSOLETE_RENDER")" -eq 3 ] || {
 		printf '%s\n' 'e2e static: obsolete webhook.failurePolicy changed the rendered fail-closed contract' >&2
 		exit 1
 	}

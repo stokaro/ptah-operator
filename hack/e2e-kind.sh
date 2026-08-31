@@ -166,6 +166,7 @@ fi
 identity="${K8S_VERSION}-${E2E_RUN_ID}"
 CLUSTER_NAME=$(dns_name ptah-e2e "$identity" 48)
 OPERATOR_NAMESPACE=$(dns_name ptah-system "$identity")
+HA_TEST_NAMESPACE=$(dns_name ptah-test-ha "$identity")
 TEST_NAMESPACE=$(dns_name ptah-test-a "$identity")
 FOREIGN_NAMESPACE=$(dns_name ptah-test-b "$identity")
 # Leave room for the chart name and its longest resource suffix.
@@ -577,13 +578,15 @@ client_major=$(printf '%s\n' "$client_version" | sed -n 's/^v\([0-9][0-9]*\)\..*
 client_minor=$(printf '%s\n' "$client_version" | sed -n 's/^v[0-9][0-9]*\.\([0-9][0-9]*\)\..*$/\1/p')
 server_major=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1)
 server_minor=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f2)
-[ -n "$client_major" ] && [ -n "$client_minor" ] ||
+if [ -z "$client_major" ] || [ -z "$client_minor" ]; then
 	fail "could not parse kubectl client version $client_version"
+fi
 [ "$client_major" -eq "$server_major" ] ||
 	fail "kubectl $client_version has a different major version than Kubernetes $K8S_VERSION"
 minor_skew=$((client_minor - server_minor))
-[ "$minor_skew" -ge -1 ] && [ "$minor_skew" -le 1 ] ||
+if [ "$minor_skew" -lt -1 ] || [ "$minor_skew" -gt 1 ]; then
 	fail "kubectl $client_version is outside the supported one-minor skew for Kubernetes $K8S_VERSION"
+fi
 
 ensure_source_image "$E2E_REGISTRY_IMAGE"
 printf 'e2e: starting isolated registry %s on Docker context %s\n' \
@@ -680,8 +683,16 @@ helm --kubeconfig "$KUBECONFIG_FILE" upgrade --install "$HELM_RELEASE" \
 	--set-string execution.executorImage="$E2E_EXECUTOR_IMAGE" \
 	--set-string execution.runnerImage="$E2E_RUNNER_IMAGE" \
 	--set-string execution.ptahVersion="$E2E_PTAH_VERSION" \
-	--set replicaCount=1 \
+	--set-string certificateRotation.interval="168h" \
+	--set replicaCount=2 \
 	--set podDisruptionBudget.enabled=false
+
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_HA_TEST_NAMESPACE=$HA_TEST_NAMESPACE \
+E2E_FOREIGN_NAMESPACE=$FOREIGN_NAMESPACE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+	"$ROOT_DIR/hack/e2e-ha.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -692,6 +703,11 @@ E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 	"$ROOT_DIR/hack/e2e-assert.sh"
+
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+	"$ROOT_DIR/hack/e2e-cert-rotation.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \

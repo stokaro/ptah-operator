@@ -36,11 +36,13 @@ import (
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/planstore"
+	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/schemaselector"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 const (
@@ -81,6 +83,9 @@ type SchemaReconciler struct {
 	LockNamespace string
 	Clock         func() time.Time
 	Telemetry     telemetry.Observer
+	// AdmissionOptions must match cluster-wide built-in Pod admission settings.
+	// The exact values are copied into each durable operation snapshot.
+	AdmissionOptions podintent.Options
 }
 
 func (r *SchemaReconciler) Reconcile(ctx context.Context, request ctrl.Request) (result ctrl.Result, err error) {
@@ -511,6 +516,11 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		if r.Jobs == nil {
 			return ctrl.Result{}, fmt.Errorf("Job builder is not configured")
 		}
+		if operation.AdmissionSnapshot != nil {
+			if snapshotErr := podintent.ValidateSnapshot(operation.AdmissionSnapshot); snapshotErr != nil {
+				return r.operationFailure(ctx, schema, fmt.Errorf("validate persisted Pod admission snapshot: %w", snapshotErr))
+			}
+		}
 		job, err = r.Jobs.Build(schema, *operation, plan)
 		if err != nil {
 			if operation.Type == operatorv1alpha1.OperationApply {
@@ -520,6 +530,40 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		if job.Namespace != schema.Namespace || job.Name != operation.JobName {
 			return ctrl.Result{}, fmt.Errorf("Job builder returned an object outside the operation claim")
+		}
+		if operation.AdmissionSnapshot != nil {
+			templateDigest, digestErr := podintent.DigestTemplate(&job.Spec.Template)
+			if digestErr != nil {
+				failure := fmt.Errorf("validate rebuilt Job Pod template: %w", digestErr)
+				if operation.Type != operatorv1alpha1.OperationApply {
+					return r.discardStaleOperation(ctx, schema, failure)
+				}
+				return r.operationFailure(ctx, schema, failure)
+			}
+			if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
+				failure := fmt.Errorf("rebuilt Job Pod template differs from the persisted admission snapshot")
+				if operation.Type != operatorv1alpha1.OperationApply {
+					return r.discardStaleOperation(ctx, schema, failure)
+				}
+				return r.operationFailure(ctx, schema, failure)
+			}
+		}
+		if operation.AdmissionSnapshot == nil {
+			snapshot, snapshotErr := podintent.Resolve(
+				ctx, r.directReader(), schema.Namespace, &job.Spec.Template, r.AdmissionOptions,
+			)
+			if snapshotErr != nil {
+				return r.operationFailure(ctx, schema, fmt.Errorf("resolve Pod admission snapshot: %w", snapshotErr))
+			}
+			before := schema.DeepCopy()
+			schema.Status.ActiveOperation.AdmissionSnapshot = snapshot
+			if err := r.patchStatus(ctx, before, schema); err != nil {
+				return ctrl.Result{}, err
+			}
+			// The snapshot is a separate durable boundary. In particular, an
+			// Apply reconciliation must persist it before DispatchStarted and
+			// before the one permitted Job create attempt.
+			return ctrl.Result{Requeue: true}, nil
 		}
 		expectedJob := job.DeepCopy()
 		if operationNeedsTargetLock(schema) && !operation.DispatchStarted {
@@ -2262,7 +2306,10 @@ func (r *SchemaReconciler) collectTerminalPodEvidence(
 	if selected.UID == "" {
 		return evidence, nil, fmt.Errorf("%w: Pod UID is empty", errTerminalPodIntent)
 	}
-	if err := validatePodIntent(selected, job); err != nil {
+	if schema.Status.ActiveOperation == nil {
+		return evidence, nil, fmt.Errorf("%w: active operation admission binding is missing", errTerminalPodIntent)
+	}
+	if err := validatePodIntent(selected, job, schema.Status.ActiveOperation.AdmissionSnapshot); err != nil {
 		return evidence, nil, fmt.Errorf("%w: %v", errTerminalPodIntent, err)
 	}
 	for _, status := range selected.Status.ContainerStatuses {
@@ -2842,6 +2889,9 @@ func (r *SchemaReconciler) SetupWithManager(manager ctrl.Manager) error {
 	if problems := k8svalidation.IsDNS1123Label(r.LockNamespace); len(problems) != 0 {
 		return fmt.Errorf("target lock namespace is invalid: %s", problems[0])
 	}
+	if err := r.AdmissionOptions.Validate(); err != nil {
+		return fmt.Errorf("Pod admission configuration is invalid: %w", err)
+	}
 	if r.Client == nil {
 		r.Client = manager.GetClient()
 	}
@@ -3319,7 +3369,11 @@ func normalizeGeneratedJobSelector(job *batchv1.Job) error {
 	return nil
 }
 
-func validatePodIntent(pod *corev1.Pod, job *batchv1.Job) error {
+func validatePodIntent(
+	pod *corev1.Pod,
+	job *batchv1.Job,
+	snapshot *operatorv1alpha1.PodAdmissionSnapshot,
+) error {
 	if pod == nil || job == nil || job.UID == "" ||
 		!exactControllerOwner(pod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job", job.Name, job.UID) {
 		return fmt.Errorf("Pod is not controller-owned by the exact Job UID")
@@ -3345,63 +3399,13 @@ func validatePodIntent(pod *corev1.Pod, job *batchv1.Job) error {
 		}
 	}
 
-	expectedPod := &corev1.Pod{Spec: *job.Spec.Template.Spec.DeepCopy()}
-	actualPod := pod.DeepCopy()
-	clientgoscheme.Scheme.Default(expectedPod)
-	clientgoscheme.Scheme.Default(actualPod)
-	actualPod.Spec.NodeName = expectedPod.Spec.NodeName
-	actualPod.Spec.Priority = expectedPod.Spec.Priority
-	actualPod.Spec.PreemptionPolicy = expectedPod.Spec.PreemptionPolicy
-	if containsLocalObjectReferences(actualPod.Spec.ImagePullSecrets, expectedPod.Spec.ImagePullSecrets) {
-		actualPod.Spec.ImagePullSecrets = append([]corev1.LocalObjectReference(nil), expectedPod.Spec.ImagePullSecrets...)
+	if snapshot == nil || job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] != snapshot.Digest {
+		return fmt.Errorf("Job template is not bound to the persisted admission snapshot")
 	}
-	actualPod.Spec.Tolerations = removeAutomaticNoExecuteTolerations(actualPod.Spec.Tolerations, expectedPod.Spec.Tolerations)
-	if !reflect.DeepEqual(actualPod.Spec, expectedPod.Spec) {
-		return fmt.Errorf("Pod workload spec does not match the validated Job template")
+	if err := podintent.ValidatePodSpec(&pod.Spec, &job.Spec.Template, snapshot); err != nil {
+		return fmt.Errorf("Pod workload spec does not match the validated Job template: %w", err)
 	}
 	return nil
-}
-
-func containsLocalObjectReferences(actual, expected []corev1.LocalObjectReference) bool {
-	remaining := make(map[string]int, len(actual))
-	for _, reference := range actual {
-		remaining[reference.Name]++
-	}
-	for _, reference := range expected {
-		if remaining[reference.Name] == 0 {
-			return false
-		}
-		remaining[reference.Name]--
-	}
-	return true
-}
-
-func removeAutomaticNoExecuteTolerations(actual, expected []corev1.Toleration) []corev1.Toleration {
-	filtered := make([]corev1.Toleration, 0, len(actual))
-	for _, toleration := range actual {
-		if slicesContainsToleration(expected, toleration) {
-			filtered = append(filtered, toleration)
-			continue
-		}
-		if toleration.Operator == corev1.TolerationOpExists && toleration.Effect == corev1.TaintEffectNoExecute &&
-			(toleration.Key == "node.kubernetes.io/not-ready" || toleration.Key == "node.kubernetes.io/unreachable") {
-			continue
-		}
-		filtered = append(filtered, toleration)
-	}
-	if len(filtered) == 0 && len(expected) == 0 {
-		return nil
-	}
-	return filtered
-}
-
-func slicesContainsToleration(values []corev1.Toleration, candidate corev1.Toleration) bool {
-	for _, value := range values {
-		if reflect.DeepEqual(value, candidate) {
-			return true
-		}
-	}
-	return false
 }
 
 func setCondition(schema *operatorv1alpha1.PtahSchema, conditionType string, status metav1.ConditionStatus, reason, message string) {

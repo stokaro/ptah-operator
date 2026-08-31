@@ -3,6 +3,25 @@
   "title": "Ptah operator Helm values",
   "type": "object",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "leaderElection": {
+            "const": false
+          }
+        },
+        "required": ["leaderElection"]
+      },
+      "then": {
+        "properties": {
+          "replicaCount": {
+            "maximum": 1
+          }
+        }
+      }
+    }
+  ],
   "properties": {
     "replicaCount": {
       "type": "integer",
@@ -71,6 +90,30 @@
         "ptahVersion": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defaultTolerationsEnabled", "defaultNotReadyTolerationSeconds", "defaultUnreachableTolerationSeconds", "extendedResourceTolerationEnabled", "alwaysPullImagesEnabled"],
+      "properties": {
+        "defaultTolerationsEnabled": {
+          "type": "boolean"
+        },
+        "defaultNotReadyTolerationSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "defaultUnreachableTolerationSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "extendedResourceTolerationEnabled": {
+          "type": "boolean"
+        },
+        "alwaysPullImagesEnabled": {
+          "type": "boolean"
         }
       }
     },
@@ -183,10 +226,78 @@
           "maximum": 30
         },
         "existingSecret": {
-          "type": "string"
+          "type": "string",
+          "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+          "maxLength": 253
         },
         "caBundle": {
           "type": "string"
+        }
+      }
+    },
+    "certificateRotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "interval",
+        "operationTimeout",
+        "retryInitial",
+        "retryMax",
+        "healthPort",
+        "renewalThreshold",
+        "servingCertificateValidity",
+        "caCertificateValidity",
+        "probeTimeout",
+        "probeInterval",
+        "leaseDuration",
+        "leaseAcquireTimeout",
+        "resources"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "interval": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "operationTimeout": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "retryInitial": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "retryMax": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "healthPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "renewalThreshold": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "servingCertificateValidity": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "caCertificateValidity": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "probeTimeout": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "probeInterval": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "leaseDuration": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "leaseAcquireTimeout": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "resources": {
+          "type": "object"
         }
       }
     },
@@ -221,6 +332,12 @@
           ]
         }
       }
+    }
+  },
+  "definitions": {
+    "positiveDuration": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*(ms|s|m|h)$"
     }
   }
 }

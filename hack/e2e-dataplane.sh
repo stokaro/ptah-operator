@@ -19,6 +19,8 @@ REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
 REGISTRY_CREDENTIALS_FILE=${E2E_REGISTRY_CREDENTIALS_FILE:-}
 RECONCILE_INTERVAL=${E2E_RECONCILE_INTERVAL:-15s}
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
+ADMISSION_RUNTIME_CLASS=ptah-e2e-runtime
+ADMISSION_RUNTIME_TAINT=operator.ptah.dev/e2e-runtime
 
 # Imported variables retain their export attribute across reassignment in
 # POSIX shells. Clear every secret-bearing name before loading task values.
@@ -69,8 +71,9 @@ for value_name in \
 	[ -n "$value" ] || fail "$value_name is required"
 done
 [ -f "$KUBECONFIG_FILE" ] || fail "E2E_KUBECONFIG does not name a file"
-[ -f "$REGISTRY_CREDENTIALS_FILE" ] && [ ! -L "$REGISTRY_CREDENTIALS_FILE" ] ||
+if [ ! -f "$REGISTRY_CREDENTIALS_FILE" ] || [ -L "$REGISTRY_CREDENTIALS_FILE" ]; then
 	fail "E2E_REGISTRY_CREDENTIALS_FILE must name a regular non-symlink file"
+fi
 if registry_credentials_mode=$(stat -c '%a' "$REGISTRY_CREDENTIALS_FILE" 2>/dev/null); then
 	:
 else
@@ -118,6 +121,7 @@ MYSQL_URL_FILE=$WORK_DIR/mysql.url
 REGISTRY_PASSWORD_FILE=$WORK_DIR/registry.password
 RESULT_ASSERT_BINARY=$WORK_DIR/e2e-resultassert
 RESULT_LOG_FILE=$WORK_DIR/runner-result.log
+ADMISSION_ERROR_FILE=$WORK_DIR/admission-error.txt
 MYSQL_DESTRUCTIVE_SCHEMA=
 MYSQL_DESTRUCTIVE_PLAN=
 MYSQL_DESTRUCTIVE_PLAN_UID=
@@ -128,6 +132,7 @@ MYSQL_DESTRUCTIVE_DIGEST=
 RBAC_PAUSED=0
 RBAC_RULE_INDEX=
 RBAC_ORIGINAL_VERBS=
+EPHEMERAL_SUBRESOURCE_TESTED=0
 
 mkdir -p "$WORK_DIR/go-cache"
 env GOCACHE="$WORK_DIR/go-cache" go build -trimpath \
@@ -200,7 +205,100 @@ record_observed_jobs() {
 	done
 }
 
+assert_active_pod_ephemeral_container_rejected() {
+	active_pod_object=$(k -n "$TEST_NAMESPACE" get pods \
+		-l 'app.kubernetes.io/managed-by=ptah-operator,app.kubernetes.io/component=schema-operation' \
+		-o json | jq -c '
+      [.items[] | select(
+        .metadata.deletionTimestamp == null and
+        (.status.phase == "Pending" or .status.phase == "Running") and
+        any(.metadata.ownerReferences[]?;
+          .apiVersion == "batch/v1" and .kind == "Job" and .controller == true))] |
+      first // empty
+    ')
+	[ -n "$active_pod_object" ] || return 1
+	active_pod_name=$(printf '%s\n' "$active_pod_object" | jq -er '.metadata.name')
+	active_pod_uid=$(printf '%s\n' "$active_pod_object" | jq -er '.metadata.uid')
+	active_job_name=$(printf '%s\n' "$active_pod_object" | jq -er '
+      .metadata.ownerReferences[] |
+      select(.apiVersion == "batch/v1" and .kind == "Job" and .controller == true) |
+      .name
+    ')
+	active_job_uid=$(printf '%s\n' "$active_pod_object" | jq -er '
+      .metadata.ownerReferences[] |
+      select(.apiVersion == "batch/v1" and .kind == "Job" and .controller == true) |
+      .uid
+    ')
+	active_schema=$(printf '%s\n' "$active_pod_object" |
+		jq -er '.metadata.labels["operator.ptah.dev/schema"]')
+	active_job_object=$(k -n "$TEST_NAMESPACE" get job "$active_job_name" -o json 2>/dev/null || true)
+	[ -n "$active_job_object" ] || return 1
+	printf '%s\n' "$active_job_object" | jq -e \
+		--arg jobUID "$active_job_uid" \
+		--arg podUID "$active_pod_uid" '
+      .metadata.uid == $jobUID and
+      .status.active >= 1 and
+      .spec.template.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] != null and
+      $podUID != ""
+    ' >/dev/null || return 1
+	active_schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$active_schema" -o json 2>/dev/null || true)
+	[ -n "$active_schema_object" ] || return 1
+	printf '%s\n' "$active_schema_object" | jq -e \
+		--arg jobName "$active_job_name" \
+		--arg jobUID "$active_job_uid" '
+      .status.activeOperation.jobName == $jobName and
+      .status.activeOperation.jobUID == $jobUID and
+      (.status.activeOperation.admissionSnapshot.digest |
+        test("^sha256:[0-9a-f]{64}$"))
+    ' >/dev/null || return 1
+
+	jq -n --arg uid "$active_pod_uid" --arg image "$RUNNER_IMAGE" '
+    {
+      metadata: {uid: $uid},
+      spec: {
+        ephemeralContainers: [{
+          name: "forbidden-e2e",
+          image: $image,
+          imagePullPolicy: "IfNotPresent",
+          command: ["/ptah-runner"],
+          args: ["--help"],
+          securityContext: {
+            allowPrivilegeEscalation: false,
+            capabilities: {drop: ["ALL"]}
+          }
+        }]
+      }
+    }
+  ' >"$RESOURCE_FILE"
+	# kubectl binds this request to the captured Pod UID and sends it to the
+	# /ephemeralcontainers subresource, which must remain inside the snapshot.
+	if k -n "$TEST_NAMESPACE" patch pod "$active_pod_name" \
+		--subresource=ephemeralcontainers --type=merge \
+		--patch-file="$RESOURCE_FILE" >"$ADMISSION_ERROR_FILE" 2>&1; then
+		fail "Pod intent admission allowed an ephemeral container on exact active Pod $active_pod_name UID $active_pod_uid"
+	fi
+	grep -F 'vpodintent.operator.ptah.dev' "$ADMISSION_ERROR_FILE" >/dev/null ||
+		fail "ephemeral-container rejection did not come from the Pod intent webhook"
+	grep -F 'persisted admission envelope' "$ADMISSION_ERROR_FILE" >/dev/null ||
+		fail "Pod intent webhook rejected the active Pod for an unexpected reason"
+	k -n "$TEST_NAMESPACE" get pod "$active_pod_name" -o json | jq -e \
+		--arg podUID "$active_pod_uid" \
+		--arg jobUID "$active_job_uid" '
+      .metadata.uid == $podUID and
+      any(.metadata.ownerReferences[]?;
+        .apiVersion == "batch/v1" and .kind == "Job" and
+        .uid == $jobUID and .controller == true) and
+      ((.spec.ephemeralContainers // []) | length) == 0
+    ' >/dev/null || fail "active Pod identity changed during the negative subresource test"
+	: >"$ADMISSION_ERROR_FILE"
+	return 0
+}
+
 audit_completed_jobs() {
+	if [ "$EPHEMERAL_SUBRESOURCE_TESTED" -eq 0 ] &&
+		assert_active_pod_ephemeral_container_rejected; then
+		EPHEMERAL_SUBRESOURCE_TESTED=1
+	fi
 	record_observed_jobs
 	audit_jobs=$(k -n "$TEST_NAMESPACE" get jobs -o json)
 	printf '%s\n' "$audit_jobs" | jq -r '
@@ -234,6 +332,20 @@ audit_completed_jobs() {
         ')
 		[ "$(printf '%s\n' "$audit_owned_pods" | jq '.items | length')" -gt 0 ] ||
 			fail "terminal Job $audit_name UID $audit_uid has no exact owned Pod to audit"
+		if printf '%s\n' "$audit_job_object" | jq -e \
+			--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" '
+          .metadata.labels["app.kubernetes.io/component"] == "schema-operation" and
+          .spec.template.spec.runtimeClassName == $runtimeClass
+        ' >/dev/null; then
+			printf '%s\n' "$audit_job_object" | jq -e \
+				--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" '
+              (.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] // "") as $digest |
+              ($digest | test("^sha256:[0-9a-f]{64}$")) and
+              .spec.template.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] == $digest and
+              .spec.template.spec.runtimeClassName == $runtimeClass
+            ' >/dev/null ||
+				fail "managed Job $audit_name lacks its persisted admission binding"
+		fi
 		: >"$RESOURCE_FILE"
 		printf '%s\n%s\n' "$audit_job_object" "$audit_owned_pods" >"$RESOURCE_FILE"
 		scan_file_for_credentials "$RESOURCE_FILE" \
@@ -261,6 +373,37 @@ audit_completed_jobs() {
               ([$statuses[] | select(.state.terminated != null) | .name] | sort)
             ' >/dev/null ||
 				fail "exact Pod $audit_pod_name UID $audit_pod_uid lacks complete terminal evidence"
+			if printf '%s\n' "$audit_job_object" | jq -e \
+				--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" '
+              .metadata.labels["app.kubernetes.io/component"] == "schema-operation" and
+              .spec.template.spec.runtimeClassName == $runtimeClass
+            ' >/dev/null; then
+				printf '%s\n' "$audit_pod_object" | jq -e \
+					--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" \
+					--arg runtimeTaint "$ADMISSION_RUNTIME_TAINT" \
+					--arg pullSecret "$REGISTRY_PULL_SECRET" '
+                  (.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] // "") as $digest |
+                  ($digest | test("^sha256:[0-9a-f]{64}$")) and
+                  .spec.runtimeClassName == $runtimeClass and
+                  .spec.nodeSelector["kubernetes.io/os"] == "linux" and
+                  .spec.overhead.memory == "8Mi" and
+                  .spec.imagePullSecrets == [{name: $pullSecret}] and
+                  all((.spec.containers + (.spec.initContainers // []))[];
+                    .resources.requests.cpu == "10m" and
+                    .resources.requests.memory == "16Mi" and
+                    .resources.limits.cpu == "100m" and
+                    .resources.limits.memory == "64Mi") and
+                  any(.spec.tolerations[];
+                    .key == "node.kubernetes.io/not-ready" and
+                    .operator == "Exists" and .effect == "NoExecute" and .tolerationSeconds == 300) and
+                  any(.spec.tolerations[];
+                    .key == "node.kubernetes.io/unreachable" and
+                    .operator == "Exists" and .effect == "NoExecute" and .tolerationSeconds == 300) and
+                  any(.spec.tolerations[];
+                    .key == $runtimeTaint and .operator == "Exists" and .effect == "NoSchedule")
+                ' >/dev/null ||
+					fail "managed Pod $audit_pod_name lacks exact LimitRange, ServiceAccount, RuntimeClass, or default-toleration admission"
+			fi
 			audit_containers=$(printf '%s\n' "$audit_pod_object" | jq -r '
               [(.status.initContainerStatuses // [])[],
                (.status.containerStatuses // [])[],
@@ -728,6 +871,41 @@ create_registry_service() {
       ]
     }' >"$RESOURCE_FILE"
 	k apply -f "$RESOURCE_FILE" >/dev/null
+}
+
+create_admission_fixtures() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" \
+		--arg runtimeTaint "$ADMISSION_RUNTIME_TAINT" '
+    {
+      apiVersion: "v1", kind: "List", items: [
+        {
+          apiVersion: "v1", kind: "LimitRange",
+          metadata: {namespace: $namespace, name: "ptah-operation-defaults"},
+          spec: {limits: [{
+            type: "Container",
+            defaultRequest: {cpu: "10m", memory: "16Mi"},
+            default: {cpu: "100m", memory: "64Mi"}
+          }]}
+        },
+        {
+          apiVersion: "node.k8s.io/v1", kind: "RuntimeClass",
+          metadata: {name: $runtimeClass},
+          handler: "runc",
+          overhead: {podFixed: {memory: "8Mi"}},
+          scheduling: {
+            nodeSelector: {"kubernetes.io/os": "linux"},
+            tolerations: [{key: $runtimeTaint, operator: "Exists", effect: "NoSchedule"}]
+          }
+        }
+      ]
+    }' >"$RESOURCE_FILE"
+	k apply -f "$RESOURCE_FILE" >/dev/null
+	service_account_patch=$(jq -cn --arg secret "$REGISTRY_PULL_SECRET" \
+		'{imagePullSecrets: [{name: $secret}]}')
+	k -n "$TEST_NAMESPACE" patch serviceaccount default --type=merge \
+		--patch "$service_account_patch" >/dev/null
 }
 
 credential_suffix=$(printf '%s' "$TEST_NAMESPACE" | cksum | awk '{print $1}')
@@ -1230,7 +1408,7 @@ create_schema_resource() {
 		--arg coordinationKey "$resource_coordination_key" \
 		--arg policy e2e-verification-policy \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
-		--arg registryPullSecret "$REGISTRY_PULL_SECRET" \
+		--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" \
 		--arg interval "$RECONCILE_INTERVAL" '
     {
       apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
@@ -1260,7 +1438,7 @@ create_schema_resource() {
         interval: $interval,
         execution: {
 	          activeDeadlineSeconds: 300, failureRetryInterval: "5s", connectTimeout: "30s",
-	          imagePullSecrets: [{name: $registryPullSecret}]
+	          runtimeClassName: $runtimeClass
         }
       }
     }' >"$RESOURCE_FILE"
@@ -1595,11 +1773,12 @@ assert_destructive_gate() {
 }
 
 assert_mysql_destructive_refusal_durable() {
-	[ -n "$MYSQL_DESTRUCTIVE_SCHEMA" ] && [ -n "$MYSQL_DESTRUCTIVE_PLAN" ] &&
-		[ -n "$MYSQL_DESTRUCTIVE_PLAN_UID" ] &&
-		[ -n "$MYSQL_DESTRUCTIVE_APPLY_CHECKPOINT" ] &&
-		[ -n "$MYSQL_DESTRUCTIVE_DIGEST" ] ||
+	if [ -z "$MYSQL_DESTRUCTIVE_SCHEMA" ] || [ -z "$MYSQL_DESTRUCTIVE_PLAN" ] ||
+		[ -z "$MYSQL_DESTRUCTIVE_PLAN_UID" ] ||
+		[ -z "$MYSQL_DESTRUCTIVE_APPLY_CHECKPOINT" ] ||
+		[ -z "$MYSQL_DESTRUCTIVE_DIGEST" ]; then
 		fail "MySQL destructive-refusal evidence was not retained"
+	fi
 	wait_for_schema "$MYSQL_DESTRUCTIVE_SCHEMA" \
 		'.status.phase == "Blocked" and .status.activeOperation == null and .status.pendingObservation == null and .status.pendingLockRelease == null' \
 		"the long-window MySQL DROP INDEX refusal"
@@ -1813,10 +1992,13 @@ k -n "$TEST_NAMESPACE" rollout status deployment/"$MYSQL_SERVICE" --timeout="${T
 wait_for_database postgresql
 wait_for_database mysql
 report_database_versions
+create_admission_fixtures
 
 run_engine_lifecycle postgresql PostgreSQL postgres "$PG_SECRET"
 run_engine_lifecycle mysql MySQL mysql "$MYSQL_SECRET"
 run_mysql_dsn_refusal
+[ "$EPHEMERAL_SUBRESOURCE_TESTED" -eq 1 ] ||
+	fail "no UID-bound active operation Pod was available for the ephemeralcontainers rejection test"
 audit_runtime_credentials
 
 printf '%s\n' 'e2e data plane: starting restart and fault-injection acceptance'

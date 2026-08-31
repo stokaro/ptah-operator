@@ -19,6 +19,16 @@ filesystem, `RuntimeDefault` seccomp, no Linux capabilities, no privilege
 escalation, a deadline, bounded memory-backed work volumes, and no automatic
 Job retry.
 
+Before dispatch, the controller persists a canonical, credential-free snapshot
+of the built-in Kubernetes mutations that may affect an operation Pod. It reads
+ServiceAccount names and image-pull-secret references, LimitRange quantities,
+RuntimeClass scheduling and overhead, and PriorityClass values, but never reads
+the referenced Secret data. A fail-closed validating webhook checks the final
+post-mutation Pod before scheduling. Only the exact snapshotted mutations are
+accepted; executable, environment, volume, and security fields remain exact.
+The controller retains read-only Pod evidence permissions and is not granted
+Pod create or delete permission.
+
 Memory-backed `emptyDir` usage is charged to the writing container by
 Kubernetes. The chart defaults bound each volume, but production resource
 limits must also leave headroom for the runner binary, fetched schema, plan,
@@ -124,6 +134,9 @@ SQL output.
 - Pin manager, runner, and executor images by digest and verify their release
   provenance before installation.
 - Protect the shared target-lock namespace from untrusted Lease writers.
+- Install exactly one operator Helm release per cluster. Scale replicas within
+  that release for high availability; the singleton admission configuration
+  intentionally prevents ordinary independent-release ownership.
 - Assign one stable coordination key to every physical database and reuse it
   across all aliases, proxies, credentials, namespaces, and Ptah resource kinds.
 - Use separate database credentials for production and optional dev rehearsal

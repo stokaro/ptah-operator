@@ -1275,8 +1275,42 @@ func TestFreshLeaseEpochPersistenceAlwaysSchedulesJobDispatch(t *testing.T) {
 	if err := api.List(context.Background(), jobs, client.InNamespace(schema.Namespace)); err != nil {
 		t.Fatal(err)
 	}
+	if len(jobs.Items) != 0 {
+		t.Fatalf("admission snapshot persistence created %d Jobs", len(jobs.Items))
+	}
+	afterSnapshot := safetyGetSchema(t, api, schema)
+	if afterSnapshot.Status.ActiveOperation == nil || afterSnapshot.Status.ActiveOperation.AdmissionSnapshot == nil ||
+		afterSnapshot.Status.ActiveOperation.DispatchStarted {
+		t.Fatalf("admission boundary = %#v, want persisted snapshot before dispatch", afterSnapshot.Status.ActiveOperation)
+	}
+	boundDigest := afterSnapshot.Status.ActiveOperation.AdmissionSnapshot.Digest
+	serviceAccount := &corev1.ServiceAccount{}
+	if err := api.Get(context.Background(), client.ObjectKey{Namespace: schema.Namespace, Name: "default"}, serviceAccount); err != nil {
+		t.Fatalf("Get(default ServiceAccount) error = %v", err)
+	}
+	serviceAccount.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "changed-after-snapshot"}}
+	if err := api.Update(context.Background(), serviceAccount); err != nil {
+		t.Fatalf("mutate ServiceAccount after admission snapshot: %v", err)
+	}
+
+	// A fresh reconciler has no in-memory admission state. It must dispatch from
+	// the persisted snapshot without re-resolving changed cluster resources.
+	restarted := *reconciler
+	if _, err := restarted.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("third Reconcile() error = %v", err)
+	}
+	if err := api.List(context.Background(), jobs, client.InNamespace(schema.Namespace)); err != nil {
+		t.Fatal(err)
+	}
 	if len(jobs.Items) != 1 {
-		t.Fatalf("second reconciliation created %d Jobs, want 1", len(jobs.Items))
+		t.Fatalf("third reconciliation created %d Jobs, want 1", len(jobs.Items))
+	}
+	if got := jobs.Items[0].Annotations[workload.AnnotationAdmissionSnapshotDigest]; got != boundDigest {
+		t.Fatalf("restarted dispatch admission digest = %q, want persisted %q", got, boundDigest)
+	}
+	afterDispatch := safetyGetSchema(t, api, schema)
+	if got := afterDispatch.Status.ActiveOperation.AdmissionSnapshot.Digest; got != boundDigest {
+		t.Fatalf("restarted reconciliation replaced admission digest = %q, want %q", got, boundDigest)
 	}
 }
 

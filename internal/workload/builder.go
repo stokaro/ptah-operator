@@ -52,6 +52,9 @@ const (
 	AnnotationPlanFingerprint = "operator.ptah.dev/plan-fingerprint"
 	// AnnotationPlanContentDigest records the reconstructed plan byte digest.
 	AnnotationPlanContentDigest = "operator.ptah.dev/plan-content-digest"
+	// AnnotationAdmissionSnapshotDigest binds the Job and every resulting Pod
+	// to the credential-free admission envelope persisted before dispatch.
+	AnnotationAdmissionSnapshotDigest = "operator.ptah.dev/admission-snapshot-digest"
 
 	mainContainerName   = "ptah"
 	initContainerName   = "install-runner"
@@ -204,6 +207,13 @@ func (b Builder) Build(
 	annotations[AnnotationOperationID] = operation.ID
 	annotations[AnnotationInputFingerprint] = operation.InputFingerprint
 	annotations[AnnotationPtahVersion] = b.PtahVersion
+	if operation.AdmissionSnapshot != nil {
+		if !sha256Pattern.MatchString(operation.AdmissionSnapshot.Digest) ||
+			!sha256Pattern.MatchString(operation.AdmissionSnapshot.TemplateDigest) {
+			return nil, errors.New("Pod admission snapshot and template digests must be lowercase SHA-256 digests")
+		}
+		annotations[AnnotationAdmissionSnapshotDigest] = operation.AdmissionSnapshot.Digest
+	}
 
 	deadline := activeDeadlineSeconds(schema)
 	if operation.Type == operatorv1alpha1.OperationApply && operation.ExecutionNotAfter != nil {

@@ -3,6 +3,7 @@ package v1alpha1
 import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -312,6 +313,107 @@ type TargetLockReleaseStatus struct {
 	LeaseEpoch string `json:"leaseEpoch"`
 }
 
+// AdmissionObjectBinding identifies one API object whose credential-free
+// contents contributed to the resolved Pod admission envelope.
+type AdmissionObjectBinding struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	UID string `json:"uid"`
+	// ResourceVersion is opaque, but bounded here so hostile metadata cannot
+	// make the status object grow without limit.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	ResourceVersion string `json:"resourceVersion"`
+}
+
+// LimitRangeAdmissionSnapshot contains only the container defaults that can
+// legitimately fill resource keys absent from the submitted Job template.
+type LimitRangeAdmissionSnapshot struct {
+	Object AdmissionObjectBinding `json:"object"`
+	// +kubebuilder:validation:MaxProperties=64
+	DefaultRequests map[corev1.ResourceName]resource.Quantity `json:"defaultRequests,omitempty"`
+	// +kubebuilder:validation:MaxProperties=64
+	DefaultLimits map[corev1.ResourceName]resource.Quantity `json:"defaultLimits,omitempty"`
+}
+
+// RuntimeClassAdmissionSnapshot records the exact scheduling and overhead
+// mutation selected before dispatch. Handler is deliberately retained as
+// credential-free audit evidence even though it is not copied into PodSpec.
+type RuntimeClassAdmissionSnapshot struct {
+	Object AdmissionObjectBinding `json:"object"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Handler string `json:"handler"`
+	// OverheadDefined distinguishes an absent RuntimeClass overhead stanza from
+	// a present but empty one; Kubernetes admission preserves that distinction.
+	OverheadDefined bool `json:"overheadDefined,omitempty"`
+	// +kubebuilder:validation:MaxProperties=64
+	Overhead map[corev1.ResourceName]resource.Quantity `json:"overhead,omitempty"`
+	// +kubebuilder:validation:MaxProperties=64
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// +kubebuilder:validation:MaxItems=64
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+}
+
+// PriorityClassAdmissionSnapshot records the exact values injected by the
+// Priority admission plugin. Object is absent only when the cluster has no
+// global default and the Job does not request a named PriorityClass.
+type PriorityClassAdmissionSnapshot struct {
+	Object *AdmissionObjectBinding `json:"object,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
+	Name  string `json:"name,omitempty"`
+	Value int32  `json:"value"`
+	// +kubebuilder:validation:Enum=Never;PreemptLowerPriority
+	PreemptionPolicy *corev1.PreemptionPolicy `json:"preemptionPolicy,omitempty"`
+}
+
+// ServiceAccountAdmissionSnapshot binds the non-secret ServiceAccount fields
+// that built-in admission may copy into a Pod.
+type ServiceAccountAdmissionSnapshot struct {
+	Object AdmissionObjectBinding `json:"object"`
+	// +kubebuilder:validation:MaxItems=64
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+}
+
+// PodAdmissionSnapshot is the bounded, credential-free mutation envelope for
+// one active operation. Digest covers every other field using canonical JSON.
+// A controller restart validates this persisted snapshot instead of rereading
+// resources whose later mutations must not reinterpret the operation.
+type PodAdmissionSnapshot struct {
+	// +kubebuilder:validation:Enum=v1
+	Version string `json:"version"`
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Digest string `json:"digest"`
+	// TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod
+	// template. The self-referential snapshot annotation and four exact
+	// API-server-generated Job identity labels are omitted and validated
+	// separately against the current Job name and UID.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	TemplateDigest string `json:"templateDigest"`
+
+	ServiceAccount ServiceAccountAdmissionSnapshot `json:"serviceAccount"`
+	// +kubebuilder:validation:MaxItems=32
+	LimitRanges   []LimitRangeAdmissionSnapshot  `json:"limitRanges,omitempty"`
+	RuntimeClass  *RuntimeClassAdmissionSnapshot `json:"runtimeClass,omitempty"`
+	PriorityClass PriorityClassAdmissionSnapshot `json:"priorityClass"`
+	// DefaultTolerationsEnabled records whether kube-apiserver runs the
+	// DefaultTolerationSeconds admission plugin.
+	DefaultTolerationsEnabled bool `json:"defaultTolerationsEnabled"`
+	// +kubebuilder:validation:Minimum=0
+	DefaultNotReadyTolerationSeconds int64 `json:"defaultNotReadyTolerationSeconds"`
+	// +kubebuilder:validation:Minimum=0
+	DefaultUnreachableTolerationSeconds int64 `json:"defaultUnreachableTolerationSeconds"`
+	// ExtendedResourceTolerationEnabled records whether kube-apiserver runs the
+	// ExtendedResourceToleration admission plugin.
+	ExtendedResourceTolerationEnabled bool `json:"extendedResourceTolerationEnabled"`
+	// AlwaysPullImagesEnabled records whether kube-apiserver runs the
+	// AlwaysPullImages admission plugin.
+	AlwaysPullImagesEnabled bool `json:"alwaysPullImagesEnabled"`
+}
+
 // SchemaSourceStatus binds the requested reference to verified immutable data.
 type SchemaSourceStatus struct {
 	RequestedReference string `json:"requestedReference,omitempty"`
@@ -454,6 +556,12 @@ type ActiveOperationStatus struct {
 	JobUID           types.UID     `json:"jobUID,omitempty"`
 	StartedAt        metav1.Time   `json:"startedAt"`
 	Attempt          int32         `json:"attempt"`
+
+	// AdmissionSnapshot is persisted before dispatch and is bound into the Job
+	// and Pod template annotations. It permits only modeled, safe built-in
+	// admission mutations while retaining exact validation for executable and
+	// security-sensitive Pod fields.
+	AdmissionSnapshot *PodAdmissionSnapshot `json:"admissionSnapshot,omitempty"`
 
 	// DispatchStarted is persisted immediately before the one permitted Job
 	// create attempt. A missing Apply Job after this boundary is outcome-unknown

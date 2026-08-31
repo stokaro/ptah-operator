@@ -1,4 +1,5 @@
 {{- include "ptah-operator.validateExecutionImages" . }}
+{{- include "ptah-operator.validateLeaderElection" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -51,6 +52,11 @@ spec:
             - --runner-image={{ .Values.execution.runnerImage }}
             - --ptah-version={{ required "execution.ptahVersion is required" .Values.execution.ptahVersion }}
             - --target-lock-namespace={{ default .Release.Namespace .Values.coordination.namespace }}
+            - --default-tolerations-enabled={{ .Values.admission.defaultTolerationsEnabled }}
+            - --default-not-ready-toleration-seconds={{ .Values.admission.defaultNotReadyTolerationSeconds }}
+            - --default-unreachable-toleration-seconds={{ .Values.admission.defaultUnreachableTolerationSeconds }}
+            - --extended-resource-toleration-enabled={{ .Values.admission.extendedResourceTolerationEnabled }}
+            - --always-pull-images-enabled={{ .Values.admission.alwaysPullImagesEnabled }}
           ports:
             - name: metrics
               containerPort: 8080
@@ -89,7 +95,12 @@ spec:
       volumes:
         - name: webhook-cert
           secret:
-            secretName: {{ default (printf "%s-webhook-cert" (include "ptah-operator.fullname" .)) .Values.webhook.existingSecret }}
+            secretName: {{ include "ptah-operator.webhookSecretName" . }}
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
         - name: tmp
           emptyDir:
             sizeLimit: 32Mi

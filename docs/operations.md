@@ -15,15 +15,169 @@ them to become Established, then upgrade the release.
 For deterministic GitOps rendering, provision the webhook TLS Secret outside
 the chart and set both `webhook.existingSecret` and the PEM-encoded
 `webhook.caBundle`. A connected Helm install can instead reuse `ca.crt` from an
-existing Secret; a first interactive install can generate a self-signed Secret.
-Argo CD and Flux should depend on the CRDs and TLS Secret before synchronizing
-the Deployment and webhook configurations.
+existing Secret. Setting `webhook.existingSecret` completely disables built-in
+certificate lifecycle resources. A first interactive install can instead
+generate a self-signed Secret and its built-in rotation Deployment. Argo CD and
+Flux should depend on the CRDs and an externally managed TLS Secret before
+synchronizing the Deployment and webhook configurations.
 
-Every operator instance that can manage the same databases must use the same
-`coordination.namespace`. The chart defaults it to the release namespace.
-Within that namespace, every resource that can mutate one physical database
-must also share the exact `spec.target.coordinationKey`, even when connection
-URLs use different aliases, proxies, or credentials.
+Install exactly one Helm release of the operator in a cluster. The manager
+watches cluster-wide resources, and admission uses the singleton
+`ptah-operator-admission` webhook configurations; a second release would create
+an independent availability domain capable of blocking the first. The fixed
+configuration names make an ordinary second Helm install fail ownership
+validation. High availability is provided by `replicaCount` within the one
+release, with leader election enabled. Helm rejects more than one replica when
+`leaderElection=false`; disabling election is supported only for an isolated
+cluster with one operator release and one replica.
+
+`coordination.namespace` contains the fixed manager leader-election Lease and
+the database target Leases. It defaults to the release namespace and may name
+a separately administered namespace for the same release. Within that
+namespace, every resource that can mutate one physical database must share the
+exact `spec.target.coordinationKey`, even when connection URLs use different
+aliases, proxies, or credentials.
+
+The manager has exact `get`, `create`, and `update` access to Leases through
+one namespace Role in `coordination.namespace`. When that namespace differs
+from the release namespace, its RoleBinding names the manager ServiceAccount
+across namespaces. The manager has no cluster-wide Lease rule and no Lease
+access in unrelated namespaces. Certificate rotation uses a different
+ServiceAccount and its exact release-namespace Lease grant.
+
+### Kubernetes admission configuration
+
+The operator persists a bounded snapshot of built-in Pod admission before it
+dispatches an operation Job. Its final Pod validating webhook accepts the
+exact snapshotted LimitRange resource defaults, ServiceAccount image pull
+secrets, RuntimeClass scheduling and overhead, PriorityClass values, and the
+configured admission-plugin mutations. It rejects other changes to resources,
+tolerations, image pull policy, command, image, environment, volumes, or
+security settings before the Pod can be scheduled.
+
+For regular and init containers, Kubernetes copies an admitted limit into a
+previously absent request after admission. The envelope accepts that API
+default only when the request is exactly equal to the separately validated
+limit. LimitRange API defaulting derives a missing container default limit
+from `max`, then derives a missing default request from that limit, and finally
+from `min`. The snapshot records those derived values explicitly. If more than
+one bound LimitRange offers a different value for the same unset field, the
+controller rejects dispatch instead of depending on list-order-dependent
+first-wins behavior. At most 64 request and limit default entries are retained
+across the complete UID- and resourceVersion-bound set.
+
+The `admission` chart values must match the kube-apiserver admission chain:
+
+- `defaultTolerationsEnabled` defaults to `true`. When enabled,
+  `defaultNotReadyTolerationSeconds` and
+  `defaultUnreachableTolerationSeconds` default to 300 and must match the API
+  server flags. Zero means an exact zero-second toleration; it does not disable
+  the plugin. When disabled, both automatically injected tolerations must be
+  absent.
+- `extendedResourceTolerationEnabled` defaults to `false`. Enable it only when
+  kube-apiserver enables `ExtendedResourceToleration`.
+- `alwaysPullImagesEnabled` defaults to `false`. Enable it only when
+  kube-apiserver enables `AlwaysPullImages`.
+
+A mismatch fails closed by rejecting the operation Pod. Updating a referenced
+LimitRange, ServiceAccount, RuntimeClass, or PriorityClass after snapshot
+persistence also rejects newly mutated Pods; retry reconciliation after the
+desired admission objects are stable. The manager receives only read access to
+those credential-free objects. It receives neither Secret read permission nor
+Pod create or delete permission.
+
+The webhook deliberately does not model `PodNodeSelector` or
+`PodTolerationRestriction` defaults; clusters that inject either into operation
+Pods are rejected rather than silently broadening scheduling. ServiceAccount
+token projection is also rejected because every operation template sets
+`automountServiceAccountToken=false`. Arbitrary mutating-webhook changes remain
+outside the envelope. Priority, RuntimeClass, LimitRange, ServiceAccount image
+pull secrets, DefaultTolerationSeconds, ExtendedResourceToleration, and
+AlwaysPullImages are the explicitly modeled mutations.
+
+`PodLevelResources` is enabled by default in the supported Kubernetes window,
+but those releases apply LimitRange `default` and `defaultRequest` only to
+`Container` items. Operation templates leave `spec.resources` unset, and the
+controller rejects a non-nil Pod-level resource stanza before dispatch. A
+future or customized API server that injects Pod-level resources fails closed
+until that mutation has an explicit, versioned snapshot model.
+
+Admission matches exact Job-controlled Pods on create and update, including
+the `ephemeralcontainers` and `resize` subresources. It does not use mutable
+labels as a selector. While the webhook is unavailable, every Job Pod creation
+is fail-closed and may be delayed. The controller and certificate-rotation
+Deployments remain recoverable because their Pods are ReplicaSet-owned. Run at
+least two controller replicas and preserve the PodDisruptionBudget during
+maintenance.
+
+The Job-owner match condition is evaluated after mutating admission. A cluster
+administrator who can install or change a cluster-scoped mutating webhook is
+therefore inside the admission trust boundary: such a webhook could remove the
+Job owner reference before validation. Ordinary workload creators cannot use
+labels or extra owner references to bypass validation; any Job controller
+reference enters the rule, and the handler rejects ambiguous ownership.
+
+## Webhook certificate lifecycle
+
+For a chart-generated webhook Secret, the chart stores `tls.crt`, `tls.key`,
+`ca.crt`, and `ca.key` and schedules a separate certificate rotator. The
+manager volume projects only `tls.crt` and `tls.key`; the CA certificate and CA
+private key never enter manager Pods. The manager ClusterRole has no Secret
+access. The rotator uses its own ServiceAccount with `get` and `update` limited
+by `resourceNames` to the one generated Secret, one precreated coordination
+Lease, and the exact mutating and validating webhook configurations. It can
+only list EndpointSlices in the release namespace because Kubernetes assigns
+their names dynamically and RBAC cannot constrain a list by label selector.
+
+Serving certificates rotate before `certificateRotation.renewalThreshold`.
+The CA rotates before its threshold, when it cannot safely issue a full-lived
+serving certificate, or when a legacy generated Secret has no `ca.key`. An
+expired certificate follows the same recovery path; the rotator talks to the
+Kubernetes API and probes webhook endpoints directly, so recovery never
+depends on a successful call through the expired admission webhook.
+
+CA replacement is fail-closed and restart-safe:
+
+1. Both webhook configurations receive an overlapping old-plus-new CA bundle.
+2. One atomic Secret update replaces the serving certificate, serving key, CA,
+   and CA key.
+3. The rotator lists the exact Service EndpointSlices, rejects empty, unready,
+   terminating, malformed, or duplicate endpoint sets, and performs a TLS
+   handshake with every ready Pod IP using the Service DNS name. It requires
+   the exact new leaf certificate, then requires a second identical endpoint
+   snapshot.
+4. Only after that proof do both webhook configurations contract to the new CA.
+
+If the rotator stops between steps, its replacement expands both configurations
+to a common overlap, repeats proof for every stable endpoint, and then contracts
+trust. A timeout leaves overlapping trust in place. There is no interval in
+which the API server is configured to trust neither the old nor the new
+serving certificate. controller-runtime watches the projected `tls.crt` and
+`tls.key` files and reloads them without restarting the manager Pods.
+
+The conservative defaults reconcile immediately at startup and every six
+hours, bound each reconciliation to 15 minutes, and retry failures with jittered
+exponential backoff from five seconds to five minutes. Liveness reports whether
+the supervisor is running; readiness is true only after a successful complete
+reconciliation and becomes false during retries. The Deployment exposes those
+states on `/healthz` and `/readyz` without serving certificate or key material.
+It renews 30 days before expiry, issues 90-day serving certificates and
+three-year CAs, and allows five minutes for Secret projection plus endpoint
+proof. `probeTimeout` must exceed `probeInterval`; serving validity must exceed
+the renewal threshold; CA validity must exceed serving validity. The separately
+authorized, ReplicaSet-owned Deployment is deliberately outside the all-Job
+admission rule, so it can restart and repair trust when the webhook certificate
+or CA bundle is already broken. Its precreated Lease serializes reconciliation.
+To request an immediate reconciliation without changing the interval, restart
+that Deployment:
+
+```sh
+kubectl -n <namespace> rollout restart \
+  deployment/<certificate-rotation-deployment>
+```
+
+Never copy `ca.key` into diagnostics. Inspect Deployment status and structured
+error messages; certificate and key bytes are intentionally absent from logs.
 
 ## Normal status progression
 

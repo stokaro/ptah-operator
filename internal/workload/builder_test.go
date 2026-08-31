@@ -132,6 +132,30 @@ func TestBuildPinsRunnerSizeContractForEveryOperation(t *testing.T) {
 	}
 }
 
+func TestBuildBindsPersistedAdmissionSnapshotDigest(t *testing.T) {
+	t.Parallel()
+
+	operation := operationFixture(operatorv1alpha1.OperationResolve)
+	operation.AdmissionSnapshot = &operatorv1alpha1.PodAdmissionSnapshot{
+		Digest: digest('a'), TemplateDigest: digest('b'),
+	}
+	job, err := builderFixture().Build(schemaFixture(), operation, nil)
+	if err != nil {
+		t.Fatalf("Build() error = %v", err)
+	}
+	if got := job.Annotations[AnnotationAdmissionSnapshotDigest]; got != digest('a') {
+		t.Fatalf("Job admission snapshot digest = %q", got)
+	}
+	if got := job.Spec.Template.Annotations[AnnotationAdmissionSnapshotDigest]; got != digest('a') {
+		t.Fatalf("Pod template admission snapshot digest = %q", got)
+	}
+
+	operation.AdmissionSnapshot.Digest = "sha256:INVALID"
+	if _, err := builderFixture().Build(schemaFixture(), operation, nil); err == nil {
+		t.Fatal("Build() accepted a non-canonical admission snapshot digest")
+	}
+}
+
 func TestBuildUsesOnlyBoundedMemoryBackedEmptyDirs(t *testing.T) {
 	t.Parallel()
 

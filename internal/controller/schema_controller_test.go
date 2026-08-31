@@ -10,6 +10,8 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	nodev1 "k8s.io/api/node/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -20,8 +22,10 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
+	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
 const (
@@ -36,15 +40,38 @@ var testCoordinationDigest = mustTestCoordinationDigest()
 
 type fakeJobs struct{}
 
+type changedTemplateJobs struct{ fakeJobs }
+
+func (changedTemplateJobs) Build(
+	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.ActiveOperationStatus,
+	plan *operatorv1alpha1.PtahSchemaPlan,
+) (*batchv1.Job, error) {
+	job, err := (fakeJobs{}).Build(schema, operation, plan)
+	if err != nil {
+		return nil, err
+	}
+	if job.Spec.Template.Annotations == nil {
+		job.Spec.Template.Annotations = map[string]string{}
+	}
+	job.Spec.Template.Annotations["operator.ptah.dev/rebuilt-template"] = "changed"
+	return job, nil
+}
+
 func (fakeJobs) NameFor(_ *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus) (string, error) {
 	return "ptah-" + strings.ToLower(string(operation.Type)) + "-test", nil
 }
 
 func (fakeJobs) Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus, _ *operatorv1alpha1.PtahSchemaPlan) (*batchv1.Job, error) {
+	annotations := map[string]string{}
+	if operation.AdmissionSnapshot != nil {
+		annotations[workload.AnnotationAdmissionSnapshotDigest] = operation.AdmissionSnapshot.Digest
+	}
 	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
 		Namespace: schema.Namespace, Name: operation.JobName,
+		Annotations:     annotations,
 		OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)},
-	}}, nil
+	}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}}}}, nil
 }
 
 func (fakeJobs) ExecutionBinding() (string, string, string, int32) {
@@ -115,6 +142,49 @@ func TestPendingSchemaClaimsResolveBeforeCreatingJob(t *testing.T) {
 	}
 	if len(jobs.Items) != 0 {
 		t.Fatal("claim reconciliation created a Job before persisting status")
+	}
+}
+
+func TestPersistedAdmissionSnapshotRejectsChangedRebuiltTemplateBeforeDispatch(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("claim Reconcile() error = %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("snapshot Reconcile() error = %v", err)
+	}
+	persisted := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status.ActiveOperation == nil || persisted.Status.ActiveOperation.AdmissionSnapshot == nil {
+		t.Fatalf("snapshot was not persisted before dispatch: %#v", persisted.Status.ActiveOperation)
+	}
+	if persisted.Status.ActiveOperation.DispatchStarted {
+		t.Fatal("snapshot reconciliation started dispatch")
+	}
+
+	reconciler.Jobs = changedTemplateJobs{}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("changed-template Reconcile() error = %v", err)
+	}
+	actual := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status.Phase != operatorv1alpha1.PhasePending || actual.Status.ActiveOperation != nil {
+		t.Fatalf("changed rebuilt template was not discarded before dispatch: %#v", actual.Status)
+	}
+	jobs := &batchv1.JobList{}
+	if err := api.List(context.Background(), jobs); err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Fatalf("changed rebuilt template created %d Jobs", len(jobs.Items))
 	}
 }
 
@@ -673,17 +743,62 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 }
 
 func terminalWorkload(schema *operatorv1alpha1.PtahSchema, conditionType batchv1.JobConditionType) (*batchv1.Job, *corev1.Pod) {
+	ensureTestAdmissionSnapshot(schema)
+	annotations := map[string]string{
+		workload.AnnotationAdmissionSnapshotDigest: schema.Status.ActiveOperation.AdmissionSnapshot.Digest,
+	}
 	job := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: schema.Status.ActiveOperation.JobName, UID: "job-uid", OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)}},
+		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: schema.Status.ActiveOperation.JobName, UID: "job-uid", Annotations: annotations, OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)}},
+		Spec:       batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}}},
 		Status:     batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: conditionType, Status: corev1.ConditionTrue}}},
 	}
+	priority := int32(0)
+	preemption := corev1.PreemptLowerPriority
+	seconds := int64(300)
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 		Namespace: schema.Namespace, Name: job.Name + "-pod", UID: "pod-uid",
-		Labels: map[string]string{"job-name": job.Name}, OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
+		Labels: map[string]string{"job-name": job.Name}, Annotations: annotations, OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
+	}, Spec: corev1.PodSpec{
+		ServiceAccountName: "default", Priority: &priority, PreemptionPolicy: &preemption,
+		Tolerations: []corev1.Toleration{
+			{Key: "node.kubernetes.io/not-ready", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds},
+			{Key: "node.kubernetes.io/unreachable", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute, TolerationSeconds: &seconds},
+		},
 	}, Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
 		Name: executorContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
 	}}}}
 	return job, pod
+}
+
+func ensureTestAdmissionSnapshot(schema *operatorv1alpha1.PtahSchema) {
+	if schema.Status.ActiveOperation.AdmissionSnapshot != nil {
+		return
+	}
+	policy := corev1.PreemptLowerPriority
+	templateDigest, err := podintent.DigestTemplate(&corev1.PodTemplateSpec{})
+	if err != nil {
+		panic(err)
+	}
+	snapshot := &operatorv1alpha1.PodAdmissionSnapshot{
+		Version:        podintent.SnapshotVersion,
+		TemplateDigest: templateDigest,
+		ServiceAccount: operatorv1alpha1.ServiceAccountAdmissionSnapshot{Object: operatorv1alpha1.AdmissionObjectBinding{
+			Name: "default", UID: "default-service-account-uid", ResourceVersion: "1",
+		}},
+		PriorityClass:                       operatorv1alpha1.PriorityClassAdmissionSnapshot{Value: 0, PreemptionPolicy: &policy},
+		DefaultTolerationsEnabled:           true,
+		DefaultNotReadyTolerationSeconds:    300,
+		DefaultUnreachableTolerationSeconds: 300,
+		ExtendedResourceTolerationEnabled:   false,
+		AlwaysPullImagesEnabled:             false,
+	}
+	copy := *snapshot
+	digest, err := fingerprint.DigestCanonicalJSON(copy)
+	if err != nil {
+		panic(err)
+	}
+	snapshot.Digest = digest
+	schema.Status.ActiveOperation.AdmissionSnapshot = snapshot
 }
 
 func TestTerminalWorkloadFixtureMatchesImmutableIntent(t *testing.T) {
@@ -700,7 +815,7 @@ func TestTerminalWorkloadFixtureMatchesImmutableIntent(t *testing.T) {
 	if err := validateJobIntent(job, expected, schema); err != nil {
 		t.Fatalf("Job fixture: %v", err)
 	}
-	if err := validatePodIntent(pod, job); err != nil {
+	if err := validatePodIntent(pod, job, schema.Status.ActiveOperation.AdmissionSnapshot); err != nil {
 		t.Fatalf("Pod fixture: %v", err)
 	}
 }
@@ -716,10 +831,21 @@ func jobControllerReference(job *batchv1.Job) metav1.OwnerReference {
 func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (*SchemaReconciler, client.Client) {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{operatorv1alpha1.AddToScheme, batchv1.AddToScheme, corev1.AddToScheme, coordinationv1.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{operatorv1alpha1.AddToScheme, batchv1.AddToScheme, corev1.AddToScheme, coordinationv1.AddToScheme, nodev1.AddToScheme, schedulingv1.AddToScheme} {
 		if err := add(scheme); err != nil {
 			t.Fatal(err)
 		}
+	}
+	hasDefaultServiceAccount := false
+	for _, object := range objects {
+		if serviceAccount, ok := object.(*corev1.ServiceAccount); ok && serviceAccount.Namespace == "team-a" && serviceAccount.Name == "default" {
+			hasDefaultServiceAccount = true
+		}
+	}
+	if !hasDefaultServiceAccount {
+		objects = append(objects, &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
+			Namespace: "team-a", Name: "default", UID: "default-service-account-uid", ResourceVersion: "1",
+		}})
 	}
 	api := fake.NewClientBuilder().WithScheme(scheme).
 		WithStatusSubresource(&operatorv1alpha1.PtahSchema{}, &operatorv1alpha1.PtahSchemaPlan{}, &operatorv1alpha1.PtahSchemaApproval{}, &batchv1.Job{}).
@@ -732,8 +858,9 @@ func fakeReconciler(t *testing.T, logs PodLogReader, objects ...client.Object) (
 	testClock := &safetyClock{now: clock}
 	reconciler := &SchemaReconciler{
 		Client: api, APIReader: api, Scheme: scheme, Logs: logs, Jobs: fakeJobs{},
-		LockNamespace: "ptah-system",
-		Clock:         testClock.Now,
+		LockNamespace:    "ptah-system",
+		Clock:            testClock.Now,
+		AdmissionOptions: podintent.DefaultOptions(),
 	}
 	reconciler.Locks = targetlock.New(api, api, testClock)
 	seedFixtureLocks(t, reconciler, api, objects)

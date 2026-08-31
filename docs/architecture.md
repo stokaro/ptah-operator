@@ -36,7 +36,18 @@ One persisted `status.activeOperation` is the ordinary serialization point:
    coherent no-change plan can establish convergence.
 
 The controller writes the operation claim before it creates a deterministic
-Job. Apply has a second persisted dispatch boundary immediately before its only
+Job. It then resolves a bounded, credential-free Pod-admission snapshot and
+persists its canonical digest as a separate boundary before any dispatch. The
+snapshot binds the exact ServiceAccount, LimitRange defaults, RuntimeClass
+scheduling and overhead, PriorityClass values, and configured built-in
+admission behavior by UID and resourceVersion. Job and Pod annotations carry
+that digest. A fail-closed validating webhook compares the final post-mutation
+Pod against the persisted snapshot before scheduling, while retaining exact
+matching for executable, environment, volume, and security fields. A changed
+admission resource therefore rejects the Pod instead of reinterpreting an
+already claimed operation.
+
+Apply has another persisted dispatch boundary immediately before its only
 permitted Job create attempt. After a restart, a dispatched Apply with a
 missing or replaced Job is outcome-unknown and is never recreated.
 
@@ -123,8 +134,17 @@ serialization comes from the explicit coordination realm rather than an
 unverifiable DNS inference.
 
 All schemas use one configurable coordination namespace, so resources in
-different namespaces still contend for the same database target. Different
-future Ptah resource kinds can use the same Lease contract.
+different namespaces still contend for the same database target. The manager
+also creates its fixed-name leader-election Lease there. Replicas in the one
+supported Helm release form one ownership domain with exactly one active
+reconciler, while webhook servers remain available on every ready replica.
+Different future Ptah resource kinds can use the same target Lease contract.
+
+Managers currently watch cluster-wide resources, and the fixed
+`ptah-operator-admission` configurations form a singleton admission
+availability domain. Exactly one Helm release is supported per cluster;
+high availability comes from replicas within that release. Independent
+releases are unsafe without disjoint watch and admission scopes.
 
 The Lease complements the database advisory lock used by Ptah. Its immutable
 duration covers the maximum Job deadline plus grace. The same holder is

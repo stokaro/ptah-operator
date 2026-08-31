@@ -95,16 +95,19 @@ for value_name in \
 	[ -n "$value" ] || fail "$value_name is required"
 done
 [ -f "$KUBECONFIG_FILE" ] || fail "E2E_KUBECONFIG does not name a file"
-[ -f "$SHARED_AUDITED_JOBS_FILE" ] && [ -w "$SHARED_AUDITED_JOBS_FILE" ] ||
+if [ ! -f "$SHARED_AUDITED_JOBS_FILE" ] || [ ! -w "$SHARED_AUDITED_JOBS_FILE" ]; then
 	fail "E2E_AUDITED_JOBS_FILE must name the writable parent audit ledger"
-[ -f "$SHARED_OBSERVED_JOBS_FILE" ] && [ -w "$SHARED_OBSERVED_JOBS_FILE" ] ||
+fi
+if [ ! -f "$SHARED_OBSERVED_JOBS_FILE" ] || [ ! -w "$SHARED_OBSERVED_JOBS_FILE" ]; then
 	fail "E2E_OBSERVED_JOBS_FILE must name the writable parent Job ledger"
+fi
 is_pinned_image "$EXECUTOR_IMAGE" ||
 	fail "E2E_EXECUTOR_IMAGE must be pinned by a lowercase SHA-256 digest"
 is_pinned_image "$FIXTURE_IMAGE" ||
 	fail "E2E_FIXTURE_IMAGE must be pinned by a lowercase SHA-256 digest"
-[ -f "$RESULT_ASSERT_BINARY" ] && [ -x "$RESULT_ASSERT_BINARY" ] ||
+if [ ! -f "$RESULT_ASSERT_BINARY" ] || [ ! -x "$RESULT_ASSERT_BINARY" ]; then
 	fail "E2E_RESULT_ASSERT_BINARY must name the executable parent result parser"
+fi
 printf '%s\n' "$TIMEOUT_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "E2E_TIMEOUT_SECONDS must be a positive integer"
 printf '%s\n' "$FAULT_ACTIVE_DEADLINE_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
@@ -888,8 +891,9 @@ database_url_for() {
 	esac
 	base_url=$(secret_url "$base_secret")
 	new_url=$(printf '%s' "$base_url" | sed -E "s#/[^/?]+(\\?.*)?$#/${url_database}\\1#")
-	[ -n "$new_url" ] && [ "$new_url" != "$base_url" ] ||
+	if [ -z "$new_url" ] || [ "$new_url" = "$base_url" ]; then
 		fail "could not derive an isolated $url_engine database URL"
+	fi
 	printf '%s\n' "$new_url"
 }
 
@@ -1721,8 +1725,9 @@ wait_for_operation_job_terminal() {
 			TERMINAL_OPERATION_ID=$(printf '%s\n' "$terminal_jobs" | jq -r '.items[0].metadata.annotations["operator.ptah.dev/operation-id"]')
 			TERMINAL_JOB_NAME=$(printf '%s\n' "$terminal_jobs" | jq -er '.items[0].metadata.name')
 			TERMINAL_JOB_UID=$(printf '%s\n' "$terminal_jobs" | jq -er '.items[0].metadata.uid')
-			[ -n "$TERMINAL_OPERATION_ID" ] && [ "$TERMINAL_OPERATION_ID" != null ] ||
+			if [ -z "$TERMINAL_OPERATION_ID" ] || [ "$TERMINAL_OPERATION_ID" = null ]; then
 				fail "$terminal_schema terminal Job lacks its operation identity"
+			fi
 			return 0
 		fi
 		sleep 1
@@ -2560,6 +2565,77 @@ wait_for_apply_pod() {
 	fail "timed out waiting for the running Apply Pod for $active_schema"
 }
 
+assert_active_pod_ephemeral_container_rejected() {
+	active_schema=$1
+	if [ -z "$ACTIVE_OPERATION_ID" ] || [ -z "$ACTIVE_JOB_NAME" ] ||
+		[ -z "$ACTIVE_JOB_UID" ] || [ -z "$ACTIVE_POD_NAME" ] || [ -z "$ACTIVE_POD_UID" ]; then
+		fail "cannot test ephemeral-container admission without an exact active operation identity"
+	fi
+
+	active_pod=$(k -n "$TEST_NAMESPACE" get pod "$ACTIVE_POD_NAME" -o json)
+	printf '%s\n' "$active_pod" | jq -e \
+		--arg podUID "$ACTIVE_POD_UID" \
+		--arg jobName "$ACTIVE_JOB_NAME" \
+		--arg jobUID "$ACTIVE_JOB_UID" \
+		--arg operationID "$ACTIVE_OPERATION_ID" '
+      .metadata.uid == $podUID and
+      .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      (.metadata.ownerReferences // [] | length == 1 and .[0].apiVersion == "batch/v1" and
+        .[0].kind == "Job" and .[0].name == $jobName and .[0].uid == $jobUID and
+        .[0].controller == true) and
+      ((.spec.ephemeralContainers // []) | length == 0)
+    ' >/dev/null || fail "$active_schema ephemeral-container test lost its exact active Pod identity"
+	k -n "$TEST_NAMESPACE" get ptahschema "$active_schema" -o json | jq -e \
+		--arg operationID "$ACTIVE_OPERATION_ID" \
+		--arg jobName "$ACTIVE_JOB_NAME" \
+		--arg jobUID "$ACTIVE_JOB_UID" '
+      .status.activeOperation.id == $operationID and
+      .status.activeOperation.jobName == $jobName and
+      .status.activeOperation.jobUID == $jobUID and
+      .status.activeOperation.dispatchStarted == true
+    ' >/dev/null || fail "$active_schema changed active operation before its ephemeral-container test"
+
+	printf '%s\n' "$active_pod" | jq '
+      .spec.ephemeralContainers = [{
+        name: "ptah-admission-must-deny",
+        image: "invalid.invalid/ptah-admission-must-deny@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        imagePullPolicy: "Never",
+        command: ["/bin/sh"],
+        targetContainerName: "ptah"
+      }] |
+      {
+        apiVersion: "v1", kind: "Pod",
+        metadata: {
+          namespace: .metadata.namespace,
+          name: .metadata.name,
+          uid: .metadata.uid,
+          resourceVersion: .metadata.resourceVersion
+        },
+        spec: {ephemeralContainers: .spec.ephemeralContainers}
+      }
+    ' >"$RESOURCE_FILE"
+	if k replace --raw \
+		"/api/v1/namespaces/${TEST_NAMESPACE}/pods/${ACTIVE_POD_NAME}/ephemeralcontainers" \
+		-f "$RESOURCE_FILE" >"$LOG_FILE" 2>&1; then
+		fail "$active_schema operation Pod admitted an out-of-envelope ephemeral container"
+	fi
+	if ! grep -F 'vpodintent.operator.ptah.dev' "$LOG_FILE" >/dev/null ||
+		! grep -F 'denied the request' "$LOG_FILE" >/dev/null; then
+		fail "$active_schema ephemeral-container request failed outside the Pod-intent webhook"
+	fi
+
+	k -n "$TEST_NAMESPACE" get pod "$ACTIVE_POD_NAME" -o json | jq -e \
+		--arg podUID "$ACTIVE_POD_UID" \
+		--arg jobUID "$ACTIVE_JOB_UID" '
+      .metadata.uid == $podUID and
+      (.metadata.ownerReferences // [] | any(
+        .apiVersion == "batch/v1" and .kind == "Job" and
+        .uid == $jobUID and .controller == true)) and
+      ((.spec.ephemeralContainers // []) |
+        all(.name != "ptah-admission-must-deny"))
+    ' >/dev/null || fail "$active_schema retained the rejected ephemeral container or changed Pod identity"
+}
+
 checkpoint_leases() {
 	lease_checkpoint=$1
 	k -n "$OPERATOR_NAMESPACE" get leases \
@@ -3379,10 +3455,11 @@ run_credential_principal_refusal() {
 		fail "credential-bearing principal refusal dispatched an Apply Job"
 	[ "$(watch_new_uid_count "$principal_schema" plan "$principal_plan_checkpoint")" -eq 1 ] ||
 		fail "credential-bearing principal refusal retried before its one-hour barrier"
-	[ "$(watch_added_uid_count "$principal_schema" resolve)" -eq 1 ] &&
-		[ "$(watch_added_uid_count "$principal_schema" verify)" -eq 1 ] &&
-		[ "$(watch_added_uid_count "$principal_schema" observe)" -eq 1 ] ||
+	if [ "$(watch_added_uid_count "$principal_schema" resolve)" -ne 1 ] ||
+		[ "$(watch_added_uid_count "$principal_schema" verify)" -ne 1 ] ||
+		[ "$(watch_added_uid_count "$principal_schema" observe)" -ne 1 ]; then
 		fail "credential-bearing principal refusal did not reach Plan through one exact read-only chain"
+	fi
 	[ "$(k -n "$TEST_NAMESPACE" get ptahschemaapprovals -o json | jq \
 		--arg uid "$principal_schema_uid" '[.items[] | select(.spec.schemaRef.uid == $uid)] | length')" -eq 0 ] ||
 		fail "credential-bearing principal refusal created an approval"
@@ -3504,6 +3581,7 @@ start_mysql_barrier "$MYSQL_UNKNOWN_DB" e2e_fault_my_unknown_barrier
 
 create_approval "$PG_RESTART_SCHEMA" e2e-fault-pg-restart-approval
 wait_for_apply_pod "$PG_RESTART_SCHEMA"
+assert_active_pod_ephemeral_container_rejected "$PG_RESTART_SCHEMA"
 PG_OPERATION_ID=$ACTIVE_OPERATION_ID
 PG_JOB_NAME=$ACTIVE_JOB_NAME
 PG_JOB_UID=$ACTIVE_JOB_UID
@@ -3549,10 +3627,11 @@ MYSQL_LEASE_NAME=$LEASE_NAME
 MYSQL_LEASE_UID=$LEASE_UID
 MYSQL_LEASE_HOLDER=$LEASE_HOLDER
 MYSQL_LEASE_EPOCH=$LEASE_EPOCH
-[ "$PG_LEASE_UID" != "$PG_PARALLEL_LEASE_UID" ] &&
-	[ "$PG_LEASE_UID" != "$MYSQL_LEASE_UID" ] &&
-	[ "$PG_PARALLEL_LEASE_UID" != "$MYSQL_LEASE_UID" ] ||
+if [ "$PG_LEASE_UID" = "$PG_PARALLEL_LEASE_UID" ] ||
+	[ "$PG_LEASE_UID" = "$MYSQL_LEASE_UID" ] ||
+	[ "$PG_PARALLEL_LEASE_UID" = "$MYSQL_LEASE_UID" ]; then
 	fail "distinct coordination keys collapsed into one target Lease"
+fi
 
 # Three Apply Pods and three independent operator Leases are live at this
 # checkpoint. Both same-engine Pods hold database-local native advisory locks
@@ -3841,8 +3920,10 @@ load_single_new_released_lease "$ALIAS_LEASES_BEFORE" \
 ALIAS_IDLE_LEASE_NAME=$LEASE_NAME
 ALIAS_IDLE_LEASE_UID=$LEASE_UID
 ALIAS_IDLE_LEASE_EPOCH=$LEASE_EPOCH
-[ -n "$ALIAS_A_IDENTITY" ] && [ -n "$ALIAS_B_IDENTITY" ] && [ "$ALIAS_A_IDENTITY" != "$ALIAS_B_IDENTITY" ] ||
+if [ -z "$ALIAS_A_IDENTITY" ] || [ -z "$ALIAS_B_IDENTITY" ] ||
+	[ "$ALIAS_A_IDENTITY" = "$ALIAS_B_IDENTITY" ]; then
 	fail "the two database URL aliases did not retain distinct target identities"
+fi
 printf '%s\n' "$ALIAS_A_COORDINATION" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
 	fail "the first database URL alias has no persisted coordination digest"
 [ "$ALIAS_A_COORDINATION" = "$ALIAS_B_COORDINATION" ] ||
@@ -4177,9 +4258,10 @@ MANUAL_LEASE_HOLDER=$LEASE_HOLDER
 pause_controller_status_writes
 stop_read_workload_barrier
 wait_for_operation_job_terminal "$PG_MANUAL_SCHEMA" apply
-[ "$TERMINAL_OPERATION_ID" = "$MANUAL_OPERATION_ID" ] &&
-	[ "$TERMINAL_JOB_UID" = "$MANUAL_APPLY_JOB_UID" ] ||
+if [ "$TERMINAL_OPERATION_ID" != "$MANUAL_OPERATION_ID" ] ||
+	[ "$TERMINAL_JOB_UID" != "$MANUAL_APPLY_JOB_UID" ]; then
 	fail "manual-drift terminal Apply changed its exact operation or Job identity"
+fi
 MANUAL_STALE_RESULT=$WORK_DIR/manual-stale-apply-result.json
 capture_exact_job_result "$MANUAL_APPLY_JOB_NAME" "$MANUAL_APPLY_JOB_UID" apply "$MANUAL_STALE_RESULT"
 [ "$FAULT_RESULT_OPERATION_ID" = "$MANUAL_OPERATION_ID" ] ||
@@ -4356,17 +4438,20 @@ jq -s -e \
     length == 0
   ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 	fail "$DELETED_SCHEMA_NAME created an operation Job after the deletion evidence boundary"
-[ "$(watch_added_uid_count "$PG_RESTART_SCHEMA" apply)" -eq 1 ] &&
-	[ "$(watch_added_pod_uid_count "$PG_RESTART_SCHEMA" apply)" -eq 1 ] ||
+if [ "$(watch_added_uid_count "$PG_RESTART_SCHEMA" apply)" -ne 1 ] ||
+	[ "$(watch_added_pod_uid_count "$PG_RESTART_SCHEMA" apply)" -ne 1 ]; then
 	fail "the restarted PostgreSQL Apply history is not exactly one Job and Pod UID"
-[ "$(watch_added_uid_count "$PG_PARALLEL_SCHEMA" apply)" -eq 1 ] &&
-	[ "$(watch_added_pod_uid_count "$PG_PARALLEL_SCHEMA" apply)" -eq 1 ] ||
+fi
+if [ "$(watch_added_uid_count "$PG_PARALLEL_SCHEMA" apply)" -ne 1 ] ||
+	[ "$(watch_added_pod_uid_count "$PG_PARALLEL_SCHEMA" apply)" -ne 1 ]; then
 	fail "the parallel PostgreSQL Apply history is not exactly one Job and Pod UID"
-[ "$(watch_added_uid_count "$PG_ALIAS_SCHEMA_A" apply)" -eq 1 ] &&
-	[ "$(watch_added_uid_count "$PG_ALIAS_SCHEMA_B" apply)" -eq 1 ] &&
-	[ "$(watch_added_pod_uid_count "$PG_ALIAS_SCHEMA_A" apply)" -eq 1 ] &&
-	[ "$(watch_added_pod_uid_count "$PG_ALIAS_SCHEMA_B" apply)" -eq 1 ] ||
+fi
+if [ "$(watch_added_uid_count "$PG_ALIAS_SCHEMA_A" apply)" -ne 1 ] ||
+	[ "$(watch_added_uid_count "$PG_ALIAS_SCHEMA_B" apply)" -ne 1 ] ||
+	[ "$(watch_added_pod_uid_count "$PG_ALIAS_SCHEMA_A" apply)" -ne 1 ] ||
+	[ "$(watch_added_pod_uid_count "$PG_ALIAS_SCHEMA_B" apply)" -ne 1 ]; then
 	fail "the shared-alias Apply history contains a delayed replay"
+fi
 snapshot_watch pods
 jq -s -e \
 	--arg schema "$PG_ALIAS_SCHEMA_B" \
@@ -4408,21 +4493,26 @@ jq -s -e \
 	fail "manual drift did not retain exactly one fresh Observe Job"
 [ "$(watch_new_uid_count "$PG_MANUAL_SCHEMA" plan "$MANUAL_PLAN_CHECKPOINT")" -eq 1 ] ||
 	fail "manual drift did not retain exactly one fresh Plan Job"
-[ "$(watch_new_uid_count "$PG_RESTART_SCHEMA" observe "$PG_RESTART_OBSERVE_CHECKPOINT")" -eq 1 ] &&
-	[ "$(watch_new_uid_count "$PG_RESTART_SCHEMA" plan "$PG_RESTART_PLAN_CHECKPOINT")" -eq 1 ] ||
+if [ "$(watch_new_uid_count "$PG_RESTART_SCHEMA" observe "$PG_RESTART_OBSERVE_CHECKPOINT")" -ne 1 ] ||
+	[ "$(watch_new_uid_count "$PG_RESTART_SCHEMA" plan "$PG_RESTART_PLAN_CHECKPOINT")" -ne 1 ]; then
 	fail "restarted PostgreSQL convergence did not retain exactly one proof Observe and Plan Job"
-[ "$(watch_new_uid_count "$PG_PARALLEL_SCHEMA" observe "$PG_PARALLEL_OBSERVE_CHECKPOINT")" -eq 1 ] &&
-	[ "$(watch_new_uid_count "$PG_PARALLEL_SCHEMA" plan "$PG_PARALLEL_PLAN_CHECKPOINT")" -eq 1 ] ||
+fi
+if [ "$(watch_new_uid_count "$PG_PARALLEL_SCHEMA" observe "$PG_PARALLEL_OBSERVE_CHECKPOINT")" -ne 1 ] ||
+	[ "$(watch_new_uid_count "$PG_PARALLEL_SCHEMA" plan "$PG_PARALLEL_PLAN_CHECKPOINT")" -ne 1 ]; then
 	fail "parallel PostgreSQL convergence did not retain exactly one proof Observe and Plan Job"
-[ "$(watch_new_uid_count "$PG_ALIAS_SCHEMA_A" observe "$ALIAS_A_OBSERVE_CHECKPOINT")" -eq 1 ] &&
-	[ "$(watch_new_uid_count "$PG_ALIAS_SCHEMA_A" plan "$ALIAS_A_PLAN_CHECKPOINT")" -eq 1 ] ||
+fi
+if [ "$(watch_new_uid_count "$PG_ALIAS_SCHEMA_A" observe "$ALIAS_A_OBSERVE_CHECKPOINT")" -ne 1 ] ||
+	[ "$(watch_new_uid_count "$PG_ALIAS_SCHEMA_A" plan "$ALIAS_A_PLAN_CHECKPOINT")" -ne 1 ]; then
 	fail "shared-alias holder did not retain exactly one proof Observe and Plan Job"
-[ "$(watch_new_uid_count "$PG_ALIAS_SCHEMA_B" observe "$ALIAS_B_OBSERVE_CHECKPOINT")" -eq 1 ] &&
-	[ "$(watch_new_uid_count "$PG_ALIAS_SCHEMA_B" plan "$ALIAS_B_PLAN_CHECKPOINT")" -eq 1 ] ||
+fi
+if [ "$(watch_new_uid_count "$PG_ALIAS_SCHEMA_B" observe "$ALIAS_B_OBSERVE_CHECKPOINT")" -ne 1 ] ||
+	[ "$(watch_new_uid_count "$PG_ALIAS_SCHEMA_B" plan "$ALIAS_B_PLAN_CHECKPOINT")" -ne 1 ]; then
 	fail "shared-alias stale contender did not retain exactly one recovery Observe and Plan Job"
-[ "$(watch_new_uid_count "$MYSQL_UNKNOWN_SCHEMA" observe "$MYSQL_OBSERVE_CHECKPOINT")" -eq 1 ] &&
-	[ "$(watch_new_uid_count "$MYSQL_UNKNOWN_SCHEMA" plan "$MYSQL_PLAN_JOB_CHECKPOINT")" -eq 1 ] ||
+fi
+if [ "$(watch_new_uid_count "$MYSQL_UNKNOWN_SCHEMA" observe "$MYSQL_OBSERVE_CHECKPOINT")" -ne 1 ] ||
+	[ "$(watch_new_uid_count "$MYSQL_UNKNOWN_SCHEMA" plan "$MYSQL_PLAN_JOB_CHECKPOINT")" -ne 1 ]; then
 	fail "uncertain Apply recovery did not retain exactly one fresh Observe and Plan Job"
+fi
 [ "$(watch_added_uid_count "$MYSQL_UNKNOWN_SCHEMA" apply)" -eq 1 ] ||
 	fail "the uncertain MySQL Apply was replayed during a later reconciliation"
 [ "$(watch_added_pod_uid_count "$MYSQL_UNKNOWN_SCHEMA" apply)" -eq 1 ] ||
@@ -4454,9 +4544,10 @@ jq -s -e \
       .object.metadata.uid] | unique == [$uid]
 	' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 	fail "uncertain MySQL Apply history does not contain exactly the original Pod UID"
-[ -n "$PRINCIPAL_REFUSAL_SCHEMA" ] && [ -n "$PRINCIPAL_PLAN_UID" ] &&
-	[ -n "$PRINCIPAL_PLAN_POD_UID" ] ||
+if [ -z "$PRINCIPAL_REFUSAL_SCHEMA" ] || [ -z "$PRINCIPAL_PLAN_UID" ] ||
+	[ -z "$PRINCIPAL_PLAN_POD_UID" ]; then
 	fail "credential-bearing principal refusal did not retain its exact result identities"
+fi
 snapshot_watch jobs
 jq -s -e \
 	--arg schema "$PRINCIPAL_REFUSAL_SCHEMA" \

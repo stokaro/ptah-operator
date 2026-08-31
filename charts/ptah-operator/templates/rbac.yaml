@@ -1,3 +1,4 @@
+{{- $coordinationNamespace := default .Release.Namespace .Values.coordination.namespace -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -8,6 +9,9 @@ rules:
   - apiGroups: ["operator.ptah.dev"]
     resources: ["ptahschemas"]
     verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["operator.ptah.dev"]
+    resources: ["ptahschemas/finalizers", "ptahschemaplans/finalizers"]
+    verbs: ["update"]
   - apiGroups: ["operator.ptah.dev"]
     resources: ["ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"]
     verbs: ["get", "update", "patch"]
@@ -27,11 +31,20 @@ rules:
     resources: ["pods/log"]
     verbs: ["get"]
   - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["list"]
+  - apiGroups: ["node.k8s.io"]
+    resources: ["runtimeclasses"]
+    verbs: ["get"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch", "update"]
@@ -50,6 +63,34 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "ptah-operator.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "ptah-operator.fullname" $ }}
+  namespace: {{ $coordinationNamespace }}
+  labels:
+    {{- include "ptah-operator.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "ptah-operator.fullname" $ }}
+  namespace: {{ $coordinationNamespace }}
+  labels:
+    {{- include "ptah-operator.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "ptah-operator.fullname" $ }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ptah-operator.serviceAccountName" $ }}
+    namespace: {{ $.Release.Namespace }}
 {{- if .Values.approverClusterRole.create }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

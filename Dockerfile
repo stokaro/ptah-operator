@@ -9,6 +9,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/manager ./cmd/manager
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/ptah-runner ./cmd/ptah-runner
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/ptah-cert-rotator ./cmd/ptah-cert-rotator
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:1c2c046bc09ed40fad370b599a0b1ae7987f55b01e247cf27a7c27cd97e5bbc7
 ARG VERSION=dev
@@ -21,5 +22,6 @@ LABEL org.opencontainers.image.title="Ptah Operator" \
       org.opencontainers.image.source="$SOURCE"
 COPY --from=builder /out/manager /manager
 COPY --from=builder /out/ptah-runner /ptah-runner
+COPY --from=builder /out/ptah-cert-rotator /ptah-cert-rotator
 USER 65532:65532
 ENTRYPOINT ["/manager"]

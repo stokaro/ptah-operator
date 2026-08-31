@@ -10,7 +10,7 @@ IMG ?= ghcr.io/stokaro/ptah-operator:dev
 all: verify build
 
 build:
-	$(GO) build ./cmd/manager ./cmd/ptah-runner
+	$(GO) build ./cmd/manager ./cmd/ptah-runner ./cmd/ptah-cert-rotator
 
 test:
 	$(GO) test ./...

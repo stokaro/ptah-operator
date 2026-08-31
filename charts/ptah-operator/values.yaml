@@ -19,11 +19,25 @@ execution:
   runnerImage: ""
   ptahVersion: "v0.3.0"
 
+admission:
+  # These values must match kube-apiserver's enabled admission plugins and
+  # DefaultTolerationSeconds flags. Zero means an exact zero-second NoExecute
+  # toleration; it does not disable the plugin.
+  defaultTolerationsEnabled: true
+  defaultNotReadyTolerationSeconds: 300
+  defaultUnreachableTolerationSeconds: 300
+  extendedResourceTolerationEnabled: false
+  alwaysPullImagesEnabled: false
+
+# Required whenever replicaCount is greater than one. Disable only for an
+# isolated single-replica installation. Exactly one Helm release is supported
+# per cluster; scale this release for high availability.
 leaderElection: true
 
 coordination:
-  # Leave empty to use the Helm release namespace. Every operator instance
-  # that can reach the same databases must use the same namespace.
+  # Leave empty to use the Helm release namespace. This namespace contains
+  # both database target Leases and the manager leader-election Lease for the
+  # cluster's one supported operator release.
   namespace: ""
 
 serviceAccount:
@@ -61,6 +75,29 @@ webhook:
   # PEM-encoded CA certificate for existingSecret. Leave empty during a
   # connected Helm install to read ca.crt from that Secret.
   caBundle: ""
+
+certificateRotation:
+  # Built-in management is automatically omitted when webhook.existingSecret
+  # is set. The manager never receives Secret-read permission.
+  enabled: true
+  interval: "6h"
+  operationTimeout: "15m"
+  retryInitial: "5s"
+  retryMax: "5m"
+  healthPort: 8081
+  renewalThreshold: "720h"
+  servingCertificateValidity: "2160h"
+  caCertificateValidity: "26280h"
+  probeTimeout: "5m"
+  probeInterval: "2s"
+  leaseDuration: "10m"
+  leaseAcquireTimeout: "30s"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
 
 approverClusterRole:
   create: true

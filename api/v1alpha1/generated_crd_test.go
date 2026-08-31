@@ -208,6 +208,71 @@ func TestGeneratedPtahSchemaPlanSizeContract(t *testing.T) {
 	}
 }
 
+func TestGeneratedPtahSchemaAdmissionSnapshotBounds(t *testing.T) {
+	t.Parallel()
+
+	crd := loadGeneratedCRD(t, filepath.Join(
+		repositoryRoot(t),
+		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+	))
+	status := storageVersionSchema(t, crd).Properties["status"]
+	activeOperation := status.Properties["activeOperation"]
+	snapshot := activeOperation.Properties["admissionSnapshot"]
+	if snapshot.Type != "object" {
+		t.Fatalf("status.activeOperation.admissionSnapshot type = %q", snapshot.Type)
+	}
+
+	limitRanges := snapshot.Properties["limitRanges"]
+	if limitRanges.MaxItems == nil || *limitRanges.MaxItems != 32 || limitRanges.Items == nil || limitRanges.Items.Schema == nil {
+		t.Fatalf("admissionSnapshot.limitRanges max/items = %v/%#v", limitRanges.MaxItems, limitRanges.Items)
+	}
+	limitRange := limitRanges.Items.Schema
+	for _, name := range []string{"defaultRequests", "defaultLimits"} {
+		property := limitRange.Properties[name]
+		if property.MaxProperties == nil || *property.MaxProperties != 64 {
+			t.Errorf("admissionSnapshot.limitRanges[].%s maxProperties = %v, want 64", name, property.MaxProperties)
+		}
+	}
+
+	runtimeClass := snapshot.Properties["runtimeClass"]
+	for _, name := range []string{"overhead", "nodeSelector"} {
+		property := runtimeClass.Properties[name]
+		if property.MaxProperties == nil || *property.MaxProperties != 64 {
+			t.Errorf("admissionSnapshot.runtimeClass.%s maxProperties = %v, want 64", name, property.MaxProperties)
+		}
+	}
+	tolerations := runtimeClass.Properties["tolerations"]
+	if tolerations.MaxItems == nil || *tolerations.MaxItems != 64 {
+		t.Errorf("admissionSnapshot.runtimeClass.tolerations maxItems = %v, want 64", tolerations.MaxItems)
+	}
+	imagePullSecrets := snapshot.Properties["serviceAccount"].Properties["imagePullSecrets"]
+	if imagePullSecrets.MaxItems == nil || *imagePullSecrets.MaxItems != 64 {
+		t.Errorf("admissionSnapshot.serviceAccount.imagePullSecrets maxItems = %v, want 64", imagePullSecrets.MaxItems)
+	}
+
+	for _, name := range []string{"defaultNotReadyTolerationSeconds", "defaultUnreachableTolerationSeconds"} {
+		property := snapshot.Properties[name]
+		if property.Minimum == nil || *property.Minimum != 0 || property.Maximum != nil {
+			t.Errorf("admissionSnapshot.%s bounds = [%v,%v], want nonnegative int64", name, property.Minimum, property.Maximum)
+		}
+	}
+	for _, name := range []string{
+		"defaultTolerationsEnabled", "extendedResourceTolerationEnabled", "alwaysPullImagesEnabled",
+	} {
+		if property := snapshot.Properties[name]; property.Type != "boolean" {
+			t.Errorf("admissionSnapshot.%s type = %q, want boolean", name, property.Type)
+		}
+	}
+
+	object := snapshot.Properties["serviceAccount"].Properties["object"]
+	if maximum := object.Properties["uid"].MaxLength; maximum == nil || *maximum != 128 {
+		t.Errorf("admissionSnapshot object UID maxLength = %v, want 128", maximum)
+	}
+	if maximum := object.Properties["resourceVersion"].MaxLength; maximum == nil || *maximum != 128 {
+		t.Errorf("admissionSnapshot object resourceVersion maxLength = %v, want 128", maximum)
+	}
+}
+
 func loadGeneratedCRD(t *testing.T, path string) *apiextensions.CustomResourceDefinition {
 	t.Helper()
 

@@ -802,6 +802,220 @@ spec:
             properties:
               activeOperation:
                 properties:
+                  admissionSnapshot:
+                    properties:
+                      alwaysPullImagesEnabled:
+                        type: boolean
+                      defaultNotReadyTolerationSeconds:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      defaultTolerationsEnabled:
+                        type: boolean
+                      defaultUnreachableTolerationSeconds:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      digest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      extendedResourceTolerationEnabled:
+                        type: boolean
+                      limitRanges:
+                        items:
+                          properties:
+                            defaultLimits:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              maxProperties: 64
+                              type: object
+                            defaultRequests:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              maxProperties: 64
+                              type: object
+                            object:
+                              properties:
+                                name:
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                resourceVersion:
+                                  maxLength: 128
+                                  minLength: 1
+                                  type: string
+                                uid:
+                                  maxLength: 128
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              - resourceVersion
+                              - uid
+                              type: object
+                          required:
+                          - object
+                          type: object
+                        maxItems: 32
+                        type: array
+                      priorityClass:
+                        properties:
+                          name:
+                            maxLength: 253
+                            type: string
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                          preemptionPolicy:
+                            enum:
+                            - Never
+                            - PreemptLowerPriority
+                            type: string
+                          value:
+                            format: int32
+                            type: integer
+                        required:
+                        - value
+                        type: object
+                      runtimeClass:
+                        properties:
+                          handler:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                          nodeSelector:
+                            additionalProperties:
+                              type: string
+                            maxProperties: 64
+                            type: object
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                          overhead:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            maxProperties: 64
+                            type: object
+                          overheadDefined:
+                            type: boolean
+                          tolerations:
+                            items:
+                              properties:
+                                effect:
+                                  type: string
+                                key:
+                                  type: string
+                                operator:
+                                  type: string
+                                tolerationSeconds:
+                                  format: int64
+                                  type: integer
+                                value:
+                                  type: string
+                              type: object
+                            maxItems: 64
+                            type: array
+                        required:
+                        - handler
+                        - object
+                        type: object
+                      serviceAccount:
+                        properties:
+                          imagePullSecrets:
+                            items:
+                              properties:
+                                name:
+                                  default: ""
+                                  type: string
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            maxItems: 64
+                            type: array
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                        required:
+                        - object
+                        type: object
+                      templateDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      version:
+                        enum:
+                        - v1
+                        type: string
+                    required:
+                    - alwaysPullImagesEnabled
+                    - defaultNotReadyTolerationSeconds
+                    - defaultTolerationsEnabled
+                    - defaultUnreachableTolerationSeconds
+                    - digest
+                    - extendedResourceTolerationEnabled
+                    - priorityClass
+                    - serviceAccount
+                    - templateDigest
+                    - version
+                    type: object
                   attempt:
                     format: int32
                     type: integer

@@ -107,8 +107,16 @@ for resource in \
 		fail "API discovery is missing $resource"
 done
 
+printf '%s\n' 'e2e assertions: checking owner-reference finalizer authorization'
+for owner_resource in ptahschemas.operator.ptah.dev ptahschemaplans.operator.ptah.dev; do
+	answer=$(k auth can-i update "$owner_resource" \
+		--subresource=finalizers --as="$SERVICE_ACCOUNT" || true)
+	[ "$answer" = yes ] ||
+		fail "controller service account cannot update the $owner_resource finalizers subresource"
+done
+
 printf '%s\n' 'e2e assertions: checking webhook failure policy and scope'
-k get mutatingwebhookconfiguration/"${CONTROLLER_NAME}-approval" -o json |
+k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
 	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "${CONTROLLER_NAME}-webhook" '
       .webhooks | length == 1 and all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and
@@ -126,24 +134,29 @@ k get mutatingwebhookconfiguration/"${CONTROLLER_NAME}-approval" -o json |
           operations: ["CREATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"
         }])
     ' >/dev/null || fail "approval mutating webhook is not exact and fail-closed"
-k get validatingwebhookconfiguration/"${CONTROLLER_NAME}-approval" -o json |
+k get validatingwebhookconfiguration/ptah-operator-admission -o json |
 	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "${CONTROLLER_NAME}-webhook" '
-      .webhooks | length == 1 and all(.[];
-        .failurePolicy == "Fail" and .sideEffects == "None" and
-	        .matchPolicy == "Equivalent" and
-	        ((.namespaceSelector // {}) == {}) and
-	        ((.objectSelector // {}) == {}) and
-	        ((.matchConditions // []) == []) and
-        (.admissionReviewVersions | index("v1")) != null and
-        .clientConfig.caBundle != "" and
-        .clientConfig.service.namespace == $namespace and
-        .clientConfig.service.name == $service and
+      .webhooks | length == 2 and
+      (map(select(.name == "vapproval.operator.ptah.dev")) | length == 1 and all(.[];
+        .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Equivalent" and
+        ((.namespaceSelector // {}) == {}) and ((.objectSelector // {}) == {}) and
+        ((.matchConditions // []) == []) and
+        (.admissionReviewVersions | index("v1")) != null and .clientConfig.caBundle != "" and
+        .clientConfig.service.namespace == $namespace and .clientConfig.service.name == $service and
         .clientConfig.service.path == "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval" and
-        .rules == [{
-          apiGroups: ["operator.ptah.dev"], apiVersions: ["v1alpha1"],
-          operations: ["CREATE", "UPDATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"
-        }])
-    ' >/dev/null || fail "approval validating webhook is not exact and fail-closed"
+        .rules == [{apiGroups: ["operator.ptah.dev"], apiVersions: ["v1alpha1"],
+          operations: ["CREATE", "UPDATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"}])) and
+      (map(select(.name == "vpodintent.operator.ptah.dev")) | length == 1 and all(.[];
+        .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Equivalent" and
+        ((.namespaceSelector // {}) == {}) and ((.objectSelector // {}) == {}) and
+        (.matchConditions | length == 1 and .[0].name == "job-owned-pod" and
+          (.[0].expression | contains("batch/v1") and contains("oldObject"))) and
+        (.admissionReviewVersions | index("v1")) != null and .clientConfig.caBundle != "" and
+        .clientConfig.service.namespace == $namespace and .clientConfig.service.name == $service and
+        .clientConfig.service.path == "/validate-v1-pod-ptah-operation-intent" and
+        .rules == [{apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE", "UPDATE"],
+          resources: ["pods", "pods/ephemeralcontainers", "pods/resize"], scope: "Namespaced"}]))
+    ' >/dev/null || fail "validating webhooks are not exact and fail-closed"
 
 printf '%s\n' 'e2e assertions: checking controller Secret isolation'
 k create namespace "$TEST_NAMESPACE" >/dev/null
