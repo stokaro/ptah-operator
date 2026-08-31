@@ -2256,9 +2256,10 @@ run_engine_lifecycle() {
 		-o jsonpath='{.metadata.generation}')
 	v2_observed_generation=$(k -n "$TEST_NAMESPACE" get ptahschema "$lifecycle_schema" \
 		-o jsonpath='{.status.observedGeneration}')
-	[ "$v2_generation" = "$scheduled_tag_generation" ] &&
-		[ "$v2_observed_generation" = "$scheduled_tag_generation" ] ||
+	if [ "$v2_generation" != "$scheduled_tag_generation" ] ||
+		[ "$v2_observed_generation" != "$scheduled_tag_generation" ]; then
 		fail "$lifecycle_schema scheduled tag refresh depended on a spec generation change"
+	fi
 	plan_v2=$CURRENT_PLAN
 	plan_v2_uid=$CURRENT_PLAN_UID
 	plan_v2_fingerprint=$CURRENT_PLAN_FINGERPRINT
