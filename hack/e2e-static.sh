@@ -195,6 +195,24 @@ for lifecycle_marker in \
 	'checkpoint_jobs'; do
 	grep -F "$lifecycle_marker" "$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
 done
+for protocol_script in e2e-dataplane.sh e2e-faults.sh; do
+	case "$protocol_script" in
+	e2e-dataplane.sh) converged_result_occurrences=1 ;;
+	e2e-faults.sh) converged_result_occurrences=2 ;;
+	esac
+	for converged_result_marker in \
+		"(\$observe.observedDrift // false) == false" \
+		"(\$observe.highestDriftSeverity // \"\") == \"\"" \
+		"(\$observe.driftFindingCount // 0) == 0"; do
+		grep -F "$converged_result_marker" "$ROOT_DIR/hack/$protocol_script" >/dev/null
+		[ "$(grep -Fc "$converged_result_marker" "$ROOT_DIR/hack/$protocol_script")" -eq \
+			"$converged_result_occurrences" ] || {
+			printf 'e2e static: expected %s converged result markers in %s\n' \
+				"$converged_result_occurrences" "$protocol_script" >&2
+			exit 1
+		}
+	done
+done
 for admission_marker in \
 	'.immutable = true' \
 	'empty target Secret key' \

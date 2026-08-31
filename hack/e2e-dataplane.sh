@@ -1573,8 +1573,9 @@ assert_convergence_result_pair() {
 		--slurpfile plan "$converged_plan_result" '
       $observe[0] as $observe | $plan[0] as $plan |
       $observe.error == null and $observe.childExitCode == 0 and
-      $observe.stdout == "" and $observe.observedDrift == false and
-      $observe.highestDriftSeverity == "" and $observe.driftFindingCount == 0 and
+      $observe.stdout == "" and ($observe.observedDrift // false) == false and
+      ($observe.highestDriftSeverity // "") == "" and
+      ($observe.driftFindingCount // 0) == 0 and
       $observe.coordinationDigest == .status.target.coordinationDigest and
       $observe.targetIdentityDigest == .status.target.identityDigest and
       $observe.driftReportDigest == .status.target.driftReportDigest and

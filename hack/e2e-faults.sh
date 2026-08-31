@@ -1905,8 +1905,9 @@ assert_fault_convergence_result_pair() {
           (.status.conditions | any(
             .type == "InSync" and .status == "True" and .reason == "ScopedConverged")) and
           $observe.error == null and $observe.childExitCode == 0 and
-          $observe.stdout == "" and $observe.observedDrift == false and
-          $observe.highestDriftSeverity == "" and $observe.driftFindingCount == 0 and
+          $observe.stdout == "" and ($observe.observedDrift // false) == false and
+          ($observe.highestDriftSeverity // "") == "" and
+          ($observe.driftFindingCount // 0) == 0 and
           ($observe.observedDialect | IN("postgres", "postgresql")) and
           $observe.coordinationDigest == .status.target.coordinationDigest and
           $observe.targetIdentityDigest == .status.target.identityDigest and
@@ -4192,8 +4193,9 @@ printf '%s\n' "$ALIAS_B_FINAL_SCHEMA" | jq -e \
       .status.pendingObservation == null and .status.pendingLockRelease == null and
       .status.applied == null and .status.plan == null and
       ($observe.error == null and $observe.childExitCode == 0 and
-        $observe.stdout == "" and $observe.observedDrift == false and
-        $observe.highestDriftSeverity == "" and $observe.driftFindingCount == 0 and
+        $observe.stdout == "" and ($observe.observedDrift // false) == false and
+        ($observe.highestDriftSeverity // "") == "" and
+        ($observe.driftFindingCount // 0) == 0 and
         ($observe.observedDialect | IN("postgres", "postgresql")) and
         $observe.coordinationDigest == .status.target.coordinationDigest and
         $observe.targetIdentityDigest == .status.target.identityDigest and
