@@ -440,6 +440,93 @@ func TestObserveDriftExitOneIsAFramedResult(t *testing.T) {
 	}
 }
 
+func TestObserveNormalizesNativeConvergedSafeSeverity(t *testing.T) {
+	t.Parallel()
+
+	report := `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[],"diff":{"tables_added":[],"tables_removed":[],"columns_added":[],"columns_removed":[],"columns_changed":[]}}`
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report}}}
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: databaseEnvironment("observe-converged-safe"), Executor: executor,
+	})
+	if result.Error != nil || result.ChildExitCode != 0 || result.DriftReportDigest == "" ||
+		result.ObservedDialect != "postgres" || result.ObservedDrift ||
+		result.HighestDriftSeverity != "" || result.DriftFindingCount != 0 {
+		t.Fatalf("Run() = %#v, want a normalized converged observation", result)
+	}
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	if _, err := ParseResultFor(frame, OperationObserve, "observe-converged-safe"); err != nil {
+		t.Fatalf("ParseResultFor() error = %v", err)
+	}
+}
+
+func TestObservePreservesSafeSeverityForRealDrift(t *testing.T) {
+	t.Parallel()
+
+	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":" SAFE ","dialect":"postgres","findings":[{"category":"tables_added","count":1,"severity":"safe"}],"diff":{"tables_added":["app.audit"]}}`
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}}
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: databaseEnvironment("observe-real-safe-drift"), Executor: executor,
+	})
+	if result.Error != nil || result.ChildExitCode != 0 || result.DriftReportDigest == "" ||
+		!result.ObservedDrift || result.HighestDriftSeverity != "safe" || result.DriftFindingCount != 1 {
+		t.Fatalf("Run() = %#v, want real drift severity preserved", result)
+	}
+	if _, err := MarshalFrame(result); err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+}
+
+func TestObserveFramesInconsistentConvergedSummaryAsInvalid(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		report string
+	}{
+		{
+			name:   "drift severity",
+			report: `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[],"diff":{}}`,
+		},
+		{
+			name:   "positive finding",
+			report: `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"safe","dialect":"postgres","findings":[{"category":"columns_added","count":1,"severity":"safe"}],"diff":{}}`,
+		},
+		{
+			name:   "zero-count finding",
+			report: `{"drift":false,"failed":false,"failure_threshold":"all","highest_severity":"","dialect":"postgres","findings":[{"category":"columns_added","count":0,"severity":"safe"}],"diff":{}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			operationID := "observe-inconsistent-" + strings.ReplaceAll(test.name, " ", "-")
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: test.report}}}
+			result := Run(context.Background(), Config{
+				Operation: OperationObserve, Environment: databaseEnvironment(operationID), Executor: executor,
+			})
+			if result.Error == nil || result.Error.Code != "invalid_observed_state" ||
+				result.DriftReportDigest != "" || result.ObservedDialect != "" || result.ObservedDrift ||
+				result.HighestDriftSeverity != "" || result.DriftFindingCount != 0 {
+				t.Fatalf("Run() = %#v, want a frameable invalid_observed_state", result)
+			}
+			frame, err := MarshalFrame(result)
+			if err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			parsed, err := ParseResultFor(frame, OperationObserve, operationID)
+			if err != nil {
+				t.Fatalf("ParseResultFor() error = %v", err)
+			}
+			if parsed.Error == nil || parsed.Error.Code != "invalid_observed_state" {
+				t.Fatalf("parsed result = %#v", parsed)
+			}
+		})
+	}
+}
+
 func TestObserveNeverPublishesNativeFailureDetails(t *testing.T) {
 	t.Parallel()
 

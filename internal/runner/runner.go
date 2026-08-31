@@ -675,26 +675,49 @@ func runObserve(ctx context.Context, config Config, environment []string, inputs
 		setResultError(&result, "invalid_observed_state", errors.New("drift output dialect does not match the expected database engine"), redactor, config.Diagnostics)
 		return result
 	}
+	severity, count, err := normalizeDriftSummary(report)
+	if err != nil {
+		setResultError(&result, "invalid_observed_state", err, redactor, config.Diagnostics)
+		return result
+	}
 	reportDigest, err := dataplane.DriftReportDigest(report)
 	if err != nil {
 		setResultError(&result, "invalid_observed_state", err, redactor, config.Diagnostics)
 		return result
 	}
 	result.DriftReportDigest = reportDigest
-	count, err := driftFindingCount(report)
-	if err != nil {
-		setResultError(&result, "invalid_observed_state", err, redactor, config.Diagnostics)
-		return result
-	}
 	result.ObservedDialect = strings.ToLower(strings.TrimSpace(report.Dialect))
 	result.ObservedDrift = report.Drift
-	result.HighestDriftSeverity = strings.ToLower(strings.TrimSpace(report.HighestSeverity))
+	result.HighestDriftSeverity = severity
 	result.DriftFindingCount = count
 	// The native drift command uses exit 1 as a domain outcome. Once its exact
 	// report has been validated, the framed operation itself is successful and
 	// must use the protocol-wide success exit code.
 	result.ChildExitCode = 0
 	return result
+}
+
+func normalizeDriftSummary(report dataplane.DriftReport) (string, int32, error) {
+	severity := strings.ToLower(strings.TrimSpace(report.HighestSeverity))
+	if !report.Drift {
+		if len(report.Findings) != 0 {
+			return "", 0, errors.New("converged drift report contains findings")
+		}
+		switch severity {
+		case "", "safe":
+			return "", 0, nil
+		default:
+			return "", 0, errors.New("converged drift report contains a drift severity")
+		}
+	}
+	if !validDriftSeverity(severity) {
+		return "", 0, errors.New("drift report contains an invalid highest severity")
+	}
+	count, err := driftFindingCount(report)
+	if err != nil {
+		return "", 0, err
+	}
+	return severity, count, nil
 }
 
 func driftFindingCount(report dataplane.DriftReport) (int32, error) {
