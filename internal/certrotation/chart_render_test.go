@@ -120,6 +120,21 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	assertHTTPProbe(t, container, "readinessProbe", "/readyz")
 
 	deployment := mustObject(t, objects, "Deployment", managerName)
+	if component := deployment.GetLabels()["app.kubernetes.io/component"]; component != "controller" {
+		t.Fatalf("manager Deployment component label = %q, want controller", component)
+	}
+	var controllerDeployments []string
+	for _, object := range objects {
+		labels := object.GetLabels()
+		if object.GetKind() == "Deployment" &&
+			labels["app.kubernetes.io/instance"] == releaseName &&
+			labels["app.kubernetes.io/component"] == "controller" {
+			controllerDeployments = append(controllerDeployments, object.GetName())
+		}
+	}
+	if !slices.Equal(controllerDeployments, []string{managerName}) {
+		t.Fatalf("controller-labeled Deployments = %v, want only %q", controllerDeployments, managerName)
+	}
 	assertManagerTLSProjection(t, deployment, secretName)
 }
 
