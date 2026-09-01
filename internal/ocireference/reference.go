@@ -6,8 +6,11 @@ import (
 	_ "crypto/sha256" // Register SHA-256 for OCI digest validation.
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"oras.land/oras-go/v2/registry"
 )
@@ -49,6 +52,119 @@ func Parse(raw string) (Reference, error) {
 		Selector:   selector,
 		IsDigest:   strings.Contains(selector, ":"),
 	}, nil
+}
+
+// Authority returns the canonical HTTP authority selected by the OCI client.
+// ORAS maps a small number of logical registry names to a different request
+// host, so authorization must use Reference.Host rather than the parsed
+// Registry field. Beyond that client-defined mapping, comparison deliberately
+// does not resolve DNS names, collapse explicit ports, or remove trailing dots.
+func Authority(rawReference string) (string, error) {
+	reference, err := Parse(rawReference)
+	if err != nil {
+		return "", err
+	}
+	effective := registry.Reference{Registry: reference.Registry}.Host()
+	return CanonicalAuthority(effective)
+}
+
+// CanonicalAuthority validates an authority-only host[:port] value and applies
+// only the case folding permitted for a registry host. Transport schemes,
+// credentials, paths, and encoded separators are rejected rather than
+// normalized into a broader credential scope.
+func CanonicalAuthority(raw string) (string, error) {
+	if raw == "" || strings.TrimSpace(raw) != raw {
+		return "", errors.New("OCI registry authority must not be empty or contain surrounding whitespace")
+	}
+	for _, value := range raw {
+		if value > unicode.MaxASCII || unicode.IsSpace(value) || unicode.IsControl(value) {
+			return "", errors.New("OCI registry authority must contain printable ASCII without whitespace")
+		}
+	}
+	if strings.ContainsAny(raw, "/@?#\\\x00%") {
+		return "", errors.New("OCI registry authority must contain only a host and optional port")
+	}
+	if err := validateAuthorityHostPort(raw); err != nil {
+		return "", err
+	}
+
+	canonical := strings.ToLower(raw)
+	const sentinelRepository = "ptah-authority-validation"
+	parsed, err := registry.ParseReference(canonical + "/" + sentinelRepository)
+	if err != nil || parsed.Registry != canonical || parsed.Repository != sentinelRepository || parsed.Reference != "" {
+		if err == nil {
+			err = errors.New("value is not an authority-only registry name")
+		}
+		return "", fmt.Errorf("parse OCI registry authority: %w", err)
+	}
+	return canonical, nil
+}
+
+func validateAuthorityHostPort(authority string) error {
+	if strings.HasPrefix(authority, "[") {
+		closing := strings.IndexByte(authority, ']')
+		if closing < 0 || closing == 1 || !strings.Contains(authority[1:closing], ":") ||
+			net.ParseIP(authority[1:closing]) == nil {
+			return errors.New("OCI registry authority contains an invalid bracketed IPv6 host")
+		}
+		remainder := authority[closing+1:]
+		if remainder == "" {
+			return nil
+		}
+		if !strings.HasPrefix(remainder, ":") || strings.ContainsAny(remainder[1:], "[]:") {
+			return errors.New("OCI registry authority contains invalid text after its IPv6 host")
+		}
+		return validateAuthorityPort(remainder[1:])
+	}
+	if strings.ContainsAny(authority, "[]") {
+		return errors.New("OCI registry authority contains unmatched IPv6 brackets")
+	}
+
+	switch strings.Count(authority, ":") {
+	case 0:
+		return nil
+	case 1:
+		host, port, _ := strings.Cut(authority, ":")
+		if host == "" {
+			return errors.New("OCI registry authority host must not be empty")
+		}
+		return validateAuthorityPort(port)
+	default:
+		return errors.New("OCI registry IPv6 authority must use brackets")
+	}
+}
+
+func validateAuthorityPort(port string) error {
+	if port == "" {
+		return errors.New("OCI registry authority port must not be empty")
+	}
+	for _, value := range port {
+		if value < '0' || value > '9' {
+			return errors.New("OCI registry authority port must be decimal")
+		}
+	}
+	number, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || number == 0 {
+		return errors.New("OCI registry authority port must be between 1 and 65535")
+	}
+	return nil
+}
+
+// MatchAuthority requires a Secret-owned authority grant to name the exact
+// registry selected by an OCI reference.
+func MatchAuthority(rawReference, rawGrant string) error {
+	want, err := Authority(rawReference)
+	if err != nil {
+		return fmt.Errorf("parse OCI reference authority: %w", err)
+	}
+	got, err := CanonicalAuthority(rawGrant)
+	if err != nil {
+		return fmt.Errorf("parse OCI credential authority grant: %w", err)
+	}
+	if want != got {
+		return errors.New("OCI credential authority grant does not match the source registry")
+	}
+	return nil
 }
 
 // MatchRequested verifies that a resolver report describes exactly the

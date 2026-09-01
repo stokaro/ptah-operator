@@ -31,6 +31,8 @@ import (
 )
 
 const (
+	maxPtahVersionBytes = 128
+
 	// LabelManagedBy identifies Jobs managed by this operator.
 	LabelManagedBy = "app.kubernetes.io/managed-by"
 	// LabelComponent identifies the bounded schema-operation component.
@@ -56,18 +58,19 @@ const (
 	// to the credential-free admission envelope persisted before dispatch.
 	AnnotationAdmissionSnapshotDigest = "operator.ptah.dev/admission-snapshot-digest"
 
-	mainContainerName   = "ptah"
-	initContainerName   = "install-runner"
-	fetchContainerName  = "fetch-schema"
-	runnerVolumeName    = "runner"
-	workVolumeName      = "work"
-	fetchWorkVolumeName = "fetch-work"
-	policyVolumeName    = "verification-policy"
-	planVolumeName      = "plan"
-	sourceVolumeName    = "schema-source"
-	dockerVolumeName    = "registry-docker-config"
-	caVolumeName        = "registry-ca"
-	tlsVolumeName       = "registry-client-tls"
+	mainContainerName    = "ptah"
+	initContainerName    = "install-runner"
+	guardContainerName   = "validate-source-authority"
+	fetchContainerName   = "fetch-schema"
+	runnerVolumeName     = "runner"
+	workVolumeName       = "work"
+	fetchWorkVolumeName  = "fetch-work"
+	policyVolumeName     = "verification-policy"
+	planVolumeName       = "plan"
+	sourceVolumeName     = "schema-source"
+	dockerVolumeName     = "registry-docker-config"
+	caVolumeName         = "registry-ca"
+	caSnapshotVolumeName = "registry-ca-snapshot"
 
 	runnerPath             = "/runner/ptah-runner"
 	ptahBinaryPath         = "/usr/local/bin/ptah"
@@ -78,15 +81,15 @@ const (
 	sourceFilePath         = "/source/schema.hcl"
 	fetchWorkPath          = "/fetch-work"
 	dockerConfigPath       = "/credentials/docker"
-	caFilePath             = "/credentials/ca/ca.pem"
-	clientCertificatePath  = "/credentials/tls/tls.crt"
-	clientKeyPath          = "/credentials/tls/tls.key"
+	caSourceFilePath       = "/credentials/ca-source/ca.pem"
+	caSnapshotFilePath     = "/credentials/ca-snapshot/ca.pem"
 
 	defaultActiveDeadlineSeconds int64 = 900
 	runnerVolumeBytes                  = 64 << 20
 	workVolumeBytes                    = 128 << 20
 	sourceVolumeBytes                  = 64 << 20
 	fetchWorkVolumeBytes               = 64 << 20
+	caSnapshotVolumeBytes              = 2 << 20
 )
 
 var (
@@ -240,11 +243,11 @@ func (b Builder) Build(
 		VolumeMounts:    []corev1.VolumeMount{{Name: runnerVolumeName, MountPath: "/runner"}},
 	}}
 	if operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan {
-		fetch, fetchVolumes, err := b.schemaFetch(schema, operation, resources, &falseValue, &trueValue, &nonRootID)
+		guard, fetch, fetchVolumes, err := b.schemaFetch(schema, operation, resources, &falseValue, &trueValue, &nonRootID)
 		if err != nil {
 			return nil, err
 		}
-		initContainers = append(initContainers, fetch)
+		initContainers = append(initContainers, guard, fetch)
 		volumes = append(volumes, fetchVolumes...)
 		mounts = append(mounts, corev1.VolumeMount{Name: sourceVolumeName, MountPath: sourcePath, ReadOnly: true})
 	}
@@ -482,6 +485,7 @@ func (i buildInput) dataPlane() (
 		environment = append(environment, literalEnv("PTAH_PLAIN_HTTP", strconv.FormatBool(i.schema.Spec.Desired.Transport.PlainHTTP)))
 		var err error
 		environment, volumes, mounts, err = addRegistryAccess(
+			i.schema.Spec.Desired.OCIRef,
 			i.schema.Spec.Desired.RegistryAuthFrom,
 			i.schema.Spec.Desired.Transport,
 			environment,
@@ -585,10 +589,10 @@ func (b Builder) schemaFetch(
 	resources corev1.ResourceRequirements,
 	falseValue, trueValue *bool,
 	nonRootID *int64,
-) (corev1.Container, []corev1.Volume, error) {
+) (corev1.Container, corev1.Container, []corev1.Volume, error) {
 	source, err := schemaFetchBinding(schema, operation)
 	if err != nil {
-		return corev1.Container{}, nil, err
+		return corev1.Container{}, corev1.Container{}, nil, err
 	}
 	environment := []corev1.EnvVar{
 		literalEnv("HOME", fetchWorkPath),
@@ -604,6 +608,7 @@ func (b Builder) schemaFetch(
 		{Name: fetchWorkVolumeName, MountPath: fetchWorkPath},
 	}
 	environment, registryVolumes, registryMounts, err := addRegistryAccess(
+		source.ResolvedReference,
 		source.RegistryAuthFrom,
 		source.Transport,
 		environment,
@@ -611,23 +616,81 @@ func (b Builder) schemaFetch(
 		nil,
 	)
 	if err != nil {
-		return corev1.Container{}, nil, err
+		return corev1.Container{}, corev1.Container{}, nil, err
 	}
 	volumes = append(volumes, registryVolumes...)
 	mounts = append(mounts, registryMounts...)
-	sort.Slice(environment, func(left, right int) bool { return environment[left].Name < environment[right].Name })
-	return corev1.Container{
+	guardMounts := []corev1.VolumeMount{{Name: runnerVolumeName, MountPath: "/runner", ReadOnly: true}}
+	fetchMounts := append([]corev1.VolumeMount(nil), mounts...)
+	guardArgs := []string{"--validate-oci-source", source.ResolvedReference}
+	if source.Transport.CAFrom != nil {
+		volumes = append(volumes, corev1.Volume{
+			Name:         caSnapshotVolumeName,
+			VolumeSource: corev1.VolumeSource{EmptyDir: memoryVolume(caSnapshotVolumeBytes)},
+		})
+		filteredFetchMounts := fetchMounts[:0]
+		for _, mount := range fetchMounts {
+			if mount.Name == caVolumeName {
+				guardMounts = append(guardMounts, mount)
+				continue
+			}
+			filteredFetchMounts = append(filteredFetchMounts, mount)
+		}
+		fetchMounts = append(filteredFetchMounts,
+			corev1.VolumeMount{Name: caSnapshotVolumeName, MountPath: "/credentials/ca-snapshot", ReadOnly: true},
+		)
+		guardMounts = append(guardMounts,
+			corev1.VolumeMount{Name: caSnapshotVolumeName, MountPath: "/credentials/ca-snapshot"},
+		)
+		guardArgs = append(guardArgs, "--snapshot-oci-ca-to", caSnapshotFilePath)
+	}
+	guardEnvironment := selectEnvironment(environment,
+		"PTAH_PLAIN_HTTP",
+		"PTAH_OCI_REGISTRY",
+		runner.EnvOCIAuthMode,
+		runner.EnvOCIAuthRegistryGrant,
+		runner.EnvOCIAllowPlainHTTPGrant,
+		runner.EnvOCIHasCA,
+		runner.EnvOCICASourceFile,
+		runner.EnvOCICASHA256Grant,
+	)
+	fetchEnvironment := omitEnvironment(environment,
+		runner.EnvOCIAuthMode,
+		runner.EnvOCIAuthRegistryGrant,
+		runner.EnvOCIAllowPlainHTTPGrant,
+		runner.EnvOCIHasCA,
+		runner.EnvOCICASourceFile,
+		runner.EnvOCICASHA256Grant,
+	)
+	if source.Transport.CAFrom != nil {
+		fetchEnvironment = append(fetchEnvironment, literalEnv("PTAH_OCI_CA_FILE", caSnapshotFilePath))
+	}
+	sort.Slice(guardEnvironment, func(left, right int) bool { return guardEnvironment[left].Name < guardEnvironment[right].Name })
+	sort.Slice(fetchEnvironment, func(left, right int) bool { return fetchEnvironment[left].Name < fetchEnvironment[right].Name })
+	guard := corev1.Container{
+		Name:            guardContainerName,
+		Image:           b.ExecutorImage,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Command:         []string{runnerPath},
+		Args:            guardArgs,
+		Env:             guardEnvironment,
+		Resources:       resources,
+		SecurityContext: hardenedContainerContext(falseValue, trueValue, nonRootID),
+		VolumeMounts:    guardMounts,
+	}
+	fetch := corev1.Container{
 		Name:            fetchContainerName,
 		Image:           b.ExecutorImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{ptahBinaryPath},
 		Args:            []string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath},
 		WorkingDir:      fetchWorkPath,
-		Env:             environment,
+		Env:             fetchEnvironment,
 		Resources:       resources,
 		SecurityContext: hardenedContainerContext(falseValue, trueValue, nonRootID),
-		VolumeMounts:    mounts,
-	}, volumes, nil
+		VolumeMounts:    fetchMounts,
+	}
+	return guard, fetch, volumes, nil
 }
 
 func schemaFetchBinding(
@@ -670,12 +733,17 @@ func validateArtifactAccessBinding(source operatorv1alpha1.OCIArtifactAccessBind
 }
 
 func addRegistryAccess(
+	reference string,
 	auth *operatorv1alpha1.RegistryAuthSource,
 	transport operatorv1alpha1.OCITransportSpec,
 	environment []corev1.EnvVar,
 	volumes []corev1.Volume,
 	mounts []corev1.VolumeMount,
 ) ([]corev1.EnvVar, []corev1.Volume, []corev1.VolumeMount, error) {
+	authority, err := ocireference.Authority(reference)
+	if err != nil {
+		return nil, nil, nil, errors.New("registry access requires a valid OCI source authority")
+	}
 	if auth != nil {
 		if strings.TrimSpace(auth.Name) == "" {
 			return nil, nil, nil, errors.New("registry auth Secret name is required")
@@ -684,13 +752,25 @@ func addRegistryAccess(
 		if mode == "" {
 			mode = operatorv1alpha1.RegistryAuthEnvironment
 		}
+		registryKey := stringOrDefault(auth.RegistryKey, operatorv1alpha1.RegistryAuthoritySecretKey)
+		if registryKey != operatorv1alpha1.RegistryAuthoritySecretKey {
+			return nil, nil, nil, errors.New("registry authority grant must use the fixed registry Secret key")
+		}
+		environment = append(environment,
+			literalEnv(runner.EnvOCIAuthMode, string(mode)),
+			literalEnv("PTAH_OCI_REGISTRY", authority),
+			requiredSecretEnv(
+				runner.EnvOCIAuthRegistryGrant,
+				auth.Name,
+				operatorv1alpha1.RegistryAuthoritySecretKey,
+			),
+		)
 		switch mode {
 		case operatorv1alpha1.RegistryAuthEnvironment:
 			environment = append(environment,
 				optionalSecretEnv("PTAH_OCI_USERNAME", auth.Name, stringOrDefault(auth.UsernameKey, "username")),
 				optionalSecretEnv(runner.EnvOCIPassword, auth.Name, stringOrDefault(auth.PasswordKey, "password")),
 				optionalSecretEnv(runner.EnvOCIToken, auth.Name, stringOrDefault(auth.TokenKey, "token")),
-				optionalSecretEnv("PTAH_OCI_REGISTRY", auth.Name, stringOrDefault(auth.RegistryKey, "registry")),
 			)
 		case operatorv1alpha1.RegistryAuthDockerConfigJSON:
 			key := stringOrDefault(auth.DockerConfigJSONKey, corev1.DockerConfigJsonKey)
@@ -707,9 +787,26 @@ func addRegistryAccess(
 		default:
 			return nil, nil, nil, fmt.Errorf("unsupported registry auth mode %q", mode)
 		}
+		if transport.PlainHTTP {
+			environment = append(environment, requiredSecretEnv(
+				runner.EnvOCIAllowPlainHTTPGrant,
+				auth.Name,
+				operatorv1alpha1.RegistryAllowPlainHTTPSecretKey,
+			))
+		}
+		if transport.CAFrom != nil {
+			environment = append(environment, requiredSecretEnv(
+				runner.EnvOCICASHA256Grant,
+				auth.Name,
+				operatorv1alpha1.RegistryCASHA256SecretKey,
+			))
+		}
 	}
 
 	if ca := transport.CAFrom; ca != nil {
+		if transport.PlainHTTP {
+			return nil, nil, nil, errors.New("registry CA cannot be used with plain HTTP")
+		}
 		if ca.Name == "" || ca.Key == "" {
 			return nil, nil, nil, errors.New("registry CA ConfigMap name and key are required")
 		}
@@ -722,32 +819,15 @@ func addRegistryAccess(
 				Optional:             ca.Optional,
 			}},
 		})
-		mounts = append(mounts, corev1.VolumeMount{Name: caVolumeName, MountPath: "/credentials/ca", ReadOnly: true})
-		environment = append(environment, literalEnv("PTAH_OCI_CA_FILE", caFilePath))
+		mounts = append(mounts, corev1.VolumeMount{Name: caVolumeName, MountPath: "/credentials/ca-source", ReadOnly: true})
+		environment = append(environment,
+			literalEnv(runner.EnvOCICASourceFile, caSourceFilePath),
+			literalEnv(runner.EnvOCIHasCA, "true"),
+		)
 	}
 
-	if tls := transport.ClientCertificateFrom; tls != nil {
-		if tls.Name == "" {
-			return nil, nil, nil, errors.New("registry client-certificate Secret name is required")
-		}
-		certificateKey := stringOrDefault(tls.CertificateKey, corev1.TLSCertKey)
-		privateKey := stringOrDefault(tls.PrivateKeyKey, corev1.TLSPrivateKeyKey)
-		mode := int32(0o440)
-		volumes = append(volumes, corev1.Volume{
-			Name: tlsVolumeName,
-			VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-				SecretName: tls.Name,
-				Items: []corev1.KeyToPath{
-					{Key: certificateKey, Path: "tls.crt", Mode: &mode},
-					{Key: privateKey, Path: "tls.key", Mode: &mode},
-				},
-			}},
-		})
-		mounts = append(mounts, corev1.VolumeMount{Name: tlsVolumeName, MountPath: "/credentials/tls", ReadOnly: true})
-		environment = append(environment,
-			literalEnv("PTAH_OCI_CLIENT_CERT", clientCertificatePath),
-			literalEnv("PTAH_OCI_CLIENT_KEY", clientKeyPath),
-		)
+	if transport.ClientCertificateFrom != nil {
+		return nil, nil, nil, errors.New("registry client certificates are not supported until the executor can scope them across redirects")
 	}
 	return environment, volumes, mounts, nil
 }
@@ -761,6 +841,9 @@ func (b Builder) validate() error {
 	}
 	if strings.TrimSpace(b.PtahVersion) == "" || strings.TrimSpace(b.PtahVersion) != b.PtahVersion {
 		return errors.New("ptah version is required")
+	}
+	if len(b.PtahVersion) > maxPtahVersionBytes {
+		return fmt.Errorf("ptah version must be at most %d bytes", maxPtahVersionBytes)
 	}
 	return nil
 }
@@ -994,6 +1077,44 @@ func optionalSecretEnv(name, secret, key string) corev1.EnvVar {
 			Optional:             &optional,
 		}},
 	}
+}
+
+func requiredSecretEnv(name, secret, key string) corev1.EnvVar {
+	return corev1.EnvVar{
+		Name: name,
+		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: secret},
+			Key:                  key,
+		}},
+	}
+}
+
+func selectEnvironment(environment []corev1.EnvVar, names ...string) []corev1.EnvVar {
+	selected := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		selected[name] = struct{}{}
+	}
+	result := make([]corev1.EnvVar, 0, len(names))
+	for _, variable := range environment {
+		if _, ok := selected[variable.Name]; ok {
+			result = append(result, variable)
+		}
+	}
+	return result
+}
+
+func omitEnvironment(environment []corev1.EnvVar, names ...string) []corev1.EnvVar {
+	omitted := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		omitted[name] = struct{}{}
+	}
+	result := make([]corev1.EnvVar, 0, len(environment))
+	for _, variable := range environment {
+		if _, ok := omitted[variable.Name]; !ok {
+			result = append(result, variable)
+		}
+	}
+	return result
 }
 
 func literalEnv(name, value string) corev1.EnvVar { return corev1.EnvVar{Name: name, Value: value} }

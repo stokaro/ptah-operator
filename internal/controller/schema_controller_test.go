@@ -311,109 +311,128 @@ func TestResolveResultAcceptsCanonicalDefaultTag(t *testing.T) {
 }
 
 func TestVerificationPolicyRefusalBlocksWithoutHotRetry(t *testing.T) {
-	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		childExit   int
+		requirement string
+	}{
+		{name: "native refusal", childExit: 2, requirement: "require_signature"},
+		{name: "runner digest pin refusal", childExit: 0, requirement: "require_digest_pin"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 
-	policyBytes := []byte("require_digest_pin: true\nrequire_signature: true\n")
-	policyDigest := fingerprint.DigestBytes(policyBytes)
-	schema := schemaFixture()
-	schema.Finalizers = []string{activeOperationFinalizer}
-	schema.Status.Phase = operatorv1alpha1.PhaseVerifying
-	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
-		RequestedReference: schema.Spec.Desired.OCIRef,
-		ResolvedReference:  "oci://registry.example/team/schema@" + testDigest,
-		Digest:             testDigest,
-	}
-	schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{Fingerprint: testDigest}
-	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionTrue, "ObservedConverged", "previously converged")
-	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
-		Type: operatorv1alpha1.OperationVerify, ID: testDigest,
-		JobName: "verify-job", JobUID: "job-uid", StartedAt: metav1.Now(), Attempt: 1,
-		VerificationPolicyUID: testPolicyUID, VerificationPolicyDigest: policyDigest,
-	}
-	bindActiveInput(t, schema)
-	job, pod := terminalWorkload(schema, batchv1.JobComplete)
-	frame, err := runner.MarshalFrame(runner.Result{
-		ProtocolVersion:          runner.ProtocolVersion,
-		Operation:                runner.OperationVerify,
-		OperationID:              testDigest,
-		ChildExitCode:            2,
-		ResolvedDigest:           testDigest,
-		VerificationRequirements: []string{"require_signature"},
-		VerificationPolicyDigest: policyDigest,
-		Error:                    &runner.ResultError{Code: "verification_refused", Message: "artifact does not satisfy the verification policy"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	policyConfigMap := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: schema.Spec.Desired.VerificationPolicyFrom.Name, UID: testPolicyUID},
-		Immutable:  ptr(true),
-		Data:       map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: string(policyBytes)},
-	}
-	reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfigMap)
-	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
-	result, err := reconciler.Reconcile(context.Background(), request)
-	if err != nil {
-		t.Fatalf("Reconcile() error = %v", err)
-	}
-	if result.RequeueAfter != 10*time.Minute {
-		t.Fatalf("requeue = %s, want ordinary 10m interval", result.RequeueAfter)
-	}
-	actual := &operatorv1alpha1.PtahSchema{}
-	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
-		t.Fatal(err)
-	}
-	verified := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
-	inSync := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionInSync)
-	if actual.Status.ActiveOperation != nil || actual.Status.Phase != operatorv1alpha1.PhaseBlocked ||
-		actual.Status.Source.Verified || actual.Status.Plan != nil || actual.Status.NextReconciliationTime == nil ||
-		verified == nil || verified.Status != metav1.ConditionFalse || verified.Reason != "PolicyRefused" ||
-		inSync == nil || inSync.Status != metav1.ConditionFalse || inSync.Reason != "PolicyRefused" ||
-		!strings.Contains(verified.Message, "require_signature") {
-		t.Fatalf("status after verification refusal = %#v", actual.Status)
-	}
-	if contains(actual.Finalizers, activeOperationFinalizer) {
-		t.Fatal("policy refusal retained the transient finalizer")
-	}
-	harvested := &batchv1.Job{}
-	if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), harvested); err != nil {
-		t.Fatal(err)
-	}
-	if harvested.Spec.TTLSecondsAfterFinished == nil || *harvested.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds {
-		t.Fatalf("Job cleanup TTL = %#v", harvested.Spec.TTLSecondsAfterFinished)
-	}
+			policyBytes := []byte("require_digest_pin: true\nrequire_signature: true\n")
+			policyDigest := fingerprint.DigestBytes(policyBytes)
+			schema := schemaFixture()
+			schema.Finalizers = []string{activeOperationFinalizer}
+			schema.Status.Phase = operatorv1alpha1.PhaseVerifying
+			schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+				RequestedReference: schema.Spec.Desired.OCIRef,
+				ResolvedReference:  "oci://registry.example/team/schema@" + testDigest,
+				Digest:             testDigest,
+				MediaType:          "application/vnd.oci.image.manifest.v1+json",
+				Size:               321,
+			}
+			schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{Fingerprint: testDigest}
+			setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionTrue, "ObservedConverged", "previously converged")
+			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+				Type: operatorv1alpha1.OperationVerify, ID: testDigest,
+				JobName: "verify-job", JobUID: "job-uid", StartedAt: metav1.Now(), Attempt: 1,
+				VerificationPolicyUID: testPolicyUID, VerificationPolicyDigest: policyDigest,
+			}
+			bindActiveInput(t, schema)
+			job, pod := terminalWorkload(schema, batchv1.JobComplete)
+			frame, err := runner.MarshalFrame(runner.Result{
+				ProtocolVersion:          runner.ProtocolVersion,
+				Operation:                runner.OperationVerify,
+				OperationID:              testDigest,
+				ChildExitCode:            test.childExit,
+				ResolvedDigest:           testDigest,
+				VerificationRequirements: []string{test.requirement},
+				VerificationPolicyDigest: policyDigest,
+				Error:                    &runner.ResultError{Code: "verification_refused", Message: "artifact does not satisfy the verification policy"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			policyConfigMap := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: schema.Spec.Desired.VerificationPolicyFrom.Name, UID: testPolicyUID},
+				Immutable:  ptr(true),
+				Data:       map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: string(policyBytes)},
+			}
+			reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, job, pod, policyConfigMap)
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+			result, err := reconciler.Reconcile(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if result.RequeueAfter != 10*time.Minute {
+				t.Fatalf("requeue = %s, want ordinary 10m interval", result.RequeueAfter)
+			}
+			actual := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+				t.Fatal(err)
+			}
+			verified := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
+			inSync := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionInSync)
+			if actual.Status.ActiveOperation != nil || actual.Status.Phase != operatorv1alpha1.PhaseBlocked ||
+				actual.Status.Source.Verified || actual.Status.Plan != nil || actual.Status.NextReconciliationTime == nil ||
+				actual.Status.Source.RequestedReference != schema.Spec.Desired.OCIRef ||
+				actual.Status.Source.ResolvedReference != "oci://registry.example/team/schema@"+testDigest ||
+				actual.Status.Source.Digest != testDigest ||
+				actual.Status.Source.MediaType != "application/vnd.oci.image.manifest.v1+json" ||
+				actual.Status.Source.Size != 321 ||
+				verified == nil || verified.Status != metav1.ConditionFalse || verified.Reason != "PolicyRefused" ||
+				inSync == nil || inSync.Status != metav1.ConditionFalse || inSync.Reason != "PolicyRefused" ||
+				!strings.Contains(verified.Message, test.requirement) {
+				t.Fatalf("status after verification refusal = %#v", actual.Status)
+			}
+			if contains(actual.Finalizers, activeOperationFinalizer) {
+				t.Fatal("policy refusal retained the transient finalizer")
+			}
+			harvested := &batchv1.Job{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), harvested); err != nil {
+				t.Fatal(err)
+			}
+			if harvested.Spec.TTLSecondsAfterFinished == nil || *harvested.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds {
+				t.Fatalf("Job cleanup TTL = %#v", harvested.Spec.TTLSecondsAfterFinished)
+			}
 
-	result, err = reconciler.Reconcile(context.Background(), request)
-	if err != nil {
-		t.Fatalf("blocked Reconcile() error = %v", err)
-	}
-	if result.RequeueAfter <= 0 {
-		t.Fatalf("blocked refusal hot-looped: %#v", result)
-	}
-	unchanged := &operatorv1alpha1.PtahSchema{}
-	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), unchanged); err != nil {
-		t.Fatal(err)
-	}
-	if unchanged.Status.ActiveOperation != nil {
-		t.Fatalf("blocked refusal claimed work before interval: %#v", unchanged.Status.ActiveOperation)
-	}
+			result, err = reconciler.Reconcile(context.Background(), request)
+			if err != nil {
+				t.Fatalf("blocked Reconcile() error = %v", err)
+			}
+			if result.RequeueAfter <= 0 {
+				t.Fatalf("blocked refusal hot-looped: %#v", result)
+			}
+			unchanged := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), unchanged); err != nil {
+				t.Fatal(err)
+			}
+			if unchanged.Status.ActiveOperation != nil {
+				t.Fatalf("blocked refusal claimed work before interval: %#v", unchanged.Status.ActiveOperation)
+			}
 
-	reconciler.Clock = func() time.Time { return unchanged.Status.NextReconciliationTime.Time }
-	result, err = reconciler.Reconcile(context.Background(), request)
-	if err != nil {
-		t.Fatalf("due blocked Reconcile() error = %v", err)
-	}
-	if !result.Requeue {
-		t.Fatalf("due blocked Reconcile() result = %#v, want Resolve claim", result)
-	}
-	refreshing := &operatorv1alpha1.PtahSchema{}
-	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), refreshing); err != nil {
-		t.Fatal(err)
-	}
-	if refreshing.Status.ActiveOperation == nil ||
-		refreshing.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
-		refreshing.Status.Phase != operatorv1alpha1.PhaseResolving {
-		t.Fatalf("due verification-refusal refresh status = %#v", refreshing.Status)
+			reconciler.Clock = func() time.Time { return unchanged.Status.NextReconciliationTime.Time }
+			result, err = reconciler.Reconcile(context.Background(), request)
+			if err != nil {
+				t.Fatalf("due blocked Reconcile() error = %v", err)
+			}
+			if !result.Requeue {
+				t.Fatalf("due blocked Reconcile() result = %#v, want Resolve claim", result)
+			}
+			refreshing := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), refreshing); err != nil {
+				t.Fatal(err)
+			}
+			if refreshing.Status.ActiveOperation == nil ||
+				refreshing.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+				refreshing.Status.Phase != operatorv1alpha1.PhaseResolving {
+				t.Fatalf("due verification-refusal refresh status = %#v", refreshing.Status)
+			}
+		})
 	}
 }
 

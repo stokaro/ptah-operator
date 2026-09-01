@@ -40,7 +40,9 @@ Key safety properties:
 ## Install from this checkout
 
 The manager, runner, and Ptah executor images must be selected explicitly. All
-three are required to use immutable SHA-256 references.
+three are required to use immutable SHA-256 references. The executor version
+is explicit too: it must identify the verified build in the selected executor
+digest and is never inferred from an image tag or supplied by a chart default.
 
 ```sh
 helm upgrade --install ptah-operator ./charts/ptah-operator \
@@ -51,6 +53,11 @@ helm upgrade --install ptah-operator ./charts/ptah-operator \
   --set-string execution.executorImage=ghcr.io/stokaro/ptah@sha256:<ptah-image-digest> \
   --set-string execution.ptahVersion=<ptah-version>
 ```
+
+The supplied version is recorded in plans, approvals, Jobs, and applied status
+alongside the executor digest. Verify both values from the executor's release
+provenance before installation; changing the digest requires verifying and
+supplying its version again.
 
 The chart supports the Kubernetes window documented in
 [Kubernetes support](docs/kubernetes-support.md). It intentionally does not
@@ -74,7 +81,16 @@ kubectl -n application get ptahschema application -w
 
 Replace every placeholder in the example first. For private registries, add a
 same-namespace `registryAuthFrom` reference; the API supports environment-key
-Secrets and standard Docker config JSON Secrets. Verification-policy
+Secrets and standard Docker config JSON Secrets. Either representation must
+contain a fixed `registry` key whose authority-only `host[:port]` value exactly
+matches the OCI client's effective request authority (`registry-1.docker.io`
+for an `oci://docker.io/...` source). A Docker config Secret keeps its standard
+`.dockerconfigjson` data in addition to that owner-controlled grant. If authenticated
+`plainHTTP` is unavoidable, the authentication Secret must also contain
+`allowPlainHTTP: "true"`; anonymous plain HTTP needs no Secret grant.
+`clientCertificateFrom` is currently rejected because the pinned executor
+cannot constrain a client certificate across cross-host redirects.
+Verification-policy
 ConfigMaps must be immutable. To change a policy, create a new ConfigMap name
 and update the schema reference; delete-and-recreate is intentionally not
 treated as the same policy.

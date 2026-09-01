@@ -274,11 +274,40 @@ unchanged, and no `Apply` Job is created during the refresh. A moved tag or
 database drift observed by a due refresh therefore invalidates stale plan or
 approval evidence before mutation can begin.
 
+Native verification always inspects the resolved digest. When the selected
+policy requires `require_digest_pin`, the runner also evaluates the original
+requested reference: a tag or implicit `latest` is refused even though it
+resolved successfully, while an explicit digest remains eligible. Policies
+that permit tags retain the refresh behavior above without weakening any later
+digest binding.
+
 Registry failures are fail-closed. The last resolved digest remains visible as
 evidence, but the controller does not silently reinterpret a tag or apply a
 plan whose verification inputs cannot be revalidated. Observe and plan also
 need to fetch the digest-pinned schema, so a registry outage can delay database
 checks without causing mutation.
+
+Every registry-authentication Secret must include `registry: <host[:port]>`,
+matching the OCI client's effective request authority. This applies to both
+environment-key and Docker config JSON representations; the latter retains its
+standard `.dockerconfigjson` key alongside the fixed grant. A source under
+`oci://docker.io/...` therefore grants `registry-1.docker.io`. Missing,
+malformed, or mismatched authority grants stop the Job before Ptah can make a
+registry request. Authenticated plain HTTP also requires
+`allowPlainHTTP: "true"` in the authentication Secret. Rotate those values only
+when intentionally changing the credential's authority or transport grant.
+`clientCertificateFrom` is currently refused because the executor cannot scope
+the certificate safely across cross-host redirects.
+
+An authenticated source with `transport.caFrom` must also place
+`caSHA256: sha256:<64 lowercase hex>` in that same registry Secret. Compute the
+digest over the exact selected ConfigMap value, including its final newline if
+present. Missing or changed grant bytes fail before the registry client starts.
+The operator snapshots the selected CA once per Job, so a projected ConfigMap
+update cannot change trust roots between validation and fetch. Rotate a custom
+CA and its Secret-owned digest grant together; until both projections agree,
+read-only source operations fail closed. Anonymous custom-CA sources do not
+need a Secret grant but use the same per-Job snapshot boundary and 1 MiB limit.
 
 Digest-pinned references reduce change ambiguity and are recommended for
 production. Promote the same digest between environments rather than rebuilding

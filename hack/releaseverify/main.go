@@ -34,7 +34,7 @@ var (
 	dockerStagePattern     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
 	releaseRunSHA256       = map[string]string{
 		"smoke/verify-release":           "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
-		"smoke/chart-reproducibility":    "5db0f6150b5129d7be4c68067a3a3d47226a54bc31c38b0d5c72c9e062d290d4",
+		"smoke/chart-reproducibility":    "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
 		"publish/release":                "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
 		"publish/transaction":            "72cce0372380ba97e39ae01a383402b50b33122d24854487835b37572fc3c5e7",
 		"publish/immutability-preflight": "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
@@ -62,7 +62,7 @@ const (
 	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "4bb2c1bfdc49f99e2c68476bcdcba0d7b34110224f924b99cd63e57ef5e4f931"
+	releaseWorkflowSHA256 = "113a5de39233d82d58bc03562001e5000aa632c99b755ff318bdabe33f04027c"
 )
 
 func main() {
@@ -1053,6 +1053,15 @@ func verifyWorkflowSemantics(document []byte) error {
 			"setup-buildx": "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
 			"build":        "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
 		}); err != nil {
+		return err
+	}
+	smokeSteps, err := stepsByID(smoke.Steps)
+	if err != nil {
+		return err
+	}
+	if err := requireRunBindings(smokeSteps, "chart-reproducibility",
+		"helm lint charts/ptah-operator",
+		`--set-string execution.ptahVersion="release-smoke-explicit"`); err != nil {
 		return err
 	}
 

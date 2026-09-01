@@ -420,6 +420,7 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"publish Go cache":         {`          cache: false`, `          cache: true`, false},
 		"Buildx version":           {`          version: v0.36.1`, `          version: latest`, true},
 		"BuildKit digest":          {`image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`, `image=moby/buildkit:v0.32.2`, true},
+		"executor version":         {`            --set-string execution.ptahVersion="release-smoke-explicit"`, `            true`, false},
 		"image platform":           {`platforms: linux/amd64,linux/arm64`, `platforms: linux/amd64`, true},
 		"image push":               {`          push: true`, `          push: false`, false},
 		"image provenance":         {`          provenance: mode=max`, `          provenance: false`, false},

@@ -58,10 +58,42 @@ contract; it must bind its verifier image, trust policy bytes, and evidence into
 the plan rather than executing arbitrary user commands.
 
 Plain HTTP registry transport is an explicit opt-in for trusted test or
-air-gapped networks. Custom CA bundles and mutual-TLS client certificates are
-supported through same-namespace ConfigMap and Secret references. Registry
-credentials and database credentials are routed to different containers for
-observe and plan operations.
+air-gapped networks. Sending a registry Secret over that transport additionally
+requires the Secret owner to set the fixed `allowPlainHTTP` key to exactly
+`true`; a schema author cannot authorize that downgrade alone. Plain HTTP cannot
+be combined with a custom CA.
+
+Every registry credential Secret must contain a non-optional fixed `registry`
+key, whether it uses environment keys or Docker config JSON. Its authority-only
+`host[:port]` value must exactly match the OCI client's effective request
+authority before any Ptah process or network request starts. This includes the
+request-host mapping applied by the OCI client; host case is normalized, but
+ports and trailing dots are not collapsed. The key name cannot be selected by
+a schema author. Docker config host entries and helpers still select the actual
+credential, while the separate fixed key proves the Secret owner's consent to
+one effective authority without exposing that configuration to the guard.
+Observe and Plan run the credential-free authority guard between runner
+installation and the credentialed schema fetch. Registry credentials and
+database credentials remain routed to different containers.
+
+Ptah never consumes custom CA bytes directly from the mutable ConfigMap volume.
+Resolve and Verify copy at most 1 MiB into a private runner snapshot before the
+first Ptah child starts. Observe and Plan make the credential-free authority
+guard hash and copy the selected bytes into a dedicated memory-backed EmptyDir;
+the later credentialed fetch mounts only that read-only snapshot. When registry
+authentication is configured, the same authentication Secret must contain the
+fixed `caSHA256` key with the exact lowercase `sha256:<64 hex>` digest of the
+selected ConfigMap bytes. A missing, malformed, or mismatched grant stops the
+Job before any Ptah process or network request. The key name cannot be selected
+by a schema author. Anonymous registry access may use a custom CA without a
+Secret grant, but it is still size-bounded and snapshotted before use.
+
+`clientCertificateFrom` remains in the alpha source shape for compatibility but
+is rejected by both API validation and Job construction. The pinned executor
+loads a client pair into a process-wide TLS configuration and cannot constrain
+certificate selection after a cross-host redirect. Re-enable this field only
+with an executor contract that selects the certificate against the effective
+TLS authority on every handshake.
 
 ## Plan and approval visibility
 

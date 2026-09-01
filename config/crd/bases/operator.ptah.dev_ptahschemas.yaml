@@ -75,6 +75,8 @@ spec:
                         type: string
                       registryKey:
                         default: registry
+                        enum:
+                        - registry
                         type: string
                       tokenKey:
                         default: token
@@ -121,6 +123,14 @@ spec:
                         default: false
                         type: boolean
                     type: object
+                    x-kubernetes-validations:
+                    - message: caFrom cannot be used with plainHTTP
+                      rule: '!self.plainHTTP || !has(self.caFrom)'
+                    - message: clientCertificateFrom cannot be used with plainHTTP
+                      rule: '!self.plainHTTP || !has(self.clientCertificateFrom)'
+                    - message: clientCertificateFrom is not supported until the executor
+                        can scope client certificates across redirects
+                      rule: '!has(self.clientCertificateFrom)'
                   verificationPolicyFrom:
                     properties:
                       key:
@@ -1096,6 +1106,8 @@ spec:
                             type: string
                           registryKey:
                             default: registry
+                            enum:
+                            - registry
                             type: string
                           tokenKey:
                             default: token
@@ -1144,6 +1156,14 @@ spec:
                             default: false
                             type: boolean
                         type: object
+                        x-kubernetes-validations:
+                        - message: caFrom cannot be used with plainHTTP
+                          rule: '!self.plainHTTP || !has(self.caFrom)'
+                        - message: clientCertificateFrom cannot be used with plainHTTP
+                          rule: '!self.plainHTTP || !has(self.clientCertificateFrom)'
+                        - message: clientCertificateFrom is not supported until the
+                            executor can scope client certificates across redirects
+                          rule: '!has(self.clientCertificateFrom)'
                     required:
                     - digest
                     - resolvedReference
@@ -1489,6 +1509,8 @@ spec:
                             type: string
                           registryKey:
                             default: registry
+                            enum:
+                            - registry
                             type: string
                           tokenKey:
                             default: token
@@ -1537,6 +1559,14 @@ spec:
                             default: false
                             type: boolean
                         type: object
+                        x-kubernetes-validations:
+                        - message: caFrom cannot be used with plainHTTP
+                          rule: '!self.plainHTTP || !has(self.caFrom)'
+                        - message: clientCertificateFrom cannot be used with plainHTTP
+                          rule: '!self.plainHTTP || !has(self.clientCertificateFrom)'
+                        - message: clientCertificateFrom is not supported until the
+                            executor can scope client certificates across redirects
+                          rule: '!has(self.clientCertificateFrom)'
                     required:
                     - digest
                     - resolvedReference

@@ -1742,10 +1742,10 @@ capture_exact_job_result() {
 	jq -e \
 		--arg operation "$result_operation" \
 		--arg operationID "$FAULT_RESULT_OPERATION_ID" '
-      .protocolVersion == 3 and .operation == $operation and
+      .protocolVersion == 4 and .operation == $operation and
       .operationId == $operationID and .truncation == null
     ' "$result_output" >/dev/null ||
-		fail "runner result lost its protocol-v3 binding or complete-output guarantee"
+		fail "runner result lost its protocol-v4 binding or complete-output guarantee"
 	result_schema=$(printf '%s\n' "$result_job_object" |
 		jq -er '.metadata.labels["operator.ptah.dev/schema"]')
 	result_binding_deadline=$(deadline_from_now)
@@ -1985,7 +1985,7 @@ assert_fault_convergence_result_pair() {
           $plan.coordinationDigest == .status.target.coordinationDigest and
           $plan.targetIdentityDigest == .status.target.identityDigest
         ' >/dev/null ||
-		fail "$converged_schema did not carry exact successful protocol-v3 Observe and NoChanges Plan results"
+		fail "$converged_schema did not carry exact successful protocol-v4 Observe and NoChanges Plan results"
 	snapshot_watch jobs
 	jq -s -e \
 		--arg observeUID "$CONVERGED_OBSERVE_JOB_UID" \
@@ -2465,7 +2465,7 @@ create_approval() {
       .spec.planFingerprint == $fingerprint and
       (.spec.artifactDigest | test("^sha256:[0-9a-f]{64}$")) and
       (.spec.coordinationDigest | test("^sha256:[0-9a-f]{64}$")) and
-      .spec.runnerProtocolVersion == 3
+      .spec.runnerProtocolVersion == 4
     ' >/dev/null || fail "$approval_name was not hydrated against the exact current plan"
 }
 

@@ -26,6 +26,7 @@ const (
 	managerDigest    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	executorDigest   = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	runnerDigest     = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	ptahVersion      = "e2e-explicit-version"
 )
 
 func TestGeneratedCertificateLifecycleRender(t *testing.T) {
@@ -119,7 +120,15 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	assertHTTPProbe(t, container, "livenessProbe", "/healthz")
 	assertHTTPProbe(t, container, "readinessProbe", "/readyz")
 
-	deployment := mustObject(t, objects, "Deployment", managerName)
+	deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
+	containers, _, err = unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
+	if err != nil || len(containers) != 1 {
+		t.Fatalf("manager Deployment containers = %d, want 1", len(containers))
+	}
+	managerArgs := stringSlice(containers[0].(map[string]any)["args"])
+	if !slices.Contains(managerArgs, "--ptah-version="+ptahVersion) {
+		t.Fatalf("manager args do not bind the explicit Ptah version: %v", managerArgs)
+	}
 	if component := deployment.GetLabels()["app.kubernetes.io/component"]; component != "controller" {
 		t.Fatalf("manager Deployment component label = %q, want controller", component)
 	}
@@ -319,6 +328,40 @@ func assertHTTPProbe(t *testing.T, container map[string]any, field, path string)
 	}
 }
 
+func TestChartRequiresBoundedExplicitPtahVersion(t *testing.T) {
+	t.Parallel()
+	for name, version := range map[string]string{
+		"missing":     "",
+		"over-bounds": strings.Repeat("v", 129),
+	} {
+		name, version := name, version
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := renderChartCommand(t,
+				"--set-string", "execution.ptahVersion="+version,
+			); err == nil {
+				t.Fatalf("chart accepted invalid explicit Ptah version %q", version)
+			}
+		})
+	}
+}
+
+func TestChartPreservesExplicitPtahVersionAsOneExactArgument(t *testing.T) {
+	t.Parallel()
+
+	const version = "v1 # exact-build"
+	objects := renderChart(t, "--set-string", "execution.ptahVersion="+version)
+	deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
+	containers, _, err := unstructured.NestedSlice(deployment.Object, "spec", "template", "spec", "containers")
+	if err != nil || len(containers) != 1 {
+		t.Fatalf("manager Deployment containers = %d, want 1", len(containers))
+	}
+	managerArgs := stringSlice(containers[0].(map[string]any)["args"])
+	if !slices.Contains(managerArgs, "--ptah-version="+version) {
+		t.Fatalf("manager args did not preserve the exact Ptah version: %v", managerArgs)
+	}
+}
+
 func renderChart(t *testing.T, additionalArgs ...string) []*unstructured.Unstructured {
 	t.Helper()
 	output, err := renderChartCommand(t, additionalArgs...)
@@ -358,6 +401,7 @@ func renderChartCommand(t *testing.T, additionalArgs ...string) ([]byte, error) 
 		"--set-string", "image.digest=sha256:" + managerDigest,
 		"--set-string", "execution.executorImage=example.invalid/ptah@sha256:" + executorDigest,
 		"--set-string", "execution.runnerImage=example.invalid/operator@sha256:" + runnerDigest,
+		"--set-string", "execution.ptahVersion=" + ptahVersion,
 	}
 	args = append(args, additionalArgs...)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

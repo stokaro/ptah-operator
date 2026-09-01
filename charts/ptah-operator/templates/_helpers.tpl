@@ -97,6 +97,16 @@ app.kubernetes.io/component: controller
 {{- end -}}
 {{- end -}}
 
+{{- define "ptah-operator.validatePtahVersion" -}}
+{{- $version := default "" .Values.execution.ptahVersion -}}
+{{- if or (eq (trim $version) "") (ne (trim $version) $version) -}}
+{{- fail "execution.ptahVersion is required and must identify the build in execution.executorImage" -}}
+{{- end -}}
+{{- if gt (len $version) 128 -}}
+{{- fail "execution.ptahVersion must be at most 128 bytes" -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "ptah-operator.validateLeaderElection" -}}
 {{- if and (gt (int .Values.replicaCount) 1) (not .Values.leaderElection) -}}
 {{- fail "leaderElection must be true when replicaCount is greater than 1" -}}

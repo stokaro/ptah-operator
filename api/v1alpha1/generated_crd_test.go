@@ -154,6 +154,50 @@ func TestGeneratedPtahSchemaCRDRejectsDuplicateExclusions(t *testing.T) {
 	}
 }
 
+func TestGeneratedPtahSchemaCRDBindsRegistryAccessPolicy(t *testing.T) {
+	t.Parallel()
+
+	crd := loadGeneratedCRD(t, filepath.Join(
+		repositoryRoot(t),
+		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+	))
+	spec := storageVersionSchema(t, crd).Properties["spec"]
+	desired := spec.Properties["desired"]
+	auth := desired.Properties["registryAuthFrom"]
+	authRegistryKey := auth.Properties["registryKey"]
+	assertFixedRegistryAuthorityKey(t, "spec.desired.registryAuthFrom.registryKey", authRegistryKey)
+	if _, selectable := auth.Properties["caSHA256Key"]; selectable {
+		t.Error("spec.desired.registryAuthFrom exposes a selectable CA digest Secret key")
+	}
+
+	transport := desired.Properties["transport"]
+	wantRules := map[string]bool{
+		"!self.plainHTTP || !has(self.caFrom)":                false,
+		"!self.plainHTTP || !has(self.clientCertificateFrom)": false,
+		"!has(self.clientCertificateFrom)":                    false,
+	}
+	for _, validation := range transport.XValidations {
+		if _, ok := wantRules[validation.Rule]; ok {
+			wantRules[validation.Rule] = true
+		}
+	}
+	for rule, found := range wantRules {
+		if !found {
+			t.Errorf("spec.desired.transport is missing validation %q", rule)
+		}
+	}
+}
+
+func assertFixedRegistryAuthorityKey(t *testing.T, path string, property apiextensions.JSONSchemaProps) {
+	t.Helper()
+	if property.Default == nil || *property.Default != "registry" {
+		t.Errorf("%s default = %#v, want registry", path, property.Default)
+	}
+	if len(property.Enum) != 1 || property.Enum[0] != "registry" {
+		t.Errorf("%s enum = %#v, want [registry]", path, property.Enum)
+	}
+}
+
 func TestGeneratedPtahSchemaPlanSizeContract(t *testing.T) {
 	t.Parallel()
 

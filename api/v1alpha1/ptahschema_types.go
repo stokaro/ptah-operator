@@ -67,6 +67,21 @@ type RegistryAuthMode string
 const (
 	RegistryAuthEnvironment      RegistryAuthMode = "Environment"
 	RegistryAuthDockerConfigJSON RegistryAuthMode = "DockerConfigJSON"
+
+	// RegistryAuthoritySecretKey is the fixed Secret key by which a credential
+	// owner grants the operator permission to use either supported credential
+	// representation for one exact OCI registry authority. It is intentionally
+	// not selectable by a PtahSchema author.
+	RegistryAuthoritySecretKey = "registry"
+	// RegistryAllowPlainHTTPSecretKey is the fixed Secret key by which a
+	// credential owner explicitly permits that credential to cross an
+	// unencrypted registry connection. Its value must be exactly "true".
+	RegistryAllowPlainHTTPSecretKey = "allowPlainHTTP"
+	// RegistryCASHA256SecretKey is the fixed Secret key by which the same
+	// credential owner grants one exact custom CA bundle. Its value must be the
+	// lowercase SHA-256 digest of the selected ConfigMap bytes. It is
+	// intentionally not selectable by a PtahSchema author.
+	RegistryCASHA256SecretKey = "caSHA256"
 )
 
 // PtahSchemaSpec declares one desired schema and one database target.
@@ -160,7 +175,9 @@ type OCIArtifactAccessBinding struct {
 type DesiredSchemaSpec = OCIArtifactSourceSpec
 
 // RegistryAuthSource describes a Secret without requiring the controller to
-// read it. The kubelet projects only the selected representation into a Job.
+// read it. The kubelet projects only the selected credential representation
+// into a Job, while every mode also projects the fixed registry authority grant
+// to the runner.
 // +kubebuilder:validation:XValidation:rule="self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)",message="dockerConfigJSONKey is required in DockerConfigJSON mode"
 type RegistryAuthSource struct {
 	Name string `json:"name"`
@@ -176,7 +193,11 @@ type RegistryAuthSource struct {
 	PasswordKey string `json:"passwordKey,omitempty"`
 	// +kubebuilder:default=token
 	TokenKey string `json:"tokenKey,omitempty"`
+	// RegistryKey is retained for source compatibility. The key is fixed so the
+	// Secret owner, rather than a PtahSchema author, controls the authority grant.
+	// The referenced Secret must contain an authority-only host[:port] value.
 	// +kubebuilder:default=registry
+	// +kubebuilder:validation:Enum=registry
 	RegistryKey string `json:"registryKey,omitempty"`
 
 	// +kubebuilder:default=.dockerconfigjson
@@ -185,18 +206,29 @@ type RegistryAuthSource struct {
 
 // OCITransportSpec configures private and air-gapped registries without
 // allowing arbitrary files or commands into the execution Pod.
+// +kubebuilder:validation:XValidation:rule="!self.plainHTTP || !has(self.caFrom)",message="caFrom cannot be used with plainHTTP"
+// +kubebuilder:validation:XValidation:rule="!self.plainHTTP || !has(self.clientCertificateFrom)",message="clientCertificateFrom cannot be used with plainHTTP"
+// +kubebuilder:validation:XValidation:rule="!has(self.clientCertificateFrom)",message="clientCertificateFrom is not supported until the executor can scope client certificates across redirects"
 type OCITransportSpec struct {
 	// PlainHTTP is intended only for explicitly trusted test or air-gapped
-	// networks. HTTPS remains the default.
+	// networks. HTTPS remains the default. When registryAuthFrom is present, its
+	// Secret must also contain allowPlainHTTP with the exact value "true".
 	// +kubebuilder:default=false
 	PlainHTTP bool `json:"plainHTTP,omitempty"`
 
+	// CAFrom selects a custom CA bundle. When registryAuthFrom is present, that
+	// same Secret must contain caSHA256 with the exact lowercase SHA-256 digest
+	// of the selected bytes.
 	CAFrom *corev1.ConfigMapKeySelector `json:"caFrom,omitempty"`
 
+	// ClientCertificateFrom is reserved for a future executor contract that can
+	// select a client certificate by the effective TLS authority on every
+	// request, including redirects. The current API rejects this field.
 	ClientCertificateFrom *TLSSecretReference `json:"clientCertificateFrom,omitempty"`
 }
 
-// TLSSecretReference selects a complete client certificate credential.
+// TLSSecretReference retains the client-certificate selector shape for source
+// compatibility. OCITransportSpec currently rejects its use.
 type TLSSecretReference struct {
 	Name string `json:"name"`
 	// +kubebuilder:default=tls.crt

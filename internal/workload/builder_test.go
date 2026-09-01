@@ -255,10 +255,18 @@ func TestBuildDatabaseOperationsUseOnlyVerifiedPinnedSource(t *testing.T) {
 	if got := database.ValueFrom.SecretKeyRef.Name; got != "database" {
 		t.Fatalf("target Secret name = %q, want database", got)
 	}
-	if len(job.Spec.Template.Spec.InitContainers) != 2 {
-		t.Fatalf("init containers = %d, want installer and source fetch", len(job.Spec.Template.Spec.InitContainers))
+	if len(job.Spec.Template.Spec.InitContainers) != 3 {
+		t.Fatalf("init containers = %d, want installer, authority guard, and source fetch", len(job.Spec.Template.Spec.InitContainers))
 	}
-	fetch := job.Spec.Template.Spec.InitContainers[1]
+	guard := job.Spec.Template.Spec.InitContainers[1]
+	if guard.Name != guardContainerName || !reflect.DeepEqual(guard.Command, []string{runnerPath}) ||
+		!reflect.DeepEqual(guard.Args, []string{
+			"--validate-oci-source", schema.Status.Source.ResolvedReference,
+			"--snapshot-oci-ca-to", caSnapshotFilePath,
+		}) {
+		t.Fatalf("source authority guard = %q %q", guard.Command, guard.Args)
+	}
+	fetch := job.Spec.Template.Spec.InitContainers[2]
 	if fetch.Name != fetchContainerName || !reflect.DeepEqual(fetch.Command, []string{ptahBinaryPath}) ||
 		!reflect.DeepEqual(fetch.Args, []string{"schema", "pull", schema.Status.Source.ResolvedReference, "--out", sourceFilePath}) {
 		t.Fatalf("source fetch command = %q %q", fetch.Command, fetch.Args)
@@ -342,7 +350,6 @@ func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 		CAFrom: &corev1.ConfigMapKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: "new-generation-ca"}, Key: "ca.pem",
 		},
-		ClientCertificateFrom: &operatorv1alpha1.TLSSecretReference{Name: "new-generation-client"},
 	}
 	schema.Spec.Policy.Exclude = []string{"new-generation-exclude"}
 	schema.Spec.Policy.DriftSeverity = "destructive"
@@ -376,18 +383,30 @@ func TestBuildPostApplyObservationUsesPersistedTargetAndPolicy(t *testing.T) {
 		t.Fatalf("post-apply source fetch args = %q, want persisted reference", fetch.Args)
 	}
 	fetchEnvironment := containerEnvMap(fetch)
-	for _, name := range []string{"PTAH_OCI_USERNAME", runner.EnvOCIPassword, runner.EnvOCIToken, "PTAH_OCI_REGISTRY"} {
+	for _, name := range []string{"PTAH_OCI_USERNAME", runner.EnvOCIPassword, runner.EnvOCIToken} {
 		environment := fetchEnvironment[name]
 		if environment.ValueFrom == nil || environment.ValueFrom.SecretKeyRef == nil ||
 			environment.ValueFrom.SecretKeyRef.Name != originalSource.RegistryAuthFrom.Name {
 			t.Fatalf("post-apply %s source = %#v, want persisted registry Secret", name, environment.ValueFrom)
 		}
 	}
+	if got := fetchEnvironment["PTAH_OCI_REGISTRY"].Value; got != "registry.example" {
+		t.Fatalf("post-apply registry scope = %q, want persisted source authority", got)
+	}
+	guard := requireContainer(t, job.Spec.Template.Spec.InitContainers, guardContainerName)
+	guardEnvironment := containerEnvMap(guard)
+	for _, name := range []string{runner.EnvOCIAuthRegistryGrant, runner.EnvOCICASHA256Grant} {
+		grant := guardEnvironment[name]
+		if grant.ValueFrom == nil || grant.ValueFrom.SecretKeyRef == nil ||
+			grant.ValueFrom.SecretKeyRef.Name != originalSource.RegistryAuthFrom.Name {
+			t.Fatalf("post-apply %s source = %#v, want persisted registry Secret", name, grant.ValueFrom)
+		}
+	}
 	if got := requireVolume(t, job, caVolumeName).ConfigMap.Name; got != originalSource.Transport.CAFrom.Name {
 		t.Fatalf("post-apply CA source = %q, want persisted ConfigMap", got)
 	}
-	if got := requireVolume(t, job, tlsVolumeName).Secret.SecretName; got != originalSource.Transport.ClientCertificateFrom.Name {
-		t.Fatalf("post-apply client certificate source = %q, want persisted Secret", got)
+	if !hasMount(guard, caVolumeName) || !hasMount(guard, caSnapshotVolumeName) {
+		t.Fatalf("post-apply guard mounts = %#v, want persisted CA source and snapshot", guard.VolumeMounts)
 	}
 }
 
@@ -430,7 +449,7 @@ func TestBuildObserveAndPlanSeparateRegistryAndDatabaseCredentials(t *testing.T)
 					t.Errorf("database container unexpectedly received %s", name)
 				}
 			}
-			for _, name := range []string{dockerVolumeName, caVolumeName, tlsVolumeName} {
+			for _, name := range []string{dockerVolumeName, caVolumeName} {
 				if hasMount(main, name) {
 					t.Errorf("database container unexpectedly mounts %s", name)
 				}
@@ -446,9 +465,264 @@ func TestBuildObserveAndPlanSeparateRegistryAndDatabaseCredentials(t *testing.T)
 				if got := fetchEnvironment["DOCKER_CONFIG"].Value; got != dockerConfigPath || !hasMount(fetch, dockerVolumeName) {
 					t.Fatal("source fetch is missing the Docker config Secret mount")
 				}
+				if _, ok := fetchEnvironment[runner.EnvOCIAuthRegistryGrant]; ok {
+					t.Fatal("Docker config fetch received the runner-only authority grant")
+				}
+				if got := fetchEnvironment["PTAH_OCI_REGISTRY"].Value; got != "registry.example" {
+					t.Fatalf("Docker config fetch authority = %q, want exact source authority", got)
+				}
+				guard := requireContainer(t, pod.InitContainers, guardContainerName)
+				guardEnvironment := containerEnvMap(guard)
+				if got := guardEnvironment[runner.EnvOCIAuthMode].Value; got != string(operatorv1alpha1.RegistryAuthDockerConfigJSON) {
+					t.Fatalf("Docker config guard mode = %q", got)
+				}
+				grant := guardEnvironment[runner.EnvOCIAuthRegistryGrant]
+				if grant.ValueFrom == nil || grant.ValueFrom.SecretKeyRef == nil ||
+					grant.ValueFrom.SecretKeyRef.Name != "registry-docker" ||
+					grant.ValueFrom.SecretKeyRef.Key != operatorv1alpha1.RegistryAuthoritySecretKey ||
+					grant.ValueFrom.SecretKeyRef.Optional != nil {
+					t.Fatalf("Docker config guard authority grant = %#v", grant)
+				}
+				if _, ok := guardEnvironment["DOCKER_CONFIG"]; ok || hasMount(guard, dockerVolumeName) {
+					t.Fatal("Docker config guard received credential material")
+				}
 			}
 			if got := mainEnvironment["PTAH_SCHEMA_FILE"].Value; got != sourceFilePath {
 				t.Fatalf("database schema source = %q, want %q", got, sourceFilePath)
+			}
+		})
+	}
+}
+
+func TestBuildGuardsSourceAuthorityBeforeCredentialedFetch(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	job, err := builderFixture().Build(schema, operationFixture(operatorv1alpha1.OperationObserve), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initContainers := job.Spec.Template.Spec.InitContainers
+	if len(initContainers) != 3 || initContainers[0].Name != initContainerName ||
+		initContainers[1].Name != guardContainerName || initContainers[2].Name != fetchContainerName {
+		t.Fatalf("init container order = %#v", initContainers)
+	}
+
+	guard := initContainers[1]
+	if !reflect.DeepEqual(guard.Args, []string{
+		"--validate-oci-source", schema.Status.Source.ResolvedReference,
+		"--snapshot-oci-ca-to", caSnapshotFilePath,
+	}) {
+		t.Fatalf("authority guard args = %q", guard.Args)
+	}
+	guardEnvironment := containerEnvMap(guard)
+	for name, key := range map[string]string{
+		runner.EnvOCIAuthRegistryGrant: operatorv1alpha1.RegistryAuthoritySecretKey,
+		runner.EnvOCICASHA256Grant:     operatorv1alpha1.RegistryCASHA256SecretKey,
+	} {
+		variable := guardEnvironment[name]
+		if variable.ValueFrom == nil || variable.ValueFrom.SecretKeyRef == nil ||
+			variable.ValueFrom.SecretKeyRef.Key != key ||
+			variable.ValueFrom.SecretKeyRef.Optional != nil {
+			t.Errorf("guard %s = %#v, want required fixed Secret key %q", name, variable, key)
+		}
+	}
+	if got := guardEnvironment[runner.EnvOCICASourceFile].Value; got != caSourceFilePath {
+		t.Errorf("guard CA source path = %q, want %q", got, caSourceFilePath)
+	}
+	for _, name := range []string{"PTAH_OCI_USERNAME", runner.EnvOCIPassword, runner.EnvOCIToken,
+		"DOCKER_CONFIG", "PTAH_OCI_CA_FILE", "PTAH_OCI_CLIENT_CERT", "PTAH_OCI_CLIENT_KEY", "PTAH_DB_URL"} {
+		if _, ok := guardEnvironment[name]; ok {
+			t.Errorf("authority guard unexpectedly received %s", name)
+		}
+	}
+	if len(guard.VolumeMounts) != 3 || !hasMount(guard, runnerVolumeName) ||
+		!hasMount(guard, caVolumeName) || !hasMount(guard, caSnapshotVolumeName) {
+		t.Fatalf("authority guard mounts = %#v, want runner, CA source, and CA snapshot only", guard.VolumeMounts)
+	}
+	if hasMount(guard, dockerVolumeName) {
+		t.Fatalf("authority guard unexpectedly mounts registry credentials: %#v", guard.VolumeMounts)
+	}
+	if sourceMount := requireMount(t, guard, caVolumeName); !sourceMount.ReadOnly || sourceMount.MountPath != "/credentials/ca-source" {
+		t.Fatalf("authority guard source mount = %#v, want read-only ConfigMap projection", sourceMount)
+	}
+	if snapshotMount := requireMount(t, guard, caSnapshotVolumeName); snapshotMount.ReadOnly || snapshotMount.MountPath != "/credentials/ca-snapshot" {
+		t.Fatalf("authority guard snapshot mount = %#v, want writable dedicated EmptyDir", snapshotMount)
+	}
+
+	fetch := initContainers[2]
+	fetchEnvironment := containerEnvMap(fetch)
+	for _, name := range []string{runner.EnvOCIAuthMode, runner.EnvOCIAuthRegistryGrant,
+		runner.EnvOCIAllowPlainHTTPGrant, runner.EnvOCIHasCA, runner.EnvOCICASourceFile,
+		runner.EnvOCICASHA256Grant} {
+		if _, ok := fetchEnvironment[name]; ok {
+			t.Errorf("Ptah fetch unexpectedly received runner-only %s", name)
+		}
+	}
+	if fetchEnvironment["PTAH_OCI_REGISTRY"].Value != "registry.example" ||
+		fetchEnvironment[runner.EnvOCIPassword].ValueFrom == nil {
+		t.Fatalf("credentialed fetch lost its scoped access: env=%#v mounts=%#v", fetchEnvironment, fetch.VolumeMounts)
+	}
+	if got := fetchEnvironment["PTAH_OCI_CA_FILE"].Value; got != caSnapshotFilePath {
+		t.Fatalf("credentialed fetch CA path = %q, want verified snapshot", got)
+	}
+	if hasMount(fetch, caVolumeName) || !hasMount(fetch, caSnapshotVolumeName) {
+		t.Fatalf("credentialed fetch mounts = %#v, want only the CA snapshot", fetch.VolumeMounts)
+	}
+	if snapshotMount := requireMount(t, fetch, caSnapshotVolumeName); !snapshotMount.ReadOnly || snapshotMount.MountPath != "/credentials/ca-snapshot" {
+		t.Fatalf("credentialed fetch snapshot mount = %#v, want read-only snapshot", snapshotMount)
+	}
+}
+
+func TestBuildSnapshotsAnonymousCABundleWithoutSecretGrant(t *testing.T) {
+	t.Parallel()
+
+	for _, operationType := range []operatorv1alpha1.OperationType{
+		operatorv1alpha1.OperationResolve,
+		operatorv1alpha1.OperationObserve,
+	} {
+		operationType := operationType
+		t.Run(string(operationType), func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			schema.Spec.Desired.RegistryAuthFrom = nil
+			operation := operationFixture(operationType)
+			if operation.Source != nil {
+				operation.Source.RegistryAuthFrom = nil
+			}
+			job, err := builderFixture().Build(schema, operation, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			mainEnvironment := containerEnvMap(job.Spec.Template.Spec.Containers[0])
+			if _, ok := mainEnvironment[runner.EnvOCICASHA256Grant]; ok {
+				t.Fatal("anonymous CA unexpectedly requires a Secret digest grant")
+			}
+			if operationType != operatorv1alpha1.OperationObserve {
+				if got := mainEnvironment[runner.EnvOCICASourceFile].Value; got != caSourceFilePath {
+					t.Fatalf("anonymous Resolve CA source = %q, want %q", got, caSourceFilePath)
+				}
+				return
+			}
+
+			guard := requireContainer(t, job.Spec.Template.Spec.InitContainers, guardContainerName)
+			guardEnvironment := containerEnvMap(guard)
+			if _, ok := guardEnvironment[runner.EnvOCICASHA256Grant]; ok {
+				t.Fatal("anonymous CA guard unexpectedly received a Secret digest grant")
+			}
+			if !hasMount(guard, caVolumeName) || !hasMount(guard, caSnapshotVolumeName) {
+				t.Fatalf("anonymous CA guard mounts = %#v", guard.VolumeMounts)
+			}
+			fetch := requireContainer(t, job.Spec.Template.Spec.InitContainers, fetchContainerName)
+			if hasMount(fetch, caVolumeName) || !hasMount(fetch, caSnapshotVolumeName) {
+				t.Fatalf("anonymous fetch mounts = %#v, want only CA snapshot", fetch.VolumeMounts)
+			}
+			if got := containerEnvMap(fetch)["PTAH_OCI_CA_FILE"].Value; got != caSnapshotFilePath {
+				t.Fatalf("anonymous fetch CA path = %q, want %q", got, caSnapshotFilePath)
+			}
+		})
+	}
+}
+
+func TestBuildScopesRegistryCredentialToEffectiveRequestAuthority(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []operatorv1alpha1.RegistryAuthMode{
+		operatorv1alpha1.RegistryAuthEnvironment,
+		operatorv1alpha1.RegistryAuthDockerConfigJSON,
+	} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			schema.Spec.Desired.OCIRef = "oci://docker.io/acme/orders:stable"
+			schema.Spec.Desired.RegistryAuthFrom.Mode = mode
+			job, err := builderFixture().Build(schema, operationFixture(operatorv1alpha1.OperationResolve), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := requireEnv(t, job, "PTAH_OCI_REGISTRY").Value; got != "registry-1.docker.io" {
+				t.Fatalf("PTAH_OCI_REGISTRY = %q, want effective request authority", got)
+			}
+			grant := requireEnv(t, job, runner.EnvOCIAuthRegistryGrant)
+			if grant.ValueFrom == nil || grant.ValueFrom.SecretKeyRef == nil ||
+				grant.ValueFrom.SecretKeyRef.Key != operatorv1alpha1.RegistryAuthoritySecretKey ||
+				grant.ValueFrom.SecretKeyRef.Optional != nil {
+				t.Fatalf("authority grant = %#v, want required fixed registry Secret key", grant)
+			}
+		})
+	}
+}
+
+func TestBuildPlainHTTPRequiresCredentialOwnerGrant(t *testing.T) {
+	t.Parallel()
+
+	for name, mode := range map[string]operatorv1alpha1.RegistryAuthMode{
+		"Environment":      operatorv1alpha1.RegistryAuthEnvironment,
+		"DockerConfigJSON": operatorv1alpha1.RegistryAuthDockerConfigJSON,
+	} {
+		mode := mode
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			schema.Spec.Desired.Transport = operatorv1alpha1.OCITransportSpec{PlainHTTP: true}
+			schema.Spec.Desired.RegistryAuthFrom.Mode = mode
+			job, err := builderFixture().Build(schema, operationFixture(operatorv1alpha1.OperationResolve), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			grant := requireEnv(t, job, runner.EnvOCIAllowPlainHTTPGrant)
+			if grant.ValueFrom == nil || grant.ValueFrom.SecretKeyRef == nil ||
+				grant.ValueFrom.SecretKeyRef.Name != schema.Spec.Desired.RegistryAuthFrom.Name ||
+				grant.ValueFrom.SecretKeyRef.Key != operatorv1alpha1.RegistryAllowPlainHTTPSecretKey ||
+				grant.ValueFrom.SecretKeyRef.Optional != nil {
+				t.Fatalf("plain HTTP grant = %#v", grant)
+			}
+		})
+	}
+}
+
+func TestBuildRejectsCredentialScopeAndTransportDowngrades(t *testing.T) {
+	t.Parallel()
+
+	for name, mutate := range map[string]func(*operatorv1alpha1.PtahSchema){
+		"selectable Environment grant key": func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Spec.Desired.RegistryAuthFrom.RegistryKey = "attacker-selected"
+		},
+		"selectable Docker config grant key": func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Spec.Desired.RegistryAuthFrom.Mode = operatorv1alpha1.RegistryAuthDockerConfigJSON
+			schema.Spec.Desired.RegistryAuthFrom.RegistryKey = "attacker-selected"
+		},
+		"client certificate transport": func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Spec.Desired.Transport.ClientCertificateFrom = &operatorv1alpha1.TLSSecretReference{
+				Name: "registry-client",
+			}
+		},
+		"client certificate custom selectors": func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Spec.Desired.Transport.ClientCertificateFrom = &operatorv1alpha1.TLSSecretReference{
+				Name: "registry-client", CertificateKey: "custom.crt", PrivateKeyKey: "custom.key",
+			}
+		},
+		"client certificate over plain HTTP": func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Spec.Desired.Transport.PlainHTTP = true
+			schema.Spec.Desired.Transport.CAFrom = nil
+			schema.Spec.Desired.Transport.ClientCertificateFrom = &operatorv1alpha1.TLSSecretReference{
+				Name: "registry-client",
+			}
+		},
+		"custom CA over plain HTTP": func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Spec.Desired.Transport.PlainHTTP = true
+			schema.Spec.Desired.Transport.ClientCertificateFrom = nil
+		},
+	} {
+		mutate := mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			schema := schemaFixture()
+			mutate(schema)
+			if _, err := builderFixture().Build(schema, operationFixture(operatorv1alpha1.OperationResolve), nil); err == nil {
+				t.Fatal("Build() accepted an unsafe registry access contract")
 			}
 		})
 	}
@@ -606,8 +880,8 @@ func TestBuildHardensEveryContainerAndPod(t *testing.T) {
 		pod.SecurityContext.SeccompProfile == nil || pod.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
 		t.Fatalf("pod security context is not hardened: %#v", pod.SecurityContext)
 	}
-	if len(pod.InitContainers) != 2 || len(pod.Containers) != 1 {
-		t.Fatalf("containers = %d init, %d main; want installer, fetch, and one main", len(pod.InitContainers), len(pod.Containers))
+	if len(pod.InitContainers) != 3 || len(pod.Containers) != 1 {
+		t.Fatalf("containers = %d init, %d main; want installer, guard, fetch, and one main", len(pod.InitContainers), len(pod.Containers))
 	}
 	init := pod.InitContainers[0]
 	main := pod.Containers[0]
@@ -629,7 +903,7 @@ func TestBuildHardensEveryContainerAndPod(t *testing.T) {
 	}) {
 		t.Fatalf("main args = %q", main.Args)
 	}
-	for _, container := range []corev1.Container{init, pod.InitContainers[1], main} {
+	for _, container := range append(append([]corev1.Container(nil), pod.InitContainers...), main) {
 		security := container.SecurityContext
 		if security == nil || security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
 			security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem ||
@@ -692,14 +966,28 @@ func TestBuildRegistryDockerConfigAndTransportAreFileReferences(t *testing.T) {
 	if got := requireEnv(t, job, "DOCKER_CONFIG").Value; got != dockerConfigPath {
 		t.Fatalf("DOCKER_CONFIG = %q, want %q", got, dockerConfigPath)
 	}
-	if got := requireEnv(t, job, "PTAH_OCI_CA_FILE").Value; got != caFilePath {
-		t.Fatalf("PTAH_OCI_CA_FILE = %q", got)
+	if got := requireEnv(t, job, "PTAH_OCI_REGISTRY").Value; got != "registry.example" {
+		t.Fatalf("PTAH_OCI_REGISTRY = %q, want exact source authority", got)
 	}
-	if got := requireEnv(t, job, "PTAH_OCI_CLIENT_CERT").Value; got != clientCertificatePath {
-		t.Fatalf("PTAH_OCI_CLIENT_CERT = %q", got)
+	authorityGrant := requireEnv(t, job, runner.EnvOCIAuthRegistryGrant)
+	if authorityGrant.ValueFrom == nil || authorityGrant.ValueFrom.SecretKeyRef == nil ||
+		authorityGrant.ValueFrom.SecretKeyRef.Name != "registry-docker" ||
+		authorityGrant.ValueFrom.SecretKeyRef.Key != operatorv1alpha1.RegistryAuthoritySecretKey ||
+		authorityGrant.ValueFrom.SecretKeyRef.Optional != nil {
+		t.Fatalf("authority grant = %#v, want required fixed key", authorityGrant)
 	}
-	if got := requireEnv(t, job, "PTAH_OCI_CLIENT_KEY").Value; got != clientKeyPath {
-		t.Fatalf("PTAH_OCI_CLIENT_KEY = %q", got)
+	if _, ok := envMap(job)["PTAH_OCI_CA_FILE"]; ok {
+		t.Fatal("Resolve/Verify Job supplied the mutable CA projection directly to Ptah")
+	}
+	if got := requireEnv(t, job, runner.EnvOCICASourceFile).Value; got != caSourceFilePath {
+		t.Fatalf("runner CA source path = %q, want %q", got, caSourceFilePath)
+	}
+	grant := requireEnv(t, job, runner.EnvOCICASHA256Grant)
+	if grant.ValueFrom == nil || grant.ValueFrom.SecretKeyRef == nil ||
+		grant.ValueFrom.SecretKeyRef.Name != "registry-docker" ||
+		grant.ValueFrom.SecretKeyRef.Key != operatorv1alpha1.RegistryCASHA256SecretKey ||
+		grant.ValueFrom.SecretKeyRef.Optional != nil {
+		t.Fatalf("CA digest grant = %#v, want required fixed key", grant)
 	}
 	assertSecretReferencesOnly(t, job)
 }
@@ -719,6 +1007,28 @@ func TestBuildRejectsTaggedExecutionImages(t *testing.T) {
 			mutate(&builder)
 			if _, err := builder.Build(schema, operation, nil); err == nil || !strings.Contains(err.Error(), "pinned") {
 				t.Fatalf("Build() error = %v, want pinned-image rejection", err)
+			}
+		})
+	}
+}
+
+func TestBuildRejectsInvalidPtahVersion(t *testing.T) {
+	t.Parallel()
+	schema := schemaFixture()
+	operation := operationFixture(operatorv1alpha1.OperationResolve)
+	for name, version := range map[string]string{
+		"empty":       "",
+		"leading":     " v0.3.0",
+		"trailing":    "v0.3.0 ",
+		"over-bounds": strings.Repeat("v", maxPtahVersionBytes+1),
+	} {
+		name, version := name, version
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			builder := builderFixture()
+			builder.PtahVersion = version
+			if _, err := builder.Build(schema, operation, nil); err == nil || !strings.Contains(err.Error(), "ptah version") {
+				t.Fatalf("Build() error = %v, want Ptah-version rejection", err)
 			}
 		})
 	}
@@ -799,22 +1109,17 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 					UsernameKey: "user",
 					PasswordKey: "pass",
 					TokenKey:    "identity-token",
-					RegistryKey: "host",
+					RegistryKey: operatorv1alpha1.RegistryAuthoritySecretKey,
 				},
 				VerificationPolicyFrom: corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: "verification"},
 					Key:                  "policy.yaml",
 				},
 				Transport: operatorv1alpha1.OCITransportSpec{
-					PlainHTTP: true,
+					PlainHTTP: false,
 					CAFrom: &corev1.ConfigMapKeySelector{
 						LocalObjectReference: corev1.LocalObjectReference{Name: "registry-ca"},
 						Key:                  "ca.pem",
-					},
-					ClientCertificateFrom: &operatorv1alpha1.TLSSecretReference{
-						Name:           "registry-client",
-						CertificateKey: "cert.pem",
-						PrivateKeyKey:  "key.pem",
 					},
 				},
 			},

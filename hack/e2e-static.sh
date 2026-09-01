@@ -12,9 +12,12 @@ OBSOLETE_RENDER=$WORK_DIR/obsolete-webhooks.yaml
 OBSOLETE_ERROR=$WORK_DIR/obsolete-webhooks.err
 MUTABLE_MANAGER_ERROR=$WORK_DIR/mutable-manager.err
 LEADER_ELECTION_ERROR=$WORK_DIR/leader-election.err
+MISSING_PTAH_VERSION_ERROR=$WORK_DIR/missing-ptah-version.err
+MISSING_PTAH_VERSION_TEMPLATE_ERROR=$WORK_DIR/missing-ptah-version-template.err
 DEFAULT_RBAC_RENDER=$WORK_DIR/default-rbac.yaml
 SHARED_RBAC_RENDER=$WORK_DIR/shared-rbac.yaml
 CONTROLLER_JOB_FIXTURE=$WORK_DIR/controller-jobs.json
+CUSTOM_CA_POD_FIXTURE=$WORK_DIR/custom-ca-pods.json
 PUBLISHER_JOB_FIXTURE=$WORK_DIR/publisher-job.json
 NEGATIVE_FIXTURE=$WORK_DIR/negative-job.json
 MYSQL_REFUSAL_REWRITE_FILTER=$WORK_DIR/mysql-refusal-rewrite.jq
@@ -33,6 +36,7 @@ CLEANUP_EMPTY_PATTERNS=$WORK_DIR/cleanup-empty-patterns.txt
 CLEANUP_SAFE_PATTERNS=$WORK_DIR/cleanup-safe-patterns.txt
 CLEANUP_MATCH_PATTERNS=$WORK_DIR/cleanup-match-patterns.txt
 CLEANUP_UNSAFE_PROJECTION=$WORK_DIR/cleanup-unsafe-projection.json
+STATIC_PTAH_VERSION=e2e-explicit-version
 
 cleanup() {
 	status=$?
@@ -57,12 +61,38 @@ command -v shellcheck >/dev/null 2>&1 || {
 	printf '%s\n' 'e2e static: shellcheck is required' >&2
 	exit 1
 }
+command -v dash >/dev/null 2>&1 || {
+	printf '%s\n' 'e2e static: dash is required for POSIX shell checks' >&2
+	exit 1
+}
 
 for script in "$ROOT_DIR"/hack/e2e-*.sh; do
 	sh -n "$script"
+	dash -n "$script"
 done
 
 shellcheck "$ROOT_DIR"/hack/e2e-*.sh
+
+grep -Eq '^[[:space:]]*ProtocolVersion = 4$' "$ROOT_DIR/internal/runner/protocol.go" || {
+	printf '%s\n' 'e2e static: runner protocol constant is not version 4' >&2
+	exit 1
+}
+grep -F 'TestParserRejectsSuccessfulVerifyFrameFromPreviousProtocol' \
+	"$ROOT_DIR/internal/runner/protocol_test.go" >/dev/null || {
+	printf '%s\n' 'e2e static: previous runner protocol rejection regression is missing' >&2
+	exit 1
+}
+grep -F 'RegistryCASHA256SecretKey = "caSHA256"' \
+	"$ROOT_DIR/api/v1alpha1/ptahschema_types.go" >/dev/null || {
+	printf '%s\n' 'e2e static: fixed CA digest Secret key is missing' >&2
+	exit 1
+}
+
+grep -F "printf '%s\\n' 'e2e data plane: PASS active Pod oldObject selector enforcement'" \
+	"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null || {
+	printf '%s\n' 'e2e static: active-Pod oldObject selector PASS marker is missing' >&2
+	exit 1
+}
 
 sed -n '/# mysql-refusal-job-rewrite-begin/,/# mysql-refusal-job-rewrite-end/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh" | sed '1d;$d' >"$MYSQL_REFUSAL_REWRITE_FILTER"
@@ -421,6 +451,69 @@ if grep -F 'require_digest_pin: true' "$ROOT_DIR/testdata/e2e/verification-polic
 	printf '%s\n' 'e2e static: mutable-tag policy cannot require the requested reference to be pinned' >&2
 	exit 1
 fi
+grep -F 'require_digest_pin: true' \
+	"$ROOT_DIR/testdata/e2e/verification-policy-digest-pin.yaml" >/dev/null
+grep -F 'application/vnd.stokaro.ptah.schema.v1' \
+	"$ROOT_DIR/testdata/e2e/verification-policy-digest-pin.yaml" >/dev/null
+digest_pin_gate=$(sed -n \
+	'/^assert_requested_digest_pin_refusal() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+printf '%s\n' "$digest_pin_gate" |
+	grep -F '.childExitCode == 0' >/dev/null
+printf '%s\n' "$digest_pin_gate" |
+	grep -F '.verificationRequirements == ["require_digest_pin"]' >/dev/null
+printf '%s\n' "$digest_pin_gate" |
+	grep -F 'for digest_pin_database_operation in observe plan apply' >/dev/null
+printf '%s\n' "$digest_pin_gate" |
+	grep -F 'assert_source_job_isolation' >/dev/null
+grep -Fx 'create_digest_pin_policy_fixture' "$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
+grep -F "assert_requested_digest_pin_refusal \"\$lifecycle_reference\" \"\$digest_v1\"" \
+	"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+for tls_fixture_marker in \
+	'TLS_PROXY_CA_CONFIG_FILE=$TLS_PROXY_DIR/ca.conf' \
+	"subjectAltName=DNS:\${TLS_PROXY_DNS_NAME}" \
+	'run ./test/e2e/handcraftoci verify-certificate' \
+	'E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE' \
+	'E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE' \
+	'E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE'; do
+	grep -F -- "$tls_fixture_marker" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
+done
+if grep -F -- '-addext' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null; then
+	printf '%s\n' 'e2e static: TLS fixture certificate generation depends on non-portable openssl -addext' >&2
+	exit 1
+fi
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell and jq variables literally.
+for tls_runtime_marker in \
+	'"--listen=:5443"' \
+	'{name: "admin", containerPort: 8081, protocol: "TCP"}' \
+	'fsGroupChangePolicy: "OnRootMismatch"' \
+	'pods/http:${TLS_PROXY_POD_NAME}:8081/proxy/' \
+	'.error.code == "invalid_oci_access"' \
+	'refusal_proxy_count_after" -eq "$refusal_proxy_count_before' \
+	'good_proxy_count_after" -gt "$good_proxy_count_before' \
+	'TLS_PROXY_BAD_CA_AUTH_SECRET' \
+	'TLS_PROXY_BAD_AUTHORITY_SECRET' \
+	'TLS_PROXY_WRONG_AUTHORITY=registry-mismatch.invalid:5443' \
+	'capture_tls_proxy_identity' \
+	'assert_tls_proxy_identity_stable' \
+	'.containerID == $containerID' \
+	'assert_custom_ca_completed_pods' \
+	'assert_authenticated_https_custom_ca "$digest_v1"'; do
+	grep -F -- "$tls_runtime_marker" "$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
+done
+grep -Eq '^[[:space:]]*adminListenAddress[[:space:]]*=[[:space:]]*":8081"$' \
+	"$ROOT_DIR/test/e2e/handcraftoci/main.go"
+for tls_fixture_source_marker in \
+	'registry redirects are not permitted' \
+	'TestTLSProxyRoutesReadOnlyRegistryRequestsAndCounts' \
+	'TestTLSProxyRejectsMutationsUnknownPathsAndRegistryRedirects' \
+	'TestRequestCountAdminDoesNotExposeRegistryRoutes' \
+	'TestVerifyCertificateFilesBindsChainDNSAndServerUsage'; do
+	grep -F -- "$tls_fixture_source_marker" \
+		"$ROOT_DIR/test/e2e/handcraftoci/main.go" \
+		"$ROOT_DIR/test/e2e/handcraftoci/main_test.go" >/dev/null
+done
 grep -F './cmd/ptah' "$ROOT_DIR/test/e2e/Dockerfile.ptah" >/dev/null
 grep -Eq '^FROM .*@sha256:[0-9a-f]{64}' "$ROOT_DIR/test/e2e/Dockerfile.ptah"
 grep -F './cmd/manager' "$ROOT_DIR/test/e2e/Dockerfile.operator" >/dev/null
@@ -598,7 +691,7 @@ for lifecycle_marker in \
 	'registryAuthFrom' \
 		'coordinationKey' \
 		'.status.target.driftReportDigest != ""' \
-		'.spec.runnerProtocolVersion == 3' \
+		'.spec.runnerProtocolVersion == 4' \
 		'e2e-faults.sh' \
 	'run_mysql_dsn_refusal' \
 	'audit_started_containers' \
@@ -708,6 +801,193 @@ static_require_order() {
 		static_after=$static_line
 	done
 }
+
+tls_count_section=$(sed -n '/^tls_proxy_request_count() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+tls_capture_identity_section=$(sed -n '/^capture_tls_proxy_identity() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+tls_stable_identity_section=$(sed -n '/^assert_tls_proxy_identity_stable() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+tls_endpoint_identity_section=$(sed -n '/^assert_tls_proxy_service_endpoints() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+custom_ca_refusal_section=$(sed -n \
+	'/^assert_custom_ca_pre_child_refusal() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+custom_ca_acceptance_section=$(sed -n \
+	'/^assert_authenticated_https_custom_ca() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+engine_lifecycle_section=$(sed -n '/^run_engine_lifecycle() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+digest_pin_section=$(sed -n '/^assert_requested_digest_pin_refusal() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+source_isolation_section=$(sed -n '/^assert_source_job_isolation() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+for required_static_section in \
+	"$tls_count_section" "$tls_capture_identity_section" \
+	"$tls_stable_identity_section" "$tls_endpoint_identity_section" \
+	"$custom_ca_refusal_section" \
+	"$custom_ca_acceptance_section" "$engine_lifecycle_section" \
+	"$digest_pin_section" "$source_isolation_section"; do
+	[ -n "$required_static_section" ] || {
+		printf '%s\n' 'e2e static: a required custom source acceptance function is missing' >&2
+		exit 1
+	}
+done
+
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$tls_count_section" 'exact-Pod TLS proxy counter read' \
+	'assert_tls_proxy_identity_stable' \
+	'pods/http:${TLS_PROXY_POD_NAME}:8081/proxy/' \
+	"grep -Eq '^(0|[1-9][0-9]*)\$'" \
+	'assert_tls_proxy_identity_stable'
+static_require_count "$tls_count_section" 'assert_tls_proxy_identity_stable' 2 \
+	'exact-Pod TLS proxy counter identity binding'
+# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
+static_require_order "$tls_capture_identity_section" 'TLS proxy identity capture' \
+	'get pods' \
+	'app.kubernetes.io/name=${TLS_PROXY_SERVICE},app.kubernetes.io/component=e2e-tls-registry-proxy' \
+	'[.items[] | select(.metadata.deletionTimestamp == null)] as $live' \
+	'($live | length) == 1' \
+	'$live[0].status.phase == "Running"' \
+	'any(.type == "Ready" and .status == "True")' \
+	'.restartCount == 0 and (.containerID | length) > 0' \
+	'TLS_PROXY_POD_NAME=' \
+	'TLS_PROXY_POD_UID=' \
+	'TLS_PROXY_CONTAINER_ID=' \
+	'assert_tls_proxy_service_endpoints'
+static_require_count "$tls_capture_identity_section" \
+	'assert_tls_proxy_service_endpoints' 1 'TLS proxy capture EndpointSlice binding'
+# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
+static_require_order "$tls_stable_identity_section" 'TLS proxy stable identity re-list' \
+	'[ -n "$TLS_PROXY_POD_NAME" ]' \
+	'get pods' \
+	'app.kubernetes.io/name=${TLS_PROXY_SERVICE},app.kubernetes.io/component=e2e-tls-registry-proxy' \
+	'[.items[] | select(.metadata.deletionTimestamp == null)] as $live' \
+	'($live | length) == 1' \
+	'$live[0].status.phase == "Running"' \
+	'any(.type == "Ready" and .status == "True")' \
+	'$live[0].metadata.name == $name and $live[0].metadata.uid == $uid' \
+	'.name == "tls-registry-proxy" and .restartCount == 0' \
+	'.ready == true and .containerID == $containerID' \
+	'assert_tls_proxy_service_endpoints'
+static_require_count "$tls_stable_identity_section" \
+	'assert_tls_proxy_service_endpoints' 1 'TLS proxy stable EndpointSlice binding'
+# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
+static_require_order "$tls_endpoint_identity_section" 'TLS proxy EndpointSlice identity' \
+	'kubernetes.io/service-name=${TLS_PROXY_SERVICE}' \
+	'(.conditions.ready // false) == true' \
+	'(.conditions.terminating // false) == false' \
+	'($ready | length) == 1' \
+	'$ready[0].targetRef.apiVersion == "v1"' \
+	'$ready[0].targetRef.kind == "Pod"' \
+	'$ready[0].targetRef.name == $name' \
+	'$ready[0].targetRef.uid == $uid' \
+	'($ready[0].addresses | length) == 1'
+
+[ "$(printf '%s\n' "$custom_ca_acceptance_section" |
+	grep -Ec '^[[:space:]]*assert_custom_ca_pre_child_refusal[[:space:]]')" -eq 2 ] || {
+	printf '%s\n' 'e2e static: custom-CA acceptance must actively call two refusal cases' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_count "$custom_ca_acceptance_section" \
+	'"$bad_ca_schema" "$TLS_PROXY_BAD_CA_AUTH_SECRET"' 1 \
+	'custom-CA bad-CA refusal wiring'
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_count "$custom_ca_acceptance_section" \
+	'"$bad_authority_schema" "$TLS_PROXY_BAD_AUTHORITY_SECRET"' 1 \
+	'custom-CA bad-authority refusal wiring'
+if printf '%s\n' "$custom_ca_acceptance_section" |
+	grep -E '^[[:space:]]*#.*(assert_custom_ca_pre_child_refusal|TLS_PROXY_BAD_(CA|AUTHORITY)_AUTH_SECRET)' \
+	>/dev/null; then
+	printf '%s\n' 'e2e static: custom-CA refusal wiring is commented out' >&2
+	exit 1
+fi
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$custom_ca_refusal_section" 'custom-CA pre-child refusal boundary' \
+	'refusal_proxy_count_before=$(tls_proxy_request_count)' \
+	'create_custom_ca_schema_resource' \
+	'capture_one_new_job_result "$refusal_schema" resolve' \
+	'.error.code == "invalid_oci_access"' \
+	'assert_one_job_between_checkpoints "$refusal_schema" resolve' \
+	'for refusal_operation in verify observe plan apply; do' \
+	'assert_no_job_between_checkpoints' \
+	'refusal_job_count=$(schema_job_count_between_checkpoints' \
+	'refusal_proxy_count_after=$(tls_proxy_request_count)' \
+	'assert_tls_proxy_identity_stable' \
+	'"$refusal_proxy_count_after" -eq "$refusal_proxy_count_before"'
+[ "$(printf '%s\n' "$custom_ca_refusal_section" |
+	grep -Ec '^[[:space:]]*for refusal_operation in verify observe plan apply; do$')" -eq 1 ] || {
+	printf '%s\n' 'e2e static: custom-CA refusal no-Job matrix is incomplete' >&2
+	exit 1
+}
+
+[ "$(printf '%s\n' "$custom_ca_acceptance_section" |
+	grep -Ec '^[[:space:]]*for good_operation in resolve verify observe plan; do$')" -eq 1 ] || {
+	printf '%s\n' 'e2e static: custom-CA success operation matrix is incomplete' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_count "$custom_ca_acceptance_section" \
+	'assert_no_job_between_checkpoints "$good_schema" apply' 2 \
+	'custom-CA no-Apply boundaries'
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$custom_ca_acceptance_section" 'custom-CA authenticated success boundary' \
+	'capture_tls_proxy_identity' \
+	'"$bad_ca_schema" "$TLS_PROXY_BAD_CA_AUTH_SECRET"' \
+	'"$bad_authority_schema" "$TLS_PROXY_BAD_AUTHORITY_SECRET"' \
+	'good_database_fingerprint_before=$(custom_ca_database_schema_fingerprint)' \
+	'good_proxy_count_before=$(tls_proxy_request_count)' \
+	'create_custom_ca_schema_resource "$good_schema" "$TLS_PROXY_GOOD_AUTH_SECRET"' \
+	'assert_plan "$good_schema"' \
+	'for good_operation in resolve verify observe plan; do' \
+	'assert_no_job_between_checkpoints "$good_schema" apply "$good_before" "$good_after"' \
+	'assert_custom_ca_completed_pods' \
+	'good_proxy_count_after=$(tls_proxy_request_count)' \
+	'assert_tls_proxy_identity_stable' \
+	'"$good_proxy_count_after" -gt "$good_proxy_count_before"' \
+	'--patch '\''{"spec":{"suspend":true}}'\''' \
+	'checkpoint_schema_jobs "$good_schema" "$good_suspended_after"' \
+	'assert_no_job_between_checkpoints "$good_schema" apply "$good_before" "$good_suspended_after"' \
+	'good_database_fingerprint_after=$(custom_ca_database_schema_fingerprint)' \
+	'"$good_database_fingerprint_after" = "$good_database_fingerprint_before"'
+
+[ "$(printf '%s\n' "$engine_lifecycle_section" |
+	grep -Ec '^[[:space:]]*assert_authenticated_https_custom_ca[[:space:]]')" -eq 1 ] || {
+	printf '%s\n' 'e2e static: PostgreSQL lifecycle must actively run custom-CA acceptance once' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$engine_lifecycle_section" 'PostgreSQL v1 auxiliary source acceptances' \
+	'digest_v1=$(publish_schema' \
+	'[ "$CUSTOM_CA_COORDINATION_KEY" != "$lifecycle_coordination_key" ]' \
+	'assert_authenticated_https_custom_ca "$digest_v1"' \
+	'assert_requested_digest_pin_refusal "$lifecycle_reference" "$digest_v1"' \
+	'create_schema_resource "$lifecycle_schema"'
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_reject_marker "$engine_lifecycle_section" \
+	'assert_authenticated_https_custom_ca "$digest_v1" "$lifecycle_coordination_key"' \
+	'custom-CA primary coordination coupling'
+
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$digest_pin_section" 'DockerConfigJSON digest-pin source path' \
+	'"$DIGEST_PIN_DOCKER_AUTH_SECRET" DockerConfigJSON' \
+	'assert_one_job_between_checkpoints "$digest_pin_schema" resolve' \
+	'assert_one_job_between_checkpoints "$digest_pin_schema" verify' \
+	'for digest_pin_database_operation in observe plan apply; do' \
+	'capture_one_new_job_result "$digest_pin_schema" resolve' \
+	'.childExitCode == 0 and .stdout == "" and .error == null' \
+	'capture_one_new_job_result "$digest_pin_schema" verify' \
+	'.verificationRequirements == ["require_digest_pin"]' \
+	'assert_source_job_isolation "$digest_pin_schema" "$digest_pin_secret"' \
+	'"$DIGEST_PIN_DOCKER_AUTH_SECRET" DockerConfigJSON'
+for docker_source_marker in \
+	'PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT' \
+	'PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP' \
+	'PTAH_OCI_USERNAME' 'PTAH_OCI_PASSWORD' 'PTAH_OCI_TOKEN' \
+	'DOCKER_CONFIG' 'registry-docker-config' '.dockerconfigjson'; do
+	printf '%s\n' "$source_isolation_section" | grep -F "$docker_source_marker" >/dev/null
+done
 
 blocked_capture_section=$(sed -n '/^capture_blocked_refresh_boundary()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
@@ -1215,16 +1495,33 @@ for durable_mysql_marker in \
 done
 
 jq -n '
-  def secretEnv($name; $secret; $key):
-    {name: $name, valueFrom: {secretKeyRef: {name: $secret, key: $key}}};
-  def registryEnv:
-    [
-      secretEnv("PTAH_OCI_USERNAME"; "registry-auth"; "username"),
-      secretEnv("PTAH_OCI_PASSWORD"; "registry-auth"; "password"),
-      secretEnv("PTAH_OCI_TOKEN"; "registry-auth"; "token"),
-      secretEnv("PTAH_OCI_REGISTRY"; "registry-auth"; "registry"),
-      {name: "PTAH_PLAIN_HTTP", value: "true"}
+	  def secretEnv($name; $secret; $key):
+	    {name: $name, valueFrom: {secretKeyRef: {name: $secret, key: $key}}};
+	  def optionalSecretEnv($name; $secret; $key):
+	    {name: $name, valueFrom: {secretKeyRef: {
+	      name: $secret, key: $key, optional: true
+	    }}};
+	  def registryCredentialEnv:
+	    [
+	      optionalSecretEnv("PTAH_OCI_USERNAME"; "registry-auth"; "username"),
+	      optionalSecretEnv("PTAH_OCI_PASSWORD"; "registry-auth"; "password"),
+	      optionalSecretEnv("PTAH_OCI_TOKEN"; "registry-auth"; "token"),
+      {name: "PTAH_OCI_REGISTRY", value: "registry.example"},
+      {name: "PTAH_PLAIN_HTTP", value: "false"},
+      {name: "PTAH_OCI_CA_FILE", value: "/credentials/ca-snapshot/ca.pem"}
     ];
+  def authorityGuardEnv:
+    [
+      {name: "PTAH_OPERATOR_OCI_AUTH_MODE", value: "Environment"},
+      secretEnv("PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT"; "registry-auth"; "registry"),
+      secretEnv("PTAH_OPERATOR_OCI_CA_SHA256_GRANT"; "registry-auth"; "caSHA256"),
+      {name: "PTAH_OPERATOR_OCI_HAS_CA", value: "true"},
+      {name: "PTAH_OPERATOR_OCI_CA_SOURCE_FILE", value: "/credentials/ca-source/ca.pem"},
+      {name: "PTAH_OCI_REGISTRY", value: "registry.example"},
+      {name: "PTAH_PLAIN_HTTP", value: "false"}
+    ];
+  def registryEnv:
+    (registryCredentialEnv | map(select(.name != "PTAH_OCI_CA_FILE"))) + authorityGuardEnv;
   def databaseEnv:
     [secretEnv("PTAH_DB_URL"; "database-url"; "url")];
   def observeEnv:
@@ -1240,18 +1537,35 @@ jq -n '
         podReplacementPolicy: "Failed",
         template: {spec: {
           restartPolicy: "Never",
-          containers: [{name: "ptah", env: $mainEnv}],
+          containers: [{
+            name: "ptah",
+            env: $mainEnv,
+            volumeMounts: (if $operation == "resolve" or $operation == "verify" then
+              [{name: "registry-ca", mountPath: "/credentials/ca-source", readOnly: true}]
+            else [] end)
+          }],
           initContainers:
             ([{name: "install-runner", env: []}] +
-              (if $fetchEnv == null then [] else [{name: "fetch-schema", env: $fetchEnv}] end))
+              (if $fetchEnv == null then [] else [
+                {name: "validate-source-authority", env: authorityGuardEnv,
+                 volumeMounts: [
+                   {name: "runner", mountPath: "/runner", readOnly: true},
+                   {name: "registry-ca", mountPath: "/credentials/ca-source", readOnly: true},
+                   {name: "registry-ca-snapshot", mountPath: "/credentials/ca-snapshot"}
+                 ]},
+                {name: "fetch-schema", env: $fetchEnv,
+                 volumeMounts: [
+                   {name: "registry-ca-snapshot", mountPath: "/credentials/ca-snapshot", readOnly: true}
+                 ]}
+              ] end))
         }}
       }
     };
   {items: [
     job("resolve"; registryEnv; null),
     job("verify"; registryEnv; null),
-    job("observe"; observeEnv; registryEnv),
-    job("plan"; observeEnv; registryEnv),
+    job("observe"; observeEnv; registryCredentialEnv),
+    job("plan"; observeEnv; registryCredentialEnv),
     job("apply"; databaseEnv; null)
   ]}
 ' >"$CONTROLLER_JOB_FIXTURE"
@@ -1261,7 +1575,7 @@ jq -e \
 	--argjson requireApply true \
 	-f "$ROOT_DIR/testdata/e2e/controller-job-isolation.jq" \
 	"$CONTROLLER_JOB_FIXTURE" >/dev/null
-for missing_container in resolve:ptah observe:fetch-schema; do
+for missing_container in resolve:ptah observe:validate-source-authority observe:fetch-schema; do
 	negative_operation=${missing_container%%:*}
 	negative_container=${missing_container#*:}
 	jq \
@@ -1282,6 +1596,242 @@ for missing_container in resolve:ptah observe:fetch-schema; do
 		"$NEGATIVE_FIXTURE" >/dev/null; then
 		printf 'e2e static: controller isolation accepted %s without %s\n' \
 			"$negative_operation" "$negative_container" >&2
+		exit 1
+	fi
+done
+for invalid_ca_boundary in missing-grant selectable-key fetch-source-mount; do
+	case "$invalid_ca_boundary" in
+	missing-grant)
+		jq '
+          (.items[] |
+            select(.metadata.labels["operator.ptah.dev/operation"] == "observe") |
+            .spec.template.spec.initContainers[] |
+            select(.name == "validate-source-authority") |
+            .env) |= map(select(.name != "PTAH_OPERATOR_OCI_CA_SHA256_GRANT"))
+        ' "$CONTROLLER_JOB_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	selectable-key)
+		jq '
+          (.items[] |
+            select(.metadata.labels["operator.ptah.dev/operation"] == "observe") |
+            .spec.template.spec.initContainers[] |
+            select(.name == "validate-source-authority") |
+            .env[] |
+            select(.name == "PTAH_OPERATOR_OCI_CA_SHA256_GRANT") |
+            .valueFrom.secretKeyRef.key) = "schema-selected-key"
+        ' "$CONTROLLER_JOB_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	fetch-source-mount)
+		jq '
+          (.items[] |
+            select(.metadata.labels["operator.ptah.dev/operation"] == "observe") |
+            .spec.template.spec.initContainers[] |
+            select(.name == "fetch-schema") |
+            .volumeMounts) += [{
+              name: "registry-ca", mountPath: "/credentials/ca-source", readOnly: true
+            }]
+        ' "$CONTROLLER_JOB_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	esac
+	if jq -e \
+		--arg databaseSecret database-url \
+		--arg registrySecret registry-auth \
+		--argjson requireApply true \
+		-f "$ROOT_DIR/testdata/e2e/controller-job-isolation.jq" \
+		"$NEGATIVE_FIXTURE" >/dev/null; then
+		printf 'e2e static: controller isolation accepted invalid CA boundary %s\n' \
+			"$invalid_ca_boundary" >&2
+		exit 1
+	fi
+done
+jq \
+	--arg resolvedReference oci://registry.example/team/schema@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa '
+	  def hardenedContainer:
+	    {
+	      allowPrivilegeEscalation: false,
+	      readOnlyRootFilesystem: true,
+	      runAsNonRoot: true,
+	      runAsUser: 65532,
+	      runAsGroup: 65532,
+	      capabilities: {drop: ["ALL"]},
+	      seccompProfile: {type: "RuntimeDefault"}
+	    };
+	  def podSpec($job):
+	    ($job.spec.template.spec |
+	      .automountServiceAccountToken = false |
+	      .enableServiceLinks = false |
+	      .securityContext = {
+	        runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532,
+	        fsGroupChangePolicy: "OnRootMismatch", seccompProfile: {type: "RuntimeDefault"}
+	      } |
+	      .containers[0].securityContext = hardenedContainer |
+	      .containers[0].envFrom = [] |
+	      .containers[0].volumeMounts = [
+	        {name: "runner", mountPath: "/runner", readOnly: true},
+	        {name: "work", mountPath: "/work"},
+	        {name: "schema-source", mountPath: "/source", readOnly: true}
+	      ] |
+	      (.initContainers[] | select(.name == "install-runner")) |= (
+	        .command = ["/ptah-runner"] |
+	        .args = ["--install-to", "/runner/ptah-runner"] |
+	        .envFrom = [] |
+	        .securityContext = hardenedContainer |
+	        .volumeMounts = [{name: "runner", mountPath: "/runner"}]
+	      ) |
+	      (.initContainers[] | select(.name == "validate-source-authority")) |= (
+	        .command = ["/runner/ptah-runner"] |
+	        .args = [
+	          "--validate-oci-source", $resolvedReference,
+	          "--snapshot-oci-ca-to", "/credentials/ca-snapshot/ca.pem"
+	        ] |
+	        .envFrom = [] |
+	        .securityContext = hardenedContainer
+	      ) |
+	      (.initContainers[] | select(.name == "fetch-schema")) |= (
+	        .command = ["/usr/local/bin/ptah"] |
+	        .args = ["schema", "pull", $resolvedReference, "--out", "/source/schema.hcl"] |
+	        .envFrom = [] |
+	        .securityContext = hardenedContainer |
+	        .volumeMounts = [
+	          {name: "schema-source", mountPath: "/source"},
+	          {name: "fetch-work", mountPath: "/fetch-work"},
+	          {name: "registry-ca-snapshot", mountPath: "/credentials/ca-snapshot", readOnly: true}
+	        ]
+	      ) |
+	      .volumes = [
+	        {name: "runner", emptyDir: {medium: "Memory", sizeLimit: "64Mi"}},
+	        {name: "work", emptyDir: {medium: "Memory", sizeLimit: "128Mi"}},
+	        {name: "fetch-work", emptyDir: {medium: "Memory", sizeLimit: "64Mi"}},
+	        {name: "registry-ca", configMap: {
+	          name: "registry-ca", optional: false, defaultMode: 420,
+	          items: [{key: "ca.pem", path: "ca.pem", mode: 288}]
+	        }},
+	        {name: "registry-ca-snapshot", emptyDir: {medium: "Memory", sizeLimit: "2Mi"}},
+	        {name: "schema-source", emptyDir: {medium: "Memory", sizeLimit: "64Mi"}}
+	      ]
+	    );
+  {
+    apiVersion: "v1", kind: "List",
+    items: [
+      .items[] |
+      select(.metadata.labels["operator.ptah.dev/operation"] == "observe" or
+        .metadata.labels["operator.ptah.dev/operation"] == "plan") |
+      . as $job |
+      {
+        metadata: {
+          name: ("pod-" + $job.metadata.labels["operator.ptah.dev/operation"]),
+          uid: ("pod-uid-" + $job.metadata.labels["operator.ptah.dev/operation"]),
+          labels: ($job.metadata.labels + {"operator.ptah.dev/schema": "custom-ca"}),
+          ownerReferences: [{
+            apiVersion: "batch/v1", kind: "Job", name: "job", uid: $job.metadata.uid,
+            controller: true
+          }]
+        },
+        spec: podSpec($job),
+        status: {
+          phase: "Succeeded",
+          initContainerStatuses: [
+            {name: "install-runner", restartCount: 0, state: {terminated: {exitCode: 0}}},
+            {name: "validate-source-authority", restartCount: 0, state: {terminated: {exitCode: 0}}},
+            {name: "fetch-schema", restartCount: 0, state: {terminated: {exitCode: 0}}}
+          ],
+          containerStatuses: [
+            {name: "ptah", restartCount: 0, state: {terminated: {exitCode: 0}}}
+          ]
+        }
+      }
+    ]
+  }
+' "$CONTROLLER_JOB_FIXTURE" >"$CUSTOM_CA_POD_FIXTURE"
+jq -e \
+	--arg databaseSecret database-url \
+	--arg registrySecret registry-auth \
+	--arg registryAuthority registry.example \
+	--arg caConfigMap registry-ca \
+	--arg resolvedReference oci://registry.example/team/schema@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+	-f "$ROOT_DIR/testdata/e2e/custom-ca-pod-isolation.jq" \
+	"$CUSTOM_CA_POD_FIXTURE" >/dev/null
+for invalid_custom_ca_pod in \
+	guard-credentials fetch-source-ca main-registry init-order guard-failed \
+	pod-root missing-container-security automount-enabled guard-envfrom-registry \
+	main-envfrom-database secret-volume projected-secret-volume; do
+	case "$invalid_custom_ca_pod" in
+	guard-credentials)
+		jq '
+          (.items[0].spec.initContainers[] |
+            select(.name == "validate-source-authority") | .env) += [{
+              name: "PTAH_OCI_PASSWORD",
+              valueFrom: {secretKeyRef: {name: "registry-auth", key: "password", optional: true}}
+            }]
+        ' "$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	fetch-source-ca)
+		jq '
+          (.items[0].spec.initContainers[] |
+            select(.name == "fetch-schema") | .volumeMounts) += [{
+              name: "registry-ca", mountPath: "/credentials/ca-source", readOnly: true
+            }]
+        ' "$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	main-registry)
+		jq '.items[0].spec.containers[0].env += [{name: "PTAH_OCI_REGISTRY", value: "registry.example"}]' \
+			"$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	init-order)
+		jq '.items[0].spec.initContainers |= [.[1], .[0], .[2]]' \
+			"$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	guard-failed)
+		jq '(.items[0].status.initContainerStatuses[] |
+          select(.name == "validate-source-authority") | .state.terminated.exitCode) = 1' \
+			"$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	pod-root)
+		jq '.items[0].spec.securityContext.runAsUser = 0' \
+			"$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	missing-container-security)
+		jq 'del(.items[0].spec.initContainers[0].securityContext)' \
+			"$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	automount-enabled)
+		jq '.items[0].spec.automountServiceAccountToken = true' \
+			"$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	guard-envfrom-registry)
+		jq '(.items[0].spec.initContainers[] |
+          select(.name == "validate-source-authority") | .envFrom) =
+          [{secretRef: {name: "registry-auth"}}]' \
+			"$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	main-envfrom-database)
+		jq '.items[0].spec.containers[0].envFrom =
+          [{secretRef: {name: "database-url"}}]' \
+			"$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	secret-volume)
+		jq '.items[0].spec.volumes += [{
+          name: "registry-secret", secret: {secretName: "registry-auth"}
+        }]' "$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	projected-secret-volume)
+		jq '.items[0].spec.volumes += [{
+          name: "database-projection", projected: {sources: [
+            {secret: {name: "database-url"}}
+          ]}
+        }]' "$CUSTOM_CA_POD_FIXTURE" >"$NEGATIVE_FIXTURE"
+		;;
+	esac
+	if jq -e \
+		--arg databaseSecret database-url \
+		--arg registrySecret registry-auth \
+		--arg registryAuthority registry.example \
+		--arg caConfigMap registry-ca \
+		--arg resolvedReference oci://registry.example/team/schema@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+		-f "$ROOT_DIR/testdata/e2e/custom-ca-pod-isolation.jq" \
+		"$NEGATIVE_FIXTURE" >/dev/null; then
+		printf 'e2e static: custom-CA Pod isolation accepted %s\n' \
+			"$invalid_custom_ca_pod" >&2
 		exit 1
 	fi
 done
@@ -1377,8 +1927,43 @@ fi
 
 if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--namespace ptah-e2e \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string webhook.existingSecret=e2e-webhook-cert \
+	--set-string webhook.caBundle=e2e-ca \
+	>/dev/null 2>"$MISSING_PTAH_VERSION_ERROR"; then
+	printf '%s\n' 'e2e static: chart silently assigned a version to an arbitrary executor digest' >&2
+	exit 1
+fi
+grep -F 'ptahVersion' "$MISSING_PTAH_VERSION_ERROR" >/dev/null || {
+	printf '%s\n' 'e2e static: missing executor version did not produce an actionable schema error' >&2
+	exit 1
+}
+
+if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--skip-schema-validation \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string webhook.existingSecret=e2e-webhook-cert \
+	--set-string webhook.caBundle=e2e-ca \
+	>/dev/null 2>"$MISSING_PTAH_VERSION_TEMPLATE_ERROR"; then
+	printf '%s\n' 'e2e static: chart template bypass silently assigned an executor version' >&2
+	exit 1
+fi
+grep -F 'execution.ptahVersion is required and must identify the build in execution.executorImage' \
+	"$MISSING_PTAH_VERSION_TEMPLATE_ERROR" >/dev/null || {
+	printf '%s\n' 'e2e static: template-level executor version failure is not actionable' >&2
+	exit 1
+}
+
+if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+	--namespace ptah-e2e \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca \
 	>/dev/null 2>"$MUTABLE_MANAGER_ERROR"; then
@@ -1394,6 +1979,7 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca \
 	>/dev/null 2>"$LEADER_ELECTION_ERROR"; then
@@ -1408,6 +1994,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca >"$DEFAULT_RBAC_RENDER"
 
@@ -1418,6 +2005,7 @@ helm template ptah-e2e-ha "$ROOT_DIR/charts/ptah-operator" \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca >"$SHARED_RBAC_RENDER"
 
@@ -1484,6 +2072,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 		--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 		--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca >"$RENDERED_WEBHOOKS"
 [ "$(grep -Fc 'resources: ["ptahschemas/finalizers", "ptahschemaplans/finalizers"]' \
@@ -1530,6 +2119,10 @@ app.kubernetes.io/component: schema-operation'
 grep -F -- '--default-tolerations-enabled=true' "$RENDERED_WEBHOOKS" >/dev/null
 grep -F -- '--extended-resource-toleration-enabled=false' "$RENDERED_WEBHOOKS" >/dev/null
 grep -F -- '--always-pull-images-enabled=false' "$RENDERED_WEBHOOKS" >/dev/null
+[ "$(grep -Fc -- "--ptah-version=$STATIC_PTAH_VERSION" "$RENDERED_WEBHOOKS")" -eq 1 ] || {
+	printf '%s\n' 'e2e static: rendered manager does not bind the one explicit executor version' >&2
+	exit 1
+}
 for admission_resource in \
 	'resources: ["serviceaccounts"]' \
 	'resources: ["limitranges"]' \
@@ -1558,6 +2151,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
 	>"$ROTATOR_RENDER"
 [ "$(grep -c '^kind: Deployment$' "$ROTATOR_RENDER")" -eq 1 ]
 if grep -Eq '^kind: (Job|CronJob)$' "$ROTATOR_RENDER"; then
@@ -1600,6 +2194,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
 	>"$ROTATOR_RECREATE_RENDER"
 for recreation_marker in \
 		'kind: ValidatingAdmissionPolicy' \
@@ -1657,6 +2252,7 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 		--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
 		--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
 	--set-string webhook.caBundle=e2e-ca \
 	--set-string webhook.failurePolicy=Ignore \

@@ -732,7 +732,10 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	if result.Error != nil {
 		err := fmt.Errorf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512))
 		if operation.Type == operatorv1alpha1.OperationVerify && result.Error.Code == "verification_refused" {
-			if result.Stdout != "" || result.ChildExitCode != 2 || len(result.VerificationRequirements) == 0 ||
+			localDigestPinRefusal := result.ChildExitCode == 0 && len(result.VerificationRequirements) == 1 &&
+				result.VerificationRequirements[0] == "require_digest_pin"
+			if result.Stdout != "" || (result.ChildExitCode != 2 && !localDigestPinRefusal) ||
+				len(result.VerificationRequirements) == 0 ||
 				result.ResolvedDigest != schema.Status.Source.Digest ||
 				result.VerificationPolicyDigest == "" || operation.VerificationPolicyUID == "" ||
 				result.VerificationPolicyDigest != operation.VerificationPolicyDigest {

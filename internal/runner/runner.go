@@ -172,6 +172,19 @@ func Run(ctx context.Context, config Config) Result {
 	if config.Executor == nil {
 		config.Executor = OSExecutor{}
 	}
+	if config.Operation == OperationResolve || config.Operation == OperationVerify {
+		preparedEnvironment, cleanupCA, err := PrepareOCISourceAccess(
+			inputs.RequestedReference,
+			environment,
+			config.TempDir,
+		)
+		if err != nil {
+			setResultError(&result, "invalid_oci_access", err, redactor, config.Diagnostics)
+			return result
+		}
+		defer cleanupCA()
+		environment = preparedEnvironment
+	}
 
 	if config.Operation == OperationVerify {
 		return runVerify(ctx, config, environment, inputs, redactor, result)
@@ -514,6 +527,11 @@ func normalizedSelectors(selectors []string) []string {
 }
 
 func runVerify(ctx context.Context, config Config, environment []string, inputs Inputs, redactor Redactor, result Result) Result {
+	requestedReference, err := ocireference.Parse(inputs.RequestedReference)
+	if err != nil {
+		setResultError(&result, "invalid_input", errors.New("PTAH_REQUESTED_REFERENCE must contain the original credential-free OCI reference"), redactor, config.Diagnostics)
+		return result
+	}
 	if inputs.ResolvedReference == "" {
 		setResultError(&result, "invalid_input", errors.New("PTAH_RESOLVED_REFERENCE is required"), redactor, config.Diagnostics)
 		return result
@@ -525,6 +543,10 @@ func runVerify(ctx context.Context, config Config, environment []string, inputs 
 	resolvedDigest, err := digestFromReference(inputs.ResolvedReference)
 	if err != nil {
 		setResultError(&result, "invalid_input", errors.New("PTAH_RESOLVED_REFERENCE does not contain a SHA-256 digest"), redactor, config.Diagnostics)
+		return result
+	}
+	if err := ocireference.ValidateResolution(inputs.RequestedReference, inputs.ResolvedReference, resolvedDigest); err != nil {
+		setResultError(&result, "invalid_input", errors.New("requested and resolved OCI references do not form one immutable source binding"), redactor, config.Diagnostics)
 		return result
 	}
 	result.ResolvedDigest = resolvedDigest
@@ -580,21 +602,31 @@ func runVerify(ctx context.Context, config Config, environment []string, inputs 
 		setResultError(&result, "stale_source", errors.New("verified source digest no longer matches the resolved source"), redactor, config.Diagnostics)
 		return result
 	}
-	if verifyOutcome.exitCode == 2 {
-		if len(report.Findings) == 0 {
-			setResultError(&result, "invalid_verification_output", errors.New("verification refusal contains no policy findings"), redactor, config.Diagnostics)
-			return result
-		}
-		result.VerificationRequirements = make([]string, 0, len(report.Findings))
+	nativeRefusal := verifyOutcome.exitCode == 2
+	if nativeRefusal && len(report.Findings) == 0 {
+		setResultError(&result, "invalid_verification_output", errors.New("verification refusal contains no policy findings"), redactor, config.Diagnostics)
+		return result
+	}
+	if !nativeRefusal && len(report.Findings) != 0 {
+		setResultError(&result, "invalid_verification_output", errors.New("successful verification contains policy findings"), redactor, config.Diagnostics)
+		return result
+	}
+	requestedPinRefusal := !requestedReference.IsDigest && slices.Contains(report.Satisfied, "require_digest_pin")
+	if nativeRefusal || requestedPinRefusal {
+		result.VerificationRequirements = make([]string, 0, len(report.Findings)+1)
 		for _, finding := range report.Findings {
 			result.VerificationRequirements = append(result.VerificationRequirements, finding.Requirement)
 		}
+		if requestedPinRefusal {
+			result.VerificationRequirements = append(result.VerificationRequirements, "require_digest_pin")
+		}
 		slices.Sort(result.VerificationRequirements)
+		result.VerificationRequirements = slices.Compact(result.VerificationRequirements)
+		if len(result.VerificationRequirements) > 64 {
+			setResultError(&result, "invalid_verification_output", errors.New("verification refusal exceeds the supported requirement count"), redactor, config.Diagnostics)
+			return result
+		}
 		setResultError(&result, "verification_refused", errors.New("artifact does not satisfy the verification policy"), redactor, config.Diagnostics)
-		return result
-	}
-	if len(report.Findings) != 0 {
-		setResultError(&result, "invalid_verification_output", errors.New("successful verification contains policy findings"), redactor, config.Diagnostics)
 		return result
 	}
 

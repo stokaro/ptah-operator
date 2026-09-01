@@ -12,7 +12,7 @@ FOREIGN_NAMESPACE=${E2E_FOREIGN_NAMESPACE:-}
 HELM_RELEASE=${E2E_HELM_RELEASE:-}
 EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
-PTAH_VERSION=${E2E_PTAH_VERSION:-v0.3.0}
+PTAH_VERSION=${E2E_PTAH_VERSION:-}
 
 fail() {
 	printf 'e2e assertions: %s\n' "$*" >&2
@@ -27,7 +27,7 @@ sha256_file() {
 	shasum -a 256 "$1" | awk '{print $1}'
 }
 
-for value_name in KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE FOREIGN_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE RUNNER_IMAGE; do
+for value_name in KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE FOREIGN_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE RUNNER_IMAGE PTAH_VERSION; do
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
 done
@@ -589,7 +589,7 @@ jq -n \
       ptahVersion: $ptahVersion,
       executorImage: $executorImage,
       runnerImage: $runnerImage,
-      runnerProtocolVersion: 3,
+      runnerProtocolVersion: 4,
       dialect: "postgres",
       destructive: false,
       statementCount: 0,
@@ -721,7 +721,7 @@ schema_status=$(jq -n \
       ptahVersion: $ptahVersion,
       executorImage: $executorImage,
       runnerImage: $runnerImage,
-      runnerProtocolVersion: 3,
+      runnerProtocolVersion: 4,
       destructive: false,
       statementCount: 0,
       createdAt: $now
@@ -783,7 +783,7 @@ k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
       .spec.ptahVersion == $ptahVersion and
       .spec.executorImage == $executorImage and
       .spec.runnerImage == $runnerImage and
-      .spec.runnerProtocolVersion == 3
+      .spec.runnerProtocolVersion == 4
     ' >/dev/null || fail "mutating webhook did not stamp identity and hydrate the plan binding"
 
 for missing_binding in schema-name schema-uid plan-name plan-uid plan-fingerprint; do
@@ -823,8 +823,10 @@ jq --arg name e2e-conflicting-artifact \
 expect_denied "approval with a conflicting derived artifact binding" \
 	'artifact digest conflicts with the immutable plan' \
 	"$invalid_approval_file" "$error_file"
+# Version 3 is the immediately previous runner contract and must not be
+# accepted against a version-4 immutable plan.
 jq --arg name e2e-conflicting-protocol '
-    .metadata.name = $name | .spec.runnerProtocolVersion = 2
+    .metadata.name = $name | .spec.runnerProtocolVersion = 3
   ' "$approval_file" >"$invalid_approval_file"
 expect_denied "approval with a conflicting derived protocol binding" \
 	'runner protocol version conflicts with the immutable plan' \

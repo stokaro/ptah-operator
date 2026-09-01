@@ -11,7 +11,8 @@ are preserved; a newly created kind network is also preserved if another
 container attaches to it. Content-addressed BuildKit cache layers are managed
 by Docker and are never removed with a broad cleanup operation.
 
-The local client needs Docker, kind, kubectl, Helm, jq, SSH, curl, and htpasswd.
+The local client needs Docker, kind, kubectl, Helm, Go, Git, OpenSSL, jq, SSH,
+curl, and htpasswd.
 The Kind version must exactly match `support/kubernetes.json`; kubectl must be
 within one minor of the selected API server. The selected remote host only
 needs the Docker daemon represented by the chosen context.
@@ -32,6 +33,12 @@ checkout and exact commit. When no sibling checkout exists, the harness clones
 `E2E_EXECUTOR_IMAGE` may instead provide a digest-pinned external image, in
 which case `E2E_PTAH_VERSION` is required. `E2E_RUNNER_IMAGE` may similarly
 override the runner embedded in the freshly built operator image.
+
+For a source build, the harness derives `E2E_PTAH_VERSION` from the selected
+exact commit when the caller does not provide it. In both source and external
+image modes, it passes that non-empty version explicitly to Helm and verifies
+the same version-and-digest binding through the control-plane resources; no
+chart or assertion fallback supplies a release label.
 
 The registry, PostgreSQL, MySQL, and both e2e build images have digest-pinned
 defaults. Each runtime image is copied into the disposable registry and
@@ -77,6 +84,27 @@ Observe, and scoped Plan cycle whose explicit `NoChanges` result must remain a
 no-op. A single lossless Job watch must prove that Resolve completed before
 Verify was added and Verify completed before the first database Observe was
 added.
+The registry Secret independently grants its exact in-cluster authority through
+the fixed `registry` key and explicitly grants the test-only cleartext transport
+through `allowPlainHTTP: "true"`. Job isolation checks require the
+credential-free authority guard to run before every credentialed Observe or
+Plan fetch.
+Custom-CA coverage must instead use HTTPS and put the exact selected CA-byte
+digest in the same registry Secret under the fixed `caSHA256` key. Those checks
+run a digest-pinned, non-root, read-only TLS proxy with a task-scoped server
+certificate whose SAN is the exact in-cluster Service DNS name. A separate
+admin listener exposes only an atomic request count through the Kubernetes API
+proxy for the exact captured Pod; it has no ClusterIP Service. One immutable
+Secret has the right authority and a wrong CA digest;
+another has the right CA digest and a wrong authority. Each must produce one
+typed pre-child Resolve refusal, no other operation, and zero registry-request
+delta while the exact proxy Pod UID, container ID, ready state, and zero restart
+count remain unchanged. The matching Secret must complete Resolve, Verify,
+Observe, and Plan over HTTPS, increase the same counter, reach approval without
+Apply, and suspend. Completed Observe and Plan Pods prove that only the
+credential-free guard mounts the source ConfigMap, that it creates a private CA
+snapshot, that the credentialed fetch mounts only that read-only snapshot, and
+that the database-bearing container receives only the fetched schema.
 They then move the tag, require a new
 plan and stale the unused old approval before applying the new schema. To make
 that admission-versus-reconciliation race deterministic, the test briefly
@@ -139,7 +167,7 @@ pause and scheduling barrier must prove that the original live Lease holder
 and epoch remain and that the Lease watch contains no release, deletion, or
 replacement event; only then may status harvesting resume and release the
 Lease.
-The original Apply Job must expose one exact, production-parsed protocol-v3
+The original Apply Job must expose one exact, production-parsed protocol-v4
 result whose mutating outcome, plan digest, coordination digest, and target
 digest match both the persisted active operation and pending proof snapshot.
 Both read-only proof Jobs must also expose one exact result:
@@ -184,7 +212,7 @@ Plan Job and Pod UIDs and zero Apply UIDs.
 
 PostgreSQL and MySQL use distinct stable coordination keys. The suite requires
 their status and approval bindings to expose only the derived digest, never the
-plaintext key, and binds every approval to runner protocol version 3.
+plaintext key, and binds every approval to runner protocol version 4.
 
 Registry and database credentials are supplied only through namespaced
 Secrets. Host-side generated credentials are handed between scripts through
@@ -194,7 +222,7 @@ complete terminal log audit. Terminal Jobs are re-read by exact UID, their Pods
 are selected by controller owner UID rather than a reusable name label, and
 every exact terminated Pod and container is rechecked after its log scan before
 the Job UID is certified. Exact operation results are extracted from one
-complete integrity-bound protocol-v3 frame by the production parser, rather
+complete integrity-bound protocol-v4 frame by the production parser, rather
 than inferred from Job success alone. Every parsed frame is also bound to the
 CR's persisted active-operation ID and Job UID and to the exact `ADDED` Job
 annotation, so a stale or foreign frame cannot satisfy the suite. Any stdout

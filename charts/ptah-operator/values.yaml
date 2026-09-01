@@ -15,9 +15,12 @@ fullnameOverride: ""
 
 execution:
   # Both execution images are required and must include @sha256:<64 hex>.
+  # ptahVersion is also required, is limited to 128 bytes, and must identify
+  # the Ptah build verified for the exact executorImage digest; the chart
+  # deliberately has no default.
   executorImage: ""
   runnerImage: ""
-  ptahVersion: "v0.3.0"
+  ptahVersion: ""
 
 admission:
   # These values must match kube-apiserver's enabled admission plugins and

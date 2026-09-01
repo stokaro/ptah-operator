@@ -51,7 +51,8 @@ jobs:
           helm lint charts/ptah-operator \
             --set-string image.digest="$test_digest" \
             --set-string execution.executorImage="example.invalid/ptah@$test_digest" \
-            --set-string execution.runnerImage="example.invalid/operator@$test_digest"
+            --set-string execution.runnerImage="example.invalid/operator@$test_digest" \
+            --set-string execution.ptahVersion="release-smoke-explicit"
           source_epoch="$(git show -s --format=%ct HEAD)"
           go run ./hack/chartpackage -epoch "$source_epoch" -destination dist-a
           go run ./hack/chartpackage -epoch "$source_epoch" -destination dist-b

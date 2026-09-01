@@ -18,6 +18,12 @@ but intentionally does not trust a user-supplied server version. The executor
 discovers server capabilities from the live connection and refuses unsupported
 DDL instead of rendering for an asserted version.
 
+Database support is also scoped to the Ptah executor build exercised by the
+matrix. Installation requires both its digest-pinned image and an explicit
+version identity verified from that image's provenance. The chart has no
+executor-version default and cannot silently assign an unrelated version to a
+different digest; both values remain part of every plan and applied binding.
+
 ## PostgreSQL authority
 
 Use a dedicated login that is the owner of the managed objects, or grant it

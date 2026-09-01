@@ -197,6 +197,12 @@ helm upgrade --install ptah-operator \
   --set-string execution.ptahVersion=<ptah-version>
 ```
 
+`execution.ptahVersion` has no chart default and is not inferred from the image
+reference. Set it to the version identity established by the provenance of the
+exact executor digest. The operator records that pair in plans, approvals,
+operation Jobs, and applied status, so an executor change is an explicit new
+execution binding even when the operator release is unchanged.
+
 For an air-gapped promotion, carry the authenticated chart asset and recursively
 copy the operator image, executor image, and every referenced schema artifact
 by digest into the destination registry. Record the source and destination

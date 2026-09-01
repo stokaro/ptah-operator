@@ -22,6 +22,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	maxPlanBytes := flags.Int64("max-plan-bytes", runner.DefaultMaxPlanBytes, "maximum complete executable plan bytes")
 	operationFlag := flags.String("operation", "", "operation: resolve, verify, observe, plan, or apply")
 	installTo := flags.String("install-to", "", "copy this executable to the fixed Job runner path")
+	validateOCISource := flags.String("validate-oci-source", "", "validate OCI source authority grants without network access")
+	snapshotOCICATo := flags.String("snapshot-oci-ca-to", "", "copy a validated OCI CA to an exclusive snapshot path")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
 	}
@@ -41,6 +43,45 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 			return 2
 		}
 		return 0
+	}
+	validateMode := false
+	flags.Visit(func(current *flag.Flag) {
+		if current.Name == "validate-oci-source" {
+			validateMode = true
+		}
+	})
+	if validateMode {
+		unexpectedFlag := false
+		flags.Visit(func(current *flag.Flag) {
+			if current.Name != "validate-oci-source" && current.Name != "snapshot-oci-ca-to" {
+				unexpectedFlag = true
+			}
+		})
+		if unexpectedFlag || flags.NArg() != 0 {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: OCI source validation mode accepts only --validate-oci-source")
+			return 2
+		}
+		var err error
+		if *snapshotOCICATo == "" {
+			err = runner.ValidateOCISourceAccess(*validateOCISource, environment)
+		} else {
+			err = runner.SnapshotOCISourceAccess(*validateOCISource, environment, *snapshotOCICATo)
+		}
+		if err != nil {
+			_, _ = fmt.Fprintln(stderr, "ptah-runner: OCI source access is not authorized")
+			return 2
+		}
+		return 0
+	}
+	snapshotMode := false
+	flags.Visit(func(current *flag.Flag) {
+		if current.Name == "snapshot-oci-ca-to" {
+			snapshotMode = true
+		}
+	})
+	if snapshotMode {
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: --snapshot-oci-ca-to requires --validate-oci-source")
+		return 2
 	}
 	operation := runner.Operation(*operationFlag)
 	if operation == "" && flags.NArg() == 1 {

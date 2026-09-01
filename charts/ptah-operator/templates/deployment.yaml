@@ -1,4 +1,5 @@
 {{- include "ptah-operator.validateExecutionImages" . }}
+{{- include "ptah-operator.validatePtahVersion" . }}
 {{- include "ptah-operator.validateLeaderElection" . }}
 apiVersion: apps/v1
 kind: Deployment
@@ -51,7 +52,7 @@ spec:
             - --webhook-cert-dir=/certs
             - --executor-image={{ .Values.execution.executorImage }}
             - --runner-image={{ .Values.execution.runnerImage }}
-            - --ptah-version={{ required "execution.ptahVersion is required" .Values.execution.ptahVersion }}
+            - {{ printf "--ptah-version=%s" .Values.execution.ptahVersion | quote }}
             - --target-lock-namespace={{ default .Release.Namespace .Values.coordination.namespace }}
             - --default-tolerations-enabled={{ .Values.admission.defaultTolerationsEnabled }}
             - --default-not-ready-toleration-seconds={{ .Values.admission.defaultNotReadyTolerationSeconds }}

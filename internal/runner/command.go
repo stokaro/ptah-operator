@@ -152,6 +152,12 @@ func childEnvironment(environment []string) []string {
 		EnvDispatchNotAfter,
 		EnvExecutionNotAfter,
 		EnvExpectedDatabaseEngine,
+		EnvOCIAuthMode,
+		EnvOCIAuthRegistryGrant,
+		EnvOCIAllowPlainHTTPGrant,
+		EnvOCIHasCA,
+		EnvOCICASourceFile,
+		EnvOCICASHA256Grant,
 	)
 }
 
@@ -174,6 +180,9 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 		}
 		spec.Args = []string{"oci", "resolve", inputs.RequestedReference, "--format", "json"}
 	case OperationVerify:
+		if err := validateReference(inputs.RequestedReference, "requested reference"); err != nil {
+			return CommandSpec{}, err
+		}
 		if err := validateReference(inputs.ResolvedReference, "resolved reference"); err != nil {
 			return CommandSpec{}, err
 		}

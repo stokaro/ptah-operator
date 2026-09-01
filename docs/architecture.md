@@ -95,14 +95,19 @@ state checks again before apply.
 | --- | --- | --- | --- |
 | Resolve | yes | no | requested OCI reference |
 | Verify | yes | no | requested reference plus resolved digest evidence |
-| Observe fetch init | yes | no | digest-pinned schema artifact |
+| Observe/Plan authority guard | authority and transport grants only | no | digest-pinned reference plus optional CA source bytes |
+| Observe fetch init | yes | no | digest-pinned schema artifact plus optional read-only CA snapshot |
 | Observe main | no | target only | local read-only schema file |
-| Plan fetch init | yes | no | digest-pinned schema artifact |
+| Plan fetch init | yes | no | digest-pinned schema artifact plus optional read-only CA snapshot |
 | Plan main | no | target and optional dev target | local schema file |
 | Apply | no | target only | immutable plan chunks |
 
 The controller sees only Secret names and keys. Kubernetes resolves those
-selectors in the Job Pod.
+selectors in the Job Pod. For Resolve and Verify, the runner replaces a mounted
+custom CA ConfigMap projection with a private snapshot before starting Ptah.
+For Observe and Plan, only the credential-free guard mounts that projection; it
+validates the fixed Secret-owned digest grant and copies exact bytes to a
+dedicated EmptyDir before the credentialed fetch starts.
 
 ## Concurrency
 

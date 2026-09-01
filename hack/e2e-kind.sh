@@ -64,7 +64,7 @@ is_pinned_image() {
 	printf '%s\n' "$1" | grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$'
 }
 
-for command_name in docker kind kubectl helm jq ssh git go tar awk sed grep tr cut cksum mktemp date sleep curl htpasswd; do
+for command_name in docker kind kubectl helm jq ssh git go tar awk sed grep tr cut cksum mktemp date sleep curl htpasswd openssl; do
 	require_command "$command_name"
 done
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
@@ -180,6 +180,8 @@ REGISTRY_CONTAINER=$(dns_name ptah-registry "$identity" 63)
 REGISTRY_SERVICE=e2e-registry
 REGISTRY_DNS_NAME="${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
 REGISTRY_HOST="${REGISTRY_DNS_NAME}:5000"
+TLS_PROXY_SERVICE=e2e-registry-tls
+TLS_PROXY_DNS_NAME="${TLS_PROXY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
 REMOTE_REGISTRY=127.0.0.1
 REGISTRY_USERNAME=ptah_e2e
 registry_credential_suffix=$(printf '%s-registry-auth' "$identity" | sha256 | cut -c1-24)
@@ -250,6 +252,14 @@ REGISTRY_HTPASSWD_FILE=$WORK_DIR/registry.htpasswd
 REGISTRY_NETRC_FILE=$WORK_DIR/registry.netrc
 REGISTRY_PASSWORD_FILE=$WORK_DIR/registry.password
 REGISTRY_CREDENTIALS_FILE=$WORK_DIR/registry-credentials.json
+TLS_PROXY_DIR=$WORK_DIR/tls-proxy
+TLS_PROXY_CA_KEY_FILE=$TLS_PROXY_DIR/ca.key
+TLS_PROXY_CA_FILE=$TLS_PROXY_DIR/ca.crt
+TLS_PROXY_CA_CONFIG_FILE=$TLS_PROXY_DIR/ca.conf
+TLS_PROXY_CERT_KEY_FILE=$TLS_PROXY_DIR/tls.key
+TLS_PROXY_CERT_REQUEST_FILE=$TLS_PROXY_DIR/tls.csr
+TLS_PROXY_CERT_FILE=$TLS_PROXY_DIR/tls.crt
+TLS_PROXY_CERT_EXT_FILE=$TLS_PROXY_DIR/server.ext
 IMAGE_AUDIT_ARCHIVE=$WORK_DIR/image-audit.tar
 CHART_PACKAGE_DIR=$WORK_DIR/chart-package
 CLUSTER_CREATED=0
@@ -399,6 +409,62 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
+
+mkdir -p "$TLS_PROXY_DIR"
+chmod 700 "$TLS_PROXY_DIR"
+printf '%s\n' \
+	'[req]' \
+	'distinguished_name=dn' \
+	'x509_extensions=v3_ca' \
+	'prompt=no' \
+	'[dn]' \
+	"CN=${CLUSTER_NAME}-registry-ca" \
+	'[v3_ca]' \
+	'basicConstraints=critical,CA:TRUE,pathlen:0' \
+	'keyUsage=critical,keyCertSign,cRLSign' \
+	>"$TLS_PROXY_CA_CONFIG_FILE"
+if ! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+	-out "$TLS_PROXY_CA_KEY_FILE" >/dev/null 2>&1 ||
+	! openssl req -x509 -new -sha256 -days 2 \
+	-key "$TLS_PROXY_CA_KEY_FILE" \
+	-config "$TLS_PROXY_CA_CONFIG_FILE" \
+	-extensions v3_ca \
+	-out "$TLS_PROXY_CA_FILE" >/dev/null 2>&1 ||
+	! openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+	-out "$TLS_PROXY_CERT_KEY_FILE" >/dev/null 2>&1 ||
+	! openssl req -new -sha256 \
+	-key "$TLS_PROXY_CERT_KEY_FILE" \
+	-subj '/CN=ptah-e2e-registry' \
+	-out "$TLS_PROXY_CERT_REQUEST_FILE" >/dev/null 2>&1; then
+	fail "could not generate task-scoped TLS proxy key material"
+fi
+printf '%s\n' \
+	'[server]' \
+	'basicConstraints=critical,CA:FALSE' \
+	'keyUsage=critical,digitalSignature' \
+	'extendedKeyUsage=serverAuth' \
+	"subjectAltName=DNS:${TLS_PROXY_DNS_NAME}" \
+	>"$TLS_PROXY_CERT_EXT_FILE"
+if ! openssl x509 -req -sha256 -days 2 \
+	-in "$TLS_PROXY_CERT_REQUEST_FILE" \
+	-CA "$TLS_PROXY_CA_FILE" \
+	-CAkey "$TLS_PROXY_CA_KEY_FILE" \
+	-set_serial 1 \
+	-extfile "$TLS_PROXY_CERT_EXT_FILE" \
+	-extensions server \
+	-out "$TLS_PROXY_CERT_FILE" >/dev/null 2>&1; then
+	fail "could not sign the task-scoped TLS proxy certificate"
+fi
+chmod 600 \
+	"$TLS_PROXY_CA_KEY_FILE" "$TLS_PROXY_CA_FILE" \
+	"$TLS_PROXY_CA_CONFIG_FILE" \
+	"$TLS_PROXY_CERT_KEY_FILE" "$TLS_PROXY_CERT_REQUEST_FILE" \
+	"$TLS_PROXY_CERT_FILE" "$TLS_PROXY_CERT_EXT_FILE"
+if ! go -C "$ROOT_DIR" run ./test/e2e/handcraftoci verify-certificate \
+	"$TLS_PROXY_CA_FILE" "$TLS_PROXY_CERT_FILE" "$TLS_PROXY_DNS_NAME" \
+	>/dev/null 2>&1; then
+	fail "task-scoped TLS proxy certificate does not bind its exact Service DNS name"
+fi
 
 chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")
 [ -n "$chart_version" ] || fail "Helm chart version is missing"
@@ -749,6 +815,10 @@ E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
 E2E_REGISTRY_IP=$REGISTRY_IP \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_TLS_PROXY_SERVICE=$TLS_PROXY_SERVICE \
+E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE \
+E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \
+E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
 	"$ROOT_DIR/hack/e2e-dataplane.sh"
 
 printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"

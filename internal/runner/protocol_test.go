@@ -118,6 +118,35 @@ func TestFrameRejectsMissingMalformedOversizedAndMismatchedBindings(t *testing.T
 	}
 }
 
+func TestParserRejectsSuccessfulVerifyFrameFromPreviousProtocol(t *testing.T) {
+	t.Parallel()
+
+	digest := "sha256:" + strings.Repeat("9", 64)
+	current := Result{
+		ProtocolVersion:          ProtocolVersion,
+		Operation:                OperationVerify,
+		OperationID:              "verify-previous-protocol",
+		ChildExitCode:            0,
+		ResolvedDigest:           digest,
+		VerificationPolicyDigest: digest,
+		ObservedArtifactType:     "application/vnd.ptah.schema.layer.v1+tar",
+	}
+	if _, err := ParseResultFor(
+		handcraftedIntegrityValidFrame(t, current),
+		current.Operation,
+		current.OperationID,
+	); err != nil {
+		t.Fatalf("ParseResultFor(current protocol) error = %v", err)
+	}
+
+	previous := current
+	previous.ProtocolVersion = ProtocolVersion - 1
+	frame := handcraftedIntegrityValidFrame(t, previous)
+	if _, err := ParseResultFor(frame, previous.Operation, previous.OperationID); !errors.Is(err, ErrMalformedFrame) {
+		t.Fatalf("ParseResultFor(previous protocol) error = %v, want ErrMalformedFrame", err)
+	}
+}
+
 func TestWriteFrameRejectsShortWrite(t *testing.T) {
 	t.Parallel()
 
@@ -197,6 +226,80 @@ func TestParserRejectsImpossibleSuccessfulResultShapes(t *testing.T) {
 			t.Parallel()
 			frame := handcraftedIntegrityValidFrame(t, test.result)
 			if _, err := ParseResultFor(frame, test.result.Operation, test.result.OperationID); !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("ParseResultFor() error = %v, want ErrMalformedFrame", err)
+			}
+		})
+	}
+}
+
+func TestVerificationRefusalChildExitBinding(t *testing.T) {
+	t.Parallel()
+
+	digest := "sha256:" + strings.Repeat("9", 64)
+	base := Result{
+		ProtocolVersion:          ProtocolVersion,
+		Operation:                OperationVerify,
+		OperationID:              "verify-refusal-binding",
+		ResolvedDigest:           digest,
+		VerificationPolicyDigest: digest,
+		Error:                    &ResultError{Code: "verification_refused", Message: "artifact does not satisfy the verification policy"},
+	}
+	for name, result := range map[string]Result{
+		"native refusal": func() Result {
+			result := base
+			result.ChildExitCode = 2
+			result.VerificationRequirements = []string{"require_signature"}
+			return result
+		}(),
+		"runner digest pin refusal": func() Result {
+			result := base
+			result.ChildExitCode = 0
+			result.VerificationRequirements = []string{"require_digest_pin"}
+			return result
+		}(),
+	} {
+		name, result := name, result
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			frame, err := MarshalFrame(result)
+			if err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			got, err := ParseResultFor(frame, result.Operation, result.OperationID)
+			if err != nil {
+				t.Fatalf("ParseResultFor() error = %v", err)
+			}
+			if !reflect.DeepEqual(got, result) {
+				t.Fatalf("ParseResultFor() = %#v, want %#v", got, result)
+			}
+		})
+	}
+
+	for name, result := range map[string]Result{
+		"exit zero for native requirement": func() Result {
+			result := base
+			result.ChildExitCode = 0
+			result.VerificationRequirements = []string{"require_signature"}
+			return result
+		}(),
+		"exit zero for mixed requirements": func() Result {
+			result := base
+			result.ChildExitCode = 0
+			result.VerificationRequirements = []string{"require_digest_pin", "require_signature"}
+			return result
+		}(),
+		"non-native refusal exit": func() Result {
+			result := base
+			result.ChildExitCode = 1
+			result.VerificationRequirements = []string{"require_digest_pin"}
+			return result
+		}(),
+	} {
+		name, result := name, result
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			frame := handcraftedIntegrityValidFrame(t, result)
+			if _, err := ParseResultFor(frame, result.Operation, result.OperationID); !errors.Is(err, ErrMalformedFrame) {
 				t.Fatalf("ParseResultFor() error = %v, want ErrMalformedFrame", err)
 			}
 		})

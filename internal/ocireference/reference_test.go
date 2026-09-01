@@ -93,3 +93,75 @@ func TestParseRejectsCredentialAndTransportDecorations(t *testing.T) {
 		}
 	}
 }
+
+func TestMatchAuthorityUsesExactCanonicalRegistry(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		reference string
+		grant     string
+	}{
+		{reference: "oci://REGISTRY.example/team/schema:v1", grant: "registry.EXAMPLE"},
+		{reference: "oci://registry.example:5443/team/schema:v1", grant: "REGISTRY.example:5443"},
+		{reference: "oci://[2001:db8::1]:5443/team/schema:v1", grant: "[2001:DB8::1]:5443"},
+		{reference: "oci://[2001:db8::1]/team/schema:v1", grant: "[2001:DB8::1]"},
+		{reference: "oci://localhost:5000/team/schema:v1", grant: "LOCALHOST:5000"},
+		{reference: "oci://docker.io/team/schema:v1", grant: "registry-1.docker.io"},
+	} {
+		if err := ocireference.MatchAuthority(test.reference, test.grant); err != nil {
+			t.Errorf("MatchAuthority(%q, %q) error = %v", test.reference, test.grant, err)
+		}
+	}
+}
+
+func TestMatchAuthorityDoesNotWidenGrant(t *testing.T) {
+	t.Parallel()
+
+	for _, grant := range []string{
+		"other.example",
+		"registry.example:443",
+		"registry.example.",
+		"registry-1.docker.io",
+	} {
+		if err := ocireference.MatchAuthority("oci://registry.example/team/schema:v1", grant); err == nil {
+			t.Errorf("MatchAuthority() accepted distinct authority %q", grant)
+		}
+	}
+	if err := ocireference.MatchAuthority("oci://docker.io/team/schema:v1", "docker.io"); err == nil {
+		t.Error("MatchAuthority() accepted the logical Docker registry instead of its effective HTTP authority")
+	}
+}
+
+func TestCanonicalAuthorityRejectsDecorations(t *testing.T) {
+	t.Parallel()
+
+	for _, authority := range []string{
+		"",
+		" registry.example",
+		"registry.example ",
+		"https://registry.example",
+		"user@registry.example",
+		"registry.example/repository",
+		"registry.example?query",
+		"registry.example#fragment",
+		"registry\\example",
+		"registry.example:",
+		"registry.example:http",
+		"registry.example:0",
+		"registry.example:65536",
+		":443",
+		"2001:db8::1",
+		"[2001:db8::1",
+		"[2001:db8::1]:",
+		"[2001:db8::1]:http",
+		"[127.0.0.1]:443",
+		"registry%2eexample",
+		"registry%2fexample",
+		"registry.example\n",
+		"r\u00e9gistry.example",
+	} {
+		if _, err := ocireference.CanonicalAuthority(authority); err == nil {
+			t.Errorf("CanonicalAuthority() accepted %q", authority)
+		}
+	}
+}

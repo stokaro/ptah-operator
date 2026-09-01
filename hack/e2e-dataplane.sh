@@ -17,6 +17,10 @@ MYSQL_IMAGE=${E2E_MYSQL_IMAGE:-}
 REGISTRY_IP=${E2E_REGISTRY_IP:-}
 REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
 REGISTRY_CREDENTIALS_FILE=${E2E_REGISTRY_CREDENTIALS_FILE:-}
+TLS_PROXY_SERVICE=${E2E_TLS_PROXY_SERVICE:-}
+TLS_PROXY_CA_FILE=${E2E_TLS_PROXY_CA_FILE:-}
+TLS_PROXY_CERT_FILE=${E2E_TLS_PROXY_CERT_FILE:-}
+TLS_PROXY_KEY_FILE=${E2E_TLS_PROXY_KEY_FILE:-}
 RECONCILE_INTERVAL=${E2E_RECONCILE_INTERVAL:-1m}
 TAG_MOVE_INTERVAL=${E2E_TAG_MOVE_INTERVAL:-2m}
 APPROVAL_INTERVAL=${E2E_APPROVAL_INTERVAL:-5m}
@@ -27,6 +31,7 @@ BLOCKED_REFRESH_INTERVAL=${BLOCKED_REFRESH_SECONDS}s
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
 ADMISSION_RUNTIME_CLASS=ptah-e2e-runtime
 ADMISSION_RUNTIME_TAINT=operator.ptah.dev/e2e-runtime
+DIGEST_PIN_POLICY_NAME=e2e-digest-pin-verification-policy
 
 # Imported variables retain their export attribute across reassignment in
 # POSIX shells. Clear every secret-bearing name before loading task values.
@@ -72,7 +77,8 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 fi
 for value_name in \
 	KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE \
-	RUNNER_IMAGE FIXTURE_IMAGE POSTGRES_IMAGE MYSQL_IMAGE REGISTRY_IP REGISTRY_CREDENTIALS_FILE; do
+	RUNNER_IMAGE FIXTURE_IMAGE POSTGRES_IMAGE MYSQL_IMAGE REGISTRY_IP REGISTRY_CREDENTIALS_FILE \
+	TLS_PROXY_SERVICE TLS_PROXY_CA_FILE TLS_PROXY_CERT_FILE TLS_PROXY_KEY_FILE; do
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
 done
@@ -88,6 +94,25 @@ else
 fi
 [ "$registry_credentials_mode" = 600 ] ||
 	fail "E2E_REGISTRY_CREDENTIALS_FILE must have mode 0600"
+printf '%s\n' "$TLS_PROXY_SERVICE" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' ||
+	fail "E2E_TLS_PROXY_SERVICE must be a DNS label"
+for tls_proxy_file in "$TLS_PROXY_CA_FILE" "$TLS_PROXY_CERT_FILE" "$TLS_PROXY_KEY_FILE"; do
+	if [ ! -f "$tls_proxy_file" ] || [ -L "$tls_proxy_file" ]; then
+		fail "TLS proxy inputs must be regular non-symlink files"
+	fi
+	if tls_proxy_mode=$(stat -c '%a' "$tls_proxy_file" 2>/dev/null); then
+		:
+	else
+		tls_proxy_mode=$(stat -f '%Lp' "$tls_proxy_file" 2>/dev/null) ||
+			fail "could not inspect TLS proxy input permissions"
+	fi
+	[ "$tls_proxy_mode" = 600 ] || fail "TLS proxy input files must have mode 0600"
+done
+if [ "$TLS_PROXY_CA_FILE" = "$TLS_PROXY_CERT_FILE" ] ||
+	[ "$TLS_PROXY_CA_FILE" = "$TLS_PROXY_KEY_FILE" ] ||
+	[ "$TLS_PROXY_CERT_FILE" = "$TLS_PROXY_KEY_FILE" ]; then
+	fail "TLS proxy CA, certificate, and private key must be separate files"
+fi
 jq -e '
   type == "object" and
   (keys == ["password", "username"]) and
@@ -139,6 +164,7 @@ OBSERVED_JOBS_FILE=$WORK_DIR/observed-jobs.jsonl
 CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
 PG_PASSWORD_FILE=$WORK_DIR/postgresql.password
 PG_URL_FILE=$WORK_DIR/postgresql.url
+CUSTOM_CA_PG_URL_FILE=$WORK_DIR/custom-ca-postgresql.url
 MYSQL_PASSWORD_FILE=$WORK_DIR/mysql.password
 MYSQL_ROOT_PASSWORD_FILE=$WORK_DIR/mysql-root.password
 MYSQL_URL_FILE=$WORK_DIR/mysql.url
@@ -152,6 +178,7 @@ CLEANUP_JOB_FILE=$WORK_DIR/cleanup-jobs.json
 CLEANUP_LEASE_FILE=$WORK_DIR/cleanup-leases.json
 CLEANUP_DIAGNOSTIC_FILE=$WORK_DIR/cleanup-diagnostic.json
 BLOCKED_REFRESH_DIAGNOSTIC_FILE=$WORK_DIR/blocked-refresh-diagnostic.json
+TLS_PROXY_RESOURCE_FILE=$WORK_DIR/tls-proxy-resource.json
 MYSQL_DESTRUCTIVE_SCHEMA=
 MYSQL_DESTRUCTIVE_PLAN=
 MYSQL_DESTRUCTIVE_PLAN_UID=
@@ -167,6 +194,9 @@ RBAC_ORIGINAL_VERBS=
 RBAC_STATUS_API_GROUPS=
 RBAC_STATUS_RESOURCES=
 EPHEMERAL_SUBRESOURCE_TESTED=0
+TLS_PROXY_POD_NAME=
+TLS_PROXY_POD_UID=
+TLS_PROXY_CONTAINER_ID=
 
 mkdir -p "$WORK_DIR/go-cache"
 env GOCACHE="$WORK_DIR/go-cache" go build -trimpath \
@@ -570,7 +600,8 @@ assert_active_pod_ephemeral_container_rejected() {
       any(.metadata.ownerReferences[]?;
         .apiVersion == "batch/v1" and .kind == "Job" and
         .uid == $jobUID and .controller == true)
-    ' >/dev/null || fail "active Pod identity changed during the oldObject selector test"
+	' >/dev/null || fail "active Pod identity changed during the oldObject selector test"
+	printf '%s\n' 'e2e data plane: PASS active Pod oldObject selector enforcement'
 	: >"$ADMISSION_ERROR_FILE"
 	return 0
 }
@@ -1198,10 +1229,10 @@ capture_one_new_job_result() {
 	jq -e \
 		--arg operation "$result_operation" \
 		--arg operationID "$CAPTURED_OPERATION_ID" '
-      .protocolVersion == 3 and .operation == $operation and
+      .protocolVersion == 4 and .operation == $operation and
       .operationId == $operationID and .truncation == null
     ' "$result_output" >/dev/null ||
-		fail "validated result lost its protocol-v3 binding or complete-output guarantee"
+		fail "validated result lost its protocol-v4 binding or complete-output guarantee"
 	grep -Fx "$CAPTURED_JOB_UID" "$AUDITED_JOBS_FILE" >/dev/null 2>&1 ||
 		printf '%s\n' "$CAPTURED_JOB_UID" >>"$AUDITED_JOBS_FILE"
 }
@@ -1328,6 +1359,326 @@ create_registry_service() {
 	k apply -f "$RESOURCE_FILE" >/dev/null
 }
 
+create_authenticated_tls_proxy() {
+	printf '%s\n' 'e2e data plane: creating authenticated HTTPS custom-CA registry proxy'
+	if ! k -n "$TEST_NAMESPACE" create secret tls "$TLS_PROXY_CERT_SECRET" \
+		--cert="$TLS_PROXY_CERT_FILE" --key="$TLS_PROXY_KEY_FILE" \
+		--dry-run=client -o json >"$RESOURCE_FILE"; then
+		fail "could not render the task-scoped TLS proxy certificate Secret"
+	fi
+	jq '.immutable = true' "$RESOURCE_FILE" >"$TLS_PROXY_RESOURCE_FILE"
+	k create -f "$TLS_PROXY_RESOURCE_FILE" >/dev/null
+	: >"$RESOURCE_FILE"
+	: >"$TLS_PROXY_RESOURCE_FILE"
+
+	if ! k -n "$TEST_NAMESPACE" create configmap "$TLS_PROXY_CA_CONFIGMAP" \
+		--from-file="ca.pem=${TLS_PROXY_CA_FILE}" \
+		--dry-run=client -o json >"$RESOURCE_FILE"; then
+		fail "could not render the task-scoped TLS proxy CA ConfigMap"
+	fi
+	jq '.immutable = true' "$RESOURCE_FILE" >"$TLS_PROXY_RESOURCE_FILE"
+	k create -f "$TLS_PROXY_RESOURCE_FILE" >/dev/null
+	: >"$RESOURCE_FILE"
+	: >"$TLS_PROXY_RESOURCE_FILE"
+
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg image "$FIXTURE_IMAGE" \
+		--arg service "$TLS_PROXY_SERVICE" \
+		--arg upstream "http://${REGISTRY_HOST}" \
+		--arg certificateSecret "$TLS_PROXY_CERT_SECRET" \
+		--arg caConfigMap "$TLS_PROXY_CA_CONFIGMAP" \
+		--arg goodAuthSecret "$TLS_PROXY_GOOD_AUTH_SECRET" \
+		--arg badCAAuthSecret "$TLS_PROXY_BAD_CA_AUTH_SECRET" \
+		--arg badAuthoritySecret "$TLS_PROXY_BAD_AUTHORITY_SECRET" \
+		--arg registryAuthority "$TLS_PROXY_AUTHORITY" \
+		--arg wrongRegistryAuthority "$TLS_PROXY_WRONG_AUTHORITY" \
+		--arg caSHA256 "$TLS_PROXY_CA_SHA256" \
+		--arg badCASHA256 "$TLS_PROXY_BAD_CA_SHA256" \
+		--arg registryUsername "$REGISTRY_USERNAME" \
+		--rawfile registryPassword "$REGISTRY_PASSWORD_FILE" \
+		--arg pullSecret "$REGISTRY_PULL_SECRET" '
+    def labels: {
+      "app.kubernetes.io/name": $service,
+      "app.kubernetes.io/component": "e2e-tls-registry-proxy"
+    };
+    def authSecret($name; $authority; $caDigest): {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {
+        username: $registryUsername,
+        password: $registryPassword,
+        registry: $authority,
+        caSHA256: $caDigest
+      }
+    };
+    {
+      apiVersion: "v1", kind: "List", items: [
+        authSecret($goodAuthSecret; $registryAuthority; $caSHA256),
+        authSecret($badCAAuthSecret; $registryAuthority; $badCASHA256),
+        authSecret($badAuthoritySecret; $wrongRegistryAuthority; $caSHA256),
+        {
+          apiVersion: "apps/v1", kind: "Deployment",
+          metadata: {namespace: $namespace, name: $service, labels: labels},
+          spec: {
+            replicas: 1,
+            selector: {matchLabels: labels},
+            template: {
+              metadata: {labels: labels},
+              spec: {
+                automountServiceAccountToken: false,
+                enableServiceLinks: false,
+                imagePullSecrets: [{name: $pullSecret}],
+                terminationGracePeriodSeconds: 10,
+                securityContext: {
+                  runAsNonRoot: true,
+                  runAsUser: 65532,
+                  runAsGroup: 65532,
+                  fsGroup: 65532,
+                  fsGroupChangePolicy: "OnRootMismatch",
+                  seccompProfile: {type: "RuntimeDefault"}
+                },
+                containers: [{
+                  name: "tls-registry-proxy",
+                  image: $image,
+                  imagePullPolicy: "IfNotPresent",
+                  command: ["/e2e-handcraft-oci"],
+                  args: [
+                    "tls-proxy",
+                    "--listen=:5443",
+                    ("--upstream=" + $upstream),
+                    "--cert-file=/tls/tls.crt",
+                    "--key-file=/tls/tls.key"
+                  ],
+                  ports: [
+                    {name: "tls", containerPort: 5443, protocol: "TCP"},
+                    {name: "admin", containerPort: 8081, protocol: "TCP"}
+                  ],
+                  resources: {
+                    requests: {cpu: "10m", memory: "16Mi"},
+                    limits: {cpu: "100m", memory: "64Mi"}
+                  },
+                  readinessProbe: {tcpSocket: {port: "tls"}, initialDelaySeconds: 1, periodSeconds: 2},
+                  livenessProbe: {tcpSocket: {port: "admin"}, initialDelaySeconds: 2, periodSeconds: 5},
+                  securityContext: {
+                    allowPrivilegeEscalation: false,
+                    readOnlyRootFilesystem: true,
+                    runAsNonRoot: true,
+                    runAsUser: 65532,
+                    runAsGroup: 65532,
+                    capabilities: {drop: ["ALL"]},
+                    seccompProfile: {type: "RuntimeDefault"}
+                  },
+                  volumeMounts: [{name: "tls", mountPath: "/tls", readOnly: true}]
+                }],
+                volumes: [{
+                  name: "tls",
+                  secret: {
+                    secretName: $certificateSecret,
+                    defaultMode: 288,
+                    items: [
+                      {key: "tls.crt", path: "tls.crt", mode: 288},
+                      {key: "tls.key", path: "tls.key", mode: 288}
+                    ]
+                  }
+                }]
+              }
+            }
+          }
+        },
+        {
+          apiVersion: "v1", kind: "Service",
+          metadata: {namespace: $namespace, name: $service},
+          spec: {selector: labels, ports: [{name: "tls", port: 5443, targetPort: "tls", protocol: "TCP"}]}
+        }
+      ]
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+	: >"$RESOURCE_FILE"
+
+	k -n "$TEST_NAMESPACE" rollout status deployment/"$TLS_PROXY_SERVICE" \
+		--timeout="${TIMEOUT_SECONDS}s"
+	k -n "$TEST_NAMESPACE" get configmap "$TLS_PROXY_CA_CONFIGMAP" -o json |
+		jq -e --rawfile expectedCA "$TLS_PROXY_CA_FILE" '
+          .immutable == true and (.data | keys) == ["ca.pem"] and
+          .data["ca.pem"] == $expectedCA
+        ' \
+		>/dev/null || fail "TLS proxy CA ConfigMap is not an immutable single-key trust bundle"
+	k -n "$TEST_NAMESPACE" get secrets \
+		"$TLS_PROXY_GOOD_AUTH_SECRET" \
+		"$TLS_PROXY_BAD_CA_AUTH_SECRET" \
+		"$TLS_PROXY_BAD_AUTHORITY_SECRET" -o json |
+		jq -e \
+			--arg good "$TLS_PROXY_GOOD_AUTH_SECRET" \
+			--arg badCA "$TLS_PROXY_BAD_CA_AUTH_SECRET" \
+			--arg badAuthority "$TLS_PROXY_BAD_AUTHORITY_SECRET" \
+			--arg authority "$TLS_PROXY_AUTHORITY" \
+			--arg wrongAuthority "$TLS_PROXY_WRONG_AUTHORITY" \
+			--arg caSHA256 "$TLS_PROXY_CA_SHA256" \
+			--arg badCASHA256 "$TLS_PROXY_BAD_CA_SHA256" '
+          def named($name):
+            [.items[] | select(.metadata.name == $name)] |
+            if length == 1 then .[0] else error("missing exact auth Secret") end;
+          def fixed_shape($secret):
+            $secret.immutable == true and $secret.type == "Opaque" and
+            ($secret.data | keys | sort) == ["caSHA256", "password", "registry", "username"];
+          named($good) as $goodSecret |
+          named($badCA) as $badCASecret |
+          named($badAuthority) as $badAuthoritySecret |
+          ($authority != $wrongAuthority) and ($caSHA256 != $badCASHA256) and
+          fixed_shape($goodSecret) and fixed_shape($badCASecret) and
+          fixed_shape($badAuthoritySecret) and
+          $goodSecret.data.registry == ($authority | @base64) and
+          $goodSecret.data.caSHA256 == ($caSHA256 | @base64) and
+          $badCASecret.data.registry == ($authority | @base64) and
+          $badCASecret.data.caSHA256 == ($badCASHA256 | @base64) and
+          $badAuthoritySecret.data.registry == ($wrongAuthority | @base64) and
+          $badAuthoritySecret.data.caSHA256 == ($caSHA256 | @base64) and
+          ($goodSecret.data.username | length) > 0 and
+          ($goodSecret.data.password | length) > 0 and
+          $badCASecret.data.username == $goodSecret.data.username and
+          $badAuthoritySecret.data.username == $goodSecret.data.username and
+          $badCASecret.data.password == $goodSecret.data.password and
+          $badAuthoritySecret.data.password == $goodSecret.data.password
+        ' >/dev/null ||
+		fail "TLS proxy auth Secrets lost their orthogonal fixed authority and CA grants"
+	k -n "$TEST_NAMESPACE" get deployment "$TLS_PROXY_SERVICE" -o json |
+		jq -e \
+			--arg image "$FIXTURE_IMAGE" \
+			--arg certificateSecret "$TLS_PROXY_CERT_SECRET" \
+			--arg upstream "http://${REGISTRY_HOST}" \
+			--arg pullSecret "$REGISTRY_PULL_SECRET" '
+          .spec.replicas == 1 and
+          .spec.template.spec.automountServiceAccountToken == false and
+          .spec.template.spec.enableServiceLinks == false and
+          .spec.template.spec.imagePullSecrets == [{name: $pullSecret}] and
+          .spec.template.spec.securityContext.runAsNonRoot == true and
+          .spec.template.spec.securityContext.runAsUser == 65532 and
+		  .spec.template.spec.securityContext.runAsGroup == 65532 and
+		  .spec.template.spec.securityContext.fsGroup == 65532 and
+		  .spec.template.spec.securityContext.fsGroupChangePolicy == "OnRootMismatch" and
+		  .spec.template.spec.securityContext.seccompProfile == {type: "RuntimeDefault"} and
+		  (.spec.template.spec.containers | length) == 1 and
+          .spec.template.spec.containers[0] as $container |
+          $container.image == $image and $container.command == ["/e2e-handcraft-oci"] and
+          $container.args == [
+            "tls-proxy", "--listen=:5443", ("--upstream=" + $upstream),
+            "--cert-file=/tls/tls.crt", "--key-file=/tls/tls.key"
+		  ] and ($container.env // []) == [] and ($container.envFrom // []) == [] and
+		  $container.securityContext.allowPrivilegeEscalation == false and
+		  $container.securityContext.readOnlyRootFilesystem == true and
+		  $container.securityContext.runAsNonRoot == true and
+		  $container.securityContext.runAsUser == 65532 and
+		  $container.securityContext.runAsGroup == 65532 and
+		  $container.securityContext.capabilities.drop == ["ALL"] and
+		  $container.securityContext.seccompProfile == {type: "RuntimeDefault"} and
+          $container.volumeMounts == [{name: "tls", readOnly: true, mountPath: "/tls"}] and
+          .spec.template.spec.volumes == [{
+            name: "tls", secret: {
+              secretName: $certificateSecret, defaultMode: 288,
+              items: [
+                {key: "tls.crt", path: "tls.crt", mode: 288},
+                {key: "tls.key", path: "tls.key", mode: 288}
+              ]
+            }
+          }]
+        ' >/dev/null || fail "TLS registry proxy Deployment lost its hardened credential-free contract"
+	k -n "$TEST_NAMESPACE" get service "$TLS_PROXY_SERVICE" -o json |
+		jq -e '
+          (.spec.ports | length) == 1 and
+          .spec.ports[0].name == "tls" and .spec.ports[0].port == 5443 and
+          .spec.ports[0].targetPort == "tls" and .spec.ports[0].protocol == "TCP"
+        ' >/dev/null || fail "TLS proxy Service $TLS_PROXY_SERVICE exposes an unexpected port"
+}
+
+tls_proxy_request_count() {
+	assert_tls_proxy_identity_stable
+	count=$(k get --raw \
+		"/api/v1/namespaces/${TEST_NAMESPACE}/pods/http:${TLS_PROXY_POD_NAME}:8081/proxy/") ||
+		fail "could not read the credential-free TLS proxy request counter through the exact Pod API proxy"
+	printf '%s\n' "$count" | grep -Eq '^(0|[1-9][0-9]*)$' ||
+		fail "TLS proxy request counter returned a non-integer response"
+	assert_tls_proxy_identity_stable
+	printf '%s\n' "$count"
+}
+
+capture_tls_proxy_identity() {
+	tls_proxy_pods=$(k -n "$TEST_NAMESPACE" get pods \
+		-l "app.kubernetes.io/name=${TLS_PROXY_SERVICE},app.kubernetes.io/component=e2e-tls-registry-proxy" \
+		-o json)
+	if ! tls_proxy_identity=$(printf '%s\n' "$tls_proxy_pods" | jq -ec '
+	  [.items[] | select(.metadata.deletionTimestamp == null)] as $live |
+	  if ($live | length) == 1 and
+	      $live[0].status.phase == "Running" and
+	      ($live[0].status.conditions | any(.type == "Ready" and .status == "True")) and
+	      ([$live[0].status.containerStatuses[]? | select(
+	        .name == "tls-registry-proxy" and .ready == true and
+	        .restartCount == 0 and (.containerID | length) > 0 and
+	        .state.running != null)] | length) == 1
+	  then {
+	    name: $live[0].metadata.name,
+	    uid: $live[0].metadata.uid,
+	    containerID: ($live[0].status.containerStatuses[] |
+	      select(.name == "tls-registry-proxy") | .containerID)
+	  } else error("expected one ready proxy Pod") end
+    '); then
+		fail "TLS registry proxy does not have one exact zero-restart ready Pod"
+	fi
+	TLS_PROXY_POD_NAME=$(printf '%s\n' "$tls_proxy_identity" | jq -er '.name')
+	TLS_PROXY_POD_UID=$(printf '%s\n' "$tls_proxy_identity" | jq -er '.uid')
+	TLS_PROXY_CONTAINER_ID=$(printf '%s\n' "$tls_proxy_identity" | jq -er '.containerID')
+	[ -n "$TLS_PROXY_POD_UID" ] && [ -n "$TLS_PROXY_CONTAINER_ID" ] ||
+		fail "TLS registry proxy exact Pod identity is incomplete"
+	assert_tls_proxy_service_endpoints
+}
+
+assert_tls_proxy_service_endpoints() {
+	k -n "$TEST_NAMESPACE" get endpointslices \
+		-l "kubernetes.io/service-name=${TLS_PROXY_SERVICE}" -o json |
+		jq -e \
+			--arg name "$TLS_PROXY_POD_NAME" \
+			--arg uid "$TLS_PROXY_POD_UID" '
+              [.items[].endpoints[]? | select(
+                (.conditions.ready // false) == true and
+                (.conditions.terminating // false) == false)] as $ready |
+              ($ready | length) == 1 and
+              $ready[0].targetRef.apiVersion == "v1" and
+              $ready[0].targetRef.kind == "Pod" and
+              $ready[0].targetRef.name == $name and
+              $ready[0].targetRef.uid == $uid and
+              ($ready[0].addresses | length) == 1
+		    ' >/dev/null ||
+		fail "TLS proxy Service $TLS_PROXY_SERVICE can route outside the captured exact Pod"
+}
+
+assert_tls_proxy_identity_stable() {
+	[ -n "$TLS_PROXY_POD_NAME" ] && [ -n "$TLS_PROXY_POD_UID" ] &&
+		[ -n "$TLS_PROXY_CONTAINER_ID" ] ||
+		fail "TLS registry proxy identity was not captured before the counter window"
+	tls_proxy_pods=$(k -n "$TEST_NAMESPACE" get pods \
+		-l "app.kubernetes.io/name=${TLS_PROXY_SERVICE},app.kubernetes.io/component=e2e-tls-registry-proxy" \
+		-o json)
+	printf '%s\n' "$tls_proxy_pods" |
+		jq -e \
+			--arg name "$TLS_PROXY_POD_NAME" \
+			--arg uid "$TLS_PROXY_POD_UID" \
+			--arg containerID "$TLS_PROXY_CONTAINER_ID" '
+	      [.items[] | select(.metadata.deletionTimestamp == null)] as $live |
+	      ($live | length) == 1 and
+	      $live[0].status.phase == "Running" and
+	      ($live[0].status.conditions | any(.type == "Ready" and .status == "True")) and
+	      $live[0].metadata.name == $name and $live[0].metadata.uid == $uid and
+	      ([$live[0].status.containerStatuses[] | select(
+	        .name == "tls-registry-proxy" and .restartCount == 0 and
+	        .ready == true and .containerID == $containerID and
+	        .state.running != null)] | length) == 1
+        ' >/dev/null ||
+		fail "TLS registry proxy Pod or container identity changed inside the counter window"
+	assert_tls_proxy_service_endpoints
+}
+
 create_admission_fixtures() {
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
@@ -1363,6 +1714,35 @@ create_admission_fixtures() {
 		--patch "$service_account_patch" >/dev/null
 }
 
+create_digest_pin_policy_fixture() {
+	digest_pin_policy_file="$ROOT_DIR/testdata/e2e/verification-policy-digest-pin.yaml"
+	[ -f "$digest_pin_policy_file" ] ||
+		fail "digest-pin verification policy fixture is missing"
+	k -n "$TEST_NAMESPACE" create configmap "$DIGEST_PIN_POLICY_NAME" \
+		--from-file="policy.yaml=${digest_pin_policy_file}" \
+		--dry-run=client -o json | jq '.immutable = true' | k create -f - >/dev/null
+	k -n "$TEST_NAMESPACE" get configmap "$DIGEST_PIN_POLICY_NAME" -o json |
+		jq -e '.immutable == true and (.data["policy.yaml"] | contains("require_digest_pin: true"))' \
+			>/dev/null || fail "digest-pin verification policy ConfigMap is not immutable or strict"
+	k -n "$TEST_NAMESPACE" get secret "$DIGEST_PIN_DOCKER_AUTH_SECRET" -o json |
+		jq -e \
+			--arg registry "$REGISTRY_HOST" \
+			--arg username "$REGISTRY_USERNAME" \
+			--rawfile password "$REGISTRY_PASSWORD_FILE" '
+          .immutable == true and .type == "kubernetes.io/dockerconfigjson" and
+          (.data | keys | sort) == [".dockerconfigjson", "allowPlainHTTP", "registry"] and
+          .data.registry == ($registry | @base64) and
+          .data.allowPlainHTTP == ("true" | @base64) and
+          (.data[".dockerconfigjson"] | @base64d | fromjson) as $config |
+          ($config | keys) == ["auths"] and
+          ($config.auths | keys) == [$registry] and
+          $config.auths[$registry].username == $username and
+          $config.auths[$registry].password == $password and
+          $config.auths[$registry].auth == (($username + ":" + $password) | @base64)
+        ' >/dev/null ||
+		fail "digest-pin Docker config Secret lost its fixed credential-owner grants"
+}
+
 credential_suffix=$(printf '%s' "$TEST_NAMESPACE" | cksum | awk '{print $1}')
 PG_USER=ptah_e2e
 PG_DATABASE=ptah_e2e
@@ -1370,6 +1750,10 @@ PG_PASSWORD="e2ePg${credential_suffix}Q7"
 PG_SECRET=e2e-postgresql-db
 PG_SERVICE=e2e-postgresql
 PG_URL="postgres://${PG_USER}:${PG_PASSWORD}@${PG_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5432/${PG_DATABASE}?sslmode=disable"
+CUSTOM_CA_PG_DATABASE=ptah_e2e_custom_ca
+CUSTOM_CA_PG_SECRET=e2e-postgresql-custom-ca-db
+CUSTOM_CA_PG_URL="postgres://${PG_USER}:${PG_PASSWORD}@${PG_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5432/${CUSTOM_CA_PG_DATABASE}?sslmode=disable"
+CUSTOM_CA_COORDINATION_KEY=e2e/custom-ca/app
 MYSQL_USER=ptah_e2e
 MYSQL_DATABASE=ptah_e2e
 MYSQL_PASSWORD="e2eMy${credential_suffix}Q7"
@@ -1379,21 +1763,42 @@ MYSQL_SERVICE=e2e-mysql
 MYSQL_URL="mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(${MYSQL_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:3306)/${MYSQL_DATABASE}"
 REGISTRY_AUTH_SECRET=e2e-registry-auth
 REGISTRY_PULL_SECRET=e2e-registry-pull
+DIGEST_PIN_DOCKER_AUTH_SECRET=e2e-registry-digest-pin-docker-auth
 REGISTRY_HOST="${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000"
+TLS_PROXY_AUTHORITY="${TLS_PROXY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5443"
+TLS_PROXY_REFERENCE="oci://${TLS_PROXY_AUTHORITY}/schemas/postgresql:stable"
+TLS_PROXY_CA_CONFIGMAP=e2e-registry-tls-ca
+TLS_PROXY_CERT_SECRET=e2e-registry-tls-server
+TLS_PROXY_GOOD_AUTH_SECRET=e2e-registry-tls-auth
+TLS_PROXY_BAD_CA_AUTH_SECRET=e2e-registry-tls-auth-bad-ca
+TLS_PROXY_BAD_AUTHORITY_SECRET=e2e-registry-tls-auth-bad-authority
+TLS_PROXY_WRONG_AUTHORITY=registry-mismatch.invalid:5443
+TLS_PROXY_CA_SHA256="sha256:$(sha256 <"$TLS_PROXY_CA_FILE")"
+TLS_PROXY_BAD_CA_SHA256=sha256:0000000000000000000000000000000000000000000000000000000000000000
+printf '%s\n' "$TLS_PROXY_CA_SHA256" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
+	fail "TLS proxy CA does not have a lowercase SHA-256 digest"
+[ "$TLS_PROXY_CA_SHA256" != "$TLS_PROXY_BAD_CA_SHA256" ] ||
+	fail "fixed mismatched TLS proxy CA grant unexpectedly matched the generated CA"
+[ "$TLS_PROXY_WRONG_AUTHORITY" != "$TLS_PROXY_AUTHORITY" ] ||
+	fail "fixed mismatched TLS proxy registry authority unexpectedly matched the live authority"
+[ "$CUSTOM_CA_PG_DATABASE" != "$PG_DATABASE" ] &&
+	[ "$CUSTOM_CA_PG_SECRET" != "$PG_SECRET" ] ||
+	fail "custom-CA acceptance must use a distinct PostgreSQL database and Secret"
 
 printf '%s' "$PG_PASSWORD" >"$PG_PASSWORD_FILE"
 printf '%s' "$PG_URL" >"$PG_URL_FILE"
+printf '%s' "$CUSTOM_CA_PG_URL" >"$CUSTOM_CA_PG_URL_FILE"
 printf '%s' "$MYSQL_PASSWORD" >"$MYSQL_PASSWORD_FILE"
 printf '%s' "$MYSQL_ROOT_PASSWORD" >"$MYSQL_ROOT_PASSWORD_FILE"
 printf '%s' "$MYSQL_URL" >"$MYSQL_URL_FILE"
 printf '%s' "$REGISTRY_PASSWORD" >"$REGISTRY_PASSWORD_FILE"
 printf '%s\n' \
 	"$REGISTRY_PASSWORD" \
-	"$PG_PASSWORD" "$PG_URL" \
+	"$PG_PASSWORD" "$PG_URL" "$CUSTOM_CA_PG_URL" \
 	"$MYSQL_PASSWORD" "$MYSQL_ROOT_PASSWORD" "$MYSQL_URL" \
 	>"$CREDENTIAL_PATTERNS_FILE"
 chmod 600 \
-	"$PG_PASSWORD_FILE" "$PG_URL_FILE" \
+	"$PG_PASSWORD_FILE" "$PG_URL_FILE" "$CUSTOM_CA_PG_URL_FILE" \
 	"$MYSQL_PASSWORD_FILE" "$MYSQL_ROOT_PASSWORD_FILE" "$MYSQL_URL_FILE" \
 	"$REGISTRY_PASSWORD_FILE" "$CREDENTIAL_PATTERNS_FILE"
 
@@ -1407,6 +1812,9 @@ create_databases() {
 		--rawfile pgURL "$PG_URL_FILE" \
 		--arg pgSecret "$PG_SECRET" \
 		--arg pgService "$PG_SERVICE" \
+		--arg customCAPGDatabase "$CUSTOM_CA_PG_DATABASE" \
+		--rawfile customCAPGURL "$CUSTOM_CA_PG_URL_FILE" \
+		--arg customCAPGSecret "$CUSTOM_CA_PG_SECRET" \
 		--arg mysqlImage "$MYSQL_IMAGE" \
 		--arg mysqlUser "$MYSQL_USER" \
 		--rawfile mysqlPassword "$MYSQL_PASSWORD_FILE" \
@@ -1419,7 +1827,8 @@ create_databases() {
 		--rawfile registryPassword "$REGISTRY_PASSWORD_FILE" \
 		--arg registryHost "$REGISTRY_HOST" \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
-		--arg registryPullSecret "$REGISTRY_PULL_SECRET" '
+		--arg registryPullSecret "$REGISTRY_PULL_SECRET" \
+		--arg digestPinDockerAuthSecret "$DIGEST_PIN_DOCKER_AUTH_SECRET" '
     def secretEnv($name; $secret; $key):
       {name: $name, valueFrom: {secretKeyRef: {name: $secret, key: $key}}};
     def labels($name): {"app.kubernetes.io/name": $name, "app.kubernetes.io/component": "e2e-database"};
@@ -1432,12 +1841,13 @@ create_databases() {
           metadata: {namespace: $namespace, name: $registryAuthSecret},
           type: "Opaque",
           stringData: {
-            username: $registryUsername, password: $registryPassword, registry: $registryHost
+            username: $registryUsername, password: $registryPassword,
+            registry: $registryHost, allowPlainHTTP: "true"
           }
         },
-        {
-          apiVersion: "v1", kind: "Secret",
-          metadata: {namespace: $namespace, name: $registryPullSecret},
+		{
+		  apiVersion: "v1", kind: "Secret",
+		  metadata: {namespace: $namespace, name: $registryPullSecret},
           type: "kubernetes.io/dockerconfigjson",
           stringData: {
             ".dockerconfigjson": ({auths: {
@@ -1446,15 +1856,42 @@ create_databases() {
                 password: $registryPassword,
                 auth: (($registryUsername + ":" + $registryPassword) | @base64)
               }
-            }} | tojson)
-          }
-        },
-        {
-          apiVersion: "v1", kind: "Secret",
-          metadata: {namespace: $namespace, name: $pgSecret},
-          type: "Opaque",
-          stringData: {username: $pgUser, password: $pgPassword, database: $pgDatabase, url: $pgURL}
-        },
+		    }} | tojson)
+		  }
+		},
+		{
+		  apiVersion: "v1", kind: "Secret",
+		  metadata: {namespace: $namespace, name: $digestPinDockerAuthSecret},
+		  immutable: true,
+		  type: "kubernetes.io/dockerconfigjson",
+		  stringData: {
+		    ".dockerconfigjson": ({auths: {
+		      ($registryHost): {
+		        username: $registryUsername,
+		        password: $registryPassword,
+		        auth: (($registryUsername + ":" + $registryPassword) | @base64)
+		      }
+		    }} | tojson),
+		    registry: $registryHost,
+		    allowPlainHTTP: "true"
+		  }
+		},
+		{
+		  apiVersion: "v1", kind: "Secret",
+		  metadata: {namespace: $namespace, name: $pgSecret},
+		  type: "Opaque",
+		  stringData: {username: $pgUser, password: $pgPassword, database: $pgDatabase, url: $pgURL}
+		},
+		{
+		  apiVersion: "v1", kind: "Secret",
+		  metadata: {namespace: $namespace, name: $customCAPGSecret},
+		  immutable: true,
+		  type: "Opaque",
+		  stringData: {
+		    username: $pgUser, password: $pgPassword,
+		    database: $customCAPGDatabase, url: $customCAPGURL
+		  }
+		},
         {
           apiVersion: "apps/v1", kind: "Deployment",
           metadata: {namespace: $namespace, name: $pgService, labels: labels($pgService)},
@@ -1535,6 +1972,101 @@ create_databases() {
 	chmod 600 "$SECRET_FILE"
 	k apply -f "$SECRET_FILE" >/dev/null
 	rm -f "$SECRET_FILE"
+}
+
+create_custom_ca_database() {
+	k -n "$TEST_NAMESPACE" get secrets "$PG_SECRET" "$CUSTOM_CA_PG_SECRET" -o json |
+		jq -e \
+			--arg primary "$PG_SECRET" \
+			--arg custom "$CUSTOM_CA_PG_SECRET" \
+			--arg username "$PG_USER" \
+			--arg database "$CUSTOM_CA_PG_DATABASE" \
+			--rawfile expectedURL "$CUSTOM_CA_PG_URL_FILE" '
+          def named($name):
+            [.items[] | select(.metadata.name == $name)] |
+            if length == 1 then .[0] else error("missing exact database Secret") end;
+          named($primary) as $primarySecret |
+          named($custom) as $customSecret |
+          $customSecret.immutable == true and $customSecret.type == "Opaque" and
+          ($customSecret.data | keys | sort) == ["database", "password", "url", "username"] and
+          $customSecret.data.username == ($username | @base64) and
+          $customSecret.data.database == ($database | @base64) and
+          $customSecret.data.url == ($expectedURL | @base64) and
+          $customSecret.data.password == $primarySecret.data.password
+        ' >/dev/null ||
+		fail "custom-CA PostgreSQL Secret lost its distinct fixed target binding"
+
+	# shellcheck disable=SC2016 # Variables expand inside the database container.
+	custom_ca_database_count=$(k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT count(*) FROM pg_database WHERE datname='"'"'ptah_e2e_custom_ca'"'"'"')
+	custom_ca_database_count=$(printf '%s' "$custom_ca_database_count" | tr -d '[:space:]')
+	case "$custom_ca_database_count" in
+	0)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "CREATE DATABASE ptah_e2e_custom_ca"' \
+			>/dev/null
+		;;
+	1) ;;
+	*) fail "custom-CA PostgreSQL database lookup returned an unexpected result" ;;
+	esac
+	# shellcheck disable=SC2016 # Variables expand inside the database container.
+	custom_ca_database_result=$(k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d ptah_e2e_custom_ca -Atqc "SELECT current_database()"')
+	custom_ca_database_result=$(printf '%s' "$custom_ca_database_result" | tr -d '[:space:]')
+	[ "$custom_ca_database_result" = "$CUSTOM_CA_PG_DATABASE" ] ||
+		fail "custom-CA PostgreSQL database did not become independently queryable"
+}
+
+custom_ca_database_schema_fingerprint() {
+	custom_ca_catalog_file=$WORK_DIR/custom-ca-postgresql-catalog.json
+	custom_ca_catalog_query="WITH user_namespaces AS (
+SELECT oid, nspname FROM pg_namespace WHERE nspname !~ '^pg_' AND nspname <> 'information_schema'
+), relations AS (
+SELECT n.nspname, c.relname, c.relkind::text, c.relpersistence::text,
+CASE WHEN c.relkind IN ('v','m') THEN pg_get_viewdef(c.oid, true) ELSE '' END AS definition
+FROM pg_class c JOIN user_namespaces n ON n.oid = c.relnamespace
+), columns AS (
+SELECT n.nspname, c.relname, a.attnum, a.attname, format_type(a.atttypid, a.atttypmod) AS data_type,
+a.attnotnull, a.attidentity::text, a.attgenerated::text, COALESCE(pg_get_expr(d.adbin, d.adrelid), '') AS default_expression
+FROM pg_class c JOIN user_namespaces n ON n.oid = c.relnamespace
+JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+LEFT JOIN pg_attrdef d ON d.adrelid = c.oid AND d.adnum = a.attnum
+), constraints AS (
+SELECT n.nspname, c.relname, x.conname, x.contype::text, pg_get_constraintdef(x.oid, true) AS definition
+FROM pg_constraint x JOIN pg_class c ON c.oid = x.conrelid
+JOIN user_namespaces n ON n.oid = c.relnamespace
+), indexes AS (
+SELECT n.nspname, c.relname, i.relname AS index_name, pg_get_indexdef(i.oid) AS definition
+FROM pg_index x JOIN pg_class c ON c.oid = x.indrelid
+JOIN pg_class i ON i.oid = x.indexrelid JOIN user_namespaces n ON n.oid = c.relnamespace
+), types AS (
+SELECT n.nspname, t.typname, t.typtype::text, t.typcategory::text,
+COALESCE((SELECT json_agg(e.enumlabel ORDER BY e.enumsortorder) FROM pg_enum e WHERE e.enumtypid = t.oid), '[]'::json) AS enum_labels
+FROM pg_type t JOIN user_namespaces n ON n.oid = t.typnamespace WHERE t.typtype <> 'b'
+), routines AS (
+SELECT n.nspname, p.proname, pg_get_function_identity_arguments(p.oid) AS arguments,
+pg_get_function_result(p.oid) AS result, p.prokind::text, pg_get_functiondef(p.oid) AS definition
+FROM pg_proc p JOIN user_namespaces n ON n.oid = p.pronamespace WHERE p.prokind IN ('f','p')
+)
+SELECT json_build_object(
+'schemas', (SELECT COALESCE(json_agg(nspname ORDER BY nspname), '[]'::json) FROM user_namespaces),
+'relations', (SELECT COALESCE(json_agg(relations ORDER BY nspname, relname), '[]'::json) FROM relations),
+'columns', (SELECT COALESCE(json_agg(columns ORDER BY nspname, relname, attnum), '[]'::json) FROM columns),
+'constraints', (SELECT COALESCE(json_agg(constraints ORDER BY nspname, relname, conname), '[]'::json) FROM constraints),
+'indexes', (SELECT COALESCE(json_agg(indexes ORDER BY nspname, relname, index_name), '[]'::json) FROM indexes),
+'types', (SELECT COALESCE(json_agg(types ORDER BY nspname, typname), '[]'::json) FROM types),
+'routines', (SELECT COALESCE(json_agg(routines ORDER BY nspname, proname, arguments), '[]'::json) FROM routines)
+)"
+	# shellcheck disable=SC2016 # Variables expand inside the database container.
+	k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d ptah_e2e_custom_ca -v ON_ERROR_STOP=1 -Atqc "$1"' \
+		sh "$custom_ca_catalog_query" >"$custom_ca_catalog_file"
+	scan_file_for_credentials "$custom_ca_catalog_file" \
+		"the custom-CA PostgreSQL schema fingerprint"
+	custom_ca_catalog_fingerprint=$(sha256 <"$custom_ca_catalog_file")
+	: >"$custom_ca_catalog_file"
+	printf 'sha256:%s\n' "$custom_ca_catalog_fingerprint"
 }
 
 wait_for_database() {
@@ -1828,7 +2360,7 @@ run_mysql_dsn_refusal() {
 		jq -e \
 			--arg operation "$refusal_operation" \
 			--arg operationID "$refusal_operation_id" '
-              .protocolVersion == 3 and .operation == $operation and
+              .protocolVersion == 4 and .operation == $operation and
               .operationId == $operationID and .error.code == "invalid_target" and
               .stdout == "" and (.planContentDigest // "") == "" and
               (.planOutcome // "") == "" and
@@ -1940,6 +2472,13 @@ create_schema_resource() {
 	resource_secret=$3
 	resource_reference=$4
 	resource_coordination_key=$5
+	resource_policy=${6:-e2e-verification-policy}
+	resource_registry_auth_secret=${7:-$REGISTRY_AUTH_SECRET}
+	resource_registry_auth_mode=${8:-Environment}
+	case "$resource_registry_auth_mode" in
+	Environment | DockerConfigJSON) ;;
+	*) fail "unsupported E2E registry authentication mode $resource_registry_auth_mode" ;;
+	esac
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
 		--arg name "$resource_schema" \
@@ -1947,8 +2486,9 @@ create_schema_resource() {
 		--arg secret "$resource_secret" \
 		--arg reference "$resource_reference" \
 		--arg coordinationKey "$resource_coordination_key" \
-		--arg policy e2e-verification-policy \
-		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg policy "$resource_policy" \
+		--arg registryAuthSecret "$resource_registry_auth_secret" \
+		--arg registryAuthMode "$resource_registry_auth_mode" \
 		--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" \
 		--arg interval "$APPROVAL_INTERVAL" '
     {
@@ -1962,13 +2502,18 @@ create_schema_resource() {
         },
         desired: {
           ociRef: $reference,
-          registryAuthFrom: {
-            name: $registryAuthSecret,
-            mode: "Environment",
-            usernameKey: "username",
-            passwordKey: "password",
-            registryKey: "registry"
-          },
+		  registryAuthFrom: (if $registryAuthMode == "DockerConfigJSON" then {
+		    name: $registryAuthSecret,
+		    mode: "DockerConfigJSON",
+		    dockerConfigJSONKey: ".dockerconfigjson",
+		    registryKey: "registry"
+		  } else {
+		    name: $registryAuthSecret,
+		    mode: "Environment",
+		    usernameKey: "username",
+		    passwordKey: "password",
+		    registryKey: "registry"
+		  } end),
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
         },
@@ -1984,6 +2529,192 @@ create_schema_resource() {
       }
     }' >"$RESOURCE_FILE"
 	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+create_custom_ca_schema_resource() {
+	custom_ca_schema=$1
+	custom_ca_auth_secret=$2
+	custom_ca_coordination_key=$3
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$custom_ca_schema" \
+		--arg databaseSecret "$CUSTOM_CA_PG_SECRET" \
+		--arg reference "$TLS_PROXY_REFERENCE" \
+		--arg coordinationKey "$custom_ca_coordination_key" \
+		--arg registryAuthSecret "$custom_ca_auth_secret" \
+		--arg caConfigMap "$TLS_PROXY_CA_CONFIGMAP" \
+		--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" '
+    {
+      apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: "PostgreSQL",
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $databaseSecret, key: "url"}
+        },
+        desired: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret,
+            mode: "Environment",
+            usernameKey: "username",
+            passwordKey: "password",
+            tokenKey: "token",
+            registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: "e2e-verification-policy", key: "policy.yaml"},
+          transport: {caFrom: {name: $caConfigMap, key: "ca.pem"}}
+        },
+        policy: {
+          apply: "OnApproval", allowDestructive: false, driftSeverity: "all",
+          lockTimeout: "30s", transactionMode: "file"
+        },
+        interval: "30m",
+        execution: {
+          activeDeadlineSeconds: 300,
+          failureRetryInterval: "30m",
+          connectTimeout: "30s",
+          runtimeClassName: $runtimeClass
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+assert_custom_ca_completed_pods() {
+	custom_ca_schema=$1
+	custom_ca_resolved_reference=$2
+	k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.dev/schema=${custom_ca_schema}" -o json |
+		jq -e \
+			--arg databaseSecret "$CUSTOM_CA_PG_SECRET" \
+			--arg registrySecret "$TLS_PROXY_GOOD_AUTH_SECRET" \
+			--argjson requireApply false \
+			-f "$ROOT_DIR/testdata/e2e/controller-job-isolation.jq" >/dev/null ||
+		fail "$custom_ca_schema Jobs lost custom-CA credential isolation"
+	k -n "$TEST_NAMESPACE" get pods \
+		-l "operator.ptah.dev/schema=${custom_ca_schema}" -o json |
+		jq -e \
+			--arg databaseSecret "$CUSTOM_CA_PG_SECRET" \
+			--arg registrySecret "$TLS_PROXY_GOOD_AUTH_SECRET" \
+			--arg registryAuthority "$TLS_PROXY_AUTHORITY" \
+			--arg caConfigMap "$TLS_PROXY_CA_CONFIGMAP" \
+			--arg resolvedReference "$custom_ca_resolved_reference" \
+			-f "$ROOT_DIR/testdata/e2e/custom-ca-pod-isolation.jq" >/dev/null ||
+		fail "$custom_ca_schema completed Observe/Plan Pods lost guard, CA snapshot, source, or fetch isolation"
+}
+
+assert_custom_ca_pre_child_refusal() {
+	refusal_schema=$1
+	refusal_auth_secret=$2
+	refusal_coordination_key=$3
+	refusal_description=$4
+	refusal_before="$WORK_DIR/${refusal_schema}-before.json"
+	refusal_after="$WORK_DIR/${refusal_schema}-after.json"
+	refusal_result="$WORK_DIR/${refusal_schema}-resolve-result.json"
+	refusal_proxy_count_before=$(tls_proxy_request_count)
+
+	checkpoint_schema_jobs "$refusal_schema" "$refusal_before"
+	create_custom_ca_schema_resource "$refusal_schema" "$refusal_auth_secret" \
+		"$refusal_coordination_key"
+	wait_for_schema "$refusal_schema" '
+      .status.phase == "Failed" and .status.nextReconciliationTime != null and
+      (.status.conditions | any(
+        .type == "ReconciliationFailed" and .status == "True" and
+        .reason == "OperationFailed" and
+        (.message | startswith("invalid_oci_access:"))))
+    ' "$refusal_description to fail before the Resolve child"
+	capture_one_new_job_result "$refusal_schema" resolve "$refusal_before" "$refusal_result"
+	jq -e '
+      .childExitCode == 0 and .stdout == "" and
+      .error.code == "invalid_oci_access" and
+      (.resolvedDigest // "") == "" and
+      (.resolvedReference // "") == "" and
+      (.mutationStarted // false) == false and
+      (.uncertain // false) == false and .truncation == null
+    ' "$refusal_result" >/dev/null ||
+		fail "$refusal_schema did not retain the typed pre-child invalid_oci_access result"
+	k -n "$TEST_NAMESPACE" patch ptahschema "$refusal_schema" --type=merge \
+		--patch '{"spec":{"suspend":true}}' >/dev/null
+	wait_for_schema "$refusal_schema" \
+		'.status.phase == "Suspended" and .status.activeOperation == null' \
+		"$refusal_description fixture to suspend before retry"
+	checkpoint_schema_jobs "$refusal_schema" "$refusal_after"
+	assert_one_job_between_checkpoints "$refusal_schema" resolve \
+		"$refusal_before" "$refusal_after"
+	for refusal_operation in verify observe plan apply; do
+		assert_no_job_between_checkpoints "$refusal_schema" "$refusal_operation" \
+			"$refusal_before" "$refusal_after"
+	done
+	refusal_job_count=$(schema_job_count_between_checkpoints \
+		"$refusal_schema" "$refusal_before" "$refusal_after")
+	[ "$refusal_job_count" -eq 1 ] ||
+		fail "$refusal_schema created $refusal_job_count total Jobs, expected only one Resolve"
+	refusal_proxy_count_after=$(tls_proxy_request_count)
+	assert_tls_proxy_identity_stable
+	[ "$refusal_proxy_count_after" -eq "$refusal_proxy_count_before" ] ||
+		fail "$refusal_schema reached the TLS registry before $refusal_description was refused"
+}
+
+assert_authenticated_https_custom_ca() {
+	custom_ca_digest=$1
+	custom_ca_resolved_reference="${TLS_PROXY_REFERENCE%:*}@${custom_ca_digest}"
+	bad_ca_schema=e2e-https-ca-bad-ca
+	bad_authority_schema=e2e-https-ca-bad-authority
+	good_schema=e2e-https-ca-good
+	good_before="$WORK_DIR/${good_schema}-before.json"
+	good_after="$WORK_DIR/${good_schema}-after.json"
+	good_suspended_after="$WORK_DIR/${good_schema}-suspended-after.json"
+
+	printf '%s\n' 'e2e data plane: checking authenticated HTTPS custom-CA authority grants'
+	capture_tls_proxy_identity
+	assert_custom_ca_pre_child_refusal \
+		"$bad_ca_schema" "$TLS_PROXY_BAD_CA_AUTH_SECRET" \
+		"$CUSTOM_CA_COORDINATION_KEY" "its mismatched CA digest grant"
+	assert_custom_ca_pre_child_refusal \
+		"$bad_authority_schema" "$TLS_PROXY_BAD_AUTHORITY_SECRET" \
+		"$CUSTOM_CA_COORDINATION_KEY" "its mismatched registry authority grant"
+
+	good_database_fingerprint_before=$(custom_ca_database_schema_fingerprint)
+	printf '%s\n' "$good_database_fingerprint_before" |
+		grep -Eq '^sha256:[0-9a-f]{64}$' ||
+		fail "custom-CA PostgreSQL preflight schema fingerprint is invalid"
+	good_proxy_count_before=$(tls_proxy_request_count)
+	checkpoint_schema_jobs "$good_schema" "$good_before"
+	create_custom_ca_schema_resource "$good_schema" "$TLS_PROXY_GOOD_AUTH_SECRET" \
+		"$CUSTOM_CA_COORDINATION_KEY"
+	assert_plan "$good_schema" "$TLS_PROXY_REFERENCE" "$custom_ca_digest" postgres false \
+		"$good_before" "$good_before"
+	wait_for_schema "$good_schema" '
+      .status.phase == "AwaitingApproval" and .status.activeOperation == null and
+      .status.plan.name != null and .status.plan.approval == null and
+      (.status.conditions | any(
+        .type == "ApprovalRequired" and .status == "True" and .reason == "PlanReady"))
+    ' "the authenticated HTTPS custom-CA source to reach a nonmutating approval boundary"
+	checkpoint_schema_jobs "$good_schema" "$good_after"
+	for good_operation in resolve verify observe plan; do
+		assert_one_job_between_checkpoints "$good_schema" "$good_operation" \
+			"$good_before" "$good_after"
+	done
+	assert_no_job_between_checkpoints "$good_schema" apply "$good_before" "$good_after"
+	assert_custom_ca_completed_pods "$good_schema" "$custom_ca_resolved_reference"
+	good_proxy_count_after=$(tls_proxy_request_count)
+	assert_tls_proxy_identity_stable
+	[ "$good_proxy_count_after" -gt "$good_proxy_count_before" ] ||
+		fail "$good_schema did not make authenticated requests through the TLS registry proxy"
+	k -n "$TEST_NAMESPACE" patch ptahschema "$good_schema" --type=merge \
+		--patch '{"spec":{"suspend":true}}' >/dev/null
+	wait_for_schema "$good_schema" \
+		'.status.phase == "Suspended" and .status.activeOperation == null' \
+		"the authenticated HTTPS custom-CA fixture to suspend without Apply"
+	checkpoint_schema_jobs "$good_schema" "$good_suspended_after"
+	assert_no_job_between_checkpoints "$good_schema" apply "$good_before" "$good_suspended_after"
+	good_database_fingerprint_after=$(custom_ca_database_schema_fingerprint)
+	[ "$good_database_fingerprint_after" = "$good_database_fingerprint_before" ] ||
+		fail "$good_schema changed the dedicated database before approval"
+	audit_runtime_credentials
+	printf '%s\n' 'e2e data plane: PASS authenticated HTTPS custom-CA authority and isolation'
 }
 
 CURRENT_PLAN=
@@ -2181,7 +2912,7 @@ create_exact_approval() {
       .spec.verificationPolicyDigest != "" and .spec.ptahVersion != "" and
       (.spec.executorImage | test("@sha256:[0-9a-f]{64}$")) and
       (.spec.runnerImage | test("@sha256:[0-9a-f]{64}$")) and
-      .spec.runnerProtocolVersion == 3 and .spec.approver.username != "" and
+      .spec.runnerProtocolVersion == 4 and .spec.approver.username != "" and
       .spec.approvedAt != null and .spec.mutationRequestUID != "" and
       ([.spec | .. | scalars | select(. == $coordinationKey)] | length == 0)
     ' >/dev/null || fail "$approval_name was not hydrated and bound to the exact plan"
@@ -2198,6 +2929,106 @@ assert_job_isolation() {
 			--argjson requireApply "$isolation_require_apply" \
 			-f "$ROOT_DIR/testdata/e2e/controller-job-isolation.jq" >/dev/null ||
 		fail "$isolation_schema Jobs did not isolate authenticated registry access from database credentials"
+}
+
+assert_source_job_isolation() {
+	isolation_schema=$1
+	isolation_secret=$2
+	isolation_registry_secret=${3:-$REGISTRY_AUTH_SECRET}
+	isolation_auth_mode=${4:-Environment}
+	k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.dev/schema=${isolation_schema}" -o json |
+		jq -e \
+			--arg databaseSecret "$isolation_secret" \
+			--arg registrySecret "$isolation_registry_secret" \
+			--arg registryAuthority "$REGISTRY_HOST" \
+			--arg authMode "$isolation_auth_mode" '
+          def containers($job):
+            (($job.spec.template.spec.containers // []) +
+              ($job.spec.template.spec.initContainers // []));
+          def named($job; $name):
+            [containers($job)[] | select(.name == $name)];
+          def env_names($container):
+            [$container.env[]?.name];
+          def secret_names($container):
+            [$container.env[]?.valueFrom.secretKeyRef.name?];
+          def has_literal_env($container; $name; $value):
+            any($container.env[]?;
+              .name == $name and .value == $value and .valueFrom == null);
+          def has_secret_env($container; $name; $key; $optional):
+            any($container.env[]?;
+              .name == $name and .value == null and
+              .valueFrom.secretKeyRef.name == $registrySecret and
+              .valueFrom.secretKeyRef.key == $key and
+              (.valueFrom.secretKeyRef.optional // false) == $optional);
+          def has_mount($container; $name; $path; $readOnly):
+            any($container.volumeMounts[]?;
+              .name == $name and .mountPath == $path and
+              (.readOnly // false) == $readOnly);
+          def fixed_grants($container):
+            has_literal_env($container; "PTAH_OPERATOR_OCI_AUTH_MODE"; $authMode) and
+            has_secret_env($container; "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT"; "registry"; false) and
+            has_secret_env($container; "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP"; "allowPlainHTTP"; false) and
+            has_literal_env($container; "PTAH_OCI_REGISTRY"; $registryAuthority) and
+            has_literal_env($container; "PTAH_PLAIN_HTTP"; "true") and
+            ([env_names($container)[] | select(startswith("PTAH_OPERATOR_OCI_"))] | sort) == [
+              "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+              "PTAH_OPERATOR_OCI_AUTH_MODE",
+              "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT"
+            ];
+          def environment_credentials($job; $container):
+            has_secret_env($container; "PTAH_OCI_USERNAME"; "username"; true) and
+            has_secret_env($container; "PTAH_OCI_PASSWORD"; "password"; true) and
+            has_secret_env($container; "PTAH_OCI_TOKEN"; "token"; true) and
+			(secret_names($container) | sort) == [
+			  $registrySecret, $registrySecret, $registrySecret,
+			  $registrySecret, $registrySecret
+			] and
+            (env_names($container) | index("DOCKER_CONFIG") | not) and
+			([$job.spec.template.spec.volumes[]? |
+			  select(.name == "registry-docker-config")] | length) == 0;
+          def docker_config_credentials($job; $container):
+            (env_names($container) | index("PTAH_OCI_USERNAME") | not) and
+            (env_names($container) | index("PTAH_OCI_PASSWORD") | not) and
+            (env_names($container) | index("PTAH_OCI_TOKEN") | not) and
+			(secret_names($container) | sort) == [$registrySecret, $registrySecret] and
+            has_literal_env($container; "DOCKER_CONFIG"; "/credentials/docker") and
+            has_mount($container; "registry-docker-config"; "/credentials/docker"; true) and
+			all($container.volumeMounts[]?;
+			  .name != "registry-docker-config" or
+			  ((.subPath // "") == "" and (.subPathExpr // "") == "" and
+			   .mountPropagation == null)) and
+            ([($job.spec.template.spec.volumes // [])[] | select(
+              .name == "registry-docker-config" and
+              (keys | sort) == ["name", "secret"] and
+              .secret.secretName == $registrySecret and
+              (.secret.defaultMode // 420) == 420 and
+              .secret.items == [{key: ".dockerconfigjson", path: "config.json", mode: 288})] |
+              length) == 1 and
+            all(($job.spec.template.spec.volumes // [])[];
+              .secret == null or .name == "registry-docker-config");
+          def no_database($container):
+            (env_names($container) | index("PTAH_DB_URL") | not) and
+            (env_names($container) | index("PTAH_DEV_URL") | not) and
+            (secret_names($container) | index($databaseSecret) | not);
+          .items as $jobs |
+          ($jobs | length) == 2 and
+		  all($jobs[]; . as $job |
+			(named($job; "ptah") | .[0]) as $main |
+            (.metadata.labels["operator.ptah.dev/operation"] == "resolve" or
+              .metadata.labels["operator.ptah.dev/operation"] == "verify") and
+            .spec.backoffLimit == 0 and
+            .spec.podReplacementPolicy == "Failed" and
+            .spec.template.spec.restartPolicy == "Never" and
+			(named($job; "ptah") | length) == 1 and
+			fixed_grants($main) and
+			(if $authMode == "Environment" then
+			  environment_credentials($job; $main)
+			elif $authMode == "DockerConfigJSON" then
+			  docker_config_credentials($job; $main)
+			else false end) and
+			all(containers($job)[]; no_database(.) and (.envFrom // []) == []))
+        ' >/dev/null ||
+		fail "$isolation_schema source Jobs did not preserve registry/database credential isolation"
 }
 
 assert_coordination_boundary() {
@@ -2718,6 +3549,106 @@ assert_mysql_destructive_refusal_durable() {
 	assert_mysql_plain_index 1
 }
 
+assert_requested_digest_pin_refusal() {
+	digest_pin_reference=$1
+	digest_pin_digest=$2
+	digest_pin_engine=$3
+	digest_pin_secret=$4
+	digest_pin_schema=e2e-digest-pin-refusal
+	digest_pin_coordination_key=e2e/digest-pin/refusal
+	digest_pin_repository=${digest_pin_reference%:*}
+	digest_pin_resolved="${digest_pin_repository}@${digest_pin_digest}"
+	digest_pin_before="$WORK_DIR/${digest_pin_schema}-before.json"
+	digest_pin_after="$WORK_DIR/${digest_pin_schema}-after.json"
+	digest_pin_resolve_result="$WORK_DIR/${digest_pin_schema}-resolve-result.json"
+	digest_pin_result="$WORK_DIR/${digest_pin_schema}-verify-result.json"
+	digest_pin_policy_digest="sha256:$(sha256 <"$ROOT_DIR/testdata/e2e/verification-policy-digest-pin.yaml")"
+
+	printf '%s\n' 'e2e data plane: checking requested-reference digest-pin enforcement'
+	checkpoint_schema_jobs "$digest_pin_schema" "$digest_pin_before"
+	create_schema_resource "$digest_pin_schema" "$digest_pin_engine" "$digest_pin_secret" \
+		"$digest_pin_reference" "$digest_pin_coordination_key" "$DIGEST_PIN_POLICY_NAME" \
+		"$DIGEST_PIN_DOCKER_AUTH_SECRET" DockerConfigJSON
+	wait_for_schema "$digest_pin_schema" '
+      .status.phase == "Blocked" and .status.activeOperation == null and
+      .status.pendingObservation == null and .status.pendingLockRelease == null and
+      (.status.conditions | any(
+        .type == "ArtifactVerified" and .status == "False" and
+        .reason == "PolicyRefused" and (.message | contains("require_digest_pin"))))
+    ' "a mutable requested reference to be refused by the digest-pin policy"
+	checkpoint_schema_jobs "$digest_pin_schema" "$digest_pin_after"
+	assert_one_job_between_checkpoints "$digest_pin_schema" resolve \
+		"$digest_pin_before" "$digest_pin_after"
+	assert_one_job_between_checkpoints "$digest_pin_schema" verify \
+		"$digest_pin_before" "$digest_pin_after"
+	for digest_pin_database_operation in observe plan apply; do
+		assert_no_job_between_checkpoints "$digest_pin_schema" \
+			"$digest_pin_database_operation" "$digest_pin_before" "$digest_pin_after"
+	done
+	capture_one_new_job_result "$digest_pin_schema" resolve "$digest_pin_before" \
+		"$digest_pin_resolve_result" "$digest_pin_after"
+	jq -e \
+		--arg resolved "$digest_pin_resolved" \
+		--arg digest "$digest_pin_digest" '
+          .childExitCode == 0 and .stdout == "" and .error == null and
+          .resolvedDigest == $digest and .resolvedReference == $resolved and
+          (.mutationStarted // false) == false and
+          (.uncertain // false) == false and .truncation == null
+        ' "$digest_pin_resolve_result" >/dev/null ||
+		fail "$digest_pin_schema did not complete native Resolve through DockerConfigJSON access"
+
+	k -n "$TEST_NAMESPACE" get ptahschema "$digest_pin_schema" -o json |
+		jq -e \
+			--arg requested "$digest_pin_reference" \
+			--arg resolved "$digest_pin_resolved" \
+			--arg digest "$digest_pin_digest" \
+			--arg policyDigest "$digest_pin_policy_digest" '
+          .status.phase == "Blocked" and
+          .status.source.requestedReference == $requested and
+          .status.source.resolvedReference == $resolved and
+          .status.source.digest == $digest and
+          (.status.source.mediaType | type) == "string" and
+          (.status.source.mediaType | length) > 0 and
+          .status.source.size > 0 and
+          (.status.source.artifactType // "") == "" and
+          (.status.source.verified // false) == false and
+          .status.source.verificationPolicyDigest == $policyDigest and
+          .status.plan == null and .status.activeOperation == null and
+          .status.pendingObservation == null and .status.pendingLockRelease == null and
+          (.status.conditions | any(
+            .type == "ArtifactVerified" and .status == "False" and
+            .reason == "PolicyRefused" and (.message | contains("require_digest_pin"))))
+        ' >/dev/null ||
+		fail "$digest_pin_schema lost immutable source evidence or reached database work"
+
+	capture_one_new_job_result "$digest_pin_schema" verify "$digest_pin_before" \
+		"$digest_pin_result" "$digest_pin_after"
+	jq -e \
+		--arg digest "$digest_pin_digest" \
+		--arg policyDigest "$digest_pin_policy_digest" '
+          .childExitCode == 0 and .stdout == "" and
+          .resolvedDigest == $digest and
+          .verificationPolicyDigest == $policyDigest and
+          .verificationRequirements == ["require_digest_pin"] and
+          .error.code == "verification_refused" and
+          (.observedArtifactType // "") == "" and
+          (.resolvedReference // "") == "" and
+          (.resolvedMediaType // "") == "" and
+          (.resolvedSize // 0) == 0 and
+          (.mutationStarted // false) == false and
+          (.uncertain // false) == false and .truncation == null
+        ' "$digest_pin_result" >/dev/null ||
+		fail "$digest_pin_schema did not preserve the exact runner-enforced refusal contract"
+	assert_source_job_isolation "$digest_pin_schema" "$digest_pin_secret" \
+		"$DIGEST_PIN_DOCKER_AUTH_SECRET" DockerConfigJSON
+
+	k -n "$TEST_NAMESPACE" patch ptahschema "$digest_pin_schema" --type=merge \
+		--patch '{"spec":{"suspend":true}}' >/dev/null
+	wait_for_schema "$digest_pin_schema" \
+		'.status.phase == "Suspended" and .status.activeOperation == null' \
+		"the digest-pin refusal fixture to suspend before its refresh interval"
+}
+
 run_engine_lifecycle() {
 	lifecycle_slug=$1
 	lifecycle_engine=$2
@@ -2744,6 +3675,13 @@ run_engine_lifecycle() {
 	checkpoint_jobs "$lifecycle_schema" plan "$v1_plan_checkpoint"
 	checkpoint_coordination_leases "$coordination_lease_checkpoint"
 	digest_v1=$(publish_schema "$lifecycle_slug" v1 "$lifecycle_dialect" "$lifecycle_reference")
+	if [ "$lifecycle_slug" = postgresql ]; then
+		[ "$CUSTOM_CA_COORDINATION_KEY" != "$lifecycle_coordination_key" ] ||
+			fail "custom-CA acceptance cannot share the primary lifecycle coordination key"
+		assert_authenticated_https_custom_ca "$digest_v1"
+		assert_requested_digest_pin_refusal "$lifecycle_reference" "$digest_v1" \
+			"$lifecycle_engine" "$lifecycle_secret"
+	fi
 	create_schema_resource "$lifecycle_schema" "$lifecycle_engine" "$lifecycle_secret" \
 		"$lifecycle_reference" "$lifecycle_coordination_key"
 	assert_plan "$lifecycle_schema" "$lifecycle_reference" "$digest_v1" "$lifecycle_dialect" false \
@@ -2922,12 +3860,15 @@ run_engine_lifecycle() {
 printf '%s\n' 'e2e data plane: creating registry endpoint and isolated databases'
 create_registry_service
 create_databases
+create_authenticated_tls_proxy
 k -n "$TEST_NAMESPACE" rollout status deployment/"$PG_SERVICE" --timeout="${TIMEOUT_SECONDS}s"
 k -n "$TEST_NAMESPACE" rollout status deployment/"$MYSQL_SERVICE" --timeout="${TIMEOUT_SECONDS}s"
 wait_for_database postgresql
 wait_for_database mysql
+create_custom_ca_database
 report_database_versions
 create_admission_fixtures
+create_digest_pin_policy_fixture
 
 run_engine_lifecycle postgresql PostgreSQL postgres "$PG_SECRET"
 run_engine_lifecycle mysql MySQL mysql "$MYSQL_SECRET"

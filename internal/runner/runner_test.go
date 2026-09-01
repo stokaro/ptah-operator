@@ -97,6 +97,31 @@ func TestBuildCommand(t *testing.T) {
 	}
 }
 
+func TestBuildVerifyCommandRequiresBothSourceBindings(t *testing.T) {
+	t.Parallel()
+
+	validInputs := Inputs{
+		RequestedReference:     "oci://registry.example/team/schema:main",
+		ResolvedReference:      "oci://registry.example/team/schema@sha256:" + strings.Repeat("a", 64),
+		VerificationPolicyPath: "/policy/verification.yaml",
+	}
+	for name, mutate := range map[string]func(*Inputs){
+		"missing requested reference": func(inputs *Inputs) { inputs.RequestedReference = "" },
+		"invalid requested reference": func(inputs *Inputs) { inputs.RequestedReference = "-selector" },
+		"missing resolved reference":  func(inputs *Inputs) { inputs.ResolvedReference = "" },
+	} {
+		name, mutate := name, mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			inputs := validInputs
+			mutate(&inputs)
+			if _, err := BuildCommand("/opt/ptah", OperationVerify, inputs); err == nil {
+				t.Fatal("BuildCommand() succeeded without both requested and resolved source bindings")
+			}
+		})
+	}
+}
+
 func TestResolveRecordsStrictTopLevelDigest(t *testing.T) {
 	t.Parallel()
 
@@ -1248,11 +1273,11 @@ func TestObserveRejectsAReportWithoutSameReadDiffIdentity(t *testing.T) {
 	}
 }
 
-func TestVerifyUsesResolvedDigestAndBindsArtifactType(t *testing.T) {
+func TestVerifyUsesResolvedDigestForMutableReferenceWhenPolicyPermitsTags(t *testing.T) {
 	t.Parallel()
 
-	policyPath := filepath.Join(t.TempDir(), "policy.json")
-	policy := []byte(`{"require":["signature"]}`)
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	policy := []byte("version: 1\nartifact_types:\n  - application/vnd.stokaro.ptah.schema.v1\n")
 	if err := os.WriteFile(policyPath, policy, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1262,7 +1287,7 @@ func TestVerifyUsesResolvedDigestAndBindsArtifactType(t *testing.T) {
 	artifactType := "application/vnd.stokaro.ptah.schema.v1"
 	var snapshottedPolicyPath string
 	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{
-		{stdout: fmt.Sprintf(`{"reference":%q,"digest":%q,"satisfied":[],"findings":[]}`, resolved, digest), inspect: func(spec CommandSpec) {
+		{stdout: fmt.Sprintf(`{"reference":%q,"digest":%q,"satisfied":["artifact_types"],"findings":[]}`, resolved, digest), inspect: func(spec CommandSpec) {
 			snapshottedPolicyPath = spec.Args[4]
 			gotPolicy, err := os.ReadFile(snapshottedPolicyPath)
 			if err != nil || !bytes.Equal(gotPolicy, policy) {
@@ -1294,11 +1319,140 @@ func TestVerifyUsesResolvedDigestAndBindsArtifactType(t *testing.T) {
 	if executor.calls[1].Args[2] != resolved || executor.calls[1].Args[len(executor.calls[1].Args)-1] != "--no-referrers" {
 		t.Fatalf("inspect args = %v", executor.calls[1].Args)
 	}
+	for index, call := range executor.calls {
+		childValues := environmentMap(call.Env)
+		if _, found := childValues[EnvRequestedReference]; found {
+			t.Fatalf("command %d received the runner-only requested reference", index+1)
+		}
+		if _, found := childValues[EnvResolvedReference]; found {
+			t.Fatalf("command %d received the runner-only resolved reference", index+1)
+		}
+	}
 	if snapshottedPolicyPath == "" || snapshottedPolicyPath == policyPath {
 		t.Fatalf("verify policy path = %q, want an immutable snapshot", snapshottedPolicyPath)
 	}
 	if _, err := os.Stat(snapshottedPolicyPath); !os.IsNotExist(err) {
 		t.Fatalf("snapshotted policy still exists or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestVerifyAppliesDigestPinPolicyToOriginalRequestedReference(t *testing.T) {
+	t.Parallel()
+
+	policy := []byte("version: 1\nrequire_digest_pin: true\n")
+	digest := "sha256:" + strings.Repeat("a", 64)
+	resolved := "oci://registry.example/team/schema@" + digest
+	artifactType := dataplane.SchemaArtifactType
+	report := fmt.Sprintf(
+		`{"reference":%q,"digest":%q,"satisfied":["require_digest_pin"],"findings":[]}`,
+		resolved, digest,
+	)
+
+	for name, requested := range map[string]string{
+		"explicit tag":    "oci://registry.example/team/schema:stable",
+		"implicit latest": "oci://registry.example/team/schema",
+	} {
+		name, requested := name, requested
+		t.Run(name+" refused after immutable native verification", func(t *testing.T) {
+			t.Parallel()
+			policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+			if err := os.WriteFile(policyPath, policy, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report}}}
+			result := Run(context.Background(), Config{
+				Operation: OperationVerify,
+				Environment: []string{
+					envOperationID + "=verify-tag-pin-policy",
+					envRequestedReference + "=" + requested,
+					envResolvedReference + "=" + resolved,
+					envVerificationPolicy + "=" + policyPath,
+					envExpectedArtifactType + "=" + artifactType,
+				},
+				Executor: executor,
+			})
+			if result.Error == nil || result.Error.Code != "verification_refused" || result.ChildExitCode != 0 ||
+				result.ResolvedDigest != digest || result.VerificationPolicyDigest != sha256Digest(policy) ||
+				!reflect.DeepEqual(result.VerificationRequirements, []string{"require_digest_pin"}) ||
+				result.ObservedArtifactType != "" || result.Stdout != "" {
+				t.Fatalf("Run() = %#v", result)
+			}
+			if len(executor.calls) != 1 || executor.calls[0].Args[2] != resolved {
+				t.Fatalf("verify commands = %#v, want one immutable verify", executor.calls)
+			}
+		})
+	}
+
+	t.Run("digest request accepted", func(t *testing.T) {
+		policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+		if err := os.WriteFile(policyPath, policy, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		executor := &scriptedExecutor{t: t, responses: []scriptedResponse{
+			{stdout: report},
+			{stdout: inspectReport(resolved, digest, artifactType)},
+		}}
+		result := Run(context.Background(), Config{
+			Operation: OperationVerify,
+			Environment: []string{
+				envOperationID + "=verify-digest-pin-policy",
+				envRequestedReference + "=" + resolved,
+				envResolvedReference + "=" + resolved,
+				envVerificationPolicy + "=" + policyPath,
+				envExpectedArtifactType + "=" + artifactType,
+			},
+			Executor: executor,
+		})
+		if result.Error != nil || result.ChildExitCode != 0 || result.ResolvedDigest != digest ||
+			result.ObservedArtifactType != artifactType || len(executor.calls) != 2 {
+			t.Fatalf("Run() = %#v, commands = %d", result, len(executor.calls))
+		}
+	})
+}
+
+func TestVerifyRejectsInvalidRequestedBindingBeforeChild(t *testing.T) {
+	t.Parallel()
+
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	if err := os.WriteFile(policyPath, []byte("version: 1\nrequire_digest_pin: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	resolved := "oci://registry.example/team/schema@" + digest
+	for _, test := range []struct {
+		name      string
+		requested string
+		wantCode  string
+	}{
+		{name: "missing", wantCode: "invalid_oci_access"},
+		{name: "not OCI", requested: "registry.example/team/schema:stable", wantCode: "invalid_oci_access"},
+		{name: "credentials", requested: "oci://user:password@registry.example/team/schema:stable", wantCode: "invalid_oci_access"},
+		{name: "different repository", requested: "oci://registry.example/other/schema:stable", wantCode: "invalid_input"},
+		{name: "different digest", requested: "oci://registry.example/team/schema@sha256:" + strings.Repeat("b", 64), wantCode: "invalid_input"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			executor := &scriptedExecutor{t: t}
+			result := Run(context.Background(), Config{
+				Operation: OperationVerify,
+				Environment: []string{
+					envOperationID + "=verify-invalid-requested-binding",
+					envRequestedReference + "=" + test.requested,
+					envResolvedReference + "=" + resolved,
+					envVerificationPolicy + "=" + policyPath,
+					envExpectedArtifactType + "=" + dataplane.SchemaArtifactType,
+				},
+				Executor: executor,
+			})
+			if result.Error == nil || result.Error.Code != test.wantCode || len(executor.calls) != 0 ||
+				result.ResolvedDigest != "" || result.VerificationPolicyDigest != "" {
+				t.Fatalf("Run() = %#v, error = %#v, commands = %d", result, result.Error, len(executor.calls))
+			}
+			if test.requested != "" && strings.Contains(result.Error.Message, test.requested) {
+				t.Fatalf("invalid binding error disclosed the requested reference: %#v", result.Error)
+			}
+		})
 	}
 }
 
@@ -1360,6 +1514,7 @@ func TestVerifyModelsPolicyRefusalAsTypedNonRetryableEvidence(t *testing.T) {
 		Operation: OperationVerify,
 		Environment: []string{
 			envOperationID + "=verify-refused",
+			envRequestedReference + "=" + resolved,
 			envResolvedReference + "=" + resolved,
 			envVerificationPolicy + "=" + policyPath,
 			envExpectedArtifactType + "=" + dataplane.SchemaArtifactType,
@@ -1372,6 +1527,40 @@ func TestVerifyModelsPolicyRefusalAsTypedNonRetryableEvidence(t *testing.T) {
 	if result.Stdout != "" || result.ChildExitCode != 2 || result.ResolvedDigest != digest ||
 		!reflect.DeepEqual(result.VerificationRequirements, []string{"require_signature"}) || len(executor.calls) != 1 {
 		t.Fatalf("refusal evidence = %#v, calls=%d", result, len(executor.calls))
+	}
+}
+
+func TestVerifyUnionsRequestedDigestPinRefusalWithNativeFindings(t *testing.T) {
+	t.Parallel()
+
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	policy := []byte("version: 1\nrequire_digest_pin: true\nrequire_signature: true\n")
+	if err := os.WriteFile(policyPath, policy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	resolved := "oci://registry.example/schema@" + digest
+	report := fmt.Sprintf(
+		`{"reference":%q,"digest":%q,"satisfied":["require_digest_pin"],"findings":[{"requirement":"require_signature","detail":"no signature is attached"}]}`,
+		resolved, digest,
+	)
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 2}}}
+	result := Run(context.Background(), Config{
+		Operation: OperationVerify,
+		Environment: []string{
+			envOperationID + "=verify-combined-refusal",
+			envRequestedReference + "=oci://registry.example/schema:stable",
+			envResolvedReference + "=" + resolved,
+			envVerificationPolicy + "=" + policyPath,
+			envExpectedArtifactType + "=" + dataplane.SchemaArtifactType,
+		},
+		Executor: executor,
+	})
+	if result.Error == nil || result.Error.Code != "verification_refused" || result.ChildExitCode != 2 ||
+		result.ResolvedDigest != digest || result.VerificationPolicyDigest != sha256Digest(policy) ||
+		!reflect.DeepEqual(result.VerificationRequirements, []string{"require_digest_pin", "require_signature"}) ||
+		result.ObservedArtifactType != "" || result.Stdout != "" || len(executor.calls) != 1 {
+		t.Fatalf("Run() = %#v, commands = %d", result, len(executor.calls))
 	}
 }
 
@@ -1388,6 +1577,7 @@ func TestVerifyRejectsMalformedExitTwoAsInfrastructureFailure(t *testing.T) {
 		Operation: OperationVerify,
 		Environment: []string{
 			envOperationID + "=verify-malformed-refusal",
+			envRequestedReference + "=oci://registry.example/schema@" + digest,
 			envResolvedReference + "=oci://registry.example/schema@" + digest,
 			envVerificationPolicy + "=" + policyPath,
 			envExpectedArtifactType + "=" + dataplane.SchemaArtifactType,

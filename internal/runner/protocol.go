@@ -18,7 +18,7 @@ import (
 const (
 	// ProtocolVersion is part of the controller-to-Job approval binding. Any
 	// incompatible result format must use a new version.
-	ProtocolVersion = 3
+	ProtocolVersion = 4
 
 	// JSON escaping can expand a bounded plan payload. This shared cap includes
 	// the worst-case expansion plus fixed result-envelope headroom.
@@ -369,6 +369,13 @@ func validateResult(result Result, options ParseOptions) error {
 	if result.Operation == OperationVerify && result.Error != nil && result.Error.Code == "verification_refused" &&
 		len(result.VerificationRequirements) == 0 {
 		return fmt.Errorf("%w: verification refusal lacks typed requirements", ErrMalformedFrame)
+	}
+	if result.Operation == OperationVerify && result.Error != nil && result.Error.Code == "verification_refused" {
+		localDigestPinRefusal := result.ChildExitCode == 0 &&
+			len(result.VerificationRequirements) == 1 && result.VerificationRequirements[0] == "require_digest_pin"
+		if result.ChildExitCode != 2 && !localDigestPinRefusal {
+			return fmt.Errorf("%w: verification refusal has an invalid child exit binding", ErrMalformedFrame)
+		}
 	}
 	if result.Operation == OperationVerify && result.Error == nil &&
 		(result.ResolvedDigest == "" || result.ObservedArtifactType == "") {

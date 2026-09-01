@@ -1,0 +1,4 @@
+version: 1
+require_digest_pin: true
+artifact_types:
+  - application/vnd.stokaro.ptah.schema.v1
