@@ -293,6 +293,22 @@ func TestInvalidOCIAccessRequiresExactPreChildBinding(t *testing.T) {
 			result.CoordinationDigest = digest
 			return result
 		}(),
+		"target identity evidence": func() Result {
+			result := base
+			result.TargetIdentityDigest = digest
+			return result
+		}(),
+		"artifact evidence": func() Result {
+			result := base
+			result.Operation = OperationVerify
+			result.ObservedArtifactType = "migration-directory"
+			return result
+		}(),
+		"plan evidence": func() Result {
+			result := base
+			result.PlanContentDigest = digest
+			return result
+		}(),
 		"truncation evidence": func() Result {
 			result := base
 			result.Truncation = &TruncationMetadata{Stderr: true, StderrBytesDropped: 1}

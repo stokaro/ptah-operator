@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -202,12 +203,29 @@ func TestRunnerRejectsUnauthorizedRegistryGrantBeforeChild(t *testing.T) {
 					if result.Error == nil || result.Error.Code != "invalid_oci_access" || result.ChildExitCode != -1 {
 						t.Fatalf("Run() = %#v", result)
 					}
+					requireInvalidOCIAccessPreChildFrame(t, result)
 					if len(executor.calls) != 0 {
 						t.Fatalf("executor received %d calls before authority refusal", len(executor.calls))
 					}
 				})
 			}
 		}
+	}
+}
+
+func requireInvalidOCIAccessPreChildFrame(t *testing.T, result Result) {
+	t.Helper()
+
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	parsed, err := ParseResultFor(frame, result.Operation, result.OperationID)
+	if err != nil {
+		t.Fatalf("ParseResultFor() error = %v", err)
+	}
+	if !reflect.DeepEqual(parsed, result) {
+		t.Fatalf("ParseResultFor() = %#v, want %#v", parsed, result)
 	}
 }
 

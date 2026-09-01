@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -303,15 +304,14 @@ func validateResult(result Result, options ParseOptions) error {
 	}
 	if result.Error != nil && result.Error.Code == "invalid_oci_access" {
 		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify
-		hasExecutionEvidence := result.Stdout != "" || result.CoordinationDigest != "" ||
-			result.TargetIdentityDigest != "" || result.VerificationPolicyDigest != "" ||
-			result.DriftReportDigest != "" || result.ObservedDialect != "" || result.ObservedDrift ||
-			result.HighestDriftSeverity != "" || result.DriftFindingCount != 0 ||
-			result.ObservedArtifactType != "" || result.ResolvedDigest != "" ||
-			result.ResolvedReference != "" || result.ResolvedMediaType != "" || result.ResolvedSize != 0 ||
-			len(result.VerificationRequirements) != 0 || result.PlanContentDigest != "" ||
-			result.PlanOutcome != "" || result.MutationStarted || result.Uncertain || result.Truncation != nil
-		if !preChildOperation || result.ChildExitCode != -1 || hasExecutionEvidence {
+		expected := Result{
+			ProtocolVersion: result.ProtocolVersion,
+			Operation:       result.Operation,
+			OperationID:     result.OperationID,
+			ChildExitCode:   -1,
+			Error:           result.Error,
+		}
+		if !preChildOperation || !reflect.DeepEqual(result, expected) {
 			return fmt.Errorf("%w: invalid OCI access result lacks an exact pre-child binding", ErrMalformedFrame)
 		}
 	}
