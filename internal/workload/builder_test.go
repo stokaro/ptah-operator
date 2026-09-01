@@ -1,8 +1,11 @@
 package workload
 
 import (
+	"bytes"
 	"encoding/json"
+	"os/exec"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -92,6 +95,181 @@ func TestBuildCredentialAndInputIsolationByOperation(t *testing.T) {
 				}
 			}
 			assertSecretReferencesOnly(t, job)
+		})
+	}
+}
+
+func TestBuildSourceOperationEnvironmentContract(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		mode      operatorv1alpha1.RegistryAuthMode
+		operation operatorv1alpha1.OperationType
+		want      []string
+	}{
+		{
+			name:      "resolve environment",
+			mode:      operatorv1alpha1.RegistryAuthEnvironment,
+			operation: operatorv1alpha1.OperationResolve,
+			want: []string{
+				"HOME",
+				"PTAH_OCI_PASSWORD",
+				"PTAH_OCI_REGISTRY",
+				"PTAH_OCI_TOKEN",
+				"PTAH_OCI_USERNAME",
+				"PTAH_OPERATION_ID",
+				"PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+				"PTAH_OPERATOR_OCI_AUTH_MODE",
+				"PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+				"PTAH_PLAIN_HTTP",
+				"PTAH_REQUESTED_REFERENCE",
+				"TMPDIR",
+			},
+		},
+		{
+			name:      "verify environment",
+			mode:      operatorv1alpha1.RegistryAuthEnvironment,
+			operation: operatorv1alpha1.OperationVerify,
+			want: []string{
+				"HOME",
+				"PTAH_EXPECTED_ARTIFACT_TYPE",
+				"PTAH_OCI_PASSWORD",
+				"PTAH_OCI_REGISTRY",
+				"PTAH_OCI_TOKEN",
+				"PTAH_OCI_USERNAME",
+				"PTAH_OPERATION_ID",
+				"PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+				"PTAH_OPERATOR_OCI_AUTH_MODE",
+				"PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+				"PTAH_PLAIN_HTTP",
+				"PTAH_REQUESTED_REFERENCE",
+				"PTAH_RESOLVED_REFERENCE",
+				"PTAH_VERIFICATION_POLICY",
+				"TMPDIR",
+			},
+		},
+		{
+			name:      "resolve Docker config",
+			mode:      operatorv1alpha1.RegistryAuthDockerConfigJSON,
+			operation: operatorv1alpha1.OperationResolve,
+			want: []string{
+				"DOCKER_CONFIG",
+				"HOME",
+				"PTAH_OCI_REGISTRY",
+				"PTAH_OPERATION_ID",
+				"PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+				"PTAH_OPERATOR_OCI_AUTH_MODE",
+				"PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+				"PTAH_PLAIN_HTTP",
+				"PTAH_REQUESTED_REFERENCE",
+				"TMPDIR",
+			},
+		},
+		{
+			name:      "verify Docker config",
+			mode:      operatorv1alpha1.RegistryAuthDockerConfigJSON,
+			operation: operatorv1alpha1.OperationVerify,
+			want: []string{
+				"DOCKER_CONFIG",
+				"HOME",
+				"PTAH_EXPECTED_ARTIFACT_TYPE",
+				"PTAH_OCI_REGISTRY",
+				"PTAH_OPERATION_ID",
+				"PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
+				"PTAH_OPERATOR_OCI_AUTH_MODE",
+				"PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT",
+				"PTAH_PLAIN_HTTP",
+				"PTAH_REQUESTED_REFERENCE",
+				"PTAH_RESOLVED_REFERENCE",
+				"PTAH_VERIFICATION_POLICY",
+				"TMPDIR",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := sourceContractSchemaFixture(test.mode)
+			operation := operationFixture(test.operation)
+			operation.ID = digest('8')
+
+			job, err := builderFixture().Build(schema, operation, nil)
+			if err != nil {
+				t.Fatalf("Build() error = %v", err)
+			}
+			got := make([]string, 0, len(job.Spec.Template.Spec.Containers[0].Env))
+			for _, environment := range job.Spec.Template.Spec.Containers[0].Env {
+				got = append(got, environment.Name)
+			}
+			if !slices.Equal(got, test.want) {
+				t.Fatalf("source environment names = %q, want %q", got, test.want)
+			}
+			if len(job.Spec.Template.Spec.InitContainers) != 1 ||
+				len(job.Spec.Template.Spec.InitContainers[0].Env) != 0 {
+				t.Fatalf("runner installer received environment: %#v", job.Spec.Template.Spec.InitContainers)
+			}
+		})
+	}
+}
+
+func TestSourceIsolationFilterAcceptsJSONRoundTrippedBuilderJobs(t *testing.T) {
+	for _, mode := range []operatorv1alpha1.RegistryAuthMode{
+		operatorv1alpha1.RegistryAuthEnvironment,
+		operatorv1alpha1.RegistryAuthDockerConfigJSON,
+	} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			schema := sourceContractSchemaFixture(mode)
+			builder := builderFixture()
+			jobs := &batchv1.JobList{}
+			for _, operation := range []operatorv1alpha1.OperationType{
+				operatorv1alpha1.OperationResolve,
+				operatorv1alpha1.OperationVerify,
+			} {
+				operationStatus := operationFixture(operation)
+				operationStatus.ID = digest('8')
+				job, err := builder.Build(schema.DeepCopy(), operationStatus, nil)
+				if err != nil {
+					t.Fatalf("Build(%s) error = %v", operation, err)
+				}
+				payload, err := json.Marshal(job)
+				if err != nil {
+					t.Fatalf("marshal %s Job: %v", operation, err)
+				}
+				var roundTripped batchv1.Job
+				if err := json.Unmarshal(payload, &roundTripped); err != nil {
+					t.Fatalf("round-trip %s Job: %v", operation, err)
+				}
+				jobs.Items = append(jobs.Items, roundTripped)
+			}
+
+			payload, err := json.Marshal(jobs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command(
+				"jq", "-e",
+				"--arg", "databaseSecret", "database-url",
+				"--arg", "registrySecret", schema.Spec.Desired.RegistryAuthFrom.Name,
+				"--arg", "registryAuthority", "registry.example:5000",
+				"--arg", "authMode", string(mode),
+				"--arg", "executorImage", builder.ExecutorImage,
+				"--arg", "runnerImage", builder.RunnerImage,
+				"--arg", "verificationPolicy", schema.Spec.Desired.VerificationPolicyFrom.Name,
+				"--arg", "serviceAccountName", "",
+				"--argjson", "imagePullSecrets", "[]",
+				"--arg", "requestedReference", schema.Spec.Desired.OCIRef,
+				"--arg", "resolvedReference", schema.Status.Source.ResolvedReference,
+				"-f", "../../testdata/e2e/source-job-isolation.jq",
+			)
+			command.Stdin = bytes.NewReader(payload)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("source isolation filter rejected Builder Jobs: %v\n%s", err, output)
+			}
 		})
 	}
 }
@@ -1193,6 +1371,21 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 			},
 		},
 	}
+}
+
+func sourceContractSchemaFixture(mode operatorv1alpha1.RegistryAuthMode) *operatorv1alpha1.PtahSchema {
+	schema := schemaFixture()
+	schema.Spec.Desired.OCIRef = "oci://registry.example:5000/acme/schema:latest"
+	schema.Spec.Desired.RegistryAuthFrom = &operatorv1alpha1.RegistryAuthSource{
+		Name: "registry-auth", Mode: mode,
+	}
+	schema.Spec.Desired.Transport = operatorv1alpha1.OCITransportSpec{PlainHTTP: true}
+	schema.Spec.Execution.ServiceAccountName = ""
+	schema.Spec.Execution.ImagePullSecrets = nil
+	schema.Status.Source.RequestedReference = schema.Spec.Desired.OCIRef
+	schema.Status.Source.ResolvedReference =
+		"oci://registry.example:5000/acme/schema@" + schema.Status.Source.Digest
+	return schema
 }
 
 func builderFixture() Builder {

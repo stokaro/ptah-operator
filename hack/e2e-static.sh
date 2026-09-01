@@ -832,6 +832,8 @@ digest_pin_section=$(sed -n '/^assert_requested_digest_pin_refusal() {$/,/^}$/p'
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 source_isolation_section=$(sed -n '/^assert_source_job_isolation() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
+source_isolation_filter=$(cat \
+	"$ROOT_DIR/testdata/e2e/source-job-isolation.jq")
 for required_static_section in \
 	"$tls_count_section" "$tls_capture_identity_section" \
 	"$tls_stable_identity_section" "$tls_endpoint_match_section" \
@@ -840,12 +842,77 @@ for required_static_section in \
 	"$custom_ca_refusal_section" \
 	"$custom_ca_acceptance_section" "$custom_ca_approval_boundary_filter" \
 	"$engine_lifecycle_section" \
-	"$digest_pin_section" "$source_isolation_section"; do
+	"$digest_pin_section" "$source_isolation_section" \
+	"$source_isolation_filter"; do
 	[ -n "$required_static_section" ] || {
 		printf '%s\n' 'e2e static: a required custom source acceptance function is missing' >&2
 		exit 1
 	}
 done
+
+source_isolation_live_wiring_count() {
+	printf '%s\n' "$1" | awk '
+    /^[[:space:]]*jq -e \\$/ { stage = 1; next }
+    stage == 1 && $0 ~ /^[[:space:]]*--arg databaseSecret "\$isolation_secret" \\$/ {
+      stage = 2; next
+    }
+    stage == 2 && $0 ~ /^[[:space:]]*--arg registrySecret "\$isolation_registry_secret" \\$/ {
+      stage = 3; next
+    }
+    stage == 3 && $0 ~ /^[[:space:]]*--arg registryAuthority "\$REGISTRY_HOST" \\$/ {
+      stage = 4; next
+    }
+    stage == 4 && $0 ~ /^[[:space:]]*--arg authMode "\$isolation_auth_mode" \\$/ {
+      stage = 5; next
+    }
+    stage == 5 && $0 ~ /^[[:space:]]*--arg executorImage "\$EXECUTOR_IMAGE" \\$/ {
+      stage = 6; next
+    }
+    stage == 6 && $0 ~ /^[[:space:]]*--arg runnerImage "\$RUNNER_IMAGE" \\$/ {
+      stage = 7; next
+    }
+    stage == 7 && $0 ~ /^[[:space:]]*--arg verificationPolicy "\$isolation_verification_policy" \\$/ {
+      stage = 8; next
+    }
+    stage == 8 && $0 ~ /^[[:space:]]*--arg serviceAccountName "" \\$/ {
+      stage = 9; next
+    }
+    stage == 9 && $0 ~ /^[[:space:]]*--argjson imagePullSecrets "\[\]" \\$/ {
+      stage = 10; next
+    }
+    stage == 10 && $0 ~ /^[[:space:]]*--arg requestedReference "\$isolation_requested_reference" \\$/ {
+      stage = 11; next
+    }
+    stage == 11 && $0 ~ /^[[:space:]]*--arg resolvedReference "\$isolation_resolved_reference" \\$/ {
+      stage = 12; next
+    }
+    stage == 12 && $0 ~ /^[[:space:]]*-f "\$ROOT_DIR\/testdata\/e2e\/source-job-isolation\.jq" >\/dev\/null \|\|$/ {
+      count++; stage = 0; next
+    }
+    stage > 0 { stage = 0 }
+    END { print count + 0 }
+  '
+}
+
+[ "$(source_isolation_live_wiring_count "$source_isolation_section")" -eq 1 ] || {
+	printf '%s\n' 'e2e static: source isolation filter is not connected to the live jq invocation' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # The wiring mutation must match the literal live shell variable.
+source_isolation_commented_wiring=$(printf '%s\n' "$source_isolation_section" |
+	sed 's|^[[:space:]]*-f "\$ROOT_DIR/testdata/e2e/source-job-isolation.jq"|# disconnected filter|')
+[ "$(source_isolation_live_wiring_count "$source_isolation_commented_wiring")" -eq 0 ] || {
+	printf '%s\n' 'e2e static: source isolation wiring check accepted a commented filter' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # The wiring mutation must match the literal live shell variable.
+source_isolation_disconnected_wiring=$(printf '%s\n' "$source_isolation_section" |
+	sed '/^[[:space:]]*--arg authMode "\$isolation_auth_mode" \\$/a\
+\t\t\ttrue')
+[ "$(source_isolation_live_wiring_count "$source_isolation_disconnected_wiring")" -eq 0 ] || {
+	printf '%s\n' 'e2e static: source isolation wiring check accepted a disconnected filter' >&2
+	exit 1
+}
 
 custom_ca_boundary_wait_wiring_count=$(printf '%s\n' "$custom_ca_acceptance_section" | awk '
   previous2 ~ /^[[:space:]]*wait_for_schema "\$good_schema" \\$/ &&
@@ -1138,6 +1205,649 @@ assert_custom_ca_boundary_mutation_rejected 'wrong PlanReady reason' \
 assert_custom_ca_boundary_mutation_rejected 'stale PlanReady condition' \
 	'(.status.conditions[] | select(.type == "PlanReady")).observedGeneration = 6'
 
+source_job_fixture() {
+	jq -cn --arg authMode "$1" '
+    def secretEnv($name; $key; $optional):
+      {name: $name, valueFrom: {secretKeyRef:
+        ({name: "registry-auth", key: $key} +
+          (if $optional then {optional: true} else {} end))}};
+    def literalEnv($name; $value):
+      {name: $name, value: $value};
+    def hardenedContainer:
+      {
+        capabilities: {drop: ["ALL"]},
+        runAsUser: 65532,
+        runAsGroup: 65532,
+        runAsNonRoot: true,
+        readOnlyRootFilesystem: true,
+        allowPrivilegeEscalation: false,
+        seccompProfile: {type: "RuntimeDefault"}
+      };
+    def hardenedPod:
+      {
+        runAsUser: 65532,
+        runAsGroup: 65532,
+        runAsNonRoot: true,
+        fsGroup: 65532,
+        fsGroupChangePolicy: "OnRootMismatch",
+        seccompProfile: {type: "RuntimeDefault"}
+      };
+    def operationID($operation):
+      "sha256:" + ((if $operation == "resolve" then "1" else "2" end) * 64);
+    def fixedGrants:
+      [
+        literalEnv("PTAH_OPERATOR_OCI_AUTH_MODE"; $authMode),
+        secretEnv("PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT"; "registry"; false),
+        secretEnv("PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP"; "allowPlainHTTP"; false),
+        literalEnv("PTAH_OCI_REGISTRY"; "registry.example:5000"),
+        literalEnv("PTAH_PLAIN_HTTP"; "true")
+      ];
+    def environmentCredentials:
+      [
+        secretEnv("PTAH_OCI_USERNAME"; "username"; true),
+        secretEnv("PTAH_OCI_PASSWORD"; "password"; true),
+        secretEnv("PTAH_OCI_TOKEN"; "token"; true)
+      ];
+    def operationEnvironment($operation):
+      [
+        literalEnv("HOME"; "/work"),
+        literalEnv("TMPDIR"; "/work"),
+        literalEnv("PTAH_OPERATION_ID"; operationID($operation)),
+        literalEnv("PTAH_REQUESTED_REFERENCE";
+          "oci://registry.example:5000/acme/schema:latest")
+      ] +
+      (if $operation == "verify" then [
+        literalEnv("PTAH_RESOLVED_REFERENCE";
+          "oci://registry.example:5000/acme/schema@sha256:" + ("a" * 64)),
+        literalEnv("PTAH_VERIFICATION_POLICY"; "/verification/policy.yaml"),
+        literalEnv("PTAH_EXPECTED_ARTIFACT_TYPE";
+          "application/vnd.stokaro.ptah.schema.v1")
+      ] else [] end);
+    def dockerVolume:
+      {
+        name: "registry-docker-config",
+        secret: {
+          secretName: "registry-auth",
+          items: [{key: ".dockerconfigjson", path: "config.json", mode: 288}],
+          defaultMode: 420
+        }
+      };
+    def job($operation):
+      {
+        metadata: {
+          labels: {"operator.ptah.dev/operation": $operation},
+          annotations: {"operator.ptah.dev/operation-id": operationID($operation)}
+        },
+        spec: {
+          backoffLimit: 0,
+          podReplacementPolicy: "Failed",
+          template: {spec: {
+            restartPolicy: "Never",
+            automountServiceAccountToken: false,
+            enableServiceLinks: false,
+            dnsPolicy: "ClusterFirst",
+            imagePullSecrets: [],
+            securityContext: hardenedPod,
+            initContainers: [{
+              name: "install-runner",
+              image: ("example.invalid/operator@sha256:" + ("e" * 64)),
+              imagePullPolicy: "IfNotPresent",
+              command: ["/ptah-runner"],
+              args: ["--install-to", "/runner/ptah-runner"],
+              env: [],
+              terminationMessagePath: "/dev/termination-log",
+              terminationMessagePolicy: "File",
+              securityContext: hardenedContainer,
+              volumeMounts: [{name: "runner", mountPath: "/runner"}]
+            }],
+            containers: [{
+              name: "ptah",
+              image: ("example.invalid/ptah@sha256:" + ("d" * 64)),
+              imagePullPolicy: "IfNotPresent",
+              command: ["/runner/ptah-runner"],
+              args: [
+                "--ptah-binary", "/usr/local/bin/ptah",
+                "--max-result-bytes", "8388608",
+                "--max-plan-bytes", "8388608",
+                "--operation", $operation
+              ],
+              workingDir: "/work",
+              terminationMessagePath: "/dev/termination-log",
+              terminationMessagePolicy: "File",
+              securityContext: hardenedContainer,
+              env: ((
+                operationEnvironment($operation) +
+                fixedGrants +
+                (if $authMode == "Environment" then environmentCredentials else
+                  [literalEnv("DOCKER_CONFIG"; "/credentials/docker")]
+                end)
+              ) | sort_by(.name)),
+              volumeMounts: ([
+                {name: "runner", mountPath: "/runner", readOnly: true},
+                {name: "work", mountPath: "/work"}
+              ] + (if $authMode == "DockerConfigJSON" then [{
+                name: "registry-docker-config",
+                mountPath: "/credentials/docker",
+                readOnly: true
+              }] else [] end) + (if $operation == "verify" then [{
+                name: "verification-policy",
+                mountPath: "/verification",
+                readOnly: true
+              }] else [] end))
+            }],
+            volumes: (
+              [
+                {name: "runner", emptyDir: {medium: "Memory", sizeLimit: "64Mi"}},
+                {name: "work", emptyDir: {medium: "Memory", sizeLimit: "128Mi"}}
+              ] +
+              (if $authMode == "DockerConfigJSON" then [dockerVolume] else [] end) +
+              (if $operation == "verify" then [{
+                name: "verification-policy",
+                configMap: {
+                  name: "verification-policy",
+                  items: [{key: "policy.yaml", path: "policy.yaml", mode: 288}],
+                  defaultMode: 420
+                }
+              }] else [] end)
+            )
+          }}
+        }
+      };
+    {items: [job("resolve"), job("verify")]}
+  '
+}
+
+source_isolation_matches() {
+	printf '%s\n' "$1" |
+		jq -e \
+			--arg databaseSecret database-url \
+			--arg registrySecret registry-auth \
+			--arg registryAuthority registry.example:5000 \
+			--arg authMode "$2" \
+			--arg executorImage \
+			"example.invalid/ptah@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" \
+			--arg runnerImage \
+			"example.invalid/operator@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" \
+			--arg verificationPolicy verification-policy \
+			--arg serviceAccountName "" \
+			--argjson imagePullSecrets "[]" \
+			--arg requestedReference \
+			"oci://registry.example:5000/acme/schema:latest" \
+			--arg resolvedReference \
+			"oci://registry.example:5000/acme/schema@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+			-f "$ROOT_DIR/testdata/e2e/source-job-isolation.jq" >/dev/null
+}
+
+source_environment_fixture=$(source_job_fixture Environment)
+source_docker_fixture=$(source_job_fixture DockerConfigJSON)
+source_isolation_matches "$source_environment_fixture" Environment || {
+	printf '%s\n' 'e2e static: source isolation rejected the valid Environment fixture' >&2
+	exit 1
+}
+source_isolation_matches "$source_docker_fixture" DockerConfigJSON || {
+	printf '%s\n' 'e2e static: source isolation rejected the valid DockerConfigJSON fixture' >&2
+	exit 1
+}
+
+assert_source_isolation_mutation_rejected() {
+	source_mutation_description=$1
+	source_mutation_fixture=$2
+	source_mutation_mode=$3
+	source_mutation=$4
+	if ! source_mutated_fixture=$(printf '%s\n' "$source_mutation_fixture" |
+		jq -ec "$source_mutation"); then
+		printf 'e2e static: could not build source isolation mutation %s\n' \
+			"$source_mutation_description" >&2
+		exit 1
+	fi
+	[ "$source_mutated_fixture" != "$source_mutation_fixture" ] || {
+		printf 'e2e static: source isolation mutation %s did not change its valid baseline\n' \
+			"$source_mutation_description" >&2
+		exit 1
+	}
+	if source_isolation_matches "$source_mutated_fixture" "$source_mutation_mode"; then
+		printf 'e2e static: source isolation accepted mutation %s\n' \
+			"$source_mutation_description" >&2
+		exit 1
+	fi
+}
+
+assert_source_isolation_mutation_rejected 'missing Verify Job' \
+	"$source_environment_fixture" Environment 'del(.items[1])'
+assert_source_isolation_mutation_rejected 'extra source Job' \
+	"$source_environment_fixture" Environment '.items += [.items[1]]'
+assert_source_isolation_mutation_rejected 'duplicate Resolve operation' \
+	"$source_environment_fixture" Environment \
+	'.items[1].metadata.labels["operator.ptah.dev/operation"] = "resolve"'
+assert_source_isolation_mutation_rejected 'unknown source operation' \
+	"$source_environment_fixture" Environment \
+	'.items[1].metadata.labels["operator.ptah.dev/operation"] = "fetch"'
+assert_source_isolation_mutation_rejected 'nonzero Job backoff' \
+	"$source_environment_fixture" Environment '.items[0].spec.backoffLimit = 1'
+assert_source_isolation_mutation_rejected 'unsafe Pod replacement policy' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.podReplacementPolicy = "TerminatingOrFailed"'
+assert_source_isolation_mutation_rejected 'restartable source Pod' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.restartPolicy = "OnFailure"'
+assert_source_isolation_mutation_rejected 'automounted service-account token' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.automountServiceAccountToken = true'
+assert_source_isolation_mutation_rejected 'enabled service links' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.enableServiceLinks = true'
+assert_source_isolation_mutation_rejected 'unexpected source service account' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.serviceAccountName = "credential-bearing"'
+assert_source_isolation_mutation_rejected 'database image-pull Secret' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.imagePullSecrets = [{name: "database-url"}]'
+assert_source_isolation_mutation_rejected 'unconfined source Pod' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.securityContext.seccompProfile.type = "Unconfined"
+  '
+assert_source_isolation_mutation_rejected 'registry host alias' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.hostAliases = [{
+      ip: "203.0.113.10", hostnames: ["registry.example"]
+    }]
+  '
+assert_source_isolation_mutation_rejected 'custom registry DNS' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.dnsPolicy = "None" |
+    .items[0].spec.template.spec.dnsConfig = {
+      nameservers: ["203.0.113.53"]
+    }
+  '
+assert_source_isolation_mutation_rejected 'host-networked source Pod' \
+	"$source_docker_fixture" DockerConfigJSON \
+	'.items[0].spec.template.spec.hostNetwork = true'
+assert_source_isolation_mutation_rejected 'extra ptah main container' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.containers += [.items[0].spec.template.spec.containers[0]]'
+assert_source_isolation_mutation_rejected 'ptah-named init container' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.initContainers[0].name = "ptah"'
+assert_source_isolation_mutation_rejected 'missing ptah main container' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.containers = []'
+assert_source_isolation_mutation_rejected 'missing runner installer' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.initContainers = []'
+assert_source_isolation_mutation_rejected 'extra neutral init container' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.initContainers += [{
+      name: "neutral-init", env: [], volumeMounts: []
+    }]
+  '
+assert_source_isolation_mutation_rejected 'neutral ephemeral container' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.ephemeralContainers = [{
+      name: "neutral-debug", env: [], volumeMounts: []
+    }]
+  '
+assert_source_isolation_mutation_rejected 'attacker executor image' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.containers[0].image = "attacker.invalid/tool:latest"'
+assert_source_isolation_mutation_rejected 'attacker executor command' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.containers[0].command = ["/bin/sh", "-c"]'
+assert_source_isolation_mutation_rejected 'privileged executor context' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation = true
+  '
+assert_source_isolation_mutation_rejected 'credential termination-message path' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.containers[0].terminationMessagePath =
+      "/credentials/docker/config.json"
+  '
+assert_source_isolation_mutation_rejected 'executor lifecycle hook' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.containers[0].lifecycle = {
+      postStart: {exec: {command: ["/bin/sh", "-c", "exit 0"]}}
+    }
+  '
+assert_source_isolation_mutation_rejected 'executor probe command' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.containers[0].livenessProbe = {
+      exec: {command: ["/bin/sh", "-c", "exit 0"]}
+    }
+  '
+assert_source_isolation_mutation_rejected 'mismatched operation arguments' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.containers[0].args[-1] = "apply"
+  '
+assert_source_isolation_mutation_rejected 'attacker runner-installer image' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec.initContainers[0].image = "attacker.invalid/tool:latest"'
+assert_source_isolation_mutation_rejected 'database Secret in init container' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.initContainers[0].env += [{
+      name: "PTAH_DB_URL",
+      valueFrom: {secretKeyRef: {name: "database-url", key: "url"}}
+    }]
+  '
+assert_source_isolation_mutation_rejected 'unrelated init-container environment' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.initContainers[0].env += [{
+      name: "UNEXPECTED", value: "present"
+    }]
+  '
+assert_source_isolation_mutation_rejected 'database Secret volume' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.volumes += [{
+      name: "database", secret: {secretName: "database-url"}
+    }]
+  '
+assert_source_isolation_mutation_rejected 'registry Secret volume in Environment mode' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.volumes += [{
+      name: "registry-copy", secret: {secretName: "registry-auth"}
+    }]
+  '
+assert_source_isolation_mutation_rejected 'projected database Secret volume' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.volumes += [{
+      name: "projected-database",
+      projected: {sources: [{secret: {name: "database-url"}}]}
+    }]
+  '
+assert_source_isolation_mutation_rejected 'projected service-account token' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.volumes += [{
+      name: "service-account-token",
+      projected: {sources: [{serviceAccountToken: {
+        path: "token", expirationSeconds: 3600
+      }}]}
+    }] |
+    .items[0].spec.template.spec.initContainers[0].volumeMounts += [{
+      name: "service-account-token", mountPath: "/var/run/secrets/tokens"
+    }]
+  '
+assert_source_isolation_mutation_rejected 'CSI database Secret volume' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.volumes += [{
+      name: "database-csi",
+      csi: {
+        driver: "secrets.example.invalid",
+        nodePublishSecretRef: {name: "database-url"}
+      }
+    }] |
+    .items[0].spec.template.spec.containers[0].volumeMounts += [{
+      name: "database-csi", mountPath: "/credentials/database", readOnly: true
+    }]
+  '
+assert_source_isolation_mutation_rejected 'unexpected source volume and mount' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.volumes += [{
+      name: "unexpected", emptyDir: {medium: "Memory", sizeLimit: "1Mi"}
+    }] |
+    .items[0].spec.template.spec.containers[0].volumeMounts += [{
+      name: "unexpected", mountPath: "/unexpected"
+    }]
+  '
+assert_source_isolation_mutation_rejected 'container envFrom' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.initContainers[0].envFrom = [{
+      secretRef: {name: "registry-auth"}
+    }]
+  '
+assert_source_isolation_mutation_rejected 'wrong registry authority' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OCI_REGISTRY")).value = "other.example:5000"
+  '
+assert_source_isolation_mutation_rejected 'database URL in operation ID' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OPERATION_ID")).value =
+      "postgres://user:password@database.example/orders"
+  '
+assert_source_isolation_mutation_rejected 'self-consistent database URL operation ID' \
+	"$source_environment_fixture" Environment '
+    .items[0].metadata.annotations["operator.ptah.dev/operation-id"] =
+      "postgres://user:password@database.example/orders" |
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OPERATION_ID")).value =
+      "postgres://user:password@database.example/orders"
+  '
+assert_source_isolation_mutation_rejected 'missing operation-ID binding' \
+	"$source_environment_fixture" Environment '
+    del(.items[0].metadata.annotations["operator.ptah.dev/operation-id"]) |
+    del(.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OPERATION_ID").value)
+  '
+assert_source_isolation_mutation_rejected 'empty operation-ID binding' \
+	"$source_environment_fixture" Environment '
+    .items[0].metadata.annotations["operator.ptah.dev/operation-id"] = "" |
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OPERATION_ID")).value = ""
+  '
+assert_source_isolation_mutation_rejected 'wrong requested reference' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_REQUESTED_REFERENCE")).value =
+      "oci://attacker.example/schema:latest"
+  '
+assert_source_isolation_mutation_rejected 'wrong resolved reference' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[1].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_RESOLVED_REFERENCE")).value =
+      "oci://attacker.example/schema@sha256:" + ("b" * 64)
+  '
+assert_source_isolation_mutation_rejected 'wrong verification-policy path' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[1].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_VERIFICATION_POLICY")).value = "/unexpected/policy.yaml"
+  '
+assert_source_isolation_mutation_rejected 'wrong expected artifact type' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[1].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_EXPECTED_ARTIFACT_TYPE")).value = "application/octet-stream"
+  '
+assert_source_isolation_mutation_rejected 'wrong source working home' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "HOME")).value = "/credentials"
+  '
+assert_source_isolation_mutation_rejected 'wrong authority grant key' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT") |
+      .valueFrom.secretKeyRef.key) = "authority"
+  '
+assert_source_isolation_mutation_rejected 'explicit optional false on authority grant' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT") |
+      .valueFrom.secretKeyRef.optional) = false
+  '
+assert_source_isolation_mutation_rejected 'wrong plain-HTTP grant' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP") |
+      .valueFrom.secretKeyRef.key) = "plainHTTP"
+  '
+assert_source_isolation_mutation_rejected 'wrong plain-HTTP literal' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_PLAIN_HTTP")).value = "false"
+  '
+assert_source_isolation_mutation_rejected 'auth-mode mismatch' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OPERATOR_OCI_AUTH_MODE")).value = "DockerConfigJSON"
+  '
+assert_source_isolation_mutation_rejected 'unexpected source literal' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.containers[0].env += [{
+      name: "PTAH_OCI_CA_FILE", value: "/unexpected"
+    }]
+  '
+assert_source_isolation_mutation_rejected 'unexpected ConfigMap environment' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.containers[0].env += [{
+      name: "UNEXPECTED_CONFIG",
+      valueFrom: {configMapKeyRef: {name: "unexpected", key: "value"}}
+    }]
+  '
+assert_source_isolation_mutation_rejected 'required Environment username' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OCI_USERNAME") |
+      .valueFrom.secretKeyRef.optional) = false
+  '
+assert_source_isolation_mutation_rejected 'wrong Environment password Secret' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OCI_PASSWORD") |
+      .valueFrom.secretKeyRef.name) = "other-registry-auth"
+  '
+assert_source_isolation_mutation_rejected 'wrong Environment token key' \
+	"$source_environment_fixture" Environment '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "PTAH_OCI_TOKEN") |
+      .valueFrom.secretKeyRef.key) = "accessToken"
+  '
+assert_source_isolation_mutation_rejected 'mixed Environment and Docker config auth' \
+	"$source_environment_fixture" Environment '
+    .items[0].spec.template.spec.containers[0].env += [{
+      name: "DOCKER_CONFIG", value: "/credentials/docker"
+    }]
+  '
+assert_source_isolation_mutation_rejected 'mixed Docker config and Environment auth' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.containers[0].env += [{
+      name: "PTAH_OCI_USERNAME",
+      valueFrom: {secretKeyRef: {
+        name: "registry-auth", key: "username", optional: true
+      }}
+    }]
+  '
+assert_source_isolation_mutation_rejected 'wrong DOCKER_CONFIG value' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.containers[0].env[] |
+      select(.name == "DOCKER_CONFIG")).value = "/var/lib/docker"
+  '
+assert_source_isolation_mutation_rejected 'wrong Docker config Secret volume' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.volumes[] |
+      select(.name == "registry-docker-config") |
+      .secret.secretName) = "other-registry-auth"
+  '
+assert_source_isolation_mutation_rejected 'optional Docker config Secret volume' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.volumes[] |
+      select(.name == "registry-docker-config") |
+      .secret.optional) = true
+  '
+assert_source_isolation_mutation_rejected 'explicit required Docker config Secret volume' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.volumes[] |
+      select(.name == "registry-docker-config") |
+      .secret.optional) = false
+  '
+assert_source_isolation_mutation_rejected 'missing Docker config Secret volume' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.volumes |=
+      map(select(.name != "registry-docker-config"))
+  '
+assert_source_isolation_mutation_rejected 'wrong Docker config item' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.volumes[] |
+      select(.name == "registry-docker-config") |
+      .secret.items[0].path) = "docker.json"
+  '
+assert_source_isolation_mutation_rejected 'wrong Docker config item key' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.volumes[] |
+      select(.name == "registry-docker-config") |
+      .secret.items[0].key) = "dockerconfigjson"
+  '
+assert_source_isolation_mutation_rejected 'wrong Docker config item mode' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.volumes[] |
+      select(.name == "registry-docker-config") |
+      .secret.items[0].mode) = 256
+  '
+assert_source_isolation_mutation_rejected 'wrong Docker config default mode' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.volumes[] |
+      select(.name == "registry-docker-config") |
+      .secret.defaultMode) = 384
+  '
+assert_source_isolation_mutation_rejected 'wrong Docker config mount path' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.containers[0].volumeMounts[] |
+      select(.name == "registry-docker-config") |
+      .mountPath) = "/var/lib/docker"
+  '
+assert_source_isolation_mutation_rejected 'writable Docker config mount' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.containers[0].volumeMounts[] |
+      select(.name == "registry-docker-config") |
+      .readOnly) = false
+  '
+assert_source_isolation_mutation_rejected 'missing Docker config mount' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.containers[0].volumeMounts = []
+  '
+assert_source_isolation_mutation_rejected 'second Docker config mount' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.containers[0].volumeMounts += [{
+      name: "registry-docker-config",
+      mountPath: "/credentials/docker-copy",
+      readOnly: true
+    }]
+  '
+assert_source_isolation_mutation_rejected 'Docker config mounted by runner installer' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.initContainers[0].volumeMounts += [{
+      name: "registry-docker-config",
+      mountPath: "/credentials/docker",
+      readOnly: true
+    }]
+  '
+assert_source_isolation_mutation_rejected 'Docker config mount subPath' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.containers[0].volumeMounts[] |
+      select(.name == "registry-docker-config") |
+      .subPath) = "config.json"
+  '
+# shellcheck disable=SC2016 # jq must receive the literal Kubernetes expansion expression.
+assert_source_isolation_mutation_rejected 'Docker config mount subPathExpr' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.containers[0].volumeMounts[] |
+      select(.name == "registry-docker-config") |
+      .subPathExpr) = "$(POD_NAME)"
+  '
+assert_source_isolation_mutation_rejected 'Docker config mount propagation' \
+	"$source_docker_fixture" DockerConfigJSON '
+    (.items[0].spec.template.spec.containers[0].volumeMounts[] |
+      select(.name == "registry-docker-config") |
+      .mountPropagation) = "HostToContainer"
+  '
+assert_source_isolation_mutation_rejected 'Verify policy mount missing' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[1].spec.template.spec.containers[0].volumeMounts |=
+      map(select(.name != "verification-policy"))
+  '
+assert_source_isolation_mutation_rejected 'Verify policy volume missing' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[1].spec.template.spec.volumes |=
+      map(select(.name != "verification-policy"))
+  '
+# shellcheck disable=SC2016 # jq must receive the literal fixture variables.
+assert_source_isolation_mutation_rejected 'operation labels and env swapped' \
+	"$source_docker_fixture" DockerConfigJSON '
+    .items[0].spec.template.spec.containers[0].env as $resolveEnv |
+    .items[1].spec.template.spec.containers[0].env as $verifyEnv |
+    .items[0].metadata.labels["operator.ptah.dev/operation"] = "verify" |
+    .items[1].metadata.labels["operator.ptah.dev/operation"] = "resolve" |
+    .items[0].spec.template.spec.containers[0].env = $verifyEnv |
+    .items[1].spec.template.spec.containers[0].env = $resolveEnv
+  '
+
 [ "$(printf '%s\n' "$custom_ca_acceptance_section" |
 	grep -Ec '^[[:space:]]*assert_custom_ca_pre_child_refusal[[:space:]]')" -eq 2 ] || {
 	printf '%s\n' 'e2e static: custom-CA acceptance must actively call two refusal cases' >&2
@@ -1242,7 +1952,7 @@ for docker_source_marker in \
 	'PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP' \
 	'PTAH_OCI_USERNAME' 'PTAH_OCI_PASSWORD' 'PTAH_OCI_TOKEN' \
 	'DOCKER_CONFIG' 'registry-docker-config' '.dockerconfigjson'; do
-	printf '%s\n' "$source_isolation_section" | grep -F "$docker_source_marker" >/dev/null
+	printf '%s\n' "$source_isolation_filter" | grep -F "$docker_source_marker" >/dev/null
 done
 
 blocked_capture_section=$(sed -n '/^capture_blocked_refresh_boundary()/,/^}/p' \

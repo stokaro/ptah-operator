@@ -699,9 +699,14 @@ audit_completed_jobs() {
                   (.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] // "") as $digest |
                   ($digest | test("^sha256:[0-9a-f]{64}$")) and
                   .spec.runtimeClassName == $runtimeClass and
+                  .spec.serviceAccountName == "default" and
+                  .spec.automountServiceAccountToken == false and
                   .spec.nodeSelector["kubernetes.io/os"] == "linux" and
                   .spec.overhead.memory == "8Mi" and
                   .spec.imagePullSecrets == [{name: $pullSecret}] and
+                  all((.spec.volumes // [])[];
+                    all((.projected.sources // [])[]?;
+                      .serviceAccountToken == null)) and
                   all((.spec.containers + (.spec.initContainers // []))[];
                     .resources.requests.cpu == "10m" and
                     .resources.requests.memory == "16Mi" and
@@ -2967,98 +2972,23 @@ assert_source_job_isolation() {
 	isolation_secret=$2
 	isolation_registry_secret=${3:-$REGISTRY_AUTH_SECRET}
 	isolation_auth_mode=${4:-Environment}
+	isolation_verification_policy=$5
+	isolation_requested_reference=$6
+	isolation_resolved_reference=$7
 	k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.dev/schema=${isolation_schema}" -o json |
 		jq -e \
 			--arg databaseSecret "$isolation_secret" \
 			--arg registrySecret "$isolation_registry_secret" \
 			--arg registryAuthority "$REGISTRY_HOST" \
-			--arg authMode "$isolation_auth_mode" '
-          def containers($job):
-            (($job.spec.template.spec.containers // []) +
-              ($job.spec.template.spec.initContainers // []));
-          def named($job; $name):
-            [containers($job)[] | select(.name == $name)];
-          def env_names($container):
-            [$container.env[]?.name];
-          def secret_names($container):
-            [$container.env[]?.valueFrom.secretKeyRef.name?];
-          def has_literal_env($container; $name; $value):
-            any($container.env[]?;
-              .name == $name and .value == $value and .valueFrom == null);
-          def has_secret_env($container; $name; $key; $optional):
-            any($container.env[]?;
-              .name == $name and .value == null and
-              .valueFrom.secretKeyRef.name == $registrySecret and
-              .valueFrom.secretKeyRef.key == $key and
-              (.valueFrom.secretKeyRef.optional // false) == $optional);
-          def has_mount($container; $name; $path; $readOnly):
-            any($container.volumeMounts[]?;
-              .name == $name and .mountPath == $path and
-              (.readOnly // false) == $readOnly);
-          def fixed_grants($container):
-            has_literal_env($container; "PTAH_OPERATOR_OCI_AUTH_MODE"; $authMode) and
-            has_secret_env($container; "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT"; "registry"; false) and
-            has_secret_env($container; "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP"; "allowPlainHTTP"; false) and
-            has_literal_env($container; "PTAH_OCI_REGISTRY"; $registryAuthority) and
-            has_literal_env($container; "PTAH_PLAIN_HTTP"; "true") and
-            ([env_names($container)[] | select(startswith("PTAH_OPERATOR_OCI_"))] | sort) == [
-              "PTAH_OPERATOR_OCI_ALLOW_PLAIN_HTTP",
-              "PTAH_OPERATOR_OCI_AUTH_MODE",
-              "PTAH_OPERATOR_OCI_AUTH_REGISTRY_GRANT"
-            ];
-          def environment_credentials($job; $container):
-            has_secret_env($container; "PTAH_OCI_USERNAME"; "username"; true) and
-            has_secret_env($container; "PTAH_OCI_PASSWORD"; "password"; true) and
-            has_secret_env($container; "PTAH_OCI_TOKEN"; "token"; true) and
-			(secret_names($container) | sort) == [
-			  $registrySecret, $registrySecret, $registrySecret,
-			  $registrySecret, $registrySecret
-			] and
-            (env_names($container) | index("DOCKER_CONFIG") | not) and
-			([$job.spec.template.spec.volumes[]? |
-			  select(.name == "registry-docker-config")] | length) == 0;
-          def docker_config_credentials($job; $container):
-            (env_names($container) | index("PTAH_OCI_USERNAME") | not) and
-            (env_names($container) | index("PTAH_OCI_PASSWORD") | not) and
-            (env_names($container) | index("PTAH_OCI_TOKEN") | not) and
-			(secret_names($container) | sort) == [$registrySecret, $registrySecret] and
-            has_literal_env($container; "DOCKER_CONFIG"; "/credentials/docker") and
-            has_mount($container; "registry-docker-config"; "/credentials/docker"; true) and
-			all($container.volumeMounts[]?;
-			  .name != "registry-docker-config" or
-			  ((.subPath // "") == "" and (.subPathExpr // "") == "" and
-			   .mountPropagation == null)) and
-            ([($job.spec.template.spec.volumes // [])[] | select(
-              .name == "registry-docker-config" and
-              (keys | sort) == ["name", "secret"] and
-              .secret.secretName == $registrySecret and
-              (.secret.defaultMode // 420) == 420 and
-              .secret.items == [{key: ".dockerconfigjson", path: "config.json", mode: 288})] |
-              length) == 1 and
-            all(($job.spec.template.spec.volumes // [])[];
-              .secret == null or .name == "registry-docker-config");
-          def no_database($container):
-            (env_names($container) | index("PTAH_DB_URL") | not) and
-            (env_names($container) | index("PTAH_DEV_URL") | not) and
-            (secret_names($container) | index($databaseSecret) | not);
-          .items as $jobs |
-          ($jobs | length) == 2 and
-		  all($jobs[]; . as $job |
-			(named($job; "ptah") | .[0]) as $main |
-            (.metadata.labels["operator.ptah.dev/operation"] == "resolve" or
-              .metadata.labels["operator.ptah.dev/operation"] == "verify") and
-            .spec.backoffLimit == 0 and
-            .spec.podReplacementPolicy == "Failed" and
-            .spec.template.spec.restartPolicy == "Never" and
-			(named($job; "ptah") | length) == 1 and
-			fixed_grants($main) and
-			(if $authMode == "Environment" then
-			  environment_credentials($job; $main)
-			elif $authMode == "DockerConfigJSON" then
-			  docker_config_credentials($job; $main)
-			else false end) and
-			all(containers($job)[]; no_database(.) and (.envFrom // []) == []))
-        ' >/dev/null ||
+			--arg authMode "$isolation_auth_mode" \
+			--arg executorImage "$EXECUTOR_IMAGE" \
+			--arg runnerImage "$RUNNER_IMAGE" \
+			--arg verificationPolicy "$isolation_verification_policy" \
+			--arg serviceAccountName "" \
+			--argjson imagePullSecrets "[]" \
+			--arg requestedReference "$isolation_requested_reference" \
+			--arg resolvedReference "$isolation_resolved_reference" \
+			-f "$ROOT_DIR/testdata/e2e/source-job-isolation.jq" >/dev/null ||
 		fail "$isolation_schema source Jobs did not preserve registry/database credential isolation"
 }
 
@@ -3671,7 +3601,8 @@ assert_requested_digest_pin_refusal() {
         ' "$digest_pin_result" >/dev/null ||
 		fail "$digest_pin_schema did not preserve the exact runner-enforced refusal contract"
 	assert_source_job_isolation "$digest_pin_schema" "$digest_pin_secret" \
-		"$DIGEST_PIN_DOCKER_AUTH_SECRET" DockerConfigJSON
+		"$DIGEST_PIN_DOCKER_AUTH_SECRET" DockerConfigJSON "$DIGEST_PIN_POLICY_NAME" \
+		"$digest_pin_reference" "$digest_pin_resolved"
 
 	k -n "$TEST_NAMESPACE" patch ptahschema "$digest_pin_schema" --type=merge \
 		--patch '{"spec":{"suspend":true}}' >/dev/null
