@@ -376,13 +376,16 @@ fi
 cleanup_safe_header=$(printf '%s\n' "$cleanup_safe_output" | sed -n '1p')
 cleanup_safe_json=$(printf '%s\n' "$cleanup_safe_output" | sed -n '2p')
 cleanup_safe_lines=$(printf '%s\n' "$cleanup_safe_output" | awk 'END { print NR }')
-[ "$cleanup_safe_header" = \
+
+if [ "$cleanup_safe_header" = \
 	'e2e data plane: credential-safe reconciliation diagnostic projection' ] &&
 	[ "$cleanup_safe_lines" -eq 2 ] &&
-	[ "$cleanup_safe_json" = "$(jq -c . "$CLEANUP_DIAGNOSTIC_FIXTURE")" ] || {
+	[ "$cleanup_safe_json" = "$(jq -c . "$CLEANUP_DIAGNOSTIC_FIXTURE")" ]; then
+	:
+else
 	printf '%s\n' 'e2e static: safe cleanup diagnostic projection was not emitted exactly' >&2
 	exit 1
-}
+fi
 jq '.spec.template.spec.initContainers = null' "$MYSQL_REFUSAL_SOURCE" \
 	>"$MYSQL_REFUSAL_NULL_SOURCE"
 jq \
