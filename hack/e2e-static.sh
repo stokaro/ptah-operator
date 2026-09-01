@@ -824,6 +824,8 @@ custom_ca_refusal_section=$(sed -n \
 custom_ca_acceptance_section=$(sed -n \
 	'/^assert_authenticated_https_custom_ca() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
+custom_ca_approval_boundary_filter=$(cat \
+	"$ROOT_DIR/testdata/e2e/custom-ca-approval-boundary.jq")
 engine_lifecycle_section=$(sed -n '/^run_engine_lifecycle() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 digest_pin_section=$(sed -n '/^assert_requested_digest_pin_refusal() {$/,/^}$/p' \
@@ -836,13 +838,26 @@ for required_static_section in \
 	"$tls_endpoint_wait_section" "$tls_endpoint_assert_section" \
 	"$tls_endpoint_identity_filter" \
 	"$custom_ca_refusal_section" \
-	"$custom_ca_acceptance_section" "$engine_lifecycle_section" \
+	"$custom_ca_acceptance_section" "$custom_ca_approval_boundary_filter" \
+	"$engine_lifecycle_section" \
 	"$digest_pin_section" "$source_isolation_section"; do
 	[ -n "$required_static_section" ] || {
 		printf '%s\n' 'e2e static: a required custom source acceptance function is missing' >&2
 		exit 1
 	}
 done
+
+custom_ca_boundary_wait_wiring_count=$(printf '%s\n' "$custom_ca_acceptance_section" | awk '
+  previous2 ~ /^[[:space:]]*wait_for_schema "\$good_schema" \\$/ &&
+  previous ~ /^[[:space:]]*"\$\(cat "\$ROOT_DIR\/testdata\/e2e\/custom-ca-approval-boundary\.jq"\)" \\$/ &&
+  $0 ~ /^[[:space:]]*"the authenticated HTTPS custom-CA source to reach a nonmutating approval boundary"$/ { count++ }
+  { previous2 = previous; previous = $0 }
+  END { print count + 0 }
+')
+[ "$custom_ca_boundary_wait_wiring_count" -eq 1 ] || {
+	printf '%s\n' 'e2e static: custom-CA durable approval-boundary wait wiring is missing or duplicated' >&2
+	exit 1
+}
 
 # shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
 static_require_order "$tls_count_section" 'exact-Pod TLS proxy counter read' \
@@ -1033,6 +1048,96 @@ assert_tls_endpoint_mutation_rejected 'wrong UID' \
 assert_tls_endpoint_mutation_rejected 'wrong Pod IP' \
 	'.items[0].endpoints[0].addresses = ["10.0.0.9"]'
 
+custom_ca_boundary_fixture=$(jq -cn '
+  {
+    metadata: {generation: 7},
+    status: {
+      observedGeneration: 7,
+      phase: "AwaitingApproval",
+      nextReconciliationTime: (now + 3600 | todateiso8601),
+      plan: {
+        name: "e2e-custom-ca-plan",
+        uid: "11111111-2222-3333-4444-555555555555",
+        fingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        contentDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      conditions: [
+        {type: "PlanReady", status: "True", reason: "Published", observedGeneration: 7},
+        {type: "ApprovalRequired", status: "True", reason: "Waiting", observedGeneration: 7}
+      ]
+    }
+  }
+')
+
+custom_ca_boundary_matches() {
+	printf '%s\n' "$1" |
+		jq -e -f "$ROOT_DIR/testdata/e2e/custom-ca-approval-boundary.jq" >/dev/null
+}
+
+custom_ca_boundary_matches "$custom_ca_boundary_fixture" || {
+	printf '%s\n' 'e2e static: custom-CA boundary rejected the durable Waiting state' >&2
+	exit 1
+}
+
+assert_custom_ca_boundary_mutation_rejected() {
+	custom_ca_boundary_mutation_description=$1
+	custom_ca_boundary_mutation=$2
+	if ! custom_ca_boundary_mutated_fixture=$(printf '%s\n' "$custom_ca_boundary_fixture" |
+		jq -ec "$custom_ca_boundary_mutation"); then
+		printf 'e2e static: could not build custom-CA boundary mutation %s\n' \
+			"$custom_ca_boundary_mutation_description" >&2
+		exit 1
+	fi
+	if custom_ca_boundary_matches "$custom_ca_boundary_mutated_fixture"; then
+		printf 'e2e static: custom-CA boundary accepted mutation %s\n' \
+			"$custom_ca_boundary_mutation_description" >&2
+		exit 1
+	fi
+}
+
+assert_custom_ca_boundary_mutation_rejected 'transient ApprovalRequired reason' \
+	'(.status.conditions[] | select(.type == "ApprovalRequired")).reason = "PlanReady"'
+assert_custom_ca_boundary_mutation_rejected 'wrong phase' \
+	'.status.phase = "ReadyToApply"'
+assert_custom_ca_boundary_mutation_rejected 'stale observed generation' \
+	'.metadata.generation = 8'
+assert_custom_ca_boundary_mutation_rejected 'missing metadata generation' \
+	'del(.metadata.generation)'
+assert_custom_ca_boundary_mutation_rejected 'active operation' \
+	'.status.activeOperation = {type: "Apply", id: "unexpected"}'
+assert_custom_ca_boundary_mutation_rejected 'missing refresh deadline' \
+	'del(.status.nextReconciliationTime)'
+assert_custom_ca_boundary_mutation_rejected 'malformed refresh deadline' \
+	'.status.nextReconciliationTime = "not-a-timestamp"'
+assert_custom_ca_boundary_mutation_rejected 'expired refresh deadline' \
+	'.status.nextReconciliationTime = (now - 60 | todateiso8601)'
+assert_custom_ca_boundary_mutation_rejected 'missing current plan' \
+	'del(.status.plan)'
+assert_custom_ca_boundary_mutation_rejected 'empty plan name' \
+	'.status.plan.name = ""'
+assert_custom_ca_boundary_mutation_rejected 'empty plan UID' \
+	'.status.plan.uid = ""'
+assert_custom_ca_boundary_mutation_rejected 'malformed plan fingerprint' \
+	'.status.plan.fingerprint = "not-a-digest"'
+assert_custom_ca_boundary_mutation_rejected 'malformed plan content digest' \
+	'.status.plan.contentDigest = "sha256:short"'
+assert_custom_ca_boundary_mutation_rejected 'consumed approval' \
+	'.status.plan.approval = {name: "consumed", uid: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"}'
+assert_custom_ca_boundary_mutation_rejected 'wrong ApprovalRequired reason' \
+	'(.status.conditions[] | select(.type == "ApprovalRequired")).reason = "NotRequired"'
+assert_custom_ca_boundary_mutation_rejected 'wrong ApprovalRequired status' \
+	'(.status.conditions[] | select(.type == "ApprovalRequired")).status = "False"'
+assert_custom_ca_boundary_mutation_rejected 'stale ApprovalRequired condition' \
+	'(.status.conditions[] | select(.type == "ApprovalRequired")).observedGeneration = 6'
+assert_custom_ca_boundary_mutation_rejected 'missing PlanReady condition' \
+	'.status.conditions |= map(select(.type != "PlanReady"))'
+assert_custom_ca_boundary_mutation_rejected 'wrong PlanReady status' \
+	'(.status.conditions[] | select(.type == "PlanReady")).status = "False"'
+assert_custom_ca_boundary_mutation_rejected 'wrong PlanReady reason' \
+	'(.status.conditions[] | select(.type == "PlanReady")).reason = "Stale"'
+assert_custom_ca_boundary_mutation_rejected 'stale PlanReady condition' \
+	'(.status.conditions[] | select(.type == "PlanReady")).observedGeneration = 6'
+
 [ "$(printf '%s\n' "$custom_ca_acceptance_section" |
 	grep -Ec '^[[:space:]]*assert_custom_ca_pre_child_refusal[[:space:]]')" -eq 2 ] || {
 	printf '%s\n' 'e2e static: custom-CA acceptance must actively call two refusal cases' >&2
@@ -1090,6 +1195,7 @@ static_require_order "$custom_ca_acceptance_section" 'custom-CA authenticated su
 	'good_proxy_count_before=$(tls_proxy_request_count)' \
 	'create_custom_ca_schema_resource "$good_schema" "$TLS_PROXY_GOOD_AUTH_SECRET"' \
 	'assert_plan "$good_schema"' \
+	'"$ROOT_DIR/testdata/e2e/custom-ca-approval-boundary.jq"' \
 	'for good_operation in resolve verify observe plan; do' \
 	'assert_no_job_between_checkpoints "$good_schema" apply "$good_before" "$good_after"' \
 	'assert_custom_ca_completed_pods' \

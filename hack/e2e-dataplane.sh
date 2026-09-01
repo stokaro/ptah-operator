@@ -2720,12 +2720,9 @@ assert_authenticated_https_custom_ca() {
 		"$CUSTOM_CA_COORDINATION_KEY"
 	assert_plan "$good_schema" "$TLS_PROXY_REFERENCE" "$custom_ca_digest" postgres false \
 		"$good_before" "$good_before"
-	wait_for_schema "$good_schema" '
-      .status.phase == "AwaitingApproval" and .status.activeOperation == null and
-      .status.plan.name != null and .status.plan.approval == null and
-      (.status.conditions | any(
-        .type == "ApprovalRequired" and .status == "True" and .reason == "PlanReady"))
-    ' "the authenticated HTTPS custom-CA source to reach a nonmutating approval boundary"
+	wait_for_schema "$good_schema" \
+		"$(cat "$ROOT_DIR/testdata/e2e/custom-ca-approval-boundary.jq")" \
+		"the authenticated HTTPS custom-CA source to reach a nonmutating approval boundary"
 	checkpoint_schema_jobs "$good_schema" "$good_after"
 	for good_operation in resolve verify observe plan; do
 		assert_one_job_between_checkpoints "$good_schema" "$good_operation" \
