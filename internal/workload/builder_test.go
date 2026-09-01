@@ -1,6 +1,7 @@
 package workload
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -8,9 +9,11 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -197,6 +200,38 @@ func TestBuildBindsStableKubernetesAPIDefaults(t *testing.T) {
 		case volume.DownwardAPI != nil && volume.DownwardAPI.DefaultMode == nil:
 			t.Fatalf("downward API volume %q has no explicit default mode", volume.Name)
 		}
+	}
+}
+
+func TestBuildCustomCAObserveSurvivesKubernetesAPIRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	job, err := builderFixture().Build(schemaFixture(), operationFixture(operatorv1alpha1.OperationObserve), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaulted := job.DeepCopy()
+	clientgoscheme.Scheme.Default(defaulted)
+	normalizeServiceAccountAlias := func(spec *corev1.PodSpec) {
+		if spec.DeprecatedServiceAccount == spec.ServiceAccountName {
+			spec.DeprecatedServiceAccount = ""
+		}
+	}
+	normalizeServiceAccountAlias(&job.Spec.Template.Spec)
+	normalizeServiceAccountAlias(&defaulted.Spec.Template.Spec)
+	if !reflect.DeepEqual(defaulted.Spec, job.Spec) {
+		t.Fatalf("Kubernetes API defaulting changed custom-CA Observe Job:\nwant: %#v\n got: %#v", job.Spec, defaulted.Spec)
+	}
+	payload, err := json.Marshal(defaulted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTripped := &batchv1.Job{}
+	if err := json.Unmarshal(payload, roundTripped); err != nil {
+		t.Fatal(err)
+	}
+	if !apiequality.Semantic.DeepEqualWithNilDifferentFromEmpty(roundTripped.Spec, defaulted.Spec) {
+		t.Fatal("JSON round trip changed the semantic custom-CA Observe Job intent")
 	}
 }
 

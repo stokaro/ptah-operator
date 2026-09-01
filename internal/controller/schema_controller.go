@@ -14,6 +14,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -3374,7 +3375,7 @@ func validateJobIntent(actual, expected *batchv1.Job, schema *operatorv1alpha1.P
 	if err := normalizeGeneratedJobSelector(expectedCopy); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(actualCopy.Spec, expectedCopy.Spec) {
+	if !apiequality.Semantic.DeepEqualWithNilDifferentFromEmpty(actualCopy.Spec, expectedCopy.Spec) {
 		return fmt.Errorf("Job workload spec does not match the immutable operation intent")
 	}
 	return nil
