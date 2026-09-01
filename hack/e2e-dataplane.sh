@@ -29,6 +29,7 @@ QUIESCENT_INTERVAL=${E2E_QUIESCENT_INTERVAL:-30m}
 BLOCKED_REFRESH_SECONDS=${E2E_BLOCKED_REFRESH_SECONDS:-30}
 BLOCKED_REFRESH_INTERVAL=${BLOCKED_REFRESH_SECONDS}s
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
+TLS_PROXY_ENDPOINT_WAIT_ATTEMPTS=60
 ADMISSION_RUNTIME_CLASS=ptah-e2e-runtime
 ADMISSION_RUNTIME_TAINT=operator.ptah.dev/e2e-runtime
 DIGEST_PIN_POLICY_NAME=e2e-digest-pin-verification-policy
@@ -196,6 +197,7 @@ RBAC_STATUS_RESOURCES=
 EPHEMERAL_SUBRESOURCE_TESTED=0
 TLS_PROXY_POD_NAME=
 TLS_PROXY_POD_UID=
+TLS_PROXY_POD_IP=
 TLS_PROXY_CONTAINER_ID=
 
 mkdir -p "$WORK_DIR/go-cache"
@@ -1491,7 +1493,11 @@ create_authenticated_tls_proxy() {
         {
           apiVersion: "v1", kind: "Service",
           metadata: {namespace: $namespace, name: $service},
-          spec: {selector: labels, ports: [{name: "tls", port: 5443, targetPort: "tls", protocol: "TCP"}]}
+          spec: {
+            ipFamilyPolicy: "SingleStack",
+            selector: labels,
+            ports: [{name: "tls", port: 5443, targetPort: "tls", protocol: "TCP"}]
+          }
         }
       ]
     }' >"$RESOURCE_FILE"
@@ -1586,11 +1592,18 @@ create_authenticated_tls_proxy() {
           }]
         ' >/dev/null || fail "TLS registry proxy Deployment lost its hardened credential-free contract"
 	k -n "$TEST_NAMESPACE" get service "$TLS_PROXY_SERVICE" -o json |
-		jq -e '
+		jq -e --arg service "$TLS_PROXY_SERVICE" '
+          .spec.ipFamilyPolicy == "SingleStack" and
+          (.spec.ipFamilies | length) == 1 and
+          .spec.publishNotReadyAddresses != true and
+          .spec.selector == {
+            "app.kubernetes.io/name": $service,
+            "app.kubernetes.io/component": "e2e-tls-registry-proxy"
+          } and
           (.spec.ports | length) == 1 and
           .spec.ports[0].name == "tls" and .spec.ports[0].port == 5443 and
           .spec.ports[0].targetPort == "tls" and .spec.ports[0].protocol == "TCP"
-        ' >/dev/null || fail "TLS proxy Service $TLS_PROXY_SERVICE exposes an unexpected port"
+        ' >/dev/null || fail "TLS proxy Service $TLS_PROXY_SERVICE lost its exact single-stack routing contract"
 }
 
 tls_proxy_request_count() {
@@ -1612,6 +1625,7 @@ capture_tls_proxy_identity() {
 	  [.items[] | select(.metadata.deletionTimestamp == null)] as $live |
 	  if ($live | length) == 1 and
 	      $live[0].status.phase == "Running" and
+	      ($live[0].status.podIP | type == "string" and length > 0) and
 	      ($live[0].status.conditions | any(.type == "Ready" and .status == "True")) and
 	      ([$live[0].status.containerStatuses[]? | select(
 	        .name == "tls-registry-proxy" and .ready == true and
@@ -1620,6 +1634,7 @@ capture_tls_proxy_identity() {
 	  then {
 	    name: $live[0].metadata.name,
 	    uid: $live[0].metadata.uid,
+	    podIP: $live[0].status.podIP,
 	    containerID: ($live[0].status.containerStatuses[] |
 	      select(.name == "tls-registry-proxy") | .containerID)
 	  } else error("expected one ready proxy Pod") end
@@ -1628,35 +1643,49 @@ capture_tls_proxy_identity() {
 	fi
 	TLS_PROXY_POD_NAME=$(printf '%s\n' "$tls_proxy_identity" | jq -er '.name')
 	TLS_PROXY_POD_UID=$(printf '%s\n' "$tls_proxy_identity" | jq -er '.uid')
+	TLS_PROXY_POD_IP=$(printf '%s\n' "$tls_proxy_identity" | jq -er '.podIP')
 	TLS_PROXY_CONTAINER_ID=$(printf '%s\n' "$tls_proxy_identity" | jq -er '.containerID')
-	if [ -z "$TLS_PROXY_POD_UID" ] || [ -z "$TLS_PROXY_CONTAINER_ID" ]; then
+	if [ -z "$TLS_PROXY_POD_NAME" ] || [ -z "$TLS_PROXY_POD_UID" ] ||
+		[ -z "$TLS_PROXY_POD_IP" ] || [ -z "$TLS_PROXY_CONTAINER_ID" ]; then
 		fail "TLS registry proxy exact Pod identity is incomplete"
 	fi
-	assert_tls_proxy_service_endpoints
+	wait_for_tls_proxy_service_endpoints
+	assert_tls_proxy_identity_stable
+}
+
+tls_proxy_service_endpoints_match() {
+	k -n "$TEST_NAMESPACE" get endpointslices \
+		-l "kubernetes.io/service-name=${TLS_PROXY_SERVICE}" -o json 2>/dev/null |
+		jq -e \
+			--arg namespace "$TEST_NAMESPACE" \
+			--arg name "$TLS_PROXY_POD_NAME" \
+			--arg uid "$TLS_PROXY_POD_UID" \
+			--arg podIP "$TLS_PROXY_POD_IP" \
+			-f "$ROOT_DIR/testdata/e2e/tls-proxy-service-endpoints.jq" >/dev/null
+}
+
+wait_for_tls_proxy_service_endpoints() {
+	tls_proxy_endpoint_attempt=0
+	while [ "$tls_proxy_endpoint_attempt" -lt "$TLS_PROXY_ENDPOINT_WAIT_ATTEMPTS" ]; do
+		if tls_proxy_service_endpoints_match; then
+			return 0
+		fi
+		tls_proxy_endpoint_attempt=$((tls_proxy_endpoint_attempt + 1))
+		if [ "$tls_proxy_endpoint_attempt" -lt "$TLS_PROXY_ENDPOINT_WAIT_ATTEMPTS" ]; then
+			sleep 1
+		fi
+	done
+	fail "TLS proxy Service $TLS_PROXY_SERVICE did not converge on the captured exact Pod"
 }
 
 assert_tls_proxy_service_endpoints() {
-	k -n "$TEST_NAMESPACE" get endpointslices \
-		-l "kubernetes.io/service-name=${TLS_PROXY_SERVICE}" -o json |
-		jq -e \
-			--arg name "$TLS_PROXY_POD_NAME" \
-			--arg uid "$TLS_PROXY_POD_UID" '
-              [.items[].endpoints[]? | select(
-                (.conditions.ready // false) == true and
-                (.conditions.terminating // false) == false)] as $ready |
-              ($ready | length) == 1 and
-              $ready[0].targetRef.apiVersion == "v1" and
-              $ready[0].targetRef.kind == "Pod" and
-              $ready[0].targetRef.name == $name and
-              $ready[0].targetRef.uid == $uid and
-              ($ready[0].addresses | length) == 1
-		    ' >/dev/null ||
+	tls_proxy_service_endpoints_match ||
 		fail "TLS proxy Service $TLS_PROXY_SERVICE can route outside the captured exact Pod"
 }
 
 assert_tls_proxy_identity_stable() {
 	if [ -z "$TLS_PROXY_POD_NAME" ] || [ -z "$TLS_PROXY_POD_UID" ] ||
-		[ -z "$TLS_PROXY_CONTAINER_ID" ]; then
+		[ -z "$TLS_PROXY_POD_IP" ] || [ -z "$TLS_PROXY_CONTAINER_ID" ]; then
 		fail "TLS registry proxy identity was not captured before the counter window"
 	fi
 	tls_proxy_pods=$(k -n "$TEST_NAMESPACE" get pods \
@@ -1666,12 +1695,14 @@ assert_tls_proxy_identity_stable() {
 		jq -e \
 			--arg name "$TLS_PROXY_POD_NAME" \
 			--arg uid "$TLS_PROXY_POD_UID" \
+			--arg podIP "$TLS_PROXY_POD_IP" \
 			--arg containerID "$TLS_PROXY_CONTAINER_ID" '
 	      [.items[] | select(.metadata.deletionTimestamp == null)] as $live |
 	      ($live | length) == 1 and
 	      $live[0].status.phase == "Running" and
 	      ($live[0].status.conditions | any(.type == "Ready" and .status == "True")) and
 	      $live[0].metadata.name == $name and $live[0].metadata.uid == $uid and
+	      $live[0].status.podIP == $podIP and
 	      ([$live[0].status.containerStatuses[] | select(
 	        .name == "tls-registry-proxy" and .restartCount == 0 and
 	        .ready == true and .containerID == $containerID and

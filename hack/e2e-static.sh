@@ -495,6 +495,8 @@ for tls_runtime_marker in \
 	'TLS_PROXY_BAD_CA_AUTH_SECRET' \
 	'TLS_PROXY_BAD_AUTHORITY_SECRET' \
 	'TLS_PROXY_WRONG_AUTHORITY=registry-mismatch.invalid:5443' \
+	'ipFamilyPolicy: "SingleStack"' \
+	'.spec.publishNotReadyAddresses != true' \
 	'capture_tls_proxy_identity' \
 	'assert_tls_proxy_identity_stable' \
 	'.containerID == $containerID' \
@@ -808,8 +810,14 @@ tls_capture_identity_section=$(sed -n '/^capture_tls_proxy_identity() {$/,/^}$/p
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 tls_stable_identity_section=$(sed -n '/^assert_tls_proxy_identity_stable() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
-tls_endpoint_identity_section=$(sed -n '/^assert_tls_proxy_service_endpoints() {$/,/^}$/p' \
+tls_endpoint_match_section=$(sed -n '/^tls_proxy_service_endpoints_match() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
+tls_endpoint_wait_section=$(sed -n '/^wait_for_tls_proxy_service_endpoints() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+tls_endpoint_assert_section=$(sed -n '/^assert_tls_proxy_service_endpoints() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+tls_endpoint_identity_filter=$(cat \
+	"$ROOT_DIR/testdata/e2e/tls-proxy-service-endpoints.jq")
 custom_ca_refusal_section=$(sed -n \
 	'/^assert_custom_ca_pre_child_refusal() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
@@ -824,7 +832,9 @@ source_isolation_section=$(sed -n '/^assert_source_job_isolation() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 for required_static_section in \
 	"$tls_count_section" "$tls_capture_identity_section" \
-	"$tls_stable_identity_section" "$tls_endpoint_identity_section" \
+	"$tls_stable_identity_section" "$tls_endpoint_match_section" \
+	"$tls_endpoint_wait_section" "$tls_endpoint_assert_section" \
+	"$tls_endpoint_identity_filter" \
 	"$custom_ca_refusal_section" \
 	"$custom_ca_acceptance_section" "$engine_lifecycle_section" \
 	"$digest_pin_section" "$source_isolation_section"; do
@@ -853,10 +863,14 @@ static_require_order "$tls_capture_identity_section" 'TLS proxy identity capture
 	'.restartCount == 0 and (.containerID | length) > 0' \
 	'TLS_PROXY_POD_NAME=' \
 	'TLS_PROXY_POD_UID=' \
+	'TLS_PROXY_POD_IP=' \
 	'TLS_PROXY_CONTAINER_ID=' \
-	'assert_tls_proxy_service_endpoints'
+	'wait_for_tls_proxy_service_endpoints' \
+	'assert_tls_proxy_identity_stable'
 static_require_count "$tls_capture_identity_section" \
-	'assert_tls_proxy_service_endpoints' 1 'TLS proxy capture EndpointSlice binding'
+	'wait_for_tls_proxy_service_endpoints' 1 'TLS proxy initial EndpointSlice convergence'
+static_require_count "$tls_capture_identity_section" \
+	'assert_tls_proxy_identity_stable' 1 'TLS proxy post-convergence identity binding'
 # shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
 static_require_order "$tls_stable_identity_section" 'TLS proxy stable identity re-list' \
 	'if [ -z "$TLS_PROXY_POD_NAME" ] ||' \
@@ -867,22 +881,157 @@ static_require_order "$tls_stable_identity_section" 'TLS proxy stable identity r
 	'$live[0].status.phase == "Running"' \
 	'any(.type == "Ready" and .status == "True")' \
 	'$live[0].metadata.name == $name and $live[0].metadata.uid == $uid' \
+	'$live[0].status.podIP == $podIP' \
 	'.name == "tls-registry-proxy" and .restartCount == 0' \
 	'.ready == true and .containerID == $containerID' \
 	'assert_tls_proxy_service_endpoints'
 static_require_count "$tls_stable_identity_section" \
 	'assert_tls_proxy_service_endpoints' 1 'TLS proxy stable EndpointSlice binding'
-# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
-static_require_order "$tls_endpoint_identity_section" 'TLS proxy EndpointSlice identity' \
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$tls_endpoint_match_section" 'TLS proxy EndpointSlice lookup' \
 	'kubernetes.io/service-name=${TLS_PROXY_SERVICE}' \
-	'(.conditions.ready // false) == true' \
-	'(.conditions.terminating // false) == false' \
-	'($ready | length) == 1' \
-	'$ready[0].targetRef.apiVersion == "v1"' \
-	'$ready[0].targetRef.kind == "Pod"' \
-	'$ready[0].targetRef.name == $name' \
-	'$ready[0].targetRef.uid == $uid' \
-	'($ready[0].addresses | length) == 1'
+	'--arg namespace "$TEST_NAMESPACE"' \
+	'--arg name "$TLS_PROXY_POD_NAME"' \
+	'--arg uid "$TLS_PROXY_POD_UID"' \
+	'--arg podIP "$TLS_PROXY_POD_IP"' \
+	'-f "$ROOT_DIR/testdata/e2e/tls-proxy-service-endpoints.jq"'
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$tls_endpoint_wait_section" 'bounded initial EndpointSlice convergence' \
+	'tls_proxy_endpoint_attempt=0' \
+	'while [ "$tls_proxy_endpoint_attempt" -lt "$TLS_PROXY_ENDPOINT_WAIT_ATTEMPTS" ]; do' \
+	'if tls_proxy_service_endpoints_match; then' \
+	'return 0' \
+	'tls_proxy_endpoint_attempt=$((tls_proxy_endpoint_attempt + 1))' \
+	'sleep 1' \
+	'did not converge on the captured exact Pod'
+static_require_order "$tls_endpoint_assert_section" 'one-shot EndpointSlice identity assertion' \
+	'tls_proxy_service_endpoints_match' \
+	'can route outside the captured exact Pod'
+# shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
+static_require_order "$tls_endpoint_identity_filter" 'TLS proxy EndpointSlice identity predicate' \
+	'(if ($podIP | contains(":")) then "IPv6" else "IPv4" end) as $addressType' \
+	'[.items[]? | select((.endpoints // []) | length > 0)] as $slices' \
+	'($slices | length) == 1' \
+	'$slices[0].addressType == $addressType' \
+	'($slices[0].ports | length) == 1' \
+	'$slices[0].ports[0].name == "tls"' \
+	'$slices[0].ports[0].protocol == "TCP"' \
+	'$slices[0].ports[0].port == 5443' \
+	'($slices[0].endpoints | length) == 1' \
+	'$endpoint.conditions.ready != false' \
+	'$endpoint.conditions.serving != false' \
+	'$endpoint.conditions.terminating != true' \
+	'$endpoint.targetRef.apiVersion == null' \
+	'$endpoint.targetRef.apiVersion == "v1"' \
+	'$endpoint.targetRef.kind == "Pod"' \
+	'$endpoint.targetRef.namespace == $namespace' \
+	'$endpoint.targetRef.name == $name' \
+	'$endpoint.targetRef.uid == $uid' \
+	'$endpoint.addresses == [$podIP]'
+
+tls_endpoint_namespace=ptah-endpoint-test
+tls_endpoint_name=e2e-registry-tls-pod
+tls_endpoint_uid=11111111-2222-3333-4444-555555555555
+tls_endpoint_ip=10.0.0.8
+tls_endpoint_fixture=$(jq -cn \
+	--arg namespace "$tls_endpoint_namespace" \
+	--arg name "$tls_endpoint_name" \
+	--arg uid "$tls_endpoint_uid" \
+	--arg podIP "$tls_endpoint_ip" '
+  {items: [{
+    addressType: "IPv4",
+    ports: [{name: "tls", protocol: "TCP", port: 5443}],
+    endpoints: [{
+      addresses: [$podIP],
+      conditions: {},
+      targetRef: {
+        kind: "Pod", namespace: $namespace, name: $name, uid: $uid
+      }
+    }]
+  }]}
+')
+
+tls_endpoint_fixture_matches() {
+	printf '%s\n' "$1" |
+		jq -e \
+			--arg namespace "$tls_endpoint_namespace" \
+			--arg name "$tls_endpoint_name" \
+			--arg uid "$tls_endpoint_uid" \
+			--arg podIP "$2" \
+			-f "$ROOT_DIR/testdata/e2e/tls-proxy-service-endpoints.jq" >/dev/null
+}
+
+tls_endpoint_fixture_matches "$tls_endpoint_fixture" "$tls_endpoint_ip" || {
+	printf '%s\n' 'e2e static: EndpointSlice predicate rejected omitted optional ready and API version fields' >&2
+	exit 1
+}
+tls_endpoint_explicit_fixture=$(printf '%s\n' "$tls_endpoint_fixture" | jq -ec '
+  .items[0].endpoints[0].conditions = {
+    ready: true, serving: true, terminating: false
+  } |
+  .items[0].endpoints[0].targetRef.apiVersion = "v1"
+')
+tls_endpoint_fixture_matches "$tls_endpoint_explicit_fixture" "$tls_endpoint_ip" || {
+	printf '%s\n' 'e2e static: EndpointSlice predicate rejected explicit valid endpoint fields' >&2
+	exit 1
+}
+tls_endpoint_ipv6=2001:db8::8
+tls_endpoint_ipv6_fixture=$(printf '%s\n' "$tls_endpoint_fixture" | jq -ec \
+	--arg podIP "$tls_endpoint_ipv6" '
+  .items[0].addressType = "IPv6" |
+  .items[0].endpoints[0].addresses = [$podIP]
+')
+tls_endpoint_fixture_matches "$tls_endpoint_ipv6_fixture" "$tls_endpoint_ipv6" || {
+	printf '%s\n' 'e2e static: EndpointSlice predicate rejected an exact IPv6 route' >&2
+	exit 1
+}
+
+assert_tls_endpoint_mutation_rejected() {
+	tls_endpoint_mutation_description=$1
+	tls_endpoint_mutation=$2
+	if ! tls_endpoint_mutated_fixture=$(printf '%s\n' "$tls_endpoint_fixture" |
+		jq -ec "$tls_endpoint_mutation"); then
+		printf 'e2e static: could not build EndpointSlice mutation %s\n' \
+			"$tls_endpoint_mutation_description" >&2
+		exit 1
+	fi
+	if tls_endpoint_fixture_matches "$tls_endpoint_mutated_fixture" "$tls_endpoint_ip"; then
+		printf 'e2e static: EndpointSlice predicate accepted mutation %s\n' \
+			"$tls_endpoint_mutation_description" >&2
+		exit 1
+	fi
+}
+
+assert_tls_endpoint_mutation_rejected 'extra unready endpoint' \
+	'.items[0].endpoints += [(.items[0].endpoints[0] | .conditions.ready = false)]'
+assert_tls_endpoint_mutation_rejected 'wrong address type' \
+	'.items[0].addressType = "IPv6"'
+assert_tls_endpoint_mutation_rejected 'extra endpoint port' \
+	'.items[0].ports += [{name: "admin", protocol: "TCP", port: 8081}]'
+assert_tls_endpoint_mutation_rejected 'wrong endpoint port name' \
+	'.items[0].ports[0].name = "admin"'
+assert_tls_endpoint_mutation_rejected 'wrong endpoint port protocol' \
+	'.items[0].ports[0].protocol = "UDP"'
+assert_tls_endpoint_mutation_rejected 'wrong endpoint port number' \
+	'.items[0].ports[0].port = 5444'
+assert_tls_endpoint_mutation_rejected 'not-ready endpoint' \
+	'.items[0].endpoints[0].conditions.ready = false'
+assert_tls_endpoint_mutation_rejected 'not-serving endpoint' \
+	'.items[0].endpoints[0].conditions.serving = false'
+assert_tls_endpoint_mutation_rejected 'terminating endpoint' \
+	'.items[0].endpoints[0].conditions.terminating = true'
+assert_tls_endpoint_mutation_rejected 'contradictory API version' \
+	'.items[0].endpoints[0].targetRef.apiVersion = "apps/v1"'
+assert_tls_endpoint_mutation_rejected 'wrong kind' \
+	'.items[0].endpoints[0].targetRef.kind = "Service"'
+assert_tls_endpoint_mutation_rejected 'missing namespace' \
+	'del(.items[0].endpoints[0].targetRef.namespace)'
+assert_tls_endpoint_mutation_rejected 'wrong name' \
+	'.items[0].endpoints[0].targetRef.name = "other-pod"'
+assert_tls_endpoint_mutation_rejected 'wrong UID' \
+	'.items[0].endpoints[0].targetRef.uid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"'
+assert_tls_endpoint_mutation_rejected 'wrong Pod IP' \
+	'.items[0].endpoints[0].addresses = ["10.0.0.9"]'
 
 [ "$(printf '%s\n' "$custom_ca_acceptance_section" |
 	grep -Ec '^[[:space:]]*assert_custom_ca_pre_child_refusal[[:space:]]')" -eq 2 ] || {
