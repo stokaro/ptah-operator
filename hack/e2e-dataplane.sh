@@ -131,7 +131,10 @@ umask 077
 RESOURCE_FILE=$WORK_DIR/resource.json
 SECRET_FILE=$WORK_DIR/database-secrets.json
 LOG_FILE=$WORK_DIR/logs.txt
+# The broad ledger also records targeted result evidence. Only the full ledger
+# certifies every exact owned Pod and started-container log for TTL/GC skips.
 AUDITED_JOBS_FILE=$WORK_DIR/audited-jobs.txt
+FULLY_AUDITED_JOBS_FILE=$WORK_DIR/fully-audited-jobs.txt
 OBSERVED_JOBS_FILE=$WORK_DIR/observed-jobs.jsonl
 CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
 PG_PASSWORD_FILE=$WORK_DIR/postgresql.password
@@ -150,6 +153,7 @@ MYSQL_DESTRUCTIVE_APPLY_CHECKPOINT=
 MYSQL_DESTRUCTIVE_DIGEST=
 PERIODIC_NOOP_CHECKPOINT=
 : >"$AUDITED_JOBS_FILE"
+: >"$FULLY_AUDITED_JOBS_FILE"
 : >"$OBSERVED_JOBS_FILE"
 RBAC_PAUSED=0
 RBAC_RULE_INDEX=
@@ -333,7 +337,7 @@ audit_completed_jobs() {
     [.metadata.uid, .metadata.name] | @tsv
   ' | while IFS="$(printf '\t')" read -r audit_uid audit_name; do
 		[ -n "$audit_uid" ] || continue
-		if grep -Fx "$audit_uid" "$AUDITED_JOBS_FILE" >/dev/null 2>&1; then
+		if grep -Fx "$audit_uid" "$FULLY_AUDITED_JOBS_FILE" >/dev/null 2>&1; then
 			continue
 		fi
 		audit_job_object=$(k -n "$TEST_NAMESPACE" get job "$audit_name" -o json 2>/dev/null || true)
@@ -462,7 +466,12 @@ audit_completed_jobs() {
             any((.type == "Complete" or .type == "Failed") and .status == "True"))
         ' >/dev/null ||
 			fail "terminal Job $audit_name changed identity during its exact Pod audit"
-		printf '%s\n' "$audit_uid" >>"$AUDITED_JOBS_FILE"
+		if ! grep -Fx "$audit_uid" "$AUDITED_JOBS_FILE" >/dev/null 2>&1; then
+			printf '%s\n' "$audit_uid" >>"$AUDITED_JOBS_FILE"
+		fi
+		if ! grep -Fx "$audit_uid" "$FULLY_AUDITED_JOBS_FILE" >/dev/null 2>&1; then
+			printf '%s\n' "$audit_uid" >>"$FULLY_AUDITED_JOBS_FILE"
+		fi
 	done
 }
 
@@ -499,8 +508,43 @@ audit_runtime_credentials() {
 		fi
 		scan_file_for_credentials "$LOG_FILE" "logs for exact manager Pod $manager_audit_pod"
 	done
-	for audit_pod in $(k -n "$TEST_NAMESPACE" get pods -o name); do
-		audit_pod_object=$(k -n "$TEST_NAMESPACE" get "$audit_pod" -o json)
+	audit_pods_snapshot=$(k -n "$TEST_NAMESPACE" get pods -o json)
+	if ! audit_pod_records=$(printf '%s\n' "$audit_pods_snapshot" | jq -r '
+	    .items[] |
+	    ([.metadata.ownerReferences[]? |
+	      select(.apiVersion == "batch/v1" and .kind == "Job" and .controller == true) |
+	      .uid]) as $controllerJobUIDs |
+	    ($controllerJobUIDs |
+	      if length == 0 then "-"
+	      elif length == 1 then .[0]
+	      else error("Pod has multiple controlling batch/v1 Job owners") end) as $controllerJobUID |
+	    [.metadata.name, .metadata.uid, (.status.phase // "Unknown"), $controllerJobUID] | @tsv
+	  '); then
+		fail "could not capture exact test Pod identities for credential audit"
+	fi
+	printf '%s\n' "$audit_pod_records" | while IFS="$(printf '\t')" read -r \
+		audit_pod_name audit_pod_uid \
+		audit_snapshot_phase audit_controller_job_uid; do
+		[ -n "$audit_pod_name" ] || continue
+		if [ "$audit_snapshot_phase" = Succeeded ] || [ "$audit_snapshot_phase" = Failed ]; then
+			if [ "$audit_controller_job_uid" != "-" ]; then
+				if grep -Fx "$audit_controller_job_uid" "$FULLY_AUDITED_JOBS_FILE" >/dev/null 2>&1; then
+					continue
+				fi
+			fi
+		fi
+		audit_pod="pod/$audit_pod_name"
+		if ! audit_pod_object=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" \
+			-o json 2>/dev/null); then
+			fail "unaudited exact Pod $audit_pod_name UID $audit_pod_uid disappeared before log audit"
+		fi
+		printf '%s\n' "$audit_pod_object" | jq -e \
+			--arg uid "$audit_pod_uid" '.metadata.uid == $uid' >/dev/null ||
+			fail "unaudited exact Pod $audit_pod_name changed identity before its log audit"
+		printf '%s\n' "$audit_pod_object" >"$RESOURCE_FILE"
+		scan_file_for_credentials "$RESOURCE_FILE" \
+			"unaudited exact Pod $audit_pod_name UID $audit_pod_uid"
+		: >"$RESOURCE_FILE"
 		audit_pod_phase=$(printf '%s\n' "$audit_pod_object" | jq -r '.status.phase // ""')
 		printf '%s\n' "$audit_pod_object" | jq -e '
         ([.status.initContainerStatuses // [], .status.containerStatuses // [],
@@ -533,13 +577,20 @@ audit_runtime_credentials() {
             ' >/dev/null || fail "terminal $audit_pod has unaudited nonterminal containers"
 			;;
 		esac
+		if ! audit_pod_after=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" \
+			-o json 2>/dev/null); then
+			fail "unaudited exact Pod $audit_pod_name UID $audit_pod_uid disappeared during log audit"
+		fi
+		printf '%s\n' "$audit_pod_after" | jq -e \
+			--arg uid "$audit_pod_uid" '.metadata.uid == $uid' >/dev/null ||
+			fail "unaudited exact Pod $audit_pod_name changed identity during its log audit"
 	done
 }
 
 assert_observed_jobs_audited() {
 	jq -er '.uid' "$OBSERVED_JOBS_FILE" | while IFS= read -r observed_uid; do
 		[ -n "$observed_uid" ] || continue
-		grep -Fx "$observed_uid" "$AUDITED_JOBS_FILE" >/dev/null ||
+		grep -Fx "$observed_uid" "$FULLY_AUDITED_JOBS_FILE" >/dev/null ||
 			fail "observed Job UID $observed_uid disappeared without a complete credential audit"
 	done
 }
@@ -2390,6 +2441,7 @@ audit_runtime_credentials
 
 printf '%s\n' 'e2e data plane: starting restart and fault-injection acceptance'
 E2E_AUDITED_JOBS_FILE=$AUDITED_JOBS_FILE \
+E2E_FULLY_AUDITED_JOBS_FILE=$FULLY_AUDITED_JOBS_FILE \
 E2E_OBSERVED_JOBS_FILE=$OBSERVED_JOBS_FILE \
 E2E_FIXTURE_IMAGE=$FIXTURE_IMAGE \
 E2E_RESULT_ASSERT_BINARY=$RESULT_ASSERT_BINARY \

@@ -18,6 +18,7 @@ FAULT_ACTIVE_DEADLINE_SECONDS=${E2E_FAULT_ACTIVE_DEADLINE_SECONDS:-7200}
 FAULT_BARRIER_SECONDS=${E2E_FAULT_BARRIER_SECONDS:-7800}
 FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS=${E2E_FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS:-45}
 SHARED_AUDITED_JOBS_FILE=${E2E_AUDITED_JOBS_FILE:-}
+SHARED_FULLY_AUDITED_JOBS_FILE=${E2E_FULLY_AUDITED_JOBS_FILE:-}
 SHARED_OBSERVED_JOBS_FILE=${E2E_OBSERVED_JOBS_FILE:-}
 
 # These locals transiently hold Secret values. Clearing imported definitions
@@ -88,13 +89,16 @@ done
 for value_name in \
 	KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE FIXTURE_IMAGE \
 	RESULT_ASSERT_BINARY \
-	SHARED_AUDITED_JOBS_FILE SHARED_OBSERVED_JOBS_FILE; do
+	SHARED_AUDITED_JOBS_FILE SHARED_FULLY_AUDITED_JOBS_FILE SHARED_OBSERVED_JOBS_FILE; do
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
 done
 [ -f "$KUBECONFIG_FILE" ] || fail "E2E_KUBECONFIG does not name a file"
 if [ ! -f "$SHARED_AUDITED_JOBS_FILE" ] || [ ! -w "$SHARED_AUDITED_JOBS_FILE" ]; then
 	fail "E2E_AUDITED_JOBS_FILE must name the writable parent audit ledger"
+fi
+if [ ! -f "$SHARED_FULLY_AUDITED_JOBS_FILE" ] || [ ! -w "$SHARED_FULLY_AUDITED_JOBS_FILE" ]; then
+	fail "E2E_FULLY_AUDITED_JOBS_FILE must name the writable parent full-audit ledger"
 fi
 if [ ! -f "$SHARED_OBSERVED_JOBS_FILE" ] || [ ! -w "$SHARED_OBSERVED_JOBS_FILE" ]; then
 	fail "E2E_OBSERVED_JOBS_FILE must name the writable parent Job ledger"
@@ -137,10 +141,14 @@ RESOURCE_FILE=$WORK_DIR/resource.json
 LOG_FILE=$WORK_DIR/private.log
 AUDITED_FAULT_JOBS_FILE=$WORK_DIR/audited-job-uids.txt
 AUDITED_FAULT_PODS_FILE=$WORK_DIR/audited-pod-uids.txt
+# Targeted proofs enter the broad ledgers above. Only these full ledgers can
+# authorize a TTL/GC skip; a proven never-started Pod has no logs to collect.
+FULLY_AUDITED_FAULT_PODS_FILE=$WORK_DIR/fully-audited-pod-uids.txt
 FAULT_CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
 URL_VALUE_FILE=$WORK_DIR/database.url
 : >"$AUDITED_FAULT_JOBS_FILE"
 : >"$AUDITED_FAULT_PODS_FILE"
+: >"$FULLY_AUDITED_FAULT_PODS_FILE"
 
 stop_pid() {
 	stop_target=$1
@@ -508,15 +516,59 @@ audit_fault_runtime() {
 			scan_fault_file "$LOG_FILE" "logs for exact manager Pod $manager_audit_pod"
 		done
 
-	for audit_pod in $(k -n "$TEST_NAMESPACE" get pods -o name); do
-		audit_pod_object=$(k -n "$TEST_NAMESPACE" get "$audit_pod" -o json)
-		audit_pod_uid=$(printf '%s\n' "$audit_pod_object" | jq -er '.metadata.uid')
+	fault_audit_pods=$(k -n "$TEST_NAMESPACE" get pods -o json)
+	if ! fault_audit_pod_records=$(printf '%s\n' "$fault_audit_pods" | jq -r '
+      .items[] |
+	    (.metadata.name |
+	      if type == "string" and length > 0 then .
+	      else error("Pod has no exact name") end) as $podName |
+	    (.metadata.uid |
+	      if type == "string" and length > 0 then .
+	      else error("Pod has no exact UID") end) as $podUID |
+	    ([.metadata.ownerReferences[]? |
+	      select(.apiVersion == "batch/v1" and .kind == "Job" and .controller == true) |
+	      (.uid |
+	        if type == "string" and length > 0 then .
+	        else error("controlling Job owner has no exact UID") end)]) as $controllerJobUIDs |
+	    ($controllerJobUIDs |
+	      if length == 0 then "-"
+	      elif length == 1 then .[0]
+	      else error("Pod has multiple controlling batch/v1 Job owners") end) as $controllerJobUID |
+	    [$podName, $podUID, (.status.phase // "Unknown"), $controllerJobUID] | @tsv
+	  '); then
+		fail "could not capture exact fault-test Pod identities for credential audit"
+	fi
+	printf '%s\n' "$fault_audit_pod_records" | while IFS="$(printf '\t')" read -r \
+		audit_pod_name audit_pod_uid \
+		audit_snapshot_phase audit_pod_job_uid; do
+		[ -n "$audit_pod_name" ] || continue
+		if [ "$audit_snapshot_phase" = Succeeded ] || [ "$audit_snapshot_phase" = Failed ]; then
+			if [ "$audit_pod_job_uid" != "-" ]; then
+				if grep -Fx "$audit_pod_job_uid" "$SHARED_FULLY_AUDITED_JOBS_FILE" >/dev/null 2>&1; then
+					record_audited_uid "$AUDITED_FAULT_PODS_FILE" "$audit_pod_uid"
+					record_audited_uid "$FULLY_AUDITED_FAULT_PODS_FILE" "$audit_pod_uid"
+					record_audited_uid "$AUDITED_FAULT_JOBS_FILE" "$audit_pod_job_uid"
+					continue
+				fi
+			fi
+		fi
+		if ! audit_pod_object=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" \
+			-o json 2>/dev/null); then
+			fail "unaudited fault-test Pod $audit_pod_name UID $audit_pod_uid disappeared before its log audit"
+		fi
+		printf '%s\n' "$audit_pod_object" | jq -e \
+			--arg uid "$audit_pod_uid" '.metadata.uid == $uid' >/dev/null ||
+			fail "unaudited fault-test Pod $audit_pod_name was replaced before UID $audit_pod_uid was audited"
+		printf '%s\n' "$audit_pod_object" >"$RESOURCE_FILE"
+		scan_fault_file "$RESOURCE_FILE" \
+			"the exact live fault-test Pod $audit_pod_name UID $audit_pod_uid"
+		: >"$RESOURCE_FILE"
 		audit_pod_phase=$(printf '%s\n' "$audit_pod_object" | jq -r '.status.phase // ""')
 		printf '%s\n' "$audit_pod_object" | jq -e '
         ([.status.initContainerStatuses // [], .status.containerStatuses // [],
           .status.ephemeralContainerStatuses // []] | add) as $statuses |
         all($statuses[]; (.restartCount // 0) == 0)
-      ' >/dev/null || fail "fault-test Pod $audit_pod restarted a container before complete log audit"
+      ' >/dev/null || fail "fault-test Pod $audit_pod_name restarted a container before complete log audit"
 		audit_started_containers=$(printf '%s\n' "$audit_pod_object" | jq -r '
         [(.status.initContainerStatuses // [])[],
          (.status.containerStatuses // [])[],
@@ -524,14 +576,18 @@ audit_fault_runtime() {
         .[] | select(.state.running != null or .state.terminated != null) | .name
       ')
 		for audit_container in $audit_started_containers; do
-			if ! k -n "$TEST_NAMESPACE" logs "$audit_pod" -c "$audit_container" >"$LOG_FILE" 2>&1; then
-				fail "could not audit logs for started container $audit_container in fault-test Pod $audit_pod"
+			if ! k -n "$TEST_NAMESPACE" logs pod/"$audit_pod_name" -c "$audit_container" >"$LOG_FILE" 2>&1; then
+				fail "could not audit logs for started container $audit_container in fault-test Pod $audit_pod_name"
 			fi
-			scan_fault_file "$LOG_FILE" "logs for container $audit_container in fault-test Pod $audit_pod"
+			scan_fault_file "$LOG_FILE" "logs for container $audit_container in fault-test Pod $audit_pod_name"
 		done
-		k -n "$TEST_NAMESPACE" get "$audit_pod" -o json | jq -e \
+		if ! audit_pod_after=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" \
+			-o json 2>/dev/null); then
+			fail "unaudited fault-test Pod $audit_pod_name UID $audit_pod_uid disappeared during its log audit"
+		fi
+		printf '%s\n' "$audit_pod_after" | jq -e \
 			--arg uid "$audit_pod_uid" '.metadata.uid == $uid' >/dev/null ||
-			fail "fault-test Pod $audit_pod changed identity during its log audit"
+			fail "unaudited fault-test Pod $audit_pod_name changed identity during its log audit"
 		case "$audit_pod_phase" in
 		Succeeded | Failed)
 			printf '%s\n' "$audit_pod_object" | jq -e '
@@ -541,8 +597,9 @@ audit_fault_runtime() {
               .status.ephemeralContainerStatuses // []] |
               add | map(select(.state.terminated != null) | .name) | sort) as $terminated |
             $declared == $terminated
-          ' >/dev/null || fail "terminal fault-test Pod $audit_pod has unaudited nonterminal containers"
+          ' >/dev/null || fail "terminal fault-test Pod $audit_pod_name has unaudited nonterminal containers"
 			record_audited_uid "$AUDITED_FAULT_PODS_FILE" "$audit_pod_uid"
+			record_audited_uid "$FULLY_AUDITED_FAULT_PODS_FILE" "$audit_pod_uid"
 			;;
 		esac
 	done
@@ -555,6 +612,10 @@ audit_fault_runtime() {
 		[.metadata.uid, .metadata.name] | @tsv
     ' | while IFS="$(printf '\t')" read -r audit_job_uid audit_job_name; do
 		[ -n "$audit_job_uid" ] || continue
+		if grep -Fx "$audit_job_uid" "$SHARED_FULLY_AUDITED_JOBS_FILE" >/dev/null 2>&1; then
+			record_audited_uid "$AUDITED_FAULT_JOBS_FILE" "$audit_job_uid"
+			continue
+		fi
 		audit_job_object=$(k -n "$TEST_NAMESPACE" get job "$audit_job_name" -o json 2>/dev/null || true)
 		[ -n "$audit_job_object" ] ||
 			fail "terminal fault-test Job $audit_job_name UID $audit_job_uid disappeared before audit"
@@ -576,15 +637,21 @@ audit_fault_runtime() {
 		[ "$(printf '%s\n' "$audit_job_pods" | jq '.items | length')" -gt 0 ] || continue
 		if ! printf '%s\n' "$audit_job_pods" | jq -r '.items[].metadata.uid' |
 			while IFS= read -r audit_job_pod_uid; do
-				grep -Fx "$audit_job_pod_uid" "$AUDITED_FAULT_PODS_FILE" >/dev/null || exit 1
+				grep -Fx "$audit_job_pod_uid" "$FULLY_AUDITED_FAULT_PODS_FILE" >/dev/null || exit 1
 			done; then
 			continue
 		fi
+		printf '%s\n' "$audit_job_object" >"$RESOURCE_FILE"
+		printf '%s\n' "$audit_job_pods" >>"$RESOURCE_FILE"
+		scan_fault_file "$RESOURCE_FILE" \
+			"the exact terminal fault-test Job $audit_job_name and its exact owned Pods"
+		: >"$RESOURCE_FILE"
 		k -n "$TEST_NAMESPACE" get job "$audit_job_name" -o json | jq -e \
 			--arg uid "$audit_job_uid" '.metadata.uid == $uid' >/dev/null ||
 			fail "terminal fault-test Job $audit_job_name changed UID during its Pod audit"
 		record_audited_uid "$AUDITED_FAULT_JOBS_FILE" "$audit_job_uid"
 		record_audited_uid "$SHARED_AUDITED_JOBS_FILE" "$audit_job_uid"
+		record_audited_uid "$SHARED_FULLY_AUDITED_JOBS_FILE" "$audit_job_uid"
 	done
 	: >"$LOG_FILE"
 	LAST_FAULT_AUDIT_AT=$(date +%s)
@@ -2542,10 +2609,11 @@ record_deadline_pending_pod_evidence() {
 	printf '%s\n' "$deadline_pod_object" >"$RESOURCE_FILE"
 	scan_fault_file "$RESOURCE_FILE" "the exact never-started pre-deadline Apply Pod"
 	record_audited_uid "$AUDITED_FAULT_PODS_FILE" "$deadline_pod_uid"
+	record_audited_uid "$FULLY_AUDITED_FAULT_PODS_FILE" "$deadline_pod_uid"
 	: >"$RESOURCE_FILE"
 }
 
-wait_for_exact_pod_absence_without_audit() {
+wait_for_exact_pod_absence_after_evidence() {
 	absent_pod_name=$1
 	absent_pod_uid=$2
 	absent_pod_deadline=$(deadline_from_now)
@@ -2564,6 +2632,9 @@ wait_for_deadline_job_terminal_and_audit() {
 	deadline_terminal_name=$1
 	deadline_terminal_uid=$2
 	deadline_terminal_seconds=$3
+	deadline_terminal_pod_uid=$4
+	[ -n "$deadline_terminal_pod_uid" ] ||
+		fail "timeout Apply Job $deadline_terminal_name has no exact fully audited Pod UID"
 	deadline_terminal_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$deadline_terminal_deadline" ]; do
 		deadline_terminal_object=$(k -n "$TEST_NAMESPACE" get job "$deadline_terminal_name" -o json 2>/dev/null || true)
@@ -2586,8 +2657,11 @@ wait_for_deadline_job_terminal_and_audit() {
             ' >/dev/null; then
 				printf '%s\n' "$deadline_terminal_object" >"$RESOURCE_FILE"
 				scan_fault_file "$RESOURCE_FILE" "the exact DeadlineExceeded Apply Job"
+				grep -Fx "$deadline_terminal_pod_uid" "$FULLY_AUDITED_FAULT_PODS_FILE" >/dev/null ||
+					fail "timeout Apply Job $deadline_terminal_name lacks its fully audited Pod UID"
 				record_audited_uid "$AUDITED_FAULT_JOBS_FILE" "$deadline_terminal_uid"
 				record_audited_uid "$SHARED_AUDITED_JOBS_FILE" "$deadline_terminal_uid"
+				record_audited_uid "$SHARED_FULLY_AUDITED_JOBS_FILE" "$deadline_terminal_uid"
 				: >"$RESOURCE_FILE"
 				return 0
 			fi
@@ -3663,8 +3737,9 @@ MYSQL_TIMEOUT_LEASE_UID=$LEASE_UID
 MYSQL_TIMEOUT_LEASE_HOLDER=$LEASE_HOLDER
 MYSQL_TIMEOUT_LEASE_EPOCH=$LEASE_EPOCH
 wait_for_deadline_job_terminal_and_audit "$MYSQL_TIMEOUT_JOB_NAME" \
-	"$MYSQL_TIMEOUT_JOB_UID" "$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS"
-wait_for_exact_pod_absence_without_audit "$MYSQL_TIMEOUT_POD_NAME" \
+	"$MYSQL_TIMEOUT_JOB_UID" "$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS" \
+	"$MYSQL_TIMEOUT_POD_UID"
+wait_for_exact_pod_absence_after_evidence "$MYSQL_TIMEOUT_POD_NAME" \
 	"$MYSQL_TIMEOUT_POD_UID"
 capture_uncertain_read_proof_pair "$MYSQL_TIMEOUT_SCHEMA" \
 	"$MYSQL_TIMEOUT_OPERATION_ID" "$MYSQL_TIMEOUT_JOB_NAME" "$MYSQL_TIMEOUT_JOB_UID" \
@@ -4273,6 +4348,14 @@ assert_database_column postgresql "$PG_ALIAS_DB" fault_token 1
 # Keep a consumed, user-owned approval whose schema no longer exists. It is a
 # side-effect-free sentinel for closing the approval watch at an exact API
 # resourceVersion after all operational scenarios.
+audit_fault_runtime
+for alias_b_fully_audited_job_uid in \
+	"$ALIAS_B_JOB_UID" "$ALIAS_B_RECOVERY_OBSERVE_UID" "$ALIAS_B_RECOVERY_PLAN_UID"; do
+	[ -n "$alias_b_fully_audited_job_uid" ] ||
+		fail "shared-alias cascade boundary has an empty exact Job UID"
+	grep -Fx "$alias_b_fully_audited_job_uid" "$SHARED_FULLY_AUDITED_JOBS_FILE" >/dev/null ||
+		fail "shared-alias cascade boundary would delete a Job without a full container audit"
+done
 k -n "$TEST_NAMESPACE" delete ptahschema "$PG_ALIAS_SCHEMA_B" --wait=false >/dev/null
 wait_for_absence ptahschema "$PG_ALIAS_SCHEMA_B"
 k -n "$TEST_NAMESPACE" get ptahschemaapproval "$ALIAS_B_APPROVAL" >/dev/null ||

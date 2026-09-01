@@ -279,6 +279,262 @@ if printf '%s\n' "$scheduled_tag_section" |
 	printf '%s\n' 'e2e static: scheduled tag discovery lacks an upper Job checkpoint' >&2
 	exit 1
 fi
+static_reject_marker() {
+	static_section=$1
+	static_marker=$2
+	static_context=$3
+	if printf '%s\n' "$static_section" | grep -F -- "$static_marker" >/dev/null; then
+		printf 'e2e static: %s contains forbidden marker %s\n' \
+			"$static_context" "$static_marker" >&2
+		exit 1
+	fi
+}
+static_require_count() {
+	static_section=$1
+	static_marker=$2
+	static_expected=$3
+	static_context=$4
+	static_actual=$(printf '%s\n' "$static_section" | grep -Fc -- "$static_marker" || true)
+	[ "$static_actual" -eq "$static_expected" ] || {
+		printf 'e2e static: %s has %s occurrences of %s, expected %s\n' \
+			"$static_context" "$static_actual" "$static_marker" "$static_expected" >&2
+		exit 1
+	}
+}
+
+static_require_order() {
+	static_section=$1
+	static_context=$2
+	shift 2
+	static_after=0
+	for static_marker do
+		static_line=$(printf '%s\n' "$static_section" | grep -Fn -- "$static_marker" |
+			awk -F: -v after="$static_after" '$1 > after { print $1; exit }')
+		[ -n "$static_line" ] || {
+			printf 'e2e static: %s lacks ordered marker %s after line %s\n' \
+				"$static_context" "$static_marker" "$static_after" >&2
+			exit 1
+		}
+		static_after=$static_line
+	done
+}
+
+for runtime_audit_script in e2e-dataplane.sh e2e-faults.sh; do
+	case "$runtime_audit_script" in
+	e2e-dataplane.sh)
+		runtime_audit_function=audit_runtime_credentials
+		runtime_snapshot_variable=audit_pods_snapshot
+		runtime_owner_uid_variable=audit_controller_job_uid
+		runtime_job_ledger=FULLY_AUDITED_JOBS_FILE
+		runtime_broad_job_ledger=AUDITED_JOBS_FILE
+		runtime_generic_end='^}'
+	;;
+	e2e-faults.sh)
+		runtime_audit_function=audit_fault_runtime
+		runtime_snapshot_variable=fault_audit_pods
+		runtime_owner_uid_variable=audit_pod_job_uid
+		runtime_job_ledger=SHARED_FULLY_AUDITED_JOBS_FILE
+		runtime_broad_job_ledger=SHARED_AUDITED_JOBS_FILE
+		runtime_generic_end='^[[:space:]]*terminal_jobs='
+	;;
+	esac
+	runtime_audit_function_section=$(sed -n \
+		"/^${runtime_audit_function}()/,/^}/p" \
+		"$ROOT_DIR/hack/$runtime_audit_script")
+	runtime_audit_generic_section=$(printf '%s\n' "$runtime_audit_function_section" |
+		sed -n "/^[[:space:]]*${runtime_snapshot_variable}=/,/${runtime_generic_end}/p")
+	runtime_snapshot_marker="${runtime_snapshot_variable}=\$(k -n \"\$TEST_NAMESPACE\" get pods -o json)"
+	static_require_count "$runtime_audit_generic_section" "$runtime_snapshot_marker" 1 \
+		"$runtime_audit_function JSON Pod snapshot"
+	static_require_count "$runtime_audit_generic_section" 'get pods -o json' 1 \
+		"$runtime_audit_function generic Pod list"
+	static_reject_marker "$runtime_audit_generic_section" 'get pods -o name' \
+		"$runtime_audit_function generic Pod audit"
+	static_reject_marker "$runtime_audit_generic_section" "for audit_pod in \$(" \
+		"$runtime_audit_function generic Pod audit"
+	runtime_ledger_marker="grep -Fx \"\$${runtime_owner_uid_variable}\" \"\$${runtime_job_ledger}\""
+	runtime_terminal_phase_marker="if [ \"\$audit_snapshot_phase\" = Succeeded ] || [ \"\$audit_snapshot_phase\" = Failed ]; then"
+	runtime_owner_uid_marker="[ \"\$${runtime_owner_uid_variable}\" != \"-\" ]"
+	runtime_live_get_marker="audit_pod_object=\$(k -n \"\$TEST_NAMESPACE\" get pod \"\$audit_pod_name\""
+	runtime_post_get_marker="audit_pod_after=\$(k -n \"\$TEST_NAMESPACE\" get pod \"\$audit_pod_name\""
+	runtime_uid_marker=".metadata.uid == \$uid"
+	runtime_object_write_marker="printf '%s\\n' \"\$audit_pod_object\" >\"\$RESOURCE_FILE\""
+	runtime_skip_section=$(printf '%s\n' "$runtime_audit_generic_section" |
+		sed -n "/^[[:space:]]*if \\[[[:space:]]*\"\\\$audit_snapshot_phase\" = Succeeded/,/audit_pod_object=/p")
+	static_require_count "$runtime_skip_section" "$runtime_ledger_marker" 1 \
+		"$runtime_audit_function full-ledger Pod skip"
+	runtime_skip_greps=$(printf '%s\n' "$runtime_skip_section" | grep -F 'grep -' || true)
+	static_reject_marker "$runtime_skip_greps" "\$${runtime_broad_job_ledger}" \
+		"$runtime_audit_function broad Job-ledger authorization"
+	case "$runtime_audit_script" in
+	e2e-dataplane.sh)
+		runtime_resource_scan_marker="scan_file_for_credentials \"\$RESOURCE_FILE\""
+		runtime_log_scan_marker="scan_file_for_credentials \"\$LOG_FILE\""
+		static_require_order "$runtime_audit_generic_section" "$runtime_audit_function full-ledger Pod audit" \
+			"$runtime_snapshot_marker" '.metadata.ownerReferences' \
+			'.apiVersion == "batch/v1" and .kind == "Job" and .controller == true' \
+			'elif length == 1 then .[0]' \
+			"$runtime_terminal_phase_marker" "$runtime_owner_uid_marker" \
+			"$runtime_ledger_marker" 'continue' "$runtime_live_get_marker" \
+			"fail \"unaudited exact Pod \$audit_pod_name UID \$audit_pod_uid disappeared before log audit\"" "$runtime_uid_marker" \
+			"fail \"unaudited exact Pod \$audit_pod_name changed identity before its log audit\"" "$runtime_object_write_marker" \
+			"$runtime_resource_scan_marker" "$runtime_log_scan_marker" \
+			"$runtime_post_get_marker" "fail \"unaudited exact Pod \$audit_pod_name UID \$audit_pod_uid disappeared during log audit\"" \
+			"$runtime_uid_marker" "fail \"unaudited exact Pod \$audit_pod_name changed identity during its log audit\""
+	;;
+	e2e-faults.sh)
+		static_reject_marker "$runtime_skip_greps" "\$AUDITED_FAULT_PODS_FILE" \
+			'fault generic broad Pod-ledger authorization'
+		static_reject_marker "$runtime_skip_greps" "\$AUDITED_FAULT_JOBS_FILE" \
+			'fault generic broad Job-ledger authorization'
+		runtime_resource_scan_marker="scan_fault_file \"\$RESOURCE_FILE\""
+		runtime_log_scan_marker="scan_fault_file \"\$LOG_FILE\""
+		static_require_order "$runtime_audit_generic_section" "$runtime_audit_function full-ledger Pod audit" \
+			"$runtime_snapshot_marker" '.metadata.ownerReferences' \
+			'.apiVersion == "batch/v1" and .kind == "Job" and .controller == true' \
+			'elif length == 1 then .[0]' \
+			"$runtime_terminal_phase_marker" "$runtime_owner_uid_marker" \
+			"$runtime_ledger_marker" \
+			"record_audited_uid \"\$AUDITED_FAULT_PODS_FILE\" \"\$audit_pod_uid\"" \
+			"record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\" \"\$audit_pod_uid\"" \
+			"record_audited_uid \"\$AUDITED_FAULT_JOBS_FILE\" \"\$${runtime_owner_uid_variable}\"" \
+			'continue' "$runtime_live_get_marker" \
+			"fail \"unaudited fault-test Pod \$audit_pod_name UID \$audit_pod_uid disappeared before its log audit\"" "$runtime_uid_marker" \
+			"fail \"unaudited fault-test Pod \$audit_pod_name was replaced before UID \$audit_pod_uid was audited\"" "$runtime_object_write_marker" \
+			"$runtime_resource_scan_marker" "$runtime_log_scan_marker" \
+			"$runtime_post_get_marker" "fail \"unaudited fault-test Pod \$audit_pod_name UID \$audit_pod_uid disappeared during its log audit\"" \
+			"$runtime_uid_marker" "fail \"unaudited fault-test Pod \$audit_pod_name changed identity during its log audit\""
+	;;
+	esac
+done
+dataplane_script=$(sed -n '1,$p' "$ROOT_DIR/hack/e2e-dataplane.sh")
+static_require_order "$dataplane_script" 'data-plane full-audit ledger wiring' \
+	"FULLY_AUDITED_JOBS_FILE=\$WORK_DIR/fully-audited-jobs.txt" \
+	": >\"\$FULLY_AUDITED_JOBS_FILE\"" \
+	"E2E_FULLY_AUDITED_JOBS_FILE=\$FULLY_AUDITED_JOBS_FILE"
+observed_audit_section=$(sed -n '/^assert_observed_jobs_audited()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+static_require_count "$observed_audit_section" "grep -Fx \"\$observed_uid\" \"\$FULLY_AUDITED_JOBS_FILE\"" 1 \
+	'observed Job full-audit assertion'
+static_reject_marker "$observed_audit_section" \
+	"grep -Fx \"\$observed_uid\" \"\$AUDITED_JOBS_FILE\"" \
+	'observed Job broad-ledger assertion'
+completed_job_audit_section=$(sed -n '/^audit_completed_jobs()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+completed_full_write_marker="printf '%s\\n' \"\$audit_uid\" >>\"\$FULLY_AUDITED_JOBS_FILE\""
+static_require_order "$completed_job_audit_section" 'completed Job full-audit commit' \
+	"grep -Fx \"\$audit_uid\" \"\$FULLY_AUDITED_JOBS_FILE\"" 'continue' \
+	"audit_job_object=\$(k -n \"\$TEST_NAMESPACE\" get job \"\$audit_name\"" \
+	"audit_owned_pods=\$(printf '%s\\n' \"\$audit_pods\"" "--arg uid \"\$audit_uid\"" \
+	".uid == \$uid and .controller == true))" "printf '%s\\n%s\\n' \"\$audit_job_object\" \"\$audit_owned_pods\" >\"\$RESOURCE_FILE\"" \
+	"scan_file_for_credentials \"\$RESOURCE_FILE\"" ".metadata.uid == \$podUID" \
+	"fail \"exact Pod \$audit_pod_name UID \$audit_pod_uid lacks complete terminal evidence\"" "audit_containers=\$(printf '%s\\n' \"\$audit_pod_object\"" \
+	"scan_file_for_credentials \"\$LOG_FILE\"" ".metadata.uid == \$podUID" \
+	"fail \"exact Pod \$audit_pod_name changed identity during its log audit\"" ".metadata.uid == \$uid" \
+	"fail \"terminal Job \$audit_name changed identity during its exact Pod audit\"" "$completed_full_write_marker"
+static_require_count "$dataplane_script" \
+	"$completed_full_write_marker" 1 'data-plane full Job write sites'
+capture_result_section=$(sed -n '/^capture_one_new_job_result()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+static_reject_marker "$capture_result_section" 'FULLY_AUDITED' \
+	'result transport capture full-audit claim'
+fault_runtime_audit_function_section=$(sed -n '/^audit_fault_runtime()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+fault_script=$(sed -n '1,$p' "$ROOT_DIR/hack/e2e-faults.sh")
+static_require_order "$fault_script" 'fault full-audit ledger initialization' \
+	"SHARED_FULLY_AUDITED_JOBS_FILE=\${E2E_FULLY_AUDITED_JOBS_FILE:-}" \
+	"FULLY_AUDITED_FAULT_PODS_FILE=\$WORK_DIR/fully-audited-pod-uids.txt" \
+	": >\"\$FULLY_AUDITED_FAULT_PODS_FILE\""
+fault_generic_audit_section=$(printf '%s\n' "$fault_runtime_audit_function_section" |
+	sed -n '/^[[:space:]]*fault_audit_pods=/,/^[[:space:]]*terminal_jobs=/p')
+fault_full_pod_record_marker="record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\" \"\$audit_pod_uid\""
+static_require_count "$fault_generic_audit_section" "$fault_full_pod_record_marker" 2 \
+	'fault generic full-Pod write sites'
+fault_terminal_pod_arm=$(printf '%s\n' "$fault_generic_audit_section" |
+	sed -n '/^[[:space:]]*Succeeded | Failed)/,/^[[:space:]]*;;/p')
+static_require_count "$fault_terminal_pod_arm" "$fault_full_pod_record_marker" 1 \
+	'fault terminal Pod-arm full-audit writes'
+static_require_order "$fault_terminal_pod_arm" 'fault terminal Pod-arm promotion' \
+	"\$declared == \$terminated" "$fault_full_pod_record_marker" ';;'
+static_require_order "$fault_generic_audit_section" 'fault full-Pod commit' \
+	"scan_fault_file \"\$LOG_FILE\"" \
+	"audit_pod_after=\$(k -n \"\$TEST_NAMESPACE\" get pod \"\$audit_pod_name\"" \
+	"\$declared == \$terminated" "$fault_full_pod_record_marker"
+fault_capture_result_section=$(sed -n '/^capture_exact_job_result()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+static_reject_marker "$fault_capture_result_section" 'FULLY_AUDITED' \
+	'exact result capture full-audit claim'
+fault_terminal_job_section=$(printf '%s\n' "$fault_runtime_audit_function_section" |
+	sed -n '/^[[:space:]]*terminal_jobs=/,/^}/p')
+fault_terminal_ledger_marker="grep -Fx \"\$audit_job_uid\" \"\$SHARED_FULLY_AUDITED_JOBS_FILE\""
+fault_shared_full_write_marker="record_audited_uid \"\$SHARED_FULLY_AUDITED_JOBS_FILE\""
+fault_terminal_skip_section=$(printf '%s\n' "$fault_terminal_job_section" |
+	sed -n '/^[[:space:]]*if grep -Fx/,/audit_job_object=/p')
+static_require_count "$fault_terminal_skip_section" "$fault_terminal_ledger_marker" 1 \
+	'fault terminal full-ledger Job skip'
+fault_terminal_skip_greps=$(printf '%s\n' "$fault_terminal_skip_section" |
+	grep -F 'grep -' || true)
+static_reject_marker "$fault_terminal_skip_greps" "\$AUDITED_FAULT_JOBS_FILE" \
+	'fault terminal local broad-ledger authorization'
+static_reject_marker "$fault_terminal_skip_greps" "\$SHARED_AUDITED_JOBS_FILE" \
+	'fault terminal shared broad-ledger authorization'
+static_require_order "$fault_terminal_job_section" 'fault full Job promotion' \
+	"$fault_terminal_ledger_marker" \
+	"record_audited_uid \"\$AUDITED_FAULT_JOBS_FILE\" \"\$audit_job_uid\"" \
+	'continue' "audit_job_object=\$(k -n \"\$TEST_NAMESPACE\" get job \"\$audit_job_name\"" ".metadata.uid == \$uid" \
+	"audit_job_pods=\$(k -n \"\$TEST_NAMESPACE\" get pods -o json" \
+	".uid == \$uid and .controller == true))" \
+	"grep -Fx \"\$audit_job_pod_uid\" \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" \
+	"printf '%s\\n' \"\$audit_job_object\" >\"\$RESOURCE_FILE\"" \
+	"printf '%s\\n' \"\$audit_job_pods\" >>\"\$RESOURCE_FILE\"" \
+	"scan_fault_file \"\$RESOURCE_FILE\"" ".metadata.uid == \$uid" \
+	"fail \"terminal fault-test Job \$audit_job_name changed UID during its Pod audit\"" \
+	"${fault_shared_full_write_marker} \"\$audit_job_uid\""
+deadline_pending_section=$(sed -n '/^record_deadline_pending_pod_evidence()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+static_require_order "$deadline_pending_section" 'deadline full-Pod evidence' \
+	".metadata.uid == \$podUID and .metadata.deletionTimestamp == null" \
+	".[0].uid == \$jobUID and .[0].controller == true" \
+	'(.spec.nodeName // "") == ""' \
+	'.state.running == null and .state.terminated == null' \
+	"fail \"timeout Apply Pod \$deadline_pod_name lacks exact never-started pre-deadline evidence\"" \
+	"printf '%s\\n' \"\$deadline_pod_object\" >\"\$RESOURCE_FILE\"" \
+	"scan_fault_file \"\$RESOURCE_FILE\" \"the exact never-started pre-deadline Apply Pod\"" \
+	"record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\" \"\$deadline_pod_uid\""
+deadline_terminal_section=$(sed -n '/^wait_for_deadline_job_terminal_and_audit()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+static_require_order "$deadline_terminal_section" 'DeadlineExceeded full Job promotion' \
+	"deadline_terminal_pod_uid=\$4" '.reason == "DeadlineExceeded"' ".metadata.uid == \$uid" \
+	"printf '%s\\n' \"\$deadline_terminal_object\" >\"\$RESOURCE_FILE\"" \
+	"scan_fault_file \"\$RESOURCE_FILE\" \"the exact DeadlineExceeded Apply Job\"" \
+	"grep -Fx \"\$deadline_terminal_pod_uid\" \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" \
+	"${fault_shared_full_write_marker} \"\$deadline_terminal_uid\""
+static_require_count "$fault_script" \
+	"record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" 3 \
+	'fault full-Pod write sites'
+static_require_count "$fault_script" "$fault_shared_full_write_marker" 2 \
+	'fault shared full-Job write sites'
+static_require_count "$fault_runtime_audit_function_section" \
+	"$fault_shared_full_write_marker" 1 'fault runtime full-Job writes'
+static_require_count "$deadline_terminal_section" "$fault_shared_full_write_marker" 1 \
+	'deadline full-Job writes'
+deadline_call_section=$(sed -n \
+	"/^wait_for_deadline_job_terminal_and_audit \"\\\$MYSQL_TIMEOUT_JOB_NAME\"/,/^wait_for_exact_pod_absence_after_evidence/p" \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+static_require_order "$deadline_call_section" 'exact deadline call path' \
+	"\"\$MYSQL_TIMEOUT_POD_UID\"" \
+	"wait_for_exact_pod_absence_after_evidence \"\$MYSQL_TIMEOUT_POD_NAME\""
+static_reject_marker "$fault_script" 'wait_for_exact_pod_absence_without_audit' \
+	'deadline evidence helper naming'
+alias_b_cascade_section=$(sed -n \
+	"/^# Keep a consumed, user-owned approval/,/delete ptahschema \"\\\$PG_ALIAS_SCHEMA_B\"/p" \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+static_require_order "$alias_b_cascade_section" 'shared-alias cascade boundary' \
+	'audit_fault_runtime' \
+	"\"\$ALIAS_B_JOB_UID\" \"\$ALIAS_B_RECOVERY_OBSERVE_UID\" \"\$ALIAS_B_RECOVERY_PLAN_UID\"" \
+	"[ -n \"\$alias_b_fully_audited_job_uid\" ]" \
+	"grep -Fx \"\$alias_b_fully_audited_job_uid\" \"\$SHARED_FULLY_AUDITED_JOBS_FILE\"" \
+	"delete ptahschema \"\$PG_ALIAS_SCHEMA_B\""
 for protocol_script in e2e-dataplane.sh e2e-faults.sh; do
 	case "$protocol_script" in
 	e2e-dataplane.sh) converged_result_occurrences=1 ;;
