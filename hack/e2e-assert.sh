@@ -150,7 +150,11 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
           operations: ["CREATE", "UPDATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"}])) and
       (map(select(.name == "vpodintent.operator.ptah.dev")) | length == 1 and all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Equivalent" and
-        ((.namespaceSelector // {}) == {}) and ((.objectSelector // {}) == {}) and
+        ((.namespaceSelector // {}) == {}) and
+        .objectSelector == {matchLabels: {
+          "app.kubernetes.io/managed-by": "ptah-operator",
+          "app.kubernetes.io/component": "schema-operation"
+        }} and
         (.matchConditions | length == 1 and .[0].name == "job-owned-pod" and
           (.[0].expression | contains("batch/v1") and contains("oldObject"))) and
         (.admissionReviewVersions | index("v1")) != null and .clientConfig.caBundle != "" and
@@ -227,14 +231,212 @@ missing_fingerprint_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-missing-fingerprint.
 foreign_plan_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-foreign-plan.XXXXXX")
 foreign_approval_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-foreign-approval.XXXXXX")
 error_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-error.XXXXXX")
+webhook_scope_job_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-webhook-job.XXXXXX")
+webhook_scope_event_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-webhook-events.XXXXXX")
+chmod 600 "$webhook_scope_job_file" "$webhook_scope_event_file"
+WEBHOOK_UNRELATED_JOB=e2e-webhook-unrelated
+WEBHOOK_OUTAGE_JOB=e2e-webhook-managed-outage
+WEBHOOK_SPOOF_JOB=e2e-webhook-foreign-spoof
+WEBHOOK_DEPLOYMENT_SCALED=0
+WEBHOOK_ORIGINAL_REPLICAS=
+
+delete_webhook_scope_fixtures() {
+	k -n "$TEST_NAMESPACE" delete jobs \
+		"$WEBHOOK_UNRELATED_JOB" "$WEBHOOK_OUTAGE_JOB" "$WEBHOOK_SPOOF_JOB" \
+		--cascade=foreground --wait=true --ignore-not-found >/dev/null 2>&1
+}
+
+webhook_service_ready() {
+	k -n "$OPERATOR_NAMESPACE" get endpointslice \
+		-l "kubernetes.io/service-name=${CONTROLLER_NAME}-webhook" -o json |
+		jq -e '.items | any(.[]?.endpoints[]?; .conditions.ready == true)' >/dev/null
+}
+
+restore_webhook_deployment() {
+	[ "$WEBHOOK_DEPLOYMENT_SCALED" -eq 1 ] || return 0
+	[ -n "$WEBHOOK_ORIGINAL_REPLICAS" ] || return 1
+	k -n "$OPERATOR_NAMESPACE" scale deployment/"$CONTROLLER_NAME" \
+		--replicas="$WEBHOOK_ORIGINAL_REPLICAS" >/dev/null || return 1
+	k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" \
+		--timeout=180s >/dev/null || return 1
+	restore_deadline=$(($(date +%s) + 60))
+	while [ "$(date +%s)" -lt "$restore_deadline" ]; do
+		if webhook_service_ready; then
+			WEBHOOK_DEPLOYMENT_SCALED=0
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
 cleanup_files() {
+	status=$?
+	trap - EXIT
+	set +e
+	delete_webhook_scope_fixtures
+	if ! restore_webhook_deployment; then
+		printf '%s\n' 'e2e assertions: could not restore the webhook Deployment during cleanup' >&2
+		status=1
+	fi
 	rm -f "$schema_file" "$invalid_schema_file" "$plan_file" "$approval_file" \
 		"$invalid_approval_file" \
 		"$missing_fingerprint_file" "$foreign_plan_file" "$foreign_approval_file" \
-		"$error_file" "$error_file.stdout"
+		"$error_file" "$error_file.stdout" "$webhook_scope_job_file" \
+		"$webhook_scope_event_file"
+	exit "$status"
 }
 trap cleanup_files EXIT
 trap 'exit 130' HUP INT TERM
+
+write_webhook_scope_job() {
+	scope_job_name=$1
+	scope_managed=$2
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$scope_job_name" \
+		--arg image "$RUNNER_IMAGE" \
+		--argjson managed "$scope_managed" '
+      (if $managed then {
+        "app.kubernetes.io/managed-by": "ptah-operator",
+        "app.kubernetes.io/component": "schema-operation"
+      } else {"operator.ptah.dev/e2e-webhook-scope": "unrelated"} end) as $labels |
+      {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: {namespace: $namespace, name: $name, labels: $labels},
+        spec: {
+          backoffLimit: 0,
+          template: {
+            metadata: {labels: $labels},
+            spec: {
+              automountServiceAccountToken: false,
+              restartPolicy: "Never",
+              containers: [{
+                name: "probe",
+                image: $image,
+                imagePullPolicy: "IfNotPresent",
+                command: ["/ptah-runner"],
+                args: ["--version"],
+                env: (if $managed then [{
+                  name: "PTAH_DB_URL",
+                  valueFrom: {secretKeyRef: {name: "local-database", key: "url"}}
+                }] else [] end),
+                securityContext: {
+                  allowPrivilegeEscalation: false,
+                  capabilities: {drop: ["ALL"]}
+                }
+              }]
+            }
+          }
+        }
+      }
+    ' >"$webhook_scope_job_file"
+}
+
+assert_webhook_scope_events_safe() {
+	if grep -F 'postgres://e2e:unused@database.invalid/e2e' \
+		"$webhook_scope_event_file" >/dev/null; then
+		fail "Pod admission failure Event exposed the referenced database credential"
+	fi
+}
+
+wait_for_job_pod_admission() {
+	scope_job_name=$1
+	scope_job_uid=$2
+	scope_deadline=$(($(date +%s) + 60))
+	while [ "$(date +%s)" -lt "$scope_deadline" ]; do
+		if k -n "$TEST_NAMESPACE" get pods -l "job-name=${scope_job_name}" -o json |
+			jq -e --arg uid "$scope_job_uid" '
+              [.items[] | select(any(.metadata.ownerReferences[]?;
+                .apiVersion == "batch/v1" and .kind == "Job" and
+                .uid == $uid and .controller == true))] | length == 1
+            ' >/dev/null; then
+			return 0
+		fi
+		sleep 1
+	done
+	return 1
+}
+
+wait_for_job_failed_create() {
+	scope_job_name=$1
+	scope_job_uid=$2
+	scope_failure_pattern=$3
+	scope_deadline=$(($(date +%s) + 90))
+	while [ "$(date +%s)" -lt "$scope_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get events \
+			--field-selector "involvedObject.kind=Job,involvedObject.name=${scope_job_name}" \
+			-o json >"$webhook_scope_event_file"
+		assert_webhook_scope_events_safe
+		if jq -e \
+			--arg uid "$scope_job_uid" \
+			--arg pattern "$scope_failure_pattern" '
+              any(.items[];
+                .involvedObject.uid == $uid and .reason == "FailedCreate" and
+                ((.message // "") | contains("vpodintent.operator.ptah.dev")) and
+                ((.message // "") | test($pattern; "i")))
+            ' "$webhook_scope_event_file" >/dev/null; then
+			if k -n "$TEST_NAMESPACE" get pods -l "job-name=${scope_job_name}" -o json |
+				jq -e --arg uid "$scope_job_uid" '
+                  all(.items[]; all(.metadata.ownerReferences[]?; .uid != $uid))
+                ' >/dev/null; then
+				: >"$webhook_scope_event_file"
+				return 0
+			fi
+		fi
+		sleep 1
+	done
+	: >"$webhook_scope_event_file"
+	return 1
+}
+
+printf '%s\n' 'e2e assertions: checking Pod webhook outage scope and foreign-label refusal'
+WEBHOOK_ORIGINAL_REPLICAS=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" \
+	-o json | jq -er '.spec.replicas // 1')
+printf '%s\n' "$WEBHOOK_ORIGINAL_REPLICAS" | grep -Eq '^[1-9][0-9]*$' ||
+	fail "webhook Deployment does not have a positive replica count"
+WEBHOOK_DEPLOYMENT_SCALED=1
+k -n "$OPERATOR_NAMESPACE" scale deployment/"$CONTROLLER_NAME" --replicas=0 >/dev/null
+outage_deadline=$(($(date +%s) + 180))
+while [ "$(date +%s)" -lt "$outage_deadline" ]; do
+	if k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
+		jq -e '(.status.replicas // 0) == 0 and (.status.availableReplicas // 0) == 0' \
+			>/dev/null && ! webhook_service_ready; then
+		break
+	fi
+	sleep 1
+done
+if webhook_service_ready; then
+	fail "webhook Service retained a ready endpoint after the Deployment scaled to zero"
+fi
+
+write_webhook_scope_job "$WEBHOOK_UNRELATED_JOB" false
+k create -f "$webhook_scope_job_file" >/dev/null
+unrelated_job_uid=$(k -n "$TEST_NAMESPACE" get job "$WEBHOOK_UNRELATED_JOB" \
+	-o jsonpath='{.metadata.uid}')
+wait_for_job_pod_admission "$WEBHOOK_UNRELATED_JOB" "$unrelated_job_uid" ||
+	fail "webhook outage blocked an unrelated Job Pod outside the object selector"
+
+write_webhook_scope_job "$WEBHOOK_OUTAGE_JOB" true
+k create -f "$webhook_scope_job_file" >/dev/null
+outage_job_uid=$(k -n "$TEST_NAMESPACE" get job "$WEBHOOK_OUTAGE_JOB" \
+	-o jsonpath='{.metadata.uid}')
+wait_for_job_failed_create "$WEBHOOK_OUTAGE_JOB" "$outage_job_uid" \
+	'failed calling webhook|no endpoints available|connection refused|service unavailable' ||
+	fail "webhook outage did not fail closed for a managed-operation Pod"
+
+delete_webhook_scope_fixtures
+restore_webhook_deployment || fail "could not restore the webhook Deployment after the outage proof"
+
+write_webhook_scope_job "$WEBHOOK_SPOOF_JOB" true
+k create -f "$webhook_scope_job_file" >/dev/null
+spoof_job_uid=$(k -n "$TEST_NAMESPACE" get job "$WEBHOOK_SPOOF_JOB" \
+	-o jsonpath='{.metadata.uid}')
+wait_for_job_failed_create "$WEBHOOK_SPOOF_JOB" "$spoof_job_uid" \
+	'managed Pod Job has no exact PtahSchema controller identity' ||
+	fail "a foreign Job spoofing managed-operation labels was not denied by the Pod intent webhook"
+delete_webhook_scope_fixtures
 
 jq -n \
 	--arg namespace "$TEST_NAMESPACE" \

@@ -131,6 +131,10 @@ webhooks:
     failurePolicy: Fail
     matchPolicy: Equivalent
     timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    objectSelector:
+      matchLabels:
+        app.kubernetes.io/managed-by: ptah-operator
+        app.kubernetes.io/component: schema-operation
     matchConditions:
       - name: job-owned-pod
         expression: >-

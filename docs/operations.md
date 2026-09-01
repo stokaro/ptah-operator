@@ -102,20 +102,30 @@ controller rejects a non-nil Pod-level resource stanza before dispatch. A
 future or customized API server that injects Pod-level resources fails closed
 until that mutation has an explicit, versioned snapshot model.
 
-Admission matches exact Job-controlled Pods on create and update, including
-the `ephemeralcontainers` and `resize` subresources. It does not use mutable
-labels as a selector. While the webhook is unavailable, every Job Pod creation
-is fail-closed and may be delayed. The controller and certificate-rotation
+Admission selects Pods carrying both
+`app.kubernetes.io/managed-by=ptah-operator` and
+`app.kubernetes.io/component=schema-operation`, then requires an exact Job
+controller owner on create or on either side of an update. Kubernetes evaluates
+the object selector against both the new and old object, so removing either
+identity label from an existing operation Pod still invokes the webhook and is
+denied. The same scope covers the `ephemeralcontainers` and `resize`
+subresources. A foreign Job cannot gain admission by copying the labels: the
+handler also binds the Job to the exact current PtahSchema, operation, and
+persisted Pod intent.
+
+While the webhook is unavailable, matching operation Pods fail closed, but
+unrelated Job Pods remain available. The controller and certificate-rotation
 Deployments remain recoverable because their Pods are ReplicaSet-owned. Run at
 least two controller replicas and preserve the PodDisruptionBudget during
 maintenance.
 
-The Job-owner match condition is evaluated after mutating admission. A cluster
-administrator who can install or change a cluster-scoped mutating webhook is
-therefore inside the admission trust boundary: such a webhook could remove the
-Job owner reference before validation. Ordinary workload creators cannot use
-labels or extra owner references to bypass validation; any Job controller
-reference enters the rule, and the handler rejects ambiguous ownership.
+The object selector and Job-owner match condition are evaluated after mutating
+admission. A cluster administrator who can install or change a cluster-scoped
+mutating webhook is therefore inside the admission trust boundary: such a
+webhook could remove the managed identity labels or Job owner reference before
+validation. Ordinary workload creators cannot use copied labels or extra owner
+references to gain operation admission; matching requests enter the rule, and
+the handler rejects foreign or ambiguous ownership.
 
 ## Webhook certificate lifecycle
 

@@ -1509,10 +1509,24 @@ grep -F 'path: /validate-v1-pod-ptah-operation-intent' "$RENDERED_WEBHOOKS" >/de
 grep -F 'resources: ["pods", "pods/ephemeralcontainers", "pods/resize"]' "$RENDERED_WEBHOOKS" >/dev/null
 grep -F 'operations: ["CREATE", "UPDATE"]' "$RENDERED_WEBHOOKS" >/dev/null
 grep -F 'name: job-owned-pod' "$RENDERED_WEBHOOKS" >/dev/null
-if grep -F 'objectSelector:' "$RENDERED_WEBHOOKS" >/dev/null; then
-	printf '%s\n' 'e2e static: Pod intent admission relies on a mutable object selector' >&2
+rendered_pod_selector=$(awk '
+  $0 == "  - name: vpodintent.operator.ptah.dev" {pod_webhook = 1}
+  pod_webhook && $0 == "    objectSelector:" {selector = 1}
+  pod_webhook && selector && $0 == "    matchConditions:" {exit}
+  selector {sub(/^[[:space:]]*/, ""); print}
+' "$RENDERED_WEBHOOKS")
+expected_pod_selector='objectSelector:
+matchLabels:
+app.kubernetes.io/managed-by: ptah-operator
+app.kubernetes.io/component: schema-operation'
+[ "$rendered_pod_selector" = "$expected_pod_selector" ] || {
+	printf '%s\n' 'e2e static: Pod intent admission lacks its exact managed-operation object selector' >&2
 	exit 1
-fi
+}
+[ "$(grep -c '^[[:space:]]*objectSelector:$' "$RENDERED_WEBHOOKS")" -eq 1 ] || {
+	printf '%s\n' 'e2e static: an admission webhook gained an unexpected object selector' >&2
+	exit 1
+}
 grep -F -- '--default-tolerations-enabled=true' "$RENDERED_WEBHOOKS" >/dev/null
 grep -F -- '--extended-resource-toleration-enabled=false' "$RENDERED_WEBHOOKS" >/dev/null
 grep -F -- '--always-pull-images-enabled=false' "$RENDERED_WEBHOOKS" >/dev/null

@@ -442,6 +442,46 @@ func TestValidationHandlerAllowsUnmanagedJobPodForCertificateRecovery(t *testing
 	}
 }
 
+func TestValidationHandlerRejectsForeignJobSpoofingManagedLabels(t *testing.T) {
+	t.Parallel()
+
+	handler, pod := validationHandlerFixture(t)
+	api := handler.Reader.(client.Client)
+	job := &batchv1.Job{}
+	key := client.ObjectKey{Namespace: pod.Namespace, Name: pod.OwnerReferences[0].Name}
+	if err := api.Get(context.Background(), key, job); err != nil {
+		t.Fatal(err)
+	}
+	job.OwnerReferences = nil
+	if err := api.Update(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+
+	response := handler.Handle(context.Background(), podRequest(t, pod))
+	if response.Allowed {
+		t.Fatal("Handle() allowed a foreign Job Pod spoofing the managed-operation labels")
+	}
+}
+
+func TestValidationHandlerRejectsUpdateRemovingSelectorIdentity(t *testing.T) {
+	t.Parallel()
+
+	for _, label := range []string{workload.LabelManagedBy, workload.LabelComponent} {
+		label := label
+		t.Run(label, func(t *testing.T) {
+			t.Parallel()
+
+			handler, pod := validationHandlerFixture(t)
+			original := pod.DeepCopy()
+			delete(pod.Labels, label)
+			response := handler.Handle(context.Background(), podUpdateRequest(t, original, pod))
+			if response.Allowed {
+				t.Fatalf("Handle() allowed an update removing selector label %q", label)
+			}
+		})
+	}
+}
+
 func validationHandlerFixture(t *testing.T) (*podintent.ValidationHandler, *corev1.Pod) {
 	t.Helper()
 

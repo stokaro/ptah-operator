@@ -532,6 +532,8 @@ assert_active_pod_ephemeral_container_rejected() {
 		--patch-file="$RESOURCE_FILE" >"$ADMISSION_ERROR_FILE" 2>&1; then
 		fail "Pod intent admission allowed an ephemeral container on exact active Pod $active_pod_name UID $active_pod_uid"
 	fi
+	scan_file_for_credentials "$ADMISSION_ERROR_FILE" \
+		"the ephemeral-container admission refusal"
 	grep -F 'vpodintent.operator.ptah.dev' "$ADMISSION_ERROR_FILE" >/dev/null ||
 		fail "ephemeral-container rejection did not come from the Pod intent webhook"
 	grep -F 'persisted admission envelope' "$ADMISSION_ERROR_FILE" >/dev/null ||
@@ -545,6 +547,30 @@ assert_active_pod_ephemeral_container_rejected() {
         .uid == $jobUID and .controller == true) and
       ((.spec.ephemeralContainers // []) | length) == 0
     ' >/dev/null || fail "active Pod identity changed during the negative subresource test"
+	: >"$ADMISSION_ERROR_FILE"
+
+	# The new object no longer matches the objectSelector. This PATCH can reach
+	# the handler only because admission selection also evaluates oldObject.
+	if k -n "$TEST_NAMESPACE" label pod "$active_pod_name" \
+		'app.kubernetes.io/managed-by-' >"$ADMISSION_ERROR_FILE" 2>&1; then
+		fail "Pod intent admission allowed exact active Pod $active_pod_name UID $active_pod_uid to remove its selector identity"
+	fi
+	scan_file_for_credentials "$ADMISSION_ERROR_FILE" \
+		"the managed-identity label-removal admission refusal"
+	grep -F 'vpodintent.operator.ptah.dev' "$ADMISSION_ERROR_FILE" >/dev/null ||
+		fail "managed-identity label removal did not reach the Pod intent webhook through oldObject"
+	grep -F 'removed its managed workload identity' "$ADMISSION_ERROR_FILE" >/dev/null ||
+		fail "Pod intent webhook rejected managed-identity label removal for an unexpected reason"
+	k -n "$TEST_NAMESPACE" get pod "$active_pod_name" -o json | jq -e \
+		--arg podUID "$active_pod_uid" \
+		--arg jobUID "$active_job_uid" '
+      .metadata.uid == $podUID and
+      .metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and
+      .metadata.labels["app.kubernetes.io/component"] == "schema-operation" and
+      any(.metadata.ownerReferences[]?;
+        .apiVersion == "batch/v1" and .kind == "Job" and
+        .uid == $jobUID and .controller == true)
+    ' >/dev/null || fail "active Pod identity changed during the oldObject selector test"
 	: >"$ADMISSION_ERROR_FILE"
 	return 0
 }
@@ -2907,7 +2933,7 @@ run_engine_lifecycle postgresql PostgreSQL postgres "$PG_SECRET"
 run_engine_lifecycle mysql MySQL mysql "$MYSQL_SECRET"
 run_mysql_dsn_refusal
 [ "$EPHEMERAL_SUBRESOURCE_TESTED" -eq 1 ] ||
-	fail "no UID-bound active operation Pod was available for the ephemeralcontainers rejection test"
+	fail "no UID-bound active operation Pod was available for the admission subresource and oldObject selector tests"
 audit_runtime_credentials
 
 printf '%s\n' 'e2e data plane: starting restart and fault-injection acceptance'
