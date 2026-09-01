@@ -1929,7 +1929,15 @@ static_require_order "$engine_lifecycle_section" 'PostgreSQL v1 auxiliary source
 	'[ "$CUSTOM_CA_COORDINATION_KEY" != "$lifecycle_coordination_key" ]' \
 	'assert_authenticated_https_custom_ca "$digest_v1"' \
 	'assert_requested_digest_pin_refusal "$lifecycle_reference" "$digest_v1"' \
-	'create_schema_resource "$lifecycle_schema"'
+	'fi' \
+	'checkpoint_coordination_leases "$coordination_lease_checkpoint"' \
+	'create_schema_resource "$lifecycle_schema"' \
+	'assert_coordination_lease_boundary "$lifecycle_coordination_key"'
+[ "$(printf '%s\n' "$engine_lifecycle_section" |
+	grep -Ec '^[[:space:]]*checkpoint_coordination_leases[[:space:]]')" -eq 1 ] || {
+	printf '%s\n' 'e2e static: each engine lifecycle must capture one isolated Lease checkpoint' >&2
+	exit 1
+}
 # shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
 static_reject_marker "$engine_lifecycle_section" \
 	'assert_authenticated_https_custom_ca "$digest_v1" "$lifecycle_coordination_key"' \

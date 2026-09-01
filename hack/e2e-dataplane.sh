@@ -3635,7 +3635,6 @@ run_engine_lifecycle() {
 	checkpoint_jobs "$lifecycle_schema" apply "$v1_apply_checkpoint"
 	checkpoint_jobs "$lifecycle_schema" observe "$v1_observe_checkpoint"
 	checkpoint_jobs "$lifecycle_schema" plan "$v1_plan_checkpoint"
-	checkpoint_coordination_leases "$coordination_lease_checkpoint"
 	digest_v1=$(publish_schema "$lifecycle_slug" v1 "$lifecycle_dialect" "$lifecycle_reference")
 	if [ "$lifecycle_slug" = postgresql ]; then
 		[ "$CUSTOM_CA_COORDINATION_KEY" != "$lifecycle_coordination_key" ] ||
@@ -3644,6 +3643,7 @@ run_engine_lifecycle() {
 		assert_requested_digest_pin_refusal "$lifecycle_reference" "$digest_v1" \
 			"$lifecycle_engine" "$lifecycle_secret"
 	fi
+	checkpoint_coordination_leases "$coordination_lease_checkpoint"
 	create_schema_resource "$lifecycle_schema" "$lifecycle_engine" "$lifecycle_secret" \
 		"$lifecycle_reference" "$lifecycle_coordination_key"
 	assert_plan "$lifecycle_schema" "$lifecycle_reference" "$digest_v1" "$lifecycle_dialect" false \
