@@ -1629,8 +1629,9 @@ capture_tls_proxy_identity() {
 	TLS_PROXY_POD_NAME=$(printf '%s\n' "$tls_proxy_identity" | jq -er '.name')
 	TLS_PROXY_POD_UID=$(printf '%s\n' "$tls_proxy_identity" | jq -er '.uid')
 	TLS_PROXY_CONTAINER_ID=$(printf '%s\n' "$tls_proxy_identity" | jq -er '.containerID')
-	[ -n "$TLS_PROXY_POD_UID" ] && [ -n "$TLS_PROXY_CONTAINER_ID" ] ||
+	if [ -z "$TLS_PROXY_POD_UID" ] || [ -z "$TLS_PROXY_CONTAINER_ID" ]; then
 		fail "TLS registry proxy exact Pod identity is incomplete"
+	fi
 	assert_tls_proxy_service_endpoints
 }
 
@@ -1654,9 +1655,10 @@ assert_tls_proxy_service_endpoints() {
 }
 
 assert_tls_proxy_identity_stable() {
-	[ -n "$TLS_PROXY_POD_NAME" ] && [ -n "$TLS_PROXY_POD_UID" ] &&
-		[ -n "$TLS_PROXY_CONTAINER_ID" ] ||
+	if [ -z "$TLS_PROXY_POD_NAME" ] || [ -z "$TLS_PROXY_POD_UID" ] ||
+		[ -z "$TLS_PROXY_CONTAINER_ID" ]; then
 		fail "TLS registry proxy identity was not captured before the counter window"
+	fi
 	tls_proxy_pods=$(k -n "$TEST_NAMESPACE" get pods \
 		-l "app.kubernetes.io/name=${TLS_PROXY_SERVICE},app.kubernetes.io/component=e2e-tls-registry-proxy" \
 		-o json)
@@ -1781,9 +1783,10 @@ printf '%s\n' "$TLS_PROXY_CA_SHA256" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
 	fail "fixed mismatched TLS proxy CA grant unexpectedly matched the generated CA"
 [ "$TLS_PROXY_WRONG_AUTHORITY" != "$TLS_PROXY_AUTHORITY" ] ||
 	fail "fixed mismatched TLS proxy registry authority unexpectedly matched the live authority"
-[ "$CUSTOM_CA_PG_DATABASE" != "$PG_DATABASE" ] &&
-	[ "$CUSTOM_CA_PG_SECRET" != "$PG_SECRET" ] ||
-	fail "custom-CA acceptance must use a distinct PostgreSQL database and Secret"
+	if [ "$CUSTOM_CA_PG_DATABASE" = "$PG_DATABASE" ] ||
+		[ "$CUSTOM_CA_PG_SECRET" = "$PG_SECRET" ]; then
+		fail "custom-CA acceptance must use a distinct PostgreSQL database and Secret"
+	fi
 
 printf '%s' "$PG_PASSWORD" >"$PG_PASSWORD_FILE"
 printf '%s' "$PG_URL" >"$PG_URL_FILE"

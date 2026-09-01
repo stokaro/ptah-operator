@@ -859,7 +859,7 @@ static_require_count "$tls_capture_identity_section" \
 	'assert_tls_proxy_service_endpoints' 1 'TLS proxy capture EndpointSlice binding'
 # shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
 static_require_order "$tls_stable_identity_section" 'TLS proxy stable identity re-list' \
-	'[ -n "$TLS_PROXY_POD_NAME" ]' \
+	'if [ -z "$TLS_PROXY_POD_NAME" ] ||' \
 	'get pods' \
 	'app.kubernetes.io/name=${TLS_PROXY_SERVICE},app.kubernetes.io/component=e2e-tls-registry-proxy' \
 	'[.items[] | select(.metadata.deletionTimestamp == null)] as $live' \
