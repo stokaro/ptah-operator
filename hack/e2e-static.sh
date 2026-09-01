@@ -1057,6 +1057,7 @@ static_require_order "$custom_ca_refusal_section" 'custom-CA pre-child refusal b
 	'refusal_proxy_count_before=$(tls_proxy_request_count)' \
 	'create_custom_ca_schema_resource' \
 	'capture_one_new_job_result "$refusal_schema" resolve' \
+	'.childExitCode == -1' \
 	'.error.code == "invalid_oci_access"' \
 	'assert_one_job_between_checkpoints "$refusal_schema" resolve' \
 	'for refusal_operation in verify observe plan apply; do' \

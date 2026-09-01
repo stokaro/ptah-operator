@@ -1445,7 +1445,7 @@ func TestVerifyRejectsInvalidRequestedBindingBeforeChild(t *testing.T) {
 				},
 				Executor: executor,
 			})
-			if result.Error == nil || result.Error.Code != test.wantCode || len(executor.calls) != 0 ||
+			if result.Error == nil || result.Error.Code != test.wantCode || result.ChildExitCode != -1 || len(executor.calls) != 0 ||
 				result.ResolvedDigest != "" || result.VerificationPolicyDigest != "" {
 				t.Fatalf("Run() = %#v, error = %#v, commands = %d", result, result.Error, len(executor.calls))
 			}

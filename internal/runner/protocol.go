@@ -86,9 +86,10 @@ type TruncationMetadata struct {
 
 // Result is the complete credential-free result emitted by ptah-runner.
 type Result struct {
-	ProtocolVersion          int                 `json:"protocolVersion"`
-	Operation                Operation           `json:"operation"`
-	OperationID              string              `json:"operationId"`
+	ProtocolVersion int       `json:"protocolVersion"`
+	Operation       Operation `json:"operation"`
+	OperationID     string    `json:"operationId"`
+	// ChildExitCode is -1 when the runner refused the operation before child dispatch.
 	ChildExitCode            int                 `json:"childExitCode"`
 	Stdout                   string              `json:"stdout"`
 	CoordinationDigest       string              `json:"coordinationDigest,omitempty"`
@@ -298,6 +299,20 @@ func validateResult(result Result, options ParseOptions) error {
 		stderrValid := result.Truncation.Stderr == (result.Truncation.StderrBytesDropped > 0)
 		if !stdoutValid || !stderrValid || (!result.Truncation.Stdout && !result.Truncation.Stderr) {
 			return fmt.Errorf("%w: invalid truncation metadata", ErrMalformedFrame)
+		}
+	}
+	if result.Error != nil && result.Error.Code == "invalid_oci_access" {
+		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify
+		hasExecutionEvidence := result.Stdout != "" || result.CoordinationDigest != "" ||
+			result.TargetIdentityDigest != "" || result.VerificationPolicyDigest != "" ||
+			result.DriftReportDigest != "" || result.ObservedDialect != "" || result.ObservedDrift ||
+			result.HighestDriftSeverity != "" || result.DriftFindingCount != 0 ||
+			result.ObservedArtifactType != "" || result.ResolvedDigest != "" ||
+			result.ResolvedReference != "" || result.ResolvedMediaType != "" || result.ResolvedSize != 0 ||
+			len(result.VerificationRequirements) != 0 || result.PlanContentDigest != "" ||
+			result.PlanOutcome != "" || result.MutationStarted || result.Uncertain || result.Truncation != nil
+		if !preChildOperation || result.ChildExitCode != -1 || hasExecutionEvidence {
+			return fmt.Errorf("%w: invalid OCI access result lacks an exact pre-child binding", ErrMalformedFrame)
 		}
 	}
 	if result.Error == nil {

@@ -232,6 +232,85 @@ func TestParserRejectsImpossibleSuccessfulResultShapes(t *testing.T) {
 	}
 }
 
+func TestInvalidOCIAccessRequiresExactPreChildBinding(t *testing.T) {
+	t.Parallel()
+
+	base := Result{
+		ProtocolVersion: ProtocolVersion,
+		Operation:       OperationResolve,
+		OperationID:     "resolve-invalid-oci-access",
+		ChildExitCode:   -1,
+		Error: &ResultError{
+			Code:    "invalid_oci_access",
+			Message: "OCI access was refused before child dispatch",
+		},
+	}
+	for _, operation := range []Operation{OperationResolve, OperationVerify} {
+		operation := operation
+		t.Run("valid "+string(operation), func(t *testing.T) {
+			t.Parallel()
+			result := base
+			result.Operation = operation
+			result.OperationID = string(operation) + "-invalid-oci-access"
+			frame, err := MarshalFrame(result)
+			if err != nil {
+				t.Fatalf("MarshalFrame() error = %v", err)
+			}
+			if _, err := ParseResultFor(frame, result.Operation, result.OperationID); err != nil {
+				t.Fatalf("ParseResultFor() error = %v", err)
+			}
+		})
+	}
+
+	digest := "sha256:" + strings.Repeat("9", 64)
+	invalid := map[string]Result{
+		"child was started": func() Result {
+			result := base
+			result.ChildExitCode = 0
+			return result
+		}(),
+		"unrelated operation": func() Result {
+			result := base
+			result.Operation = OperationObserve
+			return result
+		}(),
+		"resolved descriptor evidence": func() Result {
+			result := base
+			result.ResolvedReference = "oci://registry.example/team/schema@" + digest
+			result.ResolvedMediaType = "application/vnd.oci.image.manifest.v1+json"
+			result.ResolvedDigest = digest
+			result.ResolvedSize = 1
+			return result
+		}(),
+		"verification evidence": func() Result {
+			result := base
+			result.Operation = OperationVerify
+			result.VerificationPolicyDigest = digest
+			return result
+		}(),
+		"database evidence": func() Result {
+			result := base
+			result.CoordinationDigest = digest
+			return result
+		}(),
+		"truncation evidence": func() Result {
+			result := base
+			result.Truncation = &TruncationMetadata{Stderr: true, StderrBytesDropped: 1}
+			return result
+		}(),
+	}
+	for name, result := range invalid {
+		name, result := name, result
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			frame := handcraftedIntegrityValidFrame(t, result)
+			if _, err := ParseResultFor(frame, result.Operation, result.OperationID); !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("ParseResultFor() error = %v, want ErrMalformedFrame", err)
+			}
+		})
+	}
+}
+
 func TestVerificationRefusalChildExitBinding(t *testing.T) {
 	t.Parallel()
 

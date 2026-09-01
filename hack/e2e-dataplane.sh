@@ -2661,7 +2661,7 @@ assert_custom_ca_pre_child_refusal() {
     ' "$refusal_description to fail before the Resolve child"
 	capture_one_new_job_result "$refusal_schema" resolve "$refusal_before" "$refusal_result"
 	jq -e '
-      .childExitCode == 0 and .stdout == "" and
+      .childExitCode == -1 and .stdout == "" and
       .error.code == "invalid_oci_access" and
       (.resolvedDigest // "") == "" and
       (.resolvedReference // "") == "" and

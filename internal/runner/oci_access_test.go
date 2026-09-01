@@ -199,7 +199,7 @@ func TestRunnerRejectsUnauthorizedRegistryGrantBeforeChild(t *testing.T) {
 						Environment: environment,
 						Executor:    executor,
 					})
-					if result.Error == nil || result.Error.Code != "invalid_oci_access" {
+					if result.Error == nil || result.Error.Code != "invalid_oci_access" || result.ChildExitCode != -1 {
 						t.Fatalf("Run() = %#v", result)
 					}
 					if len(executor.calls) != 0 {
@@ -229,7 +229,7 @@ func TestRunnerRejectsClientCertificateBeforeChild(t *testing.T) {
 				},
 				Executor: executor,
 			})
-			if result.Error == nil || result.Error.Code != "invalid_oci_access" {
+			if result.Error == nil || result.Error.Code != "invalid_oci_access" || result.ChildExitCode != -1 {
 				t.Fatalf("Run() = %#v", result)
 			}
 			if len(executor.calls) != 0 {
@@ -276,7 +276,7 @@ func TestRunnerRejectsUnauthorizedCABeforeChild(t *testing.T) {
 					Environment: environment,
 					Executor:    executor,
 				})
-				if result.Error == nil || result.Error.Code != "invalid_oci_access" {
+				if result.Error == nil || result.Error.Code != "invalid_oci_access" || result.ChildExitCode != -1 {
 					t.Fatalf("Run() = %#v; valid grant would be %q", result, validGrant)
 				}
 				if len(executor.calls) != 0 {
