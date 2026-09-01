@@ -84,7 +84,8 @@ removes only the controller's status-write verb, leaves webhook reads
 available, verifies the changed authorization, moves the tag, and restores and
 verifies the exact original verb list. A final destructive tag move must remain
 blocked and must not create an Apply Job. The MySQL destructive fixture removes
-a plain named index while retaining the table's unique constraint and columns.
+a standalone plain index on `name` while retaining the separate unique
+constraint on that column and all table columns.
 Its native plan reports `DROP INDEX` without destructive metadata; the
 published plan must conservatively elevate it to destructive, and the default
 policy must refuse it while both indexes remain present. The refusal is held

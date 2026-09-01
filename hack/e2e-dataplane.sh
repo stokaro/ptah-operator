@@ -1348,7 +1348,7 @@ assert_mysql_unique_index() {
 	# shellcheck disable=SC2016 # Variables expand inside the database container.
 	index_actual=$(k -n "$TEST_NAMESPACE" exec deployment/"$MYSQL_SERVICE" -- \
 		sh -ec 'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -u"$MYSQL_USER" "$MYSQL_DATABASE" -Nse "$1"' \
-		sh "SELECT count(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='e2e_widgets' AND index_name='e2e_widgets_name_unique' AND non_unique=0")
+		sh "SELECT count(*) FROM (SELECT index_name FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='e2e_widgets' AND index_name='e2e_widgets_name_unique' GROUP BY index_name HAVING count(*)=1 AND sum(non_unique=0 AND column_name='name' AND seq_in_index=1 AND expression IS NULL AND sub_part IS NULL)=1) AS exact_index")
 	index_actual=$(printf '%s' "$index_actual" | tr -d '[:space:]')
 	[ "$index_actual" = "$index_expected" ] ||
 		fail "MySQL unique index count is $index_actual, expected $index_expected"
@@ -1359,7 +1359,7 @@ assert_mysql_plain_index() {
 	# shellcheck disable=SC2016 # Variables expand inside the database container.
 	index_actual=$(k -n "$TEST_NAMESPACE" exec deployment/"$MYSQL_SERVICE" -- \
 		sh -ec 'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -u"$MYSQL_USER" "$MYSQL_DATABASE" -Nse "$1"' \
-		sh "SELECT count(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='e2e_widgets' AND index_name='e2e_widgets_name_idx' AND non_unique=1")
+		sh "SELECT count(*) FROM (SELECT index_name FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='e2e_widgets' AND index_name='e2e_widgets_name_idx' GROUP BY index_name HAVING count(*)=1 AND sum(non_unique=1 AND column_name='name' AND seq_in_index=1 AND expression IS NULL AND sub_part IS NULL)=1) AS exact_index")
 	index_actual=$(printf '%s' "$index_actual" | tr -d '[:space:]')
 	[ "$index_actual" = "$index_expected" ] ||
 		fail "MySQL plain index count is $index_actual, expected $index_expected"

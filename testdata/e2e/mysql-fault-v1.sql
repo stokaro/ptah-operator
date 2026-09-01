@@ -5,6 +5,7 @@ CREATE TABLE e2e_widgets (
   enabled boolean,
   fault_token varchar(255),
   PRIMARY KEY (id),
-  UNIQUE KEY e2e_widgets_name_unique (name),
-  KEY e2e_widgets_name_idx (name)
+  UNIQUE KEY e2e_widgets_name_unique (name)
 );
+
+CREATE INDEX e2e_widgets_name_idx ON e2e_widgets (name);

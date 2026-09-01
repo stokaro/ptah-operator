@@ -136,21 +136,48 @@ for engine in postgresql mysql; do
 	grep -F 'note ' "$ROOT_DIR/testdata/e2e/${engine}-v2.sql" >/dev/null
 	grep -F 'enabled ' "$ROOT_DIR/testdata/e2e/${engine}-v3.sql" >/dev/null
 	if [ "$engine" = mysql ]; then
-		grep -F 'UNIQUE KEY e2e_widgets_name_unique' \
-			"$ROOT_DIR/testdata/e2e/mysql-v3.sql" >/dev/null
-		grep -F 'KEY e2e_widgets_name_idx' \
-			"$ROOT_DIR/testdata/e2e/mysql-v3.sql" >/dev/null
-		grep -F 'UNIQUE KEY e2e_widgets_name_unique' \
-			"$ROOT_DIR/testdata/e2e/mysql-v4.sql" >/dev/null
 		grep -F 'note ' "$ROOT_DIR/testdata/e2e/mysql-v4.sql" >/dev/null
 		grep -F 'enabled ' "$ROOT_DIR/testdata/e2e/mysql-v4.sql" >/dev/null
-		if grep -F 'e2e_widgets_name_idx' "$ROOT_DIR/testdata/e2e/mysql-v4.sql" >/dev/null; then
+		if grep -Fi 'e2e_widgets_name_idx' "$ROOT_DIR/testdata/e2e/mysql-v4.sql" >/dev/null; then
 			printf '%s\n' 'e2e static: MySQL v4 must remove only the plain named index' >&2
 			exit 1
 		fi
+		for mysql_fixture in mysql-v3.sql mysql-v4.sql mysql-fault-v1.sql; do
+			fixture_path="$ROOT_DIR/testdata/e2e/$mysql_fixture"
+			if [ "$(grep -Fxc '  UNIQUE KEY e2e_widgets_name_unique (name)' \
+				"$fixture_path")" -ne 1 ] ||
+				[ "$(grep -Eic 'e2e_widgets_name_unique' "$fixture_path")" -ne 1 ]; then
+				printf 'e2e static: %s must contain exactly one unique name index\n' \
+					"$mysql_fixture" >&2
+				exit 1
+			fi
+			if grep -E '(^|[[:space:]])(--|#)|/\*|\*/' "$fixture_path" >/dev/null; then
+				printf 'e2e static: %s must not hide index evidence in SQL comments\n' \
+					"$mysql_fixture" >&2
+				exit 1
+			fi
+		done
+		for mysql_fixture in mysql-v3.sql mysql-fault-v1.sql; do
+			fixture_path="$ROOT_DIR/testdata/e2e/$mysql_fixture"
+			if [ "$(grep -Ec '^CREATE INDEX e2e_widgets_name_idx ON e2e_widgets \(name\);$' \
+				"$fixture_path")" -ne 1 ] ||
+				[ "$(grep -Eic 'e2e_widgets_name_idx' "$fixture_path")" -ne 1 ]; then
+				printf 'e2e static: %s must contain exactly one standalone plain named index\n' \
+					"$mysql_fixture" >&2
+				exit 1
+			fi
+		done
 		grep -F 'executor-underclassified DROP INDEX' \
 			"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
 		grep -F 'DROP INDEX was not conservatively elevated to destructive' \
+			"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
+		grep -F "index_name='e2e_widgets_name_unique' GROUP BY index_name HAVING count(*)=1 AND sum(non_unique=0 AND column_name='name' AND seq_in_index=1 AND expression IS NULL AND sub_part IS NULL)=1" \
+			"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
+		grep -F "index_name='e2e_widgets_name_idx' GROUP BY index_name HAVING count(*)=1 AND sum(non_unique=1 AND column_name='name' AND seq_in_index=1 AND expression IS NULL AND sub_part IS NULL)=1" \
+			"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
+		grep -F '(.statements | length) == 1' \
+			"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
+		grep -F '(.statements[0].sql | contains("e2e_widgets_name_idx"))' \
 			"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null
 	fi
 	if [ "$engine" = postgresql ] &&
@@ -163,12 +190,6 @@ for engine in postgresql mysql; do
 		exit 1
 	}
 	grep -F 'fault_token ' "$ROOT_DIR/testdata/e2e/${engine}-fault-v1.sql" >/dev/null
-	if [ "$engine" = mysql ]; then
-		grep -F 'UNIQUE KEY e2e_widgets_name_unique' \
-			"$ROOT_DIR/testdata/e2e/mysql-fault-v1.sql" >/dev/null
-		grep -F 'KEY e2e_widgets_name_idx' \
-			"$ROOT_DIR/testdata/e2e/mysql-fault-v1.sql" >/dev/null
-	fi
 done
 for lifecycle_marker in \
 	'wait_for_in_sync' \
