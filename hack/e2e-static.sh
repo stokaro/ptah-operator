@@ -17,6 +17,22 @@ SHARED_RBAC_RENDER=$WORK_DIR/shared-rbac.yaml
 CONTROLLER_JOB_FIXTURE=$WORK_DIR/controller-jobs.json
 PUBLISHER_JOB_FIXTURE=$WORK_DIR/publisher-job.json
 NEGATIVE_FIXTURE=$WORK_DIR/negative-job.json
+MYSQL_REFUSAL_REWRITE_FILTER=$WORK_DIR/mysql-refusal-rewrite.jq
+MYSQL_REFUSAL_SOURCE=$WORK_DIR/mysql-refusal-source.json
+MYSQL_REFUSAL_REWRITTEN=$WORK_DIR/mysql-refusal-rewritten.json
+MYSQL_REFUSAL_NULL_SOURCE=$WORK_DIR/mysql-refusal-null-source.json
+MYSQL_REFUSAL_NULL_REWRITTEN=$WORK_DIR/mysql-refusal-null-rewritten.json
+CLEANUP_DIAGNOSTIC_FILTER=$WORK_DIR/cleanup-diagnostic.jq
+CLEANUP_SCHEMA_FIXTURE=$WORK_DIR/cleanup-schemas.json
+CLEANUP_EVENT_FIXTURE=$WORK_DIR/cleanup-events.json
+CLEANUP_JOB_FIXTURE=$WORK_DIR/cleanup-jobs.json
+CLEANUP_LEASE_FIXTURE=$WORK_DIR/cleanup-leases.json
+CLEANUP_DIAGNOSTIC_FIXTURE=$WORK_DIR/cleanup-diagnostic.json
+CLEANUP_SCAN_RUNNER=$WORK_DIR/cleanup-scan-runner.sh
+CLEANUP_EMPTY_PATTERNS=$WORK_DIR/cleanup-empty-patterns.txt
+CLEANUP_SAFE_PATTERNS=$WORK_DIR/cleanup-safe-patterns.txt
+CLEANUP_MATCH_PATTERNS=$WORK_DIR/cleanup-match-patterns.txt
+CLEANUP_UNSAFE_PROJECTION=$WORK_DIR/cleanup-unsafe-projection.json
 
 cleanup() {
 	status=$?
@@ -47,6 +63,353 @@ for script in "$ROOT_DIR"/hack/e2e-*.sh; do
 done
 
 shellcheck "$ROOT_DIR"/hack/e2e-*.sh
+
+sed -n '/# mysql-refusal-job-rewrite-begin/,/# mysql-refusal-job-rewrite-end/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh" | sed '1d;$d' >"$MYSQL_REFUSAL_REWRITE_FILTER"
+[ -s "$MYSQL_REFUSAL_REWRITE_FILTER" ] || {
+	printf '%s\n' 'e2e static: MySQL refusal Job rewrite filter is missing' >&2
+	exit 1
+}
+jq -n '
+  {
+    spec: {
+      backoffLimit: 7,
+      template: {
+        metadata: {labels: {preserved: "source-only"}},
+        spec: {
+          restartPolicy: "Never",
+          containers: [{
+            name: "ptah",
+            image: "fixture.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            args: ["observe"],
+            env: [
+              {name: "PTAH_DB_URL", value: "mysql://original.invalid"},
+              {name: "PTAH_OPERATION_ID", valueFrom: {fieldRef: {fieldPath: "metadata.uid"}}},
+              {name: "PRESERVED", value: "exact"}
+            ]
+          }]
+        }
+      }
+    }
+  }
+' >"$MYSQL_REFUSAL_SOURCE"
+jq \
+	--arg namespace test-namespace \
+	--arg name test-name \
+	--arg schema test-schema \
+	--arg operation observe \
+	--arg operationID test-operation-id \
+	--arg secret test-secret \
+	-f "$MYSQL_REFUSAL_REWRITE_FILTER" "$MYSQL_REFUSAL_SOURCE" \
+	>"$MYSQL_REFUSAL_REWRITTEN"
+jq -e '
+  (.spec.template.spec | has("initContainers") | not) and
+  .spec.backoffLimit == 7 and
+  .spec.template.spec.restartPolicy == "Never" and
+  .spec.template.spec.containers == [{
+    name: "ptah",
+    image: "fixture.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    args: ["observe"],
+    env: [
+      {name: "PTAH_DB_URL", valueFrom: {secretKeyRef: {name: "test-secret", key: "url"}}},
+      {name: "PTAH_OPERATION_ID", value: "test-operation-id"},
+      {name: "PRESERVED", value: "exact"}
+    ]
+  }]
+' "$MYSQL_REFUSAL_REWRITTEN" >/dev/null || {
+	printf '%s\n' 'e2e static: MySQL refusal rewrite changed absent initContainers or unrelated Pod semantics' >&2
+	exit 1
+}
+
+sed -n '/# cleanup-diagnostic-projection-begin/,/# cleanup-diagnostic-projection-end/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh" | sed '1d;$d' >"$CLEANUP_DIAGNOSTIC_FILTER"
+[ -s "$CLEANUP_DIAGNOSTIC_FILTER" ] || {
+	printf '%s\n' 'e2e static: cleanup diagnostic projection filter is missing' >&2
+	exit 1
+}
+jq -n '
+  {
+    items: [
+      {
+        apiVersion: "operator.ptah.dev/v1alpha1",
+        kind: "PtahSchema",
+        metadata: {name: "schema-a", uid: "schema-uid-a", generation: 4},
+        spec: {unsafeSentinel: "DO_NOT_PRINT_CREDENTIAL_SENTINEL"},
+        status: {
+          observedGeneration: 4,
+          phase: "Failed",
+          nextReconciliationTime: "2026-09-01T00:00:00Z",
+          activeOperation: {
+            leaseEpoch: "v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            leaseContinuityLost: true
+          },
+          pendingObservation: {leaseEpoch: "malformed-DO_NOT_PRINT_CREDENTIAL_SENTINEL"},
+          pendingLockRelease: {leaseEpoch: "v1-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+          conditions: [{
+            type: "ReconciliationFailed",
+            status: "True",
+            reason: "OperationFailed",
+            message: "invalid_plan_output: DO_NOT_PRINT_CREDENTIAL_SENTINEL"
+          }]
+        }
+      },
+      {
+        apiVersion: "operator.ptah.dev/v1alpha1",
+        kind: "PtahSchema",
+        metadata: {name: "schema-b", uid: "schema-uid-b", generation: 2},
+        status: {
+          observedGeneration: 2,
+          phase: "not-a-phase-DO_NOT_PRINT_CREDENTIAL_SENTINEL",
+          activeOperation: {leaseEpoch: "v1-NOT-AN-EPOCH"},
+          conditions: [{
+            type: "ReconciliationFailed",
+            status: "True",
+            reason: "OperationFailed",
+            message: "bad__code: DO_NOT_PRINT_CREDENTIAL_SENTINEL"
+          }]
+        }
+      }
+    ]
+  }
+' >"$CLEANUP_SCHEMA_FIXTURE"
+jq -n '
+  {
+    items: [
+      {
+        involvedObject: {
+          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+          name: "schema-a", uid: "schema-uid-a"
+        },
+        type: "Warning", reason: "OperationFailed",
+        message: "invalid_target: DO_NOT_PRINT_CREDENTIAL_SENTINEL",
+        lastTimestamp: "2026-09-01T00:00:01Z"
+      },
+      {
+        involvedObject: {
+          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+          name: "schema-a", uid: "schema-uid-a"
+        },
+        type: "Warning", reason: "PlanStale",
+        message: "DO_NOT_PRINT_CREDENTIAL_SENTINEL",
+        lastTimestamp: "2026-09-01T00:00:02Z"
+      },
+      {
+        involvedObject: {
+          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+          name: "schema-a", uid: "schema-uid-a"
+        },
+        type: "Warning", reason: "LeaseContinuityLost",
+        message: "DO_NOT_PRINT_CREDENTIAL_SENTINEL",
+        lastTimestamp: "2026-09-01T00:00:03Z"
+      },
+      {
+        involvedObject: {
+          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+          name: "schema-a", uid: "wrong-schema-uid"
+        },
+        type: "Warning", reason: "ReconciliationFailed",
+        message: "wrong_uid_code: DO_NOT_PRINT_CREDENTIAL_SENTINEL"
+      },
+      {
+        involvedObject: {
+          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+          name: "schema-b", uid: "schema-uid-b"
+        },
+        type: "Warning", reason: "OperationFailed",
+        message: "bad__code: DO_NOT_PRINT_CREDENTIAL_SENTINEL"
+      }
+    ]
+  }
+' >"$CLEANUP_EVENT_FIXTURE"
+jq -n '
+  {
+    items: [
+      {
+        metadata: {
+          name: "job-a", uid: "job-uid-a", creationTimestamp: "2026-09-01T00:00:00Z",
+          ownerReferences: [{
+            apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+            uid: "schema-uid-a", controller: true
+          }],
+          labels: {"operator.ptah.dev/operation": "plan"},
+          annotations: {
+            "operator.ptah.dev/operation-id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "operator.ptah.dev/input-fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            unsafe: "DO_NOT_PRINT_CREDENTIAL_SENTINEL"
+          }
+        },
+        status: {
+          startTime: "2026-09-01T00:00:00Z",
+          completionTime: "2026-09-01T00:00:01Z",
+          conditions: [{type: "Failed", status: "True", message: "DO_NOT_PRINT_CREDENTIAL_SENTINEL"}]
+        }
+      },
+      {
+        metadata: {
+          name: "job-b", uid: "job-uid-b",
+          ownerReferences: [{
+            apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+            uid: "schema-uid-b", controller: true
+          }],
+          labels: {"operator.ptah.dev/operation": "DO_NOT_PRINT_CREDENTIAL_SENTINEL"}
+        },
+        status: {}
+      }
+    ]
+  }
+' >"$CLEANUP_JOB_FIXTURE"
+jq -n '
+  {
+    items: [
+      {
+        metadata: {
+          name: "lease-a", uid: "lease-uid-a", resourceVersion: "10",
+          labels: {
+            "app.kubernetes.io/managed-by": "ptah-operator",
+            "operator.ptah.dev/coordination": "database-target"
+          },
+          annotations: {"operator.ptah.dev/lease-epoch": "v1-cccccccccccccccccccccccccccccccc"}
+        },
+        spec: {
+          holderIdentity: "ptah-h-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          leaseDurationSeconds: 960,
+          leaseTransitions: 1
+        }
+      },
+      {
+        metadata: {
+          name: "lease-b", uid: "lease-uid-b", resourceVersion: "11",
+          labels: {
+            "app.kubernetes.io/managed-by": "ptah-operator",
+            "operator.ptah.dev/coordination": "database-target"
+          },
+          annotations: {"operator.ptah.dev/lease-epoch": "malformed-DO_NOT_PRINT_CREDENTIAL_SENTINEL"}
+        },
+        spec: {holderIdentity: "DO_NOT_PRINT_CREDENTIAL_SENTINEL"}
+      },
+      {
+        metadata: {
+          name: "lease-unmanaged", uid: "lease-uid-unmanaged",
+          labels: {"app.kubernetes.io/managed-by": "someone-else"}
+        },
+        spec: {holderIdentity: "DO_NOT_PRINT_CREDENTIAL_SENTINEL"}
+      }
+    ]
+  }
+' >"$CLEANUP_LEASE_FIXTURE"
+jq -n \
+	--slurpfile schemas "$CLEANUP_SCHEMA_FIXTURE" \
+	--slurpfile events "$CLEANUP_EVENT_FIXTURE" \
+	--slurpfile jobs "$CLEANUP_JOB_FIXTURE" \
+	--slurpfile leases "$CLEANUP_LEASE_FIXTURE" \
+	-f "$CLEANUP_DIAGNOSTIC_FILTER" >"$CLEANUP_DIAGNOSTIC_FIXTURE"
+if grep -F 'DO_NOT_PRINT_CREDENTIAL_SENTINEL' "$CLEANUP_DIAGNOSTIC_FIXTURE" >/dev/null; then
+	printf '%s\n' 'e2e static: cleanup diagnostic projection disclosed its sentinel' >&2
+	exit 1
+fi
+jq -e '
+  (.schemas | length) == 2 and
+  .schemas[0].uid == "schema-uid-a" and
+  .schemas[0].failure.code == "invalid_plan_output" and
+  .schemas[0].expectedEpochs == {
+    activeOperation: "v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    pendingObservation: null,
+    pendingLockRelease: "v1-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  } and
+  .schemas[0].leaseContinuityLost == true and
+  ([.schemas[0].events[].reason] | sort) ==
+    ["LeaseContinuityLost", "OperationFailed", "PlanStale"] and
+  ([.schemas[].events[].code] | index("wrong_uid_code")) == null and
+  .schemas[1].phase == null and .schemas[1].failure.code == null and
+  .schemas[1].expectedEpochs.activeOperation == null and
+  .schemas[1].jobs[0].operation == null and
+  (.leases | length) == 2 and
+  .leases[0].epoch == "v1-cccccccccccccccccccccccccccccccc" and
+  .leases[0].holderPresent == true and .leases[0].holderHashShape == true and
+  .leases[1].epoch == null and
+  .leases[1].holderPresent == true and .leases[1].holderHashShape == false
+' "$CLEANUP_DIAGNOSTIC_FIXTURE" >/dev/null || {
+	printf '%s\n' 'e2e static: cleanup diagnostic normalization or exact-UID filtering failed' >&2
+	exit 1
+}
+
+sed -n '/^suppress_cleanup_diagnostics()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh" >"$CLEANUP_SCAN_RUNNER"
+sed -n '/^emit_scanned_cleanup_diagnostic()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh" >>"$CLEANUP_SCAN_RUNNER"
+# shellcheck disable=SC2016 # Arguments expand when the generated runner executes.
+printf '%s\n' 'emit_scanned_cleanup_diagnostic "$1" "$2"' >>"$CLEANUP_SCAN_RUNNER"
+chmod 700 "$CLEANUP_SCAN_RUNNER"
+: >"$CLEANUP_EMPTY_PATTERNS"
+printf '%s\n' 'NEVER_MATCH_CLEANUP_DIAGNOSTIC' >"$CLEANUP_SAFE_PATTERNS"
+printf '%s\n' 'DO_NOT_PRINT_CREDENTIAL_SENTINEL' >"$CLEANUP_MATCH_PATTERNS"
+jq -n '{unsafe: "DO_NOT_PRINT_CREDENTIAL_SENTINEL"}' >"$CLEANUP_UNSAFE_PROJECTION"
+assert_cleanup_diagnostic_suppressed() {
+	suppression_projection=$1
+	suppression_patterns=$2
+	if suppression_output=$(sh "$CLEANUP_SCAN_RUNNER" \
+		"$suppression_projection" "$suppression_patterns" 2>&1); then
+		:
+	else
+		printf '%s\n' 'e2e static: cleanup diagnostic suppression returned nonzero' >&2
+		exit 1
+	fi
+	[ "$suppression_output" = \
+		'e2e data plane: credential-safe reconciliation diagnostics suppressed' ] || {
+		printf '%s\n' 'e2e static: cleanup diagnostic suppression emitted nonfixed output' >&2
+		exit 1
+	}
+}
+assert_cleanup_diagnostic_suppressed "$CLEANUP_DIAGNOSTIC_FIXTURE" \
+	"$CLEANUP_EMPTY_PATTERNS"
+assert_cleanup_diagnostic_suppressed "$CLEANUP_UNSAFE_PROJECTION" \
+	"$CLEANUP_MATCH_PATTERNS"
+assert_cleanup_diagnostic_suppressed "$WORK_DIR/missing-cleanup-projection.json" \
+	"$CLEANUP_SAFE_PATTERNS"
+if cleanup_safe_output=$(sh "$CLEANUP_SCAN_RUNNER" \
+	"$CLEANUP_DIAGNOSTIC_FIXTURE" "$CLEANUP_SAFE_PATTERNS" 2>&1); then
+	:
+else
+	printf '%s\n' 'e2e static: safe cleanup diagnostic projection returned nonzero' >&2
+	exit 1
+fi
+cleanup_safe_header=$(printf '%s\n' "$cleanup_safe_output" | sed -n '1p')
+cleanup_safe_json=$(printf '%s\n' "$cleanup_safe_output" | sed -n '2p')
+cleanup_safe_lines=$(printf '%s\n' "$cleanup_safe_output" | awk 'END { print NR }')
+[ "$cleanup_safe_header" = \
+	'e2e data plane: credential-safe reconciliation diagnostic projection' ] &&
+	[ "$cleanup_safe_lines" -eq 2 ] &&
+	[ "$cleanup_safe_json" = "$(jq -c . "$CLEANUP_DIAGNOSTIC_FIXTURE")" ] || {
+	printf '%s\n' 'e2e static: safe cleanup diagnostic projection was not emitted exactly' >&2
+	exit 1
+}
+jq '.spec.template.spec.initContainers = null' "$MYSQL_REFUSAL_SOURCE" \
+	>"$MYSQL_REFUSAL_NULL_SOURCE"
+jq \
+	--arg namespace test-namespace \
+	--arg name test-name \
+	--arg schema test-schema \
+	--arg operation observe \
+	--arg operationID test-operation-id \
+	--arg secret test-secret \
+	-f "$MYSQL_REFUSAL_REWRITE_FILTER" "$MYSQL_REFUSAL_NULL_SOURCE" \
+	>"$MYSQL_REFUSAL_NULL_REWRITTEN"
+jq -e '
+  (.spec.template.spec | has("initContainers")) and
+  .spec.template.spec.initContainers == null and
+  .spec.backoffLimit == 7 and
+  .spec.template.spec.restartPolicy == "Never" and
+  (.spec.template.spec.containers[0].env | any(
+    .name == "PTAH_DB_URL" and
+    .valueFrom.secretKeyRef == {name: "test-secret", key: "url"})) and
+  (.spec.template.spec.containers[0].env | any(
+    .name == "PTAH_OPERATION_ID" and .value == "test-operation-id")) and
+  (.spec.template.spec.containers[0].env | any(
+    .name == "PRESERVED" and .value == "exact"))
+' "$MYSQL_REFUSAL_NULL_REWRITTEN" >/dev/null || {
+	printf '%s\n' 'e2e static: MySQL refusal rewrite changed null initContainers or unrelated Pod semantics' >&2
+	exit 1
+}
 
 grep -F '__API_SERVER_PORT__' "$ROOT_DIR/testdata/e2e/kind.yaml.tmpl" >/dev/null
 grep -F 'application/vnd.stokaro.ptah.schema.v1' \
@@ -197,7 +560,10 @@ for lifecycle_marker in \
 	'set_reconcile_interval_and_assert_noop' \
 	'checkpoint_schema_jobs' \
 	'job_count_between_checkpoints' \
+	'schema_job_count_between_checkpoints' \
+	'capture_blocked_refresh_boundary' \
 	'prepare_blocked_refresh_cadence' \
+	'report_blocked_refresh_diagnostics' \
 	'restore_blocked_refresh_cadence' \
 	'E2E_APPROVAL_INTERVAL' \
 	'E2E_STALE_APPROVAL_INTERVAL' \
@@ -339,6 +705,200 @@ static_require_order() {
 		static_after=$static_line
 	done
 }
+
+blocked_capture_section=$(sed -n '/^capture_blocked_refresh_boundary()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+for blocked_capture_forbidden in \
+	'audit_completed_jobs' \
+	'audit_runtime_credentials' \
+	'wait_for_schema' \
+	'wait_for_one_new_job' \
+	'new_job_count_since' \
+	'all_new_jobs_complete' \
+	'checkpoint_jobs' \
+	'pause_controller_status_writes'; do
+	static_reject_marker "$blocked_capture_section" "$blocked_capture_forbidden" \
+		'blocked refresh boundary before its Job checkpoint'
+done
+static_require_count "$blocked_capture_section" \
+	"checkpoint_schema_jobs \"\$blocked_schema\" \"\$BLOCKED_GATE_CHECKPOINT\"" 1 \
+	'blocked refresh atomic Job checkpoint'
+static_require_order "$blocked_capture_section" 'blocked refresh stable boundary capture' \
+	"blocked_capture_headroom=\$(((BLOCKED_REFRESH_SECONDS * 2 + 2) / 3))" \
+	"blocked_post_checkpoint_headroom=\$((BLOCKED_REFRESH_SECONDS / 2))" \
+	"resume_schema_after_tag_move \"\$blocked_schema\"" \
+	'blocked_expected_generation=' \
+	"blocked_candidate=\$(k -n \"\$TEST_NAMESPACE\" get ptahschema \"\$blocked_schema\"" \
+	".status.observedGeneration == \$generation" \
+	"((.status.nextReconciliationTime | fromdateiso8601) - \$now >= \$headroom)" \
+	'blocked_persisted_deadline=' \
+	'BLOCKED_GATE_CHECKPOINT=' \
+	"checkpoint_schema_jobs \"\$blocked_schema\" \"\$BLOCKED_GATE_CHECKPOINT\"" \
+	"assert_one_job_between_checkpoints \"\$blocked_schema\" \"\$blocked_operation\"" \
+	"assert_no_job_between_checkpoints \"\$blocked_schema\" apply" \
+	"blocked_stable_object=\$(k -n \"\$TEST_NAMESPACE\" get ptahschema \"\$blocked_schema\" -o json)" \
+	".status.nextReconciliationTime == \$deadline" \
+	"((.status.nextReconciliationTime | fromdateiso8601) - \$now >= \$headroom)" \
+	'crossed or changed its persisted blocked refresh boundary during capture'
+blocked_prepare_section=$(sed -n '/^prepare_blocked_refresh_cadence()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+static_require_order "$blocked_prepare_section" 'blocked refresh post-boundary audit' \
+	"checkpoint_schema_jobs \"\$blocked_schema\" \"\$blocked_generation_checkpoint\"" \
+	"capture_blocked_refresh_boundary \"\$blocked_schema\" \"\$blocked_generation_checkpoint\"" \
+	'audit_runtime_credentials'
+for blocked_prepare_forbidden in 'wait_for_schema' 'wait_for_one_new_job'; do
+	static_reject_marker "$blocked_prepare_section" "$blocked_prepare_forbidden" \
+		'blocked refresh preparation'
+done
+destructive_gate_section=$(sed -n '/^assert_destructive_gate()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+for destructive_exact_marker in \
+	"\"\$gate_resolve_count\" -eq 3" \
+	"\"\$gate_verify_count\" -eq 3" \
+	"\"\$gate_observe_count\" -eq 3" \
+	"\"\$gate_plan_count\" -eq 3" \
+	"(\$new | length) == 12" \
+	"(\$resolves | length) == 3" \
+	"(\$verifies | length) == 3" \
+	"(\$observes | length) == 3" \
+	"(\$plans | length) == 3" \
+	"(\$new | map(.operation)) =="; do
+	static_require_count "$destructive_gate_section" "$destructive_exact_marker" 1 \
+		'exact blocked refresh chains'
+done
+static_reject_marker "$destructive_gate_section" '[0:12]' \
+	'exact blocked refresh chains'
+blocked_diagnostic_section=$(sed -n '/^report_blocked_refresh_diagnostics()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+for blocked_diagnostic_marker in \
+	'ObservedJobTimelineDiagnostic' \
+	'def safe_operation:' \
+	'operation_rank' \
+	'{name, uid, operation: (.operation | safe_operation), created}' \
+	'BLOCKED_REFRESH_DIAGNOSTIC_FILE' \
+	'emit_scanned_cleanup_diagnostic' \
+	'CREDENTIAL_PATTERNS_FILE'; do
+	printf '%s\n' "$blocked_diagnostic_section" | grep -F "$blocked_diagnostic_marker" >/dev/null
+done
+for blocked_diagnostic_forbidden in \
+	'.message' \
+	'logs ' \
+	' logs' \
+	'secret' \
+	'.data' \
+	'.stringData' \
+	'{name, uid, operation, created}' \
+	'>&2'; do
+	static_reject_marker "$blocked_diagnostic_section" "$blocked_diagnostic_forbidden" \
+		'credential-free blocked refresh diagnostics'
+done
+cleanup_projection_section=$(sed -n '/^project_cleanup_diagnostic_files()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+for cleanup_projection_marker in \
+	'def safe_code:' \
+	'def safe_epoch:' \
+	".involvedObject.uid == \$schema.metadata.uid" \
+	'.reason == "PlanStale"' \
+	'.reason == "LeaseContinuityLost"' \
+	'.metadata.ownerReferences // [] | any(' \
+	'operator.ptah.dev/coordination"] == "database-target"' \
+	'holderPresent:' \
+	'holderHashShape:'; do
+	printf '%s\n' "$cleanup_projection_section" | grep -F "$cleanup_projection_marker" >/dev/null
+done
+for cleanup_projection_forbidden in \
+	'message:' \
+	'holderIdentity:' \
+	'.spec.containers' \
+	'.spec.initContainers' \
+	'.data' \
+	'.stringData'; do
+	static_reject_marker "$cleanup_projection_section" "$cleanup_projection_forbidden" \
+		'credential-safe cleanup projection'
+done
+cleanup_collect_section=$(sed -n '/^collect_credential_safe_diagnostics()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+static_require_order "$cleanup_collect_section" 'generic cleanup diagnostic pipeline' \
+	'get ptahschemas -o json' \
+	'get events -o json' \
+	'get jobs -o json' \
+	'get leases' \
+	'project_cleanup_diagnostic_files' \
+	'emit_scanned_cleanup_diagnostic'
+for cleanup_collect_forbidden in \
+	'fail ' \
+	'scan_file_for_credentials' \
+	' logs' \
+	'describe ' \
+	'get secret'; do
+	static_reject_marker "$cleanup_collect_section" "$cleanup_collect_forbidden" \
+		'nonfatal generic cleanup diagnostics'
+done
+collect_diagnostics_section=$(sed -n '/^collect_diagnostics()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+static_require_order "$collect_diagnostics_section" 'generic failure diagnostics' \
+	'collect_credential_safe_diagnostics' \
+	'get ptahschemas,ptahschemaplans,ptahschemaapprovals -o wide'
+static_require_count "$destructive_gate_section" \
+	"report_blocked_refresh_diagnostics \"\$gate_schema\" \"\$gate_refresh_checkpoint\"" 6 \
+	'blocked refresh failure diagnostics'
+static_require_order "$destructive_gate_section" 'strict blocked refresh overflow failure' \
+	"\"\$gate_resolve_count\" -gt 3" \
+	"report_blocked_refresh_diagnostics \"\$gate_schema\" \"\$gate_refresh_checkpoint\"" \
+	'created work beyond three exact blocked refresh chains'
+static_require_order "$destructive_gate_section" 'blocked refresh exact success checkpoint' \
+	'gate_after_checkpoint=' \
+	"checkpoint_schema_jobs \"\$gate_schema\" \"\$gate_after_checkpoint\"" \
+	"gate_final_count=\$(job_count_between_checkpoints \"\$gate_schema\"" \
+	"\"\$gate_refresh_checkpoint\" \"\$gate_after_checkpoint\")" \
+	"[ \"\$gate_final_count\" -ne 3 ]" \
+	'crossed the exact three-chain success boundary' \
+	"gate_final_apply_count=\$(job_count_between_checkpoints \"\$gate_schema\" apply" \
+	"[ \"\$gate_final_apply_count\" -eq 0 ]" \
+	"gate_final_schema_count=\$(schema_job_count_between_checkpoints \"\$gate_schema\"" \
+	"[ \"\$gate_final_schema_count\" -eq 12 ]" \
+	'return 0'
+static_reject_marker "$destructive_gate_section" \
+	'select(.operation == "resolve" or .operation == "verify"' \
+	'exact blocked refresh all-Job proof'
+
+mysql_refusal_rewrite_section=$(sed -n '/^rewrite_mysql_refusal_job()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+mysql_refusal_script=$(sed -n '1,$p' "$ROOT_DIR/hack/e2e-dataplane.sh")
+static_require_count "$mysql_refusal_script" \
+	'# mysql-refusal-job-rewrite-begin' 1 'MySQL refusal rewrite filter opening marker'
+static_require_count "$mysql_refusal_script" \
+	'# mysql-refusal-job-rewrite-end' 1 'MySQL refusal rewrite filter closing marker'
+static_require_order "$mysql_refusal_rewrite_section" 'null-safe MySQL refusal Job rewrite' \
+	'.template.spec.containers |= map(rewrite_env)' \
+	'if (.template.spec | has("initContainers")) and' \
+	'.template.spec.initContainers != null then' \
+	'.template.spec.initContainers |= map(rewrite_env)' \
+	'else' \
+	'end)'
+static_require_count "$mysql_refusal_rewrite_section" \
+	'if (.template.spec | has("initContainers")) and' 1 \
+	'MySQL refusal optional initContainers guard'
+mysql_refusal_probe_section=$(sed -n \
+	'/^assert_mysql_refusal_rewrite_without_init_containers()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+static_require_order "$mysql_refusal_probe_section" \
+	'MySQL refusal rewrite missing-initContainers probe' \
+	'rewrite_mysql_refusal_job test-namespace test-name test-schema observe' \
+	'(.spec.template.spec | has("initContainers") | not)' \
+	'.spec.backoffLimit == 7' \
+	'.spec.template.spec.restartPolicy == "Never"' \
+	'name: "PRESERVED", value: "exact"' \
+	'changed absent initContainers or unrelated Pod semantics' \
+	'refusal_null_rewrite_probe=' \
+	'.spec.template.spec.initContainers == null' \
+	'changed null initContainers or unrelated Pod semantics'
+mysql_refusal_section=$(sed -n '/^run_mysql_dsn_refusal()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+static_require_order "$mysql_refusal_section" 'MySQL refusal Job rewrite use' \
+	'assert_mysql_refusal_rewrite_without_init_containers' \
+	"printf '%s\\n' \"\$refusal_source\"" \
+	"rewrite_mysql_refusal_job \"\$TEST_NAMESPACE\" \"\$refusal_name\""
 
 for runtime_audit_script in e2e-dataplane.sh e2e-faults.sh; do
 	case "$runtime_audit_script" in

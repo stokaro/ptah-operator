@@ -146,6 +146,12 @@ REGISTRY_PASSWORD_FILE=$WORK_DIR/registry.password
 RESULT_ASSERT_BINARY=$WORK_DIR/e2e-resultassert
 RESULT_LOG_FILE=$WORK_DIR/runner-result.log
 ADMISSION_ERROR_FILE=$WORK_DIR/admission-error.txt
+CLEANUP_SCHEMA_FILE=$WORK_DIR/cleanup-schemas.json
+CLEANUP_EVENT_FILE=$WORK_DIR/cleanup-events.json
+CLEANUP_JOB_FILE=$WORK_DIR/cleanup-jobs.json
+CLEANUP_LEASE_FILE=$WORK_DIR/cleanup-leases.json
+CLEANUP_DIAGNOSTIC_FILE=$WORK_DIR/cleanup-diagnostic.json
+BLOCKED_REFRESH_DIAGNOSTIC_FILE=$WORK_DIR/blocked-refresh-diagnostic.json
 MYSQL_DESTRUCTIVE_SCHEMA=
 MYSQL_DESTRUCTIVE_PLAN=
 MYSQL_DESTRUCTIVE_PLAN_UID=
@@ -166,8 +172,228 @@ mkdir -p "$WORK_DIR/go-cache"
 env GOCACHE="$WORK_DIR/go-cache" go build -trimpath \
 	-o "$RESULT_ASSERT_BINARY" ./test/e2e/resultassert
 
+suppress_cleanup_diagnostics() {
+	printf '%s\n' 'e2e data plane: credential-safe reconciliation diagnostics suppressed' >&2
+	return 0
+}
+
+emit_scanned_cleanup_diagnostic() {
+	emit_diagnostic_file=$1
+	emit_patterns_file=$2
+	if [ ! -f "$emit_patterns_file" ] || [ ! -s "$emit_patterns_file" ]; then
+		suppress_cleanup_diagnostics
+		return 0
+	fi
+	if grep -q '^$' "$emit_patterns_file" >/dev/null 2>&1; then
+		emit_pattern_status=0
+	else
+		emit_pattern_status=$?
+	fi
+	case "$emit_pattern_status" in
+	0)
+		suppress_cleanup_diagnostics
+		return 0
+		;;
+	1) ;;
+	*)
+		suppress_cleanup_diagnostics
+		return 0
+		;;
+	esac
+	if grep -F -f "$emit_patterns_file" "$emit_diagnostic_file" >/dev/null 2>&1; then
+		emit_scan_status=0
+	else
+		emit_scan_status=$?
+	fi
+	case "$emit_scan_status" in
+	0)
+		suppress_cleanup_diagnostics
+		return 0
+		;;
+	1) ;;
+	*)
+		suppress_cleanup_diagnostics
+		return 0
+		;;
+	esac
+	if [ ! -s "$emit_diagnostic_file" ]; then
+		suppress_cleanup_diagnostics
+		return 0
+	fi
+	if ! emit_diagnostic=$(jq -c . "$emit_diagnostic_file" 2>/dev/null); then
+		suppress_cleanup_diagnostics
+		return 0
+	fi
+	printf '%s\n' 'e2e data plane: credential-safe reconciliation diagnostic projection' >&2
+	printf '%s\n' "$emit_diagnostic" >&2
+	return 0
+}
+
+project_cleanup_diagnostic_files() {
+	project_schema_file=$1
+	project_event_file=$2
+	project_job_file=$3
+	project_lease_file=$4
+	jq -n \
+		--slurpfile schemas "$project_schema_file" \
+		--slurpfile events "$project_event_file" \
+		--slurpfile jobs "$project_job_file" \
+		--slurpfile leases "$project_lease_file" '
+          # cleanup-diagnostic-projection-begin
+          def safe_code:
+            if type == "string" then
+              (try capture("^(?<code>[a-z][a-z0-9_]{0,63}):").code catch null) as $code |
+              if ($code | type) == "string" and
+                  ($code | test("^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"))
+              then $code else null end
+            else null end;
+          def safe_epoch:
+            if type == "string" and test("^v1-[0-9a-f]{32}$") then . else null end;
+          def safe_digest:
+            if type == "string" and test("^sha256:[0-9a-f]{64}$") then . else null end;
+          def safe_phase:
+            if . == "Pending" or . == "Resolving" or . == "Verifying" or
+                . == "Observing" or . == "Planning" or . == "ReadyToApply" or
+                . == "AwaitingApproval" or
+                . == "Applying" or . == "VerifyingConvergence" or . == "InSync" or
+                . == "Blocked" or . == "Suspended" or . == "Failed"
+            then . else null end;
+          def safe_operation:
+            if . == "resolve" or . == "verify" or . == "observe" or
+                . == "plan" or . == "apply" then . else null end;
+          {
+            schemas: [
+              ($schemas[0].items // [])[] |
+              select((.metadata.uid // "") | type == "string" and length > 0) |
+              . as $schema |
+              {
+                name: $schema.metadata.name,
+                uid: $schema.metadata.uid,
+                generation: $schema.metadata.generation,
+                observedGeneration: $schema.status.observedGeneration,
+                phase: ($schema.status.phase | safe_phase),
+                nextReconciliationTime: $schema.status.nextReconciliationTime,
+                failure: ([
+                  ($schema.status.conditions // [])[] |
+                  select(.type == "ReconciliationFailed" and .status == "True") |
+                  select(.reason == "OperationFailed" or .reason == "ConfigurationError" or
+                    .reason == "ApplyOutcomeUnknown") |
+                  {
+                    condition: "ReconciliationFailed",
+                    reason,
+                    code: (.message | safe_code)
+                  }
+                ] | .[-1] // null),
+                expectedEpochs: {
+                  activeOperation: ($schema.status.activeOperation.leaseEpoch | safe_epoch),
+                  pendingObservation: ($schema.status.pendingObservation.leaseEpoch | safe_epoch),
+                  pendingLockRelease: ($schema.status.pendingLockRelease.leaseEpoch | safe_epoch)
+                },
+                leaseContinuityLost: ($schema.status.activeOperation.leaseContinuityLost // false),
+                events: [
+                  ($events[0].items // [])[] |
+                  select(.involvedObject.apiVersion == "operator.ptah.dev/v1alpha1" and
+                    .involvedObject.kind == "PtahSchema" and
+                    .involvedObject.name == $schema.metadata.name and
+                    .involvedObject.uid == $schema.metadata.uid) |
+                  select(.reason == "OperationFailed" or .reason == "ReconciliationFailed" or
+                    .reason == "ApplyOutcomeUnknown" or .reason == "PlanStale" or
+                    .reason == "LeaseContinuityLost") |
+                  {
+                    type: (if .type == "Normal" or .type == "Warning" then .type else null end),
+                    reason,
+                    code: (if .reason == "OperationFailed" or .reason == "ReconciliationFailed" or
+                      .reason == "ApplyOutcomeUnknown"
+                      then (.message | safe_code) else null end),
+                    timestamp: (.eventTime // .lastTimestamp // .firstTimestamp // null)
+                  }
+                ],
+                jobs: [
+                  ($jobs[0].items // [])[] |
+                  select(.metadata.ownerReferences // [] | any(
+                    .apiVersion == "operator.ptah.dev/v1alpha1" and
+                    .kind == "PtahSchema" and .uid == $schema.metadata.uid and
+                    .controller == true)) |
+                  {
+                    name: .metadata.name,
+                    uid: .metadata.uid,
+                    operation: (.metadata.labels["operator.ptah.dev/operation"] | safe_operation),
+                    created: .metadata.creationTimestamp,
+                    started: .status.startTime,
+                    completed: .status.completionTime,
+                    complete: ((.status.conditions // []) | any(
+                      .type == "Complete" and .status == "True")),
+                    failed: ((.status.conditions // []) | any(
+                      .type == "Failed" and .status == "True")),
+                    operationIDHashShape: ((.metadata.annotations["operator.ptah.dev/operation-id"] // "") |
+                      type == "string" and test("^sha256:[0-9a-f]{64}$")),
+                    inputFingerprint: (.metadata.annotations["operator.ptah.dev/input-fingerprint"] |
+                      safe_digest)
+                  }
+                ]
+              }
+            ],
+            leases: [
+              ($leases[0].items // [])[] |
+              select(.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and
+                .metadata.labels["operator.ptah.dev/coordination"] == "database-target") |
+              {
+                name: .metadata.name,
+                uid: .metadata.uid,
+                resourceVersion: .metadata.resourceVersion,
+                created: .metadata.creationTimestamp,
+                epoch: (.metadata.annotations["operator.ptah.dev/lease-epoch"] | safe_epoch),
+                holderPresent: ((.spec.holderIdentity // "") | type == "string" and length > 0),
+                holderHashShape: ((.spec.holderIdentity // "") |
+                  type == "string" and test("^ptah-h-[a-z2-7]{52}$")),
+                leaseDurationSeconds: .spec.leaseDurationSeconds,
+                acquireTime: .spec.acquireTime,
+                renewTime: .spec.renewTime,
+                transitions: .spec.leaseTransitions
+              }
+            ]
+          }
+          # cleanup-diagnostic-projection-end
+        '
+}
+
+collect_credential_safe_diagnostics() {
+	if [ ! -f "$CREDENTIAL_PATTERNS_FILE" ] || [ ! -s "$CREDENTIAL_PATTERNS_FILE" ]; then
+		suppress_cleanup_diagnostics
+		return 0
+	fi
+	: >"$CLEANUP_SCHEMA_FILE"
+	: >"$CLEANUP_EVENT_FILE"
+	: >"$CLEANUP_JOB_FILE"
+	: >"$CLEANUP_LEASE_FILE"
+	: >"$CLEANUP_DIAGNOSTIC_FILE"
+	chmod 600 "$CLEANUP_SCHEMA_FILE" "$CLEANUP_EVENT_FILE" "$CLEANUP_JOB_FILE" \
+		"$CLEANUP_LEASE_FILE" "$CLEANUP_DIAGNOSTIC_FILE" || {
+		suppress_cleanup_diagnostics
+		return 0
+	}
+	if ! k -n "$TEST_NAMESPACE" get ptahschemas -o json >"$CLEANUP_SCHEMA_FILE" 2>/dev/null ||
+		! k -n "$TEST_NAMESPACE" get events -o json >"$CLEANUP_EVENT_FILE" 2>/dev/null ||
+		! k -n "$TEST_NAMESPACE" get jobs -o json >"$CLEANUP_JOB_FILE" 2>/dev/null ||
+		! k -n "$OPERATOR_NAMESPACE" get leases \
+			-l 'app.kubernetes.io/managed-by=ptah-operator,operator.ptah.dev/coordination=database-target' \
+			-o json >"$CLEANUP_LEASE_FILE" 2>/dev/null; then
+		suppress_cleanup_diagnostics
+		return 0
+	fi
+	if ! project_cleanup_diagnostic_files "$CLEANUP_SCHEMA_FILE" "$CLEANUP_EVENT_FILE" \
+		"$CLEANUP_JOB_FILE" "$CLEANUP_LEASE_FILE" >"$CLEANUP_DIAGNOSTIC_FILE" 2>/dev/null; then
+		suppress_cleanup_diagnostics
+		return 0
+	fi
+	emit_scanned_cleanup_diagnostic "$CLEANUP_DIAGNOSTIC_FILE" \
+		"$CREDENTIAL_PATTERNS_FILE"
+	return 0
+}
+
 collect_diagnostics() {
 	printf '%s\n' 'e2e data plane: collecting failure diagnostics' >&2
+	collect_credential_safe_diagnostics
 	k -n "$TEST_NAMESPACE" get ptahschemas,ptahschemaplans,ptahschemaapprovals -o wide >&2 || true
 	k -n "$TEST_NAMESPACE" get jobs,pods -o wide >&2 || true
 	printf '%s\n' 'e2e data plane: raw events and logs are suppressed to protect credential-isolation failures' >&2
@@ -709,6 +935,23 @@ job_count_between_checkpoints() {
 		--arg operation "$bounded_operation" '
       [.[] |
         select(.schema == $schema and .operation == $operation) |
+        .uid as $uid |
+        select(($after[0] | index($uid)) != null and
+          ($before[0] | index($uid)) == null)] |
+      unique_by(.uid) | length
+    ' "$OBSERVED_JOBS_FILE"
+}
+
+schema_job_count_between_checkpoints() {
+	bounded_schema=$1
+	bounded_before=$2
+	bounded_after=$3
+	jq -s \
+		--slurpfile before "$bounded_before" \
+		--slurpfile after "$bounded_after" \
+		--arg schema "$bounded_schema" '
+      [.[] |
+        select(.schema == $schema) |
         .uid as $uid |
         select(($after[0] | index($uid)) != null and
           ($before[0] | index($uid)) == null)] |
@@ -1365,9 +1608,132 @@ assert_mysql_plain_index() {
 		fail "MySQL plain index count is $index_actual, expected $index_expected"
 }
 
+rewrite_mysql_refusal_job() {
+	rewrite_namespace=$1
+	rewrite_name=$2
+	rewrite_schema=$3
+	rewrite_operation=$4
+	rewrite_operation_id=$5
+	rewrite_secret=$6
+	jq \
+		--arg namespace "$rewrite_namespace" \
+		--arg name "$rewrite_name" \
+		--arg schema "$rewrite_schema" \
+		--arg operation "$rewrite_operation" \
+		--arg operationID "$rewrite_operation_id" \
+		--arg secret "$rewrite_secret" '
+          # mysql-refusal-job-rewrite-begin
+          def rewrite_env:
+            .env |= map(
+              if .name == "PTAH_DB_URL" then
+                del(.value) |
+                .valueFrom = {secretKeyRef: {name: $secret, key: "url"}}
+              elif .name == "PTAH_OPERATION_ID" then
+                .value = $operationID | del(.valueFrom)
+              else . end);
+          {
+            apiVersion: "batch/v1", kind: "Job",
+            metadata: {
+              namespace: $namespace,
+              name: $name,
+              labels: {
+                "app.kubernetes.io/component": "e2e-invalid-dsn",
+                "operator.ptah.dev/schema": $schema,
+                "operator.ptah.dev/operation": $operation
+              },
+              annotations: {"operator.ptah.dev/operation-id": $operationID}
+            },
+            spec: (.spec |
+              del(.selector, .manualSelector) |
+              .template.metadata = {
+                labels: {
+                  "app.kubernetes.io/component": "e2e-invalid-dsn",
+                  "operator.ptah.dev/schema": $schema,
+                  "operator.ptah.dev/operation": $operation
+                },
+                annotations: {"operator.ptah.dev/operation-id": $operationID}
+              } |
+              .template.spec.containers |= map(rewrite_env) |
+              if (.template.spec | has("initContainers")) and
+                  .template.spec.initContainers != null then
+                .template.spec.initContainers |= map(rewrite_env)
+              else
+                .
+              end)
+          }
+          # mysql-refusal-job-rewrite-end
+        '
+}
+
+assert_mysql_refusal_rewrite_without_init_containers() {
+	refusal_rewrite_source=$(jq -n '
+        {
+          spec: {
+            backoffLimit: 7,
+            template: {
+              metadata: {labels: {preserved: "source-only"}},
+              spec: {
+                restartPolicy: "Never",
+                containers: [{
+                  name: "ptah",
+                  image: "fixture.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  args: ["observe"],
+                  env: [
+                    {name: "PTAH_DB_URL", value: "mysql://original.invalid"},
+                    {name: "PTAH_OPERATION_ID", valueFrom: {fieldRef: {fieldPath: "metadata.uid"}}},
+                    {name: "PRESERVED", value: "exact"}
+                  ]
+                }]
+              }
+            }
+          }
+        }
+      ')
+	refusal_rewrite_probe=$(printf '%s\n' "$refusal_rewrite_source" |
+		rewrite_mysql_refusal_job test-namespace test-name test-schema observe \
+		test-operation-id test-secret) ||
+		fail "MySQL invalid-DSN Job rewrite rejected a source without initContainers"
+	printf '%s\n' "$refusal_rewrite_probe" | jq -e '
+      (.spec.template.spec | has("initContainers") | not) and
+      .spec.backoffLimit == 7 and
+      .spec.template.spec.restartPolicy == "Never" and
+      .spec.template.spec.containers == [{
+        name: "ptah",
+        image: "fixture.invalid/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        args: ["observe"],
+        env: [
+          {name: "PTAH_DB_URL", valueFrom: {secretKeyRef: {name: "test-secret", key: "url"}}},
+          {name: "PTAH_OPERATION_ID", value: "test-operation-id"},
+          {name: "PRESERVED", value: "exact"}
+        ]
+      }]
+    ' >/dev/null ||
+		fail "MySQL invalid-DSN Job rewrite changed absent initContainers or unrelated Pod semantics"
+	refusal_null_rewrite_probe=$(printf '%s\n' "$refusal_rewrite_source" |
+		jq '.spec.template.spec.initContainers = null' |
+		rewrite_mysql_refusal_job test-namespace test-name test-schema observe \
+			test-operation-id test-secret) ||
+		fail "MySQL invalid-DSN Job rewrite rejected null initContainers"
+	printf '%s\n' "$refusal_null_rewrite_probe" | jq -e '
+      (.spec.template.spec | has("initContainers")) and
+      .spec.template.spec.initContainers == null and
+      .spec.backoffLimit == 7 and
+      .spec.template.spec.restartPolicy == "Never" and
+      (.spec.template.spec.containers[0].env | any(
+        .name == "PTAH_DB_URL" and
+        .valueFrom.secretKeyRef == {name: "test-secret", key: "url"})) and
+      (.spec.template.spec.containers[0].env | any(
+        .name == "PTAH_OPERATION_ID" and .value == "test-operation-id")) and
+      (.spec.template.spec.containers[0].env | any(
+        .name == "PRESERVED" and .value == "exact"))
+    ' >/dev/null ||
+		fail "MySQL invalid-DSN Job rewrite changed null initContainers or unrelated Pod semantics"
+}
+
 run_mysql_dsn_refusal() {
 	unsafe_secret=e2e-mysql-unsafe-dsn
 	unsafe_schema_label=e2e-mysql-dsn-negative
+	assert_mysql_refusal_rewrite_without_init_containers
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
 		--arg name "$unsafe_secret" \
@@ -1402,47 +1768,10 @@ run_mysql_dsn_refusal() {
           sort_by(.metadata.creationTimestamp) |
           if length > 0 then .[-1] else error("no completed source Job") end
         ')
-		printf '%s\n' "$refusal_source" | jq \
-			--arg namespace "$TEST_NAMESPACE" \
-			--arg name "$refusal_name" \
-			--arg schema "$unsafe_schema_label" \
-			--arg operation "$refusal_operation" \
-			--arg operationID "$refusal_operation_id" \
-			--arg secret "$unsafe_secret" '
-          def rewrite_env:
-            .env |= map(
-              if .name == "PTAH_DB_URL" then
-	                del(.value) |
-                .valueFrom = {secretKeyRef: {name: $secret, key: "url"}}
-              elif .name == "PTAH_OPERATION_ID" then
-                .value = $operationID | del(.valueFrom)
-              else . end);
-          {
-            apiVersion: "batch/v1", kind: "Job",
-            metadata: {
-              namespace: $namespace,
-              name: $name,
-              labels: {
-                "app.kubernetes.io/component": "e2e-invalid-dsn",
-                "operator.ptah.dev/schema": $schema,
-                "operator.ptah.dev/operation": $operation
-              },
-              annotations: {"operator.ptah.dev/operation-id": $operationID}
-            },
-            spec: (.spec |
-              del(.selector, .manualSelector) |
-              .template.metadata = {
-                labels: {
-                  "app.kubernetes.io/component": "e2e-invalid-dsn",
-                  "operator.ptah.dev/schema": $schema,
-                  "operator.ptah.dev/operation": $operation
-                },
-                annotations: {"operator.ptah.dev/operation-id": $operationID}
-              } |
-              .template.spec.containers |= map(rewrite_env) |
-              .template.spec.initContainers |= map(rewrite_env))
-          }
-        ' >"$RESOURCE_FILE"
+		printf '%s\n' "$refusal_source" |
+			rewrite_mysql_refusal_job "$TEST_NAMESPACE" "$refusal_name" \
+				"$unsafe_schema_label" "$refusal_operation" \
+				"$refusal_operation_id" "$unsafe_secret" >"$RESOURCE_FILE"
 		k create -f "$RESOURCE_FILE" >/dev/null
 		k -n "$TEST_NAMESPACE" wait --for=condition=Complete \
 			--timeout="${TIMEOUT_SECONDS}s" job/"$refusal_name" >/dev/null
@@ -2012,22 +2341,58 @@ resume_schema_after_tag_move() {
 		-p '{"spec":{"suspend":false}}' >/dev/null
 }
 
-prepare_blocked_refresh_cadence() {
+capture_blocked_refresh_boundary() {
 	blocked_schema=$1
-	suspend_schema_for_tag_move "$blocked_schema" "$BLOCKED_REFRESH_INTERVAL"
-	blocked_generation_checkpoint="$WORK_DIR/${blocked_schema}-blocked-generation-before.json"
-	checkpoint_schema_jobs "$blocked_schema" "$blocked_generation_checkpoint"
+	blocked_generation_checkpoint=$2
+	blocked_capture_headroom=$(((BLOCKED_REFRESH_SECONDS * 2 + 2) / 3))
+	blocked_post_checkpoint_headroom=$((BLOCKED_REFRESH_SECONDS / 2))
+	[ "$blocked_post_checkpoint_headroom" -gt 0 ] ||
+		fail "blocked refresh boundary requires positive post-checkpoint headroom"
+
 	resume_schema_after_tag_move "$blocked_schema"
-	for blocked_operation in resolve verify observe plan; do
-		wait_for_one_new_job "$blocked_schema" "$blocked_operation" \
-			"$blocked_generation_checkpoint"
+	blocked_generation_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$blocked_schema" -o json)
+	blocked_expected_generation=$(printf '%s\n' "$blocked_generation_object" |
+		jq -er '.metadata.generation')
+	printf '%s\n' "$blocked_expected_generation" | grep -Eq '^[1-9][0-9]*$' ||
+		fail "$blocked_schema resumed without an exact positive generation"
+
+	blocked_state_deadline=$(deadline_from_now)
+	blocked_persisted_deadline=
+	while [ "$(date +%s)" -lt "$blocked_state_deadline" ]; do
+		if blocked_candidate=$(k -n "$TEST_NAMESPACE" get ptahschema "$blocked_schema" \
+			-o json 2>/dev/null); then
+			blocked_now=$(date +%s)
+			if printf '%s\n' "$blocked_candidate" | jq -e \
+				--argjson generation "$blocked_expected_generation" \
+				--arg interval "$BLOCKED_REFRESH_INTERVAL" \
+				--argjson now "$blocked_now" \
+				--argjson headroom "$blocked_capture_headroom" '
+              .metadata.generation == $generation and
+              .status.observedGeneration == $generation and
+              .spec.suspend == false and .spec.interval == $interval and
+              .status.phase == "Blocked" and .status.activeOperation == null and
+              .status.pendingObservation == null and
+              .status.pendingLockRelease == null and
+              .status.nextReconciliationTime != null and
+              ((.status.nextReconciliationTime | fromdateiso8601) - $now >= $headroom) and
+              (.status.conditions // [] | any(
+                .type == "ApprovalRequired" and .status == "False" and
+                .reason == "DestructiveChangesDisabled"))
+            ' >/dev/null; then
+				blocked_persisted_deadline=$(printf '%s\n' "$blocked_candidate" |
+					jq -er '.status.nextReconciliationTime')
+				break
+			fi
+			blocked_phase=$(printf '%s\n' "$blocked_candidate" |
+				jq -r '.status.phase // ""')
+			[ "$blocked_phase" != Failed ] ||
+				fail "$blocked_schema entered Failed before the blocked refresh boundary"
+		fi
+		sleep 1
 	done
-	wait_for_schema "$blocked_schema" '
-      .status.observedGeneration == .metadata.generation and
-      .status.phase == "Blocked" and .status.activeOperation == null and
-      .status.pendingObservation == null and .status.pendingLockRelease == null and
-      .status.nextReconciliationTime != null
-    ' "the generation-triggered blocked refresh before scheduled cadence proof"
+	[ -n "$blocked_persisted_deadline" ] ||
+		fail "timed out waiting for $blocked_schema blocked refresh boundary with future headroom"
+
 	BLOCKED_GATE_CHECKPOINT="$WORK_DIR/${blocked_schema}-blocked-generation-after.json"
 	checkpoint_schema_jobs "$blocked_schema" "$BLOCKED_GATE_CHECKPOINT"
 	for blocked_operation in resolve verify observe plan; do
@@ -2036,7 +2401,80 @@ prepare_blocked_refresh_cadence() {
 	done
 	assert_no_job_between_checkpoints "$blocked_schema" apply \
 		"$blocked_generation_checkpoint" "$BLOCKED_GATE_CHECKPOINT"
+
+	blocked_stable_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$blocked_schema" -o json)
+	blocked_stable_now=$(date +%s)
+	printf '%s\n' "$blocked_stable_object" | jq -e \
+		--argjson generation "$blocked_expected_generation" \
+		--arg interval "$BLOCKED_REFRESH_INTERVAL" \
+		--arg deadline "$blocked_persisted_deadline" \
+		--argjson now "$blocked_stable_now" \
+		--argjson headroom "$blocked_post_checkpoint_headroom" '
+          .metadata.generation == $generation and
+          .status.observedGeneration == $generation and
+          .spec.suspend == false and .spec.interval == $interval and
+          .status.phase == "Blocked" and .status.activeOperation == null and
+          .status.pendingObservation == null and
+          .status.pendingLockRelease == null and
+          .status.nextReconciliationTime == $deadline and
+          ((.status.nextReconciliationTime | fromdateiso8601) - $now >= $headroom) and
+          (.status.conditions // [] | any(
+            .type == "ApprovalRequired" and .status == "False" and
+            .reason == "DestructiveChangesDisabled"))
+        ' >/dev/null ||
+		fail "$blocked_schema crossed or changed its persisted blocked refresh boundary during capture"
+}
+
+prepare_blocked_refresh_cadence() {
+	blocked_schema=$1
+	suspend_schema_for_tag_move "$blocked_schema" "$BLOCKED_REFRESH_INTERVAL"
+	blocked_generation_checkpoint="$WORK_DIR/${blocked_schema}-blocked-generation-before.json"
+	checkpoint_schema_jobs "$blocked_schema" "$blocked_generation_checkpoint"
+	capture_blocked_refresh_boundary "$blocked_schema" "$blocked_generation_checkpoint"
 	audit_runtime_credentials
+}
+
+report_blocked_refresh_diagnostics() {
+	diagnostic_schema=$1
+	diagnostic_checkpoint=$2
+	: >"$BLOCKED_REFRESH_DIAGNOSTIC_FILE"
+	chmod 600 "$BLOCKED_REFRESH_DIAGNOSTIC_FILE" || {
+		suppress_cleanup_diagnostics
+		return 0
+	}
+	if [ -s "$OBSERVED_JOBS_FILE" ]; then
+		if jq -c -s \
+			--slurpfile before "$diagnostic_checkpoint" \
+			--arg schema "$diagnostic_schema" '
+              def safe_operation:
+                if . == "resolve" or . == "verify" or . == "observe" or
+                    . == "plan" or . == "apply" then . else null end;
+              def operation_rank:
+                if .operation == "resolve" then 0
+                elif .operation == "verify" then 1
+                elif .operation == "observe" then 2
+                elif .operation == "plan" then 3
+                else 4 end;
+              {
+                kind: "ObservedJobTimelineDiagnostic",
+                jobs: [
+                  .[] |
+                  select(.schema == $schema) |
+                  .uid as $uid |
+                  select(($before[0] | index($uid)) == null) |
+                  {name, uid, operation: (.operation | safe_operation), created}
+                ] | sort_by([.created, operation_rank, .uid])
+              }
+			' "$OBSERVED_JOBS_FILE" >"$BLOCKED_REFRESH_DIAGNOSTIC_FILE" 2>/dev/null; then
+			emit_scanned_cleanup_diagnostic "$BLOCKED_REFRESH_DIAGNOSTIC_FILE" \
+				"$CREDENTIAL_PATTERNS_FILE"
+		else
+			suppress_cleanup_diagnostics
+		fi
+	else
+		suppress_cleanup_diagnostics
+	fi
+	return 0
 }
 
 assert_destructive_gate() {
@@ -2065,14 +2503,19 @@ assert_destructive_gate() {
 		gate_verify_count=$(new_job_count_since "$gate_schema" verify "$gate_refresh_checkpoint")
 		gate_observe_count=$(new_job_count_since "$gate_schema" observe "$gate_refresh_checkpoint")
 		gate_plan_count=$(new_job_count_since "$gate_schema" plan "$gate_refresh_checkpoint")
-		if [ "$gate_resolve_count" -ge 3 ] && [ "$gate_verify_count" -ge 3 ] && \
-			[ "$gate_observe_count" -ge 3 ] && [ "$gate_plan_count" -ge 3 ] && \
+		if [ "$gate_resolve_count" -gt 3 ] || [ "$gate_verify_count" -gt 3 ] || \
+			[ "$gate_observe_count" -gt 3 ] || [ "$gate_plan_count" -gt 3 ]; then
+			report_blocked_refresh_diagnostics "$gate_schema" "$gate_refresh_checkpoint"
+			fail "$gate_schema created work beyond three exact blocked refresh chains"
+		fi
+		if [ "$gate_resolve_count" -eq 3 ] && [ "$gate_verify_count" -eq 3 ] && \
+			[ "$gate_observe_count" -eq 3 ] && [ "$gate_plan_count" -eq 3 ] && \
 			all_new_jobs_complete "$gate_schema" resolve "$gate_refresh_checkpoint" 3 && \
 			all_new_jobs_complete "$gate_schema" verify "$gate_refresh_checkpoint" 3 && \
 			all_new_jobs_complete "$gate_schema" observe "$gate_refresh_checkpoint" 3 && \
 			all_new_jobs_complete "$gate_schema" plan "$gate_refresh_checkpoint" 3; then
 			record_observed_jobs
-			jq -e -s \
+			if jq -e -s \
 				--slurpfile before "$gate_refresh_checkpoint" \
 				--arg schema "$gate_schema" \
 				--argjson intervalSeconds "$BLOCKED_REFRESH_SECONDS" '
@@ -2085,24 +2528,29 @@ assert_destructive_gate() {
                 else 3 end;
               [.[] |
                 select(.schema == $schema) |
-                select(.operation == "resolve" or .operation == "verify" or
-                  .operation == "observe" or .operation == "plan") |
                 select(new_since($before))
               ] | unique_by(.uid) | sort_by([.created, operation_rank]) as $new |
               [$new[] | select(.operation == "resolve")] as $resolves |
-              ($resolves | length) >= 3 and
+              [$new[] | select(.operation == "verify")] as $verifies |
+              [$new[] | select(.operation == "observe")] as $observes |
+              [$new[] | select(.operation == "plan")] as $plans |
+              ($new | length) == 12 and
+              ($resolves | length) == 3 and ($verifies | length) == 3 and
+              ($observes | length) == 3 and ($plans | length) == 3 and
               (($resolves[1].created | fromdateiso8601) -
                 ($resolves[0].created | fromdateiso8601) >= $intervalSeconds) and
               (($resolves[2].created | fromdateiso8601) -
                 ($resolves[1].created | fromdateiso8601) >= $intervalSeconds) and
-              (($resolves[0].created) as $firstResolve |
-                ([$new[] | select(.created >= $firstResolve)][0:12] |
-                  map(.operation)) ==
+              ($new | map(.operation)) ==
                 ["resolve", "verify", "observe", "plan",
                  "resolve", "verify", "observe", "plan",
-                 "resolve", "verify", "observe", "plan"])
-            ' "$OBSERVED_JOBS_FILE" >/dev/null ||
+                 "resolve", "verify", "observe", "plan"]
+			' "$OBSERVED_JOBS_FILE" >/dev/null; then
+				:
+			else
+				report_blocked_refresh_diagnostics "$gate_schema" "$gate_refresh_checkpoint"
 				fail "$gate_schema did not preserve ordered interval-spaced blocked refresh cycles"
+			fi
 			wait_for_schema "$gate_schema" '
           .status.phase == "Blocked" and .status.activeOperation == null and
           .status.pendingObservation == null and .status.pendingLockRelease == null and
@@ -2131,10 +2579,33 @@ assert_destructive_gate() {
               .spec.artifactDigest == $digest and .spec.destructive == true
             ' >/dev/null || fail "$gate_schema immutable destructive plan changed during refresh"
 			assert_no_new_jobs "$gate_schema" apply "$gate_apply_checkpoint"
+			gate_after_checkpoint="$WORK_DIR/${gate_schema}-blocked-refresh-after.json"
+			checkpoint_schema_jobs "$gate_schema" "$gate_after_checkpoint"
+			for gate_operation in resolve verify observe plan; do
+				gate_final_count=$(job_count_between_checkpoints "$gate_schema" \
+					"$gate_operation" "$gate_refresh_checkpoint" "$gate_after_checkpoint")
+				if [ "$gate_final_count" -ne 3 ]; then
+					report_blocked_refresh_diagnostics "$gate_schema" "$gate_refresh_checkpoint"
+					fail "$gate_schema crossed the exact three-chain success boundary with $gate_final_count $gate_operation Jobs"
+				fi
+			done
+			gate_final_apply_count=$(job_count_between_checkpoints "$gate_schema" apply \
+				"$gate_refresh_checkpoint" "$gate_after_checkpoint")
+			[ "$gate_final_apply_count" -eq 0 ] || {
+				report_blocked_refresh_diagnostics "$gate_schema" "$gate_refresh_checkpoint"
+				fail "$gate_schema crossed the exact three-chain success boundary with an Apply Job"
+			}
+			gate_final_schema_count=$(schema_job_count_between_checkpoints "$gate_schema" \
+				"$gate_refresh_checkpoint" "$gate_after_checkpoint")
+			[ "$gate_final_schema_count" -eq 12 ] || {
+				report_blocked_refresh_diagnostics "$gate_schema" "$gate_refresh_checkpoint"
+				fail "$gate_schema crossed the exact three-chain success boundary with $gate_final_schema_count total Jobs"
+			}
 			return 0
 		fi
 		sleep 2
 	done
+	report_blocked_refresh_diagnostics "$gate_schema" "$gate_refresh_checkpoint"
 	fail "$gate_schema did not complete three scheduled blocked refresh cycles"
 }
 
