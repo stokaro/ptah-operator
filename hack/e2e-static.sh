@@ -2379,6 +2379,27 @@ static_reject_marker "$capture_result_section" 'FULLY_AUDITED' \
 fault_runtime_audit_function_section=$(sed -n '/^audit_fault_runtime()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-faults.sh")
 fault_script=$(sed -n '1,$p' "$ROOT_DIR/hack/e2e-faults.sh")
+uncertain_read_proof_section=$(sed -n '/^capture_uncertain_read_proof_pair()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+# shellcheck disable=SC2016 # Markers intentionally match literal jq variables.
+uncertain_zero_evidence_defaults_present() {
+	zero_evidence_section=$1
+	[ "$(printf '%s\n' "$zero_evidence_section" |
+		grep -Fc '(.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs')" -eq 2 ] &&
+		[ "$(printf '%s\n' "$zero_evidence_section" |
+			grep -Fc '(.status.pendingObservation.applyPodCount // 0) == $applyPodCount')" -eq 2 ]
+}
+uncertain_zero_evidence_defaults_present "$uncertain_read_proof_section" || {
+	printf '%s\n' 'e2e static: uncertain Apply proof does not normalize both omitted Pod evidence fields' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # The mutant intentionally replaces a literal jq variable.
+uncertain_zero_evidence_mutant=$(printf '%s\n' "$uncertain_read_proof_section" |
+	sed 's#(.status.pendingObservation.applyPodCount // 0) == \$applyPodCount#.status.pendingObservation.applyPodCount == $applyPodCount#')
+if uncertain_zero_evidence_defaults_present "$uncertain_zero_evidence_mutant"; then
+	printf '%s\n' 'e2e static: uncertain Apply zero-evidence wiring mutant was not rejected' >&2
+	exit 1
+fi
 static_require_order "$fault_script" 'fault full-audit ledger initialization' \
 	"SHARED_FULLY_AUDITED_JOBS_FILE=\${E2E_FULLY_AUDITED_JOBS_FILE:-}" \
 	"FULLY_AUDITED_FAULT_PODS_FILE=\$WORK_DIR/fully-audited-pod-uids.txt" \
