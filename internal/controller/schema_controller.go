@@ -3241,16 +3241,6 @@ func policyFingerprint(schema *operatorv1alpha1.PtahSchema) (string, error) {
 	})
 }
 
-func findingCount(report dataplane.DriftReport) int32 {
-	var count int32
-	for _, finding := range report.Findings {
-		if finding.Count > 0 && count <= int32(^uint32(0)>>1)-finding.Count {
-			count += finding.Count
-		}
-	}
-	return count
-}
-
 func phaseFor(operation operatorv1alpha1.OperationType) operatorv1alpha1.ReconciliationPhase {
 	switch operation {
 	case operatorv1alpha1.OperationResolve:

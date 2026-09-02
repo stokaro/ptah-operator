@@ -509,7 +509,7 @@ func validationHandlerFixture(t *testing.T) (*podintent.ValidationHandler, *core
 	options := podintent.DefaultOptions()
 	options.ExtendedResourceTolerationEnabled = true
 	options.AlwaysPullImagesEnabled = true
-	template, snapshot := resolvedFixtureWithOptionsAndMetadata(t, options, metav1.ObjectMeta{
+	template, _ := resolvedFixtureWithOptionsAndMetadata(t, options, metav1.ObjectMeta{
 		Labels: labels, Annotations: annotations,
 	})
 	deadline := int64(900)
