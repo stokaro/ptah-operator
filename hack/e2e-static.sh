@@ -141,6 +141,51 @@ assert_database_url_rewrite_rejected \
 	'postgres://db.example?sslmode=disable' \
 	'isolated_database'
 
+ready_manager_pod_uids_section=$(sed -n '/^ready_manager_pod_uids()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+manager_pods_replaced_section=$(sed -n '/^manager_pods_replaced()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+[ -n "$ready_manager_pod_uids_section" ] && [ -n "$manager_pods_replaced_section" ] || {
+	printf '%s\n' 'e2e static: manager rollout identity helpers are missing' >&2
+	exit 1
+}
+eval "$ready_manager_pod_uids_section"
+eval "$manager_pods_replaced_section"
+ready_manager_fixture=$(jq -cn '
+  {items: [
+    {metadata: {uid: "manager-a"}, status: {conditions: [{type: "Ready", status: "True"}]}},
+    {metadata: {uid: "manager-b"}, status: {conditions: [{type: "Ready", status: "True"}]}}
+  ]}
+')
+ready_manager_uids=$(printf '%s\n' "$ready_manager_fixture" | ready_manager_pod_uids 2)
+[ "$ready_manager_uids" = '["manager-a","manager-b"]' ] || {
+	printf '%s\n' 'e2e static: manager UID selection rejected two ready HA replicas' >&2
+	exit 1
+}
+stale_manager_fixture=$(jq -cn '
+  {items: [
+    {metadata: {uid: "old-manager"}, status: {conditions: [{type: "Ready", status: "False"}]}},
+    {metadata: {uid: "new-manager-a"}, status: {conditions: [{type: "Ready", status: "True"}]}},
+    {metadata: {uid: "new-manager-b"}, status: {conditions: [{type: "Ready", status: "True"}]}}
+  ]}
+')
+if printf '%s\n' "$stale_manager_fixture" | ready_manager_pod_uids 2 >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: manager UID selection ignored a stale non-terminating replica' >&2
+	exit 1
+fi
+manager_pods_replaced '["old-a","old-b"]' '["new-a","new-b"]' >/dev/null || {
+	printf '%s\n' 'e2e static: manager replacement rejected disjoint equal-size UID sets' >&2
+	exit 1
+}
+if manager_pods_replaced '["old-a","old-b"]' '["old-b","new-a"]' >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: manager replacement accepted an overlapping UID set' >&2
+	exit 1
+fi
+if manager_pods_replaced '["old-a","old-b"]' '["new-a"]' >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: manager replacement accepted a lost replica' >&2
+	exit 1
+fi
+
 grep -Eq '^[[:space:]]*ProtocolVersion = 4$' "$ROOT_DIR/internal/runner/protocol.go" || {
 	printf '%s\n' 'e2e static: runner protocol constant is not version 4' >&2
 	exit 1

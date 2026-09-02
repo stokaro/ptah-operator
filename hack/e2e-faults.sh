@@ -824,6 +824,19 @@ load_ready_manager_leader() {
 	fail "timed out waiting for the manager leader Lease to identify a ready replacement Pod"
 }
 
+ready_manager_pod_uids() {
+	expected_replicas=$1
+	jq -ce --argjson replicas "$expected_replicas" '
+      [.items[] | select(.metadata.deletionTimestamp == null)] as $live |
+      select(
+        ($live | length) == $replicas and
+        all($live[]; any(.status.conditions[]?; .type == "Ready" and .status == "True")) and
+        ([$live[].metadata.uid] | unique | length) == $replicas
+      ) |
+      [$live[].metadata.uid] | sort
+    '
+}
+
 load_ready_manager_pod_uids() {
 	manager_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$manager_deadline" ]; do
@@ -833,18 +846,8 @@ load_ready_manager_pod_uids() {
 			-l "app.kubernetes.io/name=ptah-operator,app.kubernetes.io/instance=${HELM_RELEASE},app.kubernetes.io/component=controller" \
 			-o json 2>/dev/null || true)
 		if printf '%s\n' "$manager_replicas" | grep -Eq '^[1-9][0-9]*$' &&
-			printf '%s\n' "$manager_pods" | jq -e \
-				--argjson replicas "$manager_replicas" '
-          [.items[] | select(.metadata.deletionTimestamp == null)] as $live |
-          ($live | length) == $replicas and
-          all($live[]; any(.status.conditions[]?; .type == "Ready" and .status == "True")) and
-          ([$live[].metadata.uid] | unique | length) == $replicas
-        ' >/dev/null; then
-			MANAGER_POD_UIDS=$(printf '%s\n' "$manager_pods" | jq -c '
-          [.items[] |
-            select(.metadata.deletionTimestamp == null) |
-            .metadata.uid] | sort
-        ')
+			MANAGER_POD_UIDS=$(printf '%s\n' "$manager_pods" |
+				ready_manager_pod_uids "$manager_replicas"); then
 			return 0
 		fi
 		sleep 1
@@ -852,14 +855,19 @@ load_ready_manager_pod_uids() {
 	fail "timed out waiting for every manager replica to have one ready non-terminating Pod"
 }
 
-assert_manager_pods_replaced() {
+manager_pods_replaced() {
 	old_uids=$1
 	new_uids=$2
 	jq -en --argjson old "$old_uids" --argjson new "$new_uids" '
       ($old | length) == ($new | length) and
       ($old | length) > 0 and
       all($old[]; . as $uid | ($new | index($uid)) == null)
-    ' >/dev/null || fail "manager rollout retained or lost a controller Pod UID"
+    '
+}
+
+assert_manager_pods_replaced() {
+	manager_pods_replaced "$1" "$2" >/dev/null ||
+		fail "manager rollout retained or lost a controller Pod UID"
 }
 
 database_url_for() {
