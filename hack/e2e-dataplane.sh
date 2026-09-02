@@ -2221,13 +2221,17 @@ rewrite_mysql_refusal_job() {
 		--arg secret "$rewrite_secret" '
           # mysql-refusal-job-rewrite-begin
           def rewrite_env:
-            .env |= map(
-              if .name == "PTAH_DB_URL" then
-                del(.value) |
-                .valueFrom = {secretKeyRef: {name: $secret, key: "url"}}
-              elif .name == "PTAH_OPERATION_ID" then
-                .value = $operationID | del(.valueFrom)
-              else . end);
+            if (.env | type) == "array" then
+              .env |= map(
+                if .name == "PTAH_DB_URL" then
+                  del(.value) |
+                  .valueFrom = {secretKeyRef: {name: $secret, key: "url"}}
+                elif .name == "PTAH_OPERATION_ID" then
+                  .value = $operationID | del(.valueFrom)
+                else . end)
+            else
+              .
+            end;
           {
             apiVersion: "batch/v1", kind: "Job",
             metadata: {
@@ -2325,6 +2329,26 @@ assert_mysql_refusal_rewrite_without_init_containers() {
         .name == "PRESERVED" and .value == "exact"))
     ' >/dev/null ||
 		fail "MySQL invalid-DSN Job rewrite changed null initContainers or unrelated Pod semantics"
+	refusal_mixed_init_rewrite_probe=$(printf '%s\n' "$refusal_rewrite_source" |
+		jq '.spec.template.spec.initContainers = [
+		  {name: "without-env", image: "fixture.invalid/helper:one"},
+		  {name: "null-env", image: "fixture.invalid/helper:two", env: null}
+		]' |
+		rewrite_mysql_refusal_job test-namespace test-name test-schema observe \
+			test-operation-id test-secret) ||
+		fail "MySQL invalid-DSN Job rewrite rejected init containers without environment arrays"
+	printf '%s\n' "$refusal_mixed_init_rewrite_probe" | jq -e '
+	  .spec.template.spec.initContainers == [
+	    {name: "without-env", image: "fixture.invalid/helper:one"},
+	    {name: "null-env", image: "fixture.invalid/helper:two", env: null}
+	  ] and
+	  (.spec.template.spec.containers[0].env | any(
+	    .name == "PTAH_DB_URL" and
+	    .valueFrom.secretKeyRef == {name: "test-secret", key: "url"})) and
+	  (.spec.template.spec.containers[0].env | any(
+	    .name == "PTAH_OPERATION_ID" and .value == "test-operation-id"))
+	' >/dev/null ||
+		fail "MySQL invalid-DSN Job rewrite changed helper containers without environment arrays"
 }
 
 run_mysql_dsn_refusal() {

@@ -25,6 +25,8 @@ MYSQL_REFUSAL_SOURCE=$WORK_DIR/mysql-refusal-source.json
 MYSQL_REFUSAL_REWRITTEN=$WORK_DIR/mysql-refusal-rewritten.json
 MYSQL_REFUSAL_NULL_SOURCE=$WORK_DIR/mysql-refusal-null-source.json
 MYSQL_REFUSAL_NULL_REWRITTEN=$WORK_DIR/mysql-refusal-null-rewritten.json
+MYSQL_REFUSAL_MIXED_SOURCE=$WORK_DIR/mysql-refusal-mixed-source.json
+MYSQL_REFUSAL_MIXED_REWRITTEN=$WORK_DIR/mysql-refusal-mixed-rewritten.json
 CLEANUP_DIAGNOSTIC_FILTER=$WORK_DIR/cleanup-diagnostic.jq
 CLEANUP_SCHEMA_FIXTURE=$WORK_DIR/cleanup-schemas.json
 CLEANUP_EVENT_FIXTURE=$WORK_DIR/cleanup-events.json
@@ -441,6 +443,33 @@ jq -e '
     .name == "PRESERVED" and .value == "exact"))
 ' "$MYSQL_REFUSAL_NULL_REWRITTEN" >/dev/null || {
 	printf '%s\n' 'e2e static: MySQL refusal rewrite changed null initContainers or unrelated Pod semantics' >&2
+	exit 1
+}
+jq '.spec.template.spec.initContainers = [
+  {name: "without-env", image: "fixture.invalid/helper:one"},
+  {name: "null-env", image: "fixture.invalid/helper:two", env: null}
+]' "$MYSQL_REFUSAL_SOURCE" >"$MYSQL_REFUSAL_MIXED_SOURCE"
+jq \
+	--arg namespace test-namespace \
+	--arg name test-name \
+	--arg schema test-schema \
+	--arg operation observe \
+	--arg operationID test-operation-id \
+	--arg secret test-secret \
+	-f "$MYSQL_REFUSAL_REWRITE_FILTER" "$MYSQL_REFUSAL_MIXED_SOURCE" \
+	>"$MYSQL_REFUSAL_MIXED_REWRITTEN"
+jq -e '
+  .spec.template.spec.initContainers == [
+    {name: "without-env", image: "fixture.invalid/helper:one"},
+    {name: "null-env", image: "fixture.invalid/helper:two", env: null}
+  ] and
+  (.spec.template.spec.containers[0].env | any(
+    .name == "PTAH_DB_URL" and
+    .valueFrom.secretKeyRef == {name: "test-secret", key: "url"})) and
+  (.spec.template.spec.containers[0].env | any(
+    .name == "PTAH_OPERATION_ID" and .value == "test-operation-id"))
+' "$MYSQL_REFUSAL_MIXED_REWRITTEN" >/dev/null || {
+	printf '%s\n' 'e2e static: MySQL refusal rewrite changed helper containers without environment arrays' >&2
 	exit 1
 }
 
@@ -2127,6 +2156,7 @@ static_require_count "$mysql_refusal_script" \
 static_require_count "$mysql_refusal_script" \
 	'# mysql-refusal-job-rewrite-end' 1 'MySQL refusal rewrite filter closing marker'
 static_require_order "$mysql_refusal_rewrite_section" 'null-safe MySQL refusal Job rewrite' \
+	'if (.env | type) == "array" then' \
 	'.template.spec.containers |= map(rewrite_env)' \
 	'if (.template.spec | has("initContainers")) and' \
 	'.template.spec.initContainers != null then' \
@@ -2149,7 +2179,11 @@ static_require_order "$mysql_refusal_probe_section" \
 	'changed absent initContainers or unrelated Pod semantics' \
 	'refusal_null_rewrite_probe=' \
 	'.spec.template.spec.initContainers == null' \
-	'changed null initContainers or unrelated Pod semantics'
+	'changed null initContainers or unrelated Pod semantics' \
+	'refusal_mixed_init_rewrite_probe=' \
+	'{name: "without-env", image: "fixture.invalid/helper:one"}' \
+	'{name: "null-env", image: "fixture.invalid/helper:two", env: null}' \
+	'changed helper containers without environment arrays'
 mysql_refusal_section=$(sed -n '/^run_mysql_dsn_refusal()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 static_require_order "$mysql_refusal_section" 'MySQL refusal Job rewrite use' \
