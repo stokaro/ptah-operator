@@ -27,6 +27,7 @@ SHARED_OBSERVED_JOBS_FILE=${E2E_OBSERVED_JOBS_FILE:-}
 unset protected_value base_url new_url url_value aliased_url PRINCIPAL_PASSWORD
 
 CONTROLLER_NAME="${HELM_RELEASE}-ptah-operator"
+LEADER_LEASE=ptah-operator.operator.ptah.dev
 PG_SERVICE=e2e-postgresql
 PG_BASE_SECRET=e2e-postgresql-db
 MYSQL_SERVICE=e2e-mysql
@@ -796,21 +797,69 @@ record_initial_job_list_for_parent() {
 	done
 }
 
-load_single_ready_manager_pod() {
-	manager_pods=$(k -n "$OPERATOR_NAMESPACE" get pods \
-		-l "app.kubernetes.io/name=ptah-operator,app.kubernetes.io/instance=${HELM_RELEASE},app.kubernetes.io/component=controller" \
-		-o json)
-	manager_ready_count=$(printf '%s\n' "$manager_pods" | jq '[.items[] |
-      select(.metadata.deletionTimestamp == null) |
-      select(.status.conditions // [] | any(.type == "Ready" and .status == "True"))] | length')
-	[ "$manager_ready_count" -eq 1 ] ||
-		fail "expected exactly one ready non-terminating manager Pod, found $manager_ready_count"
-	MANAGER_POD_NAME=$(printf '%s\n' "$manager_pods" | jq -er '[.items[] |
-      select(.metadata.deletionTimestamp == null) |
-      select(.status.conditions // [] | any(.type == "Ready" and .status == "True"))][0].metadata.name')
-	MANAGER_POD_UID=$(printf '%s\n' "$manager_pods" | jq -er '[.items[] |
-      select(.metadata.deletionTimestamp == null) |
-      select(.status.conditions // [] | any(.type == "Ready" and .status == "True"))][0].metadata.uid')
+load_ready_manager_leader() {
+	previous_uid=${1:-}
+	leader_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$leader_deadline" ]; do
+		leader_holder=$(k -n "$OPERATOR_NAMESPACE" get lease "$LEADER_LEASE" \
+			-o jsonpath='{.spec.holderIdentity}' 2>/dev/null || true)
+		leader_pod_name=$(printf '%s\n' "$leader_holder" | sed 's/_[^_]*$//')
+		if [ -n "$leader_pod_name" ] &&
+			leader_pod=$(k -n "$OPERATOR_NAMESPACE" get pod "$leader_pod_name" -o json 2>/dev/null) &&
+			printf '%s\n' "$leader_pod" | jq -e \
+				--arg release "$HELM_RELEASE" \
+				--arg previousUID "$previous_uid" '
+          .metadata.deletionTimestamp == null and
+          .metadata.uid != $previousUID and
+          .metadata.labels["app.kubernetes.io/instance"] == $release and
+          .metadata.labels["app.kubernetes.io/component"] == "controller" and
+          any(.status.conditions[]?; .type == "Ready" and .status == "True")
+        ' >/dev/null; then
+			MANAGER_POD_NAME=$leader_pod_name
+			MANAGER_POD_UID=$(printf '%s\n' "$leader_pod" | jq -er '.metadata.uid')
+			return 0
+		fi
+		sleep 1
+	done
+	fail "timed out waiting for the manager leader Lease to identify a ready replacement Pod"
+}
+
+load_ready_manager_pod_uids() {
+	manager_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$manager_deadline" ]; do
+		manager_replicas=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" \
+			-o jsonpath='{.spec.replicas}' 2>/dev/null || true)
+		manager_pods=$(k -n "$OPERATOR_NAMESPACE" get pods \
+			-l "app.kubernetes.io/name=ptah-operator,app.kubernetes.io/instance=${HELM_RELEASE},app.kubernetes.io/component=controller" \
+			-o json 2>/dev/null || true)
+		if printf '%s\n' "$manager_replicas" | grep -Eq '^[1-9][0-9]*$' &&
+			printf '%s\n' "$manager_pods" | jq -e \
+				--argjson replicas "$manager_replicas" '
+          [.items[] | select(.metadata.deletionTimestamp == null)] as $live |
+          ($live | length) == $replicas and
+          all($live[]; any(.status.conditions[]?; .type == "Ready" and .status == "True")) and
+          ([$live[].metadata.uid] | unique | length) == $replicas
+        ' >/dev/null; then
+			MANAGER_POD_UIDS=$(printf '%s\n' "$manager_pods" | jq -c '
+          [.items[] |
+            select(.metadata.deletionTimestamp == null) |
+            .metadata.uid] | sort
+        ')
+			return 0
+		fi
+		sleep 1
+	done
+	fail "timed out waiting for every manager replica to have one ready non-terminating Pod"
+}
+
+assert_manager_pods_replaced() {
+	old_uids=$1
+	new_uids=$2
+	jq -en --argjson old "$old_uids" --argjson new "$new_uids" '
+      ($old | length) == ($new | length) and
+      ($old | length) > 0 and
+      all($old[]; . as $uid | ($new | index($uid)) == null)
+    ' >/dev/null || fail "manager rollout retained or lost a controller Pod UID"
 }
 
 database_url_for() {
@@ -3865,16 +3914,18 @@ assert_mysql_apply_lock_wait "$MYSQL_UNKNOWN_DB"
 
 printf '%s\n' 'e2e faults: restarting the manager while three independent Apply Pods are active'
 audit_fault_runtime
-load_single_ready_manager_pod
+load_ready_manager_pod_uids
+OLD_MANAGER_POD_UIDS=$MANAGER_POD_UIDS
+load_ready_manager_leader
 OLD_MANAGER_POD_NAME=$MANAGER_POD_NAME
 OLD_MANAGER_POD_UID=$MANAGER_POD_UID
 start_follow_logs "$OPERATOR_NAMESPACE" "$OLD_MANAGER_POD_NAME" manager-restart "$OLD_MANAGER_POD_UID"
 k -n "$OPERATOR_NAMESPACE" rollout restart deployment/"$CONTROLLER_NAME" >/dev/null
 k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" --timeout="${TIMEOUT_SECONDS}s" >/dev/null
 finish_follow_logs "old manager logs through the restart"
-load_single_ready_manager_pod
-[ "$MANAGER_POD_UID" != "$OLD_MANAGER_POD_UID" ] ||
-	fail "manager rollout reported success without replacing the manager Pod UID"
+load_ready_manager_pod_uids
+assert_manager_pods_replaced "$OLD_MANAGER_POD_UIDS" "$MANAGER_POD_UIDS"
+load_ready_manager_leader "$OLD_MANAGER_POD_UID"
 audit_fault_runtime
 assert_active_identity "$PG_RESTART_SCHEMA" "$PG_OPERATION_ID" "$PG_JOB_NAME" "$PG_JOB_UID" "$PG_POD_NAME" "$PG_POD_UID"
 assert_active_identity "$PG_PARALLEL_SCHEMA" "$PG_PARALLEL_OPERATION_ID" "$PG_PARALLEL_JOB_NAME" "$PG_PARALLEL_JOB_UID" "$PG_PARALLEL_POD_NAME" "$PG_PARALLEL_POD_UID"
