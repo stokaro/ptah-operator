@@ -79,7 +79,7 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: stokaro/ptah
-          ref: 044287f93d7f606a33541ca32affdaa0d20b9cb1
+          ref: b990fa9a015641b92e0d76ac968dacd2bb1ce5fb
           path: .e2e/ptah
           fetch-depth: 1
       - name: Stage pinned Ptah source outside the operator build context
@@ -138,7 +138,7 @@ jobs:
         env:
           DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
           E2E_DIRECT_HOST_ACCESS: "1"
-          E2E_PTAH_REVISION: 044287f93d7f606a33541ca32affdaa0d20b9cb1
+          E2E_PTAH_REVISION: b990fa9a015641b92e0d76ac968dacd2bb1ce5fb
           E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
           E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}
           KIND_NODE_IMAGE: ${{ matrix.node_image }}
