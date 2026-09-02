@@ -3480,7 +3480,7 @@ assert_pg_apply_lock_wait() {
 		"SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid WHERE l.locktype='advisory' AND l.classid=0 AND l.objid=${PTAH_PG_APPLY_LOCK_KEY} AND l.objsubid=1 AND l.granted AND a.datname='${lock_database}'" \
 		1 "the exact PostgreSQL Ptah advisory lock"
 	wait_query_equals postgresql "$lock_database" \
-		"SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid WHERE l.locktype='advisory' AND l.classid=0 AND l.objid=${PTAH_PG_APPLY_LOCK_KEY} AND l.objsubid=1 AND l.granted AND a.datname='${lock_database}' AND a.wait_event_type='Lock'" \
+		"SELECT count(*) FROM pg_locks advisory JOIN pg_stat_activity activity ON activity.pid=advisory.pid JOIN pg_locks ddl ON ddl.pid=advisory.pid WHERE advisory.locktype='advisory' AND advisory.classid=0 AND advisory.objid=${PTAH_PG_APPLY_LOCK_KEY} AND advisory.objsubid=1 AND advisory.granted AND activity.datname='${lock_database}' AND ddl.locktype='relation' AND ddl.relation='public.e2e_widgets'::regclass AND ddl.mode='AccessExclusiveLock' AND NOT ddl.granted" \
 		1 "the PostgreSQL Apply backend to block on the metadata barrier after acquiring its advisory lock"
 }
 

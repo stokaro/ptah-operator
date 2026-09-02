@@ -2379,6 +2379,24 @@ static_reject_marker "$capture_result_section" 'FULLY_AUDITED' \
 fault_runtime_audit_function_section=$(sed -n '/^audit_fault_runtime()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-faults.sh")
 fault_script=$(sed -n '1,$p' "$ROOT_DIR/hack/e2e-faults.sh")
+pg_apply_lock_assertion_section=$(sed -n '/^assert_pg_apply_lock_wait()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+for pg_same_session_marker in \
+	'JOIN pg_locks ddl ON ddl.pid=advisory.pid' \
+	"ddl.relation='public.e2e_widgets'::regclass" \
+	"ddl.mode='AccessExclusiveLock'" \
+	'NOT ddl.granted'; do
+	static_require_count "$pg_apply_lock_assertion_section" "$pg_same_session_marker" 1 \
+		'PostgreSQL same-session advisory lock and DDL proof'
+done
+mysql_apply_lock_assertion_section=$(sed -n '/^assert_mysql_apply_lock_wait()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+for mysql_same_session_marker in \
+	"ID=IS_USED_LOCK('ptah_schema_apply')" \
+	"STATE LIKE '%metadata lock%'"; do
+	static_require_count "$mysql_apply_lock_assertion_section" "$mysql_same_session_marker" 1 \
+		'MySQL same-session advisory lock and DDL proof'
+done
 uncertain_read_proof_section=$(sed -n '/^capture_uncertain_read_proof_pair()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-faults.sh")
 # shellcheck disable=SC2016 # Markers intentionally match literal jq variables.
