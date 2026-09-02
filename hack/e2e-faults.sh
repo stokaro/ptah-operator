@@ -847,7 +847,7 @@ replace_database_url_path() {
 		;;
 	esac
 	case "$url_path" in
-	*/?*) url_prefix=${url_path%/*} ;;
+	*://*/?*) url_prefix=${url_path%/*} ;;
 	*) fail "database URL does not contain a non-empty database path" ;;
 	esac
 	printf '%s/%s%s\n' "$url_prefix" "$replacement_database" "$url_suffix"

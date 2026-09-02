@@ -93,7 +93,7 @@ assert_database_url_rewrite() (
 	rewrite_input=$1
 	rewrite_database=$2
 	rewrite_expected=$3
-	# shellcheck disable=SC2329 # The extracted helper invokes this test-local failure path.
+	# shellcheck disable=SC2317,SC2329 # The extracted helper invokes this test-local failure path.
 	fail() {
 		printf 'e2e static: database URL rewrite failed: %s\n' "$*" >&2
 		exit 1
@@ -118,6 +118,28 @@ assert_database_url_rewrite \
 	'mysql://user:password@db.example/original#client-fragment' \
 	'isolated_database' \
 	'mysql://user:password@db.example/isolated_database#client-fragment'
+assert_database_url_rewrite_rejected() (
+	rewrite_input=$1
+	rewrite_database=$2
+	# shellcheck disable=SC2317,SC2329 # The extracted helper invokes this test-local failure path.
+	fail() {
+		exit 97
+	}
+	eval "$database_url_rewrite_section"
+	set +e
+	(
+		replace_database_url_path "$rewrite_input" "$rewrite_database"
+	) >/dev/null 2>&1
+	rewrite_status=$?
+	set -e
+	[ "$rewrite_status" -ne 0 ] || {
+		printf 'e2e static: database URL rewrite accepted a URL without a database path\n' >&2
+		exit 1
+	}
+)
+assert_database_url_rewrite_rejected \
+	'postgres://db.example?sslmode=disable' \
+	'isolated_database'
 
 grep -Eq '^[[:space:]]*ProtocolVersion = 4$' "$ROOT_DIR/internal/runner/protocol.go" || {
 	printf '%s\n' 'e2e static: runner protocol constant is not version 4' >&2
