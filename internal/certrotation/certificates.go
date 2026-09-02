@@ -19,7 +19,10 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-const certificateBackdate = 5 * time.Minute
+const (
+	certificateBackdate               = 5 * time.Minute
+	maximumCertificatePolicyClockSkew = 5 * time.Minute
+)
 
 type certificateMaterial struct {
 	caPEM    []byte
@@ -54,7 +57,8 @@ func inspectSecret(secret *corev1.Secret, config Config, now time.Time) (secretS
 		current.caKey = caKey
 	}
 	rotateCA := caErr != nil || caKeyErr != nil || ca == nil || !ca.IsCA || !publicKeysEqual(ca.PublicKey, signerPublicKey(caKey)) ||
-		!certificateCurrentlyValid(ca, now) || !now.Add(config.RenewalThreshold).Before(ca.NotAfter)
+		!certificateCurrentlyValid(ca, now) || !now.Add(config.RenewalThreshold).Before(ca.NotAfter) ||
+		certificateLifetimeExceedsPolicy(ca, now, config.CACertificateValidity)
 
 	leaf, leafErr := parseLeafAndKey(current.certPEM, current.keyPEM)
 	if leafErr == nil {
@@ -67,7 +71,9 @@ func inspectSecret(secret *corev1.Secret, config Config, now time.Time) (secretS
 		// replacement instead of issuing under an unrelated key.
 		rotateCA = true
 	}
-	rotateServing := leafErr != nil || !servingCertificateValid(leaf, ca, requiredDNSNames(config), now, config.RenewalThreshold)
+	rotateServing := leafErr != nil ||
+		!servingCertificateValid(leaf, ca, requiredDNSNames(config), now, config.RenewalThreshold) ||
+		certificateLifetimeExceedsPolicy(leaf, now, config.ServingCertificateValidity)
 	if rotateServing && !rotateCA && !now.Add(config.ServingCertificateValidity).Before(ca.NotAfter) {
 		// Do not issue a replacement that outlives the current CA.
 		rotateCA = true
@@ -80,6 +86,17 @@ func inspectSecret(secret *corev1.Secret, config Config, now time.Time) (secretS
 		rotateServing:                rotateServing,
 		normalizeSecret:              secret.Type != corev1.SecretTypeTLS,
 	}, nil
+}
+
+func certificateLifetimeExceedsPolicy(certificate *x509.Certificate, now time.Time, validity time.Duration) bool {
+	if certificate == nil {
+		return false
+	}
+	// Tolerate small clock differences between the issuer and the rotator, but
+	// never let that tolerance exceed either five minutes or ten percent of the
+	// configured lifetime.
+	clockSkew := min(maximumCertificatePolicyClockSkew, validity/10)
+	return certificate.NotAfter.After(now.Add(validity).Add(clockSkew))
 }
 
 func generateMaterial(reader io.Reader, now time.Time, config Config) (certificateMaterial, error) {

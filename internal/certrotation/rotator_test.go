@@ -34,10 +34,11 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 	t.Parallel()
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name          string
-		now           time.Time
-		mutateSecret  func(*corev1.Secret)
-		wantCARotated bool
+		name           string
+		now            time.Time
+		materialConfig func(Config) Config
+		mutateSecret   func(*corev1.Secret)
+		wantCARotated  bool
 	}{
 		{name: "near-expiry serving certificate", now: baseTime.Add(25 * 24 * time.Hour)},
 		{
@@ -57,12 +58,33 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 			wantCARotated: true,
 		},
 		{name: "near-expiry CA", now: baseTime.Add(359 * 24 * time.Hour), wantCARotated: true},
+		{
+			name: "serving certificate exceeds configured lifetime",
+			now:  baseTime,
+			materialConfig: func(config Config) Config {
+				config.ServingCertificateValidity *= 2
+				return config
+			},
+		},
+		{
+			name: "CA certificate exceeds configured lifetime",
+			now:  baseTime,
+			materialConfig: func(config Config) Config {
+				config.CACertificateValidity *= 2
+				return config
+			},
+			wantCARotated: true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			config := testConfig()
-			original := mustGenerateMaterial(t, baseTime, config)
+			materialConfig := config
+			if test.materialConfig != nil {
+				materialConfig = test.materialConfig(materialConfig)
+			}
+			original := mustGenerateMaterial(t, baseTime, materialConfig)
 			secret := secretForMaterial(config, original)
 			if test.mutateSecret != nil {
 				test.mutateSecret(secret)
@@ -92,6 +114,47 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 			}
 			assertFinalBundles(t, client, config, state.current.caPEM)
 			assertProbedAddresses(t, prober.addresses(), "10.0.0.10:9443", "10.0.0.11:9443")
+		})
+	}
+}
+
+func TestCertificateLifetimePolicyAllowsOnlyBoundedClockSkew(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	config := testConfig()
+	clockSkew := min(maximumCertificatePolicyClockSkew, config.ServingCertificateValidity/10)
+	tests := []struct {
+		name               string
+		additionalValidity time.Duration
+		wantRotateServing  bool
+	}{
+		{
+			name:               "within clock skew",
+			additionalValidity: clockSkew,
+		},
+		{
+			name:               "beyond clock skew",
+			additionalValidity: clockSkew + time.Second,
+			wantRotateServing:  true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			materialConfig := config
+			materialConfig.ServingCertificateValidity += test.additionalValidity
+			material := mustGenerateMaterial(t, now, materialConfig)
+
+			state, err := inspectSecret(secretForMaterial(config, material), config, now)
+			if err != nil {
+				t.Fatalf("inspectSecret() error = %v", err)
+			}
+			if state.rotateCA {
+				t.Fatal("CA unexpectedly requires rotation")
+			}
+			if state.rotateServing != test.wantRotateServing {
+				t.Fatalf("serving rotation = %v, want %v", state.rotateServing, test.wantRotateServing)
+			}
 		})
 	}
 }

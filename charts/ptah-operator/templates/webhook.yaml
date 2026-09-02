@@ -1,5 +1,8 @@
 {{- $fullname := include "ptah-operator.fullname" . -}}
 {{- $secretName := include "ptah-operator.webhookSecretName" . -}}
+{{- if and (not .Values.webhook.existingSecret) (not .Values.certificateRotation.enabled) -}}
+{{- fail "certificateRotation.enabled must be true when webhook.existingSecret is empty" -}}
+{{- end -}}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
 {{- $caBundle := "" -}}
 {{- $caKey := "" -}}
@@ -21,10 +24,11 @@
 {{- $tlsCrt = required "generated webhook Secret must contain tls.crt" (index $existing.data "tls.crt") -}}
 {{- $tlsKey = required "generated webhook Secret must contain tls.key" (index $existing.data "tls.key") -}}
 {{- else -}}
-{{- $ca := genCA (printf "%s-ca" $fullname) 3650 -}}
+{{- /* Bootstrap material is deliberately short-lived. The rotator promptly replaces it with certificates matching the configured policy. */ -}}
+{{- $ca := genCA (printf "%s-ca" $fullname) 2 -}}
 {{- $service := include "ptah-operator.webhookServiceName" . -}}
 {{- $dnsNames := list $service (printf "%s.%s" $service .Release.Namespace) (printf "%s.%s.svc" $service .Release.Namespace) (printf "%s.%s.svc.cluster.local" $service .Release.Namespace) -}}
-{{- $cert := genSignedCert $service nil $dnsNames 825 $ca -}}
+{{- $cert := genSignedCert $service nil $dnsNames 1 $ca -}}
 {{- $caBundle = $ca.Cert | b64enc -}}
 {{- $caKey = $ca.Key | b64enc -}}
 {{- $tlsCrt = $cert.Cert | b64enc -}}

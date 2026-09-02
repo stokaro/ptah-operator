@@ -3,6 +3,9 @@ package certrotation_test
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/pem"
 	"io"
 	"maps"
 	"os"
@@ -31,7 +34,9 @@ const (
 
 func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	t.Parallel()
+	renderStarted := time.Now()
 	objects := renderChart(t)
+	renderFinished := time.Now()
 	managerName := releaseName + "-ptah-operator"
 	rotatorName := releaseName + "-ptah-operator-cert-rotator"
 	secretName := releaseName + "-ptah-operator-webhook-cert"
@@ -46,6 +51,13 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		if _, found, err := unstructured.NestedString(secret.Object, "data", key); err != nil || !found {
 			t.Errorf("generated Secret data is missing %q", key)
 		}
+	}
+	ca := mustCertificateFromSecret(t, secret, "ca.crt")
+	serving := mustCertificateFromSecret(t, secret, "tls.crt")
+	assertBootstrapCertificateExpiry(t, ca, renderStarted, renderFinished, 2*24*time.Hour)
+	assertBootstrapCertificateExpiry(t, serving, renderStarted, renderFinished, 24*time.Hour)
+	if !serving.NotAfter.Before(ca.NotAfter) {
+		t.Fatalf("bootstrap serving certificate expires at %s, CA expires at %s", serving.NotAfter, ca.NotAfter)
 	}
 
 	managerRole := mustObject(t, objects, "ClusterRole", managerName)
@@ -147,6 +159,43 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	assertManagerTLSProjection(t, deployment, secretName)
 }
 
+func mustCertificateFromSecret(t *testing.T, secret *unstructured.Unstructured, key string) *x509.Certificate {
+	t.Helper()
+	encoded, found, err := unstructured.NestedString(secret.Object, "data", key)
+	if err != nil || !found {
+		t.Fatalf("generated Secret data is missing %q", key)
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		t.Fatalf("decode generated Secret %s: %v", key, err)
+	}
+	block, rest := pem.Decode(data)
+	if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
+		t.Fatalf("generated Secret %s is not exactly one PEM certificate", key)
+	}
+	certificate, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse generated Secret %s: %v", key, err)
+	}
+	return certificate
+}
+
+func assertBootstrapCertificateExpiry(
+	t *testing.T,
+	certificate *x509.Certificate,
+	renderStarted time.Time,
+	renderFinished time.Time,
+	validity time.Duration,
+) {
+	t.Helper()
+	const timestampTolerance = time.Minute
+	earliest := renderStarted.Add(validity - timestampTolerance)
+	latest := renderFinished.Add(validity + timestampTolerance)
+	if certificate.NotAfter.Before(earliest) || certificate.NotAfter.After(latest) {
+		t.Fatalf("bootstrap certificate expiry = %s, want between %s and %s", certificate.NotAfter, earliest, latest)
+	}
+}
+
 func TestMissingSecretRecreationOptInRender(t *testing.T) {
 	t.Parallel()
 	objects := renderChart(t, "--set", "certificateRotation.recreateMissingSecret=true")
@@ -175,6 +224,26 @@ func TestMissingSecretRecreationOptInRender(t *testing.T) {
 		if !slices.Contains(args, want) {
 			t.Errorf("rotator args do not contain %q: %v", want, args)
 		}
+	}
+}
+
+func TestGeneratedCertificateRequiresRotation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "schema validation"},
+		{name: "template validation", args: []string{"--skip-schema-validation"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			args := append(slices.Clone(test.args), "--set", "certificateRotation.enabled=false")
+			if _, err := renderChartCommand(t, args...); err == nil {
+				t.Fatal("Helm accepted a generated webhook certificate without its rotator")
+			}
+		})
 	}
 }
 

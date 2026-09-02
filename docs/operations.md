@@ -16,9 +16,11 @@ For deterministic GitOps rendering, provision the webhook TLS Secret outside
 the chart and set both `webhook.existingSecret` and the PEM-encoded
 `webhook.caBundle`. A connected Helm install can instead reuse `ca.crt` from an
 existing Secret. Setting `webhook.existingSecret` completely disables built-in
-certificate lifecycle resources. A first interactive install can instead
-generate a self-signed Secret and its built-in rotation Deployment. Argo CD and
-Flux should depend on the CRDs and an externally managed TLS Secret before
+certificate lifecycle resources. Disabling `certificateRotation.enabled`
+therefore requires `webhook.existingSecret`; the chart refuses an unmanaged
+generated certificate. A first interactive install can instead generate a
+self-signed Secret and its built-in rotation Deployment. Argo CD and Flux
+should depend on the CRDs and an externally managed TLS Secret before
 synchronizing the Deployment and webhook configurations.
 
 Install exactly one Helm release of the operator in a cluster. The manager

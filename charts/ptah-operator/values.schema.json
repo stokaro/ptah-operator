@@ -20,6 +20,34 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "certificateRotation": {
+            "properties": {
+              "enabled": {
+                "const": false
+              }
+            },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["certificateRotation"]
+      },
+      "then": {
+        "properties": {
+          "webhook": {
+            "properties": {
+              "existingSecret": {
+                "minLength": 1
+              }
+            },
+            "required": ["existingSecret"]
+          }
+        },
+        "required": ["webhook"]
+      }
     }
   ],
   "properties": {
