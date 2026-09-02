@@ -2085,7 +2085,7 @@ capture_uncertain_read_proof_pair() {
       .status.pendingObservation.applyOperationID == $applyOperation and
       .status.pendingObservation.applyJobName == $applyJobName and
       .status.pendingObservation.applyJobUID == $applyJobUID and
-      .status.pendingObservation.applyPodUIDs == $applyPodUIDs and
+      (.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs and
       .status.pendingObservation.applyPodCount == $applyPodCount and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
       (.status.pendingObservation.planRequired // false) == false and
@@ -2138,7 +2138,7 @@ capture_uncertain_read_proof_pair() {
       .status.pendingObservation.applyOperationID == $applyOperation and
       .status.pendingObservation.applyJobName == $applyJobName and
       .status.pendingObservation.applyJobUID == $applyJobUID and
-      .status.pendingObservation.applyPodUIDs == $applyPodUIDs and
+      (.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs and
       .status.pendingObservation.applyPodCount == $applyPodCount and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
       .status.pendingObservation.planRequired == true and
