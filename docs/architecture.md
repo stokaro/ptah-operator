@@ -157,6 +157,13 @@ renewed through post-Apply proof, including retry delays. If Job creation or
 identity is uncertain, read-only proof waits for a complete Lease duration so
 a possibly unobserved mutating Pod cannot overlap it. Apply reconstructs the
 exact plan and revalidates the target after acquiring the Lease.
+The executor's advisory lock, authoritative inspection or plan verification,
+and target DDL share one physical database session. Losing that session aborts
+the target operation instead of allowing pooled DDL to continue after the
+database has released its lock. Full-lifecycle acceptance proves the exact
+PostgreSQL backend owns both the advisory lock and the blocked table lock; the
+MySQL proof binds the named-lock owner to the metadata-lock waiter in the same
+way.
 
 Raw drift is intentionally advisory: its selector language is not reused as a
 planning scope, and its details never authorize Apply. The authoritative Plan

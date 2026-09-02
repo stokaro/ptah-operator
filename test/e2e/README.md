@@ -137,6 +137,9 @@ at least once per segment; the suite never advances a watch position through
 an unobserved list response, and any heartbeat failure is fatal.
 Database metadata barriers hold two real PostgreSQL Apply operations and one
 MySQL Apply operation after their database-local advisory locks are acquired.
+Each assertion binds the database advisory-lock owner to the exact backend
+waiting for the metadata lock; observing an unrelated lock holder and DDL
+waiter cannot satisfy the test.
 The two PostgreSQL targets use distinct coordination keys and databases, so
 the suite proves same-engine controller independence with concurrent Jobs,
 Pods, Leases, and native locks. It restarts the manager and requires a new
