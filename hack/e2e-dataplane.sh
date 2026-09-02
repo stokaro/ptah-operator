@@ -129,8 +129,9 @@ ssh://*) ;;
 esac
 [ -f "$CHART_PACKAGE" ] || fail "E2E_CHART_PACKAGE does not name a chart package"
 ptah_version_length=$(printf '%s' "$PTAH_VERSION" | wc -c | tr -d '[:space:]')
-[ "$ptah_version_length" -ge 1 ] && [ "$ptah_version_length" -le 128 ] ||
+if [ "$ptah_version_length" -lt 1 ] || [ "$ptah_version_length" -gt 128 ]; then
 	fail "E2E_PTAH_VERSION must contain between 1 and 128 bytes"
+fi
 printf '%s\n' "$PTAH_VERSION" | grep -Eq '^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$' ||
 	fail "E2E_PTAH_VERSION must not contain control or edge-whitespace characters"
 printf '%s\n' "$REGISTRY_CONTAINER_ID" "$EXTERNAL_PG_CONTAINER_ID" |

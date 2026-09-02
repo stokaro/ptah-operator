@@ -145,10 +145,10 @@ ready_manager_pod_uids_section=$(sed -n '/^ready_manager_pod_uids()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-faults.sh")
 manager_pods_replaced_section=$(sed -n '/^manager_pods_replaced()/,/^}/p' \
 	"$ROOT_DIR/hack/e2e-faults.sh")
-[ -n "$ready_manager_pod_uids_section" ] && [ -n "$manager_pods_replaced_section" ] || {
+if [ -z "$ready_manager_pod_uids_section" ] || [ -z "$manager_pods_replaced_section" ]; then
 	printf '%s\n' 'e2e static: manager rollout identity helpers are missing' >&2
 	exit 1
-}
+fi
 eval "$ready_manager_pod_uids_section"
 eval "$manager_pods_replaced_section"
 ready_manager_fixture=$(jq -cn '
