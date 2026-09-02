@@ -16,7 +16,7 @@ test:
 	$(GO) test ./...
 
 test-race:
-	$(GO) test -race ./internal/...
+	$(GO) test -race ./...
 
 vet:
 	$(GO) vet ./...
@@ -35,7 +35,7 @@ manifests:
 	@mkdir -p charts/ptah-operator/crds
 	@cp config/crd/bases/*.yaml charts/ptah-operator/crds/
 
-verify: fmt-check generate manifests verify-kubernetes-support verify-release e2e-static vet test
+verify: fmt-check generate manifests verify-kubernetes-support verify-release e2e-static vet test test-race
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds
 
 verify-kubernetes-support:
