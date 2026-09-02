@@ -307,6 +307,12 @@ type PtahSchemaStatus struct {
 	ObservedGeneration int64               `json:"observedGeneration,omitempty"`
 	Phase              ReconciliationPhase `json:"phase,omitempty"`
 
+	// ExecutionBinding is the durable identity of the controller/runtime epoch
+	// authorized to produce new reconciliation evidence. Retained evidence stays
+	// historical until refreshed. Epoch changes on every component transition,
+	// including a rollback to identical values.
+	ExecutionBinding *ExecutionBindingStatus `json:"executionBinding,omitempty"`
+
 	Source  SchemaSourceStatus `json:"source,omitempty"`
 	Target  TargetStatus       `json:"target,omitempty"`
 	Plan    *CurrentPlanStatus `json:"plan,omitempty"`
@@ -331,6 +337,24 @@ type PtahSchemaStatus struct {
 	NextReconciliationTime *metav1.Time `json:"nextReconciliationTime,omitempty"`
 
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+}
+
+// ExecutionBindingStatus identifies one uninterrupted controller/runtime
+// evidence epoch. The explicit component fields are audit evidence; Epoch
+// prevents approvals from becoming current again after a later rollback.
+type ExecutionBindingStatus struct {
+	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
+	Epoch string `json:"epoch"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	PtahVersion string `json:"ptahVersion"`
+	// +kubebuilder:validation:MinLength=1
+	ExecutorImage string `json:"executorImage"`
+	// +kubebuilder:validation:MinLength=1
+	RunnerImage string `json:"runnerImage"`
+	// +kubebuilder:validation:Minimum=1
+	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 }
 
 // TargetLockReleaseStatus is the complete credential-free request required to
@@ -482,23 +506,25 @@ type CurrentPlanStatus struct {
 	Name string    `json:"name"`
 	UID  types.UID `json:"uid"`
 
-	Fingerprint              string      `json:"fingerprint"`
-	ContentDigest            string      `json:"contentDigest"`
-	ArtifactDigest           string      `json:"artifactDigest"`
-	CoordinationDigest       string      `json:"coordinationDigest"`
-	TargetIdentityDigest     string      `json:"targetIdentityDigest"`
-	ActualStateFingerprint   string      `json:"actualStateFingerprint"`
-	DesiredStateFingerprint  string      `json:"desiredStateFingerprint"`
-	PolicyFingerprint        string      `json:"policyFingerprint"`
-	VerificationPolicyUID    types.UID   `json:"verificationPolicyUID"`
-	VerificationPolicyDigest string      `json:"verificationPolicyDigest"`
-	PtahVersion              string      `json:"ptahVersion"`
-	ExecutorImage            string      `json:"executorImage"`
-	RunnerImage              string      `json:"runnerImage"`
-	RunnerProtocolVersion    int32       `json:"runnerProtocolVersion"`
-	Destructive              bool        `json:"destructive"`
-	StatementCount           int32       `json:"statementCount"`
-	CreatedAt                metav1.Time `json:"createdAt"`
+	Fingerprint              string    `json:"fingerprint"`
+	ContentDigest            string    `json:"contentDigest"`
+	ArtifactDigest           string    `json:"artifactDigest"`
+	CoordinationDigest       string    `json:"coordinationDigest"`
+	TargetIdentityDigest     string    `json:"targetIdentityDigest"`
+	ActualStateFingerprint   string    `json:"actualStateFingerprint"`
+	DesiredStateFingerprint  string    `json:"desiredStateFingerprint"`
+	PolicyFingerprint        string    `json:"policyFingerprint"`
+	VerificationPolicyUID    types.UID `json:"verificationPolicyUID"`
+	VerificationPolicyDigest string    `json:"verificationPolicyDigest"`
+	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
+	ExecutionBindingID    string      `json:"executionBindingID,omitempty"`
+	PtahVersion           string      `json:"ptahVersion"`
+	ExecutorImage         string      `json:"executorImage"`
+	RunnerImage           string      `json:"runnerImage"`
+	RunnerProtocolVersion int32       `json:"runnerProtocolVersion"`
+	Destructive           bool        `json:"destructive"`
+	StatementCount        int32       `json:"statementCount"`
+	CreatedAt             metav1.Time `json:"createdAt"`
 
 	Approval *ConsumedApprovalStatus `json:"approval,omitempty"`
 }
@@ -513,10 +539,12 @@ type ConsumedApprovalStatus struct {
 
 // AppliedStatus is written only after post-apply observation proves convergence.
 type AppliedStatus struct {
-	ArtifactDigest        string      `json:"artifactDigest"`
-	PlanFingerprint       string      `json:"planFingerprint"`
-	CoordinationDigest    string      `json:"coordinationDigest"`
-	TargetIdentityDigest  string      `json:"targetIdentityDigest"`
+	ArtifactDigest       string `json:"artifactDigest"`
+	PlanFingerprint      string `json:"planFingerprint"`
+	CoordinationDigest   string `json:"coordinationDigest"`
+	TargetIdentityDigest string `json:"targetIdentityDigest"`
+	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
+	ExecutionBindingID    string      `json:"executionBindingID,omitempty"`
 	PtahVersion           string      `json:"ptahVersion"`
 	ExecutorImage         string      `json:"executorImage"`
 	RunnerImage           string      `json:"runnerImage"`
@@ -591,6 +619,10 @@ type ActiveOperationStatus struct {
 	JobUID           types.UID     `json:"jobUID,omitempty"`
 	StartedAt        metav1.Time   `json:"startedAt"`
 	Attempt          int32         `json:"attempt"`
+	// ExecutionBindingID binds every Job and result to the durable evidence
+	// epoch that authorized its claim.
+	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
+	ExecutionBindingID string `json:"executionBindingID,omitempty"`
 
 	// AdmissionSnapshot is persisted before dispatch and is bound into the Job
 	// and Pod template annotations. It permits only modeled, safe built-in

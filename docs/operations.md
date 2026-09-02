@@ -264,6 +264,34 @@ durable Apply claim is the one-shot authorization boundary: dispatch, lock
 contention, and controller restarts continue the claimed operation instead of
 letting a later timer reinterpret it.
 
+Plans also bind the manager's complete execution identity: Ptah version,
+executor image digest, runner image digest, and runner protocol. If that
+identity changes before a mutating Job is dispatched, the current plan is no
+longer executable. A recorded approval becomes stale with reason
+`ExecutionBindingChanged`. A claimed but undispatched Apply releases its old
+authorization and database lock, the plan is cleared, and the replacement
+manager runs Resolve, Verify, Observe, and Plan again. Approve only the
+replacement plan; do not recreate an approval against the old UID or
+fingerprint. A dispatched Apply is never recreated under the new binding; its
+outcome is handled conservatively and requires post-Apply observation.
+
+The audit-visible `status.executionBinding` records that component tuple plus
+an opaque `epoch`. The epoch changes for every observed component transition,
+including a rollback to a byte-identical tuple. A plan and approval carry the
+epoch as `spec.executionBindingID`, so approval is one-shot for that exact
+transition: it cannot become valid again after a later rollout or rollback,
+even if all four component fields return to their previous values.
+
+A normal rolling upgrade has a leader-handoff boundary: before the old manager
+stops, it may still dispatch an approval that is valid for the complete old
+execution binding. That Job remains internally consistent and is never changed
+to the replacement binding. If an upgrade maintenance window requires that no
+new Apply be dispatched after the window begins, first scale the manager
+Deployment to zero and wait until all manager Pods have terminated. Then run
+`helm upgrade --wait`; the chart restores the configured replica count and the
+replacement manager invalidates every undispatched old-binding authorization
+before it can mutate a database.
+
 ## Mutable tags and registry outages
 
 Every reconciliation interval resolves the requested reference again. A moved
@@ -283,11 +311,17 @@ resolved successfully, while an explicit digest remains eligible. Policies
 that permit tags retain the refresh behavior above without weakening any later
 digest binding.
 
-Registry failures are fail-closed. The last resolved digest remains visible as
-evidence, but the controller does not silently reinterpret a tag or apply a
-plan whose verification inputs cannot be revalidated. Observe and plan also
-need to fetch the digest-pinned schema, so a registry outage can delay database
-checks without causing mutation.
+Registry failures are fail-closed. During a failed refresh of a previously
+resolved source, the last source, target, plan, applied record, and successful
+reconciliation timestamp remain historical evidence; they are not a claim of
+currentness. `ArtifactResolved=Unknown` with reason `RefreshFailed`, while
+`PlanReady` and `InSync` become `Unknown` with reason
+`SourceFreshnessUnknown`. No Verify, Observe, Plan, or Apply follows that
+failed Resolve. After connectivity returns, the operator must resolve and
+verify again, then observe and plan. A same-digest, no-drift recovery ends with
+`PlanReady=False`/`NoChanges`, `InSync=True`/`ScopedConverged`, and no Apply.
+Observe and plan also need to fetch the digest-pinned schema, so an outage can
+delay database checks without causing mutation.
 
 Every registry-authentication Secret must include `registry: <host[:port]>`,
 matching the OCI client's effective request authority. This applies to both
@@ -314,6 +348,26 @@ need a Secret grant but use the same per-Job snapshot boundary and 1 MiB limit.
 Digest-pinned references reduce change ambiguity and are recommended for
 production. Promote the same digest between environments rather than rebuilding
 equivalent tags.
+
+## External database targets
+
+The operator does not provision a database. An operation Job only needs a
+network route to the target and a namespace-local Secret containing the URL
+selected by `spec.target.urlFrom`. That target may be a managed service, a
+private endpoint, or a database outside Kubernetes. Keep the Secret scoped to
+the schema namespace, make the selected key nonempty, and set one stable
+`coordinationKey` for every URL alias that reaches the same physical database.
+
+A selectorless Service plus a manually managed EndpointSlice is one way to
+give an external address stable in-cluster DNS. Bind the EndpointSlice to the
+exact Service UID, set a distinct `endpointslice.kubernetes.io/managed-by`
+label for the component that owns it, publish only the database port, and
+arrange lifecycle management for address changes; the operator deliberately
+does not rewrite that route. NetworkPolicy, firewall rules, TLS, database
+privileges, backups, and high availability remain the platform owner's
+responsibility. The runtime role needs enough DDL authority for the requested
+migrations but should not be a database superuser. Database ports do not need
+to be exposed on a Kubernetes node or on the host running a kind test cluster.
 
 ## Suspension and deletion
 

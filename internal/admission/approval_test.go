@@ -121,6 +121,7 @@ func TestApprovalCreateHydratesDerivedPlanBindings(t *testing.T) {
 	approval.Spec.PolicyFingerprint = ""
 	approval.Spec.VerificationPolicyUID = ""
 	approval.Spec.VerificationPolicyDigest = ""
+	approval.Spec.ExecutionBindingID = ""
 	approval.Spec.PtahVersion = ""
 	approval.Spec.ExecutorImage = ""
 	approval.Spec.RunnerImage = ""
@@ -142,7 +143,7 @@ func TestApprovalCreateHydratesDerivedPlanBindings(t *testing.T) {
 	}
 	for _, want := range []string{
 		"sha256:artifact", coordinationDigest, "sha256:target", "sha256:actual", "sha256:desired",
-		"sha256:policy", "policy-v1-uid", "v0.3.0", "example.invalid/ptah@sha256:executor",
+		"sha256:policy", "policy-v1-uid", "v1-33333333333333333333333333333333", "v0.3.0", "example.invalid/ptah@sha256:executor",
 		"example.invalid/operator@sha256:runner", "runnerProtocolVersion",
 	} {
 		if !containsJSON(patchJSON, want) {
@@ -292,6 +293,13 @@ func TestApprovalCreateRequiresCurrentApprovalBoundary(t *testing.T) {
 			},
 		},
 		{
+			name: "execution epoch changed",
+			want: "referenced plan is no longer current for the schema",
+			mutate: func(status *operatorv1alpha1.PtahSchemaStatus) {
+				status.ExecutionBinding.Epoch = "v1-44444444444444444444444444444444"
+			},
+		},
+		{
 			name: "coordination binding changed",
 			want: "schema source or target changed after the plan was generated",
 			mutate: func(status *operatorv1alpha1.PtahSchemaStatus) {
@@ -372,6 +380,12 @@ func readyFixture(
 		},
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			Phase: operatorv1alpha1.PhaseAwaitingApproval,
+			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
+				Epoch: "v1-33333333333333333333333333333333", PtahVersion: "v0.3.0",
+				ExecutorImage:         "example.invalid/ptah@sha256:executor",
+				RunnerImage:           "example.invalid/operator@sha256:runner",
+				RunnerProtocolVersion: int32(runner.ProtocolVersion),
+			},
 			Source: operatorv1alpha1.SchemaSourceStatus{
 				Digest: "sha256:artifact", VerificationPolicyUID: policyUID, VerificationPolicyDigest: policyDigest,
 			},
@@ -379,7 +393,10 @@ func readyFixture(
 				CoordinationDigest: coordinationDigest,
 				IdentityDigest:     "sha256:target",
 			},
-			Plan: &operatorv1alpha1.CurrentPlanStatus{UID: "plan-uid", Fingerprint: "sha256:plan"},
+			Plan: &operatorv1alpha1.CurrentPlanStatus{
+				UID: "plan-uid", Fingerprint: "sha256:plan",
+				ExecutionBindingID: "v1-33333333333333333333333333333333",
+			},
 			Conditions: []metav1.Condition{{
 				Type: operatorv1alpha1.ConditionApprovalRequired, Status: metav1.ConditionTrue,
 				Reason: "Waiting", LastTransitionTime: now,
@@ -402,6 +419,7 @@ func readyFixture(
 			PolicyFingerprint:        "sha256:policy",
 			VerificationPolicyUID:    policyUID,
 			VerificationPolicyDigest: policyDigest,
+			ExecutionBindingID:       "v1-33333333333333333333333333333333",
 			PtahVersion:              "v0.3.0",
 			ExecutorImage:            "example.invalid/ptah@sha256:executor",
 			RunnerImage:              "example.invalid/operator@sha256:runner",
@@ -429,6 +447,7 @@ func readyFixture(
 			PolicyFingerprint:        "sha256:policy",
 			VerificationPolicyUID:    policyUID,
 			VerificationPolicyDigest: policyDigest,
+			ExecutionBindingID:       "v1-33333333333333333333333333333333",
 			PtahVersion:              "v0.3.0",
 			ExecutorImage:            "example.invalid/ptah@sha256:executor",
 			RunnerImage:              "example.invalid/operator@sha256:runner",

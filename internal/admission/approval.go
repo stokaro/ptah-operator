@@ -143,6 +143,7 @@ func (h *ApprovalHandler) hydrateDerivedBindings(
 		{"desired state fingerprint", &approval.Spec.DesiredStateFingerprint, plan.Spec.DesiredStateFingerprint},
 		{"policy fingerprint", &approval.Spec.PolicyFingerprint, plan.Spec.PolicyFingerprint},
 		{"verification policy digest", &approval.Spec.VerificationPolicyDigest, plan.Spec.VerificationPolicyDigest},
+		{"execution binding ID", &approval.Spec.ExecutionBindingID, plan.Spec.ExecutionBindingID},
 		{"Ptah version", &approval.Spec.PtahVersion, plan.Spec.PtahVersion},
 		{"executor image", &approval.Spec.ExecutorImage, plan.Spec.ExecutorImage},
 		{"runner image", &approval.Spec.RunnerImage, plan.Spec.RunnerImage},
@@ -256,7 +257,10 @@ func (h *ApprovalHandler) validateBinding(
 		return fmt.Errorf("schema UID does not match the plan binding")
 	}
 	if schema.Status.Plan == nil || schema.Status.Plan.UID != plan.UID ||
-		schema.Status.Plan.Fingerprint != plan.Spec.Fingerprint {
+		schema.Status.Plan.Fingerprint != plan.Spec.Fingerprint ||
+		schema.Status.ExecutionBinding == nil || schema.Status.ExecutionBinding.Epoch == "" ||
+		schema.Status.ExecutionBinding.Epoch != plan.Spec.ExecutionBindingID ||
+		schema.Status.Plan.ExecutionBindingID != plan.Spec.ExecutionBindingID {
 		return fmt.Errorf("referenced plan is no longer current for the schema")
 	}
 	if schema.Status.Phase != operatorv1alpha1.PhaseAwaitingApproval {
@@ -285,7 +289,11 @@ func (h *ApprovalHandler) validateBinding(
 	if schema.Status.Source.Digest != plan.Spec.ArtifactDigest ||
 		coordinationDigest != plan.Spec.CoordinationDigest ||
 		schema.Status.Target.CoordinationDigest != plan.Spec.CoordinationDigest ||
-		schema.Status.Target.IdentityDigest != plan.Spec.TargetIdentityDigest {
+		schema.Status.Target.IdentityDigest != plan.Spec.TargetIdentityDigest ||
+		schema.Status.ExecutionBinding.PtahVersion != plan.Spec.PtahVersion ||
+		schema.Status.ExecutionBinding.ExecutorImage != plan.Spec.ExecutorImage ||
+		schema.Status.ExecutionBinding.RunnerImage != plan.Spec.RunnerImage ||
+		schema.Status.ExecutionBinding.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
 		return fmt.Errorf("schema source or target changed after the plan was generated")
 	}
 	policyBinding, err := policy.ConfigMapBinding(ctx, h.Reader, namespace, schema.Spec.Desired.VerificationPolicyFrom)
@@ -315,6 +323,7 @@ func approvalMatchesPlan(
 		{"desired state fingerprint", approval.DesiredStateFingerprint, plan.DesiredStateFingerprint},
 		{"policy fingerprint", approval.PolicyFingerprint, plan.PolicyFingerprint},
 		{"verification policy digest", approval.VerificationPolicyDigest, plan.VerificationPolicyDigest},
+		{"execution binding ID", approval.ExecutionBindingID, plan.ExecutionBindingID},
 		{"Ptah version", approval.PtahVersion, plan.PtahVersion},
 		{"executor image", approval.ExecutorImage, plan.ExecutorImage},
 		{"runner image", approval.RunnerImage, plan.RunnerImage},

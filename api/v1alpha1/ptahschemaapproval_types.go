@@ -29,10 +29,12 @@ type PtahSchemaApprovalSpec struct {
 	PolicyFingerprint        string    `json:"policyFingerprint"`
 	VerificationPolicyUID    types.UID `json:"verificationPolicyUID"`
 	VerificationPolicyDigest string    `json:"verificationPolicyDigest"`
-	PtahVersion              string    `json:"ptahVersion"`
-	ExecutorImage            string    `json:"executorImage"`
-	RunnerImage              string    `json:"runnerImage"`
-	RunnerProtocolVersion    int32     `json:"runnerProtocolVersion"`
+	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
+	ExecutionBindingID    string `json:"executionBindingID,omitempty"`
+	PtahVersion           string `json:"ptahVersion"`
+	ExecutorImage         string `json:"executorImage"`
+	RunnerImage           string `json:"runnerImage"`
+	RunnerProtocolVersion int32  `json:"runnerProtocolVersion"`
 
 	Approver   ApprovalIdentity `json:"approver"`
 	ApprovedAt metav1.Time      `json:"approvedAt"`

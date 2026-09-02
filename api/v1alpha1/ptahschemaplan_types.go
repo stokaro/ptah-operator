@@ -49,10 +49,14 @@ type PtahSchemaPlanSpec struct {
 	PolicyFingerprint        string    `json:"policyFingerprint"`
 	VerificationPolicyUID    types.UID `json:"verificationPolicyUID"`
 	VerificationPolicyDigest string    `json:"verificationPolicyDigest"`
-	PtahVersion              string    `json:"ptahVersion"`
-	ExecutorImage            string    `json:"executorImage"`
-	RunnerImage              string    `json:"runnerImage"`
-	RunnerProtocolVersion    int32     `json:"runnerProtocolVersion"`
+	// ExecutionBindingID is a per-transition epoch. It changes even when an
+	// operator rollout returns to byte-identical component versions.
+	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
+	ExecutionBindingID    string `json:"executionBindingID,omitempty"`
+	PtahVersion           string `json:"ptahVersion"`
+	ExecutorImage         string `json:"executorImage"`
+	RunnerImage           string `json:"runnerImage"`
+	RunnerProtocolVersion int32  `json:"runnerProtocolVersion"`
 
 	Dialect        string `json:"dialect"`
 	Destructive    bool   `json:"destructive"`

@@ -50,6 +50,8 @@ const (
 	AnnotationInputFingerprint = "operator.ptah.dev/input-fingerprint"
 	// AnnotationPtahVersion records the configured data-plane version.
 	AnnotationPtahVersion = "operator.ptah.dev/ptah-version"
+	// AnnotationExecutionBindingID records the durable evidence epoch.
+	AnnotationExecutionBindingID = "operator.ptah.dev/execution-binding-id"
 	// AnnotationPlanFingerprint records the exact approved plan binding.
 	AnnotationPlanFingerprint = "operator.ptah.dev/plan-fingerprint"
 	// AnnotationPlanContentDigest records the reconstructed plan byte digest.
@@ -93,8 +95,9 @@ const (
 )
 
 var (
-	imageDigestPattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
-	sha256Pattern      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	imageDigestPattern        = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
+	sha256Pattern             = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
 )
 
 // Builder contains immutable execution-component bindings. Both images must
@@ -146,6 +149,7 @@ func NameFor(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.Act
 		string(schema.UID),
 		string(operation.Type),
 		operation.ID,
+		operation.ExecutionBindingID,
 		operation.InputFingerprint,
 		strconv.FormatInt(int64(operation.Attempt), 10),
 	}, "\x00")
@@ -175,6 +179,13 @@ func (b Builder) Build(
 	}
 	if err := validateSchema(schema); err != nil {
 		return nil, err
+	}
+	if schema.Status.ExecutionBinding.PtahVersion != b.PtahVersion ||
+		schema.Status.ExecutionBinding.ExecutorImage != b.ExecutorImage ||
+		schema.Status.ExecutionBinding.RunnerImage != b.RunnerImage ||
+		schema.Status.ExecutionBinding.RunnerProtocolVersion != int32(runner.ProtocolVersion) ||
+		operation.ExecutionBindingID != schema.Status.ExecutionBinding.Epoch {
+		return nil, errors.New("active operation execution binding is stale")
 	}
 	name, err := NameFor(schema, operation)
 	if err != nil {
@@ -210,6 +221,7 @@ func (b Builder) Build(
 	annotations[AnnotationOperationID] = operation.ID
 	annotations[AnnotationInputFingerprint] = operation.InputFingerprint
 	annotations[AnnotationPtahVersion] = b.PtahVersion
+	annotations[AnnotationExecutionBindingID] = operation.ExecutionBindingID
 	if operation.AdmissionSnapshot != nil {
 		if !sha256Pattern.MatchString(operation.AdmissionSnapshot.Digest) ||
 			!sha256Pattern.MatchString(operation.AdmissionSnapshot.TemplateDigest) {
@@ -858,6 +870,10 @@ func validateSchema(schema *operatorv1alpha1.PtahSchema) error {
 	if schema.DeletionTimestamp != nil {
 		return errors.New("cannot create an operation Job for a deleting schema")
 	}
+	if schema.Status.ExecutionBinding == nil ||
+		!executionBindingIDPattern.MatchString(schema.Status.ExecutionBinding.Epoch) {
+		return errors.New("schema durable execution binding is required")
+	}
 	if schema.Spec.Target.URLFrom.Name == "" || schema.Spec.Target.URLFrom.Key == "" {
 		return errors.New("target Secret name and key are required")
 	}
@@ -889,6 +905,9 @@ func validateOperation(operation operatorv1alpha1.ActiveOperationStatus) error {
 	}
 	if operation.Attempt < 1 {
 		return errors.New("active operation attempt must be positive")
+	}
+	if !executionBindingIDPattern.MatchString(operation.ExecutionBindingID) {
+		return errors.New("active operation execution binding ID is invalid")
 	}
 	return nil
 }
@@ -994,6 +1013,8 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 		current.PolicyFingerprint != plan.Spec.PolicyFingerprint ||
 		current.VerificationPolicyUID != plan.Spec.VerificationPolicyUID ||
 		current.VerificationPolicyDigest != plan.Spec.VerificationPolicyDigest ||
+		current.ExecutionBindingID == "" || current.ExecutionBindingID != plan.Spec.ExecutionBindingID ||
+		current.ExecutionBindingID != schema.Status.ExecutionBinding.Epoch ||
 		current.PtahVersion != plan.Spec.PtahVersion || current.ExecutorImage != plan.Spec.ExecutorImage ||
 		current.RunnerImage != plan.Spec.RunnerImage || current.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion ||
 		current.Destructive != plan.Spec.Destructive || current.StatementCount != plan.Spec.StatementCount {
@@ -1003,7 +1024,11 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 		plan.Spec.VerificationPolicyUID != schema.Status.Source.VerificationPolicyUID ||
 		plan.Spec.VerificationPolicyDigest != schema.Status.Source.VerificationPolicyDigest ||
 		plan.Spec.CoordinationDigest != schema.Status.Target.CoordinationDigest ||
-		plan.Spec.TargetIdentityDigest != schema.Status.Target.IdentityDigest {
+		plan.Spec.TargetIdentityDigest != schema.Status.Target.IdentityDigest ||
+		plan.Spec.PtahVersion != schema.Status.ExecutionBinding.PtahVersion ||
+		plan.Spec.ExecutorImage != schema.Status.ExecutionBinding.ExecutorImage ||
+		plan.Spec.RunnerImage != schema.Status.ExecutionBinding.RunnerImage ||
+		plan.Spec.RunnerProtocolVersion != schema.Status.ExecutionBinding.RunnerProtocolVersion {
 		return errors.New("apply plan source or target binding is stale")
 	}
 	if !sha256Pattern.MatchString(plan.Spec.ContentDigest) || !sha256Pattern.MatchString(plan.Spec.Fingerprint) ||

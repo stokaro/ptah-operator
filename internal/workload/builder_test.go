@@ -990,6 +990,10 @@ func TestBuildApplyProjectsExactCommittedPlan(t *testing.T) {
 	if got := job.Annotations[AnnotationPlanFingerprint]; got != plan.Spec.Fingerprint {
 		t.Fatalf("plan fingerprint annotation = %q, want %q", got, plan.Spec.Fingerprint)
 	}
+	if got := job.Annotations[AnnotationExecutionBindingID]; got != schema.Status.ExecutionBinding.Epoch ||
+		job.Spec.Template.Annotations[AnnotationExecutionBindingID] != got {
+		t.Fatalf("execution binding annotations = Job %q, Pod %q, want %q", got, job.Spec.Template.Annotations[AnnotationExecutionBindingID], schema.Status.ExecutionBinding.Epoch)
+	}
 	main := job.Spec.Template.Spec.Containers[0]
 	mount := requireMount(t, main, planVolumeName)
 	if !mount.ReadOnly || mount.MountPath != planPath {
@@ -1022,9 +1026,34 @@ func TestBuildApplyRejectsStaleBindings(t *testing.T) {
 			},
 		},
 		{
-			name: "executor changed",
+			name: "execution epoch changed",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, _ *Builder) {
+				schema.Status.ExecutionBinding.Epoch = "v1-44444444444444444444444444444444"
+			},
+		},
+		{
+			name: "Ptah version changed",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
+				builder.PtahVersion = "v0.4.0"
+			},
+		},
+		{
+			name: "executor image changed",
 			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
 				builder.ExecutorImage = "example.invalid/ptah@sha256:" + strings.Repeat("8", 64)
+			},
+		},
+		{
+			name: "runner image changed",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
+				builder.RunnerImage = "example.invalid/operator@sha256:" + strings.Repeat("8", 64)
+			},
+		},
+		{
+			name: "runner protocol changed",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan, _ *Builder) {
+				plan.Spec.RunnerProtocolVersion++
+				schema.Status.Plan.RunnerProtocolVersion = plan.Spec.RunnerProtocolVersion
 			},
 		},
 		{
@@ -1355,6 +1384,12 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 			},
 		},
 		Status: operatorv1alpha1.PtahSchemaStatus{
+			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
+				Epoch: "v1-33333333333333333333333333333333", PtahVersion: "v0.3.0",
+				ExecutorImage:         "example.invalid/ptah@" + digest('d'),
+				RunnerImage:           "example.invalid/operator@" + digest('e'),
+				RunnerProtocolVersion: int32(runner.ProtocolVersion),
+			},
 			Source: operatorv1alpha1.SchemaSourceStatus{
 				RequestedReference:       "oci://registry.example/acme/orders:stable",
 				ResolvedReference:        "oci://registry.example/acme/orders@" + artifactDigest,
@@ -1399,11 +1434,12 @@ func builderFixture() Builder {
 func operationFixture(operation operatorv1alpha1.OperationType) operatorv1alpha1.ActiveOperationStatus {
 	schema := schemaFixture()
 	active := operatorv1alpha1.ActiveOperationStatus{
-		Type:             operation,
-		ID:               "operation-01",
-		InputFingerprint: digest('f'),
-		StartedAt:        metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)),
-		Attempt:          1,
+		Type:               operation,
+		ID:                 "operation-01",
+		InputFingerprint:   digest('f'),
+		ExecutionBindingID: schema.Status.ExecutionBinding.Epoch,
+		StartedAt:          metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)),
+		Attempt:            1,
 	}
 	if operation == operatorv1alpha1.OperationVerify {
 		active.VerificationPolicyUID = schema.Status.Source.VerificationPolicyUID
@@ -1458,7 +1494,7 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 			Generation: 1,
 		},
 		Spec: operatorv1alpha1.PtahSchemaPlanSpec{
-			ContractVersion:          1,
+			ContractVersion:          2,
 			SchemaRef:                operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
 			Fingerprint:              digest('1'),
 			ContentDigest:            digest('2'),
@@ -1471,6 +1507,7 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 			PolicyFingerprint:        digest('4'),
 			VerificationPolicyUID:    schema.Status.Source.VerificationPolicyUID,
 			VerificationPolicyDigest: digest('5'),
+			ExecutionBindingID:       schema.Status.ExecutionBinding.Epoch,
 			PtahVersion:              builder.PtahVersion,
 			ExecutorImage:            builder.ExecutorImage,
 			RunnerImage:              builder.RunnerImage,
@@ -1509,6 +1546,7 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 		PolicyFingerprint:        plan.Spec.PolicyFingerprint,
 		VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
 		VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
+		ExecutionBindingID:       plan.Spec.ExecutionBindingID,
 		PtahVersion:              plan.Spec.PtahVersion,
 		ExecutorImage:            plan.Spec.ExecutorImage,
 		RunnerImage:              plan.Spec.RunnerImage,

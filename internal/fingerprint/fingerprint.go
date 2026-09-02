@@ -17,7 +17,10 @@ const (
 	coordinationContractVersion = 1
 )
 
-var coordinationKeyPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$`)
+var (
+	coordinationKeyPattern    = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$`)
+	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
+)
 
 // DigestBytes returns an OCI-style SHA-256 digest for exact bytes.
 func DigestBytes(data []byte) string {
@@ -102,6 +105,7 @@ type PlanBinding struct {
 	PolicyFingerprint        string `json:"policy_fingerprint"`
 	VerificationPolicyUID    string `json:"verification_policy_uid"`
 	VerificationPolicyDigest string `json:"verification_policy_digest"`
+	ExecutionBindingID       string `json:"execution_binding_id,omitempty"`
 	PtahVersion              string `json:"ptah_version"`
 	ExecutorImage            string `json:"executor_image"`
 	RunnerImage              string `json:"runner_image"`
@@ -132,6 +136,9 @@ func (b PlanBinding) Fingerprint() (string, error) {
 		if strings.TrimSpace(value) == "" {
 			return "", fmt.Errorf("%s is required", name)
 		}
+	}
+	if b.ContractVersion >= 2 && !executionBindingIDPattern.MatchString(b.ExecutionBindingID) {
+		return "", fmt.Errorf("a valid execution binding ID is required for plan contract version %d", b.ContractVersion)
 	}
 	if b.RunnerProtocolVersion < 1 {
 		return "", fmt.Errorf("runner protocol version must be positive")

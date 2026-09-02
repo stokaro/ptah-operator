@@ -72,7 +72,7 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 	t.Parallel()
 
 	base := fingerprint.PlanBinding{
-		ContractVersion:          1,
+		ContractVersion:          2,
 		SchemaUID:                "schema-uid",
 		PlanContentDigest:        "sha256:plan",
 		ArtifactDigest:           "sha256:artifact",
@@ -83,6 +83,7 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 		PolicyFingerprint:        "sha256:policy",
 		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: "sha256:verification",
+		ExecutionBindingID:       "v1-33333333333333333333333333333333",
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.invalid/ptah@sha256:executor",
 		RunnerImage:              "example.invalid/operator@sha256:runner",
@@ -104,6 +105,7 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 		"policy":           func(v *fingerprint.PlanBinding) { v.PolicyFingerprint += "-new" },
 		"verification UID": func(v *fingerprint.PlanBinding) { v.VerificationPolicyUID += "-new" },
 		"verification":     func(v *fingerprint.PlanBinding) { v.VerificationPolicyDigest += "-new" },
+		"execution epoch":  func(v *fingerprint.PlanBinding) { v.ExecutionBindingID = "v1-44444444444444444444444444444444" },
 		"version":          func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
 		"executor":         func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
 		"runner":           func(v *fingerprint.PlanBinding) { v.RunnerImage += "-new" },
@@ -123,6 +125,49 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 				t.Fatalf("mutation %q did not change fingerprint %s", name, got)
 			}
 		})
+	}
+}
+
+func TestPlanBindingExecutionEpochCompatibility(t *testing.T) {
+	t.Parallel()
+
+	legacy := fingerprint.PlanBinding{
+		ContractVersion:          1,
+		SchemaUID:                "schema-uid",
+		PlanContentDigest:        "sha256:plan",
+		ArtifactDigest:           "sha256:artifact",
+		CoordinationDigest:       "sha256:coordination",
+		TargetIdentityDigest:     "sha256:target",
+		ActualStateFingerprint:   "sha256:actual",
+		DesiredStateFingerprint:  "sha256:desired",
+		PolicyFingerprint:        "sha256:policy",
+		VerificationPolicyUID:    "verification-policy-uid",
+		VerificationPolicyDigest: "sha256:verification",
+		PtahVersion:              "v0.3.0",
+		ExecutorImage:            "example.invalid/ptah@sha256:executor",
+		RunnerImage:              "example.invalid/operator@sha256:runner",
+		RunnerProtocolVersion:    1,
+	}
+	legacyFingerprint, err := legacy.Fingerprint()
+	if err != nil {
+		t.Fatalf("legacy v1 binding without execution epoch: %v", err)
+	}
+	if legacyFingerprint != "sha256:f1ea9f2864032cffccab3976470b524c794c4bd3c58917d48ffd161b0ddc9bdf" {
+		t.Fatalf("legacy v1 fingerprint = %q, want backward-compatible digest", legacyFingerprint)
+	}
+
+	current := legacy
+	current.ContractVersion = 2
+	if _, err := current.Fingerprint(); err == nil || !strings.Contains(err.Error(), "execution binding ID") {
+		t.Fatalf("v2 binding without execution epoch error = %v, want execution binding refusal", err)
+	}
+	current.ExecutionBindingID = "v1-33333333333333333333333333333333"
+	if _, err := current.Fingerprint(); err != nil {
+		t.Fatalf("v2 binding with execution epoch: %v", err)
+	}
+	current.ExecutionBindingID = "retired-epoch"
+	if _, err := current.Fingerprint(); err == nil || !strings.Contains(err.Error(), "valid execution binding ID") {
+		t.Fatalf("v2 binding with malformed execution epoch error = %v, want format refusal", err)
 	}
 }
 

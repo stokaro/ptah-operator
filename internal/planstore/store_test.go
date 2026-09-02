@@ -89,6 +89,30 @@ func TestChunkLeavesKubernetesBase64TransportHeadroom(t *testing.T) {
 	}
 }
 
+func TestPrepareExecutionEpochCompatibility(t *testing.T) {
+	t.Parallel()
+
+	content := []byte("small exact plan")
+	schema, current, _ := fixture(t, content)
+	missingEpoch := current.Spec
+	missingEpoch.ExecutionBindingID = ""
+	if _, _, err := Prepare(schema, missingEpoch, content); err == nil || !strings.Contains(err.Error(), "execution binding ID") {
+		t.Fatalf("Prepare(v2 without execution epoch) error = %v, want execution binding refusal", err)
+	}
+
+	legacy := current.Spec
+	legacy.ContractVersion = 1
+	legacy.ExecutionBindingID = ""
+	var err error
+	legacy.Fingerprint, err = planBinding(schema, legacy).Fingerprint()
+	if err != nil {
+		t.Fatalf("fingerprint legacy v1 plan: %v", err)
+	}
+	if _, _, err := Prepare(schema, legacy, content); err != nil {
+		t.Fatalf("Prepare(v1 without execution epoch) error = %v, want backward-compatible storage", err)
+	}
+}
+
 func TestPublishIsCrashResumable(t *testing.T) {
 	t.Parallel()
 	schema, desired, chunks := fixture(t, []byte("small exact plan"))
@@ -139,7 +163,7 @@ func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *opera
 		t.Fatal(err)
 	}
 	spec := operatorv1alpha1.PtahSchemaPlanSpec{
-		ContractVersion:          1,
+		ContractVersion:          2,
 		SchemaRef:                operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
 		ArtifactDigest:           "sha256:artifact",
 		CoordinationDigest:       coordinationDigest,
@@ -149,6 +173,7 @@ func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *opera
 		PolicyFingerprint:        "sha256:policy",
 		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: "sha256:verification",
+		ExecutionBindingID:       "v1-33333333333333333333333333333333",
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.invalid/ptah@sha256:executor",
 		RunnerImage:              "example.invalid/operator@sha256:runner",
@@ -157,8 +182,21 @@ func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *opera
 		StatementCount:           1,
 	}
 	spec.ContentDigest = fingerprint.DigestBytes(content)
-	binding := fingerprint.PlanBinding{
-		ContractVersion:          1,
+	binding := planBinding(schema, spec)
+	spec.Fingerprint, err = binding.Fingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, chunks, err := Prepare(schema, spec, content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schema, desired, chunks
+}
+
+func planBinding(schema *operatorv1alpha1.PtahSchema, spec operatorv1alpha1.PtahSchemaPlanSpec) fingerprint.PlanBinding {
+	return fingerprint.PlanBinding{
+		ContractVersion:          spec.ContractVersion,
 		SchemaUID:                string(schema.UID),
 		PlanContentDigest:        spec.ContentDigest,
 		ArtifactDigest:           spec.ArtifactDigest,
@@ -169,20 +207,12 @@ func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *opera
 		PolicyFingerprint:        spec.PolicyFingerprint,
 		VerificationPolicyUID:    string(spec.VerificationPolicyUID),
 		VerificationPolicyDigest: spec.VerificationPolicyDigest,
+		ExecutionBindingID:       spec.ExecutionBindingID,
 		PtahVersion:              spec.PtahVersion,
 		ExecutorImage:            spec.ExecutorImage,
 		RunnerImage:              spec.RunnerImage,
 		RunnerProtocolVersion:    spec.RunnerProtocolVersion,
 	}
-	spec.Fingerprint, err = binding.Fingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	desired, chunks, err := Prepare(schema, spec, content)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return schema, desired, chunks
 }
 
 func fakeStore(t *testing.T, objects ...client.Object) Store {

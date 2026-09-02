@@ -94,6 +94,9 @@ spec:
                 type: boolean
               dialect:
                 type: string
+              executionBindingID:
+                pattern: ^v1-[0-9a-f]{32}$
+                type: string
               executorImage:
                 type: string
               fingerprint:

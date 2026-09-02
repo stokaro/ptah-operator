@@ -4,12 +4,14 @@
 remote Docker context, builds and loads the operator image, installs the Helm
 chart with its CRDs and webhooks, and runs both control-plane and real
 data-plane acceptance checks. Cleanup is automatic and is limited to the
-cluster, authenticated registry container, temporary image tags, source and
-kind node images first pulled by that invocation, and an otherwise-unused kind
-network created by that invocation. Images and networks that predated the run
-are preserved; a newly created kind network is also preserved if another
-container attaches to it. Content-addressed BuildKit cache layers are managed
-by Docker and are never removed with a broad cleanup operation.
+cluster, authenticated registry container, external PostgreSQL container,
+temporary image tags, source and kind node images first pulled by that
+invocation, and an otherwise-unused kind network created by that invocation.
+Images and networks that predated the run are preserved; a newly created kind
+network is also preserved if another container attaches to it. Containers are
+removed by their captured full Docker IDs rather than reusable names.
+Content-addressed BuildKit cache layers are managed by Docker and are never
+removed with a broad cleanup operation.
 
 The local client needs Docker, kind, kubectl, Helm, Go, Git, OpenSSL, jq, SSH,
 curl, and htpasswd.
@@ -76,10 +78,21 @@ development-target Secret, verification-policy ConfigMap, and OCI CA ConfigMap
 selectors are likewise rejected by the real API server before any Job exists.
 
 The data-plane checks use an authenticated OCI registry plus disposable
-PostgreSQL and MySQL databases. For each engine they publish a real schema
-artifact to a mutable tag, verify tag-to-digest and artifact-type evidence,
-observe drift, publish and exactly approve a plan, apply it, prove post-apply
-convergence in the database, and force a second complete Resolve, Verify,
+PostgreSQL and MySQL databases. They also start PostgreSQL 17 as a
+digest-pinned, task-labeled Docker container on the kind bridge, with a tmpfs
+data directory, no anonymous or persistent volume, no restart policy, and no
+published host port. A selectorless Service and an exact owner-bound
+EndpointSlice with a unique managed-by label route operation Jobs to its
+captured bridge IP. The fixture role is demoted from superuser after
+initialization while retaining database ownership. The suite proves that no
+Kubernetes workload hosts that database, then performs a focused Plan, exact
+approval, single Apply, post-Apply `NoChanges` proof, and an independent
+Docker-side catalog check.
+
+For each in-cluster engine the suite publishes a real schema
+artifact to a mutable tag, verifies tag-to-digest and artifact-type evidence,
+observes drift, publishes and exactly approves a plan, applies it, proves post-apply
+convergence in the database, and forces a second complete Resolve, Verify,
 Observe, and scoped Plan cycle whose explicit `NoChanges` result must remain a
 no-op. A single lossless Job watch must prove that Resolve completed before
 Verify was added and Verify completed before the first database Observe was
@@ -89,6 +102,23 @@ the fixed `registry` key and explicitly grants the test-only cleartext transport
 through `allowPlainHTTP: "true"`. Job isolation checks require the
 credential-free authority guard to run before every credentialed Observe or
 Plan fetch.
+Before the first PostgreSQL Apply, the suite records an exact old-binding
+approval, drains the manager Deployment to zero, and Helm-upgrades it with a
+changed Ptah version while both image digests remain unchanged. The old
+approval must become stale with no Apply. The replacement manager must execute
+exactly one sequential Resolve, Verify, Observe, and Plan chain and publish a
+distinct plan UID and fingerprint bound to the new version before the suite
+grants a fresh approval.
+
+After a successful periodic no-op and before moving the mutable tag, the suite
+stops the exact captured registry container. It requires exactly one failed
+Resolve, no later operation or Apply, byte-identical retained source, target,
+plan, applied, and last-success evidence, and `Unknown` source-freshness
+Conditions. The harness freezes retries while it captures that boundary,
+restarts the same container ID, waits for its authenticated HTTP API through
+the existing loopback tunnel, and then requires one ordered Resolve, Verify,
+Observe, and `NoChanges` Plan recovery chain with zero Apply and restored
+freshness Conditions.
 Custom-CA coverage must instead use HTTPS and put the exact selected CA-byte
 digest in the same registry Secret under the fixed `caSHA256` key. Those checks
 run a digest-pinned, non-root, read-only TLS proxy with a task-scoped server
@@ -218,10 +248,12 @@ their status and approval bindings to expose only the derived digest, never the
 plaintext key, and binds every approval to runner protocol version 4.
 
 Registry and database credentials are supplied only through namespaced
-Secrets. Host-side generated credentials are handed between scripts through
-mode-0600 files in a mode-0700 task directory, never through exported password
-variables or command-line arguments. Every observed Job UID must have a
-complete terminal log audit. Terminal Jobs are re-read by exact UID, their Pods
+Secrets. Host-side generated credentials, including the external PostgreSQL
+environment and URL material, are handed between scripts through mode-0600
+files in a mode-0700 task directory, never through exported password variables
+or command-line arguments. Docker-side readiness and catalog queries consume
+the container's private environment without printing it. Every observed Job UID
+must have a complete terminal log audit. Terminal Jobs are re-read by exact UID, their Pods
 are selected by controller owner UID rather than a reusable name label, and
 every exact terminated Pod and container is rechecked after its log scan before
 the Job UID is certified. Exact operation results are extracted from one

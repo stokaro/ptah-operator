@@ -13,6 +13,12 @@ input, unpinned action, incomplete publish permission set, or manager image tag
 that differs from the chart version. It publishes no version or `latest` image
 alias.
 
+A release candidate is eligible only after the same commit passes the complete
+real-cluster lifecycle on every minor in the generated Kubernetes support
+window. Advancing that sliding window adds the new minor and removes the oldest
+minor in one reviewed change; publication must not substitute a preferred-minor
+smoke test for the required matrix.
+
 ## Publication transaction
 
 A fresh transaction first creates and attests a minimal `state=prepared` journal
@@ -202,6 +208,30 @@ reference. Set it to the version identity established by the provenance of the
 exact executor digest. The operator records that pair in plans, approvals,
 operation Jobs, and applied status, so an executor change is an explicit new
 execution binding even when the operator release is unchanged.
+
+Changing `execution.ptahVersion`, `execution.executorImage`, or
+`execution.runnerImage` during a Helm upgrade intentionally invalidates a plan
+and recorded approval until a mutating Job has been dispatched. A claimed but
+undispatched Apply also returns to read-only reconciliation. Wait for the
+replacement manager to finish Resolve, Verify, Observe, and Plan, review the
+new plan UID and fingerprint, and issue a new approval. Do not carry approval
+objects across an execution-binding upgrade as deployment automation. A
+dispatched Apply remains bound to its captured execution identity and proceeds
+through conservative outcome classification and post-Apply observation; the
+upgrade never recreates it with different binaries.
+
+`status.executionBinding` exposes the active component tuple and its opaque
+`epoch` for audit. Every observed component transition creates a new epoch,
+including rollback to an identical tuple. Plans and approvals reference it as
+`spec.executionBindingID`; therefore an approval is valid for only one
+transition and cannot be reused after rollout or rollback.
+
+The invalidation boundary starts when the replacement manager owns
+reconciliation, not when `helm upgrade` is invoked. During an ordinary rolling
+upgrade, the old leader may still dispatch a fully old-binding approval before
+handoff. For a strict no-dispatch maintenance boundary, scale the manager
+Deployment to zero and wait for all manager Pods to terminate before running
+`helm upgrade --wait`. The chart then restores its configured replica count.
 
 For an air-gapped promotion, carry the authenticated chart asset and recursively
 copy the operator image, executor image, and every referenced schema artifact

@@ -9,6 +9,8 @@ KUBECONFIG_FILE=${E2E_KUBECONFIG:-}
 OPERATOR_NAMESPACE=${E2E_OPERATOR_NAMESPACE:-}
 TEST_NAMESPACE=${E2E_TEST_NAMESPACE:-}
 HELM_RELEASE=${E2E_HELM_RELEASE:-}
+CHART_PACKAGE=${E2E_CHART_PACKAGE:-}
+PTAH_VERSION=${E2E_PTAH_VERSION:-}
 EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 FIXTURE_IMAGE=${E2E_FIXTURE_IMAGE:-}
@@ -16,7 +18,16 @@ POSTGRES_IMAGE=${E2E_POSTGRES_IMAGE:-}
 MYSQL_IMAGE=${E2E_MYSQL_IMAGE:-}
 REGISTRY_IP=${E2E_REGISTRY_IP:-}
 REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
+REGISTRY_PORT=${E2E_REGISTRY_PORT:-}
 REGISTRY_CREDENTIALS_FILE=${E2E_REGISTRY_CREDENTIALS_FILE:-}
+DOCKER_CONTEXT=${E2E_DOCKER_CONTEXT:-}
+REGISTRY_CONTAINER_ID=${E2E_REGISTRY_CONTAINER_ID:-}
+EXTERNAL_PG_CONTAINER_ID=${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:-}
+EXTERNAL_PG_IP=${E2E_EXTERNAL_POSTGRES_IP:-}
+EXTERNAL_PG_SERVICE=${E2E_EXTERNAL_POSTGRES_SERVICE:-}
+EXTERNAL_PG_IMAGE=${E2E_EXTERNAL_POSTGRES_IMAGE:-}
+EXTERNAL_PG_OWNER=${E2E_EXTERNAL_POSTGRES_OWNER:-}
+EXTERNAL_PG_CREDENTIALS_FILE=${E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE:-}
 TLS_PROXY_SERVICE=${E2E_TLS_PROXY_SERVICE:-}
 TLS_PROXY_CA_FILE=${E2E_TLS_PROXY_CA_FILE:-}
 TLS_PROXY_CERT_FILE=${E2E_TLS_PROXY_CERT_FILE:-}
@@ -51,6 +62,21 @@ is_pinned_image() {
 	printf '%s\n' "$1" | grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$'
 }
 
+require_mode_0600_regular_file() {
+	mode_file=$1
+	mode_description=$2
+	if [ ! -f "$mode_file" ] || [ -L "$mode_file" ]; then
+		fail "$mode_description must name a regular non-symlink file"
+	fi
+	if mode_value=$(stat -c '%a' "$mode_file" 2>/dev/null); then
+		:
+	else
+		mode_value=$(stat -f '%Lp' "$mode_file" 2>/dev/null) ||
+			fail "could not inspect $mode_description permissions"
+	fi
+	[ "$mode_value" = 600 ] || fail "$mode_description must have mode 0600"
+}
+
 sha256() {
 	if command -v sha256sum >/dev/null 2>&1; then
 		sha256sum | awk '{print $1}'
@@ -70,7 +96,7 @@ coordination_digest() {
 	printf 'sha256:%s\n' "$(printf '%s' "$coordination_canonical" | sha256)"
 }
 
-for command_name in kubectl jq awk sed grep tr cksum mktemp date sleep tail stat go env; do
+for command_name in docker kubectl helm jq awk sed grep tr cksum mktemp date sleep tail stat wc cmp cut go env curl; do
 	require_command "$command_name"
 done
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
@@ -79,35 +105,49 @@ fi
 for value_name in \
 	KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE \
 	RUNNER_IMAGE FIXTURE_IMAGE POSTGRES_IMAGE MYSQL_IMAGE REGISTRY_IP REGISTRY_CREDENTIALS_FILE \
+	REGISTRY_PORT CHART_PACKAGE PTAH_VERSION DOCKER_CONTEXT REGISTRY_CONTAINER_ID \
+	EXTERNAL_PG_CONTAINER_ID EXTERNAL_PG_IP EXTERNAL_PG_SERVICE EXTERNAL_PG_IMAGE \
+	EXTERNAL_PG_OWNER EXTERNAL_PG_CREDENTIALS_FILE \
 	TLS_PROXY_SERVICE TLS_PROXY_CA_FILE TLS_PROXY_CERT_FILE TLS_PROXY_KEY_FILE; do
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
 done
 [ -f "$KUBECONFIG_FILE" ] || fail "E2E_KUBECONFIG does not name a file"
-if [ ! -f "$REGISTRY_CREDENTIALS_FILE" ] || [ -L "$REGISTRY_CREDENTIALS_FILE" ]; then
-	fail "E2E_REGISTRY_CREDENTIALS_FILE must name a regular non-symlink file"
-fi
-if registry_credentials_mode=$(stat -c '%a' "$REGISTRY_CREDENTIALS_FILE" 2>/dev/null); then
-	:
-else
-	registry_credentials_mode=$(stat -f '%Lp' "$REGISTRY_CREDENTIALS_FILE" 2>/dev/null) ||
-		fail "could not inspect registry credential file permissions"
-fi
-[ "$registry_credentials_mode" = 600 ] ||
-	fail "E2E_REGISTRY_CREDENTIALS_FILE must have mode 0600"
+require_mode_0600_regular_file "$REGISTRY_CREDENTIALS_FILE" E2E_REGISTRY_CREDENTIALS_FILE
+require_mode_0600_regular_file "$EXTERNAL_PG_CREDENTIALS_FILE" \
+	E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE
+case "$DOCKER_CONTEXT" in
+default | orbstack | '') fail "E2E_DOCKER_CONTEXT must name an explicit nonlocal Docker context" ;;
+esac
+docker --context "$DOCKER_CONTEXT" context inspect "$DOCKER_CONTEXT" >/dev/null ||
+	fail "E2E_DOCKER_CONTEXT cannot be inspected"
+docker_endpoint=$(docker --context "$DOCKER_CONTEXT" context inspect \
+	--format '{{ (index .Endpoints "docker").Host }}' "$DOCKER_CONTEXT")
+case "$docker_endpoint" in
+ssh://*) ;;
+*) fail "E2E_DOCKER_CONTEXT must use an SSH endpoint" ;;
+esac
+[ -f "$CHART_PACKAGE" ] || fail "E2E_CHART_PACKAGE does not name a chart package"
+ptah_version_length=$(printf '%s' "$PTAH_VERSION" | wc -c | tr -d '[:space:]')
+[ "$ptah_version_length" -ge 1 ] && [ "$ptah_version_length" -le 128 ] ||
+	fail "E2E_PTAH_VERSION must contain between 1 and 128 bytes"
+printf '%s\n' "$PTAH_VERSION" | grep -Eq '^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$' ||
+	fail "E2E_PTAH_VERSION must not contain control or edge-whitespace characters"
+printf '%s\n' "$REGISTRY_CONTAINER_ID" "$EXTERNAL_PG_CONTAINER_ID" |
+	awk 'length($0) == 64 && $0 ~ /^[0-9a-f]+$/ {valid++} END {exit valid == 2 ? 0 : 1}' ||
+	fail "Docker fixture IDs must be exact 64-character lowercase IDs"
+printf '%s\n' "$EXTERNAL_PG_IP" | grep -Eq '^[0-9]+(\.[0-9]+){3}$' ||
+	fail "E2E_EXTERNAL_POSTGRES_IP must be an IPv4 address on the kind Docker network"
+printf '%s\n' "$EXTERNAL_PG_SERVICE" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' ||
+	fail "E2E_EXTERNAL_POSTGRES_SERVICE must be a DNS label"
+printf '%s\n' "$EXTERNAL_PG_OWNER" | grep -Eq '^[0-9A-Za-z._-]+$' ||
+	fail "E2E_EXTERNAL_POSTGRES_OWNER contains unsupported characters"
+is_pinned_image "$EXTERNAL_PG_IMAGE" ||
+	fail "E2E_EXTERNAL_POSTGRES_IMAGE must be digest-pinned"
 printf '%s\n' "$TLS_PROXY_SERVICE" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' ||
 	fail "E2E_TLS_PROXY_SERVICE must be a DNS label"
 for tls_proxy_file in "$TLS_PROXY_CA_FILE" "$TLS_PROXY_CERT_FILE" "$TLS_PROXY_KEY_FILE"; do
-	if [ ! -f "$tls_proxy_file" ] || [ -L "$tls_proxy_file" ]; then
-		fail "TLS proxy inputs must be regular non-symlink files"
-	fi
-	if tls_proxy_mode=$(stat -c '%a' "$tls_proxy_file" 2>/dev/null); then
-		:
-	else
-		tls_proxy_mode=$(stat -f '%Lp' "$tls_proxy_file" 2>/dev/null) ||
-			fail "could not inspect TLS proxy input permissions"
-	fi
-	[ "$tls_proxy_mode" = 600 ] || fail "TLS proxy input files must have mode 0600"
+	require_mode_0600_regular_file "$tls_proxy_file" "TLS proxy input file"
 done
 if [ "$TLS_PROXY_CA_FILE" = "$TLS_PROXY_CERT_FILE" ] ||
 	[ "$TLS_PROXY_CA_FILE" = "$TLS_PROXY_KEY_FILE" ] ||
@@ -123,11 +163,27 @@ jq -e '
 	fail "E2E_REGISTRY_CREDENTIALS_FILE has an invalid shape"
 REGISTRY_USERNAME=$(jq -er '.username' "$REGISTRY_CREDENTIALS_FILE")
 REGISTRY_PASSWORD=$(jq -er '.password' "$REGISTRY_CREDENTIALS_FILE")
+jq -e \
+	--arg authority "${EXTERNAL_PG_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5432" '
+  type == "object" and
+  (keys == ["database", "password", "url", "username"]) and
+  (.username | type == "string" and test("^[A-Za-z0-9_.-]+$") and length > 0) and
+  (.password | type == "string" and test("^[A-Za-z0-9_.-]+$") and length > 0) and
+  (.database | type == "string" and test("^[A-Za-z0-9_.-]+$") and length > 0) and
+  .url == ("postgres://" + .username + ":" + .password + "@" + $authority + "/" +
+    .database + "?sslmode=disable")
+' "$EXTERNAL_PG_CREDENTIALS_FILE" >/dev/null ||
+	fail "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE has an invalid or misbound shape"
 for image in "$EXECUTOR_IMAGE" "$RUNNER_IMAGE" "$FIXTURE_IMAGE" "$POSTGRES_IMAGE" "$MYSQL_IMAGE"; do
 	is_pinned_image "$image" || fail "data-plane images must be pinned by a lowercase SHA-256 digest: $image"
 done
 printf '%s\n' "$REGISTRY_IP" | grep -Eq '^[0-9]+(\.[0-9]+){3}$' ||
 	fail "E2E_REGISTRY_IP must be an IPv4 address on the kind Docker network"
+printf '%s\n' "$REGISTRY_PORT" | grep -Eq '^[0-9]+$' ||
+	fail "E2E_REGISTRY_PORT must be numeric"
+if [ "$REGISTRY_PORT" -lt 1024 ] || [ "$REGISTRY_PORT" -gt 65535 ]; then
+	fail "E2E_REGISTRY_PORT must be between 1024 and 65535"
+fi
 printf '%s\n' "$TIMEOUT_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "E2E_TIMEOUT_SECONDS must be a positive integer"
 printf '%s\n' "$BLOCKED_REFRESH_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
@@ -172,6 +228,10 @@ MYSQL_URL_FILE=$WORK_DIR/mysql.url
 REGISTRY_PASSWORD_FILE=$WORK_DIR/registry.password
 RESULT_ASSERT_BINARY=$WORK_DIR/e2e-resultassert
 RESULT_LOG_FILE=$WORK_DIR/runner-result.log
+REGISTRY_OUTAGE_EVIDENCE_BEFORE=$WORK_DIR/registry-outage-evidence-before.json
+REGISTRY_OUTAGE_EVIDENCE_AFTER=$WORK_DIR/registry-outage-evidence-after.json
+REGISTRY_OUTAGE_SCHEMA_INPUT=$WORK_DIR/registry-outage-schema-input.json
+REGISTRY_OUTAGE_PLAN_INPUT=$WORK_DIR/registry-outage-plan-input.json
 ADMISSION_ERROR_FILE=$WORK_DIR/admission-error.txt
 CLEANUP_SCHEMA_FILE=$WORK_DIR/cleanup-schemas.json
 CLEANUP_EVENT_FILE=$WORK_DIR/cleanup-events.json
@@ -1045,6 +1105,41 @@ assert_no_job_between_checkpoints() {
 		fail "$bounded_schema created $bounded_count unexpected bounded $bounded_operation Jobs"
 }
 
+assert_read_only_chain_between_checkpoints() {
+	chain_schema=$1
+	chain_before=$2
+	chain_after=$3
+	k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.dev/schema=${chain_schema}" -o json |
+		jq -e \
+			--slurpfile before "$chain_before" \
+			--slurpfile after "$chain_after" '
+          def in_boundary:
+            .metadata.uid as $uid |
+            ($after[0] | index($uid)) != null and
+            ($before[0] | index($uid)) == null;
+          def bounded($operation):
+            [.items[] |
+              select(.metadata.labels["operator.ptah.dev/operation"] == $operation) |
+              select(in_boundary)] |
+            if length == 1 then .[0] else error("read-only operation is not exact") end;
+          [.items[] | select(in_boundary)] as $all |
+          bounded("resolve") as $resolve |
+          bounded("verify") as $verify |
+          bounded("observe") as $observe |
+          bounded("plan") as $plan |
+          [$resolve, $verify, $observe, $plan] as $jobs |
+          ($all | length) == 4 and
+          all($jobs[];
+            (.status.conditions // [] | any(.type == "Complete" and .status == "True")) and
+            (.status.conditions // [] | all(.type != "Failed" or .status != "True"))) and
+          $resolve.status.completionTime <= $verify.status.startTime and
+          $verify.status.completionTime <= $observe.status.startTime and
+          $observe.status.completionTime <= $plan.status.startTime
+        ' >/dev/null ||
+		fail "$chain_schema did not preserve one exact sequential Resolve, Verify, Observe, Plan chain"
+}
+
 new_job_count_since() {
 	new_schema=$1
 	new_operation=$2
@@ -1364,6 +1459,253 @@ create_registry_service() {
       ]
     }' >"$RESOURCE_FILE"
 	k apply -f "$RESOURCE_FILE" >/dev/null
+}
+
+assert_registry_container_contract() {
+	registry_expected_running=$1
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.Id}}' "$REGISTRY_CONTAINER_ID")" = "$REGISTRY_CONTAINER_ID" ] ||
+		fail "registry container identity changed"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.State.Running}}' "$REGISTRY_CONTAINER_ID")" = "$registry_expected_running" ] ||
+		fail "registry container running state is not $registry_expected_running"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-owner\"}}' \
+		"$REGISTRY_CONTAINER_ID")" = "$EXTERNAL_PG_OWNER" ] ||
+		fail "registry container lost its task owner label"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-component\"}}' \
+		"$REGISTRY_CONTAINER_ID")" = registry ] ||
+		fail "registry container lost its component label"
+	if [ "$registry_expected_running" = true ]; then
+		docker --context "$DOCKER_CONTEXT" container inspect \
+			--format '{{json .NetworkSettings.Networks}}' "$REGISTRY_CONTAINER_ID" |
+			jq -e --arg address "$REGISTRY_IP" '
+          keys == ["kind"] and .kind.IPAddress == $address
+        ' >/dev/null || fail "registry container left its exact kind-network address"
+	fi
+}
+
+wait_for_registry_http_ready() {
+	registry_ready_deadline=$(($(date +%s) + 60))
+	while [ "$(date +%s)" -lt "$registry_ready_deadline" ]; do
+		registry_ready_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+			--connect-timeout 2 --max-time 5 \
+			"http://127.0.0.1:${REGISTRY_PORT}/v2/" 2>/dev/null || true)
+		if [ "$registry_ready_status" = 401 ]; then
+			return 0
+		fi
+		sleep 1
+	done
+	fail "authenticated registry HTTP API did not become ready after restart"
+}
+
+assert_external_pg_container_contract() {
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.Id}}' "$EXTERNAL_PG_CONTAINER_ID")" = "$EXTERNAL_PG_CONTAINER_ID" ] ||
+		fail "external PostgreSQL container identity changed"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.State.Running}}' "$EXTERNAL_PG_CONTAINER_ID")" = true ] ||
+		fail "external PostgreSQL container is not running"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.HostConfig.RestartPolicy.Name}}' "$EXTERNAL_PG_CONTAINER_ID")" = no ] ||
+		fail "external PostgreSQL container gained a restart policy"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.HostConfig.PublishAllPorts}}' "$EXTERNAL_PG_CONTAINER_ID")" = false ] ||
+		fail "external PostgreSQL container publishes all ports"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.Config.Image}}' "$EXTERNAL_PG_CONTAINER_ID")" = "$EXTERNAL_PG_IMAGE" ] ||
+		fail "external PostgreSQL container lost its digest-pinned image"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-owner\"}}' \
+		"$EXTERNAL_PG_CONTAINER_ID")" = "$EXTERNAL_PG_OWNER" ] ||
+		fail "external PostgreSQL container lost its task owner label"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-component\"}}' \
+		"$EXTERNAL_PG_CONTAINER_ID")" = external-postgresql ] ||
+		fail "external PostgreSQL container lost its component label"
+	docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{json .HostConfig.PortBindings}}' "$EXTERNAL_PG_CONTAINER_ID" |
+		jq -e '. == null or . == {}' >/dev/null ||
+		fail "external PostgreSQL container has host port bindings"
+	docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{json .NetworkSettings.Ports}}' "$EXTERNAL_PG_CONTAINER_ID" |
+		jq -e 'to_entries | all(.value == null)' >/dev/null ||
+		fail "external PostgreSQL container exposes a host port"
+	docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{json .HostConfig.Tmpfs}}' "$EXTERNAL_PG_CONTAINER_ID" |
+		jq -e 'keys == ["/var/lib/postgresql/data"]' >/dev/null ||
+		fail "external PostgreSQL data directory is not an exact tmpfs"
+	docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{json .Mounts}}' "$EXTERNAL_PG_CONTAINER_ID" |
+		jq -e '
+      length == 1 and .[0].Type == "tmpfs" and
+      .[0].Destination == "/var/lib/postgresql/data"
+    ' >/dev/null || fail "external PostgreSQL container has a persistent or unexpected mount"
+	docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{json .NetworkSettings.Networks}}' "$EXTERNAL_PG_CONTAINER_ID" |
+		jq -e --arg address "$EXTERNAL_PG_IP" '
+      keys == ["kind"] and .kind.IPAddress == $address
+    ' >/dev/null || fail "external PostgreSQL container left its exact kind-network address"
+}
+
+external_pg_query() {
+	external_query=$1
+	assert_external_pg_container_contract
+	docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc "$1"' \
+		sh "$external_query"
+}
+
+assert_external_pg_server_version() {
+	external_version_num=$(external_pg_query 'SHOW server_version_num')
+	external_version_num=$(printf '%s' "$external_version_num" | tr -d '[:space:]')
+	printf '%s\n' "$external_version_num" | grep -Eq '^17[0-9]{4}$' ||
+		fail "external PostgreSQL fixture is not major version 17"
+}
+
+assert_external_pg_not_hosted_in_kubernetes() {
+	k -n "$TEST_NAMESPACE" get deployments,statefulsets,pods,jobs -o json |
+		jq -e \
+			--arg service "$EXTERNAL_PG_SERVICE" \
+			--arg image "$EXTERNAL_PG_IMAGE" '
+          [.items[] | select(
+            .metadata.name == $service or
+            .metadata.labels["app.kubernetes.io/component"] == "e2e-external-database" or
+            any(.spec.template.spec.containers[]?; .image == $image) or
+            any(.spec.containers[]?; .image == $image)
+          )] | length == 0
+        ' >/dev/null || fail "a Kubernetes workload hosts or impersonates external PostgreSQL"
+}
+
+create_external_postgresql_endpoint() {
+	printf '%s\n' 'e2e data plane: creating selectorless external PostgreSQL endpoint'
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$EXTERNAL_PG_SECRET" \
+		--arg owner "$EXTERNAL_PG_OWNER" \
+		--slurpfile credentials "$EXTERNAL_PG_CREDENTIALS_FILE" '
+      {
+        apiVersion: "v1", kind: "Secret", immutable: true,
+        metadata: {
+          namespace: $namespace, name: $name,
+          labels: {
+            "app.kubernetes.io/component": "e2e-external-database",
+            "operator.ptah.dev/e2e-owner": $owner
+          }
+        },
+        type: "Opaque", stringData: {url: $credentials[0].url}
+      }
+    ' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k create -f "$SECRET_FILE" >/dev/null
+	: >"$SECRET_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$EXTERNAL_PG_SERVICE" \
+		--arg owner "$EXTERNAL_PG_OWNER" '
+      {
+        apiVersion: "v1", kind: "Service",
+        metadata: {
+          namespace: $namespace, name: $name,
+          labels: {
+            "app.kubernetes.io/name": $name,
+            "app.kubernetes.io/component": "e2e-external-database",
+            "operator.ptah.dev/e2e-owner": $owner
+          }
+        },
+        spec: {
+          ports: [{name: "postgresql", port: 5432, protocol: "TCP", targetPort: 5432}]
+        }
+      }
+    ' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+	external_service_uid=$(k -n "$TEST_NAMESPACE" get service "$EXTERNAL_PG_SERVICE" \
+		-o jsonpath='{.metadata.uid}')
+	[ -n "$external_service_uid" ] || fail "external PostgreSQL Service has no UID"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "${EXTERNAL_PG_SERVICE}-docker" \
+		--arg service "$EXTERNAL_PG_SERVICE" \
+		--arg serviceUID "$external_service_uid" \
+		--arg owner "$EXTERNAL_PG_OWNER" \
+		--arg address "$EXTERNAL_PG_IP" '
+      {
+        apiVersion: "discovery.k8s.io/v1", kind: "EndpointSlice",
+        metadata: {
+          namespace: $namespace, name: $name,
+	          labels: {
+	            "kubernetes.io/service-name": $service,
+	            "endpointslice.kubernetes.io/managed-by": "ptah-operator-e2e",
+	            "app.kubernetes.io/component": "e2e-external-database",
+            "operator.ptah.dev/e2e-owner": $owner
+          },
+          ownerReferences: [{
+            apiVersion: "v1", kind: "Service", name: $service, uid: $serviceUID,
+            controller: true, blockOwnerDeletion: false
+          }]
+        },
+        addressType: "IPv4",
+        endpoints: [{addresses: [$address], conditions: {ready: true}}],
+        ports: [{name: "postgresql", port: 5432, protocol: "TCP"}]
+      }
+    ' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+
+	k -n "$TEST_NAMESPACE" get secret "$EXTERNAL_PG_SECRET" -o json |
+		jq -e \
+			--arg owner "$EXTERNAL_PG_OWNER" \
+			--slurpfile credentials "$EXTERNAL_PG_CREDENTIALS_FILE" '
+          .immutable == true and .type == "Opaque" and
+          .metadata.labels["app.kubernetes.io/component"] == "e2e-external-database" and
+          .metadata.labels["operator.ptah.dev/e2e-owner"] == $owner and
+          (.data | keys) == ["url"] and
+          .data.url == ($credentials[0].url | @base64)
+        ' >/dev/null || fail "external PostgreSQL Secret lost its exact URL-only binding"
+	k -n "$TEST_NAMESPACE" get service "$EXTERNAL_PG_SERVICE" -o json |
+		jq -e \
+			--arg owner "$EXTERNAL_PG_OWNER" '
+          (.spec | has("selector") | not) and
+          .metadata.labels["app.kubernetes.io/component"] == "e2e-external-database" and
+          .metadata.labels["operator.ptah.dev/e2e-owner"] == $owner and
+          .spec.ports == [{name: "postgresql", port: 5432, protocol: "TCP", targetPort: 5432}]
+        ' >/dev/null || fail "external PostgreSQL Service is not an exact selectorless route"
+	k -n "$TEST_NAMESPACE" get endpointslice "${EXTERNAL_PG_SERVICE}-docker" -o json |
+		jq -e \
+			--arg service "$EXTERNAL_PG_SERVICE" \
+			--arg serviceUID "$external_service_uid" \
+			--arg owner "$EXTERNAL_PG_OWNER" \
+			--arg address "$EXTERNAL_PG_IP" '
+	          .addressType == "IPv4" and
+	          .metadata.labels["kubernetes.io/service-name"] == $service and
+	          .metadata.labels["endpointslice.kubernetes.io/managed-by"] == "ptah-operator-e2e" and
+	          .metadata.labels["app.kubernetes.io/component"] == "e2e-external-database" and
+          .metadata.labels["operator.ptah.dev/e2e-owner"] == $owner and
+          .metadata.ownerReferences == [{
+            apiVersion: "v1", kind: "Service", name: $service, uid: $serviceUID,
+            controller: true, blockOwnerDeletion: false
+          }] and
+          .endpoints == [{addresses: [$address], conditions: {ready: true}}] and
+          .ports == [{name: "postgresql", port: 5432, protocol: "TCP"}]
+        ' >/dev/null || fail "external PostgreSQL EndpointSlice lost its exact Docker route"
+	assert_external_pg_not_hosted_in_kubernetes
+	assert_external_pg_container_contract
+	assert_external_pg_server_version
+	external_initial_table_count=$(external_pg_query \
+		"SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='e2e_widgets'")
+	external_initial_table_count=$(printf '%s' "$external_initial_table_count" | tr -d '[:space:]')
+	[ "$external_initial_table_count" = 0 ] ||
+		fail "external PostgreSQL fixture was not empty before reconciliation"
+	external_role_superuser=$(external_pg_query \
+		"SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
+	external_role_superuser=$(printf '%s' "$external_role_superuser" | tr -d '[:space:]')
+	[ "$external_role_superuser" = f ] ||
+		fail "external PostgreSQL fixture login is a superuser"
+	external_database_owner=$(external_pg_query \
+		"SELECT pg_get_userbyid(datdba) = current_user FROM pg_database WHERE datname = current_database()")
+	external_database_owner=$(printf '%s' "$external_database_owner" | tr -d '[:space:]')
+	[ "$external_database_owner" = t ] ||
+		fail "external PostgreSQL fixture login does not retain database ownership"
 }
 
 create_authenticated_tls_proxy() {
@@ -1799,6 +2141,9 @@ MYSQL_ROOT_PASSWORD="e2eMyRoot${credential_suffix}Q7"
 MYSQL_SECRET=e2e-mysql-db
 MYSQL_SERVICE=e2e-mysql
 MYSQL_URL="mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(${MYSQL_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:3306)/${MYSQL_DATABASE}"
+EXTERNAL_PG_SECRET=e2e-postgresql-external-db
+EXTERNAL_PG_SCHEMA=e2e-postgresql-external
+EXTERNAL_PG_COORDINATION_KEY=e2e/postgresql-external/app
 REGISTRY_AUTH_SECRET=e2e-registry-auth
 REGISTRY_PULL_SECRET=e2e-registry-pull
 DIGEST_PIN_DOCKER_AUTH_SECRET=e2e-registry-digest-pin-docker-auth
@@ -1836,6 +2181,7 @@ printf '%s\n' \
 	"$PG_PASSWORD" "$PG_URL" "$CUSTOM_CA_PG_URL" \
 	"$MYSQL_PASSWORD" "$MYSQL_ROOT_PASSWORD" "$MYSQL_URL" \
 	>"$CREDENTIAL_PATTERNS_FILE"
+jq -er '.password, .url' "$EXTERNAL_PG_CREDENTIALS_FILE" >>"$CREDENTIAL_PATTERNS_FILE"
 chmod 600 \
 	"$PG_PASSWORD_FILE" "$PG_URL_FILE" "$CUSTOM_CA_PG_URL_FILE" \
 	"$MYSQL_PASSWORD_FILE" "$MYSQL_ROOT_PASSWORD_FILE" "$MYSQL_URL_FILE" \
@@ -2445,7 +2791,7 @@ publish_schema() {
 	publish_revision=$2
 	publish_dialect=$3
 	publish_reference=$4
-	publish_file="$ROOT_DIR/testdata/e2e/${publish_engine}-${publish_revision}.sql"
+	publish_file=${5:-"$ROOT_DIR/testdata/e2e/${publish_engine}-${publish_revision}.sql"}
 	publish_configmap="e2e-${publish_engine}-${publish_revision}"
 	publish_job="e2e-push-${publish_engine}-${publish_revision}"
 	[ -f "$publish_file" ] || fail "schema fixture is missing: $publish_file"
@@ -2538,6 +2884,8 @@ create_schema_resource() {
 	resource_policy=${6:-e2e-verification-policy}
 	resource_registry_auth_secret=${7:-$REGISTRY_AUTH_SECRET}
 	resource_registry_auth_mode=${8:-Environment}
+	resource_failure_retry=${9:-5s}
+	resource_interval=${10:-$APPROVAL_INTERVAL}
 	case "$resource_registry_auth_mode" in
 	Environment | DockerConfigJSON) ;;
 	*) fail "unsupported E2E registry authentication mode $resource_registry_auth_mode" ;;
@@ -2553,7 +2901,8 @@ create_schema_resource() {
 		--arg registryAuthSecret "$resource_registry_auth_secret" \
 		--arg registryAuthMode "$resource_registry_auth_mode" \
 		--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" \
-		--arg interval "$APPROVAL_INTERVAL" '
+		--arg failureRetry "$resource_failure_retry" \
+		--arg interval "$resource_interval" '
     {
       apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
       metadata: {namespace: $namespace, name: $name},
@@ -2586,7 +2935,7 @@ create_schema_resource() {
         },
         interval: $interval,
         execution: {
-	          activeDeadlineSeconds: 300, failureRetryInterval: "5s", connectTimeout: "30s",
+	          activeDeadlineSeconds: 300, failureRetryInterval: $failureRetry, connectTimeout: "30s",
 	          runtimeClassName: $runtimeClass
         }
       }
@@ -3635,6 +3984,467 @@ assert_requested_digest_pin_refusal() {
 		"the digest-pin refusal fixture to suspend before its refresh interval"
 }
 
+snapshot_registry_outage_evidence() {
+	outage_schema=$1
+	outage_plan_name=$2
+	outage_output=$3
+	k -n "$TEST_NAMESPACE" get ptahschema "$outage_schema" -o json \
+		>"$REGISTRY_OUTAGE_SCHEMA_INPUT"
+	k -n "$TEST_NAMESPACE" get ptahschemaplan "$outage_plan_name" -o json \
+		>"$REGISTRY_OUTAGE_PLAN_INPUT"
+	chmod 600 "$REGISTRY_OUTAGE_SCHEMA_INPUT" "$REGISTRY_OUTAGE_PLAN_INPUT"
+	scan_file_for_credentials "$REGISTRY_OUTAGE_SCHEMA_INPUT" \
+		"registry-outage schema evidence input"
+	scan_file_for_credentials "$REGISTRY_OUTAGE_PLAN_INPUT" \
+		"registry-outage plan evidence input"
+	jq -n \
+		--slurpfile schema "$REGISTRY_OUTAGE_SCHEMA_INPUT" \
+		--slurpfile plan "$REGISTRY_OUTAGE_PLAN_INPUT" '
+          {
+            source: $schema[0].status.source,
+            target: $schema[0].status.target,
+            plan: {
+              current: $schema[0].status.plan,
+              resource: {
+                name: $plan[0].metadata.name,
+                uid: $plan[0].metadata.uid,
+                generation: $plan[0].metadata.generation,
+                creationTimestamp: $plan[0].metadata.creationTimestamp,
+                spec: $plan[0].spec,
+                status: $plan[0].status
+              }
+            },
+            applied: $schema[0].status.applied,
+            lastSuccessfulReconciliation: $schema[0].status.lastSuccessfulReconciliation
+          }
+        ' >"$outage_output"
+	: >"$REGISTRY_OUTAGE_SCHEMA_INPUT"
+	: >"$REGISTRY_OUTAGE_PLAN_INPUT"
+	chmod 600 "$outage_output"
+	scan_file_for_credentials "$outage_output" "registry-outage retained evidence"
+}
+
+wait_for_registry_refresh_failure() {
+	outage_schema=$1
+	outage_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$outage_deadline" ]; do
+		audit_completed_jobs
+		if outage_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$outage_schema" -o json 2>/dev/null); then
+			if printf '%s\n' "$outage_object" | jq -e '
+              .status.phase == "Failed" and
+              .status.activeOperation.type == "Resolve" and
+              .status.activeOperation.attempt == 2 and
+              .status.activeOperation.jobUID == null and
+              .status.nextReconciliationTime != null and
+              (.status.conditions | any(
+                .type == "ArtifactResolved" and .status == "Unknown" and
+                .reason == "RefreshFailed")) and
+              (.status.conditions | any(
+                .type == "ArtifactVerified" and .status == "True" and
+                .reason == "PolicySatisfied")) and
+              (.status.conditions | any(
+                .type == "PlanReady" and .status == "Unknown" and
+                .reason == "SourceFreshnessUnknown")) and
+              (.status.conditions | any(
+                .type == "InSync" and .status == "Unknown" and
+                .reason == "SourceFreshnessUnknown")) and
+              (.status.conditions | any(
+                .type == "Ready" and .status == "False" and
+                .reason == "OperationFailed")) and
+              (.status.conditions | any(
+                .type == "ReconciliationFailed" and .status == "True" and
+                .reason == "OperationFailed"))
+            ' >/dev/null; then
+				return 0
+			fi
+		fi
+		sleep 1
+	done
+	fail "timed out waiting for one failed registry refresh with unknown freshness"
+}
+
+assert_registry_outage_and_recovery() {
+	outage_schema=$1
+	outage_digest=$2
+	outage_plan_name=$3
+	outage_plan_uid=$4
+	outage_plan_fingerprint=$5
+	[ "$RBAC_PAUSED" -eq 1 ] ||
+		fail "registry outage proof requires the periodic no-op checkpoint barrier"
+	k -n "$TEST_NAMESPACE" get ptahschema "$outage_schema" -o json |
+		jq -e \
+			--arg digest "$outage_digest" \
+			--arg fingerprint "$outage_plan_fingerprint" \
+			--arg version "$PTAH_VERSION" '
+          .spec.execution.failureRetryInterval == "45s" and
+          .status.phase == "InSync" and .status.source.digest == $digest and
+          .status.activeOperation == null and .status.pendingObservation == null and
+          .status.pendingLockRelease == null and .status.plan == null and
+          .status.applied.artifactDigest == $digest and
+          .status.applied.planFingerprint == $fingerprint and
+          .status.applied.ptahVersion == $version and
+          .status.lastSuccessfulReconciliation != null and
+          (.status.conditions | any(
+            .type == "ArtifactResolved" and .status == "True" and .reason == "DigestPinned")) and
+          (.status.conditions | any(
+            .type == "ArtifactVerified" and .status == "True" and .reason == "PolicySatisfied")) and
+          (.status.conditions | any(
+            .type == "InSync" and .status == "True" and .reason == "ScopedConverged"))
+		' >/dev/null || fail "$outage_schema lacks a fresh successful baseline before registry outage"
+	k -n "$TEST_NAMESPACE" get ptahschemaplan "$outage_plan_name" -o json |
+		jq -e \
+			--arg uid "$outage_plan_uid" \
+			--arg fingerprint "$outage_plan_fingerprint" \
+			--arg digest "$outage_digest" \
+			--arg version "$PTAH_VERSION" '
+          .metadata.uid == $uid and .spec.fingerprint == $fingerprint and
+          .spec.artifactDigest == $digest and .spec.ptahVersion == $version and
+          (.status.conditions | any(.type == "Ready" and .status == "True"))
+        ' >/dev/null || fail "$outage_schema lacks its exact durable applied Plan before outage"
+	snapshot_registry_outage_evidence "$outage_schema" "$outage_plan_name" \
+		"$REGISTRY_OUTAGE_EVIDENCE_BEFORE"
+	outage_before="$WORK_DIR/${outage_schema}-registry-outage-before.json"
+	checkpoint_schema_jobs "$outage_schema" "$outage_before"
+	assert_registry_container_contract true
+	docker --context "$DOCKER_CONTEXT" stop --time=10 "$REGISTRY_CONTAINER_ID" >/dev/null
+	assert_registry_container_contract false
+	resume_controller_status_writes || fail "could not release the registry-outage timer barrier"
+	wait_for_one_new_job "$outage_schema" resolve "$outage_before"
+	wait_for_registry_refresh_failure "$outage_schema"
+	pause_controller_status_writes
+	outage_failed_after="$WORK_DIR/${outage_schema}-registry-outage-failed.json"
+	checkpoint_schema_jobs "$outage_schema" "$outage_failed_after"
+	assert_one_job_between_checkpoints "$outage_schema" resolve \
+		"$outage_before" "$outage_failed_after"
+	for outage_forbidden_operation in verify observe plan apply; do
+		assert_no_job_between_checkpoints "$outage_schema" "$outage_forbidden_operation" \
+			"$outage_before" "$outage_failed_after"
+	done
+	outage_failed_total=$(schema_job_count_between_checkpoints "$outage_schema" \
+		"$outage_before" "$outage_failed_after")
+	[ "$outage_failed_total" -eq 1 ] ||
+		fail "$outage_schema created $outage_failed_total Jobs during its one-failure outage boundary"
+	outage_result="$WORK_DIR/${outage_schema}-registry-outage-result.json"
+	capture_one_new_job_result "$outage_schema" resolve "$outage_before" \
+		"$outage_result" "$outage_failed_after"
+	jq -e '
+      .childExitCode != 0 and .error != null and .stdout == "" and
+      (.mutationStarted // false) == false and (.uncertain // false) == false and
+      .truncation == null
+    ' "$outage_result" >/dev/null ||
+		fail "$outage_schema registry outage did not produce one exact read-only Resolve failure"
+	snapshot_registry_outage_evidence "$outage_schema" "$outage_plan_name" \
+		"$REGISTRY_OUTAGE_EVIDENCE_AFTER"
+	cmp -s "$REGISTRY_OUTAGE_EVIDENCE_BEFORE" "$REGISTRY_OUTAGE_EVIDENCE_AFTER" ||
+		fail "$outage_schema registry outage changed retained source, target, plan, applied, or success evidence"
+
+	recovery_before="$WORK_DIR/${outage_schema}-registry-recovery-before.json"
+	checkpoint_schema_jobs "$outage_schema" "$recovery_before"
+	docker --context "$DOCKER_CONTEXT" start "$REGISTRY_CONTAINER_ID" >/dev/null
+	assert_registry_container_contract true
+	wait_for_registry_http_ready
+	assert_registry_container_contract true
+	resume_controller_status_writes || fail "could not release the registry-recovery timer barrier"
+	wait_for_one_new_job "$outage_schema" resolve "$recovery_before"
+	wait_for_one_new_job "$outage_schema" verify "$recovery_before"
+	wait_for_one_new_job "$outage_schema" observe "$recovery_before"
+	wait_for_one_new_job "$outage_schema" plan "$recovery_before"
+	wait_for_schema "$outage_schema" \
+		".status.phase == \"InSync\" and .status.source.digest == \"$outage_digest\" and .status.activeOperation == null and .status.plan == null" \
+		"same-digest registry recovery to converge without Apply"
+	recovery_after="$WORK_DIR/${outage_schema}-registry-recovery-after.json"
+	checkpoint_schema_jobs "$outage_schema" "$recovery_after"
+	for recovery_operation in resolve verify observe plan; do
+		assert_one_job_between_checkpoints "$outage_schema" "$recovery_operation" \
+			"$recovery_before" "$recovery_after"
+	done
+	assert_no_job_between_checkpoints "$outage_schema" apply \
+		"$recovery_before" "$recovery_after"
+	assert_read_only_chain_between_checkpoints "$outage_schema" \
+		"$recovery_before" "$recovery_after"
+	assert_convergence_result_pair "$outage_schema" "$recovery_before" \
+		"$recovery_before" "$recovery_after"
+	k -n "$TEST_NAMESPACE" get ptahschema "$outage_schema" -o json |
+		jq -e \
+			--arg digest "$outage_digest" \
+			--slurpfile retained "$REGISTRY_OUTAGE_EVIDENCE_BEFORE" '
+          .status.phase == "InSync" and .status.source.digest == $digest and
+          .status.applied == $retained[0].applied and
+          .status.activeOperation == null and .status.pendingObservation == null and
+          .status.pendingLockRelease == null and .status.plan == null and
+          (.status.conditions | any(
+            .type == "ArtifactResolved" and .status == "True" and .reason == "DigestPinned")) and
+          (.status.conditions | any(
+            .type == "ArtifactVerified" and .status == "True" and .reason == "PolicySatisfied")) and
+          (.status.conditions | any(
+            .type == "PlanReady" and .status == "False" and .reason == "NoChanges")) and
+          (.status.conditions | any(
+            .type == "InSync" and .status == "True" and .reason == "ScopedConverged")) and
+          (.status.conditions | any(
+            .type == "Ready" and .status == "True" and .reason == "InSync")) and
+          (.status.conditions | any(
+            .type == "ReconciliationFailed" and .status == "False" and .reason == "Succeeded"))
+		' >/dev/null || fail "$outage_schema did not restore exact fresh no-op conditions"
+	k -n "$TEST_NAMESPACE" get ptahschemaplan "$outage_plan_name" -o json |
+		jq -e \
+			--arg uid "$outage_plan_uid" \
+			--arg fingerprint "$outage_plan_fingerprint" \
+			--arg digest "$outage_digest" '
+          .metadata.uid == $uid and .spec.fingerprint == $fingerprint and
+          .spec.artifactDigest == $digest and
+          (.status.conditions | any(.type == "Ready" and .status == "True"))
+        ' >/dev/null || fail "$outage_schema did not retain its exact durable Plan through recovery"
+	audit_runtime_credentials
+	printf '%s\n' 'e2e data plane: PASS registry outage freshness and exact recovery'
+}
+
+wait_for_manager_scaled_to_zero() {
+	manager_zero_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$manager_zero_deadline" ]; do
+		if k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
+			jq -e '
+              .spec.replicas == 0 and
+              ((.status.replicas // 0) == 0) and
+              ((.status.readyReplicas // 0) == 0) and
+              ((.status.availableReplicas // 0) == 0)
+            ' >/dev/null; then
+			return 0
+		fi
+		sleep 1
+	done
+	fail "manager Deployment did not scale to zero for execution-binding fault injection"
+}
+
+upgrade_execution_binding_before_apply() {
+	upgrade_schema=$1
+	upgrade_reference=$2
+	upgrade_digest=$3
+	upgrade_dialect=$4
+	upgrade_coordination_key=$5
+	upgrade_coordination_digest=$6
+	upgrade_old_plan=$CURRENT_PLAN
+	upgrade_old_plan_uid=$CURRENT_PLAN_UID
+	upgrade_old_fingerprint=$CURRENT_PLAN_FINGERPRINT
+	upgrade_original_ptah_version=$PTAH_VERSION
+	upgrade_old_approval="${upgrade_schema}-old-binding"
+	upgrade_before="$WORK_DIR/${upgrade_schema}-binding-upgrade-before.json"
+	checkpoint_schema_jobs "$upgrade_schema" "$upgrade_before"
+	k -n "$TEST_NAMESPACE" get ptahschema "$upgrade_schema" -o json |
+		jq -e --arg planUID "$upgrade_old_plan_uid" --arg version "$PTAH_VERSION" '
+          .status.phase == "AwaitingApproval" and
+          .status.plan.uid == $planUID and .status.plan.approval == null and
+          .status.plan.ptahVersion == $version and
+          .status.nextReconciliationTime != null and
+          ((.status.nextReconciliationTime | fromdateiso8601) - now) >= 180
+        ' >/dev/null || fail "$upgrade_schema lacks a quiescent old-binding approval window"
+
+	pause_controller_status_writes
+	create_exact_approval "$upgrade_schema" "$upgrade_old_plan" "$upgrade_old_approval" \
+		"$upgrade_coordination_key" "$upgrade_coordination_digest"
+	k -n "$TEST_NAMESPACE" get ptahschemaapproval "$upgrade_old_approval" -o json |
+		jq -e \
+			--arg version "$upgrade_original_ptah_version" \
+			--arg executor "$EXECUTOR_IMAGE" \
+			--arg runner "$RUNNER_IMAGE" '
+          .spec.ptahVersion == $version and
+          .spec.executorImage == $executor and .spec.runnerImage == $runner and
+          .spec.runnerProtocolVersion == 4
+        ' >/dev/null || fail "old approval was not bound to the pre-upgrade execution identity"
+	sleep 2
+	audit_completed_jobs
+	assert_no_new_jobs "$upgrade_schema" apply "$upgrade_before"
+	upgrade_approval_object=$(k -n "$TEST_NAMESPACE" get ptahschemaapproval \
+		"$upgrade_old_approval" -o json)
+	upgrade_recorded_approval=$(printf '%s\n' "$upgrade_approval_object" | jq -c '
+      {
+        name: .metadata.name,
+        uid: .metadata.uid,
+        approver: .spec.approver,
+        approvedAt: .spec.approvedAt
+      }
+    ')
+	printf '%s\n' "$upgrade_recorded_approval" | jq -e '
+      .name != "" and .uid != "" and .approver.username != "" and .approvedAt != null
+    ' >/dev/null || fail "old-binding approval lacks an injectable exact identity"
+
+	k -n "$OPERATOR_NAMESPACE" scale deployment/"$CONTROLLER_NAME" --replicas=0 >/dev/null
+	wait_for_manager_scaled_to_zero
+	upgrade_status_patch=$(jq -nc --argjson approval "$upgrade_recorded_approval" \
+		'{status: {plan: {approval: $approval}}}')
+	k -n "$TEST_NAMESPACE" patch ptahschema "$upgrade_schema" --subresource=status \
+		--type=merge -p "$upgrade_status_patch" >/dev/null
+	k -n "$TEST_NAMESPACE" get ptahschema "$upgrade_schema" -o json |
+		jq -e \
+			--arg planUID "$upgrade_old_plan_uid" \
+			--argjson approval "$upgrade_recorded_approval" '
+          .status.plan.uid == $planUID and .status.plan.approval == $approval and
+          .status.activeOperation == null
+        ' >/dev/null || fail "old-binding approval was not durably recorded before upgrade"
+
+	UPGRADED_PTAH_VERSION="e2e-binding-$(printf '%s' "$PTAH_VERSION" | sha256 | cut -c1-16)"
+	[ "$UPGRADED_PTAH_VERSION" != "$PTAH_VERSION" ] ||
+		fail "execution-binding upgrade did not select a distinct Ptah version"
+	printf 'e2e data plane: upgrading manager execution binding from %s to %s\n' \
+		"$PTAH_VERSION" "$UPGRADED_PTAH_VERSION"
+	helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
+		--namespace "$OPERATOR_NAMESPACE" --reuse-values --wait --timeout 5m \
+		--set-string execution.ptahVersion="$UPGRADED_PTAH_VERSION" >/dev/null
+	k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" \
+		--timeout="${TIMEOUT_SECONDS}s" >/dev/null
+	k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
+		jq -e \
+			--arg version "--ptah-version=${UPGRADED_PTAH_VERSION}" \
+			--arg oldVersion "--ptah-version=${PTAH_VERSION}" \
+			--arg executor "--executor-image=${EXECUTOR_IMAGE}" \
+			--arg runner "--runner-image=${RUNNER_IMAGE}" '
+          [.spec.template.spec.containers[] | select(.name == "manager")] as $manager |
+          ($manager | length) == 1 and
+          ($manager[0].args | index($version)) != null and
+          ($manager[0].args | index($oldVersion)) == null and
+          ($manager[0].args | index($executor)) != null and
+          ($manager[0].args | index($runner)) != null
+        ' >/dev/null || fail "manager rollout did not change only the Ptah version binding"
+	wait_for_controller_status_authorization yes ||
+		fail "Helm upgrade did not restore exact controller status authorization"
+	RBAC_PAUSED=0
+	PTAH_VERSION=$UPGRADED_PTAH_VERSION
+
+	# shellcheck disable=SC2016 # jq variable is supplied by wait_for_approval.
+	wait_for_approval "$upgrade_old_approval" '
+      .spec.planRef.uid == $expectedPlanUID and
+      .spec.ptahVersion != "" and
+      (.status.conditions | any(
+        .type == "Accepted" and .status == "False" and
+        .reason == "ExecutionBindingChanged")) and
+      (.status.conditions | any(
+        .type == "Stale" and .status == "True" and
+        .reason == "ExecutionBindingChanged")) and
+      (.status.conditions | all(.type != "Consumed" or .status != "True"))
+    ' "the old execution-binding approval to become stale before Apply" \
+		"$upgrade_old_plan_uid"
+	upgrade_after="$WORK_DIR/${upgrade_schema}-binding-upgrade-after.json"
+	assert_plan "$upgrade_schema" "$upgrade_reference" "$upgrade_digest" "$upgrade_dialect" false \
+		"$upgrade_before" "$upgrade_before" "$upgrade_after"
+	for upgrade_operation in resolve verify observe plan; do
+		assert_one_job_between_checkpoints "$upgrade_schema" "$upgrade_operation" \
+			"$upgrade_before" "$upgrade_after"
+	done
+	assert_no_job_between_checkpoints "$upgrade_schema" apply \
+		"$upgrade_before" "$upgrade_after"
+	assert_read_only_chain_between_checkpoints "$upgrade_schema" \
+		"$upgrade_before" "$upgrade_after"
+	[ "$CURRENT_PLAN" != "$upgrade_old_plan" ] ||
+		fail "$upgrade_schema reused the old plan name after execution-binding upgrade"
+	[ "$CURRENT_PLAN_UID" != "$upgrade_old_plan_uid" ] ||
+		fail "$upgrade_schema reused the old plan UID after execution-binding upgrade"
+	[ "$CURRENT_PLAN_FINGERPRINT" != "$upgrade_old_fingerprint" ] ||
+		fail "$upgrade_schema reused the old fingerprint after execution-binding upgrade"
+	k -n "$TEST_NAMESPACE" get ptahschemaplans "$upgrade_old_plan" "$CURRENT_PLAN" -o json |
+		jq -e \
+			--arg oldName "$upgrade_old_plan" \
+			--arg newName "$CURRENT_PLAN" \
+			--arg oldVersion "$upgrade_original_ptah_version" \
+			--arg newVersion "$PTAH_VERSION" \
+			--arg executor "$EXECUTOR_IMAGE" \
+			--arg runner "$RUNNER_IMAGE" '
+          def named($name):
+            [.items[] | select(.metadata.name == $name)] |
+            if length == 1 then .[0] else error("plan identity is not exact") end;
+	          named($oldName) as $old | named($newName) as $new |
+	          $old.spec.ptahVersion == $oldVersion and
+	          $old.spec.ptahVersion != $newVersion and
+          $new.spec.ptahVersion == $newVersion and
+          $old.spec.executorImage == $executor and $new.spec.executorImage == $executor and
+          $old.spec.runnerImage == $runner and $new.spec.runnerImage == $runner and
+          $old.spec.runnerProtocolVersion == 4 and $new.spec.runnerProtocolVersion == 4
+        ' >/dev/null || fail "$upgrade_schema plans did not preserve exact old/new execution bindings"
+	[ "$RBAC_PAUSED" -eq 1 ] ||
+		fail "fresh binding plan lacks a status barrier before its new approval"
+	printf '%s\n' 'e2e data plane: PASS pre-Apply execution-binding upgrade invalidation'
+}
+
+assert_external_postgresql_catalog() {
+	assert_external_pg_not_hosted_in_kubernetes
+	assert_external_pg_container_contract
+	assert_external_pg_server_version
+	external_columns=$(external_pg_query \
+		"SELECT string_agg(column_name || ':' || data_type || ':' || is_nullable, ',' ORDER BY ordinal_position) FROM information_schema.columns WHERE table_schema='public' AND table_name='e2e_widgets'")
+	external_columns=$(printf '%s' "$external_columns" | tr -d '\r\n')
+	[ "$external_columns" = 'id:bigint:NO,name:text:NO' ] ||
+		fail "external PostgreSQL columns are $external_columns, expected the exact v1 schema"
+	external_primary_key=$(external_pg_query \
+		"SELECT count(*) FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu USING (constraint_catalog, constraint_schema, constraint_name, table_catalog, table_schema, table_name) WHERE tc.table_schema='public' AND tc.table_name='e2e_widgets' AND tc.constraint_type='PRIMARY KEY' AND kcu.column_name='id' AND kcu.ordinal_position=1")
+	external_primary_key=$(printf '%s' "$external_primary_key" | tr -d '[:space:]')
+	[ "$external_primary_key" = 1 ] ||
+		fail "external PostgreSQL v1 primary key is not exact"
+	external_role_superuser=$(external_pg_query \
+		"SELECT rolsuper FROM pg_roles WHERE rolname = current_user")
+	external_role_superuser=$(printf '%s' "$external_role_superuser" | tr -d '[:space:]')
+	[ "$external_role_superuser" = f ] ||
+		fail "external PostgreSQL fixture login regained superuser authority"
+	external_database_owner=$(external_pg_query \
+		"SELECT pg_get_userbyid(datdba) = current_user FROM pg_database WHERE datname = current_database()")
+	external_database_owner=$(printf '%s' "$external_database_owner" | tr -d '[:space:]')
+	[ "$external_database_owner" = t ] ||
+		fail "external PostgreSQL fixture login lost database ownership"
+}
+
+run_external_postgresql_lifecycle() {
+	external_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/postgresql-external:stable"
+	external_coordination_digest=$(coordination_digest postgresql "$EXTERNAL_PG_COORDINATION_KEY")
+	external_before="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-before.json"
+	checkpoint_schema_jobs "$EXTERNAL_PG_SCHEMA" "$external_before"
+	external_digest=$(publish_schema postgresql-external v1 postgres "$external_reference" \
+		"$ROOT_DIR/testdata/e2e/postgresql-v1.sql")
+	external_lease_before="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-leases-before.json"
+	checkpoint_coordination_leases "$external_lease_before"
+	create_schema_resource "$EXTERNAL_PG_SCHEMA" PostgreSQL "$EXTERNAL_PG_SECRET" \
+		"$external_reference" "$EXTERNAL_PG_COORDINATION_KEY" \
+		e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 45s "$QUIESCENT_INTERVAL"
+	external_after_plan="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-after-plan.json"
+	assert_plan "$EXTERNAL_PG_SCHEMA" "$external_reference" "$external_digest" postgres false \
+		"$external_before" "$external_before" "$external_after_plan"
+	for external_plan_operation in resolve verify observe plan; do
+		assert_one_job_between_checkpoints "$EXTERNAL_PG_SCHEMA" \
+			"$external_plan_operation" "$external_before" "$external_after_plan"
+	done
+	assert_no_job_between_checkpoints "$EXTERNAL_PG_SCHEMA" apply \
+		"$external_before" "$external_after_plan"
+	assert_read_only_chain_between_checkpoints "$EXTERNAL_PG_SCHEMA" \
+		"$external_before" "$external_after_plan"
+	assert_coordination_boundary "$EXTERNAL_PG_SCHEMA" "$EXTERNAL_PG_COORDINATION_KEY" \
+		"$external_coordination_digest"
+	assert_job_isolation "$EXTERNAL_PG_SCHEMA" "$EXTERNAL_PG_SECRET" false
+	external_plan=$CURRENT_PLAN
+	external_plan_uid=$CURRENT_PLAN_UID
+	external_apply_before="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-apply-before.json"
+	checkpoint_schema_jobs "$EXTERNAL_PG_SCHEMA" "$external_apply_before"
+	create_exact_approval "$EXTERNAL_PG_SCHEMA" "$external_plan" \
+		"${EXTERNAL_PG_SCHEMA}-v1" "$EXTERNAL_PG_COORDINATION_KEY" \
+		"$external_coordination_digest"
+	resume_controller_status_writes ||
+		fail "could not release external PostgreSQL approval barrier"
+	wait_for_one_new_job "$EXTERNAL_PG_SCHEMA" apply "$external_apply_before"
+	wait_for_in_sync "$EXTERNAL_PG_SCHEMA" "$external_digest" \
+		"$external_apply_before" "$external_apply_before"
+	assert_approval_consumed "${EXTERNAL_PG_SCHEMA}-v1" "$external_plan_uid"
+	assert_one_new_job "$EXTERNAL_PG_SCHEMA" apply "$external_apply_before"
+	assert_coordination_lease_boundary "$EXTERNAL_PG_COORDINATION_KEY" \
+		"$external_lease_before"
+	assert_job_isolation "$EXTERNAL_PG_SCHEMA" "$EXTERNAL_PG_SECRET" true
+	assert_external_postgresql_catalog
+	k -n "$TEST_NAMESPACE" patch ptahschema "$EXTERNAL_PG_SCHEMA" --type=merge \
+		-p '{"spec":{"suspend":true}}' >/dev/null
+	wait_for_schema "$EXTERNAL_PG_SCHEMA" '
+      .status.observedGeneration == .metadata.generation and
+      .status.phase == "Suspended" and .status.activeOperation == null and
+      .status.pendingObservation == null and .status.pendingLockRelease == null
+    ' "external PostgreSQL acceptance to suspend after exact convergence"
+	assert_external_postgresql_catalog
+	audit_runtime_credentials
+	printf '%s\n' 'e2e data plane: PASS external PostgreSQL bridge lifecycle'
+}
+
 run_engine_lifecycle() {
 	lifecycle_slug=$1
 	lifecycle_engine=$2
@@ -3668,8 +4478,14 @@ run_engine_lifecycle() {
 			"$lifecycle_engine" "$lifecycle_secret"
 	fi
 	checkpoint_coordination_leases "$coordination_lease_checkpoint"
-	create_schema_resource "$lifecycle_schema" "$lifecycle_engine" "$lifecycle_secret" \
-		"$lifecycle_reference" "$lifecycle_coordination_key"
+	if [ "$lifecycle_slug" = postgresql ]; then
+		create_schema_resource "$lifecycle_schema" "$lifecycle_engine" "$lifecycle_secret" \
+			"$lifecycle_reference" "$lifecycle_coordination_key" \
+			e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 45s "$QUIESCENT_INTERVAL"
+	else
+		create_schema_resource "$lifecycle_schema" "$lifecycle_engine" "$lifecycle_secret" \
+			"$lifecycle_reference" "$lifecycle_coordination_key"
+	fi
 	assert_plan "$lifecycle_schema" "$lifecycle_reference" "$digest_v1" "$lifecycle_dialect" false \
 		"$v1_observe_checkpoint" "$v1_plan_checkpoint"
 	assert_coordination_boundary "$lifecycle_schema" "$lifecycle_coordination_key" \
@@ -3679,12 +4495,21 @@ run_engine_lifecycle() {
 	plan_v1_fingerprint=$CURRENT_PLAN_FINGERPRINT
 	assert_job_isolation "$lifecycle_schema" "$lifecycle_secret" false
 	assert_no_new_jobs "$lifecycle_schema" apply "$v1_apply_checkpoint"
+	if [ "$lifecycle_slug" = postgresql ]; then
+		upgrade_execution_binding_before_apply "$lifecycle_schema" "$lifecycle_reference" \
+			"$digest_v1" "$lifecycle_dialect" "$lifecycle_coordination_key" \
+			"$lifecycle_coordination_digest"
+		plan_v1=$CURRENT_PLAN
+		plan_v1_uid=$CURRENT_PLAN_UID
+		plan_v1_fingerprint=$CURRENT_PLAN_FINGERPRINT
+	fi
 	v1_post_observe_checkpoint="$WORK_DIR/${lifecycle_schema}-v1-post-observe.json"
 	v1_post_plan_checkpoint="$WORK_DIR/${lifecycle_schema}-v1-post-plan.json"
 	checkpoint_jobs "$lifecycle_schema" observe "$v1_post_observe_checkpoint"
 	checkpoint_jobs "$lifecycle_schema" plan "$v1_post_plan_checkpoint"
 	create_exact_approval "$lifecycle_schema" "$plan_v1" "${lifecycle_schema}-v1" \
 		"$lifecycle_coordination_key" "$lifecycle_coordination_digest"
+	resume_controller_status_writes || fail "could not release the v1 approval barrier"
 	wait_for_one_new_job "$lifecycle_schema" apply "$v1_apply_checkpoint"
 	wait_for_in_sync "$lifecycle_schema" "$digest_v1" \
 		"$v1_post_observe_checkpoint" "$v1_post_plan_checkpoint"
@@ -3698,6 +4523,10 @@ run_engine_lifecycle() {
 	set_reconcile_interval_and_assert_noop "$lifecycle_schema" "$digest_v1" \
 		"$RECONCILE_INTERVAL"
 	assert_periodic_noop "$lifecycle_schema" "$PERIODIC_NOOP_CHECKPOINT"
+	if [ "$lifecycle_slug" = postgresql ]; then
+		assert_registry_outage_and_recovery "$lifecycle_schema" "$digest_v1" \
+			"$plan_v1" "$plan_v1_uid" "$plan_v1_fingerprint"
+	fi
 	set_reconcile_interval_and_assert_noop "$lifecycle_schema" "$digest_v1" \
 		"$TAG_MOVE_INTERVAL" true
 
@@ -3851,12 +4680,14 @@ k -n "$TEST_NAMESPACE" rollout status deployment/"$PG_SERVICE" --timeout="${TIME
 k -n "$TEST_NAMESPACE" rollout status deployment/"$MYSQL_SERVICE" --timeout="${TIMEOUT_SECONDS}s"
 wait_for_database postgresql
 wait_for_database mysql
+create_external_postgresql_endpoint
 create_custom_ca_database
 report_database_versions
 create_admission_fixtures
 create_digest_pin_policy_fixture
 
 run_engine_lifecycle postgresql PostgreSQL postgres "$PG_SECRET"
+run_external_postgresql_lifecycle
 run_engine_lifecycle mysql MySQL mysql "$MYSQL_SECRET"
 run_mysql_dsn_refusal
 [ "$EPHEMERAL_SUBRESOURCE_TESTED" -eq 1 ] ||
@@ -3871,7 +4702,8 @@ E2E_FIXTURE_IMAGE=$FIXTURE_IMAGE \
 E2E_RESULT_ASSERT_BINARY=$RESULT_ASSERT_BINARY \
 	"$ROOT_DIR/hack/e2e-faults.sh"
 assert_mysql_destructive_refusal_durable
+assert_external_postgresql_catalog
 audit_runtime_credentials
 assert_observed_jobs_audited
 
-printf '%s\n' 'e2e data plane: PASS full PostgreSQL, MySQL, OCI, restart, and fault lifecycle'
+printf '%s\n' 'e2e data plane: PASS PostgreSQL, external PostgreSQL, MySQL, OCI, restart, and fault lifecycle'

@@ -808,7 +808,8 @@ for reconciliation_cadence_marker in \
 	"QUIESCENT_INTERVAL=\${E2E_QUIESCENT_INTERVAL:-30m}" \
 	"BLOCKED_REFRESH_SECONDS=\${E2E_BLOCKED_REFRESH_SECONDS:-30}" \
 	"minimum_gate_timeout=\$((BLOCKED_REFRESH_SECONDS * 3 + 120))" \
-	"--arg interval \"\$APPROVAL_INTERVAL\"" \
+	"resource_interval=\${10:-\$APPROVAL_INTERVAL}" \
+	"--arg interval \"\$resource_interval\"" \
 	"set_reconcile_interval_and_assert_noop \"\$lifecycle_schema\" \"\$digest_v1\"" \
 	"assert_periodic_noop \"\$lifecycle_schema\" \"\$PERIODIC_NOOP_CHECKPOINT\"" \
 	"suspend_schema_for_tag_move \"\$lifecycle_schema\" \"\$APPROVAL_INTERVAL\""; do
@@ -923,6 +924,36 @@ custom_ca_approval_boundary_filter=$(cat \
 	"$ROOT_DIR/testdata/e2e/custom-ca-approval-boundary.jq")
 engine_lifecycle_section=$(sed -n '/^run_engine_lifecycle() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
+read_only_chain_section=$(sed -n '/^assert_read_only_chain_between_checkpoints() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+external_pg_create_section=$(sed -n \
+	'/^# external-postgresql-container-create-begin$/,/^# external-postgresql-container-create-end$/p' \
+	"$ROOT_DIR/hack/e2e-kind.sh")
+external_pg_contract_section=$(sed -n '/^assert_external_pg_container_contract() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+external_pg_kubernetes_absence_section=$(sed -n \
+	'/^assert_external_pg_not_hosted_in_kubernetes() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+external_pg_endpoint_section=$(sed -n '/^create_external_postgresql_endpoint() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+external_pg_catalog_section=$(sed -n '/^assert_external_postgresql_catalog() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+external_pg_lifecycle_section=$(sed -n '/^run_external_postgresql_lifecycle() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+external_pg_main_section=$(awk '
+  /^printf .*e2e data plane: creating registry endpoint and isolated databases/ {
+    in_main = 1
+  }
+  in_main { print }
+' "$ROOT_DIR/hack/e2e-dataplane.sh")
+registry_outage_section=$(sed -n '/^assert_registry_outage_and_recovery() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+registry_outage_snapshot_section=$(sed -n '/^snapshot_registry_outage_evidence() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+registry_ready_section=$(sed -n '/^wait_for_registry_http_ready() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
+binding_upgrade_section=$(sed -n '/^upgrade_execution_binding_before_apply() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh")
 digest_pin_section=$(sed -n '/^assert_requested_digest_pin_refusal() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 source_isolation_section=$(sed -n '/^assert_source_job_isolation() {$/,/^}$/p' \
@@ -936,7 +967,13 @@ for required_static_section in \
 	"$tls_endpoint_identity_filter" \
 	"$custom_ca_refusal_section" \
 	"$custom_ca_acceptance_section" "$custom_ca_approval_boundary_filter" \
-	"$engine_lifecycle_section" \
+	"$engine_lifecycle_section" "$read_only_chain_section" \
+	"$external_pg_create_section" \
+	"$external_pg_contract_section" "$external_pg_kubernetes_absence_section" \
+	"$external_pg_endpoint_section" "$external_pg_catalog_section" \
+	"$external_pg_lifecycle_section" "$external_pg_main_section" \
+	"$registry_outage_section" "$registry_outage_snapshot_section" \
+	"$registry_ready_section" "$binding_upgrade_section" \
 	"$digest_pin_section" "$source_isolation_section" \
 	"$source_isolation_filter"; do
 	[ -n "$required_static_section" ] || {
@@ -944,6 +981,308 @@ for required_static_section in \
 		exit 1
 	}
 done
+
+# shellcheck disable=SC2016 # Exact jq source markers retain jq variables literally.
+for read_only_chain_marker in \
+	'[.items[] | select(in_boundary)] as $all' \
+	'($all | length) == 4' \
+	'bounded("resolve")' \
+	'bounded("verify")' \
+	'bounded("observe")' \
+	'bounded("plan")'; do
+	printf '%s\n' "$read_only_chain_section" | grep -F -- "$read_only_chain_marker" >/dev/null
+done
+
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+for external_create_marker in \
+	'docker --context "$DOCKER_CONTEXT" create --restart=no' \
+	'--network kind' \
+	'--env-file "$EXTERNAL_PG_ENV_FILE"' \
+	'--tmpfs '\''/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=536870912'\''' \
+	'--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}"' \
+	"--label 'operator.ptah.dev/e2e-component=external-postgresql'" \
+	'"$E2E_POSTGRES_SOURCE_IMAGE"'; do
+	static_require_count "$external_pg_create_section" "$external_create_marker" 1 \
+		'external PostgreSQL Docker create contract'
+done
+if printf '%s\n' "$external_pg_create_section" |
+	grep -Eq -- '(^|[[:space:]])(--publish(-all)?|-p|--volume|-v)([=[:space:]]|$)'; then
+	printf '%s\n' 'e2e static: external PostgreSQL Docker create exposes a host port or volume' >&2
+	exit 1
+fi
+
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
+	'external PostgreSQL secret and identity lifecycle' \
+	'EXTERNAL_PG_ENV_FILE=$WORK_DIR/external-postgresql.env' \
+	'EXTERNAL_PG_PASSWORD_FILE=$WORK_DIR/external-postgresql.password' \
+	'printf '\''%s'\'' "$EXTERNAL_PG_PASSWORD" >"$EXTERNAL_PG_PASSWORD_FILE"' \
+	'--rawfile password "$EXTERNAL_PG_PASSWORD_FILE"' \
+	'"$EXTERNAL_PG_ENV_FILE" "$EXTERNAL_PG_PASSWORD_FILE"' \
+	'unset EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL' \
+	'# external-postgresql-container-create-begin' \
+	'EXTERNAL_PG_CONTAINER_ID=$(docker --context "$DOCKER_CONTEXT" container inspect' \
+	'docker --context "$DOCKER_CONTEXT" start "$EXTERNAL_PG_CONTAINER_ID"' \
+	'EXTERNAL_PG_IP=$(docker --context "$DOCKER_CONTEXT" container inspect' \
+	'assert_external_pg_container_contract "$EXTERNAL_PG_CONTAINER_ID" "$EXTERNAL_PG_IP"' \
+	'external PostgreSQL fixture is not major version 17' \
+	'ALTER ROLE ptah_external NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION' \
+	'external PostgreSQL fixture login did not retain database ownership' \
+	'E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID'
+# shellcheck disable=SC2016 # Exact forbidden source markers retain shell variables literally.
+for external_secret_argv_marker in \
+	'--arg password "$EXTERNAL_PG_PASSWORD"' \
+	'--arg url "$EXTERNAL_PG_URL"'; do
+	static_reject_marker "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
+		"$external_secret_argv_marker" 'external PostgreSQL host process arguments'
+done
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+for external_cleanup_marker in \
+	'external_cleanup_id=$EXTERNAL_PG_CONTAINER_ID' \
+	'external_cleanup_owner=' \
+	'external_cleanup_component=' \
+	'docker --context "$DOCKER_CONTEXT" container rm -fv "$external_cleanup_id"'; do
+	static_require_count "$(sed -n '/^cleanup() {$/,/^}/p' "$ROOT_DIR/hack/e2e-kind.sh")" \
+		"$external_cleanup_marker" 1 'exact external PostgreSQL cleanup'
+done
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+for registry_cleanup_marker in \
+	'registry_cleanup_id=$REGISTRY_CONTAINER_ID' \
+	'registry_cleanup_owner=' \
+	'registry_cleanup_component=' \
+	'docker --context "$DOCKER_CONTEXT" container rm -fv "$registry_cleanup_id"'; do
+	static_require_count "$(sed -n '/^cleanup() {$/,/^}/p' "$ROOT_DIR/hack/e2e-kind.sh")" \
+		"$registry_cleanup_marker" 1 'exact registry cleanup'
+done
+
+# shellcheck disable=SC2016 # Exact jq source markers retain jq variables literally.
+for external_contract_marker in \
+	'.HostConfig.RestartPolicy.Name' \
+	'.HostConfig.PublishAllPorts' \
+	'.HostConfig.PortBindings' \
+	'.NetworkSettings.Ports' \
+	'.HostConfig.Tmpfs' \
+	'length == 1 and .[0].Type == "tmpfs"' \
+	'keys == ["kind"] and .kind.IPAddress == $address'; do
+	printf '%s\n' "$external_pg_contract_section" | grep -F -- "$external_contract_marker" >/dev/null
+done
+# shellcheck disable=SC2016 # Exact jq source markers retain jq variables literally.
+for external_kubernetes_absence_marker in \
+	'get deployments,statefulsets,pods,jobs -o json' \
+	'.metadata.name == $service' \
+	'any(.spec.template.spec.containers[]?; .image == $image)' \
+	'any(.spec.containers[]?; .image == $image)' \
+	'a Kubernetes workload hosts or impersonates external PostgreSQL'; do
+	printf '%s\n' "$external_pg_kubernetes_absence_section" |
+		grep -F -- "$external_kubernetes_absence_marker" >/dev/null
+done
+# shellcheck disable=SC2016 # Exact jq and shell source markers retain variables literally.
+for external_endpoint_marker in \
+	'immutable: true' \
+	'stringData: {url: $credentials[0].url}' \
+	'(.spec | has("selector") | not)' \
+	'kind: "EndpointSlice"' \
+	'"endpointslice.kubernetes.io/managed-by": "ptah-operator-e2e"' \
+	'.metadata.labels["endpointslice.kubernetes.io/managed-by"] == "ptah-operator-e2e"' \
+	'endpoints == [{addresses: [$address], conditions: {ready: true}}]' \
+	'assert_external_pg_not_hosted_in_kubernetes' \
+	'assert_external_pg_server_version' \
+	'external PostgreSQL fixture login does not retain database ownership'; do
+	printf '%s\n' "$external_pg_endpoint_section" | grep -F -- "$external_endpoint_marker" >/dev/null
+done
+for external_catalog_marker in \
+	'assert_external_pg_not_hosted_in_kubernetes' \
+	'assert_external_pg_container_contract' \
+	'assert_external_pg_server_version' \
+	'external PostgreSQL fixture login lost database ownership'; do
+	printf '%s\n' "$external_pg_catalog_section" | grep -F -- "$external_catalog_marker" >/dev/null
+done
+
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$registry_outage_section" 'registry outage freshness and recovery proof' \
+	'lacks its exact durable applied Plan before outage' \
+	'snapshot_registry_outage_evidence "$outage_schema" "$outage_plan_name"' \
+	'checkpoint_schema_jobs "$outage_schema" "$outage_before"' \
+	'assert_registry_container_contract true' \
+	'docker --context "$DOCKER_CONTEXT" stop --time=10 "$REGISTRY_CONTAINER_ID"' \
+	'assert_registry_container_contract false' \
+	'resume_controller_status_writes' \
+	'wait_for_one_new_job "$outage_schema" resolve "$outage_before"' \
+	'wait_for_registry_refresh_failure "$outage_schema"' \
+	'pause_controller_status_writes' \
+	'assert_one_job_between_checkpoints "$outage_schema" resolve' \
+	'for outage_forbidden_operation in verify observe plan apply; do' \
+	'outage_failed_total=$(schema_job_count_between_checkpoints "$outage_schema"' \
+	'capture_one_new_job_result "$outage_schema" resolve' \
+	'(.mutationStarted // false) == false' \
+	'snapshot_registry_outage_evidence "$outage_schema" "$outage_plan_name"' \
+	'cmp -s "$REGISTRY_OUTAGE_EVIDENCE_BEFORE" "$REGISTRY_OUTAGE_EVIDENCE_AFTER"' \
+	'checkpoint_schema_jobs "$outage_schema" "$recovery_before"' \
+	'docker --context "$DOCKER_CONTEXT" start "$REGISTRY_CONTAINER_ID"' \
+	'wait_for_registry_http_ready' \
+	'assert_registry_container_contract true' \
+	'resume_controller_status_writes' \
+	'wait_for_one_new_job "$outage_schema" plan "$recovery_before"' \
+	'assert_no_job_between_checkpoints "$outage_schema" apply' \
+	'assert_read_only_chain_between_checkpoints "$outage_schema"' \
+	'did not retain its exact durable Plan through recovery'
+# shellcheck disable=SC2016 # Exact jq source markers retain jq variables literally.
+for outage_snapshot_marker in \
+	'source: $schema[0].status.source' \
+	'target: $schema[0].status.target' \
+	'current: $schema[0].status.plan' \
+	'name: $plan[0].metadata.name' \
+	'uid: $plan[0].metadata.uid' \
+	'spec: $plan[0].spec' \
+	'status: $plan[0].status' \
+	'applied: $schema[0].status.applied' \
+	'lastSuccessfulReconciliation: $schema[0].status.lastSuccessfulReconciliation'; do
+	printf '%s\n' "$registry_outage_snapshot_section" |
+		grep -F -- "$outage_snapshot_marker" >/dev/null
+done
+for outage_condition_marker in \
+	'.reason == "RefreshFailed"' \
+	'.reason == "SourceFreshnessUnknown"' \
+	'.reason == "NoChanges"' \
+	'.reason == "ScopedConverged"'; do
+	printf '%s\n' "$registry_outage_section" "$(
+		sed -n '/^wait_for_registry_refresh_failure() {$/,/^}/p' \
+			"$ROOT_DIR/hack/e2e-dataplane.sh"
+	)" | grep -F -- "$outage_condition_marker" >/dev/null
+done
+for outage_forbidden_marker in ' container create ' ' container run ' ' container rm '; do
+	static_reject_marker "$registry_outage_section" "$outage_forbidden_marker" \
+		'registry outage exact-container recovery'
+done
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$registry_ready_section" 'registry HTTP readiness after restart' \
+	'registry_ready_deadline=$(($(date +%s) + 60))' \
+	'curl --silent --output /dev/null --write-out '\''%{http_code}'\''' \
+	'--connect-timeout 2 --max-time 5' \
+	'"http://127.0.0.1:${REGISTRY_PORT}/v2/"' \
+	'[ "$registry_ready_status" = 401 ]' \
+	'authenticated registry HTTP API did not become ready after restart'
+# shellcheck disable=SC2016 # The handoff marker intentionally retains the shell variable literally.
+static_require_count "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
+	'E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT' 1 'registry readiness port handoff'
+
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$binding_upgrade_section" 'pre-Apply execution-binding upgrade proof' \
+	'upgrade_original_ptah_version=$PTAH_VERSION' \
+	'pause_controller_status_writes' \
+	'create_exact_approval "$upgrade_schema" "$upgrade_old_plan" "$upgrade_old_approval"' \
+	'old approval was not bound to the pre-upgrade execution identity' \
+	'assert_no_new_jobs "$upgrade_schema" apply "$upgrade_before"' \
+	'scale deployment/"$CONTROLLER_NAME" --replicas=0' \
+	'--subresource=status' \
+	'.status.plan.approval == $approval' \
+	'helm --kubeconfig "$KUBECONFIG_FILE" upgrade' \
+	'--set-string execution.ptahVersion="$UPGRADED_PTAH_VERSION"' \
+	'.reason == "ExecutionBindingChanged"' \
+	'assert_plan "$upgrade_schema"' \
+	'assert_no_job_between_checkpoints "$upgrade_schema" apply' \
+	'assert_read_only_chain_between_checkpoints "$upgrade_schema"' \
+	'$old.spec.ptahVersion == $oldVersion' \
+	'$new.spec.ptahVersion == $newVersion'
+
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+static_require_order "$engine_lifecycle_section" 'binding upgrade and registry outage placement' \
+	'create_schema_resource "$lifecycle_schema"' \
+	'assert_plan "$lifecycle_schema"' \
+	'upgrade_execution_binding_before_apply "$lifecycle_schema"' \
+	'create_exact_approval "$lifecycle_schema" "$plan_v1"' \
+	'wait_for_one_new_job "$lifecycle_schema" apply "$v1_apply_checkpoint"' \
+	'assert_periodic_noop "$lifecycle_schema" "$PERIODIC_NOOP_CHECKPOINT"' \
+	'assert_registry_outage_and_recovery "$lifecycle_schema" "$digest_v1"' \
+	'"$TAG_MOVE_INTERVAL" true'
+
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+for external_lifecycle_marker in \
+	'create_schema_resource "$EXTERNAL_PG_SCHEMA" PostgreSQL "$EXTERNAL_PG_SECRET"' \
+	'assert_plan "$EXTERNAL_PG_SCHEMA"' \
+	'for external_plan_operation in resolve verify observe plan; do' \
+	'assert_no_job_between_checkpoints "$EXTERNAL_PG_SCHEMA" apply' \
+	'assert_read_only_chain_between_checkpoints "$EXTERNAL_PG_SCHEMA"' \
+	'create_exact_approval "$EXTERNAL_PG_SCHEMA" "$external_plan"' \
+	'wait_for_one_new_job "$EXTERNAL_PG_SCHEMA" apply "$external_apply_before"' \
+	'wait_for_in_sync "$EXTERNAL_PG_SCHEMA" "$external_digest"' \
+	'assert_one_new_job "$EXTERNAL_PG_SCHEMA" apply "$external_apply_before"' \
+	'assert_external_postgresql_catalog'; do
+	printf '%s\n' "$external_pg_lifecycle_section" | grep -F -- "$external_lifecycle_marker" >/dev/null
+done
+
+external_pg_main_wiring_count() {
+	printf '%s\n' "$1" | awk '
+    /^[[:space:]]*create_registry_service[[:space:]]*$/ && stage == 0 { stage = 1; next }
+    /^[[:space:]]*create_databases[[:space:]]*$/ && stage == 1 { stage = 2; next }
+    /^[[:space:]]*wait_for_database postgresql[[:space:]]*$/ && stage == 2 { stage = 3; next }
+    /^[[:space:]]*wait_for_database mysql[[:space:]]*$/ && stage == 3 { stage = 4; next }
+    /^[[:space:]]*create_external_postgresql_endpoint[[:space:]]*$/ && stage == 4 {
+      stage = 5; next
+    }
+    /^[[:space:]]*run_engine_lifecycle postgresql PostgreSQL postgres "\$PG_SECRET"[[:space:]]*$/ && stage == 5 {
+      stage = 6; next
+    }
+    /^[[:space:]]*run_external_postgresql_lifecycle[[:space:]]*$/ && stage == 6 {
+      stage = 7; next
+    }
+    /^[[:space:]]*run_engine_lifecycle mysql MySQL mysql "\$MYSQL_SECRET"[[:space:]]*$/ && stage == 7 {
+      stage = 8; next
+    }
+    /^[[:space:]]*"\$ROOT_DIR\/hack\/e2e-faults\.sh"[[:space:]]*$/ && stage == 8 {
+      stage = 9; next
+    }
+    /^[[:space:]]*assert_external_postgresql_catalog[[:space:]]*$/ && stage == 9 {
+      stage = 10; next
+    }
+    /^[[:space:]]*audit_runtime_credentials[[:space:]]*$/ && stage == 10 {
+      stage = 11; next
+    }
+    /^[[:space:]]*assert_observed_jobs_audited[[:space:]]*$/ && stage == 11 {
+      count++; stage = 0; next
+    }
+    END { print count + 0 }
+  '
+}
+
+for external_main_marker in \
+	'create_external_postgresql_endpoint' \
+	'run_external_postgresql_lifecycle' \
+	'assert_external_postgresql_catalog'; do
+	static_require_count "$external_pg_main_section" "$external_main_marker" 1 \
+		'external PostgreSQL main-path call'
+done
+[ "$(external_pg_main_wiring_count "$external_pg_main_section")" -eq 1 ] || {
+	printf '%s\n' 'e2e static: external PostgreSQL main-path ordering is missing or duplicated' >&2
+	exit 1
+}
+external_pg_deleted_endpoint=$(printf '%s\n' "$external_pg_main_section" |
+	sed '/^[[:space:]]*create_external_postgresql_endpoint[[:space:]]*$/d')
+[ "$(external_pg_main_wiring_count "$external_pg_deleted_endpoint")" -eq 0 ] || {
+	printf '%s\n' 'e2e static: external PostgreSQL wiring check accepted a deleted endpoint call' >&2
+	exit 1
+}
+external_pg_deleted_lifecycle=$(printf '%s\n' "$external_pg_main_section" |
+	sed '/^[[:space:]]*run_external_postgresql_lifecycle[[:space:]]*$/d')
+[ "$(external_pg_main_wiring_count "$external_pg_deleted_lifecycle")" -eq 0 ] || {
+	printf '%s\n' 'e2e static: external PostgreSQL wiring check accepted a deleted lifecycle call' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # The mutation must retain the literal main-path variables.
+external_pg_reordered_lifecycle=$(printf '%s\n' "$external_pg_main_section" | awk '
+  /^[[:space:]]*run_external_postgresql_lifecycle[[:space:]]*$/ {
+    held = $0; next
+  }
+  /^[[:space:]]*run_engine_lifecycle mysql MySQL mysql "\$MYSQL_SECRET"[[:space:]]*$/ && held != "" {
+    print; print held; held = ""; next
+  }
+  { print }
+  END { if (held != "") print held }
+')
+[ "$(external_pg_main_wiring_count "$external_pg_reordered_lifecycle")" -eq 0 ] || {
+	printf '%s\n' 'e2e static: external PostgreSQL wiring check accepted reordered lifecycle calls' >&2
+	exit 1
+}
 
 source_isolation_live_wiring_count() {
 	printf '%s\n' "$1" | awk '

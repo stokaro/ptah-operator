@@ -32,11 +32,12 @@ import (
 )
 
 const (
-	testDigest          = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	testCoordinationKey = "team-a/app-database"
-	testLeaseEpoch      = "v1-11111111111111111111111111111111"
-	testLeaseEpochOther = "v1-22222222222222222222222222222222"
-	testPolicyUID       = types.UID("verification-policy-v1-uid")
+	testDigest             = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	testCoordinationKey    = "team-a/app-database"
+	testLeaseEpoch         = "v1-11111111111111111111111111111111"
+	testLeaseEpochOther    = "v1-22222222222222222222222222222222"
+	testExecutionBindingID = "v1-33333333333333333333333333333333"
+	testPolicyUID          = types.UID("verification-policy-v1-uid")
 )
 
 var testCoordinationDigest = mustTestCoordinationDigest()
@@ -44,6 +45,16 @@ var testCoordinationDigest = mustTestCoordinationDigest()
 type fakeJobs struct{}
 
 type changedTemplateJobs struct{ fakeJobs }
+
+type failingBuildJobs struct{ fakeJobs }
+
+type executionBindingJobs struct {
+	fakeJobs
+	ptahVersion   string
+	executorImage string
+	runnerImage   string
+	protocol      int32
+}
 
 func (changedTemplateJobs) Build(
 	schema *operatorv1alpha1.PtahSchema,
@@ -61,12 +72,20 @@ func (changedTemplateJobs) Build(
 	return job, nil
 }
 
+func (failingBuildJobs) Build(
+	*operatorv1alpha1.PtahSchema,
+	operatorv1alpha1.ActiveOperationStatus,
+	*operatorv1alpha1.PtahSchemaPlan,
+) (*batchv1.Job, error) {
+	return nil, errors.New("injected Job build failure")
+}
+
 func (fakeJobs) NameFor(_ *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus) (string, error) {
 	return "ptah-" + strings.ToLower(string(operation.Type)) + "-test", nil
 }
 
 func (fakeJobs) Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus, _ *operatorv1alpha1.PtahSchemaPlan) (*batchv1.Job, error) {
-	annotations := map[string]string{}
+	annotations := map[string]string{workload.AnnotationExecutionBindingID: operation.ExecutionBindingID}
 	if operation.AdmissionSnapshot != nil {
 		annotations[workload.AnnotationAdmissionSnapshotDigest] = operation.AdmissionSnapshot.Digest
 	}
@@ -79,6 +98,23 @@ func (fakeJobs) Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1a
 
 func (fakeJobs) ExecutionBinding() (string, string, string, int32) {
 	return "v0.3.0", "example.invalid/ptah@" + testDigest, "example.invalid/operator@" + testDigest, int32(runner.ProtocolVersion)
+}
+
+func (jobs executionBindingJobs) ExecutionBinding() (string, string, string, int32) {
+	return jobs.ptahVersion, jobs.executorImage, jobs.runnerImage, jobs.protocol
+}
+
+func (jobs executionBindingJobs) Build(
+	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.ActiveOperationStatus,
+	plan *operatorv1alpha1.PtahSchemaPlan,
+) (*batchv1.Job, error) {
+	if operation.Type == operatorv1alpha1.OperationApply && plan != nil &&
+		(plan.Spec.PtahVersion != jobs.ptahVersion || plan.Spec.ExecutorImage != jobs.executorImage ||
+			plan.Spec.RunnerImage != jobs.runnerImage || plan.Spec.RunnerProtocolVersion != jobs.protocol) {
+		return nil, errors.New("plan execution binding does not match the Job builder")
+	}
+	return (fakeJobs{}).Build(schema, operation, plan)
 }
 
 type staticLogs struct{ content []byte }
@@ -145,6 +181,422 @@ func TestPendingSchemaClaimsResolveBeforeCreatingJob(t *testing.T) {
 	}
 	if len(jobs.Items) != 0 {
 		t.Fatal("claim reconciliation created a Job before persisting status")
+	}
+}
+
+func TestInitialExecutionBindingIsDurableBeforeOperationClaim(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Status = operatorv1alpha1.PtahSchemaStatus{}
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	result, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("persist initial execution binding: %v", err)
+	}
+	if !result.Requeue {
+		t.Fatalf("initial execution-binding result = %#v, want durable-boundary requeue", result)
+	}
+	bound := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), bound); err != nil {
+		t.Fatal(err)
+	}
+	if bound.Status.ExecutionBinding == nil || !validExecutionBindingID(bound.Status.ExecutionBinding.Epoch) ||
+		bound.Status.ActiveOperation != nil || len(bound.Finalizers) != 0 {
+		t.Fatalf("initial execution binding was not isolated from the operation claim: %#v", bound)
+	}
+	epoch := bound.Status.ExecutionBinding.Epoch
+
+	restarted := *reconciler
+	if _, err := restarted.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("claim operation after restart: %v", err)
+	}
+	claimed := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), claimed); err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Status.ExecutionBinding == nil || claimed.Status.ExecutionBinding.Epoch != epoch ||
+		claimed.Status.ActiveOperation == nil || claimed.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+		claimed.Status.ActiveOperation.ExecutionBindingID != epoch {
+		t.Fatalf("restart did not reuse the durable epoch for Resolve: %#v", claimed.Status)
+	}
+}
+
+func TestExecutionBindingIDValidationMatchesStatusSchema(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		id   string
+		want bool
+	}{
+		{id: testExecutionBindingID, want: true},
+		{id: "v1-3333333333333333333333333333333A"},
+		{id: "v2-33333333333333333333333333333333"},
+		{id: "v1-3333"},
+		{id: ""},
+	} {
+		if got := validExecutionBindingID(test.id); got != test.want {
+			t.Fatalf("validExecutionBindingID(%q) = %t, want %t", test.id, got, test.want)
+		}
+	}
+}
+
+func TestSourceRefreshConditionsPreserveLastKnownEvidence(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	fixture := func() (*operatorv1alpha1.PtahSchema, *corev1.ConfigMap) {
+		schema := schemaFixture()
+		resolvedAt := metav1.NewTime(now.Add(-20 * time.Minute))
+		verifiedAt := metav1.NewTime(now.Add(-19 * time.Minute))
+		observedAt := metav1.NewTime(now.Add(-18 * time.Minute))
+		appliedAt := metav1.NewTime(now.Add(-17 * time.Minute))
+		succeededAt := metav1.NewTime(now.Add(-16 * time.Minute))
+		dueAt := metav1.NewTime(now)
+		policyBytes := []byte("policy")
+		schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
+		schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+			RequestedReference:       schema.Spec.Desired.OCIRef,
+			ResolvedReference:        "oci://registry.example/team/schema@" + testDigest,
+			Digest:                   testDigest,
+			MediaType:                "application/vnd.oci.image.manifest.v1+json",
+			ArtifactType:             dataplane.SchemaArtifactType,
+			Size:                     321,
+			Verified:                 true,
+			VerificationPolicyUID:    testPolicyUID,
+			VerificationPolicyDigest: fingerprint.DigestBytes(policyBytes),
+			ResolvedAt:               &resolvedAt,
+			VerifiedAt:               &verifiedAt,
+		}
+		schema.Status.Target = operatorv1alpha1.TargetStatus{
+			Engine:               schema.Spec.Target.Engine,
+			CoordinationDigest:   testCoordinationDigest,
+			IdentityDigest:       testDigest,
+			DriftReportDigest:    testDigest,
+			LastObservedAt:       &observedAt,
+			HighestDriftSeverity: "none",
+		}
+		schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{
+			Name: "retained-plan", UID: "retained-plan-uid", Fingerprint: testDigest,
+			ContentDigest: testDigest, ArtifactDigest: testDigest,
+			CoordinationDigest: testCoordinationDigest, TargetIdentityDigest: testDigest,
+			ExecutionBindingID: testExecutionBindingID,
+			PtahVersion:        "v0.3.0", ExecutorImage: "example.invalid/ptah@" + testDigest,
+			RunnerImage:           "example.invalid/operator@" + testDigest,
+			RunnerProtocolVersion: int32(runner.ProtocolVersion), CreatedAt: observedAt,
+		}
+		schema.Status.Applied = &operatorv1alpha1.AppliedStatus{
+			ArtifactDigest: testDigest, PlanFingerprint: testDigest,
+			CoordinationDigest: testCoordinationDigest, TargetIdentityDigest: testDigest,
+			ExecutionBindingID: testExecutionBindingID,
+			PtahVersion:        "v0.3.0", ExecutorImage: "example.invalid/ptah@" + testDigest,
+			RunnerImage:           "example.invalid/operator@" + testDigest,
+			RunnerProtocolVersion: int32(runner.ProtocolVersion), CompletedAt: appliedAt,
+		}
+		schema.Status.LastSuccessfulReconciliation = &succeededAt
+		schema.Status.NextReconciliationTime = &dueAt
+		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionTrue, "DigestPinned", "Resolved")
+		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionTrue, "PolicySatisfied", "Verified")
+		setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionTrue, "Observed", "Database observed")
+		setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, "ScopedChanges", "Managed scope differs")
+		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, "ChangesPlanned", "Plan is ready")
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "Waiting", "Approval is required")
+		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, "ScopedChanges", "Managed scope differs")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "AwaitingApproval", "Waiting for approval")
+		immutable := true
+		return schema, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: schema.Spec.Desired.VerificationPolicyFrom.Name, UID: testPolicyUID},
+			Immutable:  &immutable,
+			Data:       map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: string(policyBytes)},
+		}
+	}
+	assertEvidence := func(t *testing.T, want, actual *operatorv1alpha1.PtahSchema) {
+		t.Helper()
+		normalizeEvidenceTimes := func(schema *operatorv1alpha1.PtahSchema) {
+			for _, timestamp := range []*metav1.Time{
+				schema.Status.Source.ResolvedAt,
+				schema.Status.Source.VerifiedAt,
+				schema.Status.Target.LastObservedAt,
+				schema.Status.LastSuccessfulReconciliation,
+			} {
+				if timestamp != nil {
+					timestamp.Time = timestamp.Time.UTC()
+				}
+			}
+			if schema.Status.Plan != nil {
+				schema.Status.Plan.CreatedAt.Time = schema.Status.Plan.CreatedAt.Time.UTC()
+			}
+			if schema.Status.Applied != nil {
+				schema.Status.Applied.CompletedAt.Time = schema.Status.Applied.CompletedAt.Time.UTC()
+			}
+		}
+		want = want.DeepCopy()
+		actual = actual.DeepCopy()
+		normalizeEvidenceTimes(want)
+		normalizeEvidenceTimes(actual)
+		if !reflect.DeepEqual(actual.Status.Source, want.Status.Source) ||
+			!reflect.DeepEqual(actual.Status.Target, want.Status.Target) ||
+			!reflect.DeepEqual(actual.Status.Plan, want.Status.Plan) ||
+			!reflect.DeepEqual(actual.Status.Applied, want.Status.Applied) ||
+			!reflect.DeepEqual(actual.Status.LastSuccessfulReconciliation, want.Status.LastSuccessfulReconciliation) {
+			t.Fatalf("source refresh changed retained evidence:\nwant %#v\n got %#v", want.Status, actual.Status)
+		}
+		verified := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified)
+		if verified == nil || verified.Status != metav1.ConditionTrue || verified.Reason != "PolicySatisfied" {
+			t.Fatalf("ArtifactVerified = %#v, want retained historical verification", verified)
+		}
+		for _, conditionType := range []string{
+			operatorv1alpha1.ConditionDatabaseReachable,
+			operatorv1alpha1.ConditionDriftDetected,
+			operatorv1alpha1.ConditionApprovalRequired,
+		} {
+			before := findCondition(want.Status.Conditions, conditionType)
+			after := findCondition(actual.Status.Conditions, conditionType)
+			if before == nil || after == nil || before.Status != after.Status || before.Reason != after.Reason || before.Message != after.Message {
+				t.Fatalf("%s = %#v, want retained condition %#v", conditionType, after, before)
+			}
+		}
+	}
+	assertFreshnessUnknown := func(t *testing.T, schema *operatorv1alpha1.PtahSchema, artifactReason, dependentReason string) {
+		t.Helper()
+		for _, check := range []struct {
+			conditionType string
+			reason        string
+		}{
+			{conditionType: operatorv1alpha1.ConditionArtifactResolved, reason: artifactReason},
+			{conditionType: operatorv1alpha1.ConditionPlanReady, reason: dependentReason},
+			{conditionType: operatorv1alpha1.ConditionInSync, reason: dependentReason},
+		} {
+			condition := findCondition(schema.Status.Conditions, check.conditionType)
+			if condition == nil || condition.Status != metav1.ConditionUnknown || condition.Reason != check.reason {
+				t.Fatalf("%s = %#v, want Unknown/%s", check.conditionType, condition, check.reason)
+			}
+		}
+	}
+
+	t.Run("claim", func(t *testing.T) {
+		schema, policyConfig := fixture()
+		want := schema.DeepCopy()
+		reconciler, api := fakeReconciler(t, staticLogs{}, schema, policyConfig)
+		result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+		if err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		if !result.Requeue {
+			t.Fatalf("Reconcile() result = %#v, want immediate Resolve dispatch", result)
+		}
+		actual := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+			actual.Status.Phase != operatorv1alpha1.PhaseResolving {
+			t.Fatalf("refresh claim status = %#v", actual.Status)
+		}
+		assertEvidence(t, want, actual)
+		assertFreshnessUnknown(t, actual, "Refreshing", "SourceRefreshPending")
+	})
+
+	t.Run("failure", func(t *testing.T) {
+		schema, policyConfig := fixture()
+		want := schema.DeepCopy()
+		reconciler, api := fakeReconciler(t, staticLogs{}, schema, policyConfig)
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("claim Reconcile() error = %v", err)
+		}
+		claimed := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), claimed); err != nil {
+			t.Fatal(err)
+		}
+		result, err := reconciler.retryOperation(context.Background(), claimed, nil, errors.New("registry unavailable"))
+		if err != nil {
+			t.Fatalf("retryOperation() error = %v", err)
+		}
+		if result.RequeueAfter != failureRetry(claimed) {
+			t.Fatalf("retryOperation() result = %#v", result)
+		}
+		actual := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+			actual.Status.ActiveOperation.Attempt != 2 || actual.Status.Phase != operatorv1alpha1.PhaseFailed ||
+			actual.Status.NextReconciliationTime == nil {
+			t.Fatalf("failed refresh status = %#v", actual.Status)
+		}
+		assertEvidence(t, want, actual)
+		assertFreshnessUnknown(t, actual, "RefreshFailed", "SourceFreshnessUnknown")
+	})
+
+	t.Run("terminal runner failure", func(t *testing.T) {
+		schema, policyConfig := fixture()
+		want := schema.DeepCopy()
+		schema.Finalizers = []string{activeOperationFinalizer}
+		schema.Status.Phase = operatorv1alpha1.PhaseResolving
+		schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+			Type: operatorv1alpha1.OperationResolve, ID: "refresh-resolve", JobName: "refresh-resolve",
+			JobUID: "job-uid", StartedAt: metav1.NewTime(now), Attempt: 1,
+		}
+		bindActiveInput(t, schema)
+		job, pod := terminalWorkload(schema, batchv1.JobComplete)
+		frame, err := runner.MarshalFrame(runner.Result{
+			ProtocolVersion: runner.ProtocolVersion,
+			Operation:       runner.OperationResolve,
+			OperationID:     schema.Status.ActiveOperation.ID,
+			ChildExitCode:   1,
+			Error: &runner.ResultError{
+				Code: "registry_unavailable", Message: "registry is unavailable",
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		reconciler, api := fakeReconciler(t, staticLogs{content: frame}, schema, policyConfig, job, pod)
+		result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)})
+		if err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		if result.RequeueAfter != failureRetry(schema) {
+			t.Fatalf("Reconcile() result = %#v", result)
+		}
+		actual := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Attempt != 2 ||
+			actual.Status.Phase != operatorv1alpha1.PhaseFailed {
+			t.Fatalf("terminal refresh failure status = %#v", actual.Status)
+		}
+		assertEvidence(t, want, actual)
+		assertFreshnessUnknown(t, actual, "RefreshFailed", "SourceFreshnessUnknown")
+	})
+
+	t.Run("configuration failure", func(t *testing.T) {
+		schema, policyConfig := fixture()
+		want := schema.DeepCopy()
+		reconciler, api := fakeReconciler(t, staticLogs{}, schema, policyConfig)
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("claim Reconcile() error = %v", err)
+		}
+		claimed := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), claimed); err != nil {
+			t.Fatal(err)
+		}
+		result, err := reconciler.operationFailure(context.Background(), claimed, errors.New("invalid resolver configuration"))
+		if err != nil {
+			t.Fatalf("operationFailure() error = %v", err)
+		}
+		if result.RequeueAfter != failureRetry(claimed) {
+			t.Fatalf("operationFailure() result = %#v", result)
+		}
+		actual := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+			t.Fatal(err)
+		}
+		assertEvidence(t, want, actual)
+		assertFreshnessUnknown(t, actual, "RefreshFailed", "SourceFreshnessUnknown")
+	})
+
+	t.Run("persisted claim build failure", func(t *testing.T) {
+		schema, policyConfig := fixture()
+		want := schema.DeepCopy()
+		reconciler, api := fakeReconciler(t, staticLogs{}, schema, policyConfig)
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("claim Reconcile() error = %v", err)
+		}
+		reconciler.Jobs = failingBuildJobs{}
+		result, err := reconciler.Reconcile(context.Background(), request)
+		if err != nil {
+			t.Fatalf("build-failure Reconcile() error = %v", err)
+		}
+		if result.RequeueAfter != failureRetry(schema) {
+			t.Fatalf("build-failure Reconcile() result = %#v", result)
+		}
+		actual := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+			actual.Status.Phase != operatorv1alpha1.PhaseFailed {
+			t.Fatalf("build-failure refresh status = %#v", actual.Status)
+		}
+		assertEvidence(t, want, actual)
+		assertFreshnessUnknown(t, actual, "RefreshFailed", "SourceFreshnessUnknown")
+	})
+
+	t.Run("suspended before dispatch", func(t *testing.T) {
+		schema, policyConfig := fixture()
+		want := schema.DeepCopy()
+		reconciler, api := fakeReconciler(t, staticLogs{}, schema, policyConfig)
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("claim Reconcile() error = %v", err)
+		}
+		claimed := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), claimed); err != nil {
+			t.Fatal(err)
+		}
+		claimed.Spec.Suspend = true
+		if err := api.Update(context.Background(), claimed); err != nil {
+			t.Fatal(err)
+		}
+		result, err := reconciler.Reconcile(context.Background(), request)
+		if err != nil {
+			t.Fatalf("suspend Reconcile() error = %v", err)
+		}
+		if result.Requeue || result.RequeueAfter != 0 {
+			t.Fatalf("suspend Reconcile() result = %#v", result)
+		}
+		actual := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual.Status.ActiveOperation != nil || actual.Status.Phase != operatorv1alpha1.PhaseSuspended {
+			t.Fatalf("suspended refresh status = %#v", actual.Status)
+		}
+		assertEvidence(t, want, actual)
+		assertFreshnessUnknown(t, actual, "RefreshSuspended", "SourceFreshnessUnknown")
+	})
+}
+
+func TestInitialSourceResolutionFailureHasNoRefreshEvidence(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationResolve, ID: "initial-resolve", JobName: "initial-resolve", Attempt: 1,
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	result, err := reconciler.operationFailure(context.Background(), schema, errors.New("resolver configuration is invalid"))
+	if err != nil {
+		t.Fatalf("operationFailure() error = %v", err)
+	}
+	if result.RequeueAfter != failureRetry(schema) {
+		t.Fatalf("operationFailure() result = %#v", result)
+	}
+	actual := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		conditionType string
+		status        metav1.ConditionStatus
+		reason        string
+	}{
+		{operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionFalse, "ResolveFailed"},
+		{operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "SourceUnresolved"},
+		{operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "SourceResolutionUnknown"},
+	}
+	for _, check := range checks {
+		condition := findCondition(actual.Status.Conditions, check.conditionType)
+		if condition == nil || condition.Status != check.status || condition.Reason != check.reason {
+			t.Fatalf("%s = %#v, want %s/%s", check.conditionType, condition, check.status, check.reason)
+		}
 	}
 }
 
@@ -921,6 +1373,9 @@ func blockedPolicySchema(apply operatorv1alpha1.ApplyPolicy, destructive bool) *
 	schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{
 		Name: "blocked-plan", UID: "blocked-plan-uid", Fingerprint: testDigest,
 		ContentDigest: testDigest, ArtifactDigest: testDigest, Destructive: destructive,
+		ExecutionBindingID: testExecutionBindingID,
+		PtahVersion:        "v0.3.0", ExecutorImage: "example.invalid/ptah@" + testDigest,
+		RunnerImage: "example.invalid/operator@" + testDigest, RunnerProtocolVersion: int32(runner.ProtocolVersion),
 	}
 	if destructive {
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "PolicyBlocked", "Plan is blocked by destructive-change policy")
@@ -943,7 +1398,15 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 				VerificationPolicyFrom: corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "policy"}, Key: "policy.yaml"},
 			},
 		},
-		Status: operatorv1alpha1.PtahSchemaStatus{ObservedGeneration: 1},
+		Status: operatorv1alpha1.PtahSchemaStatus{
+			ObservedGeneration: 1,
+			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
+				Epoch: testExecutionBindingID, PtahVersion: "v0.3.0",
+				ExecutorImage:         "example.invalid/ptah@" + testDigest,
+				RunnerImage:           "example.invalid/operator@" + testDigest,
+				RunnerProtocolVersion: int32(runner.ProtocolVersion),
+			},
+		},
 	}
 }
 
@@ -951,6 +1414,7 @@ func terminalWorkload(schema *operatorv1alpha1.PtahSchema, conditionType batchv1
 	ensureTestAdmissionSnapshot(schema)
 	annotations := map[string]string{
 		workload.AnnotationAdmissionSnapshotDigest: schema.Status.ActiveOperation.AdmissionSnapshot.Digest,
+		workload.AnnotationExecutionBindingID:      schema.Status.ActiveOperation.ExecutionBindingID,
 	}
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: schema.Status.ActiveOperation.JobName, UID: "job-uid", Annotations: annotations, OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)}},
@@ -980,7 +1444,11 @@ func ensureTestAdmissionSnapshot(schema *operatorv1alpha1.PtahSchema) {
 		return
 	}
 	policy := corev1.PreemptLowerPriority
-	templateDigest, err := podintent.DigestTemplate(&corev1.PodTemplateSpec{})
+	templateDigest, err := podintent.DigestTemplate(&corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{
+		Annotations: map[string]string{
+			workload.AnnotationExecutionBindingID: schema.Status.ActiveOperation.ExecutionBindingID,
+		},
+	}})
 	if err != nil {
 		panic(err)
 	}
@@ -1206,6 +1674,20 @@ func bindActiveInput(t *testing.T, schema *operatorv1alpha1.PtahSchema) {
 	operation := schema.Status.ActiveOperation
 	if operation == nil {
 		t.Fatal("bindActiveInput requires an active operation")
+	}
+	if schema.Status.ExecutionBinding == nil {
+		schema.Status.ExecutionBinding = &operatorv1alpha1.ExecutionBindingStatus{
+			Epoch: testExecutionBindingID, PtahVersion: "v0.3.0",
+			ExecutorImage:         "example.invalid/ptah@" + testDigest,
+			RunnerImage:           "example.invalid/operator@" + testDigest,
+			RunnerProtocolVersion: int32(runner.ProtocolVersion),
+		}
+	}
+	if operation.ExecutionBindingID == "" {
+		operation.ExecutionBindingID = schema.Status.ExecutionBinding.Epoch
+	}
+	if schema.Status.Plan != nil && schema.Status.Plan.ExecutionBindingID == "" {
+		schema.Status.Plan.ExecutionBindingID = schema.Status.ExecutionBinding.Epoch
 	}
 	if operation.Type == operatorv1alpha1.OperationVerify {
 		if operation.VerificationPolicyUID == "" {

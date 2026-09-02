@@ -27,7 +27,7 @@ E2E_DIRECT_HOST_ACCESS=${E2E_DIRECT_HOST_ACCESS:-0}
 # An imported variable retains its export attribute after reassignment in POSIX
 # shells. Clear secret-bearing names before generating task credentials so no
 # later host subprocess can inherit their values.
-unset REGISTRY_PASSWORD
+unset REGISTRY_PASSWORD EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL
 
 fail() {
 	printf 'e2e: %s\n' "$*" >&2
@@ -180,12 +180,19 @@ REGISTRY_CONTAINER=$(dns_name ptah-registry "$identity" 63)
 REGISTRY_SERVICE=e2e-registry
 REGISTRY_DNS_NAME="${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
 REGISTRY_HOST="${REGISTRY_DNS_NAME}:5000"
+EXTERNAL_PG_CONTAINER=$(dns_name ptah-postgresql-external "$identity" 63)
+EXTERNAL_PG_SERVICE=e2e-postgresql-external
+EXTERNAL_PG_DNS_NAME="${EXTERNAL_PG_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
+EXTERNAL_PG_USER=ptah_external
+EXTERNAL_PG_DATABASE=ptah_external
 TLS_PROXY_SERVICE=e2e-registry-tls
 TLS_PROXY_DNS_NAME="${TLS_PROXY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
 REMOTE_REGISTRY=127.0.0.1
 REGISTRY_USERNAME=ptah_e2e
 registry_credential_suffix=$(printf '%s-registry-auth' "$identity" | sha256 | cut -c1-24)
 REGISTRY_PASSWORD="e2eRegistry${registry_credential_suffix}Q7"
+external_pg_credential_suffix=$(printf '%s-postgresql-external' "$identity" | sha256 | cut -c1-24)
+EXTERNAL_PG_PASSWORD="e2eExternalPg${external_pg_credential_suffix}Q7"
 
 if [ -z "$E2E_API_SERVER_PORT" ]; then
 	port_seed=$(printf '%s' "$CLUSTER_NAME" | cksum | awk '{print $1}')
@@ -228,6 +235,9 @@ fi
 if docker --context "$DOCKER_CONTEXT" container inspect "$REGISTRY_CONTAINER" >/dev/null 2>&1; then
 	fail "refusing to reuse pre-existing registry container $REGISTRY_CONTAINER; choose another E2E_RUN_ID"
 fi
+if docker --context "$DOCKER_CONTEXT" container inspect "$EXTERNAL_PG_CONTAINER" >/dev/null 2>&1; then
+	fail "refusing to reuse pre-existing external PostgreSQL container $EXTERNAL_PG_CONTAINER; choose another E2E_RUN_ID"
+fi
 for task_image in \
 	"${REMOTE_REGISTRY}/e2e-fixture:${IMAGE_TAG}" \
 	"${REMOTE_REGISTRY}/ptah-executor:${IMAGE_TAG}" \
@@ -252,6 +262,9 @@ REGISTRY_HTPASSWD_FILE=$WORK_DIR/registry.htpasswd
 REGISTRY_NETRC_FILE=$WORK_DIR/registry.netrc
 REGISTRY_PASSWORD_FILE=$WORK_DIR/registry.password
 REGISTRY_CREDENTIALS_FILE=$WORK_DIR/registry-credentials.json
+EXTERNAL_PG_ENV_FILE=$WORK_DIR/external-postgresql.env
+EXTERNAL_PG_PASSWORD_FILE=$WORK_DIR/external-postgresql.password
+EXTERNAL_PG_CREDENTIALS_FILE=$WORK_DIR/external-postgresql-credentials.json
 TLS_PROXY_DIR=$WORK_DIR/tls-proxy
 TLS_PROXY_CA_KEY_FILE=$TLS_PROXY_DIR/ca.key
 TLS_PROXY_CA_FILE=$TLS_PROXY_DIR/ca.crt
@@ -266,6 +279,10 @@ CLUSTER_CREATED=0
 IMAGE_CREATED=0
 IMAGE_AUDIT_CONTAINER_CREATED=0
 REGISTRY_CREATED=0
+REGISTRY_CONTAINER_ID=
+EXTERNAL_PG_CREATED=0
+EXTERNAL_PG_CONTAINER_ID=
+EXTERNAL_PG_IP=
 KIND_NODE_IMAGE_CREATED=0
 KIND_NETWORK_CREATED=0
 CREATED_IMAGE_REFS=
@@ -283,6 +300,33 @@ jq -n \
 	--rawfile password "$REGISTRY_PASSWORD_FILE" \
 	'{username: $username, password: $password}' >"$REGISTRY_CREDENTIALS_FILE"
 chmod 600 "$REGISTRY_PASSWORD_FILE" "$REGISTRY_CREDENTIALS_FILE"
+printf '%s' "$EXTERNAL_PG_PASSWORD" >"$EXTERNAL_PG_PASSWORD_FILE"
+chmod 600 "$EXTERNAL_PG_PASSWORD_FILE"
+{
+	printf 'POSTGRES_USER=%s\n' "$EXTERNAL_PG_USER"
+	printf 'POSTGRES_PASSWORD='
+	cat "$EXTERNAL_PG_PASSWORD_FILE"
+	printf '\nPOSTGRES_DB=%s\n' "$EXTERNAL_PG_DATABASE"
+	printf '%s\n' 'PGDATA=/var/lib/postgresql/data/pgdata'
+} >"$EXTERNAL_PG_ENV_FILE"
+jq -n \
+	--arg username "$EXTERNAL_PG_USER" \
+	--rawfile password "$EXTERNAL_PG_PASSWORD_FILE" \
+	--arg database "$EXTERNAL_PG_DATABASE" \
+	--arg authority "${EXTERNAL_PG_DNS_NAME}:5432" '
+      {
+        username: $username,
+        password: $password,
+        database: $database,
+        url: ("postgres://" + $username + ":" + $password + "@" + $authority + "/" +
+          $database + "?sslmode=disable")
+      }
+    ' \
+	>"$EXTERNAL_PG_CREDENTIALS_FILE"
+chmod 600 \
+	"$EXTERNAL_PG_ENV_FILE" "$EXTERNAL_PG_PASSWORD_FILE" \
+	"$EXTERNAL_PG_CREDENTIALS_FILE"
+unset EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL
 
 add_created_image() {
 	if [ -z "$CREATED_IMAGE_REFS" ]; then
@@ -291,6 +335,61 @@ add_created_image() {
 		CREATED_IMAGE_REFS="$1
 $CREATED_IMAGE_REFS"
 	fi
+}
+
+assert_external_pg_container_contract() {
+	external_contract_id=$1
+	external_contract_ip=$2
+	[ -n "$external_contract_id" ] || fail "external PostgreSQL container ID is empty"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.Id}}' "$external_contract_id")" = "$external_contract_id" ] ||
+		fail "external PostgreSQL container identity changed"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.Name}}' "$external_contract_id")" = "/${EXTERNAL_PG_CONTAINER}" ] ||
+		fail "external PostgreSQL container name changed"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.State.Running}}' "$external_contract_id")" = true ] ||
+		fail "external PostgreSQL container is not running"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.HostConfig.RestartPolicy.Name}}' "$external_contract_id")" = no ] ||
+		fail "external PostgreSQL container gained a restart policy"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.HostConfig.PublishAllPorts}}' "$external_contract_id")" = false ] ||
+		fail "external PostgreSQL container publishes all ports"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-owner\"}}' \
+		"$external_contract_id")" = "$CLUSTER_NAME" ] ||
+		fail "external PostgreSQL container lost its task owner label"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-component\"}}' \
+		"$external_contract_id")" = external-postgresql ] ||
+		fail "external PostgreSQL container lost its component label"
+	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{.Config.Image}}' "$external_contract_id")" = "$E2E_POSTGRES_SOURCE_IMAGE" ] ||
+		fail "external PostgreSQL container lost its digest-pinned source image"
+	docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{json .HostConfig.PortBindings}}' "$external_contract_id" |
+		jq -e '. == null or . == {}' >/dev/null ||
+		fail "external PostgreSQL container has host port bindings"
+	docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{json .NetworkSettings.Ports}}' "$external_contract_id" |
+		jq -e 'to_entries | all(.value == null)' >/dev/null ||
+		fail "external PostgreSQL container exposes a host port"
+	docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{json .HostConfig.Tmpfs}}' "$external_contract_id" |
+		jq -e 'keys == ["/var/lib/postgresql/data"]' >/dev/null ||
+		fail "external PostgreSQL data directory is not an exact tmpfs"
+	docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{json .Mounts}}' "$external_contract_id" |
+		jq -e '
+      length == 1 and .[0].Type == "tmpfs" and
+      .[0].Destination == "/var/lib/postgresql/data"
+    ' >/dev/null || fail "external PostgreSQL container has a persistent or unexpected mount"
+	docker --context "$DOCKER_CONTEXT" container inspect \
+		--format '{{json .NetworkSettings.Networks}}' "$external_contract_id" |
+		jq -e --arg address "$external_contract_ip" '
+      keys == ["kind"] and .kind.IPAddress == $address
+    ' >/dev/null || fail "external PostgreSQL container left its exact kind-network address"
 }
 
 collect_diagnostics() {
@@ -311,13 +410,65 @@ cleanup() {
 	if [ "$status" -ne 0 ]; then
 		collect_diagnostics
 	fi
-	if [ "$REGISTRY_CREATED" -eq 1 ]; then
-		if ! docker --context "$DOCKER_CONTEXT" container rm -fv "$REGISTRY_CONTAINER" >/dev/null 2>&1; then
-			if ! docker --context "$DOCKER_CONTEXT" info >/dev/null 2>&1 ||
-				docker --context "$DOCKER_CONTEXT" container inspect "$REGISTRY_CONTAINER" >/dev/null 2>&1; then
-				printf 'e2e: could not remove registry container %s from Docker context %s\n' \
-					"$REGISTRY_CONTAINER" "$SELECTED_DOCKER_CONTEXT" >&2
+	if [ "$EXTERNAL_PG_CREATED" -eq 1 ]; then
+		external_cleanup_id=$EXTERNAL_PG_CONTAINER_ID
+		if [ -z "$external_cleanup_id" ] &&
+			docker --context "$DOCKER_CONTEXT" container inspect "$EXTERNAL_PG_CONTAINER" >/dev/null 2>&1; then
+			external_cleanup_owner=$(docker --context "$DOCKER_CONTEXT" container inspect \
+				--format '{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
+				"$EXTERNAL_PG_CONTAINER" 2>/dev/null)
+			external_cleanup_component=$(docker --context "$DOCKER_CONTEXT" container inspect \
+				--format '{{index .Config.Labels "operator.ptah.dev/e2e-component"}}' \
+				"$EXTERNAL_PG_CONTAINER" 2>/dev/null)
+			if [ "$external_cleanup_owner" = "$CLUSTER_NAME" ] &&
+				[ "$external_cleanup_component" = external-postgresql ]; then
+				external_cleanup_id=$(docker --context "$DOCKER_CONTEXT" container inspect \
+					--format '{{.Id}}' "$EXTERNAL_PG_CONTAINER" 2>/dev/null)
+			else
+				printf 'e2e: refusing to remove external PostgreSQL container %s without the exact task owner\n' \
+					"$EXTERNAL_PG_CONTAINER" >&2
 				cleanup_failed=1
+			fi
+		fi
+		if [ -n "$external_cleanup_id" ]; then
+			if ! docker --context "$DOCKER_CONTEXT" container rm -fv "$external_cleanup_id" >/dev/null 2>&1; then
+				if ! docker --context "$DOCKER_CONTEXT" info >/dev/null 2>&1 ||
+					docker --context "$DOCKER_CONTEXT" container inspect "$external_cleanup_id" >/dev/null 2>&1; then
+					printf 'e2e: could not remove external PostgreSQL container ID %s from Docker context %s\n' \
+						"$external_cleanup_id" "$SELECTED_DOCKER_CONTEXT" >&2
+					cleanup_failed=1
+				fi
+			fi
+		fi
+	fi
+	if [ "$REGISTRY_CREATED" -eq 1 ]; then
+		registry_cleanup_id=$REGISTRY_CONTAINER_ID
+		if [ -z "$registry_cleanup_id" ] &&
+			docker --context "$DOCKER_CONTEXT" container inspect "$REGISTRY_CONTAINER" >/dev/null 2>&1; then
+			registry_cleanup_owner=$(docker --context "$DOCKER_CONTEXT" container inspect \
+				--format '{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
+				"$REGISTRY_CONTAINER" 2>/dev/null)
+			registry_cleanup_component=$(docker --context "$DOCKER_CONTEXT" container inspect \
+				--format '{{index .Config.Labels "operator.ptah.dev/e2e-component"}}' \
+				"$REGISTRY_CONTAINER" 2>/dev/null)
+			if [ "$registry_cleanup_owner" = "$CLUSTER_NAME" ] &&
+				[ "$registry_cleanup_component" = registry ]; then
+				registry_cleanup_id=$(docker --context "$DOCKER_CONTEXT" container inspect \
+					--format '{{.Id}}' "$REGISTRY_CONTAINER" 2>/dev/null)
+			else
+				printf 'e2e: refusing to remove registry container %s without the exact task labels\n' \
+					"$REGISTRY_CONTAINER" >&2
+				cleanup_failed=1
+			fi
+		fi
+		if [ -n "$registry_cleanup_id" ]; then
+			if ! docker --context "$DOCKER_CONTEXT" container rm -fv "$registry_cleanup_id" >/dev/null 2>&1; then
+				if ! docker --context "$DOCKER_CONTEXT" info >/dev/null 2>&1 ||
+					docker --context "$DOCKER_CONTEXT" container inspect "$registry_cleanup_id" >/dev/null 2>&1; then
+					printf 'e2e: could not remove registry container ID %s from Docker context %s\n' \
+						"$registry_cleanup_id" "$SELECTED_DOCKER_CONTEXT" >&2
+					cleanup_failed=1
+				fi
 			fi
 		fi
 	fi
@@ -693,12 +844,18 @@ docker --context "$DOCKER_CONTEXT" create --restart=no \
 	--network kind \
 	--network-alias "$REGISTRY_DNS_NAME" \
 	--publish "127.0.0.1:${E2E_REGISTRY_PORT}:5000" \
+	--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \
+	--label 'operator.ptah.dev/e2e-component=registry' \
 	--env REGISTRY_AUTH=htpasswd \
 	--env REGISTRY_AUTH_HTPASSWD_REALM=ptah-e2e \
 	--env REGISTRY_AUTH_HTPASSWD_PATH=/registry.htpasswd \
 	"$E2E_REGISTRY_IMAGE" >/dev/null
 docker --context "$DOCKER_CONTEXT" cp "$REGISTRY_HTPASSWD_FILE" \
 	"${REGISTRY_CONTAINER}:/registry.htpasswd"
+REGISTRY_CONTAINER_ID=$(docker --context "$DOCKER_CONTEXT" container inspect \
+	--format '{{.Id}}' "$REGISTRY_CONTAINER")
+printf '%s\n' "$REGISTRY_CONTAINER_ID" | grep -Eq '^[0-9a-f]{64}$' ||
+	fail "registry container does not have an exact Docker ID"
 docker --context "$DOCKER_CONTEXT" start "$REGISTRY_CONTAINER" >/dev/null
 
 registry_deadline=$(($(date +%s) + 60))
@@ -760,6 +917,62 @@ E2E_POSTGRES_IMAGE=$PUSHED_IMAGE_REF
 mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql
 E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
 
+# external-postgresql-container-create-begin
+printf 'e2e: starting external PostgreSQL container %s without host ports\n' \
+	"$EXTERNAL_PG_CONTAINER"
+EXTERNAL_PG_CREATED=1
+docker --context "$DOCKER_CONTEXT" create --restart=no \
+	--name "$EXTERNAL_PG_CONTAINER" \
+	--network kind \
+	--env-file "$EXTERNAL_PG_ENV_FILE" \
+	--tmpfs '/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=536870912' \
+	--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \
+	--label 'operator.ptah.dev/e2e-component=external-postgresql' \
+	"$E2E_POSTGRES_SOURCE_IMAGE" >/dev/null
+# external-postgresql-container-create-end
+EXTERNAL_PG_CONTAINER_ID=$(docker --context "$DOCKER_CONTEXT" container inspect \
+	--format '{{.Id}}' "$EXTERNAL_PG_CONTAINER")
+printf '%s\n' "$EXTERNAL_PG_CONTAINER_ID" | grep -Eq '^[0-9a-f]{64}$' ||
+	fail "external PostgreSQL container does not have an exact Docker ID"
+docker --context "$DOCKER_CONTEXT" start "$EXTERNAL_PG_CONTAINER_ID" >/dev/null
+EXTERNAL_PG_IP=$(docker --context "$DOCKER_CONTEXT" container inspect \
+	--format '{{with index .NetworkSettings.Networks "kind"}}{{.IPAddress}}{{end}}' \
+	"$EXTERNAL_PG_CONTAINER_ID")
+printf '%s\n' "$EXTERNAL_PG_IP" | grep -Eq '^[0-9]+(\.[0-9]+){3}$' ||
+	fail "external PostgreSQL container has no IPv4 address on the kind network"
+assert_external_pg_container_contract "$EXTERNAL_PG_CONTAINER_ID" "$EXTERNAL_PG_IP"
+external_pg_deadline=$(($(date +%s) + 90))
+external_pg_ready=0
+while [ "$(date +%s)" -lt "$external_pg_deadline" ]; do
+	if docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" pg_isready -q -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+		>/dev/null 2>&1; then
+		external_pg_ready=1
+		break
+	fi
+	sleep 2
+done
+[ "$external_pg_ready" -eq 1 ] || fail "external PostgreSQL container did not become queryable"
+external_pg_server_version_num=$(docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
+	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SHOW server_version_num"')
+external_pg_server_version_num=$(printf '%s' "$external_pg_server_version_num" | tr -d '[:space:]')
+printf '%s\n' "$external_pg_server_version_num" | grep -Eq '^17[0-9]{4}$' ||
+	fail "external PostgreSQL fixture is not major version 17"
+docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
+	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "ALTER ROLE ptah_external NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION"' \
+	>/dev/null
+external_pg_superuser=$(docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
+	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user"')
+external_pg_superuser=$(printf '%s' "$external_pg_superuser" | tr -d '[:space:]')
+[ "$external_pg_superuser" = f ] ||
+	fail "external PostgreSQL fixture login remained a superuser"
+external_pg_database_owner=$(docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
+	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT pg_get_userbyid(datdba) = current_user FROM pg_database WHERE datname = current_database()"')
+external_pg_database_owner=$(printf '%s' "$external_pg_database_owner" | tr -d '[:space:]')
+[ "$external_pg_database_owner" = t ] ||
+	fail "external PostgreSQL fixture login did not retain database ownership"
+assert_external_pg_container_contract "$EXTERNAL_PG_CONTAINER_ID" "$EXTERNAL_PG_IP"
+
 printf 'e2e: installing Helm release %s/%s\n' "$OPERATOR_NAMESPACE" "$HELM_RELEASE"
 helm --kubeconfig "$KUBECONFIG_FILE" upgrade --install "$HELM_RELEASE" \
 	"$CHART_PACKAGE" \
@@ -807,6 +1020,8 @@ E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
@@ -814,7 +1029,16 @@ E2E_POSTGRES_IMAGE=$E2E_POSTGRES_IMAGE \
 E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
 E2E_REGISTRY_IP=$REGISTRY_IP \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
+E2E_REGISTRY_CONTAINER_ID=$REGISTRY_CONTAINER_ID \
+E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
+E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
+E2E_EXTERNAL_POSTGRES_SERVICE=$EXTERNAL_PG_SERVICE \
+E2E_EXTERNAL_POSTGRES_IMAGE=$E2E_POSTGRES_SOURCE_IMAGE \
+E2E_EXTERNAL_POSTGRES_OWNER=$CLUSTER_NAME \
+E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
 E2E_TLS_PROXY_SERVICE=$TLS_PROXY_SERVICE \
 E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE \
 E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \

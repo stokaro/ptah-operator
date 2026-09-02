@@ -34,7 +34,10 @@ const (
 	LabelSchema  = "operator.ptah.dev/schema"
 )
 
-var sha256Pattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+var (
+	sha256Pattern             = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
+)
 
 // Store uses direct API reads through Reader and mutating calls through Client.
 // The distinction lets controllers bypass a stale cache before apply.
@@ -70,6 +73,9 @@ func Prepare(
 	}
 	if spec.ContractVersion < 1 {
 		return nil, nil, fmt.Errorf("plan contract version must be positive")
+	}
+	if spec.ContractVersion >= 2 && !executionBindingIDPattern.MatchString(spec.ExecutionBindingID) {
+		return nil, nil, fmt.Errorf("plan contract version %d requires a valid execution binding ID", spec.ContractVersion)
 	}
 	if spec.SchemaRef.Name != schema.Name || spec.SchemaRef.UID != schema.UID {
 		return nil, nil, fmt.Errorf("plan schema reference does not match the owner")

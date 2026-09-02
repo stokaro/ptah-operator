@@ -518,6 +518,7 @@ func currentApprovalFixture() (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.P
 			ActualStateFingerprint: "sha256:actual", DesiredStateFingerprint: "sha256:desired",
 			PolicyFingerprint: "sha256:policy", VerificationPolicyUID: testPolicyUID,
 			VerificationPolicyDigest: "sha256:verification-policy",
+			ExecutionBindingID:       schema.Status.ExecutionBinding.Epoch,
 			PtahVersion:              "v0.3.0", ExecutorImage: "example.invalid/ptah@sha256:executor",
 			RunnerImage: "example.invalid/operator@sha256:runner", RunnerProtocolVersion: 1,
 		},
@@ -531,7 +532,8 @@ func currentApprovalFixture() (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.P
 			TargetIdentityDigest: plan.Spec.TargetIdentityDigest, ActualStateFingerprint: plan.Spec.ActualStateFingerprint,
 			DesiredStateFingerprint: plan.Spec.DesiredStateFingerprint, PolicyFingerprint: plan.Spec.PolicyFingerprint,
 			VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
-			VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest, PtahVersion: plan.Spec.PtahVersion,
+			VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
+			ExecutionBindingID:       plan.Spec.ExecutionBindingID, PtahVersion: plan.Spec.PtahVersion,
 			ExecutorImage: plan.Spec.ExecutorImage, RunnerImage: plan.Spec.RunnerImage,
 			RunnerProtocolVersion: plan.Spec.RunnerProtocolVersion, Approver: approver, ApprovedAt: approvedAt,
 			MutationRequestUID: "admission-request-uid",
@@ -539,6 +541,7 @@ func currentApprovalFixture() (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.P
 	}
 	schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{
 		Name: plan.Name, UID: plan.UID, Fingerprint: plan.Spec.Fingerprint,
+		ExecutionBindingID: plan.Spec.ExecutionBindingID,
 		Approval: &operatorv1alpha1.ConsumedApprovalStatus{
 			Name: approval.Name, UID: "approval-uid", Approver: approver, ApprovedAt: approvedAt,
 		},

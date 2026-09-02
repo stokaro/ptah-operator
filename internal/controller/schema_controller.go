@@ -129,12 +129,21 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	if schema.DeletionTimestamp != nil {
 		return r.reconcileDeletion(ctx, schema)
 	}
+	if result, handled, err := r.reconcileExecutionBinding(ctx, schema); handled || err != nil {
+		return result, err
+	}
 	if schema.Status.ActiveOperation != nil {
 		return r.reconcileActive(ctx, schema)
 	}
 	if controllerutil.ContainsFinalizer(schema, activeOperationFinalizer) && schema.Status.PendingObservation == nil {
 		if err := r.removeActiveFinalizer(ctx, schema); err != nil {
 			return ctrl.Result{}, err
+		}
+		// The metadata patch advances resourceVersion. Reload before a status
+		// transition in this same pass so the optimistic status patch does not use
+		// the pre-finalizer object version.
+		if err := reader.Get(ctx, request.NamespacedName, schema); err != nil {
+			return ctrl.Result{}, client.IgnoreNotFound(err)
 		}
 	}
 
@@ -147,6 +156,14 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	}
 	if validationErr := schemaselector.Validate(schema.Spec.Policy.Exclude); validationErr != nil {
 		return r.operationFailure(ctx, schema, fmt.Errorf("invalid reconciliation policy: %w", validationErr))
+	}
+	if schema.Status.Plan != nil {
+		if executionBindingChangeFenced(schema) {
+			return r.executionBindingChanged(ctx, schema, schema.Status.Plan, fmt.Errorf("execution-binding invalidation is pending"))
+		}
+		if bindingErr := r.ensureCurrentStatusExecutionBinding(schema, schema.Status.Plan); bindingErr != nil {
+			return r.executionBindingChanged(ctx, schema, schema.Status.Plan, bindingErr)
+		}
 	}
 	if schema.Status.Source.Verified {
 		if policyErr := r.verifiedSourcePolicyError(ctx, schema); policyErr != nil {
@@ -253,6 +270,150 @@ func (r *SchemaReconciler) reconcilePendingObservation(ctx context.Context, sche
 		operation = operatorv1alpha1.OperationPlan
 	}
 	return r.claim(ctx, schema, operation)
+}
+
+// reconcileExecutionBinding establishes one durable evidence epoch before any
+// operation is claimed or any existing read-only result is accepted. The
+// explicit component tuple is audit evidence; the opaque epoch prevents an old
+// approval from becoming current again after a byte-identical rollback.
+func (r *SchemaReconciler) reconcileExecutionBinding(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+) (ctrl.Result, bool, error) {
+	configured, err := r.configuredExecutionBinding()
+	if err != nil {
+		return ctrl.Result{}, true, err
+	}
+	if executionBindingRetiredReadOnlyCleanupPending(schema) {
+		result, err := r.cleanupRetiredExecutionBindingOperation(ctx, schema)
+		return result, true, err
+	}
+
+	// A previously persisted admission fence must finish before another rollout
+	// can advance the epoch. This keeps the retired plan identity available for
+	// best-effort audit cleanup without making cleanup completeness a safety
+	// requirement.
+	if executionBindingChangeFenced(schema) {
+		result, err := r.executionBindingChanged(
+			ctx,
+			schema,
+			schema.Status.Plan,
+			fmt.Errorf("execution-binding invalidation is pending"),
+		)
+		return result, true, err
+	}
+
+	current := schema.Status.ExecutionBinding
+	if current != nil && validExecutionBindingID(current.Epoch) &&
+		executionBindingComponentsEqual(current, configured) {
+		if operation := schema.Status.ActiveOperation; operation != nil && operation.ExecutionBindingID != current.Epoch {
+			result, err := r.executionBindingChanged(
+				ctx,
+				schema,
+				schema.Status.Plan,
+				fmt.Errorf("active %s operation belongs to an unprovable execution-binding epoch", operation.Type),
+			)
+			return result, true, err
+		}
+		return ctrl.Result{}, false, nil
+	}
+
+	operation := schema.Status.ActiveOperation
+	if operation != nil && operation.Type == operatorv1alpha1.OperationApply &&
+		(operation.DispatchStarted || operation.JobUID != "") {
+		result, err := r.finishUncertainApplyForExecutionBindingChange(
+			ctx,
+			schema,
+			configured,
+			fmt.Errorf("execution binding changed after Apply dispatch"),
+		)
+		return result, true, err
+	}
+
+	if !hasExecutionBindingEvidence(schema) {
+		binding, err := newExecutionBinding(configured)
+		if err != nil {
+			return ctrl.Result{}, true, err
+		}
+		before := schema.DeepCopy()
+		schema.Status.ExecutionBinding = binding
+		if err := r.patchStatus(ctx, before, schema); err != nil {
+			return ctrl.Result{}, true, err
+		}
+		return ctrl.Result{Requeue: true}, true, nil
+	}
+
+	result, err := r.executionBindingChanged(
+		ctx,
+		schema,
+		schema.Status.Plan,
+		fmt.Errorf("configured execution components changed"),
+	)
+	return result, true, err
+}
+
+func (r *SchemaReconciler) configuredExecutionBinding() (*operatorv1alpha1.ExecutionBindingStatus, error) {
+	if r.Jobs == nil {
+		return nil, fmt.Errorf("Job builder is not configured")
+	}
+	ptahVersion, executorImage, runnerImage, protocolVersion := r.Jobs.ExecutionBinding()
+	if strings.TrimSpace(ptahVersion) == "" || strings.TrimSpace(ptahVersion) != ptahVersion ||
+		strings.TrimSpace(executorImage) == "" || strings.TrimSpace(executorImage) != executorImage ||
+		strings.TrimSpace(runnerImage) == "" || strings.TrimSpace(runnerImage) != runnerImage || protocolVersion < 1 {
+		return nil, fmt.Errorf("Job builder execution binding is incomplete")
+	}
+	return &operatorv1alpha1.ExecutionBindingStatus{
+		PtahVersion: ptahVersion, ExecutorImage: executorImage, RunnerImage: runnerImage,
+		RunnerProtocolVersion: protocolVersion,
+	}, nil
+}
+
+func newExecutionBinding(configured *operatorv1alpha1.ExecutionBindingStatus) (*operatorv1alpha1.ExecutionBindingStatus, error) {
+	if configured == nil {
+		return nil, fmt.Errorf("configured execution binding is unavailable")
+	}
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("create execution-binding ID: %w", err)
+	}
+	binding := configured.DeepCopy()
+	binding.Epoch = "v1-" + hex.EncodeToString(nonce)
+	return binding, nil
+}
+
+func validExecutionBindingID(id string) bool {
+	if len(id) != len("v1-")+32 || !strings.HasPrefix(id, "v1-") {
+		return false
+	}
+	encoded := strings.TrimPrefix(id, "v1-")
+	if encoded != strings.ToLower(encoded) {
+		return false
+	}
+	decoded, err := hex.DecodeString(encoded)
+	return err == nil && len(decoded) == 16
+}
+
+func executionBindingComponentsEqual(
+	left *operatorv1alpha1.ExecutionBindingStatus,
+	right *operatorv1alpha1.ExecutionBindingStatus,
+) bool {
+	return left != nil && right != nil &&
+		left.PtahVersion == right.PtahVersion &&
+		left.ExecutorImage == right.ExecutorImage &&
+		left.RunnerImage == right.RunnerImage &&
+		left.RunnerProtocolVersion == right.RunnerProtocolVersion
+}
+
+func hasExecutionBindingEvidence(schema *operatorv1alpha1.PtahSchema) bool {
+	if schema == nil {
+		return false
+	}
+	return schema.Status.ActiveOperation != nil || schema.Status.PendingObservation != nil ||
+		schema.Status.Plan != nil || schema.Status.Applied != nil ||
+		schema.Status.ObservedGeneration != 0 || schema.Status.Phase != "" ||
+		len(schema.Status.Conditions) != 0 ||
+		!reflect.DeepEqual(schema.Status.Source, operatorv1alpha1.SchemaSourceStatus{}) ||
+		!reflect.DeepEqual(schema.Status.Target, operatorv1alpha1.TargetStatus{})
 }
 
 func (r *SchemaReconciler) possibleApplyPodActive(
@@ -433,6 +594,12 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		operation = schema.Status.ActiveOperation
 	}
+	if operation.Type == operatorv1alpha1.OperationApply && !operation.DispatchStarted && operation.JobUID == "" &&
+		schema.Status.Plan != nil {
+		if bindingErr := r.ensureCurrentStatusExecutionBinding(schema, schema.Status.Plan); bindingErr != nil {
+			return r.executionBindingChanged(ctx, schema, schema.Status.Plan, bindingErr)
+		}
+	}
 	if !schema.Spec.Suspend && schema.Status.Phase == operatorv1alpha1.PhaseFailed {
 		failedRetryTime := r.now()
 		if !due(schema.Status.NextReconciliationTime, failedRetryTime) {
@@ -476,6 +643,19 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 			return r.discardStaleOperation(ctx, schema, currentErr)
 		}
+		var plan *operatorv1alpha1.PtahSchemaPlan
+		if operation.Type == operatorv1alpha1.OperationApply {
+			plan, err = r.currentPlan(ctx, schema)
+			if err != nil {
+				return r.applyBecameStale(ctx, schema, err)
+			}
+			// An old execution binding must lose its authorization without
+			// waiting for an unrelated holder of the database Lease. Releasing
+			// this claim remains safe when it has not acquired the Lease yet.
+			if err := r.ensureCurrentExecutionBinding(schema, plan); err != nil {
+				return r.executionBindingChanged(ctx, schema, schema.Status.Plan, err)
+			}
+		}
 		if operationNeedsTargetLock(schema) {
 			acquired, requeue, lockErr := r.acquireOperationLock(ctx, schema)
 			if lockErr != nil {
@@ -494,12 +674,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 				return r.verificationPolicyChanged(ctx, schema, bindingErr)
 			}
 		}
-		var plan *operatorv1alpha1.PtahSchemaPlan
 		if operation.Type == operatorv1alpha1.OperationApply {
-			plan, err = r.currentPlan(ctx, schema)
-			if err != nil {
-				return r.applyBecameStale(ctx, schema, err)
-			}
 			if _, err := r.Plans.Load(ctx, plan); err != nil {
 				return r.applyBecameStale(ctx, schema, fmt.Errorf("verify plan storage: %w", err))
 			}
@@ -911,8 +1086,11 @@ func pendingProofPolicyBindingError(
 		pending.Plan.VerificationPolicyDigest == "" {
 		return fmt.Errorf("post-apply proof lacks an immutable verification policy binding")
 	}
-	if !schema.Status.Source.Verified ||
-		schema.Status.Source.VerificationPolicyUID != pending.Plan.VerificationPolicyUID ||
+	// Execution-component rollover deliberately clears Source.Verified before
+	// post-Apply proof runs. The immutable pending snapshot remains valid input
+	// for attributing the already-dispatched Apply; it cannot authorize another
+	// mutation, and current-source verification is refreshed afterward.
+	if schema.Status.Source.VerificationPolicyUID != pending.Plan.VerificationPolicyUID ||
 		schema.Status.Source.VerificationPolicyDigest != pending.Plan.VerificationPolicyDigest ||
 		schema.Status.Source.Digest != pending.Source.Digest ||
 		schema.Status.Source.ResolvedReference != pending.Source.ResolvedReference ||
@@ -984,6 +1162,9 @@ func (r *SchemaReconciler) suspendUndispatchedOperation(ctx context.Context, sch
 	schema.Status.ActiveOperation = nil
 	schema.Status.Phase = operatorv1alpha1.PhaseSuspended
 	schema.Status.ObservedGeneration = schema.Generation
+	if operation != nil && operation.Type == operatorv1alpha1.OperationResolve {
+		markSourceRefreshSuspended(schema)
+	}
 	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionTrue, "Requested", "New database operations are suspended")
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "Suspended", "Reconciliation is suspended")
 	if err := r.patchStatus(ctx, before, schema); err != nil {
@@ -1019,6 +1200,7 @@ func (r *SchemaReconciler) consumeResult(
 	var observedDrift *bool
 	var completedPending *operatorv1alpha1.PendingObservationStatus
 	var completedProofPolicyErr error
+	var completedProofExecutionBindingErr error
 	now := metav1.NewTime(r.now())
 	schema.Status.LastAttemptTime = &now
 	if operation != nil && (operation.Type == operatorv1alpha1.OperationObserve || operation.Type == operatorv1alpha1.OperationPlan) &&
@@ -1131,6 +1313,7 @@ func (r *SchemaReconciler) consumeResult(
 			// result now, finish proof against the immutable snapshot, then make
 			// the verified source stale in the same status transition.
 			completedProofPolicyErr = r.verifiedSourcePolicyError(ctx, schema)
+			completedProofExecutionBindingErr = r.ensureCurrentStatusExecutionBinding(schema, &pending.Plan)
 		}
 		engine := schema.Spec.Target.Engine
 		expectedCoordination := schema.Status.Target.CoordinationDigest
@@ -1164,7 +1347,8 @@ func (r *SchemaReconciler) consumeResult(
 			if pending != nil && pending.Outcome == operatorv1alpha1.PendingObservationApplySucceeded && pending.Plan.Fingerprint != "" {
 				schema.Status.Applied = appliedStatusFor(pending.Plan, now)
 			}
-			if (pending == nil || pending.ApplyGeneration == schema.Generation) && completedProofPolicyErr == nil {
+			if (pending == nil || pending.ApplyGeneration == schema.Generation) &&
+				completedProofPolicyErr == nil && completedProofExecutionBindingErr == nil {
 				schema.Status.Phase = operatorv1alpha1.PhaseInSync
 				schema.Status.LastSuccessfulReconciliation = &now
 				next := metav1.NewTime(r.now().Add(interval(schema)))
@@ -1201,7 +1385,8 @@ func (r *SchemaReconciler) consumeResult(
 			schema.Status.Target.DriftFindingCount = count
 			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, "ScopedChanges", fmt.Sprintf("Managed scope requires %d schema statements; highest severity %s", count, severity))
 			setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, "ScopedChanges", "The authoritative managed scope differs from the verified artifact")
-			if pending != nil && (!pendingMatchesCurrentSchema(schema, pending) || completedProofPolicyErr != nil) {
+			if pending != nil && (!pendingMatchesCurrentSchema(schema, pending) ||
+				completedProofPolicyErr != nil || completedProofExecutionBindingErr != nil) {
 				schema.Status.Plan = nil
 				schema.Status.Phase = operatorv1alpha1.PhasePending
 				schema.Status.NextReconciliationTime = nil
@@ -1220,7 +1405,18 @@ func (r *SchemaReconciler) consumeResult(
 			}
 		}
 		if pending != nil {
-			if completedProofPolicyErr != nil {
+			if completedProofExecutionBindingErr != nil {
+				// Proof and historical Apply attribution are committed first. Preserve
+				// the retired plan identity in a non-approvable state so a CREATE that
+				// passed admission before the old Apply claim, but committed late, can
+				// still be found and retired in the next reconciliation. ActiveOperation
+				// is cleared in the same status patch below, so this completed proof is
+				// never confused with an unresolved dispatched Apply.
+				schema.Status.Plan = pending.Plan.DeepCopy()
+				schema.Status.Phase = operatorv1alpha1.PhasePending
+				schema.Status.NextReconciliationTime = nil
+				markExecutionBindingRefreshRequired(schema)
+			} else if completedProofPolicyErr != nil {
 				schema.Status.Source.Verified = false
 				schema.Status.Source.VerifiedAt = nil
 				schema.Status.Source.VerificationPolicyUID = ""
@@ -1334,6 +1530,9 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 	if err != nil {
 		return r.applyBecameStale(ctx, schema, err)
 	}
+	if err := r.ensureCurrentExecutionBinding(schema, plan); err != nil {
+		return r.executionBindingChanged(ctx, schema, schema.Status.Plan, err)
+	}
 	policyBinding, err := policy.ConfigMapBinding(ctx, r.directReader(), schema.Namespace, schema.Spec.Desired.VerificationPolicyFrom)
 	if err != nil || policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
 		if err == nil {
@@ -1446,6 +1645,7 @@ func (r *SchemaReconciler) claimAt(
 	active := &operatorv1alpha1.ActiveOperationStatus{
 		Type: operation, ID: id, InputFingerprint: inputFingerprint,
 		StartedAt: metav1.NewTime(claimedAt), Attempt: 1,
+		ExecutionBindingID: schema.Status.ExecutionBinding.Epoch,
 	}
 	if operation == operatorv1alpha1.OperationVerify {
 		active.VerificationPolicyUID = verificationPolicy.UID
@@ -1568,6 +1768,9 @@ func (r *SchemaReconciler) claimAt(
 		schema.Status.Phase = phaseFor(operation)
 	}
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "OperationInProgress", fmt.Sprintf("%s operation is in progress", operation))
+	if operation == operatorv1alpha1.OperationResolve {
+		markSourceRefreshPending(schema)
+	}
 	if operation == operatorv1alpha1.OperationApply {
 		setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionTrue, "ApprovedPlan", "Applying the exact current plan")
 		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "Satisfied", "Current plan approval requirements are satisfied")
@@ -1611,6 +1814,9 @@ func (r *SchemaReconciler) retryOperation(ctx context.Context, schema *operatorv
 	next := metav1.NewTime(r.now().Add(failureRetry(schema)))
 	schema.Status.NextReconciliationTime = &next
 	setFailure(schema, "OperationFailed", failure)
+	if operation.Type == operatorv1alpha1.OperationResolve {
+		markSourceRefreshFailed(schema)
+	}
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1646,6 +1852,37 @@ func (r *SchemaReconciler) finishUncertainApply(ctx context.Context, schema *ope
 	return r.finishUncertainApplyWithEvidence(ctx, schema, job, failure, evidence.PodUIDs, evidence.PodCount, true)
 }
 
+func (r *SchemaReconciler) finishUncertainApplyForExecutionBindingChange(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	configured *operatorv1alpha1.ExecutionBindingStatus,
+	failure error,
+) (ctrl.Result, error) {
+	operation := schema.Status.ActiveOperation
+	if operation == nil {
+		return ctrl.Result{}, fmt.Errorf("cannot retire a dispatched Apply without its active operation")
+	}
+	pods, err := r.podsOwnedByJob(ctx, schema.Namespace, operation.JobName, operation.JobUID)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	binding, err := newExecutionBinding(configured)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	evidence := podIdentityEvidence(pods)
+	return r.finishUncertainApplyWithEvidenceAndBinding(
+		ctx,
+		schema,
+		nil,
+		failure,
+		evidence.PodUIDs,
+		evidence.PodCount,
+		true,
+		binding,
+	)
+}
+
 func (r *SchemaReconciler) finishUncertainApplyWithEvidence(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -1654,6 +1891,28 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidence(
 	podUIDs []types.UID,
 	podCount int32,
 	waitForDispatchDeadline bool,
+) (ctrl.Result, error) {
+	return r.finishUncertainApplyWithEvidenceAndBinding(
+		ctx,
+		schema,
+		job,
+		failure,
+		podUIDs,
+		podCount,
+		waitForDispatchDeadline,
+		nil,
+	)
+}
+
+func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	failure error,
+	podUIDs []types.UID,
+	podCount int32,
+	waitForDispatchDeadline bool,
+	replacementBinding *operatorv1alpha1.ExecutionBindingStatus,
 ) (ctrl.Result, error) {
 	if err := r.markJobHarvested(ctx, job); err != nil {
 		return ctrl.Result{}, err
@@ -1683,7 +1942,18 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidence(
 	}
 	schema.Status.ActiveOperation = nil
 	schema.Status.PendingObservation = pending
-	schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
+	if replacementBinding != nil {
+		if !validExecutionBindingID(replacementBinding.Epoch) {
+			return ctrl.Result{}, fmt.Errorf("replacement execution binding is invalid")
+		}
+		schema.Status.ExecutionBinding = replacementBinding.DeepCopy()
+		schema.Status.PendingObservation.PlanRequired = false
+		schema.Status.Phase = operatorv1alpha1.PhasePending
+		schema.Status.NextReconciliationTime = nil
+		markExecutionBindingRefreshRequired(schema)
+	} else {
+		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
+	}
 	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, "OutcomeUnknown", "Apply outcome is uncertain; only read-only observation is permitted")
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "OutcomeUnknown", "Database state must be observed before any next action")
 	setFailure(schema, "ApplyOutcomeUnknown", failure)
@@ -1825,7 +2095,237 @@ func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operato
 	return ctrl.Result{Requeue: true}, nil
 }
 
+func (r *SchemaReconciler) executionBindingChanged(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	plan *operatorv1alpha1.CurrentPlanStatus,
+	failure error,
+) (ctrl.Result, error) {
+	operation := schema.Status.ActiveOperation
+	failureStage := telemetry.FailureStageController
+	if operation != nil {
+		failureStage = telemetry.StageForOperation(operation.Type)
+	} else if plan != nil {
+		failureStage = telemetry.FailureStagePlan
+	} else {
+		switch schema.Status.Phase {
+		case operatorv1alpha1.PhaseVerifying:
+			failureStage = telemetry.FailureStageVerify
+		case operatorv1alpha1.PhaseObserving, operatorv1alpha1.PhaseVerifyingConvergence:
+			failureStage = telemetry.FailureStageObserve
+		case operatorv1alpha1.PhasePlanning:
+			failureStage = telemetry.FailureStagePlan
+		}
+	}
+	if operation != nil && operation.Type == operatorv1alpha1.OperationApply &&
+		(operation.DispatchStarted || operation.JobUID != "") {
+		configured, err := r.configuredExecutionBinding()
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		return r.finishUncertainApplyForExecutionBindingChange(
+			ctx,
+			schema,
+			configured,
+			fmt.Errorf("execution binding changed after Apply dispatch: %w", failure),
+		)
+	}
+	if !executionBindingChangeFenced(schema) {
+		configured, err := r.configuredExecutionBinding()
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		binding, err := newExecutionBinding(configured)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		before := schema.DeepCopy()
+		retainReadOnlyOperation := isReadOnlyOperation(operation)
+		if operation != nil && !retainReadOnlyOperation &&
+			(operation.Type == operatorv1alpha1.OperationApply ||
+				operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil) &&
+			operation.LeaseEpoch != "" {
+			if err := stageOperationLockRelease(schema, operation); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		// Close the admission boundary before touching approval objects. Approval
+		// admission reads PtahSchema directly from the API server, so this durable
+		// status transition prevents any request that starts after the patch from
+		// authorizing the retired plan. Keep the plan identity for one best-effort
+		// audit cleanup after restart. A CREATE that commits after that cleanup is
+		// still non-authorizing because its retired epoch cannot match a later plan.
+		schema.Status.ExecutionBinding = binding
+		if !retainReadOnlyOperation {
+			schema.Status.ActiveOperation = nil
+		}
+		if schema.Status.PendingObservation != nil {
+			// Any Observe/Plan evidence produced by the retired components is
+			// unprovable. Keep the immutable Apply evidence and Lease, but restart
+			// its read-only proof from Observe under the new epoch.
+			schema.Status.PendingObservation.PlanRequired = false
+		}
+		schema.Status.Phase = operatorv1alpha1.PhasePending
+		schema.Status.NextReconciliationTime = nil
+		markExecutionBindingRefreshRequired(schema)
+		if err := r.patchStatus(ctx, before, schema); err != nil {
+			return ctrl.Result{}, err
+		}
+		if r.Telemetry != nil {
+			r.Telemetry.ObserveFailure(failureStage, telemetry.FailureStaleInput)
+			if operation != nil && operation.Type == operatorv1alpha1.OperationApply {
+				r.Telemetry.ObserveApply(telemetry.ApplyStale)
+			}
+		}
+		r.observeOperation(operation, telemetry.OperationStale)
+		r.event(schema, corev1.EventTypeWarning, "ExecutionBindingChanged", "The previous execution binding was retired; closing its approval boundary before starting a complete read-only refresh")
+		return ctrl.Result{Requeue: true}, nil
+	}
+	if err := r.markPlanApprovalsStaleWithReason(
+		ctx,
+		schema,
+		plan,
+		"ExecutionBindingChanged",
+		"The approved plan uses an execution binding that is no longer configured",
+	); err != nil {
+		return ctrl.Result{}, err
+	}
+	before := schema.DeepCopy()
+	schema.Status.Plan = nil
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return ctrl.Result{}, err
+	}
+	if schema.Status.PendingObservation == nil {
+		if err := r.removeActiveFinalizer(ctx, schema); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	return ctrl.Result{Requeue: true}, nil
+}
+
+func isReadOnlyOperation(operation *operatorv1alpha1.ActiveOperationStatus) bool {
+	if operation == nil {
+		return false
+	}
+	switch operation.Type {
+	case operatorv1alpha1.OperationResolve,
+		operatorv1alpha1.OperationVerify,
+		operatorv1alpha1.OperationObserve,
+		operatorv1alpha1.OperationPlan:
+		return true
+	default:
+		return false
+	}
+}
+
+func executionBindingRetiredReadOnlyCleanupPending(schema *operatorv1alpha1.PtahSchema) bool {
+	if schema == nil || schema.Status.Phase != operatorv1alpha1.PhasePending ||
+		!isReadOnlyOperation(schema.Status.ActiveOperation) || !executionBindingCleanupPending(schema) {
+		return false
+	}
+	planReady := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionPlanReady)
+	return planReady != nil && planReady.Status == metav1.ConditionFalse &&
+		planReady.Reason == "ExecutionBindingChanged"
+}
+
+func (r *SchemaReconciler) cleanupRetiredExecutionBindingOperation(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+) (ctrl.Result, error) {
+	operation := schema.Status.ActiveOperation
+	if !executionBindingRetiredReadOnlyCleanupPending(schema) || operation == nil {
+		return ctrl.Result{}, fmt.Errorf("retired execution-binding operation cleanup is not pending")
+	}
+
+	if operation.JobName != "" {
+		job := &batchv1.Job{}
+		err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job)
+		switch {
+		case err == nil && retiredReadOnlyJobMatches(schema, operation, job):
+			// Scheduling cleanup is not result consumption. Do not inspect Pods or logs:
+			// the old epoch can no longer produce current evidence.
+			if err := r.markJobHarvested(ctx, job); err != nil {
+				return ctrl.Result{}, err
+			}
+		case err != nil && !apierrors.IsNotFound(err):
+			return ctrl.Result{}, fmt.Errorf("read retired execution-binding Job: %w", err)
+		}
+	}
+
+	before := schema.DeepCopy()
+	if operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil &&
+		operation.LeaseEpoch != "" {
+		if err := stageOperationLockRelease(schema, operation); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	schema.Status.ActiveOperation = nil
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{Requeue: true}, nil
+}
+
+func retiredReadOnlyJobMatches(
+	schema *operatorv1alpha1.PtahSchema,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+	job *batchv1.Job,
+) bool {
+	if schema == nil || schema.Status.ExecutionBinding == nil || operation == nil || job == nil ||
+		operation.ID == "" || job.UID == "" || operation.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch ||
+		!validExecutionBindingID(operation.ExecutionBindingID) ||
+		!exactControllerOwner(
+			job.OwnerReferences,
+			operatorv1alpha1.GroupVersion.String(),
+			"PtahSchema",
+			schema.Name,
+			schema.UID,
+		) {
+		return false
+	}
+	if operation.JobUID != "" && operation.JobUID != job.UID {
+		return false
+	}
+	return job.Labels[workload.LabelOperation] == strings.ToLower(string(operation.Type)) &&
+		job.Annotations[workload.AnnotationOperationID] == operation.ID &&
+		job.Annotations[workload.AnnotationExecutionBindingID] == operation.ExecutionBindingID
+}
+
+func executionBindingChangeFenced(schema *operatorv1alpha1.PtahSchema) bool {
+	if schema == nil || schema.Status.Plan == nil || schema.Status.ActiveOperation != nil ||
+		schema.Status.Phase != operatorv1alpha1.PhasePending {
+		return false
+	}
+	planReady := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionPlanReady)
+	return executionBindingCleanupPending(schema) &&
+		planReady != nil && planReady.Status == metav1.ConditionFalse &&
+		planReady.Reason == "ExecutionBindingChanged"
+}
+
+func executionBindingCleanupPending(schema *operatorv1alpha1.PtahSchema) bool {
+	if schema == nil {
+		return false
+	}
+	approvalRequired := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired)
+	return approvalRequired != nil && approvalRequired.Status == metav1.ConditionFalse &&
+		approvalRequired.Reason == "ExecutionBindingChanged"
+}
+
 func (r *SchemaReconciler) markRecordedApprovalStale(ctx context.Context, schema *operatorv1alpha1.PtahSchema) error {
+	return r.markRecordedApprovalStaleWithReason(
+		ctx,
+		schema,
+		"PlanNoLongerCurrent",
+		"The approved plan no longer matches the current database state",
+	)
+}
+
+func (r *SchemaReconciler) markRecordedApprovalStaleWithReason(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	reason string,
+	message string,
+) error {
 	if schema.Status.Plan == nil || schema.Status.Plan.Approval == nil {
 		return nil
 	}
@@ -1840,9 +2340,50 @@ func (r *SchemaReconciler) markRecordedApprovalStale(ctx context.Context, schema
 	return r.markApprovalStaleWithReason(
 		ctx,
 		approval,
-		"PlanNoLongerCurrent",
-		"The approved plan no longer matches the current database state",
+		reason,
+		message,
 	)
+}
+
+func (r *SchemaReconciler) markPlanApprovalsStaleWithReason(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	plan *operatorv1alpha1.CurrentPlanStatus,
+	reason string,
+	message string,
+) error {
+	if schema == nil || plan == nil {
+		return nil
+	}
+	list := &operatorv1alpha1.PtahSchemaApprovalList{}
+	// The durable schema epoch already closes the authorization boundary. Use a
+	// namespace-wide direct read here only for best-effort audit cleanup of
+	// approvals visible after that fence; correctness does not depend on LIST
+	// quiescence.
+	if err := r.directReader().List(ctx, list, client.InNamespace(schema.Namespace)); err != nil {
+		return fmt.Errorf("list plan approvals for invalidation: %w", err)
+	}
+	for i := range list.Items {
+		if list.Items[i].Spec.SchemaRef.Name != schema.Name {
+			continue
+		}
+		approval := &operatorv1alpha1.PtahSchemaApproval{}
+		if err := r.directReader().Get(ctx, client.ObjectKeyFromObject(&list.Items[i]), approval); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("read plan approval for invalidation: %w", err)
+		}
+		if approval.DeletionTimestamp != nil ||
+			meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) ||
+			!approvalMatchesPlanStatus(approval, schema, plan) {
+			continue
+		}
+		if err := r.markApprovalStaleWithReason(ctx, approval, reason, message); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *SchemaReconciler) reobserveAfterStalePlan(
@@ -1957,6 +2498,9 @@ func (r *SchemaReconciler) operationFailure(ctx context.Context, schema *operato
 	schema.Status.Phase = operatorv1alpha1.PhaseFailed
 	next := metav1.NewTime(r.now().Add(failureRetry(schema)))
 	schema.Status.NextReconciliationTime = &next
+	if schema.Status.ActiveOperation != nil && schema.Status.ActiveOperation.Type == operatorv1alpha1.OperationResolve {
+		markSourceRefreshFailed(schema)
+	}
 	setFailure(schema, "ConfigurationError", failure)
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
@@ -2037,32 +2581,41 @@ func (r *SchemaReconciler) publishPlan(ctx context.Context, schema *operatorv1al
 		return nil, err
 	}
 	contentDigest := fingerprint.DigestBytes(content)
-	if r.Jobs == nil {
-		return nil, fmt.Errorf("Job builder is not configured")
+	configured, err := r.configuredExecutionBinding()
+	if err != nil {
+		return nil, err
 	}
-	ptahVersion, executorImage, runnerImage, protocolVersion := r.Jobs.ExecutionBinding()
+	executionBinding := schema.Status.ExecutionBinding
+	if executionBinding == nil || !validExecutionBindingID(executionBinding.Epoch) ||
+		!executionBindingComponentsEqual(executionBinding, configured) {
+		return nil, fmt.Errorf("durable execution binding is not current")
+	}
 	binding := fingerprint.PlanBinding{
-		ContractVersion: 1, SchemaUID: string(schema.UID), PlanContentDigest: contentDigest,
+		ContractVersion: 2, SchemaUID: string(schema.UID), PlanContentDigest: contentDigest,
 		ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: schema.Status.Target.CoordinationDigest,
 		TargetIdentityDigest:   schema.Status.Target.IdentityDigest,
 		ActualStateFingerprint: decoded.FromFingerprint, DesiredStateFingerprint: decoded.ToFingerprint,
 		PolicyFingerprint: policyFingerprint, VerificationPolicyUID: string(schema.Status.Source.VerificationPolicyUID),
 		VerificationPolicyDigest: schema.Status.Source.VerificationPolicyDigest,
-		PtahVersion:              ptahVersion, ExecutorImage: executorImage, RunnerImage: runnerImage, RunnerProtocolVersion: protocolVersion,
+		ExecutionBindingID:       executionBinding.Epoch,
+		PtahVersion:              executionBinding.PtahVersion, ExecutorImage: executionBinding.ExecutorImage,
+		RunnerImage: executionBinding.RunnerImage, RunnerProtocolVersion: executionBinding.RunnerProtocolVersion,
 	}
 	planFingerprint, err := binding.Fingerprint()
 	if err != nil {
 		return nil, err
 	}
 	spec := operatorv1alpha1.PtahSchemaPlanSpec{
-		ContractVersion: 1, SchemaRef: operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
+		ContractVersion: 2, SchemaRef: operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
 		Fingerprint: planFingerprint, ContentDigest: contentDigest,
 		ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: schema.Status.Target.CoordinationDigest,
 		TargetIdentityDigest:   schema.Status.Target.IdentityDigest,
 		ActualStateFingerprint: decoded.FromFingerprint, DesiredStateFingerprint: decoded.ToFingerprint,
 		PolicyFingerprint: policyFingerprint, VerificationPolicyUID: schema.Status.Source.VerificationPolicyUID,
 		VerificationPolicyDigest: schema.Status.Source.VerificationPolicyDigest,
-		PtahVersion:              ptahVersion, ExecutorImage: executorImage, RunnerImage: runnerImage, RunnerProtocolVersion: protocolVersion,
+		ExecutionBindingID:       executionBinding.Epoch,
+		PtahVersion:              executionBinding.PtahVersion, ExecutorImage: executionBinding.ExecutorImage,
+		RunnerImage: executionBinding.RunnerImage, RunnerProtocolVersion: executionBinding.RunnerProtocolVersion,
 		Dialect: decoded.Dialect, Destructive: decoded.Destructive, StatementCount: int32(len(decoded.Statements)),
 	}
 	desired, chunks, err := planstore.Prepare(schema, spec, content)
@@ -2082,6 +2635,8 @@ func (r *SchemaReconciler) currentPlan(ctx context.Context, schema *operatorv1al
 	}
 	if plan.UID != schema.Status.Plan.UID || plan.DeletionTimestamp != nil || plan.Spec.SchemaRef.UID != schema.UID ||
 		plan.Spec.Fingerprint != schema.Status.Plan.Fingerprint || plan.Spec.ArtifactDigest != schema.Status.Source.Digest ||
+		plan.Spec.ExecutionBindingID == "" || plan.Spec.ExecutionBindingID != schema.Status.Plan.ExecutionBindingID ||
+		schema.Status.ExecutionBinding == nil || plan.Spec.ExecutionBindingID != schema.Status.ExecutionBinding.Epoch ||
 		plan.Spec.CoordinationDigest != schema.Status.Plan.CoordinationDigest ||
 		plan.Spec.CoordinationDigest != schema.Status.Target.CoordinationDigest ||
 		plan.Spec.TargetIdentityDigest != schema.Status.Plan.TargetIdentityDigest ||
@@ -2096,6 +2651,46 @@ func (r *SchemaReconciler) currentPlan(ctx context.Context, schema *operatorv1al
 		return nil, fmt.Errorf("current reconciliation policy no longer matches the plan")
 	}
 	return plan, nil
+}
+
+func (r *SchemaReconciler) ensureCurrentExecutionBinding(
+	schema *operatorv1alpha1.PtahSchema,
+	plan *operatorv1alpha1.PtahSchemaPlan,
+) error {
+	if schema == nil || schema.Status.Plan == nil || schema.Status.ExecutionBinding == nil || plan == nil {
+		return fmt.Errorf("current plan execution binding is unavailable")
+	}
+	status := schema.Status.Plan
+	if status.ExecutionBindingID == "" || status.ExecutionBindingID != plan.Spec.ExecutionBindingID ||
+		status.ExecutionBindingID != schema.Status.ExecutionBinding.Epoch ||
+		status.PtahVersion != plan.Spec.PtahVersion ||
+		status.ExecutorImage != plan.Spec.ExecutorImage ||
+		status.RunnerImage != plan.Spec.RunnerImage ||
+		status.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
+		return fmt.Errorf("current plan execution binding is stale")
+	}
+	return r.ensureCurrentStatusExecutionBinding(schema, status)
+}
+
+func (r *SchemaReconciler) ensureCurrentStatusExecutionBinding(
+	schema *operatorv1alpha1.PtahSchema,
+	plan *operatorv1alpha1.CurrentPlanStatus,
+) error {
+	if schema == nil || schema.Status.ExecutionBinding == nil || plan == nil {
+		return fmt.Errorf("current plan execution binding is unavailable")
+	}
+	configured, err := r.configuredExecutionBinding()
+	if err != nil {
+		return err
+	}
+	status := schema.Status.ExecutionBinding
+	if !validExecutionBindingID(status.Epoch) || !executionBindingComponentsEqual(status, configured) ||
+		plan.ExecutionBindingID == "" || plan.ExecutionBindingID != status.Epoch ||
+		plan.PtahVersion != status.PtahVersion || plan.ExecutorImage != status.ExecutorImage ||
+		plan.RunnerImage != status.RunnerImage || plan.RunnerProtocolVersion != status.RunnerProtocolVersion {
+		return fmt.Errorf("current plan execution binding is stale")
+	}
+	return nil
 }
 
 func (r *SchemaReconciler) findApproval(ctx context.Context, schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) (*operatorv1alpha1.PtahSchemaApproval, error) {
@@ -2480,7 +3075,7 @@ func (r *SchemaReconciler) markJobHarvested(ctx context.Context, job *batchv1.Jo
 	}
 	before := job.DeepCopy()
 	job.Spec.TTLSecondsAfterFinished = ptr(jobCleanupTTLSeconds)
-	if err := r.Client.Patch(ctx, job, client.MergeFrom(before)); err != nil {
+	if err := r.Client.Patch(ctx, job, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		return fmt.Errorf("schedule completed Job cleanup: %w", err)
 	}
 	return nil
@@ -3006,7 +3601,12 @@ func databaseTargetBinding(target operatorv1alpha1.DatabaseTargetSpec) operatorv
 }
 
 func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.OperationType) (map[string]any, error) {
+	if schema == nil || schema.Status.ExecutionBinding == nil ||
+		!validExecutionBindingID(schema.Status.ExecutionBinding.Epoch) {
+		return nil, fmt.Errorf("durable execution binding is required before claiming %s", operation)
+	}
 	base := map[string]any{"generation": schema.Generation, "operation": operation, "schema_uid": schema.UID}
+	base["execution_binding"] = *schema.Status.ExecutionBinding.DeepCopy()
 	switch operation {
 	case operatorv1alpha1.OperationResolve:
 		base["requested_reference"] = schema.Spec.Desired.OCIRef
@@ -3125,6 +3725,7 @@ func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan, now metav1.Time) *
 		ActualStateFingerprint: plan.Spec.ActualStateFingerprint, DesiredStateFingerprint: plan.Spec.DesiredStateFingerprint,
 		PolicyFingerprint: plan.Spec.PolicyFingerprint, VerificationPolicyUID: plan.Spec.VerificationPolicyUID,
 		VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
+		ExecutionBindingID:       plan.Spec.ExecutionBindingID,
 		PtahVersion:              plan.Spec.PtahVersion, ExecutorImage: plan.Spec.ExecutorImage, RunnerImage: plan.Spec.RunnerImage,
 		RunnerProtocolVersion: plan.Spec.RunnerProtocolVersion, Destructive: plan.Spec.Destructive,
 		StatementCount: plan.Spec.StatementCount, CreatedAt: now,
@@ -3135,7 +3736,8 @@ func appliedStatusFor(plan operatorv1alpha1.CurrentPlanStatus, now metav1.Time) 
 	return &operatorv1alpha1.AppliedStatus{
 		ArtifactDigest: plan.ArtifactDigest, PlanFingerprint: plan.Fingerprint,
 		CoordinationDigest: plan.CoordinationDigest, TargetIdentityDigest: plan.TargetIdentityDigest,
-		PtahVersion: plan.PtahVersion, ExecutorImage: plan.ExecutorImage, RunnerImage: plan.RunnerImage,
+		ExecutionBindingID: plan.ExecutionBindingID,
+		PtahVersion:        plan.PtahVersion, ExecutorImage: plan.ExecutorImage, RunnerImage: plan.RunnerImage,
 		RunnerProtocolVersion: plan.RunnerProtocolVersion, CompletedAt: now,
 	}
 }
@@ -3179,18 +3781,31 @@ func planDriftSummary(plan dataplane.PlanFile) (int32, string) {
 }
 
 func approvalMatches(approval *operatorv1alpha1.PtahSchemaApproval, schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) bool {
-	return approval.Spec.SchemaRef.Name == schema.Name && approval.Spec.SchemaRef.UID == schema.UID &&
+	if plan == nil {
+		return false
+	}
+	return approvalMatchesPlanStatus(approval, schema, currentPlanStatus(plan, metav1.Time{}))
+}
+
+func approvalMatchesPlanStatus(
+	approval *operatorv1alpha1.PtahSchemaApproval,
+	schema *operatorv1alpha1.PtahSchema,
+	plan *operatorv1alpha1.CurrentPlanStatus,
+) bool {
+	return approval != nil && schema != nil && plan != nil &&
+		approval.Spec.SchemaRef.Name == schema.Name && approval.Spec.SchemaRef.UID == schema.UID &&
 		approval.Spec.PlanRef.Name == plan.Name && approval.Spec.PlanRef.UID == plan.UID &&
-		approval.Spec.PlanFingerprint == plan.Spec.Fingerprint && approval.Spec.ArtifactDigest == plan.Spec.ArtifactDigest &&
-		approval.Spec.CoordinationDigest == plan.Spec.CoordinationDigest &&
-		approval.Spec.TargetIdentityDigest == plan.Spec.TargetIdentityDigest &&
-		approval.Spec.ActualStateFingerprint == plan.Spec.ActualStateFingerprint &&
-		approval.Spec.DesiredStateFingerprint == plan.Spec.DesiredStateFingerprint &&
-		approval.Spec.PolicyFingerprint == plan.Spec.PolicyFingerprint &&
-		approval.Spec.VerificationPolicyUID == plan.Spec.VerificationPolicyUID &&
-		approval.Spec.VerificationPolicyDigest == plan.Spec.VerificationPolicyDigest &&
-		approval.Spec.PtahVersion == plan.Spec.PtahVersion && approval.Spec.ExecutorImage == plan.Spec.ExecutorImage &&
-		approval.Spec.RunnerImage == plan.Spec.RunnerImage && approval.Spec.RunnerProtocolVersion == plan.Spec.RunnerProtocolVersion &&
+		approval.Spec.PlanFingerprint == plan.Fingerprint && approval.Spec.ArtifactDigest == plan.ArtifactDigest &&
+		approval.Spec.CoordinationDigest == plan.CoordinationDigest &&
+		approval.Spec.TargetIdentityDigest == plan.TargetIdentityDigest &&
+		approval.Spec.ActualStateFingerprint == plan.ActualStateFingerprint &&
+		approval.Spec.DesiredStateFingerprint == plan.DesiredStateFingerprint &&
+		approval.Spec.PolicyFingerprint == plan.PolicyFingerprint &&
+		approval.Spec.VerificationPolicyUID == plan.VerificationPolicyUID &&
+		approval.Spec.VerificationPolicyDigest == plan.VerificationPolicyDigest &&
+		approval.Spec.ExecutionBindingID != "" && approval.Spec.ExecutionBindingID == plan.ExecutionBindingID &&
+		approval.Spec.PtahVersion == plan.PtahVersion && approval.Spec.ExecutorImage == plan.ExecutorImage &&
+		approval.Spec.RunnerImage == plan.RunnerImage && approval.Spec.RunnerProtocolVersion == plan.RunnerProtocolVersion &&
 		!approval.Spec.ApprovedAt.IsZero() && approval.Spec.Approver.Username != "" && approval.Spec.MutationRequestUID != ""
 }
 
@@ -3461,6 +4076,50 @@ func setCondition(schema *operatorv1alpha1.PtahSchema, conditionType string, sta
 		Type: conditionType, Status: status, Reason: reason, Message: bounded(message, 1024),
 		ObservedGeneration: schema.Generation, LastTransitionTime: metav1.Now(),
 	})
+}
+
+func markSourceRefreshPending(schema *operatorv1alpha1.PtahSchema) {
+	if schema.Status.Source.Digest == "" {
+		return
+	}
+	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, "Refreshing", "Refreshing the requested OCI reference; the retained digest remains historical evidence")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, "SourceRefreshPending", "Plan currentness is unknown until source refresh and read-only reconciliation complete")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "SourceRefreshPending", "Convergence is unknown until source refresh and read-only reconciliation complete")
+}
+
+func markSourceRefreshFailed(schema *operatorv1alpha1.PtahSchema) {
+	if schema.Status.Source.Digest == "" {
+		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionFalse, "ResolveFailed", "The requested OCI reference could not be resolved")
+		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "SourceUnresolved", "No plan can be prepared until the requested OCI reference resolves")
+		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "SourceResolutionUnknown", "Convergence cannot be determined without a resolved source")
+		return
+	}
+	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, "RefreshFailed", "The requested OCI reference could not be refreshed; the retained digest remains historical evidence")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, "SourceFreshnessUnknown", "Plan currentness is unknown because source freshness could not be established")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "SourceFreshnessUnknown", "Convergence is unknown because source freshness could not be established")
+}
+
+func markSourceRefreshSuspended(schema *operatorv1alpha1.PtahSchema) {
+	if schema.Status.Source.Digest == "" {
+		return
+	}
+	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, "RefreshSuspended", "Source refresh was suspended before dispatch; the retained digest remains historical evidence")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, "SourceFreshnessUnknown", "Plan currentness is unknown because source refresh was suspended")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "SourceFreshnessUnknown", "Convergence is unknown because source refresh was suspended")
+}
+
+func markExecutionBindingRefreshRequired(schema *operatorv1alpha1.PtahSchema) {
+	schema.Status.Source.Verified = false
+	schema.Status.Source.VerifiedAt = nil
+	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, "ExecutionBindingChanged", "The retained digest must be refreshed under the current execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionUnknown, "ExecutionBindingChanged", "The retained verification is historical evidence from the previous execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionUnknown, "ExecutionBindingChanged", "The retained target observation is historical evidence from the previous execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, "ExecutionBindingChanged", "Managed drift must be observed and planned under the current execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "ExecutionBindingChanged", "The previous plan is not valid under the current execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "ExecutionBindingChanged", "Any approval for the previous execution binding is stale")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "ExecutionBindingChanged", "Convergence must be verified under the current execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, "ExecutionBindingChanged", "No Apply operation is authorized under the previous execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ExecutionBindingChanged", "A complete read-only reconciliation is required under the current execution binding")
 }
 
 func setFailure(schema *operatorv1alpha1.PtahSchema, reason string, failure error) {

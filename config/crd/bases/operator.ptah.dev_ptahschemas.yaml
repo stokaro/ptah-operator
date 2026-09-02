@@ -1036,6 +1036,9 @@ spec:
                     type: string
                   dispatchStarted:
                     type: boolean
+                  executionBindingID:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
                   executionNotAfter:
                     format: date-time
                     type: string
@@ -1231,6 +1234,9 @@ spec:
                     type: string
                   coordinationDigest:
                     type: string
+                  executionBindingID:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
                   executorImage:
                     type: string
                   planFingerprint:
@@ -1291,6 +1297,32 @@ spec:
                   - type
                   type: object
                 type: array
+              executionBinding:
+                properties:
+                  epoch:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                  executorImage:
+                    minLength: 1
+                    type: string
+                  ptahVersion:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  runnerImage:
+                    minLength: 1
+                    type: string
+                  runnerProtocolVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - epoch
+                - executorImage
+                - ptahVersion
+                - runnerImage
+                - runnerProtocolVersion
+                type: object
               lastAttemptTime:
                 format: date-time
                 type: string
@@ -1438,6 +1470,9 @@ spec:
                         type: string
                       destructive:
                         type: boolean
+                      executionBindingID:
+                        pattern: ^v1-[0-9a-f]{32}$
+                        type: string
                       executorImage:
                         type: string
                       fingerprint:
@@ -1667,6 +1702,9 @@ spec:
                     type: string
                   destructive:
                     type: boolean
+                  executionBindingID:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
                   executorImage:
                     type: string
                   fingerprint:
