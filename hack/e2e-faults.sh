@@ -822,11 +822,35 @@ database_url_for() {
 	*) fail "unsupported URL engine $url_engine" ;;
 	esac
 	base_url=$(secret_url "$base_secret")
-	new_url=$(printf '%s' "$base_url" | sed -E "s#/[^/?]+(\\?.*)?$#/${url_database}\\1#")
+	new_url=$(replace_database_url_path "$base_url" "$url_database")
 	if [ -z "$new_url" ] || [ "$new_url" = "$base_url" ]; then
 		fail "could not derive an isolated $url_engine database URL"
 	fi
 	printf '%s\n' "$new_url"
+}
+
+replace_database_url_path() {
+	original_url=$1
+	replacement_database=$2
+	case "$original_url" in
+	*\?*)
+		url_path=${original_url%%\?*}
+		url_suffix="?${original_url#*\?}"
+		;;
+	*\#*)
+		url_path=${original_url%%\#*}
+		url_suffix="#${original_url#*\#}"
+		;;
+	*)
+		url_path=$original_url
+		url_suffix=
+		;;
+	esac
+	case "$url_path" in
+	*/?*) url_prefix=${url_path%/*} ;;
+	*) fail "database URL does not contain a non-empty database path" ;;
+	esac
+	printf '%s/%s%s\n' "$url_prefix" "$replacement_database" "$url_suffix"
 }
 
 create_url_secret() {

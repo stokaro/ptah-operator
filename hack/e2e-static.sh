@@ -75,6 +75,50 @@ done
 
 shellcheck "$ROOT_DIR"/hack/e2e-*.sh
 
+database_url_rewrite_section=$(sed -n '/^replace_database_url_path()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+[ -n "$database_url_rewrite_section" ] || {
+	printf '%s\n' 'e2e static: database URL path rewrite helper is missing' >&2
+	exit 1
+}
+database_url_for_section=$(sed -n '/^database_url_for()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+# shellcheck disable=SC2016 # The wiring check must match literal shell variables.
+printf '%s\n' "$database_url_for_section" |
+	grep -F 'new_url=$(replace_database_url_path "$base_url" "$url_database")' >/dev/null || {
+	printf '%s\n' 'e2e static: fault database URL creation bypasses the safe path rewrite' >&2
+	exit 1
+}
+assert_database_url_rewrite() (
+	rewrite_input=$1
+	rewrite_database=$2
+	rewrite_expected=$3
+	# shellcheck disable=SC2329 # The extracted helper invokes this test-local failure path.
+	fail() {
+		printf 'e2e static: database URL rewrite failed: %s\n' "$*" >&2
+		exit 1
+	}
+	eval "$database_url_rewrite_section"
+	rewrite_actual=$(replace_database_url_path "$rewrite_input" "$rewrite_database")
+	[ "$rewrite_actual" = "$rewrite_expected" ] || {
+		printf 'e2e static: database URL rewrite produced %s, expected %s\n' \
+			"$rewrite_actual" "$rewrite_expected" >&2
+		exit 1
+	}
+)
+assert_database_url_rewrite \
+	'postgres://user:password@db.example/original' \
+	'isolated_database' \
+	'postgres://user:password@db.example/isolated_database'
+assert_database_url_rewrite \
+	'postgres://user:password@db.example/original?sslrootcert=/tmp/root&ampersand=a&path=one\\two' \
+	'isolated_database' \
+	'postgres://user:password@db.example/isolated_database?sslrootcert=/tmp/root&ampersand=a&path=one\\two'
+assert_database_url_rewrite \
+	'mysql://user:password@db.example/original#client-fragment' \
+	'isolated_database' \
+	'mysql://user:password@db.example/isolated_database#client-fragment'
+
 grep -Eq '^[[:space:]]*ProtocolVersion = 4$' "$ROOT_DIR/internal/runner/protocol.go" || {
 	printf '%s\n' 'e2e static: runner protocol constant is not version 4' >&2
 	exit 1
