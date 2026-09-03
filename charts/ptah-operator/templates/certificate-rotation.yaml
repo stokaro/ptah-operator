@@ -171,6 +171,7 @@ rules:
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}

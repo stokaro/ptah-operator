@@ -499,6 +499,10 @@ func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingCl
 	namespaceGuardName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	policies.objects[namespaceGuardName] = readyPolicy(namespaceGuard.policy())
 	bindings.objects[namespaceGuardName] = namespaceGuard.binding()
+	controllerWriteGuard := NewControllerWriteGuard(guard)
+	controllerWriteGuardName := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	policies.objects[controllerWriteGuardName] = readyPolicy(controllerWriteGuard.policy())
+	bindings.objects[controllerWriteGuardName] = controllerWriteGuard.binding()
 	runtimePodName := RuntimePodGuardPolicyName(guard.ReleaseSequence)
 	runtimePodPolicy, err := guard.runtimePodIdentityPolicy()
 	if err != nil {

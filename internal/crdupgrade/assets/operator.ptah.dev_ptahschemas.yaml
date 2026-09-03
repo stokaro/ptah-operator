@@ -5,7 +5,7 @@ metadata:
   annotations:
     operator.ptah.dev/controller-state-version: "1"
     operator.ptah.dev/crd-schema-version: "1"
-    operator.ptah.dev/crd-schema-digest: "sha256:ec87bed02dd3fa7fbea859594395932d33b27479a1700baab3d9ea8c3d3c8881"
+    operator.ptah.dev/crd-schema-digest: "sha256:a802edc990f0c6fdd9db39fa5d373576c34c688cba54c8263dc96ec61f209eeb"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahschemas.operator.ptah.dev
 spec:
@@ -170,6 +170,7 @@ spec:
                 - urlFrom
                 type: object
               execution:
+                default: {}
                 properties:
                   activeDeadlineSeconds:
                     default: 900
@@ -709,6 +710,7 @@ spec:
                 - message: interval must be between 10s and 24h
                   rule: duration(self) >= duration('10s') && duration(self) <= duration('24h')
               policy:
+                default: {}
                 properties:
                   allowDestructive:
                     default: false
@@ -762,9 +764,9 @@ spec:
                     pattern: ^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$
                     type: string
                   engine:
-                    enum:
-                    - PostgreSQL
-                    - MySQL
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[A-Za-z][A-Za-z0-9._-]*$
                     type: string
                   urlFrom:
                     properties:
@@ -1180,9 +1182,9 @@ spec:
                   target:
                     properties:
                       engine:
-                        enum:
-                        - PostgreSQL
-                        - MySQL
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[A-Za-z][A-Za-z0-9._-]*$
                         type: string
                       urlFrom:
                         properties:
@@ -1648,9 +1650,9 @@ spec:
                   target:
                     properties:
                       engine:
-                        enum:
-                        - PostgreSQL
-                        - MySQL
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[A-Za-z][A-Za-z0-9._-]*$
                         type: string
                       urlFrom:
                         properties:
@@ -1841,9 +1843,9 @@ spec:
                   driftReportDigest:
                     type: string
                   engine:
-                    enum:
-                    - PostgreSQL
-                    - MySQL
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[A-Za-z][A-Za-z0-9._-]*$
                     type: string
                   highestDriftSeverity:
                     type: string

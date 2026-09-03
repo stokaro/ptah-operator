@@ -173,6 +173,9 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	if schema.Status.PendingObservation != nil {
 		return r.reconcilePendingObservation(ctx, schema)
 	}
+	if result, handled, engineErr := r.reconcileEngineSupport(ctx, schema); handled || engineErr != nil {
+		return result, engineErr
+	}
 	if validationErr := schemaselector.Validate(schema.Spec.Policy.Exclude); validationErr != nil {
 		return r.operationFailure(ctx, schema, fmt.Errorf("invalid reconciliation policy: %w", validationErr))
 	}
@@ -193,11 +196,11 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 		before := schema.DeepCopy()
 		schema.Status.Phase = operatorv1alpha1.PhaseSuspended
 		schema.Status.ObservedGeneration = schema.Generation
-		setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionTrue, "Requested", "New database operations are suspended")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "Suspended", "Reconciliation is suspended")
+		setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionTrue, operatorv1alpha1.ReasonRequested, "New database operations are suspended")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSuspended, "Reconciliation is suspended")
 		return ctrl.Result{}, r.patchStatus(ctx, before, schema)
 	}
-	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionFalse, "Active", "Reconciliation is active")
+	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionFalse, operatorv1alpha1.ReasonActive, "Reconciliation is active")
 	if schema.Status.ObservedGeneration != schema.Generation {
 		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
 	}
@@ -239,6 +242,96 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	// A changed desired reference or a regular interval always starts with a
 	// fresh resolution. This is what makes mutable tags observable.
 	return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+}
+
+// reconcileEngineSupport is deliberately after every durable mutation-safety
+// boundary and before ordinary desired-state progress. A dispatched Apply and
+// its read-only proof must finish first; an undispatched or read-only stale
+// operation is retired by reconcileActive before this point. Once idle, the
+// unsupported status closes approval admission before bounded approval cleanup
+// and before any new Job can be claimed.
+func (r *SchemaReconciler) reconcileEngineSupport(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+) (ctrl.Result, bool, error) {
+	if databaseEngineSupported(schema.Spec.Target.Engine) {
+		condition := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionEngineSupported)
+		if condition != nil && condition.Status == metav1.ConditionTrue &&
+			condition.Reason == string(operatorv1alpha1.ReasonSupportedEngine) {
+			return ctrl.Result{}, false, nil
+		}
+		before := schema.DeepCopy()
+		setCondition(
+			schema,
+			operatorv1alpha1.ConditionEngineSupported,
+			metav1.ConditionTrue,
+			operatorv1alpha1.ReasonSupportedEngine,
+			fmt.Sprintf("Database engine %q is supported", schema.Spec.Target.Engine),
+		)
+		if apiequality.Semantic.DeepEqual(before.Status, schema.Status) {
+			return ctrl.Result{}, false, nil
+		}
+		if err := r.patchStatus(ctx, before, schema); err != nil {
+			return ctrl.Result{}, true, err
+		}
+		return ctrl.Result{Requeue: true}, true, nil
+	}
+
+	message := fmt.Sprintf("Database engine %q is not supported", schema.Spec.Target.Engine)
+	before := schema.DeepCopy()
+	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
+	schema.Status.ObservedGeneration = schema.Generation
+	schema.Status.NextReconciliationTime = nil
+	setCondition(schema, operatorv1alpha1.ConditionEngineSupported, metav1.ConditionFalse, operatorv1alpha1.ReasonUnsupportedEngine, message)
+	setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionUnknown, operatorv1alpha1.ReasonUnsupportedEngine, "Database access is disabled for an unsupported engine")
+	setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, operatorv1alpha1.ReasonUnsupportedEngine, "Drift is unknown because the database engine is unsupported")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonUnsupportedEngine, "No plan can be produced for an unsupported engine")
+	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonUnsupportedEngine, "An unsupported engine cannot produce an approvable plan")
+	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonUnsupportedEngine, "No Apply operation is authorized for an unsupported engine")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonUnsupportedEngine, "Convergence is unknown because the database engine is unsupported")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonUnsupportedEngine, message)
+
+	// Persist the status fence while retaining any current plan identity. The
+	// approval webhook observes Phase=Blocked and ApprovalRequired=False, so no
+	// request beginning after this patch can authorize a plan. Later passes
+	// retire approvals one at a time; approval watch events also catch CREATEs
+	// that crossed this fence before the plan pointer is eventually cleared.
+	if !apiequality.Semantic.DeepEqual(before.Status, schema.Status) {
+		if err := r.patchStatus(ctx, before, schema); err != nil {
+			return ctrl.Result{}, true, err
+		}
+		return ctrl.Result{Requeue: true}, true, nil
+	}
+	marked, err := r.markOneSchemaApprovalStaleWithReason(
+		ctx,
+		schema,
+		operatorv1alpha1.ReasonUnsupportedEngine,
+		message,
+	)
+	if err != nil {
+		return ctrl.Result{}, true, err
+	}
+	if marked {
+		return ctrl.Result{Requeue: true}, true, nil
+	}
+	if schema.Status.Plan == nil {
+		return ctrl.Result{}, true, nil
+	}
+	before = schema.DeepCopy()
+	schema.Status.Plan = nil
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return ctrl.Result{}, true, err
+	}
+	return ctrl.Result{Requeue: true}, true, nil
+}
+
+func databaseEngineSupported(engine operatorv1alpha1.DatabaseEngine) bool {
+	switch engine {
+	case operatorv1alpha1.DatabaseEnginePostgreSQL, operatorv1alpha1.DatabaseEngineMySQL:
+		return true
+	default:
+		return false
+	}
 }
 
 // rejectUnsupportedStoredControllerState is the first check after the direct
@@ -309,8 +402,8 @@ func (r *SchemaReconciler) reconcilePendingObservation(ctx context.Context, sche
 	if schema.Spec.Suspend {
 		before := schema.DeepCopy()
 		schema.Status.Phase = operatorv1alpha1.PhaseSuspended
-		setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionTrue, "Requested", "New database operations are suspended")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "Suspended", "Reconciliation is suspended")
+		setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionTrue, operatorv1alpha1.ReasonRequested, "New database operations are suspended")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSuspended, "Reconciliation is suspended")
 		if err := r.patchStatus(ctx, before, schema); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -321,7 +414,7 @@ func (r *SchemaReconciler) reconcilePendingObservation(ctx context.Context, sche
 		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 	}
 
-	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionFalse, "Active", "Reconciliation is active")
+	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionFalse, operatorv1alpha1.ReasonActive, "Reconciliation is active")
 	if activePod {
 		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 	}
@@ -1080,9 +1173,9 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	} else {
 		schema.Status.Phase = operatorv1alpha1.PhaseObserving
 	}
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "LeaseContinuityLost", "The result was discarded because the database lock epoch changed")
-	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "LeaseContinuityLost", "A fresh observation is required after database lock continuity was lost")
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "LeaseContinuityLost", "The operator is restarting read-only observation")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonLeaseContinuityLost, "The result was discarded because the database lock epoch changed")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonLeaseContinuityLost, "A fresh observation is required after database lock continuity was lost")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonLeaseContinuityLost, "The operator is restarting read-only observation")
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1206,10 +1299,10 @@ func (r *SchemaReconciler) blockVerification(
 	if len(requirements) > 0 {
 		message += ": " + strings.Join(requirements, ", ")
 	}
-	setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, "PolicyRefused", bounded(message, 512))
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "ArtifactUnverified", "No plan may be used for an artifact refused by policy")
-	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, "PolicyRefused", "In-sync status requires an artifact accepted by the current verification policy")
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "PolicyRefused", "Artifact verification policy must be satisfied before database access")
+	setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyRefused, bounded(message, 512))
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonArtifactUnverified, "No plan may be used for an artifact refused by policy")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyRefused, "In-sync status requires an artifact accepted by the current verification policy")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyRefused, "Artifact verification policy must be satisfied before database access")
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1237,8 +1330,8 @@ func (r *SchemaReconciler) suspendUndispatchedOperation(ctx context.Context, sch
 	if operation != nil && operation.Type == operatorv1alpha1.OperationResolve {
 		markSourceRefreshSuspended(schema)
 	}
-	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionTrue, "Requested", "New database operations are suspended")
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "Suspended", "Reconciliation is suspended")
+	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionTrue, operatorv1alpha1.ReasonRequested, "New database operations are suspended")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSuspended, "Reconciliation is suspended")
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1307,8 +1400,8 @@ func (r *SchemaReconciler) consumeResult(
 			schema.Status.Applied = nil
 		}
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifying
-		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionTrue, "DigestPinned", "Desired OCI reference resolved to immutable content")
-		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, "Pending", "Resolved content has not been verified")
+		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionTrue, operatorv1alpha1.ReasonDigestPinned, "Desired OCI reference resolved to immutable content")
+		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, operatorv1alpha1.ReasonPending, "Resolved content has not been verified")
 	case operatorv1alpha1.OperationVerify:
 		if result.Stdout != "" || len(result.VerificationRequirements) != 0 || result.ResolvedDigest != schema.Status.Source.Digest ||
 			result.ObservedArtifactType != dataplane.SchemaArtifactType || result.VerificationPolicyDigest == "" ||
@@ -1324,7 +1417,7 @@ func (r *SchemaReconciler) consumeResult(
 		schema.Status.Source.VerificationPolicyDigest = result.VerificationPolicyDigest
 		schema.Status.Source.VerifiedAt = &now
 		schema.Status.Phase = operatorv1alpha1.PhaseObserving
-		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionTrue, "PolicySatisfied", "Artifact type and verification policy were satisfied")
+		setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionTrue, operatorv1alpha1.ReasonPolicySatisfied, "Artifact type and verification policy were satisfied")
 	case operatorv1alpha1.OperationObserve:
 		if result.Stdout != "" || result.CoordinationDigest == "" || result.TargetIdentityDigest == "" ||
 			result.DriftReportDigest == "" || result.DriftFindingCount < 0 {
@@ -1332,16 +1425,19 @@ func (r *SchemaReconciler) consumeResult(
 		}
 		pending := schema.Status.PendingObservation
 		engine := schema.Spec.Target.Engine
-		expectedCoordination, err := fingerprint.DatabaseCoordinationDigest(string(engine), schema.Spec.Target.CoordinationKey)
-		if err != nil {
-			return r.retryOperation(ctx, schema, job, fmt.Errorf("derive database coordination digest: %w", err))
-		}
+		var expectedCoordination string
 		if pending != nil {
 			engine = pending.Target.Engine
 			expectedCoordination = pending.CoordinationDigest
 			if pending.Plan.CoordinationDigest != expectedCoordination || result.CoordinationDigest != expectedCoordination ||
 				result.TargetIdentityDigest != pending.Plan.TargetIdentityDigest {
 				return r.retryOperation(ctx, schema, job, fmt.Errorf("post-apply observation target does not match the applied plan"))
+			}
+		} else {
+			var err error
+			expectedCoordination, err = fingerprint.DatabaseCoordinationDigest(string(engine), schema.Spec.Target.CoordinationKey)
+			if err != nil {
+				return r.retryOperation(ctx, schema, job, fmt.Errorf("derive database coordination digest: %w", err))
 			}
 		}
 		if result.CoordinationDigest != expectedCoordination {
@@ -1360,10 +1456,10 @@ func (r *SchemaReconciler) consumeResult(
 			return ctrl.Result{}, err
 		}
 		schema.Status.Plan = nil
-		setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionTrue, "Observed", "Database schema was observed")
-		setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, "ScopedPlanPending", "Raw drift was recorded; the authoritative managed scope is being planned")
-		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "ScopedPlanPending", "Convergence is unknown until scoped planning completes")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ScopedPlanPending", "A read-only scoped plan is required")
+		setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionTrue, operatorv1alpha1.ReasonObserved, "Database schema was observed")
+		setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, operatorv1alpha1.ReasonScopedPlanPending, "Raw drift was recorded; the authoritative managed scope is being planned")
+		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonScopedPlanPending, "Convergence is unknown until scoped planning completes")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonScopedPlanPending, "A read-only scoped plan is required")
 		if pending == nil {
 			schema.Status.Phase = operatorv1alpha1.PhasePlanning
 		} else {
@@ -1414,8 +1510,8 @@ func (r *SchemaReconciler) consumeResult(
 			schema.Status.Plan = nil
 			schema.Status.Target.HighestDriftSeverity = ""
 			schema.Status.Target.DriftFindingCount = 0
-			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionFalse, "ScopedConverged", "The authoritative managed scope has no changes")
-			setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "NoChanges", "No executable plan is required")
+			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionFalse, operatorv1alpha1.ReasonScopedConverged, "The authoritative managed scope has no changes")
+			setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonNoChanges, "No executable plan is required")
 			if pending != nil && pending.Outcome == operatorv1alpha1.PendingObservationApplySucceeded && pending.Plan.Fingerprint != "" {
 				schema.Status.Applied = appliedStatusFor(pending.Plan, now)
 			}
@@ -1425,19 +1521,19 @@ func (r *SchemaReconciler) consumeResult(
 				schema.Status.LastSuccessfulReconciliation = &now
 				next := metav1.NewTime(r.now().Add(interval(schema)))
 				schema.Status.NextReconciliationTime = &next
-				convergenceReason := "ScopedConverged"
+				convergenceReason := operatorv1alpha1.ReasonScopedConverged
 				convergenceMessage := "A stable scoped plan proves convergence"
 				if pending != nil && pending.Outcome == operatorv1alpha1.PendingObservationOutcomeUnknown {
-					convergenceReason = "ConvergedAfterUnknownOutcome"
+					convergenceReason = operatorv1alpha1.ReasonConvergedAfterUnknownOutcome
 					convergenceMessage = "The managed scope converged, but no Apply attribution is recorded because execution or lock continuity was uncertain"
 				}
 				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionTrue, convergenceReason, convergenceMessage)
-				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionTrue, "InSync", "Schema is in sync")
+				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionTrue, operatorv1alpha1.ReasonInSync, "Schema is in sync")
 			} else {
 				schema.Status.Phase = operatorv1alpha1.PhasePending
 				schema.Status.NextReconciliationTime = nil
-				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, "DesiredStateChanged", "The applied generation converged, but newer desired inputs must be reconciled")
-				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "DesiredStateChanged", "A newer resource generation is pending")
+				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "The applied generation converged, but newer desired inputs must be reconciled")
+				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "A newer resource generation is pending")
 			}
 		} else {
 			planDocument := []byte(result.Stdout)
@@ -1455,15 +1551,15 @@ func (r *SchemaReconciler) consumeResult(
 			observedDrift = ptr(true)
 			schema.Status.Target.HighestDriftSeverity = severity
 			schema.Status.Target.DriftFindingCount = count
-			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, "ScopedChanges", fmt.Sprintf("Managed scope requires %d schema statements; highest severity %s", count, severity))
-			setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, "ScopedChanges", "The authoritative managed scope differs from the verified artifact")
+			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, operatorv1alpha1.ReasonScopedChanges, fmt.Sprintf("Managed scope requires %d schema statements; highest severity %s", count, severity))
+			setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonScopedChanges, "The authoritative managed scope differs from the verified artifact")
 			if pending != nil && (!pendingMatchesCurrentSchema(schema, pending) ||
 				completedProofPolicyErr != nil || completedProofExecutionBindingErr != nil) {
 				schema.Status.Plan = nil
 				schema.Status.Phase = operatorv1alpha1.PhasePending
 				schema.Status.NextReconciliationTime = nil
-				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "DesiredStateChanged", "The proof plan belongs to an older desired generation")
-				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "DesiredStateChanged", "A newer resource generation is pending")
+				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "The proof plan belongs to an older desired generation")
+				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonDesiredStateChanged, "A newer resource generation is pending")
 			} else {
 				published, err := r.publishPlan(ctx, schema, decoded, planDocument)
 				if err != nil {
@@ -1473,7 +1569,7 @@ func (r *SchemaReconciler) consumeResult(
 				setPlanPolicyStatus(schema, published)
 				next := metav1.NewTime(now.Add(interval(schema)))
 				schema.Status.NextReconciliationTime = &next
-				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, "Published", "Exact plan bytes are stored in immutable chunks")
+				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionTrue, operatorv1alpha1.ReasonPublished, "Exact plan bytes are stored in immutable chunks")
 			}
 		}
 		if pending != nil {
@@ -1500,10 +1596,10 @@ func (r *SchemaReconciler) consumeResult(
 				} else {
 					schema.Status.Phase = operatorv1alpha1.PhasePending
 				}
-				setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, "PolicyChanged", bounded(completedProofPolicyErr.Error(), 512))
-				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "PolicyChanged", "Any plan for the previous verification policy is stale")
-				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, "PolicyChanged", "Post-Apply proof completed, but the artifact requires verification against the current policy")
-				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "PolicyChanged", "Artifact verification against the current policy is pending")
+				setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, bounded(completedProofPolicyErr.Error(), 512))
+				setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Any plan for the previous verification policy is stale")
+				setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Post-Apply proof completed, but the artifact requires verification against the current policy")
+				setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Artifact verification against the current policy is pending")
 			}
 			completedPending = pending.DeepCopy()
 			schema.Status.PendingObservation = nil
@@ -1519,8 +1615,8 @@ func (r *SchemaReconciler) consumeResult(
 		}
 		schema.Status.PendingObservation = pending
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
-		setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, "JobCompleted", "Apply Job completed; convergence observation is pending")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "VerifyingConvergence", "Apply completion has not yet been independently observed")
+		setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonJobCompleted, "Apply Job completed; convergence observation is pending")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonVerifyingConvergence, "Apply completion has not yet been independently observed")
 	}
 
 	if completedPending != nil {
@@ -1613,10 +1709,10 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 		return r.verificationPolicyChanged(ctx, schema, err)
 	}
 	if plan.Spec.Destructive && !schema.Spec.Policy.AllowDestructive {
-		return r.waitBlocked(ctx, schema, "DestructiveChangesDisabled", "Plan contains destructive changes and policy disallows them")
+		return r.waitBlocked(ctx, schema, operatorv1alpha1.ReasonDestructiveChangesDisabled, "Plan contains destructive changes and policy disallows them")
 	}
 	if schema.Spec.Policy.Apply == operatorv1alpha1.ApplyPolicyNever {
-		return r.waitBlocked(ctx, schema, "ApplyDisabled", "Policy records plans but does not apply them")
+		return r.waitBlocked(ctx, schema, operatorv1alpha1.ReasonApplyDisabled, "Policy records plans but does not apply them")
 	}
 
 	requiresApproval := planRequiresApproval(schema, plan)
@@ -1637,7 +1733,7 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 				schema.Status.NextReconciliationTime = &next
 			}
 			schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
-			setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "Waiting", "Create an approval bound to the current plan fingerprint")
+			setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, operatorv1alpha1.ReasonWaiting, "Create an approval bound to the current plan fingerprint")
 			if err := r.patchStatus(ctx, before, schema); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -1839,13 +1935,13 @@ func (r *SchemaReconciler) claimAt(
 	} else {
 		schema.Status.Phase = phaseFor(operation)
 	}
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "OperationInProgress", fmt.Sprintf("%s operation is in progress", operation))
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonOperationInProgress, fmt.Sprintf("%s operation is in progress", operation))
 	if operation == operatorv1alpha1.OperationResolve {
 		markSourceRefreshPending(schema)
 	}
 	if operation == operatorv1alpha1.OperationApply {
-		setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionTrue, "ApprovedPlan", "Applying the exact current plan")
-		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "Satisfied", "Current plan approval requirements are satisfied")
+		setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionTrue, operatorv1alpha1.ReasonApprovedPlan, "Applying the exact current plan")
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonSatisfied, "Current plan approval requirements are satisfied")
 	}
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
@@ -1885,7 +1981,7 @@ func (r *SchemaReconciler) retryOperation(ctx context.Context, schema *operatorv
 	schema.Status.Phase = operatorv1alpha1.PhaseFailed
 	next := metav1.NewTime(r.now().Add(failureRetry(schema)))
 	schema.Status.NextReconciliationTime = &next
-	setFailure(schema, "OperationFailed", failure)
+	setFailure(schema, operatorv1alpha1.ReasonOperationFailed, failure)
 	if operation.Type == operatorv1alpha1.OperationResolve {
 		markSourceRefreshFailed(schema)
 	}
@@ -2026,9 +2122,9 @@ func (r *SchemaReconciler) finishUncertainApplyWithEvidenceAndBinding(
 	} else {
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
 	}
-	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, "OutcomeUnknown", "Apply outcome is uncertain; only read-only observation is permitted")
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "OutcomeUnknown", "Database state must be observed before any next action")
-	setFailure(schema, "ApplyOutcomeUnknown", failure)
+	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonOutcomeUnknown, "Apply outcome is uncertain; only read-only observation is permitted")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonOutcomeUnknown, "Database state must be observed before any next action")
+	setFailure(schema, operatorv1alpha1.ReasonApplyOutcomeUnknown, failure)
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -2140,8 +2236,8 @@ func (r *SchemaReconciler) applyBecameStale(ctx context.Context, schema *operato
 	} else {
 		schema.Status.Phase = operatorv1alpha1.PhaseObserving
 	}
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "Stale", bounded(failure.Error(), 512))
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "StalePlan", "The plan became stale before apply")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonStale, bounded(failure.Error(), 512))
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonStalePlan, "The plan became stale before apply")
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -2257,7 +2353,7 @@ func (r *SchemaReconciler) executionBindingChanged(
 		ctx,
 		schema,
 		plan,
-		"ExecutionBindingChanged",
+		operatorv1alpha1.ReasonExecutionBindingChanged,
 		"The approved plan uses an execution binding that is no longer configured",
 	); err != nil {
 		return ctrl.Result{}, err
@@ -2297,7 +2393,7 @@ func executionBindingRetiredReadOnlyCleanupPending(schema *operatorv1alpha1.Ptah
 	}
 	planReady := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionPlanReady)
 	return planReady != nil && planReady.Status == metav1.ConditionFalse &&
-		planReady.Reason == "ExecutionBindingChanged"
+		planReady.Reason == string(operatorv1alpha1.ReasonExecutionBindingChanged)
 }
 
 func (r *SchemaReconciler) cleanupRetiredExecutionBindingOperation(
@@ -2371,7 +2467,7 @@ func executionBindingChangeFenced(schema *operatorv1alpha1.PtahSchema) bool {
 	planReady := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionPlanReady)
 	return executionBindingCleanupPending(schema) &&
 		planReady != nil && planReady.Status == metav1.ConditionFalse &&
-		planReady.Reason == "ExecutionBindingChanged"
+		planReady.Reason == string(operatorv1alpha1.ReasonExecutionBindingChanged)
 }
 
 func executionBindingCleanupPending(schema *operatorv1alpha1.PtahSchema) bool {
@@ -2380,14 +2476,14 @@ func executionBindingCleanupPending(schema *operatorv1alpha1.PtahSchema) bool {
 	}
 	approvalRequired := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired)
 	return approvalRequired != nil && approvalRequired.Status == metav1.ConditionFalse &&
-		approvalRequired.Reason == "ExecutionBindingChanged"
+		approvalRequired.Reason == string(operatorv1alpha1.ReasonExecutionBindingChanged)
 }
 
 func (r *SchemaReconciler) markRecordedApprovalStale(ctx context.Context, schema *operatorv1alpha1.PtahSchema) error {
 	return r.markRecordedApprovalStaleWithReason(
 		ctx,
 		schema,
-		"PlanNoLongerCurrent",
+		operatorv1alpha1.ReasonPlanNoLongerCurrent,
 		"The approved plan no longer matches the current database state",
 	)
 }
@@ -2395,7 +2491,7 @@ func (r *SchemaReconciler) markRecordedApprovalStale(ctx context.Context, schema
 func (r *SchemaReconciler) markRecordedApprovalStaleWithReason(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
-	reason string,
+	reason operatorv1alpha1.ConditionReason,
 	message string,
 ) error {
 	if schema.Status.Plan == nil || schema.Status.Plan.Approval == nil {
@@ -2421,7 +2517,7 @@ func (r *SchemaReconciler) markPlanApprovalsStaleWithReason(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 	plan *operatorv1alpha1.CurrentPlanStatus,
-	reason string,
+	reason operatorv1alpha1.ConditionReason,
 	message string,
 ) error {
 	if schema == nil || plan == nil {
@@ -2458,6 +2554,50 @@ func (r *SchemaReconciler) markPlanApprovalsStaleWithReason(
 	return nil
 }
 
+// markOneSchemaApprovalStaleWithReason bounds status writes to one approval per
+// reconciliation. Unlike plan-scoped cleanup, it deliberately needs no current
+// plan pointer: an approval CREATE that crossed the durable unsupported-engine
+// fence will enqueue another pass and is still retired as historical evidence.
+func (r *SchemaReconciler) markOneSchemaApprovalStaleWithReason(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	reason operatorv1alpha1.ConditionReason,
+	message string,
+) (bool, error) {
+	if schema == nil {
+		return false, nil
+	}
+	list := &operatorv1alpha1.PtahSchemaApprovalList{}
+	if err := r.directReader().List(ctx, list, client.InNamespace(schema.Namespace)); err != nil {
+		return false, fmt.Errorf("list schema approvals for invalidation: %w", err)
+	}
+	for i := range list.Items {
+		item := &list.Items[i]
+		if item.Spec.SchemaRef.Name != schema.Name || item.Spec.SchemaRef.UID != schema.UID ||
+			item.DeletionTimestamp != nil ||
+			meta.IsStatusConditionTrue(item.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) {
+			continue
+		}
+		approval := &operatorv1alpha1.PtahSchemaApproval{}
+		if err := r.directReader().Get(ctx, client.ObjectKeyFromObject(item), approval); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return false, fmt.Errorf("read schema approval for invalidation: %w", err)
+		}
+		if approval.Spec.SchemaRef.Name != schema.Name || approval.Spec.SchemaRef.UID != schema.UID ||
+			approval.DeletionTimestamp != nil ||
+			meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) {
+			continue
+		}
+		if err := r.markApprovalStaleWithReason(ctx, approval, reason, message); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 func (r *SchemaReconciler) reobserveAfterStalePlan(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
@@ -2486,8 +2626,8 @@ func (r *SchemaReconciler) reobserveAfterStalePlan(
 	} else {
 		schema.Status.Phase = operatorv1alpha1.PhaseObserving
 	}
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "StaleObservation", bounded(failure.Error(), 512))
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "StaleObservation", "Database state must be observed again before planning")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonStaleObservation, bounded(failure.Error(), 512))
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonStaleObservation, "Database state must be observed again before planning")
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -2540,10 +2680,10 @@ func (r *SchemaReconciler) verificationPolicyChanged(ctx context.Context, schema
 	schema.Status.Source.VerificationPolicyUID = ""
 	schema.Status.Source.VerificationPolicyDigest = ""
 	schema.Status.Phase = operatorv1alpha1.PhaseVerifying
-	setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, "PolicyChanged", bounded(failure.Error(), 512))
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "PolicyChanged", "The plan is stale because verification policy bytes changed")
-	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, "PolicyChanged", "In-sync status requires verification against the current policy bytes")
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "PolicyChanged", "Artifact verification must run again")
+	setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, bounded(failure.Error(), 512))
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "The plan is stale because verification policy bytes changed")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "In-sync status requires verification against the current policy bytes")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyChanged, "Artifact verification must run again")
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -2573,7 +2713,7 @@ func (r *SchemaReconciler) operationFailure(ctx context.Context, schema *operato
 	if schema.Status.ActiveOperation != nil && schema.Status.ActiveOperation.Type == operatorv1alpha1.OperationResolve {
 		markSourceRefreshFailed(schema)
 	}
-	setFailure(schema, "ConfigurationError", failure)
+	setFailure(schema, operatorv1alpha1.ReasonConfigurationError, failure)
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -2595,7 +2735,7 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 		schema.Status.ActiveOperation = nil
 		schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
 		schema.Status.NextReconciliationTime = nil
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ProofInputsChanged", "Post-apply observation will restart from its durable binding")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonProofInputsChanged, "Post-apply observation will restart from its durable binding")
 		if err := r.patchStatus(ctx, before, schema); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -2620,8 +2760,8 @@ func (r *SchemaReconciler) discardStaleOperation(ctx context.Context, schema *op
 	schema.Status.Plan = nil
 	schema.Status.Source.Verified = false
 	schema.Status.Phase = operatorv1alpha1.PhasePending
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "InputsChanged", "Operation result was discarded because desired inputs changed")
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "InputsChanged", bounded(failure.Error(), 512))
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonInputsChanged, "Operation result was discarded because desired inputs changed")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonInputsChanged, bounded(failure.Error(), 512))
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -2829,7 +2969,7 @@ func (r *SchemaReconciler) findApproval(ctx context.Context, schema *operatorv1a
 			if err := r.markApprovalStaleWithReason(
 				ctx,
 				candidate,
-				"SupersededApproval",
+				operatorv1alpha1.ReasonSupersededApproval,
 				"Another approval already reserves this exact immutable plan",
 			); err != nil {
 				return nil, err
@@ -2854,13 +2994,13 @@ func (r *SchemaReconciler) findApproval(ctx context.Context, schema *operatorv1a
 }
 
 func (r *SchemaReconciler) markApprovalStale(ctx context.Context, approval *operatorv1alpha1.PtahSchemaApproval) error {
-	return r.markApprovalStaleWithReason(ctx, approval, "PlanNoLongerCurrent", "The approval does not match the current immutable plan")
+	return r.markApprovalStaleWithReason(ctx, approval, operatorv1alpha1.ReasonPlanNoLongerCurrent, "The approval does not match the current immutable plan")
 }
 
 func (r *SchemaReconciler) markApprovalStaleWithReason(
 	ctx context.Context,
 	approval *operatorv1alpha1.PtahSchemaApproval,
-	reason string,
+	reason operatorv1alpha1.ConditionReason,
 	message string,
 ) error {
 	if meta.IsStatusConditionTrue(approval.Status.Conditions, operatorv1alpha1.ConditionApprovalStale) {
@@ -2870,12 +3010,12 @@ func (r *SchemaReconciler) markApprovalStaleWithReason(
 	approval.Status.ObservedGeneration = approval.Generation
 	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
 		Type: operatorv1alpha1.ConditionApprovalAccepted, Status: metav1.ConditionFalse,
-		Reason: reason, Message: message,
+		Reason: string(reason), Message: message,
 		ObservedGeneration: approval.Generation, LastTransitionTime: metav1.NewTime(r.now()),
 	})
 	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
 		Type: operatorv1alpha1.ConditionApprovalStale, Status: metav1.ConditionTrue,
-		Reason: reason, Message: message,
+		Reason: string(reason), Message: message,
 		ObservedGeneration: approval.Generation, LastTransitionTime: metav1.NewTime(r.now()),
 	})
 	if err := r.Client.Status().Patch(ctx, approval, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -2899,17 +3039,17 @@ func (r *SchemaReconciler) markApprovalConsumed(ctx context.Context, approval *o
 	approval.Status.ObservedGeneration = approval.Generation
 	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
 		Type: operatorv1alpha1.ConditionApprovalAccepted, Status: metav1.ConditionTrue,
-		Reason: "CurrentPlan", Message: "The approval exactly matches the current immutable plan",
+		Reason: string(operatorv1alpha1.ReasonCurrentPlan), Message: "The approval exactly matches the current immutable plan",
 		ObservedGeneration: approval.Generation, LastTransitionTime: metav1.NewTime(r.now()),
 	})
 	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
 		Type: operatorv1alpha1.ConditionApprovalStale, Status: metav1.ConditionFalse,
-		Reason: "CurrentPlan", Message: "The approved plan is current",
+		Reason: string(operatorv1alpha1.ReasonCurrentPlan), Message: "The approved plan is current",
 		ObservedGeneration: approval.Generation, LastTransitionTime: metav1.NewTime(r.now()),
 	})
 	meta.SetStatusCondition(&approval.Status.Conditions, metav1.Condition{
 		Type: operatorv1alpha1.ConditionApprovalConsumed, Status: metav1.ConditionTrue,
-		Reason: "DispatchCommitted", Message: "The exact plan was committed to one Apply Job dispatch",
+		Reason: string(operatorv1alpha1.ReasonDispatchCommitted), Message: "The exact plan was committed to one Apply Job dispatch",
 		ObservedGeneration: approval.Generation, LastTransitionTime: metav1.NewTime(r.now()),
 	})
 	if err := r.Client.Status().Patch(ctx, approval, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -2961,9 +3101,9 @@ func (r *SchemaReconciler) approvalBecameInvalid(ctx context.Context, schema *op
 	}
 	schema.Status.ActiveOperation = nil
 	schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
-	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "ApprovalRevoked", "The recorded approval is missing, replaced, or no longer matches the current plan")
-	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, "ApprovalRevoked", "No Apply Job was started with the invalid approval")
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "AwaitingApproval", "The current plan requires a new approval")
+	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, operatorv1alpha1.ReasonApprovalRevoked, "The recorded approval is missing, replaced, or no longer matches the current plan")
+	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonApprovalRevoked, "No Apply Job was started with the invalid approval")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonAwaitingApproval, "The current plan requires a new approval")
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -2986,7 +3126,7 @@ func (r *SchemaReconciler) approvalBecameInvalid(ctx context.Context, schema *op
 	return requeueAtDeadline(schema.Status.NextReconciliationTime, r.now()), nil
 }
 
-func (r *SchemaReconciler) waitBlocked(ctx context.Context, schema *operatorv1alpha1.PtahSchema, reason, message string) (ctrl.Result, error) {
+func (r *SchemaReconciler) waitBlocked(ctx context.Context, schema *operatorv1alpha1.PtahSchema, reason operatorv1alpha1.ConditionReason, message string) (ctrl.Result, error) {
 	before := schema.DeepCopy()
 	now := r.now()
 	next := metav1.NewTime(now.Add(interval(schema)))
@@ -3281,8 +3421,8 @@ func (r *SchemaReconciler) acquirePendingLock(
 	if pending.LeaseEpoch == "" || pending.LeaseEpoch != epoch || continuityLost {
 		pending.Outcome = operatorv1alpha1.PendingObservationOutcomeUnknown
 		pending.PlanRequired = false
-		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "LeaseContinuityLost", "Convergence proof restarted after the database lock epoch changed")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "LeaseContinuityLost", "A fresh observation is required after lock continuity was lost")
+		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonLeaseContinuityLost, "Convergence proof restarted after the database lock epoch changed")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonLeaseContinuityLost, "A fresh observation is required after lock continuity was lost")
 	}
 	pending.LeaseEpoch = epoch
 	if err := r.patchStatus(ctx, before, schema); err != nil {
@@ -3343,8 +3483,8 @@ func (r *SchemaReconciler) acquireActiveLock(
 		pending.LeaseEpoch = epoch
 	}
 	if continuityLost {
-		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "LeaseContinuityLost", "The operation result is invalid because the database lock epoch changed")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "LeaseContinuityLost", "A fresh observation is required after lock continuity was lost")
+		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonLeaseContinuityLost, "The operation result is invalid because the database lock epoch changed")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonLeaseContinuityLost, "A fresh observation is required after lock continuity was lost")
 	}
 	if err := r.patchStatus(ctx, before, schema); err != nil {
 		return false, 0, err
@@ -3508,6 +3648,15 @@ func (r *SchemaReconciler) pendingLockRequest(schema *operatorv1alpha1.PtahSchem
 }
 
 func (r *SchemaReconciler) patchStatus(ctx context.Context, before, after *operatorv1alpha1.PtahSchema) error {
+	if databaseEngineSupported(after.Spec.Target.Engine) {
+		setCondition(
+			after,
+			operatorv1alpha1.ConditionEngineSupported,
+			metav1.ConditionTrue,
+			operatorv1alpha1.ReasonSupportedEngine,
+			fmt.Sprintf("Database engine %q is supported", after.Spec.Target.Engine),
+		)
+	}
 	if reflect.DeepEqual(before.Status, after.Status) {
 		return nil
 	}
@@ -3540,7 +3689,7 @@ func (r *SchemaReconciler) observeStatusTransitions(before, after *operatorv1alp
 	if planInvalidated(before.Status.Plan, after.Status.Plan) {
 		r.event(after, corev1.EventTypeWarning, "PlanStale", "The immutable plan became stale and will not be applied")
 	}
-	if conditionBecame(before.Status.Conditions, after.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, "PolicyChanged") {
+	if conditionBecame(before.Status.Conditions, after.Status.Conditions, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionFalse, string(operatorv1alpha1.ReasonPolicyChanged)) {
 		r.event(after, corev1.EventTypeWarning, "VerificationPolicyInvalidated", "Verification policy no longer matches the plan; artifact and plan verification were invalidated")
 	}
 }
@@ -3730,10 +3879,7 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 		severity := schema.Spec.Policy.DriftSeverity
 		connectTimeout := schema.Spec.Execution.ConnectTimeout
 		lockTimeout := schema.Spec.Policy.LockTimeout
-		coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(string(schema.Spec.Target.Engine), schema.Spec.Target.CoordinationKey)
-		if err != nil {
-			return nil, fmt.Errorf("derive database coordination digest: %w", err)
-		}
+		var coordinationDigest string
 		if pending := schema.Status.PendingObservation; pending != nil {
 			base["generation"] = pending.ApplyGeneration
 			target = pending.Target
@@ -3747,6 +3893,11 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 			base["artifact_digest"] = pending.Source.Digest
 			base["source_access"] = pending.Source
 		} else {
+			var err error
+			coordinationDigest, err = fingerprint.DatabaseCoordinationDigest(string(schema.Spec.Target.Engine), schema.Spec.Target.CoordinationKey)
+			if err != nil {
+				return nil, fmt.Errorf("derive database coordination digest: %w", err)
+			}
 			if !schema.Status.Source.Verified {
 				return nil, fmt.Errorf("verified artifact is required before observation")
 			}
@@ -3934,20 +4085,20 @@ func setPlanPolicyStatus(schema *operatorv1alpha1.PtahSchema, plan *operatorv1al
 	switch {
 	case plan.Spec.Destructive && !schema.Spec.Policy.AllowDestructive:
 		schema.Status.Phase = operatorv1alpha1.PhaseBlocked
-		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "DestructiveChangesDisabled", "Plan contains destructive changes and policy disallows them")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "PolicyBlocked", "Plan is blocked by destructive-change policy")
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonDestructiveChangesDisabled, "Plan contains destructive changes and policy disallows them")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyBlocked, "Plan is blocked by destructive-change policy")
 	case schema.Spec.Policy.Apply == operatorv1alpha1.ApplyPolicyNever:
 		schema.Status.Phase = operatorv1alpha1.PhaseBlocked
-		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "ApplyDisabled", "Policy records plans but does not apply them")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ApplyDisabled", "Plan is ready but apply is disabled")
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonApplyDisabled, "Policy records plans but does not apply them")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonApplyDisabled, "Plan is ready but apply is disabled")
 	case planRequiresApproval(schema, plan):
 		schema.Status.Phase = operatorv1alpha1.PhaseAwaitingApproval
-		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, "PlanReady", "An exact immutable plan is ready for approval")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "AwaitingApproval", "Plan is waiting for approval")
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionTrue, operatorv1alpha1.ReasonPlanReady, "An exact immutable plan is ready for approval")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonAwaitingApproval, "Plan is waiting for approval")
 	default:
 		schema.Status.Phase = operatorv1alpha1.PhaseReadyToApply
-		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "NotRequired", "Policy permits this non-destructive plan without a separate approval")
-		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ApplyPending", "The exact plan is ready to apply automatically")
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonNotRequired, "Policy permits this non-destructive plan without a separate approval")
+		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonApplyPending, "The exact plan is ready to apply automatically")
 	}
 }
 
@@ -4183,9 +4334,9 @@ func validatePodIntent(
 	return nil
 }
 
-func setCondition(schema *operatorv1alpha1.PtahSchema, conditionType string, status metav1.ConditionStatus, reason, message string) {
+func setCondition(schema *operatorv1alpha1.PtahSchema, conditionType string, status metav1.ConditionStatus, reason operatorv1alpha1.ConditionReason, message string) {
 	meta.SetStatusCondition(&schema.Status.Conditions, metav1.Condition{
-		Type: conditionType, Status: status, Reason: reason, Message: bounded(message, 1024),
+		Type: conditionType, Status: status, Reason: string(reason), Message: bounded(message, 1024),
 		ObservedGeneration: schema.Generation, LastTransitionTime: metav1.Now(),
 	})
 }
@@ -4194,53 +4345,53 @@ func markSourceRefreshPending(schema *operatorv1alpha1.PtahSchema) {
 	if schema.Status.Source.Digest == "" {
 		return
 	}
-	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, "Refreshing", "Refreshing the requested OCI reference; the retained digest remains historical evidence")
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, "SourceRefreshPending", "Plan currentness is unknown until source refresh and read-only reconciliation complete")
-	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "SourceRefreshPending", "Convergence is unknown until source refresh and read-only reconciliation complete")
+	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshing, "Refreshing the requested OCI reference; the retained digest remains historical evidence")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceRefreshPending, "Plan currentness is unknown until source refresh and read-only reconciliation complete")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceRefreshPending, "Convergence is unknown until source refresh and read-only reconciliation complete")
 }
 
 func markSourceRefreshFailed(schema *operatorv1alpha1.PtahSchema) {
 	if schema.Status.Source.Digest == "" {
-		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionFalse, "ResolveFailed", "The requested OCI reference could not be resolved")
-		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "SourceUnresolved", "No plan can be prepared until the requested OCI reference resolves")
-		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "SourceResolutionUnknown", "Convergence cannot be determined without a resolved source")
+		setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionFalse, operatorv1alpha1.ReasonResolveFailed, "The requested OCI reference could not be resolved")
+		setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSourceUnresolved, "No plan can be prepared until the requested OCI reference resolves")
+		setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceResolutionUnknown, "Convergence cannot be determined without a resolved source")
 		return
 	}
-	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, "RefreshFailed", "The requested OCI reference could not be refreshed; the retained digest remains historical evidence")
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, "SourceFreshnessUnknown", "Plan currentness is unknown because source freshness could not be established")
-	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "SourceFreshnessUnknown", "Convergence is unknown because source freshness could not be established")
+	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshFailed, "The requested OCI reference could not be refreshed; the retained digest remains historical evidence")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceFreshnessUnknown, "Plan currentness is unknown because source freshness could not be established")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceFreshnessUnknown, "Convergence is unknown because source freshness could not be established")
 }
 
 func markSourceRefreshSuspended(schema *operatorv1alpha1.PtahSchema) {
 	if schema.Status.Source.Digest == "" {
 		return
 	}
-	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, "RefreshSuspended", "Source refresh was suspended before dispatch; the retained digest remains historical evidence")
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, "SourceFreshnessUnknown", "Plan currentness is unknown because source refresh was suspended")
-	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "SourceFreshnessUnknown", "Convergence is unknown because source refresh was suspended")
+	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonRefreshSuspended, "Source refresh was suspended before dispatch; the retained digest remains historical evidence")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceFreshnessUnknown, "Plan currentness is unknown because source refresh was suspended")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonSourceFreshnessUnknown, "Convergence is unknown because source refresh was suspended")
 }
 
 func markExecutionBindingRefreshRequired(schema *operatorv1alpha1.PtahSchema) {
 	schema.Status.Source.Verified = false
 	schema.Status.Source.VerifiedAt = nil
-	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, "ExecutionBindingChanged", "The retained digest must be refreshed under the current execution binding")
-	setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionUnknown, "ExecutionBindingChanged", "The retained verification is historical evidence from the previous execution binding")
-	setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionUnknown, "ExecutionBindingChanged", "The retained target observation is historical evidence from the previous execution binding")
-	setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, "ExecutionBindingChanged", "Managed drift must be observed and planned under the current execution binding")
-	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, "ExecutionBindingChanged", "The previous plan is not valid under the current execution binding")
-	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, "ExecutionBindingChanged", "Any approval for the previous execution binding is stale")
-	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, "ExecutionBindingChanged", "Convergence must be verified under the current execution binding")
-	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, "ExecutionBindingChanged", "No Apply operation is authorized under the previous execution binding")
-	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, "ExecutionBindingChanged", "A complete read-only reconciliation is required under the current execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionArtifactResolved, metav1.ConditionUnknown, operatorv1alpha1.ReasonExecutionBindingChanged, "The retained digest must be refreshed under the current execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionArtifactVerified, metav1.ConditionUnknown, operatorv1alpha1.ReasonExecutionBindingChanged, "The retained verification is historical evidence from the previous execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionDatabaseReachable, metav1.ConditionUnknown, operatorv1alpha1.ReasonExecutionBindingChanged, "The retained target observation is historical evidence from the previous execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionUnknown, operatorv1alpha1.ReasonExecutionBindingChanged, "Managed drift must be observed and planned under the current execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "The previous plan is not valid under the current execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "Any approval for the previous execution binding is stale")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionUnknown, operatorv1alpha1.ReasonExecutionBindingChanged, "Convergence must be verified under the current execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "No Apply operation is authorized under the previous execution binding")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "A complete read-only reconciliation is required under the current execution binding")
 }
 
-func setFailure(schema *operatorv1alpha1.PtahSchema, reason string, failure error) {
+func setFailure(schema *operatorv1alpha1.PtahSchema, reason operatorv1alpha1.ConditionReason, failure error) {
 	setCondition(schema, operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionTrue, reason, bounded(failure.Error(), 1024))
 	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, reason, "Reconciliation did not complete")
 }
 
 func clearFailure(schema *operatorv1alpha1.PtahSchema) {
-	setCondition(schema, operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionFalse, "Succeeded", "The latest operation completed")
+	setCondition(schema, operatorv1alpha1.ConditionReconciliationFailed, metav1.ConditionFalse, operatorv1alpha1.ReasonSucceeded, "The latest operation completed")
 }
 
 func bounded(value string, limit int) string {

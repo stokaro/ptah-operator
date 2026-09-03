@@ -59,8 +59,10 @@ parent. CI refuses a missing or invalid baseline. Locally, uncommitted generated
 changes compare with `HEAD`, while a clean just-committed tree compares with
 `HEAD^`; `CRD_SCHEMA_BASELINE_REF` selects an explicit baseline and
 `CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE=true` disables that local convenience.
-The sole initial transition accepts a complete baseline carrying neither owned
-annotation only when the candidate set has shared schema version 1.
+The sole initial transition accepts either a repository baseline with no CRD
+files or a complete baseline carrying neither owned annotation, and only when
+the candidate is the complete generated set at shared schema version 1. A
+partial baseline remains a set-integrity failure rather than a bootstrap.
 
 A missing version or digest is accepted only when the live normalized CRD
 `spec` already matches the candidate exactly; the hook then performs an
@@ -470,6 +472,19 @@ kubectl -n <namespace> get ptahschema <name> -o yaml
 kubectl -n <namespace> get ptahschemaplan
 kubectl -n <namespace> get events --field-selector involvedObject.name=<name>
 ```
+
+The complete stable condition-reason vocabulary is cataloged in
+[Condition reasons](condition-reasons.md). Automation should compare the
+`type`, `status`, and `reason` tuple and require `observedGeneration` to match
+the resource generation; condition messages are diagnostic text, not an API.
+
+`EngineSupported=False` with reason `UnsupportedEngine` is an explicit
+non-authorizing state, not a reconciliation crash. It creates no operation Job,
+plan, or approval and does not read the database credential. The controller
+finishes any already-dispatched Apply and its mandatory read-only proof before
+entering that state, while an undispatched Apply claim loses authorization
+without creating a Job. Selecting a supported engine later starts again at
+Resolve rather than reusing the old plan or approval.
 
 `Ready=True` and `InSync=True` mean a read-only observation matched the verified
 artifact. They are not inferred from an apply exit code. `ReadyToApply` means

@@ -173,7 +173,8 @@ export E2E_PTAH_VERSION=predecessor-values-proof
 eval "$release_values_section"
 render_release_values "$PREDECESSOR_VALUES_FIXTURE" predecessor.invalid/operator old ""
 render_release_values "$CANDIDATE_VALUES_FIXTURE" candidate.invalid/operator new \
-	sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+	sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+	candidate-registry-pull
 jq -e '
   .image.repository == "predecessor.invalid/operator" and
   .image.tag == "old" and
@@ -185,9 +186,13 @@ jq -e '
 jq -e '
   .image.repository == "candidate.invalid/operator" and
   .image.tag == "new" and
-  .image.testIdentityDigest == "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  .image.digest == "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" and
+  .image.allowMutableTag == false and
+  .image.pullPolicy == "IfNotPresent" and
+  .imagePullSecrets == [{name: "candidate-registry-pull"}] and
+  (.image | has("testIdentityDigest") | not)
 ' "$CANDIDATE_VALUES_FIXTURE" >/dev/null || {
-	printf '%s\n' 'e2e static: candidate values lost the exact test image identity' >&2
+	printf '%s\n' 'e2e static: candidate values lost the production digest-pinned image contract' >&2
 	exit 1
 }
 
@@ -3925,6 +3930,55 @@ for rbac_render in "$DEFAULT_RBAC_RENDER" "$SHARED_RBAC_RENDER"; do
 		printf 'e2e static: %s manager Lease verbs are not exact\n' "$rbac_render" >&2
 		exit 1
 	}
+	ptahschema_verbs=$(awk '
+      /^kind: ClusterRole$/ {cluster_role = 1; next}
+      cluster_role && /^---$/ {exit}
+      cluster_role && /resources: \["ptahschemas"\]/ {
+        if (getline > 0) print
+        exit
+      }
+    ' "$rbac_render" | tr -d '[:space:]')
+	[ "$ptahschema_verbs" = 'verbs:["get","list","watch","patch"]' ] || {
+		printf 'e2e static: %s main PtahSchema verbs are not exact guarded patch access\n' "$rbac_render" >&2
+		exit 1
+	}
+	for admission_read_contract in \
+		'serviceaccounts verbs:["get"]' \
+		'limitranges verbs:["list"]'; do
+		admission_resource=${admission_read_contract%% *}
+		admission_verbs=${admission_read_contract#* }
+		if ! awk -v resource="$admission_resource" -v verbs="$admission_verbs" '
+          /^kind: ClusterRole$/ {cluster_role = 1; next}
+          cluster_role && /^---$/ {exit}
+          cluster_role && index($0, "resources: [\"" resource "\"]") {
+            if (getline > 0) {
+              compact = $0
+              gsub(/[[:space:]]/, "", compact)
+              if (compact == verbs) found = 1
+            }
+          }
+          END {exit found ? 0 : 1}
+        ' "$rbac_render"; then
+			printf 'e2e static: %s controller ClusterRole lacks exact %s %s admission access\n' \
+				"$rbac_render" "$admission_resource" "$admission_verbs" >&2
+			exit 1
+		fi
+	done
+done
+
+# shellcheck disable=SC2016 # Match literal impersonation variables in the live proof.
+for controller_write_live_marker in \
+	'prove_controller_write_guard' \
+	'--as-user-extra "authentication.kubernetes.io/pod-name=$CONTROLLER_IMPERSONATION_POD_NAME"' \
+	'--as-user-extra "authentication.kubernetes.io/pod-uid=$CONTROLLER_IMPERSONATION_POD_UID"' \
+	'expect_controller_write_denial spec' \
+	'expect_controller_write_denial labels' \
+	'expect_controller_write_denial annotations' \
+	'expect_controller_write_denial ownerReferences' \
+	"expect_controller_write_denial 'a foreign finalizer'" \
+	'operator.ptah.dev/active-operation' \
+	'controller desired-state write boundary proof passed'; do
+	grep -F -- "$controller_write_live_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
 done
 
 default_role_namespace=$(awk '
@@ -4251,6 +4305,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/hook-identity-guard.yaml \
 	--show-only templates/namespace-guard.yaml \
+	--show-only templates/controller-write-guard.yaml \
 	--show-only templates/parent-workload-guard.yaml \
 	--show-only templates/rollout-guard.yaml \
 	--show-only templates/runtime-pod-guard.yaml \
@@ -4475,6 +4530,35 @@ for runtime_pod_guard_marker in \
 	'parameterNotFoundAction: Deny'; do
 	grep -F -- "$runtime_pod_guard_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
 done
+controller_write_guard_name=$(awk '
+  $1 == "name:" && $2 ~ /^ptah-operator-controller-write-guard-v1-/ {print $2}
+' "$ROLLOUT_GUARD_RENDER" | sort -u)
+[ "$(printf '%s\n' "$controller_write_guard_name" | grep -c .)" -eq 1 ] || {
+	printf '%s\n' 'e2e static: rendered controller write boundary lacks one stable guard identity' >&2
+	exit 1
+}
+[ "$(grep -Fxc -- "  name: $controller_write_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 2 ] || {
+	printf '%s\n' 'e2e static: controller write guard does not have one policy and binding' >&2
+	exit 1
+}
+[ "$(grep -Fxc -- "  policyName: $controller_write_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 1 ] || {
+	printf '%s\n' 'e2e static: controller write binding does not target its exact policy' >&2
+	exit 1
+}
+[ "$(grep -Fxc -- "      - $controller_write_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
+	printf '%s\n' 'e2e static: runtime, rotator, upgrade, and teardown RBAC do not share the exact controller write guard' >&2
+	exit 1
+}
+for controller_write_marker in \
+	'helm.sh/hook-weight: "-158"' \
+	'helm.sh/hook-weight: "-157"' \
+	'request.userInfo.username == \"system:serviceaccount:ptah-e2e:ptah-e2e-ptah-operator\"' \
+	'object.spec == oldObject.spec' \
+	'object.status == oldObject.status' \
+	'operator.ptah.dev/active-operation' \
+	'Ptah controller write guard rejected a desired-state mutation'; do
+	grep -F -- "$controller_write_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
+done
 parent_guard_names=$(awk '
   $1 == "name:" &&
     ($2 ~ /^ptah-operator-runtime-parent-guard-/ ||
@@ -4550,7 +4634,7 @@ done
 	PTAH_PRIVILEGE_RENDER="$CRD_FULL_RENDER" \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
-		-run '^(TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
+		-run '^(TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_EXTERNAL_CERT_RENDER" \
 	PTAH_TEARDOWN_CERTIFICATE_RUNTIME_ENABLED=false \
@@ -4718,16 +4802,26 @@ grep -F "operator source revision must be an exact 40-character lowercase Git co
 # shellcheck disable=SC2016 # Match the literal variable passed to both Docker builds.
 controller_revision_build_arg='--build-arg "REVISION=$CONTROLLER_REVISION"'
 [ "$(grep -Fc -- "$controller_revision_build_arg" "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ]
-# shellcheck disable=SC2016 # Match literal runtime Docker identity expressions.
-grep -F -- '--format '"'"'{{.Id}}'"'"' "$OPERATOR_IMAGE"' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
-grep -F 'operator image identity must be an exact lowercase sha256 Docker image ID' \
+# shellcheck disable=SC2016 # Match the registry digest passed to the packaged candidate values.
+grep -F -- '"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET"' \
 	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
-# shellcheck disable=SC2016 # Match the literal identity passed to the packaged candidate values.
-grep -F -- '"$CANDIDATE_VALUES_FILE" "$IMAGE_REPOSITORY" "$IMAGE_TAG" "$OPERATOR_IDENTITY_DIGEST"' \
+# shellcheck disable=SC2016 # Match the literal candidate push expression.
+grep -F 'push_task_image "$OPERATOR_IMAGE" ptah-operator' \
+	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
+# shellcheck disable=SC2016 # Reject the literal test-only candidate load expression.
+if grep -F 'kind load docker-image "$OPERATOR_IMAGE"' \
+	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null; then
+	printf '%s\n' 'e2e static: candidate manager can bypass the authenticated registry pull' >&2
+	exit 1
+fi
+grep -F 'type: "kubernetes.io/dockerconfigjson"' \
+	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
+# shellcheck disable=SC2016 # Match the literal pull-secret apply pipeline.
+grep -F '| kubectl --kubeconfig "$KUBECONFIG_FILE" apply -f - >/dev/null' \
 	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 # shellcheck disable=SC2016 # Match literal runtime controller identity expressions.
 for controller_identity_assignment in \
-	'E2E_CONTROLLER_IMAGE="${IMAGE_REPOSITORY}@${OPERATOR_IDENTITY_DIGEST}"' \
+	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE' \
 	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION' \
 	'E2E_CONTROLLER_STATE_VERSION=1'; do
 	[ "$(grep -Fc -- "$controller_identity_assignment" "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ]

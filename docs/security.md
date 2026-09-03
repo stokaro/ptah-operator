@@ -13,6 +13,14 @@ The operator separates four authorities:
 4. A Job receives only the credentials needed for its fixed operation through
    same-namespace Secret selectors resolved by the kubelet.
 
+Start namespace-scoped bindings from the
+[desired-state author](../examples/desired-state-author-role.yaml) and
+[diagnostic reader](../examples/diagnostic-reader-role.yaml) examples. The
+chart's optional approver ClusterRole remains unbound, so these three human
+permission sets can be assigned to different identities. Diagnostic access
+deliberately excludes Secrets and plan-chunk ConfigMaps; grant exact plan-chunk
+access separately for an approver reviewing one immutable plan.
+
 Database-operation Pods disable service-account token mounting and service-link
 environment injection. Every container runs as non-root with a read-only root
 filesystem, `RuntimeDefault` seccomp, no Linux capabilities, no privilege
@@ -28,6 +36,14 @@ post-mutation Pod before scheduling. Only the exact snapshotted mutations are
 accepted; executable, environment, volume, and security fields remain exact.
 The controller retains read-only Pod evidence permissions and is not granted
 Pod create or delete permission.
+
+Because the manager watches `PtahSchema` across namespaces and each operation
+runs in its resource's namespace, the controller has cluster-wide `get` on ServiceAccounts
+and `list` on LimitRanges. It has no ServiceAccount `list` or `watch`, no
+LimitRange `get` or `watch`, and no write verb for either resource. This is the
+minimum Kubernetes RBAC shape that permits resolving an arbitrary named
+ServiceAccount and the namespace-wide LimitRange admission set without reading
+Secret data.
 
 Memory-backed `emptyDir` usage is charged to the writing container by
 Kubernetes. The chart defaults bound each volume, but production resource

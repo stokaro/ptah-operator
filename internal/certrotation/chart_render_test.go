@@ -84,6 +84,7 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		"ptah-operator-hook-probe-guard-v1-90a0385b562b",
 		"ptah-operator-release-activation-guard-v1-f1e165dcd72a",
 		"ptah-operator-service-account-origin-guard-v1-f1e165dcd72a",
+		"ptah-operator-controller-write-guard-v1-f1e165dcd72a",
 		"ptah-operator-runtime-parent-guard-v1-f1e165dcd72a",
 		"ptah-operator-hook-pod-origin-guard-v1-f1e165dcd72a",
 		"ptah-operator-hook-parent-origin-guard-v1-f1e165dcd72a",

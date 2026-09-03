@@ -306,6 +306,233 @@ func TestInitialExecutionBindingIsDurableBeforeOperationClaim(t *testing.T) {
 	}
 }
 
+func TestUnsupportedEnginePersistsExplicitStatusWithoutCreatingWork(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Spec.Target.Engine = "SQLite"
+	schema.Generation++
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	result, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("reconcile unsupported engine: %v", err)
+	}
+	if !result.Requeue {
+		t.Fatalf("unsupported-engine fence result = %#v, want immediate cleanup pass", result)
+	}
+	actual := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), request.NamespacedName, actual); err != nil {
+		t.Fatal(err)
+	}
+	engine := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionEngineSupported)
+	ready := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReady)
+	if actual.Status.Phase != operatorv1alpha1.PhaseBlocked ||
+		actual.Status.ObservedGeneration != actual.Generation ||
+		actual.Status.ActiveOperation != nil || actual.Status.Plan != nil ||
+		engine == nil || engine.Status != metav1.ConditionFalse ||
+		engine.Reason != string(operatorv1alpha1.ReasonUnsupportedEngine) ||
+		engine.ObservedGeneration != actual.Generation ||
+		ready == nil || ready.Status != metav1.ConditionFalse ||
+		ready.Reason != string(operatorv1alpha1.ReasonUnsupportedEngine) ||
+		ready.ObservedGeneration != actual.Generation {
+		t.Fatalf("unsupported-engine status = %#v", actual.Status)
+	}
+	if len(actual.Finalizers) != 0 {
+		t.Fatalf("unsupported engine acquired operation finalizers: %#v", actual.Finalizers)
+	}
+	assertNoSchemaWork(t, api, actual)
+
+	result, err = reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("reconcile stable unsupported engine: %v", err)
+	}
+	if result.Requeue || result.RequeueAfter != 0 {
+		t.Fatalf("stable unsupported-engine result = %#v, want event-driven wait", result)
+	}
+	assertNoSchemaWork(t, api, actual)
+}
+
+func TestUnsupportedEngineFencesApprovalThenResumesWithFreshResolution(t *testing.T) {
+	t.Parallel()
+
+	schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+	schema.Spec.Target.Engine = "SQLite"
+	schema.Generation++
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, approval, policyConfig)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("persist unsupported-engine approval fence: %v", err)
+	}
+	fenced := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), request.NamespacedName, fenced); err != nil {
+		t.Fatal(err)
+	}
+	if fenced.Status.Plan == nil || fenced.Status.Phase != operatorv1alpha1.PhaseBlocked ||
+		!conditionMatches(
+			fenced.Status.Conditions,
+			operatorv1alpha1.ConditionApprovalRequired,
+			metav1.ConditionFalse,
+			operatorv1alpha1.ReasonUnsupportedEngine,
+		) {
+		t.Fatalf("unsupported engine did not close approval admission before cleanup: %#v", fenced.Status)
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("retire approval for unsupported engine: %v", err)
+	}
+	staleApproval := &operatorv1alpha1.PtahSchemaApproval{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(approval), staleApproval); err != nil {
+		t.Fatal(err)
+	}
+	if !conditionMatches(
+		staleApproval.Status.Conditions,
+		operatorv1alpha1.ConditionApprovalStale,
+		metav1.ConditionTrue,
+		operatorv1alpha1.ReasonUnsupportedEngine,
+	) || !conditionMatches(
+		staleApproval.Status.Conditions,
+		operatorv1alpha1.ConditionApprovalAccepted,
+		metav1.ConditionFalse,
+		operatorv1alpha1.ReasonUnsupportedEngine,
+	) {
+		t.Fatalf("unsupported engine did not retire matching approval: %#v", staleApproval.Status)
+	}
+	cleanupPending := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), request.NamespacedName, cleanupPending); err != nil {
+		t.Fatal(err)
+	}
+	if cleanupPending.Status.Plan == nil {
+		t.Fatal("unsupported engine cleared the plan identity before bounded approval cleanup completed")
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("clear retired plan for unsupported engine: %v", err)
+	}
+	retired := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), request.NamespacedName, retired); err != nil {
+		t.Fatal(err)
+	}
+	if retired.Status.Plan != nil || retired.Status.ActiveOperation != nil {
+		t.Fatalf("unsupported engine retained executable state: %#v", retired.Status)
+	}
+	assertNoSchemaJobs(t, api, retired)
+
+	lateApproval := approval.DeepCopy()
+	lateApproval.Name = "late-old-plan-approval"
+	lateApproval.UID = "late-old-plan-approval-uid"
+	lateApproval.ResourceVersion = ""
+	lateApproval.Status = operatorv1alpha1.PtahSchemaApprovalStatus{}
+	if err := api.Create(context.Background(), lateApproval); err != nil {
+		t.Fatalf("create approval that crossed the engine fence: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("retire approval committed after plan cleanup: %v", err)
+	}
+	staleLateApproval := &operatorv1alpha1.PtahSchemaApproval{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(lateApproval), staleLateApproval); err != nil {
+		t.Fatal(err)
+	}
+	if !conditionMatches(
+		staleLateApproval.Status.Conditions,
+		operatorv1alpha1.ConditionApprovalStale,
+		metav1.ConditionTrue,
+		operatorv1alpha1.ReasonUnsupportedEngine,
+	) {
+		t.Fatalf("late old-plan approval was not retired without a plan pointer: %#v", staleLateApproval.Status)
+	}
+	if err := api.Get(context.Background(), request.NamespacedName, retired); err != nil {
+		t.Fatal(err)
+	}
+
+	retired.Spec.Target.Engine = operatorv1alpha1.DatabaseEngineMySQL
+	retired.Generation++
+	if err := api.Update(context.Background(), retired); err != nil {
+		t.Fatalf("restore a supported engine: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("persist restored engine support: %v", err)
+	}
+	restored := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), request.NamespacedName, restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Status.ActiveOperation != nil || !conditionMatches(
+		restored.Status.Conditions,
+		operatorv1alpha1.ConditionEngineSupported,
+		metav1.ConditionTrue,
+		operatorv1alpha1.ReasonSupportedEngine,
+	) {
+		t.Fatalf("restored engine support was not a durable boundary: %#v", restored.Status)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("start fresh reconciliation after restoring engine support: %v", err)
+	}
+	refreshing := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), request.NamespacedName, refreshing); err != nil {
+		t.Fatal(err)
+	}
+	if refreshing.Status.ActiveOperation == nil ||
+		refreshing.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+		refreshing.Status.Plan != nil {
+		t.Fatalf("restored engine did not restart from Resolve: %#v", refreshing.Status)
+	}
+	assertNoSchemaJobs(t, api, refreshing)
+}
+
+func TestUnsupportedEngineCannotDispatchClaimedApply(t *testing.T) {
+	t.Parallel()
+
+	schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+	schema.Status.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{
+		Name: approval.Name, UID: approval.UID,
+		Approver: approval.Spec.Approver, ApprovedAt: approval.Spec.ApprovedAt,
+	}
+	schema.Status.Phase = operatorv1alpha1.PhaseApplying
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationApply, ID: "claimed-apply", JobName: "claimed-apply-job",
+		StartedAt: metav1.NewTime(time.Date(2026, 8, 30, 11, 59, 0, 0, time.UTC)), Attempt: 1,
+	}
+	controllerutil.AddFinalizer(schema, activeOperationFinalizer)
+	bindActiveInput(t, schema)
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, plan, approval, policyConfig)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	changed := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), request.NamespacedName, changed); err != nil {
+		t.Fatal(err)
+	}
+	changed.Spec.Target.Engine = "SQLite"
+	changed.Generation++
+	if err := api.Update(context.Background(), changed); err != nil {
+		t.Fatalf("change target engine after Apply claim: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("retire Apply claim after engine change: %v", err)
+	}
+	retired := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), request.NamespacedName, retired); err != nil {
+		t.Fatal(err)
+	}
+	if retired.Status.ActiveOperation != nil || retired.Status.Plan != nil {
+		t.Fatalf("engine change retained an undispatched Apply authorization: %#v", retired.Status)
+	}
+	assertNoSchemaJobs(t, api, retired)
+	staleApproval := &operatorv1alpha1.PtahSchemaApproval{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(approval), staleApproval); err != nil {
+		t.Fatal(err)
+	}
+	if !conditionMatches(
+		staleApproval.Status.Conditions,
+		operatorv1alpha1.ConditionApprovalStale,
+		metav1.ConditionTrue,
+		operatorv1alpha1.ReasonPlanNoLongerCurrent,
+	) {
+		t.Fatalf("engine change retained a dispatchable approval: %#v", staleApproval.Status)
+	}
+}
+
 func TestStoredExecutionBindingWithoutManagerIdentityFailsClosed(t *testing.T) {
 	t.Parallel()
 
@@ -1530,6 +1757,77 @@ func TestPostApplyObserveClaimPreservesConvergencePhase(t *testing.T) {
 	}
 }
 
+func TestPostApplyProofUsesImmutableTargetBeforeBlockingUnsupportedEngine(t *testing.T) {
+	t.Parallel()
+
+	schema := safetyPostApplyObserveSchema(t)
+	schema.Status.ActiveOperation = nil
+	schema.Spec.Target.Engine = "SQLite"
+	schema.Generation++
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("claim immutable post-Apply observation: %v", err)
+	}
+	observing := safetyGetSchema(t, api, schema)
+	if observing.Status.ActiveOperation == nil ||
+		observing.Status.ActiveOperation.Type != operatorv1alpha1.OperationObserve ||
+		observing.Status.ActiveOperation.Target == nil ||
+		observing.Status.ActiveOperation.Target.Engine != operatorv1alpha1.DatabaseEnginePostgreSQL {
+		t.Fatalf("post-Apply observation did not retain its PostgreSQL target: %#v", observing.Status)
+	}
+	if _, err := reconciler.consumeResult(context.Background(), observing, nil, runner.Result{
+		Operation:            runner.OperationObserve,
+		CoordinationDigest:   observing.Status.PendingObservation.CoordinationDigest,
+		TargetIdentityDigest: observing.Status.PendingObservation.Plan.TargetIdentityDigest,
+		DriftReportDigest:    testDigest,
+		ObservedDialect:      "postgresql",
+	}, nil, 0); err != nil {
+		t.Fatalf("complete immutable post-Apply observation: %v", err)
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("claim immutable post-Apply plan: %v", err)
+	}
+	planning := safetyGetSchema(t, api, schema)
+	if planning.Status.ActiveOperation == nil ||
+		planning.Status.ActiveOperation.Type != operatorv1alpha1.OperationPlan ||
+		planning.Status.ActiveOperation.Target == nil ||
+		planning.Status.ActiveOperation.Target.Engine != operatorv1alpha1.DatabaseEnginePostgreSQL {
+		t.Fatalf("post-Apply plan did not retain its PostgreSQL target: %#v", planning.Status)
+	}
+	if _, err := reconciler.consumeResult(context.Background(), planning, nil, runner.Result{
+		Operation:            runner.OperationPlan,
+		CoordinationDigest:   planning.Status.PendingObservation.CoordinationDigest,
+		TargetIdentityDigest: planning.Status.PendingObservation.Plan.TargetIdentityDigest,
+		PlanOutcome:          runner.PlanOutcomeNoChanges,
+	}, nil, 0); err != nil {
+		t.Fatalf("complete immutable post-Apply plan: %v", err)
+	}
+	proved := safetyGetSchema(t, api, schema)
+	if proved.Status.ActiveOperation != nil || proved.Status.PendingObservation != nil ||
+		proved.Status.Applied == nil || proved.Status.Applied.PlanFingerprint != "plan-fingerprint" {
+		t.Fatalf("post-Apply proof did not commit before the engine fence: %#v", proved.Status)
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("persist unsupported-engine fence after proof: %v", err)
+	}
+	blocked := safetyGetSchema(t, api, schema)
+	if blocked.Status.Phase != operatorv1alpha1.PhaseBlocked ||
+		blocked.Status.ObservedGeneration != blocked.Generation ||
+		!conditionMatches(
+			blocked.Status.Conditions,
+			operatorv1alpha1.ConditionEngineSupported,
+			metav1.ConditionFalse,
+			operatorv1alpha1.ReasonUnsupportedEngine,
+		) {
+		t.Fatalf("unsupported engine was not blocked after mandatory proof: %#v", blocked.Status)
+	}
+	assertNoSchemaJobs(t, api, blocked)
+}
+
 func TestAlwaysPolicyMakesSafePlanReadyWithoutClaimingApprovalIsRequired(t *testing.T) {
 	t.Parallel()
 
@@ -1760,6 +2058,13 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 				RunnerImage:           "example.invalid/operator@" + testDigest,
 				RunnerProtocolVersion: int32(runner.ProtocolVersion),
 			},
+			Conditions: []metav1.Condition{{
+				Type:               operatorv1alpha1.ConditionEngineSupported,
+				Status:             metav1.ConditionTrue,
+				Reason:             string(operatorv1alpha1.ReasonSupportedEngine),
+				Message:            "Database engine \"PostgreSQL\" is supported",
+				ObservedGeneration: 1,
+			}},
 		},
 	}
 }
@@ -2021,6 +2326,53 @@ func findCondition(conditions []metav1.Condition, conditionType string) *metav1.
 		}
 	}
 	return nil
+}
+
+func conditionMatches(
+	conditions []metav1.Condition,
+	conditionType string,
+	status metav1.ConditionStatus,
+	reason operatorv1alpha1.ConditionReason,
+) bool {
+	condition := findCondition(conditions, conditionType)
+	return condition != nil && condition.Status == status && condition.Reason == string(reason)
+}
+
+func assertNoSchemaWork(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema) {
+	t.Helper()
+	assertNoSchemaJobs(t, api, schema)
+
+	plans := &operatorv1alpha1.PtahSchemaPlanList{}
+	if err := api.List(context.Background(), plans, client.InNamespace(schema.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	for i := range plans.Items {
+		if plans.Items[i].Spec.SchemaRef.UID == schema.UID {
+			t.Fatalf("unsupported schema created plan %s", plans.Items[i].Name)
+		}
+	}
+	approvals := &operatorv1alpha1.PtahSchemaApprovalList{}
+	if err := api.List(context.Background(), approvals, client.InNamespace(schema.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	for i := range approvals.Items {
+		if approvals.Items[i].Spec.SchemaRef.UID == schema.UID {
+			t.Fatalf("unsupported schema created approval %s", approvals.Items[i].Name)
+		}
+	}
+}
+
+func assertNoSchemaJobs(t *testing.T, api client.Client, schema *operatorv1alpha1.PtahSchema) {
+	t.Helper()
+	jobs := &batchv1.JobList{}
+	if err := api.List(context.Background(), jobs, client.InNamespace(schema.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	for i := range jobs.Items {
+		if ownedByUID(jobs.Items[i].OwnerReferences, schema.UID) {
+			t.Fatalf("schema owns unexpected Job %s", jobs.Items[i].Name)
+		}
+	}
 }
 
 func bindActiveInput(t *testing.T, schema *operatorv1alpha1.PtahSchema) {

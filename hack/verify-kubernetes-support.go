@@ -42,6 +42,11 @@ const (
 	makefilePath        = "Makefile"
 	e2eHarnessPath      = "hack/e2e-kind.sh"
 	e2eDataPlanePath    = "hack/e2e-dataplane.sh"
+	e2eAssertPath       = "hack/e2e-assert.sh"
+	e2eCRDUpgradePath   = "hack/e2e-crd-upgrade.sh"
+	e2eFaultsPath       = "hack/e2e-faults.sh"
+	e2eHAPath           = "hack/e2e-ha.sh"
+	e2eCertRotationPath = "hack/e2e-cert-rotation.sh"
 
 	verificationMaxAgeDays = 35
 	// These digests make workflow policy changes explicit. Semantic checks keep
@@ -135,7 +140,16 @@ func main() {
 	if err := verifyDocumentation(docsPath, parsed); err != nil {
 		fatal(err)
 	}
-	if err := verifyE2EWiring(makefilePath, e2eHarnessPath, e2eDataPlanePath); err != nil {
+	if err := verifyE2EWiring(e2eWiringFiles{
+		makefile:         makefilePath,
+		harness:          e2eHarnessPath,
+		dataPlane:        e2eDataPlanePath,
+		assertions:       e2eAssertPath,
+		crdUpgrade:       e2eCRDUpgradePath,
+		faults:           e2eFaultsPath,
+		highAvailability: e2eHAPath,
+		certRotation:     e2eCertRotationPath,
+	}); err != nil {
 		fatal(err)
 	}
 
@@ -1114,11 +1128,35 @@ type sourceContractStep struct {
 	pattern *regexp.Regexp
 }
 
-func verifyE2EWiring(makefile, harness, dataPlane string) error {
-	if err := verifyMakeE2ETarget(makefile); err != nil {
+type e2eWiringFiles struct {
+	makefile         string
+	harness          string
+	dataPlane        string
+	assertions       string
+	crdUpgrade       string
+	faults           string
+	highAvailability string
+	certRotation     string
+}
+
+type lifecycleSourceContract struct {
+	path              string
+	exitTrap          string
+	steps             []sourceContractStep
+	successfulReturns []successfulReturnContract
+}
+
+type successfulReturnContract struct {
+	start      *regexp.Regexp
+	completion *regexp.Regexp
+}
+
+func verifyE2EWiring(files e2eWiringFiles) error {
+	if err := verifyMakeE2ETarget(files.makefile); err != nil {
 		return err
 	}
 
+	harness := files.harness
 	harnessContents, err := os.ReadFile(harness)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", harness, err)
@@ -1126,7 +1164,7 @@ func verifyE2EWiring(makefile, harness, dataPlane string) error {
 	if err := verifyShellScriptEntrypoint(harness, harnessContents); err != nil {
 		return err
 	}
-	if err := verifyFailurePreservingExitTrap(harness, harnessContents); err != nil {
+	if err := verifyFailurePreservingExitTrap(harness, harnessContents, "cleanup"); err != nil {
 		return err
 	}
 	harnessContract := []sourceContractStep{
@@ -1181,10 +1219,14 @@ func verifyE2EWiring(makefile, harness, dataPlane string) error {
 	if err := verifyOrderedSourceContract(harness, harnessContents, harnessContract); err != nil {
 		return err
 	}
+	if err := rejectStaticControlFlowBypass(harness, harnessContents, harnessContract[len(harnessContract)-1].pattern); err != nil {
+		return err
+	}
 	if err := rejectEarlySuccessfulExit(harness, harnessContents, harnessContract[len(harnessContract)-1].pattern); err != nil {
 		return err
 	}
 
+	dataPlane := files.dataPlane
 	dataPlaneContents, err := os.ReadFile(dataPlane)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", dataPlane, err)
@@ -1192,11 +1234,33 @@ func verifyE2EWiring(makefile, harness, dataPlane string) error {
 	if err := verifyShellScriptEntrypoint(dataPlane, dataPlaneContents); err != nil {
 		return err
 	}
-	if err := verifyFailurePreservingExitTrap(dataPlane, dataPlaneContents); err != nil {
+	if err := verifyFailurePreservingExitTrap(dataPlane, dataPlaneContents, "cleanup"); err != nil {
 		return err
 	}
 	dataPlaneContract := []sourceContractStep{
 		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLineSequence("safe-default persistence proof", []string{
+			`k -n "$TEST_NAMESPACE" get ptahschema "$resource_schema" -o json |`,
+			`jq -e '`,
+			`.spec.policy.apply == "OnApproval" and`,
+			`.spec.policy.allowDestructive == false`,
+			`' >/dev/null || fail "$resource_schema did not persist the safe apply-policy defaults"`,
+		}),
+		exactSourceLine("immutable plan-storage proof implementation", `assert_plan_storage_immutable() {`),
+		exactSourceLine("immutable plan-storage proof call", `assert_plan_storage_immutable "$plan_schema" "$CURRENT_PLAN" "$CURRENT_PLAN_UID"`),
+		exactSourceLine("external PostgreSQL lifecycle implementation", `run_external_postgresql_lifecycle() {`),
+		exactSourceLine("external OCI publication reference", `external_publish_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/postgresql-external:stable"`),
+		exactSourceLineSequence("external OCI publication", []string{
+			`external_digest=$(publish_schema postgresql-external v1 postgres "$external_publish_reference" \`,
+			`"$ROOT_DIR/testdata/e2e/postgresql-v1.sql")`,
+		}),
+		exactSourceLine("external digest-selected OCI source", `external_reference="${external_publish_reference%:stable}@${external_digest}"`),
+		exactSourceLineSequence("external lifecycle digest-selected source call", []string{
+			`create_schema_resource "$EXTERNAL_PG_SCHEMA" PostgreSQL "$EXTERNAL_PG_SECRET" \`,
+			`"$external_reference" "$EXTERNAL_PG_COORDINATION_KEY" \`,
+			`e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 45s "$QUIESCENT_INTERVAL"`,
+		}),
+		exactSourceLine("external per-lifecycle evidence", `printf '%s\n' 'e2e data plane: PASS external PostgreSQL bridge lifecycle'`),
 		exactSourceLine("OCI lifecycle implementation", `run_engine_lifecycle() {`),
 		exactSourceLine("OCI reference construction", `lifecycle_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/${lifecycle_slug}:stable"`),
 		exactSourceLine("OCI publication", `digest_v1=$(publish_schema "$lifecycle_slug" v1 "$lifecycle_dialect" "$lifecycle_reference")`),
@@ -1214,15 +1278,151 @@ func verifyE2EWiring(makefile, harness, dataPlane string) error {
 	if err := verifyOrderedSourceContract(dataPlane, dataPlaneContents, dataPlaneContract); err != nil {
 		return err
 	}
+	if err := rejectStaticControlFlowBypass(dataPlane, dataPlaneContents, dataPlaneContract[len(dataPlaneContract)-1].pattern); err != nil {
+		return err
+	}
 	if err := rejectEarlySuccessfulReturn(
 		dataPlane,
 		dataPlaneContents,
-		dataPlaneContract[1].pattern,
 		dataPlaneContract[4].pattern,
+		dataPlaneContract[9].pattern,
 	); err != nil {
 		return err
 	}
-	return rejectEarlySuccessfulExit(dataPlane, dataPlaneContents, dataPlaneContract[len(dataPlaneContract)-1].pattern)
+	if err := rejectEarlySuccessfulReturn(
+		dataPlane,
+		dataPlaneContents,
+		dataPlaneContract[10].pattern,
+		dataPlaneContract[13].pattern,
+	); err != nil {
+		return err
+	}
+	if err := rejectEarlySuccessfulExit(dataPlane, dataPlaneContents, dataPlaneContract[len(dataPlaneContract)-1].pattern); err != nil {
+		return err
+	}
+
+	childContracts := []lifecycleSourceContract{
+		{
+			path:     files.assertions,
+			exitTrap: "cleanup_files",
+			steps: []sourceContractStep{
+				exactSourceLine("fail-fast shell mode", "set -eu"),
+				exactSourceLine("cleanup implementation", `cleanup_files() {`),
+				exactSourceLine("cleanup status capture", `status=$?`),
+				exactSourceLine("cleanup status preservation", `exit "$status"`),
+				exactSourceLine("Pod admission outage proof", `printf '%s\n' 'e2e assertions: checking Pod webhook outage scope and foreign-label refusal'`),
+				exactSourceLineSequence("safe-default persistence proof", []string{
+					`printf '%s\n' "$schema_object" | jq -e '`,
+					`.spec.interval == "10m" and`,
+					`.spec.policy.apply == "OnApproval" and`,
+					`.spec.policy.allowDestructive == false and`,
+					`.spec.policy.driftSeverity == "all" and`,
+					`.spec.policy.lockTimeout == "30s" and`,
+					`.spec.policy.transactionMode == "file" and`,
+					`.spec.execution.activeDeadlineSeconds == 900 and`,
+					`.spec.execution.failureRetryInterval == "30s" and`,
+					`.spec.execution.connectTimeout == "10s"`,
+					`' >/dev/null || fail "PtahSchema API defaults were not persisted for omitted safe policy and execution fields"`,
+				}),
+				exactSourceLine("approval binding proof", `printf '%s\n' 'e2e assertions: checking approval stamping and exact binding'`),
+				exactSourceLine("cross-namespace refusal proof", `printf '%s\n' 'e2e assertions: checking cross-namespace approval refusal'`),
+				exactSourceLine("terminal control-plane lifecycle evidence", `printf '%s\n' 'e2e assertions: PASS control-plane contract'`),
+			},
+		},
+		{
+			path:     files.crdUpgrade,
+			exitTrap: "cleanup",
+			steps: []sourceContractStep{
+				exactSourceLine("fail-fast shell mode", "set -eu"),
+				exactSourceLine("cleanup implementation", `cleanup() {`),
+				exactSourceLine("cleanup status capture", `status=$?`),
+				exactSourceLine("cleanup status preservation", `exit "$status"`),
+				exactSourceLine("upgrade proof implementation", `run_upgrade_proof() {`),
+				exactSourceLine("predecessor upgrade proof call", `run_predecessor_upgrade_proof`),
+				exactSourceLine("runtime singleton proof call", `prove_runtime_singleton_guard`),
+				exactSourceLine("controller downgrade proof call", `prove_controller_downgrade_guard`),
+				exactSourceLine("uninstall proof implementation", `run_uninstall_proof() {`),
+				exactSourceLineSequence("phase dispatch", []string{
+					`case "$E2E_PHASE" in`,
+					`upgrade) run_upgrade_proof ;;`,
+					`uninstall) run_uninstall_proof ;;`,
+					`*) fail "unsupported E2E_PHASE $E2E_PHASE" ;;`,
+					`esac`,
+				}),
+				exactSourceLine("terminal CRD lifecycle evidence", `printf 'e2e crd: PASS phase=%s\n' "$E2E_PHASE"`),
+			},
+			successfulReturns: []successfulReturnContract{
+				{
+					start:      sourceLinePattern(`run_upgrade_proof() {`),
+					completion: sourceLinePattern(`printf '%s\n' 'e2e crd: upgrade and singleton proofs passed'`),
+				},
+				{
+					start:      sourceLinePattern(`run_uninstall_proof() {`),
+					completion: sourceLinePattern(`printf '%s\n' 'e2e crd: uninstall retained CRDs and live objects'`),
+				},
+			},
+		},
+		{
+			path:     files.faults,
+			exitTrap: "cleanup",
+			steps: []sourceContractStep{
+				exactSourceLine("fail-fast shell mode", "set -eu"),
+				exactSourceLine("cleanup implementation", `cleanup() {`),
+				exactSourceLine("cleanup status capture", `status=$?`),
+				exactSourceLine("cleanup status preservation", `exit "$status"`),
+				exactSourceLine("credential-bearing principal refusal proof implementation", `run_credential_principal_refusal() {`),
+				exactSourceLine("resourceVersion watch proof call", `start_watches`),
+				exactSourceLine("credential-bearing principal refusal proof call", `run_credential_principal_refusal`),
+				exactSourceLine("deadline fault proof", `printf '%s\n' 'e2e faults: forcing one real Kubernetes Apply Job deadline'`),
+				exactSourceLine("read-chain ordering proof call", `assert_initial_read_chain_watch_order "$PG_RESTART_SCHEMA"`),
+				exactSourceLine("operation Pod serialization proof call", `assert_no_overlapping_operation_pods`),
+				exactSourceLine("operation Job serialization proof call", `assert_no_overlapping_operation_jobs`),
+				exactSourceLine("fault audit proof call", `assert_fault_audit_complete`),
+				exactSourceLine("parent audit handoff", `record_fault_jobs_for_parent`),
+				exactSourceLine("terminal fault lifecycle evidence", `printf '%s\n' 'e2e faults: PASS watches, Kubernetes deadline recovery, stale-plan preflight, native lock barriers, restart identity, uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms'`),
+			},
+			successfulReturns: []successfulReturnContract{
+				{
+					start:      sourceLinePattern(`run_credential_principal_refusal() {`),
+					completion: sourceLinePattern(`audit_fault_runtime`),
+				},
+			},
+		},
+		{
+			path:     files.highAvailability,
+			exitTrap: "cleanup",
+			steps: []sourceContractStep{
+				exactSourceLine("fail-fast shell mode", "set -eu"),
+				exactSourceLine("cleanup implementation", `cleanup() {`),
+				exactSourceLine("Lease authorization proof", `printf '%s\n' 'e2e HA: verifying namespace-scoped Lease authorization'`),
+				exactSourceLine("initial leader proof", `initial_holder=$(wait_for_leader "")`),
+				exactSourceLine("leader failover proof", `second_holder=$(wait_for_leader "$initial_holder")`),
+				exactSourceLine("post-failover operation proof", `operation_job=$(wait_for_admitted_operation_pod "$ha_schema_uid")`),
+				exactSourceLine("terminal high-availability lifecycle evidence", `printf '%s\n' 'e2e HA: PASS one Lease, exact RBAC, Pod failover, and admitted post-failover operation'`),
+			},
+		},
+		{
+			path:     files.certRotation,
+			exitTrap: "cleanup_upgrade_files",
+			steps: []sourceContractStep{
+				exactSourceLine("fail-fast shell mode", "set -eu"),
+				exactSourceLine("cleanup implementation", `cleanup_upgrade_files() {`),
+				exactSourceLine("cleanup status capture", `status=$?`),
+				exactSourceLine("cleanup status preservation", `exit "$status"`),
+				exactSourceLine("pre-upgrade admission proof call", `assert_approval_admission_callable "before the Helm upgrade"`),
+				exactSourceLine("post-upgrade admission proof call", `assert_approval_admission_callable "after the Helm upgrade"`),
+				exactSourceLine("corrupt-CA recovery identity proof", `[ "$NEW_ROTATOR_UID" != "$OLD_ROTATOR_UID" ] || fail "certificate rotator Pod was not replaced"`),
+				exactSourceLine("missing-Secret recovery identity proof", `[ "$ROTATOR_UID_AFTER_RECREATE" != "$ROTATOR_UID_BEFORE_RECREATE" ] ||`),
+				exactSourceLine("terminal certificate lifecycle evidence", `printf '%s\n' 'e2e certificate rotation: PASS live Helm lookup, corrupt-CA recovery, and exact guarded recreation'`),
+			},
+		},
+	}
+	for _, contract := range childContracts {
+		if err := verifyLifecycleSource(contract); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func verifyMakeE2ETarget(path string) error {
@@ -1231,6 +1431,16 @@ func verifyMakeE2ETarget(path string) error {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 	lines := strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n")
+	unsafeMakeControl := regexp.MustCompile(`(?m)^[ ]*(?:(?:export|override|private|unexport)[ \t]+)*(?:MAKEFLAGS|MFLAGS|MAKEFILES)(?:[ \t]*[:+?!]?=|[ \t]*(?:#.*)?$)`)
+	if unsafeMakeControl.Match(contents) {
+		return fmt.Errorf("%s: Makefile must not set or export MAKEFLAGS, MFLAGS, or MAKEFILES because they can suppress or replace the e2e recipe", path)
+	}
+	if regexp.MustCompile(`(?m)^[ ]*(?:-?include|sinclude)[ \t]+|\$\((?:eval|file)[ \t]+`).Match(contents) {
+		return fmt.Errorf("%s: Makefile must not inject unaudited rules through include, eval, or file directives", path)
+	}
+	if regexp.MustCompile(`(?m)^[ ]*\.RECIPEPREFIX[ \t]*[:+?!]?=`).Match(contents) {
+		return fmt.Errorf("%s: .RECIPEPREFIX must not alter audited recipe parsing", path)
+	}
 	shellAssignments := regexp.MustCompile(`(?m)^[ \t]*(?:(?:export|override|private)[ \t]+)*SHELL[ \t]*[:+?]?=[^\r\n]*$`).FindAll(contents, -1)
 	if len(shellAssignments) != 1 || string(shellAssignments[0]) != "SHELL := /bin/sh" {
 		return fmt.Errorf("%s: Make recipes must use exactly SHELL := /bin/sh", path)
@@ -1240,8 +1450,27 @@ func verifyMakeE2ETarget(path string) error {
 	}
 	phony := false
 	targetLine := -1
+	e2eRuleCount := 0
+	conditionalDepth := 0
+	makeRule := regexp.MustCompile(`^[ ]*([^#:=][^:=#]*?)[ \t]*(::?|&:)(.*)$`)
+	makeConditionalStart := regexp.MustCompile(`^(?:ifeq|ifneq|ifdef|ifndef)(?:[ \t(]|$)`)
+	makeIgnore := regexp.MustCompile(`^[ \t]*\.IGNORE[ \t]*:(.*)$`)
 	for index, line := range lines {
-		if match := regexp.MustCompile(`^[ \t]*\.IGNORE[ \t]*:(.*)$`).FindStringSubmatch(line); match != nil {
+		trimmedLine := strings.TrimSpace(line)
+		switch {
+		case makeConditionalStart.MatchString(trimmedLine):
+			conditionalDepth++
+		case trimmedLine == "else" || strings.HasPrefix(trimmedLine, "else "):
+			if conditionalDepth == 0 {
+				return fmt.Errorf("%s:%d: unmatched Make else directive", path, index+1)
+			}
+		case trimmedLine == "endif" || strings.HasPrefix(trimmedLine, "endif "):
+			if conditionalDepth == 0 {
+				return fmt.Errorf("%s:%d: unmatched Make endif directive", path, index+1)
+			}
+			conditionalDepth--
+		}
+		if match := makeIgnore.FindStringSubmatch(line); match != nil {
 			ignoredTargets := strings.Fields(match[1])
 			ignoreE2E := len(ignoredTargets) == 0
 			for _, target := range ignoredTargets {
@@ -1258,23 +1487,40 @@ func verifyMakeE2ETarget(path string) error {
 				}
 			}
 		}
-		match := regexp.MustCompile(`^e2e[ \t]*:(.*)$`).FindStringSubmatch(line)
+		match := makeRule.FindStringSubmatch(line)
 		if match == nil {
 			continue
 		}
-		if targetLine >= 0 {
-			return fmt.Errorf("%s: e2e target must be declared exactly once", path)
+		if strings.Contains(match[1], "$") {
+			return fmt.Errorf("%s:%d: dynamically named Make targets are outside the audited e2e contract", path, index+1)
 		}
-		if strings.TrimSpace(match[1]) != "" {
-			return fmt.Errorf("%s: e2e target must not have dependencies or an inline recipe", path)
+		isE2ETarget := false
+		for _, target := range strings.Fields(match[1]) {
+			if target == "e2e" {
+				isE2ETarget = true
+				break
+			}
+		}
+		if !isE2ETarget {
+			continue
+		}
+		e2eRuleCount++
+		if line != "e2e:" || match[2] != ":" || strings.TrimSpace(match[3]) != "" {
+			return fmt.Errorf("%s:%d: e2e target must be the unconditional exact rule e2e:", path, index+1)
+		}
+		if conditionalDepth != 0 {
+			return fmt.Errorf("%s:%d: e2e target must not be conditional", path, index+1)
 		}
 		targetLine = index
+	}
+	if conditionalDepth != 0 {
+		return fmt.Errorf("%s: unterminated Make conditional", path)
 	}
 	if !phony {
 		return fmt.Errorf("%s: e2e target must be phony", path)
 	}
-	if targetLine < 0 {
-		return fmt.Errorf("%s: missing e2e target", path)
+	if targetLine < 0 || e2eRuleCount != 1 {
+		return fmt.Errorf("%s: e2e target must be declared exactly once", path)
 	}
 
 	var recipe []string
@@ -1300,25 +1546,72 @@ func verifyMakeE2ETarget(path string) error {
 }
 
 func verifyShellScriptEntrypoint(path string, contents []byte) error {
-	if !bytes.HasPrefix(contents, []byte("#!/bin/sh\n")) {
-		return fmt.Errorf("%s: lifecycle script must execute with #!/bin/sh", path)
+	if !bytes.HasPrefix(contents, []byte("#!/bin/sh\n\nset -eu\n")) {
+		return fmt.Errorf("%s: lifecycle script must execute with #!/bin/sh and enable set -eu before commands", path)
 	}
 	return nil
 }
 
-func verifyFailurePreservingExitTrap(path string, contents []byte) error {
-	exitTraps := regexp.MustCompile(`(?m)^[ \t]*trap[ \t]+[^\r\n]*[ \t]+(?:EXIT|0)[ \t]*(?:;[ \t]*)?(?:#[^\r\n]*)?\r?$`).FindAll(contents, -1)
-	if len(exitTraps) != 1 || strings.TrimSpace(string(exitTraps[0])) != "trap cleanup EXIT" {
-		return fmt.Errorf("%s: lifecycle script must have exactly one failure-preserving trap cleanup EXIT", path)
+func verifyFailurePreservingExitTrap(path string, contents []byte, cleanup string) error {
+	expected := "trap " + cleanup + " EXIT"
+	exitTraps := regexp.MustCompile(`(?m)^[ \t]*trap[ \t]+[^\r\n]*(?:^|[ \t])(?:EXIT|0)(?:[ \t]|$)[^\r\n]*\r?$`).FindAll(contents, -1)
+	expectedCount := 0
+	for _, raw := range exitTraps {
+		line := strings.TrimSpace(string(raw))
+		switch {
+		case line == expected:
+			expectedCount++
+		case strings.HasPrefix(line, "trap - "):
+			// A cleanup routine may disable its own trap before preserving the
+			// captured status. This is not an alternate EXIT handler.
+		default:
+			return fmt.Errorf("%s: lifecycle script has an unaudited failure-preserving trap replacement %q", path, line)
+		}
+	}
+	if expectedCount != 1 {
+		return fmt.Errorf("%s: lifecycle script must have exactly one failure-preserving %s", path, expected)
 	}
 	return nil
+}
+
+func verifyLifecycleSource(contract lifecycleSourceContract) error {
+	contents, err := os.ReadFile(contract.path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", contract.path, err)
+	}
+	if len(contract.steps) == 0 {
+		return fmt.Errorf("%s: lifecycle source contract is empty", contract.path)
+	}
+	if err := verifyShellScriptEntrypoint(contract.path, contents); err != nil {
+		return err
+	}
+	if err := verifyFailurePreservingExitTrap(contract.path, contents, contract.exitTrap); err != nil {
+		return err
+	}
+	if err := verifyOrderedSourceContract(contract.path, contents, contract.steps); err != nil {
+		return err
+	}
+	completion := contract.steps[len(contract.steps)-1].pattern
+	if err := rejectStaticControlFlowBypass(contract.path, contents, completion); err != nil {
+		return err
+	}
+	for _, boundaries := range contract.successfulReturns {
+		if err := rejectEarlySuccessfulReturn(contract.path, contents, boundaries.start, boundaries.completion); err != nil {
+			return err
+		}
+	}
+	return rejectEarlySuccessfulExit(contract.path, contents, completion)
 }
 
 func exactSourceLine(name, line string) sourceContractStep {
 	return sourceContractStep{
 		name:    name,
-		pattern: regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(line) + `[ \t]*\r?$`),
+		pattern: sourceLinePattern(line),
 	}
+}
+
+func sourceLinePattern(line string) *regexp.Regexp {
+	return regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(line) + `[ \t]*\r?$`)
 }
 
 func exactSourceLineSequence(name string, lines []string) sourceContractStep {
@@ -1350,6 +1643,38 @@ func verifyOrderedSourceContract(path string, contents []byte, steps []sourceCon
 	return nil
 }
 
+func rejectStaticControlFlowBypass(path string, contents []byte, completion *regexp.Regexp) error {
+	completionMatch := completion.FindIndex(contents)
+	if completionMatch == nil {
+		return fmt.Errorf("%s: terminal lifecycle evidence is missing", path)
+	}
+	prefix := contents[:completionMatch[1]]
+	checks := []struct {
+		name    string
+		pattern *regexp.Regexp
+	}{
+		{
+			name: "always-false wrapper",
+			pattern: regexp.MustCompile(
+				`(?m)^[ \t]*(?:if[ \t]+(?:false|![ \t]+true)(?:[ \t]*;[ \t]*then)?|while[ \t]+false(?:[ \t]*;[ \t]*do)?|until[ \t]+true(?:[ \t]*;[ \t]*do)?|false[ \t]*&&|true[ \t]*\|\|)[^\r\n]*\r?$`,
+			),
+		},
+		{
+			name: "statically unconditional wrapper",
+			pattern: regexp.MustCompile(
+				`(?m)^[ \t]*(?:if[ \t]+(?:true|![ \t]+false)(?:[ \t]*;[ \t]*then)?|while[ \t]+true(?:[ \t]*;[ \t]*do)?|until[ \t]+false(?:[ \t]*;[ \t]*do)?|true[ \t]*&&|false[ \t]*\|\|)[^\r\n]*\r?$`,
+			),
+		},
+	}
+	for _, check := range checks {
+		if match := check.pattern.FindIndex(prefix); match != nil {
+			line := 1 + bytes.Count(contents[:match[0]], []byte{'\n'})
+			return fmt.Errorf("%s:%d: %s can bypass audited lifecycle work", path, line, check.name)
+		}
+	}
+	return nil
+}
+
 func rejectEarlySuccessfulExit(path string, contents []byte, completion *regexp.Regexp) error {
 	completionMatch := completion.FindIndex(contents)
 	if completionMatch == nil {
@@ -1370,12 +1695,16 @@ func rejectEarlySuccessfulExit(path string, contents []byte, completion *regexp.
 
 func rejectEarlySuccessfulReturn(path string, contents []byte, start, completion *regexp.Regexp) error {
 	startMatch := start.FindIndex(contents)
-	completionMatch := completion.FindIndex(contents)
-	if startMatch == nil || completionMatch == nil || completionMatch[0] < startMatch[1] {
+	if startMatch == nil {
 		return fmt.Errorf("%s: lifecycle function boundaries are invalid", path)
 	}
+	completionMatch := completion.FindIndex(contents[startMatch[1]:])
+	if completionMatch == nil {
+		return fmt.Errorf("%s: lifecycle function boundaries are invalid", path)
+	}
+	completionStart := startMatch[1] + completionMatch[0]
 	earlyReturn := regexp.MustCompile(`(?m)^[ \t]*return(?:[ \t]+0)?[ \t]*(?:;[ \t]*)?(?:#[^\r\n]*)?\r?$`)
-	if match := earlyReturn.FindIndex(contents[startMatch[1]:completionMatch[0]]); match != nil {
+	if match := earlyReturn.FindIndex(contents[startMatch[1]:completionStart]); match != nil {
 		absoluteOffset := startMatch[1] + match[0]
 		line := 1 + bytes.Count(contents[:absoluteOffset], []byte{'\n'})
 		return fmt.Errorf("%s:%d: unconditional successful return precedes per-engine lifecycle evidence", path, line)

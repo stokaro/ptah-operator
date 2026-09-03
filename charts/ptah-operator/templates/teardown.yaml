@@ -22,6 +22,7 @@
 {{- $hookProbeGuardName := include "ptah-operator.hookIdentityProbeGuardPolicyName" . -}}
 {{- $activationGuardName := include "ptah-operator.releaseActivationGuardPolicyName" . -}}
 {{- $serviceAccountOriginGuardName := include "ptah-operator.serviceAccountOriginGuardPolicyName" . -}}
+{{- $controllerWriteGuardName := include "ptah-operator.controllerWriteGuardPolicyName" . -}}
 {{- $namespaceGuardName := include "ptah-operator.namespaceDeletionGuardPolicyName" . -}}
 {{- $parentReplicaSetGuardName := include "ptah-operator.parentReplicaSetGuardPolicyName" . -}}
 {{- $parentHookPodOriginGuardName := include "ptah-operator.parentHookPodOriginGuardPolicyName" . -}}
@@ -89,6 +90,7 @@ rules:
       - {{ $hookProbeGuardName }}
       - {{ $activationGuardName }}
       - {{ $serviceAccountOriginGuardName }}
+      - {{ $controllerWriteGuardName }}
       - {{ $namespaceGuardName }}
       - {{ $parentReplicaSetGuardName }}
       - {{ $parentHookPodOriginGuardName }}
@@ -453,6 +455,7 @@ rules:
       - {{ $hookProbeGuardName }}
       - {{ $activationGuardName }}
       - {{ $serviceAccountOriginGuardName }}
+      - {{ $controllerWriteGuardName }}
       - {{ $namespaceGuardName }}
       - {{ $parentReplicaSetGuardName }}
       - {{ $parentHookPodOriginGuardName }}

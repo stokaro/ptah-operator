@@ -24,8 +24,8 @@ func TestReleaseTeardownDeletesExactInventoryInSafeOrder(t *testing.T) {
 
 	fixture := newReleaseTeardownFixture(t)
 	wantOrder := expectedReleaseTeardownOrder(fixture.guard)
-	if len(wantOrder) != 28 {
-		t.Fatalf("known teardown inventory has %d objects, want 28", len(wantOrder))
+	if len(wantOrder) != 30 {
+		t.Fatalf("known teardown inventory has %d objects, want 30", len(wantOrder))
 	}
 	if err := fixture.teardown.Preflight(context.Background()); err != nil {
 		t.Fatalf("read-only preflight: %v", err)
@@ -504,13 +504,14 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 	parentHookPodOriginName := ParentHookPodOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	parentHookContractName := ParentHookJobContractPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	serviceAccountName := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	controllerWriteName := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	namespaceName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 
 	parameterized := []string{activationName, rolloutName, runtimeName, runtimePodName}
 	remaining := []string{
 		hookName, hookProbeName,
 		parentReplicaSetName, parentHookOriginName, parentHookPodOriginName, parentHookContractName,
-		serviceAccountName,
+		serviceAccountName, controllerWriteName,
 	}
 	policies := append(append([]string(nil), parameterized...), remaining...)
 

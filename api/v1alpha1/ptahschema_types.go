@@ -8,9 +8,12 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// DatabaseEngine is an explicitly supported database family. Requiring it
-// lets the controller reject unsupported targets without reading a credential.
-// +kubebuilder:validation:Enum=PostgreSQL;MySQL
+// DatabaseEngine names a database family. The API accepts bounded engine names
+// so the controller can report unsupported families through status instead of
+// turning a durable desired-state object into an admission-time dead end.
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9._-]*$`
 type DatabaseEngine string
 
 const (
@@ -95,7 +98,8 @@ type PtahSchemaSpec struct {
 	Target  DatabaseTargetSpec    `json:"target"`
 	Desired OCIArtifactSourceSpec `json:"desired"`
 	Dev     *DatabaseTargetRef    `json:"dev,omitempty"`
-	Policy  ReconciliationPolicy  `json:"policy,omitempty"`
+	// +kubebuilder:default={}
+	Policy ReconciliationPolicy `json:"policy,omitempty"`
 
 	// Interval is the cadence for resolving mutable tags and observing drift.
 	// +kubebuilder:default="10m"
@@ -104,6 +108,9 @@ type PtahSchemaSpec struct {
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('10s') && duration(self) <= duration('24h')",message="interval must be between 10s and 24h"
 	Interval metav1.Duration `json:"interval,omitempty"`
 
+	// Default the object itself so the API server also applies the nested
+	// execution defaults when a manifest omits the whole block.
+	// +kubebuilder:default={}
 	Execution ExecutionSpec `json:"execution,omitempty"`
 
 	// Suspend prevents new Jobs. A Job already applying is observed to a
@@ -708,6 +715,7 @@ type ActiveOperationStatus struct {
 const (
 	ConditionArtifactResolved     = "ArtifactResolved"
 	ConditionArtifactVerified     = "ArtifactVerified"
+	ConditionEngineSupported      = "EngineSupported"
 	ConditionDatabaseReachable    = "DatabaseReachable"
 	ConditionDriftDetected        = "DriftDetected"
 	ConditionPlanReady            = "PlanReady"
@@ -717,6 +725,72 @@ const (
 	ConditionReady                = "Ready"
 	ConditionSuspended            = "Suspended"
 	ConditionReconciliationFailed = "ReconciliationFailed"
+)
+
+// ConditionReason is the stable, machine-readable reason vocabulary emitted
+// by the schema controller. Messages may gain detail, but these values are API
+// contracts and must not be repurposed.
+type ConditionReason string
+
+const (
+	ReasonActive                       ConditionReason = "Active"
+	ReasonApplyDisabled                ConditionReason = "ApplyDisabled"
+	ReasonApplyOutcomeUnknown          ConditionReason = "ApplyOutcomeUnknown"
+	ReasonApplyPending                 ConditionReason = "ApplyPending"
+	ReasonApprovalRevoked              ConditionReason = "ApprovalRevoked"
+	ReasonApprovedPlan                 ConditionReason = "ApprovedPlan"
+	ReasonArtifactUnverified           ConditionReason = "ArtifactUnverified"
+	ReasonAwaitingApproval             ConditionReason = "AwaitingApproval"
+	ReasonConfigurationError           ConditionReason = "ConfigurationError"
+	ReasonConvergedAfterUnknownOutcome ConditionReason = "ConvergedAfterUnknownOutcome"
+	ReasonCurrentPlan                  ConditionReason = "CurrentPlan"
+	ReasonDesiredStateChanged          ConditionReason = "DesiredStateChanged"
+	ReasonDestructiveChangesDisabled   ConditionReason = "DestructiveChangesDisabled"
+	ReasonDigestPinned                 ConditionReason = "DigestPinned"
+	ReasonDispatchCommitted            ConditionReason = "DispatchCommitted"
+	ReasonExecutionBindingChanged      ConditionReason = "ExecutionBindingChanged"
+	ReasonInputsChanged                ConditionReason = "InputsChanged"
+	ReasonInSync                       ConditionReason = "InSync"
+	ReasonJobCompleted                 ConditionReason = "JobCompleted"
+	ReasonLeaseContinuityLost          ConditionReason = "LeaseContinuityLost"
+	ReasonNoChanges                    ConditionReason = "NoChanges"
+	ReasonNotRequired                  ConditionReason = "NotRequired"
+	ReasonObserved                     ConditionReason = "Observed"
+	ReasonOperationFailed              ConditionReason = "OperationFailed"
+	ReasonOperationInProgress          ConditionReason = "OperationInProgress"
+	ReasonOutcomeUnknown               ConditionReason = "OutcomeUnknown"
+	ReasonPending                      ConditionReason = "Pending"
+	ReasonPlanNoLongerCurrent          ConditionReason = "PlanNoLongerCurrent"
+	ReasonPlanReady                    ConditionReason = "PlanReady"
+	ReasonPolicyBlocked                ConditionReason = "PolicyBlocked"
+	ReasonPolicyChanged                ConditionReason = "PolicyChanged"
+	ReasonPolicyRefused                ConditionReason = "PolicyRefused"
+	ReasonPolicySatisfied              ConditionReason = "PolicySatisfied"
+	ReasonProofInputsChanged           ConditionReason = "ProofInputsChanged"
+	ReasonPublished                    ConditionReason = "Published"
+	ReasonRefreshFailed                ConditionReason = "RefreshFailed"
+	ReasonRefreshing                   ConditionReason = "Refreshing"
+	ReasonRefreshSuspended             ConditionReason = "RefreshSuspended"
+	ReasonRequested                    ConditionReason = "Requested"
+	ReasonResolveFailed                ConditionReason = "ResolveFailed"
+	ReasonSatisfied                    ConditionReason = "Satisfied"
+	ReasonScopedChanges                ConditionReason = "ScopedChanges"
+	ReasonScopedConverged              ConditionReason = "ScopedConverged"
+	ReasonScopedPlanPending            ConditionReason = "ScopedPlanPending"
+	ReasonSourceFreshnessUnknown       ConditionReason = "SourceFreshnessUnknown"
+	ReasonSourceRefreshPending         ConditionReason = "SourceRefreshPending"
+	ReasonSourceResolutionUnknown      ConditionReason = "SourceResolutionUnknown"
+	ReasonSourceUnresolved             ConditionReason = "SourceUnresolved"
+	ReasonStale                        ConditionReason = "Stale"
+	ReasonStaleObservation             ConditionReason = "StaleObservation"
+	ReasonStalePlan                    ConditionReason = "StalePlan"
+	ReasonSucceeded                    ConditionReason = "Succeeded"
+	ReasonSupersededApproval           ConditionReason = "SupersededApproval"
+	ReasonSupportedEngine              ConditionReason = "SupportedEngine"
+	ReasonSuspended                    ConditionReason = "Suspended"
+	ReasonUnsupportedEngine            ConditionReason = "UnsupportedEngine"
+	ReasonVerifyingConvergence         ConditionReason = "VerifyingConvergence"
+	ReasonWaiting                      ConditionReason = "Waiting"
 )
 
 // +kubebuilder:object:root=true

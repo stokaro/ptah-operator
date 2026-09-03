@@ -120,7 +120,7 @@ func Verify(ctx context.Context, config Config) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("verify CRD schema history: %w", err)
 	}
-	baseline, err := decodeSet("baseline", baselineFiles)
+	baseline, err := decodeBaselineSet(baselineFiles)
 	if err != nil {
 		return Result{}, fmt.Errorf("verify CRD schema history: %w", err)
 	}
@@ -361,6 +361,13 @@ func decodeSet(label string, files map[string][]byte) (documentSet, error) {
 	return set, nil
 }
 
+func decodeBaselineSet(files map[string][]byte) (documentSet, error) {
+	if len(files) == 0 {
+		return documentSet{byName: map[string]document{}}, nil
+	}
+	return decodeSet("baseline", files)
+}
+
 func requiredCRDNames() []string {
 	return []string{
 		"ptahschemaapprovals.operator.ptah.dev",
@@ -373,6 +380,20 @@ func evaluateTransition(baseline, candidate documentSet) (Result, error) {
 	candidateIdentity, err := validateIdentity("candidate", candidate, false)
 	if err != nil {
 		return Result{}, err
+	}
+	if len(baseline.byName) == 0 {
+		if candidateIdentity.version != 1 {
+			return Result{}, fmt.Errorf(
+				"initial bootstrap from an empty CRD baseline requires candidate %s=1, got %d",
+				schemaVersionAnnotation,
+				candidateIdentity.version,
+			)
+		}
+		return Result{
+			CandidateVersion: candidateIdentity.version,
+			SchemaChanged:    true,
+			InitialAdoption:  true,
+		}, nil
 	}
 	baselineIdentity, err := validateIdentity("baseline", baseline, true)
 	if err != nil {

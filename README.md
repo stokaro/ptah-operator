@@ -102,6 +102,7 @@ treated as the same policy.
 - [Security model](docs/security.md)
 - [Exact-plan approvals](docs/approvals.md)
 - [Operations and failure recovery](docs/operations.md)
+- [Condition reason contract](docs/condition-reasons.md)
 - [Kubernetes support policy](docs/kubernetes-support.md)
 - [Database support and privileges](docs/database-support.md)
 - [Releases and provenance](docs/releases.md)

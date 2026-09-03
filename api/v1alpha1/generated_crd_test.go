@@ -8,13 +8,16 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"testing"
 
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsvalidation "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/validation"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
+	structuraldefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
 	structurallisttype "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/listtype"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/yaml"
 
@@ -151,6 +154,68 @@ func TestGeneratedPtahSchemaCRDRejectsDuplicateExclusions(t *testing.T) {
 	}
 	if errs[0].Type != field.ErrorTypeDuplicate {
 		t.Fatalf("duplicate exclusion validation error = %v, want %s", errs.ToAggregate(), field.ErrorTypeDuplicate)
+	}
+}
+
+func TestGeneratedPtahSchemaCRDPersistsNestedSafeDefaults(t *testing.T) {
+	t.Parallel()
+
+	crd := loadGeneratedCRD(t, filepath.Join(
+		repositoryRoot(t),
+		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+	))
+	structural, err := structuralschema.NewStructural(storageVersionSchema(t, crd))
+	if err != nil {
+		t.Fatalf("build structural PtahSchema schema: %v", err)
+	}
+	customResource := map[string]interface{}{"spec": map[string]interface{}{}}
+	structuraldefaulting.Default(customResource, structural)
+
+	for path, want := range map[string]string{
+		"spec.interval":                       "10m",
+		"spec.policy.apply":                   "OnApproval",
+		"spec.policy.driftSeverity":           "all",
+		"spec.policy.lockTimeout":             "30s",
+		"spec.policy.transactionMode":         "file",
+		"spec.execution.failureRetryInterval": "30s",
+		"spec.execution.connectTimeout":       "10s",
+	} {
+		got, found, nestedErr := unstructured.NestedString(customResource, strings.Split(path, ".")...)
+		if nestedErr != nil || !found || got != want {
+			t.Errorf("default %s = %q, found=%t, error=%v; want %q", path, got, found, nestedErr, want)
+		}
+	}
+	allowDestructive, found, err := unstructured.NestedBool(customResource, "spec", "policy", "allowDestructive")
+	if err != nil || !found || allowDestructive {
+		t.Errorf("default spec.policy.allowDestructive = %t, found=%t, error=%v; want false", allowDestructive, found, err)
+	}
+	deadline, found, err := unstructured.NestedInt64(customResource, "spec", "execution", "activeDeadlineSeconds")
+	if err != nil || !found || deadline != 900 {
+		t.Errorf("default spec.execution.activeDeadlineSeconds = %d, found=%t, error=%v; want 900", deadline, found, err)
+	}
+}
+
+func TestGeneratedPtahSchemaCRDPersistsBoundedUnknownEngineNames(t *testing.T) {
+	t.Parallel()
+
+	crd := loadGeneratedCRD(t, filepath.Join(
+		repositoryRoot(t),
+		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+	))
+	engine := storageVersionSchema(t, crd).
+		Properties["spec"].Properties["target"].Properties["engine"]
+	if len(engine.Enum) != 0 {
+		t.Fatalf("spec.target.engine retains a closed enum: %#v", engine.Enum)
+	}
+	if engine.MinLength == nil || *engine.MinLength != 1 ||
+		engine.MaxLength == nil || *engine.MaxLength != 63 ||
+		engine.Pattern != `^[A-Za-z][A-Za-z0-9._-]*$` {
+		t.Fatalf(
+			"spec.target.engine bounds = min %v, max %v, pattern %q",
+			engine.MinLength,
+			engine.MaxLength,
+			engine.Pattern,
+		)
 	}
 }
 

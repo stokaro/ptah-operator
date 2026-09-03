@@ -193,6 +193,34 @@ k -n "$TEST_NAMESPACE" create secret generic local-database \
 k -n "$FOREIGN_NAMESPACE" create secret generic foreign-database \
 	--from-literal=url='postgres://e2e:unused@database.invalid/e2e' >/dev/null
 for namespace in "$OPERATOR_NAMESPACE" "$TEST_NAMESPACE" "$FOREIGN_NAMESPACE"; do
+	answer=$(k auth can-i get serviceaccount/default -n "$namespace" --as="$SERVICE_ACCOUNT" || true)
+	[ "$answer" = yes ] ||
+		fail "controller service account cannot resolve a ServiceAccount in namespace $namespace"
+	answer=$(k auth can-i list limitranges -n "$namespace" --as="$SERVICE_ACCOUNT" || true)
+	[ "$answer" = yes ] ||
+		fail "controller service account cannot resolve LimitRanges in namespace $namespace"
+	for denied_tuple in \
+		'list serviceaccounts' \
+		'watch serviceaccounts' \
+		'get limitranges' \
+		'watch limitranges' \
+		'create serviceaccounts' \
+		'update serviceaccounts' \
+		'patch serviceaccounts' \
+		'delete serviceaccounts' \
+		'create limitranges' \
+		'update limitranges' \
+		'patch limitranges' \
+		'delete limitranges'; do
+		denied_verb=${denied_tuple%% *}
+		denied_resource=${denied_tuple#* }
+		answer=$(k auth can-i "$denied_verb" "$denied_resource" -n "$namespace" \
+			--as="$SERVICE_ACCOUNT" || true)
+		[ "$answer" = no ] ||
+			fail "controller service account can $denied_verb $denied_resource in namespace $namespace"
+	done
+done
+for namespace in "$OPERATOR_NAMESPACE" "$TEST_NAMESPACE" "$FOREIGN_NAMESPACE"; do
 	for verb in get list watch; do
 		answer=$(k auth can-i "$verb" secrets -n "$namespace" --as="$SERVICE_ACCOUNT" || true)
 		[ "$answer" = no ] ||
@@ -231,6 +259,7 @@ k get crd ptahschemaapprovals.operator.ptah.dev -o json |
 POLICY_NAME=e2e-verification-policy
 POLICY_KEY=policy.yaml
 SCHEMA_NAME=e2e-suspended-schema
+UNSUPPORTED_ENGINE_SCHEMA=e2e-unsupported-engine
 PLAN_NAME=e2e-plan
 PLAN_CHUNK_NAME=e2e-plan-chunk-0
 APPROVAL_NAME=e2e-approval
@@ -298,6 +327,8 @@ cleanup_files() {
 	trap - EXIT
 	set +e
 	delete_webhook_scope_fixtures
+	k -n "$TEST_NAMESPACE" delete ptahschema "$UNSUPPORTED_ENGINE_SCHEMA" \
+		--wait=true --ignore-not-found >/dev/null 2>&1
 	if ! restore_webhook_deployment; then
 		printf '%s\n' 'e2e assertions: could not restore the webhook Deployment during cleanup' >&2
 		status=1
@@ -553,10 +584,85 @@ exclude_jobs_after=$(k -n "$TEST_NAMESPACE" get jobs -o json |
 [ "$exclude_jobs_after" = "$exclude_jobs_before" ] ||
 	fail "a rejected managed-scope selector created an operation Job"
 
+printf '%s\n' 'e2e assertions: checking explicit unsupported-engine status'
+jq \
+	--arg name "$UNSUPPORTED_ENGINE_SCHEMA" '
+      .metadata.name = $name |
+      .spec.target.engine = "SQLite" |
+      .spec.target.coordinationKey = "e2e/admission/unsupported" |
+      .spec.suspend = false
+    ' "$schema_file" >"$invalid_schema_file"
+k create -f "$invalid_schema_file" >/dev/null
+unsupported_deadline=$(($(date +%s) + 90))
+unsupported_schema_object=
+while [ "$(date +%s)" -lt "$unsupported_deadline" ]; do
+	unsupported_schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema \
+		"$UNSUPPORTED_ENGINE_SCHEMA" -o json)
+	if printf '%s\n' "$unsupported_schema_object" | jq -e '
+      .metadata.generation as $generation |
+      .status.observedGeneration == $generation and
+      .status.phase == "Blocked" and
+      (.status.plan == null) and
+      (.status.activeOperation == null) and
+      (.status.pendingObservation == null) and
+      any(.status.conditions[]?;
+        .type == "EngineSupported" and .status == "False" and
+        .reason == "UnsupportedEngine" and .observedGeneration == $generation) and
+      any(.status.conditions[]?;
+        .type == "Ready" and .status == "False" and
+        .reason == "UnsupportedEngine" and .observedGeneration == $generation)
+    ' >/dev/null; then
+		break
+	fi
+	sleep 1
+done
+[ -n "$unsupported_schema_object" ] ||
+	fail "unsupported engine did not produce a readable PtahSchema"
+printf '%s\n' "$unsupported_schema_object" | jq -e '
+  .metadata.generation as $generation |
+  .status.observedGeneration == $generation and
+  .status.phase == "Blocked" and
+  (.status.plan == null) and
+  (.status.activeOperation == null) and
+  (.status.pendingObservation == null) and
+  any(.status.conditions[]?;
+    .type == "EngineSupported" and .status == "False" and
+    .reason == "UnsupportedEngine" and .observedGeneration == $generation) and
+  any(.status.conditions[]?;
+    .type == "Ready" and .status == "False" and
+    .reason == "UnsupportedEngine" and .observedGeneration == $generation)
+' >/dev/null || fail "unsupported engine did not reach its explicit current-generation status"
+unsupported_schema_uid=$(printf '%s\n' "$unsupported_schema_object" | jq -er '.metadata.uid')
+k -n "$TEST_NAMESPACE" get jobs -o json |
+	jq -e --arg uid "$unsupported_schema_uid" '
+      all(.items[]; all(.metadata.ownerReferences[]?; .uid != $uid))
+    ' >/dev/null || fail "unsupported engine created an owned operation Job"
+k -n "$TEST_NAMESPACE" get ptahschemaplans -o json |
+	jq -e --arg uid "$unsupported_schema_uid" '
+      [.items[] | select(.spec.schemaRef.uid == $uid)] | length == 0
+    ' >/dev/null || fail "unsupported engine created a plan"
+k -n "$TEST_NAMESPACE" get ptahschemaapprovals -o json |
+	jq -e --arg uid "$unsupported_schema_uid" '
+      [.items[] | select(.spec.schemaRef.uid == $uid)] | length == 0
+    ' >/dev/null || fail "unsupported engine created an approval"
+k -n "$TEST_NAMESPACE" delete ptahschema "$UNSUPPORTED_ENGINE_SCHEMA" \
+	--wait=true >/dev/null
+
 k create -f "$schema_file" >/dev/null
 k -n "$TEST_NAMESPACE" wait --for=jsonpath='{.status.phase}'=Suspended \
 	ptahschema/"$SCHEMA_NAME" --timeout=90s
 schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$SCHEMA_NAME" -o json)
+printf '%s\n' "$schema_object" | jq -e '
+  .spec.interval == "10m" and
+  .spec.policy.apply == "OnApproval" and
+  .spec.policy.allowDestructive == false and
+  .spec.policy.driftSeverity == "all" and
+  .spec.policy.lockTimeout == "30s" and
+  .spec.policy.transactionMode == "file" and
+  .spec.execution.activeDeadlineSeconds == 900 and
+  .spec.execution.failureRetryInterval == "30s" and
+  .spec.execution.connectTimeout == "10s"
+' >/dev/null || fail "PtahSchema API defaults were not persisted for omitted safe policy and execution fields"
 schema_uid=$(printf '%s\n' "$schema_object" | jq -er '.metadata.uid')
 schema_generation=$(printf '%s\n' "$schema_object" | jq -er '.metadata.generation')
 if ! execution_binding=$(printf '%s\n' "$schema_object" | jq -ce \

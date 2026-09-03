@@ -80,6 +80,40 @@ func TestVerifyUsesExplicitAndLocalAutomaticBaselines(t *testing.T) {
 	}
 }
 
+func TestVerifyAllowsOnlyVersionOneBootstrapFromEmptyBaseline(t *testing.T) {
+	t.Parallel()
+
+	repository := newFixtureRepository(t)
+	if err := os.WriteFile(filepath.Join(repository, "README.md"), []byte("bootstrap baseline\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	execGitFixture(t, repository, "add", "README.md")
+	execGitFixture(t, repository, "commit", "--quiet", "-m", "empty CRD baseline")
+	baselineCommit := gitFixtureOutput(t, repository, "rev-parse", "HEAD")
+
+	writeFixtureSet(t, repository, true, 1, "candidate")
+	result, err := crdschemahistory.Verify(t.Context(), crdschemahistory.Config{
+		Root:        repository,
+		BaselineRef: baselineCommit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.BaselineVersion != 0 || result.CandidateVersion != 1 ||
+		!result.InitialAdoption || !result.SchemaChanged {
+		t.Fatalf("empty-baseline verification result = %+v", result)
+	}
+
+	writeFixtureSet(t, repository, true, 2, "later candidate")
+	_, err = crdschemahistory.Verify(t.Context(), crdschemahistory.Config{
+		Root:        repository,
+		BaselineRef: baselineCommit,
+	})
+	if err == nil || !strings.Contains(err.Error(), "initial bootstrap from an empty CRD baseline requires candidate") {
+		t.Fatalf("version-two empty-baseline verification error = %v", err)
+	}
+}
+
 func TestVerifyFailsClosedForMissingOrInvalidExplicitBaseline(t *testing.T) {
 	t.Parallel()
 

@@ -216,6 +216,10 @@ app.kubernetes.io/component: controller
 {{- printf "ptah-operator-namespace-deletion-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- end -}}
 
+{{- define "ptah-operator.controllerWriteGuardPolicyName" -}}
+{{- printf "ptah-operator-controller-write-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- end -}}
+
 {{- define "ptah-operator.hookIdentityProbeJobName" -}}
 {{- printf "ptah-hook-identity-v%s-%s" (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}

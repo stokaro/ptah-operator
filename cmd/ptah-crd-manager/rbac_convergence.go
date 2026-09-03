@@ -739,9 +739,7 @@ func buildTeardownAuthorizationChecks(
 	// Controller mutations. Every resource/subresource and mutating verb from
 	// the installed controller roles gets a distinct probe; this does not rely
 	// on one cached RBAC rule being observed atomically.
-	for _, verb := range []string{"update", "patch"} {
-		appendResource(teardownCheckController, verb+" PtahSchema", "operator.ptah.dev", "v1alpha1", "ptahschemas", "", rollout.ReleaseNamespace, verb, arbitraryObjectName)
-	}
+	appendResource(teardownCheckController, "patch PtahSchema", "operator.ptah.dev", "v1alpha1", "ptahschemas", "", rollout.ReleaseNamespace, "patch", arbitraryObjectName)
 	appendResource(teardownCheckController, "update PtahSchema finalizer", "operator.ptah.dev", "v1alpha1", "ptahschemas", "finalizers", rollout.ReleaseNamespace, "update", arbitraryObjectName)
 	appendResource(teardownCheckController, "update PtahSchemaPlan finalizer", "operator.ptah.dev", "v1alpha1", "ptahschemaplans", "finalizers", rollout.ReleaseNamespace, "update", arbitraryObjectName)
 	for _, target := range []struct {

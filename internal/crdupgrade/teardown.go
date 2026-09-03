@@ -267,6 +267,7 @@ func (t *ReleaseTeardown) validatedGuard() (*RolloutGuard, error) {
 func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error) {
 	activation := guard.releaseActivationGuard()
 	serviceAccount := NewServiceAccountOriginGuard(guard, nil)
+	controllerWrite := NewControllerWriteGuard(guard)
 	parentEntries := NewParentWorkloadGuard(guard).entries()
 	parentByName := make(map[string]parentGuardEntry, len(parentEntries))
 	for _, entry := range parentEntries {
@@ -285,6 +286,7 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 	parentHookPodOriginName := ParentHookPodOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	parentHookContractName := ParentHookJobContractPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	serviceAccountName := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	controllerWriteName := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	namespaceName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 
 	if _, err := guard.runtimePodIdentityPolicy(); err != nil {
@@ -345,6 +347,10 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 		{
 			name:         serviceAccountName,
 			verifyPolicy: serviceAccount.verifyPolicy, verifyBinding: serviceAccount.verifyBinding,
+		},
+		{
+			name:         controllerWriteName,
+			verifyPolicy: controllerWrite.verifyPolicy, verifyBinding: controllerWrite.verifyBinding,
 		},
 		{
 			name: namespaceName, final: true,

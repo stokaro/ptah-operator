@@ -125,8 +125,8 @@ func TestNewTeardownRBACConvergenceBarrierDiscoversEveryDirectEndpoint(t *testin
 	if len(configs) != 2 {
 		t.Fatalf("client factory calls = %d, want 2", len(configs))
 	}
-	if got := authorizationSweepSize(barrier); got != 51 {
-		t.Fatalf("authorization sweep size = %d, want 51 exact retired-subject plus current-credential probes", got)
+	if got := authorizationSweepSize(barrier); got != 50 {
+		t.Fatalf("authorization sweep size = %d, want 50 exact retired-subject plus current-credential probes", got)
 	}
 	for index, config := range configs {
 		if config == base {
@@ -530,14 +530,14 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		probeCounts[probe.Subject.Name] = len(probe.Checks)
 		probeChecks[probe.Subject.Name] = authorizationCheckNames(probe.Checks)
 	}
-	if want := map[string]int{"controller": 19, "certificate": 5, "hook-quiesce": 11}; !reflect.DeepEqual(probeCounts, want) {
+	if want := map[string]int{"controller": 18, "certificate": 5, "hook-quiesce": 11}; !reflect.DeepEqual(probeCounts, want) {
 		t.Fatalf("retired subject probe counts = %#v, want %#v", probeCounts, want)
 	}
 	for _, test := range []struct {
 		subject string
 		check   string
 	}{
-		{subject: "controller", check: "update PtahSchema"},
+		{subject: "controller", check: "patch PtahSchema"},
 		{subject: "certificate", check: "update mutating admission singleton"},
 		{subject: "certificate", check: "update webhook Secret"},
 		{subject: "hook-quiesce", check: "update CRD ptahschemas.operator.ptah.dev"},
@@ -588,7 +588,6 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		"create webhook Secret",
 		"update mutating admission singleton",
 		"update validating admission singleton",
-		"update PtahSchema",
 		"patch PtahSchema",
 		"update PtahSchema status",
 		"patch PtahSchema status",
@@ -626,8 +625,8 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 			t.Errorf("check %q includes intentional residual RBAC deletion for %q", check.Name, attributes.Name)
 		}
 	}
-	if len(checks) != 49 || len(byName) != 49 {
-		t.Fatalf("authorization checks = %d total/%d unique, want 49/49", len(checks), len(byName))
+	if len(checks) != 48 || len(byName) != 48 {
+		t.Fatalf("authorization checks = %d total/%d unique, want 48/48", len(checks), len(byName))
 	}
 	for _, name := range wantChecks {
 		if byName[name] == nil {
@@ -674,8 +673,8 @@ func TestTeardownAuthorizationChecksUseSeparateCoordinationNamespace(t *testing.
 			t.Errorf("check %q namespace = %q, want %q", name, attributes.Namespace, rollout.CoordinationNamespace)
 		}
 	}
-	if len(checks) != 50 {
-		t.Fatalf("split-namespace authorization check count = %d, want 50", len(checks))
+	if len(checks) != 49 {
+		t.Fatalf("split-namespace authorization check count = %d, want 49", len(checks))
 	}
 	_, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
 	if err != nil {
@@ -724,7 +723,7 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					for _, probe := range probes {
 						counts[probe.Subject.Name] = len(probe.Checks)
 					}
-					wantCounts := map[string]int{"controller": 19, "hook-quiesce": 11}
+					wantCounts := map[string]int{"controller": 18, "hook-quiesce": 11}
 					if certificateEnabled {
 						wantCounts["certificate"] = 5
 					}
@@ -749,7 +748,7 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					if err != nil {
 						t.Fatalf("teardownAuthorizationChecks() error = %v", err)
 					}
-					wantUnion := 30 + wantSelfChecks
+					wantUnion := 29 + wantSelfChecks
 					if certificateEnabled {
 						wantUnion += 3
 					}

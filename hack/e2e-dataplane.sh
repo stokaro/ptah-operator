@@ -2991,8 +2991,7 @@ create_schema_resource() {
           transport: {plainHTTP: true}
         },
         policy: {
-          apply: "OnApproval", allowDestructive: false, driftSeverity: "all",
-          lockTimeout: "30s", transactionMode: "file"
+          driftSeverity: "all", lockTimeout: "30s", transactionMode: "file"
         },
         interval: $interval,
         execution: {
@@ -3002,6 +3001,11 @@ create_schema_resource() {
       }
     }' >"$RESOURCE_FILE"
 	k create -f "$RESOURCE_FILE" >/dev/null
+	k -n "$TEST_NAMESPACE" get ptahschema "$resource_schema" -o json |
+		jq -e '
+          .spec.policy.apply == "OnApproval" and
+          .spec.policy.allowDestructive == false
+        ' >/dev/null || fail "$resource_schema did not persist the safe apply-policy defaults"
 }
 
 create_custom_ca_schema_resource() {
@@ -3200,6 +3204,94 @@ capture_current_plan() {
 		fail "$CURRENT_PLAN does not have a SHA-256 plan fingerprint"
 }
 
+assert_plan_storage_immutable() {
+	immutable_schema=$1
+	immutable_plan=$2
+	immutable_plan_uid=$3
+	immutable_plan_object=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$immutable_plan" -o json)
+	immutable_plan_resource_version=$(printf '%s\n' "$immutable_plan_object" |
+		jq -er '.metadata.resourceVersion')
+	immutable_plan_spec_digest="sha256:$(printf '%s\n' "$immutable_plan_object" |
+		jq -cS '.spec' | sha256)"
+	immutable_plan_destructive=$(printf '%s\n' "$immutable_plan_object" |
+		jq -er '.spec.destructive')
+	if [ "$immutable_plan_destructive" = true ]; then
+		immutable_plan_replacement=false
+	else
+		immutable_plan_replacement=true
+	fi
+	immutable_plan_error="$WORK_DIR/${immutable_plan}-immutable-spec.err"
+	if k -n "$TEST_NAMESPACE" patch ptahschemaplan "$immutable_plan" --type=merge \
+		-p "$(jq -nc --argjson destructive "$immutable_plan_replacement" \
+			'{spec: {destructive: $destructive}}')" \
+		>"$immutable_plan_error.stdout" 2>"$immutable_plan_error"; then
+		fail "$immutable_plan accepted a mutation to its committed spec"
+	fi
+	grep -Eiq 'immutable' "$immutable_plan_error" ||
+		fail "$immutable_plan spec mutation was refused for an unexpected reason"
+	immutable_plan_after=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$immutable_plan" -o json)
+	[ "$(printf '%s\n' "$immutable_plan_after" | jq -er '.metadata.uid')" = "$immutable_plan_uid" ] ||
+		fail "$immutable_plan identity changed after a refused spec mutation"
+	[ "$(printf '%s\n' "$immutable_plan_after" | jq -er '.metadata.resourceVersion')" = "$immutable_plan_resource_version" ] ||
+		fail "$immutable_plan resourceVersion changed after a refused spec mutation"
+	[ "sha256:$(printf '%s\n' "$immutable_plan_after" | jq -cS '.spec' | sha256)" = "$immutable_plan_spec_digest" ] ||
+		fail "$immutable_plan spec changed after a refused mutation"
+
+	immutable_chunks_file="$WORK_DIR/${immutable_plan}-immutable-chunks.tsv"
+	printf '%s\n' "$immutable_plan_object" |
+		jq -er '.spec.chunks | select(length > 0)[] | [.name, .key] | @tsv' \
+		>"$immutable_chunks_file" || fail "$immutable_plan has no plan chunks to protect"
+	immutable_chunk_count=0
+	while IFS="$(printf '\t')" read -r immutable_chunk_name immutable_chunk_key; do
+		[ -n "$immutable_chunk_name" ] && [ -n "$immutable_chunk_key" ] ||
+			fail "$immutable_plan contains an incomplete chunk reference"
+		immutable_chunk_count=$((immutable_chunk_count + 1))
+		immutable_chunk_object=$(k -n "$TEST_NAMESPACE" get configmap "$immutable_chunk_name" -o json)
+		printf '%s\n' "$immutable_chunk_object" | jq -e \
+			--arg plan "$immutable_plan" \
+			--arg planUID "$immutable_plan_uid" \
+			--arg key "$immutable_chunk_key" '
+          .immutable == true and
+          (.metadata.ownerReferences | any(
+            .apiVersion == "operator.ptah.dev/v1alpha1" and
+            .kind == "PtahSchemaPlan" and
+            .name == $plan and .uid == $planUID and .controller == true)) and
+          (.binaryData | has($key))
+        ' >/dev/null || fail "$immutable_chunk_name is not an immutable chunk owned by $immutable_plan"
+		immutable_chunk_uid=$(printf '%s\n' "$immutable_chunk_object" | jq -er '.metadata.uid')
+		immutable_chunk_resource_version=$(printf '%s\n' "$immutable_chunk_object" |
+			jq -er '.metadata.resourceVersion')
+		immutable_chunk_data_digest="sha256:$(printf '%s\n' "$immutable_chunk_object" |
+			jq -cS '.binaryData' | sha256)"
+		immutable_chunk_value=$(printf '%s\n' "$immutable_chunk_object" |
+			jq -er --arg key "$immutable_chunk_key" '.binaryData[$key]')
+		if [ "$immutable_chunk_value" = eA== ]; then
+			immutable_chunk_replacement=eQ==
+		else
+			immutable_chunk_replacement=eA==
+		fi
+		immutable_chunk_error="$WORK_DIR/${immutable_chunk_name}-immutable-data.err"
+		if k -n "$TEST_NAMESPACE" patch configmap "$immutable_chunk_name" --type=merge \
+			-p "$(jq -nc --arg key "$immutable_chunk_key" --arg value "$immutable_chunk_replacement" \
+				'{binaryData: {($key): $value}}')" \
+			>"$immutable_chunk_error.stdout" 2>"$immutable_chunk_error"; then
+			fail "$immutable_chunk_name accepted a mutation to committed plan bytes"
+		fi
+		grep -Eiq 'immutable' "$immutable_chunk_error" ||
+			fail "$immutable_chunk_name data mutation was refused for an unexpected reason"
+		immutable_chunk_after=$(k -n "$TEST_NAMESPACE" get configmap "$immutable_chunk_name" -o json)
+		[ "$(printf '%s\n' "$immutable_chunk_after" | jq -er '.metadata.uid')" = "$immutable_chunk_uid" ] ||
+			fail "$immutable_chunk_name identity changed after a refused data mutation"
+		[ "$(printf '%s\n' "$immutable_chunk_after" | jq -er '.metadata.resourceVersion')" = "$immutable_chunk_resource_version" ] ||
+			fail "$immutable_chunk_name resourceVersion changed after a refused data mutation"
+		[ "sha256:$(printf '%s\n' "$immutable_chunk_after" | jq -cS '.binaryData' | sha256)" = "$immutable_chunk_data_digest" ] ||
+			fail "$immutable_chunk_name bytes changed after a refused mutation"
+	done <"$immutable_chunks_file"
+	[ "$immutable_chunk_count" -gt 0 ] || fail "$immutable_plan did not expose an immutable plan chunk"
+	printf 'e2e data plane: immutable plan storage enforced for %s (%s chunks)\n' \
+		"$immutable_schema" "$immutable_chunk_count"
+}
+
 assert_plan() {
 	plan_schema=$1
 	plan_reference=$2
@@ -3222,13 +3314,17 @@ assert_plan() {
 			--arg digest "$plan_digest" \
 			--arg controllerImage "$CONTROLLER_IMAGE" \
 			--arg controllerRevision "$CONTROLLER_REVISION" \
-			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
-			--arg type application/vnd.stokaro.ptah.schema.v1 '
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
+		--arg type application/vnd.stokaro.ptah.schema.v1 '
+      def resolvedReference($reference; $digest):
+        if ($reference | test("@sha256:[0-9a-f]{64}$")) then $reference
+        else ($reference | sub(":[^/:]+$"; "@" + $digest))
+        end;
       .status.executionBinding as $binding |
       .status.plan as $plan |
       .status.source.requestedReference == $reference and
       .status.source.digest == $digest and
-      .status.source.resolvedReference == ($reference | sub(":[^/:]+$"; "@" + $digest)) and
+      .status.source.resolvedReference == resolvedReference($reference; $digest) and
       .status.source.verified == true and
       .status.source.artifactType == $type and
       .status.source.verificationPolicyDigest != "" and
@@ -3272,6 +3368,7 @@ assert_plan() {
       (.status.conditions | any(.type == "Ready" and .status == "True"))
     ' >/dev/null ||
 		fail "$CURRENT_PLAN is not a committed content-addressed native plan"
+	assert_plan_storage_immutable "$plan_schema" "$CURRENT_PLAN" "$CURRENT_PLAN_UID"
 
 	observe_result_file="$WORK_DIR/${plan_schema}-changed-observe-result.json"
 	plan_result_file="$WORK_DIR/${plan_schema}-changed-plan-result.json"
@@ -4583,12 +4680,16 @@ assert_external_postgresql_catalog() {
 }
 
 run_external_postgresql_lifecycle() {
-	external_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/postgresql-external:stable"
+	external_publish_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/postgresql-external:stable"
 	external_coordination_digest=$(coordination_digest postgresql "$EXTERNAL_PG_COORDINATION_KEY")
 	external_before="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-before.json"
 	checkpoint_schema_jobs "$EXTERNAL_PG_SCHEMA" "$external_before"
-	external_digest=$(publish_schema postgresql-external v1 postgres "$external_reference" \
+	external_digest=$(publish_schema postgresql-external v1 postgres "$external_publish_reference" \
 		"$ROOT_DIR/testdata/e2e/postgresql-v1.sql")
+	external_reference="${external_publish_reference%:stable}@${external_digest}"
+	printf '%s\n' "$external_reference" |
+		grep -Eq '^oci://[^[:space:]@]+@sha256:[0-9a-f]{64}$' ||
+		fail "external PostgreSQL acceptance did not select its OCI source by digest"
 	external_lease_before="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-leases-before.json"
 	checkpoint_coordination_leases "$external_lease_before"
 	create_schema_resource "$EXTERNAL_PG_SCHEMA" PostgreSQL "$EXTERNAL_PG_SECRET" \

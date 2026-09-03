@@ -194,6 +194,9 @@ func (g *RolloutGuard) Prepare(ctx context.Context) error {
 	if err := g.Verify(ctx); err != nil {
 		return err
 	}
+	if err := NewControllerWriteGuard(g).WaitReady(ctx); err != nil {
+		return fmt.Errorf("wait for controller write guard: %w", err)
+	}
 	if err := NewParentWorkloadGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for parent workload guards: %w", err)
 	}
@@ -221,6 +224,9 @@ func (g *RolloutGuard) Verify(ctx context.Context) error {
 	}
 	if err := NewNamespaceDeletionGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify namespace deletion guard: %w", err)
+	}
+	if err := NewControllerWriteGuard(g).Verify(ctx); err != nil {
+		return fmt.Errorf("verify controller write guard: %w", err)
 	}
 	if err := NewParentWorkloadGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify parent workload guards: %w", err)
@@ -307,6 +313,9 @@ func (g *RolloutGuard) VerifyHookIdentity(ctx context.Context) error {
 	if err := NewNamespaceDeletionGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify namespace deletion guard: %w", err)
 	}
+	if err := NewControllerWriteGuard(g).Verify(ctx); err != nil {
+		return fmt.Errorf("verify controller write guard: %w", err)
+	}
 	if err := NewParentWorkloadGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify parent workload guards: %w", err)
 	}
@@ -352,6 +361,9 @@ func (g *RolloutGuard) PrepareHookIdentity(ctx context.Context) error {
 	}
 	if err := NewNamespaceDeletionGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for namespace deletion guard: %w", err)
+	}
+	if err := NewControllerWriteGuard(g).WaitReady(ctx); err != nil {
+		return fmt.Errorf("wait for controller write guard: %w", err)
 	}
 	if err := NewParentWorkloadGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for parent workload guards: %w", err)

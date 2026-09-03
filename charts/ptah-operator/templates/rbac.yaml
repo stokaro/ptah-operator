@@ -27,6 +27,7 @@ rules:
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
@@ -34,7 +35,7 @@ rules:
     verbs: ["get"]
   - apiGroups: ["operator.ptah.dev"]
     resources: ["ptahschemas"]
-    verbs: ["get", "list", "watch", "update", "patch"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["operator.ptah.dev"]
     resources: ["ptahschemas/finalizers", "ptahschemaplans/finalizers"]
     verbs: ["update"]
@@ -56,6 +57,14 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  # Admission snapshots are resolved in each PtahSchema namespace. These
+  # resources contain scheduling metadata but no Secret payloads.
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["list"]
   - apiGroups: ["node.k8s.io"]
     resources: ["runtimeclasses"]
     verbs: ["get"]

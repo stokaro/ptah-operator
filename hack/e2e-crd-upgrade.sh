@@ -23,12 +23,24 @@ PREDECESSOR_DELETING_SCHEMA=predecessor-deleting
 BLOCKED_STABILITY_SECONDS=10
 BLOCKED_FAILURE_TIMEOUT_SECONDS=150
 FOREIGN_TEARDOWN_BINDING=
+CONTROLLER_IMPERSONATION_USERNAME=
+CONTROLLER_IMPERSONATION_UID=
+CONTROLLER_IMPERSONATION_POD_NAME=
+CONTROLLER_IMPERSONATION_POD_UID=
+CONTROLLER_GUARD_OWNER=
+CONTROLLER_GUARD_PROBE_INDEX=0
 
 cleanup() {
 	status=$?
 	trap - EXIT HUP INT TERM
 	if [ -n "$FOREIGN_TEARDOWN_BINDING" ]; then
 		if ! kube delete clusterrolebinding "$FOREIGN_TEARDOWN_BINDING" \
+			--ignore-not-found=true >/dev/null 2>&1; then
+			status=1
+		fi
+	fi
+	if [ -n "$CONTROLLER_GUARD_OWNER" ]; then
+		if ! kube -n "$PROOF_NAMESPACE" delete configmap "$CONTROLLER_GUARD_OWNER" \
 			--ignore-not-found=true >/dev/null 2>&1; then
 			status=1
 		fi
@@ -56,6 +68,22 @@ kube() {
 
 helm_e2e() {
 	helm --kubeconfig "$E2E_KUBECONFIG" "$@"
+}
+
+controller_kube() {
+	[ -n "$CONTROLLER_IMPERSONATION_USERNAME" ] || fail "controller impersonation username is missing"
+	[ -n "$CONTROLLER_IMPERSONATION_UID" ] || fail "controller impersonation UID is missing"
+	[ -n "$CONTROLLER_IMPERSONATION_POD_NAME" ] || fail "controller impersonation Pod name is missing"
+	[ -n "$CONTROLLER_IMPERSONATION_POD_UID" ] || fail "controller impersonation Pod UID is missing"
+	kubectl --kubeconfig "$E2E_KUBECONFIG" \
+		--as "$CONTROLLER_IMPERSONATION_USERNAME" \
+		--as-uid "$CONTROLLER_IMPERSONATION_UID" \
+		--as-group system:serviceaccounts \
+		--as-group "system:serviceaccounts:$E2E_OPERATOR_NAMESPACE" \
+		--as-group system:authenticated \
+		--as-user-extra "authentication.kubernetes.io/pod-name=$CONTROLLER_IMPERSONATION_POD_NAME" \
+		--as-user-extra "authentication.kubernetes.io/pod-uid=$CONTROLLER_IMPERSONATION_POD_UID" \
+		"$@"
 }
 
 object_evidence() {
@@ -369,6 +397,132 @@ wait_runtime_ready() {
 	runtime_deployment_names
 	kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$CONTROLLER_DEPLOYMENT" --timeout=3m >/dev/null
 	kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$ROTATOR_DEPLOYMENT" --timeout=3m >/dev/null
+}
+
+controller_write_evidence() {
+	destination=$1
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
+		jq -S '{
+          uid: .metadata.uid,
+          labels: (.metadata.labels // {}),
+          annotations: (.metadata.annotations // {}),
+          ownerReferences: (.metadata.ownerReferences // []),
+          finalizers: (.metadata.finalizers // []),
+          spec: .spec,
+          status: (.status // {})
+        }' >"$destination"
+}
+
+expect_controller_write_denial() {
+	description=$1
+	patch_type=$2
+	patch_body=$3
+	CONTROLLER_GUARD_PROBE_INDEX=$((CONTROLLER_GUARD_PROBE_INDEX + 1))
+	stdout=$WORK_DIR/controller-write-denial-${CONTROLLER_GUARD_PROBE_INDEX}.out
+	stderr=$WORK_DIR/controller-write-denial-${CONTROLLER_GUARD_PROBE_INDEX}.err
+	if controller_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" \
+		--type "$patch_type" -p "$patch_body" --dry-run=server -o json \
+		>"$stdout" 2>"$stderr"; then
+		fail "controller identity was allowed to mutate $description"
+	fi
+	if ! grep -F 'Ptah controller write guard rejected a desired-state mutation' "$stderr" >/dev/null &&
+		! grep -F 'Ptah controller write guard rejected a desired-state mutation' "$stdout" >/dev/null; then
+		fail "controller $description mutation failed without the exact write-guard denial"
+	fi
+}
+
+prove_controller_write_guard() {
+	printf '%s\n' 'e2e crd: proving the controller desired-state write boundary'
+	runtime_deployment_names
+	controller_pod_json=$WORK_DIR/controller-impersonation-pod.json
+	kube -n "$E2E_OPERATOR_NAMESPACE" get pods \
+		-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE,app.kubernetes.io/component=controller" \
+		-o json | jq -e '
+          [.items[] | select(.status.phase == "Running")] |
+          if length > 0 then sort_by(.metadata.name)[0] else error("no running controller Pod") end
+        ' >"$controller_pod_json"
+	controller_service_account=$(jq -er '.spec.serviceAccountName' "$controller_pod_json")
+	controller_service_account_uid=$(kube -n "$E2E_OPERATOR_NAMESPACE" get serviceaccount \
+		"$controller_service_account" -o jsonpath='{.metadata.uid}')
+	[ -n "$controller_service_account_uid" ] || fail "controller ServiceAccount UID is empty"
+	CONTROLLER_IMPERSONATION_USERNAME="system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$controller_service_account"
+	CONTROLLER_IMPERSONATION_UID=$controller_service_account_uid
+	CONTROLLER_IMPERSONATION_POD_NAME=$(jq -er '.metadata.name' "$controller_pod_json")
+	CONTROLLER_IMPERSONATION_POD_UID=$(jq -er '.metadata.uid' "$controller_pod_json")
+
+	controller_write_evidence "$WORK_DIR/controller-write-before.json"
+	stop_controller_deployment
+
+	current_suspend=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
+		jq -er '.spec.suspend // false')
+	suspend_patch=$(jq -cn --argjson current "$current_suspend" '{spec: {suspend: ($current | not)}}')
+	expect_controller_write_denial spec merge "$suspend_patch"
+	expect_controller_write_denial labels merge \
+		'{"metadata":{"labels":{"operator.ptah.dev/controller-write-probe":"forbidden"}}}'
+	expect_controller_write_denial annotations merge \
+		'{"metadata":{"annotations":{"operator.ptah.dev/controller-write-probe":"forbidden"}}}'
+
+	CONTROLLER_GUARD_OWNER=controller-write-guard-owner
+	kube -n "$PROOF_NAMESPACE" create configmap "$CONTROLLER_GUARD_OWNER" >/dev/null
+	owner_uid=$(kube -n "$PROOF_NAMESPACE" get configmap "$CONTROLLER_GUARD_OWNER" \
+		-o jsonpath='{.metadata.uid}')
+	owner_patch=$(jq -cn --arg name "$CONTROLLER_GUARD_OWNER" --arg uid "$owner_uid" '{
+      metadata: {ownerReferences: [{
+        apiVersion: "v1", kind: "ConfigMap", name: $name, uid: $uid
+      }]}
+    }')
+	expect_controller_write_denial ownerReferences merge "$owner_patch"
+	expect_controller_write_denial 'a foreign finalizer' merge \
+		'{"metadata":{"finalizers":["operator.ptah.dev/foreign-operation"]}}'
+
+	status_before=$WORK_DIR/controller-write-status-before.json
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
+		jq -S '.status // {}' >"$status_before"
+	if controller_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" \
+		--type merge -p '{"status":{"phase":"ControllerWriteProbe"}}' \
+		--dry-run=server -o json >"$WORK_DIR/controller-write-status-dry-run.json" \
+		2>"$WORK_DIR/controller-write-status-dry-run.err"; then
+		jq -S '.status // {}' "$WORK_DIR/controller-write-status-dry-run.json" \
+			>"$WORK_DIR/controller-write-status-response.json"
+		cmp "$status_before" "$WORK_DIR/controller-write-status-response.json" ||
+			fail "the main PtahSchema endpoint accepted a controller status mutation"
+	else
+		grep -F 'Ptah controller write guard rejected a desired-state mutation' \
+			"$WORK_DIR/controller-write-status-dry-run.err" >/dev/null ||
+			fail "controller main-resource status mutation failed without a safe API or write-guard refusal"
+	fi
+
+	current_finalizers=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
+		jq -c '(.metadata.finalizers // [])')
+	printf '%s\n' "$current_finalizers" |
+		jq -e 'index("operator.ptah.dev/active-operation") == null' >/dev/null ||
+		fail "proof PtahSchema already has the active-operation finalizer"
+	add_finalizer_patch=$(printf '%s\n' "$current_finalizers" | jq -c '{
+      metadata: {finalizers: (. + ["operator.ptah.dev/active-operation"])}
+    }')
+	controller_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" \
+		--type merge -p "$add_finalizer_patch" >/dev/null
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
+		jq -e --argjson before "$current_finalizers" '
+          (.metadata.finalizers // []) == ($before + ["operator.ptah.dev/active-operation"])
+        ' >/dev/null || fail "controller identity did not add exactly its active-operation finalizer"
+	remove_finalizer_patch=$(printf '%s\n' "$current_finalizers" | jq -c '{metadata: {finalizers: .}}')
+	controller_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" \
+		--type merge -p "$remove_finalizer_patch" >/dev/null
+
+	kube -n "$PROOF_NAMESPACE" delete configmap "$CONTROLLER_GUARD_OWNER" --wait=true >/dev/null
+	CONTROLLER_GUARD_OWNER=
+	controller_write_evidence "$WORK_DIR/controller-write-after.json"
+	cmp "$WORK_DIR/controller-write-before.json" "$WORK_DIR/controller-write-after.json" ||
+		fail "controller write proof changed anything except the temporary active-operation finalizer"
+
+	start_controller_deployment
+	wait_runtime_ready
+	CONTROLLER_IMPERSONATION_USERNAME=
+	CONTROLLER_IMPERSONATION_UID=
+	CONTROLLER_IMPERSONATION_POD_NAME=
+	CONTROLLER_IMPERSONATION_POD_UID=
+	printf '%s\n' 'e2e crd: controller desired-state write boundary proof passed'
 }
 
 assert_controller_downgrade_blocked() {
@@ -974,6 +1128,7 @@ run_upgrade_proof() {
 	assert_object_unchanged ptahschema "$PROOF_SCHEMA" "$WORK_DIR/ptahschema-before.json"
 	assert_object_unchanged ptahschemaplan "$PROOF_PLAN" "$WORK_DIR/ptahschemaplan-before.json"
 	assert_object_unchanged ptahschemaapproval "$PROOF_APPROVAL" "$WORK_DIR/ptahschemaapproval-before.json"
+	prove_controller_write_guard
 
 	printf '%s\n' 'e2e crd: proving immutable singleton coordination'
 	second_release=${E2E_HELM_RELEASE}-second
@@ -1083,3 +1238,5 @@ case "$E2E_PHASE" in
 	uninstall) run_uninstall_proof ;;
 	*) fail "unsupported E2E_PHASE $E2E_PHASE" ;;
 esac
+
+printf 'e2e crd: PASS phase=%s\n' "$E2E_PHASE"

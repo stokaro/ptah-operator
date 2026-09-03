@@ -150,6 +150,50 @@ func TestDecodeSetRejectsCRDSetChanges(t *testing.T) {
 	}
 }
 
+func TestEvaluateTransitionAllowsOnlyVersionOneBootstrapFromEmptyBaseline(t *testing.T) {
+	t.Parallel()
+
+	baseline := documentSet{byName: map[string]document{}}
+	candidate := mustDecodeFixture(t, "candidate", fixtureOptions{
+		managed: true, version: 1, description: "candidate",
+	})
+	result, err := evaluateTransition(baseline, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.BaselineVersion != 0 || result.CandidateVersion != 1 ||
+		!result.InitialAdoption || !result.SchemaChanged {
+		t.Fatalf("empty-baseline transition result = %+v", result)
+	}
+
+	laterCandidate := mustDecodeFixture(t, "candidate", fixtureOptions{
+		managed: true, version: 2, description: "candidate",
+	})
+	_, err = evaluateTransition(baseline, laterCandidate)
+	if err == nil || !strings.Contains(err.Error(), "initial bootstrap from an empty CRD baseline requires candidate") {
+		t.Fatalf("version-two empty-baseline transition error = %v", err)
+	}
+}
+
+func TestDecodeBaselineSetAllowsOnlyAnActuallyEmptySet(t *testing.T) {
+	t.Parallel()
+
+	set, err := decodeBaselineSet(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(set.byName) != 0 {
+		t.Fatalf("empty baseline decoded %d CRDs", len(set.byName))
+	}
+
+	partial := fixtureDocuments(t, fixtureOptions{
+		managed: true, version: 1, description: "partial", omitLast: true,
+	})
+	if _, err := decodeBaselineSet(partial); err == nil || !strings.Contains(err.Error(), "complete generated set") {
+		t.Fatalf("partial baseline error = %v, want complete-set rejection", err)
+	}
+}
+
 func TestValidateIdentityRequiresOneSharedVersion(t *testing.T) {
 	t.Parallel()
 
