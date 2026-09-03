@@ -148,6 +148,8 @@ case "$DOCKER_ENDPOINT" in
 	*) fail "Docker context $DOCKER_CONTEXT must use an SSH endpoint, got $DOCKER_ENDPOINT" ;;
 esac
 docker --context "$DOCKER_CONTEXT" info >/dev/null
+docker --context "$DOCKER_CONTEXT" buildx inspect "$DOCKER_CONTEXT" >/dev/null 2>&1 ||
+	fail "Docker context $DOCKER_CONTEXT must expose a working Buildx builder"
 
 ssh_authority=${DOCKER_ENDPOINT#ssh://}
 ssh_authority=${ssh_authority%%/*}
@@ -239,10 +241,6 @@ REMOTE_REGISTRY="127.0.0.1:${E2E_REGISTRY_PORT}"
 
 export DOCKER_HOST="$DOCKER_ENDPOINT"
 export KIND_EXPERIMENTAL_PROVIDER=docker
-# Historical release Dockerfiles use automatic BUILDPLATFORM, TARGETOS, and
-# TARGETARCH arguments. Select BuildKit explicitly so the exact archived source
-# builds independently of a caller's Docker CLI defaults.
-export DOCKER_BUILDKIT=1
 unset DOCKER_CERT_PATH DOCKER_TLS_VERIFY
 
 if ! existing_clusters=$(kind get clusters); then
@@ -805,7 +803,9 @@ if [ -z "$E2E_EXECUTOR_IMAGE" ]; then
 	cp "$ROOT_DIR/test/e2e/Dockerfile.ptah" "$PTAH_BUILD_CONTEXT/Dockerfile.e2e"
 	printf 'e2e: building Ptah executor %s from commit %s\n' "$PTAH_IMAGE" "$PTAH_COMMIT"
 	add_created_image "$PTAH_IMAGE"
-	docker --context "$DOCKER_CONTEXT" build \
+	docker --context "$DOCKER_CONTEXT" buildx build \
+		--builder "$DOCKER_CONTEXT" \
+		--load \
 		--file "$PTAH_BUILD_CONTEXT/Dockerfile.e2e" \
 		--build-arg "PTAH_BUILD_VERSION=${E2E_PTAH_VERSION}" \
 		--build-arg "PTAH_BUILD_COMMIT=${PTAH_SHORT_COMMIT}" \
@@ -823,7 +823,9 @@ fi
 
 printf 'e2e: building %s with Docker context %s\n' "$OPERATOR_IMAGE" "$SELECTED_DOCKER_CONTEXT"
 IMAGE_CREATED=1
-docker --context "$DOCKER_CONTEXT" build \
+docker --context "$DOCKER_CONTEXT" buildx build \
+	--builder "$DOCKER_CONTEXT" \
+	--load \
 	--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \
 	--build-arg "REVISION=$CONTROLLER_REVISION" \
 	--target operator \
@@ -831,7 +833,9 @@ docker --context "$DOCKER_CONTEXT" build \
 printf 'e2e: building predecessor image %s from exact commit %s\n' \
 	"$PREDECESSOR_OPERATOR_IMAGE" "$PREDECESSOR_REVISION"
 add_created_image "$PREDECESSOR_OPERATOR_IMAGE"
-docker --context "$DOCKER_CONTEXT" build \
+docker --context "$DOCKER_CONTEXT" buildx build \
+	--builder "$DOCKER_CONTEXT" \
+	--load \
 	--file "$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_DOCKERFILE" \
 	--build-arg "REVISION=$PREDECESSOR_REVISION" \
 	--tag "$PREDECESSOR_OPERATOR_IMAGE" "$PREDECESSOR_BUILD_CONTEXT"
@@ -841,7 +845,9 @@ predecessor_image_revision=$(docker --context "$DOCKER_CONTEXT" image inspect \
 [ "$predecessor_image_revision" = "$PREDECESSOR_REVISION" ] ||
 	fail "predecessor image revision is $predecessor_image_revision, expected $PREDECESSOR_REVISION"
 add_created_image "$FIXTURE_BUILD_IMAGE"
-docker --context "$DOCKER_CONTEXT" build \
+docker --context "$DOCKER_CONTEXT" buildx build \
+	--builder "$DOCKER_CONTEXT" \
+	--load \
 	--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \
 	--build-arg "REVISION=$CONTROLLER_REVISION" \
 	--target fixture \

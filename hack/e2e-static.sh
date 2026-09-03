@@ -148,8 +148,25 @@ grep -F 'git -C "$ROOT_DIR" archive --format=tar' "$ROOT_DIR/hack/e2e-kind.sh" >
 	printf '%s\n' 'e2e static: predecessor source is not materialized with git archive' >&2
 	exit 1
 }
-grep -F 'export DOCKER_BUILDKIT=1' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
-	printf '%s\n' 'e2e static: historical image builds do not select BuildKit explicitly' >&2
+# shellcheck disable=SC2016 # Match the exact context-bound Buildx invocation.
+grep -F 'docker --context "$DOCKER_CONTEXT" buildx inspect "$DOCKER_CONTEXT"' \
+	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+	printf '%s\n' 'e2e static: the selected remote Buildx builder is not checked' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # Match the exact context-bound Buildx invocation.
+[ "$(grep -Fc 'docker --context "$DOCKER_CONTEXT" buildx build' \
+	"$ROOT_DIR/hack/e2e-kind.sh")" -eq 4 ] || {
+	printf '%s\n' 'e2e static: every task image must use explicit Buildx' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # Match the exact remote builder binding.
+[ "$(grep -Fc -- '--builder "$DOCKER_CONTEXT"' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 4 ] || {
+	printf '%s\n' 'e2e static: every task image must bind the selected remote builder' >&2
+	exit 1
+}
+[ "$(grep -Fc -- '--load' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 4 ] || {
+	printf '%s\n' 'e2e static: every task image must load its Buildx result into the selected daemon' >&2
 	exit 1
 }
 # shellcheck disable=SC2016 # This check intentionally matches literal script variables.
