@@ -1309,6 +1309,8 @@ external_pg_host_contract_section=$(sed -n '/^assert_external_pg_container_contr
 	"$ROOT_DIR/hack/e2e-kind.sh")
 external_pg_mount_contract_section=$(sed -n '/^external_pg_mounts_are_ephemeral() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-kind.sh")
+external_pg_app_query_section=$(sed -n '/^external_pg_app_query() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-kind.sh")
 external_pg_contract_section=$(sed -n '/^assert_external_pg_container_contract() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 external_pg_kubernetes_absence_section=$(sed -n \
@@ -1350,6 +1352,7 @@ for required_static_section in \
 	"$engine_lifecycle_section" "$read_only_chain_section" \
 	"$external_pg_create_section" \
 	"$external_pg_host_contract_section" "$external_pg_mount_contract_section" \
+	"$external_pg_app_query_section" \
 	"$external_pg_contract_section" "$external_pg_kubernetes_absence_section" \
 	"$external_pg_endpoint_section" "$external_pg_catalog_section" \
 	"$external_pg_lifecycle_section" "$external_pg_main_section" \
@@ -1399,6 +1402,18 @@ for external_host_contract_marker in \
 	printf '%s\n' "$external_pg_host_contract_section" |
 		grep -F -- "$external_host_contract_marker" >/dev/null
 done
+# shellcheck disable=SC2016 # Exact source markers retain shell variables literally.
+for external_pg_app_query_marker in \
+	'cat "$EXTERNAL_PG_PASSWORD_FILE"' \
+	'IFS= read -r PGPASSWORD' \
+	'exec psql -h 127.0.0.1 -U "$1" -d "$2" -Atqc "$3"'; do
+	printf '%s\n' "$external_pg_app_query_section" |
+		grep -F -- "$external_pg_app_query_marker" >/dev/null
+done
+if printf '%s\n' "$external_pg_app_query_section" | grep -F 'POSTGRES_PASSWORD' >/dev/null; then
+	printf '%s\n' 'e2e static: application queries reuse the bootstrap superuser credential' >&2
+	exit 1
+fi
 
 # shellcheck disable=SC2016 # Exact jq source markers retain jq variables literally.
 for read_only_chain_marker in \
@@ -1433,23 +1448,35 @@ fi
 static_require_order "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 	'external PostgreSQL secret and identity lifecycle' \
 	'EXTERNAL_PG_ENV_FILE=$WORK_DIR/external-postgresql.env' \
+	'EXTERNAL_PG_ADMIN_PASSWORD_FILE=$WORK_DIR/external-postgresql-admin.password' \
 	'EXTERNAL_PG_PASSWORD_FILE=$WORK_DIR/external-postgresql.password' \
+	'EXTERNAL_PG_BOOTSTRAP_SQL_FILE=$WORK_DIR/external-postgresql-bootstrap.sql' \
 	'printf '\''%s'\'' "$EXTERNAL_PG_PASSWORD" >"$EXTERNAL_PG_PASSWORD_FILE"' \
+	'printf '\''%s'\'' "$EXTERNAL_PG_ADMIN_PASSWORD" >"$EXTERNAL_PG_ADMIN_PASSWORD_FILE"' \
+	'printf '\''POSTGRES_USER=%s\n'\'' "$EXTERNAL_PG_ADMIN_USER"' \
+	'cat "$EXTERNAL_PG_ADMIN_PASSWORD_FILE"' \
+	'CREATE ROLE %s WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' \
+	'CREATE DATABASE %s OWNER %s' \
 	'--rawfile password "$EXTERNAL_PG_PASSWORD_FILE"' \
-	'"$EXTERNAL_PG_ENV_FILE" "$EXTERNAL_PG_PASSWORD_FILE"' \
-	'unset EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL' \
+	'"$EXTERNAL_PG_ENV_FILE" "$EXTERNAL_PG_ADMIN_PASSWORD_FILE"' \
+	'unset EXTERNAL_PG_ADMIN_PASSWORD EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL' \
 	'# external-postgresql-container-create-begin' \
 	'EXTERNAL_PG_CONTAINER_ID=$(docker --context "$DOCKER_CONTEXT" container inspect' \
 	'docker --context "$DOCKER_CONTEXT" start "$EXTERNAL_PG_CONTAINER_ID"' \
 	'EXTERNAL_PG_IP=$(docker --context "$DOCKER_CONTEXT" container inspect' \
 	'assert_external_pg_container_contract "$EXTERNAL_PG_CONTAINER_ID" "$EXTERNAL_PG_IP"' \
 	'external PostgreSQL fixture is not major version 17' \
-	'ALTER ROLE ptah_external NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION' \
-	'external PostgreSQL fixture login did not retain database ownership' \
+	'<"$EXTERNAL_PG_BOOTSTRAP_SQL_FILE" >/dev/null' \
+	'rm -f "$EXTERNAL_PG_ADMIN_PASSWORD_FILE" "$EXTERNAL_PG_BOOTSTRAP_SQL_FILE"' \
+	'external PostgreSQL fixture login retained administrative attributes' \
+	'external PostgreSQL fixture login does not own its database' \
 	'E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID'
 # shellcheck disable=SC2016 # Exact forbidden source markers retain shell variables literally.
 for external_secret_argv_marker in \
 	'--arg password "$EXTERNAL_PG_PASSWORD"' \
+	'--arg password "$EXTERNAL_PG_ADMIN_PASSWORD"' \
+	'--env "PGPASSWORD=$EXTERNAL_PG_PASSWORD"' \
+	'--env "PGPASSWORD=$EXTERNAL_PG_ADMIN_PASSWORD"' \
 	'--arg url "$EXTERNAL_PG_URL"'; do
 	static_reject_marker "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 		"$external_secret_argv_marker" 'external PostgreSQL host process arguments'

@@ -28,7 +28,7 @@ E2E_DIRECT_HOST_ACCESS=${E2E_DIRECT_HOST_ACCESS:-0}
 # An imported variable retains its export attribute after reassignment in POSIX
 # shells. Clear secret-bearing names before generating task credentials so no
 # later host subprocess can inherit their values.
-unset REGISTRY_PASSWORD EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL
+unset REGISTRY_PASSWORD EXTERNAL_PG_ADMIN_PASSWORD EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL
 
 fail() {
 	printf 'e2e: %s\n' "$*" >&2
@@ -216,6 +216,8 @@ REGISTRY_HOST="${REGISTRY_DNS_NAME}:5000"
 EXTERNAL_PG_CONTAINER=$(dns_name ptah-postgresql-external "$identity" 63)
 EXTERNAL_PG_SERVICE=e2e-postgresql-external
 EXTERNAL_PG_DNS_NAME="${EXTERNAL_PG_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
+EXTERNAL_PG_ADMIN_USER=postgres
+EXTERNAL_PG_ADMIN_DATABASE=postgres
 EXTERNAL_PG_USER=ptah_external
 EXTERNAL_PG_DATABASE=ptah_external
 TLS_PROXY_SERVICE=e2e-registry-tls
@@ -226,6 +228,10 @@ registry_credential_suffix=$(printf '%s-registry-auth' "$identity" | sha256 | cu
 REGISTRY_PASSWORD="e2eRegistry${registry_credential_suffix}Q7"
 external_pg_credential_suffix=$(printf '%s-postgresql-external' "$identity" | sha256 | cut -c1-24)
 EXTERNAL_PG_PASSWORD="e2eExternalPg${external_pg_credential_suffix}Q7"
+external_pg_admin_credential_suffix=$(printf '%s-postgresql-admin' "$identity" | sha256 | cut -c1-24)
+EXTERNAL_PG_ADMIN_PASSWORD="e2eExternalPgAdmin${external_pg_admin_credential_suffix}Q7"
+[ "$EXTERNAL_PG_ADMIN_PASSWORD" != "$EXTERNAL_PG_PASSWORD" ] ||
+	fail "external PostgreSQL admin and application credentials must differ"
 
 if [ -z "$E2E_API_SERVER_PORT" ]; then
 	port_seed=$(printf '%s' "$CLUSTER_NAME" | cksum | awk '{print $1}')
@@ -300,8 +306,10 @@ REGISTRY_NETRC_FILE=$WORK_DIR/registry.netrc
 REGISTRY_PASSWORD_FILE=$WORK_DIR/registry.password
 REGISTRY_CREDENTIALS_FILE=$WORK_DIR/registry-credentials.json
 EXTERNAL_PG_ENV_FILE=$WORK_DIR/external-postgresql.env
+EXTERNAL_PG_ADMIN_PASSWORD_FILE=$WORK_DIR/external-postgresql-admin.password
 EXTERNAL_PG_PASSWORD_FILE=$WORK_DIR/external-postgresql.password
 EXTERNAL_PG_CREDENTIALS_FILE=$WORK_DIR/external-postgresql-credentials.json
+EXTERNAL_PG_BOOTSTRAP_SQL_FILE=$WORK_DIR/external-postgresql-bootstrap.sql
 TLS_PROXY_DIR=$WORK_DIR/tls-proxy
 TLS_PROXY_CA_KEY_FILE=$TLS_PROXY_DIR/ca.key
 TLS_PROXY_CA_FILE=$TLS_PROXY_DIR/ca.crt
@@ -342,14 +350,21 @@ jq -n \
 	'{username: $username, password: $password}' >"$REGISTRY_CREDENTIALS_FILE"
 chmod 600 "$REGISTRY_PASSWORD_FILE" "$REGISTRY_CREDENTIALS_FILE"
 printf '%s' "$EXTERNAL_PG_PASSWORD" >"$EXTERNAL_PG_PASSWORD_FILE"
-chmod 600 "$EXTERNAL_PG_PASSWORD_FILE"
+printf '%s' "$EXTERNAL_PG_ADMIN_PASSWORD" >"$EXTERNAL_PG_ADMIN_PASSWORD_FILE"
+printf '%s\n' "$EXTERNAL_PG_PASSWORD" | grep -Eq '^[A-Za-z0-9]+$' ||
+	fail "external PostgreSQL application password is not SQL-literal safe"
 {
-	printf 'POSTGRES_USER=%s\n' "$EXTERNAL_PG_USER"
+	printf 'POSTGRES_USER=%s\n' "$EXTERNAL_PG_ADMIN_USER"
 	printf 'POSTGRES_PASSWORD='
-	cat "$EXTERNAL_PG_PASSWORD_FILE"
-	printf '\nPOSTGRES_DB=%s\n' "$EXTERNAL_PG_DATABASE"
+	cat "$EXTERNAL_PG_ADMIN_PASSWORD_FILE"
+	printf '\nPOSTGRES_DB=%s\n' "$EXTERNAL_PG_ADMIN_DATABASE"
 	printf '%s\n' 'PGDATA=/var/lib/postgresql/data/pgdata'
 } >"$EXTERNAL_PG_ENV_FILE"
+{
+	printf "CREATE ROLE %s WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '%s';\n" \
+		"$EXTERNAL_PG_USER" "$EXTERNAL_PG_PASSWORD"
+	printf 'CREATE DATABASE %s OWNER %s;\n' "$EXTERNAL_PG_DATABASE" "$EXTERNAL_PG_USER"
+} >"$EXTERNAL_PG_BOOTSTRAP_SQL_FILE"
 jq -n \
 	--arg username "$EXTERNAL_PG_USER" \
 	--rawfile password "$EXTERNAL_PG_PASSWORD_FILE" \
@@ -365,9 +380,10 @@ jq -n \
     ' \
 	>"$EXTERNAL_PG_CREDENTIALS_FILE"
 chmod 600 \
-	"$EXTERNAL_PG_ENV_FILE" "$EXTERNAL_PG_PASSWORD_FILE" \
-	"$EXTERNAL_PG_CREDENTIALS_FILE"
-unset EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL
+	"$EXTERNAL_PG_ENV_FILE" "$EXTERNAL_PG_ADMIN_PASSWORD_FILE" \
+	"$EXTERNAL_PG_PASSWORD_FILE" "$EXTERNAL_PG_CREDENTIALS_FILE" \
+	"$EXTERNAL_PG_BOOTSTRAP_SQL_FILE"
+unset EXTERNAL_PG_ADMIN_PASSWORD EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL
 
 add_created_image() {
 	if [ -z "$CREATED_IMAGE_REFS" ]; then
@@ -388,7 +404,20 @@ external_pg_mounts_are_ephemeral() {
       ((.HostConfig.VolumesFrom // []) | length) == 0 and
       ((.Mounts // []) | all(
         .Type == "tmpfs" and .Destination == "/var/lib/postgresql/data"))
-    ' >/dev/null
+	' >/dev/null
+}
+
+external_pg_app_query() {
+	external_pg_query=$1
+	{
+		cat "$EXTERNAL_PG_PASSWORD_FILE"
+		printf '\n'
+	} | docker --context "$DOCKER_CONTEXT" exec -i "$EXTERNAL_PG_CONTAINER_ID" \
+		sh -ec '
+      IFS= read -r PGPASSWORD
+      export PGPASSWORD
+      exec psql -h 127.0.0.1 -U "$1" -d "$2" -Atqc "$3"
+    ' sh "$EXTERNAL_PG_USER" "$EXTERNAL_PG_DATABASE" "$external_pg_query"
 }
 
 assert_external_pg_container_contract() {
@@ -1068,19 +1097,24 @@ external_pg_server_version_num=$(docker --context "$DOCKER_CONTEXT" exec "$EXTER
 external_pg_server_version_num=$(printf '%s' "$external_pg_server_version_num" | tr -d '[:space:]')
 printf '%s\n' "$external_pg_server_version_num" | grep -Eq '^17[0-9]{4}$' ||
 	fail "external PostgreSQL fixture is not major version 17"
-docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
-	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "ALTER ROLE ptah_external NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION"' \
-	>/dev/null
-external_pg_superuser=$(docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
-	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT rolsuper FROM pg_roles WHERE rolname = current_user"')
-external_pg_superuser=$(printf '%s' "$external_pg_superuser" | tr -d '[:space:]')
-[ "$external_pg_superuser" = f ] ||
-	fail "external PostgreSQL fixture login remained a superuser"
-external_pg_database_owner=$(docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
-	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT pg_get_userbyid(datdba) = current_user FROM pg_database WHERE datname = current_database()"')
+docker --context "$DOCKER_CONTEXT" exec -i "$EXTERNAL_PG_CONTAINER_ID" \
+	sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' \
+	<"$EXTERNAL_PG_BOOTSTRAP_SQL_FILE" >/dev/null
+rm -f "$EXTERNAL_PG_ADMIN_PASSWORD_FILE" "$EXTERNAL_PG_BOOTSTRAP_SQL_FILE" \
+	"$EXTERNAL_PG_ENV_FILE"
+external_pg_least_privileged=$(external_pg_app_query '
+  SELECT NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND
+         NOT rolreplication AND NOT rolbypassrls
+  FROM pg_roles WHERE rolname = current_user
+')
+external_pg_least_privileged=$(printf '%s' "$external_pg_least_privileged" | tr -d '[:space:]')
+[ "$external_pg_least_privileged" = t ] ||
+	fail "external PostgreSQL fixture login retained administrative attributes"
+external_pg_database_owner=$(external_pg_app_query \
+	'SELECT pg_get_userbyid(datdba) = current_user FROM pg_database WHERE datname = current_database()')
 external_pg_database_owner=$(printf '%s' "$external_pg_database_owner" | tr -d '[:space:]')
 [ "$external_pg_database_owner" = t ] ||
-	fail "external PostgreSQL fixture login did not retain database ownership"
+	fail "external PostgreSQL fixture login does not own its database"
 assert_external_pg_container_contract "$EXTERNAL_PG_CONTAINER_ID" "$EXTERNAL_PG_IP"
 
 render_release_values() {
