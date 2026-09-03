@@ -188,7 +188,13 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			},
 		},
 		{
-			name: "approval selector", want: "objectSelector",
+			name: "mutating approval selector", want: "objectSelector",
+			mutate: func(verifier *RuntimeVerifier) {
+				verifier.Mutating.(*mutatingAdmissionClient).object.Webhooks[0].ObjectSelector = &metav1.LabelSelector{}
+			},
+		},
+		{
+			name: "validating approval selector", want: "objectSelector",
 			mutate: func(verifier *RuntimeVerifier) {
 				validatingWebhook(t, verifier, validatingApprovalWebhookName).ObjectSelector = &metav1.LabelSelector{}
 			},
@@ -207,9 +213,26 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			},
 		},
 		{
-			name: "pod selector", want: "objectSelector",
+			name: "pod selector missing", want: "objectSelector",
+			mutate: func(verifier *RuntimeVerifier) {
+				validatingWebhook(t, verifier, podIntentWebhookName).ObjectSelector = nil
+			},
+		},
+		{
+			name: "pod selector empty", want: "objectSelector",
 			mutate: func(verifier *RuntimeVerifier) {
 				validatingWebhook(t, verifier, podIntentWebhookName).ObjectSelector = &metav1.LabelSelector{}
+			},
+		},
+		{
+			name: "pod selector wrong", want: "objectSelector",
+			mutate: func(verifier *RuntimeVerifier) {
+				validatingWebhook(t, verifier, podIntentWebhookName).ObjectSelector = &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						managedByLabel:                "ptah-operator",
+						"app.kubernetes.io/component": "foreign",
+					},
+				}
 			},
 		},
 		{
@@ -697,6 +720,7 @@ func readyPodIntentWebhook(expected RuntimeInvariants) admissionregistrationv1.V
 		FailurePolicy: &fail, SideEffects: &none, MatchPolicy: &equivalent,
 		TimeoutSeconds: valuePointer(expected.WebhookTimeoutSeconds),
 		ClientConfig:   readyWebhookClientConfig(expected, podIntentPath),
+		ObjectSelector: exactPodIntentObjectSelector(),
 		Rules: []admissionregistrationv1.RuleWithOperations{{
 			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
 			Rule: admissionregistrationv1.Rule{

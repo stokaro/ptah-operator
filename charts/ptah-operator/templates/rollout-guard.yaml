@@ -145,7 +145,7 @@ spec:
     - name: oldAdmission
       expression: {{ printf `variables.isAdmission && request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
   validations:
-    - expression: 'request.subResource != "scale"'
+    - expression: '!has(request.subResource) || request.subResource != "scale"'
       message: {{ $rolloutMessage | quote }}
     - expression: {{ printf `!variables.isDeployment || !variables.isReleaseHook || request.name in [%q, %q]` $controllerDeployment $certificateDeployment | quote }}
       message: {{ $rolloutMessage | quote }}

@@ -182,7 +182,7 @@ func TestHookIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 	teardownJob := guard.hookJobName("teardown")
 	policy := guard.hookIdentityPolicy()
 	wantMatch := fmt.Sprintf(
-		`request.namespace == %q && ((request.subResource == "" && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))`,
+		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))`,
 		guard.ReleaseNamespace, guard.HookServiceAccountName, teardownServiceAccount, guard.HookServiceAccountName, teardownServiceAccount,
 		identityJob+"-", preflightJob+"-", reconcileJob+"-", quiesceJob+"-", teardownJob+"-",
 	)

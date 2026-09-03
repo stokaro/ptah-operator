@@ -46,7 +46,7 @@ func TestRuntimePodIdentityPolicyPinsServiceAccountExecutableAndSubresources(t *
 		`"pods/attach"`,
 		`"pods/portforward"`,
 		`"pods/proxy"`,
-		`request.subResource == \"\"`,
+		`!has(request.subResource) || request.subResource == \"\"`,
 		`request.userInfo.username in [\"system:kube-controller-manager\", \"system:serviceaccount:kube-system:replicaset-controller\"]`,
 		`object.spec.serviceAccountName == \"ptah-controller\"`,
 		`object.spec.serviceAccountName == \"ptah-cert-rotator\"`,
@@ -114,7 +114,7 @@ func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantMatch := fmt.Sprintf(
-		`request.namespace == %q && ((request.subResource == "" && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q))))`,
+		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q))))`,
 		guard.ReleaseNamespace,
 		guard.ControllerServiceAccountName,
 		guard.CertificateDeploymentName,
@@ -130,8 +130,8 @@ func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 		t.Fatalf("optional ServiceAccount match condition\n got: %#v\nwant: %q", policy.Spec.MatchConditions, wantMatch)
 	}
 	wantVariables := map[string]string{
-		"isController":  fmt.Sprintf(`request.subResource == "" && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.ControllerServiceAccountName),
-		"isCertificate": fmt.Sprintf(`request.subResource == "" && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.CertificateDeploymentName),
+		"isController":  fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.ControllerServiceAccountName),
+		"isCertificate": fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.CertificateDeploymentName),
 	}
 	for _, variable := range policy.Spec.Variables {
 		if want, ok := wantVariables[variable.Name]; ok {

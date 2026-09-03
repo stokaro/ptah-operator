@@ -39,6 +39,9 @@ func TestParentWorkloadGuardSeparatesStableOriginAndExactCandidateContracts(t *t
 			*policy.Spec.MatchConstraints.MatchPolicy != admissionregistrationv1.Exact {
 			t.Fatalf("%s policy is not explicitly fail-closed with exact matching", name)
 		}
+		if len(policy.Spec.Validations) == 0 || policy.Spec.Validations[0].Expression != `!has(request.subResource) || request.subResource == ""` {
+			t.Fatalf("%s policy does not safely restrict admission to the main resource", name)
+		}
 	}
 
 	otherRollout := *rollout

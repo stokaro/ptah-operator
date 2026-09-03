@@ -30,7 +30,7 @@
 {{- $replicaSetMessage := "Ptah runtime parent guard rejected an unsafe ReplicaSet" -}}
 {{- $replicaSetMatch := printf `request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))` .Release.Namespace $controllerServiceAccount $certificateServiceAccount $controllerServiceAccount $certificateServiceAccount -}}
 {{- $replicaSetValidations := list
-      `request.subResource == ""`
+      `!has(request.subResource) || request.subResource == ""`
       `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:deployment-controller"]`
       (printf `has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]` $controllerServiceAccount $certificateServiceAccount)
       `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`
@@ -50,7 +50,7 @@
 {{- $hookPodOriginMessage := "Ptah hook Pod origin guard rejected an unauthorized Pod" -}}
 {{- $hookPodOriginMatch := printf `request.namespace == %q && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` .Release.Namespace $hookPattern $teardownPattern -}}
 {{- $hookPodOriginValidations := list
-      `request.subResource == ""`
+      `!has(request.subResource) || request.subResource == ""`
       `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]`
       (printf `object.metadata.namespace == request.namespace && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern)
       `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`
@@ -70,7 +70,7 @@
 {{- $quiesceArgs := printf `%s.args == %s` $container (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown-quiesce" "timeout" "180s" "verifyControllerState" false)) -}}
 {{- $teardownArgs := printf `%s.args == %s` $container (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown" "timeout" "180s" "verifyControllerState" false)) -}}
 {{- $hookContractValidations := list
-      `request.subResource == ""`
+      `!has(request.subResource) || request.subResource == ""`
       (printf `request.name in [%q, %q, %q, %q, %q] && object.metadata.name == request.name && object.metadata.namespace == %q && (!has(object.metadata.generateName) || object.metadata.generateName == "")` $identityJob $preflightJob $reconcileJob $quiesceJob $teardownJob .Release.Namespace)
       `(!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0)`
       (printf `has(object.metadata.labels) && object.metadata.labels["app.kubernetes.io/instance"] == %q && object.metadata.labels["app.kubernetes.io/component"] == (variables.isIdentity ? "hook-identity-probe" : (variables.isPreflight ? "crd-manager-preflight" : (variables.isQuiesce ? "crd-manager-teardown-quiesce" : (variables.isTeardown ? "crd-manager-teardown" : "crd-manager"))))` .Release.Name)
@@ -242,7 +242,7 @@ spec:
     - name: release-hook-service-account-pattern
       expression: {{ $hookOriginMatch | quote }}
   validations:
-    - expression: 'request.subResource == ""'
+    - expression: '!has(request.subResource) || request.subResource == ""'
       message: {{ $hookOriginMessage | quote }}
     - expression: {{ printf `has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern | quote }}
       message: {{ $hookOriginMessage | quote }}

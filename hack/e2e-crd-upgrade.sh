@@ -16,6 +16,8 @@ PROOF_PLAN=crd-upgrade-proof
 PROOF_APPROVAL=crd-upgrade-proof
 PROOF_CONTROLLER_IMAGE=
 UPGRADE_VALUES_FILE=
+EXPECTED_SINGLETON_ANNOTATIONS_FILE=$WORK_DIR/expected-singleton-annotations.json
+EXPECTED_SINGLETON_RENDER_FILE=$WORK_DIR/expected-singleton-render.yaml
 PREDECESSOR_SCHEMA=predecessor-live
 PREDECESSOR_PLAN=predecessor-live
 PREDECESSOR_APPROVAL=predecessor-live
@@ -160,18 +162,47 @@ singleton_contract_evidence() {
 
 owned_singleton_annotation_count() {
 	resource=$1
-	kube get "$resource" ptah-operator-admission -o json | jq '[
-      .metadata.annotations // {} | keys[] |
-      select(
-        . == "operator.ptah.dev/release-name" or
-        . == "operator.ptah.dev/release-namespace" or
-        . == "operator.ptah.dev/coordination-namespace" or
-        . == "operator.ptah.dev/leader-election" or
-        . == "operator.ptah.dev/leader-election-id" or
-        . == "operator.ptah.dev/controller-state-version" or
-        . == "operator.ptah.dev/admission-contract-version"
-      )
+	[ -s "$EXPECTED_SINGLETON_ANNOTATIONS_FILE" ] ||
+		fail "expected admission singleton annotations are missing"
+	kube get "$resource" ptah-operator-admission -o json | jq \
+		--slurpfile expected "$EXPECTED_SINGLETON_ANNOTATIONS_FILE" '[
+      .metadata.annotations // {} | keys[] as $key |
+      select($expected[0] | has($key))
     ] | length'
+}
+
+prepare_expected_singleton_annotations() {
+	helm_e2e template "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
+		--show-only templates/webhook.yaml >"$EXPECTED_SINGLETON_RENDER_FILE"
+	awk '
+      $1 == "kind:" && $2 == "MutatingWebhookConfiguration" { mutating = 1; next }
+      mutating && $1 == "annotations:" { annotations = 1; next }
+      annotations && $1 == "labels:" { exit }
+      annotations { sub(/^    /, ""); print }
+    ' "$EXPECTED_SINGLETON_RENDER_FILE" | jq -Rn '
+	  [inputs | capture("^(?<key>[^:]+): \"(?<value>[^\"]*)\"$")] |
+      from_entries
+    ' >"$EXPECTED_SINGLETON_ANNOTATIONS_FILE"
+	jq -e '
+      length == 13 and
+      (keys == [
+        "operator.ptah.dev/admission-contract-version",
+        "operator.ptah.dev/certificate-deployment-name",
+        "operator.ptah.dev/controller-deployment-name",
+        "operator.ptah.dev/controller-service-account-name",
+        "operator.ptah.dev/controller-state-version",
+        "operator.ptah.dev/coordination-namespace",
+        "operator.ptah.dev/hook-service-account-name",
+        "operator.ptah.dev/leader-election",
+        "operator.ptah.dev/leader-election-id",
+        "operator.ptah.dev/release-name",
+        "operator.ptah.dev/release-namespace",
+        "operator.ptah.dev/release-sequence",
+        "operator.ptah.dev/webhook-service-name"
+      ])
+    ' "$EXPECTED_SINGLETON_ANNOTATIONS_FILE" >/dev/null ||
+		fail "candidate render does not contain the complete 13-field admission singleton tuple"
 }
 
 assert_singleton_annotation_free() {
@@ -185,17 +216,11 @@ assert_singleton_annotation_free() {
 assert_adopted_singleton_annotations() {
 	for singleton_resource in mutatingwebhookconfiguration validatingwebhookconfiguration; do
 		kube get "$singleton_resource" ptah-operator-admission -o json | jq -e \
-			--arg release "$E2E_HELM_RELEASE" \
-			--arg namespace "$E2E_OPERATOR_NAMESPACE" '
-          .metadata.annotations as $annotations |
-          ($annotations["operator.ptah.dev/release-name"] == $release) and
-          ($annotations["operator.ptah.dev/release-namespace"] == $namespace) and
-          ($annotations["operator.ptah.dev/coordination-namespace"] == $namespace) and
-          ($annotations["operator.ptah.dev/leader-election"] == "true") and
-          ($annotations["operator.ptah.dev/leader-election-id"] == "ptah-operator.operator.ptah.dev") and
-          ($annotations["operator.ptah.dev/controller-state-version"] == "1") and
-          ($annotations["operator.ptah.dev/admission-contract-version"] == "1")
-        ' >/dev/null || fail "$singleton_resource/ptah-operator-admission did not acquire the exact candidate annotation tuple"
+			--slurpfile expected "$EXPECTED_SINGLETON_ANNOTATIONS_FILE" '
+          .metadata.annotations as $actual |
+          ($expected[0] | to_entries | all(. as $entry; $actual[$entry.key] == $entry.value))
+        ' >/dev/null ||
+			fail "$singleton_resource/ptah-operator-admission did not acquire the complete exact candidate annotation tuple"
 	done
 }
 
@@ -214,7 +239,8 @@ deployment_evidence() {
 
 expect_upgrade_failure_without_deployment_change() {
 	description=$1
-	shift
+	expected_hook_suffix=$2
+	shift 2
 	before=$WORK_DIR/deployment-before.json
 	after=$WORK_DIR/deployment-after.json
 	[ -n "$UPGRADE_VALUES_FILE" ] || fail "upgrade values file is not configured"
@@ -223,6 +249,12 @@ expect_upgrade_failure_without_deployment_change() {
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$UPGRADE_VALUES_FILE" \
 		--wait --timeout 2m "$@" >"$WORK_DIR/failed-upgrade.out" 2>"$WORK_DIR/failed-upgrade.err"; then
 		fail "$description unexpectedly succeeded"
+	fi
+	if ! grep -F -- "-${expected_hook_suffix} not ready" \
+		"$WORK_DIR/failed-upgrade.out" "$WORK_DIR/failed-upgrade.err" >/dev/null; then
+		failed_hook=$(sed -n 's/.*resource Job\/[^/]*\/\([^ ]*\) not ready.*/\1/p' \
+			"$WORK_DIR/failed-upgrade.out" "$WORK_DIR/failed-upgrade.err" | sed -n '1p')
+		fail "$description failed in unexpected hook ${failed_hook:-unknown}; expected *-${expected_hook_suffix}"
 	fi
 	deployment_evidence >"$after"
 	cmp "$before" "$after" || fail "$description mutated runtime Deployments"
@@ -781,6 +813,7 @@ run_predecessor_upgrade_proof() {
 	[ -f "$E2E_PREDECESSOR_IDENTITY_FILE" ] || fail "predecessor identity file is missing"
 	[ -d "$E2E_PREDECESSOR_SOURCE_DIR" ] || fail "predecessor source archive is missing"
 	UPGRADE_VALUES_FILE=$E2E_CANDIDATE_VALUES_FILE
+	prepare_expected_singleton_annotations
 
 	printf '%s\n' 'e2e crd: proving exact predecessor-to-candidate upgrade'
 	runtime_deployment_names
@@ -806,7 +839,8 @@ run_predecessor_upgrade_proof() {
 		ptahschemaapprovals.operator.ptah.dev; do
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-unknown-singleton.json"
 	done
-	expect_upgrade_failure_without_deployment_change "upgrade with unknown annotation-free admission behavior"
+	expect_upgrade_failure_without_deployment_change \
+		"upgrade with unknown annotation-free admission behavior" preflight
 	for crd_name in \
 		ptahschemas.operator.ptah.dev \
 		ptahschemaplans.operator.ptah.dev \
@@ -843,14 +877,15 @@ run_predecessor_upgrade_proof() {
 		ptahschemaapprovals.operator.ptah.dev; do
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-unknown-predecessor.json"
 	done
-	expect_upgrade_failure_without_deployment_change "upgrade with unknown annotation-free CRD drift"
+	expect_upgrade_failure_without_deployment_change \
+		"upgrade with unknown annotation-free CRD drift" preflight
 	for crd_name in \
 		ptahschemas.operator.ptah.dev \
 		ptahschemaplans.operator.ptah.dev \
 		ptahschemaapprovals.operator.ptah.dev; do
 		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-unknown-predecessor.json"
 	done
-	assert_adopted_singleton_annotations
+	assert_singleton_annotation_free
 	restore_predecessor_crd "$drift_crd"
 
 	printf '%s\n' 'e2e crd: upgrading the exact predecessor CRDs and live objects'

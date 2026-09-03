@@ -120,6 +120,7 @@ func TestServiceAccountOriginGuardCoversCallerAndTokenRequestBypasses(t *testing
 	contract := string(serialized)
 	for _, required := range []string{
 		`serviceaccounts`,
+		`has(request.subResource)`,
 		`request.subResource == \"token\"`,
 		`authentication.kubernetes.io/pod-name`,
 		`authentication.kubernetes.io/pod-uid`,

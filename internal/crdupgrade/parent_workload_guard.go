@@ -264,7 +264,7 @@ func (g *ParentWorkloadGuard) replicaSetPolicy() *admissionregistrationv1.Valida
 				{Name: "expectedComponent", Expression: fmt.Sprintf(`object.spec.template.spec.serviceAccountName == %q ? "controller" : "certificate-rotation"`, controllerSA)},
 			},
 			Validations: []admissionregistrationv1.Validation{
-				{Expression: `request.subResource == ""`, Message: message},
+				{Expression: `!has(request.subResource) || request.subResource == ""`, Message: message},
 				{Expression: `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:deployment-controller"]`, Message: message},
 				{Expression: fmt.Sprintf(`has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]`, controllerSA, certificateSA), Message: message},
 				{Expression: `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`, Message: message},
@@ -310,7 +310,7 @@ func (g *ParentWorkloadGuard) hookPodOriginPolicy() *admissionregistrationv1.Val
 			}},
 			Variables: []admissionregistrationv1.Variable{{Name: "owner", Expression: `object.metadata.ownerReferences[0]`}},
 			Validations: []admissionregistrationv1.Validation{
-				{Expression: `request.subResource == ""`, Message: message},
+				{Expression: `!has(request.subResource) || request.subResource == ""`, Message: message},
 				{Expression: `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]`, Message: message},
 				{Expression: fmt.Sprintf(`object.metadata.namespace == request.namespace && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))`, hookPattern, teardownPattern), Message: message},
 				{Expression: `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`, Message: message},
@@ -356,7 +356,7 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 				),
 			}},
 			Validations: []admissionregistrationv1.Validation{
-				{Expression: `request.subResource == ""`, Message: message},
+				{Expression: `!has(request.subResource) || request.subResource == ""`, Message: message},
 				{Expression: fmt.Sprintf(`has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))`, hookPattern, teardownPattern), Message: message},
 				{Expression: authority, Message: message},
 			},
@@ -420,7 +420,7 @@ func (g *ParentWorkloadGuard) hookJobContractExpressions(identityJob, preflightJ
 	volume := pod + ".volumes[0]"
 	sources := volume + ".projected.sources"
 	return []string{
-		`request.subResource == ""`,
+		`!has(request.subResource) || request.subResource == ""`,
 		fmt.Sprintf(`request.name in [%q, %q, %q, %q, %q] && object.metadata.name == request.name && object.metadata.namespace == %q && (!has(object.metadata.generateName) || object.metadata.generateName == "")`, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, g.rollout.ReleaseNamespace),
 		`(!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0)`,
 		fmt.Sprintf(`has(object.metadata.labels) && object.metadata.labels["app.kubernetes.io/instance"] == %q && object.metadata.labels["app.kubernetes.io/component"] == (variables.isIdentity ? "hook-identity-probe" : (variables.isPreflight ? "crd-manager-preflight" : (variables.isQuiesce ? "crd-manager-teardown-quiesce" : (variables.isTeardown ? "crd-manager-teardown" : "crd-manager"))))`, g.rollout.ReleaseName),

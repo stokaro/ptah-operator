@@ -181,7 +181,7 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "protected-service-account-origin",
 				Expression: fmt.Sprintf(
-					`request.userInfo.username in [%q, %q] || request.userInfo.username.matches(%q) || request.userInfo.username.matches(%q) || (request.operation == "CREATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "serviceaccounts" && request.subResource == "token" && request.namespace == %q && (request.name in [%q, %q] || request.name.matches(%q) || request.name.matches(%q)))`,
+					`request.userInfo.username in [%q, %q] || request.userInfo.username.matches(%q) || request.userInfo.username.matches(%q) || (request.operation == "CREATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "serviceaccounts" && has(request.subResource) && request.subResource == "token" && request.namespace == %q && (request.name in [%q, %q] || request.name.matches(%q) || request.name.matches(%q)))`,
 					controllerUsername,
 					certificateUsername,
 					hookUsernamePattern,
@@ -194,7 +194,7 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 				),
 			}},
 			Variables: []admissionregistrationv1.Variable{
-				{Name: "isTokenRequest", Expression: `request.operation == "CREATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "serviceaccounts" && request.subResource == "token"`},
+				{Name: "isTokenRequest", Expression: `request.operation == "CREATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "serviceaccounts" && has(request.subResource) && request.subResource == "token"`},
 				{Name: "isHookCaller", Expression: fmt.Sprintf(`request.userInfo.username.matches(%q) || request.userInfo.username.matches(%q)`, hookUsernamePattern, teardownUsernamePattern)},
 				{Name: "isControllerCaller", Expression: fmt.Sprintf(`request.userInfo.username == %q`, controllerUsername)},
 				{Name: "isCertificateCaller", Expression: fmt.Sprintf(`request.userInfo.username == %q`, certificateUsername)},

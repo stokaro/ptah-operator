@@ -971,7 +971,7 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 				{Name: "oldAdmission", Expression: fmt.Sprintf(`variables.isAdmission && request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
 			},
 			Validations: []admissionregistrationv1.Validation{
-				{Expression: `request.subResource != "scale"`, Message: denialMessage},
+				{Expression: `!has(request.subResource) || request.subResource != "scale"`, Message: denialMessage},
 				{Expression: fmt.Sprintf(`!variables.isDeployment || !variables.isReleaseHook || request.name in [%q, %q]`, g.ControllerDeploymentName, g.CertificateDeploymentName), Message: denialMessage},
 				{Expression: `!variables.isDeployment || request.operation != "CREATE" || !variables.isReleaseHook || request.dryRun == true`, Message: denialMessage},
 				{Expression: fmt.Sprintf(`variables.newState >= %d`, stateVersion), Message: denialMessage},
@@ -1042,7 +1042,7 @@ func (g *RolloutGuard) hookIdentityPolicy() *admissionregistrationv1.ValidatingA
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "fixed-hook-identity",
 				Expression: fmt.Sprintf(
-					`request.namespace == %q && ((request.subResource == "" && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))`,
+					`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))`,
 					g.ReleaseNamespace, g.HookServiceAccountName, teardownServiceAccount, g.HookServiceAccountName, teardownServiceAccount, identityJob+"-", preflightJob+"-", reconcileJob+"-", quiesceJob+"-", teardownJob+"-",
 				),
 			}},
@@ -1117,7 +1117,7 @@ func (g *RolloutGuard) hookPodValidationExpressions(identityJob, preflightJob, r
 	jobLabel := `object.metadata.labels["batch.kubernetes.io/job-name"]`
 	owner := "object.metadata.ownerReferences[0]"
 	return []string{
-		`request.subResource == ""`,
+		`!has(request.subResource) || request.subResource == ""`,
 		`request.operation != "CREATE" || request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]`,
 		fmt.Sprintf(`has(%[1]s.serviceAccountName) && %[1]s.serviceAccountName == (%[2]s == %[3]q ? %[4]q : %[5]q)`, pod, jobLabel, teardownJob, teardownServiceAccount, g.HookServiceAccountName),
 		fmt.Sprintf(`has(object.metadata.labels) && "batch.kubernetes.io/job-name" in object.metadata.labels && %s in [%q, %q, %q, %q, %q]`, jobLabel, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob),

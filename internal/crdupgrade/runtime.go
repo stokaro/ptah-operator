@@ -42,6 +42,13 @@ const (
 	storedControllerStatePageSize int64 = 500
 )
 
+func exactPodIntentObjectSelector() *metav1.LabelSelector {
+	return &metav1.LabelSelector{MatchLabels: map[string]string{
+		managedByLabel:                "ptah-operator",
+		"app.kubernetes.io/component": "schema-operation",
+	}}
+}
+
 type MutatingWebhookClient interface {
 	Get(context.Context, string, metav1.GetOptions) (*admissionregistrationv1.MutatingWebhookConfiguration, error)
 }
@@ -326,6 +333,7 @@ func verifyValidatingWebhookContract(configuration *admissionregistrationv1.Vali
 			name: podIntentWebhookName, path: podIntentPath,
 			operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
 			apiGroups:  []string{""}, apiVersions: []string{"v1"}, resources: []string{"pods", "pods/ephemeralcontainers", "pods/resize"},
+			objectSelector:     exactPodIntentObjectSelector(),
 			matchConditionName: podIntentMatchConditionName,
 			matchExpression:    podIntentMatchExpression,
 		},

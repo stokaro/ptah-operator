@@ -53,7 +53,7 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 	controllerContract := g.controllerPodContractExpressions(contract)
 	certificateContract := g.certificatePodContractExpressions(contract)
 	validations := []admissionregistrationv1.Validation{
-		{Expression: `request.subResource == ""`, Message: message},
+		{Expression: `!has(request.subResource) || request.subResource == ""`, Message: message},
 		{Expression: `request.operation != "CREATE" || request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:replicaset-controller"]`, Message: message},
 		{Expression: fmt.Sprintf(`!variables.isPod || variables.newRelease >= %d`, g.ReleaseSequence), Message: message},
 		{Expression: `!variables.isPod || variables.activeRelease >= variables.newRelease`, Message: message},
@@ -114,7 +114,7 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "runtime-service-account-or-pod",
 				Expression: fmt.Sprintf(
-					`request.namespace == %q && ((request.subResource == "" && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q))))`,
+					`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q))))`,
 					g.ReleaseNamespace,
 					g.ControllerServiceAccountName,
 					g.CertificateDeploymentName,
@@ -125,13 +125,13 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 				),
 			}},
 			Variables: []admissionregistrationv1.Variable{
-				{Name: "isPod", Expression: `request.subResource == ""`},
-				{Name: "isController", Expression: fmt.Sprintf(`request.subResource == "" && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, g.ControllerServiceAccountName)},
-				{Name: "isCertificate", Expression: fmt.Sprintf(`request.subResource == "" && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, g.CertificateDeploymentName)},
-				{Name: "newState", Expression: fmt.Sprintf(`request.subResource == "" && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
-				{Name: "newRelease", Expression: fmt.Sprintf(`request.subResource == "" && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
+				{Name: "isPod", Expression: `!has(request.subResource) || request.subResource == ""`},
+				{Name: "isController", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, g.ControllerServiceAccountName)},
+				{Name: "isCertificate", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, g.CertificateDeploymentName)},
+				{Name: "newState", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
+				{Name: "newRelease", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
 				{Name: "activeRelease", Expression: fmt.Sprintf(`params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1`, activeReleaseDataKey, activeReleaseDataKey, activeReleaseDataKey)},
-				{Name: "apiVolumes", Expression: `request.subResource == "" && has(object.spec.volumes) ? object.spec.volumes.filter(v, v.name == "api-access") : []`},
+				{Name: "apiVolumes", Expression: `(!has(request.subResource) || request.subResource == "") && has(object.spec.volumes) ? object.spec.volumes.filter(v, v.name == "api-access") : []`},
 			},
 			Validations: validations,
 		},

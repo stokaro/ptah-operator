@@ -4148,8 +4148,46 @@ grep -F 'path: /validate-v1-pod-ptah-operation-intent' "$ADMISSION_RENDER" >/dev
 grep -F 'resources: ["pods", "pods/ephemeralcontainers", "pods/resize"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'operations: ["CREATE", "UPDATE"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'name: job-owned-pod' "$ADMISSION_RENDER" >/dev/null
-[ "$(grep -c '^[[:space:]]*objectSelector:$' "$ADMISSION_RENDER")" -eq 0 ] || {
-	printf '%s\n' 'e2e static: an admission webhook has a mutable object-selector bypass' >&2
+[ "$(grep -c '^[[:space:]]*objectSelector:$' "$ADMISSION_RENDER")" -eq 1 ] || {
+	printf '%s\n' 'e2e static: only the Pod intent webhook may have an object selector' >&2
+	exit 1
+}
+rendered_webhook_block() {
+	awk -v target="$1" '
+      /^  - name: / {
+        if (selected) exit
+        selected = ($3 == target)
+      }
+      selected { print }
+    ' "$ADMISSION_RENDER"
+}
+for approval_webhook_name in mapproval.operator.ptah.dev vapproval.operator.ptah.dev; do
+	approval_webhook=$(rendered_webhook_block "$approval_webhook_name")
+	[ -n "$approval_webhook" ] || {
+		printf 'e2e static: rendered approval webhook %s is missing\n' "$approval_webhook_name" >&2
+		exit 1
+	}
+	if printf '%s\n' "$approval_webhook" | grep -Eq '^[[:space:]]*objectSelector:'; then
+		printf 'e2e static: approval webhook %s has an object selector\n' "$approval_webhook_name" >&2
+		exit 1
+	fi
+done
+pod_intent_webhook=$(rendered_webhook_block vpodintent.operator.ptah.dev)
+[ -n "$pod_intent_webhook" ] || {
+	printf '%s\n' 'e2e static: rendered Pod intent webhook is missing' >&2
+	exit 1
+}
+pod_intent_selector=$(printf '%s\n' "$pod_intent_webhook" | awk '
+  /^    objectSelector:$/ { selected = 1; print; next }
+  selected && /^    [^ ]/ { exit }
+  selected { print }
+')
+expected_pod_intent_selector='    objectSelector:
+      matchLabels:
+        app.kubernetes.io/managed-by: ptah-operator
+        app.kubernetes.io/component: schema-operation'
+[ "$pod_intent_selector" = "$expected_pod_intent_selector" ] || {
+	printf '%s\n' 'e2e static: Pod intent webhook lacks its exact object selector' >&2
 	exit 1
 }
 grep -F -- '--default-tolerations-enabled=true' "$RENDERED_WEBHOOKS" >/dev/null
