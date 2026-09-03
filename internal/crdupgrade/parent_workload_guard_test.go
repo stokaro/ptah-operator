@@ -285,6 +285,7 @@ func TestRenderedParentWorkloadGuardsMatchCompiledContracts(t *testing.T) {
 	rollout.RuntimeAdmissionContractB64 = decodedManagerStringArgument(t, controller.Spec.Template.Spec.InitContainers[0].Args, "--runtime-admission-contract-b64=")
 	guard := NewParentWorkloadGuard(rollout)
 	for _, entry := range guard.entries() {
+		assertAdmissionPolicyCELHeadroom(t, "rendered "+entry.description+" policy", policies[entry.name])
 		if err := entry.verifyPolicy(policies[entry.name]); err != nil {
 			t.Fatalf("rendered %s policy: %v", entry.description, err)
 		}

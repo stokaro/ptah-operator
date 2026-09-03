@@ -73,6 +73,9 @@ func TestRenderedRolloutGuardMatchesCompiledContract(t *testing.T) {
 			bindings[binding.Name] = &binding
 		}
 	}
+	for name, policy := range policies {
+		assertAdmissionPolicyCELHeadroom(t, "rendered "+name+" policy", policy)
+	}
 
 	managerImage := "ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222"
 	controllerDeployment := deployments["ptah-e2e-ptah-operator"]
