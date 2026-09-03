@@ -1141,8 +1141,9 @@ assert_predecessor_certificate_update_allowed() {
 	rotator_pod_uid=$(kube -n "$E2E_OPERATOR_NAMESPACE" get pod "$rotator_pod" -o jsonpath='{.metadata.uid}')
 	rotator_service_account_uid=$(kube -n "$E2E_OPERATOR_NAMESPACE" get serviceaccount \
 		"$rotator_service_account" -o jsonpath='{.metadata.uid}')
-	[ -n "$rotator_pod" ] && [ -n "$rotator_pod_uid" ] && [ -n "$rotator_service_account_uid" ] ||
+	if [ -z "$rotator_pod" ] || [ -z "$rotator_pod_uid" ] || [ -z "$rotator_service_account_uid" ]; then
 		fail "predecessor certificate workload-bound identity is incomplete"
+	fi
 
 	kube get validatingwebhookconfiguration ptah-operator-admission -o json \
 		>"$WORK_DIR/predecessor-certificate-source.json"

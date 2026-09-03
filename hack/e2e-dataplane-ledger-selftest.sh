@@ -133,6 +133,9 @@ expect_failure() {
 	}
 }
 
+# These failure fixtures are invoked indirectly by name through expect_failure below.
+# Keep each suppression scoped to the corresponding fixture body.
+# shellcheck disable=SC2317
 record_with_kubectl_failure() (
 	reset_fixture
 	kubectl() {
@@ -141,6 +144,7 @@ record_with_kubectl_failure() (
 	record_observed_jobs
 )
 
+# shellcheck disable=SC2317
 record_with_jq_failure() (
 	reset_fixture
 	kubectl() {
@@ -152,6 +156,7 @@ record_with_jq_failure() (
 	record_observed_jobs
 )
 
+# shellcheck disable=SC2317
 audit_with_jq_failure() (
 	reset_fixture
 	printf '%s\n' '{"uid":"uid-1","name":"job-1","created":"2026-01-01T00:00:00Z","schema":"schema-1","operation":"plan"}' \
@@ -162,6 +167,7 @@ audit_with_jq_failure() (
 	assert_observed_jobs_audited
 )
 
+# shellcheck disable=SC2317
 audit_with_missing_full_evidence() (
 	reset_fixture
 	printf '%s\n' '{"uid":"uid-1","name":"job-1","created":"2026-01-01T00:00:00Z","schema":"schema-1","operation":"plan"}' \
@@ -169,6 +175,7 @@ audit_with_missing_full_evidence() (
 	assert_observed_jobs_audited
 )
 
+# shellcheck disable=SC2317
 count_with_jq_failure() (
 	reset_fixture
 	kubectl() {
@@ -185,6 +192,7 @@ count_with_jq_failure() (
 	assert_no_new_jobs schema-1 apply "$CHECKPOINT_FILE"
 )
 
+# shellcheck disable=SC2317
 fault_audit_with_jq_failure() (
 	reset_fixture
 	printf '%s\n' '{"type":"ADDED","object":{"metadata":{"uid":"fault-job-1"}}}' \
@@ -195,12 +203,14 @@ fault_audit_with_jq_failure() (
 	assert_fault_audit_complete
 )
 
+# shellcheck disable=SC2317
 fault_audit_with_malformed_watch() (
 	reset_fixture
 	printf '%s\n' '{' >"$WORK_DIR/watch-jobs.jsonl"
 	assert_fault_audit_complete
 )
 
+# shellcheck disable=SC2317
 fault_audit_with_invalid_uid() (
 	reset_fixture
 	printf '%s\n' '{"type":"ADDED","object":{"metadata":{"uid":"fault\njob"}}}' \
@@ -208,6 +218,7 @@ fault_audit_with_invalid_uid() (
 	assert_fault_audit_complete
 )
 
+# shellcheck disable=SC2317
 fault_record_with_jq_failure() (
 	reset_fixture
 	printf '%s\n' '{"type":"ADDED","object":{"metadata":{"uid":"fault-job-1","name":"job-1"}}}' \
@@ -218,18 +229,21 @@ fault_record_with_jq_failure() (
 	record_fault_jobs_for_parent
 )
 
+# shellcheck disable=SC2317
 fault_record_with_malformed_watch() (
 	reset_fixture
 	printf '%s\n' '{' >"$WORK_DIR/watch-jobs.jsonl"
 	record_fault_jobs_for_parent
 )
 
+# shellcheck disable=SC2317
 fault_initial_with_malformed_list() (
 	reset_fixture
 	printf '%s\n' '{"items":' >"$INITIAL_FAULT_JOBS_FILE"
 	record_initial_job_list_for_parent "$INITIAL_FAULT_JOBS_FILE"
 )
 
+# shellcheck disable=SC2317
 terminal_job_projection_with_jq_failure() (
 	reset_fixture
 	jq() {
@@ -238,6 +252,7 @@ terminal_job_projection_with_jq_failure() (
 	materialize_terminal_job_records '{"items":[]}'
 )
 
+# shellcheck disable=SC2317
 owned_pod_projection_with_jq_failure() (
 	reset_fixture
 	jq() {
@@ -246,6 +261,7 @@ owned_pod_projection_with_jq_failure() (
 	materialize_owned_pod_records '{"items":[]}'
 )
 
+# shellcheck disable=SC2317
 manager_pod_projection_with_jq_failure() (
 	reset_fixture
 	jq() {
@@ -254,6 +270,7 @@ manager_pod_projection_with_jq_failure() (
 	materialize_manager_pod_names '{"items":[]}'
 )
 
+# shellcheck disable=SC2317
 fault_manager_pod_projection_with_jq_failure() (
 	reset_fixture
 	jq() {
@@ -262,6 +279,7 @@ fault_manager_pod_projection_with_jq_failure() (
 	materialize_fault_manager_pod_names '{"items":[]}'
 )
 
+# shellcheck disable=SC2317
 fault_terminal_job_projection_with_jq_failure() (
 	reset_fixture
 	jq() {
@@ -270,6 +288,7 @@ fault_terminal_job_projection_with_jq_failure() (
 	materialize_fault_terminal_job_records '{"items":[]}'
 )
 
+# shellcheck disable=SC2317
 fault_job_pod_projection_with_jq_failure() (
 	reset_fixture
 	jq() {
@@ -278,6 +297,7 @@ fault_job_pod_projection_with_jq_failure() (
 	materialize_fault_job_pod_uids '{"items":[]}'
 )
 
+# shellcheck disable=SC2317
 complete_job_projection_with_jq_failure() (
 	reset_fixture
 	record_observed_jobs() {
@@ -289,6 +309,7 @@ complete_job_projection_with_jq_failure() (
 	all_new_jobs_complete schema-1 plan "$CHECKPOINT_FILE" 1
 )
 
+# shellcheck disable=SC2317
 complete_job_lines_with_jq_failure() (
 	reset_fixture
 	record_observed_jobs() {
@@ -335,6 +356,7 @@ fault_successful_paths() (
 		test_fail "fault helpers did not produce one valid parent record per Job UID"
 )
 
+# shellcheck disable=SC2317 # Extracted helpers invoke these test-local kubectl stubs dynamically.
 assert_successful_paths() (
 	reset_fixture
 	kubectl() {
