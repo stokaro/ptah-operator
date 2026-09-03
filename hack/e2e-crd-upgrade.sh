@@ -200,9 +200,16 @@ assert_adopted_singleton_annotations() {
 }
 
 deployment_evidence() {
-	kube -n "$E2E_OPERATOR_NAMESPACE" get deployment \
-		-l 'app.kubernetes.io/component=controller' -o json |
-		jq -S 'if (.items | length) == 1 then .items[0] | {uid: .metadata.uid, generation: .metadata.generation, spec: .spec} else error("expected one controller Deployment") end'
+	kube -n "$E2E_OPERATOR_NAMESPACE" get deployment -o json |
+		jq -S '[.items[] | {
+          name: .metadata.name,
+          uid: .metadata.uid,
+          generation: .metadata.generation,
+          labels: (.metadata.labels // {}),
+          annotations: (.metadata.annotations // {}),
+          ownerReferences: (.metadata.ownerReferences // []),
+          spec: .spec
+        }] | sort_by(.name)'
 }
 
 expect_upgrade_failure_without_deployment_change() {
@@ -218,7 +225,7 @@ expect_upgrade_failure_without_deployment_change() {
 		fail "$description unexpectedly succeeded"
 	fi
 	deployment_evidence >"$after"
-	cmp "$before" "$after" || fail "$description mutated the controller Deployment"
+	cmp "$before" "$after" || fail "$description mutated runtime Deployments"
 }
 
 wait_for_suspended() {

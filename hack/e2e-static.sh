@@ -4791,6 +4791,25 @@ for crd_live_marker in \
 		"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
 done
 
+if grep -F 'expected one controller Deployment' \
+	"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null; then
+	printf '%s\n' 'e2e static: stopped-runtime upgrade proof still requires a live controller Deployment' >&2
+	exit 1
+fi
+deployment_evidence_section=$(sed -n '/^deployment_evidence() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-crd-upgrade.sh")
+for deployment_evidence_marker in \
+	'get deployment -o json' \
+	'labels: (.metadata.labels // {})' \
+	'annotations: (.metadata.annotations // {})' \
+	'ownerReferences: (.metadata.ownerReferences // [])' \
+	'spec: .spec' \
+	'sort_by(.name)'; do
+	printf '%s\n' "$deployment_evidence_section" |
+		grep -F -- "$deployment_evidence_marker" >/dev/null
+done
+grep -F 'mutated runtime Deployments' "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
+
 if grep -F '((.status.containerStatuses // []) | length) == 0' \
 	"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null; then
 	printf '%s\n' 'e2e static: CRD runtime guard treats transient empty main status as proof' >&2
