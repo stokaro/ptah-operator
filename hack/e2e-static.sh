@@ -148,6 +148,10 @@ grep -F 'git -C "$ROOT_DIR" archive --format=tar' "$ROOT_DIR/hack/e2e-kind.sh" >
 	printf '%s\n' 'e2e static: predecessor source is not materialized with git archive' >&2
 	exit 1
 }
+grep -F 'export DOCKER_BUILDKIT=1' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+	printf '%s\n' 'e2e static: historical image builds do not select BuildKit explicitly' >&2
+	exit 1
+}
 # shellcheck disable=SC2016 # This check intentionally matches literal script variables.
 grep -F '"$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_DOCKERFILE"' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 	printf '%s\n' 'e2e static: predecessor image does not use its archived Dockerfile' >&2

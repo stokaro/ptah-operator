@@ -239,6 +239,10 @@ REMOTE_REGISTRY="127.0.0.1:${E2E_REGISTRY_PORT}"
 
 export DOCKER_HOST="$DOCKER_ENDPOINT"
 export KIND_EXPERIMENTAL_PROVIDER=docker
+# Historical release Dockerfiles use automatic BUILDPLATFORM, TARGETOS, and
+# TARGETARCH arguments. Select BuildKit explicitly so the exact archived source
+# builds independently of a caller's Docker CLI defaults.
+export DOCKER_BUILDKIT=1
 unset DOCKER_CERT_PATH DOCKER_TLS_VERIFY
 
 if ! existing_clusters=$(kind get clusters); then
