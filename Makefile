@@ -2,7 +2,7 @@ SHELL := /bin/sh
 
 GO ?= go
 CONTROLLER_GEN_VERSION ?= v0.21.0
-CRD_SCHEMA_VERSION := 2
+CRD_SCHEMA_VERSION := 1
 CONTROLLER_STATE_VERSION := 1
 DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev

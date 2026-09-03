@@ -4514,7 +4514,7 @@ for crd_file in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	cmp "$crd_file" "$ROOT_DIR/charts/ptah-operator/crds/$crd_basename"
 	cmp "$crd_file" "$ROOT_DIR/internal/crdupgrade/assets/$crd_basename"
 	[ "$(grep -Fc 'operator.ptah.dev/controller-state-version: "1"' "$crd_file")" -eq 1 ]
-	[ "$(grep -Fc 'operator.ptah.dev/crd-schema-version: "2"' "$crd_file")" -eq 1 ]
+	[ "$(grep -Fc 'operator.ptah.dev/crd-schema-version: "1"' "$crd_file")" -eq 1 ]
 	[ "$(grep -Ec 'operator[.]ptah[.]dev/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
 done
 [ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 3 ]
@@ -4529,7 +4529,7 @@ for crd_directory in \
 		exit 1
 	fi
 done
-grep -F 'CRD_SCHEMA_VERSION := 2' "$ROOT_DIR/Makefile" >/dev/null
+grep -F 'CRD_SCHEMA_VERSION := 1' "$ROOT_DIR/Makefile" >/dev/null
 grep -F 'CONTROLLER_STATE_VERSION := 1' "$ROOT_DIR/Makefile" >/dev/null
 # shellcheck disable=SC2016 # Match the literal deterministic-mode command in the generator.
 grep -F 'chmod 0644 "$STAMP_TEMP"' "$ROOT_DIR/hack/stamp-crd-schema-version.sh" >/dev/null
