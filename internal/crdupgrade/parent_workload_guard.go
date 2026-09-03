@@ -252,7 +252,7 @@ func (g *ParentWorkloadGuard) replicaSetPolicy() *admissionregistrationv1.Valida
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "protected-runtime-service-account",
 				Expression: fmt.Sprintf(
-					`request.namespace == %q && (object.spec.template.spec.serviceAccountName in [%q, %q] || (request.operation == "UPDATE" && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))`,
+					`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))`,
 					g.rollout.ReleaseNamespace, controllerSA, certificateSA, controllerSA, certificateSA,
 				),
 			}},
@@ -266,7 +266,7 @@ func (g *ParentWorkloadGuard) replicaSetPolicy() *admissionregistrationv1.Valida
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: `request.subResource == ""`, Message: message},
 				{Expression: `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:deployment-controller"]`, Message: message},
-				{Expression: fmt.Sprintf(`object.spec.template.spec.serviceAccountName in [%q, %q]`, controllerSA, certificateSA), Message: message},
+				{Expression: fmt.Sprintf(`has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]`, controllerSA, certificateSA), Message: message},
 				{Expression: `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`, Message: message},
 				{Expression: `variables.owner.apiVersion == "apps/v1" && variables.owner.kind == "Deployment" && variables.owner.name == variables.expectedDeployment && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion`, Message: message},
 				{Expression: `has(object.metadata.labels) && "pod-template-hash" in object.metadata.labels && variables.hash.matches("^[a-z0-9]{5,16}$")`, Message: message},
@@ -306,13 +306,13 @@ func (g *ParentWorkloadGuard) hookPodOriginPolicy() *admissionregistrationv1.Val
 			},
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name:       "release-hook-service-account-pattern",
-				Expression: fmt.Sprintf(`request.namespace == %q && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))`, g.rollout.ReleaseNamespace, hookPattern, teardownPattern),
+				Expression: fmt.Sprintf(`request.namespace == %q && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))`, g.rollout.ReleaseNamespace, hookPattern, teardownPattern),
 			}},
 			Variables: []admissionregistrationv1.Variable{{Name: "owner", Expression: `object.metadata.ownerReferences[0]`}},
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: `request.subResource == ""`, Message: message},
 				{Expression: `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]`, Message: message},
-				{Expression: fmt.Sprintf(`object.metadata.namespace == request.namespace && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))`, hookPattern, teardownPattern), Message: message},
+				{Expression: fmt.Sprintf(`object.metadata.namespace == request.namespace && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))`, hookPattern, teardownPattern), Message: message},
 				{Expression: `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`, Message: message},
 				{Expression: `variables.owner.apiVersion == "batch/v1" && variables.owner.kind == "Job" && has(variables.owner.name) && variables.owner.name != "" && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion`, Message: message},
 				{Expression: `has(object.metadata.labels) && ["batch.kubernetes.io/job-name", "batch.kubernetes.io/controller-uid"].all(key, key in object.metadata.labels) && object.metadata.labels["batch.kubernetes.io/job-name"] == variables.owner.name && object.metadata.labels["batch.kubernetes.io/controller-uid"] == variables.owner.uid`, Message: message},
@@ -351,13 +351,13 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "release-hook-service-account-pattern",
 				Expression: fmt.Sprintf(
-					`request.namespace == %q && ((object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q)) || (request.operation == "UPDATE" && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))`,
+					`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))`,
 					g.rollout.ReleaseNamespace, hookPattern, teardownPattern, hookPattern, teardownPattern,
 				),
 			}},
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: `request.subResource == ""`, Message: message},
-				{Expression: fmt.Sprintf(`object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q)`, hookPattern, teardownPattern), Message: message},
+				{Expression: fmt.Sprintf(`has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))`, hookPattern, teardownPattern), Message: message},
 				{Expression: authority, Message: message},
 			},
 		},
@@ -400,7 +400,7 @@ func (g *ParentWorkloadGuard) hookJobContractPolicy() *admissionregistrationv1.V
 			},
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name:       "candidate-hook-service-account",
-				Expression: fmt.Sprintf(`request.namespace == %q && object.spec.template.spec.serviceAccountName in [%q, %q]`, g.rollout.ReleaseNamespace, g.rollout.HookServiceAccountName, teardownServiceAccount),
+				Expression: fmt.Sprintf(`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))`, g.rollout.ReleaseNamespace, g.rollout.HookServiceAccountName, teardownServiceAccount, g.rollout.HookServiceAccountName, teardownServiceAccount),
 			}},
 			Variables: []admissionregistrationv1.Variable{
 				{Name: "isIdentity", Expression: fmt.Sprintf(`request.name == %q`, identityJob)},
@@ -430,7 +430,7 @@ func (g *ParentWorkloadGuard) hookJobContractExpressions(identityJob, preflightJ
 		`has(object.spec.backoffLimit) && object.spec.backoffLimit == 0 && (!has(object.spec.backoffLimitPerIndex)) && (!has(object.spec.maxFailedIndexes))`,
 		`(!has(object.spec.ttlSecondsAfterFinished)) && (!has(object.spec.podFailurePolicy)) && (!has(object.spec.successPolicy))`,
 		`(!has(object.spec.suspend) || !object.spec.suspend) && (!has(object.spec.manualSelector) || !object.spec.manualSelector) && (!has(object.spec.parallelism) || object.spec.parallelism == 1) && (!has(object.spec.completions) || object.spec.completions == 1) && (!has(object.spec.completionMode) || object.spec.completionMode == "NonIndexed")`,
-		fmt.Sprintf(`%[1]s.serviceAccountName == (variables.isTeardown ? %[2]q : %[3]q) && (!has(%[1]s.serviceAccount) || %[1]s.serviceAccount == (variables.isTeardown ? %[2]q : %[3]q)) && has(%[1]s.automountServiceAccountToken) && !%[1]s.automountServiceAccountToken`, pod, teardownServiceAccount, g.rollout.HookServiceAccountName),
+		fmt.Sprintf(`has(%[1]s.serviceAccountName) && %[1]s.serviceAccountName == (variables.isTeardown ? %[2]q : %[3]q) && (!has(%[1]s.serviceAccount) || %[1]s.serviceAccount == (variables.isTeardown ? %[2]q : %[3]q)) && has(%[1]s.automountServiceAccountToken) && !%[1]s.automountServiceAccountToken`, pod, teardownServiceAccount, g.rollout.HookServiceAccountName),
 		fmt.Sprintf(`%s.restartPolicy == "Never" && (!has(%s.nodeName) || %s.nodeName == "") && (!has(%s.nodeSelector) || %s.nodeSelector.size() == 0) && !has(%s.affinity) && (!has(%s.tolerations) || %s.tolerations.size() == 0)`, pod, pod, pod, pod, pod, pod, pod, pod),
 		fmt.Sprintf(`(!has(%s.hostNetwork) || !%s.hostNetwork) && (!has(%s.hostPID) || !%s.hostPID) && (!has(%s.hostIPC) || !%s.hostIPC) && (!has(%s.shareProcessNamespace) || !%s.shareProcessNamespace)`, pod, pod, pod, pod, pod, pod, pod, pod),
 		fmt.Sprintf(`!has(%s.hostAliases) && !has(%s.hostname) && !has(%s.subdomain) && (!has(%s.setHostnameAsFQDN) || !%s.setHostnameAsFQDN) && !has(%s.runtimeClassName) && (!has(%s.readinessGates) || %s.readinessGates.size() == 0) && (!has(%s.resourceClaims) || %s.resourceClaims.size() == 0) && (!has(%s.schedulingGates) || %s.schedulingGates.size() == 0)`, pod, pod, pod, pod, pod, pod, pod, pod, pod, pod, pod, pod),

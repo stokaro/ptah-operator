@@ -1042,8 +1042,8 @@ func (g *RolloutGuard) hookIdentityPolicy() *admissionregistrationv1.ValidatingA
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "fixed-hook-identity",
 				Expression: fmt.Sprintf(
-					`request.namespace == %q && ((request.subResource == "" && object.spec.serviceAccountName in [%q, %q]) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))`,
-					g.ReleaseNamespace, g.HookServiceAccountName, teardownServiceAccount, identityJob+"-", preflightJob+"-", reconcileJob+"-", quiesceJob+"-", teardownJob+"-",
+					`request.namespace == %q && ((request.subResource == "" && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))`,
+					g.ReleaseNamespace, g.HookServiceAccountName, teardownServiceAccount, g.HookServiceAccountName, teardownServiceAccount, identityJob+"-", preflightJob+"-", reconcileJob+"-", quiesceJob+"-", teardownJob+"-",
 				),
 			}},
 			Validations: validations,
@@ -1119,7 +1119,7 @@ func (g *RolloutGuard) hookPodValidationExpressions(identityJob, preflightJob, r
 	return []string{
 		`request.subResource == ""`,
 		`request.operation != "CREATE" || request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]`,
-		fmt.Sprintf(`%s.serviceAccountName == (%s == %q ? %q : %q)`, pod, jobLabel, teardownJob, teardownServiceAccount, g.HookServiceAccountName),
+		fmt.Sprintf(`has(%[1]s.serviceAccountName) && %[1]s.serviceAccountName == (%[2]s == %[3]q ? %[4]q : %[5]q)`, pod, jobLabel, teardownJob, teardownServiceAccount, g.HookServiceAccountName),
 		fmt.Sprintf(`has(object.metadata.labels) && "batch.kubernetes.io/job-name" in object.metadata.labels && %s in [%q, %q, %q, %q, %q]`, jobLabel, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob),
 		fmt.Sprintf(`has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && %s.apiVersion == "batch/v1" && %s.kind == "Job" && %s.name == %s && has(%s.controller) && %s.controller`, owner, owner, owner, jobLabel, owner, owner),
 		fmt.Sprintf(`has(%[1]s.uid) && %[1]s.uid != "" && has(%[1]s.blockOwnerDeletion) && %[1]s.blockOwnerDeletion && has(object.metadata.generateName) && object.metadata.generateName == %[1]s.name + "-" && object.metadata.name.startsWith(object.metadata.generateName) && object.metadata.name.size() == object.metadata.generateName.size() + 5`, owner),

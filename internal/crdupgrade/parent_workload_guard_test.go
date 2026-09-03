@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -181,6 +182,89 @@ func TestParentHookJobGuardsCloseFutureGapAndPinExecutable(t *testing.T) {
 	}
 	if strings.Contains(contract, `resources\":[\"replicasets\"`) {
 		t.Fatal("hook Job policy mixes the ReplicaSet schema into one CEL environment")
+	}
+}
+
+func TestParentWorkloadGuardsScopeOptionalServiceAccounts(t *testing.T) {
+	t.Parallel()
+
+	rollout := runtimePodGuardFixture()
+	guard := NewParentWorkloadGuard(rollout)
+	hookPattern, teardownPattern := guard.hookServiceAccountPatterns()
+	teardownServiceAccount, err := TeardownServiceAccountName(rollout.HookServiceAccountName, rollout.ReleaseSequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name             string
+		policy           *admissionregistrationv1.ValidatingAdmissionPolicy
+		match            string
+		validationPrefix string
+		candidate        bool
+	}{
+		{
+			name:   "ReplicaSet",
+			policy: guard.replicaSetPolicy(),
+			match: fmt.Sprintf(
+				`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))`,
+				rollout.ReleaseNamespace, rollout.ControllerServiceAccountName, rollout.CertificateDeploymentName, rollout.ControllerServiceAccountName, rollout.CertificateDeploymentName,
+			),
+			validationPrefix: `has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in`,
+		},
+		{
+			name:   "stable hook Job",
+			policy: guard.hookJobOriginPolicy(),
+			match: fmt.Sprintf(
+				`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))`,
+				rollout.ReleaseNamespace, hookPattern, teardownPattern, hookPattern, teardownPattern,
+			),
+			validationPrefix: `has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches`,
+		},
+		{
+			name:   "stable hook Pod",
+			policy: guard.hookPodOriginPolicy(),
+			match: fmt.Sprintf(
+				`request.namespace == %q && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))`,
+				rollout.ReleaseNamespace, hookPattern, teardownPattern,
+			),
+			validationPrefix: `object.metadata.namespace == request.namespace && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches`,
+		},
+		{
+			name:   "candidate hook Job",
+			policy: guard.hookJobContractPolicy(),
+			match: fmt.Sprintf(
+				`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))`,
+				rollout.ReleaseNamespace, rollout.HookServiceAccountName, teardownServiceAccount, rollout.HookServiceAccountName, teardownServiceAccount,
+			),
+			validationPrefix: `has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName ==`,
+			candidate:        true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if test.policy.Spec.FailurePolicy == nil || *test.policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
+				t.Fatal("policy is not fail-closed")
+			}
+			if len(test.policy.Spec.MatchConditions) != 1 || test.policy.Spec.MatchConditions[0].Expression != test.match {
+				t.Fatalf("optional ServiceAccount match condition\n got: %q\nwant: %q", test.policy.Spec.MatchConditions, test.match)
+			}
+			foundValidation := false
+			for _, validation := range test.policy.Spec.Validations {
+				if strings.HasPrefix(validation.Expression, test.validationPrefix) {
+					foundValidation = true
+					break
+				}
+			}
+			if !foundValidation {
+				t.Fatalf("policy does not explicitly reject removal of its protected ServiceAccount with prefix %q", test.validationPrefix)
+			}
+			binding := guard.binding(test.policy.Name, test.candidate)
+			if !reflect.DeepEqual(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
+				t.Fatalf("binding validation actions = %#v, want Deny", binding.Spec.ValidationActions)
+			}
+		})
 	}
 }
 

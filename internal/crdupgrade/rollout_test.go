@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -161,6 +162,42 @@ func TestRolloutGuardPrepareRequiresExactHelmCreatedRatchetsAndProvesEnforcement
 	}
 	if policies.objects[rolloutName].Annotations[helmReleaseNameAnnotation] != "" {
 		t.Fatal("persistent rollout policy unexpectedly became a Helm release resource")
+	}
+}
+
+// This is intentionally a white-box test because the retained hook Pod policy
+// is an internal upgrade contract rather than an exported API.
+func TestHookIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
+	t.Parallel()
+
+	guard := runtimePodGuardFixture()
+	teardownServiceAccount, err := TeardownServiceAccountName(guard.HookServiceAccountName, guard.ReleaseSequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityJob := HookIdentityProbeJobName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	preflightJob := guard.hookJobName("preflight")
+	reconcileJob := guard.hookJobName("reconcile")
+	quiesceJob := guard.hookJobName("teardown-quiesce")
+	teardownJob := guard.hookJobName("teardown")
+	policy := guard.hookIdentityPolicy()
+	wantMatch := fmt.Sprintf(
+		`request.namespace == %q && ((request.subResource == "" && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))`,
+		guard.ReleaseNamespace, guard.HookServiceAccountName, teardownServiceAccount, guard.HookServiceAccountName, teardownServiceAccount,
+		identityJob+"-", preflightJob+"-", reconcileJob+"-", quiesceJob+"-", teardownJob+"-",
+	)
+	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
+		t.Fatal("hook identity policy is not fail-closed")
+	}
+	if len(policy.Spec.MatchConditions) != 1 || policy.Spec.MatchConditions[0].Expression != wantMatch {
+		t.Fatalf("optional ServiceAccount match condition\n got: %#v\nwant: %q", policy.Spec.MatchConditions, wantMatch)
+	}
+	wantValidation := fmt.Sprintf(
+		`has(object.spec.serviceAccountName) && object.spec.serviceAccountName == (object.metadata.labels["batch.kubernetes.io/job-name"] == %q ? %q : %q)`,
+		teardownJob, teardownServiceAccount, guard.HookServiceAccountName,
+	)
+	if len(policy.Spec.Validations) < 3 || policy.Spec.Validations[2].Expression != wantValidation {
+		t.Fatalf("protected ServiceAccount validation\n got: %#v\nwant: %q", policy.Spec.Validations, wantValidation)
 	}
 }
 

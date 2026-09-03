@@ -138,14 +138,14 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: runtime-service-account-or-pod
-      expression: {{ printf `request.namespace == %q && ((request.subResource == "" && object.spec.serviceAccountName in [%q, %q]) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q))))` .Release.Namespace $controllerServiceAccount $certificateDeployment (printf "%s-" $controllerDeployment) (printf "%s-" $certificateDeployment) | quote }}
+      expression: {{ printf `request.namespace == %q && ((request.subResource == "" && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q))))` .Release.Namespace $controllerServiceAccount $certificateDeployment $controllerServiceAccount $certificateDeployment (printf "%s-" $controllerDeployment) (printf "%s-" $certificateDeployment) | quote }}
   variables:
     - name: isPod
       expression: 'request.subResource == ""'
     - name: isController
-      expression: {{ printf `request.subResource == "" && object.spec.serviceAccountName == %q` $controllerServiceAccount | quote }}
+      expression: {{ printf `request.subResource == "" && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q` $controllerServiceAccount | quote }}
     - name: isCertificate
-      expression: {{ printf `request.subResource == "" && object.spec.serviceAccountName == %q` $certificateDeployment | quote }}
+      expression: {{ printf `request.subResource == "" && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q` $certificateDeployment | quote }}
     - name: newState
       expression: {{ printf `request.subResource == "" && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
     - name: newRelease

@@ -22,7 +22,7 @@
 {{- $podValidations := list
       `request.subResource == ""`
       `request.operation != "CREATE" || request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]`
-      (printf `object.spec.serviceAccountName == (object.metadata.labels["batch.kubernetes.io/job-name"] == %q ? %q : %q)` $teardownJob $teardownServiceAccount $serviceAccount)
+      (printf `has(object.spec.serviceAccountName) && object.spec.serviceAccountName == (object.metadata.labels["batch.kubernetes.io/job-name"] == %q ? %q : %q)` $teardownJob $teardownServiceAccount $serviceAccount)
       (printf `has(object.metadata.labels) && "batch.kubernetes.io/job-name" in object.metadata.labels && object.metadata.labels["batch.kubernetes.io/job-name"] in [%q, %q, %q, %q, %q]` $identityJob $preflightJob $reconcileJob $quiesceJob $teardownJob)
       `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "batch/v1" && object.metadata.ownerReferences[0].kind == "Job" && object.metadata.ownerReferences[0].name == object.metadata.labels["batch.kubernetes.io/job-name"] && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller`
       `has(object.metadata.ownerReferences[0].uid) && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion && has(object.metadata.generateName) && object.metadata.generateName == object.metadata.ownerReferences[0].name + "-" && object.metadata.name.startsWith(object.metadata.generateName) && object.metadata.name.size() == object.metadata.generateName.size() + 5`
@@ -146,7 +146,7 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: fixed-hook-identity
-      expression: {{ printf `request.namespace == %q && ((request.subResource == "" && object.spec.serviceAccountName in [%q, %q]) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))` .Release.Namespace $serviceAccount $teardownServiceAccount (printf "%s-" $identityJob) (printf "%s-" $preflightJob) (printf "%s-" $reconcileJob) (printf "%s-" $quiesceJob) (printf "%s-" $teardownJob) | quote }}
+      expression: {{ printf `request.namespace == %q && ((request.subResource == "" && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))` .Release.Namespace $serviceAccount $teardownServiceAccount $serviceAccount $teardownServiceAccount (printf "%s-" $identityJob) (printf "%s-" $preflightJob) (printf "%s-" $reconcileJob) (printf "%s-" $quiesceJob) (printf "%s-" $teardownJob) | quote }}
   validations:
     {{- range $expression := $podValidations }}
     - expression: {{ $expression | quote }}

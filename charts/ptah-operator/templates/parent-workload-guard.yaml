@@ -28,11 +28,11 @@
 {{- $teardownJob := $teardownServiceAccount -}}
 
 {{- $replicaSetMessage := "Ptah runtime parent guard rejected an unsafe ReplicaSet" -}}
-{{- $replicaSetMatch := printf `request.namespace == %q && (object.spec.template.spec.serviceAccountName in [%q, %q] || (request.operation == "UPDATE" && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))` .Release.Namespace $controllerServiceAccount $certificateServiceAccount $controllerServiceAccount $certificateServiceAccount -}}
+{{- $replicaSetMatch := printf `request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))` .Release.Namespace $controllerServiceAccount $certificateServiceAccount $controllerServiceAccount $certificateServiceAccount -}}
 {{- $replicaSetValidations := list
       `request.subResource == ""`
       `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:deployment-controller"]`
-      (printf `object.spec.template.spec.serviceAccountName in [%q, %q]` $controllerServiceAccount $certificateServiceAccount)
+      (printf `has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]` $controllerServiceAccount $certificateServiceAccount)
       `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`
       `variables.owner.apiVersion == "apps/v1" && variables.owner.kind == "Deployment" && variables.owner.name == variables.expectedDeployment && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion`
       `has(object.metadata.labels) && "pod-template-hash" in object.metadata.labels && variables.hash.matches("^[a-z0-9]{5,16}$")`
@@ -43,16 +43,16 @@
       (printf `object.spec.selector.matchLabels["app.kubernetes.io/instance"] == %q && object.spec.selector.matchLabels["app.kubernetes.io/component"] == variables.expectedComponent && object.spec.selector.matchLabels["pod-template-hash"] == variables.hash` .Release.Name) -}}
 
 {{- $hookOriginMessage := "Ptah hook parent origin guard rejected an unauthorized Job" -}}
-{{- $hookOriginMatch := printf `request.namespace == %q && ((object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q)) || (request.operation == "UPDATE" && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))` .Release.Namespace $hookPattern $teardownPattern $hookPattern $teardownPattern -}}
+{{- $hookOriginMatch := printf `request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))` .Release.Namespace $hookPattern $teardownPattern $hookPattern $teardownPattern -}}
 {{- $namespaceGuardName := include "ptah-operator.namespaceDeletionGuardPolicyName" . -}}
 {{- $hookAuthority := printf `(authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed()) || (authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").name(%q).check("delete").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").name(%q).check("delete").allowed())` $namespaceGuardName $namespaceGuardName -}}
 
 {{- $hookPodOriginMessage := "Ptah hook Pod origin guard rejected an unauthorized Pod" -}}
-{{- $hookPodOriginMatch := printf `request.namespace == %q && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` .Release.Namespace $hookPattern $teardownPattern -}}
+{{- $hookPodOriginMatch := printf `request.namespace == %q && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` .Release.Namespace $hookPattern $teardownPattern -}}
 {{- $hookPodOriginValidations := list
       `request.subResource == ""`
       `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]`
-      (printf `object.metadata.namespace == request.namespace && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern)
+      (printf `object.metadata.namespace == request.namespace && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern)
       `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`
       `variables.owner.apiVersion == "batch/v1" && variables.owner.kind == "Job" && has(variables.owner.name) && variables.owner.name != "" && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion`
       `has(object.metadata.labels) && ["batch.kubernetes.io/job-name", "batch.kubernetes.io/controller-uid"].all(key, key in object.metadata.labels) && object.metadata.labels["batch.kubernetes.io/job-name"] == variables.owner.name && object.metadata.labels["batch.kubernetes.io/controller-uid"] == variables.owner.uid`
@@ -80,7 +80,7 @@
       `has(object.spec.backoffLimit) && object.spec.backoffLimit == 0 && (!has(object.spec.backoffLimitPerIndex)) && (!has(object.spec.maxFailedIndexes))`
       `(!has(object.spec.ttlSecondsAfterFinished)) && (!has(object.spec.podFailurePolicy)) && (!has(object.spec.successPolicy))`
       `(!has(object.spec.suspend) || !object.spec.suspend) && (!has(object.spec.manualSelector) || !object.spec.manualSelector) && (!has(object.spec.parallelism) || object.spec.parallelism == 1) && (!has(object.spec.completions) || object.spec.completions == 1) && (!has(object.spec.completionMode) || object.spec.completionMode == "NonIndexed")`
-      (printf `%[1]s.serviceAccountName == (variables.isTeardown ? %[2]q : %[3]q) && (!has(%[1]s.serviceAccount) || %[1]s.serviceAccount == (variables.isTeardown ? %[2]q : %[3]q)) && has(%[1]s.automountServiceAccountToken) && !%[1]s.automountServiceAccountToken` $pod $teardownServiceAccount $hookServiceAccount)
+      (printf `has(%[1]s.serviceAccountName) && %[1]s.serviceAccountName == (variables.isTeardown ? %[2]q : %[3]q) && (!has(%[1]s.serviceAccount) || %[1]s.serviceAccount == (variables.isTeardown ? %[2]q : %[3]q)) && has(%[1]s.automountServiceAccountToken) && !%[1]s.automountServiceAccountToken` $pod $teardownServiceAccount $hookServiceAccount)
       (printf `%s.restartPolicy == "Never" && (!has(%s.nodeName) || %s.nodeName == "") && (!has(%s.nodeSelector) || %s.nodeSelector.size() == 0) && !has(%s.affinity) && (!has(%s.tolerations) || %s.tolerations.size() == 0)` $pod $pod $pod $pod $pod $pod $pod $pod)
       (printf `(!has(%s.hostNetwork) || !%s.hostNetwork) && (!has(%s.hostPID) || !%s.hostPID) && (!has(%s.hostIPC) || !%s.hostIPC) && (!has(%s.shareProcessNamespace) || !%s.shareProcessNamespace)` $pod $pod $pod $pod $pod $pod $pod $pod)
       (printf `!has(%s.hostAliases) && !has(%s.hostname) && !has(%s.subdomain) && (!has(%s.setHostnameAsFQDN) || !%s.setHostnameAsFQDN) && !has(%s.runtimeClassName) && (!has(%s.readinessGates) || %s.readinessGates.size() == 0) && (!has(%s.resourceClaims) || %s.resourceClaims.size() == 0) && (!has(%s.schedulingGates) || %s.schedulingGates.size() == 0)` $pod $pod $pod $pod $pod $pod $pod $pod $pod $pod $pod $pod)
@@ -244,7 +244,7 @@ spec:
   validations:
     - expression: 'request.subResource == ""'
       message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q)` $hookPattern $teardownPattern | quote }}
+    - expression: {{ printf `has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern | quote }}
       message: {{ $hookOriginMessage | quote }}
     - expression: {{ $hookAuthority | quote }}
       message: {{ $hookOriginMessage | quote }}
@@ -365,7 +365,7 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: candidate-hook-service-account
-      expression: {{ printf `request.namespace == %q && object.spec.template.spec.serviceAccountName in [%q, %q]` .Release.Namespace $hookServiceAccount $teardownServiceAccount | quote }}
+      expression: {{ printf `request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))` .Release.Namespace $hookServiceAccount $teardownServiceAccount $hookServiceAccount $teardownServiceAccount | quote }}
   variables:
     - name: isIdentity
       expression: {{ printf `request.name == %q` $identityJob | quote }}

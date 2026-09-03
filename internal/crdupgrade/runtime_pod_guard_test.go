@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -99,6 +100,56 @@ func TestRuntimePodIdentityBindingUsesActivationParameter(t *testing.T) {
 		binding.Spec.ParamRef.ParameterNotFoundAction == nil || *binding.Spec.ParamRef.ParameterNotFoundAction != admissionregistrationv1.DenyAction ||
 		!reflect.DeepEqual(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
 		t.Fatalf("runtime Pod binding does not use the fail-closed activation parameter: %#v", binding.Spec)
+	}
+}
+
+// This is intentionally a white-box test because match scoping is part of the
+// internal retained-policy contract and cannot be observed through public API.
+func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
+	t.Parallel()
+
+	guard := runtimePodGuardFixture()
+	policy, err := guard.runtimePodIdentityPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMatch := fmt.Sprintf(
+		`request.namespace == %q && ((request.subResource == "" && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q))))`,
+		guard.ReleaseNamespace,
+		guard.ControllerServiceAccountName,
+		guard.CertificateDeploymentName,
+		guard.ControllerServiceAccountName,
+		guard.CertificateDeploymentName,
+		guard.ControllerDeploymentName+"-",
+		guard.CertificateDeploymentName+"-",
+	)
+	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
+		t.Fatal("runtime Pod identity policy is not fail-closed")
+	}
+	if len(policy.Spec.MatchConditions) != 1 || policy.Spec.MatchConditions[0].Expression != wantMatch {
+		t.Fatalf("optional ServiceAccount match condition\n got: %#v\nwant: %q", policy.Spec.MatchConditions, wantMatch)
+	}
+	wantVariables := map[string]string{
+		"isController":  fmt.Sprintf(`request.subResource == "" && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.ControllerServiceAccountName),
+		"isCertificate": fmt.Sprintf(`request.subResource == "" && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.CertificateDeploymentName),
+	}
+	for _, variable := range policy.Spec.Variables {
+		if want, ok := wantVariables[variable.Name]; ok {
+			if variable.Expression != want {
+				t.Fatalf("%s variable = %q, want %q", variable.Name, variable.Expression, want)
+			}
+			delete(wantVariables, variable.Name)
+		}
+	}
+	if len(wantVariables) != 0 {
+		t.Fatalf("runtime identity variables are missing: %#v", wantVariables)
+	}
+	binding, err := guard.runtimePodIdentityBinding()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
+		t.Fatalf("binding validation actions = %#v, want Deny", binding.Spec.ValidationActions)
 	}
 }
 
