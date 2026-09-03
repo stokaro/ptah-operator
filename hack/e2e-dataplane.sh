@@ -242,6 +242,16 @@ LOG_FILE=$WORK_DIR/logs.txt
 AUDITED_JOBS_FILE=$WORK_DIR/audited-jobs.txt
 FULLY_AUDITED_JOBS_FILE=$WORK_DIR/fully-audited-jobs.txt
 OBSERVED_JOBS_FILE=$WORK_DIR/observed-jobs.jsonl
+OBSERVED_JOBS_SNAPSHOT_FILE=$WORK_DIR/observed-jobs-snapshot.json
+OBSERVED_JOB_RECORDS_FILE=$WORK_DIR/observed-job-records.jsonl
+OBSERVED_JOB_RECORD_FILE=$WORK_DIR/observed-job-record.json
+OBSERVED_JOB_UIDS_FILE=$WORK_DIR/observed-job-uids.txt
+NEW_JOB_COUNT_FILE=$WORK_DIR/new-job-count.txt
+TERMINAL_JOB_RECORDS_FILE=$WORK_DIR/terminal-job-records.tsv
+OWNED_POD_RECORDS_FILE=$WORK_DIR/owned-pod-records.tsv
+MANAGER_POD_NAMES_FILE=$WORK_DIR/manager-pod-names.txt
+COMPLETE_JOB_RECORDS_FILE=$WORK_DIR/complete-job-records.json
+COMPLETE_JOB_LINES_FILE=$WORK_DIR/complete-job-records.jsonl
 CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
 PG_PASSWORD_FILE=$WORK_DIR/postgresql.password
 PG_URL_FILE=$WORK_DIR/postgresql.url
@@ -560,20 +570,46 @@ scan_file_for_credentials() {
 }
 
 record_observed_jobs() {
-	k -n "$TEST_NAMESPACE" get jobs -o json | jq -c '
-    .items[] | {
-      uid: .metadata.uid,
-      name: .metadata.name,
-      created: .metadata.creationTimestamp,
-      schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
-      operation: (.metadata.labels["operator.ptah.dev/operation"] // "")
-    }
-  ' | while IFS= read -r observed_job; do
-		observed_uid=$(printf '%s\n' "$observed_job" | jq -r '.uid')
-		if ! grep -F "\"uid\":\"${observed_uid}\"" "$OBSERVED_JOBS_FILE" >/dev/null 2>&1; then
-			printf '%s\n' "$observed_job" >>"$OBSERVED_JOBS_FILE"
+	if ! k -n "$TEST_NAMESPACE" get jobs -o json >"$OBSERVED_JOBS_SNAPSHOT_FILE"; then
+		fail "could not list Jobs while recording the observed Job ledger"
+	fi
+	if ! jq -c '
+      if type != "object" or (.items | type) != "array" then
+        error("Job list must contain an items array")
+      else
+        .items[] |
+        {
+          uid: .metadata.uid,
+          name: .metadata.name,
+          created: .metadata.creationTimestamp,
+          schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
+          operation: (.metadata.labels["operator.ptah.dev/operation"] // "")
+        } |
+        if (.uid | type) == "string" and (.uid | length) > 0 and
+            (.name | type) == "string" and (.name | length) > 0 and
+            (.created | type) == "string" and (.created | length) > 0 and
+            (.schema | type) == "string" and (.operation | type) == "string"
+        then .
+        else error("Job ledger record contains invalid identity fields") end
+      end
+    ' "$OBSERVED_JOBS_SNAPSHOT_FILE" >"$OBSERVED_JOB_RECORDS_FILE"; then
+		fail "could not validate the observed Job ledger snapshot"
+	fi
+	while IFS= read -r observed_job; do
+		printf '%s\n' "$observed_job" >"$OBSERVED_JOB_RECORD_FILE" ||
+			fail "could not stage an observed Job ledger record"
+		if ! observed_uid=$(jq -er '
+          if type == "object" and (.uid | type) == "string" and (.uid | length) > 0
+          then .uid
+          else error("observed Job record has no UID") end
+        ' "$OBSERVED_JOB_RECORD_FILE"); then
+			fail "could not read an observed Job UID from the validated ledger record"
 		fi
-	done
+		if ! grep -F "\"uid\":\"${observed_uid}\"" "$OBSERVED_JOBS_FILE" >/dev/null 2>&1; then
+			printf '%s\n' "$observed_job" >>"$OBSERVED_JOBS_FILE" ||
+				fail "could not append an observed Job to the ledger"
+		fi
+	done <"$OBSERVED_JOB_RECORDS_FILE"
 }
 
 assert_active_pod_ephemeral_container_rejected() {
@@ -701,6 +737,52 @@ assert_active_pod_ephemeral_container_rejected() {
 	return 0
 }
 
+materialize_terminal_job_records() {
+	terminal_job_snapshot=$1
+	if ! printf '%s\n' "$terminal_job_snapshot" | jq -r '
+      .items[] |
+      select(.status.conditions // [] |
+        any((.type == "Complete" or .type == "Failed") and .status == "True")) |
+      (.metadata.uid |
+        if type == "string" and length > 0 then .
+        else error("terminal Job has no exact UID") end) as $uid |
+      (.metadata.name |
+        if type == "string" and length > 0 then .
+        else error("terminal Job has no exact name") end) as $name |
+      [$uid, $name] | @tsv
+    ' >"$TERMINAL_JOB_RECORDS_FILE"; then
+		fail "could not capture exact terminal Job identities for credential audit"
+	fi
+}
+
+materialize_owned_pod_records() {
+	owned_pod_snapshot=$1
+	if ! printf '%s\n' "$owned_pod_snapshot" | jq -r '
+      .items[] |
+      (.metadata.uid |
+        if type == "string" and length > 0 then .
+        else error("owned Pod has no exact UID") end) as $uid |
+      (.metadata.name |
+        if type == "string" and length > 0 then .
+        else error("owned Pod has no exact name") end) as $name |
+      [$uid, $name] | @tsv
+    ' >"$OWNED_POD_RECORDS_FILE"; then
+		fail "could not capture exact owned Pod identities for credential audit"
+	fi
+}
+
+materialize_manager_pod_names() {
+	manager_pod_snapshot=$1
+	if ! printf '%s\n' "$manager_pod_snapshot" | jq -r '
+      .items[] | select(.metadata.deletionTimestamp == null) |
+      .metadata.name |
+      if type == "string" and length > 0 then .
+      else error("manager Pod has no exact name") end
+    ' >"$MANAGER_POD_NAMES_FILE"; then
+		fail "could not capture exact manager Pod names for credential audit"
+	fi
+}
+
 audit_completed_jobs() {
 	if [ "$EPHEMERAL_SUBRESOURCE_TESTED" -eq 0 ] &&
 		assert_active_pod_ephemeral_container_rejected; then
@@ -708,12 +790,8 @@ audit_completed_jobs() {
 	fi
 	record_observed_jobs
 	audit_jobs=$(k -n "$TEST_NAMESPACE" get jobs -o json)
-	printf '%s\n' "$audit_jobs" | jq -r '
-    .items[] |
-	    select(.status.conditions // [] |
-	      any((.type == "Complete" or .type == "Failed") and .status == "True")) |
-    [.metadata.uid, .metadata.name] | @tsv
-  ' | while IFS="$(printf '\t')" read -r audit_uid audit_name; do
+	materialize_terminal_job_records "$audit_jobs"
+	while IFS="$(printf '\t')" read -r audit_uid audit_name; do
 		[ -n "$audit_uid" ] || continue
 		if grep -Fx "$audit_uid" "$FULLY_AUDITED_JOBS_FILE" >/dev/null 2>&1; then
 			continue
@@ -766,9 +844,8 @@ audit_completed_jobs() {
 		printf '%s\n%s\n' "$audit_job_object" "$audit_owned_pods" >"$RESOURCE_FILE"
 		scan_file_for_credentials "$RESOURCE_FILE" \
 			"Job $audit_name UID $audit_uid and its exact owned Pods"
-		printf '%s\n' "$audit_owned_pods" | jq -r '
-          .items[] | [.metadata.uid, .metadata.name] | @tsv
-        ' | while IFS="$(printf '\t')" read -r audit_pod_uid audit_pod_name; do
+		materialize_owned_pod_records "$audit_owned_pods"
+		while IFS="$(printf '\t')" read -r audit_pod_uid audit_pod_name; do
 			[ -n "$audit_pod_uid" ] || continue
 			audit_pod_object=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" -o json 2>/dev/null || true)
 			[ -n "$audit_pod_object" ] ||
@@ -856,7 +933,7 @@ audit_completed_jobs() {
                 .uid == $jobUID and .controller == true))
             ' >/dev/null ||
 				fail "exact Pod $audit_pod_name changed identity during its log audit"
-		done
+		done <"$OWNED_POD_RECORDS_FILE"
 		k -n "$TEST_NAMESPACE" get job "$audit_name" -o json | jq -e \
 			--arg uid "$audit_uid" '
           .metadata.uid == $uid and
@@ -870,7 +947,7 @@ audit_completed_jobs() {
 		if ! grep -Fx "$audit_uid" "$FULLY_AUDITED_JOBS_FILE" >/dev/null 2>&1; then
 			printf '%s\n' "$audit_uid" >>"$FULLY_AUDITED_JOBS_FILE"
 		fi
-	done
+	done <"$TERMINAL_JOB_RECORDS_FILE"
 }
 
 audit_runtime_credentials() {
@@ -894,9 +971,8 @@ audit_runtime_credentials() {
           .status.ephemeralContainerStatuses // []] | add) as $statuses |
         all($statuses[]; (.restartCount // 0) == 0))
     ' >/dev/null || fail "a manager container restarted before its complete log history was audited"
-	printf '%s\n' "$manager_audit_pods" | jq -r '
-      .items[] | select(.metadata.deletionTimestamp == null) | .metadata.name
-    ' | while IFS= read -r manager_audit_pod; do
+	materialize_manager_pod_names "$manager_audit_pods"
+	while IFS= read -r manager_audit_pod; do
 		[ -n "$manager_audit_pod" ] || continue
 		manager_audit_uid=$(k -n "$OPERATOR_NAMESPACE" get pod "$manager_audit_pod" -o jsonpath='{.metadata.uid}')
 		[ -n "$manager_audit_uid" ] || fail "manager Pod $manager_audit_pod has no exact UID"
@@ -905,7 +981,7 @@ audit_runtime_credentials() {
 			fail "could not audit logs for exact manager Pod $manager_audit_pod UID $manager_audit_uid"
 		fi
 		scan_file_for_credentials "$LOG_FILE" "logs for exact manager Pod $manager_audit_pod"
-	done
+	done <"$MANAGER_POD_NAMES_FILE"
 	audit_pods_snapshot=$(k -n "$TEST_NAMESPACE" get pods -o json)
 	if ! audit_pod_records=$(printf '%s\n' "$audit_pods_snapshot" | jq -r '
 	    .items[] |
@@ -986,11 +1062,18 @@ audit_runtime_credentials() {
 }
 
 assert_observed_jobs_audited() {
-	jq -er '.uid' "$OBSERVED_JOBS_FILE" | while IFS= read -r observed_uid; do
+	if ! jq -r '
+      if type == "object" and (.uid | type) == "string" and (.uid | length) > 0
+      then .uid
+      else error("observed Job ledger record has no UID") end
+    ' "$OBSERVED_JOBS_FILE" >"$OBSERVED_JOB_UIDS_FILE"; then
+		fail "could not validate observed Job UIDs before the final audit assertion"
+	fi
+	while IFS= read -r observed_uid; do
 		[ -n "$observed_uid" ] || continue
 		grep -Fx "$observed_uid" "$FULLY_AUDITED_JOBS_FILE" >/dev/null ||
 			fail "observed Job UID $observed_uid disappeared without a complete credential audit"
-	done
+	done <"$OBSERVED_JOB_UIDS_FILE"
 }
 
 wait_for_schema() {
@@ -1192,15 +1275,30 @@ new_job_count_since() {
 	new_schema=$1
 	new_operation=$2
 	new_checkpoint=$3
-	record_observed_jobs
-	jq -s \
+	record_observed_jobs || fail "could not refresh the observed Job ledger before counting Jobs"
+	if ! jq -r -s \
 		--slurpfile before "$new_checkpoint" \
 		--arg schema "$new_schema" \
 		--arg operation "$new_operation" '
       [.[] |
         select(.schema == $schema and .operation == $operation) |
         .uid as $uid | select(($before[0] | index($uid)) == null)] | length
-    ' "$OBSERVED_JOBS_FILE"
+    ' "$OBSERVED_JOBS_FILE" >"$NEW_JOB_COUNT_FILE"; then
+		fail "could not count new $new_operation Jobs for $new_schema"
+	fi
+	new_count=
+	{
+		if ! IFS= read -r new_count; then
+			fail "new Job count output was empty"
+		fi
+		case "$new_count" in
+		'' | *[!0-9]*) fail "new Job count output was not a non-negative integer" ;;
+		esac
+		if IFS= read -r unexpected_count_line; then
+			fail "new Job count output contained an unexpected second line: $unexpected_count_line"
+		fi
+	} <"$NEW_JOB_COUNT_FILE"
+	printf '%s\n' "$new_count"
 }
 
 wait_for_one_new_job() {
@@ -1235,7 +1333,8 @@ assert_no_new_jobs() {
 	new_schema=$1
 	new_operation=$2
 	new_checkpoint=$3
-	new_count=$(new_job_count_since "$new_schema" "$new_operation" "$new_checkpoint")
+	new_count=$(new_job_count_since "$new_schema" "$new_operation" "$new_checkpoint") ||
+		fail "could not assert the absence of new $new_operation Jobs for $new_schema"
 	[ "$new_count" -eq 0 ] ||
 		fail "$new_schema created $new_count unexpected $new_operation Jobs"
 }
@@ -1246,25 +1345,45 @@ all_new_jobs_complete() {
 	complete_checkpoint=$3
 	complete_minimum=$4
 	record_observed_jobs
-	complete_records=$(jq -c -s \
+	if ! jq -c -s \
 		--slurpfile before "$complete_checkpoint" \
 		--arg schema "$complete_schema" \
 		--arg operation "$complete_operation" '
       [.[] |
         select(.schema == $schema and .operation == $operation) |
-        .uid as $uid | select(($before[0] | index($uid)) == null)] |
-      unique_by(.uid)
-    ' "$OBSERVED_JOBS_FILE")
-	[ "$(printf '%s\n' "$complete_records" | jq 'length')" -ge "$complete_minimum" ] || return 1
-	printf '%s\n' "$complete_records" | jq -c '.[]' |
-		while IFS= read -r complete_record; do
-			complete_name=$(printf '%s\n' "$complete_record" | jq -er '.name')
-			complete_uid=$(printf '%s\n' "$complete_record" | jq -er '.uid')
-			complete_object=$(k -n "$TEST_NAMESPACE" get job "$complete_name" -o json 2>/dev/null) || exit 1
-			printf '%s\n' "$complete_object" | jq -e \
-				--arg uid "$complete_uid" \
-				--arg schema "$complete_schema" \
-				--arg operation "$complete_operation" '
+	        .uid as $uid | select(($before[0] | index($uid)) == null)] |
+	      unique_by(.uid)
+	    ' "$OBSERVED_JOBS_FILE" >"$COMPLETE_JOB_RECORDS_FILE"; then
+		fail "could not capture new $complete_operation Job records for $complete_schema"
+	fi
+	if ! complete_count=$(jq -er '
+      if type == "array" then length
+      else error("complete Job records must be an array") end
+    ' "$COMPLETE_JOB_RECORDS_FILE"); then
+		fail "could not count new $complete_operation Job records for $complete_schema"
+	fi
+	[ "$complete_count" -ge "$complete_minimum" ] || return 1
+	if ! jq -c '
+      .[] |
+      if (.name | type) == "string" and (.name | length) > 0 and
+          (.uid | type) == "string" and (.uid | length) > 0
+      then .
+      else error("complete Job record has invalid identity fields") end
+    ' "$COMPLETE_JOB_RECORDS_FILE" >"$COMPLETE_JOB_LINES_FILE"; then
+		fail "could not validate new $complete_operation Job identities for $complete_schema"
+	fi
+	while IFS= read -r complete_record; do
+		if ! complete_name=$(printf '%s\n' "$complete_record" | jq -er '.name'); then
+			fail "could not read a validated complete Job name for $complete_schema"
+		fi
+		if ! complete_uid=$(printf '%s\n' "$complete_record" | jq -er '.uid'); then
+			fail "could not read a validated complete Job UID for $complete_schema"
+		fi
+		complete_object=$(k -n "$TEST_NAMESPACE" get job "$complete_name" -o json 2>/dev/null) || return 1
+		printf '%s\n' "$complete_object" | jq -e \
+			--arg uid "$complete_uid" \
+			--arg schema "$complete_schema" \
+			--arg operation "$complete_operation" '
               .metadata.uid == $uid and
               .metadata.labels["operator.ptah.dev/schema"] == $schema and
               .metadata.labels["operator.ptah.dev/operation"] == $operation and
@@ -1272,8 +1391,8 @@ all_new_jobs_complete() {
                 any(.type == "Complete" and .status == "True")) and
               (.status.conditions // [] |
                 all(.type != "Failed" or .status != "True"))
-            ' >/dev/null || exit 1
-		done
+			' >/dev/null || return 1
+	done <"$COMPLETE_JOB_LINES_FILE"
 }
 
 capture_one_new_job_result() {
@@ -1379,10 +1498,10 @@ capture_one_new_job_result() {
 	jq -e \
 		--arg operation "$result_operation" \
 		--arg operationID "$CAPTURED_OPERATION_ID" '
-      .protocolVersion == 4 and .operation == $operation and
+      .protocolVersion == 5 and .operation == $operation and
       .operationId == $operationID and .truncation == null
     ' "$result_output" >/dev/null ||
-		fail "validated result lost its protocol-v4 binding or complete-output guarantee"
+		fail "validated result lost its protocol-v5 binding or complete-output guarantee"
 	grep -Fx "$CAPTURED_JOB_UID" "$AUDITED_JOBS_FILE" >/dev/null 2>&1 ||
 		printf '%s\n' "$CAPTURED_JOB_UID" >>"$AUDITED_JOBS_FILE"
 }
@@ -2830,7 +2949,7 @@ run_mysql_dsn_refusal() {
 		jq -e \
 			--arg operation "$refusal_operation" \
 			--arg operationID "$refusal_operation_id" '
-              .protocolVersion == 4 and .operation == $operation and
+              .protocolVersion == 5 and .operation == $operation and
               .operationId == $operationID and .error.code == "invalid_target" and
               .stdout == "" and (.planContentDigest // "") == "" and
               (.planOutcome // "") == "" and
@@ -3545,7 +3664,7 @@ create_exact_approval() {
       .spec.controllerStateVersion == $controllerStateVersion and
       (.spec.executorImage | test("@sha256:[0-9a-f]{64}$")) and
       (.spec.runnerImage | test("@sha256:[0-9a-f]{64}$")) and
-      .spec.runnerProtocolVersion == 4 and .spec.approver.username != "" and
+      .spec.runnerProtocolVersion == 5 and .spec.approver.username != "" and
       .spec.approvedAt != null and .spec.mutationRequestUID != "" and
       ([.spec | .. | scalars | select(. == $coordinationKey)] | length == 0)
     ' >/dev/null || fail "$approval_name was not hydrated and bound to the exact plan"
@@ -4520,7 +4639,7 @@ upgrade_execution_binding_before_apply() {
 			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
           .spec.ptahVersion == $version and
           .spec.executorImage == $executor and .spec.runnerImage == $runner and
-          .spec.runnerProtocolVersion == 4 and
+          .spec.runnerProtocolVersion == 5 and
           (.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
           .spec.controllerImage == $controllerImage and
           .spec.controllerRevision == $controllerRevision and
@@ -4638,7 +4757,7 @@ upgrade_execution_binding_before_apply() {
           $new.spec.ptahVersion == $newVersion and
           $old.spec.executorImage == $executor and $new.spec.executorImage == $executor and
           $old.spec.runnerImage == $runner and $new.spec.runnerImage == $runner and
-          $old.spec.runnerProtocolVersion == 4 and $new.spec.runnerProtocolVersion == 4 and
+          $old.spec.runnerProtocolVersion == 5 and $new.spec.runnerProtocolVersion == 5 and
           ($old.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
           ($new.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
           $old.spec.executionBindingID != $new.spec.executionBindingID and

@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -30,30 +31,44 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	batchv1 "k8s.io/api/batch/v1"
 )
 
 const (
-	manifestPath        = "support/kubernetes.json"
-	chartPath           = "charts/ptah-operator/Chart.yaml"
-	workflowPath        = ".github/workflows/ci.yml"
-	updateWorkflowPath  = ".github/workflows/update-kubernetes-support.yml"
-	releaseWorkflowPath = ".github/workflows/release.yml"
-	docsPath            = "docs/kubernetes-support.md"
-	makefilePath        = "Makefile"
-	e2eHarnessPath      = "hack/e2e-kind.sh"
-	e2eDataPlanePath    = "hack/e2e-dataplane.sh"
-	e2eAssertPath       = "hack/e2e-assert.sh"
-	e2eCRDUpgradePath   = "hack/e2e-crd-upgrade.sh"
-	e2eFaultsPath       = "hack/e2e-faults.sh"
-	e2eHAPath           = "hack/e2e-ha.sh"
-	e2eCertRotationPath = "hack/e2e-cert-rotation.sh"
+	manifestPath                   = "support/kubernetes.json"
+	goModPath                      = "go.mod"
+	chartPath                      = "charts/ptah-operator/Chart.yaml"
+	workflowPath                   = ".github/workflows/ci.yml"
+	updateWorkflowPath             = ".github/workflows/update-kubernetes-support.yml"
+	releaseWorkflowPath            = ".github/workflows/release.yml"
+	docsPath                       = "docs/kubernetes-support.md"
+	makefilePath                   = "Makefile"
+	e2eHarnessPath                 = "hack/e2e-kind.sh"
+	e2eStaticPath                  = "hack/e2e-static.sh"
+	e2eDataPlanePath               = "hack/e2e-dataplane.sh"
+	e2eAssertPath                  = "hack/e2e-assert.sh"
+	e2eCRDUpgradePath              = "hack/e2e-crd-upgrade.sh"
+	e2eFaultsPath                  = "hack/e2e-faults.sh"
+	e2eHAPath                      = "hack/e2e-ha.sh"
+	e2eCertRotationPath            = "hack/e2e-cert-rotation.sh"
+	failedHookEvidencePath         = "hack/failed-hook-evidence.jq"
+	failedHookEvidenceSelftestPath = "hack/failed-hook-evidence-selftest.sh"
+	admissionSchemaContractPath    = "hack/admission-schema-contract.jq"
+	admissionSchemaSelftestPath    = "hack/admission-schema-contract-selftest.sh"
+	controllerSchemaContractPath   = "hack/controller-object-schema-contract.jq"
+	controllerSchemaSelftestPath   = "hack/controller-object-schema-contract-selftest.sh"
 
 	verificationMaxAgeDays = 35
+
+	reviewedKubernetesAPIMinor       = 36
+	reviewedKubernetesSupportMaximum = 37
+	reviewedJobAPISurfaceSHA256      = "cf7bfb98b59dce0740581a34ea11d1a4813239be28241dd11c91124b7435fa48"
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256     = "b2464cb40e2b3bbd6c4283f86a3993be6bf64822ef4b4055b5521745d3147f33"
-	updateWorkflowSHA256 = "a012609ecffb861006cfbfdf09f769dfc1f5b0d7810f78a7fdbe33d4d3266a80"
+	ciWorkflowSHA256       = "b2464cb40e2b3bbd6c4283f86a3993be6bf64822ef4b4055b5521745d3147f33"
+	updateWorkflowSHA256   = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
+	controllerSchemaSHA256 = "b73a7b8718abd34b4a8f45a1342c31c50690bf82358b378621dfbbe6e30892e5"
 
 	ciSupportMatrixTimeoutMinutes     = 10
 	ciVerifyTimeoutMinutes            = 20
@@ -67,10 +82,10 @@ const (
 
 var updateRunSHA256 = map[string]string{
 	"prepare/discover":           "0777e441d8638d72eb040d78366facf3dc3e0674e3ab82fdcb7c8548c7a775b0",
-	"prepare/verify":             "ef49b2a3563779c072dfa5368724c3ab5da29e4e922af48fd32c14cb85d92b18",
-	"prepare/bundle":             "2cdde53d6c0539ecc80276d50f8652fb6978021734aed4e50b8078ca0826e896",
-	"propose/apply-bundle":       "c1ced6a6bf89a62b4a96b2ffb5a171d1ae7e493667b36b0bf6b0a97434ac9b34",
-	"propose/support-window-pr":  "8222c9bdd8dece19debcf10efd43706aa8fa778df92a41712616253755c59c9f",
+	"prepare/verify":             "038bedf5ed59eb6eaecfe2473d0c6ac854b18a226be67a8d8c8b49c95b134337",
+	"prepare/bundle":             "0a2282370fad04a75a56821a662f64ce2955f36abff8e4d7d1cafddb3b60a8b9",
+	"propose/apply-bundle":       "07427747ba0f70786046ecd7ade587f8fed37fdb4e39add4c786f11f41416b7a",
+	"propose/support-window-pr":  "52a1ca884f27872b285a23448748eac3c79de29847434bf94f74c8dd7a5eafb1",
 	"dispatch/dispatch-evidence": "c1bda73672b5f67bf582cb77d628acd30f201828d40c631deb7902ab435769ae",
 }
 
@@ -79,6 +94,7 @@ var (
 	kindImagePattern = regexp.MustCompile(`^kindest/node:v(\d+)\.(\d+)\.(\d+)@sha256:([0-9a-f]{64})$`)
 	kindVersion      = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 	chartRange       = regexp.MustCompile(`(?m)^kubeVersion:\s*"([^"]+)"\s*$`)
+	kubernetesModule = regexp.MustCompile(`(?m)^[\t ]*(k8s\.io/(?:api|apiextensions-apiserver|apimachinery|client-go))[\t ]+v0\.([0-9]+)\.([0-9]+)(?:[\t ]|$)`)
 )
 
 type supportManifest struct {
@@ -111,9 +127,10 @@ type parsedRelease struct {
 }
 
 func main() {
-	output := flag.String("output", "verify", "output mode: verify, matrix, or helm-range")
+	output := flag.String("output", "verify", "output mode: verify, proposal, matrix, or helm-range")
 	nowValue := flag.String("now", "", "UTC date used for freshness validation (YYYY-MM-DD; defaults to today)")
 	flag.Parse()
+	proposal := *output == "proposal"
 
 	now, err := validationDate(*nowValue)
 	if err != nil {
@@ -121,6 +138,18 @@ func main() {
 	}
 	manifest, parsed, err := loadAndValidateManifest(manifestPath, now)
 	if err != nil {
+		fatal(err)
+	}
+	compiledMinor, err := verifyKubernetesDependencyWindowForMode(goModPath, parsed, proposal)
+	if err != nil {
+		fatal(err)
+	}
+	if err := verifyJobAPIBoundaryForMode(
+		compiledMinor,
+		parsed[len(parsed)-1].minor,
+		controllerJobAPISurfaceDigest(),
+		proposal,
+	); err != nil {
 		fatal(err)
 	}
 
@@ -141,14 +170,21 @@ func main() {
 		fatal(err)
 	}
 	if err := verifyE2EWiring(e2eWiringFiles{
-		makefile:         makefilePath,
-		harness:          e2eHarnessPath,
-		dataPlane:        e2eDataPlanePath,
-		assertions:       e2eAssertPath,
-		crdUpgrade:       e2eCRDUpgradePath,
-		faults:           e2eFaultsPath,
-		highAvailability: e2eHAPath,
-		certRotation:     e2eCertRotationPath,
+		makefile:                   makefilePath,
+		harness:                    e2eHarnessPath,
+		staticChecks:               e2eStaticPath,
+		dataPlane:                  e2eDataPlanePath,
+		assertions:                 e2eAssertPath,
+		crdUpgrade:                 e2eCRDUpgradePath,
+		faults:                     e2eFaultsPath,
+		highAvailability:           e2eHAPath,
+		certRotation:               e2eCertRotationPath,
+		failedHookEvidence:         failedHookEvidencePath,
+		failedHookEvidenceSelftest: failedHookEvidenceSelftestPath,
+		admissionSchemaContract:    admissionSchemaContractPath,
+		admissionSchemaSelftest:    admissionSchemaSelftestPath,
+		controllerSchemaContract:   controllerSchemaContractPath,
+		controllerSchemaSelftest:   controllerSchemaSelftestPath,
 	}); err != nil {
 		fatal(err)
 	}
@@ -156,6 +192,8 @@ func main() {
 	switch *output {
 	case "verify":
 		fmt.Printf("Kubernetes support window verified: %s-%s (%d minors)\n", parsed[0].Minor, parsed[len(parsed)-1].Minor, len(parsed))
+	case "proposal":
+		fmt.Printf("Kubernetes support proposal validated: %s-%s (%d minors); ordinary verification still enforces the frozen API boundary\n", parsed[0].Minor, parsed[len(parsed)-1].Minor, len(parsed))
 	case "matrix":
 		entries := make([]matrixEntry, 0, len(parsed))
 		for _, item := range parsed {
@@ -177,6 +215,187 @@ func main() {
 	default:
 		fatal(fmt.Errorf("unsupported -output value %q", *output))
 	}
+}
+
+func verifyKubernetesDependencyWindow(path string, releases []parsedRelease) (int, error) {
+	return verifyKubernetesDependencyWindowForMode(path, releases, false)
+}
+
+func verifyKubernetesDependencyWindowForMode(path string, releases []parsedRelease, proposal bool) (int, error) {
+	if len(releases) == 0 {
+		return 0, errors.New("Kubernetes dependency verification requires a non-empty support window")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return 0, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	required := []string{
+		"k8s.io/api",
+		"k8s.io/apiextensions-apiserver",
+		"k8s.io/apimachinery",
+		"k8s.io/client-go",
+	}
+	versions := make(map[string]int, len(required))
+	for _, match := range kubernetesModule.FindAllStringSubmatch(string(contents), -1) {
+		if _, duplicate := versions[match[1]]; duplicate {
+			return 0, fmt.Errorf("%s: Kubernetes module %s is required exactly once", path, match[1])
+		}
+		minor, conversionErr := strconv.Atoi(match[2])
+		if conversionErr != nil {
+			return 0, fmt.Errorf("%s: parse Kubernetes module %s minor: %w", path, match[1], conversionErr)
+		}
+		versions[match[1]] = minor
+	}
+	for _, module := range required {
+		if _, exists := versions[module]; !exists {
+			return 0, fmt.Errorf("%s: %s must have one stable v0.MINOR.PATCH requirement", path, module)
+		}
+	}
+
+	compiledMinor := versions[required[0]]
+	for _, module := range required[1:] {
+		if versions[module] != compiledMinor {
+			return 0, fmt.Errorf(
+				"%s: Kubernetes modules must share one API minor; %s uses 0.%d while %s uses 0.%d",
+				path,
+				required[0],
+				compiledMinor,
+				module,
+				versions[module],
+			)
+		}
+	}
+
+	newest := releases[len(releases)-1]
+	if newest.major != 1 {
+		return 0, fmt.Errorf("%s: Kubernetes Go module mapping only supports major 1, got %s", path, newest.Minor)
+	}
+	forwardSkew := newest.minor - compiledMinor
+	if forwardSkew < 0 {
+		return 0, fmt.Errorf(
+			"%s: Kubernetes Go API 0.%d is newer than the advertised support maximum %s",
+			path,
+			compiledMinor,
+			newest.Minor,
+		)
+	}
+	maximumForwardSkew := 1
+	if proposal {
+		// Proposal validation may expose exactly the next maintained minor in a
+		// pull request before its compiled API surface has been reviewed. Normal
+		// verification below remains the authority for support and release.
+		maximumForwardSkew = 2
+	}
+	if forwardSkew > maximumForwardSkew {
+		return 0, fmt.Errorf(
+			"%s: newest proposed Kubernetes %s is %d minors ahead of the compiled Go API 0.%d; update and review the Job/Pod API boundary before advancing the window",
+			path,
+			newest.Minor,
+			forwardSkew,
+			compiledMinor,
+		)
+	}
+	return compiledMinor, nil
+}
+
+func verifyJobAPIBoundaryForMode(compiledMinor, supportedMaximum int, actualDigest string, proposal bool) error {
+	strictErr := verifyReviewedJobAPIBoundary(compiledMinor, supportedMaximum, actualDigest)
+	if strictErr == nil || !proposal {
+		return strictErr
+	}
+	// A proposal is discovery evidence, not a support claim. Permit only the
+	// immediate next supported maximum while the compiled dependency and every
+	// reachable Job/Pod field remain byte-for-byte at the reviewed boundary.
+	// The ordinary matrix and release modes still call the strict branch above
+	// and therefore keep the proposed pull request red until review is explicit.
+	if compiledMinor != reviewedKubernetesAPIMinor ||
+		supportedMaximum != reviewedKubernetesSupportMaximum+1 ||
+		actualDigest != reviewedJobAPISurfaceSHA256 {
+		return strictErr
+	}
+	return nil
+}
+
+func verifyReviewedJobAPIBoundary(compiledMinor, supportedMaximum int, actualDigest string) error {
+	if compiledMinor != reviewedKubernetesAPIMinor || supportedMaximum != reviewedKubernetesSupportMaximum {
+		return fmt.Errorf(
+			"Kubernetes dependency/support profile %d/%d differs from reviewed Job API boundary %d/%d; review the reachable Job/Pod fields and update the structural guard",
+			compiledMinor,
+			supportedMaximum,
+			reviewedKubernetesAPIMinor,
+			reviewedKubernetesSupportMaximum,
+		)
+	}
+	if actualDigest != reviewedJobAPISurfaceSHA256 {
+		return fmt.Errorf(
+			"compiled reachable Job API surface digest is %s, want reviewed digest %s; review the Job/Pod JSON field graph before accepting dependency drift",
+			actualDigest,
+			reviewedJobAPISurfaceSHA256,
+		)
+	}
+	return nil
+}
+
+type jobAPISurfaceEntry struct {
+	Type   string   `json:"type"`
+	Fields []string `json:"fields"`
+}
+
+func controllerJobAPISurfaceDigest() string {
+	visited := make(map[reflect.Type]struct{})
+	entries := make([]jobAPISurfaceEntry, 0)
+	var visit func(reflect.Type)
+	visit = func(value reflect.Type) {
+		for value.Kind() == reflect.Pointer || value.Kind() == reflect.Slice || value.Kind() == reflect.Array {
+			value = value.Elem()
+		}
+		if value.Kind() == reflect.Map {
+			visit(value.Elem())
+			return
+		}
+		if value.Kind() != reflect.Struct || !strings.HasPrefix(value.PkgPath(), "k8s.io/api/") {
+			return
+		}
+		if _, exists := visited[value]; exists {
+			return
+		}
+		visited[value] = struct{}{}
+
+		fields := make([]string, 0, value.NumField())
+		for index := 0; index < value.NumField(); index++ {
+			field := value.Field(index)
+			if !field.IsExported() {
+				continue
+			}
+			jsonTag := field.Tag.Get("json")
+			jsonName := strings.Split(jsonTag, ",")[0]
+			if jsonName == "-" {
+				continue
+			}
+			if jsonName == "" && !field.Anonymous {
+				jsonName = field.Name
+			}
+			if jsonName != "" {
+				fields = append(fields, jsonName)
+			}
+			visit(field.Type)
+		}
+		sort.Strings(fields)
+		entries = append(entries, jobAPISurfaceEntry{
+			Type:   value.PkgPath() + "." + value.Name(),
+			Fields: fields,
+		})
+	}
+
+	visit(reflect.TypeOf(batchv1.JobSpec{}))
+	sort.Slice(entries, func(left, right int) bool { return entries[left].Type < entries[right].Type })
+	canonical, err := json.Marshal(entries)
+	if err != nil {
+		panic(fmt.Sprintf("marshal reachable Job API surface: %v", err))
+	}
+	digest := sha256.Sum256(canonical)
+	return fmt.Sprintf("%x", digest)
 }
 
 func validationDate(value string) (time.Time, error) {
@@ -588,12 +807,21 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 		"pull-requests: write",
 		"go run ./hack/updatekubernetessupport",
 		"go test ./hack ./hack/updatekubernetessupport",
-		"go run ./hack/verify-kubernetes-support.go -now \"$today\"",
+		"go run ./hack/verify-kubernetes-support.go -output=proposal -now \"$today\"",
 		"git status --porcelain=v1 --untracked-files=all",
+		"git status --porcelain=v1 --untracked-files=all > \"$status_file\"",
 		"patch-base64",
 		"patch-sha256",
 		"git apply --check",
 		"remote_base_sha",
+		"if ! git merge-base --is-ancestor \"$remote_oid\" \"$BASE_SHA\"; then",
+		"git merge-base --is-ancestor \"$remote_parent\" \"$BASE_SHA\"",
+		"git rev-list --count \"$BASE_SHA..$remote_oid\"",
+		"support branch contains review commits; refusing to overwrite",
+		"git show -s --format=%ae \"$remote_oid\"",
+		"git show -s --format=%ce \"$remote_oid\"",
+		"git diff-tree --no-commit-id --name-status -r \"$remote_oid\"",
+		"mapfile -t prior_status_lines < \"$prior_status_file\"",
 		"repos/$GITHUB_REPOSITORY/pulls",
 		"-f head=\"$repository_owner:$support_branch\"",
 		".head.repo.full_name == $repo",
@@ -621,12 +849,17 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 	}
 	for marker, expected := range map[string]int{
 		"--json state,baseRefName,headRefName,headRefOid,isCrossRepository,headRepository": 2,
-		".isCrossRepository == false":            2,
-		".headRepository.nameWithOwner == $repo": 2,
+		".isCrossRepository == false":                                        2,
+		".headRepository.nameWithOwner == $repo":                             2,
+		"git status --porcelain=v1 --untracked-files=all > \"$status_file\"": 2,
+		"41898282+github-actions[bot]@users.noreply.github.com":              3,
 	} {
 		if count := bytes.Count(contents, []byte(marker)); count != expected {
 			return fmt.Errorf("%s: expected %d same-repository pull-request markers %q, found %d", path, expected, marker, count)
 		}
+	}
+	if bytes.Contains(contents, []byte("< <(git status --porcelain=v1 --untracked-files=all)")) {
+		return fmt.Errorf("%s: support updater must check git status before consuming its output", path)
 	}
 	if len(workflow.On) != 2 {
 		return fmt.Errorf("%s: support updater must have only schedule and workflow_dispatch triggers", path)
@@ -874,6 +1107,8 @@ func verifyReleaseWorkflow(path string) error {
 		".head_branch == $branch",
 		".head_sha == $sha",
 		".conclusion == \"success\"",
+		"<<<\"$runs\" > \"$run_ids_file\"",
+		"mapfile -t run_ids < \"$run_ids_file\"",
 		"actions/runs/$run_id/jobs",
 		".name == \"Kubernetes support gate\"",
 		"poll_deadline_epoch=$(( $(date -u +%s) + SUPPORT_POLL_TIMEOUT_MINUTES * 60 ))",
@@ -884,6 +1119,9 @@ func verifyReleaseWorkflow(path string) error {
 		if !strings.Contains(evidence.Run, marker) {
 			return fmt.Errorf("%s: support preflight is missing exact-CI evidence marker %q", path, marker)
 		}
+	}
+	if strings.Contains(evidence.Run, "mapfile -t run_ids < <(jq") {
+		return fmt.Errorf("%s: support preflight must check CI-run JSON decoding before polling", path)
 	}
 
 	publish := workflow.Jobs["publish"]
@@ -1129,14 +1367,21 @@ type sourceContractStep struct {
 }
 
 type e2eWiringFiles struct {
-	makefile         string
-	harness          string
-	dataPlane        string
-	assertions       string
-	crdUpgrade       string
-	faults           string
-	highAvailability string
-	certRotation     string
+	makefile                   string
+	harness                    string
+	staticChecks               string
+	dataPlane                  string
+	assertions                 string
+	crdUpgrade                 string
+	faults                     string
+	highAvailability           string
+	certRotation               string
+	failedHookEvidence         string
+	failedHookEvidenceSelftest string
+	admissionSchemaContract    string
+	admissionSchemaSelftest    string
+	controllerSchemaContract   string
+	controllerSchemaSelftest   string
 }
 
 type lifecycleSourceContract struct {
@@ -1155,6 +1400,15 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyMakeE2ETarget(files.makefile); err != nil {
 		return err
 	}
+	if err := verifyFailedHookEvidenceAssets(files); err != nil {
+		return err
+	}
+	if err := verifyAdmissionSchemaAssets(files); err != nil {
+		return err
+	}
+	if err := verifyControllerObjectSchemaAssets(files); err != nil {
+		return err
+	}
 
 	harness := files.harness
 	harnessContents, err := os.ReadFile(harness)
@@ -1171,6 +1425,13 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("fail-fast shell mode", "set -eu"),
 		exactSourceLine("required Kubernetes version", `[ -n "$K8S_VERSION" ] || fail "K8S_VERSION is required (for example, 1.37.0)"`),
 		exactSourceLine("exact Kubernetes version syntax", `printf '%s\n' "$K8S_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||`),
+		exactSourceLineSequence("supported Kubernetes minor binding", []string{
+			`K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)`,
+			`case "$K8S_MAJOR_MINOR" in`,
+			`1.35 | 1.36 | 1.37) ;;`,
+			`*) fail "Kubernetes $K8S_MAJOR_MINOR is outside the supported 1.35-1.37 window" ;;`,
+			`esac`,
+		}),
 		exactSourceLine("support-manifest image selection", `if [ -z "$KIND_NODE_IMAGE" ]; then`),
 		exactSourceLine("digest-pinned node image", `is_pinned_image "$KIND_NODE_IMAGE" ||`),
 		exactSourceLineSequence("node image version binding", []string{
@@ -1185,6 +1446,26 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`ACTUAL_KIND_VERSION=$(kind version | awk '{print $2}')`,
 			`[ "$ACTUAL_KIND_VERSION" = "$EXPECTED_KIND_VERSION" ] ||`,
 			`fail "kind $EXPECTED_KIND_VERSION is required, got $ACTUAL_KIND_VERSION"`,
+		}),
+		exactSourceLineSequence("guarded API feature gates for Kubernetes 1.35", []string{
+			`1.35)`,
+			`{`,
+			`printf '%s\n' 'featureGates:'`,
+			`printf '%s\n' '  GenericWorkload: true'`,
+			`} >>"$KIND_CONFIG"`,
+			`;;`,
+		}),
+		exactSourceLineSequence("guarded API feature gates for Kubernetes 1.37", []string{
+			`1.37)`,
+			`{`,
+			`printf '%s\n' 'featureGates:'`,
+			`printf '%s\n' '  EmptyDirVolumeMode: true'`,
+			`printf '%s\n' '  EvictionRequestAPI: true'`,
+			`printf '%s\n' '  GenericWorkload: true'`,
+			`printf '%s\n' '  VolumeBindMountOptions: true'`,
+			`printf '%s\n' '  WorkloadWithJob: true'`,
+			`} >>"$KIND_CONFIG"`,
+			`;;`,
 		}),
 		exactSourceLineSequence("kind cluster creation", []string{
 			`kind create cluster \`,
@@ -1202,6 +1483,32 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`*) fail "cluster reports $server_version, expected v$K8S_VERSION" ;;`,
 			`esac`,
 		}),
+		exactSourceLineSequence("live admission OpenAPI boundary", []string{
+			`ADMISSION_OPENAPI_FILE=$WORK_DIR/admissionregistration-openapi-v3.json`,
+			`kubectl --kubeconfig "$KUBECONFIG_FILE" get --raw \`,
+			`/openapi/v3/apis/admissionregistration.k8s.io/v1 >"$ADMISSION_OPENAPI_FILE"`,
+			`jq -e -f "$ROOT_DIR/hack/admission-schema-contract.jq" \`,
+			`"$ADMISSION_OPENAPI_FILE" >/dev/null ||`,
+			`fail "Kubernetes $K8S_VERSION admission schema exceeds the frozen certificate write boundary"`,
+		}),
+		exactSourceLineSequence("live controller Job OpenAPI boundary", []string{
+			`CONTROLLER_BATCH_OPENAPI_FILE=$WORK_DIR/controller-batch-openapi-v3.json`,
+			`CONTROLLER_CORE_OPENAPI_FILE=$WORK_DIR/controller-core-openapi-v3.json`,
+			`kubectl --kubeconfig "$KUBECONFIG_FILE" get --raw \`,
+			`/openapi/v3/apis/batch/v1 >"$CONTROLLER_BATCH_OPENAPI_FILE"`,
+			`kubectl --kubeconfig "$KUBECONFIG_FILE" get --raw \`,
+			`/openapi/v3/api/v1 >"$CONTROLLER_CORE_OPENAPI_FILE"`,
+			`jq -e \`,
+			`--arg minor "${server_major}.${server_minor}" \`,
+			`--slurpfile core "$CONTROLLER_CORE_OPENAPI_FILE" \`,
+			`-f "$ROOT_DIR/hack/controller-object-schema-contract.jq" \`,
+			`"$CONTROLLER_BATCH_OPENAPI_FILE" >/dev/null ||`,
+			`fail "Kubernetes $K8S_VERSION Job/Pod API exceeds the reviewed controller write boundary"`,
+		}),
+		exactSourceLineSequence("candidate guarded API version propagation", []string{
+			`E2E_KUBERNETES_VERSION=$K8S_VERSION \`,
+			`E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \`,
+		}),
 		exactSourceLineSequence("candidate upgrade lifecycle", []string{
 			`E2E_PHASE=upgrade \`,
 			`"$ROOT_DIR/hack/e2e-crd-upgrade.sh"`,
@@ -1211,6 +1518,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("certificate lifecycle", `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`),
 		exactSourceLine("data-plane and OCI lifecycle", `"$ROOT_DIR/hack/e2e-dataplane.sh"`),
 		exactSourceLineSequence("uninstall lifecycle", []string{
+			`E2E_KUBERNETES_VERSION=$K8S_VERSION \`,
 			`E2E_PHASE=uninstall \`,
 			`"$ROOT_DIR/hack/e2e-crd-upgrade.sh"`,
 		}),
@@ -1300,6 +1608,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := rejectEarlySuccessfulExit(dataPlane, dataPlaneContents, dataPlaneContract[len(dataPlaneContract)-1].pattern); err != nil {
 		return err
 	}
+	if err := verifyFailedUpgradeEvidenceSource(files.crdUpgrade); err != nil {
+		return err
+	}
 
 	childContracts := []lifecycleSourceContract{
 		{
@@ -1334,9 +1645,27 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			exitTrap: "cleanup",
 			steps: []sourceContractStep{
 				exactSourceLine("fail-fast shell mode", "set -eu"),
+				exactSourceLine("required live Kubernetes version", `E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION:?E2E_KUBERNETES_VERSION is required}`),
 				exactSourceLine("cleanup implementation", `cleanup() {`),
 				exactSourceLine("cleanup status capture", `status=$?`),
 				exactSourceLine("cleanup status preservation", `exit "$status"`),
+				exactSourceLine("live server version verification", `verify_supported_server_version`),
+				exactSourceLine("predecessor read-only Job fixture", `wait_for_predecessor_read_only_job() {`),
+				exactSourceLine("predecessor running Apply fixture", `prepare_predecessor_apply_fixture() {`),
+				exactSourceLine("controller guarded-field proof implementation", `prove_controller_object_supported_window_guard() {`),
+				exactSourceLine("controller guarded-field proof call", `prove_controller_object_supported_window_guard`),
+				exactSourceLine("predecessor read-only Job terminal staging", `stage_predecessor_read_only_job_completion`),
+				exactSourceLine("predecessor read-only Job late-create UID gap", `stage_predecessor_read_only_job_uid_gap`),
+				exactSourceLine("predecessor Apply database barrier start", `start_predecessor_apply_barrier`),
+				exactSourceLine("predecessor running Apply start", `start_predecessor_apply_fixture`),
+				exactSourceLine("predecessor Apply database barrier contention", `wait_for_predecessor_apply_barrier_contention`),
+				exactSourceLine("predecessor Apply running late-create UID gap", `stage_predecessor_apply_job_uid_gap_while_running`),
+				exactSourceLine("predecessor Apply upgrade overlap proof", `assert_predecessor_apply_remains_exclusive_while_running`),
+				exactSourceLine("predecessor Apply database barrier recheck", `assert_predecessor_apply_barrier_contended`),
+				exactSourceLine("predecessor Apply database barrier release", `release_predecessor_apply_barrier`),
+				exactSourceLine("predecessor Apply terminal wait", `wait_for_predecessor_apply_job_terminal`),
+				exactSourceLine("predecessor read-only Job cleanup proof", `wait_for_predecessor_read_only_job_cleanup`),
+				exactSourceLine("predecessor Apply cleanup proof", `wait_for_predecessor_apply_job_cleanup`),
 				exactSourceLine("upgrade proof implementation", `run_upgrade_proof() {`),
 				exactSourceLine("predecessor upgrade proof call", `run_predecessor_upgrade_proof`),
 				exactSourceLine("runtime singleton proof call", `prove_runtime_singleton_guard`),
@@ -1423,6 +1752,420 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		}
 	}
 	return nil
+}
+
+func verifyFailedUpgradeEvidenceSource(path string) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	contract := []sourceContractStep{
+		exactSourceLine("failed-upgrade evidence implementation", `expect_upgrade_failure_without_deployment_change() {`),
+		exactSourceLine("failed-upgrade structured status destination", `status_file=$WORK_DIR/failed-upgrade-status.json`),
+		exactSourceLineSequence("current and next failed revision binding", []string{
+			`before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \`,
+			`--namespace "$E2E_OPERATOR_NAMESPACE" -o json | jq -er '.version | select(type == "number" and . >= 1)')`,
+			`failed_revision=$((before_revision + 1))`,
+		}),
+		exactSourceLineSequence("rendered preflight hook identity binding", []string{
+			`hook_service_account=$(jq -er '."operator.ptah.dev/hook-service-account-name"' \`,
+			`"$EXPECTED_SINGLETON_ANNOTATIONS_FILE")`,
+			`expected_hook_name=$(printf '%s' "$hook_service_account" | cut -c1-53 | sed 's/-$//')-preflight`,
+		}),
+		exactSourceLineSequence("failed upgrade execution and explicit revision retrieval", []string{
+			`if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \`,
+			`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$UPGRADE_VALUES_FILE" \`,
+			`--wait --timeout 2m "$@" >"$WORK_DIR/failed-upgrade.out" 2>"$WORK_DIR/failed-upgrade.err"; then`,
+			`fail "$description unexpectedly succeeded"`,
+			`fi`,
+			`if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`,
+			`--revision "$failed_revision" -o json >"$status_file"; then`,
+			`fail "$description did not retain structured Helm evidence for failed revision $failed_revision"`,
+			`fi`,
+		}),
+		exactSourceLineSequence("exact failed preflight evidence evaluation", []string{
+			`if ! jq -e \`,
+			`--argjson expected_revision "$failed_revision" \`,
+			`--arg expected_name "$expected_hook_name" \`,
+			`--argjson expected_weight -60 \`,
+			`-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$status_file" >/dev/null; then`,
+		}),
+		exactSourceLine("failed preflight evidence refusal", `fail "$description lacks exact revision-bound failed preflight evidence"`),
+	}
+	if err := verifyOrderedSourceContract(path, contents, contract); err != nil {
+		return err
+	}
+
+	start := contract[0].pattern.FindIndex(contents)
+	end := sourceLinePattern(`expect_upgrade_render_failure_without_deployment_change() {`).FindIndex(contents)
+	if start == nil || end == nil || end[0] <= start[1] {
+		return fmt.Errorf("%s: failed-upgrade evidence function boundaries are invalid", path)
+	}
+	functionBody := contents[start[0]:end[0]]
+	if bytes.Count(functionBody, []byte("failed-upgrade.err")) != 1 {
+		return fmt.Errorf("%s: failed-upgrade stderr may only be captured once and must not be parsed as hook evidence", path)
+	}
+	if bytes.Count(functionBody, []byte("failed-upgrade-status.json")) != 1 || bytes.Count(functionBody, []byte("$status_file")) != 3 {
+		return fmt.Errorf("%s: failed-upgrade evidence must flow only from the explicitly retrieved structured revision status", path)
+	}
+	return nil
+}
+
+const failedHookEvidenceContract = `def hook_phase:
+  .last_run.phase // "";
+
+(.hooks // []) as $hooks |
+($hooks | map(select(hook_phase == "Failed"))) as $failed |
+(.version == $expected_revision) and
+(.info.status == "failed") and
+($failed | length == 1) and
+($failed[0] |
+  .name == $expected_name and
+  .kind == "Job" and
+  (.weight | tonumber) == $expected_weight and
+  ((.events // []) | index("pre-upgrade") != null) and
+  ((.last_run.started_at // "") | length > 0) and
+  ((.last_run.completed_at // "") | length > 0)) and
+($hooks | all(.[];
+  if
+    (((.events // []) | index("pre-upgrade")) != null) and
+    ((.weight | tonumber) > $expected_weight)
+  then
+    hook_phase == ""
+  else
+    true
+  end))`
+
+func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
+	filterContents, err := os.ReadFile(files.failedHookEvidence)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.failedHookEvidence, err)
+	}
+	if actual, expected := normalizedNonemptyLines(string(filterContents)), normalizedNonemptyLines(failedHookEvidenceContract); !equalStrings(actual, expected) {
+		return fmt.Errorf("%s: failed Helm hook evidence filter must preserve the exact revision, status, hook identity, timestamp, and later-hook exclusion contract", files.failedHookEvidence)
+	}
+
+	selftestContents, err := os.ReadFile(files.failedHookEvidenceSelftest)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.failedHookEvidenceSelftest, err)
+	}
+	if err := verifyShellScriptEntrypoint(files.failedHookEvidenceSelftest, selftestContents); err != nil {
+		return err
+	}
+	if err := verifyFailurePreservingExitTrap(files.failedHookEvidenceSelftest, selftestContents, "cleanup"); err != nil {
+		return err
+	}
+	selftestContract := []sourceContractStep{
+		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLine("failed-hook evaluator implementation", `evaluate() {`),
+		exactSourceLineSequence("revision-bound failed-hook evaluator", []string{
+			`jq -e \`,
+			`--argjson expected_revision 7 \`,
+			`--arg expected_name ptah-crd-preflight \`,
+			`--argjson expected_weight -60 \`,
+			`-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$1" >/dev/null`,
+		}),
+		exactSourceLine("negative-fixture implementation", `expect_rejected() {`),
+		exactSourceLine("negative-fixture mutation", `jq "$filter" "$WORK_DIR/valid.json" >"$fixture"`),
+		exactSourceLineSequence("negative-fixture refusal", []string{
+			`if evaluate "$fixture"; then`,
+			`printf 'failed hook evidence self-test: accepted %s\n' "$name" >&2`,
+			`exit 1`,
+			`fi`,
+		}),
+		exactSourceLine("valid fixture evaluation", `evaluate "$WORK_DIR/valid.json"`),
+		exactSourceLine("wrong revision refusal", `expect_rejected wrong-revision '.version = 8'`),
+		exactSourceLine("wrong hook name refusal", `expect_rejected wrong-name '.hooks[1].name = "other-preflight"'`),
+		exactSourceLine("wrong hook weight refusal", `expect_rejected wrong-weight '.hooks[1].weight = -59'`),
+		exactSourceLine("wrong hook event refusal", `expect_rejected wrong-event '.hooks[1].events = ["post-upgrade"]'`),
+		exactSourceLine("multiple failed hooks refusal", `expect_rejected two-failures '.hooks[2].last_run = .hooks[1].last_run'`),
+		exactSourceLine("later hook execution refusal", `expect_rejected later-hook-ran '.hooks[2].last_run = .hooks[0].last_run'`),
+		exactSourceLine("terminal failed-hook self-test evidence", `printf '%s\n' 'failed hook evidence self-test: PASS'`),
+	}
+	if err := verifyOrderedSourceContract(files.failedHookEvidenceSelftest, selftestContents, selftestContract); err != nil {
+		return err
+	}
+	if bytes.Count(selftestContents, []byte("hack/failed-hook-evidence.jq")) != 1 {
+		return fmt.Errorf("%s: self-test must invoke the audited failed-hook filter exactly once", files.failedHookEvidenceSelftest)
+	}
+	if err := rejectStaticControlFlowBypass(files.failedHookEvidenceSelftest, selftestContents, selftestContract[len(selftestContract)-1].pattern); err != nil {
+		return err
+	}
+	if err := rejectEarlySuccessfulReturn(
+		files.failedHookEvidenceSelftest,
+		selftestContents,
+		selftestContract[3].pattern,
+		selftestContract[5].pattern,
+	); err != nil {
+		return err
+	}
+	if err := rejectEarlySuccessfulExit(files.failedHookEvidenceSelftest, selftestContents, selftestContract[len(selftestContract)-1].pattern); err != nil {
+		return err
+	}
+
+	staticContents, err := os.ReadFile(files.staticChecks)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.staticChecks, err)
+	}
+	if err := verifyShellScriptEntrypoint(files.staticChecks, staticContents); err != nil {
+		return err
+	}
+	staticContract := []sourceContractStep{
+		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLine("failed-hook evidence self-test wiring", `"$(dirname -- "$0")/failed-hook-evidence-selftest.sh"`),
+		exactSourceLine("static-check repository root setup", `unset CDPATH`),
+	}
+	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
+		return err
+	}
+	if bytes.Count(staticContents, []byte("failed-hook-evidence-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: failed-hook evidence self-test must be wired exactly once", files.staticChecks)
+	}
+	if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, staticContract[1].pattern); err != nil {
+		return err
+	}
+	return rejectEarlySuccessfulExit(files.staticChecks, staticContents, staticContract[1].pattern)
+}
+
+const admissionSchemaContract = `. as $document |
+
+def require_exact_properties($schema_name; $expected):
+  ($document.components.schemas[$schema_name] //
+    error("OpenAPI schema is missing: " + $schema_name)) as $schema |
+  ($schema.properties //
+    error("OpenAPI schema has no properties: " + $schema_name)) as $properties |
+  ($properties | keys) as $actual |
+  if $actual == $expected then true
+  else error("OpenAPI properties changed for " + $schema_name +
+    ": actual=" + ($actual | tojson) + ", expected=" + ($expected | tojson))
+  end;
+
+require_exact_properties(
+  "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta";
+  [
+    "annotations",
+    "creationTimestamp",
+    "deletionGracePeriodSeconds",
+    "deletionTimestamp",
+    "finalizers",
+    "generateName",
+    "generation",
+    "labels",
+    "managedFields",
+    "name",
+    "namespace",
+    "ownerReferences",
+    "resourceVersion",
+    "selfLink",
+    "uid"
+  ]
+) and
+require_exact_properties(
+  "io.k8s.api.admissionregistration.v1.WebhookClientConfig";
+  ["caBundle", "service", "url"]
+) and
+require_exact_properties(
+  "io.k8s.api.admissionregistration.v1.MutatingWebhook";
+  [
+    "admissionReviewVersions",
+    "clientConfig",
+    "failurePolicy",
+    "matchConditions",
+    "matchPolicy",
+    "name",
+    "namespaceSelector",
+    "objectSelector",
+    "reinvocationPolicy",
+    "rules",
+    "sideEffects",
+    "timeoutSeconds"
+  ]
+) and
+require_exact_properties(
+  "io.k8s.api.admissionregistration.v1.ValidatingWebhook";
+  [
+    "admissionReviewVersions",
+    "clientConfig",
+    "failurePolicy",
+    "matchConditions",
+    "matchPolicy",
+    "name",
+    "namespaceSelector",
+    "objectSelector",
+    "rules",
+    "sideEffects",
+    "timeoutSeconds"
+  ]
+) and
+require_exact_properties(
+  "io.k8s.api.admissionregistration.v1.MutatingWebhookConfiguration";
+  ["apiVersion", "kind", "metadata", "webhooks"]
+) and
+require_exact_properties(
+  "io.k8s.api.admissionregistration.v1.ValidatingWebhookConfiguration";
+  ["apiVersion", "kind", "metadata", "webhooks"]
+)`
+
+func verifyAdmissionSchemaAssets(files e2eWiringFiles) error {
+	filterContents, err := os.ReadFile(files.admissionSchemaContract)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.admissionSchemaContract, err)
+	}
+	if actual, expected := normalizedNonemptyLines(string(filterContents)), normalizedNonemptyLines(admissionSchemaContract); !equalStrings(actual, expected) {
+		return fmt.Errorf("%s: admission OpenAPI filter must preserve the exact configuration, metadata, client, and webhook field inventories", files.admissionSchemaContract)
+	}
+
+	selftestContents, err := os.ReadFile(files.admissionSchemaSelftest)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.admissionSchemaSelftest, err)
+	}
+	if err := verifyShellScriptEntrypoint(files.admissionSchemaSelftest, selftestContents); err != nil {
+		return err
+	}
+	if err := verifyFailurePreservingExitTrap(files.admissionSchemaSelftest, selftestContents, "cleanup"); err != nil {
+		return err
+	}
+	selftestContract := []sourceContractStep{
+		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLine("cleanup implementation", `cleanup() {`),
+		exactSourceLine("cleanup status capture", `status=$?`),
+		exactSourceLine("cleanup status preservation", `exit "$status"`),
+		exactSourceLine("exact fixture evaluation", `jq -e -f "$FILTER" "$fixture" >/dev/null`),
+		exactSourceLine("added webhook field refusal", `if jq -e -f "$FILTER" "$extra" >/dev/null 2>&1; then`),
+		exactSourceLine("missing metadata field refusal", `if jq -e -f "$FILTER" "$missing" >/dev/null 2>&1; then`),
+		exactSourceLine("added configuration field refusal", `if jq -e -f "$FILTER" "$top_level" >/dev/null 2>&1; then`),
+		exactSourceLine("terminal admission schema self-test evidence", `printf '%s\n' 'admission schema self-test: PASS'`),
+	}
+	if err := verifyOrderedSourceContract(files.admissionSchemaSelftest, selftestContents, selftestContract); err != nil {
+		return err
+	}
+	if bytes.Count(selftestContents, []byte("hack/admission-schema-contract.jq")) != 1 {
+		return fmt.Errorf("%s: self-test must bind the audited admission schema filter exactly once", files.admissionSchemaSelftest)
+	}
+	if err := rejectStaticControlFlowBypass(files.admissionSchemaSelftest, selftestContents, selftestContract[len(selftestContract)-1].pattern); err != nil {
+		return err
+	}
+	if err := rejectEarlySuccessfulExit(files.admissionSchemaSelftest, selftestContents, selftestContract[len(selftestContract)-1].pattern); err != nil {
+		return err
+	}
+
+	staticContents, err := os.ReadFile(files.staticChecks)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.staticChecks, err)
+	}
+	staticContract := []sourceContractStep{
+		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLine("admission schema self-test wiring", `"$(dirname -- "$0")/admission-schema-contract-selftest.sh"`),
+		exactSourceLine("static-check repository root setup", `unset CDPATH`),
+	}
+	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
+		return err
+	}
+	if bytes.Count(staticContents, []byte("admission-schema-contract-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: admission schema self-test must be wired exactly once", files.staticChecks)
+	}
+	if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, staticContract[1].pattern); err != nil {
+		return err
+	}
+	return rejectEarlySuccessfulExit(files.staticChecks, staticContents, staticContract[1].pattern)
+}
+
+func verifyControllerObjectSchemaAssets(files e2eWiringFiles) error {
+	filterContents, err := os.ReadFile(files.controllerSchemaContract)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.controllerSchemaContract, err)
+	}
+	filterDigest := fmt.Sprintf("%x", sha256.Sum256(filterContents))
+	if filterDigest != controllerSchemaSHA256 {
+		return fmt.Errorf(
+			"%s: controller Job OpenAPI field inventory digest is %s, want reviewed digest %s",
+			files.controllerSchemaContract,
+			filterDigest,
+			controllerSchemaSHA256,
+		)
+	}
+
+	selftestContents, err := os.ReadFile(files.controllerSchemaSelftest)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.controllerSchemaSelftest, err)
+	}
+	if err := verifyShellScriptEntrypoint(files.controllerSchemaSelftest, selftestContents); err != nil {
+		return err
+	}
+	if err := verifyFailurePreservingExitTrap(files.controllerSchemaSelftest, selftestContents, "cleanup"); err != nil {
+		return err
+	}
+	selftestContract := []sourceContractStep{
+		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLine("cleanup implementation", `cleanup() {`),
+		exactSourceLine("cleanup status capture", `status=$?`),
+		exactSourceLine("cleanup status preservation", `exit "$status"`),
+		exactSourceLine("reviewed-minor fixture evaluation", `evaluate 1.37 "$batch_fixture" "$core_fixture"`),
+		exactSourceLine("added JobSpec field refusal", `if evaluate 1.37 "$job_extra" "$core_fixture" 2>/dev/null; then`),
+		exactSourceLine("added PodSpec field refusal", `if evaluate 1.37 "$batch_fixture" "$pod_extra" 2>/dev/null; then`),
+		exactSourceLine("added nested volume field refusal", `if evaluate 1.37 "$batch_fixture" "$volume_extra" 2>/dev/null; then`),
+		exactSourceLine("added projection field refusal", `if evaluate 1.37 "$batch_fixture" "$projection_extra" 2>/dev/null; then`),
+		exactSourceLine("missing reviewed schema refusal", `if evaluate 1.37 "$batch_fixture" "$missing_schema" 2>/dev/null; then`),
+		exactSourceLine("unreviewed minor refusal", `if evaluate 1.38 "$batch_fixture" "$core_fixture" 2>/dev/null; then`),
+		exactSourceLine("terminal controller object schema evidence", `printf '%s\n' 'controller object schema self-test: PASS'`),
+	}
+	if err := verifyOrderedSourceContract(files.controllerSchemaSelftest, selftestContents, selftestContract); err != nil {
+		return err
+	}
+	if bytes.Count(selftestContents, []byte("hack/controller-object-schema-contract.jq")) != 1 {
+		return fmt.Errorf("%s: self-test must bind the reviewed controller Job schema filter exactly once", files.controllerSchemaSelftest)
+	}
+	if err := rejectStaticControlFlowBypass(files.controllerSchemaSelftest, selftestContents, selftestContract[len(selftestContract)-1].pattern); err != nil {
+		return err
+	}
+	if err := rejectEarlySuccessfulExit(files.controllerSchemaSelftest, selftestContents, selftestContract[len(selftestContract)-1].pattern); err != nil {
+		return err
+	}
+
+	staticContents, err := os.ReadFile(files.staticChecks)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.staticChecks, err)
+	}
+	staticContract := []sourceContractStep{
+		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLine("controller object schema self-test wiring", `"$(dirname -- "$0")/controller-object-schema-contract-selftest.sh"`),
+		exactSourceLine("static-check repository root setup", `unset CDPATH`),
+	}
+	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
+		return err
+	}
+	if bytes.Count(staticContents, []byte("controller-object-schema-contract-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: controller object schema self-test must be wired exactly once", files.staticChecks)
+	}
+	if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, staticContract[1].pattern); err != nil {
+		return err
+	}
+	return rejectEarlySuccessfulExit(files.staticChecks, staticContents, staticContract[1].pattern)
+}
+
+func normalizedNonemptyLines(source string) []string {
+	source = strings.ReplaceAll(source, "\r\n", "\n")
+	lines := strings.Split(source, "\n")
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			result = append(result, line)
+		}
+	}
+	return result
+}
+
+func equalStrings(actual, expected []string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	for index := range expected {
+		if actual[index] != expected[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func verifyMakeE2ETarget(path string) error {
@@ -1644,11 +2387,12 @@ func verifyOrderedSourceContract(path string, contents []byte, steps []sourceCon
 }
 
 func rejectStaticControlFlowBypass(path string, contents []byte, completion *regexp.Regexp) error {
-	completionMatch := completion.FindIndex(contents)
+	shellCode := maskShellHeredocBodies(contents)
+	completionMatch := firstUnquotedShellMatch(shellCode, completion)
 	if completionMatch == nil {
 		return fmt.Errorf("%s: terminal lifecycle evidence is missing", path)
 	}
-	prefix := contents[:completionMatch[1]]
+	prefix := shellCode[:completionMatch[1]]
 	checks := []struct {
 		name    string
 		pattern *regexp.Regexp
@@ -1667,7 +2411,7 @@ func rejectStaticControlFlowBypass(path string, contents []byte, completion *reg
 		},
 	}
 	for _, check := range checks {
-		if match := check.pattern.FindIndex(prefix); match != nil {
+		if match := firstUnquotedShellMatch(prefix, check.pattern); match != nil {
 			line := 1 + bytes.Count(contents[:match[0]], []byte{'\n'})
 			return fmt.Errorf("%s:%d: %s can bypass audited lifecycle work", path, line, check.name)
 		}
@@ -1676,35 +2420,266 @@ func rejectStaticControlFlowBypass(path string, contents []byte, completion *reg
 }
 
 func rejectEarlySuccessfulExit(path string, contents []byte, completion *regexp.Regexp) error {
-	completionMatch := completion.FindIndex(contents)
+	shellCode := maskShellHeredocBodies(contents)
+	completionMatch := firstUnquotedShellMatch(shellCode, completion)
 	if completionMatch == nil {
 		return fmt.Errorf("%s: terminal lifecycle evidence is missing", path)
 	}
-	earlySuccess := regexp.MustCompile(`(?m)^[ \t]*(?:exit(?:[ \t]+0)?|exec[ \t]+(?:(?:/usr)?/bin/)?true)[ \t]*(?:;[ \t]*)?(?:#[^\r\n]*)?\r?$`)
-	if match := earlySuccess.FindIndex(contents[:completionMatch[0]]); match != nil {
+	earlySuccess := regexp.MustCompile(`(?m)^[ \t]*(?:(?:(?:builtin|command)[ \t]+)?exit(?:[ \t]+0+)?|exec[ \t]+(?:(?:/usr)?/bin/)?true)[ \t]*(?:;[ \t]*)?(?:#[^\r\n]*)?\r?$`)
+	if match := firstUnquotedShellMatch(shellCode[:completionMatch[0]], earlySuccess); match != nil {
 		line := 1 + bytes.Count(contents[:match[0]], []byte{'\n'})
 		return fmt.Errorf("%s:%d: unconditional successful exit precedes terminal lifecycle evidence", path, line)
 	}
 	topLevelFailFastDisable := regexp.MustCompile(`(?m)^set[ \t]+(?:\+[^ \t;#\r\n]*[eu][^ \t;#\r\n]*|\+o[ \t]+(?:errexit|nounset))[ \t]*(?:;[^\r\n]*)?(?:#[^\r\n]*)?\r?$`)
-	if match := topLevelFailFastDisable.FindIndex(contents[:completionMatch[0]]); match != nil {
+	if match := firstUnquotedShellMatch(shellCode[:completionMatch[0]], topLevelFailFastDisable); match != nil {
 		line := 1 + bytes.Count(contents[:match[0]], []byte{'\n'})
 		return fmt.Errorf("%s:%d: top-level fail-fast mode is disabled before terminal lifecycle evidence", path, line)
 	}
 	return nil
 }
 
+type shellHeredoc struct {
+	delimiter        []byte
+	stripLeadingTabs bool
+}
+
+// maskShellHeredocBodies replaces here-document payloads and terminators with
+// spaces while preserving byte offsets and line breaks. Shell payload text is
+// data, so quotes or apparent commands in it must not affect control-flow
+// checks on the surrounding script.
+func maskShellHeredocBodies(contents []byte) []byte {
+	masked := bytes.Clone(contents)
+	pending := make([]shellHeredoc, 0, 1)
+	readingHeredocs := false
+
+	const (
+		unquoted = iota
+		singleQuoted
+		doubleQuoted
+		comment
+	)
+	state := unquoted
+
+	for index := 0; index < len(contents); {
+		if readingHeredocs {
+			lineEnd := bytes.IndexByte(contents[index:], '\n')
+			if lineEnd < 0 {
+				lineEnd = len(contents)
+			} else {
+				lineEnd += index
+			}
+			line := contents[index:lineEnd]
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
+			candidate := line
+			if pending[0].stripLeadingTabs {
+				candidate = bytes.TrimLeft(candidate, "\t")
+			}
+			for bodyIndex := index; bodyIndex < lineEnd; bodyIndex++ {
+				masked[bodyIndex] = ' '
+			}
+			if bytes.Equal(candidate, pending[0].delimiter) {
+				pending = pending[1:]
+				readingHeredocs = len(pending) > 0
+			}
+			if lineEnd == len(contents) {
+				break
+			}
+			index = lineEnd + 1
+			continue
+		}
+
+		current := contents[index]
+		switch state {
+		case comment:
+			if current == '\n' {
+				state = unquoted
+				readingHeredocs = len(pending) > 0
+			}
+			index++
+		case singleQuoted:
+			if current == '\'' {
+				state = unquoted
+			}
+			index++
+		case doubleQuoted:
+			switch current {
+			case '\\':
+				if index+1 < len(contents) {
+					index += 2
+					continue
+				}
+			case '"':
+				state = unquoted
+			}
+			index++
+		default:
+			switch current {
+			case '\\':
+				if index+1 < len(contents) {
+					index += 2
+					continue
+				}
+			case '\'':
+				state = singleQuoted
+			case '"':
+				state = doubleQuoted
+			case '#':
+				if index == 0 || contents[index-1] == '\n' || contents[index-1] == ' ' || contents[index-1] == '\t' {
+					state = comment
+				}
+			case '<':
+				if heredoc, end, ok := parseShellHeredoc(contents, index); ok {
+					pending = append(pending, heredoc)
+					index = end
+					continue
+				}
+			case '\n':
+				readingHeredocs = len(pending) > 0
+			}
+			index++
+		}
+	}
+	return masked
+}
+
+func parseShellHeredoc(contents []byte, offset int) (shellHeredoc, int, bool) {
+	if offset+1 >= len(contents) || contents[offset+1] != '<' ||
+		(offset > 0 && contents[offset-1] == '<') ||
+		(offset+2 < len(contents) && contents[offset+2] == '<') {
+		return shellHeredoc{}, offset, false
+	}
+
+	index := offset + 2
+	stripLeadingTabs := false
+	if index < len(contents) && contents[index] == '-' {
+		stripLeadingTabs = true
+		index++
+	}
+	for index < len(contents) && (contents[index] == ' ' || contents[index] == '\t') {
+		index++
+	}
+
+	delimiter := make([]byte, 0, 16)
+	started := false
+	quote := byte(0)
+	for index < len(contents) {
+		current := contents[index]
+		if quote == 0 {
+			switch current {
+			case ' ', '\t', '\r', '\n', ';', '|', '&', '(', ')', '<', '>':
+				if !started {
+					return shellHeredoc{}, offset, false
+				}
+				return shellHeredoc{delimiter: delimiter, stripLeadingTabs: stripLeadingTabs}, index, true
+			case '\'', '"':
+				started = true
+				quote = current
+				index++
+				continue
+			case '\\':
+				started = true
+				if index+1 >= len(contents) || contents[index+1] == '\n' {
+					return shellHeredoc{}, offset, false
+				}
+				delimiter = append(delimiter, contents[index+1])
+				index += 2
+				continue
+			}
+		} else if current == quote {
+			quote = 0
+			index++
+			continue
+		} else if quote == '"' && current == '\\' {
+			if index+1 >= len(contents) || contents[index+1] == '\n' {
+				return shellHeredoc{}, offset, false
+			}
+			delimiter = append(delimiter, contents[index+1])
+			index += 2
+			continue
+		}
+		started = true
+		delimiter = append(delimiter, current)
+		index++
+	}
+	if !started || quote != 0 {
+		return shellHeredoc{}, offset, false
+	}
+	return shellHeredoc{delimiter: delimiter, stripLeadingTabs: stripLeadingTabs}, index, true
+}
+
+func firstUnquotedShellMatch(contents []byte, pattern *regexp.Regexp) []int {
+	for _, match := range pattern.FindAllIndex(contents, -1) {
+		if !insideShellQuote(contents, match[0]) {
+			return match
+		}
+	}
+	return nil
+}
+
+func insideShellQuote(contents []byte, offset int) bool {
+	const (
+		unquoted = iota
+		singleQuoted
+		doubleQuoted
+		comment
+	)
+	state := unquoted
+	for index := 0; index < offset; index++ {
+		current := contents[index]
+		switch state {
+		case comment:
+			if current == '\n' {
+				state = unquoted
+			}
+		case singleQuoted:
+			if current == '\'' {
+				state = unquoted
+			}
+		case doubleQuoted:
+			switch current {
+			case '\\':
+				if index+1 < offset {
+					index++
+				}
+			case '"':
+				state = unquoted
+			}
+		default:
+			switch current {
+			case '\\':
+				if index+1 < offset {
+					index++
+				}
+			case '\'':
+				state = singleQuoted
+			case '"':
+				state = doubleQuoted
+			case '#':
+				if index == 0 || contents[index-1] == '\n' || contents[index-1] == ' ' || contents[index-1] == '\t' {
+					state = comment
+				}
+			}
+		}
+	}
+	return state == singleQuoted || state == doubleQuoted
+}
+
 func rejectEarlySuccessfulReturn(path string, contents []byte, start, completion *regexp.Regexp) error {
-	startMatch := start.FindIndex(contents)
+	shellCode := maskShellHeredocBodies(contents)
+	startMatch := firstUnquotedShellMatch(shellCode, start)
 	if startMatch == nil {
 		return fmt.Errorf("%s: lifecycle function boundaries are invalid", path)
 	}
-	completionMatch := completion.FindIndex(contents[startMatch[1]:])
+	functionBody := shellCode[startMatch[1]:]
+	completionMatch := firstUnquotedShellMatch(functionBody, completion)
 	if completionMatch == nil {
 		return fmt.Errorf("%s: lifecycle function boundaries are invalid", path)
 	}
 	completionStart := startMatch[1] + completionMatch[0]
-	earlyReturn := regexp.MustCompile(`(?m)^[ \t]*return(?:[ \t]+0)?[ \t]*(?:;[ \t]*)?(?:#[^\r\n]*)?\r?$`)
-	if match := earlyReturn.FindIndex(contents[startMatch[1]:completionStart]); match != nil {
+	earlyReturn := regexp.MustCompile(`(?m)^[ \t]*(?:(?:builtin|command)[ \t]+)?return(?:[ \t]+0+)?[ \t]*(?:;[ \t]*)?(?:#[^\r\n]*)?\r?$`)
+	if match := firstUnquotedShellMatch(shellCode[startMatch[1]:completionStart], earlyReturn); match != nil {
 		absoluteOffset := startMatch[1] + match[0]
 		line := 1 + bytes.Count(contents[:absoluteOffset], []byte{'\n'})
 		return fmt.Errorf("%s:%d: unconditional successful return precedes per-engine lifecycle evidence", path, line)

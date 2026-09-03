@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
 )
@@ -19,7 +20,9 @@ import (
 const (
 	// ProtocolVersion is part of the controller-to-Job approval binding. Any
 	// incompatible result format must use a new version.
-	ProtocolVersion = 4
+	ProtocolVersion = 5
+
+	legacyProtocolVersion = 4
 
 	// JSON escaping can expand a bounded plan payload. This shared cap includes
 	// the worst-case expansion plus fixed result-envelope headroom.
@@ -85,42 +88,55 @@ type TruncationMetadata struct {
 	StderrBytesDropped int64 `json:"stderrBytesDropped,omitempty"`
 }
 
+// DriftFindingSummary is the only per-category drift detail permitted across
+// the runner boundary. Category names are a fixed machine vocabulary; raw
+// object names, SQL, schema literals, and diff payloads are never included.
+type DriftFindingSummary struct {
+	Category string `json:"category"`
+	Count    int32  `json:"count"`
+	Severity string `json:"severity"`
+}
+
 // Result is the complete credential-free result emitted by ptah-runner.
 type Result struct {
 	ProtocolVersion int       `json:"protocolVersion"`
 	Operation       Operation `json:"operation"`
 	OperationID     string    `json:"operationId"`
 	// ChildExitCode is -1 when the runner refused the operation before child dispatch.
-	ChildExitCode            int                 `json:"childExitCode"`
-	Stdout                   string              `json:"stdout"`
-	CoordinationDigest       string              `json:"coordinationDigest,omitempty"`
-	TargetIdentityDigest     string              `json:"targetIdentityDigest,omitempty"`
-	VerificationPolicyDigest string              `json:"verificationPolicyDigest,omitempty"`
-	DriftReportDigest        string              `json:"driftReportDigest,omitempty"`
-	ObservedDialect          string              `json:"observedDialect,omitempty"`
-	ObservedDrift            bool                `json:"observedDrift,omitempty"`
-	HighestDriftSeverity     string              `json:"highestDriftSeverity,omitempty"`
-	DriftFindingCount        int32               `json:"driftFindingCount,omitempty"`
-	ObservedArtifactType     string              `json:"observedArtifactType,omitempty"`
-	ResolvedDigest           string              `json:"resolvedDigest,omitempty"`
-	ResolvedReference        string              `json:"resolvedReference,omitempty"`
-	ResolvedMediaType        string              `json:"resolvedMediaType,omitempty"`
-	ResolvedSize             int64               `json:"resolvedSize,omitempty"`
-	VerificationRequirements []string            `json:"verificationRequirements,omitempty"`
-	PlanContentDigest        string              `json:"planContentDigest,omitempty"`
-	PlanOutcome              PlanOutcome         `json:"planOutcome,omitempty"`
-	MutationStarted          bool                `json:"mutationStarted,omitempty"`
-	Uncertain                bool                `json:"uncertain,omitempty"`
-	Error                    *ResultError        `json:"error,omitempty"`
-	Truncation               *TruncationMetadata `json:"truncation,omitempty"`
+	ChildExitCode            int                   `json:"childExitCode"`
+	Stdout                   string                `json:"stdout"`
+	CoordinationDigest       string                `json:"coordinationDigest,omitempty"`
+	TargetIdentityDigest     string                `json:"targetIdentityDigest,omitempty"`
+	VerificationPolicyDigest string                `json:"verificationPolicyDigest,omitempty"`
+	DriftReportDigest        string                `json:"driftReportDigest,omitempty"`
+	ObservedDialect          string                `json:"observedDialect,omitempty"`
+	ObservedDrift            bool                  `json:"observedDrift,omitempty"`
+	HighestDriftSeverity     string                `json:"highestDriftSeverity,omitempty"`
+	DriftFindingCount        int32                 `json:"driftFindingCount,omitempty"`
+	DriftFindings            []DriftFindingSummary `json:"driftFindings,omitempty"`
+	DriftFindingsTruncated   bool                  `json:"driftFindingsTruncated,omitempty"`
+	ObservedArtifactType     string                `json:"observedArtifactType,omitempty"`
+	ResolvedDigest           string                `json:"resolvedDigest,omitempty"`
+	ResolvedReference        string                `json:"resolvedReference,omitempty"`
+	ResolvedMediaType        string                `json:"resolvedMediaType,omitempty"`
+	ResolvedSize             int64                 `json:"resolvedSize,omitempty"`
+	VerificationRequirements []string              `json:"verificationRequirements,omitempty"`
+	PlanContentDigest        string                `json:"planContentDigest,omitempty"`
+	PlanOutcome              PlanOutcome           `json:"planOutcome,omitempty"`
+	MutationStarted          bool                  `json:"mutationStarted,omitempty"`
+	Uncertain                bool                  `json:"uncertain,omitempty"`
+	Error                    *ResultError          `json:"error,omitempty"`
+	Truncation               *TruncationMetadata   `json:"truncation,omitempty"`
 }
 
-// ParseOptions optionally binds a parsed frame to the operation that created
-// the Job. Empty expected values disable the corresponding check.
+// ParseOptions optionally binds a parsed frame to the Job contract that
+// created it. A zero ExpectedProtocolVersion selects ProtocolVersion; legacy
+// protocol frames are accepted only when their version is explicitly set.
 type ParseOptions struct {
-	MaxFrameBytes       int64
-	ExpectedOperation   Operation
-	ExpectedOperationID string
+	MaxFrameBytes           int64
+	ExpectedProtocolVersion int
+	ExpectedOperation       Operation
+	ExpectedOperationID     string
 }
 
 // MarshalFrame encodes a length- and digest-bound frame. The byte length and
@@ -277,8 +293,20 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 }
 
 func validateResult(result Result, options ParseOptions) error {
-	if result.ProtocolVersion != ProtocolVersion {
-		return fmt.Errorf("%w: unsupported protocol version %d", ErrMalformedFrame, result.ProtocolVersion)
+	expectedProtocolVersion := options.ExpectedProtocolVersion
+	if expectedProtocolVersion == 0 {
+		expectedProtocolVersion = ProtocolVersion
+	}
+	if expectedProtocolVersion != legacyProtocolVersion && expectedProtocolVersion != ProtocolVersion {
+		return fmt.Errorf("%w: unsupported expected protocol version %d", ErrMalformedFrame, expectedProtocolVersion)
+	}
+	if result.ProtocolVersion != expectedProtocolVersion {
+		return fmt.Errorf(
+			"%w: protocol version binding mismatch: got %d, expected %d",
+			ErrMalformedFrame,
+			result.ProtocolVersion,
+			expectedProtocolVersion,
+		)
 	}
 	if !result.Operation.Valid() {
 		return fmt.Errorf("%w: unsupported operation %q", ErrMalformedFrame, result.Operation)
@@ -422,10 +450,15 @@ func validateResult(result Result, options ParseOptions) error {
 			if !validDriftSeverity(result.HighestDriftSeverity) {
 				return fmt.Errorf("%w: drift observation has invalid severity", ErrMalformedFrame)
 			}
-		} else if result.HighestDriftSeverity != "" || result.DriftFindingCount != 0 {
+			if err := validateDriftFindingSummaries(result); err != nil {
+				return err
+			}
+		} else if result.HighestDriftSeverity != "" || result.DriftFindingCount != 0 ||
+			len(result.DriftFindings) != 0 || result.DriftFindingsTruncated {
 			return fmt.Errorf("%w: converged observation carries drift findings", ErrMalformedFrame)
 		}
-	} else if result.ObservedDialect != "" || result.ObservedDrift || result.HighestDriftSeverity != "" || result.DriftFindingCount != 0 {
+	} else if result.ObservedDialect != "" || result.ObservedDrift || result.HighestDriftSeverity != "" ||
+		result.DriftFindingCount != 0 || len(result.DriftFindings) != 0 || result.DriftFindingsTruncated {
 		return fmt.Errorf("%w: observation summary is set on a non-successful observation", ErrMalformedFrame)
 	}
 	if options.ExpectedOperation != "" && result.Operation != options.ExpectedOperation {
@@ -433,6 +466,60 @@ func validateResult(result Result, options ParseOptions) error {
 	}
 	if options.ExpectedOperationID != "" && result.OperationID != options.ExpectedOperationID {
 		return fmt.Errorf("%w: operation ID binding mismatch", ErrMalformedFrame)
+	}
+	return nil
+}
+
+func validateDriftFindingSummaries(result Result) error {
+	const maxFindings = 64
+	if result.ProtocolVersion == legacyProtocolVersion {
+		if len(result.DriftFindings) != 0 || result.DriftFindingsTruncated {
+			return fmt.Errorf("%w: legacy drift observation carries structured findings", ErrMalformedFrame)
+		}
+		return nil
+	}
+	if len(result.DriftFindings) == 0 {
+		if result.DriftFindingsTruncated {
+			return fmt.Errorf("%w: truncated drift observation has no finding summaries", ErrMalformedFrame)
+		}
+		return fmt.Errorf("%w: drift observation has no finding summaries", ErrMalformedFrame)
+	}
+	if len(result.DriftFindings) > maxFindings {
+		return fmt.Errorf("%w: drift observation has an invalid finding summary count", ErrMalformedFrame)
+	}
+	var carried int64
+	previousRank := int(^uint(0) >> 1)
+	previousCategory := ""
+	seen := make(map[string]struct{}, len(result.DriftFindings))
+	for index, finding := range result.DriftFindings {
+		if !dataplane.IsKnownDriftFindingCategory(finding.Category) || finding.Count <= 0 ||
+			!validDriftSeverity(finding.Severity) {
+			return fmt.Errorf("%w: drift observation has an invalid finding summary", ErrMalformedFrame)
+		}
+		if _, duplicate := seen[finding.Category]; duplicate {
+			return fmt.Errorf("%w: drift observation has duplicate finding summaries", ErrMalformedFrame)
+		}
+		seen[finding.Category] = struct{}{}
+		rank := driftSeverityRank(finding.Severity)
+		if index > 0 && (rank > previousRank || rank == previousRank && strings.Compare(previousCategory, finding.Category) >= 0) {
+			return fmt.Errorf("%w: drift finding summaries are not in canonical order", ErrMalformedFrame)
+		}
+		if index == 0 && finding.Severity != result.HighestDriftSeverity {
+			return fmt.Errorf("%w: drift finding summaries do not match the highest severity", ErrMalformedFrame)
+		}
+		carried += int64(finding.Count)
+		if carried > int64(^uint32(0)>>1) {
+			return fmt.Errorf("%w: drift finding summary count exceeds the supported range", ErrMalformedFrame)
+		}
+		previousRank = rank
+		previousCategory = finding.Category
+	}
+	if result.DriftFindingsTruncated {
+		if len(result.DriftFindings) != maxFindings || carried >= int64(result.DriftFindingCount) {
+			return fmt.Errorf("%w: truncated drift finding summaries lack omitted findings", ErrMalformedFrame)
+		}
+	} else if carried != int64(result.DriftFindingCount) {
+		return fmt.Errorf("%w: drift finding summaries do not match the total count", ErrMalformedFrame)
 	}
 	return nil
 }
@@ -452,6 +539,23 @@ func validDriftSeverity(value string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func driftSeverityRank(value string) int {
+	switch value {
+	case "safe":
+		return 1
+	case "info":
+		return 2
+	case "warning":
+		return 3
+	case "error":
+		return 4
+	case "destructive":
+		return 5
+	default:
+		return 0
 	}
 }
 

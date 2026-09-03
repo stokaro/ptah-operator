@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/runner"
@@ -20,6 +21,9 @@ func TestParseExactResult(t *testing.T) {
 		ObservedDrift:        true,
 		HighestDriftSeverity: "warning",
 		DriftFindingCount:    1,
+		DriftFindings: []runner.DriftFindingSummary{{
+			Category: "columns_added", Count: 1, Severity: "warning",
+		}},
 	}
 	frame, err := runner.MarshalFrame(result)
 	if err != nil {
@@ -32,7 +36,8 @@ func TestParseExactResult(t *testing.T) {
 	}
 	if parsed.Stdout != "" || parsed.DriftReportDigest != result.DriftReportDigest ||
 		parsed.ObservedDialect != result.ObservedDialect || !parsed.ObservedDrift ||
-		parsed.HighestDriftSeverity != result.HighestDriftSeverity || parsed.DriftFindingCount != 1 {
+		parsed.HighestDriftSeverity != result.HighestDriftSeverity || parsed.DriftFindingCount != 1 ||
+		!reflect.DeepEqual(parsed.DriftFindings, result.DriftFindings) {
 		t.Fatalf("parsed credential-free observation = %#v", parsed)
 	}
 }
@@ -51,6 +56,9 @@ func TestParseExactResultRejectsMultipleFrames(t *testing.T) {
 		ObservedDrift:        true,
 		HighestDriftSeverity: "warning",
 		DriftFindingCount:    1,
+		DriftFindings: []runner.DriftFindingSummary{{
+			Category: "columns_added", Count: 1, Severity: "warning",
+		}},
 	}
 	frame, err := runner.MarshalFrame(result)
 	if err != nil {

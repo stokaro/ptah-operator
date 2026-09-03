@@ -9,7 +9,11 @@ The operator separates four authorities:
 2. An approver may read schemas and plans and create immutable approvals. The
    chart creates an optional ClusterRole but never binds it automatically.
 3. The controller may manage plans, Jobs, ConfigMaps, Leases, status, and
-   Events. Its shipped ClusterRole contains no Secret permission.
+   Events. Its shipped ClusterRole contains no Secret permission. Retained,
+   typed admission policies constrain its main-resource writes to structural
+   Job, immutable plan, and immutable chunk shapes; a fail-closed webhook then
+   reconstructs and compares the complete write intent through direct API
+   reads.
 4. A Job receives only the credentials needed for its fixed operation through
    same-namespace Secret selectors resolved by the kubelet.
 
@@ -20,6 +24,12 @@ chart's optional approver ClusterRole remains unbound, so these three human
 permission sets can be assigned to different identities. Diagnostic access
 deliberately excludes Secrets and plan-chunk ConfigMaps; grant exact plan-chunk
 access separately for an approver reviewing one immutable plan.
+
+These write boundaries reduce the effect of controller bugs and prevent its
+RBAC from becoming arbitrary workload or ConfigMap creation authority. The
+manager binary and its status-write authority remain trusted: the admission
+layers do not claim to contain a malicious replacement image that can forge
+the status records used to reconstruct intent.
 
 Database-operation Pods disable service-account token mounting and service-link
 environment injection. Every container runs as non-root with a read-only root
@@ -147,6 +157,13 @@ change to TLS verification, channel binding, authentication requirements, or
 plaintext fallback invalidates the plan before the mutating child dispatches.
 
 Raw drift details are parsed in memory and excluded from the framed result.
+Observe exposes at most 64 canonical category aggregates, each containing only
+a category from the closed v1 machine vocabulary, a positive count, and a
+severity. A syntactically valid but unknown category fails the operation; adding
+a category requires an explicit runner protocol update. The frame never carries
+object names, SQL, schema literals, or the native diff. `driftFindingCount`
+remains the complete aggregate count; `driftFindingsTruncated=true` explicitly
+reports that additional categories were omitted.
 Resolve and Verify follow the same boundary: native stdout is strictly decoded
 before a small typed descriptor or requirement-name set is emitted, arbitrary
 verification details and inspection metadata are discarded, and native stderr

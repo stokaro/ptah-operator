@@ -543,6 +543,16 @@ func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingCl
 	controllerWriteGuardName := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	policies.objects[controllerWriteGuardName] = readyPolicy(controllerWriteGuard.policy())
 	bindings.objects[controllerWriteGuardName] = controllerWriteGuard.binding()
+	certificateWriteGuard := NewCertificateWriteGuard(guard)
+	for _, entry := range certificateWriteGuard.entries() {
+		policies.objects[entry.name] = readyPolicy(certificateWriteGuard.policy(entry))
+		bindings.objects[entry.name] = certificateWriteGuard.binding(entry)
+	}
+	controllerObjectGuard := NewControllerObjectGuard(guard)
+	for _, entry := range controllerObjectGuard.entries() {
+		policies.objects[entry.name] = readyPolicy(controllerObjectGuard.policy(entry))
+		bindings.objects[entry.name] = controllerObjectGuard.binding(entry)
+	}
 	runtimePodName := RuntimePodGuardPolicyName(guard.ReleaseSequence)
 	runtimePodPolicy, err := guard.runtimePodIdentityPolicy()
 	if err != nil {

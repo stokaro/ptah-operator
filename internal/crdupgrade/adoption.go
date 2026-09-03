@@ -218,7 +218,7 @@ func (a *AdmissionAdopter) validateValidatingForAdoption(
 		return singletonAdoptionState{}, err
 	}
 	if state.legacy {
-		if err := verifyValidatingWebhookContract(configuration, legacyExpected); err != nil {
+		if err := verifyLegacyValidatingWebhookContract(configuration, legacyExpected); err != nil {
 			return singletonAdoptionState{}, err
 		}
 	}

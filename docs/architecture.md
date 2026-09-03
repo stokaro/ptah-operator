@@ -23,7 +23,8 @@ One persisted `status.activeOperation` is the ordinary serialization point:
    digest-pinned artifact type.
 3. **Observe** fetches the verified schema by digest and validates a raw,
    read-only drift report. The report's schema details stay inside the runner;
-   status receives only a digest, dialect, counts, and severity summary.
+   status receives only a digest, dialect, total count, highest severity, and
+   bounded category-level aggregates.
 4. **Plan** performs two independent native scoped plans while holding the
    database-realm Lease. It accepts only byte-identical results, then makes the
    native Apply path parse and dry-run those exact bytes. A no-change result is
@@ -46,6 +47,36 @@ Pod against the persisted snapshot before scheduling, while retaining exact
 matching for executable, environment, volume, and security fields. A changed
 admission resource therefore rejects the Pod instead of reinterpreting an
 already claimed operation.
+
+The manager's own Kubernetes writes pass through two independent admission
+layers. Stable typed policies reject Jobs, plan manifests, and plan chunks that
+fall outside their narrow structural forms, including any Job update beyond
+the exact nil-to-300 cleanup TTL transition. Read-only, predecessor, and
+pending-operation cleanup requires terminal Job evidence. The exact currently
+claimed Apply may record that TTL before it becomes terminal because Kubernetes
+does not start the countdown until the Job finishes. A validating webhook
+performs the stronger semantic check by directly reading the owning schema and
+plan and reconstructing the exact expected object. Keeping one policy per GVK
+avoids cross-type CEL assumptions while preserving a fail-closed boundary
+during rollout.
+
+Upgrade compatibility is deliberately narrower than ordinary reconstruction.
+After an upgrade durably retires an execution epoch, the replacement manager
+may add only the cleanup TTL to an exact terminal Job retained from the
+supported predecessor. A read-only Job must match the operation name, UID,
+owner, five-annotation envelope, admission snapshot, and retirement
+conditions. If its create committed after the predecessor's final status write,
+the replacement first persists the strictly reconstructed UID and requeues;
+cleanup cannot occur in the adoption pass.
+
+A dispatched predecessor Apply is handled only from persisted outcome-unknown
+evidence. The exact name, UID, owner, seven-annotation plan envelope, and
+retired execution epoch must match. A late-committing Apply Job follows the
+same UID-adoption boundary before any Pod discovery. The replacement waits for
+every exact-owner Pod and the Job's terminal condition, then adds only the
+cleanup TTL. It never reads, replays, or certifies the retired Apply result;
+fresh read-only observation remains mandatory. Arbitrary Jobs, field changes,
+and TTL rollback remain denied.
 
 Apply has another persisted dispatch boundary immediately before its only
 permitted Job create attempt. After a restart, a dispatched Apply with a

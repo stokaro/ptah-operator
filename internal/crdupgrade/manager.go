@@ -545,7 +545,7 @@ func recognizedPredecessorTransition(
 		if err != nil {
 			return false, err
 		}
-		if candidateSchemaVersion != 1 || candidateStateVersion != 1 {
+		if candidateSchemaVersion != CurrentCRDSchemaVersion || candidateStateVersion != 1 {
 			return false, nil
 		}
 		existing := existingByName[candidate.Name]

@@ -83,6 +83,10 @@ metrics:
 webhook:
   port: 9443
   timeoutSeconds: 5
+  # The manager-write validator may read one schema, one plan, and up to 16
+  # immutable plan chunks. Kubernetes caps admission timeouts at 30 seconds;
+  # keep this fail-closed path at that bound independently of the fast paths.
+  controllerWriteTimeoutSeconds: 30
   # Name of a pre-provisioned kubernetes.io/tls Secret. The Secret must also
   # contain ca.crt. Set caBundle to render the chart without cluster lookup.
   existingSecret: ""

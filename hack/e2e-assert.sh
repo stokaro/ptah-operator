@@ -681,7 +681,7 @@ if ! execution_binding=$(printf '%s\n' "$schema_object" | jq -ce \
       $binding.ptahVersion == $ptahVersion and
       $binding.executorImage == $executorImage and
       $binding.runnerImage == $runnerImage and
-      ($binding.runnerProtocolVersion | type == "number" and . == 4)
+      ($binding.runnerProtocolVersion | type == "number" and . == 5)
     ) | $binding
   '); then
 	fail "suspended schema lacks the exact seven-field controller/runtime execution binding"
@@ -749,7 +749,7 @@ plan_binding_json=$(jq -cn \
     ptah_version: $ptahVersion,
     executor_image: $executorImage,
     runner_image: $runnerImage,
-    runner_protocol_version: 4
+    runner_protocol_version: 5
   }
 ')
 plan_fingerprint="sha256:$(printf '%s' "$plan_binding_json" | sha256_stdin)"
@@ -814,7 +814,7 @@ jq -n \
       ptahVersion: $ptahVersion,
       executorImage: $executorImage,
       runnerImage: $runnerImage,
-      runnerProtocolVersion: 4,
+      runnerProtocolVersion: 5,
       dialect: "postgres",
       destructive: false,
       statementCount: 0,
@@ -954,7 +954,7 @@ schema_status=$(jq -n \
       ptahVersion: $ptahVersion,
       executorImage: $executorImage,
       runnerImage: $runnerImage,
-      runnerProtocolVersion: 4,
+      runnerProtocolVersion: 5,
       destructive: false,
       statementCount: 0,
       createdAt: $now
@@ -1024,7 +1024,7 @@ k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
       .spec.ptahVersion == $ptahVersion and
       .spec.executorImage == $executorImage and
       .spec.runnerImage == $runnerImage and
-      .spec.runnerProtocolVersion == 4
+      .spec.runnerProtocolVersion == 5
     ' >/dev/null || fail "mutating webhook did not stamp identity and hydrate the plan binding"
 
 for missing_binding in schema-name schema-uid plan-name plan-uid plan-fingerprint; do
@@ -1071,10 +1071,10 @@ jq --arg name e2e-conflicting-controller-image \
 expect_denied "approval with a conflicting controller image binding" \
 	'controller image conflicts with the immutable plan' \
 	"$invalid_approval_file" "$error_file"
-# Version 3 is the immediately previous runner contract and must not be
-# accepted against a version-4 immutable plan.
+# Version 4 is the immediately previous runner contract and must not be
+# accepted against a version-5 immutable plan.
 jq --arg name e2e-conflicting-protocol '
-    .metadata.name = $name | .spec.runnerProtocolVersion = 3
+    .metadata.name = $name | .spec.runnerProtocolVersion = 4
   ' "$approval_file" >"$invalid_approval_file"
 expect_denied "approval with a conflicting derived protocol binding" \
 	'runner protocol version conflicts with the immutable plan' \

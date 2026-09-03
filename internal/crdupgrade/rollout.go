@@ -197,6 +197,12 @@ func (g *RolloutGuard) Prepare(ctx context.Context) error {
 	if err := NewControllerWriteGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for controller write guard: %w", err)
 	}
+	if err := NewCertificateWriteGuard(g).WaitReady(ctx); err != nil {
+		return fmt.Errorf("wait for certificate write guards: %w", err)
+	}
+	if err := NewControllerObjectGuard(g).WaitReady(ctx); err != nil {
+		return fmt.Errorf("wait for controller object guards: %w", err)
+	}
 	if err := NewParentWorkloadGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for parent workload guards: %w", err)
 	}
@@ -227,6 +233,12 @@ func (g *RolloutGuard) Verify(ctx context.Context) error {
 	}
 	if err := NewControllerWriteGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify controller write guard: %w", err)
+	}
+	if err := NewCertificateWriteGuard(g).Verify(ctx); err != nil {
+		return fmt.Errorf("verify certificate write guards: %w", err)
+	}
+	if err := NewControllerObjectGuard(g).Verify(ctx); err != nil {
+		return fmt.Errorf("verify controller object guards: %w", err)
 	}
 	if err := NewParentWorkloadGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify parent workload guards: %w", err)
@@ -316,6 +328,12 @@ func (g *RolloutGuard) VerifyHookIdentity(ctx context.Context) error {
 	if err := NewControllerWriteGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify controller write guard: %w", err)
 	}
+	if err := NewCertificateWriteGuard(g).Verify(ctx); err != nil {
+		return fmt.Errorf("verify certificate write guards: %w", err)
+	}
+	if err := NewControllerObjectGuard(g).Verify(ctx); err != nil {
+		return fmt.Errorf("verify controller object guards: %w", err)
+	}
 	if err := NewParentWorkloadGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify parent workload guards: %w", err)
 	}
@@ -364,6 +382,12 @@ func (g *RolloutGuard) PrepareHookIdentity(ctx context.Context) error {
 	}
 	if err := NewControllerWriteGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for controller write guard: %w", err)
+	}
+	if err := NewCertificateWriteGuard(g).WaitReady(ctx); err != nil {
+		return fmt.Errorf("wait for certificate write guards: %w", err)
+	}
+	if err := NewControllerObjectGuard(g).WaitReady(ctx); err != nil {
+		return fmt.Errorf("wait for controller object guards: %w", err)
 	}
 	if err := NewParentWorkloadGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for parent workload guards: %w", err)

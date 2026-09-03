@@ -40,7 +40,7 @@ var (
 	releaseRunSHA256       = map[string]string{
 		"smoke/verify-release":               "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
 		"smoke/chart-reproducibility":        "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
-		"support-preflight/support-evidence": "0bc791ffd82cbdb79cc5fb2d0025a8a62478f86381bc38daa8d04231b049d566",
+		"support-preflight/support-evidence": "bf181ba760698cf2b0f89514d3f38c80b96cb3d930dcf573d1d6c864f26c74dd",
 		"publish/release":                    "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
 		"publish/transaction":                "72cce0372380ba97e39ae01a383402b50b33122d24854487835b37572fc3c5e7",
 		"publish/immutability-preflight":     "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
@@ -71,7 +71,7 @@ const (
 	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "ec2d45cbb2173f7dd00fe7c50b7b06e025b37e79f6878b770a2c952636a7a955"
+	releaseWorkflowSHA256 = "9a5321e3808e0b10c477ad9adc1ba6daf15701082f469b901bf8c2cf422e7149"
 )
 
 func main() {

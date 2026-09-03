@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,12 +17,15 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsvalidation "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/validation"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
+	structuralcel "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	structuraldefaulting "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/defaulting"
 	structurallisttype "k8s.io/apiextensions-apiserver/pkg/apiserver/schema/listtype"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	celconfig "k8s.io/apiserver/pkg/apis/cel"
 
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
 )
 
@@ -126,6 +131,106 @@ func TestGeneratedCRDsPassAPIServerValidation(t *testing.T) {
 				t.Fatalf("API server rejected generated CRD %s: %v", name, errs.ToAggregate())
 			}
 		})
+	}
+}
+
+func TestGeneratedPtahSchemaCRDAcceptsUntruncatedTargetStatus(t *testing.T) {
+	t.Parallel()
+
+	crd := loadGeneratedCRD(t, filepath.Join(
+		repositoryRoot(t),
+		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+	))
+	structural, err := structuralschema.NewStructural(storageVersionSchema(t, crd))
+	if err != nil {
+		t.Fatalf("build structural PtahSchema schema: %v", err)
+	}
+	validator := structuralcel.NewValidator(structural, true, celconfig.PerCallLimit)
+	if validator == nil {
+		t.Fatal("generated PtahSchema schema did not compile a CEL validator")
+	}
+
+	for _, test := range []struct {
+		name   string
+		target map[string]interface{}
+	}{
+		{name: "omitted false fields", target: map[string]interface{}{"engine": "PostgreSQL"}},
+		{name: "explicit false truncation", target: map[string]interface{}{
+			"engine": "PostgreSQL", "driftFindingsTruncated": false,
+		}},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			object := map[string]interface{}{
+				"apiVersion": "operator.ptah.dev/v1alpha1",
+				"kind":       "PtahSchema",
+				"metadata":   map[string]interface{}{"name": "orders", "namespace": "tenant-a"},
+				"spec": map[string]interface{}{
+					"target": map[string]interface{}{
+						"engine": "PostgreSQL", "coordinationKey": "tenant-a/orders",
+						"urlFrom": map[string]interface{}{"name": "database", "key": "url"},
+					},
+					"desired": map[string]interface{}{
+						"ociRef":                 "oci://registry.example/schema:current",
+						"verificationPolicyFrom": map[string]interface{}{"name": "verification", "key": "policy.yaml"},
+					},
+				},
+				"status": map[string]interface{}{"target": test.target},
+			}
+			structuraldefaulting.Default(object, structural)
+			errs, _ := validator.Validate(
+				context.Background(),
+				field.NewPath("ptahschema"),
+				structural,
+				object,
+				nil,
+				celconfig.RuntimeCELCostBudget,
+			)
+			if len(errs) != 0 {
+				t.Fatalf("API server CEL rejected untruncated target status: %v", errs.ToAggregate())
+			}
+		})
+	}
+}
+
+func TestGeneratedPtahSchemaCRDUsesTheClosedDriftCategoryVocabulary(t *testing.T) {
+	t.Parallel()
+
+	crd := loadGeneratedCRD(t, filepath.Join(
+		repositoryRoot(t),
+		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+	))
+	status := storageVersionSchema(t, crd).Properties["status"]
+	target := status.Properties["target"]
+	findings := target.Properties["driftFindings"]
+	if findings.Items == nil || findings.Items.Schema == nil {
+		t.Fatal("status.target.driftFindings has no item schema")
+	}
+	categories := findings.Items.Schema.Properties["category"].Enum
+	seen := make(map[string]struct{}, len(categories))
+	got := make([]string, 0, len(categories))
+	for _, raw := range categories {
+		category, ok := raw.(string)
+		if !ok {
+			t.Fatalf("generated drift category enum contains non-string value %#v", raw)
+		}
+		if !dataplane.IsKnownDriftFindingCategory(category) {
+			t.Errorf("generated drift category enum contains runtime-unknown value %q", category)
+			continue
+		}
+		if _, duplicate := seen[category]; duplicate {
+			t.Errorf("generated drift category enum repeats %q", category)
+		}
+		seen[category] = struct{}{}
+		got = append(got, category)
+	}
+	want := dataplane.DriftFindingCategories()
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("generated drift category enum = %q, runtime vocabulary = %q", got, want)
 	}
 }
 
@@ -329,6 +434,14 @@ func TestGeneratedPtahSchemaAdmissionSnapshotBounds(t *testing.T) {
 	snapshot := activeOperation.Properties["admissionSnapshot"]
 	if snapshot.Type != "object" {
 		t.Fatalf("status.activeOperation.admissionSnapshot type = %q", snapshot.Type)
+	}
+	pendingObservation := status.Properties["pendingObservation"]
+	pendingSnapshot := pendingObservation.Properties["admissionSnapshot"]
+	if !reflect.DeepEqual(pendingSnapshot, snapshot) {
+		t.Fatal("status.pendingObservation.admissionSnapshot does not preserve the bounded active-operation snapshot schema")
+	}
+	if slices.Contains(pendingObservation.Required, "admissionSnapshot") {
+		t.Fatal("status.pendingObservation.admissionSnapshot must remain optional for backward decoding")
 	}
 
 	limitRanges := snapshot.Properties["limitRanges"]

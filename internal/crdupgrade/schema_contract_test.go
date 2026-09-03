@@ -46,8 +46,8 @@ func TestGeneratedCRDsCarrySchemaIdentityFence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("candidate %s: %v", candidate.Name, err)
 		}
-		if version != 1 {
-			t.Fatalf("candidate %s schema version = %d, want 1", candidate.Name, version)
+		if version != CurrentCRDSchemaVersion {
+			t.Fatalf("candidate %s schema version = %d, want %d", candidate.Name, version, CurrentCRDSchemaVersion)
 		}
 		digest, err := schemaDigest(candidate, false)
 		if err != nil {

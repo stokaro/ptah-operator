@@ -53,7 +53,9 @@ jobs:
           set -euo pipefail
           today="$(date -u +%Y-%m-%d)"
           go test ./hack ./hack/updatekubernetessupport
-          go run ./hack/verify-kubernetes-support.go -now "$today"
+          # Proposal validation admits only the immediate next minor so the
+          # automation can open a reviewable PR. Ordinary CI remains frozen.
+          go run ./hack/verify-kubernetes-support.go -output=proposal -now "$today"
           git diff --check
       - name: Export a strictly bounded deterministic patch
         id: bundle
@@ -64,7 +66,9 @@ jobs:
           [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
           git diff --cached --quiet --exit-code
 
-          mapfile -t status_lines < <(git status --porcelain=v1 --untracked-files=all)
+          status_file="$RUNNER_TEMP/kubernetes-support-status"
+          git status --porcelain=v1 --untracked-files=all > "$status_file"
+          mapfile -t status_lines < "$status_file"
           for status_line in "${status_lines[@]}"; do
             case "$status_line" in
               ' M charts/ptah-operator/Chart.yaml' | \
@@ -151,7 +155,9 @@ jobs:
           git diff --cached --check
           [[ -z "$(git diff --cached --summary)" ]]
 
-          mapfile -t status_lines < <(git status --porcelain=v1 --untracked-files=all)
+          status_file="$RUNNER_TEMP/kubernetes-support-status"
+          git status --porcelain=v1 --untracked-files=all > "$status_file"
+          mapfile -t status_lines < "$status_file"
           (( ${#status_lines[@]} > 0 ))
           for status_line in "${status_lines[@]}"; do
             case "$status_line" in
@@ -198,6 +204,44 @@ jobs:
           git commit --message "$title"
 
           remote_oid="$(git ls-remote --heads origin "refs/heads/$support_branch" | awk '{print $1}')"
+          if [[ -n "$remote_oid" ]]; then
+            [[ "$remote_oid" =~ ^[0-9a-f]{40}$ ]]
+            git fetch --no-tags origin "refs/heads/$support_branch"
+            [[ "$(git rev-parse FETCH_HEAD)" == "$remote_oid" ]]
+            if ! git merge-base --is-ancestor "$remote_oid" "$BASE_SHA"; then
+              parent_line="$(git rev-list --parents --max-count=1 "$remote_oid")"
+              [[ "$(wc -w <<<"$parent_line")" -eq 2 ]]
+              remote_parent="$(git rev-parse "${remote_oid}^")"
+              git merge-base --is-ancestor "$remote_parent" "$BASE_SHA"
+              commits_ahead="$(git rev-list --count "$BASE_SHA..$remote_oid")"
+              if [[ "$commits_ahead" -ne 1 ]]; then
+                echo "support branch contains review commits; refusing to overwrite $remote_oid" >&2
+                exit 1
+              fi
+              [[ "$(git show -s --format=%ae "$remote_oid")" == '41898282+github-actions[bot]@users.noreply.github.com' ]]
+              [[ "$(git show -s --format=%ce "$remote_oid")" == '41898282+github-actions[bot]@users.noreply.github.com' ]]
+              [[ "$(git show -s --format=%s "$remote_oid")" == "$title" ]]
+
+              prior_summary_file="$RUNNER_TEMP/prior-support-branch-summary"
+              git diff-tree --no-commit-id --summary -r "$remote_oid" > "$prior_summary_file"
+              [[ ! -s "$prior_summary_file" ]]
+              prior_status_file="$RUNNER_TEMP/prior-support-branch-status"
+              git diff-tree --no-commit-id --name-status -r "$remote_oid" > "$prior_status_file"
+              mapfile -t prior_status_lines < "$prior_status_file"
+              (( ${#prior_status_lines[@]} > 0 && ${#prior_status_lines[@]} <= 3 ))
+              for prior_status_line in "${prior_status_lines[@]}"; do
+                case "$prior_status_line" in
+                  $'M\tcharts/ptah-operator/Chart.yaml' | \
+                  $'M\tdocs/kubernetes-support.md' | \
+                  $'M\tsupport/kubernetes.json') ;;
+                  *)
+                    echo "existing support branch is not an untouched automation commit: $prior_status_line" >&2
+                    exit 1
+                    ;;
+                esac
+              done
+            fi
+          fi
           git push \
             "--force-with-lease=refs/heads/$support_branch:$remote_oid" \
             origin \

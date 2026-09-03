@@ -167,7 +167,10 @@ unbound credentials or grants from an external authorizer are outside the
 enumerable Kubernetes RBAC contract and must be retired by the administrator
 before uninstall.
 
-A failed preflight leaves the runtime unchanged. An API failure during the
+A failed preflight leaves the runtime unchanged. Helm deletes the failed hook
+Job immediately, while the failed release revision retains the exact hook
+name, weight, event, phase, and timestamps used by the support-window proof.
+An API failure during the
 subsequent two-Deployment quiesce can leave one exact Deployment at zero, but
 the admission boundary remains and the same operation is safe to retry. A
 later cleanup failure likewise leaves admission in place and retains the
@@ -227,10 +230,11 @@ The runtime verifier closes the remaining concurrent-install race in which two
 clients could both render while the singleton was absent. New manager and
 certificate-rotation Pods wait for both fixed admission configurations and
 require their complete annotation tuple to match the Pod's release. They also
-require exactly one mutating approval webhook and the two validating approval
-and operation-Pod webhooks, with fail-closed policies, nonempty CA bundles, the
-exact Service, paths, port, rules, selectors, match condition, review version,
-side-effect and match policies, reinvocation policy, and configured timeout.
+require exactly one mutating approval webhook and three validating webhooks for
+approval, operation-Pod intent, and controller writes, with fail-closed
+policies, nonempty CA bundles, the exact Service, paths, port, rules, selectors,
+match conditions, review version, side-effect and match policies, reinvocation
+policy, and their bounded timeouts.
 The verifier reads this complete contract again after its wait and rechecks the
 CRDs immediately before allowing the process to start. A losing release or a
 Pod launched while Helm is repairing a drifted singleton can neither reconcile
@@ -362,8 +366,32 @@ manager volume projects only `tls.crt` and `tls.key`; the CA certificate and CA
 private key never enter manager Pods. The manager ClusterRole has no Secret
 access. The rotator uses its own ServiceAccount with `get` and `update` limited
 by `resourceNames` to the one generated Secret, one precreated coordination
-Lease, and the exact mutating and validating webhook configurations. By
-default, `certificateRotation.recreateMissingSecret=false`: the chart grants no
+Lease, and the exact mutating and validating webhook configurations. RBAC
+cannot limit which fields an `update` changes, so two retained, parameterless,
+fail-closed admission policies type-check the mutating and validating
+configurations separately. They require the exact rotator ServiceAccount,
+singleton name, unchanged ordered webhook-entry inventory, caller-controlled
+metadata, and webhook behavior. Kube-apiserver-managed generation and
+managed-fields bookkeeping are the only metadata exceptions; generation must
+track an actual webhook-list change. Kubernetes field management can rewrite
+`metadata.managedFields` before admission and cannot distinguish that rewrite
+from a caller-requested ownership reset, so the guard does not treat field
+ownership bookkeeping as a security boundary. Among behavioral and
+caller-controlled fields, only a nonempty per-entry `caBundle` of at most 256
+KiB may differ. Because the policy preserves the live entry inventory
+instead of hard-coding one release's list, a failed preflight before quiescence
+cannot lock the still-running predecessor rotator out of its existing CA-only
+updates. The rotator treats its configured webhook names as required identity
+anchors, then rotates every additional entry targeting the exact release
+Service. This also lets an already-running predecessor carry a same-Service
+entry observed in a narrow partial-apply race; URL and foreign-Service entries
+remain untouched. It does not make a quiesced predecessor restartable after
+candidate activation. The release and image ratchets intentionally block that
+rollback, and recovery after quiescence is to retry the same candidate. Helm
+installs and binds these policies before granting certificate update access,
+and every hook and runtime init verifier requires the observed policy
+generations to have no CEL warnings. By default,
+`certificateRotation.recreateMissingSecret=false`: the chart grants no
 Secret `create`, renders no Secret-creation admission policy or binding, and
 grants no read access to those policy types. A deleted Secret therefore makes
 the rotator fail clearly and remain unready until an administrator restores it
@@ -477,6 +505,16 @@ The complete stable condition-reason vocabulary is cataloged in
 [Condition reasons](condition-reasons.md). Automation should compare the
 `type`, `status`, and `reason` tuple and require `observedGeneration` to match
 the resource generation; condition messages are diagnostic text, not an API.
+
+`status.target.driftFindings` is a bounded, canonical summary of the most
+recent raw Observe result. Entries are ordered by descending severity and then
+category, contain no object names or SQL, and are limited to 64 categories.
+`driftFindingCount` covers the complete report rather than the displayed list;
+when `driftFindingsTruncated` is true, undisplayed categories contributed to
+that total. A subsequent scoped Plan deliberately does not replace this raw
+observation summary: the `DriftDetected` condition describes the authoritative
+managed scope, while `status.target` remains evidence for the observation
+identified by `driftReportDigest` and `lastObservedAt`.
 
 `EngineSupported=False` with reason `UnsupportedEngine` is an explicit
 non-authorizing state, not a reconciliation crash. It creates no operation Job,
@@ -697,7 +735,12 @@ Plans and chunks are owned by the schema. Old plan objects may remain useful as
 audit evidence until Kubernetes garbage collection removes the owning schema;
 only the exact UID and fingerprint in `status.plan` are current. Completed Jobs
 receive a short cleanup TTL before the controller clears the active operation;
-failure to schedule that TTL leaves the operation retryable.
+failure to schedule that TTL leaves the operation retryable. The exact current
+Apply may receive the same TTL while still running when the controller must
+persist an uncertain outcome; the countdown starts only after the Job finishes.
+During schema deletion, a terminal Job that cannot satisfy the exact cleanup
+admission contract is left to owner garbage collection instead of blocking the
+finalizer on a weaker write.
 
 An executable plan is limited to 8 MiB, including its trailing newline. The
 runner rejects a larger native plan before publication. Accepted bytes are

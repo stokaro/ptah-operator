@@ -85,6 +85,11 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		"ptah-operator-release-activation-guard-v1-f1e165dcd72a",
 		"ptah-operator-service-account-origin-guard-v1-f1e165dcd72a",
 		"ptah-operator-controller-write-guard-v1-f1e165dcd72a",
+		"ptah-operator-job-write-guard-v1-f1e165dcd72a",
+		"ptah-operator-chunk-write-guard-v1-f1e165dcd72a",
+		"ptah-operator-plan-write-guard-v1-f1e165dcd72a",
+		"ptah-operator-certificate-mutate-guard-v1-f1e165dcd72a",
+		"ptah-operator-certificate-validate-guard-v1-f1e165dcd72a",
 		"ptah-operator-runtime-parent-guard-v1-f1e165dcd72a",
 		"ptah-operator-hook-pod-origin-guard-v1-f1e165dcd72a",
 		"ptah-operator-hook-parent-origin-guard-v1-f1e165dcd72a",
@@ -114,7 +119,7 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	args := stringSlice(container["args"])
 	for _, want := range []string{
 		"--mutating-webhook-names=mapproval.operator.ptah.dev",
-		"--validating-webhook-names=vapproval.operator.ptah.dev,vpodintent.operator.ptah.dev",
+		"--validating-webhook-names=vapproval.operator.ptah.dev,vpodintent.operator.ptah.dev,vcontrollerwrite.operator.ptah.dev",
 		"--run-interval=6h",
 		"--operation-timeout=15m",
 		"--retry-initial=5s",
@@ -124,6 +129,14 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		if !slices.Contains(args, want) {
 			t.Errorf("rotator args do not contain %q: %v", want, args)
 		}
+	}
+	mutatingConfiguration := mustObject(t, objects, "MutatingWebhookConfiguration", configurationName)
+	validatingConfiguration := mustObject(t, objects, "ValidatingWebhookConfiguration", configurationName)
+	if got, want := strings.Split(requiredArgumentValue(t, args, "--mutating-webhook-names="), ","), webhookNames(t, mutatingConfiguration); !slices.Equal(got, want) {
+		t.Fatalf("rotator mutating webhook inventory = %v, rendered singleton order = %v", got, want)
+	}
+	if got, want := strings.Split(requiredArgumentValue(t, args, "--validating-webhook-names="), ","), webhookNames(t, validatingConfiguration); !slices.Equal(got, want) {
+		t.Fatalf("rotator validating webhook inventory = %v, rendered singleton order = %v", got, want)
 	}
 	for _, forbiddenPrefix := range []string{
 		"--recreate-missing-secret",
@@ -603,4 +616,43 @@ func stringSlice(value any) []string {
 		result = append(result, value.(string))
 	}
 	return result
+}
+
+func requiredArgumentValue(t *testing.T, args []string, prefix string) string {
+	t.Helper()
+	var value string
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, prefix) {
+			continue
+		}
+		if value != "" {
+			t.Fatalf("rotator args contain duplicate %q arguments: %v", prefix, args)
+		}
+		value = strings.TrimPrefix(arg, prefix)
+	}
+	if value == "" {
+		t.Fatalf("rotator args do not contain a nonempty %q argument: %v", prefix, args)
+	}
+	return value
+}
+
+func webhookNames(t *testing.T, configuration *unstructured.Unstructured) []string {
+	t.Helper()
+	rawWebhooks, found, err := unstructured.NestedSlice(configuration.Object, "webhooks")
+	if err != nil || !found || len(rawWebhooks) == 0 {
+		t.Fatalf("%s/%s has no webhook entries", configuration.GetKind(), configuration.GetName())
+	}
+	names := make([]string, 0, len(rawWebhooks))
+	for _, rawWebhook := range rawWebhooks {
+		webhook, ok := rawWebhook.(map[string]any)
+		if !ok {
+			t.Fatalf("%s/%s contains a malformed webhook entry: %#v", configuration.GetKind(), configuration.GetName(), rawWebhook)
+		}
+		name, ok := webhook["name"].(string)
+		if !ok || name == "" {
+			t.Fatalf("%s/%s contains an unnamed webhook entry: %#v", configuration.GetKind(), configuration.GetName(), webhook)
+		}
+		names = append(names, name)
+	}
+	return names
 }

@@ -93,6 +93,11 @@ resolved_predecessor=$(git -C "$ROOT_DIR" rev-parse --verify "${PREDECESSOR_REVI
 [ -n "$K8S_VERSION" ] || fail "K8S_VERSION is required (for example, 1.37.0)"
 printf '%s\n' "$K8S_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
 	fail "K8S_VERSION must be an exact major.minor.patch version"
+K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)
+case "$K8S_MAJOR_MINOR" in
+1.35 | 1.36 | 1.37) ;;
+*) fail "Kubernetes $K8S_MAJOR_MINOR is outside the supported 1.35-1.37 window" ;;
+esac
 printf '%s\n' "$E2E_PTAH_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||
 	fail "E2E_PTAH_REVISION must be an exact 40-character lowercase Git commit"
 if [ -z "$KIND_NODE_IMAGE" ]; then
@@ -800,6 +805,25 @@ mirror_task_image() {
 
 sed "s/__API_SERVER_PORT__/${E2E_API_SERVER_PORT}/g" \
 	"$ROOT_DIR/testdata/e2e/kind.yaml.tmpl" >"$KIND_CONFIG"
+case "$K8S_MAJOR_MINOR" in
+1.35)
+	{
+		printf '%s\n' 'featureGates:'
+		printf '%s\n' '  GenericWorkload: true'
+	} >>"$KIND_CONFIG"
+	;;
+1.36) ;;
+1.37)
+	{
+		printf '%s\n' 'featureGates:'
+		printf '%s\n' '  EmptyDirVolumeMode: true'
+		printf '%s\n' '  EvictionRequestAPI: true'
+		printf '%s\n' '  GenericWorkload: true'
+		printf '%s\n' '  VolumeBindMountOptions: true'
+		printf '%s\n' '  WorkloadWithJob: true'
+	} >>"$KIND_CONFIG"
+	;;
+esac
 
 if [ "$E2E_DIRECT_HOST_ACCESS" -eq 0 ]; then
 	ssh_args="-N -o BatchMode=yes -o ExitOnForwardFailure=yes"
@@ -960,6 +984,26 @@ minor_skew=$((client_minor - server_minor))
 if [ "$minor_skew" -lt -1 ] || [ "$minor_skew" -gt 1 ]; then
 	fail "kubectl $client_version is outside the supported one-minor skew for Kubernetes $K8S_VERSION"
 fi
+
+ADMISSION_OPENAPI_FILE=$WORK_DIR/admissionregistration-openapi-v3.json
+kubectl --kubeconfig "$KUBECONFIG_FILE" get --raw \
+	/openapi/v3/apis/admissionregistration.k8s.io/v1 >"$ADMISSION_OPENAPI_FILE"
+jq -e -f "$ROOT_DIR/hack/admission-schema-contract.jq" \
+	"$ADMISSION_OPENAPI_FILE" >/dev/null ||
+	fail "Kubernetes $K8S_VERSION admission schema exceeds the frozen certificate write boundary"
+
+CONTROLLER_BATCH_OPENAPI_FILE=$WORK_DIR/controller-batch-openapi-v3.json
+CONTROLLER_CORE_OPENAPI_FILE=$WORK_DIR/controller-core-openapi-v3.json
+kubectl --kubeconfig "$KUBECONFIG_FILE" get --raw \
+	/openapi/v3/apis/batch/v1 >"$CONTROLLER_BATCH_OPENAPI_FILE"
+kubectl --kubeconfig "$KUBECONFIG_FILE" get --raw \
+	/openapi/v3/api/v1 >"$CONTROLLER_CORE_OPENAPI_FILE"
+jq -e \
+	--arg minor "${server_major}.${server_minor}" \
+	--slurpfile core "$CONTROLLER_CORE_OPENAPI_FILE" \
+	-f "$ROOT_DIR/hack/controller-object-schema-contract.jq" \
+	"$CONTROLLER_BATCH_OPENAPI_FILE" >/dev/null ||
+	fail "Kubernetes $K8S_VERSION Job/Pod API exceeds the reviewed controller write boundary"
 
 ensure_source_image "$E2E_REGISTRY_IMAGE"
 printf 'e2e: starting isolated registry %s on Docker context %s\n' \
@@ -1208,6 +1252,12 @@ E2E_PREDECESSOR_IDENTITY_FILE=$PREDECESSOR_IDENTITY_FILE \
 E2E_PREDECESSOR_SOURCE_DIR=$PREDECESSOR_BUILD_CONTEXT \
 E2E_PREDECESSOR_IMAGE=$PREDECESSOR_OPERATOR_IMAGE \
 E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
+E2E_KUBERNETES_VERSION=$K8S_VERSION \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
+E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
+E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
+E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
 E2E_PHASE=upgrade \
 	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 
@@ -1274,6 +1324,7 @@ E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_KUBERNETES_VERSION=$K8S_VERSION \
 E2E_PHASE=uninstall \
 	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 

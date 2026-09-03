@@ -89,6 +89,23 @@ func TestChunkLeavesKubernetesBase64TransportHeadroom(t *testing.T) {
 	}
 }
 
+func TestDesiredChunkUsesBlockingPlanOwner(t *testing.T) {
+	t.Parallel()
+
+	_, plan, chunks := fixture(t, []byte("small exact plan"))
+	plan.UID = "plan-uid"
+	chunk := desiredChunk(plan, plan.Spec.Chunks[0], chunks[0])
+	if len(chunk.OwnerReferences) != 1 {
+		t.Fatalf("chunk owner references = %#v, want one PtahSchemaPlan owner", chunk.OwnerReferences)
+	}
+	owner := chunk.OwnerReferences[0]
+	if owner.APIVersion != operatorv1alpha1.GroupVersion.String() || owner.Kind != "PtahSchemaPlan" ||
+		owner.Name != plan.Name || owner.UID != plan.UID || owner.Controller == nil || !*owner.Controller ||
+		owner.BlockOwnerDeletion == nil || !*owner.BlockOwnerDeletion {
+		t.Fatalf("chunk owner reference = %#v, want exact blocking PtahSchemaPlan owner", owner)
+	}
+}
+
 func TestPrepareExecutionEpochCompatibility(t *testing.T) {
 	t.Parallel()
 
@@ -186,6 +203,79 @@ func TestLoadRejectsReplacedChunk(t *testing.T) {
 	}
 	if _, err := store.Load(context.Background(), published); err == nil {
 		t.Fatal("Load() accepted a delete-and-recreate chunk")
+	}
+}
+
+func TestLoadRejectsInexactChunkOwnerReference(t *testing.T) {
+	t.Parallel()
+
+	falseValue := false
+	tests := map[string]func([]metav1.OwnerReference) []metav1.OwnerReference{
+		"wrong API version": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
+			owners[0].APIVersion = "operator.ptah.dev/v999"
+			return owners
+		},
+		"wrong kind": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
+			owners[0].Kind = "PtahSchema"
+			return owners
+		},
+		"wrong name": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
+			owners[0].Name = "different-plan"
+			return owners
+		},
+		"wrong UID": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
+			owners[0].UID = "different-plan-uid"
+			return owners
+		},
+		"missing controller": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
+			owners[0].Controller = nil
+			return owners
+		},
+		"non-controller": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
+			owners[0].Controller = &falseValue
+			return owners
+		},
+		"missing block owner deletion": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
+			owners[0].BlockOwnerDeletion = nil
+			return owners
+		},
+		"does not block owner deletion": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
+			owners[0].BlockOwnerDeletion = &falseValue
+			return owners
+		},
+		"duplicate exact owner": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
+			return append(owners, owners[0])
+		},
+		"extra owner": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
+			return append(owners, metav1.OwnerReference{APIVersion: "v1", Kind: "ConfigMap", Name: "other", UID: "other-uid"})
+		},
+	}
+
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			schema, desired, chunks := fixture(t, []byte("small exact plan"))
+			store := fakeStore(t, schema)
+			published, err := store.Publish(context.Background(), desired, chunks)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			chunk := &corev1.ConfigMap{}
+			key := client.ObjectKey{Namespace: published.Namespace, Name: published.Spec.Chunks[0].Name}
+			if err := store.Client.Get(context.Background(), key, chunk); err != nil {
+				t.Fatal(err)
+			}
+			chunk.OwnerReferences = mutate(chunk.OwnerReferences)
+			if err := store.Client.Update(context.Background(), chunk); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := store.Load(context.Background(), published); err == nil ||
+				!strings.Contains(err.Error(), "exact blocking plan owner reference") {
+				t.Fatalf("Load() error = %v, want exact owner-reference refusal", err)
+			}
+		})
 	}
 }
 

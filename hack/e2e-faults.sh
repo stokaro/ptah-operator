@@ -159,6 +159,9 @@ AUDITED_FAULT_PODS_FILE=$WORK_DIR/audited-pod-uids.txt
 # authorize a TTL/GC skip; a proven never-started Pod has no logs to collect.
 FULLY_AUDITED_FAULT_PODS_FILE=$WORK_DIR/fully-audited-pod-uids.txt
 FAULT_CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
+FAULT_MANAGER_POD_NAMES_FILE=$WORK_DIR/manager-pod-names.txt
+FAULT_TERMINAL_JOB_RECORDS_FILE=$WORK_DIR/terminal-job-records.tsv
+FAULT_JOB_POD_UIDS_FILE=$WORK_DIR/job-pod-uids.txt
 URL_VALUE_FILE=$WORK_DIR/database.url
 : >"$AUDITED_FAULT_JOBS_FILE"
 : >"$AUDITED_FAULT_PODS_FILE"
@@ -498,6 +501,47 @@ record_audited_uid() {
 	grep -Fx "$uid_value" "$uid_file" >/dev/null 2>&1 || printf '%s\n' "$uid_value" >>"$uid_file"
 }
 
+materialize_fault_manager_pod_names() {
+	fault_manager_pod_snapshot=$1
+	if ! printf '%s\n' "$fault_manager_pod_snapshot" | jq -r '
+      .items[] | select(.metadata.deletionTimestamp == null) |
+      .metadata.name |
+      if type == "string" and length > 0 then .
+      else error("manager Pod has no exact name") end
+    ' >"$FAULT_MANAGER_POD_NAMES_FILE"; then
+		fail "could not capture exact manager Pod names for fault credential audit"
+	fi
+}
+
+materialize_fault_terminal_job_records() {
+	fault_terminal_job_snapshot=$1
+	if ! printf '%s\n' "$fault_terminal_job_snapshot" | jq -r '
+      .items[] |
+      select(.status.conditions // [] |
+        any((.type == "Complete" or .type == "Failed") and .status == "True")) |
+      (.metadata.uid |
+        if type == "string" and length > 0 then .
+        else error("terminal Job has no exact UID") end) as $uid |
+      (.metadata.name |
+        if type == "string" and length > 0 then .
+        else error("terminal Job has no exact name") end) as $name |
+      [$uid, $name] | @tsv
+    ' >"$FAULT_TERMINAL_JOB_RECORDS_FILE"; then
+		fail "could not capture exact terminal Job identities for fault credential audit"
+	fi
+}
+
+materialize_fault_job_pod_uids() {
+	fault_job_pod_snapshot=$1
+	if ! printf '%s\n' "$fault_job_pod_snapshot" | jq -r '
+      .items[] | .metadata.uid |
+      if type == "string" and length > 0 then .
+      else error("owned Pod has no exact UID") end
+    ' >"$FAULT_JOB_POD_UIDS_FILE"; then
+		fail "could not capture exact owned Pod UIDs for fault credential audit"
+	fi
+}
+
 audit_fault_runtime() {
 	: >"$RESOURCE_FILE"
 	k -n "$TEST_NAMESPACE" get \
@@ -518,8 +562,8 @@ audit_fault_runtime() {
           .status.ephemeralContainerStatuses // []] | add) as $statuses |
         all($statuses[]; (.restartCount // 0) == 0))
     ' >/dev/null || fail "a manager container restarted before its complete log history was audited"
-	printf '%s\n' "$manager_audit_pods" | jq -r '.items[] | select(.metadata.deletionTimestamp == null) | .metadata.name' |
-		while IFS= read -r manager_audit_pod; do
+	materialize_fault_manager_pod_names "$manager_audit_pods"
+	while IFS= read -r manager_audit_pod; do
 			[ -n "$manager_audit_pod" ] || continue
 			manager_audit_uid=$(k -n "$OPERATOR_NAMESPACE" get pod "$manager_audit_pod" -o jsonpath='{.metadata.uid}')
 			[ -n "$manager_audit_uid" ] || fail "manager Pod $manager_audit_pod has no exact UID"
@@ -528,7 +572,7 @@ audit_fault_runtime() {
 				fail "could not audit logs for exact manager Pod $manager_audit_pod UID $manager_audit_uid"
 			fi
 			scan_fault_file "$LOG_FILE" "logs for exact manager Pod $manager_audit_pod"
-		done
+	done <"$FAULT_MANAGER_POD_NAMES_FILE"
 
 	fault_audit_pods=$(k -n "$TEST_NAMESPACE" get pods -o json)
 	if ! fault_audit_pod_records=$(printf '%s\n' "$fault_audit_pods" | jq -r '
@@ -634,12 +678,8 @@ audit_fault_runtime() {
 	done
 
 	terminal_jobs=$(k -n "$TEST_NAMESPACE" get jobs -o json)
-	printf '%s\n' "$terminal_jobs" | jq -r '
-      .items[] |
-      select(.status.conditions // [] |
-        any((.type == "Complete" or .type == "Failed") and .status == "True")) |
-		[.metadata.uid, .metadata.name] | @tsv
-    ' | while IFS="$(printf '\t')" read -r audit_job_uid audit_job_name; do
+	materialize_fault_terminal_job_records "$terminal_jobs"
+	while IFS="$(printf '\t')" read -r audit_job_uid audit_job_name; do
 		[ -n "$audit_job_uid" ] || continue
 		if grep -Fx "$audit_job_uid" "$SHARED_FULLY_AUDITED_JOBS_FILE" >/dev/null 2>&1; then
 			record_audited_uid "$AUDITED_FAULT_JOBS_FILE" "$audit_job_uid"
@@ -684,10 +724,10 @@ audit_fault_runtime() {
           ]}
         ')
 		[ "$(printf '%s\n' "$audit_job_pods" | jq '.items | length')" -gt 0 ] || continue
-		if ! printf '%s\n' "$audit_job_pods" | jq -r '.items[].metadata.uid' |
-			while IFS= read -r audit_job_pod_uid; do
+		materialize_fault_job_pod_uids "$audit_job_pods"
+		if ! while IFS= read -r audit_job_pod_uid; do
 				grep -Fx "$audit_job_pod_uid" "$FULLY_AUDITED_FAULT_PODS_FILE" >/dev/null || exit 1
-			done; then
+			done <"$FAULT_JOB_POD_UIDS_FILE"; then
 			continue
 		fi
 		printf '%s\n' "$audit_job_object" >"$RESOURCE_FILE"
@@ -701,7 +741,7 @@ audit_fault_runtime() {
 		record_audited_uid "$AUDITED_FAULT_JOBS_FILE" "$audit_job_uid"
 		record_audited_uid "$SHARED_AUDITED_JOBS_FILE" "$audit_job_uid"
 		record_audited_uid "$SHARED_FULLY_AUDITED_JOBS_FILE" "$audit_job_uid"
-	done
+	done <"$FAULT_TERMINAL_JOB_RECORDS_FILE"
 	: >"$LOG_FILE"
 	LAST_FAULT_AUDIT_AT=$(date +%s)
 }
@@ -783,12 +823,23 @@ assert_fault_audit_complete() {
 		jobs) audit_watch=$WORK_DIR/watch-jobs.jsonl; audit_ledger=$AUDITED_FAULT_JOBS_FILE ;;
 		pods) audit_watch=$WORK_DIR/watch-pods.jsonl; audit_ledger=$AUDITED_FAULT_PODS_FILE ;;
 		esac
-		jq -r -s '[.[] | select(.type == "ADDED") | .object.metadata.uid] | unique[]' \
-			"$audit_watch" | while IFS= read -r watched_uid; do
-			[ -n "$watched_uid" ] || continue
+		audit_projection=$WORK_DIR/audit-${audit_kind}-uids.txt
+		if ! jq -r -s '
+          [.[] | select(.type == "ADDED") | .object.metadata.uid] as $uids |
+          if all($uids[];
+            type == "string" and length > 0 and length <= 128 and
+            ((contains("\n") or contains("\r") or contains("\t")) | not))
+          then $uids | unique[]
+          else error("watch contains an invalid object UID")
+          end
+        ' "$audit_watch" >"$audit_projection"; then
+			fail "could not validate the fault-test $audit_kind watch before the audit assertion"
+		fi
+		while IFS= read -r watched_uid; do
+			[ -n "$watched_uid" ] || fail "fault-test $audit_kind projection contains an empty UID"
 			grep -Fx "$watched_uid" "$audit_ledger" >/dev/null ||
 				fail "fault-test $audit_kind UID $watched_uid was never credential-audited"
-		done
+		done <"$audit_projection"
 	done
 }
 
@@ -812,37 +863,63 @@ audit_protected_terminal_job() {
 }
 
 record_fault_jobs_for_parent() {
-	jq -c -s '
+	observed_projection=$WORK_DIR/fault-observed-jobs.jsonl
+	if ! jq -c -s '
       [.[] | select(.type == "ADDED") | .object] |
-      unique_by(.metadata.uid)[] | {
-        uid: .metadata.uid,
-        name: .metadata.name,
-        schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
-        operation: (.metadata.labels["operator.ptah.dev/operation"] // "")
-      }
-    ' "$WORK_DIR/watch-jobs.jsonl" | while IFS= read -r observed_job; do
+      unique_by(.metadata.uid) |
+      if all(.[];
+        (.metadata.uid | type == "string" and length > 0 and length <= 128 and
+          ((contains("\n") or contains("\r") or contains("\t")) | not)) and
+        (.metadata.name | type == "string" and length > 0) and
+        (.metadata.labels["operator.ptah.dev/schema"] // "" | type == "string") and
+        (.metadata.labels["operator.ptah.dev/operation"] // "" | type == "string"))
+      then .[] | {
+          uid: .metadata.uid,
+          name: .metadata.name,
+          schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
+          operation: (.metadata.labels["operator.ptah.dev/operation"] // "")
+        }
+      else error("watch contains an invalid Job identity")
+      end
+    ' "$WORK_DIR/watch-jobs.jsonl" >"$observed_projection"; then
+		fail "could not validate the fault Job watch before updating the parent ledger"
+	fi
+	while IFS= read -r observed_job; do
 		observed_uid=$(printf '%s\n' "$observed_job" | jq -er '.uid')
 		if ! grep -F "\"uid\":\"${observed_uid}\"" "$SHARED_OBSERVED_JOBS_FILE" >/dev/null 2>&1; then
 			printf '%s\n' "$observed_job" >>"$SHARED_OBSERVED_JOBS_FILE"
 		fi
-	done
+	done <"$observed_projection"
 }
 
 record_initial_job_list_for_parent() {
 	initial_job_list=$1
-	jq -c '
-      .items[] | {
-        uid: .metadata.uid,
-        name: .metadata.name,
-        schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
-        operation: (.metadata.labels["operator.ptah.dev/operation"] // "")
-      }
-    ' "$initial_job_list" | while IFS= read -r observed_job; do
+	initial_projection=$WORK_DIR/fault-initial-jobs.jsonl
+	if ! jq -c '
+      if (.items | type) != "array" then error("initial Job list has no items array")
+      elif all(.items[];
+        (.metadata.uid | type == "string" and length > 0 and length <= 128 and
+          ((contains("\n") or contains("\r") or contains("\t")) | not)) and
+        (.metadata.name | type == "string" and length > 0) and
+        (.metadata.labels["operator.ptah.dev/schema"] // "" | type == "string") and
+        (.metadata.labels["operator.ptah.dev/operation"] // "" | type == "string"))
+      then .items[] | {
+          uid: .metadata.uid,
+          name: .metadata.name,
+          schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
+          operation: (.metadata.labels["operator.ptah.dev/operation"] // "")
+        }
+      else error("initial Job list contains an invalid identity")
+      end
+    ' "$initial_job_list" >"$initial_projection"; then
+		fail "could not validate the initial fault Job list before updating the parent ledger"
+	fi
+	while IFS= read -r observed_job; do
 		observed_uid=$(printf '%s\n' "$observed_job" | jq -er '.uid')
 		if ! grep -F "\"uid\":\"${observed_uid}\"" "$SHARED_OBSERVED_JOBS_FILE" >/dev/null 2>&1; then
 			printf '%s\n' "$observed_job" >>"$SHARED_OBSERVED_JOBS_FILE"
 		fi
-	done
+	done <"$initial_projection"
 }
 
 load_ready_manager_leader() {
@@ -1886,10 +1963,10 @@ capture_exact_job_result() {
 	jq -e \
 		--arg operation "$result_operation" \
 		--arg operationID "$FAULT_RESULT_OPERATION_ID" '
-      .protocolVersion == 4 and .operation == $operation and
+      .protocolVersion == 5 and .operation == $operation and
       .operationId == $operationID and .truncation == null
     ' "$result_output" >/dev/null ||
-		fail "runner result lost its protocol-v4 binding or complete-output guarantee"
+		fail "runner result lost its protocol-v5 binding or complete-output guarantee"
 	result_schema=$(printf '%s\n' "$result_job_object" |
 		jq -er '.metadata.labels["operator.ptah.dev/schema"]')
 	result_binding_deadline=$(deadline_from_now)
@@ -2167,7 +2244,7 @@ assert_fault_convergence_result_pair() {
           $plan.coordinationDigest == .status.target.coordinationDigest and
           $plan.targetIdentityDigest == .status.target.identityDigest
         ' >/dev/null ||
-		fail "$converged_schema did not carry exact successful protocol-v4 Observe and NoChanges Plan results"
+		fail "$converged_schema did not carry exact successful protocol-v5 Observe and NoChanges Plan results"
 	snapshot_watch jobs
 	jq -s -e \
 		--arg observeUID "$CONVERGED_OBSERVE_JOB_UID" \
@@ -2735,7 +2812,7 @@ create_approval() {
       .spec.controllerImage == $controllerImage and
       .spec.controllerRevision == $controllerRevision and
       .spec.controllerStateVersion == $controllerStateVersion and
-      .spec.runnerProtocolVersion == 4
+      .spec.runnerProtocolVersion == 5
     ' >/dev/null || fail "$approval_name was not hydrated against the exact current plan"
 }
 

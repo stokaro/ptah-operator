@@ -133,7 +133,8 @@ jobs:
               -f head_sha="$GITHUB_SHA" \
               -f status=completed \
               -f per_page=100)"
-            mapfile -t run_ids < <(jq -r \
+            run_ids_file="$RUNNER_TEMP/successful-support-run-ids"
+            jq -r \
               --arg branch "$DEFAULT_BRANCH" \
               --arg sha "$GITHUB_SHA" '
                 .workflow_runs[] |
@@ -143,7 +144,8 @@ jobs:
                        .status == "completed" and
                        .conclusion == "success") |
                 .id
-              ' <<<"$runs")
+              ' <<<"$runs" > "$run_ids_file"
+            mapfile -t run_ids < "$run_ids_file"
             for run_id in "${run_ids[@]}"; do
               jobs="$(gh api \
                 --method GET \

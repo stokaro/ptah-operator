@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,7 +62,10 @@ const (
 	applyTerminationGrace    = 30 * time.Second
 )
 
-var controllerImagePattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
+var (
+	controllerImagePattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
+	sha256DigestPattern    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
 
 // JobBuilder turns one already-persisted operation claim into a deterministic
 // Job. It must never read Secret content.
@@ -590,8 +594,17 @@ func (r *SchemaReconciler) possibleApplyPodActive(
 		return false, fmt.Errorf("pending observation lacks an Apply operation identity")
 	}
 	if pending.ApplyJobUID == "" {
-		// An uncertain create without a confirmed Job UID is protected by the
-		// immutable ObserveAfter horizon instead of Pod discovery.
+		adopted, err := r.adoptRetiredPredecessorApplyJobUID(ctx, schema, pending)
+		if err != nil {
+			return false, err
+		}
+		if adopted {
+			// UID adoption is a durable boundary. Re-read the schema before Pod
+			// discovery so every later decision is bound to the committed Job UID.
+			return true, nil
+		}
+		// An uncertain create with no exact late-committing predecessor Job is
+		// protected by the immutable ObserveAfter horizon instead of Pod discovery.
 		return false, nil
 	}
 	if pending.ApplyJobName == "" {
@@ -613,7 +626,208 @@ func (r *SchemaReconciler) possibleApplyPodActive(
 			return true, nil
 		}
 	}
+	cleanupPending, err := r.cleanupRetiredPredecessorApplyJob(ctx, schema, pending)
+	if err != nil {
+		return false, err
+	}
+	if cleanupPending {
+		// A successful cleanup patch is a durable boundary of its own. Re-read
+		// before claiming or consuming read-only proof, while the exact fenced
+		// Apply identity is still the only operation eligible for this update.
+		return true, nil
+	}
 	return false, nil
+}
+
+func (r *SchemaReconciler) adoptRetiredPredecessorApplyJobUID(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+) (bool, error) {
+	if !predecessorApplyUIDAdoptionPending(schema, pending) {
+		return false, nil
+	}
+	job := &batchv1.Job{}
+	err := r.directReader().Get(ctx, types.NamespacedName{
+		Namespace: schema.Namespace,
+		Name:      pending.ApplyJobName,
+	}, job)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read late-committing predecessor Apply Job: %w", err)
+	}
+	if !retiredPredecessorApplyJobMatches(schema, pending, job) {
+		return false, nil
+	}
+	before := schema.DeepCopy()
+	pending.ApplyJobUID = job.UID
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// cleanupRetiredPredecessorApplyJob schedules garbage collection for the exact
+// Apply Job that crossed an execution-binding transition. It deliberately
+// reads no executor result and accepts no Apply attribution: PendingObservation
+// remains outcome-unknown until a fresh read-only proof completes.
+func (r *SchemaReconciler) cleanupRetiredPredecessorApplyJob(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+) (bool, error) {
+	if !predecessorApplyCleanupPending(schema, pending) {
+		return false, nil
+	}
+	job := &batchv1.Job{}
+	err := r.directReader().Get(ctx, types.NamespacedName{
+		Namespace: schema.Namespace,
+		Name:      pending.ApplyJobName,
+	}, job)
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read retired predecessor Apply Job: %w", err)
+	}
+	if !retiredPredecessorApplyJobMatches(schema, pending, job) {
+		return false, nil
+	}
+	if job.Spec.TTLSecondsAfterFinished != nil {
+		return false, nil
+	}
+	if !jobTerminal(job) {
+		// Do not let fresh proof clear PendingObservation in the short window
+		// between the last terminal Pod and the Job controller's terminal
+		// condition. The exact retired Job remains fenced until cleanup is
+		// durably scheduled.
+		return true, nil
+	}
+	if err := r.markJobHarvested(ctx, job); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func predecessorApplyCleanupPending(
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+) bool {
+	return predecessorApplyRetirementPending(schema, pending) && pending.ApplyJobUID != ""
+}
+
+func predecessorApplyUIDAdoptionPending(
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+) bool {
+	return predecessorApplyRetirementPending(schema, pending) && pending.ApplyJobUID == ""
+}
+
+func predecessorApplyRetirementPending(
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+) bool {
+	if schema == nil || pending == nil || schema.Status.ExecutionBinding == nil ||
+		schema.Status.ActiveOperation != nil || schema.Status.Phase != operatorv1alpha1.PhasePending ||
+		pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown || pending.PlanRequired ||
+		pending.ApplyOperationID == "" || pending.ApplyJobName == "" ||
+		!validExecutionBindingID(schema.Status.ExecutionBinding.Epoch) ||
+		!validExecutionBindingID(pending.Plan.ExecutionBindingID) ||
+		pending.Plan.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch ||
+		!executionBindingCleanupPending(schema) {
+		return false
+	}
+	planReady := meta.FindStatusCondition(schema.Status.Conditions, operatorv1alpha1.ConditionPlanReady)
+	return planReady != nil && planReady.Status == metav1.ConditionFalse &&
+		planReady.Reason == string(operatorv1alpha1.ReasonExecutionBindingChanged)
+}
+
+func retiredPredecessorApplyJobMatches(
+	schema *operatorv1alpha1.PtahSchema,
+	pending *operatorv1alpha1.PendingObservationStatus,
+	job *batchv1.Job,
+) bool {
+	if !predecessorApplyRetirementPending(schema, pending) || job == nil || job.UID == "" ||
+		job.Name != pending.ApplyJobName ||
+		(pending.ApplyJobUID != "" && job.UID != pending.ApplyJobUID) ||
+		!exactControllerOwner(
+			job.OwnerReferences,
+			operatorv1alpha1.GroupVersion.String(),
+			"PtahSchema",
+			schema.Name,
+			schema.UID,
+		) {
+		return false
+	}
+	wantLabels := map[string]string{
+		workload.LabelManagedBy:   "ptah-operator",
+		workload.LabelComponent:   "schema-operation",
+		workload.LabelSchema:      schema.Name,
+		workload.LabelOperation:   "apply",
+		workload.LabelOperationID: workload.OperationIDLabelValue(pending.ApplyOperationID),
+	}
+	if !reflect.DeepEqual(job.Labels, wantLabels) ||
+		!sha256DigestPattern.MatchString(pending.Plan.Fingerprint) ||
+		!sha256DigestPattern.MatchString(pending.Plan.ContentDigest) ||
+		strings.TrimSpace(pending.Plan.PtahVersion) == "" ||
+		pending.Plan.PtahVersion != strings.TrimSpace(pending.Plan.PtahVersion) {
+		return false
+	}
+	inputFingerprint := job.Annotations[workload.AnnotationInputFingerprint]
+	snapshotDigest := job.Annotations[workload.AnnotationAdmissionSnapshotDigest]
+	wantAnnotations := map[string]string{
+		workload.AnnotationOperationID:             pending.ApplyOperationID,
+		workload.AnnotationInputFingerprint:        inputFingerprint,
+		workload.AnnotationPtahVersion:             pending.Plan.PtahVersion,
+		workload.AnnotationExecutionBindingID:      pending.Plan.ExecutionBindingID,
+		workload.AnnotationPlanFingerprint:         pending.Plan.Fingerprint,
+		workload.AnnotationPlanContentDigest:       pending.Plan.ContentDigest,
+		workload.AnnotationAdmissionSnapshotDigest: snapshotDigest,
+	}
+	currentFormat := len(job.Annotations) == 10
+	switch {
+	case len(job.Annotations) == 7:
+		// The supported predecessor did not persist controller provenance in
+		// its Job envelope. Keep that compatibility path exact and separate.
+	case currentFormat:
+		if pending.Plan.Name == "" || pending.Plan.UID == "" ||
+			pending.AdmissionSnapshot == nil ||
+			podintent.ValidateSnapshot(pending.AdmissionSnapshot) != nil ||
+			pending.AdmissionSnapshot.Digest != snapshotDigest ||
+			!controllerImagePattern.MatchString(pending.Plan.ControllerImage) ||
+			controllerstate.ValidateRevision(pending.Plan.ControllerRevision) != nil ||
+			pending.Plan.ControllerStateVersion < 1 {
+			return false
+		}
+		wantAnnotations[workload.AnnotationControllerImage] = pending.Plan.ControllerImage
+		wantAnnotations[workload.AnnotationControllerRevision] = pending.Plan.ControllerRevision
+		wantAnnotations[workload.AnnotationControllerStateVersion] = strconv.FormatInt(
+			int64(pending.Plan.ControllerStateVersion),
+			10,
+		)
+	default:
+		return false
+	}
+	if !sha256DigestPattern.MatchString(inputFingerprint) ||
+		!sha256DigestPattern.MatchString(snapshotDigest) ||
+		!reflect.DeepEqual(job.Annotations, wantAnnotations) ||
+		!reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
+		return false
+	}
+	normalized := job.DeepCopy()
+	if err := normalizeGeneratedJobSelector(normalized); err != nil {
+		return false
+	}
+	if !reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
+		return false
+	}
+	if currentFormat {
+		templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
+		return err == nil && templateDigest == pending.AdmissionSnapshot.TemplateDigest
+	}
+	return true
 }
 
 func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
@@ -667,7 +881,7 @@ func (r *SchemaReconciler) reconcileDeletion(ctx context.Context, schema *operat
 					return r.finishUncertainApplyWithEvidence(
 						ctx,
 						schema,
-						job,
+						nil,
 						fmt.Errorf("Apply executor termination is not proven during deletion"),
 						evidence.PodUIDs,
 						evidence.PodCount,
@@ -862,6 +1076,34 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		}
 		if r.Jobs == nil {
 			return ctrl.Result{}, fmt.Errorf("Job builder is not configured")
+		}
+		if operation.JobUID != "" {
+			if !isReadOnlyOperation(operation) {
+				return ctrl.Result{}, fmt.Errorf("missing %s Job has an unsupported persisted UID boundary", operation.Type)
+			}
+			pods, podsErr := r.podsOwnedByJob(ctx, schema.Namespace, operation.JobName, operation.JobUID)
+			if podsErr != nil {
+				return ctrl.Result{}, podsErr
+			}
+			for _, pod := range pods {
+				if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+					// Job deletion does not prove that an already-created Pod has
+					// stopped. Poll the exact owner UID until every old attempt is
+					// terminal or gone before authorizing a new read-only dispatch.
+					return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
+				}
+			}
+			// A persisted UID proves that this attempt already crossed its
+			// dispatch boundary. Job admission only permits CREATE while the
+			// active claim has no UID, so durably advance to a fresh attempt and
+			// deterministic name before a later reconciliation can recreate the
+			// read-only work. Apply is handled above and is never recreated.
+			return r.retryOperation(
+				ctx,
+				schema,
+				nil,
+				fmt.Errorf("%s Job %q with persisted UID %q is missing", operation.Type, operation.JobName, operation.JobUID),
+			)
 		}
 		if operation.AdmissionSnapshot != nil {
 			if snapshotErr := podintent.ValidateSnapshot(operation.AdmissionSnapshot); snapshotErr != nil {
@@ -1138,7 +1380,7 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	honestJob := jobErr == nil && (operation.JobUID == "" || operation.JobUID == job.UID) &&
 		exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahSchema", schema.Name, schema.UID)
 	if operation.Type == operatorv1alpha1.OperationApply {
-		if !honestJob {
+		if !honestJob || schema.DeletionTimestamp != nil {
 			job = nil
 		}
 		return r.finishUncertainApply(ctx, schema, job, fmt.Errorf("database lock continuity was lost during Apply"))
@@ -1146,7 +1388,7 @@ func (r *SchemaReconciler) recoverLeaseContinuity(
 	if honestJob && !jobTerminal(job) {
 		return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
 	}
-	if honestJob {
+	if honestJob && schema.DeletionTimestamp == nil {
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -1446,11 +1688,20 @@ func (r *SchemaReconciler) consumeResult(
 		if !dataplane.DialectMatches(string(engine), result.ObservedDialect) {
 			return r.retryOperation(ctx, schema, job, fmt.Errorf("observation dialect %q does not match target engine %q", result.ObservedDialect, engine))
 		}
+		findings := make([]operatorv1alpha1.DriftFindingStatus, len(result.DriftFindings))
+		for index, finding := range result.DriftFindings {
+			findings[index] = operatorv1alpha1.DriftFindingStatus{
+				Category: finding.Category,
+				Count:    finding.Count,
+				Severity: finding.Severity,
+			}
+		}
 		schema.Status.Target = operatorv1alpha1.TargetStatus{
 			Engine: engine, CoordinationDigest: result.CoordinationDigest,
 			IdentityDigest: result.TargetIdentityDigest, DriftReportDigest: result.DriftReportDigest,
 			LastObservedAt: &now, HighestDriftSeverity: result.HighestDriftSeverity,
-			DriftFindingCount: result.DriftFindingCount,
+			DriftFindingCount: result.DriftFindingCount, DriftFindings: findings,
+			DriftFindingsTruncated: result.DriftFindingsTruncated,
 		}
 		if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
 			return ctrl.Result{}, err
@@ -1508,8 +1759,6 @@ func (r *SchemaReconciler) consumeResult(
 			}
 			observedDrift = ptr(false)
 			schema.Status.Plan = nil
-			schema.Status.Target.HighestDriftSeverity = ""
-			schema.Status.Target.DriftFindingCount = 0
 			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionFalse, operatorv1alpha1.ReasonScopedConverged, "The authoritative managed scope has no changes")
 			setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonNoChanges, "No executable plan is required")
 			if pending != nil && pending.Outcome == operatorv1alpha1.PendingObservationApplySucceeded && pending.Plan.Fingerprint != "" {
@@ -1549,8 +1798,6 @@ func (r *SchemaReconciler) consumeResult(
 			}
 			count, severity := planDriftSummary(decoded)
 			observedDrift = ptr(true)
-			schema.Status.Target.HighestDriftSeverity = severity
-			schema.Status.Target.DriftFindingCount = count
 			setCondition(schema, operatorv1alpha1.ConditionDriftDetected, metav1.ConditionTrue, operatorv1alpha1.ReasonScopedChanges, fmt.Sprintf("Managed scope requires %d schema statements; highest severity %s", count, severity))
 			setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse, operatorv1alpha1.ReasonScopedChanges, "The authoritative managed scope differs from the verified artifact")
 			if pending != nil && (!pendingMatchesCurrentSchema(schema, pending) ||
@@ -1956,14 +2203,26 @@ func (r *SchemaReconciler) claimAt(
 }
 
 func (r *SchemaReconciler) retryOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, failure error) (ctrl.Result, error) {
+	operation := schema.Status.ActiveOperation
+	if !isReadOnlyOperation(operation) {
+		operationType := operatorv1alpha1.OperationType("")
+		if operation != nil {
+			operationType = operation.Type
+		}
+		return ctrl.Result{}, fmt.Errorf("retry requires an active read-only operation, got %q", operationType)
+	}
 	if err := r.markJobHarvested(ctx, job); err != nil {
 		return ctrl.Result{}, err
 	}
 	before := schema.DeepCopy()
-	operation := schema.Status.ActiveOperation
 	operation.Attempt++
 	operation.JobUID = ""
 	operation.DispatchStarted = false
+	// A new read-only attempt is a fresh admission boundary. Re-resolve the
+	// cluster objects and admission configuration that shape its Pod instead of
+	// pinning the new dispatch to the retired attempt's snapshot. Apply never
+	// enters this retry path because its dispatch outcome may be ambiguous.
+	operation.AdmissionSnapshot = nil
 	if operation.Type == operatorv1alpha1.OperationPlan && schema.Status.PendingObservation == nil {
 		release, err := targetLockReleaseForOperation(operation)
 		if err != nil {
@@ -2203,7 +2462,8 @@ func pendingObservationFor(
 	target := *operation.Target
 	return &operatorv1alpha1.PendingObservationStatus{
 		Outcome: outcome, ApplyOperationID: operation.ID, ApplyJobName: operation.JobName, ApplyJobUID: jobUID,
-		ApplyPodUIDs: append([]types.UID(nil), podUIDs...), ApplyPodCount: podCount,
+		AdmissionSnapshot: operation.AdmissionSnapshot.DeepCopy(),
+		ApplyPodUIDs:      append([]types.UID(nil), podUIDs...), ApplyPodCount: podCount,
 		ApplyGeneration: schema.Status.ObservedGeneration, ObserveAfter: observeAfter, Plan: plan, Target: target,
 		CoordinationDigest:   operation.CoordinationDigest,
 		Source:               *operation.Source.DeepCopy(),
@@ -2409,9 +2669,23 @@ func (r *SchemaReconciler) cleanupRetiredExecutionBindingOperation(
 		job := &batchv1.Job{}
 		err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: operation.JobName}, job)
 		switch {
+		case err == nil && operation.JobUID == "" && retiredPredecessorReadOnlyJobMatches(schema, operation, job):
+			// A predecessor CREATE can pass admission before the quiescence fence
+			// and commit after the old controller's final status write. Persist the
+			// fully reconstructed UID first; the following pass is then the same
+			// strict, UID-bound cleanup update used after an ordinary dispatch.
+			before := schema.DeepCopy()
+			operation.JobUID = job.UID
+			if err := r.patchStatus(ctx, before, schema); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{Requeue: true}, nil
 		case err == nil && retiredReadOnlyJobMatches(schema, operation, job):
 			// Scheduling cleanup is not result consumption. Do not inspect Pods or logs:
 			// the old epoch can no longer produce current evidence.
+			if !jobTerminal(job) {
+				return ctrl.Result{RequeueAfter: maxLockContentionPoll}, nil
+			}
 			if err := r.markJobHarvested(ctx, job); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -2439,7 +2713,7 @@ func retiredReadOnlyJobMatches(
 	operation *operatorv1alpha1.ActiveOperationStatus,
 	job *batchv1.Job,
 ) bool {
-	if schema == nil || schema.Status.ExecutionBinding == nil || operation == nil || job == nil ||
+	if schema == nil || schema.Status.ExecutionBinding == nil || !isReadOnlyOperation(operation) || job == nil ||
 		operation.ID == "" || job.UID == "" || operation.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch ||
 		!validExecutionBindingID(operation.ExecutionBindingID) ||
 		!exactControllerOwner(
@@ -2451,12 +2725,125 @@ func retiredReadOnlyJobMatches(
 		) {
 		return false
 	}
-	if operation.JobUID != "" && operation.JobUID != job.UID {
+	expectedName, err := workload.NameFor(schema, *operation.DeepCopy())
+	if err != nil || operation.JobName != expectedName || job.Name != expectedName ||
+		operation.JobUID == "" || operation.JobUID != job.UID || operation.AdmissionSnapshot == nil ||
+		podintent.ValidateSnapshot(operation.AdmissionSnapshot) != nil {
 		return false
 	}
-	return job.Labels[workload.LabelOperation] == strings.ToLower(string(operation.Type)) &&
-		job.Annotations[workload.AnnotationOperationID] == operation.ID &&
-		job.Annotations[workload.AnnotationExecutionBindingID] == operation.ExecutionBindingID
+	wantLabels := map[string]string{
+		workload.LabelManagedBy:   "ptah-operator",
+		workload.LabelComponent:   "schema-operation",
+		workload.LabelSchema:      schema.Name,
+		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
+		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
+	}
+	if !reflect.DeepEqual(job.Labels, wantLabels) {
+		return false
+	}
+	ptahVersion := job.Annotations[workload.AnnotationPtahVersion]
+	if ptahVersion == "" || len(ptahVersion) > 128 || strings.TrimSpace(ptahVersion) != ptahVersion {
+		return false
+	}
+	wantAnnotations := map[string]string{
+		workload.AnnotationOperationID:             operation.ID,
+		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
+		workload.AnnotationPtahVersion:             ptahVersion,
+		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
+		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
+	}
+	switch len(job.Annotations) {
+	case 5:
+		// The supported predecessor did not persist controller provenance.
+		// Keep its envelope exact and separate from the current format.
+	case 8:
+		controllerImage := job.Annotations[workload.AnnotationControllerImage]
+		controllerRevision := job.Annotations[workload.AnnotationControllerRevision]
+		controllerStateVersion := job.Annotations[workload.AnnotationControllerStateVersion]
+		parsedStateVersion, parseErr := strconv.ParseInt(controllerStateVersion, 10, 32)
+		if !controllerImagePattern.MatchString(controllerImage) ||
+			controllerstate.ValidateRevision(controllerRevision) != nil || parseErr != nil ||
+			parsedStateVersion < 1 || strconv.FormatInt(parsedStateVersion, 10) != controllerStateVersion {
+			return false
+		}
+		wantAnnotations[workload.AnnotationControllerImage] = controllerImage
+		wantAnnotations[workload.AnnotationControllerRevision] = controllerRevision
+		wantAnnotations[workload.AnnotationControllerStateVersion] = controllerStateVersion
+	default:
+		return false
+	}
+	if !reflect.DeepEqual(job.Annotations, wantAnnotations) ||
+		!reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
+		return false
+	}
+	normalized := job.DeepCopy()
+	if err := normalizeGeneratedJobSelector(normalized); err != nil ||
+		!reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
+		return false
+	}
+	templateDigest, err := podintent.DigestTemplate(&normalized.Spec.Template)
+	return err == nil && templateDigest == operation.AdmissionSnapshot.TemplateDigest
+}
+
+func retiredPredecessorReadOnlyJobMatches(
+	schema *operatorv1alpha1.PtahSchema,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+	job *batchv1.Job,
+) bool {
+	if schema == nil || schema.Status.ExecutionBinding == nil || !isReadOnlyOperation(operation) || job == nil ||
+		operation.ID == "" || operation.JobUID != "" || job.UID == "" ||
+		!validExecutionBindingID(operation.ExecutionBindingID) ||
+		operation.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch ||
+		!exactControllerOwner(
+			job.OwnerReferences,
+			operatorv1alpha1.GroupVersion.String(),
+			"PtahSchema",
+			schema.Name,
+			schema.UID,
+		) {
+		return false
+	}
+	expectedName, err := workload.NameFor(schema, *operation.DeepCopy())
+	if err != nil || operation.JobName != expectedName || job.Name != expectedName || operation.AdmissionSnapshot == nil {
+		return false
+	}
+	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
+		return false
+	}
+	wantLabels := map[string]string{
+		workload.LabelManagedBy:   "ptah-operator",
+		workload.LabelComponent:   "schema-operation",
+		workload.LabelSchema:      schema.Name,
+		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
+		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
+	}
+	if !reflect.DeepEqual(job.Labels, wantLabels) {
+		return false
+	}
+	ptahVersion := job.Annotations[workload.AnnotationPtahVersion]
+	if ptahVersion == "" || strings.TrimSpace(ptahVersion) != ptahVersion {
+		return false
+	}
+	wantAnnotations := map[string]string{
+		workload.AnnotationOperationID:             operation.ID,
+		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
+		workload.AnnotationPtahVersion:             ptahVersion,
+		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
+		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
+	}
+	if !reflect.DeepEqual(job.Annotations, wantAnnotations) ||
+		!reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
+		return false
+	}
+	normalized := job.DeepCopy()
+	if err := normalizeGeneratedJobSelector(normalized); err != nil ||
+		!reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
+		return false
+	}
+	template := normalized.Spec.Template.DeepCopy()
+	delete(template.Annotations, workload.AnnotationAdmissionSnapshotDigest)
+	templateDigest, err := podintent.DigestTemplate(template)
+	return err == nil && templateDigest == operation.AdmissionSnapshot.TemplateDigest
 }
 
 func executionBindingChangeFenced(schema *operatorv1alpha1.PtahSchema) bool {

@@ -34,6 +34,9 @@ func TestFrameRoundTripFromMixedLogs(t *testing.T) {
 		ObservedDrift:        true,
 		HighestDriftSeverity: "warning",
 		DriftFindingCount:    1,
+		DriftFindings: []DriftFindingSummary{{
+			Category: "columns_added", Count: 1, Severity: "warning",
+		}},
 	}
 	frame, err := MarshalFrame(wanted)
 	if err != nil {
@@ -48,6 +51,128 @@ func TestFrameRoundTripFromMixedLogs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, wanted) {
 		t.Fatalf("ParseResultFor() = %#v, want %#v", got, wanted)
+	}
+}
+
+func TestLegacyProtocolFourRequiresExplicitVersionBinding(t *testing.T) {
+	t.Parallel()
+
+	legacy := Result{
+		ProtocolVersion: legacyProtocolVersion, Operation: OperationObserve, OperationID: "legacy-observe",
+		ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+		TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
+		DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
+		ObservedDrift: true, HighestDriftSeverity: "warning", DriftFindingCount: 1,
+	}
+	frame := handcraftedIntegrityValidFrame(t, legacy)
+	if _, err := MarshalFrame(legacy); !errors.Is(err, ErrMalformedFrame) {
+		t.Fatalf("MarshalFrame(legacy v4) error = %v, want ErrMalformedFrame", err)
+	}
+	if _, err := ParseResultFor(frame, OperationObserve, legacy.OperationID); !errors.Is(err, ErrMalformedFrame) {
+		t.Fatalf("ParseResultFor(legacy v4) error = %v, want ErrMalformedFrame", err)
+	}
+
+	got, err := ParseResultWithOptions(frame, ParseOptions{
+		ExpectedProtocolVersion: legacyProtocolVersion,
+		ExpectedOperation:       legacy.Operation,
+		ExpectedOperationID:     legacy.OperationID,
+	})
+	if err != nil {
+		t.Fatalf("ParseResultWithOptions(explicit legacy v4) error = %v", err)
+	}
+	if !reflect.DeepEqual(got, legacy) {
+		t.Fatalf("ParseResultWithOptions(explicit legacy v4) = %#v, want %#v", got, legacy)
+	}
+}
+
+func TestProtocolFiveDriftRequiresStructuredFindings(t *testing.T) {
+	t.Parallel()
+
+	result := Result{
+		ProtocolVersion: ProtocolVersion, Operation: OperationObserve, OperationID: "observe-missing-findings",
+		ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+		TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
+		DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
+		ObservedDrift: true, HighestDriftSeverity: "warning", DriftFindingCount: 1,
+	}
+	if _, err := MarshalFrame(result); !errors.Is(err, ErrMalformedFrame) {
+		t.Fatalf("MarshalFrame(v5 drift without findings) error = %v, want ErrMalformedFrame", err)
+	}
+	frame := handcraftedIntegrityValidFrame(t, result)
+	if _, err := ParseResultFor(frame, result.Operation, result.OperationID); !errors.Is(err, ErrMalformedFrame) {
+		t.Fatalf("ParseResultFor(v5 drift without findings) error = %v, want ErrMalformedFrame", err)
+	}
+}
+
+func TestLegacyProtocolFourRejectsStructuredFindings(t *testing.T) {
+	t.Parallel()
+
+	result := Result{
+		ProtocolVersion: legacyProtocolVersion, Operation: OperationObserve, OperationID: "legacy-structured-findings",
+		ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+		TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
+		DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
+		ObservedDrift: true, HighestDriftSeverity: "warning", DriftFindingCount: 1,
+		DriftFindings: []DriftFindingSummary{{Category: "columns_added", Count: 1, Severity: "warning"}},
+	}
+	if _, err := ParseResultWithOptions(handcraftedIntegrityValidFrame(t, result), ParseOptions{
+		ExpectedProtocolVersion: legacyProtocolVersion,
+		ExpectedOperation:       result.Operation,
+		ExpectedOperationID:     result.OperationID,
+	}); !errors.Is(err, ErrMalformedFrame) {
+		t.Fatalf("ParseResultWithOptions(legacy v4 with structured findings) error = %v, want ErrMalformedFrame", err)
+	}
+}
+
+func TestFrameRejectsInconsistentStructuredDriftFindings(t *testing.T) {
+	t.Parallel()
+
+	base := Result{
+		ProtocolVersion: ProtocolVersion, Operation: OperationObserve, OperationID: "observe-findings",
+		ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+		TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
+		DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
+		ObservedDrift: true, HighestDriftSeverity: "warning", DriftFindingCount: 2,
+		DriftFindings: []DriftFindingSummary{{Category: "columns_added", Count: 2, Severity: "warning"}},
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Result)
+	}{
+		{name: "invalid category", mutate: func(result *Result) { result.DriftFindings[0].Category = "app.users" }},
+		{name: "unknown identifier category", mutate: func(result *Result) { result.DriftFindings[0].Category = "private_schema_name" }},
+		{name: "zero count", mutate: func(result *Result) { result.DriftFindings[0].Count = 0 }},
+		{name: "count mismatch", mutate: func(result *Result) { result.DriftFindingCount = 3 }},
+		{name: "highest mismatch", mutate: func(result *Result) { result.HighestDriftSeverity = "error" }},
+		{name: "duplicate", mutate: func(result *Result) {
+			result.DriftFindingCount = 4
+			result.DriftFindings = append(result.DriftFindings, result.DriftFindings[0])
+		}},
+		{name: "noncanonical order", mutate: func(result *Result) {
+			result.DriftFindingCount = 3
+			result.DriftFindings = []DriftFindingSummary{
+				{Category: "tables_added", Count: 1, Severity: "safe"},
+				{Category: "columns_added", Count: 2, Severity: "warning"},
+			}
+		}},
+		{name: "invalid truncation", mutate: func(result *Result) { result.DriftFindingsTruncated = true }},
+		{name: "non-observe", mutate: func(result *Result) {
+			result.Operation = OperationResolve
+			result.ResolvedDigest = "sha256:" + strings.Repeat("6", 64)
+			result.ResolvedReference = "oci://registry.example/schema@" + result.ResolvedDigest
+			result.ResolvedMediaType = "application/vnd.example.schema"
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			candidate := base
+			candidate.DriftFindings = append([]DriftFindingSummary(nil), base.DriftFindings...)
+			test.mutate(&candidate)
+			if _, err := MarshalFrame(candidate); !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("MarshalFrame() error = %v, want ErrMalformedFrame", err)
+			}
+		})
 	}
 }
 
@@ -140,10 +265,17 @@ func TestParserRejectsSuccessfulVerifyFrameFromPreviousProtocol(t *testing.T) {
 	}
 
 	previous := current
-	previous.ProtocolVersion = ProtocolVersion - 1
+	previous.ProtocolVersion = legacyProtocolVersion
 	frame := handcraftedIntegrityValidFrame(t, previous)
 	if _, err := ParseResultFor(frame, previous.Operation, previous.OperationID); !errors.Is(err, ErrMalformedFrame) {
 		t.Fatalf("ParseResultFor(previous protocol) error = %v, want ErrMalformedFrame", err)
+	}
+	if _, err := ParseResultWithOptions(frame, ParseOptions{
+		ExpectedProtocolVersion: legacyProtocolVersion,
+		ExpectedOperation:       previous.Operation,
+		ExpectedOperationID:     previous.OperationID,
+	}); err != nil {
+		t.Fatalf("ParseResultWithOptions(explicit previous protocol) error = %v", err)
 	}
 }
 

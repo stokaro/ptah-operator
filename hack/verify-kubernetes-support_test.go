@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,223 @@ func TestValidationDateRejectsNonDate(t *testing.T) {
 	t.Parallel()
 	if _, err := validationDate("2026-8-31"); err == nil || !strings.Contains(err.Error(), "YYYY-MM-DD") {
 		t.Fatalf("validationDate() error = %v, want strict date error", err)
+	}
+}
+
+func TestVerifyKubernetesDependencyWindow(t *testing.T) {
+	t.Parallel()
+
+	releases := []parsedRelease{
+		{release: release{Minor: "1.35"}, major: 1, minor: 35},
+		{release: release{Minor: "1.36"}, major: 1, minor: 36},
+		{release: release{Minor: "1.37"}, major: 1, minor: 37},
+	}
+	moduleFile := func(versionByModule map[string]string) string {
+		var contents strings.Builder
+		contents.WriteString("module example.test/operator\n\nrequire (\n")
+		for _, module := range []string{
+			"k8s.io/api",
+			"k8s.io/apiextensions-apiserver",
+			"k8s.io/apimachinery",
+			"k8s.io/client-go",
+		} {
+			version := versionByModule[module]
+			if version != "" {
+				fmt.Fprintf(&contents, "\t%s %s\n", module, version)
+			}
+		}
+		contents.WriteString(")\n")
+		return contents.String()
+	}
+	all := func(version string) map[string]string {
+		return map[string]string{
+			"k8s.io/api":                     version,
+			"k8s.io/apiextensions-apiserver": version,
+			"k8s.io/apimachinery":            version,
+			"k8s.io/client-go":               version,
+		}
+	}
+	tests := []struct {
+		name      string
+		versions  map[string]string
+		wantError string
+	}{
+		{name: "same minor", versions: all("v0.37.0")},
+		{name: "one-minor forward compatibility", versions: all("v0.36.1")},
+		{
+			name:      "support advanced by two minors",
+			versions:  all("v0.35.9"),
+			wantError: "2 minors ahead",
+		},
+		{
+			name: "mixed Kubernetes module minors",
+			versions: map[string]string{
+				"k8s.io/api":                     "v0.36.1",
+				"k8s.io/apiextensions-apiserver": "v0.36.1",
+				"k8s.io/apimachinery":            "v0.37.0",
+				"k8s.io/client-go":               "v0.36.1",
+			},
+			wantError: "must share one API minor",
+		},
+		{
+			name:      "prerelease dependency",
+			versions:  all("v0.37.0-beta.0"),
+			wantError: "must have one stable",
+		},
+		{
+			name: "missing direct dependency",
+			versions: map[string]string{
+				"k8s.io/api":                     "v0.36.1",
+				"k8s.io/apiextensions-apiserver": "v0.36.1",
+				"k8s.io/apimachinery":            "v0.36.1",
+			},
+			wantError: "k8s.io/client-go must have one stable",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			path := filepath.Join(t.TempDir(), "go.mod")
+			if err := os.WriteFile(path, []byte(moduleFile(test.versions)), 0o600); err != nil {
+				t.Fatalf("write go.mod fixture: %v", err)
+			}
+			_, err := verifyKubernetesDependencyWindow(path, releases)
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("verifyKubernetesDependencyWindow() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyKubernetesDependencyWindow() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestVerifyKubernetesDependencyWindowProposalMode(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "go.mod")
+	contents := `module example.test/operator
+
+require (
+	k8s.io/api v0.36.1
+	k8s.io/apiextensions-apiserver v0.36.1
+	k8s.io/apimachinery v0.36.1
+	k8s.io/client-go v0.36.1
+)
+`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write go.mod fixture: %v", err)
+	}
+	nextWindow := []parsedRelease{
+		{release: release{Minor: "1.36"}, major: 1, minor: 36},
+		{release: release{Minor: "1.37"}, major: 1, minor: 37},
+		{release: release{Minor: "1.38"}, major: 1, minor: 38},
+	}
+	if _, err := verifyKubernetesDependencyWindow(path, nextWindow); err == nil || !strings.Contains(err.Error(), "2 minors ahead") {
+		t.Fatalf("strict dependency verification error = %v, want two-minor skew rejection", err)
+	}
+	if _, err := verifyKubernetesDependencyWindowForMode(path, nextWindow, true); err != nil {
+		t.Fatalf("proposal dependency verification rejected the immediate next window: %v", err)
+	}
+
+	skippedWindow := []parsedRelease{
+		{release: release{Minor: "1.37"}, major: 1, minor: 37},
+		{release: release{Minor: "1.38"}, major: 1, minor: 38},
+		{release: release{Minor: "1.39"}, major: 1, minor: 39},
+	}
+	if _, err := verifyKubernetesDependencyWindowForMode(path, skippedWindow, true); err == nil ||
+		!strings.Contains(err.Error(), "3 minors ahead") {
+		t.Fatalf("proposal dependency verification error = %v, want skipped-window rejection", err)
+	}
+}
+
+func TestVerifyReviewedJobAPIBoundary(t *testing.T) {
+	t.Parallel()
+
+	actualDigest := controllerJobAPISurfaceDigest()
+	if err := verifyReviewedJobAPIBoundary(
+		reviewedKubernetesAPIMinor,
+		reviewedKubernetesSupportMaximum,
+		actualDigest,
+	); err != nil {
+		t.Fatalf("verifyReviewedJobAPIBoundary() rejected the compiled profile: %v", err)
+	}
+	if err := verifyReviewedJobAPIBoundary(
+		reviewedKubernetesAPIMinor,
+		reviewedKubernetesSupportMaximum+1,
+		actualDigest,
+	); err == nil || !strings.Contains(err.Error(), "differs from reviewed Job API boundary") {
+		t.Fatalf("verifyReviewedJobAPIBoundary() support error = %v", err)
+	}
+	if err := verifyReviewedJobAPIBoundary(
+		reviewedKubernetesAPIMinor,
+		reviewedKubernetesSupportMaximum,
+		strings.Repeat("0", 64),
+	); err == nil || !strings.Contains(err.Error(), "reachable Job API surface digest") {
+		t.Fatalf("verifyReviewedJobAPIBoundary() digest error = %v", err)
+	}
+}
+
+func TestVerifyJobAPIBoundaryProposalMode(t *testing.T) {
+	t.Parallel()
+
+	actualDigest := controllerJobAPISurfaceDigest()
+	if err := verifyJobAPIBoundaryForMode(
+		reviewedKubernetesAPIMinor,
+		reviewedKubernetesSupportMaximum+1,
+		actualDigest,
+		true,
+	); err != nil {
+		t.Fatalf("proposal boundary rejected the immediate next minor: %v", err)
+	}
+
+	tests := []struct {
+		name             string
+		compiledMinor    int
+		supportedMaximum int
+		digest           string
+		proposal         bool
+	}{
+		{
+			name:          "ordinary verification cannot bypass review",
+			compiledMinor: reviewedKubernetesAPIMinor, supportedMaximum: reviewedKubernetesSupportMaximum + 1,
+			digest: actualDigest,
+		},
+		{
+			name:          "proposal cannot skip a support minor",
+			compiledMinor: reviewedKubernetesAPIMinor, supportedMaximum: reviewedKubernetesSupportMaximum + 2,
+			digest: actualDigest, proposal: true,
+		},
+		{
+			name:          "proposal cannot conceal dependency drift",
+			compiledMinor: reviewedKubernetesAPIMinor + 1, supportedMaximum: reviewedKubernetesSupportMaximum + 1,
+			digest: actualDigest, proposal: true,
+		},
+		{
+			name:          "proposal cannot conceal reachable API drift",
+			compiledMinor: reviewedKubernetesAPIMinor, supportedMaximum: reviewedKubernetesSupportMaximum + 1,
+			digest: strings.Repeat("0", 64), proposal: true,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if err := verifyJobAPIBoundaryForMode(
+				test.compiledMinor,
+				test.supportedMaximum,
+				test.digest,
+				test.proposal,
+			); err == nil {
+				t.Fatal("verification accepted an unreviewed API boundary")
+			}
+		})
 	}
 }
 
@@ -299,9 +517,37 @@ func TestVerifyUpdateWorkflowRejectsDeliveryMutations(t *testing.T) {
 			old: "          go test ./hack ./hack/updatekubernetessupport\n",
 			new: "          true # deterministic tests omitted\n",
 		},
+		"proposal validation replaced by strict verification": {
+			old: "          go run ./hack/verify-kubernetes-support.go -output=proposal -now \"$today\"\n",
+			new: "          go run ./hack/verify-kubernetes-support.go -now \"$today\"\n",
+		},
 		"forced unchanged output": {
 			old: "            'changed=true' \\\n",
 			new: "            'changed=false' \\\n",
+		},
+		"unchecked status producer": {
+			old: "          git diff --cached --quiet --exit-code\n\n          status_file=\"$RUNNER_TEMP/kubernetes-support-status\"\n          git status --porcelain=v1 --untracked-files=all > \"$status_file\"\n          mapfile -t status_lines < \"$status_file\"\n",
+			new: "          git diff --cached --quiet --exit-code\n\n          mapfile -t status_lines < <(git status --porcelain=v1 --untracked-files=all)\n",
+		},
+		"review commit ancestry guard omitted": {
+			old: "            git merge-base --is-ancestor \"$remote_parent\" \"$BASE_SHA\"\n",
+			new: "            true # ancestry guard omitted\n",
+		},
+		"merged support branch classification omitted": {
+			old: "            if ! git merge-base --is-ancestor \"$remote_oid\" \"$BASE_SHA\"; then\n",
+			new: "            if true; then # every remote branch is treated as replaceable\n",
+		},
+		"review commit count guard omitted": {
+			old: "            commits_ahead=\"$(git rev-list --count \"$BASE_SHA..$remote_oid\")\"\n",
+			new: "            commits_ahead=1 # review commits ignored\n",
+		},
+		"review committer identity guard omitted": {
+			old: "            [[ \"$(git show -s --format=%ce \"$remote_oid\")\" == '41898282+github-actions[bot]@users.noreply.github.com' ]]\n",
+			new: "            true # committer identity guard omitted\n",
+		},
+		"prior support path audit omitted": {
+			old: "            git diff-tree --no-commit-id --name-status -r \"$remote_oid\" > \"$prior_status_file\"\n",
+			new: "            : > \"$prior_status_file\" # prior path audit omitted\n",
 		},
 		"skipped delivery step": {
 			old: "        id: support-window-pr\n",
@@ -449,6 +695,10 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			old: ".event == \"push\"",
 			new: ".event == \"pull_request\"",
 		},
+		"unchecked CI run decoding": {
+			old: "            run_ids_file=\"$RUNNER_TEMP/successful-support-run-ids\"\n            jq -r \\\n",
+			new: "            mapfile -t run_ids < <(jq -r \\\n",
+		},
 		"stable gate": {
 			old: ".name == \"Kubernetes support gate\"",
 			new: ".name == \"Verify source and generated files\"",
@@ -476,6 +726,220 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			path := writeMutatedWorkflow(t, workflow, test.old, test.new)
 			if err := verifyReleaseWorkflow(path); err == nil {
 				t.Fatal("verifyReleaseWorkflow() accepted a critical mutation")
+			}
+		})
+	}
+}
+
+func TestRejectEarlySuccessfulExitCannotBeHiddenByHeredocPayloadQuote(t *testing.T) {
+	t.Parallel()
+
+	contents := []byte(`#!/bin/sh
+set -eu
+: <<'PAYLOAD'
+'
+PAYLOAD
+exit 0
+printf '%s\n' 'LIFECYCLE_COMPLETE'
+`)
+	completion := regexp.MustCompile(`(?m)^printf '%s\\n' 'LIFECYCLE_COMPLETE'$`)
+	err := rejectEarlySuccessfulExit("lifecycle.sh", contents, completion)
+	if err == nil || !strings.Contains(err.Error(), "lifecycle.sh:6: unconditional successful exit") {
+		t.Fatalf("rejectEarlySuccessfulExit() error = %v, want line 6 early-exit rejection", err)
+	}
+}
+
+func TestRejectEarlySuccessfulExitIgnoresHeredocPayloadCommands(t *testing.T) {
+	t.Parallel()
+
+	contents := []byte(`#!/bin/sh
+set -eu
+cat <<-'PAYLOAD'
+	set +eu
+	exit 0
+	PAYLOAD
+printf '%s\n' 'LIFECYCLE_COMPLETE'
+`)
+	completion := regexp.MustCompile(`(?m)^printf '%s\\n' 'LIFECYCLE_COMPLETE'$`)
+	if err := rejectEarlySuccessfulExit("lifecycle.sh", contents, completion); err != nil {
+		t.Fatalf("rejectEarlySuccessfulExit() rejected here-document data: %v", err)
+	}
+}
+
+func TestRejectEarlySuccessfulExitVariants(t *testing.T) {
+	t.Parallel()
+
+	completion := regexp.MustCompile(`(?m)^printf '%s\\n' 'LIFECYCLE_COMPLETE'$`)
+	tests := map[string]struct {
+		command   string
+		wantError bool
+	}{
+		"zero padded status":         {command: "exit 00", wantError: true},
+		"builtin without status":     {command: "builtin exit", wantError: true},
+		"builtin zero status":        {command: "builtin exit 0", wantError: true},
+		"builtin zero padded status": {command: "builtin exit 000", wantError: true},
+		"command zero status":        {command: "command exit 0", wantError: true},
+		"command zero padded status": {command: "command exit 000", wantError: true},
+		"nonzero status":             {command: "exit 1"},
+		"builtin nonzero status":     {command: "builtin exit 17"},
+		"command nonzero status":     {command: "command exit 17"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			contents := []byte("#!/bin/bash\nset -eu\n" + test.command + "\nprintf '%s\\n' 'LIFECYCLE_COMPLETE'\n")
+			err := rejectEarlySuccessfulExit("lifecycle.sh", contents, completion)
+			if test.wantError && (err == nil || !strings.Contains(err.Error(), "unconditional successful exit")) {
+				t.Fatalf("rejectEarlySuccessfulExit(%q) error = %v, want early-exit rejection", test.command, err)
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("rejectEarlySuccessfulExit(%q) error = %v, want acceptance", test.command, err)
+			}
+		})
+	}
+}
+
+func TestRejectEarlySuccessfulExitUsesExecutableShellCode(t *testing.T) {
+	t.Parallel()
+
+	completion := regexp.MustCompile(`(?m)^printf '%s\\n' 'LIFECYCLE_COMPLETE'$`)
+	tests := map[string]struct {
+		prefix    string
+		wantError bool
+	}{
+		"heredoc cannot forge completion": {
+			prefix:    "cat <<'PAYLOAD'\nprintf '%s\\n' 'LIFECYCLE_COMPLETE'\nPAYLOAD\nexit 00\n",
+			wantError: true,
+		},
+		"quoted completion cannot forge completion": {
+			prefix:    "payload='\nprintf '%s\\n' 'LIFECYCLE_COMPLETE'\n'\nexit 00\n",
+			wantError: true,
+		},
+		"quoted exit is data": {
+			prefix: "payload='\nexit 00\n'\n",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			contents := []byte("#!/bin/bash\n" + test.prefix + "printf '%s\\n' 'LIFECYCLE_COMPLETE'\n")
+			err := rejectEarlySuccessfulExit("lifecycle.sh", contents, completion)
+			if test.wantError && (err == nil || !strings.Contains(err.Error(), "unconditional successful exit")) {
+				t.Fatalf("rejectEarlySuccessfulExit() error = %v, want early-exit rejection", err)
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("rejectEarlySuccessfulExit() error = %v, want shell-data acceptance", err)
+			}
+		})
+	}
+}
+
+func TestRejectEarlySuccessfulReturnVariants(t *testing.T) {
+	t.Parallel()
+
+	start := regexp.MustCompile(`(?m)^run_lifecycle\(\) \{$`)
+	completion := regexp.MustCompile(`(?m)^\tprintf '%s\\n' 'ENGINE_COMPLETE'$`)
+	tests := map[string]struct {
+		command   string
+		wantError bool
+	}{
+		"zero padded status":         {command: "return 00", wantError: true},
+		"builtin without status":     {command: "builtin return", wantError: true},
+		"builtin zero status":        {command: "builtin return 0", wantError: true},
+		"builtin zero padded status": {command: "builtin return 000", wantError: true},
+		"command zero status":        {command: "command return 0", wantError: true},
+		"command zero padded status": {command: "command return 000", wantError: true},
+		"nonzero status":             {command: "return 1"},
+		"builtin nonzero status":     {command: "builtin return 17"},
+		"command nonzero status":     {command: "command return 17"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			contents := []byte("#!/bin/bash\nrun_lifecycle() {\n\t" + test.command + "\n\tprintf '%s\\n' 'ENGINE_COMPLETE'\n}\n")
+			err := rejectEarlySuccessfulReturn("lifecycle.sh", contents, start, completion)
+			if test.wantError && (err == nil || !strings.Contains(err.Error(), "unconditional successful return")) {
+				t.Fatalf("rejectEarlySuccessfulReturn(%q) error = %v, want early-return rejection", test.command, err)
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("rejectEarlySuccessfulReturn(%q) error = %v, want acceptance", test.command, err)
+			}
+		})
+	}
+}
+
+func TestRejectEarlySuccessfulReturnUsesExecutableShellCode(t *testing.T) {
+	t.Parallel()
+
+	start := regexp.MustCompile(`(?m)^run_lifecycle\(\) \{$`)
+	completion := regexp.MustCompile(`(?m)^\tprintf '%s\\n' 'ENGINE_COMPLETE'$`)
+	tests := map[string]struct {
+		body      string
+		wantError bool
+	}{
+		"heredoc cannot forge completion": {
+			body:      "\tcat <<'PAYLOAD'\n\tprintf '%s\\n' 'ENGINE_COMPLETE'\nPAYLOAD\n\treturn 00\n",
+			wantError: true,
+		},
+		"heredoc return is data": {
+			body: "\tcat <<'PAYLOAD'\n\treturn 00\nPAYLOAD\n",
+		},
+		"quoted completion cannot forge completion": {
+			body:      "\tpayload='\n\tprintf '%s\\n' 'ENGINE_COMPLETE'\n'\n\treturn 00\n",
+			wantError: true,
+		},
+		"quoted return is data": {
+			body: "\tpayload='\n\treturn 00\n'\n",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			contents := []byte("#!/bin/bash\nrun_lifecycle() {\n" + test.body + "\tprintf '%s\\n' 'ENGINE_COMPLETE'\n}\n")
+			err := rejectEarlySuccessfulReturn("lifecycle.sh", contents, start, completion)
+			if test.wantError && (err == nil || !strings.Contains(err.Error(), "unconditional successful return")) {
+				t.Fatalf("rejectEarlySuccessfulReturn() error = %v, want early-return rejection", err)
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("rejectEarlySuccessfulReturn() error = %v, want shell-data acceptance", err)
+			}
+		})
+	}
+}
+
+func TestRejectStaticControlFlowBypassUsesExecutableShellCode(t *testing.T) {
+	t.Parallel()
+
+	completion := regexp.MustCompile(`(?m)^printf '%s\\n' 'LIFECYCLE_COMPLETE'$`)
+	tests := map[string]struct {
+		prefix    string
+		wantError bool
+	}{
+		"heredoc cannot forge completion": {
+			prefix:    "cat <<'PAYLOAD'\nprintf '%s\\n' 'LIFECYCLE_COMPLETE'\nPAYLOAD\nfalse && run_lifecycle\n",
+			wantError: true,
+		},
+		"heredoc command is data": {
+			prefix: "cat <<'PAYLOAD'\nfalse && run_lifecycle\nPAYLOAD\n",
+		},
+		"quoted completion cannot forge completion": {
+			prefix:    "payload='\nprintf '%s\\n' 'LIFECYCLE_COMPLETE'\n'\nfalse && run_lifecycle\n",
+			wantError: true,
+		},
+		"quoted command is data": {
+			prefix: "payload='\nfalse && run_lifecycle\n'\n",
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			contents := []byte("#!/bin/bash\n" + test.prefix + "printf '%s\\n' 'LIFECYCLE_COMPLETE'\n")
+			err := rejectStaticControlFlowBypass("lifecycle.sh", contents, completion)
+			if test.wantError && (err == nil || !strings.Contains(err.Error(), "can bypass audited lifecycle work")) {
+				t.Fatalf("rejectStaticControlFlowBypass() error = %v, want bypass rejection", err)
+			}
+			if !test.wantError && err != nil {
+				t.Fatalf("rejectStaticControlFlowBypass() error = %v, want shell-data acceptance", err)
 			}
 		})
 	}

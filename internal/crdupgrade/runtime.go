@@ -31,15 +31,19 @@ const (
 	AdmissionContractVersionAnnotation       = "operator.ptah.dev/admission-contract-version"
 	CurrentAdmissionContractVersion    int32 = 1
 
-	mutatingApprovalWebhookName         = "mapproval.operator.ptah.dev"
-	validatingApprovalWebhookName       = "vapproval.operator.ptah.dev"
-	podIntentWebhookName                = "vpodintent.operator.ptah.dev"
-	mutatingApprovalPath                = "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
-	validatingApprovalPath              = "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
-	podIntentPath                       = "/validate-v1-pod-ptah-operation-intent"
-	podIntentMatchConditionName         = "job-owned-pod"
-	podIntentMatchExpression            = `object.metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true) || (request.operation == 'UPDATE' && oldObject != null && oldObject.metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true))`
-	storedControllerStatePageSize int64 = 500
+	mutatingApprovalWebhookName                = "mapproval.operator.ptah.dev"
+	validatingApprovalWebhookName              = "vapproval.operator.ptah.dev"
+	podIntentWebhookName                       = "vpodintent.operator.ptah.dev"
+	controllerWriteWebhookName                 = "vcontrollerwrite.operator.ptah.dev"
+	mutatingApprovalPath                       = "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
+	validatingApprovalPath                     = "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
+	podIntentPath                              = "/validate-v1-pod-ptah-operation-intent"
+	controllerWritePath                        = "/validate-operator-controller-write"
+	podIntentMatchConditionName                = "job-owned-pod"
+	podIntentMatchExpression                   = `object.metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true) || (request.operation == 'UPDATE' && oldObject != null && oldObject.metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true))`
+	controllerWriteMatchConditionName          = "controller-service-account"
+	controllerWriteWebhookTimeoutSeconds       = int32(30)
+	storedControllerStatePageSize        int64 = 500
 )
 
 func exactPodIntentObjectSelector() *metav1.LabelSelector {
@@ -281,6 +285,9 @@ type webhookContract struct {
 	matchConditionName string
 	matchExpression    string
 	reinvocationPolicy *admissionregistrationv1.ReinvocationPolicyType
+	matchPolicy        admissionregistrationv1.MatchPolicyType
+	timeoutSeconds     int32
+	rules              []admissionregistrationv1.RuleWithOperations
 }
 
 type webhookView struct {
@@ -320,16 +327,26 @@ func verifyMutatingWebhookContract(configuration *admissionregistrationv1.Mutati
 }
 
 func verifyValidatingWebhookContract(configuration *admissionregistrationv1.ValidatingWebhookConfiguration, expected RuntimeInvariants) error {
-	if len(configuration.Webhooks) != 2 {
-		return fmt.Errorf("fixed admission singleton ValidatingWebhookConfiguration/%s has %d webhooks, expected exactly 2", configuration.Name, len(configuration.Webhooks))
-	}
-	want := map[string]webhookContract{
-		validatingApprovalWebhookName: {
+	return verifyValidatingWebhookContracts(configuration, expected, true)
+}
+
+func verifyLegacyValidatingWebhookContract(configuration *admissionregistrationv1.ValidatingWebhookConfiguration, expected RuntimeInvariants) error {
+	return verifyValidatingWebhookContracts(configuration, expected, false)
+}
+
+func verifyValidatingWebhookContracts(
+	configuration *admissionregistrationv1.ValidatingWebhookConfiguration,
+	expected RuntimeInvariants,
+	includeControllerWrite bool,
+) error {
+	scope := admissionregistrationv1.NamespacedScope
+	want := []webhookContract{
+		{
 			name: validatingApprovalWebhookName, path: validatingApprovalPath,
 			operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
 			apiGroups:  []string{"operator.ptah.dev"}, apiVersions: []string{"v1alpha1"}, resources: []string{"ptahschemaapprovals"},
 		},
-		podIntentWebhookName: {
+		{
 			name: podIntentWebhookName, path: podIntentPath,
 			operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
 			apiGroups:  []string{""}, apiVersions: []string{"v1"}, resources: []string{"pods", "pods/ephemeralcontainers", "pods/resize"},
@@ -338,16 +355,43 @@ func verifyValidatingWebhookContract(configuration *admissionregistrationv1.Vali
 			matchExpression:    podIntentMatchExpression,
 		},
 	}
-	seen := make(map[string]struct{}, len(configuration.Webhooks))
-	for _, webhook := range configuration.Webhooks {
-		contract, found := want[webhook.Name]
-		if !found {
-			return fmt.Errorf("fixed admission singleton ValidatingWebhookConfiguration/%s has unexpected webhook %q", configuration.Name, webhook.Name)
-		}
-		if _, duplicate := seen[webhook.Name]; duplicate {
-			return fmt.Errorf("fixed admission singleton ValidatingWebhookConfiguration/%s duplicates webhook %q", configuration.Name, webhook.Name)
-		}
-		seen[webhook.Name] = struct{}{}
+	if includeControllerWrite {
+		want = append(want, webhookContract{
+			name: controllerWriteWebhookName, path: controllerWritePath,
+			timeoutSeconds:     controllerWriteWebhookTimeoutSeconds,
+			matchPolicy:        admissionregistrationv1.Exact,
+			matchConditionName: controllerWriteMatchConditionName,
+			matchExpression: fmt.Sprintf(
+				"request.userInfo.username == 'system:serviceaccount:%s:%s'",
+				expected.ReleaseNamespace,
+				expected.ControllerServiceAccountName,
+			),
+			rules: []admissionregistrationv1.RuleWithOperations{
+				{
+					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
+					Rule:       admissionregistrationv1.Rule{APIGroups: []string{"batch"}, APIVersions: []string{"v1"}, Resources: []string{"jobs"}, Scope: &scope},
+				},
+				{
+					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+					Rule:       admissionregistrationv1.Rule{APIGroups: []string{""}, APIVersions: []string{"v1"}, Resources: []string{"configmaps"}, Scope: &scope},
+				},
+				{
+					Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+					Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahschemaplans"}, Scope: &scope},
+				},
+			},
+		})
+	}
+	if len(configuration.Webhooks) != len(want) {
+		return fmt.Errorf(
+			"fixed admission singleton ValidatingWebhookConfiguration/%s has %d webhooks, expected exactly %d",
+			configuration.Name,
+			len(configuration.Webhooks),
+			len(want),
+		)
+	}
+	for index, contract := range want {
+		webhook := configuration.Webhooks[index]
 		if err := verifyWebhookContract("ValidatingWebhookConfiguration", configuration.Name, webhookView{
 			name: webhook.Name, admissionReviewVersions: webhook.AdmissionReviewVersions,
 			clientConfig: webhook.ClientConfig, rules: webhook.Rules,
@@ -376,11 +420,19 @@ func verifyWebhookContract(kind, configurationName string, actual webhookView, w
 	if actual.sideEffects == nil || *actual.sideEffects != admissionregistrationv1.SideEffectClassNone {
 		return fmt.Errorf("%s sideEffects must be None", prefix)
 	}
-	if actual.matchPolicy == nil || *actual.matchPolicy != admissionregistrationv1.Equivalent {
-		return fmt.Errorf("%s matchPolicy must be Equivalent", prefix)
+	wantMatchPolicy := want.matchPolicy
+	if wantMatchPolicy == "" {
+		wantMatchPolicy = admissionregistrationv1.Equivalent
 	}
-	if actual.timeoutSeconds == nil || *actual.timeoutSeconds != expected.WebhookTimeoutSeconds {
-		return fmt.Errorf("%s timeoutSeconds must be %d", prefix, expected.WebhookTimeoutSeconds)
+	if actual.matchPolicy == nil || *actual.matchPolicy != wantMatchPolicy {
+		return fmt.Errorf("%s matchPolicy must be %s", prefix, wantMatchPolicy)
+	}
+	wantTimeoutSeconds := expected.WebhookTimeoutSeconds
+	if want.timeoutSeconds != 0 {
+		wantTimeoutSeconds = want.timeoutSeconds
+	}
+	if actual.timeoutSeconds == nil || *actual.timeoutSeconds != wantTimeoutSeconds {
+		return fmt.Errorf("%s timeoutSeconds must be %d", prefix, wantTimeoutSeconds)
 	}
 	if !equalOptional(actual.reinvocationPolicy, want.reinvocationPolicy) {
 		return fmt.Errorf("%s reinvocationPolicy is not the expected value", prefix)
@@ -396,14 +448,17 @@ func verifyWebhookContract(kind, configurationName string, actual webhookView, w
 		service.Path == nil || *service.Path != want.path || service.Port == nil || *service.Port != 443 {
 		return fmt.Errorf("%s Service target does not match %s/%s%s on port 443", prefix, expected.ReleaseNamespace, expected.WebhookServiceName, want.path)
 	}
-	scope := admissionregistrationv1.NamespacedScope
-	wantRules := []admissionregistrationv1.RuleWithOperations{{
-		Operations: want.operations,
-		Rule: admissionregistrationv1.Rule{
-			APIGroups: want.apiGroups, APIVersions: want.apiVersions,
-			Resources: want.resources, Scope: &scope,
-		},
-	}}
+	wantRules := want.rules
+	if wantRules == nil {
+		scope := admissionregistrationv1.NamespacedScope
+		wantRules = []admissionregistrationv1.RuleWithOperations{{
+			Operations: want.operations,
+			Rule: admissionregistrationv1.Rule{
+				APIGroups: want.apiGroups, APIVersions: want.apiVersions,
+				Resources: want.resources, Scope: &scope,
+			},
+		}}
+	}
 	if !reflect.DeepEqual(actual.rules, wantRules) {
 		return fmt.Errorf("%s rules do not match the exact admission scope", prefix)
 	}
@@ -421,7 +476,7 @@ func verifyWebhookContract(kind, configurationName string, actual webhookView, w
 	}
 	if len(actual.matchConditions) != 1 || actual.matchConditions[0].Name != want.matchConditionName ||
 		normalizeExpression(actual.matchConditions[0].Expression) != normalizeExpression(want.matchExpression) {
-		return fmt.Errorf("%s matchConditions do not match the exact Job-owner predicate", prefix)
+		return fmt.Errorf("%s matchConditions do not match the exact admission predicate", prefix)
 	}
 	return nil
 }

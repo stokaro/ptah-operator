@@ -24,8 +24,8 @@ func TestReleaseTeardownDeletesExactInventoryInSafeOrder(t *testing.T) {
 
 	fixture := newReleaseTeardownFixture(t)
 	wantOrder := expectedReleaseTeardownOrder(fixture.guard)
-	if len(wantOrder) != 30 {
-		t.Fatalf("known teardown inventory has %d objects, want 30", len(wantOrder))
+	if len(wantOrder) != 40 {
+		t.Fatalf("known teardown inventory has %d objects, want 40", len(wantOrder))
 	}
 	if err := fixture.teardown.Preflight(context.Background()); err != nil {
 		t.Fatalf("read-only preflight: %v", err)
@@ -444,6 +444,7 @@ func newReleaseTeardownFixture(t *testing.T) *releaseTeardownFixture {
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{
 			readyValidatingApprovalWebhook(expected),
 			readyPodIntentWebhook(expected),
+			readyControllerWriteWebhook(expected),
 		},
 	}
 	setTeardownObjectIdentity(validatingObject, "validating-webhook")
@@ -505,6 +506,11 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 	parentHookContractName := ParentHookJobContractPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	serviceAccountName := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	controllerWriteName := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	controllerJobWriteName := ControllerJobWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	controllerChunkWriteName := ControllerChunkWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	controllerPlanWriteName := ControllerPlanWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	certificateMutatingWriteName := CertificateMutatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	certificateValidatingWriteName := CertificateValidatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	namespaceName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 
 	parameterized := []string{activationName, rolloutName, runtimeName, runtimePodName}
@@ -512,6 +518,8 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 		hookName, hookProbeName,
 		parentReplicaSetName, parentHookOriginName, parentHookPodOriginName, parentHookContractName,
 		serviceAccountName, controllerWriteName,
+		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
+		certificateMutatingWriteName, certificateValidatingWriteName,
 	}
 	policies := append(append([]string(nil), parameterized...), remaining...)
 

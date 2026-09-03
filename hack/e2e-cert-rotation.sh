@@ -37,6 +37,23 @@ webhook_bundle() {
 		jq -r --arg name "$webhook_name" '
           [.webhooks[] | select(.name == $name) | .clientConfig.caBundle] |
           if length == 1 then .[0] else empty end
+		'
+}
+
+uniform_service_bundle() {
+	kind=$1
+	configuration=$2
+	kubectl --kubeconfig "$KUBECONFIG_FILE" get "$kind" "$configuration" -o json |
+		jq -r --arg service "$SERVICE" '
+          .webhooks as $webhooks |
+          [$webhooks[] | select(.clientConfig.service.name == $service) | .clientConfig.caBundle] as $bundles |
+          if ($webhooks | length) > 0 and
+             ($bundles | length) == ($webhooks | length) and
+             ($bundles | all(type == "string" and length > 0)) and
+             ($bundles | unique | length) == 1
+          then $bundles[0]
+          else empty
+          end
         '
 }
 
@@ -81,8 +98,7 @@ assert_entry_bundle() {
 	configuration=$2
 	webhook_name=$3
 	entry_certificate=$4
-	foreign_certificate_a=$5
-	foreign_certificate_b=$6
+	shift 4
 	observed_bundle=$(webhook_bundle "$kind" "$configuration" "$webhook_name")
 	[ -n "$observed_bundle" ] || fail "could not read caBundle for ${webhook_name}"
 	observed_file=$UPGRADE_WORK_DIR/observed-${webhook_name}.pem
@@ -99,7 +115,7 @@ assert_entry_bundle() {
 	if ! openssl verify -CAfile "$observed_file" "$entry_certificate" >/dev/null 2>&1; then
 		fail "caBundle for ${webhook_name} dropped its entry-local root"
 	fi
-	for foreign_certificate in "$foreign_certificate_a" "$foreign_certificate_b"; do
+	for foreign_certificate in "$@"; do
 		if openssl verify -CAfile "$observed_file" "$foreign_certificate" >/dev/null 2>&1; then
 			fail "caBundle for ${webhook_name} gained another entry's root"
 		fi
@@ -143,6 +159,12 @@ ROTATOR_DEPLOYMENT=$(resource_name deployment certificate-rotation)
 ROTATOR_DEPLOYMENT_JSON=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get deployment "$ROTATOR_DEPLOYMENT" -o json)
 ROTATOR_SERVICE_ACCOUNT=$(printf '%s' "$ROTATOR_DEPLOYMENT_JSON" | jq -r '.spec.template.spec.serviceAccountName')
+ROTATOR_POD=$(resource_name pod certificate-rotation)
+ROTATOR_POD_JSON=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+	get pod "$ROTATOR_POD" -o json)
+ROTATOR_SERVICE_ACCOUNT_UID=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+	get serviceaccount "$ROTATOR_SERVICE_ACCOUNT" -o jsonpath='{.metadata.uid}')
+ROTATOR_POD_UID=$(printf '%s' "$ROTATOR_POD_JSON" | jq -r '.metadata.uid')
 MUTATING_CONFIGURATION=$(resource_name mutatingwebhookconfiguration "")
 VALIDATING_CONFIGURATION=$(resource_name validatingwebhookconfiguration "")
 SERVICE=$(kubectl --kubeconfig "$KUBECONFIG_FILE" get \
@@ -163,6 +185,10 @@ fi
 if [ -z "$ROTATOR_SERVICE_ACCOUNT" ] || [ "$ROTATOR_SERVICE_ACCOUNT" = null ]; then
 	fail "certificate rotator ServiceAccount was not found"
 fi
+if [ -z "$ROTATOR_SERVICE_ACCOUNT_UID" ] || [ -z "$ROTATOR_POD" ] || [ -z "$ROTATOR_POD_UID" ] ||
+	[ "$ROTATOR_POD_UID" = null ]; then
+	fail "certificate rotator workload-bound identity was not found"
+fi
 printf '%s' "$ROTATOR_DEPLOYMENT_JSON" |
 	jq -e '.spec.template.spec.containers[] | select(.name == "certificate-rotator") | .args | index("--recreate-missing-secret=true") != null' \
 		>/dev/null ||
@@ -173,6 +199,75 @@ if [ "$(kubectl --kubeconfig "$KUBECONFIG_FILE" auth can-i \
 	get "secret/${SECRET_NAME}" -n "$OPERATOR_NAMESPACE")" != no ]; then
 	fail "manager ServiceAccount can read the webhook Secret"
 fi
+
+rotator_kube() {
+	kubectl --kubeconfig "$KUBECONFIG_FILE" \
+		--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${ROTATOR_SERVICE_ACCOUNT}" \
+		--as-uid="$ROTATOR_SERVICE_ACCOUNT_UID" \
+		--as-group=system:serviceaccounts \
+		--as-group="system:serviceaccounts:${OPERATOR_NAMESPACE}" \
+		--as-group=system:authenticated \
+		--as-user-extra="authentication.kubernetes.io/pod-name=${ROTATOR_POD}" \
+		--as-user-extra="authentication.kubernetes.io/pod-uid=${ROTATOR_POD_UID}" \
+		"$@"
+}
+
+CERTIFICATE_WRITE_PROBE_INDEX=0
+expect_certificate_write_denial() {
+	resource=$1
+	description=$2
+	filter=$3
+	denial=$4
+	CERTIFICATE_WRITE_PROBE_INDEX=$((CERTIFICATE_WRITE_PROBE_INDEX + 1))
+	source=$UPGRADE_WORK_DIR/certificate-write-${CERTIFICATE_WRITE_PROBE_INDEX}-source.json
+	candidate=$UPGRADE_WORK_DIR/certificate-write-${CERTIFICATE_WRITE_PROBE_INDEX}-candidate.json
+	error_file=$UPGRADE_WORK_DIR/certificate-write-${CERTIFICATE_WRITE_PROBE_INDEX}.err
+	kubectl --kubeconfig "$KUBECONFIG_FILE" get "$resource" ptah-operator-admission -o json >"$source"
+	jq "$filter" "$source" >"$candidate"
+	if rotator_kube replace --field-manager='' --dry-run=server -f "$candidate" \
+		>/dev/null 2>"$error_file"; then
+		fail "certificate write guard accepted ${description}"
+	fi
+	grep -F "$denial" "$error_file" >/dev/null ||
+		fail "${description} was not rejected by the typed certificate write guard"
+}
+
+prove_certificate_write_guards() {
+	proof_bundle=$(printf '%s' 'certificate-write-boundary-proof' | base64 | tr -d '\n')
+	for resource in mutatingwebhookconfiguration validatingwebhookconfiguration; do
+		source=$UPGRADE_WORK_DIR/${resource}-ca-source.json
+		candidate=$UPGRADE_WORK_DIR/${resource}-ca-candidate.json
+		kubectl --kubeconfig "$KUBECONFIG_FILE" get "$resource" ptah-operator-admission -o json >"$source"
+		jq --arg bundle "$proof_bundle" '(.webhooks[].clientConfig.caBundle) = $bundle' \
+			"$source" >"$candidate"
+		rotator_kube replace --field-manager='' --dry-run=server -f "$candidate" >/dev/null ||
+			fail "certificate write guard rejected a bounded CA-only ${resource} update"
+	done
+	expect_certificate_write_denial mutatingwebhookconfiguration \
+		'a mutating reinvocationPolicy change' \
+		'.webhooks[0].reinvocationPolicy = "IfNeeded"' \
+		'Ptah certificate mutating write guard rejected an unsafe mutation'
+	expect_certificate_write_denial validatingwebhookconfiguration \
+		'a validating failurePolicy change' \
+		'.webhooks[0].failurePolicy = "Ignore"' \
+		'Ptah certificate validating write guard rejected an unsafe mutation'
+	expect_certificate_write_denial validatingwebhookconfiguration \
+		'a validating metadata annotation change' \
+		'.metadata.annotations["operator.ptah.dev/certificate-write-e2e"] = "changed"' \
+		'Ptah certificate validating write guard rejected an unsafe mutation'
+	expect_certificate_write_denial validatingwebhookconfiguration \
+		'an empty validating caBundle' \
+		'.webhooks[0].clientConfig.caBundle = ""' \
+		'Ptah certificate validating write guard rejected an unsafe mutation'
+	# shellcheck disable=SC2016 # jq binds $first; the shell must not expand it.
+	expect_certificate_write_denial validatingwebhookconfiguration \
+		'a validating webhook reorder' \
+		'.webhooks[0] as $first | .webhooks[0] = .webhooks[1] | .webhooks[1] = $first' \
+		'Ptah certificate validating write guard rejected an unsafe mutation'
+	printf '%s\n' 'e2e certificate rotation: typed certificate write boundary proof passed'
+}
+
+prove_certificate_write_guards
 
 GUARD_ERROR=$UPGRADE_WORK_DIR/secret-guard.err
 if kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
@@ -228,9 +323,11 @@ fi
 MUTATING_UPGRADE_CA=$(generate_upgrade_ca mutating)
 APPROVAL_UPGRADE_CA=$(generate_upgrade_ca approval-validating)
 POD_UPGRADE_CA=$(generate_upgrade_ca pod-validating)
+CONTROLLER_WRITE_UPGRADE_CA=$(generate_upgrade_ca controller-write-validating)
 MUTATING_OVERLAP=$(build_overlap_bundle mutating "$MUTATING_UPGRADE_CA")
 APPROVAL_OVERLAP=$(build_overlap_bundle approval-validating "$APPROVAL_UPGRADE_CA")
 POD_OVERLAP=$(build_overlap_bundle pod-validating "$POD_UPGRADE_CA")
+CONTROLLER_WRITE_OVERLAP=$(build_overlap_bundle controller-write-validating "$CONTROLLER_WRITE_UPGRADE_CA")
 
 kubectl --kubeconfig "$KUBECONFIG_FILE" get \
 	mutatingwebhookconfiguration "$MUTATING_CONFIGURATION" -o json |
@@ -240,18 +337,21 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" get \
 	kubectl --kubeconfig "$KUBECONFIG_FILE" replace -f - >/dev/null
 kubectl --kubeconfig "$KUBECONFIG_FILE" get \
 	validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" -o json |
-	jq --arg approval "$APPROVAL_OVERLAP" --arg pod "$POD_OVERLAP" '
-      (.webhooks[] | select(.name == "vapproval.operator.ptah.dev") | .clientConfig.caBundle) = $approval |
-      (.webhooks[] | select(.name == "vpodintent.operator.ptah.dev") | .clientConfig.caBundle) = $pod
+	jq --arg approval "$APPROVAL_OVERLAP" --arg pod "$POD_OVERLAP" --arg controller "$CONTROLLER_WRITE_OVERLAP" '
+	      (.webhooks[] | select(.name == "vapproval.operator.ptah.dev") | .clientConfig.caBundle) = $approval |
+	      (.webhooks[] | select(.name == "vpodintent.operator.ptah.dev") | .clientConfig.caBundle) = $pod |
+	      (.webhooks[] | select(.name == "vcontrollerwrite.operator.ptah.dev") | .clientConfig.caBundle) = $controller
     ' |
 	kubectl --kubeconfig "$KUBECONFIG_FILE" replace -f - >/dev/null
 
 assert_entry_bundle mutatingwebhookconfiguration "$MUTATING_CONFIGURATION" \
-	mapproval.operator.ptah.dev "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
+	mapproval.operator.ptah.dev "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
 assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
-	vapproval.operator.ptah.dev "$APPROVAL_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$POD_UPGRADE_CA"
+	vapproval.operator.ptah.dev "$APPROVAL_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
 assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
-	vpodintent.operator.ptah.dev "$POD_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA"
+	vpodintent.operator.ptah.dev "$POD_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
+assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
+	vcontrollerwrite.operator.ptah.dev "$CONTROLLER_WRITE_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
 assert_approval_admission_callable "before the Helm upgrade"
 
 if ! helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
@@ -260,11 +360,13 @@ if ! helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAG
 fi
 
 assert_entry_bundle mutatingwebhookconfiguration "$MUTATING_CONFIGURATION" \
-	mapproval.operator.ptah.dev "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
+	mapproval.operator.ptah.dev "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
 assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
-	vapproval.operator.ptah.dev "$APPROVAL_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$POD_UPGRADE_CA"
+	vapproval.operator.ptah.dev "$APPROVAL_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
 assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
-	vpodintent.operator.ptah.dev "$POD_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA"
+	vpodintent.operator.ptah.dev "$POD_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
+assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
+	vcontrollerwrite.operator.ptah.dev "$CONTROLLER_WRITE_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
 assert_approval_admission_callable "after the Helm upgrade"
 
 # Corrupt ca.crt while leaving the serving leaf and key intact. One malformed
@@ -326,14 +428,8 @@ NEW_CERT=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 [ "$NEW_CA" != "$OLD_CA" ] || fail "recovery rotation did not replace the CA"
 [ "$NEW_CERT" != "$OLD_CERT" ] || fail "recovery rotation did not replace the serving certificate"
 
-MUTATING_CA=$(kubectl --kubeconfig "$KUBECONFIG_FILE" get mutatingwebhookconfiguration \
-	-l "app.kubernetes.io/instance=${HELM_RELEASE}" -o json |
-	jq -r --arg service "$SERVICE" \
-		'[.items[].webhooks[] | select(.name == "mapproval.operator.ptah.dev" and .clientConfig.service.name == $service) | .clientConfig.caBundle] | if length == 1 then .[0] else empty end')
-VALIDATING_CA=$(kubectl --kubeconfig "$KUBECONFIG_FILE" get validatingwebhookconfiguration \
-	-l "app.kubernetes.io/instance=${HELM_RELEASE}" -o json |
-	jq -r --arg service "$SERVICE" \
-		'[.items[].webhooks[] | select((.name == "vapproval.operator.ptah.dev" or .name == "vpodintent.operator.ptah.dev") and .clientConfig.service.name == $service) | .clientConfig.caBundle] | if length == 2 and (unique | length) == 1 then .[0] else empty end')
+MUTATING_CA=$(uniform_service_bundle mutatingwebhookconfiguration "$MUTATING_CONFIGURATION")
+VALIDATING_CA=$(uniform_service_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION")
 [ "$MUTATING_CA" = "$NEW_CA" ] || fail "mutating webhook trust did not contract to the replacement CA"
 [ "$VALIDATING_CA" = "$NEW_CA" ] || fail "validating webhook trust did not contract to the replacement CA"
 
@@ -391,14 +487,8 @@ done
 kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
 	deployment "$DEPLOYMENT" --timeout=5m >/dev/null ||
 	fail "manager Deployment did not remain ready after Secret recreation"
-MUTATING_CA=$(kubectl --kubeconfig "$KUBECONFIG_FILE" get mutatingwebhookconfiguration \
-	"$MUTATING_CONFIGURATION" -o json |
-	jq -r --arg service "$SERVICE" \
-		'[.webhooks[] | select(.name == "mapproval.operator.ptah.dev" and .clientConfig.service.name == $service) | .clientConfig.caBundle] | if length == 1 then .[0] else empty end')
-VALIDATING_CA=$(kubectl --kubeconfig "$KUBECONFIG_FILE" get validatingwebhookconfiguration \
-	"$VALIDATING_CONFIGURATION" -o json |
-	jq -r --arg service "$SERVICE" \
-		'[.webhooks[] | select((.name == "vapproval.operator.ptah.dev" or .name == "vpodintent.operator.ptah.dev") and .clientConfig.service.name == $service) | .clientConfig.caBundle] | if length == 2 and (unique | length) == 1 then .[0] else empty end')
+MUTATING_CA=$(uniform_service_bundle mutatingwebhookconfiguration "$MUTATING_CONFIGURATION")
+VALIDATING_CA=$(uniform_service_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION")
 [ "$MUTATING_CA" = "$RECREATED_CA" ] || fail "mutating webhook trust did not contract after Secret recreation"
 [ "$VALIDATING_CA" = "$RECREATED_CA" ] || fail "validating webhook trust did not contract after Secret recreation"
 

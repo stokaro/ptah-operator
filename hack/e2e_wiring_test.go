@@ -159,6 +159,12 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "exact Kubernetes version syntax",
 		},
 		{
+			name:        "supported Kubernetes minor binding omitted",
+			old:         `K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)`,
+			replacement: `K8S_MAJOR_MINOR=1.37`,
+			wantError:   "supported Kubernetes minor binding",
+		},
+		{
 			name:        "support manifest image lookup omitted",
 			old:         `if [ -z "$KIND_NODE_IMAGE" ]; then`,
 			replacement: `if false; then`,
@@ -183,6 +189,12 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "kind version binding",
 		},
 		{
+			name:        "guarded API feature gate omitted",
+			old:         `		printf '%s\n' '  WorkloadWithJob: true'`,
+			replacement: `		printf '%s\n' '  WorkloadWithJob: false'`,
+			wantError:   "guarded API feature gates",
+		},
+		{
 			name:        "kind cluster creation omitted",
 			old:         "kind create cluster \\\n",
 			replacement: "true # kind cluster creation omitted\n",
@@ -205,6 +217,18 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			old:         `v"$K8S_VERSION"*) ;;`,
 			replacement: `v*) ;;`,
 			wantError:   "API server version binding",
+		},
+		{
+			name:        "admission OpenAPI endpoint omitted",
+			old:         `/openapi/v3/apis/admissionregistration.k8s.io/v1 >"$ADMISSION_OPENAPI_FILE"`,
+			replacement: `/openapi/v3 >"$ADMISSION_OPENAPI_FILE"`,
+			wantError:   "live admission OpenAPI boundary",
+		},
+		{
+			name:        "admission OpenAPI filter bypassed",
+			old:         `"$ADMISSION_OPENAPI_FILE" >/dev/null ||`,
+			replacement: `"$ADMISSION_OPENAPI_FILE" >/dev/null || true ||`,
+			wantError:   "live admission OpenAPI boundary",
 		},
 		{
 			name:        "upgrade lifecycle omitted",
@@ -471,6 +495,337 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 	}
 }
 
+func TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.crdUpgrade)
+	tests := []struct {
+		name        string
+		old         string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "next revision is not bound to current revision",
+			old:         `failed_revision=$((before_revision + 1))`,
+			replacement: `failed_revision=$before_revision`,
+			wantError:   "current and next failed revision binding",
+		},
+		{
+			name:        "hook name is not derived from rendered identity",
+			old:         `expected_hook_name=$(printf '%s' "$hook_service_account" | cut -c1-53 | sed 's/-$//')-preflight`,
+			replacement: `expected_hook_name=ptah-crd-preflight`,
+			wantError:   "rendered preflight hook identity binding",
+		},
+		{
+			name:        "failed revision is not selected explicitly",
+			old:         `--revision "$failed_revision" -o json >"$status_file"; then`,
+			replacement: `-o json >"$status_file"; then`,
+			wantError:   "explicit revision retrieval",
+		},
+		{
+			name:        "evidence is checked against previous revision",
+			old:         `--argjson expected_revision "$failed_revision" \`,
+			replacement: `--argjson expected_revision "$before_revision" \`,
+			wantError:   "exact failed preflight evidence evaluation",
+		},
+		{
+			name:        "evidence omits exact hook name",
+			old:         `--arg expected_name "$expected_hook_name" \`,
+			replacement: `--arg expected_name "" \`,
+			wantError:   "exact failed preflight evidence evaluation",
+		},
+		{
+			name:        "evidence omits exact hook weight",
+			old:         `--argjson expected_weight -60 \`,
+			replacement: `--argjson expected_weight -50 \`,
+			wantError:   "exact failed preflight evidence evaluation",
+		},
+		{
+			name:        "evidence filter result is ignored",
+			old:         `-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$status_file" >/dev/null; then`,
+			replacement: `-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$status_file" >/dev/null || true; then`,
+			wantError:   "exact failed preflight evidence evaluation",
+		},
+		{
+			name: "stderr is parsed as hook evidence",
+			old:  `status_file=$WORK_DIR/failed-upgrade-status.json`,
+			replacement: "status_file=$WORK_DIR/failed-upgrade-status.json\n" +
+				`grep -F preflight "$WORK_DIR/failed-upgrade.err" >/dev/null || true`,
+			wantError: "stderr may only be captured once",
+		},
+		{
+			name: "structured revision evidence is overwritten",
+			old:  `status_file=$WORK_DIR/failed-upgrade-status.json`,
+			replacement: "status_file=$WORK_DIR/failed-upgrade-status.json\n" +
+				`printf '%s\n' '{}' >"$status_file"`,
+			wantError: "must flow only from the explicitly retrieved structured revision status",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.crdUpgrade = writeMutatedE2ESource(t, "e2e-crd-upgrade.sh", source, test.old, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestVerifyAdmissionSchemaAssetsRejectCriticalMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	t.Run("filter accepts added fields", func(t *testing.T) {
+		t.Parallel()
+		source := readE2ESource(t, files.admissionSchemaContract)
+		mutated := files
+		mutated.admissionSchemaContract = writeMutatedE2ESource(
+			t,
+			"admission-schema-contract.jq",
+			source,
+			`if $actual == $expected then true`,
+			`if ($expected - $actual | length) == 0 then true`,
+		)
+		if err := verifyAdmissionSchemaAssets(mutated); err == nil || !strings.Contains(err.Error(), "exact configuration, metadata, client, and webhook field inventories") {
+			t.Fatalf("verifyAdmissionSchemaAssets() error = %v, want exact inventory rejection", err)
+		}
+	})
+
+	t.Run("configuration negative removed", func(t *testing.T) {
+		t.Parallel()
+		source := readE2ESource(t, files.admissionSchemaSelftest)
+		mutated := files
+		mutated.admissionSchemaSelftest = writeMutatedE2ESource(
+			t,
+			"admission-schema-contract-selftest.sh",
+			source,
+			`if jq -e -f "$FILTER" "$top_level" >/dev/null 2>&1; then`,
+			`if false; then`,
+		)
+		if err := verifyAdmissionSchemaAssets(mutated); err == nil || !strings.Contains(err.Error(), "added configuration field refusal") {
+			t.Fatalf("verifyAdmissionSchemaAssets() error = %v, want configuration negative rejection", err)
+		}
+	})
+
+	t.Run("static invocation removed", func(t *testing.T) {
+		t.Parallel()
+		source := readE2ESource(t, files.staticChecks)
+		mutated := files
+		mutated.staticChecks = writeMutatedE2ESource(
+			t,
+			"e2e-static.sh",
+			source,
+			`"$(dirname -- "$0")/admission-schema-contract-selftest.sh"`,
+			`: # admission schema self-test removed`,
+		)
+		if err := verifyAdmissionSchemaAssets(mutated); err == nil || !strings.Contains(err.Error(), "admission schema self-test wiring") {
+			t.Fatalf("verifyAdmissionSchemaAssets() error = %v, want static wiring rejection", err)
+		}
+	})
+}
+
+func TestVerifyControllerObjectSchemaAssetsRejectCriticalMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	t.Run("reviewed field inventory changed", func(t *testing.T) {
+		t.Parallel()
+		source := readE2ESource(t, files.controllerSchemaContract)
+		mutated := files
+		mutated.controllerSchemaContract = writeMutatedE2ESource(
+			t,
+			"controller-object-schema-contract.jq",
+			source,
+			`    "scheduling",`,
+			`    "schedulingGroup",`,
+		)
+		if err := verifyControllerObjectSchemaAssets(mutated); err == nil || !strings.Contains(err.Error(), "field inventory digest") {
+			t.Fatalf("verifyControllerObjectSchemaAssets() error = %v, want inventory digest rejection", err)
+		}
+	})
+
+	t.Run("unreviewed minor negative removed", func(t *testing.T) {
+		t.Parallel()
+		source := readE2ESource(t, files.controllerSchemaSelftest)
+		mutated := files
+		mutated.controllerSchemaSelftest = writeMutatedE2ESource(
+			t,
+			"controller-object-schema-contract-selftest.sh",
+			source,
+			`if evaluate 1.38 "$batch_fixture" "$core_fixture" 2>/dev/null; then`,
+			`if false; then`,
+		)
+		if err := verifyControllerObjectSchemaAssets(mutated); err == nil || !strings.Contains(err.Error(), "unreviewed minor refusal") {
+			t.Fatalf("verifyControllerObjectSchemaAssets() error = %v, want unreviewed-minor rejection", err)
+		}
+	})
+
+	t.Run("static invocation removed", func(t *testing.T) {
+		t.Parallel()
+		source := readE2ESource(t, files.staticChecks)
+		mutated := files
+		mutated.staticChecks = writeMutatedE2ESource(
+			t,
+			"e2e-static.sh",
+			source,
+			`"$(dirname -- "$0")/controller-object-schema-contract-selftest.sh"`,
+			`: # controller object schema self-test removed`,
+		)
+		if err := verifyControllerObjectSchemaAssets(mutated); err == nil || !strings.Contains(err.Error(), "controller object schema self-test wiring") {
+			t.Fatalf("verifyControllerObjectSchemaAssets() error = %v, want static wiring rejection", err)
+		}
+	})
+}
+
+func TestVerifyFailedHookEvidenceFilterRejectsContractMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.failedHookEvidence)
+	tests := []struct {
+		name        string
+		old         string
+		replacement string
+	}{
+		{name: "revision", old: `(.version == $expected_revision)`, replacement: `(.version >= $expected_revision)`},
+		{name: "release status", old: `(.info.status == "failed")`, replacement: `(.info.status != "deployed")`},
+		{name: "single failed hook", old: `($failed | length == 1)`, replacement: `($failed | length >= 1)`},
+		{name: "hook name", old: `.name == $expected_name`, replacement: `.name != ""`},
+		{name: "hook kind", old: `.kind == "Job"`, replacement: `.kind != ""`},
+		{name: "hook weight", old: `(.weight | tonumber) == $expected_weight`, replacement: `(.weight | tonumber) <= $expected_weight`},
+		{name: "hook event", old: `((.events // []) | index("pre-upgrade") != null)`, replacement: `((.events // []) | length > 0)`},
+		{name: "started timestamp", old: `((.last_run.started_at // "") | length > 0)`, replacement: `true`},
+		{name: "completed timestamp", old: `((.last_run.completed_at // "") | length > 0))`, replacement: `true)`},
+		{name: "later hook cutoff", old: `((.weight | tonumber) > $expected_weight)`, replacement: `((.weight | tonumber) >= $expected_weight)`},
+		{name: "later hook exclusion", old: `hook_phase == ""`, replacement: `hook_phase != "Failed"`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.failedHookEvidence = writeMutatedE2ESource(t, "failed-hook-evidence.jq", source, test.old, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), "failed Helm hook evidence filter") {
+				t.Fatalf("verifyE2EWiring() error = %v, want exact filter contract rejection", err)
+			}
+		})
+	}
+}
+
+func TestVerifyFailedHookEvidenceSelftestRejectsCriticalMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.failedHookEvidenceSelftest)
+	tests := []struct {
+		name        string
+		old         string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "wrong filter is evaluated",
+			old:         `-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$1" >/dev/null`,
+			replacement: `-f "$ROOT_DIR/hack/other-filter.jq" "$1" >/dev/null`,
+			wantError:   "revision-bound failed-hook evaluator",
+		},
+		{
+			name:        "valid fixture evaluation is removed",
+			old:         `evaluate "$WORK_DIR/valid.json"`,
+			replacement: `: # valid fixture evaluation removed`,
+			wantError:   "valid fixture evaluation",
+		},
+		{
+			name:        "revision negative is removed",
+			old:         `expect_rejected wrong-revision '.version = 8'`,
+			replacement: `: # wrong revision accepted`,
+			wantError:   "wrong revision refusal",
+		},
+		{
+			name:        "name negative is removed",
+			old:         `expect_rejected wrong-name '.hooks[1].name = "other-preflight"'`,
+			replacement: `: # wrong name accepted`,
+			wantError:   "wrong hook name refusal",
+		},
+		{
+			name:        "weight negative is removed",
+			old:         `expect_rejected wrong-weight '.hooks[1].weight = -59'`,
+			replacement: `: # wrong weight accepted`,
+			wantError:   "wrong hook weight refusal",
+		},
+		{
+			name:        "later hook negative is removed",
+			old:         `expect_rejected later-hook-ran '.hooks[2].last_run = .hooks[0].last_run'`,
+			replacement: `: # later hook execution accepted`,
+			wantError:   "later hook execution refusal",
+		},
+		{
+			name:        "negative checker returns successfully",
+			old:         "expect_rejected() {\n",
+			replacement: "expect_rejected() {\n\treturn 0\n",
+			wantError:   "unconditional successful return",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.failedHookEvidenceSelftest = writeMutatedE2ESource(t, "failed-hook-evidence-selftest.sh", source, test.old, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestVerifyFailedHookEvidenceStaticWiringRejectsMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.staticChecks)
+	tests := []struct {
+		name        string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "self-test invocation removed",
+			replacement: `: # failed hook evidence self-test removed`,
+			wantError:   "failed-hook evidence self-test wiring",
+		},
+		{
+			name:        "self-test failure ignored",
+			replacement: `"$(dirname -- "$0")/failed-hook-evidence-selftest.sh" || true`,
+			wantError:   "failed-hook evidence self-test wiring",
+		},
+		{
+			name: "self-test hidden in false branch",
+			replacement: "if false; then\n" +
+				"\t\"$(dirname -- \"$0\")/failed-hook-evidence-selftest.sh\"\n" +
+				"fi",
+			wantError: "always-false wrapper",
+		},
+	}
+	const invocation = `"$(dirname -- "$0")/failed-hook-evidence-selftest.sh"`
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.staticChecks = writeMutatedE2ESource(t, "e2e-static.sh", source, invocation, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
 func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 	t.Parallel()
 
@@ -551,6 +906,34 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			old:         "prove_runtime_singleton_guard\n",
 			replacement: "true # singleton proof removed\n",
 			wantError:   "runtime singleton proof call",
+		},
+		{
+			name:        "CRD predecessor Job cleanup proof removed",
+			child:       "crd-upgrade",
+			old:         "wait_for_predecessor_read_only_job_cleanup\n",
+			replacement: "true # predecessor Job cleanup proof removed\n",
+			wantError:   "predecessor read-only Job cleanup proof",
+		},
+		{
+			name:        "CRD predecessor Apply cleanup proof removed",
+			child:       "crd-upgrade",
+			old:         "wait_for_predecessor_apply_job_cleanup\n",
+			replacement: "true # predecessor Apply cleanup proof removed\n",
+			wantError:   "predecessor Apply cleanup proof",
+		},
+		{
+			name:        "CRD live predecessor Apply overlap proof removed",
+			child:       "crd-upgrade",
+			old:         "assert_predecessor_apply_remains_exclusive_while_running\n",
+			replacement: "true # predecessor Apply overlap proof removed\n",
+			wantError:   "predecessor Apply upgrade overlap proof",
+		},
+		{
+			name:        "CRD controller guarded-field proof removed",
+			child:       "crd-upgrade",
+			old:         "prove_controller_object_supported_window_guard\n",
+			replacement: "true # controller guarded-field proof removed\n",
+			wantError:   "controller guarded-field proof call",
 		},
 		{
 			name:        "CRD upgrade proof returns immediately",
@@ -712,14 +1095,21 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 
 func repositoryE2EWiringFiles() e2eWiringFiles {
 	return e2eWiringFiles{
-		makefile:         filepath.Join("..", makefilePath),
-		harness:          filepath.Join("..", e2eHarnessPath),
-		dataPlane:        filepath.Join("..", e2eDataPlanePath),
-		assertions:       filepath.Join("..", e2eAssertPath),
-		crdUpgrade:       filepath.Join("..", e2eCRDUpgradePath),
-		faults:           filepath.Join("..", e2eFaultsPath),
-		highAvailability: filepath.Join("..", e2eHAPath),
-		certRotation:     filepath.Join("..", e2eCertRotationPath),
+		makefile:                   filepath.Join("..", makefilePath),
+		harness:                    filepath.Join("..", e2eHarnessPath),
+		staticChecks:               filepath.Join("..", e2eStaticPath),
+		dataPlane:                  filepath.Join("..", e2eDataPlanePath),
+		assertions:                 filepath.Join("..", e2eAssertPath),
+		crdUpgrade:                 filepath.Join("..", e2eCRDUpgradePath),
+		faults:                     filepath.Join("..", e2eFaultsPath),
+		highAvailability:           filepath.Join("..", e2eHAPath),
+		certRotation:               filepath.Join("..", e2eCertRotationPath),
+		failedHookEvidence:         filepath.Join("..", failedHookEvidencePath),
+		failedHookEvidenceSelftest: filepath.Join("..", failedHookEvidenceSelftestPath),
+		admissionSchemaContract:    filepath.Join("..", admissionSchemaContractPath),
+		admissionSchemaSelftest:    filepath.Join("..", admissionSchemaSelftestPath),
+		controllerSchemaContract:   filepath.Join("..", controllerSchemaContractPath),
+		controllerSchemaSelftest:   filepath.Join("..", controllerSchemaSelftestPath),
 	}
 }
 

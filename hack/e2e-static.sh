@@ -2,6 +2,10 @@
 
 set -eu
 
+"$(dirname -- "$0")/failed-hook-evidence-selftest.sh"
+"$(dirname -- "$0")/admission-schema-contract-selftest.sh"
+"$(dirname -- "$0")/controller-object-schema-contract-selftest.sh"
+
 unset CDPATH
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-static.XXXXXX")
@@ -104,6 +108,8 @@ dash -n "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 
 shellcheck "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 
+"$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
+
 predecessor_revision=$(jq -er '.revision' "$PREDECESSOR_IDENTITY")
 [ "$predecessor_revision" = 210c9673e6ad8e339278d99cc4735557332df7bd ] || {
 	printf '%s\n' 'e2e static: predecessor revision identity changed unexpectedly' >&2
@@ -194,6 +200,97 @@ grep -F 'run_predecessor_upgrade_proof' "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/de
 	printf '%s\n' 'e2e static: predecessor upgrade proof is not wired into the CRD lifecycle' >&2
 	exit 1
 }
+for predecessor_job_marker in \
+	'wait_for_predecessor_read_only_job() {' \
+	'stage_predecessor_read_only_job_completion' \
+	'stage_predecessor_read_only_job_uid_gap' \
+	'wait_for_predecessor_read_only_job_cleanup'; do
+	grep -F "$predecessor_job_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
+		printf '%s\n' 'e2e static: predecessor read-only Job cleanup proof is incomplete' >&2
+		exit 1
+	}
+done
+# shellcheck disable=SC2016 # These checks intentionally match literal harness variables.
+for predecessor_apply_marker in \
+	'prepare_predecessor_apply_fixture() {' \
+	'start_predecessor_apply_barrier' \
+	'start_predecessor_apply_fixture' \
+	'wait_for_predecessor_apply_barrier_contention' \
+	'stage_predecessor_apply_job_uid_gap_while_running' \
+	'assert_predecessor_apply_remains_exclusive_while_running' \
+	'assert_predecessor_apply_barrier_contended' \
+	'release_predecessor_apply_barrier' \
+	'wait_for_predecessor_apply_job_terminal' \
+	'wait_for_predecessor_apply_job_cleanup' \
+	'go -C "$ROOT_DIR" run ./hack/predecessorapplyfixture'; do
+	grep -F "$predecessor_apply_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
+		printf '%s\n' 'e2e static: predecessor running Apply cleanup proof is incomplete' >&2
+		exit 1
+	}
+done
+[ "$(grep -Fc 'assert_predecessor_apply_remains_exclusive_while_running' \
+	"$ROOT_DIR/hack/e2e-crd-upgrade.sh")" -eq 2 ] || {
+	printf '%s\n' 'e2e static: predecessor running Apply cleanup proof is not called exactly once' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # These checks intentionally match literal harness variables.
+for controller_object_live_marker in \
+	'E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION:?E2E_KUBERNETES_VERSION is required}' \
+	'verify_supported_server_version' \
+	'prove_controller_object_supported_window_guard() {' \
+	'expect_controller_job_api_acceptance' \
+	'expect_controller_job_vap_denial' \
+	'JobSpec.scheduling' \
+	'PodSpec.evictionResponders' \
+	'EmptyDirVolumeSource.mode' \
+	'VolumeMount.bindMountOptions' \
+	'PodSpec.workloadRef' \
+	'Ptah controller Job write guard rejected an unsafe workload shape'; do
+	grep -F "$controller_object_live_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
+		printf '%s\n' 'e2e static: live controller-object guarded-field proof is incomplete' >&2
+		exit 1
+	}
+done
+# shellcheck disable=SC2016 # Match the literal child-process version binding.
+[ "$(grep -Fc 'E2E_KUBERNETES_VERSION=$K8S_VERSION' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ] || {
+	printf '%s\n' 'e2e static: live Kubernetes version is not bound into both CRD lifecycle phases' >&2
+	exit 1
+}
+for controller_object_feature_gate in \
+	'EmptyDirVolumeMode: true' \
+	'EvictionRequestAPI: true' \
+	'VolumeBindMountOptions: true' \
+	'WorkloadWithJob: true'; do
+	grep -F "$controller_object_feature_gate" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+		printf '%s\n' 'e2e static: kind lacks a required controller-object guarded-field feature gate' >&2
+		exit 1
+	}
+done
+[ "$(grep -Fc 'GenericWorkload: true' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ] || {
+	printf '%s\n' 'e2e static: kind does not enable GenericWorkload for both guarded API versions' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # These checks intentionally match literal harness variables.
+for admission_schema_marker in \
+	'kubectl --kubeconfig "$KUBECONFIG_FILE" get --raw' \
+	'/openapi/v3/apis/admissionregistration.k8s.io/v1' \
+	'hack/admission-schema-contract.jq'; do
+	grep -F -- "$admission_schema_marker" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+		printf '%s\n' 'e2e static: per-minor admission OpenAPI contract is not wired into the cluster path' >&2
+		exit 1
+	}
+done
+# shellcheck disable=SC2016 # These checks intentionally match literal harness variables.
+for controller_schema_marker in \
+	'/openapi/v3/apis/batch/v1' \
+	'/openapi/v3/api/v1' \
+	'--arg minor "${server_major}.${server_minor}"' \
+	'hack/controller-object-schema-contract.jq'; do
+	grep -F -- "$controller_schema_marker" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+		printf '%s\n' 'e2e static: per-minor controller Job OpenAPI contract is not wired into the cluster path' >&2
+		exit 1
+	}
+done
 release_values_section=$(sed -n '/^render_release_values()/,/^}/p' "$ROOT_DIR/hack/e2e-kind.sh")
 [ -n "$release_values_section" ] || {
 	printf '%s\n' 'e2e static: separate predecessor and candidate values helper is missing' >&2
@@ -339,8 +436,8 @@ if manager_pods_replaced '["old-a","old-b"]' '["new-a"]' >/dev/null 2>&1; then
 	exit 1
 fi
 
-grep -Eq '^[[:space:]]*ProtocolVersion = 4$' "$ROOT_DIR/internal/runner/protocol.go" || {
-	printf '%s\n' 'e2e static: runner protocol constant is not version 4' >&2
+grep -Eq '^[[:space:]]*ProtocolVersion = 5$' "$ROOT_DIR/internal/runner/protocol.go" || {
+	printf '%s\n' 'e2e static: runner protocol constant is not version 5' >&2
 	exit 1
 }
 grep -F 'TestParserRejectsSuccessfulVerifyFrameFromPreviousProtocol' \
@@ -1004,7 +1101,7 @@ for lifecycle_marker in \
 	'registryAuthFrom' \
 		'coordinationKey' \
 		'.status.target.driftReportDigest != ""' \
-		'.spec.runnerProtocolVersion == 4' \
+		'.spec.runnerProtocolVersion == 5' \
 		'e2e-faults.sh' \
 	'run_mysql_dsn_refusal' \
 	'audit_started_containers' \
@@ -1115,6 +1212,16 @@ static_require_order() {
 		static_after=$static_line
 	done
 }
+
+# shellcheck disable=SC2016 # Exact handoff markers intentionally retain shell variables literally.
+static_require_order "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
+	'predecessor Apply database barrier handoff' \
+	'E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT' \
+	'E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID' \
+	'E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP' \
+	'E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE' \
+	'E2E_PHASE=upgrade' \
+	'"$ROOT_DIR/hack/e2e-crd-upgrade.sh"'
 
 control_plane_plan_fixture_section=$(sed -n '/^artifact_digest=/,/^approval_json()/p' \
 	"$ROOT_DIR/hack/e2e-assert.sh")
@@ -4054,6 +4161,8 @@ done
 # shellcheck disable=SC2016 # Match literal impersonation variables in the live proof.
 for controller_write_live_marker in \
 	'prove_controller_write_guard' \
+	'prove_controller_direct_write_webhook' \
+	'directly read plan manifest' \
 	'--as-user-extra "authentication.kubernetes.io/pod-name=$CONTROLLER_IMPERSONATION_POD_NAME"' \
 	'--as-user-extra "authentication.kubernetes.io/pod-uid=$CONTROLLER_IMPERSONATION_POD_UID"' \
 	'expect_controller_write_denial spec' \
@@ -4062,8 +4171,22 @@ for controller_write_live_marker in \
 	'expect_controller_write_denial ownerReferences' \
 	"expect_controller_write_denial 'a foreign finalizer'" \
 	'operator.ptah.dev/active-operation' \
-	'controller desired-state write boundary proof passed'; do
+	'controller desired-state and direct-write boundaries passed'; do
 	grep -F -- "$controller_write_live_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
+done
+
+# shellcheck disable=SC2016 # Match literal impersonation variables in the live proof.
+for certificate_write_live_marker in \
+	'prove_certificate_write_guards' \
+	'--as-user-extra="authentication.kubernetes.io/pod-name=${ROTATOR_POD}"' \
+	'--as-user-extra="authentication.kubernetes.io/pod-uid=${ROTATOR_POD_UID}"' \
+	'certificate write guard rejected a bounded CA-only' \
+	'a mutating reinvocationPolicy change' \
+	'a validating failurePolicy change' \
+	'an empty validating caBundle' \
+	'a validating webhook reorder' \
+	'typed certificate write boundary proof passed'; do
+	grep -F -- "$certificate_write_live_marker" "$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
 done
 
 default_role_namespace=$(awk '
@@ -4124,10 +4247,10 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
 	--set-string webhook.existingSecret=e2e-webhook-cert \
-	--set-string webhook.caBundle=e2e-ca >"$ADMISSION_RENDER"
+	--set-string webhook.caBundle=ZTJlLWNh >"$ADMISSION_RENDER"
 [ "$(grep -Fc 'resources: ["ptahschemas/finalizers", "ptahschemaplans/finalizers"]' \
 	"$RENDERED_WEBHOOKS")" -eq 1 ] || {
-	printf '%s\n' 'e2e static: rendered controller role lacks its exact owner-finalizer resources' >&2
+	printf '%s\n' 'e2e static: rendered controller role lacks its exact blocking-owner finalizer resources' >&2
 	exit 1
 }
 finalizer_verbs=$(awk '
@@ -4142,12 +4265,20 @@ finalizer_verbs=$(awk '
 }
 [ "$(grep -c '^kind: MutatingWebhookConfiguration$' "$ADMISSION_RENDER")" -eq 1 ]
 [ "$(grep -c '^kind: ValidatingWebhookConfiguration$' "$ADMISSION_RENDER")" -eq 1 ]
-[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$ADMISSION_RENDER")" -eq 3 ]
+[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$ADMISSION_RENDER")" -eq 4 ]
 grep -F 'name: vpodintent.operator.ptah.dev' "$ADMISSION_RENDER" >/dev/null
 grep -F 'path: /validate-v1-pod-ptah-operation-intent' "$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["pods", "pods/ephemeralcontainers", "pods/resize"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'operations: ["CREATE", "UPDATE"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'name: job-owned-pod' "$ADMISSION_RENDER" >/dev/null
+grep -F 'name: vcontrollerwrite.operator.ptah.dev' "$ADMISSION_RENDER" >/dev/null
+grep -F 'path: /validate-operator-controller-write' "$ADMISSION_RENDER" >/dev/null
+grep -F 'name: controller-service-account' "$ADMISSION_RENDER" >/dev/null
+grep -F 'request.userInfo.username ==' "$ADMISSION_RENDER" >/dev/null
+grep -F "'system:serviceaccount:ptah-e2e:ptah-e2e-ptah-operator'" "$ADMISSION_RENDER" >/dev/null
+grep -F 'resources: ["jobs"]' "$ADMISSION_RENDER" >/dev/null
+grep -F 'resources: ["configmaps"]' "$ADMISSION_RENDER" >/dev/null
+grep -F 'resources: ["ptahschemaplans"]' "$ADMISSION_RENDER" >/dev/null
 [ "$(grep -c '^[[:space:]]*objectSelector:$' "$ADMISSION_RENDER")" -eq 1 ] || {
 	printf '%s\n' 'e2e static: only the Pod intent webhook may have an object selector' >&2
 	exit 1
@@ -4159,7 +4290,12 @@ rendered_webhook_block() {
         selected = ($3 == target)
       }
       selected { print }
-    ' "$ADMISSION_RENDER"
+	' "$ADMISSION_RENDER"
+}
+controller_write_webhook=$(rendered_webhook_block vcontrollerwrite.operator.ptah.dev)
+[ "$(printf '%s\n' "$controller_write_webhook" | sed -n 's/^[[:space:]]*timeoutSeconds: //p')" = 30 ] || {
+	printf '%s\n' 'e2e static: controller-write webhook does not use its dedicated 30-second fail-closed timeout' >&2
+	exit 1
 }
 for approval_webhook_name in mapproval.operator.ptah.dev vapproval.operator.ptah.dev; do
 	approval_webhook=$(rendered_webhook_block "$approval_webhook_name")
@@ -4378,7 +4514,7 @@ for crd_file in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	cmp "$crd_file" "$ROOT_DIR/charts/ptah-operator/crds/$crd_basename"
 	cmp "$crd_file" "$ROOT_DIR/internal/crdupgrade/assets/$crd_basename"
 	[ "$(grep -Fc 'operator.ptah.dev/controller-state-version: "1"' "$crd_file")" -eq 1 ]
-	[ "$(grep -Fc 'operator.ptah.dev/crd-schema-version: "1"' "$crd_file")" -eq 1 ]
+	[ "$(grep -Fc 'operator.ptah.dev/crd-schema-version: "2"' "$crd_file")" -eq 1 ]
 	[ "$(grep -Ec 'operator[.]ptah[.]dev/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
 done
 [ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 3 ]
@@ -4393,7 +4529,7 @@ for crd_directory in \
 		exit 1
 	fi
 done
-grep -F 'CRD_SCHEMA_VERSION := 1' "$ROOT_DIR/Makefile" >/dev/null
+grep -F 'CRD_SCHEMA_VERSION := 2' "$ROOT_DIR/Makefile" >/dev/null
 grep -F 'CONTROLLER_STATE_VERSION := 1' "$ROOT_DIR/Makefile" >/dev/null
 # shellcheck disable=SC2016 # Match the literal deterministic-mode command in the generator.
 grep -F 'chmod 0644 "$STAMP_TEMP"' "$ROOT_DIR/hack/stamp-crd-schema-version.sh" >/dev/null
@@ -4429,6 +4565,8 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/hook-identity-guard.yaml \
 	--show-only templates/namespace-guard.yaml \
 	--show-only templates/controller-write-guard.yaml \
+	--show-only templates/controller-object-guard.yaml \
+	--show-only templates/certificate-write-guard.yaml \
 	--show-only templates/parent-workload-guard.yaml \
 	--show-only templates/rollout-guard.yaml \
 	--show-only templates/runtime-pod-guard.yaml \
@@ -4595,7 +4733,7 @@ done
 grep -F -- '--controller-image=ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222' \
 	"$CRD_FULL_RENDER" >/dev/null
 [ "$(grep -Fc 'resources: ["customresourcedefinitions"]' "$CRD_FULL_RENDER")" -eq 3 ]
-[ "$(grep -Fc 'resourceNames: ["ptah-operator-admission"]' "$CRD_FULL_RENDER")" -eq 7 ]
+[ "$(grep -Fc 'resourceNames: ["ptah-operator-admission"]' "$CRD_FULL_RENDER")" -eq 11 ]
 teardown_resource_count=$(grep -Ec '^apiVersion:' "$TEARDOWN_RENDER")
 [ "$teardown_resource_count" -eq 18 ]
 [ "$(grep -Fc 'helm.sh/hook: pre-delete' "$TEARDOWN_RENDER")" -eq "$teardown_resource_count" ]
@@ -4682,6 +4820,95 @@ for controller_write_marker in \
 	'Ptah controller write guard rejected a desired-state mutation'; do
 	grep -F -- "$controller_write_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
 done
+controller_object_guard_names=$(awk '
+  $1 == "name:" &&
+    ($2 ~ /^ptah-operator-job-write-guard-v1-/ ||
+     $2 ~ /^ptah-operator-chunk-write-guard-v1-/ ||
+     $2 ~ /^ptah-operator-plan-write-guard-v1-/) {
+    print $2
+  }
+' "$ROLLOUT_GUARD_RENDER" | sort -u)
+[ "$(printf '%s\n' "$controller_object_guard_names" | grep -c .)" -eq 3 ] || {
+	printf '%s\n' 'e2e static: rendered controller object boundary lacks three typed guard identities' >&2
+	exit 1
+}
+for controller_object_guard_name in $controller_object_guard_names; do
+	[ "$(grep -Fxc -- "  name: $controller_object_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 2 ] || {
+		printf 'e2e static: controller object guard %s does not have one policy and binding\n' \
+			"$controller_object_guard_name" >&2
+		exit 1
+	}
+	[ "$(grep -Fxc -- "  policyName: $controller_object_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 1 ] || {
+		printf 'e2e static: controller object binding does not target %s exactly once\n' \
+			"$controller_object_guard_name" >&2
+		exit 1
+	}
+	[ "$(grep -Fxc -- "      - $controller_object_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
+		printf 'e2e static: lifecycle RBAC does not share controller object guard %s\n' \
+			"$controller_object_guard_name" >&2
+		exit 1
+	}
+done
+for controller_object_marker in \
+	'helm.sh/hook-weight: "-152"' \
+	'helm.sh/hook-weight: "-151"' \
+	'resources: ["jobs"]' \
+	'resources: ["configmaps"]' \
+	'resources: ["ptahschemaplans"]' \
+	'object.spec.ttlSecondsAfterFinished == 300' \
+	'object.binaryData[\"chunk\"].size() <= 524288' \
+	'object.spec.contractVersion == 3' \
+	'Ptah controller Job write guard rejected an unsafe workload shape' \
+	'Ptah controller chunk write guard rejected an unsafe ConfigMap shape' \
+	'Ptah controller plan write guard rejected an unsafe manifest shape'; do
+	grep -F -- "$controller_object_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
+done
+certificate_write_guard_names=$(awk '
+  $1 == "name:" &&
+    ($2 ~ /^ptah-operator-certificate-mutate-guard-v1-/ ||
+     $2 ~ /^ptah-operator-certificate-validate-guard-v1-/) {
+    print $2
+  }
+' "$ROLLOUT_GUARD_RENDER" | sort -u)
+[ "$(printf '%s\n' "$certificate_write_guard_names" | grep -c .)" -eq 2 ] || {
+	printf '%s\n' 'e2e static: rendered certificate write boundary lacks two typed guard identities' >&2
+	exit 1
+}
+for certificate_write_guard_name in $certificate_write_guard_names; do
+	[ "$(grep -Fxc -- "  name: $certificate_write_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 2 ] || {
+		printf 'e2e static: certificate write guard %s does not have one policy and binding\n' \
+			"$certificate_write_guard_name" >&2
+		exit 1
+	}
+	[ "$(grep -Fxc -- "  policyName: $certificate_write_guard_name" "$ROLLOUT_GUARD_RENDER")" -eq 1 ] || {
+		printf 'e2e static: certificate write binding does not target %s exactly once\n' \
+			"$certificate_write_guard_name" >&2
+		exit 1
+	}
+	[ "$(grep -Fxc -- "      - $certificate_write_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
+		printf 'e2e static: runtime, rotator, upgrade, and teardown RBAC do not share certificate guard %s\n' \
+			"$certificate_write_guard_name" >&2
+		exit 1
+	}
+done
+for certificate_write_marker in \
+	'helm.sh/hook-weight: "-156"' \
+	'helm.sh/hook-weight: "-155"' \
+	'helm.sh/hook-weight: "-154"' \
+	'helm.sh/hook-weight: "-153"' \
+	'resources: ["mutatingwebhookconfigurations"]' \
+	'resources: ["validatingwebhookconfigurations"]' \
+	'request.userInfo.username == \"system:serviceaccount:ptah-e2e:ptah-e2e-ptah-operator-cert-rotator\"' \
+	'object.metadata.selfLink' \
+	'object.webhooks != oldObject.webhooks && object.metadata.generation == oldObject.metadata.generation + 1' \
+	'object.webhooks.map(webhook, webhook.name) == oldObject.webhooks.map(webhook, webhook.name)' \
+	'object.webhooks.all(webhook, oldObject.webhooks.exists(previous' \
+	'clientConfig.caBundle.size() > 0' \
+	'clientConfig.caBundle.size() <= 262144' \
+	'Ptah certificate mutating write guard rejected an unsafe mutation' \
+	'Ptah certificate validating write guard rejected an unsafe mutation'; do
+	grep -F -- "$certificate_write_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
+done
 parent_guard_names=$(awk '
   $1 == "name:" &&
     ($2 ~ /^ptah-operator-runtime-parent-guard-/ ||
@@ -4753,11 +4980,12 @@ done
 (cd "$ROOT_DIR" && \
 	PTAH_ROLLOUT_GUARD_RENDER="$ROLLOUT_GUARD_RENDER" \
 	PTAH_RUNTIME_POD_GUARD_RENDER="$ROLLOUT_GUARD_RENDER" \
+	PTAH_ADMISSION_RENDER="$ADMISSION_RENDER" \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_RENDER" \
 	PTAH_PRIVILEGE_RENDER="$CRD_FULL_RENDER" \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
-		-run '^(TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
+		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_EXTERNAL_CERT_RENDER" \
 	PTAH_TEARDOWN_CERTIFICATE_RUNTIME_ENABLED=false \

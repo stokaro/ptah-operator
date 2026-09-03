@@ -107,10 +107,17 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			},
 		},
 		{
-			name: "validating cardinality", want: "expected exactly 2",
+			name: "validating cardinality", want: "expected exactly 3",
 			mutate: func(verifier *RuntimeVerifier) {
 				client := verifier.Validating.(*validatingAdmissionClient)
 				client.object.Webhooks = client.object.Webhooks[:1]
+			},
+		},
+		{
+			name: "validating order", want: "has name",
+			mutate: func(verifier *RuntimeVerifier) {
+				webhooks := verifier.Validating.(*validatingAdmissionClient).object.Webhooks
+				webhooks[1], webhooks[2] = webhooks[2], webhooks[1]
 			},
 		},
 		{
@@ -246,6 +253,32 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			mutate: func(verifier *RuntimeVerifier) {
 				webhook := validatingWebhook(t, verifier, podIntentWebhookName)
 				webhook.MatchConditions[0].Expression = strings.Replace(webhook.MatchConditions[0].Expression, "'batch/v1'", "'batch /v1'", 1)
+			},
+		},
+		{
+			name: "controller write match policy", want: "matchPolicy must be Exact",
+			mutate: func(verifier *RuntimeVerifier) {
+				equivalent := admissionregistrationv1.Equivalent
+				validatingWebhook(t, verifier, controllerWriteWebhookName).MatchPolicy = &equivalent
+			},
+		},
+		{
+			name: "controller write rules", want: "rules do not match",
+			mutate: func(verifier *RuntimeVerifier) {
+				validatingWebhook(t, verifier, controllerWriteWebhookName).Rules[0].Resources = []string{"*"}
+			},
+		},
+		{
+			name: "controller write identity", want: "matchConditions",
+			mutate: func(verifier *RuntimeVerifier) {
+				validatingWebhook(t, verifier, controllerWriteWebhookName).MatchConditions[0].Expression = "true"
+			},
+		},
+		{
+			name: "controller write timeout", want: "timeoutSeconds must be 30",
+			mutate: func(verifier *RuntimeVerifier) {
+				timeout := int32(5)
+				validatingWebhook(t, verifier, controllerWriteWebhookName).TimeoutSeconds = &timeout
 			},
 		},
 		{
@@ -673,6 +706,7 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{
 			readyValidatingApprovalWebhook(expected),
 			readyPodIntentWebhook(expected),
+			readyControllerWriteWebhook(expected),
 		},
 	}}
 	return &RuntimeVerifier{
@@ -730,6 +764,41 @@ func readyPodIntentWebhook(expected RuntimeInvariants) admissionregistrationv1.V
 		}},
 		MatchConditions: []admissionregistrationv1.MatchCondition{{
 			Name: podIntentMatchConditionName, Expression: podIntentMatchExpression,
+		}},
+	}
+}
+
+func readyControllerWriteWebhook(expected RuntimeInvariants) admissionregistrationv1.ValidatingWebhook {
+	fail := admissionregistrationv1.Fail
+	none := admissionregistrationv1.SideEffectClassNone
+	exact := admissionregistrationv1.Exact
+	scope := admissionregistrationv1.NamespacedScope
+	return admissionregistrationv1.ValidatingWebhook{
+		Name: controllerWriteWebhookName, AdmissionReviewVersions: []string{"v1"},
+		FailurePolicy: &fail, SideEffects: &none, MatchPolicy: &exact,
+		TimeoutSeconds: valuePointer(controllerWriteWebhookTimeoutSeconds),
+		ClientConfig:   readyWebhookClientConfig(expected, controllerWritePath),
+		Rules: []admissionregistrationv1.RuleWithOperations{
+			{
+				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
+				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"batch"}, APIVersions: []string{"v1"}, Resources: []string{"jobs"}, Scope: &scope},
+			},
+			{
+				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+				Rule:       admissionregistrationv1.Rule{APIGroups: []string{""}, APIVersions: []string{"v1"}, Resources: []string{"configmaps"}, Scope: &scope},
+			},
+			{
+				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahschemaplans"}, Scope: &scope},
+			},
+		},
+		MatchConditions: []admissionregistrationv1.MatchCondition{{
+			Name: controllerWriteMatchConditionName,
+			Expression: fmt.Sprintf(
+				"request.userInfo.username == 'system:serviceaccount:%s:%s'",
+				expected.ReleaseNamespace,
+				expected.ControllerServiceAccountName,
+			),
 		}},
 	}
 }

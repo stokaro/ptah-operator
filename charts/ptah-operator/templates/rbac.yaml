@@ -28,6 +28,11 @@ rules:
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.controllerPlanWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.certificateMutatingWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.certificateValidatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}

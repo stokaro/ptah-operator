@@ -23,6 +23,11 @@
 {{- $activationGuardName := include "ptah-operator.releaseActivationGuardPolicyName" . -}}
 {{- $serviceAccountOriginGuardName := include "ptah-operator.serviceAccountOriginGuardPolicyName" . -}}
 {{- $controllerWriteGuardName := include "ptah-operator.controllerWriteGuardPolicyName" . -}}
+{{- $controllerJobWriteGuardName := include "ptah-operator.controllerJobWriteGuardPolicyName" . -}}
+{{- $controllerChunkWriteGuardName := include "ptah-operator.controllerChunkWriteGuardPolicyName" . -}}
+{{- $controllerPlanWriteGuardName := include "ptah-operator.controllerPlanWriteGuardPolicyName" . -}}
+{{- $certificateMutatingWriteGuardName := include "ptah-operator.certificateMutatingWriteGuardPolicyName" . -}}
+{{- $certificateValidatingWriteGuardName := include "ptah-operator.certificateValidatingWriteGuardPolicyName" . -}}
 {{- $namespaceGuardName := include "ptah-operator.namespaceDeletionGuardPolicyName" . -}}
 {{- $parentReplicaSetGuardName := include "ptah-operator.parentReplicaSetGuardPolicyName" . -}}
 {{- $parentHookPodOriginGuardName := include "ptah-operator.parentHookPodOriginGuardPolicyName" . -}}
@@ -91,6 +96,11 @@ rules:
       - {{ $activationGuardName }}
       - {{ $serviceAccountOriginGuardName }}
       - {{ $controllerWriteGuardName }}
+      - {{ $controllerJobWriteGuardName }}
+      - {{ $controllerChunkWriteGuardName }}
+      - {{ $controllerPlanWriteGuardName }}
+      - {{ $certificateMutatingWriteGuardName }}
+      - {{ $certificateValidatingWriteGuardName }}
       - {{ $namespaceGuardName }}
       - {{ $parentReplicaSetGuardName }}
       - {{ $parentHookPodOriginGuardName }}
@@ -456,6 +466,11 @@ rules:
       - {{ $activationGuardName }}
       - {{ $serviceAccountOriginGuardName }}
       - {{ $controllerWriteGuardName }}
+      - {{ $controllerJobWriteGuardName }}
+      - {{ $controllerChunkWriteGuardName }}
+      - {{ $controllerPlanWriteGuardName }}
+      - {{ $certificateMutatingWriteGuardName }}
+      - {{ $certificateValidatingWriteGuardName }}
       - {{ $namespaceGuardName }}
       - {{ $parentReplicaSetGuardName }}
       - {{ $parentHookPodOriginGuardName }}

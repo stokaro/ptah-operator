@@ -293,8 +293,6 @@ func validatePlanContract(spec operatorv1alpha1.PtahSchemaPlanSpec) error {
 
 func desiredChunk(plan *operatorv1alpha1.PtahSchemaPlan, ref operatorv1alpha1.PlanChunkReference, content []byte) *corev1.ConfigMap {
 	immutable := true
-	controller := true
-	blockDeletion := true
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: plan.Namespace,
@@ -303,14 +301,7 @@ func desiredChunk(plan *operatorv1alpha1.PtahSchemaPlan, ref operatorv1alpha1.Pl
 				LabelPlan:   plan.Name,
 				LabelSchema: plan.Spec.SchemaRef.Name,
 			},
-			OwnerReferences: []metav1.OwnerReference{{
-				APIVersion:         operatorv1alpha1.GroupVersion.String(),
-				Kind:               "PtahSchemaPlan",
-				Name:               plan.Name,
-				UID:                plan.UID,
-				Controller:         &controller,
-				BlockOwnerDeletion: &blockDeletion,
-			}},
+			OwnerReferences: []metav1.OwnerReference{blockingPlanOwnerReference(plan)},
 		},
 		Immutable:  &immutable,
 		BinaryData: map[string][]byte{ref.Key: append([]byte(nil), content...)},
@@ -334,20 +325,28 @@ func verifyChunk(plan *operatorv1alpha1.PtahSchemaPlan, ref operatorv1alpha1.Pla
 	if configMap.Labels[LabelPlan] != plan.Name || configMap.Labels[LabelSchema] != plan.Spec.SchemaRef.Name {
 		return fmt.Errorf("plan chunk %d labels do not match the manifest", ref.Index)
 	}
-	owned := false
-	for _, owner := range configMap.OwnerReferences {
-		if owner.UID == plan.UID && owner.Name == plan.Name && owner.Kind == "PtahSchemaPlan" {
-			owned = true
-		}
-	}
-	if !owned {
-		return fmt.Errorf("plan chunk %d is not owned by the immutable plan UID", ref.Index)
+	expectedOwnerReferences := []metav1.OwnerReference{blockingPlanOwnerReference(plan)}
+	if !reflect.DeepEqual(configMap.OwnerReferences, expectedOwnerReferences) {
+		return fmt.Errorf("plan chunk %d does not have the exact blocking plan owner reference", ref.Index)
 	}
 	actual, ok := configMap.BinaryData[ref.Key]
 	if !ok || int32(len(actual)) != ref.Size || ref.Digest != fingerprint.DigestBytes(actual) || !bytes.Equal(actual, expected) {
 		return fmt.Errorf("plan chunk %d does not match the manifest", ref.Index)
 	}
 	return nil
+}
+
+func blockingPlanOwnerReference(plan *operatorv1alpha1.PtahSchemaPlan) metav1.OwnerReference {
+	controller := true
+	blockDeletion := true
+	return metav1.OwnerReference{
+		APIVersion:         operatorv1alpha1.GroupVersion.String(),
+		Kind:               "PtahSchemaPlan",
+		Name:               plan.Name,
+		UID:                plan.UID,
+		Controller:         &controller,
+		BlockOwnerDeletion: &blockDeletion,
+	}
 }
 
 func split(content []byte, size int) [][]byte {

@@ -19,12 +19,72 @@ const (
 	PlanFormatVersion     = 1
 	SchemaArtifactType    = "application/vnd.stokaro.ptah.schema.v1"
 	MigrationArtifactType = "application/vnd.stokaro.ptah.migrations.v1"
+
+	// DriftFindingVocabularyVersion identifies the closed category vocabulary
+	// accepted from native drift reports. Extending this vocabulary is a runner
+	// protocol change: an older controller must reject, rather than publish, a
+	// category whose disclosure contract it does not understand.
+	DriftFindingVocabularyVersion = 1
 )
 
 var (
 	mediaTypePattern               = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$`)
 	verificationRequirementPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	driftFindingCategories         = []string{
+		"columns_added",
+		"columns_modified",
+		"columns_removed",
+		"constraints_added",
+		"constraints_removed",
+		"enum_values_added",
+		"enum_values_removed",
+		"enums_added",
+		"enums_removed",
+		"extensions_added",
+		"extensions_modified",
+		"extensions_removed",
+		"functions_added",
+		"functions_modified",
+		"functions_removed",
+		"indexes_added",
+		"indexes_removed",
+		"rls_enabled_tables_added",
+		"rls_enabled_tables_removed",
+		"rls_policies_added",
+		"rls_policies_modified",
+		"rls_policies_removed",
+		"roles_added",
+		"roles_modified",
+		"roles_removed",
+		"table_constraints_added",
+		"table_constraints_removed",
+		"tables_added",
+		"tables_removed",
+		"unique_protections_removed",
+		"vector_dimension_changed",
+	}
+	driftFindingCategorySet = func() map[string]struct{} {
+		categories := make(map[string]struct{}, len(driftFindingCategories))
+		for _, category := range driftFindingCategories {
+			categories[category] = struct{}{}
+		}
+		return categories
+	}()
 )
+
+// DriftFindingCategories returns a copy of the closed v1 machine vocabulary.
+// Extending this list requires a runner protocol bump and synchronized CRD
+// schema changes.
+func DriftFindingCategories() []string {
+	return append([]string(nil), driftFindingCategories...)
+}
+
+// IsKnownDriftFindingCategory reports whether category belongs to the closed
+// v1 machine vocabulary.
+func IsKnownDriftFindingCategory(category string) bool {
+	_, known := driftFindingCategorySet[category]
+	return known
+}
 
 type ResolveReport struct {
 	Reference       string `json:"reference"`
@@ -194,10 +254,15 @@ func DecodeDrift(data []byte, exitCode int) (DriftReport, error) {
 	if report.Drift && strings.TrimSpace(report.HighestSeverity) == "" {
 		return DriftReport{}, fmt.Errorf("drift report is missing highest_severity")
 	}
+	seenFindings := make(map[string]struct{}, len(report.Findings))
 	for _, finding := range report.Findings {
-		if finding.Count < 0 || strings.TrimSpace(finding.Category) == "" || !knownSeverity(finding.Severity) {
+		if finding.Count <= 0 || !IsKnownDriftFindingCategory(finding.Category) || !knownSeverity(finding.Severity) {
 			return DriftReport{}, fmt.Errorf("drift report contains an invalid finding")
 		}
+		if _, duplicate := seenFindings[finding.Category]; duplicate {
+			return DriftReport{}, fmt.Errorf("drift report contains a duplicate finding category")
+		}
+		seenFindings[finding.Category] = struct{}{}
 	}
 	return report, nil
 }

@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,13 +24,16 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	approvaladmission "github.com/stokaro/ptah-operator/internal/admission"
+	"github.com/stokaro/ptah-operator/internal/controllerwrite"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/planstore"
+	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/workload"
@@ -45,6 +51,71 @@ type replaceJobBeforeCleanupPatchClient struct {
 	client.Client
 	replacementUID types.UID
 	replaced       bool
+}
+
+type assignCreatedJobUIDClient struct {
+	client.Client
+	uid types.UID
+}
+
+type validatingJobPatchClient struct {
+	client.Client
+	validator  *controllerwrite.Validator
+	jobUpdates int
+}
+
+func (c assignCreatedJobUIDClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+	if job, ok := object.(*batchv1.Job); ok && job.UID == "" {
+		job.UID = c.uid
+	}
+	return c.Client.Create(ctx, object, options...)
+}
+
+func (c *validatingJobPatchClient) Patch(
+	ctx context.Context,
+	object client.Object,
+	patch client.Patch,
+	options ...client.PatchOption,
+) error {
+	job, ok := object.(*batchv1.Job)
+	if !ok {
+		return c.Client.Patch(ctx, object, patch, options...)
+	}
+	oldJob := &batchv1.Job{}
+	if err := c.Client.Get(ctx, client.ObjectKeyFromObject(job), oldJob); err != nil {
+		return err
+	}
+	oldCandidate := oldJob.DeepCopy()
+	newCandidate := job.DeepCopy()
+	for _, candidate := range []*batchv1.Job{oldCandidate, newCandidate} {
+		candidate.TypeMeta = metav1.TypeMeta{APIVersion: batchv1.SchemeGroupVersion.String(), Kind: "Job"}
+	}
+	oldRaw, err := json.Marshal(oldCandidate)
+	if err != nil {
+		return err
+	}
+	newRaw, err := json.Marshal(newCandidate)
+	if err != nil {
+		return err
+	}
+	request := admissionv1.AdmissionRequest{
+		UID:       "controller-write-test-request",
+		Name:      job.Name,
+		Namespace: job.Namespace,
+		Operation: admissionv1.Update,
+		UserInfo: authenticationv1.UserInfo{
+			Username: "system:serviceaccount:ptah-system:ptah-operator",
+		},
+		Resource:  metav1.GroupVersionResource{Group: batchv1.GroupName, Version: "v1", Resource: "jobs"},
+		Kind:      metav1.GroupVersionKind{Group: batchv1.GroupName, Version: "v1", Kind: "Job"},
+		OldObject: runtime.RawExtension{Raw: oldRaw},
+		Object:    runtime.RawExtension{Raw: newRaw},
+	}
+	c.jobUpdates++
+	if err := c.validator.Validate(ctx, request); err != nil {
+		return fmt.Errorf("controller write validation: %w", err)
+	}
+	return c.Client.Patch(ctx, object, patch, options...)
 }
 
 func (c *replaceJobBeforeCleanupPatchClient) Patch(
@@ -87,16 +158,143 @@ func (l *safetyCountingLogs) Read(context.Context, string, string, string) ([]by
 	return append([]byte(nil), l.content...), nil
 }
 
-func bindRetiredReadOnlyJob(job *batchv1.Job, operation *operatorv1alpha1.ActiveOperationStatus) {
-	if job.Labels == nil {
-		job.Labels = map[string]string{}
+func bindRetiredReadOnlyJob(
+	job *batchv1.Job,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+) {
+	if len(job.OwnerReferences) != 1 {
+		panic("retired read-only Job fixture requires one schema owner")
 	}
-	if job.Annotations == nil {
-		job.Annotations = map[string]string{}
+	owner := job.OwnerReferences[0]
+	schemaIdentity := &operatorv1alpha1.PtahSchema{ObjectMeta: metav1.ObjectMeta{Name: owner.Name, UID: owner.UID}}
+	jobName, err := workload.NameFor(schemaIdentity, *operation)
+	if err != nil {
+		panic(err)
 	}
-	job.Labels[workload.LabelOperation] = strings.ToLower(string(operation.Type))
-	job.Annotations[workload.AnnotationOperationID] = operation.ID
-	job.Annotations[workload.AnnotationExecutionBindingID] = operation.ExecutionBindingID
+	operation.JobName = jobName
+	job.Name = jobName
+	labels := map[string]string{
+		workload.LabelManagedBy:   "ptah-operator",
+		workload.LabelComponent:   "schema-operation",
+		workload.LabelSchema:      owner.Name,
+		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
+		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
+	}
+	annotations := map[string]string{
+		workload.AnnotationOperationID:             operation.ID,
+		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
+		workload.AnnotationPtahVersion:             "v0.3.0",
+		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
+		workload.AnnotationControllerImage:         testControllerImage,
+		workload.AnnotationControllerRevision:      testControllerRevision,
+		workload.AnnotationControllerStateVersion:  strconv.FormatInt(int64(testControllerStateVersion), 10),
+		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
+	}
+	job.Labels = labels
+	job.Annotations = annotations
+	job.Spec.Template.Labels = maps.Clone(labels)
+	job.Spec.Template.Annotations = maps.Clone(annotations)
+	templateDigest, err := podintent.DigestTemplate(&job.Spec.Template)
+	if err != nil {
+		panic(err)
+	}
+	operation.AdmissionSnapshot.TemplateDigest = templateDigest
+	operation.AdmissionSnapshot.Digest = ""
+	snapshotDigest, err := fingerprint.DigestCanonicalJSON(*operation.AdmissionSnapshot)
+	if err != nil {
+		panic(err)
+	}
+	operation.AdmissionSnapshot.Digest = snapshotDigest
+	job.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
+	job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
+}
+
+func bindPredecessorApplyJob(
+	job *batchv1.Job,
+	schema *operatorv1alpha1.PtahSchema,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+	plan *operatorv1alpha1.CurrentPlanStatus,
+) {
+	labels := map[string]string{
+		workload.LabelManagedBy:   "ptah-operator",
+		workload.LabelComponent:   "schema-operation",
+		workload.LabelSchema:      schema.Name,
+		workload.LabelOperation:   "apply",
+		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
+	}
+	annotations := map[string]string{
+		workload.AnnotationOperationID:             operation.ID,
+		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
+		workload.AnnotationPtahVersion:             plan.PtahVersion,
+		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
+		workload.AnnotationPlanFingerprint:         plan.Fingerprint,
+		workload.AnnotationPlanContentDigest:       plan.ContentDigest,
+		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
+	}
+	job.Labels = labels
+	job.Annotations = annotations
+	job.Spec.Template.Labels = map[string]string{}
+	for key, value := range labels {
+		job.Spec.Template.Labels[key] = value
+	}
+	job.Spec.Template.Annotations = map[string]string{}
+	for key, value := range annotations {
+		job.Spec.Template.Annotations[key] = value
+	}
+}
+
+func bindCurrentApplyJob(
+	t *testing.T,
+	job *batchv1.Job,
+	schema *operatorv1alpha1.PtahSchema,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+	plan *operatorv1alpha1.CurrentPlanStatus,
+) {
+	t.Helper()
+
+	labels := map[string]string{
+		workload.LabelManagedBy:   "ptah-operator",
+		workload.LabelComponent:   "schema-operation",
+		workload.LabelSchema:      schema.Name,
+		workload.LabelOperation:   "apply",
+		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
+	}
+	annotations := map[string]string{
+		workload.AnnotationOperationID:             operation.ID,
+		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
+		workload.AnnotationPtahVersion:             plan.PtahVersion,
+		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
+		workload.AnnotationControllerImage:         plan.ControllerImage,
+		workload.AnnotationControllerRevision:      plan.ControllerRevision,
+		workload.AnnotationControllerStateVersion:  fmt.Sprintf("%d", plan.ControllerStateVersion),
+		workload.AnnotationPlanFingerprint:         plan.Fingerprint,
+		workload.AnnotationPlanContentDigest:       plan.ContentDigest,
+		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
+	}
+	job.Labels = labels
+	job.Annotations = annotations
+	job.Spec.Template.Labels = map[string]string{}
+	for key, value := range labels {
+		job.Spec.Template.Labels[key] = value
+	}
+	job.Spec.Template.Annotations = map[string]string{}
+	for key, value := range annotations {
+		job.Spec.Template.Annotations[key] = value
+	}
+
+	templateDigest, err := podintent.DigestTemplate(&job.Spec.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.AdmissionSnapshot.TemplateDigest = templateDigest
+	operation.AdmissionSnapshot.Digest = ""
+	snapshotDigest, err := fingerprint.DigestCanonicalJSON(*operation.AdmissionSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.AdmissionSnapshot.Digest = snapshotDigest
+	job.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
+	job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
 }
 
 func (c *failNthSchemaStatusPatchClient) Status() client.SubResourceWriter {
@@ -214,6 +412,391 @@ func TestMissingDispatchedApplyJobForcesObservationWithoutRecreation(t *testing.
 			}
 			if len(jobs.Items) != 0 {
 				t.Fatalf("Jobs before ObserveAfter = %#v, want none", jobs.Items)
+			}
+		})
+	}
+}
+
+func TestRunningApplyContinuityLossPersistsUnknownThroughValidatedCleanup(t *testing.T) {
+	t.Parallel()
+
+	schema := safetyApplySchema(t)
+	schema.Status.Plan.Name = "current-plan"
+	schema.Status.Plan.UID = "current-plan-uid"
+	schema.Status.Plan.Fingerprint = testDigest
+	schema.Status.Plan.ContentDigest = safetyOtherDigest
+	schema.Status.Plan.ControllerImage = schema.Status.ExecutionBinding.ControllerImage
+	schema.Status.Plan.ControllerRevision = schema.Status.ExecutionBinding.ControllerRevision
+	schema.Status.Plan.ControllerStateVersion = schema.Status.ExecutionBinding.ControllerStateVersion
+	operation := schema.Status.ActiveOperation
+	bindActiveInput(t, schema)
+	ensureTestAdmissionSnapshot(schema)
+	jobName, err := workload.NameFor(schema, *operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.JobName = jobName
+	operation.JobUID = "running-apply-job-uid"
+	operation.DispatchStarted = true
+	operation.LeaseContinuityLost = true
+	job, err := (fakeJobs{}).Build(schema, *operation, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job.UID = operation.JobUID
+	bindCurrentApplyJob(t, job, schema, operation, schema.Status.Plan)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace,
+			Name:      job.Name + "-running",
+			UID:       "running-apply-pod-uid",
+			OwnerReferences: []metav1.OwnerReference{
+				jobControllerReference(job),
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, job, pod)
+	validating := &validatingJobPatchClient{Client: api}
+	validating.validator = &controllerwrite.Validator{
+		Reader: api, Jobs: reconciler.Jobs,
+		ManagerUsername: "system:serviceaccount:ptah-system:ptah-operator",
+	}
+	reconciler.Client = validating
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	result, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Reconcile() continuity loss error = %v", err)
+	}
+	if !result.Requeue {
+		t.Fatalf("Reconcile() result = %#v, want immediate outcome-unknown follow-up", result)
+	}
+	if validating.jobUpdates != 1 {
+		t.Fatalf("validated Job cleanup updates = %d, want 1", validating.jobUpdates)
+	}
+	persistedJob := &batchv1.Job{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
+		*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds || jobTerminal(persistedJob) {
+		t.Fatalf("running Apply cleanup = TTL %#v, terminal %t", persistedJob.Spec.TTLSecondsAfterFinished, jobTerminal(persistedJob))
+	}
+	persisted := safetyGetSchema(t, api, schema)
+	pending := persisted.Status.PendingObservation
+	if persisted.Status.ActiveOperation != nil || pending == nil ||
+		pending.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown ||
+		pending.ApplyJobName != job.Name || pending.ApplyJobUID != job.UID ||
+		pending.ApplyPodCount != 1 || !reflect.DeepEqual(pending.ApplyPodUIDs, []types.UID{pod.UID}) {
+		t.Fatalf("continuity-loss pending evidence = %#v", persisted.Status)
+	}
+
+	persistedPod := &corev1.Pod{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(pod), persistedPod); err != nil {
+		t.Fatal(err)
+	}
+	persistedPod.Status.Phase = corev1.PodFailed
+	if err := api.Status().Update(context.Background(), persistedPod); err != nil {
+		t.Fatalf("finish running Apply Pod: %v", err)
+	}
+	persistedJob.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	if err := api.Status().Update(context.Background(), persistedJob); err != nil {
+		t.Fatalf("finish running Apply Job: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("Reconcile() after terminal Apply error = %v", err)
+	}
+	if validating.jobUpdates != 1 {
+		t.Fatalf("terminal follow-up issued %d validated Job updates, want the original cleanup only", validating.jobUpdates)
+	}
+}
+
+func TestDeletingRetiredApplyCrossesValidatedCleanupBoundary(t *testing.T) {
+	t.Parallel()
+
+	schema, job := predecessorApplyCleanupMatchFixture()
+	schema.Finalizers = []string{activeOperationFinalizer}
+	deletedAt := metav1.NewTime(time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC))
+	schema.DeletionTimestamp = &deletedAt
+	pending := schema.Status.PendingObservation
+	pending.CoordinationDigest = testCoordinationDigest
+	pending.Plan.CoordinationDigest = testCoordinationDigest
+	pending.LeaseDurationSeconds = 960
+	pending.LeaseEpoch = testLeaseEpoch
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace,
+			Name:      job.Name + "-failed",
+			UID:       "retired-apply-pod-uid",
+			OwnerReferences: []metav1.OwnerReference{
+				jobControllerReference(job),
+			},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodFailed},
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, job, pod)
+	validating := &validatingJobPatchClient{Client: api}
+	validating.validator = &controllerwrite.Validator{
+		Reader: api, Jobs: reconciler.Jobs,
+		ManagerUsername: "system:serviceaccount:ptah-system:ptah-operator",
+	}
+	reconciler.Client = validating
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	result, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Reconcile() deletion cleanup error = %v", err)
+	}
+	if result.RequeueAfter != maxLockContentionPoll || validating.jobUpdates != 1 {
+		t.Fatalf("deletion cleanup boundary = %#v, validated updates %d", result, validating.jobUpdates)
+	}
+	persistedJob := &batchv1.Job{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
+		*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds {
+		t.Fatalf("retired Apply cleanup TTL = %#v", persistedJob.Spec.TTLSecondsAfterFinished)
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("Reconcile() finalizer progress error = %v", err)
+	}
+	remaining := &operatorv1alpha1.PtahSchema{}
+	err = api.Get(context.Background(), client.ObjectKeyFromObject(schema), remaining)
+	if err != nil && !apierrors.IsNotFound(err) {
+		t.Fatalf("read deleting schema: %v", err)
+	}
+	if err == nil && (controllerutil.ContainsFinalizer(remaining, activeOperationFinalizer) ||
+		remaining.Status.ActiveOperation != nil || remaining.Status.PendingObservation != nil ||
+		remaining.Status.PendingLockRelease != nil) {
+		t.Fatalf("deletion did not cross the retired Apply cleanup boundary: %#v", remaining)
+	}
+}
+
+func TestDeletingUntrustedApplySkipsJobCleanupAndPersistsUncertainty(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		configure func(*operatorv1alpha1.PtahSchema, *batchv1.Job) []client.Object
+	}{
+		{
+			name: "terminal Job envelope is untrusted",
+			configure: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) []client.Object {
+				job.Annotations["operator.ptah.dev/untrusted"] = "true"
+				job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+				pod := &corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace:       job.Namespace,
+						Name:            job.Name + "-failed",
+						UID:             "untrusted-terminal-pod-uid",
+						OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
+					},
+					Status: corev1.PodStatus{
+						Phase: corev1.PodFailed,
+						ContainerStatuses: []corev1.ContainerStatus{{
+							Name: executorContainerName,
+							State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+								ExitCode: 1,
+							}},
+						}},
+					},
+				}
+				return []client.Object{pod}
+			},
+		},
+		{
+			name: "continuity-loss Job envelope is untrusted",
+			configure: func(schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) []client.Object {
+				schema.Status.ActiveOperation.LeaseContinuityLost = true
+				job.Annotations["operator.ptah.dev/untrusted"] = "true"
+				return nil
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := safetyApplySchema(t)
+			schema.Status.Plan.Name = "current-plan"
+			schema.Status.Plan.UID = "current-plan-uid"
+			schema.Status.Plan.Fingerprint = testDigest
+			schema.Status.Plan.ContentDigest = safetyOtherDigest
+			schema.Status.Plan.ControllerImage = schema.Status.ExecutionBinding.ControllerImage
+			schema.Status.Plan.ControllerRevision = schema.Status.ExecutionBinding.ControllerRevision
+			schema.Status.Plan.ControllerStateVersion = schema.Status.ExecutionBinding.ControllerStateVersion
+			operation := schema.Status.ActiveOperation
+			operation.StartedAt = metav1.NewTime(time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC))
+			operation.DispatchNotAfter = nil
+			operation.ExecutionNotAfter = nil
+			operation.TerminationGracePeriodSeconds = 0
+			operation.JobUID = "deleting-untrusted-apply-job-uid"
+			bindActiveInput(t, schema)
+			ensureTestAdmissionSnapshot(schema)
+			jobName, err := workload.NameFor(schema, *operation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			operation.JobName = jobName
+			job, err := (fakeJobs{}).Build(schema, *operation, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			job.UID = operation.JobUID
+			bindCurrentApplyJob(t, job, schema, operation, schema.Status.Plan)
+			objects := []client.Object{schema, job}
+			objects = append(objects, test.configure(schema, job)...)
+			deletedAt := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+			schema.DeletionTimestamp = &deletedAt
+
+			reconciler, api := fakeReconciler(t, staticLogs{}, objects...)
+			validating := &validatingJobPatchClient{Client: api}
+			validating.validator = &controllerwrite.Validator{
+				Reader: api, Jobs: reconciler.Jobs,
+				ManagerUsername: "system:serviceaccount:ptah-system:ptah-operator",
+			}
+			reconciler.Client = validating
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+			result, err := reconciler.Reconcile(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Reconcile() uncertainty boundary error = %v", err)
+			}
+			if !result.Requeue || validating.jobUpdates != 0 {
+				t.Fatalf("uncertainty boundary = %#v, validated Job updates %d", result, validating.jobUpdates)
+			}
+			persisted := safetyGetSchema(t, api, schema)
+			if persisted.Status.ActiveOperation != nil || persisted.Status.PendingObservation == nil ||
+				persisted.Status.PendingObservation.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown {
+				t.Fatalf("deleting untrusted Apply did not persist uncertainty: %#v", persisted.Status)
+			}
+			persistedJob := &batchv1.Job{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), persistedJob); err != nil {
+				t.Fatal(err)
+			}
+			if persistedJob.Spec.TTLSecondsAfterFinished != nil {
+				t.Fatalf("untrusted deleting Apply received cleanup TTL %#v", persistedJob.Spec.TTLSecondsAfterFinished)
+			}
+
+			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+				t.Fatalf("Reconcile() finalizer progress error = %v", err)
+			}
+			remaining := &operatorv1alpha1.PtahSchema{}
+			err = api.Get(context.Background(), client.ObjectKeyFromObject(schema), remaining)
+			if err != nil && !apierrors.IsNotFound(err) {
+				t.Fatalf("read deleting schema: %v", err)
+			}
+			if err == nil && (controllerutil.ContainsFinalizer(remaining, activeOperationFinalizer) ||
+				remaining.Status.ActiveOperation != nil || remaining.Status.PendingObservation != nil ||
+				remaining.Status.PendingLockRelease != nil) {
+				t.Fatalf("deletion remained blocked by untrusted Apply: %#v", remaining)
+			}
+		})
+	}
+}
+
+func TestDeletingReadOnlyContinuityLossSkipsJobCleanupAndProgresses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		newSchema   func(*testing.T) *operatorv1alpha1.PtahSchema
+		wantPending bool
+	}{
+		{
+			name: "Plan",
+			newSchema: func(_ *testing.T) *operatorv1alpha1.PtahSchema {
+				return safetyLockedOperationSchema(operatorv1alpha1.OperationPlan)
+			},
+		},
+		{
+			name:        "pending Observe",
+			newSchema:   safetyPostApplyObserveSchema,
+			wantPending: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := test.newSchema(t)
+			operation := schema.Status.ActiveOperation
+			operation.JobUID = "deleting-read-only-job-uid"
+			operation.DispatchStarted = true
+			operation.LeaseContinuityLost = true
+			deletedAt := metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+			schema.DeletionTimestamp = &deletedAt
+			job := &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: schema.Namespace,
+					Name:      operation.JobName,
+					UID:       operation.JobUID,
+					Annotations: map[string]string{
+						"operator.ptah.dev/untrusted": "true",
+					},
+					OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)},
+				},
+				Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+					Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
+				}}},
+			}
+
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema, job)
+			validating := &validatingJobPatchClient{Client: api}
+			validating.validator = &controllerwrite.Validator{
+				Reader: api, Jobs: reconciler.Jobs,
+				ManagerUsername: "system:serviceaccount:ptah-system:ptah-operator",
+			}
+			reconciler.Client = validating
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+			result, err := reconciler.Reconcile(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Reconcile() continuity-loss deletion error = %v", err)
+			}
+			if !result.Requeue || validating.jobUpdates != 0 {
+				t.Fatalf("continuity-loss boundary = %#v, validated Job updates %d", result, validating.jobUpdates)
+			}
+			persistedJob := &batchv1.Job{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), persistedJob); err != nil {
+				t.Fatal(err)
+			}
+			if persistedJob.Spec.TTLSecondsAfterFinished != nil {
+				t.Fatalf("deleting untrusted read-only Job received cleanup TTL %#v", persistedJob.Spec.TTLSecondsAfterFinished)
+			}
+
+			persisted := &operatorv1alpha1.PtahSchema{}
+			persistedErr := api.Get(context.Background(), client.ObjectKeyFromObject(schema), persisted)
+			if persistedErr != nil && !apierrors.IsNotFound(persistedErr) {
+				t.Fatalf("read deleting schema after continuity loss: %v", persistedErr)
+			}
+			if test.wantPending {
+				if persistedErr != nil || persisted.Status.ActiveOperation != nil || persisted.Status.PendingObservation == nil {
+					t.Fatalf("continuity-loss deletion status = %#v, error %v", persisted.Status, persistedErr)
+				}
+			} else if persistedErr == nil && (persisted.Status.ActiveOperation != nil || persisted.Status.PendingObservation != nil) {
+				t.Fatalf("continuity-loss deletion status = %#v", persisted.Status)
+			}
+
+			if persistedErr == nil {
+				if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+					t.Fatalf("Reconcile() finalizer progress error = %v", err)
+				}
+			}
+			remaining := &operatorv1alpha1.PtahSchema{}
+			err = api.Get(context.Background(), client.ObjectKeyFromObject(schema), remaining)
+			if err != nil && !apierrors.IsNotFound(err) {
+				t.Fatalf("read deleting schema: %v", err)
+			}
+			if err == nil && (controllerutil.ContainsFinalizer(remaining, activeOperationFinalizer) ||
+				remaining.Status.ActiveOperation != nil || remaining.Status.PendingObservation != nil ||
+				remaining.Status.PendingLockRelease != nil) {
+				t.Fatalf("deletion remained blocked by read-only Job: %#v", remaining)
 			}
 		})
 	}
@@ -987,9 +1570,15 @@ func TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) 
 				VerificationPolicyDigest: policyDigest,
 			}
 			schema.Status.Target = operatorv1alpha1.TargetStatus{
-				CoordinationDigest: testCoordinationDigest,
-				IdentityDigest:     testDigest,
-				DriftReportDigest:  safetyOtherDigest,
+				CoordinationDigest:   testCoordinationDigest,
+				IdentityDigest:       testDigest,
+				DriftReportDigest:    safetyOtherDigest,
+				HighestDriftSeverity: "warning",
+				DriftFindingCount:    3,
+				DriftFindings: []operatorv1alpha1.DriftFindingStatus{
+					{Category: "columns_added", Count: 2, Severity: "warning"},
+					{Category: "tables_added", Count: 1, Severity: "safe"},
+				},
 			}
 			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
 				Type:      operatorv1alpha1.OperationPlan,
@@ -1043,6 +1632,11 @@ func TestDeferredPlanConsumptionPersistsRefreshDeadlineAtomically(t *testing.T) 
 				approval == nil || approval.Status != test.approvalStatus || approval.Reason != test.approvalReason {
 				t.Fatalf("atomic deferred Plan status = %#v, want phase %s, deadline %s, and approval reason %s", actual.Status, test.phase, wantNext, test.approvalReason)
 			}
+			wantFindings := schema.Status.Target.DriftFindings
+			if actual.Status.Target.HighestDriftSeverity != "warning" || actual.Status.Target.DriftFindingCount != 3 ||
+				!reflect.DeepEqual(actual.Status.Target.DriftFindings, wantFindings) {
+				t.Fatalf("Plan replaced raw observation summary: %#v", actual.Status.Target)
+			}
 		})
 	}
 }
@@ -1062,9 +1656,14 @@ func TestPolicyReplacementCannotProduceInSyncFromNoChangePlan(t *testing.T) {
 		VerificationPolicyDigest: fingerprint.DigestBytes([]byte("old-policy")),
 	}
 	schema.Status.Target = operatorv1alpha1.TargetStatus{
-		CoordinationDigest: testCoordinationDigest,
-		IdentityDigest:     testDigest,
-		DriftReportDigest:  safetyOtherDigest,
+		CoordinationDigest:   testCoordinationDigest,
+		IdentityDigest:       testDigest,
+		DriftReportDigest:    safetyOtherDigest,
+		HighestDriftSeverity: "error",
+		DriftFindingCount:    1,
+		DriftFindings: []operatorv1alpha1.DriftFindingStatus{{
+			Category: "columns_modified", Count: 1, Severity: "error",
+		}},
 	}
 	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
 		Type:      operatorv1alpha1.OperationPlan,
@@ -1103,6 +1702,10 @@ func TestPolicyReplacementCannotProduceInSyncFromNoChangePlan(t *testing.T) {
 	actual := safetyGetSchema(t, api, schema)
 	if actual.Status.Source.Verified || actual.Status.Phase != operatorv1alpha1.PhaseVerifying {
 		t.Fatalf("policy replacement status = %#v", actual.Status)
+	}
+	if actual.Status.Target.HighestDriftSeverity != "error" || actual.Status.Target.DriftFindingCount != 1 ||
+		!reflect.DeepEqual(actual.Status.Target.DriftFindings, schema.Status.Target.DriftFindings) {
+		t.Fatalf("no-change Plan replaced raw observation summary: %#v", actual.Status.Target)
 	}
 	if condition := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionInSync); condition != nil && condition.Status == metav1.ConditionTrue {
 		t.Fatalf("InSync condition = %#v, must not be true under an unverified replacement policy", condition)
@@ -1986,6 +2589,129 @@ func TestExecutionBindingChangeRejectsDispatchedReadOnlyJobResult(t *testing.T) 
 	}
 }
 
+func TestRetiredPredecessorReadOnlyLateCreateAdoptsUIDBeforeCleanup(t *testing.T) {
+	for _, operationType := range []operatorv1alpha1.OperationType{
+		operatorv1alpha1.OperationResolve,
+		operatorv1alpha1.OperationVerify,
+		operatorv1alpha1.OperationObserve,
+		operatorv1alpha1.OperationPlan,
+	} {
+		operationType := operationType
+		t.Run(string(operationType), func(t *testing.T) {
+			t.Parallel()
+
+			schema, job := predecessorReadOnlyLateCreateFixture(t, operationType)
+			oldEpoch := schema.Status.ExecutionBinding.Epoch
+			logs := &safetyCountingLogs{content: []byte("late predecessor result must not be read")}
+			reconciler, api := fakeReconciler(t, logs, schema, job)
+			reconciler.Jobs = executionBindingJobs{
+				ptahVersion: "v0.4.0", executorImage: "example.invalid/ptah@" + safetyOtherDigest,
+				runnerImage: "example.invalid/operator@" + safetyOtherDigest,
+				protocol:    int32(runner.ProtocolVersion) + 1,
+			}
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+				t.Fatalf("fence late-created %s Job: %v", operationType, err)
+			}
+			fenced := safetyGetSchema(t, api, schema)
+			if fenced.Status.ActiveOperation == nil || fenced.Status.ActiveOperation.JobUID != "" ||
+				fenced.Status.ActiveOperation.ExecutionBindingID != oldEpoch ||
+				fenced.Status.ExecutionBinding == nil || fenced.Status.ExecutionBinding.Epoch == oldEpoch {
+				t.Fatalf("late-created %s fence = %#v", operationType, fenced.Status)
+			}
+
+			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+				t.Fatalf("adopt late-created %s Job UID: %v", operationType, err)
+			}
+			adopted := safetyGetSchema(t, api, schema)
+			if adopted.Status.ActiveOperation == nil || adopted.Status.ActiveOperation.JobUID != job.UID ||
+				adopted.Status.ActiveOperation.JobName != job.Name {
+				t.Fatalf("late-created %s UID was not durably adopted: %#v", operationType, adopted.Status)
+			}
+			persistedJob := &batchv1.Job{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), persistedJob); err != nil {
+				t.Fatal(err)
+			}
+			if persistedJob.Spec.TTLSecondsAfterFinished != nil {
+				t.Fatalf("%s cleanup happened before UID adoption: %#v", operationType, persistedJob.Spec.TTLSecondsAfterFinished)
+			}
+
+			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+				t.Fatalf("clean late-created %s Job: %v", operationType, err)
+			}
+			cleaned := safetyGetSchema(t, api, schema)
+			if cleaned.Status.ActiveOperation != nil || cleaned.Status.ExecutionBinding == nil ||
+				cleaned.Status.ExecutionBinding.Epoch != adopted.Status.ExecutionBinding.Epoch {
+				t.Fatalf("late-created %s cleanup lost the durable fence: %#v", operationType, cleaned.Status)
+			}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), persistedJob); err != nil {
+				t.Fatal(err)
+			}
+			if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
+				*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds || logs.reads != 0 {
+				t.Fatalf("late-created %s cleanup: TTL=%#v log reads=%d", operationType, persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
+			}
+		})
+	}
+}
+
+func TestRetiredPredecessorReadOnlyUIDAdoptionRejectsUnprovenJob(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*operatorv1alpha1.PtahSchema, *batchv1.Job)
+	}{
+		{
+			name: "nondeterministic name",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Name = "arbitrary-read-only-job"
+			},
+		},
+		{
+			name: "owner mismatch",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.OwnerReferences[0].UID = "other-schema-uid"
+			},
+		},
+		{
+			name: "extra annotation",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Annotations[workload.AnnotationControllerImage] = "example.invalid/controller@" + testDigest
+				job.Spec.Template.Annotations[workload.AnnotationControllerImage] = job.Annotations[workload.AnnotationControllerImage]
+			},
+		},
+		{
+			name: "template mutation",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Spec.Template.Spec.Containers[0].Image = "example.invalid/replaced@" + safetyOtherDigest
+			},
+		},
+		{
+			name: "status UID already committed",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
+				schema.Status.ActiveOperation.JobUID = "different-job-uid"
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, job := predecessorReadOnlyLateCreateFixture(t, operatorv1alpha1.OperationResolve)
+			newBinding := schema.Status.ExecutionBinding.DeepCopy()
+			newBinding.Epoch = "v1-22222222222222222222222222222222"
+			schema.Status.ExecutionBinding = newBinding
+			test.mutate(schema, job)
+			if retiredPredecessorReadOnlyJobMatches(schema, schema.Status.ActiveOperation, job) {
+				t.Fatal("retiredPredecessorReadOnlyJobMatches() accepted unproven Job")
+			}
+		})
+	}
+}
+
 func TestRetiredReadOnlyJobCleanupSurvivesStatusPatchCrash(t *testing.T) {
 	t.Parallel()
 
@@ -2088,6 +2814,19 @@ func TestRetiredReadOnlyJobCleanupDoesNotTouchUnprovenJob(t *testing.T) {
 			name: "schema owner mismatch",
 			mutate: func(job *batchv1.Job) {
 				job.OwnerReferences[0].UID = "other-schema-uid"
+			},
+		},
+		{
+			name: "extra current-format annotation",
+			mutate: func(job *batchv1.Job) {
+				job.Annotations["operator.ptah.dev/unbound"] = "unexpected"
+				job.Spec.Template.Annotations["operator.ptah.dev/unbound"] = "unexpected"
+			},
+		},
+		{
+			name: "Pod template mutation",
+			mutate: func(job *batchv1.Job) {
+				job.Spec.Template.Spec.ServiceAccountName = "unbound-service-account"
 			},
 		},
 	}
@@ -2717,6 +3456,582 @@ func TestExecutionBindingChangeAfterApplyDispatchNeverRecreatesMutation(t *testi
 	}
 }
 
+func TestExecutionBindingChangeCleansCurrentApplyOnlyAfterTerminalJob(t *testing.T) {
+	t.Parallel()
+
+	schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+	planFingerprint := fingerprint.DigestBytes([]byte("current-format Apply plan"))
+	plan.Spec.Fingerprint = planFingerprint
+	schema.Status.Plan.Fingerprint = planFingerprint
+	approval.Spec.PlanFingerprint = planFingerprint
+	oldExecutionEpoch := schema.Status.ExecutionBinding.Epoch
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhaseApplying
+	schema.Status.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{
+		Name: approval.Name, UID: approval.UID, Approver: approval.Spec.Approver, ApprovedAt: approval.Spec.ApprovedAt,
+	}
+	started := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	executionNotAfter := metav1.NewTime(started.Add(leaseDuration(schema) - time.Minute))
+	target := databaseTargetBinding(schema.Spec.Target)
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationApply, ID: "current-format-apply",
+		StartedAt: metav1.NewTime(started), Attempt: 1, DispatchStarted: true,
+		CoordinationDigest: testCoordinationDigest, TargetIdentityDigest: testDigest,
+		LeaseDurationSeconds: int32(leaseDuration(schema) / time.Second), LeaseEpoch: testLeaseEpoch,
+		ExecutionNotAfter: &executionNotAfter, TerminationGracePeriodSeconds: int64(applyTerminationGrace / time.Second),
+		Target: &target, Source: artifactAccessBinding(schema),
+		ObservationExclude:  append([]string(nil), schema.Spec.Policy.Exclude...),
+		ObservationSeverity: schema.Spec.Policy.DriftSeverity, ObservationDev: schema.Spec.Dev.DeepCopy(),
+		ObservationConnectTimeout: schema.Spec.Execution.ConnectTimeout,
+		ObservationLockTimeout:    schema.Spec.Policy.LockTimeout,
+	}
+	bindActiveInput(t, schema)
+	jobName, err := workload.NameFor(schema, *schema.Status.ActiveOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema.Status.ActiveOperation.JobName = jobName
+	ensureTestAdmissionSnapshot(schema)
+	applyJob, err := (fakeJobs{}).Build(schema, *schema.Status.ActiveOperation, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyJob.UID = "current-format-apply-job-uid"
+	schema.Status.ActiveOperation.JobUID = applyJob.UID
+	bindCurrentApplyJob(t, applyJob, schema, schema.Status.ActiveOperation, schema.Status.Plan)
+	wantSnapshot := schema.Status.ActiveOperation.AdmissionSnapshot.DeepCopy()
+
+	logs := &safetyCountingLogs{content: []byte("retired current Apply result must not be read")}
+	reconciler, api := fakeReconciler(t, logs, schema, plan, approval, policyConfig, applyJob)
+	reconciler.Jobs = executionBindingJobs{
+		ptahVersion: "v0.4.0", executorImage: "example.invalid/ptah@" + safetyOtherDigest,
+		runnerImage: "example.invalid/operator@" + safetyOtherDigest,
+		protocol:    int32(runner.ProtocolVersion) + 1,
+	}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("retire current-format Apply: %v", err)
+	}
+	fenced := safetyGetSchema(t, api, schema)
+	if fenced.Status.ActiveOperation != nil || fenced.Status.PendingObservation == nil ||
+		fenced.Status.PendingObservation.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown ||
+		fenced.Status.PendingObservation.ApplyJobName != applyJob.Name ||
+		fenced.Status.PendingObservation.ApplyJobUID != applyJob.UID ||
+		!reflect.DeepEqual(fenced.Status.PendingObservation.AdmissionSnapshot, wantSnapshot) ||
+		fenced.Status.ExecutionBinding == nil || fenced.Status.ExecutionBinding.Epoch == oldExecutionEpoch {
+		t.Fatalf("current-format Apply retirement fence = %#v", fenced.Status)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("retire current-format Apply plan: %v", err)
+	}
+
+	waiting, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("wait for current-format Apply terminal Job: %v", err)
+	}
+	if waiting.RequeueAfter != maxLockContentionPoll {
+		t.Fatalf("nonterminal current-format Apply result = %#v", waiting)
+	}
+	persistedJob := &batchv1.Job{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyJob), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished != nil || logs.reads != 0 {
+		t.Fatalf("nonterminal current-format Apply was cleaned or read: TTL=%#v log reads=%d", persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
+	}
+
+	persistedJob.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	if err := api.Status().Update(context.Background(), persistedJob); err != nil {
+		t.Fatalf("finish current-format Apply Job: %v", err)
+	}
+	result, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("schedule current-format Apply cleanup: %v", err)
+	}
+	if result.RequeueAfter != maxLockContentionPoll {
+		t.Fatalf("current-format Apply cleanup result = %#v", result)
+	}
+	cleaned := safetyGetSchema(t, api, schema)
+	if cleaned.Status.ActiveOperation != nil || cleaned.Status.PendingObservation == nil ||
+		cleaned.Status.PendingObservation.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown ||
+		cleaned.Status.Applied != nil {
+		t.Fatalf("current-format Apply cleanup certified or reran mutation: %#v", cleaned.Status)
+	}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyJob), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
+		*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds || logs.reads != 0 {
+		t.Fatalf("current-format Apply cleanup: TTL=%#v log reads=%d", persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
+	}
+	jobs := &batchv1.JobList{}
+	if err := api.List(context.Background(), jobs, client.InNamespace(schema.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 1 || jobs.Items[0].UID != applyJob.UID {
+		t.Fatalf("current-format Apply cleanup recreated mutation: %#v", jobs.Items)
+	}
+}
+
+func TestExecutionBindingChangeCleansTerminalPredecessorApplyWithoutTrustingResult(t *testing.T) {
+	t.Parallel()
+
+	schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+	validPlanFingerprint := fingerprint.DigestBytes([]byte("predecessor apply plan"))
+	plan.Spec.Fingerprint = validPlanFingerprint
+	schema.Status.Plan.Fingerprint = validPlanFingerprint
+	approval.Spec.PlanFingerprint = validPlanFingerprint
+	oldExecutionEpoch := schema.Status.ExecutionBinding.Epoch
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhaseApplying
+	schema.Status.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{
+		Name: approval.Name, UID: approval.UID, Approver: approval.Spec.Approver, ApprovedAt: approval.Spec.ApprovedAt,
+	}
+	if schema.Status.Plan.Fingerprint != validPlanFingerprint {
+		t.Fatalf("test plan fingerprint reset to %q", schema.Status.Plan.Fingerprint)
+	}
+	started := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	executionNotAfter := metav1.NewTime(started.Add(leaseDuration(schema) - time.Minute))
+	target := databaseTargetBinding(schema.Spec.Target)
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationApply, ID: "running-predecessor-apply", JobName: "running-predecessor-apply-job",
+		StartedAt: metav1.NewTime(started), Attempt: 1, DispatchStarted: true,
+		CoordinationDigest: testCoordinationDigest, TargetIdentityDigest: testDigest,
+		LeaseDurationSeconds: int32(leaseDuration(schema) / time.Second), LeaseEpoch: testLeaseEpoch,
+		ExecutionNotAfter: &executionNotAfter, TerminationGracePeriodSeconds: int64(applyTerminationGrace / time.Second),
+		Target: &target, Source: artifactAccessBinding(schema),
+		ObservationExclude:  append([]string(nil), schema.Spec.Policy.Exclude...),
+		ObservationSeverity: schema.Spec.Policy.DriftSeverity, ObservationDev: schema.Spec.Dev.DeepCopy(),
+		ObservationConnectTimeout: schema.Spec.Execution.ConnectTimeout,
+		ObservationLockTimeout:    schema.Spec.Policy.LockTimeout,
+	}
+	bindActiveInput(t, schema)
+	jobName, err := workload.NameFor(schema, *schema.Status.ActiveOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema.Status.ActiveOperation.JobName = jobName
+	ensureTestAdmissionSnapshot(schema)
+	applyJob, err := (fakeJobs{}).Build(schema, *schema.Status.ActiveOperation, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyJob.UID = "predecessor-apply-job-uid"
+	schema.Status.ActiveOperation.JobUID = applyJob.UID
+	bindPredecessorApplyJob(applyJob, schema, schema.Status.ActiveOperation, schema.Status.Plan)
+	applyPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace, Name: applyJob.Name + "-running", UID: "predecessor-apply-pod-uid",
+			OwnerReferences: []metav1.OwnerReference{jobControllerReference(applyJob)},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	logs := &safetyCountingLogs{content: []byte("retired Apply result must not be read")}
+	reconciler, api := fakeReconciler(t, logs, schema, plan, approval, policyConfig, applyJob, applyPod)
+	reconciler.Jobs = executionBindingJobs{
+		ptahVersion: "v0.4.0", executorImage: "example.invalid/ptah@" + safetyOtherDigest,
+		runnerImage: "example.invalid/operator@" + safetyOtherDigest,
+		protocol:    int32(runner.ProtocolVersion) + 1,
+	}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("retire running predecessor Apply: %v", err)
+	}
+	fenced := safetyGetSchema(t, api, schema)
+	if fenced.Status.ActiveOperation != nil || fenced.Status.PendingObservation == nil ||
+		fenced.Status.PendingObservation.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown ||
+		fenced.Status.PendingObservation.ApplyJobName != applyJob.Name ||
+		fenced.Status.PendingObservation.ApplyJobUID != applyJob.UID ||
+		fenced.Status.ExecutionBinding == nil || fenced.Status.ExecutionBinding.Epoch == oldExecutionEpoch {
+		t.Fatalf("running predecessor Apply fence = %#v", fenced.Status)
+	}
+	persistedJob := &batchv1.Job{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyJob), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished != nil || logs.reads != 0 {
+		t.Fatalf("rollover trusted or cleaned a running Apply: TTL=%#v log reads=%d", persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
+	}
+
+	persistedPod := &corev1.Pod{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyPod), persistedPod); err != nil {
+		t.Fatal(err)
+	}
+	persistedPod.Status.Phase = corev1.PodFailed
+	if err := api.Status().Update(context.Background(), persistedPod); err != nil {
+		t.Fatalf("finish predecessor Apply Pod: %v", err)
+	}
+
+	// The retained plan is retired first. A terminal Pod cannot race fresh proof
+	// past the Job controller's still-pending terminal condition.
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("finish predecessor Apply plan fence: %v", err)
+	}
+	cleanupFence := safetyGetSchema(t, api, schema)
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyJob), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if !retiredPredecessorApplyJobMatches(cleanupFence, cleanupFence.Status.PendingObservation, persistedJob) {
+		t.Fatalf("terminal predecessor Apply lost its cleanup proof: status=%#v labels=%#v annotations=%#v templateAnnotations=%#v", cleanupFence.Status, persistedJob.Labels, persistedJob.Annotations, persistedJob.Spec.Template.Annotations)
+	}
+	if jobTerminal(persistedJob) {
+		t.Fatalf("predecessor Apply Job unexpectedly became terminal: %#v", persistedJob.Status)
+	}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyPod), persistedPod); err != nil {
+		t.Fatal(err)
+	}
+	if persistedPod.Status.Phase != corev1.PodFailed {
+		t.Fatalf("predecessor Apply Pod phase = %q, want Failed", persistedPod.Status.Phase)
+	}
+	waiting, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("wait for predecessor Apply Job terminal condition: %v", err)
+	}
+	if waiting.RequeueAfter != maxLockContentionPoll {
+		t.Fatalf("nonterminal Job result = %#v, want cleanup fence requeue", waiting)
+	}
+	waitingSchema := safetyGetSchema(t, api, schema)
+	if waitingSchema.Status.ActiveOperation != nil || waitingSchema.Status.PendingObservation == nil {
+		t.Fatalf("terminal Pod advanced proof before Job cleanup: %#v", waitingSchema.Status)
+	}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyJob), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished != nil {
+		t.Fatalf("nonterminal predecessor Apply acquired a cleanup TTL: %#v", persistedJob.Spec.TTLSecondsAfterFinished)
+	}
+	persistedJob.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	if err := api.Status().Update(context.Background(), persistedJob); err != nil {
+		t.Fatalf("finish predecessor Apply Job: %v", err)
+	}
+	result, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("schedule predecessor Apply cleanup: %v", err)
+	}
+	if result.RequeueAfter != maxLockContentionPoll {
+		t.Fatalf("cleanup result = %#v, want a durable-boundary requeue", result)
+	}
+	cleaned := safetyGetSchema(t, api, schema)
+	if cleaned.Status.ActiveOperation != nil || cleaned.Status.PendingObservation == nil ||
+		cleaned.Status.PendingObservation.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown ||
+		cleaned.Status.Applied != nil {
+		t.Fatalf("cleanup certified the retired Apply: %#v", cleaned.Status)
+	}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyJob), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
+		*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds || logs.reads != 0 {
+		t.Fatalf("predecessor Apply cleanup: TTL=%#v log reads=%d", persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
+	}
+
+	afterHorizon := cleaned.Status.PendingObservation.ObserveAfter.Add(time.Second)
+	reconciler.Clock = func() time.Time { return afterHorizon }
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("claim fresh proof after predecessor Apply cleanup: %v", err)
+	}
+	observing := safetyGetSchema(t, api, schema)
+	if observing.Status.ActiveOperation == nil || observing.Status.ActiveOperation.Type != operatorv1alpha1.OperationObserve ||
+		observing.Status.ActiveOperation.ExecutionBindingID != observing.Status.ExecutionBinding.Epoch ||
+		observing.Status.ActiveOperation.ExecutionBindingID == oldExecutionEpoch || logs.reads != 0 {
+		t.Fatalf("cleanup did not require a fresh current-epoch observation: %#v", observing.Status)
+	}
+}
+
+func TestRetiredPredecessorApplyLateCreateAdoptsUIDBeforePodFenceAndCleanup(t *testing.T) {
+	t.Parallel()
+
+	schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+	planFingerprint := fingerprint.DigestBytes([]byte("late predecessor apply plan"))
+	plan.Spec.Fingerprint = planFingerprint
+	schema.Status.Plan.Fingerprint = planFingerprint
+	approval.Spec.PlanFingerprint = planFingerprint
+	oldExecutionEpoch := schema.Status.ExecutionBinding.Epoch
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhaseApplying
+	schema.Status.Plan.Approval = &operatorv1alpha1.ConsumedApprovalStatus{
+		Name: approval.Name, UID: approval.UID, Approver: approval.Spec.Approver, ApprovedAt: approval.Spec.ApprovedAt,
+	}
+	started := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	executionNotAfter := metav1.NewTime(started.Add(leaseDuration(schema) - time.Minute))
+	target := databaseTargetBinding(schema.Spec.Target)
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationApply, ID: "late-predecessor-apply", StartedAt: metav1.NewTime(started),
+		Attempt: 1, DispatchStarted: true, CoordinationDigest: testCoordinationDigest,
+		TargetIdentityDigest: testDigest, LeaseDurationSeconds: int32(leaseDuration(schema) / time.Second),
+		LeaseEpoch: testLeaseEpoch, ExecutionNotAfter: &executionNotAfter,
+		TerminationGracePeriodSeconds: int64(applyTerminationGrace / time.Second), Target: &target,
+		Source: artifactAccessBinding(schema), ObservationExclude: append([]string(nil), schema.Spec.Policy.Exclude...),
+		ObservationSeverity: schema.Spec.Policy.DriftSeverity, ObservationDev: schema.Spec.Dev.DeepCopy(),
+		ObservationConnectTimeout: schema.Spec.Execution.ConnectTimeout,
+		ObservationLockTimeout:    schema.Spec.Policy.LockTimeout,
+	}
+	bindActiveInput(t, schema)
+	jobName, err := workload.NameFor(schema, *schema.Status.ActiveOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema.Status.ActiveOperation.JobName = jobName
+	ensureTestAdmissionSnapshot(schema)
+	applyJob, err := (fakeJobs{}).Build(schema, *schema.Status.ActiveOperation, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyJob.UID = "late-predecessor-apply-job-uid"
+	bindPredecessorApplyJob(applyJob, schema, schema.Status.ActiveOperation, schema.Status.Plan)
+	applyPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace, Name: applyJob.Name + "-running", UID: "late-predecessor-apply-pod-uid",
+			OwnerReferences: []metav1.OwnerReference{jobControllerReference(applyJob)},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	logs := &safetyCountingLogs{content: []byte("late retired Apply result must not be read")}
+	reconciler, api := fakeReconciler(t, logs, schema, plan, approval, policyConfig)
+	reconciler.Jobs = executionBindingJobs{
+		ptahVersion: "v0.4.0", executorImage: "example.invalid/ptah@" + safetyOtherDigest,
+		runnerImage: "example.invalid/operator@" + safetyOtherDigest,
+		protocol:    int32(runner.ProtocolVersion) + 1,
+	}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("retire predecessor Apply before late Job commit: %v", err)
+	}
+	fenced := safetyGetSchema(t, api, schema)
+	if fenced.Status.ActiveOperation != nil || fenced.Status.PendingObservation == nil ||
+		fenced.Status.PendingObservation.ApplyJobName != applyJob.Name ||
+		fenced.Status.PendingObservation.ApplyJobUID != "" ||
+		fenced.Status.PendingObservation.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown ||
+		fenced.Status.ExecutionBinding == nil || fenced.Status.ExecutionBinding.Epoch == oldExecutionEpoch {
+		t.Fatalf("late predecessor Apply fence = %#v", fenced.Status)
+	}
+	if err := api.Create(context.Background(), applyJob); err != nil {
+		t.Fatalf("commit predecessor Apply Job after retirement fence: %v", err)
+	}
+	if err := api.Create(context.Background(), applyPod); err != nil {
+		t.Fatalf("start late predecessor Apply Pod: %v", err)
+	}
+
+	// Retire the retained plan before entering PendingObservation reconciliation.
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("finish predecessor Apply plan fence: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("adopt late predecessor Apply Job UID: %v", err)
+	}
+	adopted := safetyGetSchema(t, api, schema)
+	if adopted.Status.PendingObservation == nil || adopted.Status.PendingObservation.ApplyJobUID != applyJob.UID ||
+		len(adopted.Status.PendingObservation.ApplyPodUIDs) != 0 || adopted.Status.PendingObservation.ApplyPodCount != 0 {
+		t.Fatalf("late predecessor Apply UID adoption was not its own durable boundary: %#v", adopted.Status)
+	}
+	persistedJob := &batchv1.Job{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyJob), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished != nil || logs.reads != 0 {
+		t.Fatalf("UID adoption consumed or cleaned a running Apply: TTL=%#v log reads=%d", persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
+	}
+
+	blocked, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("fence active late predecessor Apply Pod: %v", err)
+	}
+	if blocked.RequeueAfter != maxLockContentionPoll {
+		t.Fatalf("running late predecessor Apply result = %#v", blocked)
+	}
+	withEvidence := safetyGetSchema(t, api, schema)
+	if withEvidence.Status.PendingObservation == nil || withEvidence.Status.PendingObservation.ApplyPodCount != 1 ||
+		!reflect.DeepEqual(withEvidence.Status.PendingObservation.ApplyPodUIDs, []types.UID{applyPod.UID}) {
+		t.Fatalf("running late predecessor Apply Pod evidence = %#v", withEvidence.Status.PendingObservation)
+	}
+
+	persistedPod := &corev1.Pod{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyPod), persistedPod); err != nil {
+		t.Fatal(err)
+	}
+	persistedPod.Status.Phase = corev1.PodFailed
+	if err := api.Status().Update(context.Background(), persistedPod); err != nil {
+		t.Fatalf("finish late predecessor Apply Pod: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("wait for late predecessor Apply Job terminal condition: %v", err)
+	}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyJob), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished != nil {
+		t.Fatalf("late predecessor Apply received TTL before Job terminal condition: %#v", persistedJob.Spec.TTLSecondsAfterFinished)
+	}
+	persistedJob.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
+	if err := api.Status().Update(context.Background(), persistedJob); err != nil {
+		t.Fatalf("finish late predecessor Apply Job: %v", err)
+	}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("schedule late predecessor Apply cleanup: %v", err)
+	}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(applyJob), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished == nil ||
+		*persistedJob.Spec.TTLSecondsAfterFinished != jobCleanupTTLSeconds || logs.reads != 0 {
+		t.Fatalf("late predecessor Apply cleanup: TTL=%#v log reads=%d", persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
+	}
+	cleaned := safetyGetSchema(t, api, schema)
+	if cleaned.Status.PendingObservation == nil ||
+		cleaned.Status.PendingObservation.Outcome != operatorv1alpha1.PendingObservationOutcomeUnknown ||
+		cleaned.Status.Applied != nil {
+		t.Fatalf("late predecessor Apply cleanup certified a retired result: %#v", cleaned.Status)
+	}
+}
+
+func TestRetiredPredecessorApplyCleanupRequiresExactFencedEnvelope(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*operatorv1alpha1.PtahSchema, *batchv1.Job)
+	}{
+		{
+			name: "same-name replacement",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.UID = "replacement-job-uid"
+			},
+		},
+		{
+			name: "schema owner mismatch",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.OwnerReferences[0].UID = "other-schema-uid"
+			},
+		},
+		{
+			name: "active operation present",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
+				schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationApply}
+			},
+		},
+		{
+			name: "outcome is not unknown",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *batchv1.Job) {
+				schema.Status.PendingObservation.Outcome = operatorv1alpha1.PendingObservationApplySucceeded
+			},
+		},
+		{
+			name: "retired epoch is current",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				current := schema.Status.ExecutionBinding.Epoch
+				schema.Status.PendingObservation.Plan.ExecutionBindingID = current
+				job.Annotations[workload.AnnotationExecutionBindingID] = current
+				job.Spec.Template.Annotations[workload.AnnotationExecutionBindingID] = current
+			},
+		},
+		{
+			name: "operation label mismatch",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Labels[workload.LabelOperation] = "plan"
+			},
+		},
+		{
+			name: "extra controller annotation",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Annotations[workload.AnnotationControllerImage] = "example.invalid/controller@" + testDigest
+				job.Spec.Template.Annotations[workload.AnnotationControllerImage] = job.Annotations[workload.AnnotationControllerImage]
+			},
+		},
+		{
+			name: "plan digest mismatch",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Annotations[workload.AnnotationPlanContentDigest] = strings.Replace(safetyOtherDigest, "b", "c", 1)
+				job.Spec.Template.Annotations[workload.AnnotationPlanContentDigest] = job.Annotations[workload.AnnotationPlanContentDigest]
+			},
+		},
+		{
+			name: "template envelope mismatch",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Spec.Template.Annotations[workload.AnnotationOperationID] = "other-operation"
+			},
+		},
+		{
+			name: "invalid input fingerprint",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Annotations[workload.AnnotationInputFingerprint] = "sha256:not-a-digest"
+				job.Spec.Template.Annotations[workload.AnnotationInputFingerprint] = "sha256:not-a-digest"
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, job := predecessorApplyCleanupMatchFixture()
+			test.mutate(schema, job)
+			if retiredPredecessorApplyJobMatches(schema, schema.Status.PendingObservation, job) {
+				t.Fatal("retiredPredecessorApplyJobMatches() accepted unsafe cleanup evidence")
+			}
+		})
+	}
+}
+
+func TestRetiredPredecessorApplyUIDAdoptionRejectsUnprovenJob(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*operatorv1alpha1.PtahSchema, *batchv1.Job)
+	}{
+		{
+			name: "wrong owner",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.OwnerReferences[0].UID = "replacement-schema-uid"
+			},
+		},
+		{
+			name: "wrong operation label",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Labels[workload.LabelOperation] = "observe"
+				job.Spec.Template.Labels[workload.LabelOperation] = "observe"
+			},
+		},
+		{
+			name: "extra controller identity",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Annotations[workload.AnnotationControllerImage] = "example.invalid/controller@" + testDigest
+				job.Spec.Template.Annotations[workload.AnnotationControllerImage] = job.Annotations[workload.AnnotationControllerImage]
+			},
+		},
+		{
+			name: "template annotation mismatch",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				job.Spec.Template.Annotations[workload.AnnotationPlanFingerprint] = safetyOtherDigest
+			},
+		},
+		{
+			name: "current execution epoch",
+			mutate: func(schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) {
+				current := schema.Status.ExecutionBinding.Epoch
+				schema.Status.PendingObservation.Plan.ExecutionBindingID = current
+				job.Annotations[workload.AnnotationExecutionBindingID] = current
+				job.Spec.Template.Annotations[workload.AnnotationExecutionBindingID] = current
+			},
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema, job := predecessorApplyCleanupMatchFixture()
+			schema.Status.PendingObservation.ApplyJobUID = ""
+			test.mutate(schema, job)
+			if retiredPredecessorApplyJobMatches(schema, schema.Status.PendingObservation, job) {
+				t.Fatal("retiredPredecessorApplyJobMatches() accepted an unproven late Job")
+			}
+		})
+	}
+}
+
 func TestExecutionBindingChangeDiscardsOldPostApplyProofResult(t *testing.T) {
 	t.Parallel()
 
@@ -2736,8 +4051,7 @@ func TestExecutionBindingChangeDiscardsOldPostApplyProofResult(t *testing.T) {
 		Attempt:   1,
 	}
 	bindActiveInput(t, schema)
-	job, pod := terminalWorkload(schema, batchv1.JobComplete)
-	bindRetiredReadOnlyJob(job, schema.Status.ActiveOperation)
+	job, _ := terminalWorkload(schema, batchv1.JobComplete)
 	frame := safetyRunnerFrame(t, runner.Result{
 		ProtocolVersion:      runner.ProtocolVersion,
 		Operation:            runner.OperationPlan,
@@ -2758,7 +4072,24 @@ func TestExecutionBindingChangeDiscardsOldPostApplyProofResult(t *testing.T) {
 		Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: "updated policy"},
 	}
 	logs := &safetyCountingLogs{content: frame}
-	reconciler, api := fakeReconciler(t, logs, schema, job, pod, policyConfig)
+	reconciler, api := fakeReconciler(t, logs, schema, policyConfig)
+	// Build the Job only after the fixture has persisted the target-lock epoch;
+	// the real controller also binds its input fingerprint after lock acquisition.
+	bindRetiredReadOnlyJob(job, schema.Status.ActiveOperation)
+	stored := safetyGetSchema(t, api, schema)
+	stored.Status.ActiveOperation = schema.Status.ActiveOperation.DeepCopy()
+	if err := api.Status().Update(context.Background(), stored); err != nil {
+		t.Fatalf("persist exact locked operation fixture: %v", err)
+	}
+	terminalStatus := job.Status.DeepCopy()
+	job.Status = batchv1.JobStatus{}
+	if err := api.Create(context.Background(), job); err != nil {
+		t.Fatalf("create exact retired Job fixture: %v", err)
+	}
+	job.Status = *terminalStatus
+	if err := api.Status().Update(context.Background(), job); err != nil {
+		t.Fatalf("finish exact retired Job fixture: %v", err)
+	}
 	wantPending := schema.Status.PendingObservation.DeepCopy()
 	wantPending.PlanRequired = false
 	reconciler.Jobs = executionBindingJobs{
@@ -2809,6 +4140,9 @@ func TestExecutionBindingChangeDiscardsOldPostApplyProofResult(t *testing.T) {
 	persistedJob := &batchv1.Job{}
 	if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), persistedJob); err != nil {
 		t.Fatal(err)
+	}
+	if !retiredReadOnlyJobMatches(fenced, fenced.Status.ActiveOperation, persistedJob) {
+		t.Fatalf("retired post-Apply proof lost its exact cleanup envelope: operation=%#v labels=%#v annotations=%#v template=%#v", fenced.Status.ActiveOperation, persistedJob.Labels, persistedJob.Annotations, persistedJob.Spec.Template)
 	}
 	if persistedJob.Spec.TTLSecondsAfterFinished != nil || logs.reads != 0 {
 		t.Fatalf("first fence consumed retired proof: TTL=%#v log reads=%d", persistedJob.Spec.TTLSecondsAfterFinished, logs.reads)
@@ -3237,6 +4571,7 @@ func TestFreshLeaseEpochPersistenceAlwaysSchedulesJobDispatch(t *testing.T) {
 	schema.Status.Phase = operatorv1alpha1.PhasePlanning
 	schema.Status.Target.DriftReportDigest = safetyOtherDigest
 	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	reconciler.Client = assignCreatedJobUIDClient{Client: api, uid: "fresh-plan-job-uid"}
 	reconciler.Locks = targetlock.New(api, api, nil)
 
 	stored := safetyGetSchema(t, api, schema)
@@ -3304,6 +4639,9 @@ func TestFreshLeaseEpochPersistenceAlwaysSchedulesJobDispatch(t *testing.T) {
 		t.Fatalf("restarted dispatch admission digest = %q, want persisted %q", got, boundDigest)
 	}
 	afterDispatch := safetyGetSchema(t, api, schema)
+	if afterDispatch.Status.ActiveOperation == nil || afterDispatch.Status.ActiveOperation.AdmissionSnapshot == nil {
+		t.Fatalf("restarted dispatch cleared its active operation: %#v", afterDispatch.Status)
+	}
 	if got := afterDispatch.Status.ActiveOperation.AdmissionSnapshot.Digest; got != boundDigest {
 		t.Fatalf("restarted reconciliation replaced admission digest = %q, want %q", got, boundDigest)
 	}
@@ -3379,6 +4717,155 @@ func safetyApplySchema(t *testing.T) *operatorv1alpha1.PtahSchema {
 	}
 	bindActiveInput(t, schema)
 	return schema
+}
+
+func predecessorApplyCleanupMatchFixture() (*operatorv1alpha1.PtahSchema, *batchv1.Job) {
+	schema := schemaFixture()
+	retiredEpoch := "v1-22222222222222222222222222222222"
+	operationID := "predecessor-apply-operation"
+	jobName := "ptah-apply-app-0123456789abcdef"
+	jobUID := types.UID("predecessor-apply-job-uid")
+	schema.Status.Phase = operatorv1alpha1.PhasePending
+	schema.Status.ActiveOperation = nil
+	schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+		Outcome:          operatorv1alpha1.PendingObservationOutcomeUnknown,
+		ApplyOperationID: operationID,
+		ApplyJobName:     jobName,
+		ApplyJobUID:      jobUID,
+		Plan: operatorv1alpha1.CurrentPlanStatus{
+			Fingerprint:        testDigest,
+			ContentDigest:      safetyOtherDigest,
+			ExecutionBindingID: retiredEpoch,
+			PtahVersion:        "v0.3.0",
+		},
+	}
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "retired")
+	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonExecutionBindingChanged, "retired")
+	labels := map[string]string{
+		workload.LabelManagedBy:   "ptah-operator",
+		workload.LabelComponent:   "schema-operation",
+		workload.LabelSchema:      schema.Name,
+		workload.LabelOperation:   "apply",
+		workload.LabelOperationID: workload.OperationIDLabelValue(operationID),
+	}
+	annotations := map[string]string{
+		workload.AnnotationOperationID:             operationID,
+		workload.AnnotationInputFingerprint:        testDigest,
+		workload.AnnotationPtahVersion:             "v0.3.0",
+		workload.AnnotationExecutionBindingID:      retiredEpoch,
+		workload.AnnotationPlanFingerprint:         testDigest,
+		workload.AnnotationPlanContentDigest:       safetyOtherDigest,
+		workload.AnnotationAdmissionSnapshotDigest: testDigest,
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace, Name: jobName, UID: jobUID,
+			Labels: labels, Annotations: annotations,
+			OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)},
+		},
+		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				workload.LabelManagedBy: "ptah-operator", workload.LabelComponent: "schema-operation",
+				workload.LabelSchema: schema.Name, workload.LabelOperation: "apply",
+				workload.LabelOperationID: workload.OperationIDLabelValue(operationID),
+			},
+			Annotations: map[string]string{
+				workload.AnnotationOperationID: operationID, workload.AnnotationInputFingerprint: testDigest,
+				workload.AnnotationPtahVersion: "v0.3.0", workload.AnnotationExecutionBindingID: retiredEpoch,
+				workload.AnnotationPlanFingerprint: testDigest, workload.AnnotationPlanContentDigest: safetyOtherDigest,
+				workload.AnnotationAdmissionSnapshotDigest: testDigest,
+			},
+		}}},
+	}
+	return schema, job
+}
+
+func predecessorReadOnlyLateCreateFixture(
+	t *testing.T,
+	operationType operatorv1alpha1.OperationType,
+) (*operatorv1alpha1.PtahSchema, *batchv1.Job) {
+	t.Helper()
+
+	schema := schemaFixture()
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = phaseFor(operationType)
+	schema.Status.Source = operatorv1alpha1.SchemaSourceStatus{
+		ResolvedReference:        "oci://registry.example/team/schema@" + testDigest,
+		Digest:                   testDigest,
+		ArtifactType:             dataplane.SchemaArtifactType,
+		Verified:                 true,
+		VerificationPolicyUID:    testPolicyUID,
+		VerificationPolicyDigest: testDigest,
+	}
+	schema.Status.Target = operatorv1alpha1.TargetStatus{
+		Engine: schema.Spec.Target.Engine, CoordinationDigest: testCoordinationDigest,
+		IdentityDigest: testDigest, DriftReportDigest: safetyOtherDigest,
+	}
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operationType, ID: "late-predecessor-" + strings.ToLower(string(operationType)),
+		StartedAt: metav1.NewTime(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)), Attempt: 1,
+	}
+	bindActiveInput(t, schema)
+	operation := schema.Status.ActiveOperation
+	jobName, err := workload.NameFor(schema, *operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.JobName = jobName
+	ensureTestAdmissionSnapshot(schema)
+	labels := map[string]string{
+		workload.LabelManagedBy:   "ptah-operator",
+		workload.LabelComponent:   "schema-operation",
+		workload.LabelSchema:      schema.Name,
+		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
+		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
+	}
+	annotations := map[string]string{
+		workload.AnnotationOperationID:        operation.ID,
+		workload.AnnotationInputFingerprint:   operation.InputFingerprint,
+		workload.AnnotationPtahVersion:        schema.Status.ExecutionBinding.PtahVersion,
+		workload.AnnotationExecutionBindingID: operation.ExecutionBindingID,
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: schema.Namespace, Name: operation.JobName, UID: "late-predecessor-job-uid",
+			Labels: labels, Annotations: annotations,
+			OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)},
+		},
+		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{
+			ObjectMeta: metav1.ObjectMeta{
+				Labels: map[string]string{
+					workload.LabelManagedBy: "ptah-operator", workload.LabelComponent: "schema-operation",
+					workload.LabelSchema: schema.Name, workload.LabelOperation: strings.ToLower(string(operation.Type)),
+					workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
+				},
+				Annotations: map[string]string{
+					workload.AnnotationOperationID: operation.ID, workload.AnnotationInputFingerprint: operation.InputFingerprint,
+					workload.AnnotationPtahVersion:        schema.Status.ExecutionBinding.PtahVersion,
+					workload.AnnotationExecutionBindingID: operation.ExecutionBindingID,
+				},
+			},
+			Spec: corev1.PodSpec{
+				ServiceAccountName: "default", RestartPolicy: corev1.RestartPolicyNever,
+				Containers: []corev1.Container{{Name: executorContainerName, Image: "example.invalid/ptah@" + testDigest}},
+			},
+		}},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}},
+	}
+	templateDigest, err := podintent.DigestTemplate(&job.Spec.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.AdmissionSnapshot.TemplateDigest = templateDigest
+	operation.AdmissionSnapshot.Digest = ""
+	snapshotDigest, err := fingerprint.DigestCanonicalJSON(*operation.AdmissionSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.AdmissionSnapshot.Digest = snapshotDigest
+	job.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
+	job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
+	return schema, job
 }
 
 func safetyLockedOperationSchema(operation operatorv1alpha1.OperationType) *operatorv1alpha1.PtahSchema {

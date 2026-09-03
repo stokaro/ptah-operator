@@ -37,7 +37,7 @@
 {{- $tlsCrt = $cert.Cert | b64enc -}}
 {{- $tlsKey = $cert.Key | b64enc -}}
 {{- end -}}
-{{- $entryBundles := dict "mutating" $caBundle "approvalValidating" $caBundle "podValidating" $caBundle -}}
+{{- $entryBundles := dict "mutating" $caBundle "approvalValidating" $caBundle "podValidating" $caBundle "controllerWriteValidating" $caBundle -}}
 {{- if not .Values.webhook.existingSecret -}}
 {{- if $existingMutating -}}
 {{- range $existingMutating.webhooks -}}
@@ -53,6 +53,8 @@
 {{- $_ := set $entryBundles "approvalValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- else if eq .name "vpodintent.operator.ptah.dev" -}}
 {{- $_ := set $entryBundles "podValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
+{{- else if eq .name "vcontrollerwrite.operator.ptah.dev" -}}
+{{- $_ := set $entryBundles "controllerWriteValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -188,4 +190,38 @@ webhooks:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["pods", "pods/ephemeralcontainers", "pods/resize"]
+        scope: Namespaced
+  - name: vcontrollerwrite.operator.ptah.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Exact
+    timeoutSeconds: {{ .Values.webhook.controllerWriteTimeoutSeconds }}
+    matchConditions:
+      - name: controller-service-account
+        expression: >-
+          request.userInfo.username ==
+          'system:serviceaccount:{{ .Release.Namespace }}:{{ include "ptah-operator.serviceAccountName" . }}'
+    clientConfig:
+      caBundle: {{ index $entryBundles "controllerWriteValidating" }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $serviceName }}
+        path: /validate-operator-controller-write
+        port: 443
+    rules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+      - apiGroups: ["operator.ptah.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE"]
+        resources: ["ptahschemaplans"]
         scope: Namespaced

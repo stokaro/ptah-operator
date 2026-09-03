@@ -20,11 +20,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/certrotation"
 )
 
-const (
-	defaultMutatingWebhookNames   = "mapproval.operator.ptah.dev"
-	defaultValidatingWebhookNames = "vapproval.operator.ptah.dev,vpodintent.operator.ptah.dev"
-	healthServerShutdownTimeout   = 5 * time.Second
-)
+const healthServerShutdownTimeout = 5 * time.Second
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -55,9 +51,9 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	flags.StringVar(&config.SecretCreateServiceAccountName, "secret-create-service-account-name", "", "exact ServiceAccount subject guarded for generated TLS Secret recreation")
 	flags.StringVar(&config.LeaseName, "lease-name", "", "exact certificate rotation Lease name")
 	flags.StringVar(&config.MutatingWebhookConfiguration, "mutating-webhook-configuration", "", "exact MutatingWebhookConfiguration name")
-	flags.StringVar(&mutatingWebhookNames, "mutating-webhook-names", defaultMutatingWebhookNames, "comma-separated exact webhook entries to update")
+	flags.StringVar(&mutatingWebhookNames, "mutating-webhook-names", "", "required comma-separated mutating webhook anchors for the exact Service")
 	flags.StringVar(&config.ValidatingWebhookConfiguration, "validating-webhook-configuration", "", "exact ValidatingWebhookConfiguration name")
-	flags.StringVar(&validatingWebhookNames, "validating-webhook-names", defaultValidatingWebhookNames, "comma-separated exact webhook entries to update")
+	flags.StringVar(&validatingWebhookNames, "validating-webhook-names", "", "required comma-separated validating webhook anchors for the exact Service")
 	flags.StringVar(&config.ServiceName, "service-name", "", "webhook Service name")
 	flags.StringVar(&config.ServiceNamespace, "service-namespace", "", "webhook Service namespace")
 	flags.StringVar(&config.EndpointPortName, "endpoint-port-name", "https", "EndpointSlice port name used for direct Pod probes")

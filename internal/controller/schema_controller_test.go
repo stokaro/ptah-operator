@@ -48,6 +48,8 @@ var testCoordinationDigest = mustTestCoordinationDigest()
 
 type fakeJobs struct{}
 
+type attemptNamedJobs struct{ fakeJobs }
+
 type changedTemplateJobs struct{ fakeJobs }
 
 type failingBuildJobs struct{ fakeJobs }
@@ -89,6 +91,13 @@ func (failingBuildJobs) Build(
 
 func (fakeJobs) NameFor(_ *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus) (string, error) {
 	return "ptah-" + strings.ToLower(string(operation.Type)) + "-test", nil
+}
+
+func (attemptNamedJobs) NameFor(
+	schema *operatorv1alpha1.PtahSchema,
+	operation operatorv1alpha1.ActiveOperationStatus,
+) (string, error) {
+	return workload.NameFor(schema, operation)
 }
 
 func (fakeJobs) Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus, _ *operatorv1alpha1.PtahSchemaPlan) (*batchv1.Job, error) {
@@ -1141,6 +1150,264 @@ func TestSourceRefreshConditionsPreserveLastKnownEvidence(t *testing.T) {
 	})
 }
 
+func TestMissingReadOnlyJobWithPersistedUIDAdvancesAttemptBeforeRecreate(t *testing.T) {
+	t.Parallel()
+
+	for _, operationType := range []operatorv1alpha1.OperationType{
+		operatorv1alpha1.OperationResolve,
+		operatorv1alpha1.OperationVerify,
+		operatorv1alpha1.OperationObserve,
+		operatorv1alpha1.OperationPlan,
+	} {
+		operationType := operationType
+		t.Run(string(operationType), func(t *testing.T) {
+			t.Parallel()
+
+			policyBytes := []byte("policy")
+			schema := schemaFixture()
+			schema.Finalizers = []string{activeOperationFinalizer}
+			schema.Status.Phase = phaseFor(operationType)
+			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+				Type:      operationType,
+				ID:        "missing-" + strings.ToLower(string(operationType)),
+				JobUID:    "missing-job-uid",
+				StartedAt: metav1.NewTime(time.Date(2026, 8, 30, 11, 59, 0, 0, time.UTC)),
+				Attempt:   1,
+			}
+
+			objects := []client.Object{schema}
+			switch operationType {
+			case operatorv1alpha1.OperationVerify:
+				schema.Status.Source.ResolvedReference = "oci://registry.example/team/schema@" + testDigest
+				schema.Status.Source.Digest = testDigest
+				schema.Status.ActiveOperation.VerificationPolicyUID = testPolicyUID
+				schema.Status.ActiveOperation.VerificationPolicyDigest = fingerprint.DigestBytes(policyBytes)
+				objects = append(objects, &corev1.ConfigMap{
+					ObjectMeta: metav1.ObjectMeta{
+						Namespace: schema.Namespace,
+						Name:      schema.Spec.Desired.VerificationPolicyFrom.Name,
+						UID:       testPolicyUID,
+					},
+					Immutable: ptr(true),
+					Data:      map[string]string{schema.Spec.Desired.VerificationPolicyFrom.Key: string(policyBytes)},
+				})
+			case operatorv1alpha1.OperationObserve, operatorv1alpha1.OperationPlan:
+				schema.Status.Source.ResolvedReference = "oci://registry.example/team/schema@" + testDigest
+				schema.Status.Source.Digest = testDigest
+				schema.Status.Source.ArtifactType = dataplane.SchemaArtifactType
+				schema.Status.Source.Verified = true
+				if operationType == operatorv1alpha1.OperationPlan {
+					schema.Status.Target = operatorv1alpha1.TargetStatus{
+						Engine:             schema.Spec.Target.Engine,
+						CoordinationDigest: testCoordinationDigest,
+						IdentityDigest:     testDigest,
+						DriftReportDigest:  testDigest,
+					}
+					schema.Status.ActiveOperation.LeaseEpoch = testLeaseEpoch
+				}
+			}
+
+			bindActiveInput(t, schema)
+			ensureTestAdmissionSnapshot(schema)
+			oldName, err := workload.NameFor(schema, *schema.Status.ActiveOperation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			schema.Status.ActiveOperation.JobName = oldName
+
+			reconciler, api := fakeReconciler(t, staticLogs{}, objects...)
+			reconciler.Jobs = attemptNamedJobs{}
+			request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+			result, err := reconciler.Reconcile(context.Background(), request)
+			if err != nil {
+				t.Fatalf("Reconcile() missing %s Job error = %v", operationType, err)
+			}
+			if result.RequeueAfter != failureRetry(schema) {
+				t.Fatalf("Reconcile() missing %s Job result = %#v", operationType, result)
+			}
+
+			persisted := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), persisted); err != nil {
+				t.Fatal(err)
+			}
+			if persisted.Status.ActiveOperation == nil || persisted.Status.ActiveOperation.Attempt != 2 ||
+				persisted.Status.ActiveOperation.JobUID != "" || persisted.Status.ActiveOperation.DispatchStarted ||
+				persisted.Status.ActiveOperation.AdmissionSnapshot != nil ||
+				persisted.Status.ActiveOperation.JobName == oldName || persisted.Status.Phase != operatorv1alpha1.PhaseFailed ||
+				persisted.Status.NextReconciliationTime == nil {
+				t.Fatalf("missing %s Job retry boundary = %#v", operationType, persisted.Status)
+			}
+			wantName, err := workload.NameFor(persisted, *persisted.Status.ActiveOperation)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if persisted.Status.ActiveOperation.JobName != wantName {
+				t.Fatalf("retry Job name = %q, want %q", persisted.Status.ActiveOperation.JobName, wantName)
+			}
+			jobs := &batchv1.JobList{}
+			if err := api.List(context.Background(), jobs, client.InNamespace(schema.Namespace)); err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs.Items) != 0 {
+				t.Fatalf("missing %s Job retry created work before its status boundary: %#v", operationType, jobs.Items)
+			}
+		})
+	}
+}
+
+func TestMissingReadOnlyJobWaitsForItsExactOwnerPod(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhaseResolving
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type:      operatorv1alpha1.OperationResolve,
+		ID:        "missing-resolve-with-running-pod",
+		JobUID:    "missing-resolve-job-uid",
+		StartedAt: metav1.NewTime(time.Date(2026, 8, 30, 11, 59, 0, 0, time.UTC)),
+		Attempt:   1,
+	}
+	bindActiveInput(t, schema)
+	ensureTestAdmissionSnapshot(schema)
+	oldSnapshotDigest := schema.Status.ActiveOperation.AdmissionSnapshot.Digest
+	jobName, err := workload.NameFor(schema, *schema.Status.ActiveOperation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema.Status.ActiveOperation.JobName = jobName
+	missingJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Namespace: schema.Namespace,
+		Name:      jobName,
+		UID:       schema.Status.ActiveOperation.JobUID,
+	}}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace:       schema.Namespace,
+			Name:            jobName + "-pod",
+			UID:             "old-resolve-pod-uid",
+			OwnerReferences: []metav1.OwnerReference{jobControllerReference(missingJob)},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, pod)
+	reconciler.Jobs = attemptNamedJobs{}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	result, err := reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Reconcile() running orphan Pod error = %v", err)
+	}
+	if result.RequeueAfter != maxLockContentionPoll {
+		t.Fatalf("Reconcile() running orphan Pod result = %#v", result)
+	}
+	persisted := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status.ActiveOperation == nil || persisted.Status.ActiveOperation.Attempt != 1 ||
+		persisted.Status.ActiveOperation.JobUID != missingJob.UID || persisted.Status.ActiveOperation.JobName != jobName {
+		t.Fatalf("running old Pod advanced the read-only attempt: %#v", persisted.Status.ActiveOperation)
+	}
+
+	storedPod := &corev1.Pod{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(pod), storedPod); err != nil {
+		t.Fatal(err)
+	}
+	storedPod.Status.Phase = corev1.PodSucceeded
+	if err := api.Status().Update(context.Background(), storedPod); err != nil {
+		t.Fatalf("finish old read-only Pod: %v", err)
+	}
+	result, err = reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Reconcile() terminal orphan Pod error = %v", err)
+	}
+	if result.RequeueAfter != failureRetry(schema) {
+		t.Fatalf("Reconcile() terminal orphan Pod result = %#v", result)
+	}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status.ActiveOperation == nil || persisted.Status.ActiveOperation.Attempt != 2 ||
+		persisted.Status.ActiveOperation.JobUID != "" || persisted.Status.ActiveOperation.JobName == jobName ||
+		persisted.Status.ActiveOperation.AdmissionSnapshot != nil {
+		t.Fatalf("terminal old Pod did not advance the read-only attempt: %#v", persisted.Status.ActiveOperation)
+	}
+
+	serviceAccount := &corev1.ServiceAccount{}
+	serviceAccountKey := client.ObjectKey{Namespace: schema.Namespace, Name: "default"}
+	if err := api.Get(context.Background(), serviceAccountKey, serviceAccount); err != nil {
+		t.Fatal(err)
+	}
+	serviceAccount.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "registry-v2"}}
+	if err := api.Update(context.Background(), serviceAccount); err != nil {
+		t.Fatalf("change admission dependency before retry: %v", err)
+	}
+	reconciler.Clock = func() time.Time {
+		return persisted.Status.NextReconciliationTime.Add(time.Second)
+	}
+	result, err = reconciler.Reconcile(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Reconcile() resolve retry admission snapshot error = %v", err)
+	}
+	if !result.Requeue {
+		t.Fatalf("Reconcile() resolve retry admission snapshot result = %#v", result)
+	}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status.ActiveOperation == nil || persisted.Status.ActiveOperation.Attempt != 2 ||
+		persisted.Status.ActiveOperation.AdmissionSnapshot == nil {
+		t.Fatalf("read-only retry did not persist a fresh admission snapshot: %#v", persisted.Status.ActiveOperation)
+	}
+	freshSnapshot := persisted.Status.ActiveOperation.AdmissionSnapshot
+	if freshSnapshot.Digest == oldSnapshotDigest ||
+		!reflect.DeepEqual(freshSnapshot.ServiceAccount.ImagePullSecrets, serviceAccount.ImagePullSecrets) {
+		t.Fatalf("retry admission snapshot was not re-resolved: old digest=%q snapshot=%#v", oldSnapshotDigest, freshSnapshot)
+	}
+	jobs := &batchv1.JobList{}
+	if err := api.List(context.Background(), jobs, client.InNamespace(schema.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Fatalf("fresh admission snapshot boundary dispatched a Job: %#v", jobs.Items)
+	}
+}
+
+func TestRetryOperationRejectsApplyBeforeCleanupOrStatusMutation(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Status.Phase = operatorv1alpha1.PhaseApplying
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationApply, ID: "ambiguous-apply", JobName: "ambiguous-apply-job",
+		JobUID: "ambiguous-apply-job-uid", Attempt: 1, DispatchStarted: true,
+	}
+	ensureTestAdmissionSnapshot(schema)
+	wantOperation := schema.Status.ActiveOperation.DeepCopy()
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: schema.Status.ActiveOperation.JobName, UID: schema.Status.ActiveOperation.JobUID},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+			Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
+		}}},
+	}
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema, job)
+
+	if _, err := reconciler.retryOperation(context.Background(), schema, job, errors.New("ambiguous Apply failure")); err == nil || !strings.Contains(err.Error(), "read-only operation") {
+		t.Fatalf("retryOperation() error = %v, want read-only rejection", err)
+	}
+	if !reflect.DeepEqual(schema.Status.ActiveOperation, wantOperation) {
+		t.Fatalf("rejected Apply retry mutated status:\nwant %#v\n got %#v", wantOperation, schema.Status.ActiveOperation)
+	}
+	persistedJob := &batchv1.Job{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(job), persistedJob); err != nil {
+		t.Fatal(err)
+	}
+	if persistedJob.Spec.TTLSecondsAfterFinished != nil {
+		t.Fatalf("rejected Apply retry scheduled cleanup: TTL=%d", *persistedJob.Spec.TTLSecondsAfterFinished)
+	}
+}
+
 func TestInitialSourceResolutionFailureHasNoRefreshEvidence(t *testing.T) {
 	t.Parallel()
 
@@ -1754,6 +2021,51 @@ func TestPostApplyObserveClaimPreservesConvergencePhase(t *testing.T) {
 	if actual.Status.Phase != operatorv1alpha1.PhaseVerifyingConvergence ||
 		actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationObserve {
 		t.Fatalf("post-apply observation claim = %#v", actual.Status)
+	}
+}
+
+func TestObservePersistsCredentialFreeDriftFindings(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Finalizers = []string{activeOperationFinalizer}
+	schema.Status.Phase = operatorv1alpha1.PhaseObserving
+	schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+		Type: operatorv1alpha1.OperationObserve, ID: "observe-findings",
+		JobName: "observe-findings-job", JobUID: "job-uid", StartedAt: metav1.Now(), Attempt: 1,
+	}
+	bindActiveInput(t, schema)
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	wantFindings := []operatorv1alpha1.DriftFindingStatus{
+		{Category: "columns_modified", Count: 1, Severity: "error"},
+		{Category: "tables_added", Count: 2, Severity: "safe"},
+	}
+	runnerFindings := []runner.DriftFindingSummary{
+		{Category: "columns_modified", Count: 1, Severity: "error"},
+		{Category: "tables_added", Count: 2, Severity: "safe"},
+	}
+
+	if _, err := reconciler.consumeResult(context.Background(), schema, nil, runner.Result{
+		Operation:              runner.OperationObserve,
+		CoordinationDigest:     testCoordinationDigest,
+		TargetIdentityDigest:   testDigest,
+		DriftReportDigest:      testDigest,
+		ObservedDialect:        "postgresql",
+		ObservedDrift:          true,
+		HighestDriftSeverity:   "error",
+		DriftFindingCount:      3,
+		DriftFindings:          runnerFindings,
+		DriftFindingsTruncated: false,
+	}, nil, 0); err != nil {
+		t.Fatalf("consumeResult() Observe error = %v", err)
+	}
+	actual := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+		t.Fatal(err)
+	}
+	if actual.Status.Target.HighestDriftSeverity != "error" || actual.Status.Target.DriftFindingCount != 3 ||
+		!reflect.DeepEqual(actual.Status.Target.DriftFindings, wantFindings) || actual.Status.Target.DriftFindingsTruncated {
+		t.Fatalf("persisted drift summary = %#v", actual.Status.Target)
 	}
 }
 

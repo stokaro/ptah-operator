@@ -200,7 +200,7 @@ pause and scheduling barrier must prove that the original live Lease holder
 and epoch remain and that the Lease watch contains no release, deletion, or
 replacement event; only then may status harvesting resume and release the
 Lease.
-The original Apply Job must expose one exact, production-parsed protocol-v4
+The original Apply Job must expose one exact, production-parsed protocol-v5
 result whose mutating outcome, plan digest, coordination digest, and target
 digest match both the persisted active operation and pending proof snapshot.
 Both read-only proof Jobs must also expose one exact result:
@@ -245,7 +245,7 @@ Plan Job and Pod UIDs and zero Apply UIDs.
 
 PostgreSQL and MySQL use distinct stable coordination keys. The suite requires
 their status and approval bindings to expose only the derived digest, never the
-plaintext key, and binds every approval to runner protocol version 4.
+plaintext key, and binds every approval to runner protocol version 5.
 
 Registry and database credentials are supplied only through namespaced
 Secrets. Host-side generated credentials, including the external PostgreSQL
@@ -257,7 +257,7 @@ must have a complete terminal log audit. Terminal Jobs are re-read by exact UID,
 are selected by controller owner UID rather than a reusable name label, and
 every exact terminated Pod and container is rechecked after its log scan before
 the Job UID is certified. Exact operation results are extracted from one
-complete integrity-bound protocol-v4 frame by the production parser, rather
+complete integrity-bound protocol-v5 frame by the production parser, rather
 than inferred from Job success alone. Every parsed frame is also bound to the
 CR's persisted active-operation ID and Job UID and to the exact `ADDED` Job
 annotation, so a stale or foreign frame cannot satisfy the suite. Any stdout

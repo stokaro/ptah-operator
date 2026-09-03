@@ -512,8 +512,23 @@ type SchemaSourceStatus struct {
 	VerifiedAt               *metav1.Time `json:"verifiedAt,omitempty"`
 }
 
+// DriftFindingStatus is a bounded aggregate from the native drift report. It
+// intentionally excludes object names, SQL, schema literals, and raw diffs.
+type DriftFindingStatus struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9_]{0,63}$`
+	// +kubebuilder:validation:Enum=columns_added;columns_modified;columns_removed;constraints_added;constraints_removed;enum_values_added;enum_values_removed;enums_added;enums_removed;extensions_added;extensions_modified;extensions_removed;functions_added;functions_modified;functions_removed;indexes_added;indexes_removed;rls_enabled_tables_added;rls_enabled_tables_removed;rls_policies_added;rls_policies_modified;rls_policies_removed;roles_added;roles_modified;roles_removed;table_constraints_added;table_constraints_removed;tables_added;tables_removed;unique_protections_removed;vector_dimension_changed
+	Category string `json:"category"`
+	// +kubebuilder:validation:Minimum=1
+	Count int32 `json:"count"`
+	// +kubebuilder:validation:Enum=safe;info;warning;error;destructive
+	Severity string `json:"severity"`
+}
+
 // TargetStatus identifies the Secret value and observed schema without
 // disclosing either the connection string or its credentials.
+// +kubebuilder:validation:XValidation:rule="!has(self.driftFindingsTruncated) || !self.driftFindingsTruncated || (has(self.driftFindings) && size(self.driftFindings) == 64)",message="truncated drift findings require exactly 64 published summaries"
 type TargetStatus struct {
 	Engine               DatabaseEngine `json:"engine,omitempty"`
 	CoordinationDigest   string         `json:"coordinationDigest,omitempty"`
@@ -522,6 +537,13 @@ type TargetStatus struct {
 	LastObservedAt       *metav1.Time   `json:"lastObservedAt,omitempty"`
 	HighestDriftSeverity string         `json:"highestDriftSeverity,omitempty"`
 	DriftFindingCount    int32          `json:"driftFindingCount,omitempty"`
+	// DriftFindings contains only category-level aggregates. The total count
+	// above covers the complete report even when this list is truncated.
+	// +kubebuilder:validation:MaxItems=64
+	// +listType=map
+	// +listMapKey=category
+	DriftFindings          []DriftFindingStatus `json:"driftFindings,omitempty"`
+	DriftFindingsTruncated bool                 `json:"driftFindingsTruncated,omitempty"`
 }
 
 // CurrentPlanStatus is a compact reference to an immutable PtahSchemaPlan.
@@ -612,6 +634,11 @@ type PendingObservationStatus struct {
 	// +kubebuilder:validation:MaxLength=253
 	ApplyJobName string    `json:"applyJobName,omitempty"`
 	ApplyJobUID  types.UID `json:"applyJobUID,omitempty"`
+	// AdmissionSnapshot retains the exact pre-admission Pod template identity
+	// after ActiveOperation is cleared. Current-format Apply Job cleanup after
+	// an execution-binding change fails closed when this evidence is absent;
+	// older supported Job envelopes use their separate compatibility contract.
+	AdmissionSnapshot *PodAdmissionSnapshot `json:"admissionSnapshot,omitempty"`
 	// ApplyPodUIDs and ApplyPodCount preserve the terminal Pod evidence seen at
 	// the mutation boundary. More than one Pod always forces outcome-unknown
 	// proof even for a one-shot Job.

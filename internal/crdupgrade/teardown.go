@@ -268,6 +268,8 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 	activation := guard.releaseActivationGuard()
 	serviceAccount := NewServiceAccountOriginGuard(guard, nil)
 	controllerWrite := NewControllerWriteGuard(guard)
+	controllerObjects := NewControllerObjectGuard(guard)
+	certificateWrite := NewCertificateWriteGuard(guard)
 	parentEntries := NewParentWorkloadGuard(guard).entries()
 	parentByName := make(map[string]parentGuardEntry, len(parentEntries))
 	for _, entry := range parentEntries {
@@ -352,11 +354,35 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 			name:         controllerWriteName,
 			verifyPolicy: controllerWrite.verifyPolicy, verifyBinding: controllerWrite.verifyBinding,
 		},
-		{
-			name: namespaceName, final: true,
-			verifyPolicy: namespace.verifyPolicy, verifyBinding: namespace.verifyBinding,
-		},
 	}
+	for _, entry := range controllerObjects.entries() {
+		entry := entry
+		contracts = append(contracts, teardownGuardContract{
+			name: entry.name,
+			verifyPolicy: func(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
+				return controllerObjects.verifyPolicy(entry, policy)
+			},
+			verifyBinding: func(binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding) error {
+				return controllerObjects.verifyBinding(entry, binding)
+			},
+		})
+	}
+	for _, entry := range certificateWrite.entries() {
+		entry := entry
+		contracts = append(contracts, teardownGuardContract{
+			name: entry.name,
+			verifyPolicy: func(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
+				return certificateWrite.verifyPolicy(entry, policy)
+			},
+			verifyBinding: func(binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding) error {
+				return certificateWrite.verifyBinding(entry, binding)
+			},
+		})
+	}
+	contracts = append(contracts, teardownGuardContract{
+		name: namespaceName, final: true,
+		verifyPolicy: namespace.verifyPolicy, verifyBinding: namespace.verifyBinding,
+	})
 	for index, contract := range contracts {
 		if contract.name == "" || contract.verifyPolicy == nil || contract.verifyBinding == nil {
 			return nil, fmt.Errorf("release teardown guard contract %d is incomplete", index)

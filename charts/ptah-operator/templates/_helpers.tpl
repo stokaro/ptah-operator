@@ -220,6 +220,26 @@ app.kubernetes.io/component: controller
 {{- printf "ptah-operator-controller-write-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- end -}}
 
+{{- define "ptah-operator.controllerJobWriteGuardPolicyName" -}}
+{{- printf "ptah-operator-job-write-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- end -}}
+
+{{- define "ptah-operator.controllerChunkWriteGuardPolicyName" -}}
+{{- printf "ptah-operator-chunk-write-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- end -}}
+
+{{- define "ptah-operator.controllerPlanWriteGuardPolicyName" -}}
+{{- printf "ptah-operator-plan-write-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- end -}}
+
+{{- define "ptah-operator.certificateMutatingWriteGuardPolicyName" -}}
+{{- printf "ptah-operator-certificate-mutate-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- end -}}
+
+{{- define "ptah-operator.certificateValidatingWriteGuardPolicyName" -}}
+{{- printf "ptah-operator-certificate-validate-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- end -}}
+
 {{- define "ptah-operator.hookIdentityProbeJobName" -}}
 {{- printf "ptah-hook-identity-v%s-%s" (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
@@ -268,6 +288,7 @@ app.kubernetes.io/component: controller
       (printf "--runner-image=%s" .Values.execution.runnerImage)
       (printf "--ptah-version=%s" .Values.execution.ptahVersion)
       (printf "--target-lock-namespace=%s" (include "ptah-operator.coordinationNamespace" .))
+	  (printf "--controller-service-account-username=system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.serviceAccountName" .))
       (printf "--default-tolerations-enabled=%t" .Values.admission.defaultTolerationsEnabled)
       (printf "--default-not-ready-toleration-seconds=%v" .Values.admission.defaultNotReadyTolerationSeconds)
       (printf "--default-unreachable-toleration-seconds=%v" .Values.admission.defaultUnreachableTolerationSeconds)
@@ -292,7 +313,7 @@ app.kubernetes.io/component: controller
       (printf "--mutating-webhook-configuration=%s" (include "ptah-operator.approvalWebhookConfigurationName" .))
       "--mutating-webhook-names=mapproval.operator.ptah.dev"
       (printf "--validating-webhook-configuration=%s" (include "ptah-operator.approvalWebhookConfigurationName" .))
-      "--validating-webhook-names=vapproval.operator.ptah.dev,vpodintent.operator.ptah.dev"
+      "--validating-webhook-names=vapproval.operator.ptah.dev,vpodintent.operator.ptah.dev,vcontrollerwrite.operator.ptah.dev"
       (printf "--service-name=%s" (include "ptah-operator.webhookServiceName" .))
       (printf "--service-namespace=%s" .Release.Namespace)
       "--endpoint-port-name=https"
@@ -324,6 +345,43 @@ app.kubernetes.io/component: controller
 {{- end -}}
 {{- join " && " $parts -}}
 {{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.certificatePresenceEqual" -}}
+{{- printf `has(%[1]s) == has(%[2]s) && (!has(%[1]s) || (has(%[2]s) && %[1]s == %[2]s))` .newPath .oldPath -}}
+{{- end -}}
+
+{{- define "ptah-operator.certificateMetadataValidation" -}}
+{{- $parts := list -}}
+{{- range $field := list "name" "generateName" "namespace" "selfLink" "uid" "resourceVersion" "creationTimestamp" "deletionTimestamp" "deletionGracePeriodSeconds" "labels" "annotations" "ownerReferences" "finalizers" -}}
+{{- $parts = append $parts (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "object.metadata.%s" $field) "oldPath" (printf "oldObject.metadata.%s" $field))) -}}
+{{- end -}}
+{{- $parts = append $parts `((object.webhooks == oldObject.webhooks && object.metadata.generation == oldObject.metadata.generation) || (object.webhooks != oldObject.webhooks && object.metadata.generation == oldObject.metadata.generation + 1))` -}}
+{{- join " && " $parts -}}
+{{- end -}}
+
+{{- define "ptah-operator.certificateWebhookNamesValidation" -}}
+{{- printf `object.webhooks.size() > 0 && object.webhooks.size() <= 64 && object.webhooks.map(webhook, webhook.name) == oldObject.webhooks.map(webhook, webhook.name)` -}}
+{{- end -}}
+
+{{- define "ptah-operator.certificateWebhookEntriesValidation" -}}
+{{- $newWebhook := "webhook" -}}
+{{- $oldWebhook := "previous" -}}
+{{- $exactServiceTarget := printf `has(%[1]s.clientConfig.service) && %[1]s.clientConfig.service.namespace == %[2]q && %[1]s.clientConfig.service.name == %[3]q && (!has(%[1]s.clientConfig.service.port) || %[1]s.clientConfig.service.port == 443)` $newWebhook .serviceNamespace .serviceName -}}
+{{- $caBundleEquality := include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.caBundle" $newWebhook) "oldPath" (printf "%s.clientConfig.caBundle" $oldWebhook)) -}}
+{{- $mutableCABundle := printf `((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= 262144) || (!(%[1]s) && %[3]s)` $exactServiceTarget $newWebhook $caBundleEquality -}}
+{{- $parts := list
+      (printf `%s.name == %s.name` $oldWebhook $newWebhook)
+      (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.service" $newWebhook) "oldPath" (printf "%s.clientConfig.service" $oldWebhook)))
+      (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.url" $newWebhook) "oldPath" (printf "%s.clientConfig.url" $oldWebhook)))
+      $mutableCABundle -}}
+{{- range $field := list "rules" "failurePolicy" "matchPolicy" "namespaceSelector" "objectSelector" "sideEffects" "timeoutSeconds" "admissionReviewVersions" "matchConditions" -}}
+{{- $parts = append $parts (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.%s" $newWebhook $field) "oldPath" (printf "%s.%s" $oldWebhook $field))) -}}
+{{- end -}}
+{{- if .includeReinvocation -}}
+{{- $parts = append $parts (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.reinvocationPolicy" $newWebhook) "oldPath" (printf "%s.reinvocationPolicy" $oldWebhook))) -}}
+{{- end -}}
+{{- printf `object.webhooks.all(webhook, oldObject.webhooks.exists(previous, %s))` (join " && " $parts) -}}
 {{- end -}}
 
 {{- define "ptah-operator.celExactOpaqueExpression" -}}

@@ -31,6 +31,7 @@ const (
 	GeneratedSecretLabelValue = "true"
 
 	secretCreateGuardDenialMessage = "certificate rotator Secret CREATE is outside its exact recovery contract"
+	webhookServicePort             = int32(443)
 
 	defaultAcquireTimeout = 30 * time.Second
 	minimumLeaseDuration  = 30 * time.Second
@@ -659,7 +660,7 @@ func (r *Rotator) setBothBundles(ctx context.Context, bundle []byte) error {
 		return fmt.Errorf("verify managed validating CA bundles: %w", err)
 	}
 	if !mutating.allEqual(bundle) || !validating.allEqual(bundle) {
-		return errors.New("not every explicitly managed webhook contains the published CA bundle")
+		return errors.New("not every exact-Service webhook contains the published CA bundle")
 	}
 	return nil
 }
@@ -937,26 +938,38 @@ func validateConfig(config Config) error {
 	return nil
 }
 
+// managedMutatingWebhooks treats configured names as required identity
+// anchors, then includes every entry targeting the exact release Service and
+// its supported port. This lets an already-running predecessor carry a
+// same-Service entry observed in a narrow partial-apply race. It does not make a
+// quiesced predecessor restartable after candidate activation; recovery then
+// retries the same candidate. URL, foreign-Service, and other-port entries
+// remain outside this rotator's authority.
 func managedMutatingWebhooks(webhooks []admissionregistrationv1.MutatingWebhook, config Config) ([]*admissionregistrationv1.MutatingWebhook, error) {
 	expected := make(map[string]struct{}, len(config.MutatingWebhookNames))
 	for _, name := range config.MutatingWebhookNames {
 		expected[name] = struct{}{}
 	}
 	found := make(map[string]struct{}, len(expected))
-	managed := make([]*admissionregistrationv1.MutatingWebhook, 0, len(expected))
+	seen := make(map[string]struct{}, len(webhooks))
+	managed := make([]*admissionregistrationv1.MutatingWebhook, 0, len(webhooks))
 	for i := range webhooks {
 		webhook := &webhooks[i]
-		if _, wanted := expected[webhook.Name]; !wanted {
-			continue
-		}
-		if _, duplicate := found[webhook.Name]; duplicate {
+		if _, duplicate := seen[webhook.Name]; duplicate {
 			return nil, fmt.Errorf("webhook %q appears more than once", webhook.Name)
 		}
-		if !webhookTargetsService(webhook.ClientConfig, config) {
+		seen[webhook.Name] = struct{}{}
+		_, required := expected[webhook.Name]
+		targetsService := webhookTargetsService(webhook.ClientConfig, config)
+		if required && !targetsService {
 			return nil, fmt.Errorf("webhook %q does not target the configured Service", webhook.Name)
 		}
-		managed = append(managed, webhook)
-		found[webhook.Name] = struct{}{}
+		if required {
+			found[webhook.Name] = struct{}{}
+		}
+		if targetsService {
+			managed = append(managed, webhook)
+		}
 	}
 	if missing := missingMapKeys(expected, found); len(missing) != 0 {
 		return nil, fmt.Errorf("required mutating webhooks were not found: %v", missing)
@@ -964,26 +977,38 @@ func managedMutatingWebhooks(webhooks []admissionregistrationv1.MutatingWebhook,
 	return managed, nil
 }
 
+// managedValidatingWebhooks treats configured names as required identity
+// anchors, then includes every entry targeting the exact release Service and
+// its supported port. This lets an already-running predecessor carry a
+// same-Service entry observed in a narrow partial-apply race. It does not make a
+// quiesced predecessor restartable after candidate activation; recovery then
+// retries the same candidate. URL, foreign-Service, and other-port entries
+// remain outside this rotator's authority.
 func managedValidatingWebhooks(webhooks []admissionregistrationv1.ValidatingWebhook, config Config) ([]*admissionregistrationv1.ValidatingWebhook, error) {
 	expected := make(map[string]struct{}, len(config.ValidatingWebhookNames))
 	for _, name := range config.ValidatingWebhookNames {
 		expected[name] = struct{}{}
 	}
 	found := make(map[string]struct{}, len(expected))
-	managed := make([]*admissionregistrationv1.ValidatingWebhook, 0, len(expected))
+	seen := make(map[string]struct{}, len(webhooks))
+	managed := make([]*admissionregistrationv1.ValidatingWebhook, 0, len(webhooks))
 	for i := range webhooks {
 		webhook := &webhooks[i]
-		if _, wanted := expected[webhook.Name]; !wanted {
-			continue
-		}
-		if _, duplicate := found[webhook.Name]; duplicate {
+		if _, duplicate := seen[webhook.Name]; duplicate {
 			return nil, fmt.Errorf("webhook %q appears more than once", webhook.Name)
 		}
-		if !webhookTargetsService(webhook.ClientConfig, config) {
+		seen[webhook.Name] = struct{}{}
+		_, required := expected[webhook.Name]
+		targetsService := webhookTargetsService(webhook.ClientConfig, config)
+		if required && !targetsService {
 			return nil, fmt.Errorf("webhook %q does not target the configured Service", webhook.Name)
 		}
-		managed = append(managed, webhook)
-		found[webhook.Name] = struct{}{}
+		if required {
+			found[webhook.Name] = struct{}{}
+		}
+		if targetsService {
+			managed = append(managed, webhook)
+		}
 	}
 	if missing := missingMapKeys(expected, found); len(missing) != 0 {
 		return nil, fmt.Errorf("required validating webhooks were not found: %v", missing)
@@ -994,7 +1019,15 @@ func managedValidatingWebhooks(webhooks []admissionregistrationv1.ValidatingWebh
 func webhookTargetsService(clientConfig admissionregistrationv1.WebhookClientConfig, config Config) bool {
 	return clientConfig.Service != nil &&
 		clientConfig.Service.Name == config.ServiceName &&
-		clientConfig.Service.Namespace == config.ServiceNamespace
+		clientConfig.Service.Namespace == config.ServiceNamespace &&
+		effectiveWebhookServicePort(clientConfig.Service) == webhookServicePort
+}
+
+func effectiveWebhookServicePort(service *admissionregistrationv1.ServiceReference) int32 {
+	if service.Port == nil {
+		return webhookServicePort
+	}
+	return *service.Port
 }
 
 func validateWebhookNames(kind string, names []string) error {

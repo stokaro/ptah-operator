@@ -2,6 +2,7 @@ package dataplane_test
 
 import (
 	"encoding/json"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -10,6 +11,52 @@ import (
 )
 
 const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+func TestDriftFindingVocabularyV1(t *testing.T) {
+	t.Parallel()
+
+	if dataplane.DriftFindingVocabularyVersion != 1 {
+		t.Fatalf("DriftFindingVocabularyVersion = %d, want 1", dataplane.DriftFindingVocabularyVersion)
+	}
+	want := []string{
+		"columns_added", "columns_modified", "columns_removed",
+		"constraints_added", "constraints_removed",
+		"enum_values_added", "enum_values_removed", "enums_added", "enums_removed",
+		"extensions_added", "extensions_modified", "extensions_removed",
+		"functions_added", "functions_modified", "functions_removed",
+		"indexes_added", "indexes_removed",
+		"rls_enabled_tables_added", "rls_enabled_tables_removed",
+		"rls_policies_added", "rls_policies_modified", "rls_policies_removed",
+		"roles_added", "roles_modified", "roles_removed",
+		"table_constraints_added", "table_constraints_removed",
+		"tables_added", "tables_removed", "unique_protections_removed",
+		"vector_dimension_changed",
+	}
+	got := dataplane.DriftFindingCategories()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DriftFindingCategories() = %q, want %q", got, want)
+	}
+	for _, category := range got {
+		if !dataplane.IsKnownDriftFindingCategory(category) {
+			t.Errorf("v1 vocabulary rejected %q", category)
+		}
+	}
+	for _, category := range []string{"", "private_schema_name", "columns_changed", "tables-added"} {
+		if dataplane.IsKnownDriftFindingCategory(category) {
+			t.Errorf("v1 vocabulary accepted %q", category)
+		}
+	}
+
+	got[0] = "private_schema_name"
+	got = append(got, "another_private_category")
+	if fresh := dataplane.DriftFindingCategories(); !reflect.DeepEqual(fresh, want) {
+		t.Fatalf("mutating DriftFindingCategories() result changed canonical vocabulary: got %q, want %q", fresh, want)
+	}
+	if dataplane.IsKnownDriftFindingCategory("private_schema_name") ||
+		dataplane.IsKnownDriftFindingCategory("another_private_category") {
+		t.Fatal("mutating DriftFindingCategories() result changed category membership")
+	}
+}
 
 func TestDecodeResolve(t *testing.T) {
 	t.Parallel()
@@ -104,6 +151,33 @@ func TestDecodeDriftThresholdExitContract(t *testing.T) {
 	inconsistent := `{"drift":false,"failed":true,"failure_threshold":"all","highest_severity":"","dialect":"postgres","findings":[]}`
 	if _, err := dataplane.DecodeDrift([]byte(inconsistent), 1); err == nil {
 		t.Fatal("DecodeDrift() accepted failed=true without drift")
+	}
+}
+
+func TestDecodeDriftRejectsUnsafeFindingSummaries(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		findings string
+		want     string
+	}{
+		{name: "zero count", findings: `[{"category":"columns_added","count":0,"severity":"warning"}]`, want: "invalid finding"},
+		{name: "negative count", findings: `[{"category":"columns_added","count":-1,"severity":"warning"}]`, want: "invalid finding"},
+		{name: "invalid category", findings: `[{"category":"app.users.email","count":1,"severity":"warning"}]`, want: "invalid finding"},
+		{name: "unknown identifier category", findings: `[{"category":"private_schema_name","count":1,"severity":"warning"}]`, want: "invalid finding"},
+		{name: "oversized category", findings: `[{"category":"` + strings.Repeat("a", 65) + `","count":1,"severity":"warning"}]`, want: "invalid finding"},
+		{name: "invalid severity", findings: `[{"category":"columns_added","count":1,"severity":"critical"}]`, want: "invalid finding"},
+		{name: "duplicate category", findings: `[{"category":"columns_added","count":1,"severity":"warning"},{"category":"columns_added","count":2,"severity":"warning"}]`, want: "duplicate finding category"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":` + test.findings + `}`
+			if _, err := dataplane.DecodeDrift([]byte(report), 1); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("DecodeDrift() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

@@ -97,6 +97,25 @@ func TestRenderedPrivilegeTeardownRulesMatchCompiledContract(t *testing.T) {
 	}
 }
 
+func permitsResourceUpdate(rules []rbacv1.PolicyRule, apiGroup, resource string) bool {
+	for _, rule := range rules {
+		if containsString(rule.APIGroups, apiGroup) && containsString(rule.Resources, resource) &&
+			containsString(rule.Verbs, "update") {
+			return true
+		}
+	}
+	return false
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRenderedRetiredPrivilegeRulesMatchCompiledContract(t *testing.T) {
 	path := os.Getenv("PTAH_PRIVILEGE_RENDER")
 	if path == "" {
@@ -113,6 +132,7 @@ func TestRenderedRetiredPrivilegeRulesMatchCompiledContract(t *testing.T) {
 		expected[key] = contract
 	}
 	seen := make(map[string]bool, len(expected))
+	managerCanSetPlanOwner := false
 	decoder := utilyaml.NewYAMLToJSONDecoder(bytes.NewReader(rendered))
 	for {
 		var raw json.RawMessage
@@ -141,6 +161,13 @@ func TestRenderedRetiredPrivilegeRulesMatchCompiledContract(t *testing.T) {
 			}
 			key = renderedPrivilegeAuthorizationKey(true, "", object.Name)
 			rules = object.Rules
+			if object.Name == "ptah-e2e-ptah-operator" {
+				managerCanSetPlanOwner = permitsResourceUpdate(
+					object.Rules,
+					"operator.ptah.dev",
+					"ptahschemaplans/finalizers",
+				)
+			}
 		case "Role":
 			var object rbacv1.Role
 			if err := json.Unmarshal(raw, &object); err != nil {
@@ -167,6 +194,12 @@ func TestRenderedRetiredPrivilegeRulesMatchCompiledContract(t *testing.T) {
 		if !seen[key] {
 			t.Errorf("rendered retired authorization object %s is missing", key)
 		}
+	}
+	// Plan chunks use blockOwnerDeletion on their PtahSchemaPlan owner. The API
+	// server therefore requires this permission when the manager creates a
+	// chunk, independently of the teardown contract mirrored above.
+	if !managerCanSetPlanOwner {
+		t.Fatal("rendered manager ClusterRole cannot set a blocking PtahSchemaPlan owner reference")
 	}
 }
 

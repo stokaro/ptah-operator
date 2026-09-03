@@ -442,7 +442,9 @@ func TestObserveDriftExitOneIsAFramedResult(t *testing.T) {
 		t.Fatalf("commands = %#v, want one authoritative drift read", executor.calls)
 	}
 	if result.DriftReportDigest == "" || !result.ObservedDrift || result.ObservedDialect != "postgres" ||
-		result.HighestDriftSeverity != "warning" || result.DriftFindingCount != 1 {
+		result.HighestDriftSeverity != "warning" || result.DriftFindingCount != 1 ||
+		!reflect.DeepEqual(result.DriftFindings, []DriftFindingSummary{{Category: "columns_added", Count: 1, Severity: "warning"}}) ||
+		result.DriftFindingsTruncated {
 		t.Fatal("drift-present observation lacks a report digest")
 	}
 	if result.Stdout != "" {
@@ -460,8 +462,69 @@ func TestObserveDriftExitOneIsAFramedResult(t *testing.T) {
 		t.Fatalf("ParseResultFor() error = %v", err)
 	}
 	if parsed.ChildExitCode != 0 || parsed.Stdout != "" || parsed.DriftReportDigest != result.DriftReportDigest ||
-		!parsed.ObservedDrift || parsed.DriftFindingCount != 1 {
+		!parsed.ObservedDrift || parsed.DriftFindingCount != 1 || !reflect.DeepEqual(parsed.DriftFindings, result.DriftFindings) {
 		t.Fatalf("parsed result = %#v", parsed)
+	}
+}
+
+func TestObservePublishesCanonicalFindingSummaries(t *testing.T) {
+	t.Parallel()
+
+	findings := []dataplane.DriftFinding{
+		{Category: "tables_added", Count: 3, Severity: "safe"},
+		{Category: "columns_removed", Count: 1, Severity: " destructive "},
+		{Category: "indexes_added", Count: 2, Severity: "warning"},
+	}
+	report, err := json.Marshal(dataplane.DriftReport{
+		Drift: true, Failed: true, FailureThreshold: "all", HighestSeverity: " DESTRUCTIVE ",
+		Dialect: "postgres", Findings: findings, Diff: json.RawMessage(`{"changed":true}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: databaseEnvironment("observe-bounded-findings"),
+		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: string(report), exitCode: 1}}},
+	})
+	if result.Error != nil || result.DriftFindingCount != 6 || len(result.DriftFindings) != 3 ||
+		result.DriftFindingsTruncated {
+		t.Fatalf("Run() findings = %#v", result)
+	}
+	if got := result.DriftFindings; !reflect.DeepEqual(got, []DriftFindingSummary{
+		{Category: "columns_removed", Count: 1, Severity: "destructive"},
+		{Category: "indexes_added", Count: 2, Severity: "warning"},
+		{Category: "tables_added", Count: 3, Severity: "safe"},
+	}) {
+		t.Fatalf("canonical findings = %#v", got)
+	}
+	if _, err := MarshalFrame(result); err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+}
+
+func TestObserveRejectsUnknownIdentifierFindingCategory(t *testing.T) {
+	t.Parallel()
+
+	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"private_schema_name","count":1,"severity":"warning"}],"diff":{}}`
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: databaseEnvironment("observe-unknown-finding"),
+		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
+	})
+	if result.Error == nil || result.Error.Code != "invalid_observed_state" || len(result.DriftFindings) != 0 {
+		t.Fatalf("Run() = %#v, want an invalid_observed_state without findings", result)
+	}
+}
+
+func TestObserveRejectsFindingSeverityInconsistentWithHighest(t *testing.T) {
+	t.Parallel()
+
+	report := `{"drift":true,"failed":true,"failure_threshold":"all","highest_severity":"warning","dialect":"postgres","findings":[{"category":"tables_added","count":1,"severity":"safe"}],"diff":{}}`
+	result := Run(context.Background(), Config{
+		Operation: OperationObserve, Environment: databaseEnvironment("observe-inconsistent-finding-severity"),
+		Executor: &scriptedExecutor{t: t, responses: []scriptedResponse{{stdout: report, exitCode: 1}}},
+	})
+	if result.Error == nil || result.Error.Code != "invalid_observed_state" || len(result.DriftFindings) != 0 {
+		t.Fatalf("Run() = %#v, want an invalid_observed_state without findings", result)
 	}
 }
 

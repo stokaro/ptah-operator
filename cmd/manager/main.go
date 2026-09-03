@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -25,6 +26,7 @@ import (
 	approvaladmission "github.com/stokaro/ptah-operator/internal/admission"
 	"github.com/stokaro/ptah-operator/internal/controller"
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
+	"github.com/stokaro/ptah-operator/internal/controllerwrite"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
@@ -33,10 +35,11 @@ import (
 )
 
 const (
-	mutateApprovalPath    = "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
-	validateApprovalPath  = "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
-	validatePodIntentPath = "/validate-v1-pod-ptah-operation-intent"
-	leaderElectionID      = "ptah-operator.operator.ptah.dev"
+	mutateApprovalPath          = "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
+	validateApprovalPath        = "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
+	validatePodIntentPath       = "/validate-v1-pod-ptah-operation-intent"
+	validateControllerWritePath = "/validate-operator-controller-write"
+	leaderElectionID            = "ptah-operator.operator.ptah.dev"
 )
 
 // controllerRevision is injected by the release build. An unversioned manager
@@ -52,6 +55,7 @@ func main() {
 	var runnerImage string
 	var ptahVersion string
 	var targetLockNamespace string
+	var controllerServiceAccountUsername string
 	var webhookCertDir string
 	var webhookPort int
 	var defaultTolerationsEnabled bool
@@ -68,6 +72,7 @@ func main() {
 	flag.StringVar(&runnerImage, "runner-image", "", "content-addressed operator runner image")
 	flag.StringVar(&ptahVersion, "ptah-version", "", "Ptah CLI version bound into plans")
 	flag.StringVar(&targetLockNamespace, "target-lock-namespace", os.Getenv("POD_NAMESPACE"), "shared namespace for database target Leases")
+	flag.StringVar(&controllerServiceAccountUsername, "controller-service-account-username", "", "exact Kubernetes username of the operator manager ServiceAccount")
 	flag.StringVar(&webhookCertDir, "webhook-cert-dir", "/tmp/k8s-webhook-server/serving-certs", "directory containing tls.crt and tls.key")
 	flag.IntVar(&webhookPort, "webhook-port", 9443, "approval webhook TLS port")
 	flag.BoolVar(&defaultTolerationsEnabled, "default-tolerations-enabled", true, "whether kube-apiserver enables DefaultTolerationSeconds admission")
@@ -96,6 +101,13 @@ func main() {
 	}
 	if problems := validation.IsDNS1123Label(targetLockNamespace); len(problems) != 0 {
 		log.Error(fmt.Errorf("target lock namespace is invalid: %s", problems[0]), "invalid coordination configuration")
+		os.Exit(1)
+	}
+	managerIdentity := strings.Split(controllerServiceAccountUsername, ":")
+	if len(managerIdentity) != 4 || managerIdentity[0] != "system" || managerIdentity[1] != "serviceaccount" ||
+		len(validation.IsDNS1123Label(managerIdentity[2])) != 0 ||
+		len(validation.IsDNS1123Subdomain(managerIdentity[3])) != 0 {
+		log.Error(fmt.Errorf("controller ServiceAccount username must have the exact system:serviceaccount:<namespace>:<name> form"), "invalid admission configuration")
 		os.Exit(1)
 	}
 	admissionOptions := podintent.Options{
@@ -168,6 +180,12 @@ func main() {
 	}})
 	manager.GetWebhookServer().Register(validatePodIntentPath, &cradmission.Webhook{Handler: &podintent.ValidationHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder,
+	}})
+	manager.GetWebhookServer().Register(validateControllerWritePath, &cradmission.Webhook{Handler: &controllerwrite.ValidationHandler{
+		Validator: &controllerwrite.Validator{
+			Reader: manager.GetAPIReader(), Jobs: builder,
+			ManagerUsername: controllerServiceAccountUsername,
+		},
 	}})
 
 	if err := manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {

@@ -26,6 +26,9 @@ const (
 	// fence. A manager may start only after every owned CRD records the newest
 	// controller-state contract installed for the cluster.
 	ControllerStateVersionAnnotation = "operator.ptah.dev/controller-state-version"
+	// CurrentCRDSchemaVersion must match CRD_SCHEMA_VERSION in the Makefile and
+	// every generated CRD annotation.
+	CurrentCRDSchemaVersion uint64 = 2
 )
 
 const predecessorRevision = "210c9673e6ad8e339278d99cc4735557332df7bd"

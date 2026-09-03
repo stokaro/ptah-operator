@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -27,8 +28,9 @@ func TestCandidatesAreCompleteAndDeterministic(t *testing.T) {
 	got := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
 		got = append(got, candidate.Name)
-		if candidate.Annotations[SchemaVersionAnnotation] != "1" {
-			t.Fatalf("candidate %s schema version = %q, want 1", candidate.Name, candidate.Annotations[SchemaVersionAnnotation])
+		wantVersion := strconv.FormatUint(CurrentCRDSchemaVersion, 10)
+		if candidate.Annotations[SchemaVersionAnnotation] != wantVersion {
+			t.Fatalf("candidate %s schema version = %q, want %s", candidate.Name, candidate.Annotations[SchemaVersionAnnotation], wantVersion)
 		}
 		computedDigest, digestErr := ComputeSchemaDigest(candidate)
 		if digestErr != nil {
@@ -290,7 +292,7 @@ func TestReconcileRefusesNewerSchemaVersionBeforeAnyUpdate(t *testing.T) {
 	for _, object := range objects {
 		object.Spec.Versions[0].Schema.OpenAPIV3Schema.Description = "outdated schema"
 	}
-	objects[PtahSchemaCRDName].Annotations[SchemaVersionAnnotation] = "2"
+	objects[PtahSchemaCRDName].Annotations[SchemaVersionAnnotation] = strconv.FormatUint(CurrentCRDSchemaVersion+1, 10)
 	before := make(map[string]*apiextensionsv1.CustomResourceDefinition, len(objects))
 	for name, object := range objects {
 		before[name] = object.DeepCopy()
@@ -367,7 +369,7 @@ func TestCompatibleAllowsOlderVersionWithValidDigest(t *testing.T) {
 	candidates := mustCandidates(t)
 	existing := candidateByName(candidates, PtahSchemaCRDName).DeepCopy()
 	candidate := existing.DeepCopy()
-	candidate.Annotations[SchemaVersionAnnotation] = "2"
+	candidate.Annotations[SchemaVersionAnnotation] = strconv.FormatUint(CurrentCRDSchemaVersion+1, 10)
 	existing.Spec.Versions[0].Schema.OpenAPIV3Schema.Description = "older or drifted schema"
 	if err := compatible(existing, candidate, false, false); err != nil {
 		t.Fatalf("older schema identity was not upgrade-compatible: %v", err)
@@ -415,8 +417,9 @@ func TestReconcileAdoptsIncompleteIdentityOnlyForExactCandidateSchema(t *testing
 		t.Fatal(err)
 	}
 	updated := client.objects[PtahSchemaApprovalCRDName]
-	if updated.Annotations[SchemaVersionAnnotation] != "1" {
-		t.Fatalf("adopted schema version = %q, want 1", updated.Annotations[SchemaVersionAnnotation])
+	wantVersion := strconv.FormatUint(CurrentCRDSchemaVersion, 10)
+	if updated.Annotations[SchemaVersionAnnotation] != wantVersion {
+		t.Fatalf("adopted schema version = %q, want %s", updated.Annotations[SchemaVersionAnnotation], wantVersion)
 	}
 	if updated.Annotations[SchemaDigestAnnotation] != candidateByName(candidates, PtahSchemaApprovalCRDName).Annotations[SchemaDigestAnnotation] {
 		t.Fatalf("adopted schema digest = %q", updated.Annotations[SchemaDigestAnnotation])
@@ -555,7 +558,7 @@ func TestReconcileRechecksEveryIdentityAfterDryRunsBeforeAnyRealUpdate(t *testin
 	objects[PtahSchemaApprovalCRDName].Spec.Versions[0].Schema.OpenAPIV3Schema.Description = "outdated schema"
 	client := &memoryClient{objects: objects}
 	client.afterDryRun = func() {
-		client.objects[PtahSchemaCRDName].Annotations[SchemaVersionAnnotation] = "2"
+		client.objects[PtahSchemaCRDName].Annotations[SchemaVersionAnnotation] = strconv.FormatUint(CurrentCRDSchemaVersion+1, 10)
 	}
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
 	err := manager.reconcile(context.Background(), nil)

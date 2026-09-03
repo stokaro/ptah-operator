@@ -206,6 +206,7 @@ func readyAdmissionAdopter(t *testing.T, mutatingLegacy, validatingLegacy bool) 
 	}
 	if validatingLegacy {
 		removeOwnedAnnotations(&validating.object.ObjectMeta, verifier.Expected)
+		validating.object.Webhooks = validating.object.Webhooks[:2]
 	}
 	return &AdmissionAdopter{Mutating: mutating, Validating: validating, Expected: verifier.Expected}, mutating, validating
 }

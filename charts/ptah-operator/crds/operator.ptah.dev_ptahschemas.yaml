@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.dev/controller-state-version: "1"
-    operator.ptah.dev/crd-schema-version: "1"
-    operator.ptah.dev/crd-schema-digest: "sha256:a802edc990f0c6fdd9db39fa5d373576c34c688cba54c8263dc96ec61f209eeb"
+    operator.ptah.dev/crd-schema-version: "2"
+    operator.ptah.dev/crd-schema-digest: "sha256:5b71df79920a3599a61be7fe3ecb94153860c8c5c22e8d43b19138ecc7370288"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahschemas.operator.ptah.dev
 spec:
@@ -1389,6 +1389,220 @@ spec:
                 type: object
               pendingObservation:
                 properties:
+                  admissionSnapshot:
+                    properties:
+                      alwaysPullImagesEnabled:
+                        type: boolean
+                      defaultNotReadyTolerationSeconds:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      defaultTolerationsEnabled:
+                        type: boolean
+                      defaultUnreachableTolerationSeconds:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      digest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      extendedResourceTolerationEnabled:
+                        type: boolean
+                      limitRanges:
+                        items:
+                          properties:
+                            defaultLimits:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              maxProperties: 64
+                              type: object
+                            defaultRequests:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              maxProperties: 64
+                              type: object
+                            object:
+                              properties:
+                                name:
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                resourceVersion:
+                                  maxLength: 128
+                                  minLength: 1
+                                  type: string
+                                uid:
+                                  maxLength: 128
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              - resourceVersion
+                              - uid
+                              type: object
+                          required:
+                          - object
+                          type: object
+                        maxItems: 32
+                        type: array
+                      priorityClass:
+                        properties:
+                          name:
+                            maxLength: 253
+                            type: string
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                          preemptionPolicy:
+                            enum:
+                            - Never
+                            - PreemptLowerPriority
+                            type: string
+                          value:
+                            format: int32
+                            type: integer
+                        required:
+                        - value
+                        type: object
+                      runtimeClass:
+                        properties:
+                          handler:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                          nodeSelector:
+                            additionalProperties:
+                              type: string
+                            maxProperties: 64
+                            type: object
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                          overhead:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            maxProperties: 64
+                            type: object
+                          overheadDefined:
+                            type: boolean
+                          tolerations:
+                            items:
+                              properties:
+                                effect:
+                                  type: string
+                                key:
+                                  type: string
+                                operator:
+                                  type: string
+                                tolerationSeconds:
+                                  format: int64
+                                  type: integer
+                                value:
+                                  type: string
+                              type: object
+                            maxItems: 64
+                            type: array
+                        required:
+                        - handler
+                        - object
+                        type: object
+                      serviceAccount:
+                        properties:
+                          imagePullSecrets:
+                            items:
+                              properties:
+                                name:
+                                  default: ""
+                                  type: string
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            maxItems: 64
+                            type: array
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                        required:
+                        - object
+                        type: object
+                      templateDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      version:
+                        enum:
+                        - v1
+                        type: string
+                    required:
+                    - alwaysPullImagesEnabled
+                    - defaultNotReadyTolerationSeconds
+                    - defaultTolerationsEnabled
+                    - defaultUnreachableTolerationSeconds
+                    - digest
+                    - extendedResourceTolerationEnabled
+                    - priorityClass
+                    - serviceAccount
+                    - templateDigest
+                    - version
+                    type: object
                   applyGeneration:
                     format: int64
                     type: integer
@@ -1840,6 +2054,70 @@ spec:
                   driftFindingCount:
                     format: int32
                     type: integer
+                  driftFindings:
+                    items:
+                      properties:
+                        category:
+                          enum:
+                          - columns_added
+                          - columns_modified
+                          - columns_removed
+                          - constraints_added
+                          - constraints_removed
+                          - enum_values_added
+                          - enum_values_removed
+                          - enums_added
+                          - enums_removed
+                          - extensions_added
+                          - extensions_modified
+                          - extensions_removed
+                          - functions_added
+                          - functions_modified
+                          - functions_removed
+                          - indexes_added
+                          - indexes_removed
+                          - rls_enabled_tables_added
+                          - rls_enabled_tables_removed
+                          - rls_policies_added
+                          - rls_policies_modified
+                          - rls_policies_removed
+                          - roles_added
+                          - roles_modified
+                          - roles_removed
+                          - table_constraints_added
+                          - table_constraints_removed
+                          - tables_added
+                          - tables_removed
+                          - unique_protections_removed
+                          - vector_dimension_changed
+                          maxLength: 64
+                          minLength: 1
+                          pattern: ^[a-z][a-z0-9_]{0,63}$
+                          type: string
+                        count:
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        severity:
+                          enum:
+                          - safe
+                          - info
+                          - warning
+                          - error
+                          - destructive
+                          type: string
+                      required:
+                      - category
+                      - count
+                      - severity
+                      type: object
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - category
+                    x-kubernetes-list-type: map
+                  driftFindingsTruncated:
+                    type: boolean
                   driftReportDigest:
                     type: string
                   engine:
@@ -1855,6 +2133,10 @@ spec:
                     format: date-time
                     type: string
                 type: object
+                x-kubernetes-validations:
+                - message: truncated drift findings require exactly 64 published summaries
+                  rule: '!has(self.driftFindingsTruncated) || !self.driftFindingsTruncated
+                    || (has(self.driftFindings) && size(self.driftFindings) == 64)'
             type: object
         required:
         - spec

@@ -950,11 +950,72 @@ func TestMissingNamedWebhookStopsBeforeSecretTransition(t *testing.T) {
 		t.Fatalf("Run() error = %v, want missing webhook name", err)
 	}
 	if got := mustGetSecret(t, client, config).Data[CAPrivateKeyKey]; len(got) != 0 {
-		t.Fatal("Secret changed before every explicitly managed webhook was found")
+		t.Fatal("Secret changed before every required webhook anchor was found")
 	}
 }
 
-func TestUnmanagedSameServiceWebhookIsNotModified(t *testing.T) {
+func TestRequiredWebhookOnDifferentPortStopsBeforeSecretTransition(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	material := mustGenerateMaterial(t, baseTime, config)
+	legacy := secretForMaterial(config, material)
+	delete(legacy.Data, CAPrivateKeyKey)
+	client := newTestClient(config, legacy, material.caPEM, twoReadyEndpoints(config))
+	validating, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
+		context.Background(), config.ValidatingWebhookConfiguration, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get ValidatingWebhookConfiguration: %v", err)
+	}
+	differentPort := int32(8443)
+	validating.Webhooks[0].ClientConfig.Service.Port = &differentPort
+	if _, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Update(
+		context.Background(), validating, metav1.UpdateOptions{},
+	); err != nil {
+		t.Fatalf("retarget required webhook port: %v", err)
+	}
+
+	rotator := mustNewTestRotator(t, client, config, baseTime, &recordingProber{})
+	err = rotator.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), config.ValidatingWebhookNames[0]) {
+		t.Fatalf("Run() error = %v, want required webhook name", err)
+	}
+	if got := mustGetSecret(t, client, config).Data[CAPrivateKeyKey]; len(got) != 0 {
+		t.Fatal("Secret changed before the required webhook port was validated")
+	}
+}
+
+func TestWebhookTargetsServiceRequiresSupportedPort(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	explicitSupportedPort := int32(443)
+	differentPort := int32(8443)
+	tests := []struct {
+		name string
+		port *int32
+		want bool
+	}{
+		{name: "default port", want: true},
+		{name: "explicit supported port", port: &explicitSupportedPort, want: true},
+		{name: "different port", port: &differentPort, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			clientConfig := admissionregistrationv1.WebhookClientConfig{
+				Service: &admissionregistrationv1.ServiceReference{
+					Name: config.ServiceName, Namespace: config.ServiceNamespace, Port: test.port,
+				},
+			}
+			if got := webhookTargetsService(clientConfig, config); got != test.want {
+				t.Fatalf("webhookTargetsService() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 	t.Parallel()
 	config := testConfig()
 	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
@@ -962,6 +1023,51 @@ func TestUnmanagedSameServiceWebhookIsNotModified(t *testing.T) {
 	legacy := secretForMaterial(config, original)
 	delete(legacy.Data, CAPrivateKeyKey)
 	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+	foreignURL := "https://example.invalid/validate"
+	supportedPort := int32(443)
+	differentPort := int32(8443)
+	mutating, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(
+		context.Background(), config.MutatingWebhookConfiguration, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get MutatingWebhookConfiguration: %v", err)
+	}
+	mutating.Webhooks = append(mutating.Webhooks, admissionregistrationv1.MutatingWebhook{
+		Name: "future-mutating.operator.ptah.dev",
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: append([]byte(nil), original.caPEM...),
+			Service: &admissionregistrationv1.ServiceReference{
+				Name: config.ServiceName, Namespace: config.ServiceNamespace, Port: &supportedPort,
+			},
+		},
+	}, admissionregistrationv1.MutatingWebhook{
+		Name: "different-port-mutating.operator.ptah.dev",
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: append([]byte(nil), original.caPEM...),
+			Service: &admissionregistrationv1.ServiceReference{
+				Name: config.ServiceName, Namespace: config.ServiceNamespace, Port: &differentPort,
+			},
+		},
+	}, admissionregistrationv1.MutatingWebhook{
+		Name: "foreign-mutating.operator.ptah.dev",
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: append([]byte(nil), original.caPEM...),
+			Service: &admissionregistrationv1.ServiceReference{
+				Name: "other-service", Namespace: config.ServiceNamespace,
+			},
+		},
+	}, admissionregistrationv1.MutatingWebhook{
+		Name: "url-mutating.operator.ptah.dev",
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: append([]byte(nil), original.caPEM...),
+			URL:      &foreignURL,
+		},
+	})
+	if _, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().Update(
+		context.Background(), mutating, metav1.UpdateOptions{},
+	); err != nil {
+		t.Fatalf("add mutating forward-compatibility webhooks: %v", err)
+	}
 	validating, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
 		context.Background(), config.ValidatingWebhookConfiguration, metav1.GetOptions{},
 	)
@@ -969,7 +1075,117 @@ func TestUnmanagedSameServiceWebhookIsNotModified(t *testing.T) {
 		t.Fatalf("get ValidatingWebhookConfiguration: %v", err)
 	}
 	validating.Webhooks = append(validating.Webhooks, admissionregistrationv1.ValidatingWebhook{
-		Name: "unmanaged.operator.ptah.dev",
+		Name: "future.operator.ptah.dev",
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: append([]byte(nil), original.caPEM...),
+			Service: &admissionregistrationv1.ServiceReference{
+				Name: config.ServiceName, Namespace: config.ServiceNamespace,
+			},
+		},
+	}, admissionregistrationv1.ValidatingWebhook{
+		Name: "different-port.operator.ptah.dev",
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: append([]byte(nil), original.caPEM...),
+			Service: &admissionregistrationv1.ServiceReference{
+				Name: config.ServiceName, Namespace: config.ServiceNamespace, Port: &differentPort,
+			},
+		},
+	}, admissionregistrationv1.ValidatingWebhook{
+		Name: "foreign-service.operator.ptah.dev",
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: append([]byte(nil), original.caPEM...),
+			Service: &admissionregistrationv1.ServiceReference{
+				Name: "other-service", Namespace: config.ServiceNamespace,
+			},
+		},
+	}, admissionregistrationv1.ValidatingWebhook{
+		Name: "url.operator.ptah.dev",
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: append([]byte(nil), original.caPEM...),
+			URL:      &foreignURL,
+		},
+	})
+	if _, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Update(
+		context.Background(), validating, metav1.UpdateOptions{},
+	); err != nil {
+		t.Fatalf("add forward-compatibility webhooks: %v", err)
+	}
+
+	rotator := mustNewTestRotator(t, client, config, baseTime, &recordingProber{})
+	if err := rotator.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	mutating, err = client.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(
+		context.Background(), config.MutatingWebhookConfiguration, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get updated MutatingWebhookConfiguration: %v", err)
+	}
+	validating, err = client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
+		context.Background(), config.ValidatingWebhookConfiguration, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get updated ValidatingWebhookConfiguration: %v", err)
+	}
+	replacementCA := mustGetSecret(t, client, config).Data[CACertificateKey]
+	if !caBundlesEqual(mutating.Webhooks[1].ClientConfig.CABundle, replacementCA) {
+		t.Fatal("rotator did not carry a future same-Service mutating webhook through the CA transition")
+	}
+	for _, index := range []int{2, 3, 4} {
+		if !caBundlesEqual(mutating.Webhooks[index].ClientConfig.CABundle, original.caPEM) {
+			t.Fatalf("rotator modified unrelated mutating webhook entry %d", index)
+		}
+	}
+	if !caBundlesEqual(validating.Webhooks[2].ClientConfig.CABundle, replacementCA) {
+		t.Fatal("rotator did not carry a future same-Service validating webhook through the CA transition")
+	}
+	for _, index := range []int{3, 4, 5} {
+		if !caBundlesEqual(validating.Webhooks[index].ClientConfig.CABundle, original.caPEM) {
+			t.Fatalf("rotator modified unrelated webhook entry %d", index)
+		}
+	}
+}
+
+func TestAdditionalSameServiceWebhooksRetainOverlapUntilEndpointProof(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	config.ProbeTimeout = 15 * time.Millisecond
+	config.ProbeInterval = time.Millisecond
+	baseTime := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
+	original := mustGenerateMaterial(t, baseTime, config)
+	legacy := secretForMaterial(config, original)
+	delete(legacy.Data, CAPrivateKeyKey)
+	client := newTestClient(config, legacy, original.caPEM, twoReadyEndpoints(config))
+
+	mutating, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(
+		context.Background(), config.MutatingWebhookConfiguration, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get MutatingWebhookConfiguration: %v", err)
+	}
+	mutating.Webhooks = append(mutating.Webhooks, admissionregistrationv1.MutatingWebhook{
+		Name: "future-mutating.operator.ptah.dev",
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: append([]byte(nil), original.caPEM...),
+			Service: &admissionregistrationv1.ServiceReference{
+				Name: config.ServiceName, Namespace: config.ServiceNamespace,
+			},
+		},
+	})
+	if _, err := client.AdmissionregistrationV1().MutatingWebhookConfigurations().Update(
+		context.Background(), mutating, metav1.UpdateOptions{},
+	); err != nil {
+		t.Fatalf("add future mutating webhook: %v", err)
+	}
+
+	validating, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
+		context.Background(), config.ValidatingWebhookConfiguration, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get ValidatingWebhookConfiguration: %v", err)
+	}
+	validating.Webhooks = append(validating.Webhooks, admissionregistrationv1.ValidatingWebhook{
+		Name: "future-validating.operator.ptah.dev",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			Service: &admissionregistrationv1.ServiceReference{
@@ -980,12 +1196,25 @@ func TestUnmanagedSameServiceWebhookIsNotModified(t *testing.T) {
 	if _, err := client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Update(
 		context.Background(), validating, metav1.UpdateOptions{},
 	); err != nil {
-		t.Fatalf("add unmanaged webhook: %v", err)
+		t.Fatalf("add future validating webhook: %v", err)
 	}
 
-	rotator := mustNewTestRotator(t, client, config, baseTime, &recordingProber{})
-	if err := rotator.Run(context.Background()); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	rotator := mustNewTestRotator(
+		t,
+		client,
+		config,
+		baseTime,
+		&recordingProber{err: errors.New("replacement not loaded")},
+	)
+	if err := rotator.Run(context.Background()); err == nil {
+		t.Fatal("Run() unexpectedly succeeded without endpoint proof")
+	}
+	replacementCA := mustGetSecret(t, client, config).Data[CACertificateKey]
+	mutating, err = client.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(
+		context.Background(), config.MutatingWebhookConfiguration, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatalf("get updated MutatingWebhookConfiguration: %v", err)
 	}
 	validating, err = client.AdmissionregistrationV1().ValidatingWebhookConfigurations().Get(
 		context.Background(), config.ValidatingWebhookConfiguration, metav1.GetOptions{},
@@ -993,8 +1222,15 @@ func TestUnmanagedSameServiceWebhookIsNotModified(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get updated ValidatingWebhookConfiguration: %v", err)
 	}
-	if !caBundlesEqual(validating.Webhooks[2].ClientConfig.CABundle, original.caPEM) {
-		t.Fatal("rotator modified a webhook outside the explicit managed name set")
+	for name, bundle := range map[string][]byte{
+		"mutating":   mutating.Webhooks[1].ClientConfig.CABundle,
+		"validating": validating.Webhooks[2].ClientConfig.CABundle,
+	} {
+		if !caBundleContainsCertificate(bundle, original.caPEM) ||
+			!caBundleContainsCertificate(bundle, replacementCA) {
+			t.Errorf("future %s webhook did not retain both CA roots before endpoint proof", name)
+		}
+		assertBundleCertificateCount(t, bundle, 2)
 	}
 }
 
