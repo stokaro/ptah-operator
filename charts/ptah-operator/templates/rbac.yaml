@@ -6,6 +6,32 @@ metadata:
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    resourceNames:
+      - ptahschemaapprovals.operator.ptah.dev
+      - ptahschemaplans.operator.ptah.dev
+      - ptahschemas.operator.ptah.dev
+    verbs: ["get"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    resourceNames: ["ptah-operator-admission"]
+    verbs: ["get"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    resourceNames:
+      - {{ include "ptah-operator.rolloutGuardPolicyName" . }}
+      - {{ include "ptah-operator.runtimeGuardPolicyName" . }}
+      - {{ include "ptah-operator.runtimePodGuardPolicyName" . }}
+      - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
+      - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
+      - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
+      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+    verbs: ["get"]
   - apiGroups: ["operator.ptah.dev"]
     resources: ["ptahschemas"]
     verbs: ["get", "list", "watch", "update", "patch"]
@@ -30,12 +56,6 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
-  - apiGroups: [""]
-    resources: ["serviceaccounts"]
-    verbs: ["get"]
-  - apiGroups: [""]
-    resources: ["limitranges"]
-    verbs: ["list"]
   - apiGroups: ["node.k8s.io"]
     resources: ["runtimeclasses"]
     verbs: ["get"]
@@ -59,6 +79,40 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ include "ptah-operator.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ptah-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "ptah-operator.fullname" . }}-runtime-admission
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames:
+      - {{ include "ptah-operator.serviceAccountName" . }}
+      - {{ include "ptah-operator.certRotatorServiceAccountName" . }}
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "ptah-operator.fullname" . }}-runtime-admission
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "ptah-operator.fullname" . }}-runtime-admission
 subjects:
   - kind: ServiceAccount
     name: {{ include "ptah-operator.serviceAccountName" . }}

@@ -76,8 +76,21 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	clusterRole := mustObject(t, objects, "ClusterRole", rotatorName)
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "mutatingwebhookconfigurations", []string{configurationName}, []string{"get", "update"})
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingwebhookconfigurations", []string{configurationName}, []string{"get", "update"})
-	assertNoResourceVerb(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicies", "get")
-	assertNoResourceVerb(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicybindings", "get")
+	runtimeGuardNames := []string{
+		"ptah-operator-rollout-guard-v1",
+		"ptah-operator-runtime-guard-v1",
+		"ptah-operator-runtime-pod-identity-v1",
+		"ptah-operator-hook-identity-v1-90a0385b562b",
+		"ptah-operator-hook-probe-guard-v1-90a0385b562b",
+		"ptah-operator-release-activation-guard-v1-f1e165dcd72a",
+		"ptah-operator-service-account-origin-guard-v1-f1e165dcd72a",
+		"ptah-operator-runtime-parent-guard-v1-f1e165dcd72a",
+		"ptah-operator-hook-pod-origin-guard-v1-f1e165dcd72a",
+		"ptah-operator-hook-parent-origin-guard-v1-f1e165dcd72a",
+		"ptah-operator-hook-parent-contract-v1-90a0385b562b",
+	}
+	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicies", runtimeGuardNames, []string{"get"})
+	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicybindings", runtimeGuardNames, []string{"get"})
 	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicy", rotatorName)
 	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicyBinding", rotatorName)
 	mustObject(t, objects, "Lease", leaseName)

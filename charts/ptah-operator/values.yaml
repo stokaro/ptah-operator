@@ -7,6 +7,9 @@ image:
   # below. Production and ordinary installs must supply digest.
   digest: ""
   allowMutableTag: false
+  # Test-only exact content identity used when allowMutableTag is true. Set it
+  # to the loaded image's sha256 Docker image ID; leave it empty with digest.
+  testIdentityDigest: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -44,6 +47,9 @@ coordination:
   namespace: ""
 
 serviceAccount:
+  # With create=false, name must identify an existing ServiceAccount dedicated
+  # to this release. Any additional RoleBinding or ClusterRoleBinding for that
+  # identity blocks fail-closed uninstall.
   create: true
   name: ""
   annotations: {}
@@ -62,6 +68,11 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 priorityClassName: ""
+# Pin the scheduling semantics of priorityClassName. The preflight refuses a
+# class whose live value or effective preemption policy differs, so changing a
+# PriorityClass cannot silently change an already approved runtime contract.
+priorityClassValue: 0
+priorityClassPreemptionPolicy: PreemptLowerPriority
 
 metrics:
   bindAddress: ":8080"

@@ -28,6 +28,9 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -47,15 +50,76 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out repository
+        id: checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Verify Kubernetes support window
+        id: verify-support
+        shell: bash
         run: go run ./hack/verify-kubernetes-support.go
+      - name: Select exact CRD schema history baseline
+        id: crd-baseline
+        env:
+          CURRENT_SHA: ${{ github.sha }}
+          EVENT_BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+          PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          zero_sha=0000000000000000000000000000000000000000
+          commit_pattern='^[0-9a-f]{40}$'
+
+          [[ "$CURRENT_SHA" =~ $commit_pattern ]]
+          checked_out_sha="$(git rev-parse --verify HEAD)"
+          [[ "$checked_out_sha" == "$CURRENT_SHA" ]]
+
+          resolve_exact_commit() {
+            local reference=$1
+            local resolved
+            resolved="$(git rev-parse --verify --end-of-options "${reference}^{commit}")"
+            [[ "$resolved" =~ $commit_pattern ]]
+            printf '%s\n' "$resolved"
+          }
+
+          case "$EVENT_NAME" in
+            pull_request)
+              [[ "$PULL_REQUEST_BASE_SHA" =~ $commit_pattern ]]
+              baseline="$(resolve_exact_commit "$PULL_REQUEST_BASE_SHA")"
+              [[ "$baseline" == "$PULL_REQUEST_BASE_SHA" ]]
+              ;;
+            push)
+              if [[ "$EVENT_BEFORE_SHA" == "$zero_sha" ]]; then
+                baseline="$(resolve_exact_commit "${CURRENT_SHA}^")"
+              else
+                [[ "$EVENT_BEFORE_SHA" =~ $commit_pattern ]]
+                baseline="$(resolve_exact_commit "$EVENT_BEFORE_SHA")"
+                [[ "$baseline" == "$EVENT_BEFORE_SHA" ]]
+              fi
+              ;;
+            schedule|workflow_dispatch)
+              baseline="$(resolve_exact_commit "${CURRENT_SHA}^")"
+              ;;
+            *)
+              echo "unsupported event for CRD schema history baseline: $EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+          printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
       - name: Run project verification
+        id: project-verify
+        env:
+          CRD_SCHEMA_BASELINE_REF: ${{ steps.crd-baseline.outputs.baseline }}
+          CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE: "true"
+        shell: bash
         run: make verify
 
   kubernetes-e2e:
@@ -70,16 +134,23 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - name: Set up Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+        with:
+          version: v3.21.4
       - name: Check out pinned Ptah executor source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           repository: stokaro/ptah
-          ref: 14e57e5969463e52bbc8efa8fa5031bb5da9a5bf
+          ref: 3c2b509fe6bb9324be623ca416bbbfef85523d19
           path: .e2e/ptah
           fetch-depth: 1
       - name: Stage pinned Ptah source outside the operator build context
@@ -138,12 +209,40 @@ jobs:
         env:
           DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
           E2E_DIRECT_HOST_ACCESS: "1"
-          E2E_PTAH_REVISION: 14e57e5969463e52bbc8efa8fa5031bb5da9a5bf
+          E2E_PTAH_REVISION: 3c2b509fe6bb9324be623ca416bbbfef85523d19
           E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
           E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}
           KIND_NODE_IMAGE: ${{ matrix.node_image }}
           K8S_VERSION: ${{ matrix.kubernetes_version }}
+        shell: bash
         run: make e2e
       - name: Remove explicit Docker context
         if: always() && steps.docker-context.outputs.name != ''
         run: docker context rm --force "${{ steps.docker-context.outputs.name }}"
+
+  kubernetes-support-gate:
+    name: Kubernetes support gate
+    if: ${{ always() }}
+    needs: [support-matrix, verify, kubernetes-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every supported lifecycle
+        id: require-results
+        env:
+          SUPPORT_MATRIX_RESULT: ${{ needs.support-matrix.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          KUBERNETES_E2E_RESULT: ${{ needs.kubernetes-e2e.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for result in \
+            "$SUPPORT_MATRIX_RESULT" \
+            "$VERIFY_RESULT" \
+            "$KUBERNETES_E2E_RESULT"
+          do
+            if [[ "$result" != success ]]; then
+              echo "required Kubernetes support job concluded: $result" >&2
+              exit 1
+            fi
+          done

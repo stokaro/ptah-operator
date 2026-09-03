@@ -11,6 +11,9 @@ TEST_NAMESPACE=${E2E_TEST_NAMESPACE:-}
 HELM_RELEASE=${E2E_HELM_RELEASE:-}
 EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 FIXTURE_IMAGE=${E2E_FIXTURE_IMAGE:-}
+CONTROLLER_IMAGE=${E2E_CONTROLLER_IMAGE:-}
+CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:-}
+CONTROLLER_STATE_VERSION=${E2E_CONTROLLER_STATE_VERSION:-}
 RESULT_ASSERT_BINARY=${E2E_RESULT_ASSERT_BINARY:-}
 REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
@@ -89,7 +92,7 @@ for command_name in kubectl jq awk sed grep tr mktemp mkfifo date sleep base64 w
 done
 for value_name in \
 	KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE FIXTURE_IMAGE \
-	RESULT_ASSERT_BINARY \
+	CONTROLLER_IMAGE CONTROLLER_REVISION CONTROLLER_STATE_VERSION RESULT_ASSERT_BINARY \
 	SHARED_AUDITED_JOBS_FILE SHARED_FULLY_AUDITED_JOBS_FILE SHARED_OBSERVED_JOBS_FILE; do
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
@@ -108,6 +111,16 @@ is_pinned_image "$EXECUTOR_IMAGE" ||
 	fail "E2E_EXECUTOR_IMAGE must be pinned by a lowercase SHA-256 digest"
 is_pinned_image "$FIXTURE_IMAGE" ||
 	fail "E2E_FIXTURE_IMAGE must be pinned by a lowercase SHA-256 digest"
+is_pinned_image "$CONTROLLER_IMAGE" ||
+	fail "E2E_CONTROLLER_IMAGE must be pinned by a lowercase SHA-256 digest"
+[ "$(printf '%s' "$CONTROLLER_REVISION" | wc -c | tr -d '[:space:]')" -le 128 ] ||
+	fail "E2E_CONTROLLER_REVISION must be at most 128 bytes"
+[ "$CONTROLLER_REVISION" = "$(printf '%s' "$CONTROLLER_REVISION" | tr -d '[:cntrl:]')" ] ||
+	fail "E2E_CONTROLLER_REVISION must not contain control characters"
+printf '%s' "$CONTROLLER_REVISION" | grep -Eq '^[^[:space:]](.*[^[:space:]])?$' ||
+	fail "E2E_CONTROLLER_REVISION must not be empty or have edge whitespace"
+printf '%s\n' "$CONTROLLER_STATE_VERSION" | grep -Eq '^[1-9][0-9]*$' ||
+	fail "E2E_CONTROLLER_STATE_VERSION must be a positive integer"
 if [ ! -f "$RESULT_ASSERT_BINARY" ] || [ ! -x "$RESULT_ASSERT_BINARY" ]; then
 	fail "E2E_RESULT_ASSERT_BINARY must name the executable parent result parser"
 fi
@@ -560,6 +573,21 @@ audit_fault_runtime() {
 		printf '%s\n' "$audit_pod_object" | jq -e \
 			--arg uid "$audit_pod_uid" '.metadata.uid == $uid' >/dev/null ||
 			fail "unaudited fault-test Pod $audit_pod_name was replaced before UID $audit_pod_uid was audited"
+		if printf '%s\n' "$audit_pod_object" | jq -e '
+          .metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and
+          .metadata.labels["app.kubernetes.io/component"] == "schema-operation"
+        ' >/dev/null; then
+			printf '%s\n' "$audit_pod_object" | jq -e \
+				--arg controllerImage "$CONTROLLER_IMAGE" \
+				--arg controllerRevision "$CONTROLLER_REVISION" \
+				--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+              .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+              .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+              .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
+              (.metadata.annotations["operator.ptah.dev/execution-binding-id"] |
+                test("^v1-[0-9a-f]{32}$"))
+            ' >/dev/null || fail "managed fault-test Pod $audit_pod_name lacks its exact controller execution identity"
+		fi
 		printf '%s\n' "$audit_pod_object" >"$RESOURCE_FILE"
 		scan_fault_file "$RESOURCE_FILE" \
 			"the exact live fault-test Pod $audit_pod_name UID $audit_pod_uid"
@@ -627,6 +655,26 @@ audit_fault_runtime() {
             any((.type == "Complete" or .type == "Failed") and .status == "True"))
         ' >/dev/null ||
 			fail "terminal fault-test Job $audit_job_name was replaced before UID $audit_job_uid was audited"
+		if printf '%s\n' "$audit_job_object" | jq -e '
+          .metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and
+          .metadata.labels["app.kubernetes.io/component"] == "schema-operation"
+        ' >/dev/null; then
+			printf '%s\n' "$audit_job_object" | jq -e \
+				--arg controllerImage "$CONTROLLER_IMAGE" \
+				--arg controllerRevision "$CONTROLLER_REVISION" \
+				--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+              (.metadata.annotations["operator.ptah.dev/execution-binding-id"] |
+                test("^v1-[0-9a-f]{32}$")) and
+              .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+              .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+              .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
+              .spec.template.metadata.annotations["operator.ptah.dev/execution-binding-id"] ==
+                .metadata.annotations["operator.ptah.dev/execution-binding-id"] and
+              .spec.template.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+              .spec.template.metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+              .spec.template.metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion
+            ' >/dev/null || fail "managed fault-test Job $audit_job_name lacks its exact controller execution identity"
+		fi
 		audit_job_pods=$(k -n "$TEST_NAMESPACE" get pods -o json | jq \
 			--arg uid "$audit_job_uid" '
           {apiVersion: "v1", kind: "List", items: [
@@ -1780,10 +1828,19 @@ capture_exact_job_result() {
 	result_job_object=$(k -n "$TEST_NAMESPACE" get job "$result_job_name" -o json)
 	printf '%s\n' "$result_job_object" | jq -e \
 		--arg uid "$result_job_uid" \
-		--arg operation "$result_operation" '
+		--arg operation "$result_operation" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .metadata.uid == $uid and
       .metadata.labels["operator.ptah.dev/operation"] == $operation and
       (.metadata.annotations["operator.ptah.dev/operation-id"] | length > 0) and
+      .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+      .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+      .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
+      .spec.template.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+      .spec.template.metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+      .spec.template.metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
       .spec.podReplacementPolicy == "Failed" and .spec.backoffLimit == 0 and
       (.status.conditions // [] | any(.type == "Complete" and .status == "True"))
     ' >/dev/null || fail "exact $result_operation Job $result_job_name did not transport one result"
@@ -1801,10 +1858,16 @@ capture_exact_job_result() {
       else error("exact Job does not own one operation-bound Pod") end
     ')
 	FAULT_RESULT_POD_UID=$(printf '%s\n' "$result_pods" | jq -er \
-		--arg name "$FAULT_RESULT_POD" '
+		--arg name "$FAULT_RESULT_POD" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .items[] | select(.metadata.name == $name) |
       ([.status.initContainerStatuses // [], .status.containerStatuses // []] | add) as $statuses |
-      if all($statuses[]; (.restartCount // 0) == 0) and
+      if .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+        .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+        .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
+        all($statuses[]; (.restartCount // 0) == 0) and
         ([.status.containerStatuses[] |
           select(.name == "ptah" and .state.terminated.exitCode == 0)] | length) == 1
       then .metadata.uid else error("result Pod did not terminate exactly once") end
@@ -1881,6 +1944,9 @@ assert_successful_apply_result() {
 			--arg operationID "$apply_result_operation_id" \
 			--arg jobUID "$apply_result_job_uid" \
 			--arg podUID "$apply_result_pod_uid" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
 			--slurpfile result "$apply_result_file" '
           $result[0] as $result |
           [.[] | select(.object.metadata.name == $schema) | .object] as $schemas |
@@ -1895,6 +1961,16 @@ assert_successful_apply_result() {
             .status.pendingObservation.applyJobUID == $jobUID)) | .[0]) as $pendingObject |
           $pendingObject.status.pendingObservation as $pending |
           $apply != null and $pendingObject != null and
+          ($apply.status.executionBinding.epoch | test("^v1-[0-9a-f]{32}$")) and
+          $apply.status.executionBinding.controllerImage == $controllerImage and
+          $apply.status.executionBinding.controllerRevision == $controllerRevision and
+          $apply.status.executionBinding.controllerStateVersion == $controllerStateVersion and
+          $apply.status.activeOperation.executionBindingID == $apply.status.executionBinding.epoch and
+          $apply.status.plan.executionBindingID == $apply.status.executionBinding.epoch and
+          $apply.status.plan.controllerImage == $controllerImage and
+          $apply.status.plan.controllerRevision == $controllerRevision and
+          $apply.status.plan.controllerStateVersion == $controllerStateVersion and
+          $pendingObject.status.executionBinding == $apply.status.executionBinding and
           $apply.status.activeOperation.dispatchNotAfter != null and
           $apply.status.activeOperation.executionNotAfter != null and
           $apply.status.activeOperation.executionNotAfter ==
@@ -1911,6 +1987,10 @@ assert_successful_apply_result() {
           $result.targetIdentityDigest == $apply.status.activeOperation.targetIdentityDigest and
           $result.targetIdentityDigest == $apply.status.plan.targetIdentityDigest and
           $pending.plan == $apply.status.plan and
+          $pending.plan.executionBindingID == $apply.status.executionBinding.epoch and
+          $pending.plan.controllerImage == $controllerImage and
+          $pending.plan.controllerRevision == $controllerRevision and
+          $pending.plan.controllerStateVersion == $controllerStateVersion and
           $pending.applyJobName == $apply.status.activeOperation.jobName and
           $pending.applyJobUID == $jobUID and
           $pending.applyPodUIDs == [$podUID] and $pending.applyPodCount == 1 and
@@ -1968,7 +2048,10 @@ assert_fault_convergence_result_pair() {
 		--arg observeUID "$CONVERGED_OBSERVE_JOB_UID" \
 		--arg observeOperation "$FAULT_RESULT_OPERATION_ID" \
 		--arg applyOperation "$converged_apply_operation" \
-		--arg leaseEpoch "$converged_lease_epoch" '
+		--arg leaseEpoch "$converged_lease_epoch" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .status.activeOperation.type == "Observe" and
       .status.activeOperation.id == $observeOperation and
       .status.activeOperation.jobUID == $observeUID and
@@ -1976,6 +2059,10 @@ assert_fault_convergence_result_pair() {
       .status.pendingObservation.outcome == "ApplySucceeded" and
       .status.pendingObservation.applyOperationID == $applyOperation and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
+      .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch and
+      .status.pendingObservation.plan.controllerImage == $controllerImage and
+      .status.pendingObservation.plan.controllerRevision == $controllerRevision and
+      .status.pendingObservation.plan.controllerStateVersion == $controllerStateVersion and
       (.status.pendingObservation.planRequired // false) == false and
       .status.phase == "VerifyingConvergence" and .status.applied == null and
       .status.pendingLockRelease == null and
@@ -2015,7 +2102,10 @@ assert_fault_convergence_result_pair() {
 		--arg planUID "$CONVERGED_PLAN_JOB_UID" \
 		--arg planOperation "$FAULT_RESULT_OPERATION_ID" \
 		--arg applyOperation "$converged_apply_operation" \
-		--arg leaseEpoch "$converged_lease_epoch" '
+		--arg leaseEpoch "$converged_lease_epoch" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .status.activeOperation.type == "Plan" and
       .status.activeOperation.id == $planOperation and
       .status.activeOperation.jobUID == $planUID and
@@ -2023,6 +2113,10 @@ assert_fault_convergence_result_pair() {
       .status.pendingObservation.outcome == "ApplySucceeded" and
       .status.pendingObservation.applyOperationID == $applyOperation and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
+      .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch and
+      .status.pendingObservation.plan.controllerImage == $controllerImage and
+      .status.pendingObservation.plan.controllerRevision == $controllerRevision and
+      .status.pendingObservation.plan.controllerStateVersion == $controllerStateVersion and
       .status.pendingObservation.planRequired == true and
       .status.phase == "VerifyingConvergence" and .status.applied == null and
       .status.pendingLockRelease == null and
@@ -2046,10 +2140,17 @@ assert_fault_convergence_result_pair() {
 	converged_schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$converged_schema" -o json)
 	printf '%s\n' "$converged_schema_object" | jq -e \
 		--slurpfile observe "$converged_observe_result" \
-		--slurpfile plan "$converged_plan_result" '
+		--slurpfile plan "$converged_plan_result" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
           $observe[0] as $observe | $plan[0] as $plan |
-          .status.phase == "InSync" and .status.pendingObservation == null and
-          .status.activeOperation == null and .status.plan == null and
+	          .status.phase == "InSync" and .status.pendingObservation == null and
+	          .status.activeOperation == null and .status.plan == null and
+              .status.applied.executionBindingID == .status.executionBinding.epoch and
+              .status.applied.controllerImage == $controllerImage and
+              .status.applied.controllerRevision == $controllerRevision and
+              .status.applied.controllerStateVersion == $controllerStateVersion and
           (.status.conditions | any(
             .type == "InSync" and .status == "True" and .reason == "ScopedConverged")) and
           $observe.error == null and $observe.childExitCode == 0 and
@@ -2133,7 +2234,10 @@ capture_uncertain_read_proof_pair() {
 		--arg applyJobUID "$uncertain_apply_job_uid" \
 		--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
 		--argjson applyPodCount "$uncertain_apply_pod_count" \
-		--arg leaseEpoch "$uncertain_lease_epoch" '
+		--arg leaseEpoch "$uncertain_lease_epoch" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .status.activeOperation.type == "Observe" and
       .status.activeOperation.id == $observeOperation and
       .status.activeOperation.jobUID == $observeUID and
@@ -2145,6 +2249,10 @@ capture_uncertain_read_proof_pair() {
       (.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs and
       (.status.pendingObservation.applyPodCount // 0) == $applyPodCount and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
+      .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch and
+      .status.pendingObservation.plan.controllerImage == $controllerImage and
+      .status.pendingObservation.plan.controllerRevision == $controllerRevision and
+      .status.pendingObservation.plan.controllerStateVersion == $controllerStateVersion and
       (.status.pendingObservation.planRequired // false) == false and
       .status.phase == "VerifyingConvergence" and .status.applied == null and
       .status.pendingLockRelease == null and
@@ -2186,7 +2294,10 @@ capture_uncertain_read_proof_pair() {
 		--arg applyJobUID "$uncertain_apply_job_uid" \
 		--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
 		--argjson applyPodCount "$uncertain_apply_pod_count" \
-		--arg leaseEpoch "$uncertain_lease_epoch" '
+		--arg leaseEpoch "$uncertain_lease_epoch" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .status.activeOperation.type == "Plan" and
       .status.activeOperation.id == $planOperation and
       .status.activeOperation.jobUID == $planUID and
@@ -2198,6 +2309,10 @@ capture_uncertain_read_proof_pair() {
       (.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs and
       (.status.pendingObservation.applyPodCount // 0) == $applyPodCount and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
+      .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch and
+      .status.pendingObservation.plan.controllerImage == $controllerImage and
+      .status.pendingObservation.plan.controllerRevision == $controllerRevision and
+      .status.pendingObservation.plan.controllerStateVersion == $controllerStateVersion and
       .status.pendingObservation.planRequired == true and
       .status.phase == "VerifyingConvergence" and .status.applied == null and
       .status.pendingLockRelease == null and
@@ -2264,8 +2379,15 @@ assert_approval_consumed() {
 	consumed_plan_uid=$2
 	k -n "$TEST_NAMESPACE" get ptahschemaapproval "$consumed_approval" -o json |
 		jq -e \
-			--arg planUID "$consumed_plan_uid" '
+			--arg planUID "$consumed_plan_uid" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
         .spec.planRef.uid == $planUID and
+        (.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
+        .spec.controllerImage == $controllerImage and
+        .spec.controllerRevision == $controllerRevision and
+        .spec.controllerStateVersion == $controllerStateVersion and
         (.status.conditions | any(
           .type == "Consumed" and .status == "True" and .reason == "DispatchCommitted")) and
         (.status.conditions | any(
@@ -2502,9 +2624,33 @@ wait_for_plan() {
       .status.activeOperation == null and
       .status.plan.name != null
 	' "a non-destructive plan awaiting exact approval"
-	PLAN_NAME=$(k -n "$TEST_NAMESPACE" get ptahschema "$plan_schema" -o jsonpath='{.status.plan.name}')
+	plan_schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$plan_schema" -o json)
+	PLAN_NAME=$(printf '%s\n' "$plan_schema_object" | jq -er '.status.plan.name')
+	printf '%s\n' "$plan_schema_object" | jq -e \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+      .status.executionBinding as $binding |
+      .status.plan as $plan |
+      ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
+      $binding.controllerImage == $controllerImage and
+      $binding.controllerRevision == $controllerRevision and
+      $binding.controllerStateVersion == $controllerStateVersion and
+      $plan.executionBindingID == $binding.epoch and
+      $plan.controllerImage == $controllerImage and
+      $plan.controllerRevision == $controllerRevision and
+      $plan.controllerStateVersion == $controllerStateVersion
+    ' >/dev/null || fail "$plan_schema current plan lacks its exact controller identity"
 	k -n "$TEST_NAMESPACE" get ptahschemaplan "$PLAN_NAME" -o json |
-		jq -e '
+		jq -e \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+      .spec.contractVersion == 3 and
+      (.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
+      .spec.controllerImage == $controllerImage and
+      .spec.controllerRevision == $controllerRevision and
+      .spec.controllerStateVersion == $controllerStateVersion and
       .spec.destructive == false and .spec.statementCount > 0 and
       (.status.conditions | any(.type == "Ready" and .status == "True"))
     ' >/dev/null || fail "$plan_schema did not produce a ready non-destructive plan"
@@ -2513,11 +2659,46 @@ wait_for_plan() {
 create_approval() {
 	approval_schema=$1
 	approval_name=$2
-	approval_schema_uid=$(k -n "$TEST_NAMESPACE" get ptahschema "$approval_schema" -o jsonpath='{.metadata.uid}')
-	approval_plan=$(k -n "$TEST_NAMESPACE" get ptahschema "$approval_schema" -o jsonpath='{.status.plan.name}')
+	approval_schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$approval_schema" -o json)
+	approval_schema_uid=$(printf '%s\n' "$approval_schema_object" | jq -er '.metadata.uid')
+	approval_plan=$(printf '%s\n' "$approval_schema_object" | jq -er '.status.plan.name')
 	[ -n "$approval_plan" ] || fail "$approval_schema has no plan to approve"
-	approval_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$approval_plan" -o jsonpath='{.metadata.uid}')
-	approval_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$approval_plan" -o jsonpath='{.spec.fingerprint}')
+	approval_plan_object=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$approval_plan" -o json)
+	approval_plan_uid=$(printf '%s\n' "$approval_plan_object" | jq -er '.metadata.uid')
+	approval_fingerprint=$(printf '%s\n' "$approval_plan_object" | jq -er '.spec.fingerprint')
+	approval_execution_binding_id=$(printf '%s\n' "$approval_plan_object" | jq -er '.spec.executionBindingID')
+	printf '%s\n' "$approval_schema_object" | jq -e \
+		--arg plan "$approval_plan" \
+		--arg planUID "$approval_plan_uid" \
+		--arg fingerprint "$approval_fingerprint" \
+		--arg executionBindingID "$approval_execution_binding_id" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+      .status.executionBinding as $binding |
+      .status.plan as $current |
+      $binding.epoch == $executionBindingID and
+      $binding.controllerImage == $controllerImage and
+      $binding.controllerRevision == $controllerRevision and
+      $binding.controllerStateVersion == $controllerStateVersion and
+      $current.name == $plan and $current.uid == $planUID and
+      $current.fingerprint == $fingerprint and
+      $current.executionBindingID == $executionBindingID and
+      $current.controllerImage == $controllerImage and
+      $current.controllerRevision == $controllerRevision and
+      $current.controllerStateVersion == $controllerStateVersion
+    ' >/dev/null || fail "$approval_schema current plan is not bound to the exact controller identity"
+	printf '%s\n' "$approval_plan_object" | jq -e \
+		--arg executionBindingID "$approval_execution_binding_id" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+      .spec.contractVersion == 3 and
+      .spec.executionBindingID == $executionBindingID and
+      .spec.controllerImage == $controllerImage and
+      .spec.controllerRevision == $controllerRevision and
+      .spec.controllerStateVersion == $controllerStateVersion
+    ' >/dev/null || fail "$approval_plan is not a current-contract plan with the exact controller identity"
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
 		--arg name "$approval_name" \
@@ -2541,11 +2722,19 @@ create_approval() {
 		jq -e \
 			--arg schema "$approval_schema" \
 			--arg plan "$approval_plan" \
-			--arg fingerprint "$approval_fingerprint" '
+			--arg fingerprint "$approval_fingerprint" \
+			--arg executionBindingID "$approval_execution_binding_id" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .spec.schemaRef.name == $schema and .spec.planRef.name == $plan and
       .spec.planFingerprint == $fingerprint and
       (.spec.artifactDigest | test("^sha256:[0-9a-f]{64}$")) and
       (.spec.coordinationDigest | test("^sha256:[0-9a-f]{64}$")) and
+      .spec.executionBindingID == $executionBindingID and
+      .spec.controllerImage == $controllerImage and
+      .spec.controllerRevision == $controllerRevision and
+      .spec.controllerStateVersion == $controllerStateVersion and
       .spec.runnerProtocolVersion == 4
     ' >/dev/null || fail "$approval_name was not hydrated against the exact current plan"
 }
@@ -3093,8 +3282,20 @@ assert_post_apply_proof_history() {
 		--arg leaseEpoch "$proof_lease_epoch" \
 		--arg observeJobUID "$proof_observe_job_uid" \
 		--arg planJobUID "$proof_plan_job_uid" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
 		--slurpfile jobs "$proof_job_watch" \
 		--slurpfile leases "$proof_lease_watch" '
+      def exact_controller_plan($plan; $binding):
+        ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
+        $binding.controllerImage == $controllerImage and
+        $binding.controllerRevision == $controllerRevision and
+        $binding.controllerStateVersion == $controllerStateVersion and
+        $plan.executionBindingID == $binding.epoch and
+        $plan.controllerImage == $controllerImage and
+        $plan.controllerRevision == $controllerRevision and
+        $plan.controllerStateVersion == $controllerStateVersion;
       def active_matches_pending($active; $pending):
         $active.coordinationDigest == $pending.coordinationDigest and
         $active.targetIdentityDigest == $pending.plan.targetIdentityDigest and
@@ -3162,7 +3363,9 @@ assert_post_apply_proof_history() {
       $apply != null and $pendingObject != null and $observe != null and $plan != null and
 	      $releaseRequest != null and $apply.status.applied == null and
 	      $apply.status.pendingLockRelease == null and
+      exact_controller_plan($apply.status.plan; $apply.status.executionBinding) and
       $pending.plan == $apply.status.plan and
+	      exact_controller_plan($pending.plan; $pendingObject.status.executionBinding) and
 	      $pending.applyJobName == $apply.status.activeOperation.jobName and
 	      $pending.applyJobUID == $applyJobUID and
       $pending.coordinationDigest == $apply.status.activeOperation.coordinationDigest and
@@ -3180,6 +3383,7 @@ assert_post_apply_proof_history() {
 	      all($schemas[];
 	        if .status.pendingObservation.applyOperationID == $applyOperation then
 	          .status.phase == "VerifyingConvergence" and
+	          exact_controller_plan(.status.pendingObservation.plan; .status.executionBinding) and
 	          .status.applied == null and .status.pendingLockRelease == null and
 	          all(.status.conditions[];
 	            if (.type == "InSync" or .type == "Ready") then .status != "True" else true end)
@@ -3193,6 +3397,10 @@ assert_post_apply_proof_history() {
         .status.applied.planFingerprint == $pending.plan.fingerprint and
         .status.applied.coordinationDigest == $pending.plan.coordinationDigest and
         .status.applied.targetIdentityDigest == $pending.plan.targetIdentityDigest and
+        .status.applied.executionBindingID == $pending.plan.executionBindingID and
+        .status.applied.controllerImage == $controllerImage and
+        .status.applied.controllerRevision == $controllerRevision and
+        .status.applied.controllerStateVersion == $controllerStateVersion and
         .status.applied.ptahVersion == $pending.plan.ptahVersion and
         .status.applied.executorImage == $pending.plan.executorImage and
         .status.applied.runnerImage == $pending.plan.runnerImage and
@@ -3271,10 +3479,24 @@ assert_uncertain_apply_proof_history() {
 		--argjson applyPodCount "$unknown_apply_pod_count" \
 		--arg planMode "$unknown_plan_mode" \
 		--arg oldActual "$unknown_old_actual_fingerprint" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
 		--slurpfile jobs "$unknown_job_watch" \
 		--slurpfile leases "$unknown_lease_watch" \
 		--slurpfile finalSchema "$unknown_final_schema" \
 		--slurpfile freshPlan "$unknown_fresh_plan" '
+      def exact_controller_binding($binding):
+        ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
+        $binding.controllerImage == $controllerImage and
+        $binding.controllerRevision == $controllerRevision and
+        $binding.controllerStateVersion == $controllerStateVersion;
+      def exact_controller_plan($plan; $binding):
+        exact_controller_binding($binding) and
+        $plan.executionBindingID == $binding.epoch and
+        $plan.controllerImage == $controllerImage and
+        $plan.controllerRevision == $controllerRevision and
+        $plan.controllerStateVersion == $controllerStateVersion;
       def pending_binding_matches($candidate; $origin):
         $candidate.outcome == $origin.outcome and
         $candidate.applyOperationID == $origin.applyOperationID and
@@ -3326,6 +3548,12 @@ assert_uncertain_apply_proof_history() {
         $final.status.plan.policyFingerprint == $fresh.spec.policyFingerprint and
         $final.status.plan.verificationPolicyUID == $fresh.spec.verificationPolicyUID and
         $final.status.plan.verificationPolicyDigest == $fresh.spec.verificationPolicyDigest and
+        $fresh.spec.contractVersion == 3 and
+        exact_controller_plan($final.status.plan; $final.status.executionBinding) and
+        $final.status.plan.executionBindingID == $fresh.spec.executionBindingID and
+        $final.status.plan.controllerImage == $fresh.spec.controllerImage and
+        $final.status.plan.controllerRevision == $fresh.spec.controllerRevision and
+        $final.status.plan.controllerStateVersion == $fresh.spec.controllerStateVersion and
         $final.status.plan.ptahVersion == $fresh.spec.ptahVersion and
         $final.status.plan.executorImage == $fresh.spec.executorImage and
         $final.status.plan.runnerImage == $fresh.spec.runnerImage and
@@ -3341,6 +3569,10 @@ assert_uncertain_apply_proof_history() {
         $fresh.spec.policyFingerprint == $old.policyFingerprint and
         $fresh.spec.verificationPolicyUID == $old.verificationPolicyUID and
         $fresh.spec.verificationPolicyDigest == $old.verificationPolicyDigest and
+        $fresh.spec.executionBindingID == $old.executionBindingID and
+        $fresh.spec.controllerImage == $old.controllerImage and
+        $fresh.spec.controllerRevision == $old.controllerRevision and
+        $fresh.spec.controllerStateVersion == $old.controllerStateVersion and
         $fresh.spec.ptahVersion == $old.ptahVersion and
         $fresh.spec.executorImage == $old.executorImage and
         $fresh.spec.runnerImage == $old.runnerImage and
@@ -3399,6 +3631,8 @@ assert_uncertain_apply_proof_history() {
         (.value.object.spec.holderIdentity // "") == "")) | .[0]) as $released |
 	      $apply != null and $unknown != null and $observe != null and $plan != null and
 	      $releaseRequest != null and
+	      exact_controller_plan($apply.value.status.plan; $apply.value.status.executionBinding) and
+	      exact_controller_plan($origin.plan; $unknown.value.status.executionBinding) and
 	      $apply.value.status.activeOperation.dispatchNotAfter != null and
 	      $apply.value.status.activeOperation.executionNotAfter ==
 	        $apply.value.status.activeOperation.dispatchNotAfter and
@@ -3416,6 +3650,7 @@ assert_uncertain_apply_proof_history() {
       active_matches_pending($plan.value.status.activeOperation; $plan.value.status.pendingObservation) and
 	      all([$unknown.value, $observe.value, $plan.value][];
 	        .status.phase == "VerifyingConvergence" and
+	        exact_controller_plan(.status.pendingObservation.plan; .status.executionBinding) and
 	        .status.applied == null and .status.pendingLockRelease == null and
 	        all(.status.conditions[];
 	          if (.type == "InSync" or .type == "Ready") then .status != "True" else true end)) and
@@ -3440,8 +3675,9 @@ assert_uncertain_apply_proof_history() {
           .value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] == $leaseEpoch
 	        else true end) and
       ($finalSchema[0] as $final | $freshPlan[0] as $fresh |
-        if $planMode == "no-changes" then
-          $final.status.phase == "InSync" and $final.status.activeOperation == null and
+	        if $planMode == "no-changes" then
+	          $final.status.phase == "InSync" and $final.status.activeOperation == null and
+	          exact_controller_binding($final.status.executionBinding) and
           $final.status.pendingObservation == null and $final.status.pendingLockRelease == null and
           $final.status.applied == null and $final.status.plan == null and
           ($final.status.conditions | any(

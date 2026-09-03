@@ -1,4 +1,5 @@
 {{- $fullname := include "ptah-operator.fullname" . -}}
+{{- include "ptah-operator.validateAdmissionSingleton" . -}}
 {{- $secretName := include "ptah-operator.webhookSecretName" . -}}
 {{- if and (not .Values.webhook.existingSecret) (not .Values.certificateRotation.enabled) -}}
 {{- fail "certificateRotation.enabled must be true when webhook.existingSecret is empty" -}}
@@ -10,6 +11,8 @@
 {{- $tlsKey := "" -}}
 {{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
+{{- $existingMutating := lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" $configurationName -}}
+{{- $existingValidating := lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $configurationName -}}
 {{- if .Values.webhook.existingSecret -}}
 {{- if .Values.webhook.caBundle -}}
 {{- $caBundle = .Values.webhook.caBundle | b64enc -}}
@@ -36,7 +39,6 @@
 {{- end -}}
 {{- $entryBundles := dict "mutating" $caBundle "approvalValidating" $caBundle "podValidating" $caBundle -}}
 {{- if not .Values.webhook.existingSecret -}}
-{{- $existingMutating := lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" $configurationName -}}
 {{- if $existingMutating -}}
 {{- range $existingMutating.webhooks -}}
 {{- if and (eq .name "mapproval.operator.ptah.dev") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
@@ -44,7 +46,6 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- $existingValidating := lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $configurationName -}}
 {{- if $existingValidating -}}
 {{- range $existingValidating.webhooks -}}
 {{- if and .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
@@ -79,6 +80,20 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
   name: {{ $configurationName }}
+  annotations:
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/coordination-namespace: {{ include "ptah-operator.coordinationNamespace" . | quote }}
+    operator.ptah.dev/leader-election: {{ printf "%t" .Values.leaderElection | quote }}
+    operator.ptah.dev/leader-election-id: {{ include "ptah-operator.leaderElectionID" . | quote }}
+    operator.ptah.dev/webhook-service-name: {{ include "ptah-operator.webhookServiceName" . | quote }}
+    operator.ptah.dev/hook-service-account-name: {{ include "ptah-operator.crdManagerServiceAccountName" . | quote }}
+    operator.ptah.dev/controller-service-account-name: {{ include "ptah-operator.serviceAccountName" . | quote }}
+    operator.ptah.dev/controller-deployment-name: {{ include "ptah-operator.fullname" . | quote }}
+    operator.ptah.dev/certificate-deployment-name: {{ include "ptah-operator.certRotatorServiceAccountName" . | quote }}
+    operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+    operator.ptah.dev/admission-contract-version: {{ include "ptah-operator.admissionContractVersion" . | quote }}
+    operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 webhooks:
@@ -107,6 +122,20 @@ apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingWebhookConfiguration
 metadata:
   name: {{ $configurationName }}
+  annotations:
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/coordination-namespace: {{ include "ptah-operator.coordinationNamespace" . | quote }}
+    operator.ptah.dev/leader-election: {{ printf "%t" .Values.leaderElection | quote }}
+    operator.ptah.dev/leader-election-id: {{ include "ptah-operator.leaderElectionID" . | quote }}
+    operator.ptah.dev/webhook-service-name: {{ include "ptah-operator.webhookServiceName" . | quote }}
+    operator.ptah.dev/hook-service-account-name: {{ include "ptah-operator.crdManagerServiceAccountName" . | quote }}
+    operator.ptah.dev/controller-service-account-name: {{ include "ptah-operator.serviceAccountName" . | quote }}
+    operator.ptah.dev/controller-deployment-name: {{ include "ptah-operator.fullname" . | quote }}
+    operator.ptah.dev/certificate-deployment-name: {{ include "ptah-operator.certRotatorServiceAccountName" . | quote }}
+    operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+    operator.ptah.dev/admission-contract-version: {{ include "ptah-operator.admissionContractVersion" . | quote }}
+    operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 webhooks:
@@ -135,10 +164,6 @@ webhooks:
     failurePolicy: Fail
     matchPolicy: Equivalent
     timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
-    objectSelector:
-      matchLabels:
-        app.kubernetes.io/managed-by: ptah-operator
-        app.kubernetes.io/component: schema-operation
     matchConditions:
       - name: job-owned-pod
         expression: >-

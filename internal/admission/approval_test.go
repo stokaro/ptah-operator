@@ -28,6 +28,8 @@ type fixedClock struct{ value time.Time }
 
 func (c fixedClock) Now() time.Time { return c.value }
 
+const testControllerImage = "example.invalid/manager@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+
 func TestApprovalCreateStampsAuthenticatedIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -109,6 +111,89 @@ func TestApprovalCreateRejectsStalePlan(t *testing.T) {
 	}
 }
 
+func TestApprovalCreateRejectsFuturePlanContract(t *testing.T) {
+	t.Parallel()
+
+	handler, approval := readyFixture(t, true, true)
+	api, ok := handler.Reader.(client.Client)
+	if !ok {
+		t.Fatal("approval fixture reader is not mutable")
+	}
+	plan := &operatorv1alpha1.PtahSchemaPlan{}
+	key := client.ObjectKey{Namespace: approval.Namespace, Name: approval.Spec.PlanRef.Name}
+	if err := api.Get(context.Background(), key, plan); err != nil {
+		t.Fatal(err)
+	}
+	plan.Spec.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
+	if err := api.Update(context.Background(), plan); err != nil {
+		t.Fatal(err)
+	}
+	request := requestFor(t, approval, admissionv1.Create)
+	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+	response := handler.Handle(context.Background(), request)
+	if response.Allowed || response.Result == nil || !strings.Contains(response.Result.Message, "unsupported plan contract version") {
+		t.Fatalf("Handle() response = %#v, want future-contract denial", response.Result)
+	}
+}
+
+func TestApprovalCreateRejectsNonCurrentManagerIdentity(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*operatorv1alpha1.PtahSchemaPlanSpec)
+	}{
+		{name: "missing image", mutate: func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
+			spec.ControllerImage = ""
+		}},
+		{name: "missing revision", mutate: func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
+			spec.ControllerRevision = ""
+		}},
+		{name: "future state version", mutate: func(spec *operatorv1alpha1.PtahSchemaPlanSpec) {
+			spec.ControllerStateVersion++
+		}},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			handler, approval := readyFixture(t, true, true)
+			api, ok := handler.Reader.(client.Client)
+			if !ok {
+				t.Fatal("approval fixture reader is not mutable")
+			}
+			plan := &operatorv1alpha1.PtahSchemaPlan{}
+			key := client.ObjectKey{Namespace: approval.Namespace, Name: approval.Spec.PlanRef.Name}
+			if err := api.Get(context.Background(), key, plan); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(&plan.Spec)
+			if err := api.Update(context.Background(), plan); err != nil {
+				t.Fatal(err)
+			}
+			request := requestFor(t, approval, admissionv1.Create)
+			request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+			response := handler.Handle(context.Background(), request)
+			if response.Allowed || response.Result == nil || !strings.Contains(response.Result.Message, "manager identity is not current") {
+				t.Fatalf("Handle() response = %#v, want manager-identity denial", response.Result)
+			}
+		})
+	}
+}
+
+func TestApprovalHandlerRejectsControlCharacterControllerRevision(t *testing.T) {
+	t.Parallel()
+
+	handler, approval := readyFixture(t, true, true)
+	handler.ControllerRevision = "release\ncandidate"
+	request := requestFor(t, approval, admissionv1.Create)
+	request.UserInfo = authenticationv1.UserInfo{Username: "alice"}
+	response := handler.Handle(context.Background(), request)
+	if response.Allowed || response.Result == nil || response.Result.Code != http.StatusInternalServerError ||
+		!strings.Contains(response.Result.Message, "not initialized") {
+		t.Fatalf("Handle() response = %#v, want invalid-handler refusal", response.Result)
+	}
+}
+
 func TestApprovalCreateHydratesDerivedPlanBindings(t *testing.T) {
 	t.Parallel()
 
@@ -122,6 +207,9 @@ func TestApprovalCreateHydratesDerivedPlanBindings(t *testing.T) {
 	approval.Spec.VerificationPolicyUID = ""
 	approval.Spec.VerificationPolicyDigest = ""
 	approval.Spec.ExecutionBindingID = ""
+	approval.Spec.ControllerImage = ""
+	approval.Spec.ControllerRevision = ""
+	approval.Spec.ControllerStateVersion = 0
 	approval.Spec.PtahVersion = ""
 	approval.Spec.ExecutorImage = ""
 	approval.Spec.RunnerImage = ""
@@ -143,7 +231,8 @@ func TestApprovalCreateHydratesDerivedPlanBindings(t *testing.T) {
 	}
 	for _, want := range []string{
 		"sha256:artifact", coordinationDigest, "sha256:target", "sha256:actual", "sha256:desired",
-		"sha256:policy", "policy-v1-uid", "v1-33333333333333333333333333333333", "v0.3.0", "example.invalid/ptah@sha256:executor",
+		"sha256:policy", "policy-v1-uid", "v1-33333333333333333333333333333333", testControllerImage,
+		"v0.3.0", "example.invalid/ptah@sha256:executor",
 		"example.invalid/operator@sha256:runner", "runnerProtocolVersion",
 	} {
 		if !containsJSON(patchJSON, want) {
@@ -381,7 +470,9 @@ func readyFixture(
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			Phase: operatorv1alpha1.PhaseAwaitingApproval,
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
-				Epoch: "v1-33333333333333333333333333333333", PtahVersion: "v0.3.0",
+				Epoch: "v1-33333333333333333333333333333333", ControllerImage: testControllerImage,
+				ControllerRevision:     "controller-test-revision",
+				ControllerStateVersion: 1, PtahVersion: "v0.3.0",
 				ExecutorImage:         "example.invalid/ptah@sha256:executor",
 				RunnerImage:           "example.invalid/operator@sha256:runner",
 				RunnerProtocolVersion: int32(runner.ProtocolVersion),
@@ -396,6 +487,8 @@ func readyFixture(
 			Plan: &operatorv1alpha1.CurrentPlanStatus{
 				UID: "plan-uid", Fingerprint: "sha256:plan",
 				ExecutionBindingID: "v1-33333333333333333333333333333333",
+				ControllerImage:    testControllerImage,
+				ControllerRevision: "controller-test-revision", ControllerStateVersion: 1,
 			},
 			Conditions: []metav1.Condition{{
 				Type: operatorv1alpha1.ConditionApprovalRequired, Status: metav1.ConditionTrue,
@@ -409,6 +502,7 @@ func readyFixture(
 	plan := &operatorv1alpha1.PtahSchemaPlan{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "app-plan", UID: "plan-uid", Generation: 1},
 		Spec: operatorv1alpha1.PtahSchemaPlanSpec{
+			ContractVersion:          fingerprint.CurrentPlanContractVersion,
 			SchemaRef:                operatorv1alpha1.ImmutableObjectReference{Name: "app", UID: "schema-uid"},
 			Fingerprint:              "sha256:plan",
 			ArtifactDigest:           "sha256:artifact",
@@ -420,6 +514,9 @@ func readyFixture(
 			VerificationPolicyUID:    policyUID,
 			VerificationPolicyDigest: policyDigest,
 			ExecutionBindingID:       "v1-33333333333333333333333333333333",
+			ControllerImage:          testControllerImage,
+			ControllerRevision:       "controller-test-revision",
+			ControllerStateVersion:   1,
 			PtahVersion:              "v0.3.0",
 			ExecutorImage:            "example.invalid/ptah@sha256:executor",
 			RunnerImage:              "example.invalid/operator@sha256:runner",
@@ -448,6 +545,9 @@ func readyFixture(
 			VerificationPolicyUID:    policyUID,
 			VerificationPolicyDigest: policyDigest,
 			ExecutionBindingID:       "v1-33333333333333333333333333333333",
+			ControllerImage:          testControllerImage,
+			ControllerRevision:       "controller-test-revision",
+			ControllerStateVersion:   1,
 			PtahVersion:              "v0.3.0",
 			ExecutorImage:            "example.invalid/ptah@sha256:executor",
 			RunnerImage:              "example.invalid/operator@sha256:runner",
@@ -463,6 +563,8 @@ func readyFixture(
 	return &ApprovalHandler{
 		Reader: reader, Decoder: cradmission.NewDecoder(scheme),
 		Clock: fixedClock{value: now.Time}, Mutate: mutate,
+		ControllerImage:    testControllerImage,
+		ControllerRevision: "controller-test-revision", ControllerStateVersion: 1,
 	}, approval
 }
 

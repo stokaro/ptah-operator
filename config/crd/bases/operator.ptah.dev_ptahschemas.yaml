@@ -3,6 +3,9 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
+    operator.ptah.dev/controller-state-version: "1"
+    operator.ptah.dev/crd-schema-version: "1"
+    operator.ptah.dev/crd-schema-digest: "sha256:ec87bed02dd3fa7fbea859594395932d33b27479a1700baab3d9ea8c3d3c8881"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahschemas.operator.ptah.dev
 spec:
@@ -1232,6 +1235,18 @@ spec:
                   completedAt:
                     format: date-time
                     type: string
+                  controllerImage:
+                    pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                    type: string
+                  controllerRevision:
+                    maxLength: 128
+                    minLength: 1
+                    pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                    type: string
+                  controllerStateVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
                   coordinationDigest:
                     type: string
                   executionBindingID:
@@ -1299,6 +1314,18 @@ spec:
                 type: array
               executionBinding:
                 properties:
+                  controllerImage:
+                    pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                    type: string
+                  controllerRevision:
+                    maxLength: 128
+                    minLength: 1
+                    pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                    type: string
+                  controllerStateVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
                   epoch:
                     pattern: ^v1-[0-9a-f]{32}$
                     type: string
@@ -1461,6 +1488,18 @@ spec:
                         type: string
                       contentDigest:
                         type: string
+                      controllerImage:
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                      controllerRevision:
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                        type: string
+                      controllerStateVersion:
+                        format: int32
+                        minimum: 1
+                        type: integer
                       coordinationDigest:
                         type: string
                       createdAt:
@@ -1693,6 +1732,18 @@ spec:
                     type: string
                   contentDigest:
                     type: string
+                  controllerImage:
+                    pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                    type: string
+                  controllerRevision:
+                    maxLength: 128
+                    minLength: 1
+                    pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                    type: string
+                  controllerStateVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
                   coordinationDigest:
                     type: string
                   createdAt:

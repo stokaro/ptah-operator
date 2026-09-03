@@ -10,16 +10,29 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
 )
 
 const (
 	prefix                      = "sha256:"
 	coordinationContractVersion = 1
+
+	// LegacyPlanContractVersion is the oldest plan fingerprint format that can
+	// still be read while existing objects are retired.
+	LegacyPlanContractVersion int32 = 1
+	// ExecutionEpochPlanContractVersion introduced the durable execution epoch.
+	ExecutionEpochPlanContractVersion int32 = 2
+	// CurrentPlanContractVersion additionally binds the digest-pinned manager
+	// image, manager revision, and controller-state semantics into every newly
+	// published plan.
+	CurrentPlanContractVersion int32 = 3
 )
 
 var (
 	coordinationKeyPattern    = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$`)
 	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
+	imageDigestPattern        = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 )
 
 // DigestBytes returns an OCI-style SHA-256 digest for exact bytes.
@@ -106,6 +119,9 @@ type PlanBinding struct {
 	VerificationPolicyUID    string `json:"verification_policy_uid"`
 	VerificationPolicyDigest string `json:"verification_policy_digest"`
 	ExecutionBindingID       string `json:"execution_binding_id,omitempty"`
+	ControllerImage          string `json:"controller_image,omitempty"`
+	ControllerRevision       string `json:"controller_revision,omitempty"`
+	ControllerStateVersion   int32  `json:"controller_state_version,omitempty"`
 	PtahVersion              string `json:"ptah_version"`
 	ExecutorImage            string `json:"executor_image"`
 	RunnerImage              string `json:"runner_image"`
@@ -114,8 +130,8 @@ type PlanBinding struct {
 
 // Fingerprint validates and hashes the complete plan binding.
 func (b PlanBinding) Fingerprint() (string, error) {
-	if b.ContractVersion < 1 {
-		return "", fmt.Errorf("plan binding contract version must be positive")
+	if err := ValidatePlanContractVersion(b.ContractVersion); err != nil {
+		return "", err
 	}
 	required := map[string]string{
 		"schema UID":                 b.SchemaUID,
@@ -137,13 +153,39 @@ func (b PlanBinding) Fingerprint() (string, error) {
 			return "", fmt.Errorf("%s is required", name)
 		}
 	}
-	if b.ContractVersion >= 2 && !executionBindingIDPattern.MatchString(b.ExecutionBindingID) {
+	if b.ContractVersion >= ExecutionEpochPlanContractVersion && !executionBindingIDPattern.MatchString(b.ExecutionBindingID) {
 		return "", fmt.Errorf("a valid execution binding ID is required for plan contract version %d", b.ContractVersion)
+	}
+	if b.ContractVersion >= CurrentPlanContractVersion {
+		if !imageDigestPattern.MatchString(b.ControllerImage) {
+			return "", fmt.Errorf("controller image must be pinned by a lowercase SHA-256 digest for plan contract version %d", b.ContractVersion)
+		}
+		if err := controllerstate.ValidateRevision(b.ControllerRevision); err != nil {
+			return "", fmt.Errorf("invalid controller revision for plan contract version %d: %w", b.ContractVersion, err)
+		}
+		if b.ControllerStateVersion < 1 {
+			return "", fmt.Errorf("controller state version must be positive for plan contract version %d", b.ContractVersion)
+		}
 	}
 	if b.RunnerProtocolVersion < 1 {
 		return "", fmt.Errorf("runner protocol version must be positive")
 	}
 	return DigestCanonicalJSON(b)
+}
+
+// ValidatePlanContractVersion rejects both retired pre-v1 data and unknown
+// future contracts. Future objects must not be interpreted using today's
+// approval or Apply semantics.
+func ValidatePlanContractVersion(version int32) error {
+	if version < LegacyPlanContractVersion || version > CurrentPlanContractVersion {
+		return fmt.Errorf(
+			"unsupported plan contract version %d; supported range is %d-%d",
+			version,
+			LegacyPlanContractVersion,
+			CurrentPlanContractVersion,
+		)
+	}
+	return nil
 }
 
 // OperationInput identifies one deterministic, crash-recoverable execution.

@@ -19,6 +19,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/planstore"
@@ -994,6 +995,18 @@ func TestBuildApplyProjectsExactCommittedPlan(t *testing.T) {
 		job.Spec.Template.Annotations[AnnotationExecutionBindingID] != got {
 		t.Fatalf("execution binding annotations = Job %q, Pod %q, want %q", got, job.Spec.Template.Annotations[AnnotationExecutionBindingID], schema.Status.ExecutionBinding.Epoch)
 	}
+	if got := job.Annotations[AnnotationControllerImage]; got != builder.ControllerImage ||
+		job.Spec.Template.Annotations[AnnotationControllerImage] != got {
+		t.Fatalf("controller image annotations = Job %q, Pod %q, want %q", got, job.Spec.Template.Annotations[AnnotationControllerImage], builder.ControllerImage)
+	}
+	if got := job.Annotations[AnnotationControllerRevision]; got != builder.ControllerRevision ||
+		job.Spec.Template.Annotations[AnnotationControllerRevision] != got {
+		t.Fatalf("controller revision annotations = Job %q, Pod %q, want %q", got, job.Spec.Template.Annotations[AnnotationControllerRevision], builder.ControllerRevision)
+	}
+	if got := job.Annotations[AnnotationControllerStateVersion]; got != "1" ||
+		job.Spec.Template.Annotations[AnnotationControllerStateVersion] != got {
+		t.Fatalf("controller state annotations = Job %q, Pod %q, want 1", got, job.Spec.Template.Annotations[AnnotationControllerStateVersion])
+	}
 	main := job.Spec.Template.Spec.Containers[0]
 	mount := requireMount(t, main, planVolumeName)
 	if !mount.ReadOnly || mount.MountPath != planPath {
@@ -1029,6 +1042,38 @@ func TestBuildApplyRejectsStaleBindings(t *testing.T) {
 			name: "execution epoch changed",
 			mutate: func(schema *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, _ *Builder) {
 				schema.Status.ExecutionBinding.Epoch = "v1-44444444444444444444444444444444"
+			},
+		},
+		{
+			name: "controller image changed",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
+				builder.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("8", 64)
+			},
+		},
+		{
+			name: "controller revision changed",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
+				builder.ControllerRevision = "controller-next-revision"
+			},
+		},
+		{
+			name: "controller state version changed",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, _ *operatorv1alpha1.PtahSchemaPlan, builder *Builder) {
+				builder.ControllerStateVersion++
+			},
+		},
+		{
+			name: "future plan contract",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan, _ *Builder) {
+				plan.Spec.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
+			},
+		},
+		{
+			name: "missing plan manager identity",
+			mutate: func(_ *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan, _ *Builder) {
+				plan.Spec.ControllerImage = ""
+				plan.Spec.ControllerRevision = ""
+				plan.Spec.ControllerStateVersion = 0
 			},
 		},
 		{
@@ -1276,6 +1321,36 @@ func TestBuildRejectsInvalidPtahVersion(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsInvalidControllerIdentity(t *testing.T) {
+	t.Parallel()
+	schema := schemaFixture()
+	operation := operationFixture(operatorv1alpha1.OperationResolve)
+	for name, mutate := range map[string]func(*Builder){
+		"empty image":   func(builder *Builder) { builder.ControllerImage = "" },
+		"mutable image": func(builder *Builder) { builder.ControllerImage = "example.invalid/manager:latest" },
+		"uppercase image digest": func(builder *Builder) {
+			builder.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("A", 64)
+		},
+		"empty revision":      func(builder *Builder) { builder.ControllerRevision = "" },
+		"whitespace revision": func(builder *Builder) { builder.ControllerRevision = " revision" },
+		"control revision":    func(builder *Builder) { builder.ControllerRevision = "release\ncandidate" },
+		"oversized revision": func(builder *Builder) {
+			builder.ControllerRevision = strings.Repeat("r", controllerstate.MaxRevisionBytes+1)
+		},
+		"missing state version": func(builder *Builder) { builder.ControllerStateVersion = 0 },
+	} {
+		name, mutate := name, mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			builder := builderFixture()
+			mutate(&builder)
+			if _, err := builder.Build(schema, operation, nil); err == nil || !strings.Contains(err.Error(), "controller") {
+				t.Fatalf("Build() error = %v, want controller-identity rejection", err)
+			}
+		})
+	}
+}
+
 func TestNameForIsDeterministicBoundedAndAttemptSpecific(t *testing.T) {
 	t.Parallel()
 	schema := schemaFixture()
@@ -1311,10 +1386,11 @@ func TestBuilderExposesValidatedExecutionBinding(t *testing.T) {
 	if err := builder.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	ptahVersion, executorImage, runnerImage, protocolVersion := builder.ExecutionBinding()
-	if ptahVersion != builder.PtahVersion || executorImage != builder.ExecutorImage || runnerImage != builder.RunnerImage ||
+	controllerImage, controllerRevision, controllerStateVersion, ptahVersion, executorImage, runnerImage, protocolVersion := builder.ExecutionBinding()
+	if controllerImage != builder.ControllerImage || controllerRevision != builder.ControllerRevision || controllerStateVersion != builder.ControllerStateVersion ||
+		ptahVersion != builder.PtahVersion || executorImage != builder.ExecutorImage || runnerImage != builder.RunnerImage ||
 		protocolVersion != int32(runner.ProtocolVersion) {
-		t.Fatalf("ExecutionBinding() = %q, %q, %q, %d", ptahVersion, executorImage, runnerImage, protocolVersion)
+		t.Fatalf("ExecutionBinding() = %q, %q, %d, %q, %q, %q, %d", controllerImage, controllerRevision, controllerStateVersion, ptahVersion, executorImage, runnerImage, protocolVersion)
 	}
 	operation := operationFixture(operatorv1alpha1.OperationResolve)
 	methodName, err := builder.NameFor(schemaFixture(), operation)
@@ -1385,7 +1461,9 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 		},
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
-				Epoch: "v1-33333333333333333333333333333333", PtahVersion: "v0.3.0",
+				Epoch: "v1-33333333333333333333333333333333", ControllerImage: "example.invalid/manager@" + digest('f'),
+				ControllerRevision:     "controller-test-revision",
+				ControllerStateVersion: 1, PtahVersion: "v0.3.0",
 				ExecutorImage:         "example.invalid/ptah@" + digest('d'),
 				RunnerImage:           "example.invalid/operator@" + digest('e'),
 				RunnerProtocolVersion: int32(runner.ProtocolVersion),
@@ -1425,9 +1503,12 @@ func sourceContractSchemaFixture(mode operatorv1alpha1.RegistryAuthMode) *operat
 
 func builderFixture() Builder {
 	return Builder{
-		ExecutorImage: "example.invalid/ptah@" + digest('d'),
-		RunnerImage:   "example.invalid/operator@" + digest('e'),
-		PtahVersion:   "v0.3.0",
+		ExecutorImage:          "example.invalid/ptah@" + digest('d'),
+		RunnerImage:            "example.invalid/operator@" + digest('e'),
+		PtahVersion:            "v0.3.0",
+		ControllerImage:        "example.invalid/manager@" + digest('f'),
+		ControllerRevision:     "controller-test-revision",
+		ControllerStateVersion: 1,
 	}
 }
 
@@ -1494,7 +1575,7 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 			Generation: 1,
 		},
 		Spec: operatorv1alpha1.PtahSchemaPlanSpec{
-			ContractVersion:          2,
+			ContractVersion:          fingerprint.CurrentPlanContractVersion,
 			SchemaRef:                operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
 			Fingerprint:              digest('1'),
 			ContentDigest:            digest('2'),
@@ -1508,6 +1589,9 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 			VerificationPolicyUID:    schema.Status.Source.VerificationPolicyUID,
 			VerificationPolicyDigest: digest('5'),
 			ExecutionBindingID:       schema.Status.ExecutionBinding.Epoch,
+			ControllerImage:          builder.ControllerImage,
+			ControllerRevision:       builder.ControllerRevision,
+			ControllerStateVersion:   builder.ControllerStateVersion,
 			PtahVersion:              builder.PtahVersion,
 			ExecutorImage:            builder.ExecutorImage,
 			RunnerImage:              builder.RunnerImage,
@@ -1547,6 +1631,9 @@ func planFixture(schema *operatorv1alpha1.PtahSchema, builder Builder) *operator
 		VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
 		VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
 		ExecutionBindingID:       plan.Spec.ExecutionBindingID,
+		ControllerImage:          plan.Spec.ControllerImage,
+		ControllerRevision:       plan.Spec.ControllerRevision,
+		ControllerStateVersion:   plan.Spec.ControllerStateVersion,
 		PtahVersion:              plan.Spec.PtahVersion,
 		ExecutorImage:            plan.Spec.ExecutorImage,
 		RunnerImage:              plan.Spec.RunnerImage,

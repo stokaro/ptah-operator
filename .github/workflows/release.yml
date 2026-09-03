@@ -2,6 +2,7 @@ name: Release
 
 on:
   pull_request:
+  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -19,7 +20,7 @@ env:
 jobs:
   smoke:
     name: Release contract and multi-architecture build
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -81,9 +82,113 @@ jobs:
             REVISION=${{ github.sha }}
             SOURCE=https://github.com/${{ github.repository }}
 
+  support-preflight:
+    name: Verify release Kubernetes support evidence
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source-sha: ${{ steps.support-evidence.outputs.source-sha }}
+    steps:
+      - name: Check out repository
+        id: checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        id: setup-go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Require fresh exact-commit support evidence
+        id: support-evidence
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # CI can use 20 minutes for verification, 90 for E2E, and 5 for
+          # the aggregate gate. Five additional minutes cover queue/API delay.
+          SUPPORT_POLL_TIMEOUT_MINUTES: "120"
+        shell: bash
+        run: |
+          set -euo pipefail
+          today="$(date -u +%Y-%m-%d)"
+          go run ./hack/verify-kubernetes-support.go -now "$today"
+          go run ./hack/releaseverify
+          [[ -n "$DEFAULT_BRANCH" ]]
+
+          evidence_run=''
+          delay=2
+          poll_deadline_epoch=$(( $(date -u +%s) + SUPPORT_POLL_TIMEOUT_MINUTES * 60 ))
+          while true; do
+            runs="$(gh api \
+              --method GET \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+              -f branch="$DEFAULT_BRANCH" \
+              -f event=push \
+              -f head_sha="$GITHUB_SHA" \
+              -f status=completed \
+              -f per_page=100)"
+            mapfile -t run_ids < <(jq -r \
+              --arg branch "$DEFAULT_BRANCH" \
+              --arg sha "$GITHUB_SHA" '
+                .workflow_runs[] |
+                select(.event == "push" and
+                       .head_branch == $branch and
+                       .head_sha == $sha and
+                       .status == "completed" and
+                       .conclusion == "success") |
+                .id
+              ' <<<"$runs")
+            for run_id in "${run_ids[@]}"; do
+              jobs="$(gh api \
+                --method GET \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+                -f filter=latest \
+                -f per_page=100)"
+              if jq -e \
+                --arg sha "$GITHUB_SHA" '
+                  [.jobs[] |
+                   select(.name == "Kubernetes support gate" and
+                          .head_sha == $sha and
+                          .status == "completed" and
+                          .conclusion == "success")] |
+                  length == 1
+                ' <<<"$jobs" >/dev/null
+              then
+                evidence_run="$run_id"
+                break
+              fi
+            done
+            if [[ -n "$evidence_run" ]]; then
+              break
+            fi
+            remaining_seconds=$((poll_deadline_epoch - $(date -u +%s)))
+            if (( remaining_seconds <= 0 )); then
+              break
+            fi
+            sleep_seconds="$delay"
+            if (( sleep_seconds > remaining_seconds )); then
+              sleep_seconds="$remaining_seconds"
+            fi
+            sleep "$sleep_seconds"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          if [[ -z "$evidence_run" ]]; then
+            echo "no exact-SHA default-branch CI run reached a successful Kubernetes support gate" >&2
+            exit 1
+          fi
+          printf 'source-sha=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
   publish:
     name: Publish signed image and attested chart
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [support-preflight]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.support-preflight.outputs.source-sha == github.sha
     runs-on: ubuntu-latest
     environment: release
     timeout-minutes: 45

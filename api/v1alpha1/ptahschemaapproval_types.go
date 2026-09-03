@@ -30,11 +30,19 @@ type PtahSchemaApprovalSpec struct {
 	VerificationPolicyUID    types.UID `json:"verificationPolicyUID"`
 	VerificationPolicyDigest string    `json:"verificationPolicyDigest"`
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID    string `json:"executionBindingID,omitempty"`
-	PtahVersion           string `json:"ptahVersion"`
-	ExecutorImage         string `json:"executorImage"`
-	RunnerImage           string `json:"runnerImage"`
-	RunnerProtocolVersion int32  `json:"runnerProtocolVersion"`
+	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
+	ControllerImage string `json:"controllerImage,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
+	ControllerRevision string `json:"controllerRevision,omitempty"`
+	// +kubebuilder:validation:Minimum=1
+	ControllerStateVersion int32  `json:"controllerStateVersion,omitempty"`
+	PtahVersion            string `json:"ptahVersion"`
+	ExecutorImage          string `json:"executorImage"`
+	RunnerImage            string `json:"runnerImage"`
+	RunnerProtocolVersion  int32  `json:"runnerProtocolVersion"`
 
 	Approver   ApprovalIdentity `json:"approver"`
 	ApprovedAt metav1.Time      `json:"approvedAt"`

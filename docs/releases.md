@@ -19,6 +19,23 @@ window. Advancing that sliding window adds the new minor and removes the oldest
 minor in one reviewed change; publication must not substitute a preferred-minor
 smoke test for the required matrix.
 
+## Release sequence
+
+Every published chart version advances the append-only rollout-guard sequence,
+even when the controller-state and admission contracts do not change. Prepare a
+release by updating the chart `version`, `appVersion`, and default manager image
+tag; increment both `ptah-operator.releaseSequence` in
+`charts/ptah-operator/templates/_helpers.tpl` and `CurrentReleaseSequence` in
+`internal/crdupgrade/rollout.go`; then append the matching record to
+`hack/releaseverify/release-sequence-history.json`.
+
+The release verifier requires the Helm and Go values to match the final history
+record. CI compares the history with its exact Git baseline: existing release
+records are immutable, unchanged release metadata must retain its recorded
+sequence, and one newly prepared version must use a strictly greater sequence.
+This prevents a different manager image contract from reusing the names of
+retained rollout guards.
+
 ## Publication transaction
 
 A fresh transaction first creates and attests a minimal `state=prepared` journal
@@ -207,11 +224,16 @@ helm upgrade --install ptah-operator \
 reference. Set it to the version identity established by the provenance of the
 exact executor digest. The operator records that pair in plans, approvals,
 operation Jobs, and applied status, so an executor change is an explicit new
-execution binding even when the operator release is unchanged.
+execution binding even when the operator release is unchanged. Release builds
+also inject the exact manager source revision. The manager refuses to start
+without both a digest-pinned manager image identity and that revision, and
+records them together with the controller-state contract version in every new
+execution binding.
 
 Changing `execution.ptahVersion`, `execution.executorImage`, or
-`execution.runnerImage` during a Helm upgrade intentionally invalidates a plan
-and recorded approval until a mutating Job has been dispatched. A claimed but
+`execution.runnerImage`, or rolling out a different manager image, manager
+revision, or controller-state contract, intentionally invalidates a plan and
+recorded approval until a mutating Job has been dispatched. A claimed but
 undispatched Apply also returns to read-only reconciliation. Wait for the
 replacement manager to finish Resolve, Verify, Observe, and Plan, review the
 new plan UID and fingerprint, and issue a new approval. Do not carry approval
@@ -220,18 +242,22 @@ dispatched Apply remains bound to its captured execution identity and proceeds
 through conservative outcome classification and post-Apply observation; the
 upgrade never recreates it with different binaries.
 
-`status.executionBinding` exposes the active component tuple and its opaque
-`epoch` for audit. Every observed component transition creates a new epoch,
-including rollback to an identical tuple. Plans and approvals reference it as
-`spec.executionBindingID`; therefore an approval is valid for only one
-transition and cannot be reused after rollout or rollback.
+`status.executionBinding` exposes the manager image, manager revision,
+controller-state contract, Ptah version, executor image, runner image, runner
+protocol, and its opaque `epoch` for audit. Every observed component transition
+creates a new epoch, including rollback to an identical tuple. Current plan
+contract v3 binds the manager fields explicitly. Plans and approvals reference
+the epoch as `spec.executionBindingID`; therefore an approval is valid for only
+one transition and cannot be reused after rollout or rollback.
 
 The invalidation boundary starts when the replacement manager owns
-reconciliation, not when `helm upgrade` is invoked. During an ordinary rolling
-upgrade, the old leader may still dispatch a fully old-binding approval before
-handoff. For a strict no-dispatch maintenance boundary, scale the manager
-Deployment to zero and wait for all manager Pods to terminate before running
-`helm upgrade --wait`. The chart then restores its configured replica count.
+reconciliation, not when `helm upgrade` is invoked. The `Recreate` strategy
+terminates every old manager Pod before starting replacement Pods, preventing
+mixed admission contracts behind the webhook Service. The old leader may still
+dispatch a fully old-binding approval before termination. For a strict
+no-dispatch maintenance boundary, scale the manager Deployment to zero and wait
+for all manager Pods to terminate before running `helm upgrade --wait`. The
+chart then restores its configured replica count.
 
 For an air-gapped promotion, carry the authenticated chart asset and recursively
 copy the operator image, executor image, and every referenced schema artifact

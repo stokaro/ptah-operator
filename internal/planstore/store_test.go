@@ -97,19 +97,53 @@ func TestPrepareExecutionEpochCompatibility(t *testing.T) {
 	missingEpoch := current.Spec
 	missingEpoch.ExecutionBindingID = ""
 	if _, _, err := Prepare(schema, missingEpoch, content); err == nil || !strings.Contains(err.Error(), "execution binding ID") {
-		t.Fatalf("Prepare(v2 without execution epoch) error = %v, want execution binding refusal", err)
+		t.Fatalf("Prepare(current without execution epoch) error = %v, want execution binding refusal", err)
+	}
+	missingManager := current.Spec
+	missingManager.ControllerImage = ""
+	missingManager.ControllerRevision = ""
+	missingManager.ControllerStateVersion = 0
+	if _, _, err := Prepare(schema, missingManager, content); err == nil || !strings.Contains(err.Error(), "controller image") {
+		t.Fatalf("Prepare(current without manager identity) error = %v, want controller refusal", err)
+	}
+	invalidRevision := current.Spec
+	invalidRevision.ControllerRevision = "release\ncandidate"
+	if _, _, err := Prepare(schema, invalidRevision, content); err == nil || !strings.Contains(err.Error(), "control characters") {
+		t.Fatalf("Prepare(current with control-character revision) error = %v, want revision refusal", err)
+	}
+
+	epochContract := current.Spec
+	epochContract.ContractVersion = fingerprint.ExecutionEpochPlanContractVersion
+	epochContract.ControllerImage = ""
+	epochContract.ControllerRevision = ""
+	epochContract.ControllerStateVersion = 0
+	var err error
+	epochContract.Fingerprint, err = planBinding(schema, epochContract).Fingerprint()
+	if err != nil {
+		t.Fatalf("fingerprint legacy v2 plan: %v", err)
+	}
+	if _, _, err := Prepare(schema, epochContract, content); err != nil {
+		t.Fatalf("Prepare(v2 without manager identity) error = %v, want backward-compatible storage", err)
 	}
 
 	legacy := current.Spec
-	legacy.ContractVersion = 1
+	legacy.ContractVersion = fingerprint.LegacyPlanContractVersion
 	legacy.ExecutionBindingID = ""
-	var err error
+	legacy.ControllerImage = ""
+	legacy.ControllerRevision = ""
+	legacy.ControllerStateVersion = 0
 	legacy.Fingerprint, err = planBinding(schema, legacy).Fingerprint()
 	if err != nil {
 		t.Fatalf("fingerprint legacy v1 plan: %v", err)
 	}
 	if _, _, err := Prepare(schema, legacy, content); err != nil {
 		t.Fatalf("Prepare(v1 without execution epoch) error = %v, want backward-compatible storage", err)
+	}
+
+	future := current.Spec
+	future.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
+	if _, _, err := Prepare(schema, future, content); err == nil || !strings.Contains(err.Error(), "unsupported plan contract version") {
+		t.Fatalf("Prepare(future contract) error = %v, want unsupported-version refusal", err)
 	}
 }
 
@@ -163,7 +197,7 @@ func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *opera
 		t.Fatal(err)
 	}
 	spec := operatorv1alpha1.PtahSchemaPlanSpec{
-		ContractVersion:          2,
+		ContractVersion:          fingerprint.CurrentPlanContractVersion,
 		SchemaRef:                operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
 		ArtifactDigest:           "sha256:artifact",
 		CoordinationDigest:       coordinationDigest,
@@ -174,6 +208,9 @@ func fixture(t *testing.T, content []byte) (*operatorv1alpha1.PtahSchema, *opera
 		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: "sha256:verification",
 		ExecutionBindingID:       "v1-33333333333333333333333333333333",
+		ControllerImage:          "example.invalid/manager@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		ControllerRevision:       "controller-test-revision",
+		ControllerStateVersion:   1,
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.invalid/ptah@sha256:executor",
 		RunnerImage:              "example.invalid/operator@sha256:runner",
@@ -208,6 +245,9 @@ func planBinding(schema *operatorv1alpha1.PtahSchema, spec operatorv1alpha1.Ptah
 		VerificationPolicyUID:    string(spec.VerificationPolicyUID),
 		VerificationPolicyDigest: spec.VerificationPolicyDigest,
 		ExecutionBindingID:       spec.ExecutionBindingID,
+		ControllerImage:          spec.ControllerImage,
+		ControllerRevision:       spec.ControllerRevision,
+		ControllerStateVersion:   spec.ControllerStateVersion,
 		PtahVersion:              spec.PtahVersion,
 		ExecutorImage:            spec.ExecutorImage,
 		RunnerImage:              spec.RunnerImage,

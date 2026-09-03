@@ -6,36 +6,48 @@ on:
   workflow_dispatch:
 
 permissions:
-  actions: write
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: update-kubernetes-support
   cancel-in-progress: false
 
 jobs:
-  update:
-    name: Discover maintained Kubernetes minors
+  prepare:
+    name: Discover and validate maintained Kubernetes minors
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.bundle.outputs.changed }}
+      base-sha: ${{ steps.bundle.outputs.base-sha }}
+      patch-base64: ${{ steps.bundle.outputs.patch-base64 }}
+      patch-sha256: ${{ steps.bundle.outputs.patch-sha256 }}
     steps:
       - name: Check out the default branch
+        id: checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Discover the support window from official release metadata
+        id: discover
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: go run ./hack/updatekubernetessupport
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./hack/updatekubernetessupport
       - name: Verify the deterministic support contract
+        id: verify
         shell: bash
         run: |
           set -euo pipefail
@@ -43,30 +55,137 @@ jobs:
           go test ./hack ./hack/updatekubernetessupport
           go run ./hack/verify-kubernetes-support.go -now "$today"
           git diff --check
-      - name: Detect an update
-        id: changes
+      - name: Export a strictly bounded deterministic patch
+        id: bundle
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- \
+          base_sha="$(git rev-parse HEAD)"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
+          git diff --cached --quiet --exit-code
+
+          mapfile -t status_lines < <(git status --porcelain=v1 --untracked-files=all)
+          for status_line in "${status_lines[@]}"; do
+            case "$status_line" in
+              ' M charts/ptah-operator/Chart.yaml' | \
+              ' M docs/kubernetes-support.md' | \
+              ' M support/kubernetes.json') ;;
+              *)
+                echo "support discovery changed an unauthorized path or file mode: $status_line" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          printf 'base-sha=%s\n' "$base_sha" >> "$GITHUB_OUTPUT"
+          if (( ${#status_lines[@]} == 0 )); then
+            printf '%s\n' \
+              'changed=false' \
+              'patch-base64=' \
+              'patch-sha256=' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          patch_file="$RUNNER_TEMP/kubernetes-support.patch"
+          git diff --binary --full-index -- \
             support/kubernetes.json \
             charts/ptah-operator/Chart.yaml \
-            docs/kubernetes-support.md; then
-            echo 'changed=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'changed=true' >> "$GITHUB_OUTPUT"
-          fi
-      - name: Open or update the support-window pull request
-        if: steps.changes.outputs.changed == 'true'
+            docs/kubernetes-support.md > "$patch_file"
+          [[ -s "$patch_file" ]]
+          patch_size="$(wc -c < "$patch_file")"
+          (( patch_size <= 262144 ))
+          git apply --check --cached "$patch_file"
+          patch_sha256="$(sha256sum "$patch_file" | awk '{print $1}')"
+          [[ "$patch_sha256" =~ ^[0-9a-f]{64}$ ]]
+          printf '%s\n' \
+            'changed=true' \
+            "patch-base64=$(base64 --wrap=0 "$patch_file")" \
+            "patch-sha256=$patch_sha256" >> "$GITHUB_OUTPUT"
+
+  propose:
+    name: Publish the verified support-window pull request
+    needs: [prepare]
+    if: needs.prepare.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      pr-number: ${{ steps.support-window-pr.outputs.pr-number }}
+      pushed-sha: ${{ steps.support-window-pr.outputs.pushed-sha }}
+      support-branch: ${{ steps.support-window-pr.outputs.support-branch }}
+    steps:
+      - name: Check out the exact validated base
+        id: checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.base-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate and apply the prepared patch
+        id: apply-bundle
         env:
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base-sha }}
+          PATCH_BASE64: ${{ needs.prepare.outputs.patch-base64 }}
+          PATCH_SHA256: ${{ needs.prepare.outputs.patch-sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$PATCH_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$PATCH_BASE64" =~ ^[A-Za-z0-9+/]+={0,2}$ ]]
+          (( ${#PATCH_BASE64} <= 349528 ))
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_BASE_SHA" ]]
+          git diff --quiet --exit-code
+          git diff --cached --quiet --exit-code
+
+          patch_file="$RUNNER_TEMP/kubernetes-support.patch"
+          printf '%s' "$PATCH_BASE64" | base64 --decode > "$patch_file"
+          [[ -s "$patch_file" ]]
+          patch_size="$(wc -c < "$patch_file")"
+          (( patch_size <= 262144 ))
+          [[ "$(sha256sum "$patch_file" | awk '{print $1}')" == "$PATCH_SHA256" ]]
+          git apply --check "$patch_file"
+          git apply --index "$patch_file"
+          git diff --cached --check
+          [[ -z "$(git diff --cached --summary)" ]]
+
+          mapfile -t status_lines < <(git status --porcelain=v1 --untracked-files=all)
+          (( ${#status_lines[@]} > 0 ))
+          for status_line in "${status_lines[@]}"; do
+            case "$status_line" in
+              'M  charts/ptah-operator/Chart.yaml' | \
+              'M  docs/kubernetes-support.md' | \
+              'M  support/kubernetes.json') ;;
+              *)
+                echo "prepared patch changed an unauthorized path or file mode: $status_line" >&2
+                exit 1
+                ;;
+            esac
+          done
+      - name: Open or update the support-window pull request
+        id: support-window-pr
+        env:
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ needs.prepare.outputs.base-sha }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          base_branch='${{ github.event.repository.default_branch }}'
           support_branch='automation/kubernetes-support-window'
           title='chore: refresh Kubernetes support window'
           body_file="$RUNNER_TEMP/kubernetes-support-window.md"
+          repository_owner="${GITHUB_REPOSITORY%%/*}"
+          [[ "$GITHUB_REPOSITORY" == "$repository_owner/"* ]]
+          [[ -n "$repository_owner" ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git check-ref-format --branch "$BASE_BRANCH" >/dev/null
+          remote_base_sha="$(git ls-remote --heads origin "refs/heads/$BASE_BRANCH" | awk '{print $1}')"
+          if [[ "$remote_base_sha" != "$BASE_SHA" ]]; then
+            echo "default branch moved from validated SHA $BASE_SHA to $remote_base_sha; rerun discovery" >&2
+            exit 1
+          fi
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -83,6 +202,9 @@ jobs:
             "--force-with-lease=refs/heads/$support_branch:$remote_oid" \
             origin \
             "HEAD:refs/heads/$support_branch"
+          pushed_sha="$(git rev-parse HEAD)"
+          remote_sha="$(git ls-remote --heads origin "refs/heads/$support_branch" | awk '{print $1}')"
+          [[ "$remote_sha" == "$pushed_sha" ]]
 
           {
             echo 'This automated update advances or refreshes the consecutive three-minor Kubernetes support window.'
@@ -92,27 +214,225 @@ jobs:
             echo 'The complete Kubernetes matrix must pass before merge.'
           } > "$body_file"
 
-          pr_number="$(gh pr list \
-            --repo "$GITHUB_REPOSITORY" \
-            --base "$base_branch" \
-            --head "$support_branch" \
-            --state open \
-            --json number \
-            --jq '.[0].number // empty')"
-          if [[ -z "$pr_number" ]]; then
-            gh pr create \
+          open_pulls_file="$RUNNER_TEMP/open-support-window-pulls.json"
+          same_repo_numbers_file="$RUNNER_TEMP/same-repository-support-window-pulls"
+          gh api \
+            --paginate \
+            --method GET \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/pulls" \
+            -f state=open \
+            -f base="$BASE_BRANCH" \
+            -f head="$repository_owner:$support_branch" \
+            -f per_page=100 > "$open_pulls_file"
+          jq -r \
+            --arg base "$BASE_BRANCH" \
+            --arg head "$support_branch" \
+            --arg repo "$GITHUB_REPOSITORY" '
+              .[] |
+              select(
+                .state == "open" and
+                .base.ref == $base and
+                .base.repo.full_name == $repo and
+                .head.ref == $head and
+                .head.repo.full_name == $repo
+              ) |
+              .number
+            ' "$open_pulls_file" > "$same_repo_numbers_file"
+          mapfile -t same_repo_pr_numbers < "$same_repo_numbers_file"
+          for candidate_number in "${same_repo_pr_numbers[@]}"; do
+            [[ "$candidate_number" =~ ^[1-9][0-9]*$ ]]
+          done
+
+          case "${#same_repo_pr_numbers[@]}" in
+          0)
+            pr_url="$(gh pr create \
               --repo "$GITHUB_REPOSITORY" \
-              --base "$base_branch" \
+              --base "$BASE_BRANCH" \
               --head "$support_branch" \
               --title "$title" \
-              --body-file "$body_file"
-          else
+              --body-file "$body_file")"
+            pr_number="${pr_url##*/}"
+            [[ "$pr_number" =~ ^[1-9][0-9]*$ ]]
+            ;;
+          1)
+            pr_number="${same_repo_pr_numbers[0]}"
             gh pr edit "$pr_number" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$title" \
               --body-file "$body_file"
+            ;;
+          *)
+            echo "found ${#same_repo_pr_numbers[@]} same-repository support-window pull requests; refusing ambiguous update" >&2
+            exit 1
+            ;;
+          esac
+
+          pr_matches=false
+          delay=2
+          for attempt in {1..6}; do
+            pr_json="$(gh pr view "$pr_number" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json state,baseRefName,headRefName,headRefOid,isCrossRepository,headRepository)"
+            if jq -e \
+              --arg base "$BASE_BRANCH" \
+              --arg head "$support_branch" \
+              --arg repo "$GITHUB_REPOSITORY" \
+              --arg sha "$pushed_sha" '
+                .state == "OPEN" and
+                .baseRefName == $base and
+                .headRefName == $head and
+                .headRefOid == $sha and
+                .isCrossRepository == false and
+                .headRepository.nameWithOwner == $repo
+              ' <<<"$pr_json" >/dev/null
+            then
+              pr_matches=true
+              break
+            fi
+            if (( attempt < 6 )); then
+              sleep "$delay"
+              delay=$((delay < 30 ? delay * 2 : 30))
+            fi
+          done
+          if [[ "$pr_matches" != true ]]; then
+            echo "support-window pull request does not point at pushed SHA $pushed_sha" >&2
+            exit 1
           fi
 
+          printf '%s\n' \
+            "pr-number=$pr_number" \
+            "pushed-sha=$pushed_sha" \
+            "support-branch=$support_branch" >> "$GITHUB_OUTPUT"
+
+  dispatch:
+    name: Dispatch and verify exact-SHA checks
+    needs: [prepare, propose]
+    if: needs.prepare.outputs.changed == 'true' && needs.propose.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Revalidate delivery and dispatch exact-SHA checks
+        id: dispatch-evidence
+        env:
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base-sha }}
+          EXPECTED_PR_NUMBER: ${{ needs.propose.outputs.pr-number }}
+          EXPECTED_SHA: ${{ needs.propose.outputs.pushed-sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUPPORT_BRANCH: ${{ needs.propose.outputs.support-branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$EXPECTED_PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SUPPORT_BRANCH" == 'automation/kubernetes-support-window' ]]
+          git check-ref-format --branch "$BASE_BRANCH" >/dev/null
+
+          require_delivery_identity() {
+            base_ref_json="$(gh api \
+              --method GET \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/git/ref/heads/$BASE_BRANCH")"
+            base_sha="$(jq -er '.object.sha' <<<"$base_ref_json")"
+            [[ "$base_sha" == "$EXPECTED_BASE_SHA" ]]
+
+            ref_json="$(gh api \
+              --method GET \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/git/ref/heads/$SUPPORT_BRANCH")"
+            remote_sha="$(jq -er '.object.sha' <<<"$ref_json")"
+            [[ "$remote_sha" == "$EXPECTED_SHA" ]]
+
+            pr_json="$(gh pr view "$EXPECTED_PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json state,baseRefName,headRefName,headRefOid,isCrossRepository,headRepository)"
+            jq -e \
+              --arg base "$BASE_BRANCH" \
+              --arg head "$SUPPORT_BRANCH" \
+              --arg repo "$GITHUB_REPOSITORY" \
+              --arg sha "$EXPECTED_SHA" '
+                .state == "OPEN" and
+                .baseRefName == $base and
+                .headRefName == $head and
+                .headRefOid == $sha and
+                .isCrossRepository == false and
+                .headRepository.nameWithOwner == $repo
+              ' <<<"$pr_json" >/dev/null
+          }
+
           # GITHUB_TOKEN-generated pushes do not trigger ordinary push workflows.
-          # workflow_dispatch is intentionally used so the updated SHA receives CI.
-          gh workflow run ci.yml --ref "$support_branch"
+          # workflow_dispatch is intentionally used so the exact updated SHA receives
+          # both the complete Kubernetes lifecycle and release-package smoke checks.
+          require_dispatched_run() {
+            workflow_file="$1"
+            case "$workflow_file" in
+              ci.yml | release.yml) ;;
+              *)
+                echo "unsupported workflow dispatch target: $workflow_file" >&2
+                return 1
+                ;;
+            esac
+            runs_endpoint="repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_file/runs"
+            before_runs="$(gh api \
+              --method GET \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "$runs_endpoint" \
+              -f branch="$SUPPORT_BRANCH" \
+              -f event=workflow_dispatch \
+              -f head_sha="$EXPECTED_SHA" \
+              -f per_page=100)"
+            before_ids="$(jq -c \
+              --arg branch "$SUPPORT_BRANCH" \
+              --arg sha "$EXPECTED_SHA" '
+                [.workflow_runs[] |
+                 select(.event == "workflow_dispatch" and
+                        .head_branch == $branch and
+                        .head_sha == $sha) |
+                 .id]
+              ' <<<"$before_runs")"
+            gh workflow run "$workflow_file" --ref "$SUPPORT_BRANCH"
+
+            delay=2
+            for attempt in {1..8}; do
+              runs="$(gh api \
+                --method GET \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "$runs_endpoint" \
+                -f branch="$SUPPORT_BRANCH" \
+                -f event=workflow_dispatch \
+                -f head_sha="$EXPECTED_SHA" \
+                -f per_page=100)"
+              if jq -e \
+                --arg branch "$SUPPORT_BRANCH" \
+                --arg sha "$EXPECTED_SHA" \
+                --argjson before_ids "$before_ids" '
+                  [.workflow_runs[] |
+                   select(.event == "workflow_dispatch" and
+                          .head_branch == $branch and
+                          .head_sha == $sha) |
+                   select((.id as $id | $before_ids | index($id)) == null)] |
+                  length > 0
+                ' <<<"$runs" >/dev/null
+              then
+                return
+              fi
+              if (( attempt < 8 )); then
+                sleep "$delay"
+                delay=$((delay < 30 ? delay * 2 : 30))
+              fi
+            done
+            echo "$workflow_file did not start at pushed SHA $EXPECTED_SHA" >&2
+            return 1
+          }
+
+          require_delivery_identity
+          require_dispatched_run ci.yml
+          require_delivery_identity
+          require_dispatched_run release.yml
+          require_delivery_identity

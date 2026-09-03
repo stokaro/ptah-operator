@@ -31,6 +31,7 @@ type PtahSchemaPlanSpec struct {
 	// ContractVersion versions plan publication and reconstruction separately
 	// from the Kubernetes API version.
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=3
 	ContractVersion int32 `json:"contractVersion"`
 
 	SchemaRef ImmutableObjectReference `json:"schemaRef"`
@@ -52,11 +53,22 @@ type PtahSchemaPlanSpec struct {
 	// ExecutionBindingID is a per-transition epoch. It changes even when an
 	// operator rollout returns to byte-identical component versions.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID    string `json:"executionBindingID,omitempty"`
-	PtahVersion           string `json:"ptahVersion"`
-	ExecutorImage         string `json:"executorImage"`
-	RunnerImage           string `json:"runnerImage"`
-	RunnerProtocolVersion int32  `json:"runnerProtocolVersion"`
+	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	// ControllerImage, ControllerRevision, and ControllerStateVersion are
+	// required by the current plan contract. They remain optional on the wire so
+	// legacy v1/v2 plans can still be read and retired safely during an upgrade.
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
+	ControllerImage string `json:"controllerImage,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
+	ControllerRevision string `json:"controllerRevision,omitempty"`
+	// +kubebuilder:validation:Minimum=1
+	ControllerStateVersion int32  `json:"controllerStateVersion,omitempty"`
+	PtahVersion            string `json:"ptahVersion"`
+	ExecutorImage          string `json:"executorImage"`
+	RunnerImage            string `json:"runnerImage"`
+	RunnerProtocolVersion  int32  `json:"runnerProtocolVersion"`
 
 	Dialect        string `json:"dialect"`
 	Destructive    bool   `json:"destructive"`

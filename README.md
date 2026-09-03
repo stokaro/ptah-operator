@@ -26,7 +26,8 @@ new read-only observation.
 Key safety properties:
 
 - OCI tags are resolved once and all later artifact access uses the digest.
-- Plans bind exact bytes to artifact, target, observed state, policy, Ptah
+- Plans bind exact bytes to artifact, target, observed state, policy, the
+  digest-pinned manager image, manager revision and state semantics, Ptah
   version, executor image, runner image, and runner protocol.
 - Approvals are separate immutable resources stamped with authenticated
   admission identity.

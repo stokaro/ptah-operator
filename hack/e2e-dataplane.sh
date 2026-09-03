@@ -11,6 +11,9 @@ TEST_NAMESPACE=${E2E_TEST_NAMESPACE:-}
 HELM_RELEASE=${E2E_HELM_RELEASE:-}
 CHART_PACKAGE=${E2E_CHART_PACKAGE:-}
 PTAH_VERSION=${E2E_PTAH_VERSION:-}
+CONTROLLER_IMAGE=${E2E_CONTROLLER_IMAGE:-}
+CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:-}
+CONTROLLER_STATE_VERSION=${E2E_CONTROLLER_STATE_VERSION:-}
 EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 FIXTURE_IMAGE=${E2E_FIXTURE_IMAGE:-}
@@ -104,7 +107,8 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 fi
 for value_name in \
 	KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE \
-	RUNNER_IMAGE FIXTURE_IMAGE POSTGRES_IMAGE MYSQL_IMAGE REGISTRY_IP REGISTRY_CREDENTIALS_FILE \
+	RUNNER_IMAGE CONTROLLER_IMAGE CONTROLLER_REVISION CONTROLLER_STATE_VERSION \
+	FIXTURE_IMAGE POSTGRES_IMAGE MYSQL_IMAGE REGISTRY_IP REGISTRY_CREDENTIALS_FILE \
 	REGISTRY_PORT CHART_PACKAGE PTAH_VERSION DOCKER_CONTEXT REGISTRY_CONTAINER_ID \
 	EXTERNAL_PG_CONTAINER_ID EXTERNAL_PG_IP EXTERNAL_PG_SERVICE EXTERNAL_PG_IMAGE \
 	EXTERNAL_PG_OWNER EXTERNAL_PG_CREDENTIALS_FILE \
@@ -112,6 +116,16 @@ for value_name in \
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
 done
+is_pinned_image "$CONTROLLER_IMAGE" ||
+	fail "E2E_CONTROLLER_IMAGE must be pinned by a lowercase SHA-256 digest"
+[ "$(printf '%s' "$CONTROLLER_REVISION" | wc -c | tr -d '[:space:]')" -le 128 ] ||
+	fail "E2E_CONTROLLER_REVISION must be at most 128 bytes"
+[ "$CONTROLLER_REVISION" = "$(printf '%s' "$CONTROLLER_REVISION" | tr -d '[:cntrl:]')" ] ||
+	fail "E2E_CONTROLLER_REVISION must not contain control characters"
+printf '%s' "$CONTROLLER_REVISION" | grep -Eq '^[^[:space:]](.*[^[:space:]])?$' ||
+	fail "E2E_CONTROLLER_REVISION must not be empty or have edge whitespace"
+printf '%s\n' "$CONTROLLER_STATE_VERSION" | grep -Eq '^[1-9][0-9]*$' ||
+	fail "E2E_CONTROLLER_STATE_VERSION must be a positive integer"
 [ -f "$KUBECONFIG_FILE" ] || fail "E2E_KUBECONFIG does not name a file"
 require_mode_0600_regular_file "$REGISTRY_CREDENTIALS_FILE" E2E_REGISTRY_CREDENTIALS_FILE
 require_mode_0600_regular_file "$EXTERNAL_PG_CREDENTIALS_FILE" \
@@ -208,6 +222,15 @@ k() {
 }
 
 CONTROLLER_NAME="${HELM_RELEASE}-ptah-operator"
+deployed_controller_image=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
+	jq -er '
+      [.spec.template.spec.containers[] | select(.name == "manager").args[]? |
+        select(startswith("--controller-image=")) | ltrimstr("--controller-image=")] as $images |
+      if ($images | length) == 1 then $images[0]
+      else error("manager must have exactly one --controller-image argument") end
+    ')
+[ "$deployed_controller_image" = "$CONTROLLER_IMAGE" ] ||
+	fail "manager controller image argument does not match E2E_CONTROLLER_IMAGE"
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-data-e2e.XXXXXX")
 chmod 700 "$WORK_DIR"
 umask 077
@@ -583,9 +606,18 @@ assert_active_pod_ephemeral_container_rejected() {
 	[ -n "$active_job_object" ] || return 1
 	printf '%s\n' "$active_job_object" | jq -e \
 		--arg jobUID "$active_job_uid" \
-		--arg podUID "$active_pod_uid" '
+		--arg podUID "$active_pod_uid" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .metadata.uid == $jobUID and
       .status.active >= 1 and
+      .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+      .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+      .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
+      .spec.template.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+      .spec.template.metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+      .spec.template.metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
       .spec.template.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] != null and
       $podUID != ""
     ' >/dev/null || return 1
@@ -713,10 +745,19 @@ audit_completed_jobs() {
           .spec.template.spec.runtimeClassName == $runtimeClass
         ' >/dev/null; then
 			printf '%s\n' "$audit_job_object" | jq -e \
-				--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" '
+				--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" \
+				--arg controllerImage "$CONTROLLER_IMAGE" \
+				--arg controllerRevision "$CONTROLLER_REVISION" \
+				--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
               (.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] // "") as $digest |
               ($digest | test("^sha256:[0-9a-f]{64}$")) and
               .spec.template.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] == $digest and
+              .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+              .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+              .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
+              .spec.template.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+              .spec.template.metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+              .spec.template.metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
               .spec.template.spec.runtimeClassName == $runtimeClass
             ' >/dev/null ||
 				fail "managed Job $audit_name lacks its persisted admission binding"
@@ -756,9 +797,15 @@ audit_completed_jobs() {
 				printf '%s\n' "$audit_pod_object" | jq -e \
 					--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" \
 					--arg runtimeTaint "$ADMISSION_RUNTIME_TAINT" \
-					--arg pullSecret "$REGISTRY_PULL_SECRET" '
+					--arg pullSecret "$REGISTRY_PULL_SECRET" \
+					--arg controllerImage "$CONTROLLER_IMAGE" \
+					--arg controllerRevision "$CONTROLLER_REVISION" \
+					--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
                   (.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] // "") as $digest |
                   ($digest | test("^sha256:[0-9a-f]{64}$")) and
+                  .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+                  .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+                  .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
                   .spec.runtimeClassName == $runtimeClass and
                   .spec.serviceAccountName == "default" and
                   .spec.automountServiceAccountToken == false and
@@ -2552,6 +2599,19 @@ assert_mysql_plain_index() {
 		fail "MySQL plain index count is $index_actual, expected $index_expected"
 }
 
+assert_mysql_declared_element_order() {
+	# This table deliberately declares a named foreign key before an unnamed
+	# index whose column collides with that constraint name. MySQL allocates
+	# both backing-index names in declaration order.
+	# shellcheck disable=SC2016 # Variables expand inside the database container.
+	index_order=$(k -n "$TEST_NAMESPACE" exec deployment/"$MYSQL_SERVICE" -- \
+		sh -ec 'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -u"$MYSQL_USER" "$MYSQL_DATABASE" -Nse "$1"' \
+		sh "SELECT GROUP_CONCAT(CONCAT(index_name, ':', column_name) ORDER BY index_name, seq_in_index SEPARATOR ',') FROM information_schema.statistics WHERE table_schema=DATABASE() AND table_name='e2e_order_child'")
+	index_order=$(printf '%s' "$index_order" | tr -d '\r\n')
+	[ "$index_order" = 'b:a,b_2:b' ] ||
+		fail "MySQL declaration-order indexes are $index_order, expected b:a,b_2:b"
+}
+
 rewrite_mysql_refusal_job() {
 	rewrite_namespace=$1
 	rewrite_name=$2
@@ -3160,7 +3220,12 @@ assert_plan() {
 		jq -e \
 			--arg reference "$plan_reference" \
 			--arg digest "$plan_digest" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
 			--arg type application/vnd.stokaro.ptah.schema.v1 '
+      .status.executionBinding as $binding |
+      .status.plan as $plan |
       .status.source.requestedReference == $reference and
       .status.source.digest == $digest and
       .status.source.resolvedReference == ($reference | sub(":[^/:]+$"; "@" + $digest)) and
@@ -3168,7 +3233,15 @@ assert_plan() {
       .status.source.artifactType == $type and
       .status.source.verificationPolicyDigest != "" and
 		.status.target.identityDigest != "" and
-		.status.target.driftReportDigest != ""
+		.status.target.driftReportDigest != "" and
+      ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
+      $binding.controllerImage == $controllerImage and
+      $binding.controllerRevision == $controllerRevision and
+      $binding.controllerStateVersion == $controllerStateVersion and
+      $plan.executionBindingID == $binding.epoch and
+      $plan.controllerImage == $controllerImage and
+      $plan.controllerRevision == $controllerRevision and
+      $plan.controllerStateVersion == $controllerStateVersion
     ' >/dev/null || fail "$plan_schema did not retain resolve, verification, and observation evidence"
 	drift_report_digest=$(k -n "$TEST_NAMESPACE" get ptahschema "$plan_schema" \
 		-o jsonpath='{.status.target.driftReportDigest}')
@@ -3180,10 +3253,18 @@ assert_plan() {
 			--arg schema "$plan_schema" \
 			--arg digest "$plan_digest" \
 			--arg dialect "$plan_dialect" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
 			--argjson destructive "$plan_destructive" '
+      .spec.contractVersion == 3 and
       .spec.schemaRef.name == $schema and
       .spec.artifactDigest == $digest and
       .spec.dialect == $dialect and
+	  (.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
+	  .spec.controllerImage == $controllerImage and
+	  .spec.controllerRevision == $controllerRevision and
+	  .spec.controllerStateVersion == $controllerStateVersion and
 	  (.spec.actualStateFingerprint | test("^sha256:[0-9a-f]{64}$")) and
       .spec.destructive == $destructive and
       .spec.statementCount > 0 and
@@ -3285,9 +3366,45 @@ create_exact_approval() {
 	approval_name=$3
 	approval_coordination_key=$4
 	approval_coordination_digest=$5
-	approval_schema_uid=$(k -n "$TEST_NAMESPACE" get ptahschema "$approval_schema" -o jsonpath='{.metadata.uid}')
-	approval_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$approval_plan" -o jsonpath='{.metadata.uid}')
-	approval_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$approval_plan" -o jsonpath='{.spec.fingerprint}')
+	approval_schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$approval_schema" -o json)
+	approval_plan_object=$(k -n "$TEST_NAMESPACE" get ptahschemaplan "$approval_plan" -o json)
+	approval_schema_uid=$(printf '%s\n' "$approval_schema_object" | jq -er '.metadata.uid')
+	approval_plan_uid=$(printf '%s\n' "$approval_plan_object" | jq -er '.metadata.uid')
+	approval_fingerprint=$(printf '%s\n' "$approval_plan_object" | jq -er '.spec.fingerprint')
+	approval_execution_binding_id=$(printf '%s\n' "$approval_plan_object" | jq -er '.spec.executionBindingID')
+	printf '%s\n' "$approval_schema_object" | jq -e \
+		--arg plan "$approval_plan" \
+		--arg planUID "$approval_plan_uid" \
+		--arg fingerprint "$approval_fingerprint" \
+		--arg executionBindingID "$approval_execution_binding_id" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+      .status.executionBinding as $binding |
+      .status.plan as $current |
+      ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
+      $binding.epoch == $executionBindingID and
+      $binding.controllerImage == $controllerImage and
+      $binding.controllerRevision == $controllerRevision and
+      $binding.controllerStateVersion == $controllerStateVersion and
+      $current.name == $plan and $current.uid == $planUID and
+      $current.fingerprint == $fingerprint and
+      $current.executionBindingID == $executionBindingID and
+      $current.controllerImage == $controllerImage and
+      $current.controllerRevision == $controllerRevision and
+      $current.controllerStateVersion == $controllerStateVersion
+    ' >/dev/null || fail "$approval_schema current plan is not bound to the exact controller identity"
+	printf '%s\n' "$approval_plan_object" | jq -e \
+		--arg executionBindingID "$approval_execution_binding_id" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+      .spec.contractVersion == 3 and
+      .spec.executionBindingID == $executionBindingID and
+      .spec.controllerImage == $controllerImage and
+      .spec.controllerRevision == $controllerRevision and
+      .spec.controllerStateVersion == $controllerStateVersion
+    ' >/dev/null || fail "$approval_plan is not a current-contract plan with the exact controller identity"
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
 		--arg name "$approval_name" \
@@ -3311,6 +3428,10 @@ create_exact_approval() {
 			--arg schema "$approval_schema" \
 			--arg plan "$approval_plan" \
 			--arg fingerprint "$approval_fingerprint" \
+			--arg executionBindingID "$approval_execution_binding_id" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
 			--arg coordinationKey "$approval_coordination_key" \
 			--arg coordinationDigest "$approval_coordination_digest" '
       .spec.schemaRef.name == $schema and .spec.planRef.name == $plan and
@@ -3320,6 +3441,10 @@ create_exact_approval() {
       .spec.actualStateFingerprint != "" and
       .spec.desiredStateFingerprint != "" and .spec.policyFingerprint != "" and
       .spec.verificationPolicyDigest != "" and .spec.ptahVersion != "" and
+      .spec.executionBindingID == $executionBindingID and
+      .spec.controllerImage == $controllerImage and
+      .spec.controllerRevision == $controllerRevision and
+      .spec.controllerStateVersion == $controllerStateVersion and
       (.spec.executorImage | test("@sha256:[0-9a-f]{64}$")) and
       (.spec.runnerImage | test("@sha256:[0-9a-f]{64}$")) and
       .spec.runnerProtocolVersion == 4 and .spec.approver.username != "" and
@@ -3423,6 +3548,22 @@ wait_for_in_sync() {
 	wait_for_schema "$sync_schema" \
 		".status.phase == \"InSync\" and .status.source.digest == \"$sync_digest\" and .status.applied.artifactDigest == \"$sync_digest\" and .status.pendingObservation == null and .status.activeOperation == null and .status.pendingLockRelease == null and (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and .reason == \"ScopedConverged\"))" \
 		"post-apply convergence for $sync_digest"
+	k -n "$TEST_NAMESPACE" get ptahschema "$sync_schema" -o json |
+		jq -e \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+      .status.executionBinding as $binding |
+      .status.applied as $applied |
+      ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
+      $binding.controllerImage == $controllerImage and
+      $binding.controllerRevision == $controllerRevision and
+      $binding.controllerStateVersion == $controllerStateVersion and
+      $applied.executionBindingID == $binding.epoch and
+      $applied.controllerImage == $controllerImage and
+      $applied.controllerRevision == $controllerRevision and
+      $applied.controllerStateVersion == $controllerStateVersion
+    ' >/dev/null || fail "$sync_schema applied evidence is not bound to the exact controller identity"
 	assert_convergence_result_pair "$sync_schema" "$sync_observe_checkpoint" \
 		"$sync_plan_checkpoint"
 }
@@ -4002,6 +4143,7 @@ snapshot_registry_outage_evidence() {
 		--slurpfile schema "$REGISTRY_OUTAGE_SCHEMA_INPUT" \
 		--slurpfile plan "$REGISTRY_OUTAGE_PLAN_INPUT" '
           {
+            executionBinding: $schema[0].status.executionBinding,
             source: $schema[0].status.source,
             target: $schema[0].status.target,
             plan: {
@@ -4076,7 +4218,12 @@ assert_registry_outage_and_recovery() {
 		jq -e \
 			--arg digest "$outage_digest" \
 			--arg fingerprint "$outage_plan_fingerprint" \
-			--arg version "$PTAH_VERSION" '
+			--arg version "$PTAH_VERSION" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+          .status.executionBinding as $binding |
+          .status.applied as $applied |
           .spec.execution.failureRetryInterval == "45s" and
           .status.phase == "InSync" and .status.source.digest == $digest and
           .status.activeOperation == null and .status.pendingObservation == null and
@@ -4084,6 +4231,14 @@ assert_registry_outage_and_recovery() {
           .status.applied.artifactDigest == $digest and
           .status.applied.planFingerprint == $fingerprint and
           .status.applied.ptahVersion == $version and
+          ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
+          $binding.controllerImage == $controllerImage and
+          $binding.controllerRevision == $controllerRevision and
+          $binding.controllerStateVersion == $controllerStateVersion and
+          $applied.executionBindingID == $binding.epoch and
+          $applied.controllerImage == $controllerImage and
+          $applied.controllerRevision == $controllerRevision and
+          $applied.controllerStateVersion == $controllerStateVersion and
           .status.lastSuccessfulReconciliation != null and
           (.status.conditions | any(
             .type == "ArtifactResolved" and .status == "True" and .reason == "DigestPinned")) and
@@ -4097,9 +4252,17 @@ assert_registry_outage_and_recovery() {
 			--arg uid "$outage_plan_uid" \
 			--arg fingerprint "$outage_plan_fingerprint" \
 			--arg digest "$outage_digest" \
-			--arg version "$PTAH_VERSION" '
+			--arg version "$PTAH_VERSION" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
           .metadata.uid == $uid and .spec.fingerprint == $fingerprint and
           .spec.artifactDigest == $digest and .spec.ptahVersion == $version and
+          .spec.contractVersion == 3 and
+          (.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
+          .spec.controllerImage == $controllerImage and
+          .spec.controllerRevision == $controllerRevision and
+          .spec.controllerStateVersion == $controllerStateVersion and
           (.status.conditions | any(.type == "Ready" and .status == "True"))
         ' >/dev/null || fail "$outage_schema lacks its exact durable applied Plan before outage"
 	snapshot_registry_outage_evidence "$outage_schema" "$outage_plan_name" \
@@ -4137,7 +4300,7 @@ assert_registry_outage_and_recovery() {
 	snapshot_registry_outage_evidence "$outage_schema" "$outage_plan_name" \
 		"$REGISTRY_OUTAGE_EVIDENCE_AFTER"
 	cmp -s "$REGISTRY_OUTAGE_EVIDENCE_BEFORE" "$REGISTRY_OUTAGE_EVIDENCE_AFTER" ||
-		fail "$outage_schema registry outage changed retained source, target, plan, applied, or success evidence"
+		fail "$outage_schema registry outage changed retained execution, source, target, plan, applied, or success evidence"
 
 	recovery_before="$WORK_DIR/${outage_schema}-registry-recovery-before.json"
 	checkpoint_schema_jobs "$outage_schema" "$recovery_before"
@@ -4168,9 +4331,19 @@ assert_registry_outage_and_recovery() {
 	k -n "$TEST_NAMESPACE" get ptahschema "$outage_schema" -o json |
 		jq -e \
 			--arg digest "$outage_digest" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
 			--slurpfile retained "$REGISTRY_OUTAGE_EVIDENCE_BEFORE" '
           .status.phase == "InSync" and .status.source.digest == $digest and
+          .status.executionBinding == $retained[0].executionBinding and
           .status.applied == $retained[0].applied and
+          .status.executionBinding.controllerImage == $controllerImage and
+          .status.executionBinding.controllerRevision == $controllerRevision and
+          .status.executionBinding.controllerStateVersion == $controllerStateVersion and
+          .status.applied.controllerImage == $controllerImage and
+          .status.applied.controllerRevision == $controllerRevision and
+          .status.applied.controllerStateVersion == $controllerStateVersion and
           .status.activeOperation == null and .status.pendingObservation == null and
           .status.pendingLockRelease == null and .status.plan == null and
           (.status.conditions | any(
@@ -4199,21 +4372,18 @@ assert_registry_outage_and_recovery() {
 	printf '%s\n' 'e2e data plane: PASS registry outage freshness and exact recovery'
 }
 
-wait_for_manager_scaled_to_zero() {
-	manager_zero_deadline=$(deadline_from_now)
-	while [ "$(date +%s)" -lt "$manager_zero_deadline" ]; do
-		if k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
-			jq -e '
-              .spec.replicas == 0 and
-              ((.status.replicas // 0) == 0) and
-              ((.status.readyReplicas // 0) == 0) and
-              ((.status.availableReplicas // 0) == 0)
-            ' >/dev/null; then
+wait_for_manager_removed() {
+	manager_removal_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$manager_removal_deadline" ]; do
+		if ! k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" \
+			>/dev/null 2>&1 &&
+			! k -n "$OPERATOR_NAMESPACE" get pods \
+				-l 'app.kubernetes.io/component=controller' -o name | grep -q .; then
 			return 0
 		fi
 		sleep 1
 	done
-	fail "manager Deployment did not scale to zero for execution-binding fault injection"
+	fail "manager Deployment was not removed for execution-binding fault injection"
 }
 
 upgrade_execution_binding_before_apply() {
@@ -4246,10 +4416,17 @@ upgrade_execution_binding_before_apply() {
 		jq -e \
 			--arg version "$upgrade_original_ptah_version" \
 			--arg executor "$EXECUTOR_IMAGE" \
-			--arg runner "$RUNNER_IMAGE" '
+			--arg runner "$RUNNER_IMAGE" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
           .spec.ptahVersion == $version and
           .spec.executorImage == $executor and .spec.runnerImage == $runner and
-          .spec.runnerProtocolVersion == 4
+          .spec.runnerProtocolVersion == 4 and
+          (.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
+          .spec.controllerImage == $controllerImage and
+          .spec.controllerRevision == $controllerRevision and
+          .spec.controllerStateVersion == $controllerStateVersion
         ' >/dev/null || fail "old approval was not bound to the pre-upgrade execution identity"
 	sleep 2
 	audit_completed_jobs
@@ -4268,8 +4445,9 @@ upgrade_execution_binding_before_apply() {
       .name != "" and .uid != "" and .approver.username != "" and .approvedAt != null
     ' >/dev/null || fail "old-binding approval lacks an injectable exact identity"
 
-	k -n "$OPERATOR_NAMESPACE" scale deployment/"$CONTROLLER_NAME" --replicas=0 >/dev/null
-	wait_for_manager_scaled_to_zero
+	k -n "$OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_NAME" \
+		--cascade=foreground --wait=true >/dev/null
+	wait_for_manager_removed
 	upgrade_status_patch=$(jq -nc --argjson approval "$upgrade_recorded_approval" \
 		'{status: {plan: {approval: $approval}}}')
 	k -n "$TEST_NAMESPACE" patch ptahschema "$upgrade_schema" --subresource=status \
@@ -4297,13 +4475,15 @@ upgrade_execution_binding_before_apply() {
 			--arg version "--ptah-version=${UPGRADED_PTAH_VERSION}" \
 			--arg oldVersion "--ptah-version=${PTAH_VERSION}" \
 			--arg executor "--executor-image=${EXECUTOR_IMAGE}" \
-			--arg runner "--runner-image=${RUNNER_IMAGE}" '
+			--arg runner "--runner-image=${RUNNER_IMAGE}" \
+			--arg controllerImage "--controller-image=${CONTROLLER_IMAGE}" '
           [.spec.template.spec.containers[] | select(.name == "manager")] as $manager |
           ($manager | length) == 1 and
           ($manager[0].args | index($version)) != null and
           ($manager[0].args | index($oldVersion)) == null and
           ($manager[0].args | index($executor)) != null and
-          ($manager[0].args | index($runner)) != null
+          ($manager[0].args | index($runner)) != null and
+          ($manager[0].args | index($controllerImage)) != null
         ' >/dev/null || fail "manager rollout did not change only the Ptah version binding"
 	wait_for_controller_status_authorization yes ||
 		fail "Helm upgrade did not restore exact controller status authorization"
@@ -4347,7 +4527,10 @@ upgrade_execution_binding_before_apply() {
 			--arg oldVersion "$upgrade_original_ptah_version" \
 			--arg newVersion "$PTAH_VERSION" \
 			--arg executor "$EXECUTOR_IMAGE" \
-			--arg runner "$RUNNER_IMAGE" '
+			--arg runner "$RUNNER_IMAGE" \
+			--arg controllerImage "$CONTROLLER_IMAGE" \
+			--arg controllerRevision "$CONTROLLER_REVISION" \
+			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
           def named($name):
             [.items[] | select(.metadata.name == $name)] |
             if length == 1 then .[0] else error("plan identity is not exact") end;
@@ -4357,7 +4540,16 @@ upgrade_execution_binding_before_apply() {
           $new.spec.ptahVersion == $newVersion and
           $old.spec.executorImage == $executor and $new.spec.executorImage == $executor and
           $old.spec.runnerImage == $runner and $new.spec.runnerImage == $runner and
-          $old.spec.runnerProtocolVersion == 4 and $new.spec.runnerProtocolVersion == 4
+          $old.spec.runnerProtocolVersion == 4 and $new.spec.runnerProtocolVersion == 4 and
+          ($old.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
+          ($new.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
+          $old.spec.executionBindingID != $new.spec.executionBindingID and
+          $old.spec.controllerImage == $controllerImage and
+          $new.spec.controllerImage == $controllerImage and
+          $old.spec.controllerRevision == $controllerRevision and
+          $new.spec.controllerRevision == $controllerRevision and
+          $old.spec.controllerStateVersion == $controllerStateVersion and
+          $new.spec.controllerStateVersion == $controllerStateVersion
         ' >/dev/null || fail "$upgrade_schema plans did not preserve exact old/new execution bindings"
 	[ "$RBAC_PAUSED" -eq 1 ] ||
 		fail "fresh binding plan lacks a status barrier before its new approval"
@@ -4521,6 +4713,9 @@ run_engine_lifecycle() {
 	assert_job_isolation "$lifecycle_schema" "$lifecycle_secret" true
 	assert_database_column "$lifecycle_slug" name 1
 	assert_database_column "$lifecycle_slug" note 0
+	if [ "$lifecycle_slug" = mysql ]; then
+		assert_mysql_declared_element_order
+	fi
 	set_reconcile_interval_and_assert_noop "$lifecycle_schema" "$digest_v1" \
 		"$RECONCILE_INTERVAL"
 	assert_periodic_noop "$lifecycle_schema" "$PERIODIC_NOOP_CHECKPOINT"
@@ -4701,6 +4896,9 @@ E2E_FULLY_AUDITED_JOBS_FILE=$FULLY_AUDITED_JOBS_FILE \
 E2E_OBSERVED_JOBS_FILE=$OBSERVED_JOBS_FILE \
 E2E_FIXTURE_IMAGE=$FIXTURE_IMAGE \
 E2E_RESULT_ASSERT_BINARY=$RESULT_ASSERT_BINARY \
+E2E_CONTROLLER_IMAGE=$CONTROLLER_IMAGE \
+E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 	"$ROOT_DIR/hack/e2e-faults.sh"
 assert_mysql_destructive_refusal_durable
 assert_external_postgresql_catalog

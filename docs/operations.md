@@ -5,12 +5,174 @@
 Install CRDs and the controller through the Helm chart. Supply digest-pinned
 manager, executor, and runner images. The chart refuses all three when only a
 tag is supplied. `image.allowMutableTag=true` exists solely for isolated test
-clusters that load a locally built image and is never a production setting.
+clusters that load a locally built image and is never a production setting. It
+also requires `image.testIdentityDigest` to equal that loaded image's exact
+lowercase `sha256:` Docker image ID; the manager records
+`<repository>@<image-ID>` as its content identity while the Pod still pulls the
+test tag. Production `image.digest` mode forbids `image.testIdentityDigest`.
 
 CRDs are stored under the chart's `crds/` directory and are installed before
-templated resources. Review CRD schema changes before an upgrade because Helm
-does not upgrade CRDs automatically. Apply the new CRDs explicitly, wait for
-them to become Established, then upgrade the release.
+templated resources. The candidate operator image embeds the exact same
+generated CRDs. The same reconciliation hook runs for `pre-install` and
+`pre-upgrade`, which makes a fresh installation over CRDs retained by an
+earlier uninstall safe and usable. It first scans every durable
+controller-state version described below. Only after that downgrade preflight
+succeeds does it dry-run every required schema change, update only the `spec`
+and the two owned schema-identity annotations of each existing CRD, and wait
+for both `Established=True` and `NamesAccepted=True`. Helm does not roll the
+manager Deployment until that hook succeeds.
+
+The hook never creates, deletes, or force-applies a CRD. A missing CRD, an API
+identity conflict, a stored version absent from the candidate, a rejected
+dry-run, or an incompatible schema identity introduced concurrently makes the
+Helm operation fail. The
+dedicated hook ServiceAccount can `get` and `update` only the three exact Ptah
+CRD names. Separate read-only `list` grants for `PtahSchema`, `PtahSchemaPlan`,
+and `PtahSchemaApproval` are the only non-exact-name hook permissions and exist
+solely for the downgrade preflight.
+Hook RBAC is removed after either success or failure. Replacing only `spec` and
+those two owned annotations preserves CRD UIDs, all other metadata, status,
+and all custom resources. The manager and certificate-rotation Pods also run
+the embedded verifier as an init container
+with read-only, exact-name CRD and admission-configuration access. A partial
+update, later schema drift, or admission singleton owned by another release
+therefore cannot start either mutating process.
+
+Every generated CRD carries a schema-identity pair: the positive decimal
+`operator.ptah.dev/crd-schema-version` rollback fence and
+`operator.ptah.dev/crd-schema-digest`, a lowercase SHA-256 digest of its
+normalized `spec`. Every deliberate generated CRD schema change must increase
+`CRD_SCHEMA_VERSION` in the Makefile and regenerate the base, chart, and
+embedded copies together; the generator derives the digest. Before any dry-run
+or real update, the hook checks all three live versions and refuses an existing
+version newer than the candidate. It also refuses two different digests bound
+to the same version. This machine-enforced binding prevents an older image from
+narrowing a newer schema even if a developer forgot to bump the version.
+
+Repository verification independently recomputes every annotated digest and
+compares the complete generated CRD set with an exact Git baseline. A changed
+normalized `spec` requires one shared schema version that is strictly newer;
+an unchanged set rejects a version bump, rollback, and added or removed CRDs.
+Pull-request CI uses the exact base commit, a default-branch push uses the
+event's previous commit, and scheduled or manual CI uses the candidate's
+parent. CI refuses a missing or invalid baseline. Locally, uncommitted generated
+changes compare with `HEAD`, while a clean just-committed tree compares with
+`HEAD^`; `CRD_SCHEMA_BASELINE_REF` selects an explicit baseline and
+`CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE=true` disables that local convenience.
+The sole initial transition accepts a complete baseline carrying neither owned
+annotation only when the candidate set has shared schema version 1.
+
+A missing version or digest is accepted only when the live normalized CRD
+`spec` already matches the candidate exactly; the hook then performs an
+annotation-only legacy identity adoption. A malformed annotation, an incomplete
+identity plus any schema difference, or a same-version digest collision fails
+before all CRD mutations. For such an installation, keep the managers offline
+and restore or select the historical operator release whose generated schema
+exactly matches the live CRD. Let that release adopt the complete identity,
+then upgrade through versioned schemas. If no matching release can be
+identified, back up every CRD and custom resource and perform a separately
+reviewed offline schema migration. The operator intentionally provides no
+value that labels an unknown schema as trusted.
+
+Before starting a manager, the init verifier scans every `PtahSchema`,
+`PtahSchemaPlan`, and `PtahSchemaApproval` across the cluster. It checks
+controller-state versions in `PtahSchema.status.executionBinding`,
+`status.plan`, `status.applied`, and `status.pendingObservation.plan`, plus the
+immutable `spec.controllerStateVersion` carried by every plan and approval.
+Every kind is read through exhaustive pagination anchored to its own single
+collection `resourceVersion`. A nonzero version newer than the binary's
+supported controller-state version blocks the rollout, even if another stored
+location is absent or still legacy. During a Helm downgrade, the pre-upgrade
+hook fails before Helm changes the Deployment, so the newer ready manager Pods
+remain in place and the older candidate never gets an opportunity to
+reinterpret or rewrite future state.
+Missing or zero versions remain readable as legacy state and are upgraded only
+by ordinary reconciliation under the current manager. A malformed or negative
+stored version also blocks startup. The upgrade hook repeats this state scan
+after all server-side dry-runs, immediately before release cutover. After the
+old runtime Pods have stopped, it performs a third scan immediately before the
+first real CRD update. The controller init verifier repeats both CRD and state
+checks after the admission singleton becomes ready. A missing client for any
+of the three durable resource collections fails closed.
+
+CRD updates are necessarily separate Kubernetes API transactions. The complete
+dry-run prevents predictable partial upgrades, but an API failure or concurrent
+administrator change can still interrupt the real update sequence. In that
+case, leave the old running manager in place, resolve the API or policy failure,
+and rerun the same candidate upgrade. Do not edit the remaining CRDs to imitate
+the candidate and do not use server-side apply conflict forcing. A rollback to
+an image whose embedded schemas differ also remains blocked by its init
+verifier; select a manager version compatible with the schemas already stored.
+
+Helm retains CRDs and their custom resources on uninstall. Back them up before
+schema work anyway; uninstalling the release removes the controller and
+admission resources, not the database changes previously executed by Ptah.
+
+Uninstall is a fail-closed, two-phase operation. A read/update-only hook first
+verifies the complete release, admission, RBAC, ServiceAccount, and workload
+inventory before scaling the two exact runtime Deployments to zero. A separate
+cleanup identity then removes only the candidate release's exact bindings and
+chart-created ServiceAccounts. It self-revokes that temporary delete authority
+before any admission guard is removed. The remaining identity can only read
+the teardown inventory, submit SubjectAccessReviews and
+SelfSubjectAccessReviews, and delete the exact admission and activation objects
+compiled into the candidate.
+
+Every chart workload uses a Pod-bound projected ServiceAccount token. After
+the runtime Pods are gone and the retired chart-created ServiceAccounts have
+been deleted, cleanup retains the admission boundary for another 65 seconds.
+Kubernetes invalidates a bound credential no later than 60 seconds after the
+bound Pod or ServiceAccount enters deletion, including when finalizers delay
+object removal. The five-second margin prevents a formerly mounted credential
+from outliving the admission guards. The cleanup Job's own bound credential is
+still live and is evaluated separately as described below. This delay relies
+on the documented Kubernetes authenticator contract; the authorization probes
+that follow prove revocation of chart-issued permissions, not bearer-token
+rejection.
+
+Before removing admission, the cleanup hook sends every revocation probe
+directly to every ready and serving address advertised by the
+`default/kubernetes` Service. Each connection verifies the normal Kubernetes
+Service TLS name and cluster CA. Discovery is repeated before every sweep. An
+added or removed address, or any discovery error, restarts the stable interval;
+a non-terminating address that is not ready and serving blocks completion.
+Terminating addresses may leave the set, but that smaller set must itself stay
+stable for the full interval. This proves every continuously advertised address
+rather than assuming that an EndpointSlice address maps one-to-one to an API
+server process.
+
+Canonical SubjectAccessReviews bind every retired runtime and hook
+ServiceAccount to only the exact mutating permissions that its deleted
+release bindings issued; permissions issued exclusively to another identity
+are not cross-probed. A normal Kubernetes RBAC no-opinion result
+(`allowed=false`, `denied=false`) is successful; an allow or evaluation error
+is not. The cleanup Job is checked through SelfSubjectAccessReview using its
+actual bearer token on every address, so its ServiceAccount UID, Pod and node
+binding, and credential identifier come from the authenticator rather than a
+synthetic identity. The stable interval starts only after all of those results
+are not allowed. Missing, malformed, changing, unreachable, or TLS-invalid
+endpoint inventory blocks uninstall instead of assuming authorization cache
+convergence.
+
+If `serviceAccount.create=false`, the named controller ServiceAccount must be
+dedicated to this release. Any additional direct RoleBinding or
+ClusterRoleBinding for that identity, including a binding in another
+namespace, blocks uninstall because the operator cannot prove safe privilege
+retirement without taking ownership of user RBAC. Remove or migrate that
+binding and retry. The user-created ServiceAccount itself is never deleted.
+Its use by the controller must remain limited to the chart's Pod-bound token;
+unbound credentials or grants from an external authorizer are outside the
+enumerable Kubernetes RBAC contract and must be retired by the administrator
+before uninstall.
+
+A failed preflight leaves the runtime unchanged. An API failure during the
+subsequent two-Deployment quiesce can leave one exact Deployment at zero, but
+the admission boundary remains and the same operation is safe to retry. A
+later cleanup failure likewise leaves admission in place and retains the
+failed Job and Pod for diagnostics. After correcting the reported conflict or
+API reachability problem, rerun the same `helm uninstall`; the hooks revalidate
+live state and resume idempotently from the exact stored identities. Do not
+delete the remaining guards by hand merely to make an uninstall pass.
 
 For deterministic GitOps rendering, provision the webhook TLS Secret outside
 the chart and set both `webhook.existingSecret` and the PEM-encoded
@@ -31,7 +193,68 @@ configuration names make an ordinary second Helm install fail ownership
 validation. High availability is provided by `replicaCount` within the one
 release, with leader election enabled. Helm rejects more than one replica when
 `leaderElection=false`; disabling election is supported only for an isolated
-cluster with one operator release and one replica.
+cluster with one operator release and one replica. The manager Deployment uses
+`Recreate` for both modes. Every ready replica serves admission traffic even
+when it does not hold the reconciliation Lease, so an old and a new revision
+must never overlap behind the webhook Service. Upgrades are briefly unavailable
+and fail closed; after rollout, multiple elected replicas again provide
+steady-state availability and single-writer reconciliation.
+
+Before quiescing the old runtime, the upgrade hook projects the exact candidate
+Pod requests and limits through every synchronized Pod ResourceQuota in the
+release namespace. After the old Pods disappear, it waits through stale quota
+status and transient API failures until a resource-version-anchored
+ResourceQuota/Pod/ResourceQuota observation shows capacity for the candidate.
+This check cannot reserve capacity against unrelated namespace writers. If
+another workload consumes that capacity after the observation, Kubernetes may
+temporarily report `FailedCreate` for the replacement Deployment. Admission
+remains fail closed; free the required quota and the Deployment controller will
+retry candidate Pod creation. Treat a Helm `--wait` timeout in that state as a
+capacity incident, not as permission to remove the rollout guards.
+
+Both fixed admission configurations record the owning release name and
+namespace, the effective coordination namespace, the leader-election mode, and
+the fixed leader-election ID in `operator.ptah.dev/*` annotations. Connected
+Helm rendering uses `lookup` and fails when either singleton is missing its
+peer, lacks an annotation, or disagrees with the requested values. This blocks
+a second release and blocks changes to `coordination.namespace` or
+`leaderElection` before either the CRD hook or manager Deployment can mutate
+cluster state. There is no value that bypasses this check.
+
+The runtime verifier closes the remaining concurrent-install race in which two
+clients could both render while the singleton was absent. New manager and
+certificate-rotation Pods wait for both fixed admission configurations and
+require their complete annotation tuple to match the Pod's release. They also
+require exactly one mutating approval webhook and the two validating approval
+and operation-Pod webhooks, with fail-closed policies, nonempty CA bundles, the
+exact Service, paths, port, rules, selectors, match condition, review version,
+side-effect and match policies, reinvocation policy, and configured timeout.
+The verifier reads this complete contract again after its wait and rechecks the
+CRDs immediately before allowing the process to start. A losing release or a
+Pod launched while Helm is repairing a drifted singleton can neither reconcile
+schemas nor patch the winning release's CA bundle.
+
+### Offline singleton migration
+
+Do not change singleton annotations merely to make an online upgrade pass. To
+adopt a legacy installation that predates the annotations, first establish that
+the fixed configurations are owned by the one intended release. Suspend every
+`PtahSchema`, wait for every operation Job to finish, place the databases in a
+maintenance window, and scale the manager and certificate-rotation Deployments
+to zero. Annotate both `ptah-operator-admission` configurations with the actual
+release name, release namespace, effective coordination namespace,
+leader-election setting, and the fixed ID
+`ptah-operator.operator.ptah.dev`. Upgrade that same release, verify its CRDs
+and Pods, then restore replicas and resume reconciliation.
+
+Changing an established coordination namespace or leader-election mode is a
+full offline migration, not an upgrade. After the same suspension, job drain,
+database maintenance, and scale-to-zero sequence, record the old coordination
+Leases and back up all Ptah custom resources. Uninstall the release; verify that
+the three CRDs and their objects remain. Install exactly one release with the
+new invariant values, verify its admission annotations and manager readiness,
+then end maintenance and resume the schemas. Retain the old Leases as audit
+evidence until no interrupted operation can refer to them.
 
 `coordination.namespace` contains the fixed manager leader-election Lease and
 the database target Leases. It defaults to the release namespace and may name
@@ -264,10 +487,11 @@ durable Apply claim is the one-shot authorization boundary: dispatch, lock
 contention, and controller restarts continue the claimed operation instead of
 letting a later timer reinterpret it.
 
-Plans also bind the manager's complete execution identity: Ptah version,
-executor image digest, runner image digest, and runner protocol. If that
-identity changes before a mutating Job is dispatched, the current plan is no
-longer executable. A recorded approval becomes stale with reason
+Current plan contract v3 also binds the manager's complete execution identity:
+manager image digest, controller source revision, controller state version,
+Ptah version, executor image digest, runner image digest, and runner protocol.
+If that identity changes before a mutating Job is dispatched, the current plan
+is no longer executable. A recorded approval becomes stale with reason
 `ExecutionBindingChanged`. A claimed but undispatched Apply releases its old
 authorization and database lock, the plan is cleared, and the replacement
 manager runs Resolve, Verify, Observe, and Plan again. Approve only the
@@ -280,17 +504,18 @@ an opaque `epoch`. The epoch changes for every observed component transition,
 including a rollback to a byte-identical tuple. A plan and approval carry the
 epoch as `spec.executionBindingID`, so approval is one-shot for that exact
 transition: it cannot become valid again after a later rollout or rollback,
-even if all four component fields return to their previous values.
+even if all seven component fields return to their previous values.
 
-A normal rolling upgrade has a leader-handoff boundary: before the old manager
-stops, it may still dispatch an approval that is valid for the complete old
-execution binding. That Job remains internally consistent and is never changed
-to the replacement binding. If an upgrade maintenance window requires that no
-new Apply be dispatched after the window begins, first scale the manager
-Deployment to zero and wait until all manager Pods have terminated. Then run
-`helm upgrade --wait`; the chart restores the configured replica count and the
-replacement manager invalidates every undispatched old-binding authorization
-before it can mutate a database.
+A normal chart upgrade has a hard revision boundary: the `Recreate` strategy
+terminates every old manager Pod before any replacement manager Pod starts.
+Before termination, the old manager may still dispatch an approval that is
+valid for the complete old execution binding. That Job remains internally
+consistent and is never changed to the replacement binding. If an upgrade
+maintenance window requires that no new Apply be dispatched after the window
+begins, first scale the manager Deployment to zero and wait until all manager
+Pods have terminated. Then run `helm upgrade --wait`; the chart restores the
+configured replica count and the replacement manager invalidates every
+undispatched old-binding authorization before it can mutate a database.
 
 ## Mutable tags and registry outages
 

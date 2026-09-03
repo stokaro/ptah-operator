@@ -8,3 +8,15 @@ CREATE TABLE e2e_widgets (
 );
 
 CREATE INDEX e2e_widgets_name_idx ON e2e_widgets (name);
+
+CREATE TABLE e2e_order_parent (
+  id bigint NOT NULL,
+  PRIMARY KEY (id)
+);
+
+CREATE TABLE e2e_order_child (
+  a bigint NOT NULL,
+  b bigint NOT NULL,
+  CONSTRAINT b FOREIGN KEY (a) REFERENCES e2e_order_parent (id),
+  KEY (b)
+);

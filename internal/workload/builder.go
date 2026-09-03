@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
@@ -52,6 +53,14 @@ const (
 	AnnotationPtahVersion = "operator.ptah.dev/ptah-version"
 	// AnnotationExecutionBindingID records the durable evidence epoch.
 	AnnotationExecutionBindingID = "operator.ptah.dev/execution-binding-id"
+	// AnnotationControllerImage records the exact manager container content that
+	// authorized the operation.
+	AnnotationControllerImage = "operator.ptah.dev/controller-image"
+	// AnnotationControllerRevision records the exact manager build that
+	// authorized the operation.
+	AnnotationControllerRevision = "operator.ptah.dev/controller-revision"
+	// AnnotationControllerStateVersion records the manager-side state contract.
+	AnnotationControllerStateVersion = "operator.ptah.dev/controller-state-version"
 	// AnnotationPlanFingerprint records the exact approved plan binding.
 	AnnotationPlanFingerprint = "operator.ptah.dev/plan-fingerprint"
 	// AnnotationPlanContentDigest records the reconstructed plan byte digest.
@@ -103,9 +112,12 @@ var (
 // Builder contains immutable execution-component bindings. Both images must
 // be content-addressed so a resumed operation cannot silently run new code.
 type Builder struct {
-	ExecutorImage string
-	RunnerImage   string
-	PtahVersion   string
+	ExecutorImage          string
+	RunnerImage            string
+	PtahVersion            string
+	ControllerImage        string
+	ControllerRevision     string
+	ControllerStateVersion int32
 }
 
 // Validate checks the immutable execution configuration before the manager
@@ -126,12 +138,15 @@ func (b Builder) NameFor(
 // ExecutionBinding returns the immutable execution identity recorded in every
 // plan and approval fingerprint.
 func (b Builder) ExecutionBinding() (
+	controllerImage string,
+	controllerRevision string,
+	controllerStateVersion int32,
 	ptahVersion string,
 	executorImage string,
 	runnerImage string,
-	protocolVersion int32,
+	runnerProtocolVersion int32,
 ) {
-	return b.PtahVersion, b.ExecutorImage, b.RunnerImage, int32(runner.ProtocolVersion)
+	return b.ControllerImage, b.ControllerRevision, b.ControllerStateVersion, b.PtahVersion, b.ExecutorImage, b.RunnerImage, int32(runner.ProtocolVersion)
 }
 
 // NameFor returns the Job name bound to every field that distinguishes an
@@ -180,7 +195,10 @@ func (b Builder) Build(
 	if err := validateSchema(schema); err != nil {
 		return nil, err
 	}
-	if schema.Status.ExecutionBinding.PtahVersion != b.PtahVersion ||
+	if schema.Status.ExecutionBinding.ControllerImage != b.ControllerImage ||
+		schema.Status.ExecutionBinding.ControllerRevision != b.ControllerRevision ||
+		schema.Status.ExecutionBinding.ControllerStateVersion != b.ControllerStateVersion ||
+		schema.Status.ExecutionBinding.PtahVersion != b.PtahVersion ||
 		schema.Status.ExecutionBinding.ExecutorImage != b.ExecutorImage ||
 		schema.Status.ExecutionBinding.RunnerImage != b.RunnerImage ||
 		schema.Status.ExecutionBinding.RunnerProtocolVersion != int32(runner.ProtocolVersion) ||
@@ -200,7 +218,11 @@ func (b Builder) Build(
 		return nil, err
 	}
 	if operation.Type == operatorv1alpha1.OperationApply &&
-		(plan.Spec.PtahVersion != b.PtahVersion ||
+		(plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion ||
+			plan.Spec.ControllerImage != b.ControllerImage ||
+			plan.Spec.ControllerRevision != b.ControllerRevision ||
+			plan.Spec.ControllerStateVersion != b.ControllerStateVersion ||
+			plan.Spec.PtahVersion != b.PtahVersion ||
 			plan.Spec.ExecutorImage != b.ExecutorImage ||
 			plan.Spec.RunnerImage != b.RunnerImage ||
 			plan.Spec.RunnerProtocolVersion != int32(runner.ProtocolVersion)) {
@@ -222,6 +244,9 @@ func (b Builder) Build(
 	annotations[AnnotationInputFingerprint] = operation.InputFingerprint
 	annotations[AnnotationPtahVersion] = b.PtahVersion
 	annotations[AnnotationExecutionBindingID] = operation.ExecutionBindingID
+	annotations[AnnotationControllerImage] = b.ControllerImage
+	annotations[AnnotationControllerRevision] = b.ControllerRevision
+	annotations[AnnotationControllerStateVersion] = strconv.FormatInt(int64(b.ControllerStateVersion), 10)
 	if operation.AdmissionSnapshot != nil {
 		if !sha256Pattern.MatchString(operation.AdmissionSnapshot.Digest) ||
 			!sha256Pattern.MatchString(operation.AdmissionSnapshot.TemplateDigest) {
@@ -845,6 +870,15 @@ func addRegistryAccess(
 }
 
 func (b Builder) validate() error {
+	if !imageDigestPattern.MatchString(b.ControllerImage) {
+		return errors.New("controller image must be pinned by a lowercase SHA-256 digest")
+	}
+	if err := controllerstate.ValidateRevision(b.ControllerRevision); err != nil {
+		return err
+	}
+	if b.ControllerStateVersion < 1 {
+		return errors.New("controller state version must be positive")
+	}
 	if !imageDigestPattern.MatchString(b.ExecutorImage) {
 		return errors.New("executor image must be pinned by a lowercase SHA-256 digest")
 	}
@@ -873,6 +907,11 @@ func validateSchema(schema *operatorv1alpha1.PtahSchema) error {
 	if schema.Status.ExecutionBinding == nil ||
 		!executionBindingIDPattern.MatchString(schema.Status.ExecutionBinding.Epoch) {
 		return errors.New("schema durable execution binding is required")
+	}
+	if controllerstate.ValidateRevision(schema.Status.ExecutionBinding.ControllerRevision) != nil ||
+		!imageDigestPattern.MatchString(schema.Status.ExecutionBinding.ControllerImage) ||
+		schema.Status.ExecutionBinding.ControllerStateVersion < 1 {
+		return errors.New("schema durable execution binding has no manager identity")
 	}
 	if schema.Spec.Target.URLFrom.Name == "" || schema.Spec.Target.URLFrom.Key == "" {
 		return errors.New("target Secret name and key are required")
@@ -956,6 +995,12 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 	if plan == nil {
 		return errors.New("apply operation requires a plan")
 	}
+	if err := fingerprint.ValidatePlanContractVersion(plan.Spec.ContractVersion); err != nil {
+		return fmt.Errorf("apply plan contract is not supported: %w", err)
+	}
+	if plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion {
+		return fmt.Errorf("apply plan contract version %d is not current", plan.Spec.ContractVersion)
+	}
 	if plan.Namespace != schema.Namespace || plan.Spec.SchemaRef.Name != schema.Name || plan.Spec.SchemaRef.UID != schema.UID {
 		return errors.New("apply plan does not belong to the schema UID in this namespace")
 	}
@@ -1015,6 +1060,9 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 		current.VerificationPolicyDigest != plan.Spec.VerificationPolicyDigest ||
 		current.ExecutionBindingID == "" || current.ExecutionBindingID != plan.Spec.ExecutionBindingID ||
 		current.ExecutionBindingID != schema.Status.ExecutionBinding.Epoch ||
+		current.ControllerImage == "" || current.ControllerImage != plan.Spec.ControllerImage ||
+		current.ControllerRevision == "" || current.ControllerRevision != plan.Spec.ControllerRevision ||
+		current.ControllerStateVersion < 1 || current.ControllerStateVersion != plan.Spec.ControllerStateVersion ||
 		current.PtahVersion != plan.Spec.PtahVersion || current.ExecutorImage != plan.Spec.ExecutorImage ||
 		current.RunnerImage != plan.Spec.RunnerImage || current.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion ||
 		current.Destructive != plan.Spec.Destructive || current.StatementCount != plan.Spec.StatementCount {
@@ -1025,6 +1073,9 @@ func validateApplyPlan(schema *operatorv1alpha1.PtahSchema, plan *operatorv1alph
 		plan.Spec.VerificationPolicyDigest != schema.Status.Source.VerificationPolicyDigest ||
 		plan.Spec.CoordinationDigest != schema.Status.Target.CoordinationDigest ||
 		plan.Spec.TargetIdentityDigest != schema.Status.Target.IdentityDigest ||
+		plan.Spec.ControllerImage == "" || plan.Spec.ControllerImage != schema.Status.ExecutionBinding.ControllerImage ||
+		plan.Spec.ControllerRevision == "" || plan.Spec.ControllerRevision != schema.Status.ExecutionBinding.ControllerRevision ||
+		plan.Spec.ControllerStateVersion < 1 || plan.Spec.ControllerStateVersion != schema.Status.ExecutionBinding.ControllerStateVersion ||
 		plan.Spec.PtahVersion != schema.Status.ExecutionBinding.PtahVersion ||
 		plan.Spec.ExecutorImage != schema.Status.ExecutionBinding.ExecutorImage ||
 		plan.Spec.RunnerImage != schema.Status.ExecutionBinding.RunnerImage ||

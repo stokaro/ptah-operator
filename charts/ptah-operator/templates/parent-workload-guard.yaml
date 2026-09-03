@@ -1,0 +1,402 @@
+{{- include "ptah-operator.validateAdmissionSingleton" . -}}
+{{- $sequence := include "ptah-operator.releaseSequence" . -}}
+{{- $managerImage := include "ptah-operator.managerImage" . -}}
+{{- $replicaSetName := include "ptah-operator.parentReplicaSetGuardPolicyName" . -}}
+{{- $hookOriginName := include "ptah-operator.parentHookJobOriginGuardPolicyName" . -}}
+{{- $hookPodOriginName := include "ptah-operator.parentHookPodOriginGuardPolicyName" . -}}
+{{- $hookContractName := include "ptah-operator.parentHookJobContractPolicyName" . -}}
+{{- $hookServiceAccount := include "ptah-operator.crdManagerServiceAccountName" . -}}
+{{- $hookSuffix := printf "-crd-v%s-%s" $sequence (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
+{{- if not (hasSuffix $hookSuffix $hookServiceAccount) -}}
+{{- fail "parent workload guard hook ServiceAccount does not match the candidate release identity" -}}
+{{- end -}}
+{{- $hookBase := trimSuffix $hookSuffix $hookServiceAccount -}}
+{{- if eq $hookBase "" -}}
+{{- fail "parent workload guard hook ServiceAccount has no stable name prefix" -}}
+{{- end -}}
+{{- $hookPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-crd-v" $hookBase)) -}}
+{{- $teardownPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-cleanup-v" $hookBase)) -}}
+{{- $controllerServiceAccount := include "ptah-operator.serviceAccountName" . -}}
+{{- $controllerDeployment := include "ptah-operator.fullname" . -}}
+{{- $certificateServiceAccount := include "ptah-operator.certRotatorServiceAccountName" . -}}
+{{- $certificateDeployment := include "ptah-operator.certRotatorServiceAccountName" . -}}
+{{- $identityJob := include "ptah-operator.hookIdentityProbeJobName" . -}}
+{{- $reconcileJob := include "ptah-operator.crdManagerClusterRoleName" . -}}
+{{- $preflightJob := printf "%s-preflight" ($reconcileJob | trunc 53 | trimSuffix "-") -}}
+{{- $quiesceJob := include "ptah-operator.teardownQuiesceJobName" . -}}
+{{- $teardownServiceAccount := include "ptah-operator.teardownServiceAccountName" . -}}
+{{- $teardownJob := $teardownServiceAccount -}}
+
+{{- $replicaSetMessage := "Ptah runtime parent guard rejected an unsafe ReplicaSet" -}}
+{{- $replicaSetMatch := printf `request.namespace == %q && (object.spec.template.spec.serviceAccountName in [%q, %q] || (request.operation == "UPDATE" && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))` .Release.Namespace $controllerServiceAccount $certificateServiceAccount $controllerServiceAccount $certificateServiceAccount -}}
+{{- $replicaSetValidations := list
+      `request.subResource == ""`
+      `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:deployment-controller"]`
+      (printf `object.spec.template.spec.serviceAccountName in [%q, %q]` $controllerServiceAccount $certificateServiceAccount)
+      `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`
+      `variables.owner.apiVersion == "apps/v1" && variables.owner.kind == "Deployment" && variables.owner.name == variables.expectedDeployment && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion`
+      `has(object.metadata.labels) && "pod-template-hash" in object.metadata.labels && variables.hash.matches("^[a-z0-9]{5,16}$")`
+      `object.metadata.name == variables.expectedDeployment + "-" + variables.hash && (!has(object.metadata.generateName) || object.metadata.generateName == "")`
+      `has(object.spec.selector.matchLabels) && object.spec.selector.matchLabels.size() == 4 && (!has(object.spec.selector.matchExpressions) || object.spec.selector.matchExpressions.size() == 0)`
+      `object.spec.selector.matchLabels.all(key, key in ["app.kubernetes.io/name", "app.kubernetes.io/instance", "app.kubernetes.io/component", "pod-template-hash"])`
+      `has(object.spec.template.metadata.labels) && ["app.kubernetes.io/name", "app.kubernetes.io/instance", "app.kubernetes.io/component", "pod-template-hash"].all(key, key in object.metadata.labels && key in object.spec.selector.matchLabels && key in object.spec.template.metadata.labels && object.metadata.labels[key] == object.spec.selector.matchLabels[key] && object.spec.selector.matchLabels[key] == object.spec.template.metadata.labels[key])`
+      (printf `object.spec.selector.matchLabels["app.kubernetes.io/instance"] == %q && object.spec.selector.matchLabels["app.kubernetes.io/component"] == variables.expectedComponent && object.spec.selector.matchLabels["pod-template-hash"] == variables.hash` .Release.Name) -}}
+
+{{- $hookOriginMessage := "Ptah hook parent origin guard rejected an unauthorized Job" -}}
+{{- $hookOriginMatch := printf `request.namespace == %q && ((object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q)) || (request.operation == "UPDATE" && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))` .Release.Namespace $hookPattern $teardownPattern $hookPattern $teardownPattern -}}
+{{- $namespaceGuardName := include "ptah-operator.namespaceDeletionGuardPolicyName" . -}}
+{{- $hookAuthority := printf `(authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed()) || (authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").name(%q).check("delete").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").name(%q).check("delete").allowed())` $namespaceGuardName $namespaceGuardName -}}
+
+{{- $hookPodOriginMessage := "Ptah hook Pod origin guard rejected an unauthorized Pod" -}}
+{{- $hookPodOriginMatch := printf `request.namespace == %q && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` .Release.Namespace $hookPattern $teardownPattern -}}
+{{- $hookPodOriginValidations := list
+      `request.subResource == ""`
+      `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]`
+      (printf `object.metadata.namespace == request.namespace && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern)
+      `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`
+      `variables.owner.apiVersion == "batch/v1" && variables.owner.kind == "Job" && has(variables.owner.name) && variables.owner.name != "" && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion`
+      `has(object.metadata.labels) && ["batch.kubernetes.io/job-name", "batch.kubernetes.io/controller-uid"].all(key, key in object.metadata.labels) && object.metadata.labels["batch.kubernetes.io/job-name"] == variables.owner.name && object.metadata.labels["batch.kubernetes.io/controller-uid"] == variables.owner.uid`
+      `has(object.metadata.generateName) && object.metadata.generateName == variables.owner.name + "-" && object.metadata.name.startsWith(object.metadata.generateName) && object.metadata.name.size() == object.metadata.generateName.size() + 5` -}}
+
+{{- $hookContractMessage := printf "Ptah hook parent contract v%s rejected an unsafe Job" $sequence -}}
+{{- $pod := "object.spec.template.spec" -}}
+{{- $templateMetadata := "object.spec.template.metadata" -}}
+{{- $container := printf "%s.containers[0]" $pod -}}
+{{- $volume := printf "%s.volumes[0]" $pod -}}
+{{- $sources := printf "%s.projected.sources" $volume -}}
+{{- $identityArgs := printf `%s.args == %s` $container (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "identity-probe" "timeout" "180s" "verifyControllerState" false)) -}}
+{{- $preflightArgs := printf `%s.args == %s` $container (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "preflight" "timeout" "180s" "verifyControllerState" false)) -}}
+{{- $reconcileArgs := printf `%s.args == %s` $container (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "reconcile" "timeout" "180s" "verifyControllerState" false)) -}}
+{{- $quiesceArgs := printf `%s.args == %s` $container (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown-quiesce" "timeout" "180s" "verifyControllerState" false)) -}}
+{{- $teardownArgs := printf `%s.args == %s` $container (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown" "timeout" "180s" "verifyControllerState" false)) -}}
+{{- $hookContractValidations := list
+      `request.subResource == ""`
+      (printf `request.name in [%q, %q, %q, %q, %q] && object.metadata.name == request.name && object.metadata.namespace == %q && (!has(object.metadata.generateName) || object.metadata.generateName == "")` $identityJob $preflightJob $reconcileJob $quiesceJob $teardownJob .Release.Namespace)
+      `(!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0)`
+      (printf `has(object.metadata.labels) && object.metadata.labels["app.kubernetes.io/instance"] == %q && object.metadata.labels["app.kubernetes.io/component"] == (variables.isIdentity ? "hook-identity-probe" : (variables.isPreflight ? "crd-manager-preflight" : (variables.isQuiesce ? "crd-manager-teardown-quiesce" : (variables.isTeardown ? "crd-manager-teardown" : "crd-manager"))))` .Release.Name)
+      `has(object.metadata.annotations) && object.metadata.annotations.size() == 3 && object.metadata.annotations["helm.sh/hook"] == ((variables.isQuiesce || variables.isTeardown) ? "pre-delete" : "pre-install,pre-upgrade") && object.metadata.annotations["helm.sh/hook-delete-policy"] == ((variables.isQuiesce || variables.isTeardown) ? "before-hook-creation,hook-succeeded" : "before-hook-creation,hook-succeeded,hook-failed") && object.metadata.annotations["helm.sh/hook-weight"] == (variables.isIdentity ? "-105" : (variables.isPreflight ? "-60" : (variables.isQuiesce ? "-10" : "0")))`
+      (printf `(!has(%s.annotations) || %s.annotations.size() == 0) && (!has(%s.ownerReferences) || %s.ownerReferences.size() == 0) && (!has(%s.finalizers) || %s.finalizers.size() == 0)` $templateMetadata $templateMetadata $templateMetadata $templateMetadata $templateMetadata $templateMetadata)
+      `has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds == (variables.isIdentity ? 120 : 210)`
+      `has(object.spec.backoffLimit) && object.spec.backoffLimit == 0 && (!has(object.spec.backoffLimitPerIndex)) && (!has(object.spec.maxFailedIndexes))`
+      `(!has(object.spec.ttlSecondsAfterFinished)) && (!has(object.spec.podFailurePolicy)) && (!has(object.spec.successPolicy))`
+      `(!has(object.spec.suspend) || !object.spec.suspend) && (!has(object.spec.manualSelector) || !object.spec.manualSelector) && (!has(object.spec.parallelism) || object.spec.parallelism == 1) && (!has(object.spec.completions) || object.spec.completions == 1) && (!has(object.spec.completionMode) || object.spec.completionMode == "NonIndexed")`
+      (printf `%[1]s.serviceAccountName == (variables.isTeardown ? %[2]q : %[3]q) && (!has(%[1]s.serviceAccount) || %[1]s.serviceAccount == (variables.isTeardown ? %[2]q : %[3]q)) && has(%[1]s.automountServiceAccountToken) && !%[1]s.automountServiceAccountToken` $pod $teardownServiceAccount $hookServiceAccount)
+      (printf `%s.restartPolicy == "Never" && (!has(%s.nodeName) || %s.nodeName == "") && (!has(%s.nodeSelector) || %s.nodeSelector.size() == 0) && !has(%s.affinity) && (!has(%s.tolerations) || %s.tolerations.size() == 0)` $pod $pod $pod $pod $pod $pod $pod $pod)
+      (printf `(!has(%s.hostNetwork) || !%s.hostNetwork) && (!has(%s.hostPID) || !%s.hostPID) && (!has(%s.hostIPC) || !%s.hostIPC) && (!has(%s.shareProcessNamespace) || !%s.shareProcessNamespace)` $pod $pod $pod $pod $pod $pod $pod $pod)
+      (printf `!has(%s.hostAliases) && !has(%s.hostname) && !has(%s.subdomain) && (!has(%s.setHostnameAsFQDN) || !%s.setHostnameAsFQDN) && !has(%s.runtimeClassName) && (!has(%s.readinessGates) || %s.readinessGates.size() == 0) && (!has(%s.resourceClaims) || %s.resourceClaims.size() == 0) && (!has(%s.schedulingGates) || %s.schedulingGates.size() == 0)` $pod $pod $pod $pod $pod $pod $pod $pod $pod $pod $pod $pod)
+      (printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.runAsNonRoot) && %[1]s.securityContext.runAsNonRoot && has(%[1]s.securityContext.runAsUser) && %[1]s.securityContext.runAsUser == 65532 && has(%[1]s.securityContext.runAsGroup) && %[1]s.securityContext.runAsGroup == 65532 && !has(%[1]s.securityContext.fsGroup) && !has(%[1]s.securityContext.fsGroupChangePolicy) && !has(%[1]s.securityContext.supplementalGroups) && !has(%[1]s.securityContext.supplementalGroupsPolicy) && !has(%[1]s.securityContext.seLinuxOptions) && !has(%[1]s.securityContext.seLinuxChangePolicy) && !has(%[1]s.securityContext.windowsOptions) && !has(%[1]s.securityContext.appArmorProfile) && has(%[1]s.securityContext.seccompProfile) && %[1]s.securityContext.seccompProfile.type == "RuntimeDefault" && !has(%[1]s.securityContext.seccompProfile.localhostProfile) && (!has(%[1]s.securityContext.sysctls) || %[1]s.securityContext.sysctls.size() == 0)` $pod)
+      (printf `has(%s.containers) && %s.containers.size() == 1 && (!has(%s.initContainers) || %s.initContainers.size() == 0) && (!has(%s.ephemeralContainers) || %s.ephemeralContainers.size() == 0)` $pod $pod $pod $pod $pod $pod)
+      (printf `%s.name == (variables.isIdentity ? "identity-probe" : (variables.isPreflight ? "crd-manager-preflight" : (variables.isQuiesce ? "crd-manager-teardown-quiesce" : (variables.isTeardown ? "crd-manager-teardown" : "crd-manager"))))` $container)
+      (printf `%s.image == %q && %s.command == ["/ptah-crd-manager"] && %s.imagePullPolicy in ["Always", "IfNotPresent", "Never"]` $container $managerImage $container $container)
+      (printf `(variables.isIdentity && %s) || (variables.isPreflight && %s) || (variables.isQuiesce && %s) || (variables.isTeardown && %s) || (!variables.isIdentity && !variables.isPreflight && !variables.isQuiesce && !variables.isTeardown && request.name == %q && %s)` $identityArgs $preflightArgs $quiesceArgs $teardownArgs $reconcileJob $reconcileArgs)
+      (printf `!has(%[1]s.lifecycle) && (!has(%[1]s.env) || %[1]s.env.size() == 0) && (!has(%[1]s.envFrom) || %[1]s.envFrom.size() == 0) && (!has(%[1]s.ports) || %[1]s.ports.size() == 0) && !has(%[1]s.livenessProbe) && !has(%[1]s.readinessProbe) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "")` $container)
+      (printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.allowPrivilegeEscalation) && !%[1]s.securityContext.allowPrivilegeEscalation && has(%[1]s.securityContext.readOnlyRootFilesystem) && %[1]s.securityContext.readOnlyRootFilesystem && (!has(%[1]s.securityContext.privileged) || !%[1]s.securityContext.privileged) && !has(%[1]s.securityContext.runAsUser) && !has(%[1]s.securityContext.runAsGroup) && !has(%[1]s.securityContext.runAsNonRoot) && !has(%[1]s.securityContext.procMount) && !has(%[1]s.securityContext.seLinuxOptions) && !has(%[1]s.securityContext.windowsOptions) && !has(%[1]s.securityContext.seccompProfile) && !has(%[1]s.securityContext.appArmorProfile) && has(%[1]s.securityContext.capabilities) && (!has(%[1]s.securityContext.capabilities.add) || %[1]s.securityContext.capabilities.add.size() == 0) && has(%[1]s.securityContext.capabilities.drop) && %[1]s.securityContext.capabilities.drop == ["ALL"]` $container)
+      (printf `has(dyn(%[1]s.resources).requests) && dyn(%[1]s.resources).requests.size() == 2 && quantity(string(dyn(%[1]s.resources).requests["cpu"])).compareTo(quantity("5m")) == 0 && quantity(string(dyn(%[1]s.resources).requests["memory"])).compareTo(quantity("16Mi")) == 0 && has(dyn(%[1]s.resources).limits) && dyn(%[1]s.resources).limits.size() == 1 && quantity(string(dyn(%[1]s.resources).limits["memory"])).compareTo(quantity("32Mi")) == 0 && (!has(dyn(%[1]s.resources).claims) || dyn(%[1]s.resources).claims.size() == 0) && (!has(%[1]s.resizePolicy) || %[1]s.resizePolicy.size() == 0)` $container)
+      (printf `has(%[1]s.volumeMounts) && %[1]s.volumeMounts.size() == 1 && %[1]s.volumeMounts[0].name == "api-access" && %[1]s.volumeMounts[0].mountPath == "/var/run/secrets/kubernetes.io/serviceaccount" && has(%[1]s.volumeMounts[0].readOnly) && %[1]s.volumeMounts[0].readOnly && !has(%[1]s.volumeMounts[0].mountPropagation) && !has(%[1]s.volumeMounts[0].subPath) && !has(%[1]s.volumeMounts[0].subPathExpr) && !has(%[1]s.volumeMounts[0].recursiveReadOnly)` $container)
+      (printf `has(%s.volumes) && %s.volumes.size() == 1 && %s.name == "api-access" && has(%s.projected) && has(%s.projected.defaultMode) && %s.projected.defaultMode == 420 && %s.size() == 3` $pod $pod $volume $volume $volume $volume $sources)
+      (printf `%s.exists(s, has(s.serviceAccountToken) && s.serviceAccountToken.path == "token" && has(s.serviceAccountToken.expirationSeconds) && s.serviceAccountToken.expirationSeconds == 3600 && !has(s.serviceAccountToken.audience))` $sources)
+      (printf `%s.exists(s, has(s.configMap) && s.configMap.name == "kube-root-ca.crt" && has(s.configMap.items) && s.configMap.items.size() == 1 && s.configMap.items[0].key == "ca.crt" && s.configMap.items[0].path == "ca.crt" && !has(s.configMap.items[0].mode))` $sources)
+      (printf `%s.exists(s, has(s.downwardAPI) && has(s.downwardAPI.items) && s.downwardAPI.items.size() == 1 && s.downwardAPI.items[0].path == "namespace" && has(s.downwardAPI.items[0].fieldRef) && s.downwardAPI.items[0].fieldRef.apiVersion == "v1" && s.downwardAPI.items[0].fieldRef.fieldPath == "metadata.namespace" && !has(s.downwardAPI.items[0].mode))` $sources)
+      (printf `%s.all(s, has(s.serviceAccountToken) || has(s.configMap) || has(s.downwardAPI))` $sources)
+      (printf `(!has(%[1]s.imagePullSecrets) || (%[1]s.imagePullSecrets.all(secret, secret.name != "") && %[1]s.imagePullSecrets.all(secret, %[1]s.imagePullSecrets.filter(other, other.name == secret.name).size() == 1)))` $pod)
+      (printf `(!has(%s.dnsPolicy) || %s.dnsPolicy == "ClusterFirst") && !has(%s.dnsConfig) && (!has(%s.schedulerName) || %s.schedulerName == "default-scheduler") && (!has(%s.priority) || %s.priority == 0) && !has(%s.priorityClassName) && (!has(%s.preemptionPolicy) || %s.preemptionPolicy == "PreemptLowerPriority")` $pod $pod $pod $pod $pod $pod $pod $pod $pod $pod)
+      (printf `(!has(%s.terminationGracePeriodSeconds) || %s.terminationGracePeriodSeconds == 30) && (!has(%s.enableServiceLinks) || %s.enableServiceLinks) && (!has(%s.topologySpreadConstraints) || %s.topologySpreadConstraints.size() == 0) && !has(dyn(%s).overhead) && !has(%s.os)` $pod $pod $pod $pod $pod $pod $pod $pod) -}}
+
+{{- $replicaSetPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $replicaSetName -}}
+{{- $replicaSetBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $replicaSetName -}}
+{{- $hookOriginPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $hookOriginName -}}
+{{- $hookOriginBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $hookOriginName -}}
+{{- $hookPodOriginPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $hookPodOriginName -}}
+{{- $hookPodOriginBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $hookPodOriginName -}}
+{{- $hookContractPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $hookContractName -}}
+{{- $hookContractBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $hookContractName -}}
+{{- range $entry := list
+      (dict "kind" "ValidatingAdmissionPolicy" "object" $replicaSetPolicy "name" $replicaSetName "candidate" false)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $replicaSetBinding "name" $replicaSetName "candidate" false)
+      (dict "kind" "ValidatingAdmissionPolicy" "object" $hookOriginPolicy "name" $hookOriginName "candidate" false)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $hookOriginBinding "name" $hookOriginName "candidate" false)
+      (dict "kind" "ValidatingAdmissionPolicy" "object" $hookPodOriginPolicy "name" $hookPodOriginName "candidate" false)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $hookPodOriginBinding "name" $hookPodOriginName "candidate" false)
+      (dict "kind" "ValidatingAdmissionPolicy" "object" $hookContractPolicy "name" $hookContractName "candidate" true)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $hookContractBinding "name" $hookContractName "candidate" true) -}}
+{{- with $entry.object -}}
+{{- $annotations := default (dict) .metadata.annotations -}}
+{{- $labels := default (dict) .metadata.labels -}}
+{{- if or
+      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
+      (and $entry.candidate (ne (default "" (index $annotations "operator.ptah.dev/release-sequence")) $sequence))
+      (and $entry.candidate (ne (default "" (index $annotations "operator.ptah.dev/manager-image")) $managerImage))
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
+      (ne (default "" (index $labels "app.kubernetes.io/component")) "parent-workload-guard") -}}
+{{- fail (printf "retained %s %s has foreign or incomplete parent-workload ownership" $entry.kind $entry.name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- if not $replicaSetPolicy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $replicaSetName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-139"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: parent-workload-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["replicasets"]
+        scope: Namespaced
+  matchConditions:
+    - name: protected-runtime-service-account
+      expression: {{ $replicaSetMatch | quote }}
+  variables:
+    - name: owner
+      expression: 'object.metadata.ownerReferences[0]'
+    - name: hash
+      expression: 'object.metadata.labels["pod-template-hash"]'
+    - name: isController
+      expression: {{ printf `object.spec.template.spec.serviceAccountName == %q` $controllerServiceAccount | quote }}
+    - name: expectedDeployment
+      expression: {{ printf `object.spec.template.spec.serviceAccountName == %q ? %q : %q` $controllerServiceAccount $controllerDeployment $certificateDeployment | quote }}
+    - name: expectedComponent
+      expression: {{ printf `object.spec.template.spec.serviceAccountName == %q ? "controller" : "certificate-rotation"` $controllerServiceAccount | quote }}
+  validations:
+    {{- range $expression := $replicaSetValidations }}
+    - expression: {{ $expression | quote }}
+      message: {{ $replicaSetMessage | quote }}
+    {{- end }}
+---
+{{- end }}
+{{- if not $replicaSetBinding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $replicaSetName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-138"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: parent-workload-guard
+spec:
+  policyName: {{ $replicaSetName }}
+  validationActions: [Deny]
+---
+{{- end }}
+{{- if not $hookOriginPolicy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $hookOriginName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-137"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: parent-workload-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+        scope: Namespaced
+  matchConditions:
+    - name: release-hook-service-account-pattern
+      expression: {{ $hookOriginMatch | quote }}
+  validations:
+    - expression: 'request.subResource == ""'
+      message: {{ $hookOriginMessage | quote }}
+    - expression: {{ printf `object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q)` $hookPattern $teardownPattern | quote }}
+      message: {{ $hookOriginMessage | quote }}
+    - expression: {{ $hookAuthority | quote }}
+      message: {{ $hookOriginMessage | quote }}
+---
+{{- end }}
+{{- if not $hookOriginBinding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $hookOriginName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-136"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: parent-workload-guard
+spec:
+  policyName: {{ $hookOriginName }}
+  validationActions: [Deny]
+---
+{{- end }}
+{{- if not $hookPodOriginPolicy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $hookPodOriginName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-135"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: parent-workload-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+        scope: Namespaced
+  matchConditions:
+    - name: release-hook-service-account-pattern
+      expression: {{ $hookPodOriginMatch | quote }}
+  variables:
+    - name: owner
+      expression: 'object.metadata.ownerReferences[0]'
+  validations:
+    {{- range $expression := $hookPodOriginValidations }}
+    - expression: {{ $expression | quote }}
+      message: {{ $hookPodOriginMessage | quote }}
+    {{- end }}
+---
+{{- end }}
+{{- if not $hookPodOriginBinding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $hookPodOriginName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-134"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: parent-workload-guard
+spec:
+  policyName: {{ $hookPodOriginName }}
+  validationActions: [Deny]
+---
+{{- end }}
+{{- if not $hookContractPolicy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $hookContractName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-133"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: parent-workload-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+        scope: Namespaced
+  matchConditions:
+    - name: candidate-hook-service-account
+      expression: {{ printf `request.namespace == %q && object.spec.template.spec.serviceAccountName in [%q, %q]` .Release.Namespace $hookServiceAccount $teardownServiceAccount | quote }}
+  variables:
+    - name: isIdentity
+      expression: {{ printf `request.name == %q` $identityJob | quote }}
+    - name: isPreflight
+      expression: {{ printf `request.name == %q` $preflightJob | quote }}
+    - name: isQuiesce
+      expression: {{ printf `request.name == %q` $quiesceJob | quote }}
+    - name: isTeardown
+      expression: {{ printf `request.name == %q` $teardownJob | quote }}
+  validations:
+    {{- range $expression := $hookContractValidations }}
+    - expression: {{ $expression | quote }}
+      message: {{ $hookContractMessage | quote }}
+    {{- end }}
+---
+{{- end }}
+{{- if not $hookContractBinding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $hookContractName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-132"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: parent-workload-guard
+spec:
+  policyName: {{ $hookContractName }}
+  validationActions: [Deny]
+{{- end }}

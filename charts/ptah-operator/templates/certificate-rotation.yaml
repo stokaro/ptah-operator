@@ -113,6 +113,15 @@ rules:
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames:
+      - {{ include "ptah-operator.serviceAccountName" . }}
+      - {{ $rotatorName }}
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -137,6 +146,13 @@ metadata:
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    resourceNames:
+      - ptahschemaapprovals.operator.ptah.dev
+      - ptahschemaplans.operator.ptah.dev
+      - ptahschemas.operator.ptah.dev
+    verbs: ["get"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
     resourceNames: [{{ $configurationName | quote }}]
@@ -145,6 +161,24 @@ rules:
     resources: ["validatingwebhookconfigurations"]
     resourceNames: [{{ $configurationName | quote }}]
     verbs: ["get", "update"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    resourceNames:
+      - {{ include "ptah-operator.rolloutGuardPolicyName" . }}
+      - {{ include "ptah-operator.runtimeGuardPolicyName" . }}
+      - {{ include "ptah-operator.runtimePodGuardPolicyName" . }}
+      - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
+      - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
+      - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
+      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+    verbs: ["get"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list"]
   {{- if .Values.certificateRotation.recreateMissingSecret }}
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
@@ -172,6 +206,9 @@ kind: Deployment
 metadata:
   name: {{ $rotatorName }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+    operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: certificate-rotation
@@ -187,12 +224,16 @@ spec:
       app.kubernetes.io/component: certificate-rotation
   template:
     metadata:
+      annotations:
+        operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+        operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
       labels:
         {{- include "ptah-operator.labels" . | nindent 8 }}
         app.kubernetes.io/component: certificate-rotation
     spec:
       serviceAccountName: {{ $rotatorName }}
-      automountServiceAccountToken: true
+      automountServiceAccountToken: false
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -203,41 +244,39 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      initContainers:
+        - name: verify-candidate-runtime
+          image: {{ include "ptah-operator.managerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          args:
+            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "runtime-verify" "timeout" "60s" "verifyControllerState" false) | fromJsonArray) }}
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
       containers:
         - name: certificate-rotator
           image: {{ include "ptah-operator.managerImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/ptah-cert-rotator"]
           args:
-            - --namespace={{ .Release.Namespace }}
-            - --secret-name={{ $secretName }}
-            {{- if .Values.certificateRotation.recreateMissingSecret }}
-            - --recreate-missing-secret=true
-            - --secret-create-policy-name={{ $rotatorName }}
-            - --secret-create-policy-binding-name={{ $rotatorName }}
-            - --secret-create-service-account-name={{ $rotatorName }}
+            {{- range (include "ptah-operator.certificateRuntimeArgsJSON" . | fromJsonArray) }}
+            - {{ . | quote }}
             {{- end }}
-            - --lease-name={{ $leaseName }}
-            - --mutating-webhook-configuration={{ $configurationName }}
-            - --mutating-webhook-names=mapproval.operator.ptah.dev
-            - --validating-webhook-configuration={{ $configurationName }}
-            - --validating-webhook-names=vapproval.operator.ptah.dev,vpodintent.operator.ptah.dev
-            - --service-name={{ $serviceName }}
-            - --service-namespace={{ .Release.Namespace }}
-            - --endpoint-port-name=https
-            - --holder-identity=$(POD_NAME)/$(POD_UID)
-            - --run-interval={{ .Values.certificateRotation.interval }}
-            - --operation-timeout={{ .Values.certificateRotation.operationTimeout }}
-            - --retry-initial={{ .Values.certificateRotation.retryInitial }}
-            - --retry-max={{ .Values.certificateRotation.retryMax }}
-            - --health-bind-address=:{{ .Values.certificateRotation.healthPort }}
-            - --renewal-threshold={{ .Values.certificateRotation.renewalThreshold }}
-            - --serving-certificate-validity={{ .Values.certificateRotation.servingCertificateValidity }}
-            - --ca-certificate-validity={{ .Values.certificateRotation.caCertificateValidity }}
-            - --probe-timeout={{ .Values.certificateRotation.probeTimeout }}
-            - --probe-interval={{ .Values.certificateRotation.probeInterval }}
-            - --lease-duration={{ .Values.certificateRotation.leaseDuration }}
-            - --lease-acquire-timeout={{ .Values.certificateRotation.leaseAcquireTimeout }}
           env:
             - name: POD_NAME
               valueFrom:
@@ -273,8 +312,31 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
           resources:
             {{- toYaml .Values.certificateRotation.resources | nindent 12 }}
+      volumes:
+        - name: api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        apiVersion: v1
+                        fieldPath: metadata.namespace
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

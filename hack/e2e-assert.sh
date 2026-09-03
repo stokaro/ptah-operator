@@ -13,6 +13,9 @@ HELM_RELEASE=${E2E_HELM_RELEASE:-}
 EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 PTAH_VERSION=${E2E_PTAH_VERSION:-}
+CONTROLLER_IMAGE=${E2E_CONTROLLER_IMAGE:-}
+CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:-}
+CONTROLLER_STATE_VERSION=${E2E_CONTROLLER_STATE_VERSION:-}
 
 fail() {
 	printf 'e2e assertions: %s\n' "$*" >&2
@@ -27,10 +30,28 @@ sha256_file() {
 	shasum -a 256 "$1" | awk '{print $1}'
 }
 
-for value_name in KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE FOREIGN_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE RUNNER_IMAGE PTAH_VERSION; do
+sha256_stdin() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum | awk '{print $1}'
+		return
+	fi
+	shasum -a 256 | awk '{print $1}'
+}
+
+for value_name in KUBECONFIG_FILE OPERATOR_NAMESPACE TEST_NAMESPACE FOREIGN_NAMESPACE HELM_RELEASE EXECUTOR_IMAGE RUNNER_IMAGE PTAH_VERSION CONTROLLER_IMAGE CONTROLLER_REVISION CONTROLLER_STATE_VERSION; do
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
 done
+[ "$(printf '%s' "$CONTROLLER_REVISION" | wc -c | tr -d '[:space:]')" -le 128 ] ||
+	fail "E2E_CONTROLLER_REVISION must be at most 128 bytes"
+[ "$CONTROLLER_REVISION" = "$(printf '%s' "$CONTROLLER_REVISION" | tr -d '[:cntrl:]')" ] ||
+	fail "E2E_CONTROLLER_REVISION must not contain control characters"
+printf '%s' "$CONTROLLER_REVISION" | grep -Eq '^[^[:space:]](.*[^[:space:]])?$' ||
+	fail "E2E_CONTROLLER_REVISION must not be empty or have edge whitespace"
+printf '%s\n' "$CONTROLLER_IMAGE" | grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$' ||
+	fail "E2E_CONTROLLER_IMAGE must be pinned by a lowercase SHA-256 digest"
+printf '%s\n' "$CONTROLLER_STATE_VERSION" | grep -Eq '^[1-9][0-9]*$' ||
+	fail "E2E_CONTROLLER_STATE_VERSION must be a positive integer"
 [ -f "$KUBECONFIG_FILE" ] || fail "E2E_KUBECONFIG does not name a file"
 [ "$TEST_NAMESPACE" != "$FOREIGN_NAMESPACE" ] ||
 	fail "E2E_TEST_NAMESPACE and E2E_FOREIGN_NAMESPACE must differ"
@@ -233,11 +254,12 @@ foreign_approval_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-foreign-approval.XXXXXX
 error_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-error.XXXXXX")
 webhook_scope_job_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-webhook-job.XXXXXX")
 webhook_scope_event_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-webhook-events.XXXXXX")
-chmod 600 "$webhook_scope_job_file" "$webhook_scope_event_file"
+webhook_deployment_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-webhook-deployment.XXXXXX")
+chmod 600 "$webhook_scope_job_file" "$webhook_scope_event_file" "$webhook_deployment_file"
 WEBHOOK_UNRELATED_JOB=e2e-webhook-unrelated
 WEBHOOK_OUTAGE_JOB=e2e-webhook-managed-outage
 WEBHOOK_SPOOF_JOB=e2e-webhook-foreign-spoof
-WEBHOOK_DEPLOYMENT_SCALED=0
+WEBHOOK_DEPLOYMENT_STOPPED=0
 WEBHOOK_ORIGINAL_REPLICAS=
 
 delete_webhook_scope_fixtures() {
@@ -253,16 +275,17 @@ webhook_service_ready() {
 }
 
 restore_webhook_deployment() {
-	[ "$WEBHOOK_DEPLOYMENT_SCALED" -eq 1 ] || return 0
+	[ "$WEBHOOK_DEPLOYMENT_STOPPED" -eq 1 ] || return 0
 	[ -n "$WEBHOOK_ORIGINAL_REPLICAS" ] || return 1
-	k -n "$OPERATOR_NAMESPACE" scale deployment/"$CONTROLLER_NAME" \
-		--replicas="$WEBHOOK_ORIGINAL_REPLICAS" >/dev/null || return 1
+	if ! k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" >/dev/null 2>&1; then
+		k create -f "$webhook_deployment_file" >/dev/null || return 1
+	fi
 	k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" \
 		--timeout=180s >/dev/null || return 1
 	restore_deadline=$(($(date +%s) + 60))
 	while [ "$(date +%s)" -lt "$restore_deadline" ]; do
 		if webhook_service_ready; then
-			WEBHOOK_DEPLOYMENT_SCALED=0
+			WEBHOOK_DEPLOYMENT_STOPPED=0
 			return 0
 		fi
 		sleep 1
@@ -283,7 +306,7 @@ cleanup_files() {
 		"$invalid_approval_file" \
 		"$missing_fingerprint_file" "$foreign_plan_file" "$foreign_approval_file" \
 		"$error_file" "$error_file.stdout" "$webhook_scope_job_file" \
-		"$webhook_scope_event_file"
+		"$webhook_scope_event_file" "$webhook_deployment_file"
 	exit "$status"
 }
 trap cleanup_files EXIT
@@ -396,19 +419,29 @@ WEBHOOK_ORIGINAL_REPLICAS=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLL
 	-o json | jq -er '.spec.replicas // 1')
 printf '%s\n' "$WEBHOOK_ORIGINAL_REPLICAS" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "webhook Deployment does not have a positive replica count"
-WEBHOOK_DEPLOYMENT_SCALED=1
-k -n "$OPERATOR_NAMESPACE" scale deployment/"$CONTROLLER_NAME" --replicas=0 >/dev/null
+k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
+	jq 'del(
+      .metadata.creationTimestamp,
+      .metadata.generation,
+      .metadata.managedFields,
+      .metadata.resourceVersion,
+      .metadata.uid,
+      .metadata.annotations."deployment.kubernetes.io/revision",
+      .status
+    )' >"$webhook_deployment_file"
+WEBHOOK_DEPLOYMENT_STOPPED=1
+k -n "$OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_NAME" \
+	--cascade=foreground --wait=true >/dev/null
 outage_deadline=$(($(date +%s) + 180))
 while [ "$(date +%s)" -lt "$outage_deadline" ]; do
-	if k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
-		jq -e '(.status.replicas // 0) == 0 and (.status.availableReplicas // 0) == 0' \
-			>/dev/null && ! webhook_service_ready; then
+	if ! k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" \
+		>/dev/null 2>&1 && ! webhook_service_ready; then
 		break
 	fi
 	sleep 1
 done
 if webhook_service_ready; then
-	fail "webhook Service retained a ready endpoint after the Deployment scaled to zero"
+	fail "webhook Service retained a ready endpoint after the Deployment was removed"
 fi
 
 write_webhook_scope_job "$WEBHOOK_UNRELATED_JOB" false
@@ -523,10 +556,46 @@ exclude_jobs_after=$(k -n "$TEST_NAMESPACE" get jobs -o json |
 k create -f "$schema_file" >/dev/null
 k -n "$TEST_NAMESPACE" wait --for=jsonpath='{.status.phase}'=Suspended \
 	ptahschema/"$SCHEMA_NAME" --timeout=90s
-schema_uid=$(k -n "$TEST_NAMESPACE" get ptahschema "$SCHEMA_NAME" -o jsonpath='{.metadata.uid}')
-schema_generation=$(k -n "$TEST_NAMESPACE" get ptahschema "$SCHEMA_NAME" -o jsonpath='{.metadata.generation}')
+schema_object=$(k -n "$TEST_NAMESPACE" get ptahschema "$SCHEMA_NAME" -o json)
+schema_uid=$(printf '%s\n' "$schema_object" | jq -er '.metadata.uid')
+schema_generation=$(printf '%s\n' "$schema_object" | jq -er '.metadata.generation')
+if ! execution_binding=$(printf '%s\n' "$schema_object" | jq -ce \
+	--arg controllerImage "$CONTROLLER_IMAGE" \
+	--arg controllerRevision "$CONTROLLER_REVISION" \
+	--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
+	--arg ptahVersion "$PTAH_VERSION" \
+	--arg executorImage "$EXECUTOR_IMAGE" \
+	--arg runnerImage "$RUNNER_IMAGE" '
+    .status.executionBinding as $binding |
+    select(
+      ($binding.epoch | test("^v1-[0-9a-f]{32}$")) and
+      $binding.controllerImage == $controllerImage and
+      $binding.controllerRevision == $controllerRevision and
+      $binding.controllerStateVersion == $controllerStateVersion and
+      $binding.ptahVersion == $ptahVersion and
+      $binding.executorImage == $executorImage and
+      $binding.runnerImage == $runnerImage and
+      ($binding.runnerProtocolVersion | type == "number" and . == 4)
+    ) | $binding
+  '); then
+	fail "suspended schema lacks the exact seven-field controller/runtime execution binding"
+fi
+execution_binding_id=$(printf '%s\n' "$execution_binding" | jq -er '.epoch')
+controller_image=$(printf '%s\n' "$execution_binding" | jq -er '.controllerImage')
+controller_revision=$(printf '%s\n' "$execution_binding" | jq -er '.controllerRevision')
+controller_state_version=$(printf '%s\n' "$execution_binding" | jq -er '.controllerStateVersion')
+deployed_controller_image=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
+	jq -er '
+      [.spec.template.spec.containers[] | select(.name == "manager").args[]? |
+        select(startswith("--controller-image=")) | ltrimstr("--controller-image=")] as $images |
+      if ($images | length) == 1 then $images[0]
+      else error("manager must have exactly one --controller-image argument") end
+    ')
+[ "$controller_image" = "$deployed_controller_image" ] ||
+	fail "schema execution binding does not match the manager's exact controller image argument"
+[ "$deployed_controller_image" = "$CONTROLLER_IMAGE" ] ||
+	fail "manager controller image argument does not match the externally expected image identity"
 
-plan_fingerprint=sha256:1111111111111111111111111111111111111111111111111111111111111111
 artifact_digest=sha256:2222222222222222222222222222222222222222222222222222222222222222
 content_digest=sha256:2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881
 coordination_digest=sha256:a039cc1dcc29e539b94d48451d5b4b5fa2b2eebc7927f5c4e106679b98479725
@@ -536,6 +605,48 @@ drift_report_digest=sha256:99999999999999999999999999999999999999999999999999999
 desired_fingerprint=sha256:6666666666666666666666666666666666666666666666666666666666666666
 policy_fingerprint=sha256:7777777777777777777777777777777777777777777777777777777777777777
 created_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+plan_binding_json=$(jq -cn \
+	--arg schemaUID "$schema_uid" \
+	--arg contentDigest "$content_digest" \
+	--arg artifactDigest "$artifact_digest" \
+	--arg coordinationDigest "$coordination_digest" \
+	--arg targetDigest "$target_digest" \
+	--arg actualFingerprint "$actual_fingerprint" \
+	--arg desiredFingerprint "$desired_fingerprint" \
+	--arg policyFingerprint "$policy_fingerprint" \
+	--arg verificationPolicyUID "$policy_uid" \
+	--arg verificationPolicyDigest "$policy_digest" \
+	--arg executionBindingID "$execution_binding_id" \
+	--arg controllerImage "$controller_image" \
+	--arg controllerRevision "$controller_revision" \
+	--argjson controllerStateVersion "$controller_state_version" \
+	--arg ptahVersion "$PTAH_VERSION" \
+	--arg executorImage "$EXECUTOR_IMAGE" \
+	--arg runnerImage "$RUNNER_IMAGE" '
+  {
+    contract_version: 3,
+    schema_uid: $schemaUID,
+    plan_content_digest: $contentDigest,
+    artifact_digest: $artifactDigest,
+    coordination_digest: $coordinationDigest,
+    target_identity_digest: $targetDigest,
+    actual_state_fingerprint: $actualFingerprint,
+    desired_state_fingerprint: $desiredFingerprint,
+    policy_fingerprint: $policyFingerprint,
+    verification_policy_uid: $verificationPolicyUID,
+    verification_policy_digest: $verificationPolicyDigest,
+    execution_binding_id: $executionBindingID,
+    controller_image: $controllerImage,
+    controller_revision: $controllerRevision,
+    controller_state_version: $controllerStateVersion,
+    ptah_version: $ptahVersion,
+    executor_image: $executorImage,
+    runner_image: $runnerImage,
+    runner_protocol_version: 4
+  }
+')
+plan_fingerprint="sha256:$(printf '%s' "$plan_binding_json" | sha256_stdin)"
 
 jq -n \
 	--arg namespace "$TEST_NAMESPACE" \
@@ -553,6 +664,10 @@ jq -n \
 	--arg policyFingerprint "$policy_fingerprint" \
 	--arg verificationPolicyUID "$policy_uid" \
 	--arg verificationPolicyDigest "$policy_digest" \
+	--arg executionBindingID "$execution_binding_id" \
+	--arg controllerImage "$controller_image" \
+	--arg controllerRevision "$controller_revision" \
+	--argjson controllerStateVersion "$controller_state_version" \
 	--arg ptahVersion "$PTAH_VERSION" \
 	--arg executorImage "$EXECUTOR_IMAGE" \
 	--arg runnerImage "$RUNNER_IMAGE" '
@@ -573,7 +688,7 @@ jq -n \
       }]
     },
     spec: {
-      contractVersion: 1,
+      contractVersion: 3,
       schemaRef: {name: $schemaName, uid: $schemaUID},
       fingerprint: $fingerprint,
       contentDigest: $contentDigest,
@@ -586,6 +701,10 @@ jq -n \
       policyFingerprint: $policyFingerprint,
       verificationPolicyUID: $verificationPolicyUID,
       verificationPolicyDigest: $verificationPolicyDigest,
+      executionBindingID: $executionBindingID,
+      controllerImage: $controllerImage,
+      controllerRevision: $controllerRevision,
+      controllerStateVersion: $controllerStateVersion,
       ptahVersion: $ptahVersion,
       executorImage: $executorImage,
       runnerImage: $runnerImage,
@@ -671,6 +790,10 @@ schema_status=$(jq -n \
 	--arg policyFingerprint "$policy_fingerprint" \
 	--arg verificationPolicyUID "$policy_uid" \
 	--arg verificationPolicyDigest "$policy_digest" \
+	--arg executionBindingID "$execution_binding_id" \
+	--arg controllerImage "$controller_image" \
+	--arg controllerRevision "$controller_revision" \
+	--argjson controllerStateVersion "$controller_state_version" \
 	--arg ptahVersion "$PTAH_VERSION" \
 	--arg executorImage "$EXECUTOR_IMAGE" \
 	--arg runnerImage "$RUNNER_IMAGE" \
@@ -718,6 +841,10 @@ schema_status=$(jq -n \
       policyFingerprint: $policyFingerprint,
       verificationPolicyUID: $verificationPolicyUID,
       verificationPolicyDigest: $verificationPolicyDigest,
+      executionBindingID: $executionBindingID,
+      controllerImage: $controllerImage,
+      controllerRevision: $controllerRevision,
+      controllerStateVersion: $controllerStateVersion,
       ptahVersion: $ptahVersion,
       executorImage: $executorImage,
       runnerImage: $runnerImage,
@@ -766,6 +893,10 @@ k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
 		--arg policyFingerprint "$policy_fingerprint" \
 		--arg verificationPolicyUID "$policy_uid" \
 		--arg verificationPolicyDigest "$policy_digest" \
+		--arg executionBindingID "$execution_binding_id" \
+		--arg controllerImage "$controller_image" \
+		--arg controllerRevision "$controller_revision" \
+		--argjson controllerStateVersion "$controller_state_version" \
 		--arg ptahVersion "$PTAH_VERSION" \
 		--arg executorImage "$EXECUTOR_IMAGE" \
 		--arg runnerImage "$RUNNER_IMAGE" '
@@ -780,6 +911,10 @@ k -n "$TEST_NAMESPACE" get ptahschemaapproval "$APPROVAL_NAME" -o json |
       .spec.policyFingerprint == $policyFingerprint and
       .spec.verificationPolicyUID == $verificationPolicyUID and
       .spec.verificationPolicyDigest == $verificationPolicyDigest and
+      .spec.executionBindingID == $executionBindingID and
+      .spec.controllerImage == $controllerImage and
+      .spec.controllerRevision == $controllerRevision and
+      .spec.controllerStateVersion == $controllerStateVersion and
       .spec.ptahVersion == $ptahVersion and
       .spec.executorImage == $executorImage and
       .spec.runnerImage == $runnerImage and
@@ -822,6 +957,13 @@ jq --arg name e2e-conflicting-artifact \
   ' "$approval_file" >"$invalid_approval_file"
 expect_denied "approval with a conflicting derived artifact binding" \
 	'artifact digest conflicts with the immutable plan' \
+	"$invalid_approval_file" "$error_file"
+jq --arg name e2e-conflicting-controller-image \
+	--arg image 'e2e.invalid/manager@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' '
+    .metadata.name = $name | .spec.controllerImage = $image
+  ' "$approval_file" >"$invalid_approval_file"
+expect_denied "approval with a conflicting controller image binding" \
+	'controller image conflicts with the immutable plan' \
 	"$invalid_approval_file" "$error_file"
 # Version 3 is the immediately previous runner contract and must not be
 # accepted against a version-4 immutable plan.

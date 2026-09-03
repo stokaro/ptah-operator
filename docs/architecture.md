@@ -74,6 +74,8 @@ or RBAC failure therefore retries the transition instead of orphaning the Job.
 - credential-free database route identity;
 - observed and desired state fingerprints;
 - reconciliation policy and verification-policy bytes;
+- digest-pinned manager image, exact manager revision, and controller-state
+  contract version;
 - Ptah version and digest-pinned executor image;
 - runner image and protocol version;
 - exact plan content digest.

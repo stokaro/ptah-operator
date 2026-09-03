@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,238 @@ func TestYAMLScalars(t *testing.T) {
 	if err != nil || tag != "0.2.0-rc.1" {
 		t.Fatalf("nestedScalar() = %q, %v", tag, err)
 	}
+}
+
+func TestCurrentReleaseSequenceContractMatchesHistory(t *testing.T) {
+	t.Parallel()
+
+	root := filepath.Join("..", "..")
+	read := func(path string) []byte {
+		t.Helper()
+		document, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return document
+	}
+	chart := read("charts/ptah-operator/Chart.yaml")
+	values := read("charts/ptah-operator/values.yaml")
+	contract, err := currentReleaseContract(
+		mustTopLevelScalar(t, chart, "version"),
+		mustTopLevelScalar(t, chart, "appVersion"),
+		values,
+		read(releaseSequenceHelperPath),
+		read(releaseSequenceGoPath),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	history, err := decodeReleaseSequenceHistory("candidate", read(releaseSequenceHistoryPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyCandidateReleaseContract(history, contract); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReleaseSequenceParsersRequireExactParity(t *testing.T) {
+	t.Parallel()
+
+	helper := []byte("{{- define \"ptah-operator.releaseSequence\" -}}12{{- end -}}\n")
+	goSource := []byte("package crdupgrade\nconst CurrentReleaseSequence int32 = 12\n")
+	if sequence, err := helmReleaseSequence(helper); err != nil || sequence != 12 {
+		t.Fatalf("helmReleaseSequence() = %d, %v", sequence, err)
+	}
+	if sequence, err := goReleaseSequence(goSource); err != nil || sequence != 12 {
+		t.Fatalf("goReleaseSequence() = %d, %v", sequence, err)
+	}
+	if _, err := currentReleaseContract(
+		"1.2.0", "1.2.0",
+		[]byte("image:\n  repository: example.invalid/operator\n  tag: 1.2.0\n"),
+		helper,
+		[]byte("package crdupgrade\nconst CurrentReleaseSequence int32 = 11\n"),
+	); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("currentReleaseContract() error = %v, want parity rejection", err)
+	}
+
+	for name, document := range map[string][]byte{
+		"Helm expression":  []byte("{{- define \"ptah-operator.releaseSequence\" -}}{{ add 1 1 }}{{- end -}}\n"),
+		"Go inferred type": []byte("package crdupgrade\nconst CurrentReleaseSequence = 12\n"),
+		"Go expression":    []byte("package crdupgrade\nconst CurrentReleaseSequence int32 = 6 + 6\n"),
+		"Go zero":          []byte("package crdupgrade\nconst CurrentReleaseSequence int32 = 0\n"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var err error
+			if strings.HasPrefix(name, "Helm") {
+				_, err = helmReleaseSequence(document)
+			} else {
+				_, err = goReleaseSequence(document)
+			}
+			if err == nil {
+				t.Fatal("release sequence parser accepted a non-canonical contract")
+			}
+		})
+	}
+}
+
+func TestReleaseSequenceHistoryTransitions(t *testing.T) {
+	t.Parallel()
+
+	baselineRelease := releaseContract{
+		Version:                "0.1.0",
+		AppVersion:             "0.1.0",
+		ManagerImageRepository: "example.invalid/operator",
+		ManagerImageTag:        "0.1.0",
+		ReleaseSequence:        4,
+	}
+	nextRelease := releaseContract{
+		Version:                "0.2.0",
+		AppVersion:             "0.2.0",
+		ManagerImageRepository: "example.invalid/operator-v2",
+		ManagerImageTag:        "0.2.0",
+		ReleaseSequence:        5,
+	}
+	baseline := releaseSequenceHistory{FormatVersion: 1, Releases: []releaseContract{baselineRelease}}
+
+	for name, test := range map[string]struct {
+		candidate releaseSequenceHistory
+		wantError string
+	}{
+		"unchanged metadata keeps sequence": {
+			candidate: releaseSequenceHistory{FormatVersion: 1, Releases: []releaseContract{baselineRelease}},
+		},
+		"new version and image contract increases sequence": {
+			candidate: releaseSequenceHistory{FormatVersion: 1, Releases: []releaseContract{baselineRelease, nextRelease}},
+		},
+		"same sequence for new contract": {
+			candidate: releaseSequenceHistory{FormatVersion: 1, Releases: []releaseContract{
+				baselineRelease,
+				withReleaseSequence(nextRelease, baselineRelease.ReleaseSequence),
+			}},
+			wantError: "must strictly increase",
+		},
+		"decreased sequence for new contract": {
+			candidate: releaseSequenceHistory{FormatVersion: 1, Releases: []releaseContract{
+				baselineRelease,
+				withReleaseSequence(nextRelease, baselineRelease.ReleaseSequence-1),
+			}},
+			wantError: "must strictly increase",
+		},
+		"published entry rewrite": {
+			candidate: releaseSequenceHistory{FormatVersion: 1, Releases: []releaseContract{
+				withReleaseSequence(baselineRelease, baselineRelease.ReleaseSequence+1),
+			}},
+			wantError: "rewrote published entry",
+		},
+		"published entry removal": {
+			candidate: releaseSequenceHistory{FormatVersion: 1, Releases: nil},
+			wantError: "removed published entries",
+		},
+		"multiple releases in one transition": {
+			candidate: releaseSequenceHistory{FormatVersion: 1, Releases: []releaseContract{
+				baselineRelease,
+				nextRelease,
+				{
+					Version:                "0.3.0",
+					AppVersion:             "0.3.0",
+					ManagerImageRepository: "example.invalid/operator-v3",
+					ManagerImageTag:        "0.3.0",
+					ReleaseSequence:        6,
+				},
+			}},
+			wantError: "exactly one release",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			err := verifyReleaseSequenceTransition(baseline, test.candidate)
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyReleaseSequenceTransition() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestReleaseSequenceHistoryRejectsInvalidOrNonCanonicalRecords(t *testing.T) {
+	t.Parallel()
+
+	release := releaseContract{
+		Version:                "1.0.0",
+		AppVersion:             "1.0.0",
+		ManagerImageRepository: "example.invalid/operator",
+		ManagerImageTag:        "1.0.0",
+		ReleaseSequence:        1,
+	}
+	valid := releaseSequenceHistory{FormatVersion: 1, Releases: []releaseContract{release}}
+	validDocument, err := canonicalReleaseSequenceHistory(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeReleaseSequenceHistory("candidate", validDocument); err != nil {
+		t.Fatal(err)
+	}
+
+	wrongTag := valid
+	wrongTag.Releases = append([]releaseContract(nil), valid.Releases...)
+	wrongTag.Releases[0].ManagerImageTag = "latest"
+	wrongTagDocument, err := canonicalReleaseSequenceHistory(wrongTag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeReleaseSequenceHistory("candidate", wrongTagDocument); err == nil || !strings.Contains(err.Error(), "manager image tag") {
+		t.Fatalf("decodeReleaseSequenceHistory() error = %v, want image-tag rejection", err)
+	}
+
+	nonCanonical := append([]byte(" \n"), validDocument...)
+	if _, err := decodeReleaseSequenceHistory("candidate", nonCanonical); err == nil || !strings.Contains(err.Error(), "canonical JSON") {
+		t.Fatalf("decodeReleaseSequenceHistory() error = %v, want canonical rejection", err)
+	}
+
+	unknownField := bytes.Replace(validDocument, []byte("\"formatVersion\": 1"), []byte("\"formatVersion\": 1,\n  \"unexpected\": true"), 1)
+	if _, err := decodeReleaseSequenceHistory("candidate", unknownField); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("decodeReleaseSequenceHistory() error = %v, want unknown-field rejection", err)
+	}
+}
+
+func TestCompareReleaseVersions(t *testing.T) {
+	t.Parallel()
+
+	for _, pair := range [][2]string{
+		{"0.1.0-rc.1", "0.1.0"},
+		{"0.1.0-rc.1", "0.1.0-rc.2"},
+		{"0.1.9", "0.2.0"},
+		{"1.9.9", "2.0.0"},
+	} {
+		order, err := compareReleaseVersions(pair[0], pair[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if order >= 0 {
+			t.Fatalf("compareReleaseVersions(%q, %q) = %d, want less than zero", pair[0], pair[1], order)
+		}
+	}
+}
+
+func mustTopLevelScalar(t *testing.T, document []byte, key string) string {
+	t.Helper()
+	value, err := topLevelScalar(document, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
+func withReleaseSequence(release releaseContract, sequence uint64) releaseContract {
+	release.ReleaseSequence = sequence
+	return release
 }
 
 func TestGoToolchain(t *testing.T) {
@@ -114,6 +347,8 @@ func TestVerifyDockerfileRequiresPinnedFrontendAndBases(t *testing.T) {
 	digest := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 	valid := []byte("# syntax=docker/dockerfile:1.7@" + digest + "\n" +
 		"FROM --platform=$BUILDPLATFORM golang:1.27.0-alpine@" + digest + " AS builder\n" +
+		"ARG REVISION\n" +
+		"RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags=\"-s -w -X main.controllerRevision=${REVISION}\" -o /out/manager ./cmd/manager\n" +
 		"FROM gcr.io/distroless/static-debian13:nonroot@" + digest + "\n" +
 		"LABEL org.opencontainers.image.source=x org.opencontainers.image.revision=y org.opencontainers.image.version=z\n")
 	if err := verifyDockerfile(valid, "1.27.0"); err != nil {
@@ -122,6 +357,33 @@ func TestVerifyDockerfileRequiresPinnedFrontendAndBases(t *testing.T) {
 	mutableFrontend := []byte("# syntax=docker/dockerfile:1.7\n" + string(valid[strings.Index(string(valid), "FROM"):]))
 	if err := verifyDockerfile(mutableFrontend, "1.27.0"); err == nil {
 		t.Fatal("verifyDockerfile() accepted a mutable syntax frontend")
+	}
+	for name, mutation := range map[string]struct {
+		old string
+		new string
+	}{
+		"missing builder revision argument": {
+			old: "ARG REVISION\n",
+			new: "",
+		},
+		"revision used only as an OCI label": {
+			old: `-ldflags="-s -w -X main.controllerRevision=${REVISION}"`,
+			new: `-ldflags="-s -w"`,
+		},
+		"constant controller revision": {
+			old: `main.controllerRevision=${REVISION}`,
+			new: `main.controllerRevision=unknown`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mutated := bytes.Replace(valid, []byte(mutation.old), []byte(mutation.new), 1)
+			if bytes.Equal(mutated, valid) {
+				t.Fatalf("fixture does not contain %q", mutation.old)
+			}
+			if err := verifyDockerfile(mutated, "1.27.0"); err == nil {
+				t.Fatal("verifyDockerfile() accepted a manager build without exact revision binding")
+			}
+		})
 	}
 }
 
@@ -352,7 +614,7 @@ func TestReleaseWorkflowJQProgramsCompile(t *testing.T) {
 	}
 	for index, program := range programs {
 		arguments := []string{"-n"}
-		for _, variable := range []string{"digest", "os", "architecture", "source", "revision", "version", "name"} {
+		for _, variable := range []string{"digest", "os", "architecture", "source", "revision", "version", "name", "branch", "sha"} {
 			arguments = append(arguments, "--arg", variable, "")
 		}
 		arguments = append(arguments, "def __release_filter: ("+program+"); null")
@@ -410,48 +672,66 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		new string
 		all bool
 	}{
-		"tag trigger":              {`      - "v*"`, `      - main`, false},
-		"tag job guard":            {`startsWith(github.ref, 'refs/tags/v')`, `startsWith(github.ref, 'refs/heads/')`, false},
-		"protected environment":    {`    environment: release`, `    environment: unprotected`, false},
-		"source ancestry":          {`git merge-base --is-ancestor "$GITHUB_SHA"`, `git merge-base "$GITHUB_SHA"`, false},
-		"write permission":         {`      id-token: write`, `      id-token: read`, false},
-		"attestation metadata":     {`      artifact-metadata: write`, `      artifact-metadata: read`, false},
-		"action pin":               {`actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09`, `actions/checkout@v6`, true},
-		"publish Go cache":         {`          cache: false`, `          cache: true`, false},
-		"Buildx version":           {`          version: v0.36.1`, `          version: latest`, true},
-		"BuildKit digest":          {`image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`, `image=moby/buildkit:v0.32.2`, true},
-		"executor version":         {`            --set-string execution.ptahVersion="release-smoke-explicit"`, `            true`, false},
-		"image platform":           {`platforms: linux/amd64,linux/arm64`, `platforms: linux/amd64`, true},
-		"image push":               {`          push: true`, `          push: false`, false},
-		"image provenance":         {`          provenance: mode=max`, `          provenance: false`, false},
-		"image SBOM":               {`          sbom: generator=docker.io/docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9`, `          sbom: true`, false},
-		"asset manifest binding":   {`            dist/release-manifest.txt`, `            dist/not-the-manifest.txt`, true},
-		"image attestation digest": {`subject-digest: ${{ steps.artifacts.outputs.image-digest }}`, `subject-digest: ${{ steps.artifacts.outputs.chart-digest }}`, false},
-		"image signature digest":   {`${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}`, `${{ steps.artifacts.outputs.image-repository }}@sha256:bad`, true},
-		"published guard":          {`published but not immutable; refusing recovery`, `published release may be reused`, false},
-		"published recovery":       {`              release_state=published`, `              release_state=recover`, false},
-		"immutability preflight":   {`"repos/$GITHUB_REPOSITORY/immutable-releases"`, `"repos/$GITHUB_REPOSITORY/releases"`, false},
-		"prepared journal":         {`            --notes-file dist/release-journal.txt`, `            --notes 'mutable'`, false},
-		"stable transaction":       {`            transaction="$GITHUB_RUN_ID"`, `            transaction="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"`, false},
-		"prepared image reuse":     {`docker buildx imagetools inspect --raw "$reference"`, `false`, false},
-		"staging checkpoint":       {`gh attestation verify "oci://$IMAGE@$digest"`, `test -n "$digest"`, false},
-		"checkpoint digest":        {`          subject-digest: ${{ steps.image.outputs.digest }}`, `          subject-digest: sha256:bad`, false},
-		"registry error binding":   {`            -registry-missing-reference "$reference"`, `            -registry-missing-reference ghcr.io/example/other:tag`, false},
-		"Docker material verifier": {`            -provenance "$image_dir/provenance.json"`, `            -provenance /dev/null`, false},
-		"live tag binding":         {`            -verify-tag-identity`, `            -verify-tag-identity=false`, true},
-		"asset source ref":         {`              --source-ref "$GITHUB_REF"`, `              --source-ref refs/tags/v-any`, true},
-		"asset comparison":         {`          cmp dist/release-manifest.txt`, `          test -f dist/release-manifest.txt`, false},
-		"publish gate attestation": {`gh attestation verify "$gate_dir/$name"`, `test -f "$gate_dir/$name"`, false},
-		"starter cleanup":          {`gh api --method DELETE`, `gh api --method GET`, false},
-		"signature identity":       {`--certificate-identity "$identity"`, `--certificate-identity-regexp '.*'`, false},
-		"retention tag binding":    {`          cmp "$image_dir/index.json" "$image_dir/tag-index.json"`, `          true`, false},
-		"platform contract":        {`              ["linux/amd64", "linux/arm64"] and`, `              ["linux/amd64"] and`, false},
-		"max provenance":           {`            -provenance-revision "$GITHUB_SHA"`, `            -provenance-revision unknown`, false},
-		"final publication":        {`gh release edit "$GITHUB_REF_NAME" --draft=false`, `gh release edit "$GITHUB_REF_NAME" --draft=true`, false},
-		"immutable verification":   {`          [[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]`, `          true`, false},
-		"asset replacement":        {`gh release upload "$GITHUB_REF_NAME" "$source"`, `gh release upload "$GITHUB_REF_NAME" "$source" --clobber`, false},
-		"extra privileged step":    {`      - name: Publish completed release transaction`, "      - name: Injected\n        id: injected\n        run: true\n      - name: Publish completed release transaction", false},
-		"dead shell branch":        {`          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false`, "          if false; then\n            echo bypass\n          fi\n          gh release edit \"$GITHUB_REF_NAME\" --draft=false --latest=false", false},
+		"manual smoke trigger":      {`  workflow_dispatch:`, `  # workflow_dispatch removed`, false},
+		"manual smoke guard":        {`github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'`, `github.event_name == 'pull_request'`, false},
+		"tag trigger":               {`      - "v*"`, `      - main`, false},
+		"tag job guard":             {`startsWith(github.ref, 'refs/tags/v')`, `startsWith(github.ref, 'refs/heads/')`, false},
+		"preflight permission":      {`      actions: read`, `      actions: write`, false},
+		"preflight timeout":         {`    timeout-minutes: 130`, `    timeout-minutes: 1`, false},
+		"support poll timeout":      {`SUPPORT_POLL_TIMEOUT_MINUTES: "120"`, `SUPPORT_POLL_TIMEOUT_MINUTES: "100"`, false},
+		"fresh support policy":      {`go run ./hack/verify-kubernetes-support.go -now "$today"`, `true # support freshness omitted`, false},
+		"preflight policy verifier": {`go run ./hack/releaseverify`, `true # release policy omitted`, false},
+		"default branch binding":    {`DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}`, `DEFAULT_BRANCH: master`, false},
+		"exact CI workflow":         {`actions/workflows/ci.yml/runs`, `actions/runs`, false},
+		"exact CI head SHA":         {`-f head_sha="$GITHUB_SHA"`, `-f head_sha=unknown`, false},
+		"CI push event":             {`.event == "push"`, `.event == "pull_request"`, false},
+		"CI default branch":         {`.head_branch == $branch`, `.head_branch != $branch`, false},
+		"stable support gate":       {`.name == "Kubernetes support gate"`, `.name == "Verify source and generated files"`, false},
+		"bounded evidence polling":  {`poll_deadline_epoch=$(( $(date -u +%s) + SUPPORT_POLL_TIMEOUT_MINUTES * 60 ))`, `poll_deadline_epoch=0`, false},
+		"preflight output":          {`source-sha: ${{ steps.support-evidence.outputs.source-sha }}`, `source-sha: ${{ github.sha }}`, false},
+		"publish dependency":        {`    needs: [support-preflight]`, `    needs: []`, false},
+		"publish evidence binding":  {`needs.support-preflight.outputs.source-sha == github.sha`, `github.sha == github.sha`, false},
+		"preflight error bypass":    {`        id: support-evidence`, "        id: support-evidence\n        continue-on-error: true", false},
+		"protected environment":     {`    environment: release`, `    environment: unprotected`, false},
+		"source ancestry":           {`git merge-base --is-ancestor "$GITHUB_SHA"`, `git merge-base "$GITHUB_SHA"`, false},
+		"write permission":          {`      id-token: write`, `      id-token: read`, false},
+		"attestation metadata":      {`      artifact-metadata: write`, `      artifact-metadata: read`, false},
+		"action pin":                {`actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09`, `actions/checkout@v6`, true},
+		"publish Go cache":          {`          cache: false`, `          cache: true`, false},
+		"Buildx version":            {`          version: v0.36.1`, `          version: latest`, true},
+		"BuildKit digest":           {`image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`, `image=moby/buildkit:v0.32.2`, true},
+		"executor version":          {`            --set-string execution.ptahVersion="release-smoke-explicit"`, `            true`, false},
+		"image platform":            {`platforms: linux/amd64,linux/arm64`, `platforms: linux/amd64`, true},
+		"image push":                {`          push: true`, `          push: false`, false},
+		"image provenance":          {`          provenance: mode=max`, `          provenance: false`, false},
+		"image SBOM":                {`          sbom: generator=docker.io/docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9`, `          sbom: true`, false},
+		"asset manifest binding":    {`            dist/release-manifest.txt`, `            dist/not-the-manifest.txt`, true},
+		"image attestation digest":  {`subject-digest: ${{ steps.artifacts.outputs.image-digest }}`, `subject-digest: ${{ steps.artifacts.outputs.chart-digest }}`, false},
+		"image signature digest":    {`${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}`, `${{ steps.artifacts.outputs.image-repository }}@sha256:bad`, true},
+		"published guard":           {`published but not immutable; refusing recovery`, `published release may be reused`, false},
+		"published recovery":        {`              release_state=published`, `              release_state=recover`, false},
+		"immutability preflight":    {`"repos/$GITHUB_REPOSITORY/immutable-releases"`, `"repos/$GITHUB_REPOSITORY/releases"`, false},
+		"prepared journal":          {`            --notes-file dist/release-journal.txt`, `            --notes 'mutable'`, false},
+		"stable transaction":        {`            transaction="$GITHUB_RUN_ID"`, `            transaction="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"`, false},
+		"prepared image reuse":      {`docker buildx imagetools inspect --raw "$reference"`, `false`, false},
+		"staging checkpoint":        {`gh attestation verify "oci://$IMAGE@$digest"`, `test -n "$digest"`, false},
+		"checkpoint digest":         {`          subject-digest: ${{ steps.image.outputs.digest }}`, `          subject-digest: sha256:bad`, false},
+		"registry error binding":    {`            -registry-missing-reference "$reference"`, `            -registry-missing-reference ghcr.io/example/other:tag`, false},
+		"Docker material verifier":  {`            -provenance "$image_dir/provenance.json"`, `            -provenance /dev/null`, false},
+		"live tag binding":          {`            -verify-tag-identity`, `            -verify-tag-identity=false`, true},
+		"asset source ref":          {`              --source-ref "$GITHUB_REF"`, `              --source-ref refs/tags/v-any`, true},
+		"asset comparison":          {`          cmp dist/release-manifest.txt`, `          test -f dist/release-manifest.txt`, false},
+		"publish gate attestation":  {`gh attestation verify "$gate_dir/$name"`, `test -f "$gate_dir/$name"`, false},
+		"starter cleanup":           {`gh api --method DELETE`, `gh api --method GET`, false},
+		"signature identity":        {`--certificate-identity "$identity"`, `--certificate-identity-regexp '.*'`, false},
+		"retention tag binding":     {`          cmp "$image_dir/index.json" "$image_dir/tag-index.json"`, `          true`, false},
+		"platform contract":         {`              ["linux/amd64", "linux/arm64"] and`, `              ["linux/amd64"] and`, false},
+		"max provenance":            {`            -provenance-revision "$GITHUB_SHA"`, `            -provenance-revision unknown`, false},
+		"final publication":         {`gh release edit "$GITHUB_REF_NAME" --draft=false`, `gh release edit "$GITHUB_REF_NAME" --draft=true`, false},
+		"immutable verification":    {`          [[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]`, `          true`, false},
+		"asset replacement":         {`gh release upload "$GITHUB_REF_NAME" "$source"`, `gh release upload "$GITHUB_REF_NAME" "$source" --clobber`, false},
+		"extra privileged step":     {`      - name: Publish completed release transaction`, "      - name: Injected\n        id: injected\n        run: true\n      - name: Publish completed release transaction", false},
+		"dead shell branch":         {`          gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false`, "          if false; then\n            echo bypass\n          fi\n          gh release edit \"$GITHUB_REF_NAME\" --draft=false --latest=false", false},
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {

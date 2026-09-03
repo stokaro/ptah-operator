@@ -21,6 +21,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -32,12 +33,15 @@ import (
 )
 
 const (
-	testDigest             = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	testCoordinationKey    = "team-a/app-database"
-	testLeaseEpoch         = "v1-11111111111111111111111111111111"
-	testLeaseEpochOther    = "v1-22222222222222222222222222222222"
-	testExecutionBindingID = "v1-33333333333333333333333333333333"
-	testPolicyUID          = types.UID("verification-policy-v1-uid")
+	testDigest                       = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	testCoordinationKey              = "team-a/app-database"
+	testLeaseEpoch                   = "v1-11111111111111111111111111111111"
+	testLeaseEpochOther              = "v1-22222222222222222222222222222222"
+	testExecutionBindingID           = "v1-33333333333333333333333333333333"
+	testControllerImage              = "example.invalid/manager@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	testControllerRevision           = "controller-test-revision"
+	testControllerStateVersion int32 = 1
+	testPolicyUID                    = types.UID("verification-policy-v1-uid")
 )
 
 var testCoordinationDigest = mustTestCoordinationDigest()
@@ -50,10 +54,13 @@ type failingBuildJobs struct{ fakeJobs }
 
 type executionBindingJobs struct {
 	fakeJobs
-	ptahVersion   string
-	executorImage string
-	runnerImage   string
-	protocol      int32
+	ptahVersion            string
+	executorImage          string
+	runnerImage            string
+	protocol               int32
+	controllerImage        string
+	controllerRevision     string
+	controllerStateVersion int32
 }
 
 func (changedTemplateJobs) Build(
@@ -96,12 +103,24 @@ func (fakeJobs) Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1a
 	}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}}}}, nil
 }
 
-func (fakeJobs) ExecutionBinding() (string, string, string, int32) {
-	return "v0.3.0", "example.invalid/ptah@" + testDigest, "example.invalid/operator@" + testDigest, int32(runner.ProtocolVersion)
+func (fakeJobs) ExecutionBinding() (string, string, int32, string, string, string, int32) {
+	return testControllerImage, testControllerRevision, testControllerStateVersion, "v0.3.0", "example.invalid/ptah@" + testDigest, "example.invalid/operator@" + testDigest, int32(runner.ProtocolVersion)
 }
 
-func (jobs executionBindingJobs) ExecutionBinding() (string, string, string, int32) {
-	return jobs.ptahVersion, jobs.executorImage, jobs.runnerImage, jobs.protocol
+func (jobs executionBindingJobs) ExecutionBinding() (string, string, int32, string, string, string, int32) {
+	controllerImage := jobs.controllerImage
+	if controllerImage == "" {
+		controllerImage = testControllerImage
+	}
+	revision := jobs.controllerRevision
+	if revision == "" {
+		revision = testControllerRevision
+	}
+	stateVersion := jobs.controllerStateVersion
+	if stateVersion == 0 {
+		stateVersion = testControllerStateVersion
+	}
+	return controllerImage, revision, stateVersion, jobs.ptahVersion, jobs.executorImage, jobs.runnerImage, jobs.protocol
 }
 
 func (jobs executionBindingJobs) Build(
@@ -110,11 +129,35 @@ func (jobs executionBindingJobs) Build(
 	plan *operatorv1alpha1.PtahSchemaPlan,
 ) (*batchv1.Job, error) {
 	if operation.Type == operatorv1alpha1.OperationApply && plan != nil &&
-		(plan.Spec.PtahVersion != jobs.ptahVersion || plan.Spec.ExecutorImage != jobs.executorImage ||
+		(plan.Spec.ControllerImage != controllerImageOrDefault(jobs.controllerImage) ||
+			plan.Spec.ControllerRevision != revisionOrDefault(jobs.controllerRevision) ||
+			plan.Spec.ControllerStateVersion != stateVersionOrDefault(jobs.controllerStateVersion) ||
+			plan.Spec.PtahVersion != jobs.ptahVersion || plan.Spec.ExecutorImage != jobs.executorImage ||
 			plan.Spec.RunnerImage != jobs.runnerImage || plan.Spec.RunnerProtocolVersion != jobs.protocol) {
 		return nil, errors.New("plan execution binding does not match the Job builder")
 	}
 	return (fakeJobs{}).Build(schema, operation, plan)
+}
+
+func controllerImageOrDefault(image string) string {
+	if image == "" {
+		return testControllerImage
+	}
+	return image
+}
+
+func revisionOrDefault(revision string) string {
+	if revision == "" {
+		return testControllerRevision
+	}
+	return revision
+}
+
+func stateVersionOrDefault(version int32) int32 {
+	if version == 0 {
+		return testControllerStateVersion
+	}
+	return version
 }
 
 type staticLogs struct{ content []byte }
@@ -126,6 +169,42 @@ func (l staticLogs) Read(context.Context, string, string, string) ([]byte, error
 type failFirstJobCleanupPatchClient struct {
 	client.Client
 	failed bool
+}
+
+type futureStateOnSecondSchemaGetReader struct {
+	client.Reader
+	writer     client.Client
+	key        client.ObjectKey
+	schemaGets int
+	injected   *operatorv1alpha1.PtahSchema
+}
+
+func (r *futureStateOnSecondSchemaGetReader) Get(
+	ctx context.Context,
+	key client.ObjectKey,
+	object client.Object,
+	options ...client.GetOption,
+) error {
+	if _, isSchema := object.(*operatorv1alpha1.PtahSchema); isSchema && key == r.key {
+		r.schemaGets++
+		if r.schemaGets == 2 {
+			latest := &operatorv1alpha1.PtahSchema{}
+			if err := r.Reader.Get(ctx, key, latest, options...); err != nil {
+				return err
+			}
+			latest.Status.ExecutionBinding.ControllerStateVersion = testControllerStateVersion + 1
+			latest.Status.Phase = operatorv1alpha1.PhaseApplying
+			latest.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+				Type: operatorv1alpha1.OperationApply, ID: "future-apply",
+				JobName: "future-apply", JobUID: "future-job-uid", DispatchStarted: true,
+			}
+			if err := r.writer.Status().Update(ctx, latest); err != nil {
+				return err
+			}
+			r.injected = latest.DeepCopy()
+		}
+	}
+	return r.Reader.Get(ctx, key, object, options...)
 }
 
 func (c *failFirstJobCleanupPatchClient) Patch(
@@ -204,6 +283,9 @@ func TestInitialExecutionBindingIsDurableBeforeOperationClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bound.Status.ExecutionBinding == nil || !validExecutionBindingID(bound.Status.ExecutionBinding.Epoch) ||
+		bound.Status.ExecutionBinding.ControllerImage != testControllerImage ||
+		bound.Status.ExecutionBinding.ControllerRevision != testControllerRevision ||
+		bound.Status.ExecutionBinding.ControllerStateVersion != testControllerStateVersion ||
 		bound.Status.ActiveOperation != nil || len(bound.Finalizers) != 0 {
 		t.Fatalf("initial execution binding was not isolated from the operation claim: %#v", bound)
 	}
@@ -221,6 +303,270 @@ func TestInitialExecutionBindingIsDurableBeforeOperationClaim(t *testing.T) {
 		claimed.Status.ActiveOperation == nil || claimed.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
 		claimed.Status.ActiveOperation.ExecutionBindingID != epoch {
 		t.Fatalf("restart did not reuse the durable epoch for Resolve: %#v", claimed.Status)
+	}
+}
+
+func TestStoredExecutionBindingWithoutManagerIdentityFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	oldEpoch := schema.Status.ExecutionBinding.Epoch
+	schema.Status.ExecutionBinding.ControllerImage = ""
+	schema.Status.ExecutionBinding.ControllerRevision = ""
+	schema.Status.ExecutionBinding.ControllerStateVersion = 0
+	schema.Status.Phase = operatorv1alpha1.PhaseInSync
+	schema.Status.Source.Verified = true
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("fence legacy execution binding: %v", err)
+	}
+	fenced := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), request.NamespacedName, fenced); err != nil {
+		t.Fatal(err)
+	}
+	if fenced.Status.ExecutionBinding == nil || fenced.Status.ExecutionBinding.Epoch == oldEpoch ||
+		fenced.Status.ExecutionBinding.ControllerImage != testControllerImage ||
+		fenced.Status.ExecutionBinding.ControllerRevision != testControllerRevision ||
+		fenced.Status.ExecutionBinding.ControllerStateVersion != testControllerStateVersion ||
+		fenced.Status.ActiveOperation != nil || fenced.Status.Phase != operatorv1alpha1.PhasePending ||
+		fenced.Status.Source.Verified {
+		t.Fatalf("legacy execution binding was not fenced before work: %#v", fenced.Status)
+	}
+
+	restarted := *reconciler
+	if _, err := restarted.Reconcile(context.Background(), request); err != nil {
+		t.Fatalf("start fresh read-only chain: %v", err)
+	}
+	refreshing := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), request.NamespacedName, refreshing); err != nil {
+		t.Fatal(err)
+	}
+	if refreshing.Status.ActiveOperation == nil ||
+		refreshing.Status.ActiveOperation.Type != operatorv1alpha1.OperationResolve ||
+		refreshing.Status.ActiveOperation.ExecutionBindingID != fenced.Status.ExecutionBinding.Epoch {
+		t.Fatalf("legacy execution binding did not restart at Resolve: %#v", refreshing.Status)
+	}
+}
+
+func TestFutureControllerStateFailsBeforeAnyReconciliationMutation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		storedLocation func(*operatorv1alpha1.PtahSchema)
+		operationState func(*operatorv1alpha1.PtahSchema)
+	}{
+		{name: "idle execution binding", storedLocation: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.ExecutionBinding.ControllerStateVersion = testControllerStateVersion + 1
+		}, operationState: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.Phase = operatorv1alpha1.PhaseInSync
+		}},
+		{name: "read-only operation current plan", storedLocation: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{ControllerStateVersion: testControllerStateVersion + 1}
+		}, operationState: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.Phase = operatorv1alpha1.PhaseResolving
+			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationResolve}
+			controllerutil.AddFinalizer(schema, activeOperationFinalizer)
+		}},
+		{name: "undispatched Apply applied evidence", storedLocation: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.Applied = &operatorv1alpha1.AppliedStatus{ControllerStateVersion: testControllerStateVersion + 1}
+		}, operationState: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.Phase = operatorv1alpha1.PhaseApplying
+			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationApply}
+			controllerutil.AddFinalizer(schema, activeOperationFinalizer)
+		}},
+		{name: "dispatched Apply execution binding", storedLocation: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.ExecutionBinding.ControllerStateVersion = testControllerStateVersion + 1
+		}, operationState: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.Phase = operatorv1alpha1.PhaseApplying
+			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+				Type: operatorv1alpha1.OperationApply, DispatchStarted: true, JobUID: "future-job-uid",
+			}
+			controllerutil.AddFinalizer(schema, activeOperationFinalizer)
+		}},
+		{name: "pending observation plan", storedLocation: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{
+				Plan: operatorv1alpha1.CurrentPlanStatus{ControllerStateVersion: testControllerStateVersion + 1},
+			}
+		}, operationState: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.Phase = operatorv1alpha1.PhaseVerifyingConvergence
+			controllerutil.AddFinalizer(schema, activeOperationFinalizer)
+		}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := schemaFixture()
+			test.storedLocation(schema)
+			test.operationState(schema)
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+			key := client.ObjectKeyFromObject(schema)
+			before := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(context.Background(), key, before); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err == nil ||
+				!strings.Contains(err.Error(), "exceeds supported version") {
+				t.Fatalf("Reconcile() error = %v, want future-state refusal", err)
+			}
+			after := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(context.Background(), key, after); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("future-state refusal rewrote PtahSchema:\nbefore: %#v\n after: %#v", before, after)
+			}
+			jobs := &batchv1.JobList{}
+			if err := api.List(context.Background(), jobs, client.InNamespace(schema.Namespace)); err != nil {
+				t.Fatal(err)
+			}
+			if len(jobs.Items) != 0 {
+				t.Fatalf("future-state refusal created %d Jobs", len(jobs.Items))
+			}
+		})
+	}
+}
+
+func TestDanglingFinalizerCleanupRejectsConcurrentFutureState(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Status.Phase = operatorv1alpha1.PhaseInSync
+	controllerutil.AddFinalizer(schema, activeOperationFinalizer)
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	key := client.ObjectKeyFromObject(schema)
+	reader := &futureStateOnSecondSchemaGetReader{Reader: api, writer: api, key: key}
+	reconciler.APIReader = reader
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err == nil ||
+		!strings.Contains(err.Error(), "recheck stored controller state before finalizer removal") ||
+		!strings.Contains(err.Error(), "exceeds supported version") {
+		t.Fatalf("Reconcile() error = %v, want concurrent future-state refusal", err)
+	}
+	if reader.injected == nil {
+		t.Fatal("test reader did not inject future state between the initial and finalizer reads")
+	}
+	actual := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), key, actual); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(actual.Spec, reader.injected.Spec) ||
+		!reflect.DeepEqual(actual.Status, reader.injected.Status) ||
+		!reflect.DeepEqual(actual.Finalizers, reader.injected.Finalizers) {
+		t.Fatalf("old manager mutated concurrently injected future state:\ninjected: %#v\n  actual: %#v", reader.injected, actual)
+	}
+	if !contains(actual.Finalizers, activeOperationFinalizer) || actual.Status.ActiveOperation == nil ||
+		actual.Status.ExecutionBinding.ControllerStateVersion != testControllerStateVersion+1 {
+		t.Fatalf("future safety state lost its protection: %#v", actual)
+	}
+	jobs := &batchv1.JobList{}
+	if err := api.List(context.Background(), jobs, client.InNamespace(schema.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Fatalf("concurrent future-state refusal created %d Jobs", len(jobs.Items))
+	}
+	leases := &coordinationv1.LeaseList{}
+	if err := api.List(context.Background(), leases); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases.Items) != 0 {
+		t.Fatalf("concurrent future-state refusal mutated %d Leases", len(leases.Items))
+	}
+}
+
+func TestRemoveActiveFinalizerRetainsDurableSafetyWork(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*operatorv1alpha1.PtahSchema)
+	}{
+		{name: "active operation", mutate: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{Type: operatorv1alpha1.OperationApply}
+		}},
+		{name: "pending observation", mutate: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.PendingObservation = &operatorv1alpha1.PendingObservationStatus{}
+		}},
+		{name: "pending lock release", mutate: func(schema *operatorv1alpha1.PtahSchema) {
+			schema.Status.PendingLockRelease = &operatorv1alpha1.TargetLockReleaseStatus{}
+		}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := schemaFixture()
+			controllerutil.AddFinalizer(schema, activeOperationFinalizer)
+			test.mutate(schema)
+			reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+			if err := reconciler.removeActiveFinalizer(context.Background(), schema); err == nil ||
+				!strings.Contains(err.Error(), "still protects durable safety work") {
+				t.Fatalf("removeActiveFinalizer() error = %v, want protected-work refusal", err)
+			}
+			actual := &operatorv1alpha1.PtahSchema{}
+			if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+				t.Fatal(err)
+			}
+			if !contains(actual.Finalizers, activeOperationFinalizer) || !reflect.DeepEqual(actual.Status, schema.Status) {
+				t.Fatalf("protected safety state was mutated: %#v", actual)
+			}
+		})
+	}
+}
+
+func TestNegativeStoredControllerStateFailsBeforeAnyReconciliationMutation(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	schema.Status.Phase = operatorv1alpha1.PhaseInSync
+	schema.Status.Applied = &operatorv1alpha1.AppliedStatus{ControllerStateVersion: -1}
+	reconciler, api := fakeReconciler(t, staticLogs{}, schema)
+	key := client.ObjectKeyFromObject(schema)
+	before := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), key, before); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err == nil ||
+		!strings.Contains(err.Error(), "controller state version -1 is invalid") {
+		t.Fatalf("Reconcile() error = %v, want invalid stored-state refusal", err)
+	}
+	after := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), key, after); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("invalid-state refusal rewrote PtahSchema:\nbefore: %#v\n after: %#v", before, after)
+	}
+	jobs := &batchv1.JobList{}
+	if err := api.List(context.Background(), jobs, client.InNamespace(schema.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Fatalf("invalid-state refusal created %d Jobs", len(jobs.Items))
+	}
+}
+
+func TestConfiguredExecutionBindingRejectsControlCharacterControllerRevision(t *testing.T) {
+	t.Parallel()
+
+	reconciler := &SchemaReconciler{Jobs: executionBindingJobs{
+		controllerRevision: "release\ncandidate",
+		ptahVersion:        "v0.3.0",
+		executorImage:      "example.invalid/ptah@" + testDigest,
+		runnerImage:        "example.invalid/operator@" + testDigest,
+		protocol:           int32(runner.ProtocolVersion),
+	}}
+	if _, err := reconciler.configuredExecutionBinding(); err == nil ||
+		!strings.Contains(err.Error(), "execution binding is incomplete") {
+		t.Fatalf("configuredExecutionBinding() error = %v, want revision refusal", err)
 	}
 }
 
@@ -283,7 +629,9 @@ func TestSourceRefreshConditionsPreserveLastKnownEvidence(t *testing.T) {
 			ContentDigest: testDigest, ArtifactDigest: testDigest,
 			CoordinationDigest: testCoordinationDigest, TargetIdentityDigest: testDigest,
 			ExecutionBindingID: testExecutionBindingID,
-			PtahVersion:        "v0.3.0", ExecutorImage: "example.invalid/ptah@" + testDigest,
+			ControllerImage:    testControllerImage,
+			ControllerRevision: testControllerRevision, ControllerStateVersion: testControllerStateVersion,
+			PtahVersion: "v0.3.0", ExecutorImage: "example.invalid/ptah@" + testDigest,
 			RunnerImage:           "example.invalid/operator@" + testDigest,
 			RunnerProtocolVersion: int32(runner.ProtocolVersion), CreatedAt: observedAt,
 		}
@@ -291,7 +639,9 @@ func TestSourceRefreshConditionsPreserveLastKnownEvidence(t *testing.T) {
 			ArtifactDigest: testDigest, PlanFingerprint: testDigest,
 			CoordinationDigest: testCoordinationDigest, TargetIdentityDigest: testDigest,
 			ExecutionBindingID: testExecutionBindingID,
-			PtahVersion:        "v0.3.0", ExecutorImage: "example.invalid/ptah@" + testDigest,
+			ControllerImage:    testControllerImage,
+			ControllerRevision: testControllerRevision, ControllerStateVersion: testControllerStateVersion,
+			PtahVersion: "v0.3.0", ExecutorImage: "example.invalid/ptah@" + testDigest,
 			RunnerImage:           "example.invalid/operator@" + testDigest,
 			RunnerProtocolVersion: int32(runner.ProtocolVersion), CompletedAt: appliedAt,
 		}
@@ -1374,7 +1724,9 @@ func blockedPolicySchema(apply operatorv1alpha1.ApplyPolicy, destructive bool) *
 		Name: "blocked-plan", UID: "blocked-plan-uid", Fingerprint: testDigest,
 		ContentDigest: testDigest, ArtifactDigest: testDigest, Destructive: destructive,
 		ExecutionBindingID: testExecutionBindingID,
-		PtahVersion:        "v0.3.0", ExecutorImage: "example.invalid/ptah@" + testDigest,
+		ControllerImage:    testControllerImage,
+		ControllerRevision: testControllerRevision, ControllerStateVersion: testControllerStateVersion,
+		PtahVersion: "v0.3.0", ExecutorImage: "example.invalid/ptah@" + testDigest,
 		RunnerImage: "example.invalid/operator@" + testDigest, RunnerProtocolVersion: int32(runner.ProtocolVersion),
 	}
 	if destructive {
@@ -1401,7 +1753,9 @@ func schemaFixture() *operatorv1alpha1.PtahSchema {
 		Status: operatorv1alpha1.PtahSchemaStatus{
 			ObservedGeneration: 1,
 			ExecutionBinding: &operatorv1alpha1.ExecutionBindingStatus{
-				Epoch: testExecutionBindingID, PtahVersion: "v0.3.0",
+				Epoch: testExecutionBindingID, ControllerImage: testControllerImage,
+				ControllerRevision:     testControllerRevision,
+				ControllerStateVersion: testControllerStateVersion, PtahVersion: "v0.3.0",
 				ExecutorImage:         "example.invalid/ptah@" + testDigest,
 				RunnerImage:           "example.invalid/operator@" + testDigest,
 				RunnerProtocolVersion: int32(runner.ProtocolVersion),
@@ -1677,7 +2031,9 @@ func bindActiveInput(t *testing.T, schema *operatorv1alpha1.PtahSchema) {
 	}
 	if schema.Status.ExecutionBinding == nil {
 		schema.Status.ExecutionBinding = &operatorv1alpha1.ExecutionBindingStatus{
-			Epoch: testExecutionBindingID, PtahVersion: "v0.3.0",
+			Epoch: testExecutionBindingID, ControllerImage: testControllerImage,
+			ControllerRevision:     testControllerRevision,
+			ControllerStateVersion: testControllerStateVersion, PtahVersion: "v0.3.0",
 			ExecutorImage:         "example.invalid/ptah@" + testDigest,
 			RunnerImage:           "example.invalid/operator@" + testDigest,
 			RunnerProtocolVersion: int32(runner.ProtocolVersion),

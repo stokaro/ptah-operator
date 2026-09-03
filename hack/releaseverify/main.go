@@ -9,10 +9,14 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -32,37 +36,42 @@ var (
 	sha256DigestPattern    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	dockerArgumentPattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	dockerStagePattern     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
+	releaseSequenceHelper  = regexp.MustCompile(`(?m)^\{\{- define "ptah-operator[.]releaseSequence" -\}\}([1-9][0-9]*)\{\{- end -\}\}$`)
 	releaseRunSHA256       = map[string]string{
-		"smoke/verify-release":           "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
-		"smoke/chart-reproducibility":    "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
-		"publish/release":                "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
-		"publish/transaction":            "72cce0372380ba97e39ae01a383402b50b33122d24854487835b37572fc3c5e7",
-		"publish/immutability-preflight": "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
-		"publish/draft":                  "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
-		"publish/stage-inspect":          "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
-		"publish/chart-package":          "d5b44cddda0c6f79697af28047accd9cf48c7bde7e2e72826078ea9937b316a2",
-		"publish/artifacts":              "5812ca3f58b88b19f0879602e96c34e5ab27ad95e90ab5cbd6f46cbfb44dd000",
-		"publish/image-structure":        "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
-		"publish/finalize-journal":       "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
-		"publish/asset-auth":             "e1c7c1e7eefef128a64a883a73c56dab37d8f1dd24436daa84b7a077896ea8ee",
-		"publish/asset-sync":             "8ac2fce0ed0460b72eee90bb530e1c17da79ed62f4e54877a780bd8dbbc34e4e",
-		"publish/image-signature":        "e0b994a90bc38dd8019f4b4157a72e5f6cab1873f3bc1ca39b8ca41dcb023d5e",
-		"publish/final-verify":           "1ad635ea3d03dc718ecfff46a020a5bcfef28f5bb2b8932c5d3245e37286d843",
-		"publish/publish-release":        "3ff6501266556d3d352e9af3af8b7f2ea79db14ff5f474417b49a9686856de8e",
+		"smoke/verify-release":               "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
+		"smoke/chart-reproducibility":        "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
+		"support-preflight/support-evidence": "0bc791ffd82cbdb79cc5fb2d0025a8a62478f86381bc38daa8d04231b049d566",
+		"publish/release":                    "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
+		"publish/transaction":                "72cce0372380ba97e39ae01a383402b50b33122d24854487835b37572fc3c5e7",
+		"publish/immutability-preflight":     "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
+		"publish/draft":                      "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
+		"publish/stage-inspect":              "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
+		"publish/chart-package":              "d5b44cddda0c6f79697af28047accd9cf48c7bde7e2e72826078ea9937b316a2",
+		"publish/artifacts":                  "5812ca3f58b88b19f0879602e96c34e5ab27ad95e90ab5cbd6f46cbfb44dd000",
+		"publish/image-structure":            "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
+		"publish/finalize-journal":           "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
+		"publish/asset-auth":                 "e1c7c1e7eefef128a64a883a73c56dab37d8f1dd24436daa84b7a077896ea8ee",
+		"publish/asset-sync":                 "8ac2fce0ed0460b72eee90bb530e1c17da79ed62f4e54877a780bd8dbbc34e4e",
+		"publish/image-signature":            "e0b994a90bc38dd8019f4b4157a72e5f6cab1873f3bc1ca39b8ca41dcb023d5e",
+		"publish/final-verify":               "1ad635ea3d03dc718ecfff46a020a5bcfef28f5bb2b8932c5d3245e37286d843",
+		"publish/publish-release":            "3ff6501266556d3d352e9af3af8b7f2ea79db14ff5f474417b49a9686856de8e",
 	}
 )
 
 const (
-	repositoryName = "stokaro/ptah-operator"
-	imageName      = "ghcr.io/stokaro/ptah-operator"
-	buildxVersion  = "v0.36.1"
-	buildkitImage  = "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
-	sbomDigest     = "sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
-	sbomGenerator  = "docker.io/docker/buildkit-syft-scanner:stable-1@" + sbomDigest
+	repositoryName             = "stokaro/ptah-operator"
+	imageName                  = "ghcr.io/stokaro/ptah-operator"
+	releaseSequenceHistoryPath = "hack/releaseverify/release-sequence-history.json"
+	releaseSequenceHelperPath  = "charts/ptah-operator/templates/_helpers.tpl"
+	releaseSequenceGoPath      = "internal/crdupgrade/rollout.go"
+	buildxVersion              = "v0.36.1"
+	buildkitImage              = "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
+	sbomDigest                 = "sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
+	sbomGenerator              = "docker.io/docker/buildkit-syft-scanner:stable-1@" + sbomDigest
 	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "113a5de39233d82d58bc03562001e5000aa632c99b755ff318bdabe33f04027c"
+	releaseWorkflowSHA256 = "ec2d45cbb2173f7dd00fe7c50b7b06e025b37e79f6878b770a2c952636a7a955"
 )
 
 func main() {
@@ -308,6 +317,18 @@ func verifyRepository(root, tag string) error {
 	if err != nil {
 		return fmt.Errorf("read release workflow: %w", err)
 	}
+	helpers, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(releaseSequenceHelperPath)))
+	if err != nil {
+		return fmt.Errorf("read release sequence Helm helper: %w", err)
+	}
+	rolloutSource, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(releaseSequenceGoPath)))
+	if err != nil {
+		return fmt.Errorf("read release sequence Go contract: %w", err)
+	}
+	history, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(releaseSequenceHistoryPath)))
+	if err != nil {
+		return fmt.Errorf("read release sequence history: %w", err)
+	}
 
 	version, err := topLevelScalar(chart, "version")
 	if err != nil {
@@ -332,6 +353,13 @@ func verifyRepository(root, tag string) error {
 	}
 	if tag != "" && tag != "v"+version {
 		return fmt.Errorf("release tag %q must equal v%s", tag, version)
+	}
+	contract, err := currentReleaseContract(version, appVersion, values, helpers, rolloutSource)
+	if err != nil {
+		return err
+	}
+	if err := verifyReleaseSequenceHistory(root, history, contract); err != nil {
+		return err
 	}
 
 	toolchain, err := goToolchain(module)
@@ -386,6 +414,539 @@ func yamlScalar(document []byte, section, key string) (string, error) {
 	return "", fmt.Errorf("YAML field %s.%s is missing", section, key)
 }
 
+type releaseSequenceHistory struct {
+	FormatVersion int               `json:"formatVersion"`
+	Releases      []releaseContract `json:"releases"`
+}
+
+type releaseContract struct {
+	Version                string `json:"version"`
+	AppVersion             string `json:"appVersion"`
+	ManagerImageRepository string `json:"managerImageRepository"`
+	ManagerImageTag        string `json:"managerImageTag"`
+	ReleaseSequence        uint64 `json:"releaseSequence"`
+}
+
+func currentReleaseContract(
+	version, appVersion string,
+	values, helpers, rolloutSource []byte,
+) (releaseContract, error) {
+	repository, err := nestedScalar(values, "image", "repository")
+	if err != nil {
+		return releaseContract{}, err
+	}
+	tag, err := nestedScalar(values, "image", "tag")
+	if err != nil {
+		return releaseContract{}, err
+	}
+	helperSequence, err := helmReleaseSequence(helpers)
+	if err != nil {
+		return releaseContract{}, err
+	}
+	goSequence, err := goReleaseSequence(rolloutSource)
+	if err != nil {
+		return releaseContract{}, err
+	}
+	if helperSequence != goSequence {
+		return releaseContract{}, fmt.Errorf(
+			"Helm release sequence %d does not match Go CurrentReleaseSequence %d",
+			helperSequence,
+			goSequence,
+		)
+	}
+	return releaseContract{
+		Version:                version,
+		AppVersion:             appVersion,
+		ManagerImageRepository: repository,
+		ManagerImageTag:        tag,
+		ReleaseSequence:        helperSequence,
+	}, nil
+}
+
+func helmReleaseSequence(document []byte) (uint64, error) {
+	matches := releaseSequenceHelper.FindAllSubmatch(document, -1)
+	if len(matches) != 1 {
+		return 0, fmt.Errorf(
+			"Helm helpers must contain exactly one canonical ptah-operator.releaseSequence definition, found %d",
+			len(matches),
+		)
+	}
+	return positiveReleaseSequence(string(matches[0][1]), "Helm release sequence")
+}
+
+func goReleaseSequence(document []byte) (uint64, error) {
+	parsed, err := parser.ParseFile(token.NewFileSet(), releaseSequenceGoPath, document, 0)
+	if err != nil {
+		return 0, fmt.Errorf("parse Go release sequence contract: %w", err)
+	}
+	var expressions []ast.Expr
+	for _, declaration := range parsed.Decls {
+		general, ok := declaration.(*ast.GenDecl)
+		if !ok || general.Tok != token.CONST {
+			continue
+		}
+		for _, rawSpecification := range general.Specs {
+			specification, ok := rawSpecification.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for index, name := range specification.Names {
+				if name.Name != "CurrentReleaseSequence" {
+					continue
+				}
+				identifier, exactType := specification.Type.(*ast.Ident)
+				if !exactType || identifier.Name != "int32" {
+					return 0, errors.New("Go CurrentReleaseSequence must have the explicit int32 type")
+				}
+				switch {
+				case len(specification.Values) == len(specification.Names):
+					expressions = append(expressions, specification.Values[index])
+				case len(specification.Names) == 1 && len(specification.Values) == 1:
+					expressions = append(expressions, specification.Values[0])
+				default:
+					return 0, errors.New("Go CurrentReleaseSequence must use one explicit constant expression")
+				}
+			}
+		}
+	}
+	if len(expressions) != 1 {
+		return 0, fmt.Errorf("Go source must declare CurrentReleaseSequence exactly once, found %d", len(expressions))
+	}
+	literal, ok := expressions[0].(*ast.BasicLit)
+	if !ok || literal.Kind != token.INT {
+		return 0, errors.New("Go CurrentReleaseSequence must be a positive exact decimal integer literal")
+	}
+	sequence, err := positiveReleaseSequence(literal.Value, "Go CurrentReleaseSequence")
+	if err != nil {
+		return 0, err
+	}
+	if sequence > uint64(1<<31-1) {
+		return 0, errors.New("Go CurrentReleaseSequence exceeds int32")
+	}
+	return sequence, nil
+}
+
+func positiveReleaseSequence(raw, label string) (uint64, error) {
+	if raw == "" || raw[0] < '1' || raw[0] > '9' {
+		return 0, fmt.Errorf("%s %q is not a positive exact decimal integer", label, raw)
+	}
+	for _, character := range raw[1:] {
+		if character < '0' || character > '9' {
+			return 0, fmt.Errorf("%s %q is not a positive exact decimal integer", label, raw)
+		}
+	}
+	sequence, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s %q is not a positive exact decimal integer: %w", label, raw, err)
+	}
+	return sequence, nil
+}
+
+func verifyReleaseSequenceHistory(root string, candidateDocument []byte, candidate releaseContract) error {
+	candidateHistory, err := decodeReleaseSequenceHistory("candidate", candidateDocument)
+	if err != nil {
+		return err
+	}
+	if err := verifyCandidateReleaseContract(candidateHistory, candidate); err != nil {
+		return err
+	}
+
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve repository root for release sequence history: %w", err)
+	}
+	baselineCommit, err := selectReleaseSequenceBaseline(absoluteRoot)
+	if err != nil {
+		return err
+	}
+	baselineDocument, found, err := releaseSequenceHistoryAt(absoluteRoot, baselineCommit)
+	if err != nil {
+		return err
+	}
+	if !found {
+		if len(candidateHistory.Releases) != 1 || candidateHistory.Releases[0].ReleaseSequence != 1 {
+			return errors.New("initial release sequence history adoption requires exactly one release at sequence 1")
+		}
+		return nil
+	}
+	baselineHistory, err := decodeReleaseSequenceHistory("baseline", baselineDocument)
+	if err != nil {
+		return err
+	}
+	return verifyReleaseSequenceTransition(baselineHistory, candidateHistory)
+}
+
+func verifyCandidateReleaseContract(history releaseSequenceHistory, candidate releaseContract) error {
+	if len(history.Releases) == 0 {
+		return errors.New("candidate release sequence history has no releases")
+	}
+	if history.Releases[len(history.Releases)-1] != candidate {
+		return fmt.Errorf(
+			"current release metadata %#v does not match the final release sequence history entry %#v",
+			candidate,
+			history.Releases[len(history.Releases)-1],
+		)
+	}
+	return nil
+}
+
+func decodeReleaseSequenceHistory(label string, document []byte) (releaseSequenceHistory, error) {
+	var history releaseSequenceHistory
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&history); err != nil {
+		return releaseSequenceHistory{}, fmt.Errorf("decode %s release sequence history: %w", label, err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return releaseSequenceHistory{}, fmt.Errorf("decode %s release sequence history: trailing JSON data", label)
+	}
+	if history.FormatVersion != 1 {
+		return releaseSequenceHistory{}, fmt.Errorf(
+			"%s release sequence history formatVersion is %d, expected 1",
+			label,
+			history.FormatVersion,
+		)
+	}
+	if len(history.Releases) == 0 {
+		return releaseSequenceHistory{}, fmt.Errorf("%s release sequence history has no releases", label)
+	}
+	for index, release := range history.Releases {
+		if _, err := parseReleaseVersion(release.Version); err != nil {
+			return releaseSequenceHistory{}, fmt.Errorf("%s release sequence history entry %d: %w", label, index, err)
+		}
+		if release.AppVersion != release.Version {
+			return releaseSequenceHistory{}, fmt.Errorf(
+				"%s release sequence history entry %d appVersion %q does not match version %q",
+				label,
+				index,
+				release.AppVersion,
+				release.Version,
+			)
+		}
+		if release.ManagerImageRepository == "" || strings.ContainsAny(release.ManagerImageRepository, "@\t\r\n ") {
+			return releaseSequenceHistory{}, fmt.Errorf(
+				"%s release sequence history entry %d has invalid manager image repository %q",
+				label,
+				index,
+				release.ManagerImageRepository,
+			)
+		}
+		if release.ManagerImageTag != release.Version {
+			return releaseSequenceHistory{}, fmt.Errorf(
+				"%s release sequence history entry %d manager image tag %q does not match version %q",
+				label,
+				index,
+				release.ManagerImageTag,
+				release.Version,
+			)
+		}
+		if release.ReleaseSequence == 0 || release.ReleaseSequence > uint64(1<<31-1) {
+			return releaseSequenceHistory{}, fmt.Errorf(
+				"%s release sequence history entry %d has invalid releaseSequence %d",
+				label,
+				index,
+				release.ReleaseSequence,
+			)
+		}
+		if index == 0 {
+			if release.ReleaseSequence != 1 {
+				return releaseSequenceHistory{}, fmt.Errorf("%s release sequence history must begin at sequence 1", label)
+			}
+			continue
+		}
+		previous := history.Releases[index-1]
+		order, err := compareReleaseVersions(previous.Version, release.Version)
+		if err != nil {
+			return releaseSequenceHistory{}, fmt.Errorf("%s release sequence history entry %d: %w", label, index, err)
+		}
+		if order >= 0 {
+			return releaseSequenceHistory{}, fmt.Errorf(
+				"%s release sequence history version %q must strictly follow %q",
+				label,
+				release.Version,
+				previous.Version,
+			)
+		}
+		if release.ReleaseSequence <= previous.ReleaseSequence {
+			return releaseSequenceHistory{}, fmt.Errorf(
+				"%s release %q sequence %d must strictly increase prior release sequence %d",
+				label,
+				release.Version,
+				release.ReleaseSequence,
+				previous.ReleaseSequence,
+			)
+		}
+	}
+	canonical, err := canonicalReleaseSequenceHistory(history)
+	if err != nil {
+		return releaseSequenceHistory{}, fmt.Errorf("encode %s release sequence history: %w", label, err)
+	}
+	if !bytes.Equal(document, canonical) {
+		return releaseSequenceHistory{}, fmt.Errorf("%s release sequence history is not canonical JSON", label)
+	}
+	return history, nil
+}
+
+func canonicalReleaseSequenceHistory(history releaseSequenceHistory) ([]byte, error) {
+	var result bytes.Buffer
+	encoder := json.NewEncoder(&result)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(history); err != nil {
+		return nil, err
+	}
+	return result.Bytes(), nil
+}
+
+func verifyReleaseSequenceTransition(baseline, candidate releaseSequenceHistory) error {
+	if len(candidate.Releases) < len(baseline.Releases) {
+		return errors.New("candidate release sequence history removed published entries")
+	}
+	for index, published := range baseline.Releases {
+		if candidate.Releases[index] != published {
+			return fmt.Errorf("candidate release sequence history rewrote published entry %d", index)
+		}
+	}
+	additional := len(candidate.Releases) - len(baseline.Releases)
+	if additional > 1 {
+		return fmt.Errorf("candidate release sequence history appended %d releases; exactly one release may be prepared at a time", additional)
+	}
+	if additional == 0 {
+		return nil
+	}
+	published := baseline.Releases[len(baseline.Releases)-1]
+	next := candidate.Releases[len(candidate.Releases)-1]
+	if next.ReleaseSequence <= published.ReleaseSequence {
+		return fmt.Errorf(
+			"new release %q sequence %d must strictly increase published release %q sequence %d",
+			next.Version,
+			next.ReleaseSequence,
+			published.Version,
+			published.ReleaseSequence,
+		)
+	}
+	return nil
+}
+
+type parsedReleaseVersion struct {
+	numbers    [3]uint64
+	prerelease []string
+}
+
+func parseReleaseVersion(raw string) (parsedReleaseVersion, error) {
+	if !semanticVersionPattern.MatchString(raw) {
+		return parsedReleaseVersion{}, fmt.Errorf("release version %q is not a supported semantic version", raw)
+	}
+	core, prerelease, hasPrerelease := strings.Cut(raw, "-")
+	parts := strings.Split(core, ".")
+	var parsed parsedReleaseVersion
+	for index, part := range parts {
+		value, err := strconv.ParseUint(part, 10, 64)
+		if err != nil {
+			return parsedReleaseVersion{}, fmt.Errorf("release version %q component %q is invalid: %w", raw, part, err)
+		}
+		parsed.numbers[index] = value
+	}
+	if !hasPrerelease {
+		return parsed, nil
+	}
+	parsed.prerelease = strings.Split(prerelease, ".")
+	for _, identifier := range parsed.prerelease {
+		if releaseVersionNumericIdentifier(identifier) && len(identifier) > 1 && identifier[0] == '0' {
+			return parsedReleaseVersion{}, fmt.Errorf("release version %q has a numeric prerelease identifier with a leading zero", raw)
+		}
+	}
+	return parsed, nil
+}
+
+func compareReleaseVersions(left, right string) (int, error) {
+	leftVersion, err := parseReleaseVersion(left)
+	if err != nil {
+		return 0, err
+	}
+	rightVersion, err := parseReleaseVersion(right)
+	if err != nil {
+		return 0, err
+	}
+	for index := range leftVersion.numbers {
+		switch {
+		case leftVersion.numbers[index] < rightVersion.numbers[index]:
+			return -1, nil
+		case leftVersion.numbers[index] > rightVersion.numbers[index]:
+			return 1, nil
+		}
+	}
+	if len(leftVersion.prerelease) == 0 && len(rightVersion.prerelease) == 0 {
+		return 0, nil
+	}
+	if len(leftVersion.prerelease) == 0 {
+		return 1, nil
+	}
+	if len(rightVersion.prerelease) == 0 {
+		return -1, nil
+	}
+	limit := min(len(leftVersion.prerelease), len(rightVersion.prerelease))
+	for index := 0; index < limit; index++ {
+		leftIdentifier := leftVersion.prerelease[index]
+		rightIdentifier := rightVersion.prerelease[index]
+		if leftIdentifier == rightIdentifier {
+			continue
+		}
+		leftNumeric := releaseVersionNumericIdentifier(leftIdentifier)
+		rightNumeric := releaseVersionNumericIdentifier(rightIdentifier)
+		switch {
+		case leftNumeric && rightNumeric:
+			if len(leftIdentifier) < len(rightIdentifier) ||
+				len(leftIdentifier) == len(rightIdentifier) && leftIdentifier < rightIdentifier {
+				return -1, nil
+			}
+			return 1, nil
+		case leftNumeric:
+			return -1, nil
+		case rightNumeric:
+			return 1, nil
+		case leftIdentifier < rightIdentifier:
+			return -1, nil
+		default:
+			return 1, nil
+		}
+	}
+	switch {
+	case len(leftVersion.prerelease) < len(rightVersion.prerelease):
+		return -1, nil
+	case len(leftVersion.prerelease) > len(rightVersion.prerelease):
+		return 1, nil
+	default:
+		return 0, nil
+	}
+}
+
+func releaseVersionNumericIdentifier(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func selectReleaseSequenceBaseline(root string) (string, error) {
+	releaseBaseline := strings.TrimSpace(os.Getenv("RELEASE_SEQUENCE_BASELINE_REF"))
+	sharedBaseline := strings.TrimSpace(os.Getenv("CRD_SCHEMA_BASELINE_REF"))
+	if releaseBaseline != "" && sharedBaseline != "" && releaseBaseline != sharedBaseline {
+		return "", errors.New("release sequence and CRD schema history baselines disagree")
+	}
+	requested := releaseBaseline
+	if requested == "" {
+		requested = sharedBaseline
+	}
+	if requested != "" {
+		if !commitPattern.MatchString(requested) {
+			return "", fmt.Errorf("release sequence history baseline %q is not an exact lowercase Git commit", requested)
+		}
+		resolved, err := resolveReleaseSequenceCommit(root, requested)
+		if err != nil {
+			return "", err
+		}
+		if resolved != requested {
+			return "", fmt.Errorf("release sequence history baseline %q resolved to %q", requested, resolved)
+		}
+		return resolved, nil
+	}
+
+	dirty, err := releaseSequenceInputsDirty(root)
+	if err != nil {
+		return "", err
+	}
+	if dirty {
+		return resolveReleaseSequenceCommit(root, "HEAD")
+	}
+	commit, err := resolveReleaseSequenceCommit(root, "HEAD^")
+	if err == nil {
+		return commit, nil
+	}
+	// Release smoke jobs intentionally use a shallow read-only checkout. Their
+	// candidate history is still self-consistent; exact base comparison already
+	// ran in the required full-history CI support gate before publication.
+	return resolveReleaseSequenceCommit(root, "HEAD")
+}
+
+func releaseSequenceInputsDirty(root string) (bool, error) {
+	arguments := []string{
+		"status", "--porcelain=v1", "--untracked-files=all", "-z", "--",
+		"charts/ptah-operator/Chart.yaml",
+		"charts/ptah-operator/values.yaml",
+		releaseSequenceHelperPath,
+		releaseSequenceGoPath,
+		releaseSequenceHistoryPath,
+	}
+	output, err := releaseSequenceGitOutput(root, arguments...)
+	if err != nil {
+		return false, fmt.Errorf("inspect release sequence inputs: %w", err)
+	}
+	return len(output) != 0, nil
+}
+
+func resolveReleaseSequenceCommit(root, reference string) (string, error) {
+	if reference == "" || strings.HasPrefix(reference, "-") || strings.ContainsAny(reference, "\x00\r\n") {
+		return "", fmt.Errorf("release sequence Git reference %q is invalid", reference)
+	}
+	output, err := releaseSequenceGitOutput(root, "rev-parse", "--verify", "--end-of-options", reference+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("resolve release sequence history baseline %q: %w", reference, err)
+	}
+	commit := strings.TrimSpace(string(output))
+	if !commitPattern.MatchString(commit) {
+		return "", fmt.Errorf("release sequence Git reference %q resolved to invalid commit %q", reference, commit)
+	}
+	return commit, nil
+}
+
+func releaseSequenceHistoryAt(root, commit string) ([]byte, bool, error) {
+	output, err := releaseSequenceGitOutput(
+		root,
+		"ls-tree", "-z", "--name-only", commit, "--", releaseSequenceHistoryPath,
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("locate release sequence history at %s: %w", commit, err)
+	}
+	if len(output) == 0 {
+		return nil, false, nil
+	}
+	if string(output) != releaseSequenceHistoryPath+"\x00" {
+		return nil, false, fmt.Errorf("Git returned an unexpected release sequence history path at %s", commit)
+	}
+	document, err := releaseSequenceGitOutput(root, "show", commit+":"+releaseSequenceHistoryPath)
+	if err != nil {
+		return nil, false, fmt.Errorf("read release sequence history at %s: %w", commit, err)
+	}
+	return document, true, nil
+}
+
+func releaseSequenceGitOutput(root string, arguments ...string) ([]byte, error) {
+	command := exec.Command("git", arguments...)
+	command.Dir = root
+	command.Env = append(os.Environ(), "LC_ALL=C")
+	output, err := command.Output()
+	if err == nil {
+		return output, nil
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		message := strings.TrimSpace(string(exitError.Stderr))
+		if len(message) > 4096 {
+			message = message[:4096] + "..."
+		}
+		if message != "" {
+			return nil, fmt.Errorf("git %s: %s: %w", arguments[0], message, err)
+		}
+	}
+	return nil, fmt.Errorf("git %s: %w", arguments[0], err)
+}
+
 func goToolchain(module []byte) (string, error) {
 	var languageVersion string
 	scanner := bufio.NewScanner(strings.NewReader(string(module)))
@@ -426,8 +987,43 @@ type dockerfileInstruction struct {
 }
 
 func verifyDockerfile(document []byte, toolchain string) error {
-	_, err := dockerfileExternalInputs(document, toolchain)
-	return err
+	if _, err := dockerfileExternalInputs(document, toolchain); err != nil {
+		return err
+	}
+	return verifyManagerRevisionBinding(document)
+}
+
+func verifyManagerRevisionBinding(document []byte) error {
+	instructions, err := dockerfileInstructions(document)
+	if err != nil {
+		return err
+	}
+	const managerBuild = `CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w -X main.controllerRevision=${REVISION}" -o /out/manager ./cmd/manager`
+	stage := -1
+	revisionDeclared := false
+	managerBuilds := 0
+	for _, instruction := range instructions {
+		switch instruction.Name {
+		case "from":
+			stage++
+		case "arg":
+			if stage == 0 && instruction.Args == "REVISION" {
+				revisionDeclared = true
+			}
+		case "run":
+			if !strings.Contains(instruction.Args, "-o /out/manager") {
+				continue
+			}
+			managerBuilds++
+			if stage != 0 || !revisionDeclared || instruction.Args != managerBuild {
+				return fmt.Errorf("Dockerfile line %d manager build must bind the builder REVISION argument to main.controllerRevision", instruction.Line)
+			}
+		}
+	}
+	if managerBuilds != 1 {
+		return fmt.Errorf("Dockerfile must contain exactly one revision-bound manager build, found %d", managerBuilds)
+	}
+	return nil
 }
 
 func dockerfileExternalInputs(document []byte, toolchain string) ([]dockerfileInput, error) {
@@ -985,18 +1581,43 @@ type workflowConcurrency struct {
 }
 
 type workflowJob struct {
-	If          string            `yaml:"if"`
-	Environment string            `yaml:"environment"`
-	Permissions map[string]string `yaml:"permissions"`
-	Steps       []workflowStep    `yaml:"steps"`
+	Name            string             `yaml:"name"`
+	If              string             `yaml:"if"`
+	Needs           workflowStringList `yaml:"needs"`
+	Environment     string             `yaml:"environment"`
+	TimeoutMinutes  int                `yaml:"timeout-minutes"`
+	Permissions     map[string]string  `yaml:"permissions"`
+	Outputs         map[string]string  `yaml:"outputs"`
+	ContinueOnError bool               `yaml:"continue-on-error"`
+	Steps           []workflowStep     `yaml:"steps"`
 }
 
 type workflowStep struct {
-	ID   string         `yaml:"id"`
-	If   string         `yaml:"if"`
-	Uses string         `yaml:"uses"`
-	Run  string         `yaml:"run"`
-	With map[string]any `yaml:"with"`
+	ID              string            `yaml:"id"`
+	If              string            `yaml:"if"`
+	Uses            string            `yaml:"uses"`
+	Run             string            `yaml:"run"`
+	Env             map[string]string `yaml:"env"`
+	With            map[string]any    `yaml:"with"`
+	ContinueOnError bool              `yaml:"continue-on-error"`
+}
+
+type workflowStringList []string
+
+func (values *workflowStringList) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		var value string
+		if err := node.Decode(&value); err != nil {
+			return err
+		}
+		*values = workflowStringList{value}
+		return nil
+	case yaml.SequenceNode:
+		return node.Decode((*[]string)(values))
+	default:
+		return errors.New("workflow needs must be a string or list")
+	}
 }
 
 func verifyWorkflow(document []byte) error {
@@ -1012,11 +1633,14 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := decoder.Decode(&workflow); err != nil {
 		return fmt.Errorf("parse release workflow: %w", err)
 	}
-	if len(workflow.On) != 2 {
-		return errors.New("release workflow must have only pull_request and tag push triggers")
+	if len(workflow.On) != 3 {
+		return errors.New("release workflow must have only pull_request, workflow_dispatch, and tag push triggers")
 	}
 	if _, ok := workflow.On["pull_request"]; !ok {
 		return errors.New("release workflow must run smoke checks on pull requests")
+	}
+	if _, ok := workflow.On["workflow_dispatch"]; !ok {
+		return errors.New("release workflow must run smoke checks on manual dispatch")
 	}
 	push, ok := workflow.On["push"]
 	if !ok {
@@ -1034,15 +1658,15 @@ func verifyWorkflowSemantics(document []byte) error {
 	if !equalStringMap(workflow.Permissions, map[string]string{"contents": "read"}) {
 		return errors.New("release workflow top-level permissions must be contents: read only")
 	}
-	if len(workflow.Jobs) != 2 {
-		return errors.New("release workflow must contain exactly the smoke and publish jobs")
+	if len(workflow.Jobs) != 3 {
+		return errors.New("release workflow must contain exactly the smoke, support-preflight, and publish jobs")
 	}
 	smoke, ok := workflow.Jobs["smoke"]
 	if !ok {
 		return errors.New("release workflow has no smoke job")
 	}
-	if smoke.If != "github.event_name == 'pull_request'" || len(smoke.Permissions) != 0 {
-		return errors.New("smoke job must be read-only and gated to pull requests")
+	if smoke.If != "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'" || len(smoke.Permissions) != 0 {
+		return errors.New("smoke job must be read-only and gated to pull requests or manual dispatch")
 	}
 	if err := verifyStepContract("smoke", smoke.Steps,
 		[]string{"checkout", "setup-go", "setup-helm", "verify-release", "chart-reproducibility", "setup-buildx", "build"},
@@ -1065,12 +1689,94 @@ func verifyWorkflowSemantics(document []byte) error {
 		return err
 	}
 
+	preflight, ok := workflow.Jobs["support-preflight"]
+	if !ok {
+		return errors.New("release workflow has no support-preflight job")
+	}
+	if preflight.Name != "Verify release Kubernetes support evidence" {
+		return errors.New("support-preflight job name does not match the release contract")
+	}
+	if preflight.If != "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')" {
+		return errors.New("support-preflight job must be gated to v* tag push refs")
+	}
+	if preflight.Environment != "" || len(preflight.Needs) != 0 {
+		return errors.New("support-preflight job must run before and outside the protected release environment")
+	}
+	if preflight.TimeoutMinutes != 130 {
+		return errors.New("support-preflight timeout must bound the exact-SHA CI wait to 130 minutes")
+	}
+	if !equalStringMap(preflight.Permissions, map[string]string{"actions": "read", "contents": "read"}) {
+		return errors.New("support-preflight permissions must be actions: read and contents: read")
+	}
+	if !equalStringMap(preflight.Outputs, map[string]string{
+		"source-sha": "${{ steps.support-evidence.outputs.source-sha }}",
+	}) {
+		return errors.New("support-preflight must expose only its verified source SHA")
+	}
+	if err := verifyStepContract("support-preflight", preflight.Steps,
+		[]string{"checkout", "setup-go", "support-evidence"},
+		map[string]string{
+			"checkout": "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+			"setup-go": "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+		}); err != nil {
+		return err
+	}
+	preflightSteps, err := stepsByID(preflight.Steps)
+	if err != nil {
+		return err
+	}
+	preflightCheckout, err := requireStep(preflightSteps, "checkout")
+	if err != nil {
+		return err
+	}
+	if value(preflightCheckout.With, "persist-credentials") != "false" {
+		return errors.New("support-preflight checkout must not persist credentials")
+	}
+	preflightGo, err := requireStep(preflightSteps, "setup-go")
+	if err != nil {
+		return err
+	}
+	if value(preflightGo.With, "go-version-file") != "go.mod" || value(preflightGo.With, "cache") != "false" ||
+		value(preflightGo.With, "cache-dependency-path") != "" {
+		return errors.New("support-preflight Go setup must use go.mod with action caching disabled")
+	}
+	supportEvidence, err := requireStep(preflightSteps, "support-evidence")
+	if err != nil {
+		return err
+	}
+	if !equalStringMap(supportEvidence.Env, map[string]string{
+		"DEFAULT_BRANCH":               "${{ github.event.repository.default_branch }}",
+		"GH_TOKEN":                     "${{ secrets.GITHUB_TOKEN }}",
+		"SUPPORT_POLL_TIMEOUT_MINUTES": "120",
+	}) {
+		return errors.New("support-preflight evidence must bind the default branch, Actions token, and 120-minute poll")
+	}
+	if err := requireRunBindings(preflightSteps, "support-evidence",
+		"go run ./hack/verify-kubernetes-support.go -now \"$today\"",
+		"go run ./hack/releaseverify",
+		"repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs",
+		"-f branch=\"$DEFAULT_BRANCH\"", "-f event=push", "-f head_sha=\"$GITHUB_SHA\"",
+		".event == \"push\"", ".head_branch == $branch", ".head_sha == $sha",
+		".status == \"completed\"", ".conclusion == \"success\"",
+		"repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs",
+		".name == \"Kubernetes support gate\"",
+		"poll_deadline_epoch=$(( $(date -u +%s) + SUPPORT_POLL_TIMEOUT_MINUTES * 60 ))",
+		"remaining_seconds=$((poll_deadline_epoch - $(date -u +%s)))",
+		"if (( remaining_seconds <= 0 ))", "sleep \"$sleep_seconds\"",
+		"delay=$((delay < 30 ? delay * 2 : 30))",
+		"printf 'source-sha=%s\\n' \"$GITHUB_SHA\" >> \"$GITHUB_OUTPUT\""); err != nil {
+		return err
+	}
+
 	publish, ok := workflow.Jobs["publish"]
 	if !ok {
 		return errors.New("release workflow has no publish job")
 	}
-	if publish.If != "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')" {
-		return errors.New("publish job must be gated to v* tag push refs")
+	if !equalStringSet(publish.Needs, []string{"support-preflight"}) {
+		return errors.New("publish job must depend only on support-preflight")
+	}
+	if publish.If != "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.support-preflight.outputs.source-sha == github.sha" {
+		return errors.New("publish job must bind successful support-preflight evidence to the tag SHA")
 	}
 	if publish.Environment != "release" {
 		return errors.New("publish job must use the protected release environment")
@@ -1107,7 +1813,13 @@ func verifyWorkflowSemantics(document []byte) error {
 		return err
 	}
 	for jobName, job := range workflow.Jobs {
+		if job.ContinueOnError {
+			return fmt.Errorf("release job %s must not continue on error", jobName)
+		}
 		for _, step := range job.Steps {
+			if step.ContinueOnError {
+				return fmt.Errorf("release step %q in job %s must not continue on error", step.ID, jobName)
+			}
 			if step.Uses != "" && !actionPinPattern.MatchString(step.Uses) {
 				return fmt.Errorf("release action %q in job %s is not pinned to a full commit", step.Uses, jobName)
 			}
@@ -1355,6 +2067,25 @@ func equalStringMap(actual, expected map[string]string) bool {
 	}
 	for key, want := range expected {
 		if actual[key] != want {
+			return false
+		}
+	}
+	return true
+}
+
+func equalStringSet(actual workflowStringList, expected []string) bool {
+	if len(actual) != len(expected) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(actual))
+	for _, value := range actual {
+		seen[value] = struct{}{}
+	}
+	if len(seen) != len(actual) {
+		return false
+	}
+	for _, value := range expected {
+		if _, ok := seen[value]; !ok {
 			return false
 		}
 	}

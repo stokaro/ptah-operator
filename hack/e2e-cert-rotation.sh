@@ -186,8 +186,8 @@ grep -F 'certificate rotator Secret CREATE is outside its exact recovery contrac
 	"$GUARD_ERROR" >/dev/null ||
 	fail "unrelated Secret CREATE was not rejected by the exact recovery guard"
 
-kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" scale \
-	deployment "$DEPLOYMENT" --replicas=2 >/dev/null
+kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" patch \
+	deployment "$DEPLOYMENT" --type=merge -p '{"spec":{"replicas":2}}' >/dev/null
 kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
 	deployment "$DEPLOYMENT" --timeout=5m >/dev/null
 

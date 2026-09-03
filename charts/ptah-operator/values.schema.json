@@ -58,7 +58,7 @@
     "image": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["repository", "tag", "digest", "allowMutableTag", "pullPolicy"],
+      "required": ["repository", "tag", "digest", "allowMutableTag", "testIdentityDigest", "pullPolicy"],
       "properties": {
         "repository": {
           "type": "string",
@@ -75,6 +75,10 @@
         },
         "allowMutableTag": {
           "type": "boolean"
+        },
+        "testIdentityDigest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[0-9a-f]{64}$"
         },
         "pullPolicy": {
           "type": "string",
@@ -168,10 +172,14 @@
       "required": ["create", "name", "annotations"],
       "properties": {
         "create": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "Create the controller ServiceAccount. When false, name must identify an existing identity dedicated to this release with no additional RoleBinding or ClusterRoleBinding."
         },
         "name": {
-          "type": "string"
+          "type": "string",
+          "description": "Controller ServiceAccount name. Required when create is false; that existing identity must be dedicated to this release.",
+          "maxLength": 253,
+          "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
         },
         "annotations": {
           "type": "object",
@@ -205,7 +213,28 @@
     "tolerations": {
       "type": "array",
       "items": {
-        "type": "object"
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string",
+            "enum": ["Equal", "Exists"]
+          },
+          "value": {
+            "type": "string"
+          },
+          "effect": {
+            "type": "string",
+            "enum": ["", "NoSchedule", "PreferNoSchedule", "NoExecute"]
+          },
+          "tolerationSeconds": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       }
     },
     "affinity": {
@@ -213,6 +242,15 @@
     },
     "priorityClassName": {
       "type": "string"
+    },
+    "priorityClassValue": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "priorityClassPreemptionPolicy": {
+      "type": "string",
+      "enum": ["PreemptLowerPriority", "Never"]
     },
     "metrics": {
       "type": "object",

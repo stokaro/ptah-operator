@@ -1,16 +1,35 @@
 {{- include "ptah-operator.validateExecutionImages" . }}
 {{- include "ptah-operator.validatePtahVersion" . }}
 {{- include "ptah-operator.validateLeaderElection" . }}
+{{- include "ptah-operator.validateAdmissionSingleton" . }}
+{{- range $key := list "operator.ptah.dev/controller-state-version" "operator.ptah.dev/release-sequence" }}
+{{- if hasKey (default (dict) $.Values.podAnnotations) $key }}
+{{- fail (printf "podAnnotations must not override %s" $key) }}
+{{- end }}
+{{- end }}
+{{- range $key := list "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" }}
+{{- if hasKey (default (dict) $.Values.podLabels) $key }}
+{{- fail (printf "podLabels must not override reserved selector label %s" $key) }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "ptah-operator.fullname" . }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+    operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
 spec:
   replicas: {{ .Values.replicaCount }}
+  # Webhook requests are served by every ready replica, independently of
+  # leader election. Recreate prevents two controller revisions from serving
+  # incompatible admission and execution contracts behind one Service.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "ptah-operator.selectorLabels" . | nindent 6 }}
@@ -21,13 +40,16 @@ spec:
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .Values.podAnnotations }}
       annotations:
+        operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+        operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
+        {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "ptah-operator.serviceAccountName" . }}
-      automountServiceAccountToken: true
+      automountServiceAccountToken: false
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -39,26 +61,39 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      initContainers:
+        - name: verify-candidate-runtime
+          image: {{ include "ptah-operator.managerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          args:
+            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "runtime-verify" "timeout" "60s" "verifyControllerState" true) | fromJsonArray) }}
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
       containers:
         - name: manager
           image: {{ include "ptah-operator.managerImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/manager"]
           args:
-            - --leader-elect={{ .Values.leaderElection }}
-            - --metrics-bind-address={{ .Values.metrics.bindAddress }}
-            - --health-probe-bind-address=:8081
-            - --webhook-port={{ .Values.webhook.port }}
-            - --webhook-cert-dir=/certs
-            - --executor-image={{ .Values.execution.executorImage }}
-            - --runner-image={{ .Values.execution.runnerImage }}
-            - {{ printf "--ptah-version=%s" .Values.execution.ptahVersion | quote }}
-            - --target-lock-namespace={{ default .Release.Namespace .Values.coordination.namespace }}
-            - --default-tolerations-enabled={{ .Values.admission.defaultTolerationsEnabled }}
-            - --default-not-ready-toleration-seconds={{ .Values.admission.defaultNotReadyTolerationSeconds }}
-            - --default-unreachable-toleration-seconds={{ .Values.admission.defaultUnreachableTolerationSeconds }}
-            - --extended-resource-toleration-enabled={{ .Values.admission.extendedResourceTolerationEnabled }}
-            - --always-pull-images-enabled={{ .Values.admission.alwaysPullImagesEnabled }}
+            {{- range (include "ptah-operator.controllerRuntimeArgsJSON" . | fromJsonArray) }}
+            - {{ . | quote }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: 8080
@@ -75,6 +110,9 @@ spec:
             capabilities:
               drop: ["ALL"]
           volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
             - name: webhook-cert
               mountPath: /certs
               readOnly: true
@@ -95,6 +133,24 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        - name: api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        apiVersion: v1
+                        fieldPath: metadata.namespace
         - name: webhook-cert
           secret:
             secretName: {{ include "ptah-operator.webhookSecretName" . }}

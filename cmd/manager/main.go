@@ -24,6 +24,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	approvaladmission "github.com/stokaro/ptah-operator/internal/admission"
 	"github.com/stokaro/ptah-operator/internal/controller"
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/planstore"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
@@ -38,10 +39,15 @@ const (
 	leaderElectionID      = "ptah-operator.operator.ptah.dev"
 )
 
+// controllerRevision is injected by the release build. An unversioned manager
+// must fail before it can interpret or write durable controller state.
+var controllerRevision string
+
 func main() {
 	var metricsAddress string
 	var probeAddress string
 	var leaderElection bool
+	var controllerImage string
 	var executorImage string
 	var runnerImage string
 	var ptahVersion string
@@ -57,6 +63,7 @@ func main() {
 	flag.StringVar(&metricsAddress, "metrics-bind-address", ":8080", "address for Prometheus metrics")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "address for health probes")
 	flag.BoolVar(&leaderElection, "leader-elect", true, "use a Kubernetes Lease for leader election")
+	flag.StringVar(&controllerImage, "controller-image", "", "content-addressed manager image identity")
 	flag.StringVar(&executorImage, "executor-image", "", "content-addressed Ptah executor image")
 	flag.StringVar(&runnerImage, "runner-image", "", "content-addressed operator runner image")
 	flag.StringVar(&ptahVersion, "ptah-version", "", "Ptah CLI version bound into plans")
@@ -75,7 +82,14 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOptions)))
 	log := ctrl.Log.WithName("setup")
 
-	builder := workload.Builder{ExecutorImage: executorImage, RunnerImage: runnerImage, PtahVersion: ptahVersion}
+	builder := workload.Builder{
+		ExecutorImage:          executorImage,
+		RunnerImage:            runnerImage,
+		PtahVersion:            ptahVersion,
+		ControllerImage:        controllerImage,
+		ControllerRevision:     controllerRevision,
+		ControllerStateVersion: controllerstate.CurrentVersion,
+	}
 	if err := builder.Validate(); err != nil {
 		log.Error(err, "invalid immutable execution configuration")
 		os.Exit(1)
@@ -144,9 +158,13 @@ func main() {
 	decoder := cradmission.NewDecoder(manager.GetScheme())
 	manager.GetWebhookServer().Register(mutateApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.ApprovalHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: true,
+		ControllerImage: controllerImage, ControllerRevision: controllerRevision,
+		ControllerStateVersion: controllerstate.CurrentVersion,
 	}})
 	manager.GetWebhookServer().Register(validateApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.ApprovalHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false,
+		ControllerImage: controllerImage, ControllerRevision: controllerRevision,
+		ControllerStateVersion: controllerstate.CurrentVersion,
 	}})
 	manager.GetWebhookServer().Register(validatePodIntentPath, &cradmission.Webhook{Handler: &podintent.ValidationHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder,
@@ -162,6 +180,9 @@ func main() {
 	}
 
 	log.Info("starting manager",
+		"controllerImage", controllerImage,
+		"controllerRevision", controllerRevision,
+		"controllerStateVersion", controllerstate.CurrentVersion,
 		"ptahVersion", ptahVersion,
 		"runnerProtocol", workload.ProtocolVersion,
 		"coordinationNamespace", targetLockNamespace,

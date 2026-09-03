@@ -72,7 +72,7 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 	t.Parallel()
 
 	base := fingerprint.PlanBinding{
-		ContractVersion:          2,
+		ContractVersion:          fingerprint.CurrentPlanContractVersion,
 		SchemaUID:                "schema-uid",
 		PlanContentDigest:        "sha256:plan",
 		ArtifactDigest:           "sha256:artifact",
@@ -84,6 +84,9 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 		VerificationPolicyUID:    "verification-policy-uid",
 		VerificationPolicyDigest: "sha256:verification",
 		ExecutionBindingID:       "v1-33333333333333333333333333333333",
+		ControllerImage:          "example.invalid/manager@sha256:" + strings.Repeat("c", 64),
+		ControllerRevision:       "controller-test-revision",
+		ControllerStateVersion:   1,
 		PtahVersion:              "v0.3.0",
 		ExecutorImage:            "example.invalid/ptah@sha256:executor",
 		RunnerImage:              "example.invalid/operator@sha256:runner",
@@ -106,10 +109,15 @@ func TestPlanBindingEveryInputInvalidatesFingerprint(t *testing.T) {
 		"verification UID": func(v *fingerprint.PlanBinding) { v.VerificationPolicyUID += "-new" },
 		"verification":     func(v *fingerprint.PlanBinding) { v.VerificationPolicyDigest += "-new" },
 		"execution epoch":  func(v *fingerprint.PlanBinding) { v.ExecutionBindingID = "v1-44444444444444444444444444444444" },
-		"version":          func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
-		"executor":         func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
-		"runner":           func(v *fingerprint.PlanBinding) { v.RunnerImage += "-new" },
-		"protocol":         func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
+		"controller image": func(v *fingerprint.PlanBinding) {
+			v.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("d", 64)
+		},
+		"controller revision": func(v *fingerprint.PlanBinding) { v.ControllerRevision += "-new" },
+		"controller state":    func(v *fingerprint.PlanBinding) { v.ControllerStateVersion++ },
+		"version":             func(v *fingerprint.PlanBinding) { v.PtahVersion += "-new" },
+		"executor":            func(v *fingerprint.PlanBinding) { v.ExecutorImage += "-new" },
+		"runner":              func(v *fingerprint.PlanBinding) { v.RunnerImage += "-new" },
+		"protocol":            func(v *fingerprint.PlanBinding) { v.RunnerProtocolVersion++ },
 	}
 	for name, mutate := range mutations {
 		name, mutate := name, mutate
@@ -156,18 +164,52 @@ func TestPlanBindingExecutionEpochCompatibility(t *testing.T) {
 		t.Fatalf("legacy v1 fingerprint = %q, want backward-compatible digest", legacyFingerprint)
 	}
 
-	current := legacy
-	current.ContractVersion = 2
-	if _, err := current.Fingerprint(); err == nil || !strings.Contains(err.Error(), "execution binding ID") {
+	epochContract := legacy
+	epochContract.ContractVersion = fingerprint.ExecutionEpochPlanContractVersion
+	if _, err := epochContract.Fingerprint(); err == nil || !strings.Contains(err.Error(), "execution binding ID") {
 		t.Fatalf("v2 binding without execution epoch error = %v, want execution binding refusal", err)
 	}
-	current.ExecutionBindingID = "v1-33333333333333333333333333333333"
-	if _, err := current.Fingerprint(); err != nil {
+	epochContract.ExecutionBindingID = "v1-33333333333333333333333333333333"
+	epochFingerprint, err := epochContract.Fingerprint()
+	if err != nil {
 		t.Fatalf("v2 binding with execution epoch: %v", err)
 	}
-	current.ExecutionBindingID = "retired-epoch"
-	if _, err := current.Fingerprint(); err == nil || !strings.Contains(err.Error(), "valid execution binding ID") {
+	if epochFingerprint != "sha256:477c8ad206e3bb60a7e973ecdaaf5cf35b3313b41b32baf31827a6032e2e0f25" {
+		t.Fatalf("v2 fingerprint = %q, want backward-compatible digest", epochFingerprint)
+	}
+	epochContract.ExecutionBindingID = "retired-epoch"
+	if _, err := epochContract.Fingerprint(); err == nil || !strings.Contains(err.Error(), "valid execution binding ID") {
 		t.Fatalf("v2 binding with malformed execution epoch error = %v, want format refusal", err)
+	}
+
+	current := legacy
+	current.ContractVersion = fingerprint.CurrentPlanContractVersion
+	current.ExecutionBindingID = "v1-33333333333333333333333333333333"
+	if _, err := current.Fingerprint(); err == nil || !strings.Contains(err.Error(), "controller image") {
+		t.Fatalf("v3 binding without manager image error = %v, want controller image refusal", err)
+	}
+	current.ControllerImage = "example.invalid/manager@sha256:" + strings.Repeat("c", 64)
+	if _, err := current.Fingerprint(); err == nil || !strings.Contains(err.Error(), "controller revision") {
+		t.Fatalf("v3 binding without manager identity error = %v, want controller revision refusal", err)
+	}
+	current.ControllerRevision = "controller-test-revision"
+	if _, err := current.Fingerprint(); err == nil || !strings.Contains(err.Error(), "controller state version") {
+		t.Fatalf("v3 binding without state version error = %v, want controller state refusal", err)
+	}
+	current.ControllerStateVersion = 1
+	if _, err := current.Fingerprint(); err != nil {
+		t.Fatalf("v3 binding with manager identity: %v", err)
+	}
+	invalidRevision := current
+	invalidRevision.ControllerRevision = "release\ncandidate"
+	if _, err := invalidRevision.Fingerprint(); err == nil || !strings.Contains(err.Error(), "control characters") {
+		t.Fatalf("v3 binding with control-character revision error = %v, want revision refusal", err)
+	}
+
+	future := current
+	future.ContractVersion = fingerprint.CurrentPlanContractVersion + 1
+	if _, err := future.Fingerprint(); err == nil || !strings.Contains(err.Error(), "unsupported plan contract version") {
+		t.Fatalf("future binding error = %v, want unsupported-version refusal", err)
 	}
 }
 

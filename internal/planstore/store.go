@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/plancontract"
 )
@@ -37,6 +38,7 @@ const (
 var (
 	sha256Pattern             = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	executionBindingIDPattern = regexp.MustCompile(`^v1-[0-9a-f]{32}$`)
+	imageDigestPattern        = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
 )
 
 // Store uses direct API reads through Reader and mutating calls through Client.
@@ -71,11 +73,8 @@ func Prepare(
 	if !sha256Pattern.MatchString(spec.Fingerprint) {
 		return nil, nil, fmt.Errorf("plan fingerprint must be a lowercase SHA-256 digest")
 	}
-	if spec.ContractVersion < 1 {
-		return nil, nil, fmt.Errorf("plan contract version must be positive")
-	}
-	if spec.ContractVersion >= 2 && !executionBindingIDPattern.MatchString(spec.ExecutionBindingID) {
-		return nil, nil, fmt.Errorf("plan contract version %d requires a valid execution binding ID", spec.ContractVersion)
+	if err := validatePlanContract(spec); err != nil {
+		return nil, nil, err
 	}
 	if spec.SchemaRef.Name != schema.Name || spec.SchemaRef.UID != schema.UID {
 		return nil, nil, fmt.Errorf("plan schema reference does not match the owner")
@@ -135,6 +134,9 @@ func (s Store) Publish(
 	}
 	if desired == nil || len(chunks) != len(desired.Spec.Chunks) {
 		return nil, fmt.Errorf("plan manifest and chunks do not match")
+	}
+	if err := validatePlanContract(desired.Spec); err != nil {
+		return nil, err
 	}
 
 	plan := desired.DeepCopy()
@@ -205,6 +207,9 @@ func (s Store) Load(ctx context.Context, plan *operatorv1alpha1.PtahSchemaPlan) 
 	if plan == nil || plan.UID == "" {
 		return nil, fmt.Errorf("persisted plan is required")
 	}
+	if err := validatePlanContract(plan.Spec); err != nil {
+		return nil, err
+	}
 	if plan.Status.ObservedGeneration != plan.Generation ||
 		!meta.IsStatusConditionTrue(plan.Status.Conditions, operatorv1alpha1.ConditionPlanStorageReady) {
 		return nil, fmt.Errorf("plan storage is not committed")
@@ -248,6 +253,9 @@ func VolumeSources(plan *operatorv1alpha1.PtahSchemaPlan) ([]corev1.VolumeProjec
 	if plan == nil || len(plan.Spec.Chunks) == 0 || len(plan.Spec.Chunks) > MaxChunks {
 		return nil, fmt.Errorf("plan has an invalid chunk manifest")
 	}
+	if err := validatePlanContract(plan.Spec); err != nil {
+		return nil, err
+	}
 	sources := make([]corev1.VolumeProjection, len(plan.Spec.Chunks))
 	for index, ref := range plan.Spec.Chunks {
 		if ref.Index != int32(index) || ref.Key == "" || ref.Name == "" {
@@ -259,6 +267,28 @@ func VolumeSources(plan *operatorv1alpha1.PtahSchemaPlan) ([]corev1.VolumeProjec
 		}}
 	}
 	return sources, nil
+}
+
+func validatePlanContract(spec operatorv1alpha1.PtahSchemaPlanSpec) error {
+	if err := fingerprint.ValidatePlanContractVersion(spec.ContractVersion); err != nil {
+		return err
+	}
+	if spec.ContractVersion >= fingerprint.ExecutionEpochPlanContractVersion &&
+		!executionBindingIDPattern.MatchString(spec.ExecutionBindingID) {
+		return fmt.Errorf("plan contract version %d requires a valid execution binding ID", spec.ContractVersion)
+	}
+	if spec.ContractVersion >= fingerprint.CurrentPlanContractVersion {
+		if !imageDigestPattern.MatchString(spec.ControllerImage) {
+			return fmt.Errorf("plan contract version %d requires a digest-pinned controller image", spec.ContractVersion)
+		}
+		if err := controllerstate.ValidateRevision(spec.ControllerRevision); err != nil {
+			return fmt.Errorf("plan contract version %d has an invalid controller revision: %w", spec.ContractVersion, err)
+		}
+		if spec.ControllerStateVersion < 1 {
+			return fmt.Errorf("plan contract version %d requires a positive controller state version", spec.ContractVersion)
+		}
+	}
+	return nil
 }
 
 func desiredChunk(plan *operatorv1alpha1.PtahSchemaPlan, ref operatorv1alpha1.PlanChunkReference, content []byte) *corev1.ConfigMap {

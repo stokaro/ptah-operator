@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
@@ -59,12 +61,22 @@ const (
 	applyTerminationGrace    = 30 * time.Second
 )
 
+var controllerImagePattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
+
 // JobBuilder turns one already-persisted operation claim into a deterministic
 // Job. It must never read Secret content.
 type JobBuilder interface {
 	NameFor(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus) (string, error)
 	Build(schema *operatorv1alpha1.PtahSchema, operation operatorv1alpha1.ActiveOperationStatus, plan *operatorv1alpha1.PtahSchemaPlan) (*batchv1.Job, error)
-	ExecutionBinding() (ptahVersion, executorImage, runnerImage string, protocolVersion int32)
+	ExecutionBinding() (
+		controllerImage string,
+		controllerRevision string,
+		controllerStateVersion int32,
+		ptahVersion string,
+		executorImage string,
+		runnerImage string,
+		runnerProtocolVersion int32,
+	)
 }
 
 // SchemaReconciler implements the Resolve -> Verify -> Observe -> Plan ->
@@ -123,6 +135,9 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	if err := reader.Get(ctx, request.NamespacedName, schema); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	if err := r.rejectUnsupportedStoredControllerState(schema); err != nil {
+		return ctrl.Result{}, err
+	}
 	if schema.Status.PendingLockRelease != nil {
 		return r.reconcilePendingLockRelease(ctx, schema)
 	}
@@ -139,11 +154,15 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 		if err := r.removeActiveFinalizer(ctx, schema); err != nil {
 			return ctrl.Result{}, err
 		}
-		// The metadata patch advances resourceVersion. Reload before a status
-		// transition in this same pass so the optimistic status patch does not use
-		// the pre-finalizer object version.
+		// The metadata patch advances resourceVersion. Reload and repeat the
+		// downgrade fence before a status transition in this pass. An in-flight
+		// concurrent status write conflicts with the optimistic finalizer patch;
+		// a write after it is caught by this direct reload.
 		if err := reader.Get(ctx, request.NamespacedName, schema); err != nil {
 			return ctrl.Result{}, client.IgnoreNotFound(err)
+		}
+		if err := r.rejectUnsupportedStoredControllerState(schema); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 
@@ -220,6 +239,53 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	// A changed desired reference or a regular interval always starts with a
 	// fresh resolution. This is what makes mutable tags observable.
 	return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+}
+
+// rejectUnsupportedStoredControllerState is the first check after the direct
+// API read. A manager that encounters state written by a newer controller must
+// not rotate bindings, alter finalizers, renew or release Leases, or interpret
+// an operation claim. Existing Job deadlines and Lease horizons provide
+// containment until a capable manager resumes the object.
+func (r *SchemaReconciler) rejectUnsupportedStoredControllerState(schema *operatorv1alpha1.PtahSchema) error {
+	configured, err := r.configuredExecutionBinding()
+	if err != nil {
+		return err
+	}
+	if schema == nil {
+		return fmt.Errorf("schema is unavailable")
+	}
+
+	type storedVersion struct {
+		name    string
+		version int32
+	}
+	versions := make([]storedVersion, 0, 4)
+	if schema.Status.ExecutionBinding != nil {
+		versions = append(versions, storedVersion{"status.executionBinding", schema.Status.ExecutionBinding.ControllerStateVersion})
+	}
+	if schema.Status.Plan != nil {
+		versions = append(versions, storedVersion{"status.plan", schema.Status.Plan.ControllerStateVersion})
+	}
+	if schema.Status.Applied != nil {
+		versions = append(versions, storedVersion{"status.applied", schema.Status.Applied.ControllerStateVersion})
+	}
+	if schema.Status.PendingObservation != nil {
+		versions = append(versions, storedVersion{"status.pendingObservation.plan", schema.Status.PendingObservation.Plan.ControllerStateVersion})
+	}
+	for _, stored := range versions {
+		if stored.version < 0 {
+			return fmt.Errorf("stored %s controller state version %d is invalid; refusing to interpret or write PtahSchema state", stored.name, stored.version)
+		}
+		if stored.version > configured.ControllerStateVersion {
+			return fmt.Errorf(
+				"stored %s controller state version %d exceeds supported version %d; refusing to interpret or write PtahSchema state",
+				stored.name,
+				stored.version,
+				configured.ControllerStateVersion,
+			)
+		}
+	}
+	return nil
 }
 
 func (r *SchemaReconciler) reconcilePendingObservation(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
@@ -356,13 +422,16 @@ func (r *SchemaReconciler) configuredExecutionBinding() (*operatorv1alpha1.Execu
 	if r.Jobs == nil {
 		return nil, fmt.Errorf("Job builder is not configured")
 	}
-	ptahVersion, executorImage, runnerImage, protocolVersion := r.Jobs.ExecutionBinding()
-	if strings.TrimSpace(ptahVersion) == "" || strings.TrimSpace(ptahVersion) != ptahVersion ||
+	controllerImage, controllerRevision, controllerStateVersion, ptahVersion, executorImage, runnerImage, protocolVersion := r.Jobs.ExecutionBinding()
+	if !controllerImagePattern.MatchString(controllerImage) ||
+		controllerstate.ValidateRevision(controllerRevision) != nil || controllerStateVersion < 1 ||
+		strings.TrimSpace(ptahVersion) == "" || strings.TrimSpace(ptahVersion) != ptahVersion ||
 		strings.TrimSpace(executorImage) == "" || strings.TrimSpace(executorImage) != executorImage ||
 		strings.TrimSpace(runnerImage) == "" || strings.TrimSpace(runnerImage) != runnerImage || protocolVersion < 1 {
 		return nil, fmt.Errorf("Job builder execution binding is incomplete")
 	}
 	return &operatorv1alpha1.ExecutionBindingStatus{
+		ControllerImage: controllerImage, ControllerRevision: controllerRevision, ControllerStateVersion: controllerStateVersion,
 		PtahVersion: ptahVersion, ExecutorImage: executorImage, RunnerImage: runnerImage,
 		RunnerProtocolVersion: protocolVersion,
 	}, nil
@@ -398,6 +467,9 @@ func executionBindingComponentsEqual(
 	right *operatorv1alpha1.ExecutionBindingStatus,
 ) bool {
 	return left != nil && right != nil &&
+		left.ControllerImage == right.ControllerImage &&
+		left.ControllerRevision == right.ControllerRevision &&
+		left.ControllerStateVersion == right.ControllerStateVersion &&
 		left.PtahVersion == right.PtahVersion &&
 		left.ExecutorImage == right.ExecutorImage &&
 		left.RunnerImage == right.RunnerImage &&
@@ -2591,13 +2663,16 @@ func (r *SchemaReconciler) publishPlan(ctx context.Context, schema *operatorv1al
 		return nil, fmt.Errorf("durable execution binding is not current")
 	}
 	binding := fingerprint.PlanBinding{
-		ContractVersion: 2, SchemaUID: string(schema.UID), PlanContentDigest: contentDigest,
+		ContractVersion: fingerprint.CurrentPlanContractVersion, SchemaUID: string(schema.UID), PlanContentDigest: contentDigest,
 		ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: schema.Status.Target.CoordinationDigest,
 		TargetIdentityDigest:   schema.Status.Target.IdentityDigest,
 		ActualStateFingerprint: decoded.FromFingerprint, DesiredStateFingerprint: decoded.ToFingerprint,
 		PolicyFingerprint: policyFingerprint, VerificationPolicyUID: string(schema.Status.Source.VerificationPolicyUID),
 		VerificationPolicyDigest: schema.Status.Source.VerificationPolicyDigest,
 		ExecutionBindingID:       executionBinding.Epoch,
+		ControllerImage:          executionBinding.ControllerImage,
+		ControllerRevision:       executionBinding.ControllerRevision,
+		ControllerStateVersion:   executionBinding.ControllerStateVersion,
 		PtahVersion:              executionBinding.PtahVersion, ExecutorImage: executionBinding.ExecutorImage,
 		RunnerImage: executionBinding.RunnerImage, RunnerProtocolVersion: executionBinding.RunnerProtocolVersion,
 	}
@@ -2606,7 +2681,7 @@ func (r *SchemaReconciler) publishPlan(ctx context.Context, schema *operatorv1al
 		return nil, err
 	}
 	spec := operatorv1alpha1.PtahSchemaPlanSpec{
-		ContractVersion: 2, SchemaRef: operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
+		ContractVersion: fingerprint.CurrentPlanContractVersion, SchemaRef: operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
 		Fingerprint: planFingerprint, ContentDigest: contentDigest,
 		ArtifactDigest: schema.Status.Source.Digest, CoordinationDigest: schema.Status.Target.CoordinationDigest,
 		TargetIdentityDigest:   schema.Status.Target.IdentityDigest,
@@ -2614,6 +2689,9 @@ func (r *SchemaReconciler) publishPlan(ctx context.Context, schema *operatorv1al
 		PolicyFingerprint: policyFingerprint, VerificationPolicyUID: schema.Status.Source.VerificationPolicyUID,
 		VerificationPolicyDigest: schema.Status.Source.VerificationPolicyDigest,
 		ExecutionBindingID:       executionBinding.Epoch,
+		ControllerImage:          executionBinding.ControllerImage,
+		ControllerRevision:       executionBinding.ControllerRevision,
+		ControllerStateVersion:   executionBinding.ControllerStateVersion,
 		PtahVersion:              executionBinding.PtahVersion, ExecutorImage: executionBinding.ExecutorImage,
 		RunnerImage: executionBinding.RunnerImage, RunnerProtocolVersion: executionBinding.RunnerProtocolVersion,
 		Dialect: decoded.Dialect, Destructive: decoded.Destructive, StatementCount: int32(len(decoded.Statements)),
@@ -2633,7 +2711,11 @@ func (r *SchemaReconciler) currentPlan(ctx context.Context, schema *operatorv1al
 	if err := r.directReader().Get(ctx, types.NamespacedName{Namespace: schema.Namespace, Name: schema.Status.Plan.Name}, plan); err != nil {
 		return nil, fmt.Errorf("read current plan: %w", err)
 	}
-	if plan.UID != schema.Status.Plan.UID || plan.DeletionTimestamp != nil || plan.Spec.SchemaRef.UID != schema.UID ||
+	if err := fingerprint.ValidatePlanContractVersion(plan.Spec.ContractVersion); err != nil {
+		return nil, fmt.Errorf("current plan contract is not supported: %w", err)
+	}
+	if plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion ||
+		plan.UID != schema.Status.Plan.UID || plan.DeletionTimestamp != nil || plan.Spec.SchemaRef.UID != schema.UID ||
 		plan.Spec.Fingerprint != schema.Status.Plan.Fingerprint || plan.Spec.ArtifactDigest != schema.Status.Source.Digest ||
 		plan.Spec.ExecutionBindingID == "" || plan.Spec.ExecutionBindingID != schema.Status.Plan.ExecutionBindingID ||
 		schema.Status.ExecutionBinding == nil || plan.Spec.ExecutionBindingID != schema.Status.ExecutionBinding.Epoch ||
@@ -2643,7 +2725,13 @@ func (r *SchemaReconciler) currentPlan(ctx context.Context, schema *operatorv1al
 		plan.Spec.TargetIdentityDigest != schema.Status.Target.IdentityDigest ||
 		plan.Spec.VerificationPolicyUID != schema.Status.Plan.VerificationPolicyUID ||
 		plan.Spec.VerificationPolicyUID != schema.Status.Source.VerificationPolicyUID ||
-		plan.Spec.VerificationPolicyDigest != schema.Status.Source.VerificationPolicyDigest {
+		plan.Spec.VerificationPolicyDigest != schema.Status.Source.VerificationPolicyDigest ||
+		plan.Spec.ControllerImage == "" || plan.Spec.ControllerImage != schema.Status.Plan.ControllerImage ||
+		plan.Spec.ControllerRevision == "" || plan.Spec.ControllerRevision != schema.Status.Plan.ControllerRevision ||
+		plan.Spec.ControllerStateVersion < 1 || plan.Spec.ControllerStateVersion != schema.Status.Plan.ControllerStateVersion ||
+		plan.Spec.ControllerImage != schema.Status.ExecutionBinding.ControllerImage ||
+		plan.Spec.ControllerRevision != schema.Status.ExecutionBinding.ControllerRevision ||
+		plan.Spec.ControllerStateVersion != schema.Status.ExecutionBinding.ControllerStateVersion {
 		return nil, fmt.Errorf("current plan binding is stale")
 	}
 	currentPolicyFingerprint, err := policyFingerprint(schema)
@@ -2660,9 +2748,15 @@ func (r *SchemaReconciler) ensureCurrentExecutionBinding(
 	if schema == nil || schema.Status.Plan == nil || schema.Status.ExecutionBinding == nil || plan == nil {
 		return fmt.Errorf("current plan execution binding is unavailable")
 	}
+	if plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion {
+		return fmt.Errorf("current plan execution binding uses unsupported write contract %d", plan.Spec.ContractVersion)
+	}
 	status := schema.Status.Plan
 	if status.ExecutionBindingID == "" || status.ExecutionBindingID != plan.Spec.ExecutionBindingID ||
 		status.ExecutionBindingID != schema.Status.ExecutionBinding.Epoch ||
+		status.ControllerImage == "" || status.ControllerImage != plan.Spec.ControllerImage ||
+		status.ControllerRevision == "" || status.ControllerRevision != plan.Spec.ControllerRevision ||
+		status.ControllerStateVersion < 1 || status.ControllerStateVersion != plan.Spec.ControllerStateVersion ||
 		status.PtahVersion != plan.Spec.PtahVersion ||
 		status.ExecutorImage != plan.Spec.ExecutorImage ||
 		status.RunnerImage != plan.Spec.RunnerImage ||
@@ -2686,6 +2780,9 @@ func (r *SchemaReconciler) ensureCurrentStatusExecutionBinding(
 	status := schema.Status.ExecutionBinding
 	if !validExecutionBindingID(status.Epoch) || !executionBindingComponentsEqual(status, configured) ||
 		plan.ExecutionBindingID == "" || plan.ExecutionBindingID != status.Epoch ||
+		plan.ControllerImage == "" || plan.ControllerImage != status.ControllerImage ||
+		plan.ControllerRevision == "" || plan.ControllerRevision != status.ControllerRevision ||
+		plan.ControllerStateVersion < 1 || plan.ControllerStateVersion != status.ControllerStateVersion ||
 		plan.PtahVersion != status.PtahVersion || plan.ExecutorImage != status.ExecutorImage ||
 		plan.RunnerImage != status.RunnerImage || plan.RunnerProtocolVersion != status.RunnerProtocolVersion {
 		return fmt.Errorf("current plan execution binding is stale")
@@ -3086,8 +3183,15 @@ func (r *SchemaReconciler) removeActiveFinalizer(ctx context.Context, schema *op
 	if err := r.directReader().Get(ctx, client.ObjectKeyFromObject(schema), latest); err != nil {
 		return client.IgnoreNotFound(err)
 	}
+	if err := r.rejectUnsupportedStoredControllerState(latest); err != nil {
+		return fmt.Errorf("recheck stored controller state before finalizer removal: %w", err)
+	}
 	if !controllerutil.ContainsFinalizer(latest, activeOperationFinalizer) {
 		return nil
+	}
+	if latest.Status.ActiveOperation != nil || latest.Status.PendingObservation != nil ||
+		latest.Status.PendingLockRelease != nil {
+		return fmt.Errorf("active-operation finalizer still protects durable safety work")
 	}
 	before := latest.DeepCopy()
 	controllerutil.RemoveFinalizer(latest, activeOperationFinalizer)
@@ -3726,6 +3830,9 @@ func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan, now metav1.Time) *
 		PolicyFingerprint: plan.Spec.PolicyFingerprint, VerificationPolicyUID: plan.Spec.VerificationPolicyUID,
 		VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
 		ExecutionBindingID:       plan.Spec.ExecutionBindingID,
+		ControllerImage:          plan.Spec.ControllerImage,
+		ControllerRevision:       plan.Spec.ControllerRevision,
+		ControllerStateVersion:   plan.Spec.ControllerStateVersion,
 		PtahVersion:              plan.Spec.PtahVersion, ExecutorImage: plan.Spec.ExecutorImage, RunnerImage: plan.Spec.RunnerImage,
 		RunnerProtocolVersion: plan.Spec.RunnerProtocolVersion, Destructive: plan.Spec.Destructive,
 		StatementCount: plan.Spec.StatementCount, CreatedAt: now,
@@ -3737,7 +3844,9 @@ func appliedStatusFor(plan operatorv1alpha1.CurrentPlanStatus, now metav1.Time) 
 		ArtifactDigest: plan.ArtifactDigest, PlanFingerprint: plan.Fingerprint,
 		CoordinationDigest: plan.CoordinationDigest, TargetIdentityDigest: plan.TargetIdentityDigest,
 		ExecutionBindingID: plan.ExecutionBindingID,
-		PtahVersion:        plan.PtahVersion, ExecutorImage: plan.ExecutorImage, RunnerImage: plan.RunnerImage,
+		ControllerImage:    plan.ControllerImage,
+		ControllerRevision: plan.ControllerRevision, ControllerStateVersion: plan.ControllerStateVersion,
+		PtahVersion: plan.PtahVersion, ExecutorImage: plan.ExecutorImage, RunnerImage: plan.RunnerImage,
 		RunnerProtocolVersion: plan.RunnerProtocolVersion, CompletedAt: now,
 	}
 }
@@ -3781,7 +3890,7 @@ func planDriftSummary(plan dataplane.PlanFile) (int32, string) {
 }
 
 func approvalMatches(approval *operatorv1alpha1.PtahSchemaApproval, schema *operatorv1alpha1.PtahSchema, plan *operatorv1alpha1.PtahSchemaPlan) bool {
-	if plan == nil {
+	if plan == nil || plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion {
 		return false
 	}
 	return approvalMatchesPlanStatus(approval, schema, currentPlanStatus(plan, metav1.Time{}))
@@ -3804,6 +3913,9 @@ func approvalMatchesPlanStatus(
 		approval.Spec.VerificationPolicyUID == plan.VerificationPolicyUID &&
 		approval.Spec.VerificationPolicyDigest == plan.VerificationPolicyDigest &&
 		approval.Spec.ExecutionBindingID != "" && approval.Spec.ExecutionBindingID == plan.ExecutionBindingID &&
+		approval.Spec.ControllerImage != "" && approval.Spec.ControllerImage == plan.ControllerImage &&
+		approval.Spec.ControllerRevision != "" && approval.Spec.ControllerRevision == plan.ControllerRevision &&
+		approval.Spec.ControllerStateVersion >= 1 && approval.Spec.ControllerStateVersion == plan.ControllerStateVersion &&
 		approval.Spec.PtahVersion == plan.PtahVersion && approval.Spec.ExecutorImage == plan.ExecutorImage &&
 		approval.Spec.RunnerImage == plan.RunnerImage && approval.Spec.RunnerProtocolVersion == plan.RunnerProtocolVersion &&
 		!approval.Spec.ApprovedAt.IsZero() && approval.Spec.Approver.Username != "" && approval.Spec.MutationRequestUID != ""

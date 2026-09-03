@@ -36,7 +36,7 @@ That command reads the official Kubernetes stable release, derives the consecuti
 
 ## Moving the window
 
-The weekly [`update-kubernetes-support.yml`](../.github/workflows/update-kubernetes-support.yml) workflow performs live discovery and opens or updates the `automation/kubernetes-support-window` pull request. It explicitly dispatches the regular CI workflow for the automation branch, ensuring the token-generated update receives the same source verification and complete three-minor cluster matrix as a human-authored pull request.
+The weekly [`update-kubernetes-support.yml`](../.github/workflows/update-kubernetes-support.yml) workflow performs live discovery with read-only permissions and exports only a size-limited, digest-bound patch over the three generated support files. A separate job with content and pull-request write access applies that patch, opens or updates the `automation/kubernetes-support-window` pull request, and exports the exact pushed commit and pull-request identity. A final job has Actions write access but no content or pull-request write access; it revalidates the remote branch and open pull request against those outputs, explicitly dispatches the CI and Release workflows, and confirms that both new manual runs resolve to that commit. The token-generated update therefore receives the same source verification, complete three-minor cluster matrix, and release-package smoke checks as a human-authored pull request without combining repository publication and workflow-dispatch authority in one job.
 
 When Kubernetes publishes a new minor release, the automation follows this policy:
 

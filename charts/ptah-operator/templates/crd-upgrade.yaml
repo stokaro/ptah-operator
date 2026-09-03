@@ -1,0 +1,634 @@
+{{- include "ptah-operator.validateAdmissionSingleton" . -}}
+{{- $serviceAccountName := include "ptah-operator.crdManagerServiceAccountName" . -}}
+{{- $clusterRoleName := include "ptah-operator.crdManagerClusterRoleName" . -}}
+{{- $preflightJobName := printf "%s-preflight" ($clusterRoleName | trunc 53 | trimSuffix "-") -}}
+{{- $probeRoleName := printf "%s-probe" ($clusterRoleName | trunc 57 | trimSuffix "-") -}}
+{{- $imageCheckJobName := printf "%s-image-check" ($clusterRoleName | trunc 51 | trimSuffix "-") -}}
+{{- $identityProbeJobName := include "ptah-operator.hookIdentityProbeJobName" . -}}
+{{- $identityBootstrapRoleName := printf "%s-bootstrap" ($clusterRoleName | trunc 53 | trimSuffix "-") -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $imageCheckJobName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-130"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-image-check
+spec:
+  activeDeadlineSeconds: 120
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "ptah-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: crd-manager-image-check
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: image-check
+          image: {{ include "ptah-operator.managerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          args:
+            - image-check
+            - --release-sequence={{ include "ptah-operator.releaseSequence" . }}
+            - --manager-image={{ include "ptah-operator.managerImage" . }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-110"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $identityBootstrapRoleName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-109"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hook-identity-bootstrap
+rules:
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies"]
+    resourceNames:
+      - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
+      - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
+      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+    verbs: ["get"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicybindings"]
+    resourceNames:
+      - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
+      - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
+      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $identityBootstrapRoleName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-108"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hook-identity-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $identityBootstrapRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $identityBootstrapRoleName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-109"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hook-identity-bootstrap
+rules:
+  # Before enforcement is proven, this identity can only dry-run an UPDATE of
+  # its inert, candidate-specific marker. It has no workload mutation or schema
+  # rights; the read-only inventory below cannot change a staged workload.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ include "ptah-operator.hookIdentityProbeObjectName" . }}]
+    verbs: ["get", "update"]
+  # This narrowly named create grant exists only so the unprivileged identity
+  # probe can prove that the origin guard, rather than RBAC, rejects an
+  # unbound token request before any schema or workload permission is granted.
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    resourceNames: [{{ $serviceAccountName | quote }}]
+    verbs: ["create"]
+  # Namespace-wide reads are required to detect Jobs and Pods that were
+  # staged with any protected hook identity before the guards were installed.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $identityBootstrapRoleName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-108"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hook-identity-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $identityBootstrapRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $identityProbeJobName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-105"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: hook-identity-probe
+spec:
+  activeDeadlineSeconds: 120
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "ptah-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: hook-identity-probe
+    spec:
+      serviceAccountName: {{ $serviceAccountName }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: identity-probe
+          image: {{ include "ptah-operator.managerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          args:
+            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "identity-probe" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      volumes:
+        - name: api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        apiVersion: v1
+                        fieldPath: metadata.namespace
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $clusterRoleName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-80"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    resourceNames:
+      - ptahschemaapprovals.operator.ptah.dev
+      - ptahschemaplans.operator.ptah.dev
+      - ptahschemas.operator.ptah.dev
+    verbs: ["get", "update"]
+  # Kubernetes RBAC cannot scope LIST by resourceName. These read-only grants
+  # cover every kind that can persist controller-written state and are required
+  # to reject controller downgrades before changing any CRD schema.
+  - apiGroups: ["operator.ptah.dev"]
+    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]
+    verbs: ["list"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    resourceNames: ["ptah-operator-admission"]
+    verbs: ["get", "update"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies"]
+    resourceNames:
+      - {{ include "ptah-operator.rolloutGuardPolicyName" . }}
+      - {{ include "ptah-operator.runtimeGuardPolicyName" . }}
+      - {{ include "ptah-operator.runtimePodGuardPolicyName" . }}
+      - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
+      - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
+      - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
+      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+    verbs: ["get"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicybindings"]
+    resourceNames:
+      - {{ include "ptah-operator.rolloutGuardPolicyName" . }}
+      - {{ include "ptah-operator.runtimeGuardPolicyName" . }}
+      - {{ include "ptah-operator.runtimePodGuardPolicyName" . }}
+      - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
+      - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
+      - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
+      - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
+      - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+    verbs: ["get"]
+  - apiGroups: ["scheduling.k8s.io"]
+    resources: ["priorityclasses"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $clusterRoleName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-70"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $clusterRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $clusterRoleName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-80"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - {{ include "ptah-operator.fullname" . }}
+      - {{ include "ptah-operator.certRotatorServiceAccountName" . }}
+    verbs: ["get", "update"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames:
+      - {{ include "ptah-operator.serviceAccountName" . }}
+      - {{ include "ptah-operator.certRotatorServiceAccountName" . }}
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["ptah-operator-release-activation"]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $clusterRoleName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-70"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $clusterRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $preflightJobName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-60"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-preflight
+spec:
+  activeDeadlineSeconds: 210
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "ptah-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: crd-manager-preflight
+    spec:
+      serviceAccountName: {{ $serviceAccountName }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: crd-manager-preflight
+          image: {{ include "ptah-operator.managerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          args:
+            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "preflight" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      volumes:
+        - name: api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        apiVersion: v1
+                        fieldPath: metadata.namespace
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $probeRoleName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-30"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+rules:
+  # Kubernetes RBAC cannot scope CREATE by resourceName. This grant becomes
+  # usable only after the rollout binding exists; that policy permits this
+  # ServiceAccount to create the two fixed names only as dry-run probes.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $probeRoleName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-20"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $probeRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $clusterRoleName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+spec:
+  activeDeadlineSeconds: 210
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "ptah-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: crd-manager
+    spec:
+      serviceAccountName: {{ $serviceAccountName }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: crd-manager
+          image: {{ include "ptah-operator.managerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          args:
+            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "reconcile" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      volumes:
+        - name: api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        apiVersion: v1
+                        fieldPath: metadata.namespace

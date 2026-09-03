@@ -346,6 +346,22 @@ type ExecutionBindingStatus struct {
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	Epoch string `json:"epoch"`
 
+	// ControllerImage identifies the exact manager container content that
+	// interpreted controller state and authorized this evidence epoch.
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
+	ControllerImage string `json:"controllerImage,omitempty"`
+	// ControllerRevision identifies the exact manager build that interpreted
+	// controller state. It is provenance metadata in addition to ControllerImage,
+	// not a substitute for the image content digest.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
+	ControllerRevision string `json:"controllerRevision,omitempty"`
+	// ControllerStateVersion versions manager-side reconciliation semantics
+	// independently of the data-plane runner protocol.
+	// +kubebuilder:validation:Minimum=1
+	ControllerStateVersion int32 `json:"controllerStateVersion,omitempty"`
+
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	PtahVersion string `json:"ptahVersion"`
@@ -517,14 +533,22 @@ type CurrentPlanStatus struct {
 	VerificationPolicyUID    types.UID `json:"verificationPolicyUID"`
 	VerificationPolicyDigest string    `json:"verificationPolicyDigest"`
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID    string      `json:"executionBindingID,omitempty"`
-	PtahVersion           string      `json:"ptahVersion"`
-	ExecutorImage         string      `json:"executorImage"`
-	RunnerImage           string      `json:"runnerImage"`
-	RunnerProtocolVersion int32       `json:"runnerProtocolVersion"`
-	Destructive           bool        `json:"destructive"`
-	StatementCount        int32       `json:"statementCount"`
-	CreatedAt             metav1.Time `json:"createdAt"`
+	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
+	ControllerImage string `json:"controllerImage,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
+	ControllerRevision string `json:"controllerRevision,omitempty"`
+	// +kubebuilder:validation:Minimum=1
+	ControllerStateVersion int32       `json:"controllerStateVersion,omitempty"`
+	PtahVersion            string      `json:"ptahVersion"`
+	ExecutorImage          string      `json:"executorImage"`
+	RunnerImage            string      `json:"runnerImage"`
+	RunnerProtocolVersion  int32       `json:"runnerProtocolVersion"`
+	Destructive            bool        `json:"destructive"`
+	StatementCount         int32       `json:"statementCount"`
+	CreatedAt              metav1.Time `json:"createdAt"`
 
 	Approval *ConsumedApprovalStatus `json:"approval,omitempty"`
 }
@@ -544,12 +568,20 @@ type AppliedStatus struct {
 	CoordinationDigest   string `json:"coordinationDigest"`
 	TargetIdentityDigest string `json:"targetIdentityDigest"`
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
-	ExecutionBindingID    string      `json:"executionBindingID,omitempty"`
-	PtahVersion           string      `json:"ptahVersion"`
-	ExecutorImage         string      `json:"executorImage"`
-	RunnerImage           string      `json:"runnerImage"`
-	RunnerProtocolVersion int32       `json:"runnerProtocolVersion"`
-	CompletedAt           metav1.Time `json:"completedAt"`
+	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
+	ControllerImage string `json:"controllerImage,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
+	ControllerRevision string `json:"controllerRevision,omitempty"`
+	// +kubebuilder:validation:Minimum=1
+	ControllerStateVersion int32       `json:"controllerStateVersion,omitempty"`
+	PtahVersion            string      `json:"ptahVersion"`
+	ExecutorImage          string      `json:"executorImage"`
+	RunnerImage            string      `json:"runnerImage"`
+	RunnerProtocolVersion  int32       `json:"runnerProtocolVersion"`
+	CompletedAt            metav1.Time `json:"completedAt"`
 }
 
 // PendingObservationOutcome records why read-only convergence proof is

@@ -1620,15 +1620,21 @@ func TestExecutionBindingChangeInvalidatesPlanBeforeApply(t *testing.T) {
 	t.Parallel()
 
 	base := executionBindingJobs{
-		ptahVersion:   "v0.3.0",
-		executorImage: "example.invalid/ptah@" + testDigest,
-		runnerImage:   "example.invalid/operator@" + testDigest,
-		protocol:      int32(runner.ProtocolVersion),
+		controllerImage:        testControllerImage,
+		ptahVersion:            "v0.3.0",
+		executorImage:          "example.invalid/ptah@" + testDigest,
+		runnerImage:            "example.invalid/operator@" + testDigest,
+		protocol:               int32(runner.ProtocolVersion),
+		controllerRevision:     testControllerRevision,
+		controllerStateVersion: testControllerStateVersion,
 	}
 	changes := []struct {
 		name   string
 		mutate func(*executionBindingJobs)
 	}{
+		{name: "controller image", mutate: func(binding *executionBindingJobs) {
+			binding.controllerImage = "example.invalid/manager@" + safetyOtherDigest
+		}},
 		{name: "Ptah version", mutate: func(binding *executionBindingJobs) { binding.ptahVersion = "v0.4.0" }},
 		{name: "executor image", mutate: func(binding *executionBindingJobs) {
 			binding.executorImage = "example.invalid/ptah@" + safetyOtherDigest
@@ -1637,6 +1643,8 @@ func TestExecutionBindingChangeInvalidatesPlanBeforeApply(t *testing.T) {
 			binding.runnerImage = "example.invalid/operator@" + safetyOtherDigest
 		}},
 		{name: "runner protocol", mutate: func(binding *executionBindingJobs) { binding.protocol++ }},
+		{name: "controller revision", mutate: func(binding *executionBindingJobs) { binding.controllerRevision += "-next" }},
+		{name: "controller state", mutate: func(binding *executionBindingJobs) { binding.controllerStateVersion++ }},
 	}
 	for _, change := range changes {
 		change := change
@@ -1653,6 +1661,7 @@ func TestExecutionBindingChangeInvalidatesPlanBeforeApply(t *testing.T) {
 			t.Run(change.name+"/"+mode.name, func(t *testing.T) {
 				t.Parallel()
 				schema, plan, approval, policyConfig := safetyApprovalFixture(t)
+				oldEpoch := schema.Status.ExecutionBinding.Epoch
 				future := metav1.NewTime(time.Date(2026, 8, 30, 12, 10, 0, 0, time.UTC))
 				schema.Status.NextReconciliationTime = &future
 				objects := []client.Object{schema, plan, policyConfig}
@@ -1690,6 +1699,17 @@ func TestExecutionBindingChangeInvalidatesPlanBeforeApply(t *testing.T) {
 					actual.Status.Phase != operatorv1alpha1.PhasePending ||
 					actual.Status.NextReconciliationTime != nil || actual.Status.Source.Verified || actual.Status.Source.VerifiedAt != nil {
 					t.Fatalf("durable binding fence status = %#v", actual.Status)
+				}
+				controllerImage, controllerRevision, controllerStateVersion, ptahVersion, executorImage, runnerImage, protocolVersion := changed.ExecutionBinding()
+				wantBinding := &operatorv1alpha1.ExecutionBindingStatus{
+					ControllerImage:    controllerImage,
+					ControllerRevision: controllerRevision, ControllerStateVersion: controllerStateVersion,
+					PtahVersion: ptahVersion, ExecutorImage: executorImage, RunnerImage: runnerImage,
+					RunnerProtocolVersion: protocolVersion,
+				}
+				if actual.Status.ExecutionBinding == nil || actual.Status.ExecutionBinding.Epoch == oldEpoch ||
+					!executionBindingComponentsEqual(actual.Status.ExecutionBinding, wantBinding) {
+					t.Fatalf("replacement execution binding = %#v, want a fresh epoch for %#v", actual.Status.ExecutionBinding, wantBinding)
 				}
 				for _, conditionCheck := range []struct {
 					conditionType string
@@ -2244,6 +2264,8 @@ func TestExecutionBindingChangeFencesLateApprovalAcrossRestart(t *testing.T) {
 	}
 	handler := &approvaladmission.ApprovalHandler{
 		Reader: api, Decoder: cradmission.NewDecoder(reconciler.Scheme), Mutate: false,
+		ControllerImage:    testControllerImage,
+		ControllerRevision: testControllerRevision, ControllerStateVersion: testControllerStateVersion,
 	}
 	response := handler.Handle(context.Background(), cradmission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
 		UID:       "post-fence-admission",
@@ -2900,7 +2922,7 @@ func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operato
 	plan := &operatorv1alpha1.PtahSchemaPlan{
 		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: "approved-plan", UID: "approved-plan-uid", Generation: 1},
 		Spec: operatorv1alpha1.PtahSchemaPlanSpec{
-			ContractVersion:          2,
+			ContractVersion:          fingerprint.CurrentPlanContractVersion,
 			SchemaRef:                operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
 			Fingerprint:              "sha256:plan",
 			ContentDigest:            testDigest,
@@ -2913,6 +2935,9 @@ func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operato
 			VerificationPolicyUID:    schema.Status.Source.VerificationPolicyUID,
 			VerificationPolicyDigest: schema.Status.Source.VerificationPolicyDigest,
 			ExecutionBindingID:       schema.Status.ExecutionBinding.Epoch,
+			ControllerImage:          schema.Status.ExecutionBinding.ControllerImage,
+			ControllerRevision:       schema.Status.ExecutionBinding.ControllerRevision,
+			ControllerStateVersion:   schema.Status.ExecutionBinding.ControllerStateVersion,
 			PtahVersion:              "v0.3.0",
 			ExecutorImage:            "example.invalid/ptah@" + testDigest,
 			RunnerImage:              "example.invalid/operator@" + testDigest,
@@ -2937,6 +2962,9 @@ func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operato
 			VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
 			VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
 			ExecutionBindingID:       plan.Spec.ExecutionBindingID,
+			ControllerImage:          plan.Spec.ControllerImage,
+			ControllerRevision:       plan.Spec.ControllerRevision,
+			ControllerStateVersion:   plan.Spec.ControllerStateVersion,
 			PtahVersion:              plan.Spec.PtahVersion,
 			ExecutorImage:            plan.Spec.ExecutorImage,
 			RunnerImage:              plan.Spec.RunnerImage,
@@ -3436,6 +3464,9 @@ func safetyPostApplyObserveSchema(t *testing.T) *operatorv1alpha1.PtahSchema {
 			VerificationPolicyUID:    testPolicyUID,
 			VerificationPolicyDigest: testDigest,
 			ExecutionBindingID:       schema.Status.ExecutionBinding.Epoch,
+			ControllerImage:          schema.Status.ExecutionBinding.ControllerImage,
+			ControllerRevision:       schema.Status.ExecutionBinding.ControllerRevision,
+			ControllerStateVersion:   schema.Status.ExecutionBinding.ControllerStateVersion,
 			PtahVersion:              "v0.3.0",
 			ExecutorImage:            "example.invalid/ptah@" + testDigest,
 			RunnerImage:              "example.invalid/operator@" + testDigest,

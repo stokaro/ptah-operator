@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 )
@@ -513,12 +514,16 @@ func currentApprovalFixture() (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.P
 	plan := &operatorv1alpha1.PtahSchemaPlan{
 		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: "plan", UID: "plan-uid"},
 		Spec: operatorv1alpha1.PtahSchemaPlanSpec{
-			SchemaRef:   operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
-			Fingerprint: "sha256:plan", ArtifactDigest: "sha256:artifact", TargetIdentityDigest: "sha256:target",
+			ContractVersion: fingerprint.CurrentPlanContractVersion,
+			SchemaRef:       operatorv1alpha1.ImmutableObjectReference{Name: schema.Name, UID: schema.UID},
+			Fingerprint:     "sha256:plan", ArtifactDigest: "sha256:artifact", TargetIdentityDigest: "sha256:target",
 			ActualStateFingerprint: "sha256:actual", DesiredStateFingerprint: "sha256:desired",
 			PolicyFingerprint: "sha256:policy", VerificationPolicyUID: testPolicyUID,
 			VerificationPolicyDigest: "sha256:verification-policy",
 			ExecutionBindingID:       schema.Status.ExecutionBinding.Epoch,
+			ControllerImage:          schema.Status.ExecutionBinding.ControllerImage,
+			ControllerRevision:       schema.Status.ExecutionBinding.ControllerRevision,
+			ControllerStateVersion:   schema.Status.ExecutionBinding.ControllerStateVersion,
 			PtahVersion:              "v0.3.0", ExecutorImage: "example.invalid/ptah@sha256:executor",
 			RunnerImage: "example.invalid/operator@sha256:runner", RunnerProtocolVersion: 1,
 		},
@@ -533,7 +538,9 @@ func currentApprovalFixture() (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.P
 			DesiredStateFingerprint: plan.Spec.DesiredStateFingerprint, PolicyFingerprint: plan.Spec.PolicyFingerprint,
 			VerificationPolicyUID:    plan.Spec.VerificationPolicyUID,
 			VerificationPolicyDigest: plan.Spec.VerificationPolicyDigest,
-			ExecutionBindingID:       plan.Spec.ExecutionBindingID, PtahVersion: plan.Spec.PtahVersion,
+			ExecutionBindingID:       plan.Spec.ExecutionBindingID, ControllerImage: plan.Spec.ControllerImage,
+			PtahVersion:        plan.Spec.PtahVersion,
+			ControllerRevision: plan.Spec.ControllerRevision, ControllerStateVersion: plan.Spec.ControllerStateVersion,
 			ExecutorImage: plan.Spec.ExecutorImage, RunnerImage: plan.Spec.RunnerImage,
 			RunnerProtocolVersion: plan.Spec.RunnerProtocolVersion, Approver: approver, ApprovedAt: approvedAt,
 			MutationRequestUID: "admission-request-uid",
@@ -542,6 +549,8 @@ func currentApprovalFixture() (*operatorv1alpha1.PtahSchema, *operatorv1alpha1.P
 	schema.Status.Plan = &operatorv1alpha1.CurrentPlanStatus{
 		Name: plan.Name, UID: plan.UID, Fingerprint: plan.Spec.Fingerprint,
 		ExecutionBindingID: plan.Spec.ExecutionBindingID,
+		ControllerImage:    plan.Spec.ControllerImage,
+		ControllerRevision: plan.Spec.ControllerRevision, ControllerStateVersion: plan.Spec.ControllerStateVersion,
 		Approval: &operatorv1alpha1.ConsumedApprovalStatus{
 			Name: approval.Name, UID: "approval-uid", Approver: approver, ApprovedAt: approvedAt,
 		},

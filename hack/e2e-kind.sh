@@ -4,6 +4,7 @@ set -eu
 
 unset CDPATH
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
+PREDECESSOR_IDENTITY_FILE=$ROOT_DIR/internal/crdupgrade/assets/predecessor.json
 
 DOCKER_CONTEXT=${DOCKER_CONTEXT:-remote-dev-container}
 K8S_VERSION=${K8S_VERSION:-}
@@ -12,7 +13,7 @@ E2E_EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 E2E_RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 E2E_PTAH_VERSION=${E2E_PTAH_VERSION:-}
 E2E_PTAH_SOURCE_DIR=${E2E_PTAH_SOURCE_DIR:-}
-E2E_PTAH_REVISION=${E2E_PTAH_REVISION:-14e57e5969463e52bbc8efa8fa5031bb5da9a5bf}
+E2E_PTAH_REVISION=${E2E_PTAH_REVISION:-3c2b509fe6bb9324be623ca416bbbfef85523d19}
 E2E_PTAH_GIT_URL=${E2E_PTAH_GIT_URL:-https://github.com/stokaro/ptah.git}
 E2E_REGISTRY_IMAGE=${E2E_REGISTRY_IMAGE:-registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33}
 E2E_POSTGRES_SOURCE_IMAGE=${E2E_POSTGRES_SOURCE_IMAGE:-postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73}
@@ -71,6 +72,24 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 	fail "sha256sum or shasum is required"
 fi
 
+[ -f "$PREDECESSOR_IDENTITY_FILE" ] ||
+	fail "predecessor identity fixture is missing: $PREDECESSOR_IDENTITY_FILE"
+PREDECESSOR_REVISION=$(jq -er '.revision' "$PREDECESSOR_IDENTITY_FILE")
+PREDECESSOR_DOCKERFILE=$(jq -er '.dockerfile' "$PREDECESSOR_IDENTITY_FILE")
+PREDECESSOR_CHART=$(jq -er '.chart' "$PREDECESSOR_IDENTITY_FILE")
+printf '%s\n' "$PREDECESSOR_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||
+	fail "predecessor revision must be an exact 40-character lowercase Git commit"
+case "$PREDECESSOR_DOCKERFILE" in
+	/* | ../* | */../* | */..) fail "predecessor Dockerfile path must stay inside its archive" ;;
+esac
+case "$PREDECESSOR_CHART" in
+	/* | ../* | */../* | */..) fail "predecessor chart path must stay inside its archive" ;;
+esac
+resolved_predecessor=$(git -C "$ROOT_DIR" rev-parse --verify "${PREDECESSOR_REVISION}^{commit}" 2>/dev/null) ||
+	fail "exact predecessor commit $PREDECESSOR_REVISION is unavailable; fetch repository history"
+[ "$resolved_predecessor" = "$PREDECESSOR_REVISION" ] ||
+	fail "predecessor revision resolved to $resolved_predecessor, expected $PREDECESSOR_REVISION"
+
 [ -n "$K8S_VERSION" ] || fail "K8S_VERSION is required (for example, 1.37.0)"
 printf '%s\n' "$K8S_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
 	fail "K8S_VERSION must be an exact major.minor.patch version"
@@ -104,6 +123,9 @@ if [ -n "$E2E_RUNNER_IMAGE" ]; then
 	is_pinned_image "$E2E_RUNNER_IMAGE" ||
 		fail "E2E_RUNNER_IMAGE must be pinned with @sha256:<64 lowercase hex> when provided"
 fi
+CONTROLLER_REVISION=$(git -C "$ROOT_DIR" rev-parse HEAD)
+printf '%s\n' "$CONTROLLER_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||
+	fail "operator source revision must be an exact 40-character lowercase Git commit"
 for source_image in "$E2E_REGISTRY_IMAGE" "$E2E_POSTGRES_SOURCE_IMAGE" "$E2E_MYSQL_SOURCE_IMAGE"; do
 	is_pinned_image "$source_image" ||
 		fail "registry and database source images must be pinned by digest: $source_image"
@@ -174,6 +196,8 @@ HELM_RELEASE=$(dns_name ptah "$identity" 35)
 IMAGE_REPOSITORY=ptah-operator-e2e.local/ptah-operator
 IMAGE_TAG=$(printf '%s' "$identity" | sha256 | cut -c1-16)
 OPERATOR_IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+PREDECESSOR_IMAGE_REPOSITORY=ptah-operator-e2e.local/ptah-operator-predecessor
+PREDECESSOR_OPERATOR_IMAGE="${PREDECESSOR_IMAGE_REPOSITORY}:${IMAGE_TAG}"
 FIXTURE_BUILD_IMAGE="ptah-operator-e2e.local/e2e-fixture:${IMAGE_TAG}"
 PTAH_IMAGE="ptah-executor-e2e.local/ptah:${IMAGE_TAG}"
 REGISTRY_CONTAINER=$(dns_name ptah-registry "$identity" 63)
@@ -225,6 +249,9 @@ fi
 if docker --context "$DOCKER_CONTEXT" image inspect "$OPERATOR_IMAGE" >/dev/null 2>&1; then
 	fail "refusing to overwrite pre-existing image $OPERATOR_IMAGE; choose another E2E_RUN_ID"
 fi
+if docker --context "$DOCKER_CONTEXT" image inspect "$PREDECESSOR_OPERATOR_IMAGE" >/dev/null 2>&1; then
+	fail "refusing to overwrite pre-existing image $PREDECESSOR_OPERATOR_IMAGE; choose another E2E_RUN_ID"
+fi
 if docker --context "$DOCKER_CONTEXT" image inspect "$FIXTURE_BUILD_IMAGE" >/dev/null 2>&1; then
 	fail "refusing to overwrite pre-existing image $FIXTURE_BUILD_IMAGE; choose another E2E_RUN_ID"
 fi
@@ -275,6 +302,10 @@ TLS_PROXY_CERT_FILE=$TLS_PROXY_DIR/tls.crt
 TLS_PROXY_CERT_EXT_FILE=$TLS_PROXY_DIR/server.ext
 IMAGE_AUDIT_ARCHIVE=$WORK_DIR/image-audit.tar
 CHART_PACKAGE_DIR=$WORK_DIR/chart-package
+PREDECESSOR_SOURCE_ARCHIVE=$WORK_DIR/predecessor-source.tar
+PREDECESSOR_BUILD_CONTEXT=$WORK_DIR/predecessor-source
+PREDECESSOR_VALUES_FILE=$WORK_DIR/predecessor-values.json
+CANDIDATE_VALUES_FILE=$WORK_DIR/candidate-values.json
 CLUSTER_CREATED=0
 IMAGE_CREATED=0
 IMAGE_AUDIT_CONTAINER_CREATED=0
@@ -357,11 +388,11 @@ assert_external_pg_container_contract() {
 		--format '{{.HostConfig.PublishAllPorts}}' "$external_contract_id")" = false ] ||
 		fail "external PostgreSQL container publishes all ports"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-owner\"}}' \
+		--format '{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
 		"$external_contract_id")" = "$CLUSTER_NAME" ] ||
 		fail "external PostgreSQL container lost its task owner label"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-component\"}}' \
+		--format '{{index .Config.Labels "operator.ptah.dev/e2e-component"}}' \
 		"$external_contract_id")" = external-postgresql ] ||
 		fail "external PostgreSQL container lost its component label"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
@@ -617,6 +648,33 @@ if ! go -C "$ROOT_DIR" run ./test/e2e/handcraftoci verify-certificate \
 	fail "task-scoped TLS proxy certificate does not bind its exact Service DNS name"
 fi
 
+mkdir -p "$PREDECESSOR_BUILD_CONTEXT"
+git -C "$ROOT_DIR" archive --format=tar \
+	--output="$PREDECESSOR_SOURCE_ARCHIVE" "$PREDECESSOR_REVISION"
+tar -xf "$PREDECESSOR_SOURCE_ARCHIVE" -C "$PREDECESSOR_BUILD_CONTEXT"
+[ -f "$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_DOCKERFILE" ] ||
+	fail "predecessor archive is missing $PREDECESSOR_DOCKERFILE"
+[ -f "$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_CHART/Chart.yaml" ] ||
+	fail "predecessor archive is missing $PREDECESSOR_CHART/Chart.yaml"
+predecessor_crd_count=$(jq -er '.crds | length' "$PREDECESSOR_IDENTITY_FILE")
+[ "$predecessor_crd_count" -eq 3 ] ||
+	fail "predecessor identity must contain exactly three CRDs"
+predecessor_crd_index=0
+while [ "$predecessor_crd_index" -lt "$predecessor_crd_count" ]; do
+	predecessor_crd_path=$(jq -er ".crds[$predecessor_crd_index].path" "$PREDECESSOR_IDENTITY_FILE")
+	predecessor_crd_digest=$(jq -er ".crds[$predecessor_crd_index].normalizedSpecDigest" "$PREDECESSOR_IDENTITY_FILE")
+	case "$predecessor_crd_path" in
+		/* | ../* | */../* | */..) fail "predecessor CRD path must stay inside its archive" ;;
+	esac
+	[ -f "$PREDECESSOR_BUILD_CONTEXT/$predecessor_crd_path" ] ||
+		fail "predecessor archive is missing $predecessor_crd_path"
+	actual_predecessor_digest=$(go -C "$ROOT_DIR" run ./hack/crdschemadigest \
+		"$PREDECESSOR_BUILD_CONTEXT/$predecessor_crd_path")
+	[ "$actual_predecessor_digest" = "$predecessor_crd_digest" ] ||
+		fail "predecessor CRD $predecessor_crd_path digest is $actual_predecessor_digest, expected $predecessor_crd_digest"
+	predecessor_crd_index=$((predecessor_crd_index + 1))
+done
+
 chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")
 [ -n "$chart_version" ] || fail "Helm chart version is missing"
 chart_source_epoch=$(git -C "$ROOT_DIR" show -s --format=%ct HEAD)
@@ -761,11 +819,29 @@ printf 'e2e: building %s with Docker context %s\n' "$OPERATOR_IMAGE" "$SELECTED_
 IMAGE_CREATED=1
 docker --context "$DOCKER_CONTEXT" build \
 	--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \
+	--build-arg "REVISION=$CONTROLLER_REVISION" \
 	--target operator \
 	--tag "$OPERATOR_IMAGE" "$ROOT_DIR"
+OPERATOR_IDENTITY_DIGEST=$(docker --context "$DOCKER_CONTEXT" image inspect \
+	--format '{{.Id}}' "$OPERATOR_IMAGE")
+printf '%s\n' "$OPERATOR_IDENTITY_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
+	fail "operator image identity must be an exact lowercase sha256 Docker image ID"
+printf 'e2e: building predecessor image %s from exact commit %s\n' \
+	"$PREDECESSOR_OPERATOR_IMAGE" "$PREDECESSOR_REVISION"
+add_created_image "$PREDECESSOR_OPERATOR_IMAGE"
+docker --context "$DOCKER_CONTEXT" build \
+	--file "$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_DOCKERFILE" \
+	--build-arg "REVISION=$PREDECESSOR_REVISION" \
+	--tag "$PREDECESSOR_OPERATOR_IMAGE" "$PREDECESSOR_BUILD_CONTEXT"
+predecessor_image_revision=$(docker --context "$DOCKER_CONTEXT" image inspect \
+	--format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+	"$PREDECESSOR_OPERATOR_IMAGE")
+[ "$predecessor_image_revision" = "$PREDECESSOR_REVISION" ] ||
+	fail "predecessor image revision is $predecessor_image_revision, expected $PREDECESSOR_REVISION"
 add_created_image "$FIXTURE_BUILD_IMAGE"
 docker --context "$DOCKER_CONTEXT" build \
 	--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \
+	--build-arg "REVISION=$CONTROLLER_REVISION" \
 	--target fixture \
 	--tag "$FIXTURE_BUILD_IMAGE" "$ROOT_DIR"
 
@@ -783,6 +859,8 @@ tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)manager$' ||
 	fail "the controller image does not contain /manager"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-runner$' ||
 	fail "the controller image does not contain /ptah-runner"
+tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-crd-manager$' ||
+	fail "the controller image does not contain /ptah-crd-manager"
 docker --context "$DOCKER_CONTEXT" container rm "$IMAGE_AUDIT_CONTAINER" >/dev/null
 IMAGE_AUDIT_CONTAINER_CREATED=0
 
@@ -808,6 +886,7 @@ kind create cluster \
 	--wait 5m
 
 kind load docker-image "$OPERATOR_IMAGE" --name "$CLUSTER_NAME"
+kind load docker-image "$PREDECESSOR_OPERATOR_IMAGE" --name "$CLUSTER_NAME"
 
 server_version=$(kubectl --kubeconfig "$KUBECONFIG_FILE" version -o json |
 	jq -r '.serverVersion.gitVersion')
@@ -973,24 +1052,67 @@ external_pg_database_owner=$(printf '%s' "$external_pg_database_owner" | tr -d '
 	fail "external PostgreSQL fixture login did not retain database ownership"
 assert_external_pg_container_contract "$EXTERNAL_PG_CONTAINER_ID" "$EXTERNAL_PG_IP"
 
-printf 'e2e: installing Helm release %s/%s\n' "$OPERATOR_NAMESPACE" "$HELM_RELEASE"
-helm --kubeconfig "$KUBECONFIG_FILE" upgrade --install "$HELM_RELEASE" \
-	"$CHART_PACKAGE" \
+render_release_values() {
+	values_destination=$1
+	values_image_repository=$2
+	values_image_tag=$3
+	values_identity_digest=$4
+	jq -n \
+		--arg repository "$values_image_repository" \
+		--arg tag "$values_image_tag" \
+		--arg identityDigest "$values_identity_digest" \
+		--arg executorImage "$E2E_EXECUTOR_IMAGE" \
+		--arg runnerImage "$E2E_RUNNER_IMAGE" \
+		--arg ptahVersion "$E2E_PTAH_VERSION" '
+      {
+        image: {
+          repository: $repository,
+          tag: $tag,
+          allowMutableTag: true,
+          pullPolicy: "Never"
+        },
+        execution: {
+          executorImage: $executorImage,
+          runnerImage: $runnerImage,
+          ptahVersion: $ptahVersion
+        },
+        certificateRotation: {
+          interval: "168h",
+          recreateMissingSecret: true
+        },
+        replicaCount: 2,
+        podDisruptionBudget: {enabled: false}
+      }
+      | if $identityDigest == "" then . else .image.testIdentityDigest = $identityDigest end
+    ' >"$values_destination"
+}
+
+render_release_values \
+	"$PREDECESSOR_VALUES_FILE" "$PREDECESSOR_IMAGE_REPOSITORY" "$IMAGE_TAG" ""
+render_release_values \
+	"$CANDIDATE_VALUES_FILE" "$IMAGE_REPOSITORY" "$IMAGE_TAG" "$OPERATOR_IDENTITY_DIGEST"
+
+printf 'e2e: installing exact predecessor release %s/%s from %s\n' \
+	"$OPERATOR_NAMESPACE" "$HELM_RELEASE" "$PREDECESSOR_REVISION"
+helm --kubeconfig "$KUBECONFIG_FILE" install "$HELM_RELEASE" \
+	"$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_CHART" \
 	--namespace "$OPERATOR_NAMESPACE" \
 	--create-namespace \
 	--wait \
 	--timeout 5m \
-		--set-string image.repository="$IMAGE_REPOSITORY" \
-		--set-string image.tag="$IMAGE_TAG" \
-		--set image.allowMutableTag=true \
-		--set-string image.pullPolicy=Never \
-	--set-string execution.executorImage="$E2E_EXECUTOR_IMAGE" \
-	--set-string execution.runnerImage="$E2E_RUNNER_IMAGE" \
-	--set-string execution.ptahVersion="$E2E_PTAH_VERSION" \
-	--set-string certificateRotation.interval="168h" \
-	--set certificateRotation.recreateMissingSecret=true \
-	--set replicaCount=2 \
-	--set podDisruptionBudget.enabled=false
+	--values "$PREDECESSOR_VALUES_FILE"
+
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \
+E2E_PREDECESSOR_IDENTITY_FILE=$PREDECESSOR_IDENTITY_FILE \
+E2E_PREDECESSOR_SOURCE_DIR=$PREDECESSOR_BUILD_CONTEXT \
+E2E_PREDECESSOR_IMAGE=$PREDECESSOR_OPERATOR_IMAGE \
+E2E_CANDIDATE_IMAGE=$OPERATOR_IMAGE \
+E2E_PHASE=upgrade \
+	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -1007,6 +1129,9 @@ E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
+E2E_CONTROLLER_IMAGE="${IMAGE_REPOSITORY}@${OPERATOR_IDENTITY_DIGEST}" \
+E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_STATE_VERSION=1 \
 	"$ROOT_DIR/hack/e2e-assert.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
@@ -1025,6 +1150,9 @@ E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_FIXTURE_IMAGE=$E2E_FIXTURE_IMAGE \
+E2E_CONTROLLER_IMAGE="${IMAGE_REPOSITORY}@${OPERATOR_IDENTITY_DIGEST}" \
+E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_STATE_VERSION=1 \
 E2E_POSTGRES_IMAGE=$E2E_POSTGRES_IMAGE \
 E2E_MYSQL_IMAGE=$E2E_MYSQL_IMAGE \
 E2E_REGISTRY_IP=$REGISTRY_IP \
@@ -1044,5 +1172,12 @@ E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE \
 E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \
 E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
 	"$ROOT_DIR/hack/e2e-dataplane.sh"
+
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_PHASE=uninstall \
+	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 
 printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"
