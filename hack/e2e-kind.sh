@@ -315,6 +315,7 @@ EXTERNAL_PG_ADMIN_PASSWORD_FILE=$WORK_DIR/external-postgresql-admin.password
 EXTERNAL_PG_PASSWORD_FILE=$WORK_DIR/external-postgresql.password
 EXTERNAL_PG_CREDENTIALS_FILE=$WORK_DIR/external-postgresql-credentials.json
 EXTERNAL_PG_BOOTSTRAP_SQL_FILE=$WORK_DIR/external-postgresql-bootstrap.sql
+NODE_READINESS_FILE=$WORK_DIR/node-readiness.json
 TLS_PROXY_DIR=$WORK_DIR/tls-proxy
 TLS_PROXY_CA_KEY_FILE=$TLS_PROXY_DIR/ca.key
 TLS_PROXY_CA_FILE=$TLS_PROXY_DIR/ca.crt
@@ -472,6 +473,80 @@ assert_external_pg_container_contract() {
 		jq -e --arg address "$external_contract_ip" '
       keys == ["kind"] and .kind.IPAddress == $address
     ' >/dev/null || fail "external PostgreSQL container left its exact kind-network address"
+}
+
+collect_node_readiness_diagnostics() {
+	node_diagnostics_context=$1
+	printf 'e2e: Kubernetes node readiness diagnostics (%s)\n' \
+		"$node_diagnostics_context" >&2
+	printf '%s\n' 'e2e: node conditions: name type status reason last-transition' >&2
+	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get nodes -o json |
+		jq -r '
+      .items[] as $node
+      | ($node.status.conditions // [])[]
+      | [
+          $node.metadata.name,
+          .type,
+          .status,
+          (.reason // "-"),
+          (.lastTransitionTime // "-")
+        ]
+      | @tsv
+    ' >&2 || true
+	printf '%s\n' 'e2e: recent node warnings: namespace node reason count time' >&2
+	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get events -A \
+		--field-selector type=Warning -o json |
+		jq -r '
+      [.items[] | select(.involvedObject.kind == "Node")]
+      | sort_by(.eventTime // .lastTimestamp // .metadata.creationTimestamp // "")
+      | .[-20:][]
+      | [
+          (.metadata.namespace // "-"),
+          .involvedObject.name,
+          (.reason // "-"),
+          ((.count // 1) | tostring),
+          (.eventTime // .lastTimestamp // .metadata.creationTimestamp // "-")
+        ]
+      | @tsv
+    ' >&2 || true
+}
+
+wait_for_ready_nodes() {
+	node_readiness_context=$1
+	if ! kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+		get nodes -o json >"$NODE_READINESS_FILE"; then
+		collect_node_readiness_diagnostics "$node_readiness_context"
+		return 1
+	fi
+	if ! jq -e '.items | length > 0' "$NODE_READINESS_FILE" >/dev/null; then
+		collect_node_readiness_diagnostics "$node_readiness_context"
+		return 1
+	fi
+	if ! kubectl --kubeconfig "$KUBECONFIG_FILE" wait \
+		--for=condition=Ready nodes --all --timeout=2m; then
+		collect_node_readiness_diagnostics "$node_readiness_context"
+		return 1
+	fi
+}
+
+nodes_ready_now() {
+	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+		get nodes -o json >"$NODE_READINESS_FILE" &&
+		jq -e '
+      ((.items | length) > 0) and
+      all(.items[];
+        any((.status.conditions // [])[];
+          .type == "Ready" and .status == "True"
+        )
+      )
+    ' "$NODE_READINESS_FILE" >/dev/null
+}
+
+require_ready_nodes() {
+	required_readiness_context=$1
+	if ! wait_for_ready_nodes "$required_readiness_context"; then
+		fail "infrastructure readiness check failed: $required_readiness_context"
+	fi
 }
 
 collect_diagnostics() {
@@ -961,6 +1036,7 @@ kind create cluster \
 	--config "$KIND_CONFIG" \
 	--kubeconfig "$KUBECONFIG_FILE" \
 	--wait 5m
+require_ready_nodes "after kind cluster creation"
 
 kind load docker-image "$PREDECESSOR_OPERATOR_IMAGE" --name "$CLUSTER_NAME"
 
@@ -1211,13 +1287,23 @@ render_release_values \
 
 printf 'e2e: installing exact predecessor release %s/%s from %s\n' \
 	"$OPERATOR_NAMESPACE" "$HELM_RELEASE" "$PREDECESSOR_REVISION"
-helm --kubeconfig "$KUBECONFIG_FILE" install "$HELM_RELEASE" \
+require_ready_nodes "immediately before predecessor Helm install"
+if command helm --kubeconfig "$KUBECONFIG_FILE" install "$HELM_RELEASE" \
 	"$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_CHART" \
 	--namespace "$OPERATOR_NAMESPACE" \
 	--create-namespace \
 	--wait \
 	--timeout 5m \
-	--values "$PREDECESSOR_VALUES_FILE"
+	--values "$PREDECESSOR_VALUES_FILE"; then
+	:
+else
+	predecessor_install_status=$?
+	if nodes_ready_now; then
+		fail "predecessor release installation failed while Kubernetes nodes were Ready at the immediate post-failure check (Helm exit $predecessor_install_status)"
+	fi
+	collect_node_readiness_diagnostics "immediately after predecessor Helm install failed"
+	fail "infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)"
+fi
 
 jq -n \
 	--arg name "$MANAGER_PULL_SECRET" \

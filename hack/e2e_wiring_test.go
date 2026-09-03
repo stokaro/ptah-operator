@@ -207,6 +207,121 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "kind cluster creation",
 		},
 		{
+			name:        "zero-node readiness guard bypassed",
+			old:         `.items | length > 0`,
+			replacement: `true`,
+			wantError:   "bounded hard node readiness wait",
+		},
+		{
+			name:        "bounded node readiness wait bypassed",
+			old:         `--for=condition=Ready nodes --all --timeout=2m; then`,
+			replacement: `--for=condition=Ready nodes --all --timeout=2m || true; then`,
+			wantError:   "bounded hard node readiness wait",
+		},
+		{
+			name:        "immediate readiness predicate accepts a partial cluster",
+			old:         `.type == "Ready" and .status == "True"`,
+			replacement: `.status == "True"`,
+			wantError:   "immediate all-node readiness predicate",
+		},
+		{
+			name:        "immediate readiness predicate accepts zero nodes",
+			old:         `((.items | length) > 0) and`,
+			replacement: `true and`,
+			wantError:   "immediate all-node readiness predicate",
+		},
+		{
+			name:        "immediate readiness predicate masks node query failure",
+			old:         `get nodes -o json >"$NODE_READINESS_FILE" &&`,
+			replacement: `get nodes -o json |`,
+			wantError:   "immediate all-node readiness predicate",
+		},
+		{
+			name:        "node warning diagnostics broadened beyond nodes",
+			old:         `[.items[] | select(.involvedObject.kind == "Node")]`,
+			replacement: `[.items[]]`,
+			wantError:   "credential-safe node readiness diagnostics",
+		},
+		{
+			name: "node condition diagnostics include free-form messages",
+			old: ".status,\n" +
+				`          (.reason // "-"),` + "\n" +
+				`          (.lastTransitionTime // "-")`,
+			replacement: ".status,\n" +
+				`          (.message // "-"),` + "\n" +
+				`          (.lastTransitionTime // "-")`,
+			wantError: "credential-safe node readiness diagnostics",
+		},
+		{
+			name:        "node diagnostics append raw workload YAML",
+			old:         `printf '%s\n' 'e2e: recent node warnings: namespace node reason count time' >&2`,
+			replacement: "kubectl --kubeconfig \"$KUBECONFIG_FILE\" get pods -A -o yaml >&2 || true\n\t" + `printf '%s\n' 'e2e: recent node warnings: namespace node reason count time' >&2`,
+			wantError:   "credential-safe node readiness diagnostics",
+		},
+		{
+			name:        "node diagnostics append broad describe output",
+			old:         `printf '%s\n' 'e2e: recent node warnings: namespace node reason count time' >&2`,
+			replacement: "kubectl --kubeconfig \"$KUBECONFIG_FILE\" describe pods -A >&2 || true\n\t" + `printf '%s\n' 'e2e: recent node warnings: namespace node reason count time' >&2`,
+			wantError:   "credential-safe node readiness diagnostics",
+		},
+		{
+			name: "node diagnostics are replaced by a later unsafe definition",
+			old:  "    ' >&2 || true\n}\n\nwait_for_ready_nodes() {",
+			replacement: "    ' >&2 || true\n}\n\n" +
+				"collect_node_readiness_diagnostics() {\n" +
+				"\tkubectl --kubeconfig \"$KUBECONFIG_FILE\" get pods -A -o yaml >&2 || true\n" +
+				"}\n\nwait_for_ready_nodes() {",
+			wantError: "exactly one function definition",
+		},
+		{
+			name:        "bounded node readiness wait is replaced by a later no-op definition",
+			old:         "collect_diagnostics() {",
+			replacement: "wait_for_ready_nodes() { return 0; }\n\ncollect_diagnostics() {",
+			wantError:   "wait_for_ready_nodes must have exactly one function definition",
+		},
+		{
+			name:        "immediate node readiness predicate is replaced by a later no-op definition",
+			old:         "collect_diagnostics() {",
+			replacement: "nodes_ready_now() { return 0; }\n\ncollect_diagnostics() {",
+			wantError:   "nodes_ready_now must have exactly one function definition",
+		},
+		{
+			name:        "hard node readiness requirement is replaced by a later no-op definition",
+			old:         "collect_diagnostics() {",
+			replacement: "require_ready_nodes() { :; }\n\ncollect_diagnostics() {",
+			wantError:   "require_ready_nodes must have exactly one function definition",
+		},
+		{
+			name:        "hard node readiness requirement is replaced by a spaced multiline definition",
+			old:         "collect_diagnostics() {",
+			replacement: "require_ready_nodes ( )\n{\n\t:\n}\n\ncollect_diagnostics() {",
+			wantError:   "require_ready_nodes must have exactly one function definition",
+		},
+		{
+			name:        "hard node readiness requirement declarator is split across a continuation",
+			old:         "collect_diagnostics() {",
+			replacement: "require_ready_nodes \\\n() { :; }\n\ncollect_diagnostics() {",
+			wantError:   "require_ready_nodes must have exactly one function definition",
+		},
+		{
+			name:        "hard node readiness requirement is replaced by a subshell-body definition",
+			old:         "collect_diagnostics() {",
+			replacement: "require_ready_nodes() ( : )\n\ncollect_diagnostics() {",
+			wantError:   "require_ready_nodes must have exactly one function definition",
+		},
+		{
+			name:        "hard node readiness requirement is replaced by a keyword-body definition",
+			old:         "collect_diagnostics() {",
+			replacement: "require_ready_nodes() if false; then return 1; fi\n\ncollect_diagnostics() {",
+			wantError:   "require_ready_nodes must have exactly one function definition",
+		},
+		{
+			name:        "post-creation node readiness omitted",
+			old:         `require_ready_nodes "after kind cluster creation"`,
+			replacement: `: # post-creation node readiness omitted`,
+			wantError:   "kind cluster creation",
+		},
+		{
 			name:        "server version extraction omitted",
 			old:         `server_version=$(kubectl --kubeconfig "$KUBECONFIG_FILE" version -o json |`,
 			replacement: `server_version=v"$K8S_VERSION"`,
@@ -229,6 +344,285 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			old:         `"$ADMISSION_OPENAPI_FILE" >/dev/null ||`,
 			replacement: `"$ADMISSION_OPENAPI_FILE" >/dev/null || true ||`,
 			wantError:   "live admission OpenAPI boundary",
+		},
+		{
+			name:        "predecessor install readiness gate omitted",
+			old:         `require_ready_nodes "immediately before predecessor Helm install"`,
+			replacement: `: # predecessor install readiness gate omitted`,
+			wantError:   "immediate predecessor install readiness gate",
+		},
+		{
+			name:        "predecessor install failure ignored",
+			old:         `if command helm --kubeconfig "$KUBECONFIG_FILE" install "$HELM_RELEASE" \`,
+			replacement: `command helm --kubeconfig "$KUBECONFIG_FILE" install "$HELM_RELEASE" \`,
+			wantError:   "immediate predecessor install readiness gate",
+		},
+		{
+			name:        "post-install failure readiness recheck is delayed",
+			old:         `if nodes_ready_now; then`,
+			replacement: `if wait_for_ready_nodes "after predecessor Helm install failed"; then`,
+			wantError:   "immediate predecessor install readiness gate",
+		},
+		{
+			name: "post-install readiness recheck is not immediate",
+			old:  "\tpredecessor_install_status=$?\n\tif nodes_ready_now; then",
+			replacement: "\tpredecessor_install_status=$?\n" +
+				"\tsleep 30\n\tif nodes_ready_now; then",
+			wantError: "immediate predecessor install readiness gate",
+		},
+		{
+			name:        "Helm function override retries commands",
+			old:         "set -eu\n",
+			replacement: "set -eu\nhelm() { command helm \"$@\" || command helm \"$@\"; }\n",
+			wantError:   "Helm function override",
+		},
+		{
+			name:        "command function override retries commands",
+			old:         "set -eu\n",
+			replacement: "set -eu\ncommand() { /usr/bin/env \"$@\" || /usr/bin/env \"$@\"; }\n",
+			wantError:   "command function override",
+		},
+		{
+			name:        "multiline command function override retries commands",
+			old:         "set -eu\n",
+			replacement: "set -eu\ncommand()\n{\n\t/usr/bin/env \"$@\" || /usr/bin/env \"$@\"\n}\n",
+			wantError:   "command function override",
+		},
+		{
+			name:        "spaced-parentheses command function override retries commands",
+			old:         "set -eu\n",
+			replacement: "set -eu\ncommand ( ) { /usr/bin/env \"$@\" || /usr/bin/env \"$@\"; }\n",
+			wantError:   "command function override",
+		},
+		{
+			name:        "subshell-body command function override retries commands",
+			old:         "set -eu\n",
+			replacement: "set -eu\ncommand() ( /usr/bin/env \"$@\" || /usr/bin/env \"$@\"; )\n",
+			wantError:   "command function override",
+		},
+		{
+			name:        "keyword-body command function override retries commands",
+			old:         "set -eu\n",
+			replacement: "set -eu\ncommand() if /usr/bin/env \"$@\"; then :; else /usr/bin/env \"$@\"; fi\n",
+			wantError:   "command function override",
+		},
+		{
+			name:        "command alias override replaces the builtin",
+			old:         "set -eu\n",
+			replacement: "set -eu\nalias command='retry_command'\n",
+			wantError:   "command alias override",
+		},
+		{
+			name:        "single-quoted command alias override replaces the builtin",
+			old:         "set -eu\n",
+			replacement: "set -eu\nalias 'command=retry_command'\n",
+			wantError:   "command alias override",
+		},
+		{
+			name:        "double-quoted Helm alias override replaces the executable",
+			old:         "set -eu\n",
+			replacement: "set -eu\nalias \"helm=retry_helm\"\n",
+			wantError:   "Helm alias override",
+		},
+		{
+			name: "predecessor install retried",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\ncommand helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\" >/dev/null 2>&1 || true",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install retried in a subshell",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\n(command helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\") || true",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install executable is split across a continuation",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\ncommand hel\\\nm install retry-chart || true",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install subcommand is split across a continuation",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\ncommand helm ins\\\ntall retry-chart || true",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install retried through quoted command substitution",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nretry_result=\"$(command helm install retry-chart)\" || true",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install retried through an expandable here-document",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nsh <<EOF\ncommand helm install retry-chart\nEOF",
+			wantError: "shell here-document syntax",
+		},
+		{
+			name: "predecessor install retried through legacy command substitution",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nretry_result=`helm install retry-chart` || true",
+			wantError: "legacy backtick command substitution",
+		},
+		{
+			name: "predecessor install retried in a command group",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\n{ command helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\"; } || true",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install retried as a pipeline command",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nprintf '%s\\n' retry | command helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\" || true",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install retried after a background separator",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\ntrue & command helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\" || true",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install retried after an or-list boundary",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nfalse || command helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\"",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install retried after a control keyword",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nif true; then command helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\"; fi",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install retried through a shell command string",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nsh -c 'command helm install retry-chart' || true",
+			wantError: "Helm command-string launch",
+		},
+		{
+			name: "predecessor install retried through eval",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\neval 'command helm install retry-chart' || true",
+			wantError: "Helm command-string launch",
+		},
+		{
+			name: "predecessor install retried through a variable-backed shell command string",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nretry_command='command helm install retry-chart'\nenv sh -c \"$retry_command\" || true",
+			wantError: "host shell command-string launch",
+		},
+		{
+			name: "predecessor install retried through Bash after a long option",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nretry_command='command helm install retry-chart'\nbash --noprofile -c \"$retry_command\" || true",
+			wantError: "host shell command-string launch",
+		},
+		{
+			name: "predecessor install retried through env and Bash after a long option",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nretry_command='command helm install retry-chart'\nenv bash --noprofile -c \"$retry_command\" || true",
+			wantError: "host shell command-string launch",
+		},
+		{
+			name: "predecessor install retried through Bash after an option operand",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nretry_command='command helm install retry-chart'\nbash -O extglob -c \"$retry_command\" || true",
+			wantError: "host shell command-string launch",
+		},
+		{
+			name: "predecessor install retried with environment prefix",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nHELM_DEBUG=1 command helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\" >/dev/null 2>&1 || true",
+			wantError: "exactly one semantic install attempt",
+		},
+		{
+			name: "predecessor install retried through env",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nenv HELM_DEBUG=1 command helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\" >/dev/null 2>&1 || true",
+			wantError: "env-launched Helm command",
+		},
+		{
+			name: "predecessor install retried through env option operand",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nenv -u HELM_DEBUG helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\" >/dev/null 2>&1 || true",
+			wantError: "env-launched Helm command",
+		},
+		{
+			name: "predecessor install retried through plain env",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nenv helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\" >/dev/null 2>&1 || true",
+			wantError: "env-launched Helm command",
+		},
+		{
+			name: "predecessor install retried through multiline env",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\nenv -u HELM_DEBUG \\\n\thelm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\" >/dev/null 2>&1 || true",
+			wantError: "env-launched Helm command",
+		},
+		{
+			name: "predecessor install retried through command env",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\ncommand env HELM_DEBUG=1 helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\" >/dev/null 2>&1 || true",
+			wantError: "env-launched Helm command",
+		},
+		{
+			name: "predecessor install retried through chained env",
+			old: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi",
+			replacement: "\tfail \"infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)\"\n" +
+				"fi\ntrue && env helm install retry-chart --kubeconfig \"$KUBECONFIG_FILE\" >/dev/null 2>&1 || true",
+			wantError: "env-launched Helm command",
 		},
 		{
 			name:        "upgrade lifecycle omitted",
@@ -906,6 +1300,20 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			old:         `cp "$ROOT_DIR/testdata/e2e/postgresql-v1.sql" "$predecessor_plan_source"`,
 			replacement: `cp "$ROOT_DIR/testdata/e2e/postgres-v1.sql" "$predecessor_plan_source"`,
 			wantError:   "predecessor Apply schema fixture",
+		},
+		{
+			name:        "CRD predecessor fixture completion polling rejects missing conditions",
+			child:       "crd-upgrade",
+			old:         `(.status.conditions // []) | any(.type == "Complete" and .status == "True")`,
+			replacement: `.status.conditions | any(.type == "Complete" and .status == "True")`,
+			wantError:   "predecessor fixture Job nil-safe completion polling",
+		},
+		{
+			name:        "CRD predecessor fixture failure polling rejects missing conditions",
+			child:       "crd-upgrade",
+			old:         `(.status.conditions // []) | any(.type == "Failed" and .status == "True")`,
+			replacement: `.status.conditions | any(.type == "Failed" and .status == "True")`,
+			wantError:   "predecessor fixture Job nil-safe failure polling",
 		},
 		{
 			name:        "CRD proof call removed",

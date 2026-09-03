@@ -513,11 +513,11 @@ wait_for_successful_fixture_job() {
 	while [ "$(date +%s)" -lt "$deadline" ]; do
 		if kube -n "$PROOF_NAMESPACE" get job "$job_name" -o json \
 			>"$WORK_DIR/fixture-job.json" 2>/dev/null; then
-			if jq -e '.status.conditions | any(.type == "Complete" and .status == "True")' \
+			if jq -e '(.status.conditions // []) | any(.type == "Complete" and .status == "True")' \
 				"$WORK_DIR/fixture-job.json" >/dev/null; then
 				return
 			fi
-			if jq -e '.status.conditions | any(.type == "Failed" and .status == "True")' \
+			if jq -e '(.status.conditions // []) | any(.type == "Failed" and .status == "True")' \
 				"$WORK_DIR/fixture-job.json" >/dev/null; then
 				fail "fixture Job $job_name failed"
 			fi

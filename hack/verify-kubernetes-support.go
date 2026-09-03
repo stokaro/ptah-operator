@@ -1447,6 +1447,85 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`[ "$ACTUAL_KIND_VERSION" = "$EXPECTED_KIND_VERSION" ] ||`,
 			`fail "kind $EXPECTED_KIND_VERSION is required, got $ACTUAL_KIND_VERSION"`,
 		}),
+		exactSourceLine("node readiness snapshot path", `NODE_READINESS_FILE=$WORK_DIR/node-readiness.json`),
+		exactSourceLineSequence("credential-safe node readiness diagnostics", []string{
+			`collect_node_readiness_diagnostics() {`,
+			`node_diagnostics_context=$1`,
+			`printf 'e2e: Kubernetes node readiness diagnostics (%s)\n' \`,
+			`"$node_diagnostics_context" >&2`,
+			`printf '%s\n' 'e2e: node conditions: name type status reason last-transition' >&2`,
+			`kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get nodes -o json |`,
+			`jq -r '`,
+			`.items[] as $node`,
+			`| ($node.status.conditions // [])[]`,
+			`| [`,
+			`$node.metadata.name,`,
+			`.type,`,
+			`.status,`,
+			`(.reason // "-"),`,
+			`(.lastTransitionTime // "-")`,
+			`]`,
+			`| @tsv`,
+			`' >&2 || true`,
+			`printf '%s\n' 'e2e: recent node warnings: namespace node reason count time' >&2`,
+			`kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get events -A \`,
+			`--field-selector type=Warning -o json |`,
+			`jq -r '`,
+			`[.items[] | select(.involvedObject.kind == "Node")]`,
+			`| sort_by(.eventTime // .lastTimestamp // .metadata.creationTimestamp // "")`,
+			`| .[-20:][]`,
+			`| [`,
+			`(.metadata.namespace // "-"),`,
+			`.involvedObject.name,`,
+			`(.reason // "-"),`,
+			`((.count // 1) | tostring),`,
+			`(.eventTime // .lastTimestamp // .metadata.creationTimestamp // "-")`,
+			`]`,
+			`| @tsv`,
+			`' >&2 || true`,
+			`}`,
+		}),
+		exactSourceLineSequence("bounded hard node readiness wait", []string{
+			`wait_for_ready_nodes() {`,
+			`node_readiness_context=$1`,
+			`if ! kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \`,
+			`get nodes -o json >"$NODE_READINESS_FILE"; then`,
+			`collect_node_readiness_diagnostics "$node_readiness_context"`,
+			`return 1`,
+			`fi`,
+			`if ! jq -e '.items | length > 0' "$NODE_READINESS_FILE" >/dev/null; then`,
+			`collect_node_readiness_diagnostics "$node_readiness_context"`,
+			`return 1`,
+			`fi`,
+			`if ! kubectl --kubeconfig "$KUBECONFIG_FILE" wait \`,
+			`--for=condition=Ready nodes --all --timeout=2m; then`,
+			`collect_node_readiness_diagnostics "$node_readiness_context"`,
+			`return 1`,
+			`fi`,
+			`}`,
+		}),
+		exactSourceLineSequence("immediate all-node readiness predicate", []string{
+			`nodes_ready_now() {`,
+			`kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \`,
+			`get nodes -o json >"$NODE_READINESS_FILE" &&`,
+			`jq -e '`,
+			`((.items | length) > 0) and`,
+			`all(.items[];`,
+			`any((.status.conditions // [])[];`,
+			`.type == "Ready" and .status == "True"`,
+			`)`,
+			`)`,
+			`' "$NODE_READINESS_FILE" >/dev/null`,
+			`}`,
+		}),
+		exactSourceLineSequence("hard node readiness requirement", []string{
+			`require_ready_nodes() {`,
+			`required_readiness_context=$1`,
+			`if ! wait_for_ready_nodes "$required_readiness_context"; then`,
+			`fail "infrastructure readiness check failed: $required_readiness_context"`,
+			`fi`,
+			`}`,
+		}),
 		exactSourceLineSequence("guarded API feature gates for Kubernetes 1.35", []string{
 			`1.35)`,
 			`{`,
@@ -1474,6 +1553,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`--config "$KIND_CONFIG" \`,
 			`--kubeconfig "$KUBECONFIG_FILE" \`,
 			`--wait 5m`,
+			`require_ready_nodes "after kind cluster creation"`,
 		}),
 		exactSourceLineSequence("API server version binding", []string{
 			`server_version=$(kubectl --kubeconfig "$KUBECONFIG_FILE" version -o json |`,
@@ -1505,6 +1585,27 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`"$CONTROLLER_BATCH_OPENAPI_FILE" >/dev/null ||`,
 			`fail "Kubernetes $K8S_VERSION Job/Pod API exceeds the reviewed controller write boundary"`,
 		}),
+		exactSourceLineSequence("immediate predecessor install readiness gate", []string{
+			`require_ready_nodes "immediately before predecessor Helm install"`,
+			`if command helm --kubeconfig "$KUBECONFIG_FILE" install "$HELM_RELEASE" \`,
+			`"$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_CHART" \`,
+			`--namespace "$OPERATOR_NAMESPACE" \`,
+			`--create-namespace \`,
+			`--wait \`,
+			`--timeout 5m \`,
+			`--values "$PREDECESSOR_VALUES_FILE"; then`,
+			`:`,
+			`else`,
+			`predecessor_install_status=$?`,
+			`if nodes_ready_now; then`,
+		}),
+		exactSourceLineSequence("post-install-failure readiness classification", []string{
+			`fail "predecessor release installation failed while Kubernetes nodes were Ready at the immediate post-failure check (Helm exit $predecessor_install_status)"`,
+			`fi`,
+			`collect_node_readiness_diagnostics "immediately after predecessor Helm install failed"`,
+			`fail "infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)"`,
+			`fi`,
+		}),
 		exactSourceLineSequence("candidate guarded API version propagation", []string{
 			`E2E_KUBERNETES_VERSION=$K8S_VERSION \`,
 			`E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \`,
@@ -1525,6 +1626,19 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("terminal Kubernetes lifecycle evidence", `printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"`),
 	}
 	if err := verifyOrderedSourceContract(harness, harnessContents, harnessContract); err != nil {
+		return err
+	}
+	for _, functionName := range []string{
+		"collect_node_readiness_diagnostics",
+		"wait_for_ready_nodes",
+		"nodes_ready_now",
+		"require_ready_nodes",
+	} {
+		if err := verifySingleShellFunctionDefinition(harness, harnessContents, functionName); err != nil {
+			return err
+		}
+	}
+	if err := verifySingleDirectHelmInstallAttempt(harness, harnessContents); err != nil {
 		return err
 	}
 	if err := rejectStaticControlFlowBypass(harness, harnessContents, harnessContract[len(harnessContract)-1].pattern); err != nil {
@@ -1651,6 +1765,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("cleanup status preservation", `exit "$status"`),
 				exactSourceLine("live server version verification", `verify_supported_server_version`),
 				exactSourceLine("predecessor read-only Job fixture", `wait_for_predecessor_read_only_job() {`),
+				exactSourceLine("predecessor fixture Job nil-safe completion polling", `if jq -e '(.status.conditions // []) | any(.type == "Complete" and .status == "True")' \`),
+				exactSourceLine("predecessor fixture Job nil-safe failure polling", `if jq -e '(.status.conditions // []) | any(.type == "Failed" and .status == "True")' \`),
 				exactSourceLine("predecessor running Apply fixture", `prepare_predecessor_apply_fixture() {`),
 				exactSourceLine("predecessor Apply schema fixture", `cp "$ROOT_DIR/testdata/e2e/postgresql-v1.sql" "$predecessor_plan_source"`),
 				exactSourceLine("controller guarded-field proof implementation", `prove_controller_object_supported_window_guard() {`),
@@ -2345,6 +2461,138 @@ func verifyLifecycleSource(contract lifecycleSourceContract) error {
 		}
 	}
 	return rejectEarlySuccessfulExit(contract.path, contents, completion)
+}
+
+func verifySingleDirectHelmInstallAttempt(path string, contents []byte) error {
+	shellCode := maskShellHeredocBodies(contents)
+	logicalShell := normalizeShellContinuations(shellCode)
+	if bytes.Contains(shellCode, []byte{'`'}) {
+		return fmt.Errorf("%s: legacy backtick command substitution is not allowed around the audited install", path)
+	}
+	if bytes.Contains(contents, []byte("<<")) {
+		return fmt.Errorf("%s: shell here-document syntax is not allowed around the audited install", path)
+	}
+	const shellAssignment = `[A-Za-z_][A-Za-z0-9_]*=(?:"[^"\r\n]*"|'[^'\r\n]*'|[^ \t;&|"'\r\n]*)`
+	const shellCommandBoundary = `(?:(?:^|;;&|;;|;&|&&|\|\||[;|&(){}])[ \t]*)`
+	const shellControlPrefix = `(?:(?:if|elif|while|until|then|else|do)[ \t]+)?`
+	indirectionChecks := []struct {
+		name    string
+		pattern *regexp.Regexp
+	}{
+		{
+			name:    "Helm function override",
+			pattern: shellFunctionDeclaratorPattern("helm"),
+		},
+		{
+			name:    "Helm alias override",
+			pattern: shellAliasOverridePattern("helm"),
+		},
+		{
+			name:    "command function override",
+			pattern: shellFunctionDeclaratorPattern("command"),
+		},
+		{
+			name:    "command alias override",
+			pattern: shellAliasOverridePattern("command"),
+		},
+		{
+			name: "env-launched Helm command",
+			pattern: regexp.MustCompile(
+				`(?m)` + shellCommandBoundary + shellControlPrefix + `(?:![ \t]+)*(?:` + shellAssignment + `[ \t]+)*` +
+					`(?:command[ \t]+)*(?:[^ \t;&|]*/)?env[ \t]+(?:[^;&|\r\n]*[ \t])?(?:command[ \t]+)*(?:[^ \t;&|]*/)?helm(?:[ \t;&|]|$)`,
+			),
+		},
+		{
+			name: "Helm command-string launch",
+			pattern: regexp.MustCompile(
+				`(?m)` + shellCommandBoundary + shellControlPrefix + `(?:![ \t]+)*(?:` + shellAssignment + `[ \t]+)*` +
+					`(?:(?:command[ \t]+)*(?:[^ \t;&|(){}]*/)?(?:sh|bash|dash|ksh|zsh)[ \t]+-[A-Za-z]*c[A-Za-z]*|(?:command[ \t]+)*eval)[ \t]+` +
+					`(?:"[^"\r\n]*helm[^"\r\n]*[ \t]+install[^"\r\n]*"|'[^'\r\n]*helm[^'\r\n]*[ \t]+install[^'\r\n]*')`,
+			),
+		},
+		{
+			name: "Helm variable indirection",
+			pattern: regexp.MustCompile(
+				`(?m)^[ \t]*(?:(?:export|readonly)[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=[ \t]*(?:helm|'helm'|"helm")(?:[ \t;#]|$)`,
+			),
+		},
+		{
+			name: "Helm argument-forwarding wrapper",
+			pattern: regexp.MustCompile(
+				`(?m)^[ \t]*(?:command[ \t]+)?(?:[^ \t;&|]*/)?helm[ \t]+(?:"\$(?:@|\*)"|'\$(?:@|\*)'|\$(?:@|\*))(?:[ \t;&|]|$)`,
+			),
+		},
+	}
+	for _, check := range indirectionChecks {
+		if match := firstUnquotedShellMatch(shellCode, check.pattern); match != nil {
+			line := 1 + bytes.Count(contents[:match[0]], []byte{'\n'})
+			return fmt.Errorf("%s:%d: %s is not allowed around the audited install", path, line, check.name)
+		}
+		if firstUnquotedShellMatch(logicalShell, check.pattern) != nil {
+			return fmt.Errorf("%s: %s is not allowed around the audited install", path, check.name)
+		}
+	}
+	hostShellLaunch := regexp.MustCompile(
+		`(?m)` + shellCommandBoundary + shellControlPrefix + `(?:![ \t]+)*(?:` + shellAssignment + `[ \t]+)*` +
+			`(?:(?:command|exec|time)[ \t]+)*(?:(?:[^ \t;&|(){}#\r\n]*/)?env[ \t]+(?:[^;&|\r\n]*[ \t])?)?` +
+			`(?:[^ \t;&|(){}#\r\n]*/)?(?:sh|bash|dash|ksh|zsh)(?:[ \t]|$)`,
+	)
+	if firstUnquotedShellMatch(logicalShell, hostShellLaunch) != nil {
+		return fmt.Errorf("%s: host shell command-string launch is not allowed around the audited install", path)
+	}
+	hostEvalLaunch := regexp.MustCompile(
+		`(?m)` + shellCommandBoundary + shellControlPrefix + `(?:![ \t]+)*(?:` + shellAssignment + `[ \t]+)*(?:command[ \t]+)*eval(?:[ \t]|$)`,
+	)
+	if firstUnquotedShellMatch(logicalShell, hostEvalLaunch) != nil {
+		return fmt.Errorf("%s: host shell command-string launch is not allowed around the audited install", path)
+	}
+
+	helmInstall := regexp.MustCompile(
+		`(?m)` + shellCommandBoundary + shellControlPrefix + `(?:![ \t]+)*` +
+			`(?:` + shellAssignment + `[ \t]+)*` +
+			`(?:(?:command|exec|time)[ \t]+)*(?:[^ \t;&|]*/)?helm` +
+			`(?:[ \t]+[^;&|\r\n]*)?[ \t]+install(?:[ \t;&|]|$)`,
+	)
+	attempts := helmInstall.FindAllIndex(logicalShell, -1)
+	if len(attempts) != 1 {
+		return fmt.Errorf("%s: predecessor Helm installation must have exactly one semantic install attempt, found %d", path, len(attempts))
+	}
+	return nil
+}
+
+func verifySingleShellFunctionDefinition(path string, contents []byte, name string) error {
+	shellCode := normalizeShellContinuations(maskShellHeredocBodies(contents))
+	definition := shellFunctionDeclaratorPattern(name)
+	count := 0
+	for _, match := range definition.FindAllIndex(shellCode, -1) {
+		if !insideShellQuote(shellCode, match[0]) {
+			count++
+		}
+	}
+	if count != 1 {
+		return fmt.Errorf("%s: %s must have exactly one function definition, found %d", path, name, count)
+	}
+	return nil
+}
+
+func normalizeShellContinuations(contents []byte) []byte {
+	return regexp.MustCompile(`\\\r?\n`).ReplaceAll(contents, nil)
+}
+
+func shellFunctionDeclaratorPattern(name string) *regexp.Regexp {
+	escapedName := regexp.QuoteMeta(name)
+	return regexp.MustCompile(
+		`(?m)^[ \t]*(?:function[ \t]+` + escapedName + `(?:[ \t]*\([ \t]*\)|[ \t]+|\r?$)|` +
+			escapedName + `[ \t]*\([ \t]*\))`,
+	)
+}
+
+func shellAliasOverridePattern(name string) *regexp.Regexp {
+	escapedName := regexp.QuoteMeta(name)
+	return regexp.MustCompile(
+		`(?m)^[ \t]*alias[ \t]+(?:` + escapedName + `(?:[ \t]*=|[ \t]+)|` +
+			`'` + escapedName + `=[^'\r\n]*'|"` + escapedName + `=[^"\r\n]*")`,
+	)
 }
 
 func exactSourceLine(name, line string) sourceContractStep {
