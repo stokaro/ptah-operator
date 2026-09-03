@@ -734,7 +734,7 @@ EOF
 	wait_for_suspended "$PREDECESSOR_APPLY_SCHEMA"
 
 	predecessor_plan_source=$WORK_DIR/predecessor-apply-schema.sql
-	cp "$ROOT_DIR/testdata/e2e/postgres-v1.sql" "$predecessor_plan_source"
+	cp "$ROOT_DIR/testdata/e2e/postgresql-v1.sql" "$predecessor_plan_source"
 	kube -n "$PROOF_NAMESPACE" create configmap predecessor-apply-plan-source \
 		--from-file="schema.sql=$predecessor_plan_source" >/dev/null
 	jq -n \

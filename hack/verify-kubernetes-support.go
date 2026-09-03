@@ -1652,6 +1652,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("live server version verification", `verify_supported_server_version`),
 				exactSourceLine("predecessor read-only Job fixture", `wait_for_predecessor_read_only_job() {`),
 				exactSourceLine("predecessor running Apply fixture", `prepare_predecessor_apply_fixture() {`),
+				exactSourceLine("predecessor Apply schema fixture", `cp "$ROOT_DIR/testdata/e2e/postgresql-v1.sql" "$predecessor_plan_source"`),
 				exactSourceLine("controller guarded-field proof implementation", `prove_controller_object_supported_window_guard() {`),
 				exactSourceLine("controller guarded-field proof call", `prove_controller_object_supported_window_guard`),
 				exactSourceLine("predecessor read-only Job terminal staging", `stage_predecessor_read_only_job_completion`),

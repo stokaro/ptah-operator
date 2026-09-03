@@ -901,6 +901,13 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "failure-preserving trap",
 		},
 		{
+			name:        "CRD predecessor Apply schema fixture path changed",
+			child:       "crd-upgrade",
+			old:         `cp "$ROOT_DIR/testdata/e2e/postgresql-v1.sql" "$predecessor_plan_source"`,
+			replacement: `cp "$ROOT_DIR/testdata/e2e/postgres-v1.sql" "$predecessor_plan_source"`,
+			wantError:   "predecessor Apply schema fixture",
+		},
+		{
 			name:        "CRD proof call removed",
 			child:       "crd-upgrade",
 			old:         "prove_runtime_singleton_guard\n",
