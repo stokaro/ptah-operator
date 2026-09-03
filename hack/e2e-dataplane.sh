@@ -3243,8 +3243,9 @@ assert_plan_storage_immutable() {
 		>"$immutable_chunks_file" || fail "$immutable_plan has no plan chunks to protect"
 	immutable_chunk_count=0
 	while IFS="$(printf '\t')" read -r immutable_chunk_name immutable_chunk_key; do
-		[ -n "$immutable_chunk_name" ] && [ -n "$immutable_chunk_key" ] ||
+		if [ -z "$immutable_chunk_name" ] || [ -z "$immutable_chunk_key" ]; then
 			fail "$immutable_plan contains an incomplete chunk reference"
+		fi
 		immutable_chunk_count=$((immutable_chunk_count + 1))
 		immutable_chunk_object=$(k -n "$TEST_NAMESPACE" get configmap "$immutable_chunk_name" -o json)
 		printf '%s\n' "$immutable_chunk_object" | jq -e \

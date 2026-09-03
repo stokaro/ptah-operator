@@ -1229,12 +1229,12 @@ controller_revision_pattern='pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:sp
 for controller_revision_crd in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	controller_revision_fields=$(grep -c '^[[:space:]]*controllerRevision:' "$controller_revision_crd" || true)
 	controller_revision_patterns=$(grep -Fc "$controller_revision_pattern" "$controller_revision_crd" || true)
-	[ "$controller_revision_fields" -gt 0 ] &&
-		[ "$controller_revision_patterns" -eq "$controller_revision_fields" ] || {
+	if [ "$controller_revision_fields" -le 0 ] ||
+		[ "$controller_revision_patterns" -ne "$controller_revision_fields" ]; then
 		printf 'e2e static: %s lacks exact revision validation on every controllerRevision field\n' \
 			"$controller_revision_crd" >&2
 		exit 1
-	}
+	fi
 done
 # shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
 for fault_identity_handoff in \

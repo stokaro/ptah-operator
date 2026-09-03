@@ -52,7 +52,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256     = "4a3a07fcbd634936429d2a778d3d8fa6b1110c7bc78cbdaa0063b5a7fc9cc0e8"
+	ciWorkflowSHA256     = "b2464cb40e2b3bbd6c4283f86a3993be6bf64822ef4b4055b5521745d3147f33"
 	updateWorkflowSHA256 = "a012609ecffb861006cfbfdf09f769dfc1f5b0d7810f78a7fdbe33d4d3266a80"
 
 	ciSupportMatrixTimeoutMinutes     = 10
@@ -514,7 +514,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	wantMatrixEnv := map[string]string{
 		"DOCKER_CONTEXT":         "${{ steps.docker-context.outputs.name }}",
 		"E2E_DIRECT_HOST_ACCESS": "1",
-		"E2E_PTAH_REVISION":      "3c2b509fe6bb9324be623ca416bbbfef85523d19",
+		"E2E_PTAH_REVISION":      "fe26eb5af616b3b48aa75bf5cdb59ac9306b7836",
 		"E2E_PTAH_SOURCE_DIR":    "${{ runner.temp }}/ptah",
 		"E2E_RUN_ID":             "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}",
 		"KIND_NODE_IMAGE":        "${{ matrix.node_image }}",
