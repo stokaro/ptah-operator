@@ -66,7 +66,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256       = "b2464cb40e2b3bbd6c4283f86a3993be6bf64822ef4b4055b5521745d3147f33"
+	ciWorkflowSHA256       = "02860adce242a5852bd3640050c39d57fa24350c54d4c6928d2c4ce6a6b99b81"
 	updateWorkflowSHA256   = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	controllerSchemaSHA256 = "b73a7b8718abd34b4a8f45a1342c31c50690bf82358b378621dfbbe6e30892e5"
 
@@ -733,7 +733,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	wantMatrixEnv := map[string]string{
 		"DOCKER_CONTEXT":         "${{ steps.docker-context.outputs.name }}",
 		"E2E_DIRECT_HOST_ACCESS": "1",
-		"E2E_PTAH_REVISION":      "fe26eb5af616b3b48aa75bf5cdb59ac9306b7836",
+		"E2E_PTAH_REVISION":      "5451155ed00de348abbb6dbabc5370401dc23772",
 		"E2E_PTAH_SOURCE_DIR":    "${{ runner.temp }}/ptah",
 		"E2E_RUN_ID":             "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}",
 		"KIND_NODE_IMAGE":        "${{ matrix.node_image }}",

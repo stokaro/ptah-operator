@@ -28,7 +28,7 @@ Required inputs:
   callers must provide it explicitly for any other version.
 
 The harness builds its Ptah executor from commit
-`fe26eb5af616b3b48aa75bf5cdb59ac9306b7836` in a sibling Ptah checkout by
+`5451155ed00de348abbb6dbabc5370401dc23772` in a sibling Ptah checkout by
 default. Set `E2E_PTAH_SOURCE_DIR` and `E2E_PTAH_REVISION` to select another
 checkout and exact commit. When no sibling checkout exists, the harness clones
 `E2E_PTAH_GIT_URL` into its task-owned temporary directory.
