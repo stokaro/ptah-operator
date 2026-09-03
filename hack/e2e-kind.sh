@@ -148,6 +148,12 @@ case "$DOCKER_ENDPOINT" in
 	*) fail "Docker context $DOCKER_CONTEXT must use an SSH endpoint, got $DOCKER_ENDPOINT" ;;
 esac
 docker --context "$DOCKER_CONTEXT" info >/dev/null
+BUILDX_PLUGIN_PATH=$(docker --context "$DOCKER_CONTEXT" info \
+	--format '{{range .ClientInfo.Plugins}}{{if eq .Name "buildx"}}{{.Path}}{{end}}{{end}}')
+printf '%s\n' "$BUILDX_PLUGIN_PATH" | grep -Eq '^/[^[:cntrl:]]+$' ||
+	fail "Docker Buildx plugin path must be absolute"
+[ -x "$BUILDX_PLUGIN_PATH" ] ||
+	fail "Docker Buildx plugin is not executable: $BUILDX_PLUGIN_PATH"
 docker --context "$DOCKER_CONTEXT" buildx inspect "$DOCKER_CONTEXT" >/dev/null 2>&1 ||
 	fail "Docker context $DOCKER_CONTEXT must expose a working Buildx builder"
 
@@ -703,13 +709,16 @@ chart_asset=${CHART_PACKAGE##*/}
 printf 'e2e: installing release-form chart %s (%s)\n' \
 	"$chart_asset" "$CHART_PACKAGE_DIGEST"
 
-mkdir -p "$DOCKER_CLI_CONFIG"
+mkdir -p "$DOCKER_CLI_CONFIG/cli-plugins"
+ln -s "$BUILDX_PLUGIN_PATH" "$DOCKER_CLI_CONFIG/cli-plugins/docker-buildx"
 unset DOCKER_HOST
 DOCKER_CONFIG=$DOCKER_CLI_CONFIG docker context create "$TASK_DOCKER_CONTEXT" \
 	--docker "host=${DOCKER_ENDPOINT}" >/dev/null
 export DOCKER_HOST="$DOCKER_ENDPOINT"
 export DOCKER_CONFIG="$DOCKER_CLI_CONFIG"
 DOCKER_CONTEXT=$TASK_DOCKER_CONTEXT
+docker --context "$DOCKER_CONTEXT" buildx inspect "$DOCKER_CONTEXT" >/dev/null 2>&1 ||
+	fail "isolated Docker config cannot use its task-scoped Buildx builder"
 
 if ! docker --context "$DOCKER_CONTEXT" image inspect "$KIND_NODE_IMAGE" >/dev/null 2>&1; then
 	KIND_NODE_IMAGE_CREATED=1

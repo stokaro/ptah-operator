@@ -154,6 +154,17 @@ grep -F 'docker --context "$DOCKER_CONTEXT" buildx inspect "$DOCKER_CONTEXT"' \
 	printf '%s\n' 'e2e static: the selected remote Buildx builder is not checked' >&2
 	exit 1
 }
+# shellcheck disable=SC2016 # Match task-local plugin isolation literally.
+grep -F 'ln -s "$BUILDX_PLUGIN_PATH" "$DOCKER_CLI_CONFIG/cli-plugins/docker-buildx"' \
+	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+	printf '%s\n' 'e2e static: isolated Docker config cannot discover the checked Buildx plugin' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # Count the literal pre- and post-isolation checks.
+[ "$(grep -Fc 'buildx inspect "$DOCKER_CONTEXT"' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ] || {
+	printf '%s\n' 'e2e static: Buildx must be checked before and after Docker config isolation' >&2
+	exit 1
+}
 # shellcheck disable=SC2016 # Match the exact context-bound Buildx invocation.
 [ "$(grep -Fc 'docker --context "$DOCKER_CONTEXT" buildx build' \
 	"$ROOT_DIR/hack/e2e-kind.sh")" -eq 4 ] || {
