@@ -378,6 +378,19 @@ $CREATED_IMAGE_REFS"
 	fi
 }
 
+external_pg_mounts_are_ephemeral() {
+	jq -e '
+      (.HostConfig.Tmpfs | keys) == ["/var/lib/postgresql/data"] and
+      ((.HostConfig.Tmpfs["/var/lib/postgresql/data"] | split(",") | sort) ==
+        (["rw", "noexec", "nosuid", "nodev", "size=536870912"] | sort)) and
+      ((.HostConfig.Binds // []) | length) == 0 and
+      ((.HostConfig.Mounts // []) | length) == 0 and
+      ((.HostConfig.VolumesFrom // []) | length) == 0 and
+      ((.Mounts // []) | all(
+        .Type == "tmpfs" and .Destination == "/var/lib/postgresql/data"))
+    ' >/dev/null
+}
+
 assert_external_pg_container_contract() {
 	external_contract_id=$1
 	external_contract_ip=$2
@@ -417,15 +430,9 @@ assert_external_pg_container_contract() {
 		jq -e 'to_entries | all(.value == null)' >/dev/null ||
 		fail "external PostgreSQL container exposes a host port"
 	docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{json .HostConfig.Tmpfs}}' "$external_contract_id" |
-		jq -e 'keys == ["/var/lib/postgresql/data"]' >/dev/null ||
-		fail "external PostgreSQL data directory is not an exact tmpfs"
-	docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{json .Mounts}}' "$external_contract_id" |
-		jq -e '
-      length == 1 and .[0].Type == "tmpfs" and
-      .[0].Destination == "/var/lib/postgresql/data"
-    ' >/dev/null || fail "external PostgreSQL container has a persistent or unexpected mount"
+		--format '{"HostConfig":{"Tmpfs":{{json .HostConfig.Tmpfs}},"Binds":{{json .HostConfig.Binds}},"Mounts":{{json .HostConfig.Mounts}},"VolumesFrom":{{json .HostConfig.VolumesFrom}}},"Mounts":{{json .Mounts}}}' \
+		"$external_contract_id" | external_pg_mounts_are_ephemeral ||
+		fail "external PostgreSQL container has a persistent or unexpected mount"
 	docker --context "$DOCKER_CONTEXT" container inspect \
 		--format '{{json .NetworkSettings.Networks}}' "$external_contract_id" |
 		jq -e --arg address "$external_contract_ip" '

@@ -1307,6 +1307,8 @@ external_pg_create_section=$(sed -n \
 	"$ROOT_DIR/hack/e2e-kind.sh")
 external_pg_host_contract_section=$(sed -n '/^assert_external_pg_container_contract() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-kind.sh")
+external_pg_mount_contract_section=$(sed -n '/^external_pg_mounts_are_ephemeral() {$/,/^}$/p' \
+	"$ROOT_DIR/hack/e2e-kind.sh")
 external_pg_contract_section=$(sed -n '/^assert_external_pg_container_contract() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 external_pg_kubernetes_absence_section=$(sed -n \
@@ -1347,7 +1349,7 @@ for required_static_section in \
 	"$custom_ca_acceptance_section" "$custom_ca_approval_boundary_filter" \
 	"$engine_lifecycle_section" "$read_only_chain_section" \
 	"$external_pg_create_section" \
-	"$external_pg_host_contract_section" \
+	"$external_pg_host_contract_section" "$external_pg_mount_contract_section" \
 	"$external_pg_contract_section" "$external_pg_kubernetes_absence_section" \
 	"$external_pg_endpoint_section" "$external_pg_catalog_section" \
 	"$external_pg_lifecycle_section" "$external_pg_main_section" \
@@ -1360,6 +1362,30 @@ for required_static_section in \
 		exit 1
 	}
 done
+
+eval "$external_pg_mount_contract_section"
+assert_external_pg_mount_contract_accepts() {
+	printf '%s\n' "$1" | external_pg_mounts_are_ephemeral || {
+		printf '%s\n' 'e2e static: external PostgreSQL mount contract rejected an ephemeral representation' >&2
+		exit 1
+	}
+}
+assert_external_pg_mount_contract_rejects() {
+	if printf '%s\n' "$1" | external_pg_mounts_are_ephemeral; then
+		printf '%s\n' 'e2e static: external PostgreSQL mount contract accepted persistent or unsafe storage' >&2
+		exit 1
+	fi
+}
+assert_external_pg_mount_contract_accepts \
+	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"rw,noexec,nosuid,nodev,size=536870912"},"Binds":null,"Mounts":null,"VolumesFrom":null},"Mounts":[]}'
+assert_external_pg_mount_contract_accepts \
+	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"nodev,nosuid,noexec,size=536870912,rw"},"Binds":[],"Mounts":[],"VolumesFrom":[]},"Mounts":[{"Type":"tmpfs","Destination":"/var/lib/postgresql/data"}]}'
+assert_external_pg_mount_contract_rejects \
+	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"rw,noexec,nosuid,nodev,size=536870912"},"Binds":null,"Mounts":null,"VolumesFrom":null},"Mounts":[{"Type":"volume","Destination":"/var/lib/postgresql/data"}]}'
+assert_external_pg_mount_contract_rejects \
+	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"rw,noexec,nosuid,nodev,size=536870912"},"Binds":["/host:/var/lib/postgresql/data"],"Mounts":null,"VolumesFrom":null},"Mounts":[]}'
+assert_external_pg_mount_contract_rejects \
+	'{"HostConfig":{"Tmpfs":{"/var/lib/postgresql/data":"rw,nosuid,nodev,size=536870912"},"Binds":null,"Mounts":null,"VolumesFrom":null},"Mounts":[]}'
 
 # Docker Go templates are already single-quoted. Backslash-escaped quotes are
 # passed literally and make `docker inspect --format` fail before Helm install.
