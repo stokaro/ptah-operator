@@ -14,6 +14,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 func TestStoredControllerStateClientsUseEveryDurableResource(t *testing.T) {
@@ -211,6 +212,35 @@ func TestDecodeRuntimeAdmissionContractPreservesFalseValues(t *testing.T) {
 	}
 	if contract.Namespace != "ptah-system" || contract.ControllerServiceAccountName != "ptah-controller" || contract.CertificateServiceAccountName != "ptah-certificate" {
 		t.Fatalf("decoded identity = %#v", contract)
+	}
+}
+
+func TestNewRolloutGuardUsesDecodedPriorityClassContract(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString([]byte(strings.Replace(
+		validRuntimeAdmissionContractJSON,
+		`"priorityClassName":""`,
+		`"priorityClassName":"runtime-critical"`,
+		1,
+	)))
+	contract, err := decodeRuntimeAdmissionContract(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	guard := newRolloutGuard(
+		fake.NewSimpleClientset(),
+		crdupgrade.RuntimeInvariants{ReleaseNamespace: "ptah-system"},
+		"manager-image", "webhook-secret",
+		9443, 8081, 1,
+		nil, nil, nil, nil,
+		contract,
+		encoded,
+	)
+	if guard.PriorityClassName != "runtime-critical" {
+		t.Fatalf("rollout priority class = %q, want decoded runtime-critical class", guard.PriorityClassName)
+	}
+	if guard.RuntimeAdmissionContractB64 != encoded {
+		t.Fatal("rollout lost the encoded runtime admission contract")
 	}
 }
 

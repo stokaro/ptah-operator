@@ -14,6 +14,8 @@ E2E_EXTERNAL_POSTGRES_CONTAINER_ID=${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:-}
 
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-crd.XXXXXX")
+chmod 700 "$WORK_DIR"
+umask 077
 PROOF_NAMESPACE=$E2E_PROOF_NAMESPACE
 PROOF_SCHEMA=crd-upgrade-proof
 PROOF_PLAN=crd-upgrade-proof
@@ -25,6 +27,7 @@ EXPECTED_SINGLETON_RENDER_FILE=$WORK_DIR/expected-singleton-render.yaml
 EXPECTED_CRD_UPGRADE_RENDER_FILE=$WORK_DIR/expected-crd-upgrade-render.yaml
 EXPECTED_IDENTITY_HOOK_NAME=
 EXPECTED_PREFLIGHT_HOOK_NAME=
+EXPECTED_RECONCILE_HOOK_NAME=
 IDENTITY_HOOK_CAPTURE_PID=
 IDENTITY_HOOK_LOG_FILE=$WORK_DIR/identity-hook.log
 IDENTITY_HOOK_CAPTURE_STATUS_FILE=$WORK_DIR/identity-hook-capture-status
@@ -33,6 +36,12 @@ IDENTITY_HOOK_WAIT_FILE=$WORK_DIR/identity-hook-wait
 IDENTITY_HOOK_PODS_FILE=$WORK_DIR/identity-hook-pods.json
 IDENTITY_HOOK_JOB_FILE=$WORK_DIR/identity-hook-job.json
 IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE=$WORK_DIR/identity-hook-credential-patterns
+LATE_ACTIVATION_HOOK_CAPTURE_PID=
+LATE_ACTIVATION_HOOK_CAPTURE_BINARY=$WORK_DIR/hooklogcapture
+LATE_ACTIVATION_HOOK_LOG_FILE=$WORK_DIR/late-activation-hook.log
+LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE=$WORK_DIR/late-activation-hook-capture-status
+LATE_ACTIVATION_HOOK_CAPTURE_ERRORS_FILE=$WORK_DIR/late-activation-hook-capture-errors
+LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE=$WORK_DIR/late-activation-hook-capture-ready
 PREDECESSOR_SCHEMA=predecessor-live
 PREDECESSOR_PLAN=predecessor-live
 PREDECESSOR_APPROVAL=predecessor-live
@@ -80,6 +89,11 @@ cleanup() {
 		kill "$IDENTITY_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
 		wait "$IDENTITY_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
 		IDENTITY_HOOK_CAPTURE_PID=
+	fi
+	if [ -n "$LATE_ACTIVATION_HOOK_CAPTURE_PID" ]; then
+		kill "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
+		wait "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
+		LATE_ACTIVATION_HOOK_CAPTURE_PID=
 	fi
 	if [ "$PREDECESSOR_APPLY_BARRIER_ACTIVE" -eq 1 ]; then
 		if ! docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
@@ -374,13 +388,20 @@ prepare_expected_hook_names() {
 		--show-only templates/crd-upgrade.yaml >"$EXPECTED_CRD_UPGRADE_RENDER_FILE"
 	identity_matches=$(rendered_hook_job_name hook-identity-probe -105)
 	preflight_matches=$(rendered_hook_job_name crd-manager-preflight -60)
+	reconcile_matches=$(rendered_hook_job_name crd-manager 0)
 	[ "$(printf '%s\n' "$identity_matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] ||
 		fail "candidate render does not contain exactly one -105 identity hook Job"
 	[ "$(printf '%s\n' "$preflight_matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] ||
 		fail "candidate render does not contain exactly one -60 preflight hook Job"
+	[ "$(printf '%s\n' "$reconcile_matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] ||
+		fail "candidate render does not contain exactly one weight-0 reconcile hook Job"
 	EXPECTED_IDENTITY_HOOK_NAME=$identity_matches
 	EXPECTED_PREFLIGHT_HOOK_NAME=$preflight_matches
-	for rendered_hook_name in "$EXPECTED_IDENTITY_HOOK_NAME" "$EXPECTED_PREFLIGHT_HOOK_NAME"; do
+	EXPECTED_RECONCILE_HOOK_NAME=$reconcile_matches
+	for rendered_hook_name in \
+		"$EXPECTED_IDENTITY_HOOK_NAME" \
+		"$EXPECTED_PREFLIGHT_HOOK_NAME" \
+		"$EXPECTED_RECONCILE_HOOK_NAME"; do
 		printf '%s\n' "$rendered_hook_name" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
 			fail "candidate render contains an invalid hook Job name"
 		[ "${#rendered_hook_name}" -le 63 ] || fail "candidate render contains an overlong hook Job name"
@@ -802,6 +823,8 @@ webhooks:
     matchConditions:
       - name: exact-release-activation-update
         expression: 'request.namespace == "$E2E_OPERATOR_NAMESPACE" && request.name == "ptah-operator-release-activation"'
+      - name: active-release-sequence-change
+        expression: 'oldObject != null && has(oldObject.data) && has(object.data) && "active-release-sequence" in oldObject.data && "active-release-sequence" in object.data && object.data["active-release-sequence"] != oldObject.data["active-release-sequence"]'
     rules:
       - apiGroups: [""]
         apiVersions: ["v1"]
@@ -816,6 +839,108 @@ delete_late_activation_blocker() {
 	kube delete validatingwebhookconfiguration "$LATE_ACTIVATION_BLOCKER_WEBHOOK" \
 		--wait=true >/dev/null
 	LATE_ACTIVATION_BLOCKER_WEBHOOK=
+}
+
+arm_late_activation_hook_log_capture() {
+	[ -n "$EXPECTED_RECONCILE_HOOK_NAME" ] || fail "rendered reconcile hook name is unavailable"
+	[ -z "$LATE_ACTIVATION_HOOK_CAPTURE_PID" ] || fail "late activation hook log capture is already armed"
+	require_mode_0600_regular_file "$EXPECTED_CRD_UPGRADE_RENDER_FILE" expected-crd-upgrade-render
+	mkdir -p "$WORK_DIR/go-cache"
+	env GOCACHE="$WORK_DIR/go-cache" go -C "$ROOT_DIR" build -trimpath \
+		-o "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ./hack/hooklogcapture
+	[ -f "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] &&
+		[ ! -L "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] &&
+		[ -x "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] ||
+		fail "late activation hook log capture helper is not a regular executable"
+	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
+		--kubeconfig "$E2E_KUBECONFIG" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" \
+		--job-name "$EXPECTED_RECONCILE_HOOK_NAME" \
+		--render-file "$EXPECTED_CRD_UPGRADE_RENDER_FILE" \
+		--log-file "$LATE_ACTIVATION_HOOK_LOG_FILE" \
+		--status-file "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" \
+		--ready-file "$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE" \
+		--error-file "$LATE_ACTIVATION_HOOK_CAPTURE_ERRORS_FILE" \
+		--timeout 3m >/dev/null 2>&1 &
+	LATE_ACTIVATION_HOOK_CAPTURE_PID=$!
+	activation_capture_arm_grace=0
+	while [ ! -s "$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE" ] &&
+		kill -0 "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 &&
+		[ "$activation_capture_arm_grace" -lt 15 ]; do
+		sleep 1
+		activation_capture_arm_grace=$((activation_capture_arm_grace + 1))
+	done
+	if [ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE" 2>/dev/null)" != ready ] ||
+		[ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" 2>/dev/null)" != watching ] ||
+		! kill -0 "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1; then
+		kill "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
+		finish_late_activation_hook_log_capture || true
+		fail "late activation hook log capture did not arm before Helm"
+	fi
+	for activation_capture_file in \
+		"$LATE_ACTIVATION_HOOK_LOG_FILE" \
+		"$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" \
+		"$LATE_ACTIVATION_HOOK_CAPTURE_ERRORS_FILE" \
+		"$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE"; do
+		require_mode_0600_regular_file "$activation_capture_file" late-activation-hook-capture-file
+	done
+}
+
+finish_late_activation_hook_log_capture() {
+	[ -n "$LATE_ACTIVATION_HOOK_CAPTURE_PID" ] || fail "late activation hook log capture is not armed"
+	late_activation_capture_grace=0
+	while kill -0 "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 &&
+		[ "$late_activation_capture_grace" -lt 15 ]; do
+		case "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" 2>/dev/null)" in
+		captured | failed | canceled) break ;;
+		esac
+		sleep 1
+		late_activation_capture_grace=$((late_activation_capture_grace + 1))
+	done
+	case "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" 2>/dev/null)" in
+	captured | failed | canceled) ;;
+	*)
+		kill "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
+		;;
+	esac
+	late_activation_capture_status=0
+	wait "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 || late_activation_capture_status=$?
+	LATE_ACTIVATION_HOOK_CAPTURE_PID=
+	return "$late_activation_capture_status"
+}
+
+emit_late_activation_hook_diagnostic() {
+	require_mode_0600_regular_file "$LATE_ACTIVATION_HOOK_LOG_FILE" late-activation-hook-log
+	require_mode_0600_regular_file "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" late-activation-hook-capture-status
+	require_mode_0600_regular_file "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" identity-hook-credential-patterns
+	[ -s "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" ] ||
+		fail "late activation hook credential scanner has no protected patterns"
+	[ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE")" = captured ] ||
+		fail "late activation hook diagnostic was not captured"
+	if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$LATE_ACTIVATION_HOOK_LOG_FILE" >/dev/null; then
+		fail "late activation hook diagnostic contained a protected task credential"
+	else
+		diagnostic_scan_status=$?
+		[ "$diagnostic_scan_status" -eq 1 ] || fail "late activation hook credential scan failed closed"
+	fi
+	if grep -Eq '(^|[^[:alnum:]_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+($|[^[:alnum:]_-])|[Aa]uthorization:[[:space:]]*|[Bb]earer[[:space:]]+|://[^[:space:]@/:]+:[^[:space:]@/]+@' \
+		"$LATE_ACTIVATION_HOOK_LOG_FILE"; then
+		fail "late activation hook diagnostic contained a credential-shaped value"
+	fi
+	diagnostic_size=$(wc -c <"$LATE_ACTIVATION_HOOK_LOG_FILE" | tr -d '[:space:]')
+	diagnostic_lines=$(awk 'END { print NR + 0 }' "$LATE_ACTIVATION_HOOK_LOG_FILE")
+	if [ "$diagnostic_size" -gt 8192 ] || [ "$diagnostic_lines" -ne 1 ] ||
+		! LC_ALL=C grep -Eq '^ptah-crd-manager: [[:print:]]+$' "$LATE_ACTIVATION_HOOK_LOG_FILE"; then
+		fail "late activation hook diagnostic has an unsafe format"
+	fi
+	for activation_error_marker in \
+		'wait for release activation guard before persistence' \
+		'late-activation-blocker.operator.ptah.dev' \
+		'service "ptah-operator-e2e-missing-blocker" not found'; do
+		grep -F "$activation_error_marker" "$LATE_ACTIVATION_HOOK_LOG_FILE" >/dev/null ||
+			fail "late activation hook diagnostic lacks exact blocker evidence"
+	done
+	cat "$LATE_ACTIVATION_HOOK_LOG_FILE" >&2
 }
 
 restore_runtime_deployment_snapshot() {
@@ -848,6 +973,7 @@ prove_late_activation_failure_recovery() {
 		jq -er '.version | select(type == "number" and . >= 1)')
 	late_revision=$((before_revision + 1))
 	create_late_activation_blocker
+	arm_late_activation_hook_log_capture
 	late_upgrade_succeeded=false
 	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
@@ -855,19 +981,30 @@ prove_late_activation_failure_recovery() {
 		2>"$WORK_DIR/late-activation-failure.err"; then
 		late_upgrade_succeeded=true
 	fi
+	late_activation_capture_succeeded=false
+	if finish_late_activation_hook_log_capture; then
+		late_activation_capture_succeeded=true
+	fi
 	delete_late_activation_blocker
 	[ "$late_upgrade_succeeded" = false ] ||
 		fail "upgrade with a late activation blocker unexpectedly succeeded"
+	[ "$late_activation_capture_succeeded" = true ] ||
+		fail "late activation hook log capture process failed"
+	emit_late_activation_hook_diagnostic
 
 	helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \
 		--revision "$late_revision" -o json >"$WORK_DIR/late-activation-failure-status.json"
-	jq -e --argjson expected_revision "$late_revision" '
+	jq -e --argjson expected_revision "$late_revision" \
+		--arg expected_reconcile_name "$EXPECTED_RECONCILE_HOOK_NAME" '
+      [(.hooks // [])[] | select(.last_run.phase == "Failed")] as $failed |
       .version == $expected_revision and
       .info.status == "failed" and
-      any((.hooks // [])[];
-        .kind == "Job" and ((.weight // 0) | tonumber) == 0 and
+      ($failed | length == 1) and
+      ($failed[0] |
+		.name == $expected_reconcile_name and
+		.kind == "Job" and
+		(.weight == null or ((.weight | type) == "number" and .weight == 0)) and
         ((.events // []) | index("pre-upgrade") != null) and
-        .last_run.phase == "Failed" and
         ((.last_run.started_at // "") | length > 0) and
         ((.last_run.completed_at // "") | length > 0))
     ' "$WORK_DIR/late-activation-failure-status.json" >/dev/null || {

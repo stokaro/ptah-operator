@@ -458,6 +458,63 @@ func TestChartPreservesExplicitPtahVersionAsOneExactArgument(t *testing.T) {
 	}
 }
 
+func TestConfiguredPriorityClassIsLimitedToReconcileHookJob(t *testing.T) {
+	t.Parallel()
+
+	const priorityClassName = "runtime-critical"
+	objects := renderChart(t,
+		"--set-string", "priorityClassName="+priorityClassName,
+		"--set", "priorityClassValue=1000",
+	)
+	wantClassless := map[string]bool{
+		"crd-manager-image-check":      false,
+		"hook-identity-probe":          false,
+		"crd-manager-preflight":        false,
+		"crd-manager-teardown-quiesce": false,
+		"crd-manager-teardown":         false,
+	}
+	reconcileJobs := 0
+	for _, object := range objects {
+		if object.GetKind() != "Job" {
+			continue
+		}
+		component := object.GetLabels()["app.kubernetes.io/component"]
+		weight := object.GetAnnotations()["helm.sh/hook-weight"]
+		priorityClass, found, err := unstructured.NestedString(object.Object, "spec", "template", "spec", "priorityClassName")
+		if err != nil {
+			t.Fatalf("Job/%s priorityClassName: %v", object.GetName(), err)
+		}
+		if component == "crd-manager" && weight == "0" {
+			reconcileJobs++
+			if !found || priorityClass != priorityClassName {
+				t.Fatalf("reconcile Job priorityClassName = %q, found=%t; want %q", priorityClass, found, priorityClassName)
+			}
+		} else {
+			if found {
+				t.Fatalf("bootstrap or teardown Job/%s unexpectedly uses priorityClassName %q", object.GetName(), priorityClass)
+			}
+			if _, expected := wantClassless[component]; expected {
+				wantClassless[component] = true
+			}
+		}
+		for _, field := range []string{"priority", "preemptionPolicy"} {
+			if value, found, err := unstructured.NestedFieldNoCopy(object.Object, "spec", "template", "spec", field); err != nil {
+				t.Fatalf("Job/%s %s: %v", object.GetName(), field, err)
+			} else if found {
+				t.Fatalf("Job/%s contains Pod-admission output field %s=%v", object.GetName(), field, value)
+			}
+		}
+	}
+	if reconcileJobs != 1 {
+		t.Fatalf("configured priority class appears on %d reconcile hook Jobs, want exactly one", reconcileJobs)
+	}
+	for component, seen := range wantClassless {
+		if !seen {
+			t.Errorf("classless hook Job component %q was not rendered", component)
+		}
+	}
+}
+
 func renderChart(t *testing.T, additionalArgs ...string) []*unstructured.Unstructured {
 	t.Helper()
 	output, err := renderChartCommand(t, additionalArgs...)

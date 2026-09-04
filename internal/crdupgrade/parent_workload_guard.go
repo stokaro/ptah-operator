@@ -428,6 +428,10 @@ func (g *ParentWorkloadGuard) hookJobContractExpressions(identityJob, preflightJ
 	container := pod + ".containers[0]"
 	volume := pod + ".volumes[0]"
 	sources := volume + ".projected.sources"
+	priorityClassExpression := fmt.Sprintf(`!has(%s.priorityClassName)`, pod)
+	if g.rollout.PriorityClassName != "" {
+		priorityClassExpression = fmt.Sprintf(`(request.name == %q && has(%s.priorityClassName) && %s.priorityClassName == %q) || (request.name != %q && !has(%s.priorityClassName))`, reconcileJob, pod, pod, g.rollout.PriorityClassName, reconcileJob, pod)
+	}
 	return []string{
 		`!has(request.subResource) || request.subResource == ""`,
 		fmt.Sprintf(`request.name in [%q, %q, %q, %q, %q] && object.metadata.name == request.name && object.metadata.namespace == %q && (!has(object.metadata.generateName) || object.metadata.generateName == "")`, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, g.rollout.ReleaseNamespace),
@@ -462,7 +466,7 @@ func (g *ParentWorkloadGuard) hookJobContractExpressions(identityJob, preflightJ
 		fmt.Sprintf(`%s.exists(s, has(s.downwardAPI) && has(s.downwardAPI.items) && s.downwardAPI.items.size() == 1 && s.downwardAPI.items[0].path == "namespace" && has(s.downwardAPI.items[0].fieldRef) && s.downwardAPI.items[0].fieldRef.apiVersion == "v1" && s.downwardAPI.items[0].fieldRef.fieldPath == "metadata.namespace" && !has(s.downwardAPI.items[0].mode))`, sources),
 		fmt.Sprintf(`%s.all(s, has(s.serviceAccountToken) || has(s.configMap) || has(s.downwardAPI))`, sources),
 		fmt.Sprintf(`(!has(%[1]s.imagePullSecrets) || (%[1]s.imagePullSecrets.all(secret, secret.name != "") && %[1]s.imagePullSecrets.all(secret, %[1]s.imagePullSecrets.filter(other, other.name == secret.name).size() == 1)))`, pod),
-		fmt.Sprintf(`(!has(%s.dnsPolicy) || %s.dnsPolicy == "ClusterFirst") && !has(%s.dnsConfig) && (!has(%s.schedulerName) || %s.schedulerName == "default-scheduler") && (!has(%s.priority) || %s.priority == 0) && !has(%s.priorityClassName) && (!has(%s.preemptionPolicy) || %s.preemptionPolicy == "PreemptLowerPriority")`, pod, pod, pod, pod, pod, pod, pod, pod, pod, pod),
+		fmt.Sprintf(`(!has(%s.dnsPolicy) || %s.dnsPolicy == "ClusterFirst") && !has(%s.dnsConfig) && (!has(%s.schedulerName) || %s.schedulerName == "default-scheduler") && !has(%s.priority) && (%s) && !has(%s.preemptionPolicy)`, pod, pod, pod, pod, pod, pod, priorityClassExpression, pod),
 		fmt.Sprintf(`(!has(%s.terminationGracePeriodSeconds) || %s.terminationGracePeriodSeconds == 30) && (!has(%s.enableServiceLinks) || %s.enableServiceLinks) && (!has(%s.topologySpreadConstraints) || %s.topologySpreadConstraints.size() == 0) && !has(dyn(%s).overhead) && !has(%s.os)`, pod, pod, pod, pod, pod, pod, pod, pod),
 	}
 }

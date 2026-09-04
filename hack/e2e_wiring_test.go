@@ -17,8 +17,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	celgo "github.com/google/cel-go/cel"
 )
 
 func TestVerifyE2EWiring(t *testing.T) {
@@ -26,6 +29,111 @@ func TestVerifyE2EWiring(t *testing.T) {
 
 	if err := verifyE2EWiring(repositoryE2EWiringFiles()); err != nil {
 		t.Fatalf("verifyE2EWiring() error = %v", err)
+	}
+}
+
+func TestLateActivationBlockerMatchesOnlySequenceChanges(t *testing.T) {
+	t.Parallel()
+
+	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
+	expressionPattern := regexp.MustCompile(`(?m)^[\t ]*- name: active-release-sequence-change\r?\n[\t ]*expression: '([^'\r\n]+)'[\t ]*\r?$`)
+	matches := expressionPattern.FindAllStringSubmatch(source, -1)
+	if len(matches) != 1 {
+		t.Fatalf("late activation blocker expression matches = %d, want 1", len(matches))
+	}
+
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("oldObject", celgo.DynType),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast, issues := environment.Compile(matches[0][1])
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile late activation blocker: %v", issues.Err())
+	}
+	program, err := environment.Program(ast)
+	if err != nil {
+		t.Fatalf("build late activation blocker: %v", err)
+	}
+
+	activation := func(sequence string) map[string]any {
+		return map[string]any{"data": map[string]any{"active-release-sequence": sequence}}
+	}
+	malformedProbe := activation("0")
+	malformedProbe["data"].(map[string]any)["unexpected"] = "must-be-denied"
+	for _, test := range []struct {
+		name      string
+		oldObject any
+		object    any
+		want      bool
+	}{
+		{
+			name:      "same-sequence malformed guard probe skips blocker",
+			oldObject: activation("0"),
+			object:    malformedProbe,
+			want:      false,
+		},
+		{
+			name:      "candidate activation transition matches blocker",
+			oldObject: activation("0"),
+			object:    activation("1"),
+			want:      true,
+		},
+		{
+			name:      "unchanged activation skips blocker",
+			oldObject: activation("1"),
+			object:    activation("1"),
+			want:      false,
+		},
+		{
+			name:      "create skips blocker",
+			oldObject: nil,
+			object:    activation("1"),
+			want:      false,
+		},
+		{
+			name:      "missing old sequence skips blocker",
+			oldObject: map[string]any{"data": map[string]any{}},
+			object:    activation("1"),
+			want:      false,
+		},
+		{
+			name:      "missing new sequence skips blocker",
+			oldObject: activation("0"),
+			object:    map[string]any{"data": map[string]any{}},
+			want:      false,
+		},
+		{
+			name:      "missing old data skips blocker",
+			oldObject: map[string]any{},
+			object:    activation("1"),
+			want:      false,
+		},
+		{
+			name:      "missing new data skips blocker",
+			oldObject: activation("0"),
+			object:    map[string]any{},
+			want:      false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result, _, evalErr := program.Eval(map[string]any{
+				"oldObject": test.oldObject,
+				"object":    test.object,
+			})
+			if evalErr != nil {
+				t.Fatalf("evaluate late activation blocker: %v", evalErr)
+			}
+			got, ok := result.Value().(bool)
+			if !ok {
+				t.Fatalf("late activation blocker result = %T(%v), want bool", result.Value(), result.Value())
+			}
+			if got != test.want {
+				t.Fatalf("late activation blocker = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 
@@ -1478,11 +1586,218 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "legacy plan active structural denial",
 		},
 		{
+			name:        "CRD late activation hook identity is hard-coded",
+			child:       "crd-upgrade",
+			old:         `reconcile_matches=$(rendered_hook_job_name crd-manager 0)`,
+			replacement: `reconcile_matches=ptah-operator-crd-manager`,
+			wantError:   "exact rendered reconcile hook identity",
+		},
+		{
+			name:        "CRD late activation hook identity assignment is hard-coded",
+			child:       "crd-upgrade",
+			old:         `EXPECTED_RECONCILE_HOOK_NAME=$reconcile_matches`,
+			replacement: `EXPECTED_RECONCILE_HOOK_NAME=ptah-operator-crd-manager`,
+			wantError:   "rendered reconcile hook identity assignment",
+		},
+		{
+			name:        "CRD late activation hook uniqueness checks the wrong render",
+			child:       "crd-upgrade",
+			old:         `[ "$(printf '%s\n' "$reconcile_matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] ||`,
+			replacement: `[ "$(printf '%s\n' "$identity_matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] ||`,
+			wantError:   "unique rendered reconcile hook identity",
+		},
+		{
 			name:        "CRD late activation blocker broadens its target",
 			child:       "crd-upgrade",
 			old:         `expression: 'request.namespace == "$E2E_OPERATOR_NAMESPACE" && request.name == "ptah-operator-release-activation"'`,
 			replacement: `expression: 'true'`,
 			wantError:   "late activation exact update blocker",
+		},
+		{
+			name:        "CRD late activation blocker loses same-sequence probe exclusion",
+			child:       "crd-upgrade",
+			old:         `expression: 'oldObject != null && has(oldObject.data) && has(object.data) && "active-release-sequence" in oldObject.data && "active-release-sequence" in object.data && object.data["active-release-sequence"] != oldObject.data["active-release-sequence"]'`,
+			replacement: `expression: 'true'`,
+			wantError:   "late activation exact update blocker",
+		},
+		{
+			name:        "CRD late activation hook capture is not armed",
+			child:       "crd-upgrade",
+			old:         "\tarm_late_activation_hook_log_capture\n",
+			replacement: "\t: # late activation hook capture omitted\n",
+			wantError:   "late activation hook capture arming",
+		},
+		{
+			name:        "CRD late activation hook capture is not finished",
+			child:       "crd-upgrade",
+			old:         "\tif finish_late_activation_hook_log_capture; then\n\t\tlate_activation_capture_succeeded=true\n\tfi\n",
+			replacement: "\tif true; then\n\t\tlate_activation_capture_succeeded=true\n\tfi\n",
+			wantError:   "late activation capture completion and evidence",
+		},
+		{
+			name:        "CRD late activation helper build target is replaced",
+			child:       "crd-upgrade",
+			old:         `-o "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ./hack/hooklogcapture`,
+			replacement: `-o "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ./hack`,
+			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+		},
+		{
+			name:        "CRD late activation helper Job target is hard-coded",
+			child:       "crd-upgrade",
+			old:         `--job-name "$EXPECTED_RECONCILE_HOOK_NAME" \`,
+			replacement: `--job-name ptah-operator-crd-manager \`,
+			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+		},
+		{
+			name:        "CRD late activation helper is detached from the candidate render",
+			child:       "crd-upgrade",
+			old:         `--render-file "$EXPECTED_CRD_UPGRADE_RENDER_FILE" \`,
+			replacement: `--render-file /tmp/unbound-render.yaml \`,
+			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+		},
+		{
+			name:        "CRD late activation helper is not backgrounded",
+			child:       "crd-upgrade",
+			old:         `--timeout 3m >/dev/null 2>&1 &`,
+			replacement: `--timeout 3m >/dev/null 2>&1`,
+			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+		},
+		{
+			name:        "CRD late activation helper PID is not retained",
+			child:       "crd-upgrade",
+			old:         `LATE_ACTIVATION_HOOK_CAPTURE_PID=$!`,
+			replacement: `LATE_ACTIVATION_HOOK_CAPTURE_PID=`,
+			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+		},
+		{
+			name:        "CRD late activation helper readiness marker is weakened",
+			child:       "crd-upgrade",
+			old:         `[ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE" 2>/dev/null)" != ready ] ||`,
+			replacement: `[ ! -s "$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE" ] ||`,
+			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+		},
+		{
+			name:        "CRD late activation helper readiness accepts a non-watching process",
+			child:       "crd-upgrade",
+			old:         `[ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" 2>/dev/null)" != watching ] ||`,
+			replacement: `[ ! -s "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" ] ||`,
+			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+		},
+		{
+			name:        "CRD late activation helper completion does not join the process",
+			child:       "crd-upgrade",
+			old:         `wait "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 || late_activation_capture_status=$?`,
+			replacement: `true # capture helper left unjoined`,
+			wantError:   "exact bounded late activation hook capture completion contract",
+		},
+		{
+			name:  "CRD late activation blocker is deleted before capture completion",
+			child: "crd-upgrade",
+			old: "\tif finish_late_activation_hook_log_capture; then\n" +
+				"\t\tlate_activation_capture_succeeded=true\n" +
+				"\tfi\n" +
+				"\tdelete_late_activation_blocker\n",
+			replacement: "\tdelete_late_activation_blocker\n" +
+				"\tif finish_late_activation_hook_log_capture; then\n" +
+				"\t\tlate_activation_capture_succeeded=true\n" +
+				"\tfi\n",
+			wantError: "late activation capture completion and evidence",
+		},
+		{
+			name:  "CRD late activation hook diagnostic drops the credential scan",
+			child: "crd-upgrade",
+			old: "if grep -F -f \"$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE\" \"$LATE_ACTIVATION_HOOK_LOG_FILE\" >/dev/null; then\n" +
+				"\t\tfail \"late activation hook diagnostic contained a protected task credential\"\n" +
+				"\telse\n" +
+				"\t\tdiagnostic_scan_status=$?\n" +
+				"\t\t[ \"$diagnostic_scan_status\" -eq 1 ] || fail \"late activation hook credential scan failed closed\"\n" +
+				"\tfi",
+			replacement: `: # protected credential scan removed`,
+			wantError:   "late activation hook diagnostic credential scan",
+		},
+		{
+			name:        "CRD late activation hook diagnostic drops credential-shape refusal",
+			child:       "crd-upgrade",
+			old:         `fail "late activation hook diagnostic contained a credential-shaped value"`,
+			replacement: `true # credential-shaped values accepted`,
+			wantError:   "late activation hook diagnostic credential-shape scan",
+		},
+		{
+			name:        "CRD late activation hook diagnostic accepts an unbound capture",
+			child:       "crd-upgrade",
+			old:         `fail "late activation hook diagnostic was not captured"`,
+			replacement: `true # missing capture accepted`,
+			wantError:   "late activation hook captured status",
+		},
+		{
+			name:        "CRD late activation hook diagnostic omits the activation phase",
+			child:       "crd-upgrade",
+			old:         `'wait for release activation guard before persistence' \`,
+			replacement: `'unrelated failure' \`,
+			wantError:   "late activation hook exact blocker evidence",
+		},
+		{
+			name:        "CRD late activation hook diagnostic omits the blocker webhook",
+			child:       "crd-upgrade",
+			old:         `'late-activation-blocker.operator.ptah.dev' \`,
+			replacement: `'unrelated-webhook.operator.ptah.dev' \`,
+			wantError:   "late activation hook exact blocker evidence",
+		},
+		{
+			name:        "CRD late activation hook diagnostic omits the missing service",
+			child:       "crd-upgrade",
+			old:         `'service "ptah-operator-e2e-missing-blocker" not found'; do`,
+			replacement: `'unrelated service failure'; do`,
+			wantError:   "late activation hook exact blocker evidence",
+		},
+		{
+			name:        "CRD late activation hook diagnostic emits before safety checks",
+			child:       "crd-upgrade",
+			old:         "emit_late_activation_hook_diagnostic() {\n",
+			replacement: "emit_late_activation_hook_diagnostic() {\n\tcat \"$LATE_ACTIVATION_HOOK_LOG_FILE\" >&2\n",
+			wantError:   "late activation hook safe diagnostic emission",
+		},
+		{
+			name:        "CRD late activation hook diagnostic uses an alternate early emitter",
+			child:       "crd-upgrade",
+			old:         "emit_late_activation_hook_diagnostic() {\n",
+			replacement: "emit_late_activation_hook_diagnostic() {\n\tcommand cat \"$LATE_ACTIVATION_HOOK_LOG_FILE\" >&2\n",
+			wantError:   "exact credential-safe late activation hook diagnostic contract",
+		},
+		{
+			name:        "CRD late activation failed hook is not name-bound",
+			child:       "crd-upgrade",
+			old:         `.name == $expected_reconcile_name and`,
+			replacement: `.name != "" and`,
+			wantError:   "late activation failed revision evidence",
+		},
+		{
+			name:        "CRD late activation accepts multiple failed hooks",
+			child:       "crd-upgrade",
+			old:         `($failed | length == 1) and`,
+			replacement: `($failed | length >= 1) and`,
+			wantError:   "late activation failed revision evidence",
+		},
+		{
+			name:        "CRD late activation accepts string hook weights",
+			child:       "crd-upgrade",
+			old:         `(.weight == null or ((.weight | type) == "number" and .weight == 0)) and`,
+			replacement: `((try (.weight | tonumber) catch null) == 0) and`,
+			wantError:   "late activation failed revision evidence",
+		},
+		{
+			name:        "CRD late activation failed status jq is not fail-closed",
+			child:       "crd-upgrade",
+			old:         `jq -e --argjson expected_revision "$late_revision" \`,
+			replacement: `jq --argjson expected_revision "$late_revision" \`,
+			wantError:   "late activation failed status fail-closed jq",
+		},
+		{
+			name:        "CRD late activation exact diagnostic is skipped",
+			child:       "crd-upgrade",
+			old:         "\temit_late_activation_hook_diagnostic\n",
+			replacement: "\t: # exact blocker diagnostic skipped\n",
+			wantError:   "late activation capture completion and evidence",
 		},
 		{
 			name:        "CRD late failure skips the activation marker check",

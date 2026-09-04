@@ -67,10 +67,15 @@ resources:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+# Assign this class to the runtime Deployments and to the weight-zero CRD
+# reconcile hook after preflight verifies the live class. Earlier bootstrap,
+# preflight, and uninstall hooks remain classless; Pod admission may apply the
+# cluster's global default class to those hooks.
 priorityClassName: ""
-# Pin the scheduling semantics of priorityClassName. The preflight refuses a
-# class whose live value or effective preemption policy differs, so changing a
-# PriorityClass cannot silently change an already approved runtime contract.
+# Pin the scheduling semantics of priorityClassName. Use 0 and
+# PreemptLowerPriority when no class is configured. The preflight refuses a
+# named class whose live value or effective preemption policy differs, so a
+# PriorityClass change cannot silently alter an approved runtime contract.
 priorityClassValue: 0
 priorityClassPreemptionPolicy: PreemptLowerPriority
 

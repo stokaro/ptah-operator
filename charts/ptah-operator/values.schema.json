@@ -241,15 +241,18 @@
       "type": "object"
     },
     "priorityClassName": {
-      "type": "string"
+      "type": "string",
+      "description": "PriorityClass assigned to runtime Deployments and to the weight-zero CRD reconcile hook after preflight validates the live class. Bootstrap, preflight, and uninstall hooks remain classless and may receive the cluster global default during Pod admission."
     },
     "priorityClassValue": {
       "type": "integer",
+      "description": "Expected live value of priorityClassName. Must remain 0 when priorityClassName is empty.",
       "minimum": -2147483648,
       "maximum": 2147483647
     },
     "priorityClassPreemptionPolicy": {
       "type": "string",
+      "description": "Expected effective preemption policy of priorityClassName. Must remain PreemptLowerPriority when priorityClassName is empty.",
       "enum": ["PreemptLowerPriority", "Never"]
     },
     "metrics": {

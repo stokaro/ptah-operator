@@ -172,7 +172,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		if clientErr != nil {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
 		}
-		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, *runtimeAdmissionContractB64)
+		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
 		origin := crdupgrade.NewServiceAccountOriginGuard(
 			rollout,
 			clientset.CoreV1().ServiceAccounts(expected.ReleaseNamespace),
@@ -214,7 +214,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			Validating: clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations(),
 			Expected:   expected,
 		}
-		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, *runtimeAdmissionContractB64)
+		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
 		inventory := newWorkloadInventory(clientset, rollout)
 		admissionPreflight, preflightErr := newRuntimeAdmissionPreflight(clientset, expected, runtimeAdmissionContract)
 		if preflightErr != nil {
@@ -276,7 +276,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			Validating: clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations(),
 			Expected:   expected,
 		}
-		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, *runtimeAdmissionContractB64)
+		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
 		inventory := newWorkloadInventory(clientset, rollout)
 		admissionPreflight, preflightErr := newRuntimeAdmissionPreflight(clientset, expected, runtimeAdmissionContract)
 		if preflightErr != nil {
@@ -350,7 +350,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		if clientErr != nil {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
 		}
-		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, *runtimeAdmissionContractB64)
+		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
 		inventory := newWorkloadInventory(clientset, rollout)
 		releaseTeardown, privilegeTeardown, teardownErr := newTeardownPhases(clientset, rollout, runtimeAdmissionContract)
 		if teardownErr != nil {
@@ -401,7 +401,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		if clientErr != nil {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
 		}
-		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, *runtimeAdmissionContractB64)
+		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
 		inventory := newWorkloadInventory(clientset, rollout)
 		releaseTeardown, privilegeTeardown, teardownErr := newTeardownPhases(clientset, rollout, runtimeAdmissionContract)
 		if teardownErr != nil {
@@ -476,7 +476,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		if clientErr != nil {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
 		}
-		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, *runtimeAdmissionContractB64)
+		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
 		admissionPreflight, preflightErr := newRuntimeAdmissionPreflight(clientset, expected, runtimeAdmissionContract)
 		if preflightErr != nil {
 			return preflightErr
@@ -582,6 +582,7 @@ func newRolloutGuard(
 	managerImage, webhookSecretName string,
 	webhookPort, certificateHealthPort, controllerReplicas int32,
 	controllerArgs, certificateArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions []string,
+	runtimeAdmissionContract crdupgrade.RuntimeAdmissionContract,
 	runtimeAdmissionContractB64 string,
 ) *crdupgrade.RolloutGuard {
 	return &crdupgrade.RolloutGuard{
@@ -613,6 +614,7 @@ func newRolloutGuard(
 		CertificateArgs:                    append([]string(nil), certificateArgs...),
 		RuntimeDeploymentConfigExpressions: append([]string(nil), runtimeDeploymentConfigExpressions...),
 		RuntimePodConfigExpressions:        append([]string(nil), runtimePodConfigExpressions...),
+		PriorityClassName:                  runtimeAdmissionContract.PriorityClassName,
 		RuntimeAdmissionContractB64:        runtimeAdmissionContractB64,
 		PollEvery:                          500 * time.Millisecond,
 	}

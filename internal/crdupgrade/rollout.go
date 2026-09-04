@@ -183,6 +183,7 @@ type RolloutGuard struct {
 	CertificateArgs                    []string
 	RuntimeDeploymentConfigExpressions []string
 	RuntimePodConfigExpressions        []string
+	PriorityClassName                  string
 	RuntimeAdmissionContractB64        string
 	PollEvery                          time.Duration
 }
@@ -584,6 +585,9 @@ func (g *RolloutGuard) validateIdentity() error {
 	}
 	if g.RuntimeAdmissionContractB64 == "" {
 		return fmt.Errorf("runtime admission contract is required")
+	}
+	if g.PriorityClassName != strings.TrimSpace(g.PriorityClassName) {
+		return fmt.Errorf("priority class name must not contain surrounding whitespace")
 	}
 	if g.releaseHookUsernamePrefix() == "" {
 		return fmt.Errorf("hook service account does not encode the candidate release sequence")

@@ -609,6 +609,9 @@ spec:
       serviceAccountName: {{ $serviceAccountName }}
       automountServiceAccountToken: false
       restartPolicy: Never
+      {{- with .Values.priorityClassName }}
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

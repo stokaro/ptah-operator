@@ -70,6 +70,10 @@
 {{- $reconcileArgs := printf `%s.args == %s` $container (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "reconcile" "timeout" "180s" "verifyControllerState" false)) -}}
 {{- $quiesceArgs := printf `%s.args == %s` $container (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown-quiesce" "timeout" "180s" "verifyControllerState" false)) -}}
 {{- $teardownArgs := printf `%s.args == %s` $container (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown" "timeout" "180s" "verifyControllerState" false)) -}}
+{{- $priorityClassExpression := printf `!has(%s.priorityClassName)` $pod -}}
+{{- if ne .Values.priorityClassName "" -}}
+{{- $priorityClassExpression = printf `(request.name == %q && has(%s.priorityClassName) && %s.priorityClassName == %q) || (request.name != %q && !has(%s.priorityClassName))` $reconcileJob $pod $pod .Values.priorityClassName $reconcileJob $pod -}}
+{{- end -}}
 {{- $hookContractValidations := list
       `!has(request.subResource) || request.subResource == ""`
       (printf `request.name in [%q, %q, %q, %q, %q] && object.metadata.name == request.name && object.metadata.namespace == %q && (!has(object.metadata.generateName) || object.metadata.generateName == "")` $identityJob $preflightJob $reconcileJob $quiesceJob $teardownJob .Release.Namespace)
@@ -104,7 +108,7 @@
       (printf `%s.exists(s, has(s.downwardAPI) && has(s.downwardAPI.items) && s.downwardAPI.items.size() == 1 && s.downwardAPI.items[0].path == "namespace" && has(s.downwardAPI.items[0].fieldRef) && s.downwardAPI.items[0].fieldRef.apiVersion == "v1" && s.downwardAPI.items[0].fieldRef.fieldPath == "metadata.namespace" && !has(s.downwardAPI.items[0].mode))` $sources)
       (printf `%s.all(s, has(s.serviceAccountToken) || has(s.configMap) || has(s.downwardAPI))` $sources)
       (printf `(!has(%[1]s.imagePullSecrets) || (%[1]s.imagePullSecrets.all(secret, secret.name != "") && %[1]s.imagePullSecrets.all(secret, %[1]s.imagePullSecrets.filter(other, other.name == secret.name).size() == 1)))` $pod)
-      (printf `(!has(%s.dnsPolicy) || %s.dnsPolicy == "ClusterFirst") && !has(%s.dnsConfig) && (!has(%s.schedulerName) || %s.schedulerName == "default-scheduler") && (!has(%s.priority) || %s.priority == 0) && !has(%s.priorityClassName) && (!has(%s.preemptionPolicy) || %s.preemptionPolicy == "PreemptLowerPriority")` $pod $pod $pod $pod $pod $pod $pod $pod $pod $pod)
+      (printf `(!has(%s.dnsPolicy) || %s.dnsPolicy == "ClusterFirst") && !has(%s.dnsConfig) && (!has(%s.schedulerName) || %s.schedulerName == "default-scheduler") && !has(%s.priority) && (%s) && !has(%s.preemptionPolicy)` $pod $pod $pod $pod $pod $pod $priorityClassExpression $pod)
       (printf `(!has(%s.terminationGracePeriodSeconds) || %s.terminationGracePeriodSeconds == 30) && (!has(%s.enableServiceLinks) || %s.enableServiceLinks) && (!has(%s.topologySpreadConstraints) || %s.topologySpreadConstraints.size() == 0) && !has(dyn(%s).overhead) && !has(%s.os)` $pod $pod $pod $pod $pod $pod $pod $pod) -}}
 
 {{- $replicaSetPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $replicaSetName -}}

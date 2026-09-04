@@ -432,6 +432,99 @@ func TestParentHookJobGuardsCloseFutureGapAndPinExecutable(t *testing.T) {
 	}
 }
 
+// This is intentionally a white-box test because the generated CEL expression
+// is the immutable admission boundary for candidate hook Job templates.
+func TestParentHookJobPriorityClassContract(t *testing.T) {
+	rollout := runtimePodGuardFixture()
+	rollout.PriorityClassName = "runtime-critical"
+	guard := NewParentWorkloadGuard(rollout)
+	reconcileJob := rollout.hookJobName("reconcile")
+
+	var expression string
+	for _, validation := range guard.hookJobContractPolicy().Spec.Validations {
+		if strings.Contains(validation.Expression, ".priorityClassName") {
+			if expression != "" {
+				t.Fatal("candidate hook Job contract has more than one PriorityClass validation")
+			}
+			expression = validation.Expression
+		}
+	}
+	if expression == "" {
+		t.Fatal("candidate hook Job contract has no PriorityClass validation")
+	}
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("request", celgo.DynType),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast, issues := environment.Compile(expression)
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile hook Job PriorityClass CEL: %v", issues.Err())
+	}
+	program, err := environment.Program(ast)
+	if err != nil {
+		t.Fatalf("build hook Job PriorityClass CEL: %v", err)
+	}
+
+	tests := []struct {
+		name             string
+		jobName          string
+		priorityClass    string
+		priority         bool
+		preemptionPolicy bool
+		want             bool
+	}{
+		{name: "exact reconcile class", jobName: reconcileJob, priorityClass: "runtime-critical", want: true},
+		{name: "wrong reconcile class", jobName: reconcileJob, priorityClass: "other"},
+		{name: "omitted reconcile class", jobName: reconcileJob},
+		{name: "identity remains classless", jobName: HookIdentityProbeJobName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage), want: true},
+		{name: "preflight remains classless", jobName: rollout.hookJobName("preflight"), want: true},
+		{name: "quiesce remains classless", jobName: rollout.hookJobName("teardown-quiesce"), want: true},
+		{name: "teardown remains classless", jobName: rollout.hookJobName("teardown"), want: true},
+		{name: "bootstrap class is rejected", jobName: rollout.hookJobName("preflight"), priorityClass: "runtime-critical"},
+		{name: "Pod priority output is rejected", jobName: reconcileJob, priorityClass: "runtime-critical", priority: true},
+		{name: "Pod preemption output is rejected", jobName: reconcileJob, priorityClass: "runtime-critical", preemptionPolicy: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pod := map[string]any{}
+			if test.priorityClass != "" {
+				pod["priorityClassName"] = test.priorityClass
+			}
+			if test.priority {
+				pod["priority"] = int64(1000)
+			}
+			if test.preemptionPolicy {
+				pod["preemptionPolicy"] = "PreemptLowerPriority"
+			}
+			result, _, err := program.Eval(map[string]any{
+				"object":  map[string]any{"spec": map[string]any{"template": map[string]any{"spec": pod}}},
+				"request": map[string]any{"name": test.jobName},
+			})
+			if err != nil {
+				t.Fatalf("evaluate hook Job PriorityClass CEL: %v", err)
+			}
+			got, ok := result.Value().(bool)
+			if !ok {
+				t.Fatalf("hook Job PriorityClass CEL result = %T(%v), want bool", result.Value(), result.Value())
+			}
+			if got != test.want {
+				t.Fatalf("hook Job PriorityClass CEL = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestParentWorkloadGuardRejectsPaddedPriorityClass(t *testing.T) {
+	rollout := runtimePodGuardFixture()
+	rollout.PriorityClassName = " runtime-critical"
+	if err := NewParentWorkloadGuard(rollout).validate(); err == nil || !strings.Contains(err.Error(), "priority class name must not contain surrounding whitespace") {
+		t.Fatalf("parent workload guard validation error = %v, want padded PriorityClass refusal", err)
+	}
+}
+
 // This is intentionally a white-box test because these generated CEL
 // expressions are an internal admission boundary rather than an exported API.
 func TestHookAdmissionContractsCloseContainerStatusAndRestartSideChannels(t *testing.T) {
@@ -657,6 +750,7 @@ func TestRenderedParentWorkloadGuardsMatchCompiledContracts(t *testing.T) {
 	rollout.CertificateArgs = append([]string(nil), certificate.Spec.Template.Spec.Containers[0].Args...)
 	rollout.RuntimeDeploymentConfigExpressions = decodeRenderedRuntimeExpressions(t, controller.Spec.Template.Spec.InitContainers[0].Args, "--runtime-deployment-config-expressions-b64=")
 	rollout.RuntimePodConfigExpressions = decodeRenderedRuntimeExpressions(t, controller.Spec.Template.Spec.InitContainers[0].Args, "--runtime-pod-config-expressions-b64=")
+	rollout.PriorityClassName = controller.Spec.Template.Spec.PriorityClassName
 	rollout.RuntimeAdmissionContractB64 = decodedManagerStringArgument(t, controller.Spec.Template.Spec.InitContainers[0].Args, "--runtime-admission-contract-b64=")
 	guard := NewParentWorkloadGuard(rollout)
 	for _, entry := range guard.entries() {
