@@ -870,8 +870,16 @@ prove_late_activation_failure_recovery() {
         .last_run.phase == "Failed" and
         ((.last_run.started_at // "") | length > 0) and
         ((.last_run.completed_at // "") | length > 0))
-    ' "$WORK_DIR/late-activation-failure-status.json" >/dev/null ||
+    ' "$WORK_DIR/late-activation-failure-status.json" >/dev/null || {
+		# What the assertion actually saw. Its sibling above prints this and
+		# this one did not, so a mismatch here said only that the evidence was
+		# wrong and never which part -- one CI round trip per guess.
+		jq -c '{version, status: .info.status, hooks: [(.hooks // [])[] |
+			{name, kind, weight, events, phase: .last_run.phase,
+			 started_at: .last_run.started_at, completed_at: .last_run.completed_at}]}' \
+			"$WORK_DIR/late-activation-failure-status.json" >&2 || true
 		fail "late activation failure lacks exact failed reconcile-hook evidence"
+	}
 
 	kube -n "$E2E_OPERATOR_NAMESPACE" get configmap ptah-operator-release-activation -o json |
 		jq -e '.data["active-release-sequence"] == "0"' >/dev/null ||
