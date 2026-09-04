@@ -841,6 +841,12 @@ delete_late_activation_blocker() {
 	LATE_ACTIVATION_BLOCKER_WEBHOOK=
 }
 
+# The helper's regular-executable check is spelled as a refusal rather than as
+# `A && B && C || fail`. shellcheck 0.9.0, which CI runs, reports SC2015 on that
+# chain because the final branch can run when the first test succeeded; here
+# that is the intent, and the if-form says so without the ambiguity. 0.11.0 does
+# not report it at all, so the chain reads clean to whoever wrote it and red in
+# CI -- the same version split that reached this branch once already.
 arm_late_activation_hook_log_capture() {
 	[ -n "$EXPECTED_RECONCILE_HOOK_NAME" ] || fail "rendered reconcile hook name is unavailable"
 	[ -z "$LATE_ACTIVATION_HOOK_CAPTURE_PID" ] || fail "late activation hook log capture is already armed"
@@ -848,10 +854,11 @@ arm_late_activation_hook_log_capture() {
 	mkdir -p "$WORK_DIR/go-cache"
 	env GOCACHE="$WORK_DIR/go-cache" go -C "$ROOT_DIR" build -trimpath \
 		-o "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ./hack/hooklogcapture
-	[ -f "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] &&
-		[ ! -L "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] &&
-		[ -x "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] ||
+	if [ ! -f "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] ||
+		[ -L "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] ||
+		[ ! -x "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ]; then
 		fail "late activation hook log capture helper is not a regular executable"
+	fi
 	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
 		--kubeconfig "$E2E_KUBECONFIG" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" \

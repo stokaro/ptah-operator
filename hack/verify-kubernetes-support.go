@@ -2307,10 +2307,11 @@ const lateActivationHookCaptureArmContract = `arm_late_activation_hook_log_captu
 	mkdir -p "$WORK_DIR/go-cache"
 	env GOCACHE="$WORK_DIR/go-cache" go -C "$ROOT_DIR" build -trimpath \
 		-o "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ./hack/hooklogcapture
-	[ -f "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] &&
-		[ ! -L "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] &&
-		[ -x "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] ||
+	if [ ! -f "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] ||
+		[ -L "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ] ||
+		[ ! -x "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ]; then
 		fail "late activation hook log capture helper is not a regular executable"
+	fi
 	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
 		--kubeconfig "$E2E_KUBECONFIG" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" \
