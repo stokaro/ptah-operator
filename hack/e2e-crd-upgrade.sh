@@ -1063,14 +1063,19 @@ emit_late_activation_reconcile_diagnostic() {
 		fail "late activation reconcile log was not captured"
 	hook_diagnostic_is_safe "$LATE_ACTIVATION_RECONCILE_LOG_FILE" ||
 		fail "late activation reconcile log failed credential and format validation"
-	for activation_error_marker in \
-		'wait for release activation guard before persistence' \
-		'late-activation-blocker.operator.ptah.dev' \
-		'service "ptah-operator-e2e-missing-blocker" not found'; do
-		grep -F "$activation_error_marker" "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
-			fail "late activation reconcile log lacks exact blocker evidence"
-	done
 	cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2
+	missing_blocker_evidence=
+	grep -F 'wait for release activation guard before persistence' \
+		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
+		missing_blocker_evidence="$missing_blocker_evidence activation-phase"
+	grep -F 'late-activation-blocker.operator.ptah.dev' \
+		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
+		missing_blocker_evidence="$missing_blocker_evidence blocker-webhook"
+	grep -F 'service "ptah-operator-e2e-missing-blocker" not found' \
+		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
+		missing_blocker_evidence="$missing_blocker_evidence missing-service"
+	[ -z "$missing_blocker_evidence" ] ||
+		fail "late activation reconcile log lacks exact blocker evidence:$missing_blocker_evidence"
 }
 
 emit_late_activation_failure_summary() {

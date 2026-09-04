@@ -402,6 +402,90 @@ func TestLateActivationFailureSummaryIsBoundedAndSynthesized(t *testing.T) {
 	}
 }
 
+func TestLateActivationReconcileDiagnosticEmitsBeforeMarkerFailure(t *testing.T) {
+	t.Parallel()
+
+	const diagnostic = "ptah-crd-manager: unexpected safe reconcile failure\n"
+	output, err := runLateActivationReconcileDiagnostic(t, diagnostic)
+	if err == nil {
+		t.Fatal("emit_late_activation_reconcile_diagnostic() succeeded without blocker markers")
+	}
+	const wantFailure = "e2e crd: late activation reconcile log lacks exact blocker evidence: activation-phase blocker-webhook missing-service\n"
+	if got, want := string(output), diagnostic+wantFailure; got != want {
+		t.Fatalf("diagnostic output = %q, want %q", got, want)
+	}
+}
+
+func TestLateActivationReconcileDiagnosticWithholdsUnsafeLog(t *testing.T) {
+	t.Parallel()
+
+	const protectedMarker = "DO_NOT_EMIT_CREDENTIAL"
+	output, err := runLateActivationReconcileDiagnostic(t, "ptah-crd-manager: "+protectedMarker+"\n")
+	if err == nil {
+		t.Fatal("emit_late_activation_reconcile_diagnostic() accepted protected content")
+	}
+	if strings.Contains(string(output), protectedMarker) {
+		t.Fatalf("unsafe diagnostic escaped the credential scanner: %q", output)
+	}
+	const want = "e2e crd: late activation reconcile log failed credential and format validation\n"
+	if got := string(output); got != want {
+		t.Fatalf("unsafe diagnostic output = %q, want %q", got, want)
+	}
+}
+
+func runLateActivationReconcileDiagnostic(t *testing.T, diagnostic string) ([]byte, error) {
+	t.Helper()
+
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh is required to exercise the late-activation diagnostic")
+	}
+	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
+	var script strings.Builder
+	script.WriteString("set -eu\n")
+	script.WriteString("LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE=$1\n")
+	script.WriteString("LATE_ACTIVATION_RECONCILE_LOG_FILE=$2\n")
+	script.WriteString("IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE=$3\n")
+	for _, functionName := range []string{
+		"fail",
+		"require_mode_0600_regular_file",
+		"hook_diagnostic_is_safe",
+		"emit_late_activation_reconcile_diagnostic",
+	} {
+		script.WriteString(extractE2EShellFunction(t, source, functionName))
+		script.WriteByte('\n')
+	}
+	script.WriteString("emit_late_activation_reconcile_diagnostic\n")
+
+	tempDir := t.TempDir()
+	scriptPath := filepath.Join(tempDir, "diagnostic.sh")
+	statusPath := filepath.Join(tempDir, "capture.status")
+	logPath := filepath.Join(tempDir, "capture.log")
+	patternsPath := filepath.Join(tempDir, "credential-patterns")
+	for path, contents := range map[string]string{
+		scriptPath:   script.String(),
+		statusPath:   "captured\n",
+		logPath:      diagnostic,
+		patternsPath: "DO_NOT_EMIT_CREDENTIAL\n",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command := exec.Command(shPath, scriptPath, statusPath, logPath, patternsPath)
+	return command.CombinedOutput()
+}
+
+func extractE2EShellFunction(t *testing.T, source, name string) string {
+	t.Helper()
+	pattern := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(name) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`)
+	matches := pattern.FindAllString(source, -1)
+	if len(matches) != 1 {
+		t.Fatalf("%s function matches = %d, want 1", name, len(matches))
+	}
+	return matches[0]
+}
+
 func lateActivationSummaryFilter(t *testing.T) string {
 	t.Helper()
 	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
@@ -2043,22 +2127,22 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD late activation reconcile diagnostic omits the activation phase",
 			child:       "crd-upgrade",
-			old:         `'wait for release activation guard before persistence' \`,
-			replacement: `'unrelated failure' \`,
+			old:         `grep -F 'wait for release activation guard before persistence' \`,
+			replacement: `grep -F 'unrelated failure' \`,
 			wantError:   "late activation reconcile exact blocker evidence",
 		},
 		{
 			name:        "CRD late activation reconcile diagnostic omits the blocker webhook",
 			child:       "crd-upgrade",
-			old:         `'late-activation-blocker.operator.ptah.dev' \`,
-			replacement: `'unrelated-webhook.operator.ptah.dev' \`,
+			old:         `grep -F 'late-activation-blocker.operator.ptah.dev' \`,
+			replacement: `grep -F 'unrelated-webhook.operator.ptah.dev' \`,
 			wantError:   "late activation reconcile exact blocker evidence",
 		},
 		{
 			name:        "CRD late activation reconcile diagnostic omits the missing service",
 			child:       "crd-upgrade",
-			old:         `'service "ptah-operator-e2e-missing-blocker" not found'; do`,
-			replacement: `'unrelated service failure'; do`,
+			old:         `grep -F 'service "ptah-operator-e2e-missing-blocker" not found' \`,
+			replacement: `grep -F 'unrelated service failure' \`,
 			wantError:   "late activation reconcile exact blocker evidence",
 		},
 		{

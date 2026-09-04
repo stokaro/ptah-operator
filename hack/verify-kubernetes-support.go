@@ -1940,12 +1940,20 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("late activation preflight diagnostic implementation", `emit_late_activation_preflight_diagnostic_if_available() {`),
 				exactSourceLine("late activation preflight success contract", `grep -Fx 'candidate release preflight verified without persistent mutation' \`),
 				exactSourceLine("late activation reconcile diagnostic implementation", `emit_late_activation_reconcile_diagnostic() {`),
-				exactSourceLineSequence("late activation reconcile exact blocker evidence", []string{
-					`'wait for release activation guard before persistence' \`,
-					`'late-activation-blocker.operator.ptah.dev' \`,
-					`'service "ptah-operator-e2e-missing-blocker" not found'; do`,
-				}),
 				exactSourceLine("late activation reconcile safe diagnostic emission", `cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2`),
+				exactSourceLineSequence("late activation reconcile exact blocker evidence", []string{
+					`grep -F 'wait for release activation guard before persistence' \`,
+					`"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||`,
+					`missing_blocker_evidence="$missing_blocker_evidence activation-phase"`,
+					`grep -F 'late-activation-blocker.operator.ptah.dev' \`,
+					`"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||`,
+					`missing_blocker_evidence="$missing_blocker_evidence blocker-webhook"`,
+					`grep -F 'service "ptah-operator-e2e-missing-blocker" not found' \`,
+					`"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||`,
+					`missing_blocker_evidence="$missing_blocker_evidence missing-service"`,
+					`[ -z "$missing_blocker_evidence" ] ||`,
+					`fail "late activation reconcile log lacks exact blocker evidence:$missing_blocker_evidence"`,
+				}),
 				exactSourceLine("late activation bounded summary implementation", `emit_late_activation_failure_summary() {`),
 				exactSourceLineSequence("canceled reconcile is diagnostic-only target-not-reached evidence", []string{
 					`expectedReconcileFailed: any($reconcile[]; (.weight == null or ((.weight | type) == "number" and .weight == 0)) and .last_run.phase == "Failed"),`,
@@ -2602,14 +2610,19 @@ const lateActivationReconcileDiagnosticContract = `emit_late_activation_reconcil
 		fail "late activation reconcile log was not captured"
 	hook_diagnostic_is_safe "$LATE_ACTIVATION_RECONCILE_LOG_FILE" ||
 		fail "late activation reconcile log failed credential and format validation"
-	for activation_error_marker in \
-		'wait for release activation guard before persistence' \
-		'late-activation-blocker.operator.ptah.dev' \
-		'service "ptah-operator-e2e-missing-blocker" not found'; do
-		grep -F "$activation_error_marker" "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
-			fail "late activation reconcile log lacks exact blocker evidence"
-	done
 	cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2
+	missing_blocker_evidence=
+	grep -F 'wait for release activation guard before persistence' \
+		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
+		missing_blocker_evidence="$missing_blocker_evidence activation-phase"
+	grep -F 'late-activation-blocker.operator.ptah.dev' \
+		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
+		missing_blocker_evidence="$missing_blocker_evidence blocker-webhook"
+	grep -F 'service "ptah-operator-e2e-missing-blocker" not found' \
+		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
+		missing_blocker_evidence="$missing_blocker_evidence missing-service"
+	[ -z "$missing_blocker_evidence" ] ||
+		fail "late activation reconcile log lacks exact blocker evidence:$missing_blocker_evidence"
 }`
 
 const failedHookEvidenceContract = `def hook_phase:
