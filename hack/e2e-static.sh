@@ -162,6 +162,13 @@ done
 sh -n "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 dash -n "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 
+# The version is printed because these findings are version-dependent and the
+# mismatch is otherwise invisible: shellcheck 0.11.0 reports an unreachable trap
+# handler as SC2329 on the function, while 0.9.x and 0.10.x report SC2317 on
+# each command in its body. A suppression naming only one of the two is green
+# for whoever ran it and red on the other, which is how a pull request reached
+# review with a file that passes locally and fails here.
+printf 'e2e static: shellcheck %s\n' "$(shellcheck --version | awk '/^version:/ { print $2 }')"
 shellcheck "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"

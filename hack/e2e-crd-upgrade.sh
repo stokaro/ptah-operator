@@ -427,7 +427,12 @@ identity_hook_capture_worker() (
 	capture_child_pid=
 	capture_interrupted=0
 	capture_status=job-wait-failed
-	# shellcheck disable=SC2329 # Invoked through the signal trap below.
+	# Both codes, because shellcheck renamed this finding and CI is not on the
+	# newer version. 0.9.x and 0.10.x report SC2317 on each command in the body;
+	# 0.11.0 reports SC2329 on the function instead. Suppressing only the newer
+	# one is green for a developer running 0.11.0 and red in CI, which is how
+	# this reached a pull request.
+	# shellcheck disable=SC2317,SC2329 # Invoked through the signal trap below.
 	terminate_capture() {
 		capture_interrupted=1
 		if [ -n "$capture_child_pid" ]; then
