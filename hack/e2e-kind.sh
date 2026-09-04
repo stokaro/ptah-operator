@@ -549,6 +549,50 @@ require_ready_nodes() {
 	fi
 }
 
+assert_api_server_feature_gate_scope() {
+	expected_api_server_feature_gates=$1
+	control_plane_pods_file=$WORK_DIR/control-plane-pods.json
+	component_configs_file=$WORK_DIR/component-configs.json
+	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+		-n kube-system get pods -o json >"$control_plane_pods_file"
+	jq -e --arg expected "$expected_api_server_feature_gates" '
+      def component_commands($component):
+        [
+          .items[]
+          | select(.metadata.labels.component == $component)
+          | .spec.containers[]
+          | .command[]
+        ];
+
+      (component_commands("kube-apiserver")) as $api_server |
+      (component_commands("kube-controller-manager")) as $controller_manager |
+      (component_commands("kube-scheduler")) as $scheduler |
+      ([.items[] | select(.metadata.labels.component == "kube-apiserver")] | length) == 1 and
+      ([.items[] | select(.metadata.labels.component == "kube-controller-manager")] | length) == 1 and
+      ([.items[] | select(.metadata.labels.component == "kube-scheduler")] | length) == 1 and
+      ($api_server | map(select(startswith("--feature-gates=")))) ==
+        (if $expected == "" then [] else ["--feature-gates=" + $expected] end) and
+      ($api_server | map(select(startswith("--runtime-config="))) | length) == 1 and
+      ($controller_manager | map(select(startswith("--feature-gates=")))) == [] and
+      ($scheduler | map(select(startswith("--feature-gates=")))) == []
+    ' "$control_plane_pods_file" >/dev/null ||
+		fail "control-plane feature gates are not confined to the API server or kind runtime-config was replaced"
+	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+		-n kube-system get configmaps kubelet-config kube-proxy -o json >"$component_configs_file"
+	jq -e '
+      ([.items[].data | to_entries[].value] | join("\n")) as $configs |
+      [
+        "EmptyDirVolumeMode",
+        "EvictionRequestAPI",
+        "GenericWorkload",
+        "VolumeBindMountOptions",
+        "WorkloadWithJob"
+      ] |
+      all(.[]; . as $gate | ($configs | contains($gate) | not))
+    ' "$component_configs_file" >/dev/null ||
+		fail "API-server-only feature gates leaked into kubelet or kube-proxy configuration"
+}
+
 collect_diagnostics() {
 	[ "$CLUSTER_CREATED" -eq 1 ] || return 0
 	[ -s "$KUBECONFIG_FILE" ] || return 0
@@ -880,25 +924,43 @@ mirror_task_image() {
 
 sed "s/__API_SERVER_PORT__/${E2E_API_SERVER_PORT}/g" \
 	"$ROOT_DIR/testdata/e2e/kind.yaml.tmpl" >"$KIND_CONFIG"
-case "$K8S_MAJOR_MINOR" in
-1.35)
-	{
-		printf '%s\n' 'featureGates:'
-		printf '%s\n' '  GenericWorkload: true'
-	} >>"$KIND_CONFIG"
-	;;
-1.36) ;;
-1.37)
-	{
-		printf '%s\n' 'featureGates:'
-		printf '%s\n' '  EmptyDirVolumeMode: true'
-		printf '%s\n' '  EvictionRequestAPI: true'
-		printf '%s\n' '  GenericWorkload: true'
-		printf '%s\n' '  VolumeBindMountOptions: true'
-		printf '%s\n' '  WorkloadWithJob: true'
-	} >>"$KIND_CONFIG"
-	;;
-esac
+EXPECTED_API_SERVER_FEATURE_GATES=
+append_api_server_feature_gate_patch() {
+	feature_gate_minor=$1
+	feature_gate_config=$2
+	case "$feature_gate_minor" in
+	1.35)
+		EXPECTED_API_SERVER_FEATURE_GATES=GenericWorkload=true
+		{
+			printf '%s\n' 'kubeadmConfigPatchesJSON6902:'
+			printf '%s\n' '- group: kubeadm.k8s.io'
+			printf '%s\n' '  version: v1beta3'
+			printf '%s\n' '  kind: ClusterConfiguration'
+			printf '%s\n' '  patch: |'
+			printf '%s\n' '    - op: add'
+			printf '%s\n' '      path: /apiServer/extraArgs/feature-gates'
+			printf '%s\n' '      value: GenericWorkload=true'
+		} >>"$feature_gate_config"
+		;;
+	1.36) ;;
+	1.37)
+		EXPECTED_API_SERVER_FEATURE_GATES=EmptyDirVolumeMode=true,EvictionRequestAPI=true,GenericWorkload=true,VolumeBindMountOptions=true,WorkloadWithJob=true
+		{
+			printf '%s\n' 'kubeadmConfigPatchesJSON6902:'
+			printf '%s\n' '- group: kubeadm.k8s.io'
+			printf '%s\n' '  version: v1beta4'
+			printf '%s\n' '  kind: ClusterConfiguration'
+			printf '%s\n' '  patch: |'
+			printf '%s\n' '    - op: add'
+			printf '%s\n' '      path: /apiServer/extraArgs/-'
+			printf '%s\n' '      value:'
+			printf '%s\n' '        name: feature-gates'
+			printf '%s\n' '        value: EmptyDirVolumeMode=true,EvictionRequestAPI=true,GenericWorkload=true,VolumeBindMountOptions=true,WorkloadWithJob=true'
+		} >>"$feature_gate_config"
+		;;
+	esac
+}
+append_api_server_feature_gate_patch "$K8S_MAJOR_MINOR" "$KIND_CONFIG"
 
 if [ "$E2E_DIRECT_HOST_ACCESS" -eq 0 ]; then
 	ssh_args="-N -o BatchMode=yes -o ExitOnForwardFailure=yes"
@@ -1037,6 +1099,7 @@ kind create cluster \
 	--kubeconfig "$KUBECONFIG_FILE" \
 	--wait 5m
 require_ready_nodes "after kind cluster creation"
+assert_api_server_feature_gate_scope "$EXPECTED_API_SERVER_FEATURE_GATES"
 
 kind load docker-image "$PREDECESSOR_OPERATOR_IMAGE" --name "$CLUSTER_NAME"
 

@@ -69,6 +69,11 @@ CLEANUP_EMPTY_PATTERNS=$WORK_DIR/cleanup-empty-patterns.txt
 CLEANUP_SAFE_PATTERNS=$WORK_DIR/cleanup-safe-patterns.txt
 CLEANUP_MATCH_PATTERNS=$WORK_DIR/cleanup-match-patterns.txt
 CLEANUP_UNSAFE_PROJECTION=$WORK_DIR/cleanup-unsafe-projection.json
+FEATURE_GATE_135_ACTUAL=$WORK_DIR/feature-gate-1.35.yaml
+FEATURE_GATE_135_EXPECTED=$WORK_DIR/feature-gate-1.35.expected.yaml
+FEATURE_GATE_136_ACTUAL=$WORK_DIR/feature-gate-1.36.yaml
+FEATURE_GATE_137_ACTUAL=$WORK_DIR/feature-gate-1.37.yaml
+FEATURE_GATE_137_EXPECTED=$WORK_DIR/feature-gate-1.37.expected.yaml
 STATIC_PTAH_VERSION=e2e-explicit-version
 
 cleanup() {
@@ -256,20 +261,74 @@ done
 	printf '%s\n' 'e2e static: live Kubernetes version is not bound into both CRD lifecycle phases' >&2
 	exit 1
 }
-for controller_object_feature_gate in \
-	'EmptyDirVolumeMode: true' \
-	'EvictionRequestAPI: true' \
-	'VolumeBindMountOptions: true' \
-	'WorkloadWithJob: true'; do
-	grep -F "$controller_object_feature_gate" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
-		printf '%s\n' 'e2e static: kind lacks a required controller-object guarded-field feature gate' >&2
-		exit 1
-	}
-done
-[ "$(grep -Fc 'GenericWorkload: true' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ] || {
-	printf '%s\n' 'e2e static: kind does not enable GenericWorkload for both guarded API versions' >&2
+api_server_feature_gate_patch_section=$(sed -n \
+	'/^append_api_server_feature_gate_patch()/,/^}/p' "$ROOT_DIR/hack/e2e-kind.sh")
+[ -n "$api_server_feature_gate_patch_section" ] || {
+	printf '%s\n' 'e2e static: API-server feature gate patch helper is missing' >&2
 	exit 1
 }
+eval "$api_server_feature_gate_patch_section"
+: >"$FEATURE_GATE_135_ACTUAL"
+: >"$FEATURE_GATE_136_ACTUAL"
+: >"$FEATURE_GATE_137_ACTUAL"
+EXPECTED_API_SERVER_FEATURE_GATES=
+append_api_server_feature_gate_patch 1.35 "$FEATURE_GATE_135_ACTUAL"
+[ "$EXPECTED_API_SERVER_FEATURE_GATES" = GenericWorkload=true ] || {
+	printf '%s\n' 'e2e static: Kubernetes 1.35 API-server feature gate value is incorrect' >&2
+	exit 1
+}
+EXPECTED_API_SERVER_FEATURE_GATES=
+append_api_server_feature_gate_patch 1.36 "$FEATURE_GATE_136_ACTUAL"
+[ ! -s "$FEATURE_GATE_136_ACTUAL" ] || {
+	printf '%s\n' 'e2e static: Kubernetes 1.36 kind configuration must remain unpatched' >&2
+	exit 1
+}
+[ -z "$EXPECTED_API_SERVER_FEATURE_GATES" ] || {
+	printf '%s\n' 'e2e static: Kubernetes 1.36 gained an API-server feature gate expectation' >&2
+	exit 1
+}
+EXPECTED_API_SERVER_FEATURE_GATES=
+append_api_server_feature_gate_patch 1.37 "$FEATURE_GATE_137_ACTUAL"
+[ "$EXPECTED_API_SERVER_FEATURE_GATES" = \
+	EmptyDirVolumeMode=true,EvictionRequestAPI=true,GenericWorkload=true,VolumeBindMountOptions=true,WorkloadWithJob=true ] || {
+	printf '%s\n' 'e2e static: Kubernetes 1.37 API-server feature gate value is incorrect' >&2
+	exit 1
+}
+{
+	printf '%s\n' 'kubeadmConfigPatchesJSON6902:'
+	printf '%s\n' '- group: kubeadm.k8s.io'
+	printf '%s\n' '  version: v1beta3'
+	printf '%s\n' '  kind: ClusterConfiguration'
+	printf '%s\n' '  patch: |'
+	printf '%s\n' '    - op: add'
+	printf '%s\n' '      path: /apiServer/extraArgs/feature-gates'
+	printf '%s\n' '      value: GenericWorkload=true'
+} >"$FEATURE_GATE_135_EXPECTED"
+{
+	printf '%s\n' 'kubeadmConfigPatchesJSON6902:'
+	printf '%s\n' '- group: kubeadm.k8s.io'
+	printf '%s\n' '  version: v1beta4'
+	printf '%s\n' '  kind: ClusterConfiguration'
+	printf '%s\n' '  patch: |'
+	printf '%s\n' '    - op: add'
+	printf '%s\n' '      path: /apiServer/extraArgs/-'
+	printf '%s\n' '      value:'
+	printf '%s\n' '        name: feature-gates'
+	printf '%s\n' '        value: EmptyDirVolumeMode=true,EvictionRequestAPI=true,GenericWorkload=true,VolumeBindMountOptions=true,WorkloadWithJob=true'
+} >"$FEATURE_GATE_137_EXPECTED"
+cmp -s "$FEATURE_GATE_135_ACTUAL" "$FEATURE_GATE_135_EXPECTED" || {
+	printf '%s\n' 'e2e static: Kubernetes 1.35 API-server feature gate patch differs from the exact kubeadm v1beta3 contract' >&2
+	exit 1
+}
+cmp -s "$FEATURE_GATE_137_ACTUAL" "$FEATURE_GATE_137_EXPECTED" || {
+	printf '%s\n' 'e2e static: Kubernetes 1.37 API-server feature gate patch differs from the exact kubeadm v1beta4 contract' >&2
+	exit 1
+}
+if grep -Eq '^[[:space:]]*featureGates:' \
+	"$FEATURE_GATE_135_ACTUAL" "$FEATURE_GATE_137_ACTUAL"; then
+	printf '%s\n' 'e2e static: guarded fields escaped into global kind feature gates' >&2
+	exit 1
+fi
 # shellcheck disable=SC2016 # These checks intentionally match literal harness variables.
 for admission_schema_marker in \
 	'kubectl --kubeconfig "$KUBECONFIG_FILE" get --raw' \

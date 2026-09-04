@@ -190,9 +190,59 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "guarded API feature gate omitted",
-			old:         `		printf '%s\n' '  WorkloadWithJob: true'`,
-			replacement: `		printf '%s\n' '  WorkloadWithJob: false'`,
-			wantError:   "guarded API feature gates",
+			old:         `			printf '%s\n' '        value: EmptyDirVolumeMode=true,EvictionRequestAPI=true,GenericWorkload=true,VolumeBindMountOptions=true,WorkloadWithJob=true'`,
+			replacement: `			printf '%s\n' '        value: EmptyDirVolumeMode=true,EvictionRequestAPI=true,GenericWorkload=true,VolumeBindMountOptions=true'`,
+			wantError:   "API-server feature gate contract",
+		},
+		{
+			name:        "global kind feature gates restored",
+			old:         `append_api_server_feature_gate_patch "$K8S_MAJOR_MINOR" "$KIND_CONFIG"`,
+			replacement: "printf '%s\\n' 'featureGates:' >>\"$KIND_CONFIG\"\nappend_api_server_feature_gate_patch \"$K8S_MAJOR_MINOR\" \"$KIND_CONFIG\"",
+			wantError:   "global kind featureGates",
+		},
+		{
+			name:        "Kubernetes 1.35 kubeadm patch version changed",
+			old:         `			printf '%s\n' '  version: v1beta3'`,
+			replacement: `			printf '%s\n' '  version: v1beta4'`,
+			wantError:   "API-server feature gate contract",
+		},
+		{
+			name: "Kubernetes 1.37 patch targets the controller manager",
+			old: "\t\t\tprintf '%s\\n' '  version: v1beta4'\n" +
+				"\t\t\tprintf '%s\\n' '  kind: ClusterConfiguration'",
+			replacement: "\t\t\tprintf '%s\\n' '  version: v1beta4'\n" +
+				"\t\t\tprintf '%s\\n' '  kind: KubeletConfiguration'",
+			wantError: "API-server feature gate contract",
+		},
+		{
+			name:        "Kubernetes 1.35 patch replaces all API server arguments",
+			old:         `			printf '%s\n' '      path: /apiServer/extraArgs/feature-gates'`,
+			replacement: `			printf '%s\n' '      path: /apiServer/extraArgs'`,
+			wantError:   "API-server feature gate contract",
+		},
+		{
+			name:        "Kubernetes 1.37 patch replaces the runtime config entry",
+			old:         `			printf '%s\n' '      path: /apiServer/extraArgs/-'`,
+			replacement: `			printf '%s\n' '      path: /apiServer/extraArgs/0'`,
+			wantError:   "API-server feature gate contract",
+		},
+		{
+			name:        "Kubernetes 1.36 gains a feature gate patch",
+			old:         `	1.36) ;;`,
+			replacement: `	1.36) EXPECTED_API_SERVER_FEATURE_GATES=GenericWorkload=true ;;`,
+			wantError:   "API-server feature gate contract",
+		},
+		{
+			name:        "runtime-config preservation assertion omitted",
+			old:         `      ($api_server | map(select(startswith("--runtime-config="))) | length) == 1 and`,
+			replacement: `      true and`,
+			wantError:   "API-server feature gate contract",
+		},
+		{
+			name:        "kubelet and kube-proxy scope assertion omitted",
+			old:         `		-n kube-system get configmaps kubelet-config kube-proxy -o json >"$component_configs_file"`,
+			replacement: `		-n kube-system get configmaps kubelet-config -o json >"$component_configs_file"`,
+			wantError:   "API-server feature gate contract",
 		},
 		{
 			name:        "kind cluster creation omitted",

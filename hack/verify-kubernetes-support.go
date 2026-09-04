@@ -1396,6 +1396,86 @@ type successfulReturnContract struct {
 	completion *regexp.Regexp
 }
 
+const apiServerFeatureGatePatchContract = `append_api_server_feature_gate_patch() {
+	feature_gate_minor=$1
+	feature_gate_config=$2
+	case "$feature_gate_minor" in
+	1.35)
+		EXPECTED_API_SERVER_FEATURE_GATES=GenericWorkload=true
+		{
+			printf '%s\n' 'kubeadmConfigPatchesJSON6902:'
+			printf '%s\n' '- group: kubeadm.k8s.io'
+			printf '%s\n' '  version: v1beta3'
+			printf '%s\n' '  kind: ClusterConfiguration'
+			printf '%s\n' '  patch: |'
+			printf '%s\n' '    - op: add'
+			printf '%s\n' '      path: /apiServer/extraArgs/feature-gates'
+			printf '%s\n' '      value: GenericWorkload=true'
+		} >>"$feature_gate_config"
+		;;
+	1.36) ;;
+	1.37)
+		EXPECTED_API_SERVER_FEATURE_GATES=EmptyDirVolumeMode=true,EvictionRequestAPI=true,GenericWorkload=true,VolumeBindMountOptions=true,WorkloadWithJob=true
+		{
+			printf '%s\n' 'kubeadmConfigPatchesJSON6902:'
+			printf '%s\n' '- group: kubeadm.k8s.io'
+			printf '%s\n' '  version: v1beta4'
+			printf '%s\n' '  kind: ClusterConfiguration'
+			printf '%s\n' '  patch: |'
+			printf '%s\n' '    - op: add'
+			printf '%s\n' '      path: /apiServer/extraArgs/-'
+			printf '%s\n' '      value:'
+			printf '%s\n' '        name: feature-gates'
+			printf '%s\n' '        value: EmptyDirVolumeMode=true,EvictionRequestAPI=true,GenericWorkload=true,VolumeBindMountOptions=true,WorkloadWithJob=true'
+		} >>"$feature_gate_config"
+		;;
+	esac
+}`
+
+const apiServerFeatureGateScopeContract = `assert_api_server_feature_gate_scope() {
+	expected_api_server_feature_gates=$1
+	control_plane_pods_file=$WORK_DIR/control-plane-pods.json
+	component_configs_file=$WORK_DIR/component-configs.json
+	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+		-n kube-system get pods -o json >"$control_plane_pods_file"
+	jq -e --arg expected "$expected_api_server_feature_gates" '
+      def component_commands($component):
+        [
+          .items[]
+          | select(.metadata.labels.component == $component)
+          | .spec.containers[]
+          | .command[]
+        ];
+
+      (component_commands("kube-apiserver")) as $api_server |
+      (component_commands("kube-controller-manager")) as $controller_manager |
+      (component_commands("kube-scheduler")) as $scheduler |
+      ([.items[] | select(.metadata.labels.component == "kube-apiserver")] | length) == 1 and
+      ([.items[] | select(.metadata.labels.component == "kube-controller-manager")] | length) == 1 and
+      ([.items[] | select(.metadata.labels.component == "kube-scheduler")] | length) == 1 and
+      ($api_server | map(select(startswith("--feature-gates=")))) ==
+        (if $expected == "" then [] else ["--feature-gates=" + $expected] end) and
+      ($api_server | map(select(startswith("--runtime-config="))) | length) == 1 and
+      ($controller_manager | map(select(startswith("--feature-gates=")))) == [] and
+      ($scheduler | map(select(startswith("--feature-gates=")))) == []
+    ' "$control_plane_pods_file" >/dev/null ||
+		fail "control-plane feature gates are not confined to the API server or kind runtime-config was replaced"
+	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+		-n kube-system get configmaps kubelet-config kube-proxy -o json >"$component_configs_file"
+	jq -e '
+      ([.items[].data | to_entries[].value] | join("\n")) as $configs |
+      [
+        "EmptyDirVolumeMode",
+        "EvictionRequestAPI",
+        "GenericWorkload",
+        "VolumeBindMountOptions",
+        "WorkloadWithJob"
+      ] |
+      all(.[]; . as $gate | ($configs | contains($gate) | not))
+    ' "$component_configs_file" >/dev/null ||
+		fail "API-server-only feature gates leaked into kubelet or kube-proxy configuration"
+}`
+
 func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyMakeE2ETarget(files.makefile); err != nil {
 		return err
@@ -1526,26 +1606,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`fi`,
 			`}`,
 		}),
-		exactSourceLineSequence("guarded API feature gates for Kubernetes 1.35", []string{
-			`1.35)`,
-			`{`,
-			`printf '%s\n' 'featureGates:'`,
-			`printf '%s\n' '  GenericWorkload: true'`,
-			`} >>"$KIND_CONFIG"`,
-			`;;`,
-		}),
-		exactSourceLineSequence("guarded API feature gates for Kubernetes 1.37", []string{
-			`1.37)`,
-			`{`,
-			`printf '%s\n' 'featureGates:'`,
-			`printf '%s\n' '  EmptyDirVolumeMode: true'`,
-			`printf '%s\n' '  EvictionRequestAPI: true'`,
-			`printf '%s\n' '  GenericWorkload: true'`,
-			`printf '%s\n' '  VolumeBindMountOptions: true'`,
-			`printf '%s\n' '  WorkloadWithJob: true'`,
-			`} >>"$KIND_CONFIG"`,
-			`;;`,
-		}),
+		exactSourceLine("API-server feature gate runtime assertion", `assert_api_server_feature_gate_scope() {`),
+		exactSourceLine("API-server feature gate patch implementation", `append_api_server_feature_gate_patch() {`),
+		exactSourceLine("API-server feature gate patch call", `append_api_server_feature_gate_patch "$K8S_MAJOR_MINOR" "$KIND_CONFIG"`),
 		exactSourceLineSequence("kind cluster creation", []string{
 			`kind create cluster \`,
 			`--name "$CLUSTER_NAME" \`,
@@ -1555,6 +1618,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`--wait 5m`,
 			`require_ready_nodes "after kind cluster creation"`,
 		}),
+		exactSourceLine("live API-server-only feature gate contract", `assert_api_server_feature_gate_scope "$EXPECTED_API_SERVER_FEATURE_GATES"`),
 		exactSourceLineSequence("API server version binding", []string{
 			`server_version=$(kubectl --kubeconfig "$KUBECONFIG_FILE" version -o json |`,
 			`jq -r '.serverVersion.gitVersion')`,
@@ -1628,11 +1692,35 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyOrderedSourceContract(harness, harnessContents, harnessContract); err != nil {
 		return err
 	}
+	if err := verifyExactShellFunction(
+		harness,
+		harnessContents,
+		"append_api_server_feature_gate_patch",
+		apiServerFeatureGatePatchContract,
+	); err != nil {
+		return err
+	}
+	if err := verifyExactShellFunction(
+		harness,
+		harnessContents,
+		"assert_api_server_feature_gate_scope",
+		apiServerFeatureGateScopeContract,
+	); err != nil {
+		return err
+	}
+	if bytes.Contains(harnessContents, []byte("featureGates:")) {
+		return fmt.Errorf("%s: global kind featureGates are forbidden; guarded fields must be enabled only on the API server", harness)
+	}
+	if count := bytes.Count(harnessContents, []byte("kubeadmConfigPatchesJSON6902:")); count != 2 {
+		return fmt.Errorf("%s: expected exactly two versioned API-server feature gate patches, found %d", harness, count)
+	}
 	for _, functionName := range []string{
 		"collect_node_readiness_diagnostics",
 		"wait_for_ready_nodes",
 		"nodes_ready_now",
 		"require_ready_nodes",
+		"append_api_server_feature_gate_patch",
+		"assert_api_server_feature_gate_scope",
 	} {
 		if err := verifySingleShellFunctionDefinition(harness, harnessContents, functionName); err != nil {
 			return err
@@ -2571,6 +2659,23 @@ func verifySingleShellFunctionDefinition(path string, contents []byte, name stri
 	}
 	if count != 1 {
 		return fmt.Errorf("%s: %s must have exactly one function definition, found %d", path, name, count)
+	}
+	return nil
+}
+
+func verifyExactShellFunction(path string, contents []byte, name, expected string) error {
+	functionPattern := regexp.MustCompile(
+		`(?ms)^` + regexp.QuoteMeta(name) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`,
+	)
+	matches := functionPattern.FindAll(contents, -1)
+	if len(matches) != 1 {
+		return fmt.Errorf("%s: %s must have exactly one auditable function body, found %d", path, name, len(matches))
+	}
+	if !equalStrings(
+		normalizedNonemptyLines(string(matches[0])),
+		normalizedNonemptyLines(expected),
+	) {
+		return fmt.Errorf("%s: %s differs from the exact API-server feature gate contract", path, name)
 	}
 	return nil
 }
