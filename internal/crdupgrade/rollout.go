@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -40,12 +41,13 @@ const (
 	// CurrentReleaseSequence is mirrored by the Helm helper and release gates.
 	CurrentReleaseSequence int32 = 1
 
-	rolloutGuardVersionAnnotation = "operator.ptah.dev/rollout-guard-version"
-	rolloutGuardVersion           = "1"
-	rolloutGuardComponent         = "rollout-guard"
-	rolloutGuardManagedBy         = "ptah-operator"
-	kubernetesDNSLabelMaxLength   = 63
-	kubernetesGeneratedSuffixLen  = 5
+	rolloutGuardVersionAnnotation   = "operator.ptah.dev/rollout-guard-version"
+	rolloutGuardVersion             = "1"
+	rolloutGuardComponent           = "rollout-guard"
+	rolloutGuardManagedBy           = "ptah-operator"
+	guardEnforcementProbeAnnotation = "operator.ptah.dev/guard-enforcement-probe"
+	kubernetesDNSLabelMaxLength     = 63
+	kubernetesGeneratedSuffixLen    = 5
 
 	// ReleaseActivationName is the retained namespaced parameter consulted by
 	// every rollout/runtime guard before accepting a higher release sequence.
@@ -108,6 +110,18 @@ func runtimeGuardDenialMessage(sequence int32) string {
 	return fmt.Sprintf("Ptah runtime guard v%d rejected a non-candidate controller image", sequence)
 }
 
+func rolloutGuardProbeDenialMessage(sequence int32) string {
+	return fmt.Sprintf("Ptah rollout guard v%d rejected its exact enforcement probe", sequence)
+}
+
+func runtimeGuardProbeDenialMessage(sequence int32) string {
+	return fmt.Sprintf("Ptah runtime guard v%d rejected its exact enforcement probe", sequence)
+}
+
+func rolloutGuardNameBoundaryDenialMessage(sequence int32) string {
+	return fmt.Sprintf("Ptah rollout guard v%d rejected an arbitrary hook Deployment name", sequence)
+}
+
 func hookIdentityGuardDenialMessage(sequence int32) string {
 	return fmt.Sprintf("Ptah hook identity guard v%d rejected an unsafe privileged hook Pod", sequence)
 }
@@ -128,8 +142,8 @@ type ValidatingAdmissionPolicyBindingReader interface {
 	Get(context.Context, string, metav1.GetOptions) (*admissionregistrationv1.ValidatingAdmissionPolicyBinding, error)
 }
 
-// DeploymentWriter is the namespaced API surface required to adopt, quiesce,
-// and probe the two operator Deployments.
+// DeploymentWriter is the namespaced API surface required to adopt and
+// quiesce the operator Deployments and probe their admission boundaries.
 type DeploymentWriter interface {
 	Get(context.Context, string, metav1.GetOptions) (*appsv1.Deployment, error)
 	Create(context.Context, *appsv1.Deployment, metav1.CreateOptions) (*appsv1.Deployment, error)
@@ -215,10 +229,15 @@ func (g *RolloutGuard) Prepare(ctx context.Context) error {
 	if err := g.waitPoliciesReady(ctx); err != nil {
 		return err
 	}
-	if err := g.waitEnforced(ctx, rolloutGuardDenialMessage(g.ReleaseSequence), false); err != nil {
+	rolloutName := RolloutGuardPolicyName(g.ReleaseSequence)
+	if err := g.waitEnforced(ctx, rolloutName, rolloutGuardProbeDenialMessage(g.ReleaseSequence)); err != nil {
 		return err
 	}
-	if err := g.waitEnforced(ctx, runtimeGuardDenialMessage(g.ReleaseSequence), true); err != nil {
+	if err := g.waitRolloutCreateBoundaryEnforced(ctx); err != nil {
+		return err
+	}
+	runtimeName := RuntimeGuardPolicyName(g.ReleaseSequence)
+	if err := g.waitEnforced(ctx, runtimeName, runtimeGuardProbeDenialMessage(g.ReleaseSequence)); err != nil {
 		return err
 	}
 	return nil
@@ -765,39 +784,147 @@ func (g *RolloutGuard) waitPolicyReady(ctx context.Context, name string) error {
 	})
 }
 
-func (g *RolloutGuard) waitEnforced(ctx context.Context, denialMessage string, probeRuntime bool) error {
+// waitEnforced first proves that an unchanged Deployment is accepted, then
+// adds only the target policy's reserved token. This makes the resulting
+// single-cause denial attributable to one policy even while retained guards
+// overlap during an upgrade.
+func (g *RolloutGuard) waitEnforced(ctx context.Context, policyName, denialMessage string) error {
 	return wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
-		deployment, err := g.Deployments.Get(pollCtx, g.ControllerDeploymentName, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			probe := g.probeDeployment(probeRuntime)
-			_, err = g.Deployments.Create(pollCtx, probe, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-		} else if err == nil {
-			probe := deployment.DeepCopy()
-			if probeRuntime {
-				g.makeRuntimeProbeInvalid(probe)
-			} else {
-				g.makeRolloutProbeInvalid(probe)
+		deployment, create, err := g.enforcementProbeDeployment(pollCtx)
+		if err != nil {
+			if retryableDeploymentProbeRace(err) {
+				return false, nil
 			}
-			_, err = g.Deployments.Update(pollCtx, probe, metav1.UpdateOptions{DryRun: []string{metav1.DryRunAll}})
+			return false, err
 		}
+		if err := g.dryRunDeployment(pollCtx, deployment, create); err != nil {
+			if retryableDeploymentProbeRace(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("prove baseline Deployment is accepted before probing %s: %w", policyName, err)
+		}
+
+		probe := deployment.DeepCopy()
+		if probe.Annotations == nil {
+			probe.Annotations = map[string]string{}
+		}
+		probe.Annotations[guardEnforcementProbeAnnotation] = policyName
+		err = g.dryRunDeployment(pollCtx, probe, create)
 		if err == nil {
 			return false, nil
 		}
-		if strings.Contains(err.Error(), denialMessage) {
+		if retryableDeploymentProbeRace(err) {
+			return false, nil
+		}
+		if hasExactValidatingAdmissionPolicyDenial(err, policyName, policyName, denialMessage) {
 			return true, nil
 		}
-		return false, fmt.Errorf("probe rollout guard enforcement: %w", err)
+		return false, fmt.Errorf("probe %s enforcement: %w", policyName, err)
 	})
 }
 
-func (g *RolloutGuard) probeDeployment(runtimeProbe bool) *appsv1.Deployment {
-	probe := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: g.ControllerDeploymentName, Namespace: g.ReleaseNamespace},
+// waitRolloutCreateBoundaryEnforced proves that the candidate hook's
+// namespace-wide CREATE grant cannot escape the two fixed Deployment names.
+func (g *RolloutGuard) waitRolloutCreateBoundaryEnforced(ctx context.Context) error {
+	policyName := RolloutGuardPolicyName(g.ReleaseSequence)
+	denialMessage := rolloutGuardNameBoundaryDenialMessage(g.ReleaseSequence)
+	return wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
+		probe, err := g.rolloutCreateBoundaryProbe(pollCtx)
+		if err != nil {
+			if retryableDeploymentProbeRace(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		_, err = g.Deployments.Create(pollCtx, probe, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+		if err == nil {
+			return false, nil
+		}
+		if retryableDeploymentProbeRace(err) {
+			return false, nil
+		}
+		if hasExactValidatingAdmissionPolicyDenial(err, policyName, policyName, denialMessage) {
+			return true, nil
+		}
+		return false, fmt.Errorf("probe %s arbitrary-name CREATE boundary: %w", policyName, err)
+	})
+}
+
+func (g *RolloutGuard) enforcementProbeDeployment(ctx context.Context) (*appsv1.Deployment, bool, error) {
+	var lastNotFound error
+	for _, name := range []string{g.ControllerDeploymentName, g.CertificateDeploymentName} {
+		deployment, err := g.Deployments.Get(ctx, name, metav1.GetOptions{})
+		switch {
+		case err == nil:
+			return deployment, false, nil
+		case apierrors.IsNotFound(err):
+			lastNotFound = err
+		default:
+			return nil, false, fmt.Errorf("get baseline Deployment %s for admission enforcement probe: %w", name, err)
+		}
+	}
+
+	identity, err := g.releaseActivationIdentity(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if identity.active != 0 {
+		return nil, false, fmt.Errorf("cannot safely create a bootstrap enforcement probe while release sequence %d is active and both runtime Deployments are missing: %w", identity.active, lastNotFound)
+	}
+	return g.bootstrapProbeDeployment(g.ControllerDeploymentName), true, nil
+}
+
+func (g *RolloutGuard) rolloutCreateBoundaryProbe(ctx context.Context) (*appsv1.Deployment, error) {
+	identity, err := g.releaseActivationIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+	probe := g.bootstrapProbeDeployment(g.rolloutCreateBoundaryProbeName())
+	if identity.active > 0 {
+		probe.Annotations = map[string]string{
+			ControllerStateVersionAnnotation: strconv.FormatUint(identity.state, 10),
+			ReleaseSequenceAnnotation:        strconv.FormatUint(identity.release, 10),
+		}
+	}
+	return probe, nil
+}
+
+func (g *RolloutGuard) releaseActivationIdentity(ctx context.Context) (releaseActivationIdentity, error) {
+	var identity releaseActivationIdentity
+	activation := g.releaseActivationGuard()
+	object, err := g.ConfigMaps.Get(ctx, ReleaseActivationName, metav1.GetOptions{})
+	if err != nil {
+		return identity, fmt.Errorf("get release activation parameter for Deployment enforcement probe: %w", err)
+	}
+	identity, err = activation.verifyActivationObject(object)
+	if err != nil {
+		return releaseActivationIdentity{}, fmt.Errorf("verify release activation parameter for Deployment enforcement probe: %w", err)
+	}
+	return identity, nil
+}
+
+func (g *RolloutGuard) dryRunDeployment(ctx context.Context, deployment *appsv1.Deployment, create bool) error {
+	if create {
+		_, err := g.Deployments.Create(ctx, deployment, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+		return err
+	}
+	_, err := g.Deployments.Update(ctx, deployment, metav1.UpdateOptions{DryRun: []string{metav1.DryRunAll}})
+	return err
+}
+
+func retryableDeploymentProbeRace(err error) bool {
+	return apierrors.IsNotFound(err) || apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err)
+}
+
+func (g *RolloutGuard) bootstrapProbeDeployment(name string) *appsv1.Deployment {
+	labels := map[string]string{"operator.ptah.dev/rollout-probe": "true"}
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: g.ReleaseNamespace},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: int32Ptr(0),
-			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"operator.ptah.dev/rollout-probe": "true"}},
+			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"operator.ptah.dev/rollout-probe": "true"}},
+				ObjectMeta: metav1.ObjectMeta{Labels: maps.Clone(labels)},
 				Spec: corev1.PodSpec{Containers: []corev1.Container{{
 					Name:    "manager",
 					Image:   "invalid.example/ptah-rollout-probe:never",
@@ -806,54 +933,18 @@ func (g *RolloutGuard) probeDeployment(runtimeProbe bool) *appsv1.Deployment {
 			},
 		},
 	}
-	if !runtimeProbe {
-		g.makeRolloutProbeInvalid(probe)
-	}
-	if runtimeProbe {
-		g.makeRuntimeProbeInvalid(probe)
-	}
-	return probe
 }
 
-func (g *RolloutGuard) makeRolloutProbeInvalid(probe *appsv1.Deployment) {
-	if probe.Annotations == nil {
-		probe.Annotations = map[string]string{}
-	}
-	delete(probe.Annotations, ControllerStateVersionAnnotation)
-	probe.Annotations[ReleaseSequenceAnnotation] = strconv.FormatInt(int64(g.ReleaseSequence), 10)
-}
-
-func (g *RolloutGuard) makeRuntimeProbeInvalid(probe *appsv1.Deployment) {
-	if probe.Annotations == nil {
-		probe.Annotations = map[string]string{}
-	}
-	probe.Annotations[ControllerStateVersionAnnotation] = strconv.FormatInt(int64(g.ControllerStateVersion), 10)
-	probe.Annotations[ReleaseSequenceAnnotation] = strconv.FormatInt(int64(g.ReleaseSequence), 10)
-	if probe.Spec.Template.Annotations == nil {
-		probe.Spec.Template.Annotations = map[string]string{}
-	}
-	probe.Spec.Template.Annotations[ControllerStateVersionAnnotation] = strconv.FormatInt(int64(g.ControllerStateVersion), 10)
-	probe.Spec.Template.Annotations[ReleaseSequenceAnnotation] = strconv.FormatInt(int64(g.ReleaseSequence), 10)
-	probe.Spec.Replicas = int32Ptr(1)
-	probe.Spec.Strategy.Type = appsv1.RecreateDeploymentStrategyType
-	managerFound := false
-	for index := range probe.Spec.Template.Spec.Containers {
-		if probe.Spec.Template.Spec.Containers[index].Name == "manager" {
-			probe.Spec.Template.Spec.Containers[index].Image = "invalid.example/ptah-rollout-probe:never"
-			managerFound = true
+func (g *RolloutGuard) rolloutCreateBoundaryProbeName() string {
+	digest := hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage+"\nrollout-create-boundary")
+	base := fmt.Sprintf("ptah-rollout-scope-v%d-%s", g.ReleaseSequence, digest[:12])
+	for _, suffix := range []string{"", "-a", "-b"} {
+		name := base + suffix
+		if name != g.ControllerDeploymentName && name != g.CertificateDeploymentName {
+			return name
 		}
 	}
-	if !managerFound {
-		probe.Spec.Template.Spec.Containers = append(probe.Spec.Template.Spec.Containers, corev1.Container{
-			Name: "manager", Image: "invalid.example/ptah-rollout-probe:never", Command: []string{"/never-run"},
-		})
-	}
-	probe.Spec.Template.Spec.InitContainers = []corev1.Container{{
-		Name:    "verify-candidate-runtime",
-		Image:   g.ManagerImage,
-		Command: []string{"/ptah-crd-manager"},
-		Args:    g.verifierArgs(true),
-	}}
+	return base + "-c"
 }
 
 func (g *RolloutGuard) verifierArgs(verifyControllerState bool) []string {
@@ -959,6 +1050,21 @@ func annotationAbsentExpression(object, annotation string) string {
 	return fmt.Sprintf(`(!has(%[1]s.metadata.annotations) || !(%[2]q in %[1]s.metadata.annotations))`, object, annotation)
 }
 
+func guardEnforcementProbeValidationExpression(policyName string) string {
+	return fmt.Sprintf(
+		`!(variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation in ["CREATE", "UPDATE"] && request.dryRun == true && variables.isCandidateHook && has(object.metadata.annotations) && %[1]q in object.metadata.annotations && object.metadata.annotations[%[1]q] == %[2]q)`,
+		guardEnforcementProbeAnnotation,
+		policyName,
+	)
+}
+
+func guardEnforcementProbePersistenceExpression() string {
+	return fmt.Sprintf(
+		`request.dryRun == true || !has(object.metadata.annotations) || !(%[1]q in object.metadata.annotations)`,
+		guardEnforcementProbeAnnotation,
+	)
+}
+
 // deploymentStopTransitionExpression permits the candidate hook to stamp and
 // stop an active Deployment without changing its executable or ownership. It
 // deliberately becomes false as soon as that candidate sequence is active.
@@ -986,11 +1092,12 @@ func rolloutActiveIdentityExpression() string {
 func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
 	exact := admissionregistrationv1.Exact
-	hookPrefix := g.releaseHookUsernamePrefix()
-	metadata := g.guardMetadata(RolloutGuardPolicyName(g.ReleaseSequence))
+	name := RolloutGuardPolicyName(g.ReleaseSequence)
+	metadata := g.guardMetadata(name)
 	metadata.Annotations[ControllerStateVersionAnnotation] = strconv.FormatInt(int64(stateVersion), 10)
 	metadata.Annotations[AdmissionContractVersionAnnotation] = strconv.FormatInt(int64(admissionVersion), 10)
 	denialMessage := rolloutGuardDenialMessage(g.ReleaseSequence)
+	probeDenialMessage := rolloutGuardProbeDenialMessage(g.ReleaseSequence)
 	admissionIdentity := exactAnnotationExpression(map[string]string{
 		ReleaseNameAnnotation:              g.ReleaseName,
 		ReleaseNamespaceAnnotation:         g.ReleaseNamespace,
@@ -1027,8 +1134,8 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "fixed-operator-resource",
 				Expression: fmt.Sprintf(
-					`(request.resource.group == "apps" && request.namespace == %q && (request.name in [%q, %q] || request.userInfo.username.startsWith(%q))) || (request.resource.group == "admissionregistration.k8s.io" && request.name == %q)`,
-					g.ReleaseNamespace, g.ControllerDeploymentName, g.CertificateDeploymentName, hookPrefix, AdmissionConfigurationName,
+					`(request.resource.group == "apps" && request.namespace == %q && (request.name in [%q, %q] || request.userInfo.username == %q)) || (request.resource.group == "admissionregistration.k8s.io" && request.name == %q)`,
+					g.ReleaseNamespace, g.ControllerDeploymentName, g.CertificateDeploymentName, g.candidateHookUsername(), AdmissionConfigurationName,
 				),
 			}},
 			Variables: []admissionregistrationv1.Variable{
@@ -1041,6 +1148,7 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 				{Name: "activeState", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "activeAdmission", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
 				{Name: "isReleaseHook", Expression: g.releaseHookUsernameExpression()},
+				{Name: "isCandidateHook", Expression: fmt.Sprintf(`request.userInfo.username == %q`, g.candidateHookUsername())},
 				{Name: "newAdmission", Expression: fmt.Sprintf(`variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
 				{Name: "isActiveIdentity", Expression: rolloutActiveIdentityExpression()},
 				{Name: "stopTransition", Expression: deploymentStopTransitionExpression()},
@@ -1048,11 +1156,13 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: `variables.activationValid`, Message: denialMessage},
 				{Expression: `!has(request.subResource) || request.subResource != "scale"`, Message: denialMessage},
-				{Expression: fmt.Sprintf(`!variables.isDeployment || !variables.isReleaseHook || request.name in [%q, %q]`, g.ControllerDeploymentName, g.CertificateDeploymentName), Message: denialMessage},
-				{Expression: `!variables.isDeployment || request.operation != "CREATE" || !variables.isReleaseHook || request.dryRun == true`, Message: denialMessage},
+				{Expression: fmt.Sprintf(`!variables.isDeployment || !variables.isCandidateHook || request.name in [%q, %q]`, g.ControllerDeploymentName, g.CertificateDeploymentName), Message: rolloutGuardNameBoundaryDenialMessage(g.ReleaseSequence)},
+				{Expression: `!variables.isDeployment || request.operation != "CREATE" || !variables.isCandidateHook || request.dryRun == true`, Message: denialMessage},
 				{Expression: `variables.isActiveIdentity || variables.stopTransition`, Message: denialMessage},
 				{Expression: fmt.Sprintf(`variables.newRelease != %d || variables.newState == %d`, g.ReleaseSequence, stateVersion), Message: denialMessage},
 				{Expression: fmt.Sprintf(`!variables.isAdmission || variables.newRelease != %d || (variables.newAdmission == %d && %s)`, g.ReleaseSequence, admissionVersion, admissionIdentity), Message: denialMessage},
+				{Expression: guardEnforcementProbeValidationExpression(name), Message: probeDenialMessage},
+				{Expression: guardEnforcementProbePersistenceExpression(), Message: denialMessage},
 			},
 		},
 	}
@@ -1312,6 +1422,10 @@ func (g *RolloutGuard) releaseHookUsernamePrefix() string {
 	return "system:serviceaccount:" + g.ReleaseNamespace + ":" + g.HookServiceAccountName[:index] + "-crd-v"
 }
 
+func (g *RolloutGuard) candidateHookUsername() string {
+	return "system:serviceaccount:" + g.ReleaseNamespace + ":" + g.HookServiceAccountName
+}
+
 func (g *RolloutGuard) releaseHookUsernameExpression() string {
 	prefix := g.releaseHookUsernamePrefix()
 	return fmt.Sprintf(`request.userInfo.username.matches(%q + string(variables.newRelease) + "-[0-9a-f]{12}$")`, "^"+regexp.QuoteMeta(prefix))
@@ -1402,11 +1516,13 @@ func runtimeActiveDeploymentIdentityExpression() string {
 func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, managerImage string) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
 	exact := admissionregistrationv1.Exact
-	metadata := g.guardMetadata(RuntimeGuardPolicyName(g.ReleaseSequence))
+	name := RuntimeGuardPolicyName(g.ReleaseSequence)
+	metadata := g.guardMetadata(name)
 	metadata.Annotations[ControllerStateVersionAnnotation] = strconv.FormatInt(int64(stateVersion), 10)
 	metadata.Annotations[ReleaseSequenceAnnotation] = strconv.FormatInt(int64(releaseSequence), 10)
 	metadata.Annotations[ManagerImageAnnotation] = managerImage
 	denialMessage := runtimeGuardDenialMessage(g.ReleaseSequence)
+	probeDenialMessage := runtimeGuardProbeDenialMessage(g.ReleaseSequence)
 	validations := []admissionregistrationv1.Validation{
 		{Expression: `variables.activationValid`, Message: denialMessage},
 		{Expression: `variables.isActiveIdentity || variables.stopTransition`, Message: denialMessage},
@@ -1424,6 +1540,16 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 			Message:    denialMessage,
 		})
 	}
+	validations = append(validations,
+		admissionregistrationv1.Validation{
+			Expression: guardEnforcementProbeValidationExpression(name),
+			Message:    probeDenialMessage,
+		},
+		admissionregistrationv1.Validation{
+			Expression: guardEnforcementProbePersistenceExpression(),
+			Message:    denialMessage,
+		},
+	)
 	return &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: metadata,
@@ -1457,6 +1583,7 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 				{Name: "activeState", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "activeImage", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations ? params.metadata.annotations[%q] : ""`, ManagerImageAnnotation, ManagerImageAnnotation)},
 				{Name: "isReleaseHook", Expression: g.releaseHookUsernameExpression()},
+				{Name: "isCandidateHook", Expression: fmt.Sprintf(`request.userInfo.username == %q`, g.candidateHookUsername())},
 				{Name: "runtimeContainerName", Expression: fmt.Sprintf(`request.name == %q ? "manager" : "certificate-rotator"`, g.ControllerDeploymentName)},
 				{Name: "runtimeCommand", Expression: fmt.Sprintf(`request.name == %q ? "/manager" : "/ptah-cert-rotator"`, g.ControllerDeploymentName)},
 				{Name: "runtimeServiceAccount", Expression: fmt.Sprintf(`request.name == %q ? %q : %q`, g.ControllerDeploymentName, g.ControllerServiceAccountName, g.CertificateDeploymentName)},
@@ -1508,9 +1635,9 @@ func (g *RolloutGuard) parameterizedBindingMatchResources(name string) *admissio
 				Scope: scopePtr(admissionregistrationv1.NamespacedScope),
 			},
 		},
-		ResourceNames: []string{g.ControllerDeploymentName, g.CertificateDeploymentName},
 	}
 	if name == RuntimeGuardPolicyName(g.ReleaseSequence) {
+		deploymentRule.ResourceNames = []string{g.ControllerDeploymentName, g.CertificateDeploymentName}
 		match.ResourceRules = []admissionregistrationv1.NamedRuleWithOperations{deploymentRule}
 		return match
 	}

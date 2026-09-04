@@ -14,6 +14,10 @@
 {{- $hookUsernamePatternPrefix := printf "^%s" (regexQuoteMeta $hookUsernamePrefix) -}}
 {{- $rolloutMessage := printf "Ptah rollout guard v%s rejected an unsafe release transition" $sequence -}}
 {{- $runtimeMessage := printf "Ptah runtime guard v%s rejected a non-candidate controller image" $sequence -}}
+{{- $rolloutProbeMessage := printf "Ptah rollout guard v%s rejected its exact enforcement probe" $sequence -}}
+{{- $runtimeProbeMessage := printf "Ptah runtime guard v%s rejected its exact enforcement probe" $sequence -}}
+{{- $rolloutNameBoundaryMessage := printf "Ptah rollout guard v%s rejected an arbitrary hook Deployment name" $sequence -}}
+{{- $probeAnnotation := "operator.ptah.dev/guard-enforcement-probe" -}}
 {{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
 {{- $activationValid := printf `params != null && (%s)` $activationShape -}}
 {{- $stopTransition := `variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation == "UPDATE" && oldObject != null && variables.activationValid && variables.newRelease > variables.activeRelease && variables.newState > 0 && variables.isReleaseHook && has(object.spec.replicas) && object.spec.replicas == 0 && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) == has(oldObject.metadata.uid) && (!has(object.metadata.uid) || object.metadata.uid == oldObject.metadata.uid) && object.metadata.labels == oldObject.metadata.labels && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.metadata.annotations) && "operator.ptah.dev/controller-state-version" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/controller-state-version"] == string(variables.newState) && "operator.ptah.dev/release-sequence" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/release-sequence"] == string(variables.newRelease) && object.metadata.annotations.all(key, key in ["operator.ptah.dev/controller-state-version", "operator.ptah.dev/release-sequence"] || (has(oldObject.metadata.annotations) && key in oldObject.metadata.annotations && object.metadata.annotations[key] == oldObject.metadata.annotations[key])) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(key, key in ["operator.ptah.dev/controller-state-version", "operator.ptah.dev/release-sequence"] || (key in object.metadata.annotations && oldObject.metadata.annotations[key] == object.metadata.annotations[key]))) && object.spec.template == oldObject.spec.template && object.spec.selector == oldObject.spec.selector && object.spec.strategy == oldObject.spec.strategy && object.spec.minReadySeconds == oldObject.spec.minReadySeconds && (has(object.spec.revisionHistoryLimit) == has(oldObject.spec.revisionHistoryLimit)) && (!has(object.spec.revisionHistoryLimit) || object.spec.revisionHistoryLimit == oldObject.spec.revisionHistoryLimit) && (has(object.spec.paused) == has(oldObject.spec.paused)) && (!has(object.spec.paused) || object.spec.paused == oldObject.spec.paused) && (has(object.spec.progressDeadlineSeconds) == has(oldObject.spec.progressDeadlineSeconds)) && (!has(object.spec.progressDeadlineSeconds) || object.spec.progressDeadlineSeconds == oldObject.spec.progressDeadlineSeconds)` -}}
@@ -131,7 +135,7 @@ spec:
         scope: Cluster
   matchConditions:
     - name: fixed-operator-resource
-      expression: {{ printf `(request.resource.group == "apps" && request.namespace == %q && (request.name in [%q, %q] || request.userInfo.username.startsWith(%q))) || (request.resource.group == "admissionregistration.k8s.io" && request.name == %q)` .Release.Namespace $controllerDeployment $certificateDeployment $hookUsernamePrefix "ptah-operator-admission" | quote }}
+      expression: {{ printf `(request.resource.group == "apps" && request.namespace == %q && (request.name in [%q, %q] || request.userInfo.username == %q)) || (request.resource.group == "admissionregistration.k8s.io" && request.name == %q)` .Release.Namespace $controllerDeployment $certificateDeployment $hookUsername "ptah-operator-admission" | quote }}
   variables:
     - name: isDeployment
       expression: 'request.resource.group == "apps"'
@@ -151,6 +155,8 @@ spec:
       expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
     - name: isReleaseHook
       expression: {{ printf `request.userInfo.username.matches(%q + string(variables.newRelease) + "-[0-9a-f]{12}$")` $hookUsernamePatternPrefix | quote }}
+    - name: isCandidateHook
+      expression: {{ printf `request.userInfo.username == %q` $hookUsername | quote }}
     - name: newAdmission
       expression: {{ printf `variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
     - name: isActiveIdentity
@@ -162,9 +168,9 @@ spec:
       message: {{ $rolloutMessage | quote }}
     - expression: '!has(request.subResource) || request.subResource != "scale"'
       message: {{ $rolloutMessage | quote }}
-    - expression: {{ printf `!variables.isDeployment || !variables.isReleaseHook || request.name in [%q, %q]` $controllerDeployment $certificateDeployment | quote }}
-      message: {{ $rolloutMessage | quote }}
-    - expression: '!variables.isDeployment || request.operation != "CREATE" || !variables.isReleaseHook || request.dryRun == true'
+    - expression: {{ printf `!variables.isDeployment || !variables.isCandidateHook || request.name in [%q, %q]` $controllerDeployment $certificateDeployment | quote }}
+      message: {{ $rolloutNameBoundaryMessage | quote }}
+    - expression: '!variables.isDeployment || request.operation != "CREATE" || !variables.isCandidateHook || request.dryRun == true'
       message: {{ $rolloutMessage | quote }}
     - expression: 'variables.isActiveIdentity || variables.stopTransition'
       message: {{ $rolloutMessage | quote }}
@@ -182,6 +188,10 @@ spec:
         "operator.ptah.dev/controller-service-account-name" "operator.ptah.dev/controller-service-account-name" (include "ptah-operator.serviceAccountName" .)
         "operator.ptah.dev/controller-deployment-name" "operator.ptah.dev/controller-deployment-name" $controllerDeployment
         "operator.ptah.dev/certificate-deployment-name" "operator.ptah.dev/certificate-deployment-name" $certificateDeployment | quote }}
+      message: {{ $rolloutMessage | quote }}
+    - expression: {{ printf `!(variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation in ["CREATE", "UPDATE"] && request.dryRun == true && variables.isCandidateHook && has(object.metadata.annotations) && %[1]q in object.metadata.annotations && object.metadata.annotations[%[1]q] == %[2]q)` $probeAnnotation $rolloutName | quote }}
+      message: {{ $rolloutProbeMessage | quote }}
+    - expression: {{ printf `request.dryRun == true || !has(object.metadata.annotations) || !(%q in object.metadata.annotations)` $probeAnnotation | quote }}
       message: {{ $rolloutMessage | quote }}
 ---
 {{- end }}
@@ -215,7 +225,6 @@ spec:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["deployments", "deployments/scale"]
-        resourceNames: [{{ $controllerDeployment | quote }}, {{ $certificateDeployment | quote }}]
         scope: Namespaced
       - apiGroups: ["admissionregistration.k8s.io"]
         apiVersions: ["v1"]
@@ -284,6 +293,8 @@ spec:
       expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations ? params.metadata.annotations[%q] : ""` "operator.ptah.dev/manager-image" "operator.ptah.dev/manager-image" | quote }}
     - name: isReleaseHook
       expression: {{ printf `request.userInfo.username.matches(%q + string(variables.newRelease) + "-[0-9a-f]{12}$")` $hookUsernamePatternPrefix | quote }}
+    - name: isCandidateHook
+      expression: {{ printf `request.userInfo.username == %q` $hookUsername | quote }}
     - name: runtimeContainerName
       expression: {{ printf `request.name == %q ? "manager" : "certificate-rotator"` $controllerDeployment | quote }}
     - name: runtimeCommand
@@ -309,6 +320,10 @@ spec:
     - expression: {{ printf `variables.stopTransition || variables.newRelease != %s || (%s)` $sequence $expression | quote }}
       message: {{ $runtimeMessage | quote }}
     {{- end }}
+    - expression: {{ printf `!(variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation in ["CREATE", "UPDATE"] && request.dryRun == true && variables.isCandidateHook && has(object.metadata.annotations) && %[1]q in object.metadata.annotations && object.metadata.annotations[%[1]q] == %[2]q)` $probeAnnotation $runtimeName | quote }}
+      message: {{ $runtimeProbeMessage | quote }}
+    - expression: {{ printf `request.dryRun == true || !has(object.metadata.annotations) || !(%q in object.metadata.annotations)` $probeAnnotation | quote }}
+      message: {{ $runtimeMessage | quote }}
 ---
 {{- end }}
 {{- if not $runtimeBinding }}

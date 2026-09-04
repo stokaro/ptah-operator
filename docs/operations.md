@@ -28,8 +28,14 @@ dry-run, or an incompatible schema identity introduced concurrently makes the
 Helm operation fail. The
 dedicated hook ServiceAccount can `get` and `update` only the three exact Ptah
 CRD names. Separate read-only `list` grants for `PtahSchema`, `PtahSchemaPlan`,
-and `PtahSchemaApproval` are the only non-exact-name hook permissions and exist
-solely for the downgrade preflight.
+and `PtahSchemaApproval` exist solely for the downgrade preflight. Kubernetes
+RBAC cannot restrict `create` by `resourceNames`, so the hook also receives a
+temporary namespace-wide `create` grant for Deployments after the rollout
+guard is installed. The guard admits that identity only for server-side
+dry-run probes of the two fixed runtime Deployment names, rejects every
+arbitrary name with a dedicated policy denial, and forbids its reserved probe
+annotation from persistence. The hook proves both the exact-name and
+arbitrary-name boundaries before using any broader rollout permission.
 Hook RBAC is removed after either success or failure. Replacing only `spec` and
 those two owned annotations preserves CRD UIDs, all other metadata, status,
 and all custom resources. The manager and certificate-rotation Pods also run

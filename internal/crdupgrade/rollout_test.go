@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -158,8 +159,8 @@ func TestRolloutGuardPrepareRequiresExactHelmCreatedRatchetsAndProvesEnforcement
 		bindings.dryCreates != 0 || bindings.realCreates != 0 {
 		t.Fatal("read-only rollout preparation attempted to author an admission policy")
 	}
-	if deployments.dryCreates != 2 {
-		t.Fatalf("enforcement probe dry-run creates = %d, want 2", deployments.dryCreates)
+	if deployments.dryCreates != 5 {
+		t.Fatalf("enforcement probe dry-run creates = %d, want 5", deployments.dryCreates)
 	}
 	want := guard.policy(1, 1)
 	if !reflect.DeepEqual(policies.objects[rolloutName].Spec, want.Spec) {
@@ -215,11 +216,209 @@ func TestRolloutGuardPrepareRejectsMissingCandidatePolicy(t *testing.T) {
 }
 
 func TestRolloutGuardEnforcementProbeCannotAcceptAnOlderGuardMessage(t *testing.T) {
-	guard, _, _, _ := readyRolloutGuard()
+	guard, _, _, deployments := readyRolloutGuard()
 	guard.ReleaseSequence = 2
-	err := guard.waitEnforced(context.Background(), rolloutGuardDenialMessage(guard.ReleaseSequence), false)
-	if err == nil || !strings.Contains(err.Error(), rolloutGuardDenialMessage(1)) {
+	policyName := RolloutGuardPolicyName(guard.ReleaseSequence)
+	deployments.probeErrors[policyName] = exactPolicyDenialError(
+		RolloutGuardPolicyName(1),
+		RolloutGuardPolicyName(1),
+		rolloutGuardProbeDenialMessage(1),
+	)
+	err := guard.waitEnforced(context.Background(), policyName, rolloutGuardProbeDenialMessage(guard.ReleaseSequence))
+	if err == nil || !strings.Contains(err.Error(), rolloutGuardProbeDenialMessage(1)) {
 		t.Fatalf("enforcement probe error = %v, want older guard message rejection", err)
+	}
+}
+
+func TestRolloutGuardEnforcementProbeChangesOnlyReservedAnnotation(t *testing.T) {
+	guard, _, _, deployments := readyRolloutGuard()
+	live := legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
+	deployments.objects[live.Name] = live.DeepCopy()
+	policyName := RolloutGuardPolicyName(guard.ReleaseSequence)
+
+	if err := guard.waitEnforced(context.Background(), policyName, rolloutGuardProbeDenialMessage(guard.ReleaseSequence)); err != nil {
+		t.Fatal(err)
+	}
+	if deployments.dryCreates != 0 || deployments.dryUpdates != 2 {
+		t.Fatalf("dry-run creates/updates = %d/%d, want 0/2", deployments.dryCreates, deployments.dryUpdates)
+	}
+	baseline := deployments.dryUpdateObjects[0]
+	if !reflect.DeepEqual(baseline, live) {
+		t.Fatal("baseline enforcement probe changed the live Deployment")
+	}
+	probe := deployments.dryUpdateObjects[1].DeepCopy()
+	if got := probe.Annotations[guardEnforcementProbeAnnotation]; got != policyName {
+		t.Fatalf("enforcement probe token = %q, want %q", got, policyName)
+	}
+	delete(probe.Annotations, guardEnforcementProbeAnnotation)
+	if !reflect.DeepEqual(probe, live) {
+		t.Fatal("enforcement probe changed the live Deployment beyond its reserved annotation")
+	}
+}
+
+func TestRolloutGuardEnforcementProbeFallsBackToLiveCertificateDeployment(t *testing.T) {
+	guard, _, _, deployments := readyRolloutGuard()
+	live := legacyDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
+	deployments.objects[live.Name] = live.DeepCopy()
+	policyName := RuntimeGuardPolicyName(guard.ReleaseSequence)
+
+	if err := guard.waitEnforced(context.Background(), policyName, runtimeGuardProbeDenialMessage(guard.ReleaseSequence)); err != nil {
+		t.Fatal(err)
+	}
+	if deployments.dryCreates != 0 || len(deployments.dryUpdateObjects) != 2 {
+		t.Fatalf("dry-run creates/updates = %d/%d, want 0/2", deployments.dryCreates, len(deployments.dryUpdateObjects))
+	}
+	for _, object := range deployments.dryUpdateObjects {
+		if object.Name != guard.CertificateDeploymentName {
+			t.Fatalf("probe Deployment = %q, want certificate fallback", object.Name)
+		}
+	}
+}
+
+func TestRolloutGuardEnforcementProbeUsesBootstrapCreateOnlyWithNoActiveRelease(t *testing.T) {
+	guard, _, _, deployments := readyRolloutGuard()
+	policyName := RuntimeGuardPolicyName(guard.ReleaseSequence)
+
+	if err := guard.waitEnforced(context.Background(), policyName, runtimeGuardProbeDenialMessage(guard.ReleaseSequence)); err != nil {
+		t.Fatal(err)
+	}
+	if deployments.dryCreates != 2 || deployments.dryUpdates != 0 {
+		t.Fatalf("bootstrap dry-run creates/updates = %d/%d, want 2/0", deployments.dryCreates, deployments.dryUpdates)
+	}
+	if got := deployments.dryCreateObjects[0].Name; got != guard.ControllerDeploymentName {
+		t.Fatalf("bootstrap probe name = %q, want %q", got, guard.ControllerDeploymentName)
+	}
+	if _, found := deployments.dryCreateObjects[0].Annotations[guardEnforcementProbeAnnotation]; found {
+		t.Fatal("bootstrap baseline unexpectedly contains the enforcement token")
+	}
+	if got := deployments.dryCreateObjects[1].Annotations[guardEnforcementProbeAnnotation]; got != policyName {
+		t.Fatalf("bootstrap enforcement token = %q, want %q", got, policyName)
+	}
+
+	guard, _, _, deployments = readyRolloutGuard()
+	activation := guard.releaseActivationGuard()
+	guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activationObject(activation, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	t.Cleanup(cancel)
+	err := guard.waitEnforced(ctx, policyName, runtimeGuardProbeDenialMessage(guard.ReleaseSequence))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("active-release probe error = %v, want retry until deadline", err)
+	}
+	if deployments.dryCreates != 0 || deployments.dryUpdates != 0 {
+		t.Fatal("active release with missing Deployments reached a dry-run mutation")
+	}
+}
+
+func TestRolloutGuardCreateBoundaryProbeCarriesTheActiveIdentityWithoutASentinel(t *testing.T) {
+	guard, _, _, _ := readyRolloutGuard()
+	activation := guard.releaseActivationGuard()
+	guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activationObject(activation, 1)
+
+	probe, err := guard.rolloutCreateBoundaryProbe(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.Name == guard.ControllerDeploymentName || probe.Name == guard.CertificateDeploymentName {
+		t.Fatalf("boundary probe reused fixed Deployment name %q", probe.Name)
+	}
+	if got := probe.Annotations[ControllerStateVersionAnnotation]; got != "1" {
+		t.Fatalf("boundary probe controller state = %q, want active state 1", got)
+	}
+	if got := probe.Annotations[ReleaseSequenceAnnotation]; got != "1" {
+		t.Fatalf("boundary probe release sequence = %q, want active sequence 1", got)
+	}
+	if _, found := probe.Annotations[guardEnforcementProbeAnnotation]; found {
+		t.Fatal("boundary probe unexpectedly contains the reserved enforcement sentinel")
+	}
+}
+
+func TestRolloutGuardEnforcementProbesRetryBenignDeploymentRaces(t *testing.T) {
+	t.Parallel()
+
+	resource := schema.GroupResource{Group: "apps", Resource: "deployments"}
+	tests := []struct {
+		name       string
+		live       bool
+		createErrs []error
+		updateErrs []error
+		wantCreate int
+		wantUpdate int
+	}{
+		{
+			name:       "baseline create observes concurrent create",
+			createErrs: []error{apierrors.NewAlreadyExists(resource, "ptah-controller")},
+			wantCreate: 3,
+		},
+		{
+			name:       "sentinel create observes concurrent create",
+			createErrs: []error{nil, apierrors.NewAlreadyExists(resource, "ptah-controller")},
+			wantCreate: 4,
+		},
+		{
+			name:       "baseline update conflicts",
+			live:       true,
+			updateErrs: []error{apierrors.NewConflict(resource, "ptah-controller", errors.New("changed"))},
+			wantUpdate: 3,
+		},
+		{
+			name:       "sentinel update observes deletion",
+			live:       true,
+			updateErrs: []error{nil, apierrors.NewNotFound(resource, "ptah-controller")},
+			wantUpdate: 4,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			guard, _, _, deployments := readyRolloutGuard()
+			if test.live {
+				deployments.objects[guard.ControllerDeploymentName] = legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
+			}
+			deployments.dryCreateResults = append([]error(nil), test.createErrs...)
+			deployments.dryUpdateResults = append([]error(nil), test.updateErrs...)
+			name := RolloutGuardPolicyName(guard.ReleaseSequence)
+			if err := guard.waitEnforced(context.Background(), name, rolloutGuardProbeDenialMessage(guard.ReleaseSequence)); err != nil {
+				t.Fatal(err)
+			}
+			if deployments.dryCreates != test.wantCreate || deployments.dryUpdates != test.wantUpdate {
+				t.Fatalf("dry-run creates/updates = %d/%d, want %d/%d", deployments.dryCreates, deployments.dryUpdates, test.wantCreate, test.wantUpdate)
+			}
+		})
+	}
+}
+
+func TestRolloutGuardEnforcementProbeRetriesNotFoundBetweenReads(t *testing.T) {
+	guard, _, _, deployments := readyRolloutGuard()
+	activation := guard.releaseActivationGuard()
+	guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activationObject(activation, 1)
+	live := legacyDeployment(guard, guard.ControllerDeploymentName, "controller")
+	live.Annotations[ControllerStateVersionAnnotation] = "1"
+	live.Annotations[ReleaseSequenceAnnotation] = "1"
+	deployments.objects[live.Name] = live
+	resource := schema.GroupResource{Group: "apps", Resource: "deployments"}
+	deployments.getErrors = map[string][]error{
+		guard.ControllerDeploymentName: {apierrors.NewNotFound(resource, guard.ControllerDeploymentName)},
+	}
+
+	name := RolloutGuardPolicyName(guard.ReleaseSequence)
+	if err := guard.waitEnforced(context.Background(), name, rolloutGuardProbeDenialMessage(guard.ReleaseSequence)); err != nil {
+		t.Fatal(err)
+	}
+	if deployments.dryCreates != 0 || deployments.dryUpdates != 2 {
+		t.Fatalf("dry-run creates/updates = %d/%d, want 0/2 after the read race", deployments.dryCreates, deployments.dryUpdates)
+	}
+}
+
+func TestRolloutGuardCreateBoundaryProbeRetriesAlreadyExists(t *testing.T) {
+	guard, _, _, deployments := readyRolloutGuard()
+	resource := schema.GroupResource{Group: "apps", Resource: "deployments"}
+	deployments.dryCreateResults = []error{apierrors.NewAlreadyExists(resource, guard.rolloutCreateBoundaryProbeName())}
+
+	if err := guard.waitRolloutCreateBoundaryEnforced(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if deployments.dryCreates != 2 {
+		t.Fatalf("boundary dry-run creates = %d, want one retry and one exact denial", deployments.dryCreates)
 	}
 }
 
@@ -449,16 +648,149 @@ func TestRolloutPolicyCoversScaleAndActivationAwareRecovery(t *testing.T) {
 	}
 }
 
-func TestRolloutEnforcementProbeCannotUseBootstrapRecoveryException(t *testing.T) {
+// This is intentionally a white-box test because the append-only policy and
+// binding scopes are an internal security contract.
+func TestRolloutBindingCoversArbitraryCandidateHookDeploymentCreates(t *testing.T) {
 	t.Parallel()
 
-	guard, _, _, _ := readyRolloutGuard()
-	probe := guard.probeDeployment(false)
-	if got := probe.Annotations[ReleaseSequenceAnnotation]; got != strconv.FormatInt(int64(guard.ReleaseSequence), 10) {
-		t.Fatalf("probe release sequence = %q, want candidate sequence", got)
+	guard := runtimePodGuardFixture()
+	rolloutName := RolloutGuardPolicyName(guard.ReleaseSequence)
+	runtimeName := RuntimeGuardPolicyName(guard.ReleaseSequence)
+	rolloutBinding := guard.binding(rolloutName)
+	runtimeBinding := guard.binding(runtimeName)
+
+	rolloutDeploymentRule := rolloutBinding.Spec.MatchResources.ResourceRules[0]
+	if len(rolloutDeploymentRule.ResourceNames) != 0 {
+		t.Fatalf("rollout Deployment binding resourceNames = %v, want all names in the release namespace", rolloutDeploymentRule.ResourceNames)
 	}
-	if _, found := probe.Annotations[ControllerStateVersionAnnotation]; found {
-		t.Fatal("rollout enforcement probe unexpectedly has a valid controller-state marker")
+	if got := rolloutBinding.Spec.MatchResources.ResourceRules[1].ResourceNames; !reflect.DeepEqual(got, []string{AdmissionConfigurationName}) {
+		t.Fatalf("rollout admission binding resourceNames = %v, want the fixed singleton", got)
+	}
+	if got := runtimeBinding.Spec.MatchResources.ResourceRules[0].ResourceNames; !reflect.DeepEqual(got, []string{guard.ControllerDeploymentName, guard.CertificateDeploymentName}) {
+		t.Fatalf("runtime binding resourceNames = %v, want the two fixed Deployments", got)
+	}
+
+	policy := guard.policy(guard.ControllerStateVersion, guard.AdmissionContractVersion)
+	params := rolloutActivationCELObject(
+		guard,
+		0,
+		int64(guard.ControllerStateVersion),
+		int64(guard.AdmissionContractVersion),
+		int64(guard.ReleaseSequence),
+		guard.ManagerImage,
+	)
+	object := rolloutDeploymentCELObject(guard, 0, 0, guard.ManagerImage)
+	arbitraryName := guard.rolloutCreateBoundaryProbeName()
+	object["metadata"].(map[string]any)["name"] = arbitraryName
+	request := rolloutRequestCELObject(guard, "CREATE", "", rolloutHookUsername(guard))
+	request["name"] = arbitraryName
+	request["dryRun"] = true
+	if !evaluatePolicyMatchConditions(t, policy, object, nil, request, params) {
+		t.Fatal("arbitrary-name candidate-hook CREATE did not match the rollout policy")
+	}
+	results := evaluatePolicyValidations(t, policy, object, nil, request, params)
+	failed := make([]int, 0, 1)
+	for index, allowed := range results {
+		if !allowed {
+			failed = append(failed, index)
+		}
+	}
+	if !reflect.DeepEqual(failed, []int{2}) {
+		t.Fatalf("arbitrary-name validation failures = %v, want only the name boundary", failed)
+	}
+	if got := policy.Spec.Validations[failed[0]].Message; got != rolloutGuardNameBoundaryDenialMessage(guard.ReleaseSequence) {
+		t.Fatalf("name-boundary denial = %q, want dedicated message", got)
+	}
+
+	request["name"] = guard.ControllerDeploymentName
+	object["metadata"].(map[string]any)["name"] = guard.ControllerDeploymentName
+	if got := evaluatePolicyValidations(t, policy, object, nil, request, params); slices.Contains(got, false) {
+		t.Fatalf("fixed-name candidate dry-run CREATE was rejected: %v", got)
+	}
+
+	request["name"] = arbitraryName
+	request["userInfo"] = map[string]any{"username": "system:serviceaccount:ptah-system:unrelated"}
+	object["metadata"].(map[string]any)["name"] = arbitraryName
+	if evaluatePolicyMatchConditions(t, policy, object, nil, request, params) {
+		t.Fatal("arbitrary-name CREATE by an unrelated identity matched the rollout policy")
+	}
+}
+
+// This is intentionally a white-box test because the per-release probe token
+// isolation is an internal retained-policy compatibility contract.
+func TestGuardEnforcementProbeTokensAreUniqueAndCannotPersist(t *testing.T) {
+	t.Parallel()
+
+	current := runtimePodGuardFixture()
+	current.ReleaseSequence = 2
+	current.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(current.ReleaseNamespace, current.ReleaseName, 2, current.ManagerImage)[:12]
+	predecessorValue := *current
+	predecessor := &predecessorValue
+	predecessor.ReleaseSequence = 1
+	predecessor.HookServiceAccountName = "ptah-crd-v1-" + hookIdentityDigest(predecessor.ReleaseNamespace, predecessor.ReleaseName, 1, predecessor.ManagerImage)[:12]
+
+	type policyEntry struct {
+		name   string
+		guard  *RolloutGuard
+		policy *admissionregistrationv1.ValidatingAdmissionPolicy
+	}
+	entries := []policyEntry{
+		{name: RolloutGuardPolicyName(current.ReleaseSequence), guard: current, policy: current.policy(current.ControllerStateVersion, current.AdmissionContractVersion)},
+		{name: RuntimeGuardPolicyName(current.ReleaseSequence), guard: current, policy: current.runtimePolicy(current.ControllerStateVersion, current.ReleaseSequence, current.ManagerImage)},
+		{name: RolloutGuardPolicyName(predecessor.ReleaseSequence), guard: predecessor, policy: predecessor.policy(predecessor.ControllerStateVersion, predecessor.AdmissionContractVersion)},
+		{name: RuntimeGuardPolicyName(predecessor.ReleaseSequence), guard: predecessor, policy: predecessor.runtimePolicy(predecessor.ControllerStateVersion, predecessor.ReleaseSequence, predecessor.ManagerImage)},
+	}
+	params := rolloutActivationCELObject(
+		current,
+		0,
+		int64(current.ControllerStateVersion),
+		int64(current.AdmissionContractVersion),
+		int64(current.ReleaseSequence),
+		current.ManagerImage,
+	)
+
+	for targetIndex, target := range entries {
+		t.Run(target.name, func(t *testing.T) {
+			object := rolloutDeploymentCELObject(current, 0, 0, current.ManagerImage)
+			object["metadata"].(map[string]any)["annotations"] = map[string]any{
+				guardEnforcementProbeAnnotation: target.name,
+			}
+			request := rolloutRequestCELObject(current, "UPDATE", "", rolloutHookUsername(target.guard))
+			request["dryRun"] = true
+			for index, entry := range entries {
+				results := evaluatePolicyValidations(t, entry.policy, object, object, request, params)
+				failed := make([]int, 0, 1)
+				for validationIndex, allowed := range results {
+					if !allowed {
+						failed = append(failed, validationIndex)
+					}
+				}
+				if index == targetIndex {
+					if len(failed) != 1 {
+						t.Fatalf("target policy %s failures = %v, want one dedicated probe denial", entry.name, failed)
+					}
+					if got := entry.policy.Spec.Validations[failed[0]].Message; !strings.Contains(got, "exact enforcement probe") {
+						t.Fatalf("target policy %s denial = %q, want dedicated probe message", entry.name, got)
+					}
+					continue
+				}
+				if len(failed) != 0 {
+					t.Fatalf("non-target policy %s rejected token %s at validations %v", entry.name, target.name, failed)
+				}
+			}
+		})
+	}
+
+	object := rolloutDeploymentCELObject(current, 0, 0, current.ManagerImage)
+	object["metadata"].(map[string]any)["annotations"] = map[string]any{
+		guardEnforcementProbeAnnotation: "unknown-future-token",
+	}
+	request := rolloutRequestCELObject(current, "UPDATE", "", "helm")
+	request["dryRun"] = false
+	for _, entry := range entries {
+		if got := evaluatePolicyValidations(t, entry.policy, object, object, request, params); !slices.Contains(got, false) {
+			t.Fatalf("policy %s permitted persistence of the reserved probe annotation", entry.name)
+		}
 	}
 }
 
@@ -780,6 +1112,35 @@ func evaluatePolicyValidationPrefix(
 	return true
 }
 
+func evaluatePolicyValidations(
+	t *testing.T,
+	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
+	object, oldObject, request map[string]any,
+	params any,
+) []bool {
+	t.Helper()
+	values := map[string]any{
+		"object":    object,
+		"oldObject": oldObject,
+		"request":   request,
+		"params":    params,
+	}
+	variables := make(map[string]any, len(policy.Spec.Variables))
+	for _, variable := range policy.Spec.Variables {
+		variables[variable.Name] = evaluateRolloutCEL(t, variable.Expression, values, variables)
+	}
+	results := make([]bool, 0, len(policy.Spec.Validations))
+	for index, validation := range policy.Spec.Validations {
+		result := evaluateRolloutCEL(t, validation.Expression, values, variables)
+		allowed, ok := result.(bool)
+		if !ok {
+			t.Fatalf("validation %d result = %T(%v), want bool", index, result, result)
+		}
+		results = append(results, allowed)
+	}
+	return results
+}
+
 func evaluatePolicyMatchConditions(
 	t *testing.T,
 	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
@@ -877,7 +1238,11 @@ func rolloutCELClone(t *testing.T, source any) any {
 func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingClient, *rolloutDeploymentClient) {
 	policies := &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{}}
 	bindings := &rolloutBindingClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding{}}
-	deployments := &rolloutDeploymentClient{objects: map[string]*appsv1.Deployment{}, dryUpdateErrors: map[string]error{}}
+	deployments := &rolloutDeploymentClient{
+		objects:         map[string]*appsv1.Deployment{},
+		dryUpdateErrors: map[string]error{},
+		probeErrors:     map[string]error{},
+	}
 	managerImage := "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	hookServiceAccount := "ptah-crd-v1-" + hookIdentityDigest("ptah-system", "ptah", 1, managerImage)[:12]
 	guard := &RolloutGuard{
@@ -919,6 +1284,7 @@ func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingCl
 		RuntimeAdmissionContractB64:        testRuntimeAdmissionContractB64,
 		PollEvery:                          time.Millisecond,
 	}
+	deployments.guard = guard
 	hookName := HookIdentityGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	policies.objects[hookName] = readyPolicy(guard.hookIdentityPolicy())
 	bindings.objects[hookName] = guard.binding(hookName)
@@ -1105,15 +1471,29 @@ func (c *rolloutBindingClient) Create(_ context.Context, binding *admissionregis
 }
 
 type rolloutDeploymentClient struct {
-	objects         map[string]*appsv1.Deployment
-	dryUpdateErrors map[string]error
-	dryCreates      int
-	dryUpdates      int
-	realUpdates     int
-	realScaleOrder  []string
+	objects          map[string]*appsv1.Deployment
+	getErrors        map[string][]error
+	dryCreateResults []error
+	dryUpdateResults []error
+	dryUpdateErrors  map[string]error
+	probeErrors      map[string]error
+	guard            *RolloutGuard
+	dryCreates       int
+	dryUpdates       int
+	realUpdates      int
+	realScaleOrder   []string
+	dryCreateObjects []*appsv1.Deployment
+	dryUpdateObjects []*appsv1.Deployment
 }
 
 func (c *rolloutDeploymentClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*appsv1.Deployment, error) {
+	if results := c.getErrors[name]; len(results) != 0 {
+		err := results[0]
+		c.getErrors[name] = results[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	object, found := c.objects[name]
 	if !found {
 		return nil, apierrors.NewNotFound(schema.GroupResource{Group: appsv1.GroupName, Resource: "deployments"}, name)
@@ -1124,10 +1504,19 @@ func (c *rolloutDeploymentClient) Get(_ context.Context, name string, _ metav1.G
 func (c *rolloutDeploymentClient) Create(_ context.Context, deployment *appsv1.Deployment, options metav1.CreateOptions) (*appsv1.Deployment, error) {
 	if len(options.DryRun) != 0 {
 		c.dryCreates++
-		if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas > 0 {
-			return nil, errors.New(runtimeGuardDenialMessage(1))
+		c.dryCreateObjects = append(c.dryCreateObjects, deployment.DeepCopy())
+		if len(c.dryCreateResults) != 0 {
+			err := c.dryCreateResults[0]
+			c.dryCreateResults = c.dryCreateResults[1:]
+			if err != nil {
+				return nil, err
+			}
+			return deployment.DeepCopy(), nil
 		}
-		return nil, errors.New(rolloutGuardDenialMessage(1))
+		if err := c.enforcementProbeError(deployment); err != nil {
+			return nil, err
+		}
+		return deployment.DeepCopy(), nil
 	}
 	return nil, errors.New("unexpected real Deployment create")
 }
@@ -1135,10 +1524,19 @@ func (c *rolloutDeploymentClient) Create(_ context.Context, deployment *appsv1.D
 func (c *rolloutDeploymentClient) Update(_ context.Context, deployment *appsv1.Deployment, options metav1.UpdateOptions) (*appsv1.Deployment, error) {
 	if len(options.DryRun) != 0 {
 		c.dryUpdates++
-		if deployment.Annotations == nil || deployment.Annotations[ControllerStateVersionAnnotation] == "" {
-			return nil, errors.New(rolloutGuardDenialMessage(1))
+		c.dryUpdateObjects = append(c.dryUpdateObjects, deployment.DeepCopy())
+		if len(c.dryUpdateResults) != 0 {
+			err := c.dryUpdateResults[0]
+			c.dryUpdateResults = c.dryUpdateResults[1:]
+			if err != nil {
+				return nil, err
+			}
+			return deployment.DeepCopy(), nil
 		}
 		if err := c.dryUpdateErrors[deployment.Name]; err != nil {
+			return nil, err
+		}
+		if err := c.enforcementProbeError(deployment); err != nil {
 			return nil, err
 		}
 		return deployment.DeepCopy(), nil
@@ -1151,6 +1549,41 @@ func (c *rolloutDeploymentClient) Update(_ context.Context, deployment *appsv1.D
 	}
 	c.objects[updated.Name] = updated
 	return updated.DeepCopy(), nil
+}
+
+func (c *rolloutDeploymentClient) enforcementProbeError(deployment *appsv1.Deployment) error {
+	if c.guard == nil {
+		return nil
+	}
+	policyName := ""
+	if deployment.Annotations != nil {
+		policyName = deployment.Annotations[guardEnforcementProbeAnnotation]
+	}
+	if err := c.probeErrors[policyName]; err != nil {
+		return err
+	}
+	switch policyName {
+	case RolloutGuardPolicyName(c.guard.ReleaseSequence):
+		return exactPolicyDenialError(policyName, policyName, rolloutGuardProbeDenialMessage(c.guard.ReleaseSequence))
+	case RuntimeGuardPolicyName(c.guard.ReleaseSequence):
+		return exactPolicyDenialError(policyName, policyName, runtimeGuardProbeDenialMessage(c.guard.ReleaseSequence))
+	}
+	if deployment.Name == c.guard.rolloutCreateBoundaryProbeName() {
+		name := RolloutGuardPolicyName(c.guard.ReleaseSequence)
+		return exactPolicyDenialError(name, name, rolloutGuardNameBoundaryDenialMessage(c.guard.ReleaseSequence))
+	}
+	return nil
+}
+
+func exactPolicyDenialError(policyName, bindingName, denialMessage string) error {
+	message := validatingAdmissionPolicyDenialCauseMessage(policyName, bindingName, denialMessage)
+	return &apierrors.StatusError{ErrStatus: metav1.Status{
+		Status:  metav1.StatusFailure,
+		Message: message,
+		Reason:  metav1.StatusReasonInvalid,
+		Code:    422,
+		Details: &metav1.StatusDetails{Causes: []metav1.StatusCause{{Message: message}}},
+	}}
 }
 
 type rolloutPodClient struct {
