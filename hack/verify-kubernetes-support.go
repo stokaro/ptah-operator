@@ -1903,7 +1903,15 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`.version == $expected_revision and`,
 					`.info.status == "failed" and`,
 					`any((.hooks // [])[];`,
-					`.kind == "Job" and (.weight | tonumber) == 0 and`,
+					// (.weight // 0), because Helm omits helm.sh/hook-weight for a
+					// hook that sets none and an unset weight is weight 0. The
+					// bare (.weight | tonumber) this used to pin throws on null
+					// and aborts the any() around it, so the lifecycle proof
+					// failed on every supported minor as soon as a real cluster
+					// reported an unweighted hook. failed-hook-evidence.jq had
+					// always handled it; this contract pinned the copy that did
+					// not.
+					`.kind == "Job" and ((.weight // 0) | tonumber) == 0 and`,
 					`((.events // []) | index("pre-upgrade") != null) and`,
 					`.last_run.phase == "Failed" and`,
 				}),

@@ -865,7 +865,7 @@ prove_late_activation_failure_recovery() {
       .version == $expected_revision and
       .info.status == "failed" and
       any((.hooks // [])[];
-        .kind == "Job" and (.weight | tonumber) == 0 and
+        .kind == "Job" and ((.weight // 0) | tonumber) == 0 and
         ((.events // []) | index("pre-upgrade") != null) and
         .last_run.phase == "Failed" and
         ((.last_run.started_at // "") | length > 0) and
