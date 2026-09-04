@@ -15,7 +15,9 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -135,6 +137,291 @@ func TestLateActivationBlockerMatchesOnlySequenceChanges(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLateActivationRevisionClassification(t *testing.T) {
+	t.Parallel()
+
+	jqPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq is required to exercise the embedded late-activation revision classifier")
+	}
+	filter := lateActivationRevisionFilter(t)
+	const (
+		expectedRevision      = 4
+		expectedPreflightName = "ptah-operator-crd-manager-preflight"
+		expectedReconcileName = "ptah-operator-crd-manager"
+	)
+
+	hook := func(name string, weight any, phase string) map[string]any {
+		return map[string]any{
+			"name":   name,
+			"kind":   "Job",
+			"weight": weight,
+			"events": []any{"pre-upgrade"},
+			"last_run": map[string]any{
+				"phase":        phase,
+				"started_at":   "2026-09-04T12:00:00Z",
+				"completed_at": "2026-09-04T12:00:01Z",
+			},
+		}
+	}
+	fixture := func() map[string]any {
+		return map[string]any{
+			"version": expectedRevision,
+			"info":    map[string]any{"status": "failed"},
+			"hooks": []any{
+				hook("ptah-operator-identity", -105, "Succeeded"),
+				hook(expectedPreflightName, -60, "Succeeded"),
+				hook(expectedReconcileName, 0, "Failed"),
+			},
+		}
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func(map[string]any)
+		want   bool
+	}{
+		{name: "exact boundary", mutate: func(map[string]any) {}, want: true},
+		{
+			name: "preflight failed",
+			mutate: func(status map[string]any) {
+				status["hooks"].([]any)[1].(map[string]any)["last_run"].(map[string]any)["phase"] = "Failed"
+			},
+		},
+		{
+			name: "unknown failed hook",
+			mutate: func(status map[string]any) {
+				status["hooks"].([]any)[2].(map[string]any)["last_run"].(map[string]any)["phase"] = "Pending"
+				status["hooks"] = append(status["hooks"].([]any), hook("unknown-hook", 0, "Failed"))
+			},
+		},
+		{
+			name: "multiple failed hooks",
+			mutate: func(status map[string]any) {
+				status["hooks"] = append(status["hooks"].([]any), hook("other-hook", 10, "Failed"))
+			},
+		},
+		{
+			name: "wrong reconcile identity",
+			mutate: func(status map[string]any) {
+				status["hooks"].([]any)[2].(map[string]any)["name"] = "other-reconcile"
+			},
+		},
+		{
+			name: "string reconcile weight",
+			mutate: func(status map[string]any) {
+				status["hooks"].([]any)[2].(map[string]any)["weight"] = "0"
+			},
+		},
+		{
+			name: "omitted zero reconcile weight",
+			mutate: func(status map[string]any) {
+				delete(status["hooks"].([]any)[2].(map[string]any), "weight")
+			},
+			want: true,
+		},
+		{
+			name: "duplicate preflight",
+			mutate: func(status map[string]any) {
+				status["hooks"] = append(status["hooks"].([]any), hook(expectedPreflightName, -60, "Succeeded"))
+			},
+		},
+		{
+			name: "preflight has no completion time",
+			mutate: func(status map[string]any) {
+				delete(status["hooks"].([]any)[1].(map[string]any)["last_run"].(map[string]any), "completed_at")
+			},
+		},
+		{
+			name: "wrong revision",
+			mutate: func(status map[string]any) {
+				status["version"] = expectedRevision + 1
+			},
+		},
+		{
+			name: "release is not failed",
+			mutate: func(status map[string]any) {
+				status["info"].(map[string]any)["status"] = "deployed"
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			status := fixture()
+			test.mutate(status)
+			encoded, marshalErr := json.Marshal(status)
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			command := exec.Command(
+				jqPath,
+				"-e",
+				"--argjson", "expected_revision", "4",
+				"--arg", "expected_preflight_name", expectedPreflightName,
+				"--arg", "expected_reconcile_name", expectedReconcileName,
+				filter,
+			)
+			command.Stdin = strings.NewReader(string(encoded))
+			output, runErr := command.CombinedOutput()
+			if got := runErr == nil; got != test.want {
+				t.Fatalf("late activation revision classification = %t, want %t; jq output = %q", got, test.want, output)
+			}
+		})
+	}
+}
+
+func lateActivationRevisionFilter(t *testing.T) string {
+	t.Helper()
+	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
+	commandMarker := `if jq -e --argjson expected_revision "$late_revision" \`
+	commandOffset := strings.Index(source, commandMarker)
+	if commandOffset < 0 {
+		t.Fatal("late activation revision classifier command is missing")
+	}
+	filterMarker := `--arg expected_reconcile_name "$EXPECTED_RECONCILE_HOOK_NAME" '` + "\n"
+	filterOffset := strings.Index(source[commandOffset:], filterMarker)
+	if filterOffset < 0 {
+		t.Fatal("late activation revision classifier filter start is missing")
+	}
+	filterOffset += commandOffset + len(filterMarker)
+	endMarker := "\n        ' \"$late_status_file\" >/dev/null 2>&1; then"
+	endOffset := strings.Index(source[filterOffset:], endMarker)
+	if endOffset < 0 {
+		t.Fatal("late activation revision classifier filter end is missing")
+	}
+	return source[filterOffset : filterOffset+endOffset]
+}
+
+func TestLateActivationFailureSummaryIsBoundedAndSynthesized(t *testing.T) {
+	t.Parallel()
+
+	jqPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq is required to exercise the embedded late-activation summary")
+	}
+	filter := lateActivationSummaryFilter(t)
+	const rawEvidenceMarker = "RAW_PRIVATE_EVIDENCE_MUST_NOT_ESCAPE"
+	status := map[string]any{
+		"version": 4,
+		"info": map[string]any{
+			"status":      "failed",
+			"description": rawEvidenceMarker,
+		},
+		"hooks": []any{
+			map[string]any{
+				"name":   "ptah-operator-crd-manager-preflight",
+				"kind":   "Job",
+				"weight": -60,
+				"last_run": map[string]any{
+					"phase": "Failed",
+				},
+			},
+			map[string]any{
+				"name": rawEvidenceMarker,
+				"kind": "Job",
+				"last_run": map[string]any{
+					"phase": "Failed",
+				},
+			},
+		},
+	}
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(
+		jqPath,
+		"-c",
+		"--argjson", "expected_revision", "4",
+		"--arg", "expected_preflight_name", "ptah-operator-crd-manager-preflight",
+		"--arg", "expected_reconcile_name", "ptah-operator-crd-manager",
+		"--arg", "preflight_capture", "captured",
+		"--arg", "reconcile_capture", "canceled",
+		"--arg", "preflight_exit", "0",
+		"--arg", "reconcile_exit", "1",
+		filter,
+	)
+	command.Stdin = strings.NewReader(string(encoded))
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("execute late activation summary: %v", err)
+	}
+	if len(output) > 1024 {
+		t.Fatalf("late activation summary length = %d, want at most 1024", len(output))
+	}
+	if strings.Count(string(output), "\n") != 1 {
+		t.Fatalf("late activation summary is not exactly one line: %q", output)
+	}
+	if strings.Contains(string(output), rawEvidenceMarker) {
+		t.Fatalf("late activation summary leaked raw revision evidence: %q", output)
+	}
+	var summary map[string]any
+	if err := json.Unmarshal(output, &summary); err != nil {
+		t.Fatalf("decode late activation summary: %v", err)
+	}
+	if got := summary["reconcileTarget"]; got != "not-reached" {
+		t.Fatalf("reconcileTarget = %v, want not-reached", got)
+	}
+	status["hooks"] = append(status["hooks"].([]any), map[string]any{
+		"name":   "ptah-operator-crd-manager",
+		"kind":   "Job",
+		"weight": 0,
+		"last_run": map[string]any{
+			"phase":      "Failed",
+			"started_at": "2026-09-04T12:00:02Z",
+		},
+	})
+	encoded, err = json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command = exec.Command(
+		jqPath,
+		"-c",
+		"--argjson", "expected_revision", "4",
+		"--arg", "expected_preflight_name", "ptah-operator-crd-manager-preflight",
+		"--arg", "expected_reconcile_name", "ptah-operator-crd-manager",
+		"--arg", "preflight_capture", "captured",
+		"--arg", "reconcile_capture", "canceled",
+		"--arg", "preflight_exit", "0",
+		"--arg", "reconcile_exit", "1",
+		filter,
+	)
+	command.Stdin = strings.NewReader(string(encoded))
+	output, err = command.Output()
+	if err != nil {
+		t.Fatalf("execute late activation summary with reached reconcile: %v", err)
+	}
+	if err := json.Unmarshal(output, &summary); err != nil {
+		t.Fatalf("decode late activation summary with reached reconcile: %v", err)
+	}
+	if got := summary["reconcileTarget"]; got != "reached" {
+		t.Fatalf("reconcileTarget = %v, want reached despite canceled capture", got)
+	}
+}
+
+func lateActivationSummaryFilter(t *testing.T) string {
+	t.Helper()
+	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
+	commandMarker := `if activation_summary=$(jq -c \`
+	commandOffset := strings.Index(source, commandMarker)
+	if commandOffset < 0 {
+		t.Fatal("late activation summary command is missing")
+	}
+	filterMarker := `--arg reconcile_exit "$reconcile_capture_exit" '` + "\n"
+	filterOffset := strings.Index(source[commandOffset:], filterMarker)
+	if filterOffset < 0 {
+		t.Fatal("late activation summary filter start is missing")
+	}
+	filterOffset += commandOffset + len(filterMarker)
+	endMarker := "\n        ' \"$status_file\" 2>/dev/null); then"
+	endOffset := strings.Index(source[filterOffset:], endMarker)
+	if endOffset < 0 {
+		t.Fatal("late activation summary filter end is missing")
+	}
+	return source[filterOffset : filterOffset+endOffset]
 }
 
 func TestVerifyMakeE2ETargetRejectsMutations(t *testing.T) {
@@ -1113,10 +1400,12 @@ func TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations(t *testing.T) {
 			wantError:   "current and next failed revision binding",
 		},
 		{
-			name:        "hook name is not derived from rendered identity",
-			old:         `[ -n "$EXPECTED_PREFLIGHT_HOOK_NAME" ] || fail "rendered preflight hook name is unavailable"`,
-			replacement: `EXPECTED_PREFLIGHT_HOOK_NAME=ptah-crd-preflight`,
-			wantError:   "rendered hook identity binding",
+			name: "hook name is not derived from rendered identity",
+			old: "[ -n \"$EXPECTED_IDENTITY_HOOK_NAME\" ] || fail \"rendered identity hook name is unavailable\"\n" +
+				"\t[ -n \"$EXPECTED_PREFLIGHT_HOOK_NAME\" ] || fail \"rendered preflight hook name is unavailable\"",
+			replacement: "[ -n \"$EXPECTED_IDENTITY_HOOK_NAME\" ] || fail \"rendered identity hook name is unavailable\"\n" +
+				"\tEXPECTED_PREFLIGHT_HOOK_NAME=ptah-crd-preflight",
+			wantError: "rendered hook identity binding",
 		},
 		{
 			name:        "failed revision is not selected explicitly",
@@ -1621,183 +1910,247 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "late activation exact update blocker",
 		},
 		{
-			name:        "CRD late activation hook capture is not armed",
+			name:        "CRD late activation dual captures are not armed",
 			child:       "crd-upgrade",
-			old:         "\tarm_late_activation_hook_log_capture\n",
-			replacement: "\t: # late activation hook capture omitted\n",
-			wantError:   "late activation hook capture arming",
+			old:         "\tarm_late_activation_hook_log_captures\n",
+			replacement: "\t: # late activation hook captures omitted\n",
+			wantError:   "late activation dual capture arming",
 		},
 		{
-			name:        "CRD late activation hook capture is not finished",
+			name:        "CRD late activation dual captures are not finished",
 			child:       "crd-upgrade",
-			old:         "\tif finish_late_activation_hook_log_capture; then\n\t\tlate_activation_capture_succeeded=true\n\tfi\n",
-			replacement: "\tif true; then\n\t\tlate_activation_capture_succeeded=true\n\tfi\n",
-			wantError:   "late activation capture completion and evidence",
+			old:         "\tif finish_late_activation_hook_log_captures; then\n\t\tlate_activation_captures_succeeded=true\n\tfi\n",
+			replacement: "\tif true; then\n\t\tlate_activation_captures_succeeded=true\n\tfi\n",
+			wantError:   "late activation dual capture completion",
 		},
 		{
 			name:        "CRD late activation helper build target is replaced",
 			child:       "crd-upgrade",
 			old:         `-o "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ./hack/hooklogcapture`,
 			replacement: `-o "$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" ./hack`,
-			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+			wantError:   "exact dual resourceVersion-bound late activation hook capture arm contract",
 		},
 		{
-			name:        "CRD late activation helper Job target is hard-coded",
+			name:        "CRD late activation preflight helper Job target is hard-coded",
+			child:       "crd-upgrade",
+			old:         `--job-name "$EXPECTED_PREFLIGHT_HOOK_NAME" \`,
+			replacement: `--job-name ptah-operator-crd-manager-preflight \`,
+			wantError:   "exact dual resourceVersion-bound late activation hook capture arm contract",
+		},
+		{
+			name:        "CRD late activation reconcile helper Job target is hard-coded",
 			child:       "crd-upgrade",
 			old:         `--job-name "$EXPECTED_RECONCILE_HOOK_NAME" \`,
 			replacement: `--job-name ptah-operator-crd-manager \`,
-			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+			wantError:   "exact dual resourceVersion-bound late activation hook capture arm contract",
 		},
 		{
-			name:        "CRD late activation helper is detached from the candidate render",
+			name:        "CRD late activation preflight mode is omitted",
 			child:       "crd-upgrade",
-			old:         `--render-file "$EXPECTED_CRD_UPGRADE_RENDER_FILE" \`,
-			replacement: `--render-file /tmp/unbound-render.yaml \`,
-			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+			old:         `--hook-mode preflight \`,
+			replacement: `--hook-mode reconcile \`,
+			wantError:   "exact dual resourceVersion-bound late activation hook capture arm contract",
 		},
 		{
-			name:        "CRD late activation helper is not backgrounded",
+			name:        "CRD late activation reconcile mode is omitted",
 			child:       "crd-upgrade",
-			old:         `--timeout 3m >/dev/null 2>&1 &`,
-			replacement: `--timeout 3m >/dev/null 2>&1`,
-			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+			old:         `--hook-mode reconcile \`,
+			replacement: `--hook-mode preflight \`,
+			wantError:   "exact dual resourceVersion-bound late activation hook capture arm contract",
 		},
 		{
-			name:        "CRD late activation helper PID is not retained",
+			name:        "CRD late activation preflight helper PID is not retained",
 			child:       "crd-upgrade",
-			old:         `LATE_ACTIVATION_HOOK_CAPTURE_PID=$!`,
-			replacement: `LATE_ACTIVATION_HOOK_CAPTURE_PID=`,
-			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+			old:         `LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=$!`,
+			replacement: `LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=`,
+			wantError:   "exact dual resourceVersion-bound late activation hook capture arm contract",
 		},
 		{
-			name:        "CRD late activation helper readiness marker is weakened",
+			name:        "CRD late activation reconcile helper PID is not retained",
 			child:       "crd-upgrade",
-			old:         `[ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE" 2>/dev/null)" != ready ] ||`,
-			replacement: `[ ! -s "$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE" ] ||`,
-			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+			old:         `LATE_ACTIVATION_RECONCILE_CAPTURE_PID=$!`,
+			replacement: `LATE_ACTIVATION_RECONCILE_CAPTURE_PID=`,
+			wantError:   "exact dual resourceVersion-bound late activation hook capture arm contract",
+		},
+		{
+			name:        "CRD late activation preflight helper is not cleaned up",
+			child:       "crd-upgrade",
+			old:         `wait "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" >/dev/null 2>&1 || true`,
+			replacement: `true # preflight capture is not joined during cleanup`,
+			wantError:   "late activation preflight capture cleanup",
+		},
+		{
+			name:        "CRD late activation reconcile helper is not cleaned up",
+			child:       "crd-upgrade",
+			old:         `wait "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" >/dev/null 2>&1 || true`,
+			replacement: `true # reconcile capture is not joined during cleanup`,
+			wantError:   "late activation reconcile capture cleanup",
 		},
 		{
 			name:        "CRD late activation helper readiness accepts a non-watching process",
 			child:       "crd-upgrade",
-			old:         `[ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" 2>/dev/null)" != watching ] ||`,
-			replacement: `[ ! -s "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" ] ||`,
-			wantError:   "exact resourceVersion-bound late activation hook capture arm contract",
+			old:         `[ "$(sed -n '1p' "$capture_status_file" 2>/dev/null)" != watching ] ||`,
+			replacement: `[ ! -s "$capture_status_file" ] ||`,
+			wantError:   "late activation readiness requires watching state",
 		},
 		{
 			name:        "CRD late activation helper completion does not join the process",
 			child:       "crd-upgrade",
-			old:         `wait "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 || late_activation_capture_status=$?`,
+			old:         `wait "$capture_pid" >/dev/null 2>&1 || capture_exit_status=$?`,
 			replacement: `true # capture helper left unjoined`,
 			wantError:   "exact bounded late activation hook capture completion contract",
 		},
 		{
-			name:  "CRD late activation blocker is deleted before capture completion",
+			name:  "CRD late activation blocker is deleted before dual capture completion",
 			child: "crd-upgrade",
-			old: "\tif finish_late_activation_hook_log_capture; then\n" +
-				"\t\tlate_activation_capture_succeeded=true\n" +
-				"\tfi\n" +
-				"\tdelete_late_activation_blocker\n",
-			replacement: "\tdelete_late_activation_blocker\n" +
-				"\tif finish_late_activation_hook_log_capture; then\n" +
-				"\t\tlate_activation_capture_succeeded=true\n" +
+			old: "\tlate_activation_captures_succeeded=false\n" +
+				"\tif finish_late_activation_hook_log_captures; then\n" +
+				"\t\tlate_activation_captures_succeeded=true\n" +
 				"\tfi\n",
-			wantError: "late activation capture completion and evidence",
+			replacement: "\tdelete_late_activation_blocker\n" +
+				"\tlate_activation_captures_succeeded=false\n" +
+				"\tif finish_late_activation_hook_log_captures; then\n" +
+				"\t\tlate_activation_captures_succeeded=true\n" +
+				"\tfi\n",
+			wantError: "late activation dual capture completion",
 		},
 		{
 			name:  "CRD late activation hook diagnostic drops the credential scan",
 			child: "crd-upgrade",
-			old: "if grep -F -f \"$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE\" \"$LATE_ACTIVATION_HOOK_LOG_FILE\" >/dev/null; then\n" +
-				"\t\tfail \"late activation hook diagnostic contained a protected task credential\"\n" +
+			old: "if grep -F -f \"$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE\" \"$diagnostic_file\" >/dev/null; then\n" +
+				"\t\treturn 1\n" +
 				"\telse\n" +
 				"\t\tdiagnostic_scan_status=$?\n" +
-				"\t\t[ \"$diagnostic_scan_status\" -eq 1 ] || fail \"late activation hook credential scan failed closed\"\n" +
+				"\t\t[ \"$diagnostic_scan_status\" -eq 1 ] || return 1\n" +
 				"\tfi",
 			replacement: `: # protected credential scan removed`,
 			wantError:   "late activation hook diagnostic credential scan",
 		},
 		{
-			name:        "CRD late activation hook diagnostic drops credential-shape refusal",
+			name:        "CRD late activation hook diagnostic removes its size bound",
 			child:       "crd-upgrade",
-			old:         `fail "late activation hook diagnostic contained a credential-shaped value"`,
-			replacement: `true # credential-shaped values accepted`,
-			wantError:   "late activation hook diagnostic credential-shape scan",
+			old:         `[ "$diagnostic_size" -gt 0 ] && [ "$diagnostic_size" -le 8192 ] &&`,
+			replacement: `[ "$diagnostic_size" -gt 0 ] &&`,
+			wantError:   "late activation hook diagnostic bounded format",
 		},
 		{
-			name:        "CRD late activation hook diagnostic accepts an unbound capture",
+			name:        "CRD late activation reconcile diagnostic accepts an unbound capture",
 			child:       "crd-upgrade",
-			old:         `fail "late activation hook diagnostic was not captured"`,
+			old:         `fail "late activation reconcile log was not captured"`,
 			replacement: `true # missing capture accepted`,
-			wantError:   "late activation hook captured status",
+			wantError:   "exact reconcile blocker diagnostic emission contract",
 		},
 		{
-			name:        "CRD late activation hook diagnostic omits the activation phase",
+			name:        "CRD late activation reconcile diagnostic omits the activation phase",
 			child:       "crd-upgrade",
 			old:         `'wait for release activation guard before persistence' \`,
 			replacement: `'unrelated failure' \`,
-			wantError:   "late activation hook exact blocker evidence",
+			wantError:   "late activation reconcile exact blocker evidence",
 		},
 		{
-			name:        "CRD late activation hook diagnostic omits the blocker webhook",
+			name:        "CRD late activation reconcile diagnostic omits the blocker webhook",
 			child:       "crd-upgrade",
 			old:         `'late-activation-blocker.operator.ptah.dev' \`,
 			replacement: `'unrelated-webhook.operator.ptah.dev' \`,
-			wantError:   "late activation hook exact blocker evidence",
+			wantError:   "late activation reconcile exact blocker evidence",
 		},
 		{
-			name:        "CRD late activation hook diagnostic omits the missing service",
+			name:        "CRD late activation reconcile diagnostic omits the missing service",
 			child:       "crd-upgrade",
 			old:         `'service "ptah-operator-e2e-missing-blocker" not found'; do`,
 			replacement: `'unrelated service failure'; do`,
-			wantError:   "late activation hook exact blocker evidence",
+			wantError:   "late activation reconcile exact blocker evidence",
 		},
 		{
-			name:        "CRD late activation hook diagnostic emits before safety checks",
+			name:        "CRD late activation preflight diagnostic emits before safety checks",
 			child:       "crd-upgrade",
-			old:         "emit_late_activation_hook_diagnostic() {\n",
-			replacement: "emit_late_activation_hook_diagnostic() {\n\tcat \"$LATE_ACTIVATION_HOOK_LOG_FILE\" >&2\n",
-			wantError:   "late activation hook safe diagnostic emission",
+			old:         "emit_late_activation_preflight_diagnostic_if_available() {\n",
+			replacement: "emit_late_activation_preflight_diagnostic_if_available() {\n\tcat \"$LATE_ACTIVATION_PREFLIGHT_LOG_FILE\" >&2\n",
+			wantError:   "exact optional preflight diagnostic emission contract",
 		},
 		{
-			name:        "CRD late activation hook diagnostic uses an alternate early emitter",
+			name:        "CRD late activation reconcile diagnostic emits before safety checks",
 			child:       "crd-upgrade",
-			old:         "emit_late_activation_hook_diagnostic() {\n",
-			replacement: "emit_late_activation_hook_diagnostic() {\n\tcommand cat \"$LATE_ACTIVATION_HOOK_LOG_FILE\" >&2\n",
-			wantError:   "exact credential-safe late activation hook diagnostic contract",
+			old:         "emit_late_activation_reconcile_diagnostic() {\n",
+			replacement: "emit_late_activation_reconcile_diagnostic() {\n\tcat \"$LATE_ACTIVATION_RECONCILE_LOG_FILE\" >&2\n",
+			wantError:   "late activation reconcile safe diagnostic emission",
 		},
 		{
-			name:        "CRD late activation failed hook is not name-bound",
+			name:        "CRD late activation preflight is not name-bound",
 			child:       "crd-upgrade",
-			old:         `.name == $expected_reconcile_name and`,
-			replacement: `.name != "" and`,
+			old:         ".name == $expected_preflight_name and\n            .kind == \"Job\"",
+			replacement: ".name != \"\" and\n            .kind == \"Job\"",
 			wantError:   "late activation failed revision evidence",
+		},
+		{
+			name:        "CRD late activation reconcile is not name-bound",
+			child:       "crd-upgrade",
+			old:         ".name == $expected_reconcile_name and\n            .kind == \"Job\"",
+			replacement: ".name != \"\" and\n            .kind == \"Job\"",
+			wantError:   "late activation reconcile identity evidence",
 		},
 		{
 			name:        "CRD late activation accepts multiple failed hooks",
 			child:       "crd-upgrade",
 			old:         `($failed | length == 1) and`,
 			replacement: `($failed | length >= 1) and`,
-			wantError:   "late activation failed revision evidence",
+			wantError:   "late activation exact failed reconcile evidence",
 		},
 		{
-			name:        "CRD late activation accepts string hook weights",
+			name:        "CRD late activation accepts a failed preflight",
 			child:       "crd-upgrade",
-			old:         `(.weight == null or ((.weight | type) == "number" and .weight == 0)) and`,
-			replacement: `((try (.weight | tonumber) catch null) == 0) and`,
-			wantError:   "late activation failed revision evidence",
+			old:         `.last_run.phase == "Succeeded" and`,
+			replacement: `.last_run.phase != "" and`,
+			wantError:   "late activation exact preflight success evidence",
+		},
+		{
+			name:  "CRD late activation coerces a reconcile hook weight",
+			child: "crd-upgrade",
+			old: "($reconcile[0] |\n" +
+				`            (.weight == null or ((.weight | type) == "number" and .weight == 0)) and`,
+			replacement: "($reconcile[0] |\n" +
+				`            (.weight == null or (.weight | tonumber) == 0) and`,
+			wantError: "late activation exact failed reconcile evidence",
 		},
 		{
 			name:        "CRD late activation failed status jq is not fail-closed",
 			child:       "crd-upgrade",
-			old:         `jq -e --argjson expected_revision "$late_revision" \`,
-			replacement: `jq --argjson expected_revision "$late_revision" \`,
-			wantError:   "late activation failed status fail-closed jq",
+			old:         `if jq -e --argjson expected_revision "$late_revision" \`,
+			replacement: `if jq --argjson expected_revision "$late_revision" \`,
+			wantError:   "late activation failed status fail-closed exact hook identity jq",
 		},
 		{
-			name:        "CRD late activation exact diagnostic is skipped",
+			name:        "CRD late activation exact reconcile diagnostic is skipped",
 			child:       "crd-upgrade",
-			old:         "\temit_late_activation_hook_diagnostic\n",
+			old:         "\temit_late_activation_reconcile_diagnostic\n",
 			replacement: "\t: # exact blocker diagnostic skipped\n",
-			wantError:   "late activation capture completion and evidence",
+			wantError:   "late activation capture evidence only after revision classification",
+		},
+		{
+			name:        "CRD late activation leaks raw Helm stderr",
+			child:       "crd-upgrade",
+			old:         "\tlate_activation_expected_failure=false\n",
+			replacement: "\tcat \"$WORK_DIR/late-activation-failure.err\" >&2\n\tlate_activation_expected_failure=false\n",
+			wantError:   "late activation raw Helm evidence must remain write-only",
+		},
+		{
+			name:        "CRD late activation leaks raw helper errors",
+			child:       "crd-upgrade",
+			old:         "\tlate_activation_expected_failure=false\n",
+			replacement: "\tcat \"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE\" >&2\n\tlate_activation_expected_failure=false\n",
+			wantError:   "late activation helper errors must not be emitted as evidence",
+		},
+		{
+			name:  "CRD late activation requires captures before revision query",
+			child: "crd-upgrade",
+			old: "\tif ! helm_e2e status \"$E2E_HELM_RELEASE\" --namespace \"$E2E_OPERATOR_NAMESPACE\" \\\n" +
+				"\t\t--revision \"$late_revision\" -o json >\"$late_status_file\" 2>/dev/null; then\n",
+			replacement: "\tif [ \"$late_activation_captures_succeeded\" != true ]; then\n" +
+				"\t\tfail \"capture failed too early\"\n" +
+				"\tfi\n" +
+				"\tif ! helm_e2e status \"$E2E_HELM_RELEASE\" --namespace \"$E2E_OPERATOR_NAMESPACE\" \\\n" +
+				"\t\t--revision \"$late_revision\" -o json >\"$late_status_file\" 2>/dev/null; then\n",
+			wantError: "revision classification must precede capture-success enforcement",
 		},
 		{
 			name:        "CRD late failure skips the activation marker check",

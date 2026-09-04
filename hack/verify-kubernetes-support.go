@@ -1893,7 +1893,20 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("late activation helper destination", `LATE_ACTIVATION_HOOK_CAPTURE_BINARY=$WORK_DIR/hooklogcapture`),
 				exactSourceLine("cleanup implementation", `cleanup() {`),
 				exactSourceLine("cleanup status capture", `status=$?`),
-				exactSourceLine("late activation hook capture cleanup", `if [ -n "$LATE_ACTIVATION_HOOK_CAPTURE_PID" ]; then`),
+				exactSourceLineSequence("late activation preflight capture cleanup", []string{
+					`if [ -n "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" ]; then`,
+					`kill "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" >/dev/null 2>&1 || true`,
+					`wait "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" >/dev/null 2>&1 || true`,
+					`LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=`,
+					`fi`,
+				}),
+				exactSourceLineSequence("late activation reconcile capture cleanup", []string{
+					`if [ -n "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" ]; then`,
+					`kill "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" >/dev/null 2>&1 || true`,
+					`wait "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" >/dev/null 2>&1 || true`,
+					`LATE_ACTIVATION_RECONCILE_CAPTURE_PID=`,
+					`fi`,
+				}),
 				exactSourceLine("late activation blocker cleanup", `if [ -n "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ]; then`),
 				exactSourceLine("cleanup status preservation", `exit "$status"`),
 				exactSourceLine("live server version verification", `verify_supported_server_version`),
@@ -1909,62 +1922,120 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`- name: active-release-sequence-change`,
 					`expression: 'oldObject != null && has(oldObject.data) && has(object.data) && "active-release-sequence" in oldObject.data && "active-release-sequence" in object.data && object.data["active-release-sequence"] != oldObject.data["active-release-sequence"]'`,
 				}),
-				exactSourceLine("late activation hook capture arming implementation", `arm_late_activation_hook_log_capture() {`),
-				exactSourceLine("late activation hook capture completion implementation", `finish_late_activation_hook_log_capture() {`),
-				exactSourceLine("late activation hook diagnostic implementation", `emit_late_activation_hook_diagnostic() {`),
-				exactSourceLineSequence("late activation hook captured status", []string{
-					`[ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE")" = captured ] ||`,
-					`fail "late activation hook diagnostic was not captured"`,
-				}),
+				exactSourceLine("late activation readiness implementation", `wait_for_late_activation_hook_log_capture_ready() {`),
+				exactSourceLine("late activation readiness requires watching state", `[ "$(sed -n '1p' "$capture_status_file" 2>/dev/null)" != watching ] ||`),
+				exactSourceLine("late activation dual capture arming implementation", `arm_late_activation_hook_log_captures() {`),
+				exactSourceLine("late activation single capture completion implementation", `finish_late_activation_hook_log_capture() {`),
+				exactSourceLine("late activation dual capture completion implementation", `finish_late_activation_hook_log_captures() {`),
+				exactSourceLine("late activation diagnostic scanner implementation", `hook_diagnostic_is_safe() {`),
 				exactSourceLineSequence("late activation hook diagnostic credential scan", []string{
-					`if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$LATE_ACTIVATION_HOOK_LOG_FILE" >/dev/null; then`,
-					`fail "late activation hook diagnostic contained a protected task credential"`,
+					`if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$diagnostic_file" >/dev/null; then`,
+					`return 1`,
 					`else`,
 					`diagnostic_scan_status=$?`,
-					`[ "$diagnostic_scan_status" -eq 1 ] || fail "late activation hook credential scan failed closed"`,
+					`[ "$diagnostic_scan_status" -eq 1 ] || return 1`,
 					`fi`,
 				}),
-				exactSourceLine("late activation hook diagnostic credential-shape scan", `fail "late activation hook diagnostic contained a credential-shaped value"`),
-				exactSourceLineSequence("late activation hook exact blocker evidence", []string{
+				exactSourceLine("late activation hook diagnostic bounded format", `[ "$diagnostic_size" -gt 0 ] && [ "$diagnostic_size" -le 8192 ] &&`),
+				exactSourceLine("late activation preflight diagnostic implementation", `emit_late_activation_preflight_diagnostic_if_available() {`),
+				exactSourceLine("late activation preflight success contract", `grep -Fx 'candidate release preflight verified without persistent mutation' \`),
+				exactSourceLine("late activation reconcile diagnostic implementation", `emit_late_activation_reconcile_diagnostic() {`),
+				exactSourceLineSequence("late activation reconcile exact blocker evidence", []string{
 					`'wait for release activation guard before persistence' \`,
 					`'late-activation-blocker.operator.ptah.dev' \`,
 					`'service "ptah-operator-e2e-missing-blocker" not found'; do`,
 				}),
-				exactSourceLine("late activation hook safe diagnostic emission", `cat "$LATE_ACTIVATION_HOOK_LOG_FILE" >&2`),
+				exactSourceLine("late activation reconcile safe diagnostic emission", `cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2`),
+				exactSourceLine("late activation bounded summary implementation", `emit_late_activation_failure_summary() {`),
+				exactSourceLineSequence("canceled reconcile is diagnostic-only target-not-reached evidence", []string{
+					`expectedReconcileFailed: any($reconcile[]; (.weight == null or ((.weight | type) == "number" and .weight == 0)) and .last_run.phase == "Failed"),`,
+					`preflightCapture: $preflight_capture,`,
+					`preflightCaptureExit: $preflight_exit,`,
+					`reconcileCapture: $reconcile_capture,`,
+					`reconcileCaptureExit: $reconcile_exit,`,
+					`reconcileTarget: (`,
+					`if any($reconcile[]; ((.last_run.started_at // "") | type) == "string" and ((.last_run.started_at // "") | length > 0)) then "reached"`,
+					`elif $reconcile_capture == "canceled" then "not-reached"`,
+					`else "indeterminate"`,
+					`end`,
+					`)`,
+				}),
 				exactSourceLine("predecessor top-level Deployment recovery", `fail "candidate rollout guards blocked exact predecessor Deployment recovery for $deployment_name"`),
 				exactSourceLine("late activation failure implementation", `prove_late_activation_failure_recovery() {`),
-				exactSourceLine("late activation hook capture arming", `arm_late_activation_hook_log_capture`),
+				exactSourceLine("late activation dual capture arming", `arm_late_activation_hook_log_captures`),
 				exactSourceLineSequence("late activation Helm failure execution", []string{
 					`if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \`,
 					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \`,
 					`--wait --timeout 2m >"$WORK_DIR/late-activation-failure.out" \`,
 					`2>"$WORK_DIR/late-activation-failure.err"; then`,
 				}),
-				exactSourceLineSequence("late activation capture completion and evidence", []string{
+				exactSourceLineSequence("late activation dual capture completion", []string{
 					`fi`,
-					`late_activation_capture_succeeded=false`,
-					`if finish_late_activation_hook_log_capture; then`,
-					`late_activation_capture_succeeded=true`,
+					`late_activation_captures_succeeded=false`,
+					`if finish_late_activation_hook_log_captures; then`,
+					`late_activation_captures_succeeded=true`,
 					`fi`,
-					`delete_late_activation_blocker`,
-					`[ "$late_upgrade_succeeded" = false ] ||`,
-					`fail "upgrade with a late activation blocker unexpectedly succeeded"`,
-					`[ "$late_activation_capture_succeeded" = true ] ||`,
-					`fail "late activation hook log capture process failed"`,
-					`emit_late_activation_hook_diagnostic`,
 				}),
-				exactSourceLine("late activation failed status fail-closed jq", `jq -e --argjson expected_revision "$late_revision" \`),
-				exactSourceLine("late activation failed hook identity argument", `--arg expected_reconcile_name "$EXPECTED_RECONCILE_HOOK_NAME" '`),
+				exactSourceLineSequence("late activation structured revision retrieval before capture evidence", []string{
+					`if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`,
+					`--revision "$late_revision" -o json >"$late_status_file" 2>/dev/null; then`,
+				}),
+				exactSourceLineSequence("late activation failed status fail-closed exact hook identity jq", []string{
+					`if jq -e --argjson expected_revision "$late_revision" \`,
+					`--arg expected_preflight_name "$EXPECTED_PREFLIGHT_HOOK_NAME" \`,
+					`--arg expected_reconcile_name "$EXPECTED_RECONCILE_HOOK_NAME" '`,
+				}),
 				exactSourceLineSequence("late activation failed revision evidence", []string{
-					`[(.hooks // [])[] | select(.last_run.phase == "Failed")] as $failed |`,
+					`((.hooks // []) | if type == "array" then . else [] end) as $hooks |`,
+					`[$hooks[] | select(.last_run.phase == "Failed")] as $failed |`,
+					`[$hooks[] | select(`,
+					`.name == $expected_preflight_name and`,
+					`.kind == "Job"`,
+					`)] as $preflight |`,
+				}),
+				exactSourceLineSequence("late activation reconcile identity evidence", []string{
+					`[$hooks[] | select(`,
+					`.name == $expected_reconcile_name and`,
+					`.kind == "Job"`,
+					`)] as $reconcile |`,
+				}),
+				exactSourceLineSequence("late activation exact preflight success evidence", []string{
 					`.version == $expected_revision and`,
 					`.info.status == "failed" and`,
-					`($failed | length == 1) and`,
-					`($failed[0] |`,
-					`.name == $expected_reconcile_name and`,
-					`.kind == "Job" and`,
-					`(.weight == null or ((.weight | type) == "number" and .weight == 0)) and`,
+					`($preflight | length == 1) and`,
+					`($preflight[0] |`,
+					`((.weight | type) == "number" and .weight == -60) and`,
+					`((.events // []) | type) == "array" and`,
 					`((.events // []) | index("pre-upgrade") != null) and`,
+					`.last_run.phase == "Succeeded" and`,
+					`((.last_run.started_at // "") | type) == "string" and`,
+					`((.last_run.started_at // "") | length > 0) and`,
+					`((.last_run.completed_at // "") | type) == "string" and`,
+					`((.last_run.completed_at // "") | length > 0)) and`,
+				}),
+				exactSourceLineSequence("late activation exact failed reconcile evidence", []string{
+					`($reconcile | length == 1) and`,
+					`($failed | length == 1) and`,
+					`($failed[0].name == $expected_reconcile_name) and`,
+					`($reconcile[0] |`,
+					`(.weight == null or ((.weight | type) == "number" and .weight == 0)) and`,
+					`((.events // []) | type) == "array" and`,
+					`((.events // []) | index("pre-upgrade") != null) and`,
+					`.last_run.phase == "Failed" and`,
+					`((.last_run.started_at // "") | type) == "string" and`,
+					`((.last_run.started_at // "") | length > 0) and`,
+					`((.last_run.completed_at // "") | type) == "string" and`,
+					`((.last_run.completed_at // "") | length > 0))`,
+				}),
+				exactSourceLineSequence("late activation capture evidence only after revision classification", []string{
+					`delete_late_activation_blocker`,
+					`if [ "$late_activation_captures_succeeded" != true ]; then`,
+					`emit_late_activation_preflight_diagnostic_if_available`,
+					`emit_late_activation_failure_summary "$late_status_file"`,
+					`fail "late activation hook log captures did not both complete successfully"`,
+					`fi`,
+					`verify_late_activation_preflight_capture`,
+					`emit_late_activation_reconcile_diagnostic`,
 				}),
 				exactSourceLine("late activation marker remains uncommitted", `fail "late failure advanced the release activation marker"`),
 				exactSourceLine("predecessor Deployment restore", `restore_runtime_deployment_snapshot "$CONTROLLER_DEPLOYMENT" "$controller_snapshot"`),
@@ -2198,9 +2269,17 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		return fmt.Errorf("read %s: %w", files.crdUpgrade, err)
 	}
 	for _, functionName := range []string{
-		"arm_late_activation_hook_log_capture",
+		"wait_for_late_activation_hook_log_capture_ready",
+		"arm_late_activation_hook_log_captures",
 		"finish_late_activation_hook_log_capture",
-		"emit_late_activation_hook_diagnostic",
+		"finish_late_activation_hook_log_captures",
+		"late_activation_capture_status_summary",
+		"late_activation_capture_exit_summary",
+		"hook_diagnostic_is_safe",
+		"emit_late_activation_preflight_diagnostic_if_available",
+		"verify_late_activation_preflight_capture",
+		"emit_late_activation_reconcile_diagnostic",
+		"emit_late_activation_failure_summary",
 	} {
 		if err := verifySingleShellFunctionDefinition(files.crdUpgrade, crdUpgradeContents, functionName); err != nil {
 			return err
@@ -2209,9 +2288,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyExactShellFunctionContract(
 		files.crdUpgrade,
 		crdUpgradeContents,
-		"arm_late_activation_hook_log_capture",
+		"arm_late_activation_hook_log_captures",
 		lateActivationHookCaptureArmContract,
-		"exact resourceVersion-bound late activation hook capture arm contract",
+		"exact dual resourceVersion-bound late activation hook capture arm contract",
 	); err != nil {
 		return err
 	}
@@ -2227,11 +2306,83 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyExactShellFunctionContract(
 		files.crdUpgrade,
 		crdUpgradeContents,
-		"emit_late_activation_hook_diagnostic",
-		lateActivationHookDiagnosticContract,
-		"exact credential-safe late activation hook diagnostic contract",
+		"finish_late_activation_hook_log_captures",
+		lateActivationHookCapturesFinishContract,
+		"exact bounded dual late activation hook capture completion contract",
 	); err != nil {
 		return err
+	}
+	if err := verifyExactShellFunctionContract(
+		files.crdUpgrade,
+		crdUpgradeContents,
+		"hook_diagnostic_is_safe",
+		lateActivationHookDiagnosticContract,
+		"exact credential-safe bounded hook diagnostic scanner contract",
+	); err != nil {
+		return err
+	}
+	if err := verifyExactShellFunctionContract(
+		files.crdUpgrade,
+		crdUpgradeContents,
+		"emit_late_activation_preflight_diagnostic_if_available",
+		lateActivationPreflightDiagnosticContract,
+		"exact optional preflight diagnostic emission contract",
+	); err != nil {
+		return err
+	}
+	if err := verifyExactShellFunctionContract(
+		files.crdUpgrade,
+		crdUpgradeContents,
+		"emit_late_activation_reconcile_diagnostic",
+		lateActivationReconcileDiagnosticContract,
+		"exact reconcile blocker diagnostic emission contract",
+	); err != nil {
+		return err
+	}
+	lateActivationFailurePattern := regexp.MustCompile(`(?ms)^prove_late_activation_failure_recovery\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`)
+	lateActivationFailureMatches := lateActivationFailurePattern.FindAll(crdUpgradeContents, -1)
+	if len(lateActivationFailureMatches) != 1 {
+		return fmt.Errorf("%s: late activation failure proof must have exactly one auditable function body", files.crdUpgrade)
+	}
+	lateActivationFailureBody := lateActivationFailureMatches[0]
+	orderedEvidenceMarkers := []struct {
+		description string
+		marker      string
+	}{
+		{"structured revision query", `if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`},
+		{"exact revision classification", `if jq -e --argjson expected_revision "$late_revision" \`},
+		{"capture-success enforcement", `if [ "$late_activation_captures_succeeded" != true ]; then`},
+	}
+	previousEvidenceOffset := -1
+	for _, evidenceMarker := range orderedEvidenceMarkers {
+		offset := bytes.Index(lateActivationFailureBody, []byte(evidenceMarker.marker))
+		if offset < 0 || offset <= previousEvidenceOffset {
+			return fmt.Errorf(
+				"%s: revision classification must precede capture-success enforcement at %s",
+				files.crdUpgrade,
+				evidenceMarker.description,
+			)
+		}
+		previousEvidenceOffset = offset
+	}
+	for _, privateEvidence := range []string{
+		"late-activation-failure.out",
+		"late-activation-failure.err",
+	} {
+		if bytes.Count(crdUpgradeContents, []byte(privateEvidence)) != 1 {
+			return fmt.Errorf("%s: late activation raw Helm evidence must remain write-only", files.crdUpgrade)
+		}
+	}
+	for _, helperErrorFile := range []string{
+		"LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE",
+		"LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE",
+	} {
+		if bytes.Contains(lateActivationFailureBody, []byte(helperErrorFile)) {
+			return fmt.Errorf("%s: late activation helper errors must not be emitted as evidence", files.crdUpgrade)
+		}
+		if bytes.Count(crdUpgradeContents, []byte(helperErrorFile)) != 3 {
+			return fmt.Errorf("%s: late activation helper error files must remain private non-emitted capture outputs", files.crdUpgrade)
+		}
 	}
 	return nil
 }
@@ -2300,9 +2451,11 @@ func verifyFailedUpgradeEvidenceSource(path string) error {
 	return nil
 }
 
-const lateActivationHookCaptureArmContract = `arm_late_activation_hook_log_capture() {
+const lateActivationHookCaptureArmContract = `arm_late_activation_hook_log_captures() {
+	[ -n "$EXPECTED_PREFLIGHT_HOOK_NAME" ] || fail "rendered preflight hook name is unavailable"
 	[ -n "$EXPECTED_RECONCILE_HOOK_NAME" ] || fail "rendered reconcile hook name is unavailable"
-	[ -z "$LATE_ACTIVATION_HOOK_CAPTURE_PID" ] || fail "late activation hook log capture is already armed"
+	[ -z "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" ] || fail "late activation preflight capture is already armed"
+	[ -z "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" ] || fail "late activation reconcile capture is already armed"
 	require_mode_0600_regular_file "$EXPECTED_CRD_UPGRADE_RENDER_FILE" expected-crd-upgrade-render
 	mkdir -p "$WORK_DIR/go-cache"
 	env GOCACHE="$WORK_DIR/go-cache" go -C "$ROOT_DIR" build -trimpath \
@@ -2315,92 +2468,148 @@ const lateActivationHookCaptureArmContract = `arm_late_activation_hook_log_captu
 	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
 		--kubeconfig "$E2E_KUBECONFIG" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" \
-		--job-name "$EXPECTED_RECONCILE_HOOK_NAME" \
+		--job-name "$EXPECTED_PREFLIGHT_HOOK_NAME" \
+		--hook-mode preflight \
 		--render-file "$EXPECTED_CRD_UPGRADE_RENDER_FILE" \
-		--log-file "$LATE_ACTIVATION_HOOK_LOG_FILE" \
-		--status-file "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" \
-		--ready-file "$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE" \
-		--error-file "$LATE_ACTIVATION_HOOK_CAPTURE_ERRORS_FILE" \
+		--log-file "$LATE_ACTIVATION_PREFLIGHT_LOG_FILE" \
+		--status-file "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" \
+		--ready-file "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_READY_FILE" \
+		--error-file "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE" \
 		--timeout 3m >/dev/null 2>&1 &
-	LATE_ACTIVATION_HOOK_CAPTURE_PID=$!
-	activation_capture_arm_grace=0
-	while [ ! -s "$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE" ] &&
-		kill -0 "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 &&
-		[ "$activation_capture_arm_grace" -lt 15 ]; do
-		sleep 1
-		activation_capture_arm_grace=$((activation_capture_arm_grace + 1))
-	done
-	if [ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE" 2>/dev/null)" != ready ] ||
-		[ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" 2>/dev/null)" != watching ] ||
-		! kill -0 "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1; then
-		kill "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
-		finish_late_activation_hook_log_capture || true
-		fail "late activation hook log capture did not arm before Helm"
-	fi
+	LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=$!
+	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
+		--kubeconfig "$E2E_KUBECONFIG" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" \
+		--job-name "$EXPECTED_RECONCILE_HOOK_NAME" \
+		--hook-mode reconcile \
+		--render-file "$EXPECTED_CRD_UPGRADE_RENDER_FILE" \
+		--log-file "$LATE_ACTIVATION_RECONCILE_LOG_FILE" \
+		--status-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" \
+		--ready-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE" \
+		--error-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE" \
+		--timeout 3m >/dev/null 2>&1 &
+	LATE_ACTIVATION_RECONCILE_CAPTURE_PID=$!
+	wait_for_late_activation_hook_log_capture_ready \
+		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" \
+		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" \
+		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_READY_FILE" \
+		"late activation preflight capture"
+	wait_for_late_activation_hook_log_capture_ready \
+		"$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" \
+		"$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" \
+		"$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE" \
+		"late activation reconcile capture"
 	for activation_capture_file in \
-		"$LATE_ACTIVATION_HOOK_LOG_FILE" \
-		"$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" \
-		"$LATE_ACTIVATION_HOOK_CAPTURE_ERRORS_FILE" \
-		"$LATE_ACTIVATION_HOOK_CAPTURE_READY_FILE"; do
+		"$LATE_ACTIVATION_PREFLIGHT_LOG_FILE" \
+		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" \
+		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE" \
+		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_READY_FILE" \
+		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" \
+		"$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" \
+		"$LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE" \
+		"$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE"; do
 		require_mode_0600_regular_file "$activation_capture_file" late-activation-hook-capture-file
 	done
 }`
 
 const lateActivationHookCaptureFinishContract = `finish_late_activation_hook_log_capture() {
-	[ -n "$LATE_ACTIVATION_HOOK_CAPTURE_PID" ] || fail "late activation hook log capture is not armed"
-	late_activation_capture_grace=0
-	while kill -0 "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 &&
-		[ "$late_activation_capture_grace" -lt 15 ]; do
-		case "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" 2>/dev/null)" in
+	capture_pid=$1
+	capture_status_file=$2
+	capture_grace=0
+	while kill -0 "$capture_pid" >/dev/null 2>&1 && [ "$capture_grace" -lt 15 ]; do
+		case "$(sed -n '1p' "$capture_status_file" 2>/dev/null)" in
 		captured | failed | canceled) break ;;
 		esac
 		sleep 1
-		late_activation_capture_grace=$((late_activation_capture_grace + 1))
+		capture_grace=$((capture_grace + 1))
 	done
-	case "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" 2>/dev/null)" in
+	case "$(sed -n '1p' "$capture_status_file" 2>/dev/null)" in
 	captured | failed | canceled) ;;
-	*)
-		kill "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
-		;;
+	*) kill "$capture_pid" >/dev/null 2>&1 || true ;;
 	esac
-	late_activation_capture_status=0
-	wait "$LATE_ACTIVATION_HOOK_CAPTURE_PID" >/dev/null 2>&1 || late_activation_capture_status=$?
-	LATE_ACTIVATION_HOOK_CAPTURE_PID=
-	return "$late_activation_capture_status"
+	capture_exit_status=0
+	wait "$capture_pid" >/dev/null 2>&1 || capture_exit_status=$?
+	return "$capture_exit_status"
 }`
 
-const lateActivationHookDiagnosticContract = `emit_late_activation_hook_diagnostic() {
-	require_mode_0600_regular_file "$LATE_ACTIVATION_HOOK_LOG_FILE" late-activation-hook-log
-	require_mode_0600_regular_file "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE" late-activation-hook-capture-status
+const lateActivationHookCapturesFinishContract = `finish_late_activation_hook_log_captures() {
+	[ -n "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" ] || fail "late activation preflight capture is not armed"
+	[ -n "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" ] || fail "late activation reconcile capture is not armed"
+	LATE_ACTIVATION_PREFLIGHT_CAPTURE_EXIT_STATUS=0
+	finish_late_activation_hook_log_capture \
+		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" \
+		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" ||
+		LATE_ACTIVATION_PREFLIGHT_CAPTURE_EXIT_STATUS=$?
+	LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=
+	LATE_ACTIVATION_RECONCILE_CAPTURE_EXIT_STATUS=0
+	finish_late_activation_hook_log_capture \
+		"$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" \
+		"$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" ||
+		LATE_ACTIVATION_RECONCILE_CAPTURE_EXIT_STATUS=$?
+	LATE_ACTIVATION_RECONCILE_CAPTURE_PID=
+	[ "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_EXIT_STATUS" -eq 0 ] &&
+		[ "$LATE_ACTIVATION_RECONCILE_CAPTURE_EXIT_STATUS" -eq 0 ]
+}`
+
+const lateActivationHookDiagnosticContract = `hook_diagnostic_is_safe() {
+	diagnostic_file=$1
+	[ -f "$diagnostic_file" ] && [ ! -L "$diagnostic_file" ] || return 1
+	if diagnostic_mode=$(stat -c '%a' "$diagnostic_file" 2>/dev/null); then
+		:
+	else
+		diagnostic_mode=$(stat -f '%Lp' "$diagnostic_file" 2>/dev/null) || return 1
+	fi
+	[ "$diagnostic_mode" = 600 ] || return 1
 	require_mode_0600_regular_file "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" identity-hook-credential-patterns
-	[ -s "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" ] ||
-		fail "late activation hook credential scanner has no protected patterns"
-	[ "$(sed -n '1p' "$LATE_ACTIVATION_HOOK_CAPTURE_STATUS_FILE")" = captured ] ||
-		fail "late activation hook diagnostic was not captured"
-	if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$LATE_ACTIVATION_HOOK_LOG_FILE" >/dev/null; then
-		fail "late activation hook diagnostic contained a protected task credential"
+	[ -s "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" ] || return 1
+	if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$diagnostic_file" >/dev/null; then
+		return 1
 	else
 		diagnostic_scan_status=$?
-		[ "$diagnostic_scan_status" -eq 1 ] || fail "late activation hook credential scan failed closed"
+		[ "$diagnostic_scan_status" -eq 1 ] || return 1
 	fi
-	if grep -Eq '(^|[^[:alnum:]_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+($|[^[:alnum:]_-])|[Aa]uthorization:[[:space:]]*|[Bb]earer[[:space:]]+|://[^[:space:]@/:]+:[^[:space:]@/]+@' \
-		"$LATE_ACTIVATION_HOOK_LOG_FILE"; then
-		fail "late activation hook diagnostic contained a credential-shaped value"
+	if LC_ALL=C grep -Eq '(^|[^[:alnum:]_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+($|[^[:alnum:]_-])|[Aa]uthorization:[[:space:]]*|[Bb]earer[[:space:]]+|://[^[:space:]@/:]+:[^[:space:]@/]+@' \
+		"$diagnostic_file"; then
+		return 1
+	else
+		diagnostic_scan_status=$?
+		[ "$diagnostic_scan_status" -eq 1 ] || return 1
 	fi
-	diagnostic_size=$(wc -c <"$LATE_ACTIVATION_HOOK_LOG_FILE" | tr -d '[:space:]')
-	diagnostic_lines=$(awk 'END { print NR + 0 }' "$LATE_ACTIVATION_HOOK_LOG_FILE")
-	if [ "$diagnostic_size" -gt 8192 ] || [ "$diagnostic_lines" -ne 1 ] ||
-		! LC_ALL=C grep -Eq '^ptah-crd-manager: [[:print:]]+$' "$LATE_ACTIVATION_HOOK_LOG_FILE"; then
-		fail "late activation hook diagnostic has an unsafe format"
+	diagnostic_size=$(wc -c <"$diagnostic_file" | tr -d '[:space:]')
+	diagnostic_lines=$(awk 'END { print NR + 0 }' "$diagnostic_file")
+	case "$diagnostic_size:$diagnostic_lines" in
+	*[!0-9:]* | :* | *:) return 1 ;;
+	esac
+	[ "$diagnostic_size" -gt 0 ] && [ "$diagnostic_size" -le 8192 ] &&
+		[ "$diagnostic_lines" -eq 1 ] &&
+		LC_ALL=C grep -Eq '^ptah-crd-manager: [[:print:]]+$|^candidate release preflight verified without persistent mutation$' \
+			"$diagnostic_file"
+}`
+
+const lateActivationPreflightDiagnosticContract = `emit_late_activation_preflight_diagnostic_if_available() {
+	[ "$(late_activation_capture_status_summary "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE")" = captured ] || return 0
+	[ -s "$LATE_ACTIVATION_PREFLIGHT_LOG_FILE" ] || return 0
+	if hook_diagnostic_is_safe "$LATE_ACTIVATION_PREFLIGHT_LOG_FILE"; then
+		cat "$LATE_ACTIVATION_PREFLIGHT_LOG_FILE" >&2
+	else
+		printf '%s\n' 'e2e crd: preflight diagnostic withheld by credential and format scanner' >&2
 	fi
+}`
+
+const lateActivationReconcileDiagnosticContract = `emit_late_activation_reconcile_diagnostic() {
+	require_mode_0600_regular_file "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" late-activation-reconcile-capture-status
+	[ "$(sed -n '1p' "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE")" = captured ] ||
+		fail "late activation reconcile log was not captured"
+	hook_diagnostic_is_safe "$LATE_ACTIVATION_RECONCILE_LOG_FILE" ||
+		fail "late activation reconcile log failed credential and format validation"
 	for activation_error_marker in \
 		'wait for release activation guard before persistence' \
 		'late-activation-blocker.operator.ptah.dev' \
 		'service "ptah-operator-e2e-missing-blocker" not found'; do
-		grep -F "$activation_error_marker" "$LATE_ACTIVATION_HOOK_LOG_FILE" >/dev/null ||
-			fail "late activation hook diagnostic lacks exact blocker evidence"
+		grep -F "$activation_error_marker" "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
+			fail "late activation reconcile log lacks exact blocker evidence"
 	done
-	cat "$LATE_ACTIVATION_HOOK_LOG_FILE" >&2
+	cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2
 }`
 
 const failedHookEvidenceContract = `def hook_phase:

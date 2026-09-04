@@ -16,6 +16,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -24,10 +25,39 @@ import (
 )
 
 const (
-	testNamespace = "ptah-system"
-	testJobName   = "ptah-crd-v2-deadbeef"
-	testImage     = "ghcr.io/stokaro/ptah-operator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	testNamespace        = "ptah-system"
+	testJobName          = "ptah-crd-v2-deadbeef"
+	testPreflightJobName = testJobName + "-preflight"
+	testImage            = "ghcr.io/stokaro/ptah-operator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 )
+
+type testHookContract struct {
+	mode               hookMode
+	jobName            string
+	serviceAccountName string
+	component          string
+	containerName      string
+	hookWeight         string
+}
+
+var testHookContracts = map[hookMode]testHookContract{
+	hookModePreflight: {
+		mode:               hookModePreflight,
+		jobName:            testPreflightJobName,
+		serviceAccountName: testJobName,
+		component:          "crd-manager-preflight",
+		containerName:      "crd-manager-preflight",
+		hookWeight:         "-60",
+	},
+	hookModeReconcile: {
+		mode:               hookModeReconcile,
+		jobName:            testJobName,
+		serviceAccountName: testJobName,
+		component:          "crd-manager",
+		containerName:      "crd-manager",
+		hookWeight:         "0",
+	},
+}
 
 type logAttempt struct {
 	stream io.ReadCloser
@@ -37,24 +67,100 @@ type logAttempt struct {
 type fakeResourceClient struct {
 	mu sync.Mutex
 
-	jobList *batchv1.JobList
-	podList *corev1.PodList
+	priorityClassList *schedulingv1.PriorityClassList
+	jobList           *batchv1.JobList
+	podList           *corev1.PodList
 
-	jobWatcher *watch.RaceFreeFakeWatcher
-	podWatcher *watch.RaceFreeFakeWatcher
+	priorityClassWatcher *watch.RaceFreeFakeWatcher
+	jobWatcher           *watch.RaceFreeFakeWatcher
+	podWatcher           *watch.RaceFreeFakeWatcher
 
-	jobListOptions  metav1.ListOptions
-	podListOptions  metav1.ListOptions
-	jobWatchOptions metav1.ListOptions
-	podWatchOptions metav1.ListOptions
+	priorityClassListOptions  metav1.ListOptions
+	priorityClassWatchOptions metav1.ListOptions
+	jobListOptions            metav1.ListOptions
+	podListOptions            metav1.ListOptions
+	jobWatchOptions           metav1.ListOptions
+	podWatchOptions           metav1.ListOptions
 
 	logAttempts    []logAttempt
 	logStarted     chan struct{}
 	repeatLogError error
+	logContainers  []string
 
 	jobWatchHook    func()
 	podWatchGate    <-chan struct{}
 	podWatchEntered chan struct{}
+
+	priorityClassListError   error
+	priorityClassWatchError  error
+	priorityClassListGate    <-chan struct{}
+	priorityClassListEntered chan struct{}
+	priorityClassWatchHook   func()
+	nilPriorityClassList     bool
+	nilPriorityClassWatch    bool
+}
+
+func (client *fakeResourceClient) listPriorityClasses(
+	ctx context.Context,
+	options metav1.ListOptions,
+) (*schedulingv1.PriorityClassList, error) {
+	client.mu.Lock()
+	client.priorityClassListOptions = options
+	list := client.priorityClassList
+	listError := client.priorityClassListError
+	gate := client.priorityClassListGate
+	entered := client.priorityClassListEntered
+	nilList := client.nilPriorityClassList
+	client.mu.Unlock()
+	if entered != nil {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+	}
+	if gate != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-gate:
+		}
+	}
+	if listError != nil {
+		return nil, listError
+	}
+	if nilList {
+		return nil, nil
+	}
+	if list == nil {
+		return &schedulingv1.PriorityClassList{ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv"}}, nil
+	}
+	return list.DeepCopy(), nil
+}
+
+func (client *fakeResourceClient) watchPriorityClasses(
+	_ context.Context,
+	options metav1.ListOptions,
+) (watch.Interface, error) {
+	client.mu.Lock()
+	client.priorityClassWatchOptions = options
+	if client.priorityClassWatchError != nil {
+		client.mu.Unlock()
+		return nil, client.priorityClassWatchError
+	}
+	if client.nilPriorityClassWatch {
+		client.mu.Unlock()
+		return nil, nil
+	}
+	if client.priorityClassWatcher == nil {
+		client.priorityClassWatcher = watch.NewRaceFreeFake()
+	}
+	watcher := client.priorityClassWatcher
+	hook := client.priorityClassWatchHook
+	client.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return watcher, nil
 }
 
 func (client *fakeResourceClient) listJobs(
@@ -124,10 +230,11 @@ func (client *fakeResourceClient) watchPods(
 
 func (client *fakeResourceClient) streamPodLogs(
 	_ context.Context,
-	_, _, _ string,
+	_, _, containerName string,
 ) (io.ReadCloser, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
+	client.logContainers = append(client.logContainers, containerName)
 	if client.logStarted != nil {
 		select {
 		case client.logStarted <- struct{}{}:
@@ -207,6 +314,608 @@ func TestCaptureUsesSnapshotResourceVersionsAndCapturesPodFirst(t *testing.T) {
 	}
 	assertFileContents(t, logPath, "late activation rejected\n")
 	assertFileContents(t, output.status.path, "captured\n")
+}
+
+func TestCaptureUsesExactModeProfile(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		mode hookMode
+		log  string
+	}{
+		{mode: hookModePreflight, log: "candidate release preflight verified without persistent mutation\n"},
+		{mode: hookModeReconcile, log: "ptah-crd-manager: activation rejected\n"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(string(test.mode), func(t *testing.T) {
+			t.Parallel()
+
+			jobWatcher := watch.NewRaceFreeFake()
+			podWatcher := watch.NewRaceFreeFake()
+			client := &fakeResourceClient{
+				jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+				podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+				jobWatcher:  jobWatcher,
+				podWatcher:  podWatcher,
+				logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader(test.log))}},
+			}
+			output := newTestOutputs(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			result := make(chan error, 1)
+			config := testCaptureConfigForMode(test.mode)
+			go func() { result <- capture(ctx, client, config, output) }()
+
+			waitForFileContents(t, output.ready.path, "ready\n")
+			job := validJobForMode(test.mode)
+			jobWatcher.Add(job)
+			podWatcher.Add(validPodForMode(test.mode, job.UID))
+			select {
+			case err := <-result:
+				if err != nil {
+					t.Fatalf("capture returned an error: %v", err)
+				}
+			case <-ctx.Done():
+				t.Fatalf("capture did not complete: %v", ctx.Err())
+			}
+			if err := output.close(); err != nil {
+				t.Fatalf("close outputs: %v", err)
+			}
+			assertFileContents(t, output.logPath, test.log)
+			assertFileContents(t, output.status.path, "captured\n")
+			contract := mustTestHookContract(test.mode)
+			client.mu.Lock()
+			defer client.mu.Unlock()
+			if len(client.logContainers) != 1 || client.logContainers[0] != contract.containerName {
+				t.Fatalf("log containers = %v, want [%s]", client.logContainers, contract.containerName)
+			}
+		})
+	}
+}
+
+func TestPreflightCaptureBindsLiveGlobalDefaultPriorityClass(t *testing.T) {
+	t.Parallel()
+
+	preemptNever := corev1.PreemptNever
+	priorityClass := testPriorityClass("batch-default", -10, true, &preemptNever)
+	priorityClassWatcher := watch.NewRaceFreeFake()
+	jobWatcher := watch.NewRaceFreeFake()
+	podWatcher := watch.NewRaceFreeFake()
+	client := &fakeResourceClient{
+		priorityClassList: &schedulingv1.PriorityClassList{
+			ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv-10"},
+			Items:    []schedulingv1.PriorityClass{priorityClass},
+		},
+		priorityClassWatcher: priorityClassWatcher,
+		jobList:              &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+		podList:              &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+		jobWatcher:           jobWatcher,
+		podWatcher:           podWatcher,
+		logAttempts: []logAttempt{{
+			stream: io.NopCloser(strings.NewReader("candidate release preflight verified without persistent mutation\n")),
+		}},
+	}
+	output := newTestOutputs(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- capture(ctx, client, testCaptureConfigForMode(hookModePreflight), output) }()
+
+	waitForFileContents(t, output.ready.path, "ready\n")
+	job := validJobForMode(hookModePreflight)
+	pod := validPodForMode(hookModePreflight, job.UID)
+	pod.Spec.PriorityClassName = priorityClass.Name
+	pod.Spec.Priority = testInt32Pointer(priorityClass.Value)
+	pod.Spec.PreemptionPolicy = &preemptNever
+	jobWatcher.Add(job)
+	podWatcher.Add(pod)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("capture returned an error: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("capture did not accept the live global default contract: %v", ctx.Err())
+	}
+	if err := output.close(); err != nil {
+		t.Fatalf("close outputs: %v", err)
+	}
+	assertFileContents(t, output.status.path, "captured\n")
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.priorityClassListOptions.Limit != priorityClassListLimit ||
+		client.priorityClassListOptions.Continue != "" ||
+		client.priorityClassListOptions.ResourceVersion != "" ||
+		client.priorityClassListOptions.ResourceVersionMatch != "" {
+		t.Fatalf("PriorityClass List options = %#v, want one bounded current snapshot", client.priorityClassListOptions)
+	}
+	if client.priorityClassWatchOptions.ResourceVersion != "priority-rv-10" ||
+		!client.priorityClassWatchOptions.AllowWatchBookmarks ||
+		client.priorityClassWatchOptions.Limit != 0 ||
+		client.priorityClassWatchOptions.Continue != "" {
+		t.Fatalf("PriorityClass Watch options = %#v, want exact snapshot continuation", client.priorityClassWatchOptions)
+	}
+}
+
+func TestPreflightCaptureWaitsForPriorityClassSnapshotBeforeReady(t *testing.T) {
+	t.Parallel()
+
+	gate := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	priorityClassWatcher := watch.NewRaceFreeFake()
+	client := &fakeResourceClient{
+		priorityClassList: &schedulingv1.PriorityClassList{
+			ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv"},
+		},
+		priorityClassWatcher:     priorityClassWatcher,
+		priorityClassListGate:    gate,
+		priorityClassListEntered: entered,
+		jobList:                  &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+		podList:                  &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+		jobWatcher:               watch.NewRaceFreeFake(),
+		podWatcher:               watch.NewRaceFreeFake(),
+	}
+	output := newTestOutputs(t)
+	defer func() { _ = output.close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- capture(ctx, client, testCaptureConfigForMode(hookModePreflight), output) }()
+
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("PriorityClass List was not attempted")
+	}
+	assertFileContents(t, output.ready.path, "")
+	close(gate)
+	waitForFileContents(t, output.ready.path, "ready\n")
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("capture error = %v, want context cancellation", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("capture did not stop after cancellation")
+	}
+	if !priorityClassWatcher.IsStopped() {
+		t.Fatal("capture did not stop the PriorityClass watch")
+	}
+}
+
+func TestPreflightCaptureRejectsImmediatePriorityWatchErrorBeforeReady(t *testing.T) {
+	t.Parallel()
+
+	priorityClassWatcher := watch.NewRaceFreeFake()
+	status := &metav1.Status{
+		Status:  metav1.StatusFailure,
+		Reason:  metav1.StatusReasonExpired,
+		Message: "resource version expired",
+		Code:    410,
+	}
+	client := &fakeResourceClient{
+		priorityClassList: &schedulingv1.PriorityClassList{
+			ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv"},
+		},
+		priorityClassWatcher: priorityClassWatcher,
+		priorityClassWatchHook: func() {
+			priorityClassWatcher.Error(status)
+		},
+		jobList:    &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+		podList:    &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+		jobWatcher: watch.NewRaceFreeFake(),
+		podWatcher: watch.NewRaceFreeFake(),
+	}
+	output := newTestOutputs(t)
+	defer func() { _ = output.close() }()
+	err := capture(context.Background(), client, testCaptureConfigForMode(hookModePreflight), output)
+	if err == nil || !strings.Contains(err.Error(), "PriorityClass watch error") {
+		t.Fatalf("capture error = %v, want immediate PriorityClass watch rejection", err)
+	}
+	assertFileContents(t, output.ready.path, "")
+}
+
+func TestResolveGlobalPriorityDefaultsMatchesKubernetesSelection(t *testing.T) {
+	t.Parallel()
+
+	preemptNever := corev1.PreemptNever
+	preemptLower := corev1.PreemptLowerPriority
+	tests := []struct {
+		name      string
+		inventory []schedulingv1.PriorityClass
+		want      []priorityAdmissionCandidate
+	}{
+		{
+			name: "no global default",
+			inventory: []schedulingv1.PriorityClass{
+				testPriorityClass("ordinary", 100, false, &preemptNever),
+			},
+			want: []priorityAdmissionCandidate{{preemptionPolicy: corev1.PreemptLowerPriority}},
+		},
+		{
+			name: "smallest global default wins",
+			inventory: []schedulingv1.PriorityClass{
+				testPriorityClass("higher", 100, true, &preemptLower),
+				testPriorityClass("minimum", -10, true, &preemptNever),
+			},
+			want: []priorityAdmissionCandidate{{
+				name: "minimum", uid: types.UID("minimum-uid"), value: -10, preemptionPolicy: corev1.PreemptNever,
+			}},
+		},
+		{
+			name: "equal minimums remain explicit candidates",
+			inventory: []schedulingv1.PriorityClass{
+				testPriorityClass("zeta", -10, true, &preemptNever),
+				testPriorityClass("higher", 100, true, &preemptLower),
+				testPriorityClass("alpha", -10, true, nil),
+			},
+			want: []priorityAdmissionCandidate{
+				{name: "alpha", uid: types.UID("alpha-uid"), value: -10, preemptionPolicy: corev1.PreemptLowerPriority},
+				{name: "zeta", uid: types.UID("zeta-uid"), value: -10, preemptionPolicy: corev1.PreemptNever},
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			inventory := make(map[string]schedulingv1.PriorityClass, len(test.inventory))
+			for index := range test.inventory {
+				inventory[test.inventory[index].Name] = test.inventory[index]
+			}
+			got, err := resolveGlobalPriorityDefaults(inventory)
+			if err != nil {
+				t.Fatalf("resolveGlobalPriorityDefaults: %v", err)
+			}
+			if !priorityAdmissionDefaultsEqual(got, priorityAdmissionDefaults{candidates: test.want}) {
+				t.Fatalf("resolved candidates = %#v, want %#v", got.candidates, test.want)
+			}
+		})
+	}
+}
+
+func TestPreflightPodAcceptsEachEqualMinimumCandidate(t *testing.T) {
+	t.Parallel()
+
+	preemptNever := corev1.PreemptNever
+	inventory := map[string]schedulingv1.PriorityClass{
+		"alpha": testPriorityClass("alpha", -10, true, nil),
+		"zeta":  testPriorityClass("zeta", -10, true, &preemptNever),
+	}
+	defaults, err := resolveGlobalPriorityDefaults(inventory)
+	if err != nil {
+		t.Fatalf("resolveGlobalPriorityDefaults: %v", err)
+	}
+	for _, candidate := range defaults.candidates {
+		candidate := candidate
+		t.Run(candidate.name, func(t *testing.T) {
+			t.Parallel()
+
+			config := testCaptureConfigForMode(hookModePreflight)
+			config.preflightPriority = defaults
+			pod := validPodForMode(hookModePreflight, types.UID("job-uid"))
+			pod.Spec.PriorityClassName = candidate.name
+			pod.Spec.Priority = testInt32Pointer(candidate.value)
+			policy := candidate.preemptionPolicy
+			pod.Spec.PreemptionPolicy = &policy
+			if err := validatePod(pod, config); err != nil {
+				t.Fatalf("validatePod rejected an effective minimum candidate: %v", err)
+			}
+		})
+	}
+}
+
+func TestPreflightPodRejectsGlobalDefaultContractDrift(t *testing.T) {
+	t.Parallel()
+
+	preemptNever := corev1.PreemptNever
+	config := testCaptureConfigForMode(hookModePreflight)
+	config.preflightPriority = priorityAdmissionDefaults{candidates: []priorityAdmissionCandidate{{
+		name:             "batch-default",
+		uid:              types.UID("batch-default-uid"),
+		value:            -10,
+		preemptionPolicy: corev1.PreemptNever,
+	}}}
+	tests := map[string]func(*corev1.Pod){
+		"name": func(pod *corev1.Pod) {
+			pod.Spec.PriorityClassName = "different-default"
+		},
+		"value": func(pod *corev1.Pod) {
+			pod.Spec.Priority = testInt32Pointer(-9)
+		},
+		"preemption policy": func(pod *corev1.Pod) {
+			policy := corev1.PreemptLowerPriority
+			pod.Spec.PreemptionPolicy = &policy
+		},
+	}
+	for name, mutate := range tests {
+		name, mutate := name, mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			pod := validPodForMode(hookModePreflight, types.UID("job-uid"))
+			pod.Spec.PriorityClassName = "batch-default"
+			pod.Spec.Priority = testInt32Pointer(-10)
+			pod.Spec.PreemptionPolicy = &preemptNever
+			mutate(pod)
+			if err := validatePod(pod, config); err == nil {
+				t.Fatal("validatePod accepted global default admission drift")
+			}
+		})
+	}
+
+	unresolved := config
+	unresolved.preflightPriorityResolved = false
+	pod := validPodForMode(hookModePreflight, types.UID("job-uid"))
+	if err := validatePod(pod, unresolved); err == nil {
+		t.Fatal("validatePod accepted a preflight Pod before priority state was resolved")
+	}
+}
+
+func TestEstablishPreflightPriorityContractRejectsIncompleteSnapshot(t *testing.T) {
+	t.Parallel()
+
+	remaining := int64(0)
+	invalidPolicy := corev1.PreemptionPolicy("Sometimes")
+	tests := []struct {
+		name   string
+		client *fakeResourceClient
+	}{
+		{
+			name: "list error",
+			client: &fakeResourceClient{
+				priorityClassListError: errors.New("list unavailable"),
+			},
+		},
+		{
+			name: "nil list",
+			client: &fakeResourceClient{
+				nilPriorityClassList: true,
+			},
+		},
+		{
+			name:   "empty resourceVersion",
+			client: &fakeResourceClient{priorityClassList: &schedulingv1.PriorityClassList{}},
+		},
+		{
+			name: "continuation token",
+			client: &fakeResourceClient{priorityClassList: &schedulingv1.PriorityClassList{
+				ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv", Continue: "next-page"},
+			}},
+		},
+		{
+			name: "remaining item count",
+			client: &fakeResourceClient{priorityClassList: &schedulingv1.PriorityClassList{
+				ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv", RemainingItemCount: &remaining},
+			}},
+		},
+		{
+			name: "incomplete global default identity",
+			client: &fakeResourceClient{priorityClassList: &schedulingv1.PriorityClassList{
+				ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv"},
+				Items: []schedulingv1.PriorityClass{{
+					ObjectMeta:    metav1.ObjectMeta{Name: "default", ResourceVersion: "item-rv"},
+					GlobalDefault: true,
+				}},
+			}},
+		},
+		{
+			name: "invalid global default policy",
+			client: &fakeResourceClient{priorityClassList: &schedulingv1.PriorityClassList{
+				ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv"},
+				Items: []schedulingv1.PriorityClass{
+					testPriorityClass("default", 10, true, &invalidPolicy),
+				},
+			}},
+		},
+		{
+			name: "duplicate names",
+			client: &fakeResourceClient{priorityClassList: &schedulingv1.PriorityClassList{
+				ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv"},
+				Items: []schedulingv1.PriorityClass{
+					testPriorityClass("duplicate", 10, false, nil),
+					testPriorityClass("duplicate", 20, true, nil),
+				},
+			}},
+		},
+		{
+			name: "watch error",
+			client: &fakeResourceClient{
+				priorityClassList: &schedulingv1.PriorityClassList{
+					ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv"},
+				},
+				priorityClassWatchError: errors.New("watch unavailable"),
+			},
+		},
+		{
+			name: "nil watch",
+			client: &fakeResourceClient{
+				priorityClassList: &schedulingv1.PriorityClassList{
+					ListMeta: metav1.ListMeta{ResourceVersion: "priority-rv"},
+				},
+				nilPriorityClassWatch: true,
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, _, watcher, err := establishPreflightPriorityContract(context.Background(), test.client)
+			if watcher != nil {
+				watcher.Stop()
+			}
+			if err == nil {
+				t.Fatal("establishPreflightPriorityContract accepted an incomplete snapshot")
+			}
+		})
+	}
+}
+
+func TestPriorityClassWatchIgnoresOnlyUnchangedEffectiveDefault(t *testing.T) {
+	t.Parallel()
+
+	preemptNever := corev1.PreemptNever
+	minimum := testPriorityClass("minimum", -10, true, &preemptNever)
+	higher := testPriorityClass("higher", 100, true, nil)
+	ordinary := testPriorityClass("ordinary", -100, false, nil)
+	inventory := map[string]schedulingv1.PriorityClass{
+		minimum.Name:  minimum,
+		higher.Name:   higher,
+		ordinary.Name: ordinary,
+	}
+	expected, err := resolveGlobalPriorityDefaults(inventory)
+	if err != nil {
+		t.Fatalf("resolveGlobalPriorityDefaults: %v", err)
+	}
+
+	higher.Value = 101
+	higher.ResourceVersion = "higher-rv-2"
+	if err := handlePriorityClassEvent(watch.Event{Type: watch.Modified, Object: &higher}, inventory, expected); err != nil {
+		t.Fatalf("higher default change altered the effective contract: %v", err)
+	}
+	ordinary.Value = -200
+	ordinary.ResourceVersion = "ordinary-rv-2"
+	if err := handlePriorityClassEvent(watch.Event{Type: watch.Modified, Object: &ordinary}, inventory, expected); err != nil {
+		t.Fatalf("non-default change altered the effective contract: %v", err)
+	}
+
+	higher.Value = -20
+	higher.ResourceVersion = "higher-rv-3"
+	if err := handlePriorityClassEvent(watch.Event{Type: watch.Modified, Object: &higher}, inventory, expected); err == nil ||
+		!strings.Contains(err.Error(), "changed during hook capture") {
+		t.Fatalf("effective minimum change error = %v", err)
+	}
+}
+
+func TestPriorityClassWatchRejectsEffectiveCandidateSetChanges(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		event func(schedulingv1.PriorityClass) watch.Event
+	}{
+		{
+			name: "default deleted",
+			event: func(current schedulingv1.PriorityClass) watch.Event {
+				current.ResourceVersion = "default-rv-2"
+				return watch.Event{Type: watch.Deleted, Object: &current}
+			},
+		},
+		{
+			name: "equal minimum added",
+			event: func(_ schedulingv1.PriorityClass) watch.Event {
+				added := testPriorityClass("second-minimum", -10, true, nil)
+				return watch.Event{Type: watch.Added, Object: &added}
+			},
+		},
+		{
+			name: "default policy changed",
+			event: func(current schedulingv1.PriorityClass) watch.Event {
+				policy := corev1.PreemptNever
+				current.PreemptionPolicy = &policy
+				current.ResourceVersion = "default-rv-2"
+				return watch.Event{Type: watch.Modified, Object: &current}
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			current := testPriorityClass("default", -10, true, nil)
+			inventory := map[string]schedulingv1.PriorityClass{current.Name: current}
+			expected, err := resolveGlobalPriorityDefaults(inventory)
+			if err != nil {
+				t.Fatalf("resolveGlobalPriorityDefaults: %v", err)
+			}
+			if err := handlePriorityClassEvent(test.event(current), inventory, expected); err == nil ||
+				!strings.Contains(err.Error(), "changed during hook capture") {
+				t.Fatalf("candidate-set change error = %v", err)
+			}
+		})
+	}
+}
+
+func TestPriorityClassWatchFailsClosedOnErrorAndClosure(t *testing.T) {
+	t.Parallel()
+
+	status := &metav1.Status{
+		Status:  metav1.StatusFailure,
+		Reason:  metav1.StatusReasonExpired,
+		Message: "resource version expired",
+		Code:    410,
+	}
+	if err := handlePriorityClassEvent(
+		watch.Event{Type: watch.Error, Object: status},
+		map[string]schedulingv1.PriorityClass{},
+		priorityAdmissionDefaults{},
+	); err == nil || !strings.Contains(err.Error(), "PriorityClass watch error") {
+		t.Fatalf("watch error event returned %v", err)
+	}
+
+	events := make(chan watch.Event)
+	close(events)
+	if err := drainPriorityClassEvents(events, nil, priorityAdmissionDefaults{}); err == nil ||
+		!strings.Contains(err.Error(), "watch closed") {
+		t.Fatalf("closed watch returned %v", err)
+	}
+}
+
+func TestPreflightCaptureQuarantinesPodFirstUntilExactJobBinding(t *testing.T) {
+	t.Parallel()
+
+	jobWatcher := watch.NewRaceFreeFake()
+	podWatcher := watch.NewRaceFreeFake()
+	client := &fakeResourceClient{
+		jobList:     &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+		podList:     &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+		jobWatcher:  jobWatcher,
+		podWatcher:  podWatcher,
+		logAttempts: []logAttempt{{stream: io.NopCloser(strings.NewReader("candidate release preflight verified without persistent mutation\n"))}},
+		logStarted:  make(chan struct{}, 1),
+	}
+	output := newTestOutputs(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	config := testCaptureConfigForMode(hookModePreflight)
+	go func() { result <- capture(ctx, client, config, output) }()
+
+	waitForFileContents(t, output.ready.path, "ready\n")
+	job := validJobForMode(hookModePreflight)
+	podWatcher.Add(validPodForMode(hookModePreflight, job.UID))
+	select {
+	case <-client.logStarted:
+	case <-time.After(time.Second):
+		t.Fatal("preflight log stream did not start from the Pod ADDED event")
+	}
+	waitForFileContents(t, output.quarantinePath, "candidate release preflight verified without persistent mutation\n")
+	assertFileContents(t, output.logPath, "")
+
+	jobWatcher.Add(job)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("capture returned an error: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("capture did not bind the preflight Pod to its Job: %v", ctx.Err())
+	}
+	if err := output.close(); err != nil {
+		t.Fatalf("close outputs: %v", err)
+	}
+	assertFileContents(t, output.logPath, "candidate release preflight verified without persistent mutation\n")
+	assertFileContents(t, output.status.path, "captured\n")
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.logContainers) != 1 || client.logContainers[0] != "crd-manager-preflight" {
+		t.Fatalf("log containers = %v, want [crd-manager-preflight]", client.logContainers)
+	}
 }
 
 func TestCaptureMarksReadyOnlyAfterBothWatchesAreEstablished(t *testing.T) {
@@ -562,6 +1271,50 @@ func TestValidateJobAgainstRenderRejectsConflictingDeprecatedServiceAccount(t *t
 	}
 }
 
+func TestValidateGeneratedPodMetadataUsesAPIServerPrefixTruncation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		jobName string
+	}{
+		{
+			name:    "58-byte generateName boundary",
+			jobName: strings.Repeat("a", 47) + "-preflight",
+		},
+		{
+			name:    "long preflight generateName",
+			jobName: strings.Repeat("a", 52) + "-preflight",
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			generateName := test.jobName + "-"
+			prefix := generateName
+			if len(prefix) > generatedNameMaxPrefixLength {
+				prefix = prefix[:generatedNameMaxPrefixLength]
+			}
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+				Name:         prefix + "bcdgh",
+				GenerateName: generateName,
+				Finalizers:   []string{batchv1.JobTrackingFinalizer},
+			}}
+			if err := validateGeneratedPodMetadata(pod, test.jobName); err != nil {
+				t.Fatalf("validateGeneratedPodMetadata rejected API-generated name: %v", err)
+			}
+			if len(generateName) > generatedNameMaxPrefixLength {
+				pod.Name = generateName + "bcdgh"
+				if err := validateGeneratedPodMetadata(pod, test.jobName); err == nil {
+					t.Fatal("validateGeneratedPodMetadata accepted an untruncated long generated prefix")
+				}
+			}
+		})
+	}
+}
+
 func TestValidatePodAgainstRenderRejectsFullPodSpecDrift(t *testing.T) {
 	t.Parallel()
 
@@ -635,10 +1388,10 @@ func TestValidatePodAgainstRenderNormalizesRuntimeAssignedDefaults(t *testing.T)
 	pod.Spec.EnableServiceLinks = &enableServiceLinks
 	pod.Spec.DeprecatedServiceAccount = pod.Spec.ServiceAccountName
 
-	if err := validatePodAgainstRender(pod, validRenderedJob()); err != nil {
+	if err := validatePodAgainstRender(pod, validRenderedJob(), testCaptureConfig()); err != nil {
 		t.Fatalf("validatePodAgainstRender rejected documented runtime defaults: %v", err)
 	}
-	if err := validatePodOwner(pod, validJob()); err != nil {
+	if err := validatePodOwner(pod, validJob(), testCaptureConfig()); err != nil {
 		t.Fatalf("validatePodOwner rejected the redundant service account alias: %v", err)
 	}
 }
@@ -656,7 +1409,7 @@ func TestValidatePodAgainstRenderBindsConfiguredAdmissionDefaults(t *testing.T) 
 		unreachable := int64(23)
 		pod.Spec.Tolerations[0].TolerationSeconds = &notReady
 		pod.Spec.Tolerations[1].TolerationSeconds = &unreachable
-		if err := validatePodAgainstRender(pod, rendered); err != nil {
+		if err := validatePodAgainstRender(pod, rendered, testCaptureConfig()); err != nil {
 			t.Fatalf("validatePodAgainstRender rejected exact configured tolerations: %v", err)
 		}
 	})
@@ -673,7 +1426,7 @@ func TestValidatePodAgainstRenderBindsConfiguredAdmissionDefaults(t *testing.T) 
 		pod.Spec.Priority = &priority
 		policy := corev1.PreemptNever
 		pod.Spec.PreemptionPolicy = &policy
-		if err := validatePodAgainstRender(pod, rendered); err != nil {
+		if err := validatePodAgainstRender(pod, rendered, testCaptureConfig()); err != nil {
 			t.Fatalf("validatePodAgainstRender rejected exact configured priority: %v", err)
 		}
 	})
@@ -684,11 +1437,11 @@ func TestValidatePodAgainstRenderBindsConfiguredAdmissionDefaults(t *testing.T) 
 			encodedTestControllerRuntimeArguments(true, 300, 300, true)
 		pod := validPod(types.UID("job-uid"))
 		pod.Spec.Containers[0].Args[19] = rendered.Spec.Template.Spec.Containers[0].Args[19]
-		if err := validatePodAgainstRender(pod, rendered); err == nil {
+		if err := validatePodAgainstRender(pod, rendered, testCaptureConfig()); err == nil {
 			t.Fatal("validatePodAgainstRender accepted an unmodified pull policy with AlwaysPullImages enabled")
 		}
 		pod.Spec.Containers[0].ImagePullPolicy = corev1.PullAlways
-		if err := validatePodAgainstRender(pod, rendered); err != nil {
+		if err := validatePodAgainstRender(pod, rendered, testCaptureConfig()); err != nil {
 			t.Fatalf("validatePodAgainstRender rejected the exact AlwaysPullImages mutation: %v", err)
 		}
 	})
@@ -723,11 +1476,188 @@ func TestPodComparisonsRejectConflictingDeprecatedServiceAccount(t *testing.T) {
 	job := validJob()
 	pod := validPod(job.UID)
 	pod.Spec.DeprecatedServiceAccount = "different-account"
-	if err := validatePodAgainstRender(pod, validRenderedJob()); err == nil {
+	if err := validatePodAgainstRender(pod, validRenderedJob(), testCaptureConfig()); err == nil {
 		t.Fatal("validatePodAgainstRender accepted a conflicting deprecated service account alias")
 	}
-	if err := validatePodOwner(pod, job); err == nil {
+	if err := validatePodOwner(pod, job, testCaptureConfig()); err == nil {
 		t.Fatal("validatePodOwner accepted a conflicting deprecated service account alias")
+	}
+}
+
+func TestHookModeProfilesAreExactAndCannotCrossAccept(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []hookMode{hookModePreflight, hookModeReconcile} {
+		mode := mode
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+
+			otherMode := hookModePreflight
+			if mode == hookModePreflight {
+				otherMode = hookModeReconcile
+			}
+			other := mustTestHookContract(otherMode)
+			config := testCaptureConfigForMode(mode)
+			job := validJobForMode(mode)
+			pod := validPodForMode(mode, job.UID)
+			if err := validateRenderedJob(validRenderedJobForMode(mode), config); err != nil {
+				t.Fatalf("validateRenderedJob rejected exact %s profile: %v", mode, err)
+			}
+			if err := validateJob(job, config); err != nil {
+				t.Fatalf("validateJob rejected exact %s profile: %v", mode, err)
+			}
+			if err := validatePod(pod, config); err != nil {
+				t.Fatalf("validatePod rejected exact %s profile: %v", mode, err)
+			}
+			if err := validatePodOwner(pod, job, config); err != nil {
+				t.Fatalf("validatePodOwner rejected exact %s profile: %v", mode, err)
+			}
+
+			jobMutations := map[string]func(*batchv1.Job){
+				"other mode weight": func(candidate *batchv1.Job) {
+					candidate.Annotations[hookWeightAnnotation] = other.hookWeight
+				},
+				"other mode Job component": func(candidate *batchv1.Job) {
+					candidate.Labels[componentLabel] = other.component
+				},
+				"other mode template component": func(candidate *batchv1.Job) {
+					candidate.Spec.Template.Labels[componentLabel] = other.component
+				},
+				"other mode container": func(candidate *batchv1.Job) {
+					candidate.Spec.Template.Spec.Containers[0].Name = other.containerName
+				},
+				"other mode argument": func(candidate *batchv1.Job) {
+					candidate.Spec.Template.Spec.Containers[0].Args[0] = string(other.mode)
+				},
+			}
+			for name, mutate := range jobMutations {
+				candidate := validJobForMode(mode)
+				mutate(candidate)
+				if err := validateJob(candidate, config); err == nil {
+					t.Errorf("validateJob accepted %s", name)
+				}
+			}
+
+			podMutations := map[string]func(*corev1.Pod){
+				"other mode Pod component": func(candidate *corev1.Pod) {
+					candidate.Labels[componentLabel] = other.component
+				},
+				"other mode Pod container": func(candidate *corev1.Pod) {
+					candidate.Spec.Containers[0].Name = other.containerName
+				},
+				"other mode Pod argument": func(candidate *corev1.Pod) {
+					candidate.Spec.Containers[0].Args[0] = string(other.mode)
+				},
+			}
+			for name, mutate := range podMutations {
+				candidate := validPodForMode(mode, job.UID)
+				mutate(candidate)
+				if err := validatePod(candidate, config); err == nil {
+					t.Errorf("validatePod accepted %s", name)
+				}
+			}
+		})
+	}
+}
+
+func TestHookModeProfilesMatchLiteralContracts(t *testing.T) {
+	t.Parallel()
+	if string(hookModePreflight) != "preflight" {
+		t.Fatalf("preflight hook mode = %q, want literal preflight", hookModePreflight)
+	}
+	if string(hookModeReconcile) != "reconcile" {
+		t.Fatalf("reconcile hook mode = %q, want literal reconcile", hookModeReconcile)
+	}
+
+	for mode, contract := range testHookContracts {
+		mode, contract := mode, contract
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+
+			profile, err := profileForHookMode(mode)
+			if err != nil {
+				t.Fatalf("profileForHookMode(%q): %v", mode, err)
+			}
+			if profile.mode != contract.mode ||
+				profile.component != contract.component ||
+				profile.containerName != contract.containerName ||
+				profile.hookWeight != contract.hookWeight {
+				t.Fatalf("profileForHookMode(%q) = %#v, want literal contract %#v", mode, profile, contract)
+			}
+			serviceAccountName, err := profile.serviceAccountName(contract.jobName)
+			if err != nil {
+				t.Fatalf("serviceAccountName(%q): %v", contract.jobName, err)
+			}
+			if serviceAccountName != contract.serviceAccountName {
+				t.Fatalf("serviceAccountName(%q) = %q, want %q", contract.jobName, serviceAccountName, contract.serviceAccountName)
+			}
+		})
+	}
+}
+
+func TestHookModeValidationFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	config := testCaptureConfig()
+	config.hookMode = hookMode("verify")
+	if err := validateCaptureConfig(config); err == nil {
+		t.Fatal("validateCaptureConfig accepted an unsupported hook mode")
+	}
+	if _, err := capturePodLog(context.Background(), &fakeResourceClient{}, config, "hook-pod", io.Discard); err == nil {
+		t.Fatal("capturePodLog accepted an unsupported hook mode")
+	}
+}
+
+func TestPreflightModeUsesClasslessPodAdmissionDefaults(t *testing.T) {
+	t.Parallel()
+
+	config := testCaptureConfigForMode(hookModePreflight)
+	rendered := validRenderedJobForMode(hookModePreflight)
+	rendered.Spec.Template.Spec.Containers[0].Args[23] = managerArgumentPrefixes[23] +
+		encodedTestRuntimeAdmissionContract("runtime-only", 1000, corev1.PreemptNever, nil)
+	config.expectedJob = rendered
+	pod := validPodForMode(hookModePreflight, types.UID("job-uid"))
+	pod.Spec.Containers[0].Args[23] = rendered.Spec.Template.Spec.Containers[0].Args[23]
+	if err := validateRenderedJob(rendered, config); err != nil {
+		t.Fatalf("validateRenderedJob rejected a classless preflight for a named runtime contract: %v", err)
+	}
+	if err := validatePod(pod, config); err != nil {
+		t.Fatalf("validatePod rejected exact classless preflight admission defaults: %v", err)
+	}
+
+	rendered.Spec.Template.Spec.PriorityClassName = "runtime-only"
+	if err := validateRenderedJob(rendered, config); err == nil {
+		t.Fatal("validateRenderedJob accepted a PriorityClass on the preflight hook")
+	}
+}
+
+func TestPreflightModeBindsJobAndServiceAccountIdentity(t *testing.T) {
+	t.Parallel()
+
+	config := testCaptureConfigForMode(hookModePreflight)
+	tests := map[string]func(*batchv1.Job, *captureConfig){
+		"Job name without preflight suffix": func(job *batchv1.Job, candidate *captureConfig) {
+			job.Name = testJobName + "-probe"
+			candidate.jobName = job.Name
+		},
+		"service account equal to Job": func(job *batchv1.Job, _ *captureConfig) {
+			job.Spec.Template.Spec.ServiceAccountName = job.Name
+		},
+		"argument service account equal to Job": func(job *batchv1.Job, _ *captureConfig) {
+			job.Spec.Template.Spec.Containers[0].Args[12] = "--hook-service-account-name=" + job.Name
+		},
+	}
+	for name, mutate := range tests {
+		name, mutate := name, mutate
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			candidateConfig := config
+			job := validJobForMode(hookModePreflight)
+			mutate(job, &candidateConfig)
+			if err := validateJob(job, candidateConfig); err == nil {
+				t.Fatal("validateJob accepted a preflight identity mismatch")
+			}
+		})
 	}
 }
 
@@ -793,7 +1723,7 @@ func TestValidatePodRequiresExactControllingJobUID(t *testing.T) {
 	if err := validatePod(pod, testCaptureConfig()); err != nil {
 		t.Fatalf("validatePod rejected structurally valid Pod: %v", err)
 	}
-	if err := validatePodOwner(pod, job); err == nil {
+	if err := validatePodOwner(pod, job, testCaptureConfig()); err == nil {
 		t.Fatal("validatePodOwner accepted a different Job UID")
 	}
 }
@@ -821,7 +1751,7 @@ func TestValidatePodOwnerRequiresObservedTemplateExecutionContract(t *testing.T)
 	if err := validatePod(pod, config); err != nil {
 		t.Fatalf("validatePod rejected the independently self-consistent Pod: %v", err)
 	}
-	if err := validatePodOwner(pod, job); err == nil || !strings.Contains(err.Error(), "execution contract differs") {
+	if err := validatePodOwner(pod, job, testCaptureConfig()); err == nil || !strings.Contains(err.Error(), "execution contract differs") {
 		t.Fatalf("validatePodOwner error = %v, want template execution mismatch", err)
 	}
 }
@@ -1012,6 +1942,33 @@ func TestCapturePodLogRetriesOnlyPermittedStartupErrors(t *testing.T) {
 	}
 }
 
+func TestPreflightCapturePodLogRetriesItsExactWaitingContainer(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeResourceClient{logAttempts: []logAttempt{
+		{err: apierrors.NewBadRequest(`container "crd-manager-preflight" in pod "preflight-pod" is waiting to start - no logs yet`)},
+		{stream: io.NopCloser(strings.NewReader("preflight captured\n"))},
+	}}
+	config := testCaptureConfigForMode(hookModePreflight)
+	config.logRetryInterval = time.Millisecond
+	var destination strings.Builder
+
+	written, err := capturePodLog(context.Background(), client, config, "preflight-pod", &destination)
+	if err != nil {
+		t.Fatalf("capturePodLog returned an error: %v", err)
+	}
+	if written != int64(len("preflight captured\n")) || destination.String() != "preflight captured\n" {
+		t.Fatalf("captured %d bytes %q", written, destination.String())
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.logContainers) != 2 ||
+		client.logContainers[0] != "crd-manager-preflight" ||
+		client.logContainers[1] != "crd-manager-preflight" {
+		t.Fatalf("log containers = %v, want two exact preflight attempts", client.logContainers)
+	}
+}
+
 func TestCapturePodLogAcceptsBytesBeforeDeletedStreamError(t *testing.T) {
 	t.Parallel()
 
@@ -1148,18 +2105,34 @@ func (writer *partialFailureWriter) Write(data []byte) (int, error) {
 }
 
 func testCaptureConfig() captureConfig {
-	return captureConfig{
+	return testCaptureConfigForMode(hookModeReconcile)
+}
+
+func testCaptureConfigForMode(mode hookMode) captureConfig {
+	config := captureConfig{
 		namespace:        testNamespace,
-		jobName:          testJobName,
-		expectedJob:      validRenderedJob(),
+		jobName:          testJobNameForMode(mode),
+		hookMode:         mode,
+		expectedJob:      validRenderedJobForMode(mode),
 		logStartTimeout:  time.Second,
 		logRetryInterval: 5 * time.Millisecond,
 		maxLogBytes:      1024,
 	}
+	if mode == hookModePreflight {
+		config.preflightPriorityResolved = true
+		config.preflightPriority.candidates = []priorityAdmissionCandidate{{
+			preemptionPolicy: corev1.PreemptLowerPriority,
+		}}
+	}
+	return config
 }
 
 func validRenderedJob() *batchv1.Job {
-	job := validJob()
+	return validRenderedJobForMode(hookModeReconcile)
+}
+
+func validRenderedJobForMode(mode hookMode) *batchv1.Job {
+	job := validJobForMode(mode)
 	job.TypeMeta = metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"}
 	job.UID = ""
 	job.Spec.Selector = nil
@@ -1167,19 +2140,25 @@ func validRenderedJob() *batchv1.Job {
 }
 
 func validJob() *batchv1.Job {
+	return validJobForMode(hookModeReconcile)
+}
+
+func validJobForMode(mode hookMode) *batchv1.Job {
+	contract := mustTestHookContract(mode)
+	jobName := contract.jobName
 	backoffLimit := int32(0)
 	activeDeadline := int64(210)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: testNamespace,
-			Name:      testJobName,
+			Name:      jobName,
 			UID:       types.UID("job-uid"),
 			Annotations: map[string]string{
 				hookAnnotation:       "pre-install,pre-upgrade",
-				hookWeightAnnotation: "0",
+				hookWeightAnnotation: contract.hookWeight,
 				hookDeleteAnnotation: "before-hook-creation,hook-succeeded,hook-failed",
 			},
-			Labels: map[string]string{componentLabel: managerComponent, managedByLabel: "Helm"},
+			Labels: map[string]string{componentLabel: contract.component, managedByLabel: "Helm"},
 		},
 		Spec: batchv1.JobSpec{
 			ActiveDeadlineSeconds: &activeDeadline,
@@ -1188,17 +2167,23 @@ func validJob() *batchv1.Job {
 				batchv1.ControllerUidLabel: "job-uid",
 			}},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{componentLabel: managerComponent, managedByLabel: "Helm"}},
-				Spec:       validPodSpec(),
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{componentLabel: contract.component, managedByLabel: "Helm"}},
+				Spec:       validPodSpecForMode(mode),
 			},
 		},
 	}
 }
 
 func validPod(jobUID types.UID) *corev1.Pod {
+	return validPodForMode(hookModeReconcile, jobUID)
+}
+
+func validPodForMode(mode hookMode, jobUID types.UID) *corev1.Pod {
+	contract := mustTestHookContract(mode)
+	jobName := contract.jobName
 	controller := true
 	blockOwnerDeletion := true
-	spec := validPodSpec()
+	spec := validPodSpecForMode(mode)
 	priority := int32(0)
 	preemption := corev1.PreemptLowerPriority
 	tolerationSeconds := int64(300)
@@ -1211,20 +2196,20 @@ func validPod(jobUID types.UID) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:    testNamespace,
-			Name:         testJobName + "-bcdgh",
-			GenerateName: testJobName + "-",
+			Name:         jobName + "-bcdgh",
+			GenerateName: jobName + "-",
 			UID:          types.UID("pod-uid"),
 			Finalizers:   []string{batchv1.JobTrackingFinalizer},
 			Labels: map[string]string{
-				batchv1.JobNameLabel:       testJobName,
+				batchv1.JobNameLabel:       jobName,
 				batchv1.ControllerUidLabel: string(jobUID),
-				componentLabel:             managerComponent,
+				componentLabel:             contract.component,
 				managedByLabel:             "Helm",
 			},
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion:         "batch/v1",
 				Kind:               "Job",
-				Name:               testJobName,
+				Name:               jobName,
 				UID:                jobUID,
 				Controller:         &controller,
 				BlockOwnerDeletion: &blockOwnerDeletion,
@@ -1235,6 +2220,11 @@ func validPod(jobUID types.UID) *corev1.Pod {
 }
 
 func validPodSpec() corev1.PodSpec {
+	return validPodSpecForMode(hookModeReconcile)
+}
+
+func validPodSpecForMode(mode hookMode) corev1.PodSpec {
+	contract := mustTestHookContract(mode)
 	runAsNonRoot := true
 	runAsUser := int64(65532)
 	runAsGroup := int64(65532)
@@ -1244,7 +2234,7 @@ func validPodSpec() corev1.PodSpec {
 	defaultMode := int32(0o644)
 	expirationSeconds := int64(3600)
 	return corev1.PodSpec{
-		ServiceAccountName:           testJobName,
+		ServiceAccountName:           contract.serviceAccountName,
 		AutomountServiceAccountToken: &automount,
 		RestartPolicy:                corev1.RestartPolicyNever,
 		SecurityContext: &corev1.PodSecurityContext{
@@ -1256,11 +2246,11 @@ func validPodSpec() corev1.PodSpec {
 			},
 		},
 		Containers: []corev1.Container{{
-			Name:                     managerComponent,
+			Name:                     contract.containerName,
 			Image:                    testImage,
 			ImagePullPolicy:          corev1.PullIfNotPresent,
 			Command:                  []string{managerCommand},
-			Args:                     validManagerArguments(),
+			Args:                     validManagerArgumentsForMode(mode),
 			TerminationMessagePath:   "/dev/termination-log",
 			TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 			SecurityContext: &corev1.SecurityContext{
@@ -1302,8 +2292,13 @@ func validPodSpec() corev1.PodSpec {
 }
 
 func validManagerArguments() []string {
+	return validManagerArgumentsForMode(hookModeReconcile)
+}
+
+func validManagerArgumentsForMode(mode hookMode) []string {
+	contract := mustTestHookContract(mode)
 	return []string{
-		managerMode,
+		string(contract.mode),
 		"--timeout=180s",
 		"--release-name=ptah",
 		"--release-namespace=" + testNamespace,
@@ -1315,7 +2310,7 @@ func validManagerArguments() []string {
 		"--webhook-secret-name=ptah-webhook-cert",
 		"--webhook-port=9443",
 		"--certificate-health-port=8081",
-		"--hook-service-account-name=" + testJobName,
+		"--hook-service-account-name=" + contract.serviceAccountName,
 		"--controller-service-account-name=ptah",
 		"--controller-deployment-name=ptah",
 		"--controller-replicas=2",
@@ -1328,6 +2323,18 @@ func validManagerArguments() []string {
 		"--runtime-pod-config-expressions-b64=W10=",
 		managerArgumentPrefixes[23] + encodedTestRuntimeAdmissionContract("", 0, corev1.PreemptLowerPriority, nil),
 	}
+}
+
+func testJobNameForMode(mode hookMode) string {
+	return mustTestHookContract(mode).jobName
+}
+
+func mustTestHookContract(mode hookMode) testHookContract {
+	contract, ok := testHookContracts[mode]
+	if !ok {
+		panic("unsupported test hook mode")
+	}
+	return contract
 }
 
 func encodedTestControllerRuntimeArguments(enabled bool, notReady, unreachable int64, alwaysPull bool) string {
@@ -1360,6 +2367,28 @@ func encodedTestJSON(value any) string {
 		panic(fmt.Sprintf("marshal test runtime contract: %v", err))
 	}
 	return base64.StdEncoding.EncodeToString(encoded)
+}
+
+func testPriorityClass(
+	name string,
+	value int32,
+	globalDefault bool,
+	preemptionPolicy *corev1.PreemptionPolicy,
+) schedulingv1.PriorityClass {
+	return schedulingv1.PriorityClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            name,
+			UID:             types.UID(name + "-uid"),
+			ResourceVersion: name + "-rv-1",
+		},
+		Value:            value,
+		GlobalDefault:    globalDefault,
+		PreemptionPolicy: preemptionPolicy,
+	}
+}
+
+func testInt32Pointer(value int32) *int32 {
+	return &value
 }
 
 func newTestOutputs(t *testing.T) *captureOutputs {

@@ -46,6 +46,7 @@ func TestExecuteWritesStartupFailureOnlyToPrivateFiles(t *testing.T) {
 			"--kubeconfig", filepath.Join(directory, "missing-kubeconfig"),
 			"--namespace", testNamespace,
 			"--job-name", testJobName,
+			"--hook-mode", string(hookModeReconcile),
 			"--render-file", renderPath,
 			"--log-file", logPath,
 			"--status-file", statusPath,
@@ -105,6 +106,7 @@ func TestParseOptionsRequiresCandidateRender(t *testing.T) {
 		"--kubeconfig", filepath.Join(directory, "kubeconfig"),
 		"--namespace", testNamespace,
 		"--job-name", testJobName,
+		"--hook-mode", string(hookModeReconcile),
 		"--log-file", filepath.Join(directory, "capture.log"),
 		"--status-file", filepath.Join(directory, "capture.status"),
 		"--ready-file", filepath.Join(directory, "capture.ready"),
@@ -112,5 +114,41 @@ func TestParseOptionsRequiresCandidateRender(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "--render-file is required") {
 		t.Fatalf("parseOptions error = %v, want required candidate render", err)
+	}
+}
+
+func TestParseOptionsRequiresExactHookMode(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	base := []string{
+		"--kubeconfig", filepath.Join(directory, "kubeconfig"),
+		"--namespace", testNamespace,
+		"--job-name", testJobName,
+		"--render-file", filepath.Join(directory, "render.yaml"),
+		"--log-file", filepath.Join(directory, "capture.log"),
+		"--status-file", filepath.Join(directory, "capture.status"),
+		"--ready-file", filepath.Join(directory, "capture.ready"),
+		"--error-file", filepath.Join(directory, "capture.error"),
+	}
+	if _, err := parseOptions(base); err == nil || !strings.Contains(err.Error(), "--hook-mode is required") {
+		t.Fatalf("parseOptions missing-mode error = %v", err)
+	}
+	for _, invalid := range []string{"verify", "Preflight", " preflight", "reconcile "} {
+		args := append(append([]string{}, base...), "--hook-mode", invalid)
+		if _, err := parseOptions(args); err == nil {
+			t.Errorf("parseOptions accepted unsupported hook mode %q", invalid)
+		}
+	}
+	for _, valid := range []hookMode{hookModePreflight, hookModeReconcile} {
+		args := append(append([]string{}, base...), "--hook-mode", string(valid))
+		opts, err := parseOptions(args)
+		if err != nil {
+			t.Errorf("parseOptions rejected hook mode %q: %v", valid, err)
+			continue
+		}
+		if opts.hookMode != string(valid) {
+			t.Errorf("parsed hook mode = %q, want %q", opts.hookMode, valid)
+		}
 	}
 }

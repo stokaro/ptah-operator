@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -26,20 +28,70 @@ import (
 )
 
 const (
-	hookAnnotation        = "helm.sh/hook"
-	hookWeightAnnotation  = "helm.sh/hook-weight"
-	hookDeleteAnnotation  = "helm.sh/hook-delete-policy"
-	componentLabel        = "app.kubernetes.io/component"
-	managedByLabel        = "app.kubernetes.io/managed-by"
-	managerComponent      = "crd-manager"
-	managerCommand        = "/ptah-crd-manager"
-	managerMode           = "reconcile"
-	apiAccessVolume       = "api-access"
-	generatedNameAlphabet = "bcdfghjklmnpqrstvwxz2456789"
+	hookAnnotation               = "helm.sh/hook"
+	hookWeightAnnotation         = "helm.sh/hook-weight"
+	hookDeleteAnnotation         = "helm.sh/hook-delete-policy"
+	componentLabel               = "app.kubernetes.io/component"
+	managedByLabel               = "app.kubernetes.io/managed-by"
+	managerCommand               = "/ptah-crd-manager"
+	apiAccessVolume              = "api-access"
+	generatedNameAlphabet        = "bcdfghjklmnpqrstvwxz2456789"
+	generatedNameMaxPrefixLength = 58
+	priorityClassListLimit       = int64(500)
 )
 
+type hookMode string
+
+const (
+	hookModePreflight hookMode = "preflight"
+	hookModeReconcile hookMode = "reconcile"
+)
+
+type hookProfile struct {
+	mode          hookMode
+	component     string
+	containerName string
+	hookWeight    string
+}
+
+func profileForHookMode(mode hookMode) (hookProfile, error) {
+	switch mode {
+	case hookModePreflight:
+		return hookProfile{
+			mode:          mode,
+			component:     "crd-manager-preflight",
+			containerName: "crd-manager-preflight",
+			hookWeight:    "-60",
+		}, nil
+	case hookModeReconcile:
+		return hookProfile{
+			mode:          mode,
+			component:     "crd-manager",
+			containerName: "crd-manager",
+			hookWeight:    "0",
+		}, nil
+	default:
+		return hookProfile{}, errors.New("hook mode must be exactly preflight or reconcile")
+	}
+}
+
+func (profile hookProfile) serviceAccountName(jobName string) (string, error) {
+	switch profile.mode {
+	case hookModePreflight:
+		const suffix = "-preflight"
+		if !strings.HasSuffix(jobName, suffix) || len(jobName) == len(suffix) {
+			return "", errors.New("preflight hook Job name does not bind its service account identity")
+		}
+		return strings.TrimSuffix(jobName, suffix), nil
+	case hookModeReconcile:
+		return jobName, nil
+	default:
+		return "", errors.New("hook mode must be exactly preflight or reconcile")
+	}
+}
+
 var managerArgumentPrefixes = []string{
-	managerMode,
+	"",
 	"--timeout=",
 	"--release-name=",
 	"--release-namespace=",
@@ -70,16 +122,32 @@ var (
 	errLogStartTimeout = errors.New("hook log stream did not become available before its deadline")
 )
 
+type priorityAdmissionDefaults struct {
+	candidates []priorityAdmissionCandidate
+}
+
+type priorityAdmissionCandidate struct {
+	name             string
+	uid              types.UID
+	value            int32
+	preemptionPolicy corev1.PreemptionPolicy
+}
+
 type captureConfig struct {
-	namespace        string
-	jobName          string
-	expectedJob      *batchv1.Job
-	logStartTimeout  time.Duration
-	logRetryInterval time.Duration
-	maxLogBytes      int64
+	namespace                 string
+	jobName                   string
+	hookMode                  hookMode
+	expectedJob               *batchv1.Job
+	preflightPriority         priorityAdmissionDefaults
+	preflightPriorityResolved bool
+	logStartTimeout           time.Duration
+	logRetryInterval          time.Duration
+	maxLogBytes               int64
 }
 
 type resourceClient interface {
+	listPriorityClasses(context.Context, metav1.ListOptions) (*schedulingv1.PriorityClassList, error)
+	watchPriorityClasses(context.Context, metav1.ListOptions) (watch.Interface, error)
 	listJobs(context.Context, string, metav1.ListOptions) (*batchv1.JobList, error)
 	watchJobs(context.Context, string, metav1.ListOptions) (watch.Interface, error)
 	listPods(context.Context, string, metav1.ListOptions) (*corev1.PodList, error)
@@ -89,6 +157,20 @@ type resourceClient interface {
 
 type kubernetesResourceClient struct {
 	client kubernetes.Interface
+}
+
+func (client kubernetesResourceClient) listPriorityClasses(
+	ctx context.Context,
+	options metav1.ListOptions,
+) (*schedulingv1.PriorityClassList, error) {
+	return client.client.SchedulingV1().PriorityClasses().List(ctx, options)
+}
+
+func (client kubernetesResourceClient) watchPriorityClasses(
+	ctx context.Context,
+	options metav1.ListOptions,
+) (watch.Interface, error) {
+	return client.client.SchedulingV1().PriorityClasses().Watch(ctx, options)
 }
 
 func (client kubernetesResourceClient) listJobs(
@@ -155,6 +237,22 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 		}
 	}()
 
+	var priorityClasses map[string]schedulingv1.PriorityClass
+	var priorityClassWatch watch.Interface
+	var priorityClassEvents <-chan watch.Event
+	if config.hookMode == hookModePreflight {
+		defaults, inventory, watcher, err := establishPreflightPriorityContract(captureContext, client)
+		if err != nil {
+			return err
+		}
+		config.preflightPriority = defaults
+		config.preflightPriorityResolved = true
+		priorityClasses = inventory
+		priorityClassWatch = watcher
+		priorityClassEvents = watcher.ResultChan()
+		defer priorityClassWatch.Stop()
+	}
+
 	jobSelector := fields.OneTermEqualSelector("metadata.name", config.jobName).String()
 	jobList, err := client.listJobs(captureContext, config.namespace, metav1.ListOptions{FieldSelector: jobSelector})
 	if err != nil {
@@ -211,6 +309,9 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 	}
 	defer podWatch.Stop()
 
+	if err := drainPriorityClassEvents(priorityClassEvents, priorityClasses, config.preflightPriority); err != nil {
+		return err
+	}
 	if err := output.setStatus(statusWatching); err != nil {
 		return fmt.Errorf("write watching status: %w", err)
 	}
@@ -230,6 +331,9 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 			return captureContext.Err()
 		}
 		if observedJob != nil && observedPod != nil && completedLog != nil {
+			if err := drainPriorityClassEvents(priorityClassEvents, priorityClasses, config.preflightPriority); err != nil {
+				return err
+			}
 			if completedLog.err != nil {
 				return completedLog.err
 			}
@@ -251,6 +355,13 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 		select {
 		case <-captureContext.Done():
 			return captureContext.Err()
+		case event, open := <-priorityClassEvents:
+			if !open {
+				return errors.New("PriorityClass watch closed before capture completed")
+			}
+			if err := handlePriorityClassEvent(event, priorityClasses, config.preflightPriority); err != nil {
+				return err
+			}
 		case event, open := <-jobEvents:
 			if !open {
 				return errors.New("exact hook Job watch closed before capture completed")
@@ -265,7 +376,7 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 			if observedJob == nil {
 				observedJob = job
 				if observedPod != nil {
-					if err := validatePodOwner(observedPod, observedJob); err != nil {
+					if err := validatePodOwner(observedPod, observedJob, config); err != nil {
 						return err
 					}
 				}
@@ -287,7 +398,7 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 			if observedPod == nil {
 				observedPod = pod
 				if observedJob != nil {
-					if err := validatePodOwner(observedPod, observedJob); err != nil {
+					if err := validatePodOwner(observedPod, observedJob, config); err != nil {
 						return err
 					}
 				}
@@ -319,6 +430,229 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 	}
 }
 
+func establishPreflightPriorityContract(
+	ctx context.Context,
+	client resourceClient,
+) (priorityAdmissionDefaults, map[string]schedulingv1.PriorityClass, watch.Interface, error) {
+	options := metav1.ListOptions{Limit: priorityClassListLimit}
+	list, err := client.listPriorityClasses(ctx, options)
+	if err != nil {
+		return priorityAdmissionDefaults{}, nil, nil, fmt.Errorf("list PriorityClasses: %w", err)
+	}
+	if list == nil {
+		return priorityAdmissionDefaults{}, nil, nil, errors.New("PriorityClass list returned a nil result")
+	}
+	if list.ResourceVersion == "" {
+		return priorityAdmissionDefaults{}, nil, nil, errors.New("PriorityClass list has an empty resourceVersion")
+	}
+	if list.Continue != "" || list.RemainingItemCount != nil {
+		return priorityAdmissionDefaults{}, nil, nil, errors.New("PriorityClass inventory exceeds its single-page consistency bound")
+	}
+	if int64(len(list.Items)) > priorityClassListLimit {
+		return priorityAdmissionDefaults{}, nil, nil, errors.New("PriorityClass list exceeds the requested item limit")
+	}
+
+	inventory := make(map[string]schedulingv1.PriorityClass, len(list.Items))
+	observedUIDs := make(map[types.UID]string, len(list.Items))
+	for index := range list.Items {
+		priorityClass := list.Items[index].DeepCopy()
+		if err := validatePriorityClassObject(priorityClass); err != nil {
+			return priorityAdmissionDefaults{}, nil, nil, fmt.Errorf("validate PriorityClass inventory item: %w", err)
+		}
+		if _, found := inventory[priorityClass.Name]; found {
+			return priorityAdmissionDefaults{}, nil, nil, fmt.Errorf("PriorityClass inventory contains duplicate name %q", priorityClass.Name)
+		}
+		if previous, found := observedUIDs[priorityClass.UID]; found {
+			return priorityAdmissionDefaults{}, nil, nil, fmt.Errorf(
+				"PriorityClass inventory reuses one UID for %q and %q",
+				previous,
+				priorityClass.Name,
+			)
+		}
+		inventory[priorityClass.Name] = *priorityClass
+		observedUIDs[priorityClass.UID] = priorityClass.Name
+	}
+	defaults, err := resolveGlobalPriorityDefaults(inventory)
+	if err != nil {
+		return priorityAdmissionDefaults{}, nil, nil, err
+	}
+
+	priorityClassWatch, err := client.watchPriorityClasses(ctx, metav1.ListOptions{
+		ResourceVersion:     list.ResourceVersion,
+		AllowWatchBookmarks: true,
+	})
+	if err != nil {
+		return priorityAdmissionDefaults{}, nil, nil, fmt.Errorf("watch PriorityClasses: %w", err)
+	}
+	if priorityClassWatch == nil || priorityClassWatch.ResultChan() == nil {
+		if priorityClassWatch != nil {
+			priorityClassWatch.Stop()
+		}
+		return priorityAdmissionDefaults{}, nil, nil, errors.New("PriorityClass watch did not provide an event channel")
+	}
+	return defaults, inventory, priorityClassWatch, nil
+}
+
+func validatePriorityClassObject(priorityClass *schedulingv1.PriorityClass) error {
+	if priorityClass == nil {
+		return errors.New("PriorityClass is nil")
+	}
+	gvk := priorityClass.GetObjectKind().GroupVersionKind()
+	if !gvk.Empty() && gvk != (schema.GroupVersionKind{Group: schedulingv1.GroupName, Version: "v1", Kind: "PriorityClass"}) {
+		return fmt.Errorf("PriorityClass has unexpected apiVersion/kind %q", gvk.String())
+	}
+	if priorityClass.Namespace != "" || priorityClass.Name == "" || priorityClass.UID == "" || priorityClass.ResourceVersion == "" {
+		return errors.New("PriorityClass cluster identity is incomplete")
+	}
+	if problems := validation.IsDNS1123Subdomain(priorityClass.Name); len(problems) != 0 {
+		return fmt.Errorf("PriorityClass name is not a DNS subdomain: %s", strings.Join(problems, "; "))
+	}
+	if priorityClass.PreemptionPolicy != nil &&
+		*priorityClass.PreemptionPolicy != corev1.PreemptLowerPriority &&
+		*priorityClass.PreemptionPolicy != corev1.PreemptNever {
+		return errors.New("PriorityClass has an invalid preemptionPolicy")
+	}
+	return nil
+}
+
+func resolveGlobalPriorityDefaults(
+	inventory map[string]schedulingv1.PriorityClass,
+) (priorityAdmissionDefaults, error) {
+	minimumFound := false
+	var minimum int32
+	resolved := make([]priorityAdmissionCandidate, 0, 1)
+	for name := range inventory {
+		priorityClass := inventory[name]
+		if !priorityClass.GlobalDefault {
+			continue
+		}
+		if minimumFound && priorityClass.Value > minimum {
+			continue
+		}
+		if !minimumFound || priorityClass.Value < minimum {
+			minimumFound = true
+			minimum = priorityClass.Value
+			resolved = resolved[:0]
+		}
+		policy := corev1.PreemptLowerPriority
+		if priorityClass.PreemptionPolicy != nil {
+			policy = *priorityClass.PreemptionPolicy
+		}
+		resolved = append(resolved, priorityAdmissionCandidate{
+			name:             priorityClass.Name,
+			uid:              priorityClass.UID,
+			value:            priorityClass.Value,
+			preemptionPolicy: policy,
+		})
+	}
+	if !minimumFound {
+		resolved = append(resolved, priorityAdmissionCandidate{
+			preemptionPolicy: corev1.PreemptLowerPriority,
+		})
+	}
+	sort.Slice(resolved, func(left, right int) bool {
+		return resolved[left].name < resolved[right].name
+	})
+	return priorityAdmissionDefaults{candidates: resolved}, nil
+}
+
+func (defaults priorityAdmissionDefaults) candidateForName(name string) (priorityAdmissionCandidate, bool) {
+	for _, candidate := range defaults.candidates {
+		if candidate.name == name {
+			return candidate, true
+		}
+	}
+	return priorityAdmissionCandidate{}, false
+}
+
+func priorityAdmissionDefaultsEqual(left, right priorityAdmissionDefaults) bool {
+	if len(left.candidates) != len(right.candidates) {
+		return false
+	}
+	for index := range left.candidates {
+		if left.candidates[index] != right.candidates[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func handlePriorityClassEvent(
+	event watch.Event,
+	inventory map[string]schedulingv1.PriorityClass,
+	expected priorityAdmissionDefaults,
+) error {
+	if event.Type == watch.Bookmark {
+		return nil
+	}
+	if event.Type == watch.Error {
+		return fmt.Errorf("PriorityClass watch error: %w", apierrors.FromObject(event.Object))
+	}
+	priorityClass, ok := event.Object.(*schedulingv1.PriorityClass)
+	if !ok || priorityClass == nil {
+		return fmt.Errorf("PriorityClass watch returned %T", event.Object)
+	}
+	if err := validatePriorityClassObject(priorityClass); err != nil {
+		return fmt.Errorf("validate PriorityClass watch event: %w", err)
+	}
+
+	previous, found := inventory[priorityClass.Name]
+	switch event.Type {
+	case watch.Added:
+		if found {
+			return fmt.Errorf("PriorityClass %q produced a duplicate ADDED event", priorityClass.Name)
+		}
+		for name := range inventory {
+			if inventory[name].UID == priorityClass.UID {
+				return fmt.Errorf("PriorityClass %q reuses the UID of %q", priorityClass.Name, name)
+			}
+		}
+		inventory[priorityClass.Name] = *priorityClass.DeepCopy()
+	case watch.Modified:
+		if !found || previous.UID != priorityClass.UID {
+			return fmt.Errorf("PriorityClass %q MODIFIED event does not preserve a known identity", priorityClass.Name)
+		}
+		inventory[priorityClass.Name] = *priorityClass.DeepCopy()
+	case watch.Deleted:
+		if !found || previous.UID != priorityClass.UID {
+			return fmt.Errorf("PriorityClass %q DELETED event does not preserve a known identity", priorityClass.Name)
+		}
+		delete(inventory, priorityClass.Name)
+	default:
+		return fmt.Errorf("PriorityClass watch returned unsupported event type %q", event.Type)
+	}
+
+	resolved, err := resolveGlobalPriorityDefaults(inventory)
+	if err != nil {
+		return err
+	}
+	if !priorityAdmissionDefaultsEqual(resolved, expected) {
+		return errors.New("global default PriorityClass changed during hook capture")
+	}
+	return nil
+}
+
+func drainPriorityClassEvents(
+	events <-chan watch.Event,
+	inventory map[string]schedulingv1.PriorityClass,
+	expected priorityAdmissionDefaults,
+) error {
+	for events != nil {
+		select {
+		case event, open := <-events:
+			if !open {
+				return errors.New("PriorityClass watch closed before capture completed")
+			}
+			if err := handlePriorityClassEvent(event, inventory, expected); err != nil {
+				return err
+			}
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
 func validateCaptureConfig(config captureConfig) error {
 	if problems := validation.IsDNS1123Label(config.namespace); len(problems) != 0 {
 		return fmt.Errorf("namespace is not a DNS label: %s", strings.Join(problems, "; "))
@@ -328,6 +662,9 @@ func validateCaptureConfig(config captureConfig) error {
 	}
 	if config.logStartTimeout <= 0 || config.logRetryInterval <= 0 || config.maxLogBytes <= 0 {
 		return errors.New("log capture bounds must be greater than zero")
+	}
+	if _, err := profileForHookMode(config.hookMode); err != nil {
+		return err
 	}
 	if config.expectedJob == nil {
 		return errors.New("exact rendered hook Job is required")
@@ -426,13 +763,17 @@ func validateRenderedJob(job *batchv1.Job, config captureConfig) error {
 	if err := validateJobShape(job, config); err != nil {
 		return err
 	}
-	if _, err := runtimePodDefaultsFromTemplate(job.Spec.Template.Spec); err != nil {
+	if _, err := runtimePodDefaultsFromTemplate(job.Spec.Template.Spec, config.hookMode); err != nil {
 		return fmt.Errorf("rendered hook Job runtime admission contract: %w", err)
 	}
 	return nil
 }
 
 func validateJobShape(job *batchv1.Job, config captureConfig) error {
+	profile, err := profileForHookMode(config.hookMode)
+	if err != nil {
+		return err
+	}
 	gvk := job.GetObjectKind().GroupVersionKind()
 	// The typed BatchV1 client fixes the endpoint's GVK even when its decoder
 	// leaves TypeMeta empty. Reject contradictory TypeMeta without requiring it.
@@ -448,14 +789,14 @@ func validateJobShape(job *batchv1.Job, config captureConfig) error {
 	if job.Annotations[hookAnnotation] != "pre-install,pre-upgrade" {
 		return errors.New("hook Job has an unexpected Helm hook annotation")
 	}
-	if job.Annotations[hookWeightAnnotation] != "0" {
-		return errors.New("hook Job does not have exact hook weight 0")
+	if job.Annotations[hookWeightAnnotation] != profile.hookWeight {
+		return errors.New("hook Job does not have the exact hook weight for its mode")
 	}
 	if job.Annotations[hookDeleteAnnotation] != "before-hook-creation,hook-succeeded,hook-failed" {
 		return errors.New("hook Job has an unexpected deletion policy")
 	}
-	if job.Labels[componentLabel] != managerComponent {
-		return errors.New("hook Job does not have the CRD manager component label")
+	if job.Labels[componentLabel] != profile.component {
+		return errors.New("hook Job component label does not match its exact hook mode")
 	}
 	if job.Labels[managedByLabel] != "Helm" {
 		return errors.New("hook Job is not labeled as Helm-managed")
@@ -469,7 +810,7 @@ func validateJobShape(job *batchv1.Job, config captureConfig) error {
 	if effectiveBool(job.Spec.ManualSelector, false) {
 		return errors.New("hook Job must use the API-generated selector")
 	}
-	if job.Spec.Template.Labels[componentLabel] != managerComponent || job.Spec.Template.Labels[managedByLabel] != "Helm" {
+	if job.Spec.Template.Labels[componentLabel] != profile.component || job.Spec.Template.Labels[managedByLabel] != "Helm" {
 		return errors.New("hook Job template labels do not match the manager identity")
 	}
 	if err := validateJobTemplateMetadata(job.Spec.Template.ObjectMeta); err != nil {
@@ -482,6 +823,10 @@ func validateJobShape(job *batchv1.Job, config captureConfig) error {
 }
 
 func validatePod(pod *corev1.Pod, config captureConfig) error {
+	profile, err := profileForHookMode(config.hookMode)
+	if err != nil {
+		return err
+	}
 	gvk := pod.GetObjectKind().GroupVersionKind()
 	// As above, the typed CoreV1 endpoint is authoritative when TypeMeta is
 	// absent, while a contradictory value remains a fail-closed error.
@@ -497,8 +842,8 @@ func validatePod(pod *corev1.Pod, config captureConfig) error {
 	if pod.Labels[batchv1.JobNameLabel] != config.jobName {
 		return errors.New("hook Pod does not have the exact stable Job name label")
 	}
-	if pod.Labels[componentLabel] != managerComponent {
-		return errors.New("hook Pod does not have the CRD manager component label")
+	if pod.Labels[componentLabel] != profile.component {
+		return errors.New("hook Pod component label does not match its exact hook mode")
 	}
 	if err := validatePodSpecContract(pod.Spec, config); err != nil {
 		return fmt.Errorf("hook Pod: %w", err)
@@ -513,7 +858,7 @@ func validatePod(pod *corev1.Pod, config captureConfig) error {
 	if pod.Labels[batchv1.ControllerUidLabel] != string(owner.UID) {
 		return errors.New("hook Pod does not bind its stable controller UID label to its owner")
 	}
-	if err := validatePodAgainstRender(pod, config.expectedJob); err != nil {
+	if err := validatePodAgainstRender(pod, config.expectedJob, config); err != nil {
 		return err
 	}
 	return nil
@@ -546,14 +891,18 @@ func validateJobTemplateMetadata(metadata metav1.ObjectMeta) error {
 }
 
 func validateGeneratedPodMetadata(pod *corev1.Pod, jobName string) error {
-	prefix := jobName + "-"
-	if pod.GenerateName != prefix {
+	generateName := jobName + "-"
+	if pod.GenerateName != generateName {
 		return errors.New("hook Pod generateName does not match the exact Job prefix")
 	}
-	if !strings.HasPrefix(pod.Name, prefix) {
-		return errors.New("hook Pod name does not match its generateName")
+	prefix := generateName
+	if len(prefix) > generatedNameMaxPrefixLength {
+		prefix = prefix[:generatedNameMaxPrefixLength]
 	}
-	suffix := strings.TrimPrefix(pod.Name, prefix)
+	if !strings.HasPrefix(pod.Name, prefix) {
+		return errors.New("hook Pod name does not match its API-generated prefix")
+	}
+	suffix := pod.Name[len(prefix):]
 	if len(suffix) != 5 {
 		return errors.New("hook Pod name does not have the five-character generated suffix")
 	}
@@ -569,12 +918,16 @@ func validateGeneratedPodMetadata(pod *corev1.Pod, jobName string) error {
 }
 
 func validateContainerContract(containers []corev1.Container, config captureConfig) error {
+	profile, err := profileForHookMode(config.hookMode)
+	if err != nil {
+		return err
+	}
 	if len(containers) != 1 {
 		return errors.New("exactly one container is required")
 	}
 	container := containers[0]
-	if container.Name != managerComponent {
-		return errors.New("container name is not crd-manager")
+	if container.Name != profile.containerName {
+		return errors.New("container name does not match the exact hook mode")
 	}
 	if len(container.Command) != 1 || container.Command[0] != managerCommand {
 		return errors.New("container command is not exactly /ptah-crd-manager")
@@ -605,11 +958,19 @@ func validateContainerContract(containers []corev1.Container, config captureConf
 }
 
 func validatePodSpecContract(spec corev1.PodSpec, config captureConfig) error {
+	profile, err := profileForHookMode(config.hookMode)
+	if err != nil {
+		return err
+	}
 	if len(spec.InitContainers) != 0 || len(spec.EphemeralContainers) != 0 {
 		return errors.New("init and ephemeral containers are not permitted")
 	}
-	if spec.ServiceAccountName != config.jobName {
-		return errors.New("service account name does not match the exact hook Job identity")
+	expectedServiceAccount, err := profile.serviceAccountName(config.jobName)
+	if err != nil {
+		return err
+	}
+	if spec.ServiceAccountName != expectedServiceAccount {
+		return errors.New("service account name does not match the exact hook mode identity")
 	}
 	if spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
 		return errors.New("service account token automount must be disabled")
@@ -654,13 +1015,17 @@ func validateAPIAccessVolume(volume corev1.Volume) error {
 }
 
 func validateManagerArguments(arguments []string, config captureConfig, image string) error {
+	profile, err := profileForHookMode(config.hookMode)
+	if err != nil {
+		return err
+	}
 	if len(arguments) != len(managerArgumentPrefixes) {
 		return errors.New("container manager argument count is invalid")
 	}
 	for index, prefix := range managerArgumentPrefixes {
 		if index == 0 {
-			if arguments[index] != prefix {
-				return errors.New("container first argument is not reconcile")
+			if arguments[index] != string(profile.mode) {
+				return errors.New("container first argument does not match the exact hook mode")
 			}
 			continue
 		}
@@ -674,7 +1039,11 @@ func validateManagerArguments(arguments []string, config captureConfig, image st
 	if arguments[3] != "--release-namespace="+config.namespace {
 		return errors.New("container release namespace argument is invalid")
 	}
-	if arguments[12] != "--hook-service-account-name="+config.jobName {
+	expectedServiceAccount, err := profile.serviceAccountName(config.jobName)
+	if err != nil {
+		return err
+	}
+	if arguments[12] != "--hook-service-account-name="+expectedServiceAccount {
 		return errors.New("container hook service account argument is invalid")
 	}
 	if arguments[18] != "--manager-image="+image {
@@ -700,7 +1069,7 @@ func controllingJobOwner(pod *corev1.Pod) (metav1.OwnerReference, error) {
 	return *owner, nil
 }
 
-func validatePodOwner(pod *corev1.Pod, job *batchv1.Job) error {
+func validatePodOwner(pod *corev1.Pod, job *batchv1.Job, config captureConfig) error {
 	owner, err := controllingJobOwner(pod)
 	if err != nil {
 		return err
@@ -709,7 +1078,7 @@ func validatePodOwner(pod *corev1.Pod, job *batchv1.Job) error {
 		return errors.New("hook Pod controlling owner does not match the exact observed Job name and UID")
 	}
 	template := job.Spec.Template.Spec
-	if !podSpecMatchesTemplate(pod.Spec, template) {
+	if !podSpecMatchesTemplate(pod.Spec, template, config) {
 		return errors.New("hook Pod execution contract differs from the exact observed Job template")
 	}
 	return nil
@@ -757,7 +1126,7 @@ func validateJobAgainstRender(observed, expected *batchv1.Job) error {
 	return nil
 }
 
-func validatePodAgainstRender(observed *corev1.Pod, expected *batchv1.Job) error {
+func validatePodAgainstRender(observed *corev1.Pod, expected *batchv1.Job, config captureConfig) error {
 	if expected == nil {
 		return errors.New("candidate render is unavailable for hook Pod validation")
 	}
@@ -771,7 +1140,7 @@ func validatePodAgainstRender(observed *corev1.Pod, expected *batchv1.Job) error
 	if err := compareTemplateLabels(observed.Labels, expected.Spec.Template.Labels, owner.Name, owner.UID); err != nil {
 		return fmt.Errorf("observed hook Pod labels differ from candidate render: %w", err)
 	}
-	if !podSpecMatchesTemplate(observed.Spec, expected.Spec.Template.Spec) {
+	if !podSpecMatchesTemplate(observed.Spec, expected.Spec.Template.Spec, config) {
 		return errors.New("observed hook Pod execution contract differs from candidate render")
 	}
 	return nil
@@ -863,12 +1232,24 @@ func validateAutoGeneratedJobSelector(job *batchv1.Job) error {
 	return nil
 }
 
-func podSpecMatchesTemplate(observed, template corev1.PodSpec) bool {
+func podSpecMatchesTemplate(observed, template corev1.PodSpec, config captureConfig) bool {
 	expected := normalizePodSpecDefaults(template)
 	actual := normalizePodSpecDefaults(observed)
-	defaults, err := runtimePodDefaultsFromTemplate(template)
+	defaults, err := runtimePodDefaultsFromTemplate(template, config.hookMode)
 	if err != nil {
 		return false
+	}
+	if config.hookMode == hookModePreflight {
+		if !config.preflightPriorityResolved {
+			return false
+		}
+		candidate, found := config.preflightPriority.candidateForName(observed.PriorityClassName)
+		if !found {
+			return false
+		}
+		defaults.priorityClassName = candidate.name
+		defaults.priority = candidate.value
+		defaults.preemptionPolicy = candidate.preemptionPolicy
 	}
 	applyRuntimePodDefaults(&expected, defaults)
 	return apiequality.Semantic.DeepEqual(actual, expected)
@@ -911,6 +1292,7 @@ type runtimePodDefaults struct {
 	defaultNotReadySeconds    int64
 	defaultUnreachableSeconds int64
 	alwaysPullImagesEnabled   bool
+	priorityClassName         string
 	priority                  int32
 	preemptionPolicy          corev1.PreemptionPolicy
 }
@@ -923,11 +1305,21 @@ type renderedRuntimeAdmissionContract struct {
 	PriorityClassPreemptionPolicy string                        `json:"priorityClassPreemptionPolicy"`
 }
 
-func runtimePodDefaultsFromTemplate(template corev1.PodSpec) (runtimePodDefaults, error) {
+func runtimePodDefaultsFromTemplate(template corev1.PodSpec, mode hookMode) (runtimePodDefaults, error) {
+	profile, err := profileForHookMode(mode)
+	if err != nil {
+		return runtimePodDefaults{}, err
+	}
 	if len(template.Containers) != 1 || len(template.Containers[0].Args) != len(managerArgumentPrefixes) {
 		return runtimePodDefaults{}, errors.New("manager arguments are unavailable")
 	}
+	if template.Containers[0].Name != profile.containerName {
+		return runtimePodDefaults{}, errors.New("manager container does not match the exact hook mode")
+	}
 	arguments := template.Containers[0].Args
+	if arguments[0] != string(profile.mode) {
+		return runtimePodDefaults{}, errors.New("manager mode does not match the exact hook mode")
+	}
 	var controllerArguments []string
 	if err := decodeArgumentJSON(arguments[19], managerArgumentPrefixes[19], &controllerArguments); err != nil {
 		return runtimePodDefaults{}, fmt.Errorf("decode controller runtime arguments: %w", err)
@@ -991,6 +1383,17 @@ func runtimePodDefaultsFromTemplate(template corev1.PodSpec) (runtimePodDefaults
 	if template.Priority != nil || template.PreemptionPolicy != nil {
 		return runtimePodDefaults{}, errors.New("rendered hook template contains Pod-admission output fields")
 	}
+	if profile.mode == hookModePreflight {
+		if template.PriorityClassName != "" {
+			return runtimePodDefaults{}, errors.New("rendered preflight hook template must remain unclassified")
+		}
+		// The runtime admission contract describes the managed runtime and the
+		// reconcile hook. Capture binds the deliberately classless preflight Pod
+		// to a separately observed cluster-wide default before accepting it.
+		defaults.priority = 0
+		defaults.preemptionPolicy = corev1.PreemptLowerPriority
+		return defaults, nil
+	}
 	if template.PriorityClassName == "" {
 		if contract.PriorityClassName != "" {
 			return runtimePodDefaults{}, errors.New("runtime admission priority class is named while the rendered hook template is unclassified")
@@ -1002,6 +1405,7 @@ func runtimePodDefaultsFromTemplate(template corev1.PodSpec) (runtimePodDefaults
 	if contract.PriorityClassName != template.PriorityClassName {
 		return runtimePodDefaults{}, errors.New("runtime admission priority class differs from the rendered hook template")
 	}
+	defaults.priorityClassName = contract.PriorityClassName
 	defaults.priority = contract.PriorityClassValue
 	defaults.preemptionPolicy = policy
 	return defaults, nil
@@ -1082,6 +1486,7 @@ func applyRuntimePodDefaults(expected *corev1.PodSpec, defaults runtimePodDefaul
 			})
 		}
 	}
+	expected.PriorityClassName = defaults.priorityClassName
 	priority := defaults.priority
 	expected.Priority = &priority
 	policy := defaults.preemptionPolicy
@@ -1157,13 +1562,17 @@ func capturePodLog(
 	podName string,
 	destination io.Writer,
 ) (int64, error) {
+	profile, err := profileForHookMode(config.hookMode)
+	if err != nil {
+		return 0, err
+	}
 	streamContext, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()
 	startTimer := time.AfterFunc(config.logStartTimeout, cancelStream)
 	defer startTimer.Stop()
 
 	for {
-		stream, err := client.streamPodLogs(streamContext, config.namespace, podName, managerComponent)
+		stream, err := client.streamPodLogs(streamContext, config.namespace, podName, profile.containerName)
 		if err != nil {
 			if ctx.Err() != nil {
 				return 0, ctx.Err()
@@ -1171,7 +1580,7 @@ func capturePodLog(
 			if streamContext.Err() != nil {
 				return 0, errLogStartTimeout
 			}
-			if !isTransientLogStartError(err, podName, managerComponent) {
+			if !isTransientLogStartError(err, podName, profile.containerName) {
 				return 0, fmt.Errorf("start hook Pod log stream: %w", err)
 			}
 			if err := waitForRetry(streamContext, config.logRetryInterval); err != nil {

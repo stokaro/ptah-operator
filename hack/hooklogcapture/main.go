@@ -1,5 +1,5 @@
-// Command hooklogcapture captures the exact CRD reconciliation hook log even
-// when Helm deletes the hook immediately after it fails.
+// Command hooklogcapture captures an exact CRD hook log even when Helm deletes
+// the hook immediately after it completes.
 package main
 
 import (
@@ -27,6 +27,7 @@ type options struct {
 	kubeconfig string
 	namespace  string
 	jobName    string
+	hookMode   string
 	renderFile string
 	logFile    string
 	statusFile string
@@ -91,6 +92,7 @@ func execute(args []string) int {
 	err = capture(ctx, kubernetesResourceClient{client: clientset}, captureConfig{
 		namespace:        opts.namespace,
 		jobName:          opts.jobName,
+		hookMode:         hookMode(opts.hookMode),
 		expectedJob:      expectedJob,
 		logStartTimeout:  defaultLogStartTimeout,
 		logRetryInterval: defaultLogRetryDelay,
@@ -114,6 +116,7 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to the kubeconfig used for the capture")
 	flags.StringVar(&opts.namespace, "namespace", "", "namespace containing the exact hook Job")
 	flags.StringVar(&opts.jobName, "job-name", "", "exact hook Job name")
+	flags.StringVar(&opts.hookMode, "hook-mode", "", "exact hook mode: preflight or reconcile")
 	flags.StringVar(&opts.renderFile, "render-file", "", "path to the candidate multi-document render")
 	flags.StringVar(&opts.logFile, "log-file", "", "private destination for captured log bytes")
 	flags.StringVar(&opts.statusFile, "status-file", "", "private destination for capture status")
@@ -133,6 +136,7 @@ func parseOptions(args []string) (options, error) {
 		{"--kubeconfig", opts.kubeconfig},
 		{"--namespace", opts.namespace},
 		{"--job-name", opts.jobName},
+		{"--hook-mode", opts.hookMode},
 		{"--render-file", opts.renderFile},
 		{"--log-file", opts.logFile},
 		{"--status-file", opts.statusFile},
@@ -143,6 +147,9 @@ func parseOptions(args []string) (options, error) {
 		if item.value == "" {
 			return opts, errors.New(item.name + " is required")
 		}
+	}
+	if _, err := profileForHookMode(hookMode(opts.hookMode)); err != nil {
+		return opts, err
 	}
 	if opts.timeout <= 0 || opts.timeout > 15*time.Minute {
 		return opts, errors.New("--timeout must be greater than zero and no more than 15m")
