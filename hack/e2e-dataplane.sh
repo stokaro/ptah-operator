@@ -666,7 +666,37 @@ assert_active_pod_ephemeral_container_rejected() {
       .status.activeOperation.jobUID == $jobUID and
       (.status.activeOperation.admissionSnapshot.digest |
         test("^sha256:[0-9a-f]{64}$"))
-    ' >/dev/null || return 1
+	' >/dev/null || return 1
+
+	clone_pod_name=${active_pod_name}-clone
+	printf '%s\n' "$active_pod_object" | jq --arg cloneName "$clone_pod_name" '
+      del(
+        .metadata.creationTimestamp,
+        .metadata.deletionGracePeriodSeconds,
+        .metadata.deletionTimestamp,
+        .metadata.generateName,
+        .metadata.generation,
+		.metadata.labels["app.kubernetes.io/managed-by"],
+		.metadata.labels["app.kubernetes.io/component"],
+        .metadata.managedFields,
+        .metadata.resourceVersion,
+        .metadata.selfLink,
+        .metadata.uid,
+        .status
+      ) |
+      .metadata.name = $cloneName
+    ' >"$RESOURCE_FILE"
+	if k -n "$TEST_NAMESPACE" create --dry-run=server -f "$RESOURCE_FILE" >"$ADMISSION_ERROR_FILE" 2>&1; then
+		fail "Pod intent admission allowed a namespace actor to clone active Job Pod $active_pod_name"
+	fi
+	scan_file_for_credentials "$ADMISSION_ERROR_FILE" \
+		"the operation Pod create-origin admission refusal"
+	grep -F 'vpodintent.operator.ptah.dev' "$ADMISSION_ERROR_FILE" >/dev/null ||
+		fail "operation Pod clone rejection did not come from the Pod intent webhook"
+	grep -F 'not created by the Kubernetes Job controller' "$ADMISSION_ERROR_FILE" >/dev/null ||
+		fail "Pod intent webhook rejected the operation Pod clone for an unexpected reason"
+	printf '%s\n' 'e2e data plane: PASS operation Pod create-origin enforcement'
+	: >"$ADMISSION_ERROR_FILE"
 
 	jq -n --arg uid "$active_pod_uid" --arg image "$RUNNER_IMAGE" '
     {
@@ -710,8 +740,8 @@ assert_active_pod_ephemeral_container_rejected() {
     ' >/dev/null || fail "active Pod identity changed during the negative subresource test"
 	: >"$ADMISSION_ERROR_FILE"
 
-	# The new object no longer matches the objectSelector. This PATCH can reach
-	# the handler only because admission selection also evaluates oldObject.
+	# The webhook scope must retain managed Pods across updates even when a
+	# request tries to remove their identity labels.
 	if k -n "$TEST_NAMESPACE" label pod "$active_pod_name" \
 		'app.kubernetes.io/managed-by-' >"$ADMISSION_ERROR_FILE" 2>&1; then
 		fail "Pod intent admission allowed exact active Pod $active_pod_name UID $active_pod_uid to remove its selector identity"
@@ -719,7 +749,7 @@ assert_active_pod_ephemeral_container_rejected() {
 	scan_file_for_credentials "$ADMISSION_ERROR_FILE" \
 		"the managed-identity label-removal admission refusal"
 	grep -F 'vpodintent.operator.ptah.dev' "$ADMISSION_ERROR_FILE" >/dev/null ||
-		fail "managed-identity label removal did not reach the Pod intent webhook through oldObject"
+		fail "managed-identity label removal did not reach the Pod intent webhook"
 	grep -F 'removed its managed workload identity' "$ADMISSION_ERROR_FILE" >/dev/null ||
 		fail "Pod intent webhook rejected managed-identity label removal for an unexpected reason"
 	k -n "$TEST_NAMESPACE" get pod "$active_pod_name" -o json | jq -e \
@@ -731,8 +761,8 @@ assert_active_pod_ephemeral_container_rejected() {
       any(.metadata.ownerReferences[]?;
         .apiVersion == "batch/v1" and .kind == "Job" and
         .uid == $jobUID and .controller == true)
-	' >/dev/null || fail "active Pod identity changed during the oldObject selector test"
-	printf '%s\n' 'e2e data plane: PASS active Pod oldObject selector enforcement'
+	' >/dev/null || fail "active Pod identity changed during the managed-identity update test"
+	printf '%s\n' 'e2e data plane: PASS active Pod managed-identity enforcement'
 	: >"$ADMISSION_ERROR_FILE"
 	return 0
 }
@@ -1476,6 +1506,12 @@ capture_one_new_job_result() {
       if length == 1 then .[0].metadata.name
       else error("exact result Job does not own exactly one bound Pod") end
     ')
+	CAPTURED_POD_GENERATE_NAME=$(printf '%s\n' "$result_pods" | jq -er \
+		--arg name "$CAPTURED_POD_NAME" '
+      .items[] | select(.metadata.name == $name) | .metadata.generateName
+    ')
+	[ "$CAPTURED_POD_GENERATE_NAME" = "${CAPTURED_JOB_NAME}-" ] ||
+		fail "$CAPTURED_POD_NAME does not preserve its exact Job generateName"
 	printf '%s\n' "$result_pods" | jq -e \
 		--arg name "$CAPTURED_POD_NAME" '
       .items[] | select(.metadata.name == $name) |
@@ -2309,7 +2345,7 @@ MYSQL_SECRET=e2e-mysql-db
 MYSQL_SERVICE=e2e-mysql
 MYSQL_URL="mysql://${MYSQL_USER}:${MYSQL_PASSWORD}@tcp(${MYSQL_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:3306)/${MYSQL_DATABASE}"
 EXTERNAL_PG_SECRET=e2e-postgresql-external-db
-EXTERNAL_PG_SCHEMA=e2e-postgresql-external
+EXTERNAL_PG_SCHEMA=e2e-postgresql-external-longpod
 EXTERNAL_PG_COORDINATION_KEY=e2e/postgresql-external/app
 REGISTRY_AUTH_SECRET=e2e-registry-auth
 REGISTRY_PULL_SECRET=e2e-registry-pull
@@ -4818,6 +4854,12 @@ run_external_postgresql_lifecycle() {
 	external_after_plan="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-after-plan.json"
 	assert_plan "$EXTERNAL_PG_SCHEMA" "$external_reference" "$external_digest" postgres false \
 		"$external_before" "$external_before" "$external_after_plan"
+	[ "${#CAPTURED_JOB_NAME}" -eq 58 ] ||
+		fail "external PostgreSQL plan Job did not reach the generated-name truncation boundary"
+	[ "${#CAPTURED_POD_GENERATE_NAME}" -eq 59 ] ||
+		fail "external PostgreSQL plan Pod generateName did not cross the truncation boundary"
+	[ "${#CAPTURED_POD_NAME}" -eq 63 ] ||
+		fail "external PostgreSQL plan Pod did not preserve the bounded generated name"
 	for external_plan_operation in resolve verify observe plan; do
 		assert_one_job_between_checkpoints "$EXTERNAL_PG_SCHEMA" \
 			"$external_plan_operation" "$external_before" "$external_after_plan"
@@ -5108,7 +5150,7 @@ run_external_postgresql_lifecycle
 run_engine_lifecycle mysql MySQL mysql "$MYSQL_SECRET"
 run_mysql_dsn_refusal
 [ "$EPHEMERAL_SUBRESOURCE_TESTED" -eq 1 ] ||
-	fail "no UID-bound active operation Pod was available for the admission subresource and oldObject selector tests"
+	fail "no UID-bound active operation Pod was available for the admission subresource and managed-identity tests"
 audit_runtime_credentials
 
 printf '%s\n' 'e2e data plane: starting restart and fault-injection acceptance'

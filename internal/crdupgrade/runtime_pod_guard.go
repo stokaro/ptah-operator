@@ -16,6 +16,8 @@ import (
 const (
 	runtimePodGuardNamePrefix          = "ptah-operator-runtime-pod-identity-v"
 	runtimePodContractDigestAnnotation = "operator.ptah.dev/runtime-pod-contract-digest"
+	runtimeReplicaSetHashMinLength     = 1
+	runtimeReplicaSetHashMaxLength     = 10
 )
 
 // RuntimePodGuardPolicyName returns the append-only Pod identity boundary for
@@ -38,6 +40,34 @@ type runtimePodContract struct {
 	digest              string
 }
 
+// runtimePodActivationMatchExpression leaves the exact predecessor Pod path
+// to its retained policy before this sequence activates. Candidate, future,
+// and malformed identities still enter this policy and fail its validations.
+func (g *RolloutGuard) runtimePodActivationMatchExpression() string {
+	activationShape := g.releaseActivationParameterShapeExpression()
+	activeRelease := decimalCEL("params", activeReleaseDataKey, true)
+	bootstrapIdentity := fmt.Sprintf(
+		`params.data[%q] == "0" && %s && %s`,
+		activeReleaseDataKey,
+		annotationAbsentExpression("object", ControllerStateVersionAnnotation),
+		annotationAbsentExpression("object", ReleaseSequenceAnnotation),
+	)
+	activeIdentity := fmt.Sprintf(
+		`params.data[%[1]q] != "0" && has(object.metadata.annotations) && %[2]q in object.metadata.annotations && object.metadata.annotations[%[2]q] == params.metadata.annotations[%[2]q] && %[3]q in object.metadata.annotations && object.metadata.annotations[%[3]q] == params.data[%[1]q]`,
+		activeReleaseDataKey,
+		ControllerStateVersionAnnotation,
+		ReleaseSequenceAnnotation,
+	)
+	predecessorIdentity := fmt.Sprintf(`(%s) || (%s)`, bootstrapIdentity, activeIdentity)
+	return fmt.Sprintf(
+		`!(%[1]s) || (%[2]s) >= %[3]d || ((!has(request.subResource) || request.subResource == "") && !(%[4]s))`,
+		activationShape,
+		activeRelease,
+		g.ReleaseSequence,
+		predecessorIdentity,
+	)
+}
+
 // runtimePodIdentityPolicy returns the immutable Pod-level executable and
 // privilege boundary for the two long-lived runtime ServiceAccounts.
 func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.ValidatingAdmissionPolicy, error) {
@@ -53,16 +83,17 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 	controllerContract := g.controllerPodContractExpressions(contract)
 	certificateContract := g.certificatePodContractExpressions(contract)
 	validations := []admissionregistrationv1.Validation{
+		{Expression: `variables.activationValid`, Message: message},
 		{Expression: `!has(request.subResource) || request.subResource == ""`, Message: message},
 		{Expression: `request.operation != "CREATE" || request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:replicaset-controller"]`, Message: message},
-		{Expression: fmt.Sprintf(`!variables.isPod || variables.newRelease >= %d`, g.ReleaseSequence), Message: message},
-		{Expression: `!variables.isPod || variables.activeRelease >= variables.newRelease`, Message: message},
+		{Expression: `!variables.isPod || variables.newRelease == variables.activeRelease`, Message: message},
+		{Expression: `!variables.isPod || variables.newState == variables.activeState`, Message: message},
 	}
 	for index := range controllerContract {
 		validations = append(validations, admissionregistrationv1.Validation{
 			Expression: fmt.Sprintf(
-				`!variables.isPod || variables.newRelease > %d || (variables.newRelease == %d && variables.newState == %d && ((variables.isController && (%s)) || (variables.isCertificate && (%s))))`,
-				g.ReleaseSequence, g.ReleaseSequence, g.ControllerStateVersion, controllerContract[index], certificateContract[index],
+				`!variables.isPod || variables.newRelease != %d || (variables.newState == %d && ((variables.isController && (%s)) || (variables.isCertificate && (%s))))`,
+				g.ReleaseSequence, g.ControllerStateVersion, controllerContract[index], certificateContract[index],
 			),
 			Message: message,
 		})
@@ -70,8 +101,8 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 	for _, expression := range g.RuntimePodConfigExpressions {
 		validations = append(validations, admissionregistrationv1.Validation{
 			Expression: fmt.Sprintf(
-				`!variables.isPod || variables.newRelease > %d || (variables.newRelease == %d && variables.newState == %d && (%s))`,
-				g.ReleaseSequence, g.ReleaseSequence, g.ControllerStateVersion, expression,
+				`!variables.isPod || variables.newRelease != %d || (variables.newState == %d && (%s))`,
+				g.ReleaseSequence, g.ControllerStateVersion, expression,
 			),
 			Message: message,
 		})
@@ -111,26 +142,31 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 					}},
 				},
 			},
-			MatchConditions: []admissionregistrationv1.MatchCondition{{
-				Name: "runtime-service-account-or-pod",
-				Expression: fmt.Sprintf(
-					`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q))))`,
-					g.ReleaseNamespace,
-					g.ControllerServiceAccountName,
-					g.CertificateDeploymentName,
-					g.ControllerServiceAccountName,
-					g.CertificateDeploymentName,
-					g.ControllerDeploymentName+"-",
-					g.CertificateDeploymentName+"-",
-				),
-			}},
+			MatchConditions: []admissionregistrationv1.MatchCondition{
+				{
+					Name: "runtime-service-account-or-pod",
+					Expression: fmt.Sprintf(
+						`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
+						g.ReleaseNamespace,
+						g.ControllerServiceAccountName,
+						g.CertificateDeploymentName,
+						g.ControllerServiceAccountName,
+						g.CertificateDeploymentName,
+						runtimePodRequestNameExpression("request.name", g.ControllerDeploymentName),
+						runtimePodRequestNameExpression("request.name", g.CertificateDeploymentName),
+					),
+				},
+				{Name: "activation-gated-runtime-pod", Expression: g.runtimePodActivationMatchExpression()},
+			},
 			Variables: []admissionregistrationv1.Variable{
 				{Name: "isPod", Expression: `!has(request.subResource) || request.subResource == ""`},
 				{Name: "isController", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, g.ControllerServiceAccountName)},
 				{Name: "isCertificate", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, g.CertificateDeploymentName)},
 				{Name: "newState", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "newRelease", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
+				{Name: "activationValid", Expression: g.releaseActivationParameterShapeExpression()},
 				{Name: "activeRelease", Expression: fmt.Sprintf(`params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1`, activeReleaseDataKey, activeReleaseDataKey, activeReleaseDataKey)},
+				{Name: "activeState", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "apiVolumes", Expression: `(!has(request.subResource) || request.subResource == "") && has(object.spec.volumes) ? object.spec.volumes.filter(v, v.name == "api-access") : []`},
 			},
 			Validations: validations,
@@ -378,13 +414,71 @@ func (g *RolloutGuard) certificatePodContractExpressions(contract runtimePodCont
 }
 
 func (g *RolloutGuard) runtimePodMetadataExpression(deploymentName, component string) string {
+	owner := "object.metadata.ownerReferences[0]"
 	return fmt.Sprintf(
-		`object.metadata.name.startsWith(%q) && (!has(object.metadata.generateName) || object.metadata.generateName.startsWith(%q)) && has(object.metadata.labels) && %q in object.metadata.labels && object.metadata.labels[%q] == %q && %q in object.metadata.labels && object.metadata.labels[%q] == %q && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "apps/v1" && object.metadata.ownerReferences[0].kind == "ReplicaSet" && object.metadata.ownerReferences[0].name.startsWith(%q) && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion`,
-		deploymentName+"-", deploymentName+"-",
+		`%s && has(object.metadata.labels) && %q in object.metadata.labels && object.metadata.labels[%q] == %q && %q in object.metadata.labels && object.metadata.labels[%q] == %q && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && %s.apiVersion == "apps/v1" && %s.kind == "ReplicaSet" && %s && %s.uid != "" && has(%s.controller) && %s.controller && has(%s.blockOwnerDeletion) && %s.blockOwnerDeletion`,
+		generatedPodNameValidationExpression(owner+".name"),
 		instanceLabel, instanceLabel, g.ReleaseName,
 		"app.kubernetes.io/component", "app.kubernetes.io/component", component,
-		deploymentName+"-",
+		owner, owner, runtimeReplicaSetNameExpression(owner+".name", deploymentName),
+		owner, owner, owner, owner, owner,
 	)
+}
+
+func runtimeReplicaSetNameExpression(nameExpression, deploymentName string) string {
+	prefix := deploymentName + "-"
+	return fmt.Sprintf(
+		`%[1]s.startsWith(%[2]q) && %[1]s.substring(%[3]d).matches("^[a-z0-9]{%[4]d,%[5]d}$")`,
+		nameExpression, prefix, len(prefix), runtimeReplicaSetHashMinLength, runtimeReplicaSetHashMaxLength,
+	)
+}
+
+// runtimePodRequestNameExpression recognizes exactly the names the API server
+// can generate from a ReplicaSet owned by deploymentName. For long
+// generateName values, the API server keeps only the first 58 ASCII bytes
+// before appending its five-character random suffix.
+func runtimePodRequestNameExpression(nameExpression, deploymentName string) string {
+	replicaSetPrefix := deploymentName + "-"
+	maxGeneratedPrefixLength := kubernetesDNSLabelMaxLength - kubernetesGeneratedSuffixLen
+	if len(replicaSetPrefix) >= maxGeneratedPrefixLength {
+		effectivePrefix := replicaSetPrefix[:maxGeneratedPrefixLength]
+		return fmt.Sprintf(
+			`(%[1]s.startsWith(%[2]q) && %[1]s.size() == %[3]d && %[1]s.substring(%[4]d).matches("^[a-z0-9]{%[5]d}$"))`,
+			nameExpression,
+			effectivePrefix,
+			len(effectivePrefix)+kubernetesGeneratedSuffixLen,
+			len(effectivePrefix),
+			kubernetesGeneratedSuffixLen,
+		)
+	}
+
+	alternatives := make([]string, 0, 2)
+	maxUntruncatedHashLength := min(runtimeReplicaSetHashMaxLength, maxGeneratedPrefixLength-len(replicaSetPrefix)-1)
+	if maxUntruncatedHashLength >= runtimeReplicaSetHashMinLength {
+		alternatives = append(alternatives, fmt.Sprintf(
+			`(%[1]s.startsWith(%[2]q) && %[1]s.substring(%[3]d).matches("^[a-z0-9]{%[4]d,%[5]d}-[a-z0-9]{%[6]d}$"))`,
+			nameExpression,
+			replicaSetPrefix,
+			len(replicaSetPrefix),
+			runtimeReplicaSetHashMinLength,
+			maxUntruncatedHashLength,
+			kubernetesGeneratedSuffixLen,
+		))
+	}
+
+	truncatedHashCharacters := maxGeneratedPrefixLength - len(replicaSetPrefix)
+	if truncatedHashCharacters <= runtimeReplicaSetHashMaxLength {
+		alternatives = append(alternatives, fmt.Sprintf(
+			`(%[1]s.startsWith(%[2]q) && %[1]s.size() == %[3]d && %[1]s.substring(%[4]d).matches("^[a-z0-9]{%[5]d}$"))`,
+			nameExpression,
+			replicaSetPrefix,
+			kubernetesDNSLabelMaxLength,
+			len(replicaSetPrefix),
+			kubernetesDNSLabelMaxLength-len(replicaSetPrefix),
+		))
+	}
+
+	return "(" + strings.Join(alternatives, " || ") + ")"
 }
 
 func (g *RolloutGuard) runtimePodSpecExpression(controller bool) string {

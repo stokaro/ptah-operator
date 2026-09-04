@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	celgo "github.com/google/cel-go/cel"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -220,19 +221,13 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			},
 		},
 		{
-			name: "pod selector missing", want: "objectSelector",
-			mutate: func(verifier *RuntimeVerifier) {
-				validatingWebhook(t, verifier, podIntentWebhookName).ObjectSelector = nil
-			},
-		},
-		{
 			name: "pod selector empty", want: "objectSelector",
 			mutate: func(verifier *RuntimeVerifier) {
 				validatingWebhook(t, verifier, podIntentWebhookName).ObjectSelector = &metav1.LabelSelector{}
 			},
 		},
 		{
-			name: "pod selector wrong", want: "objectSelector",
+			name: "pod selector nonempty", want: "objectSelector",
 			mutate: func(verifier *RuntimeVerifier) {
 				validatingWebhook(t, verifier, podIntentWebhookName).ObjectSelector = &metav1.LabelSelector{
 					MatchLabels: map[string]string{
@@ -296,6 +291,108 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			err := verifier.Verify(context.Background())
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Verify error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestPodIntentMatchExpressionScopesManagedAndCanonicalJobPods(t *testing.T) {
+	t.Parallel()
+
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("oldObject", celgo.DynType),
+		celgo.Variable("request", celgo.DynType),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast, issues := environment.Compile(podIntentMatchExpression)
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile Pod-intent match expression: %v", issues.Err())
+	}
+	program, err := environment.Program(ast)
+	if err != nil {
+		t.Fatalf("build Pod-intent match expression: %v", err)
+	}
+
+	managedLabels := map[string]any{
+		"app.kubernetes.io/managed-by": "ptah-operator",
+		"app.kubernetes.io/component":  "schema-operation",
+	}
+	partialLabels := map[string]any{
+		"app.kubernetes.io/managed-by": "ptah-operator",
+	}
+	pod := func(labels map[string]any, ownerName string) map[string]any {
+		metadata := map[string]any{"ownerReferences": []any{}}
+		if labels != nil {
+			metadata["labels"] = labels
+		}
+		if ownerName != "" {
+			metadata["ownerReferences"] = []any{map[string]any{
+				"apiVersion": "batch/v1",
+				"kind":       "Job",
+				"controller": true,
+				"name":       ownerName,
+			}}
+		}
+		return map[string]any{"metadata": metadata}
+	}
+
+	tests := []struct {
+		name      string
+		operation string
+		object    map[string]any
+		oldObject any
+		want      bool
+	}{
+		{
+			name: "new managed Pod", operation: "CREATE",
+			object: pod(managedLabels, ""), want: true,
+		},
+		{
+			name: "new label-less canonical Job Pod", operation: "CREATE",
+			object: pod(nil, "ptah-apply-orders-0123456789abcdef"), want: true,
+		},
+		{
+			name: "new unrelated Job Pod", operation: "CREATE",
+			object: pod(nil, "database-backup"), want: false,
+		},
+		{
+			name: "new partially labeled unrelated Pod", operation: "CREATE",
+			object: pod(partialLabels, ""), want: false,
+		},
+		{
+			name: "old managed Pod update", operation: "UPDATE",
+			object: pod(nil, "database-backup"), oldObject: pod(managedLabels, ""), want: true,
+		},
+		{
+			name: "old canonical Job Pod update", operation: "UPDATE",
+			object: pod(nil, "database-backup"), oldObject: pod(nil, "ptah-observe-orders-0123456789abcdef"), want: true,
+		},
+		{
+			name: "old canonical Job Pod ignored on create", operation: "CREATE",
+			object: pod(nil, "database-backup"), oldObject: pod(nil, "ptah-verify-orders-0123456789abcdef"), want: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			result, _, err := program.Eval(map[string]any{
+				"object":    test.object,
+				"oldObject": test.oldObject,
+				"request":   map[string]any{"operation": test.operation},
+			})
+			if err != nil {
+				t.Fatalf("evaluate Pod-intent match expression: %v", err)
+			}
+			got, ok := result.Value().(bool)
+			if !ok {
+				t.Fatalf("Pod-intent match expression result = %T(%v), want bool", result.Value(), result.Value())
+			}
+			if got != test.want {
+				t.Fatalf("Pod-intent match expression = %t, want %t", got, test.want)
 			}
 		})
 	}
@@ -754,7 +851,6 @@ func readyPodIntentWebhook(expected RuntimeInvariants) admissionregistrationv1.V
 		FailurePolicy: &fail, SideEffects: &none, MatchPolicy: &equivalent,
 		TimeoutSeconds: valuePointer(expected.WebhookTimeoutSeconds),
 		ClientConfig:   readyWebhookClientConfig(expected, podIntentPath),
-		ObjectSelector: exactPodIntentObjectSelector(),
 		Rules: []admissionregistrationv1.RuleWithOperations{{
 			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
 			Rule: admissionregistrationv1.Rule{

@@ -22,6 +22,8 @@ evaluate() {
 		--argjson expected_revision 7 \
 		--arg expected_name ptah-crd-preflight \
 		--argjson expected_weight -60 \
+		--arg expected_identity_name ptah-hook-identity \
+		--argjson expected_identity_weight -105 \
 		-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$1" >/dev/null
 }
 
@@ -42,9 +44,9 @@ cat >"$WORK_DIR/valid.json" <<'EOF'
   "info": {"status": "failed"},
   "hooks": [
     {
-      "name": "earlier-hook",
-      "kind": "Job",
-      "weight": -70,
+	      "name": "ptah-hook-identity",
+	      "kind": "Job",
+	      "weight": -105,
       "events": ["pre-upgrade"],
       "last_run": {
         "phase": "Succeeded",
@@ -66,7 +68,7 @@ cat >"$WORK_DIR/valid.json" <<'EOF'
     {
       "name": "later-hook",
       "kind": "Job",
-      "weight": -50,
+      "weight": null,
       "events": ["pre-upgrade"],
       "last_run": {"phase": ""}
     }
@@ -79,7 +81,11 @@ expect_rejected wrong-revision '.version = 8'
 expect_rejected wrong-name '.hooks[1].name = "other-preflight"'
 expect_rejected wrong-weight '.hooks[1].weight = -59'
 expect_rejected wrong-event '.hooks[1].events = ["post-upgrade"]'
+expect_rejected missing-identity '.hooks[0].name = "other-identity"'
+expect_rejected failed-identity '.hooks[0].last_run.phase = "Failed"'
+expect_rejected wrong-identity-weight '.hooks[0].weight = -104'
 expect_rejected two-failures '.hooks[2].last_run = .hooks[1].last_run'
 expect_rejected later-hook-ran '.hooks[2].last_run = .hooks[0].last_run'
+expect_rejected malformed-later-weight '.hooks[2].weight = "not-a-weight"'
 
 printf '%s\n' 'failed hook evidence self-test: PASS'

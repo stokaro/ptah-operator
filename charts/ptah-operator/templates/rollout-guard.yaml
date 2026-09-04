@@ -14,6 +14,15 @@
 {{- $hookUsernamePatternPrefix := printf "^%s" (regexQuoteMeta $hookUsernamePrefix) -}}
 {{- $rolloutMessage := printf "Ptah rollout guard v%s rejected an unsafe release transition" $sequence -}}
 {{- $runtimeMessage := printf "Ptah runtime guard v%s rejected a non-candidate controller image" $sequence -}}
+{{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
+{{- $activationValid := printf `params != null && (%s)` $activationShape -}}
+{{- $stopTransition := `variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation == "UPDATE" && oldObject != null && variables.activationValid && variables.newRelease > variables.activeRelease && variables.newState > 0 && variables.isReleaseHook && has(object.spec.replicas) && object.spec.replicas == 0 && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) == has(oldObject.metadata.uid) && (!has(object.metadata.uid) || object.metadata.uid == oldObject.metadata.uid) && object.metadata.labels == oldObject.metadata.labels && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.metadata.annotations) && "operator.ptah.dev/controller-state-version" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/controller-state-version"] == string(variables.newState) && "operator.ptah.dev/release-sequence" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/release-sequence"] == string(variables.newRelease) && object.metadata.annotations.all(key, key in ["operator.ptah.dev/controller-state-version", "operator.ptah.dev/release-sequence"] || (has(oldObject.metadata.annotations) && key in oldObject.metadata.annotations && object.metadata.annotations[key] == oldObject.metadata.annotations[key])) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(key, key in ["operator.ptah.dev/controller-state-version", "operator.ptah.dev/release-sequence"] || (key in object.metadata.annotations && oldObject.metadata.annotations[key] == object.metadata.annotations[key]))) && object.spec.template == oldObject.spec.template && object.spec.selector == oldObject.spec.selector && object.spec.strategy == oldObject.spec.strategy && object.spec.minReadySeconds == oldObject.spec.minReadySeconds && (has(object.spec.revisionHistoryLimit) == has(oldObject.spec.revisionHistoryLimit)) && (!has(object.spec.revisionHistoryLimit) || object.spec.revisionHistoryLimit == oldObject.spec.revisionHistoryLimit) && (has(object.spec.paused) == has(oldObject.spec.paused)) && (!has(object.spec.paused) || object.spec.paused == oldObject.spec.paused) && (has(object.spec.progressDeadlineSeconds) == has(oldObject.spec.progressDeadlineSeconds)) && (!has(object.spec.progressDeadlineSeconds) || object.spec.progressDeadlineSeconds == oldObject.spec.progressDeadlineSeconds)` -}}
+{{- $rolloutBootstrap := `variables.activeRelease == 0 && (!has(object.metadata.annotations) || !("operator.ptah.dev/controller-state-version" in object.metadata.annotations)) && (!has(object.metadata.annotations) || !("operator.ptah.dev/release-sequence" in object.metadata.annotations)) && (!variables.isAdmission || (!has(object.metadata.annotations) || !("operator.ptah.dev/admission-contract-version" in object.metadata.annotations)))` -}}
+{{- $rolloutActive := `variables.activeRelease > 0 && variables.newState == variables.activeState && variables.newRelease == variables.activeRelease && (!variables.isAdmission || variables.newAdmission == variables.activeAdmission)` -}}
+{{- $rolloutActiveIdentity := printf `variables.activationValid && ((%s) || (%s))` $rolloutBootstrap $rolloutActive -}}
+{{- $runtimeBootstrap := `variables.activeRelease == 0 && (!has(object.metadata.annotations) || !("operator.ptah.dev/controller-state-version" in object.metadata.annotations)) && (!has(object.metadata.annotations) || !("operator.ptah.dev/release-sequence" in object.metadata.annotations)) && (!has(object.spec.template.metadata.annotations) || !("operator.ptah.dev/controller-state-version" in object.spec.template.metadata.annotations)) && (!has(object.spec.template.metadata.annotations) || !("operator.ptah.dev/release-sequence" in object.spec.template.metadata.annotations))` -}}
+{{- $runtimeActive := `variables.activeRelease > 0 && variables.newState == variables.activeState && variables.newRelease == variables.activeRelease && variables.templateState == string(variables.activeState) && variables.templateRelease == string(variables.activeRelease) && object.spec.template.spec.containers.size() == 1 && object.spec.template.spec.containers[0].image == variables.activeImage && has(object.spec.template.spec.initContainers) && object.spec.template.spec.initContainers.size() == 1 && object.spec.template.spec.initContainers[0].image == variables.activeImage` -}}
+{{- $runtimeActiveIdentity := printf `variables.activationValid && ((%s) || (%s))` $runtimeBootstrap $runtimeActive -}}
 {{- $pod := "object.spec.template.spec" -}}
 {{- $initContainer := printf "%s.initContainers[0]" $pod -}}
 {{- $container := printf "%s.containers[0]" $pod -}}
@@ -23,8 +32,8 @@
 {{- $controllerVerifierArgs := include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "runtime-verify" "timeout" "60s" "verifyControllerState" true) -}}
 {{- $certificateVerifierArgs := include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "runtime-verify" "timeout" "60s" "verifyControllerState" false) -}}
 {{- $verifierArgsValidation := printf `%s.args == (request.name == %q ? %s : %s)` $initContainer $controllerDeployment $controllerVerifierArgs $certificateVerifierArgs -}}
-{{- $initNoSideChannels := printf `(!has(%[1]s.env) || %[1]s.env.size() == 0) && (!has(%[1]s.envFrom) || %[1]s.envFrom.size() == 0) && !has(%[1]s.lifecycle) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && !has(%[1]s.restartPolicy) && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File"` $initContainer -}}
-{{- $appNoSideChannels := printf `!has(%[1]s.lifecycle) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && !has(%[1]s.restartPolicy) && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File"` $container -}}
+{{- $initNoSideChannels := printf `(!has(%[1]s.env) || %[1]s.env.size() == 0) && (!has(%[1]s.envFrom) || %[1]s.envFrom.size() == 0) && !has(%[1]s.lifecycle) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File" && !has(%[1]s.restartPolicy) && (!has(%[1]s.restartPolicyRules) || %[1]s.restartPolicyRules.size() == 0)` $initContainer -}}
+{{- $appNoSideChannels := printf `!has(%[1]s.lifecycle) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File" && !has(%[1]s.restartPolicy) && (!has(%[1]s.restartPolicyRules) || %[1]s.restartPolicyRules.size() == 0)` $container -}}
 {{- $initSecurity := printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.allowPrivilegeEscalation) && !%[1]s.securityContext.allowPrivilegeEscalation && has(%[1]s.securityContext.readOnlyRootFilesystem) && %[1]s.securityContext.readOnlyRootFilesystem && (!has(%[1]s.securityContext.privileged) || !%[1]s.securityContext.privileged) && !has(%[1]s.securityContext.runAsUser) && !has(%[1]s.securityContext.runAsGroup) && !has(%[1]s.securityContext.runAsNonRoot) && !has(%[1]s.securityContext.procMount) && !has(%[1]s.securityContext.seLinuxOptions) && !has(%[1]s.securityContext.windowsOptions) && !has(%[1]s.securityContext.seccompProfile) && !has(%[1]s.securityContext.appArmorProfile) && has(%[1]s.securityContext.capabilities) && (!has(%[1]s.securityContext.capabilities.add) || %[1]s.securityContext.capabilities.add.size() == 0) && has(%[1]s.securityContext.capabilities.drop) && %[1]s.securityContext.capabilities.drop == ["ALL"]` $initContainer -}}
 {{- $appSecurity := printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.allowPrivilegeEscalation) && !%[1]s.securityContext.allowPrivilegeEscalation && has(%[1]s.securityContext.readOnlyRootFilesystem) && %[1]s.securityContext.readOnlyRootFilesystem && (!has(%[1]s.securityContext.privileged) || !%[1]s.securityContext.privileged) && !has(%[1]s.securityContext.runAsUser) && !has(%[1]s.securityContext.runAsGroup) && !has(%[1]s.securityContext.runAsNonRoot) && !has(%[1]s.securityContext.procMount) && !has(%[1]s.securityContext.seLinuxOptions) && !has(%[1]s.securityContext.windowsOptions) && !has(%[1]s.securityContext.seccompProfile) && !has(%[1]s.securityContext.appArmorProfile) && has(%[1]s.securityContext.capabilities) && (!has(%[1]s.securityContext.capabilities.add) || %[1]s.securityContext.capabilities.add.size() == 0) && has(%[1]s.securityContext.capabilities.drop) && %[1]s.securityContext.capabilities.drop == ["ALL"]` $container -}}
 {{- $initResources := printf `(!has(dyn(%[1]s.resources).limits) || dyn(%[1]s.resources).limits.all(key, key in ["cpu", "memory", "ephemeral-storage"])) && (!has(dyn(%[1]s.resources).requests) || dyn(%[1]s.resources).requests.all(key, key in ["cpu", "memory", "ephemeral-storage"])) && (!has(dyn(%[1]s.resources).claims) || dyn(%[1]s.resources).claims.size() == 0)` $initContainer -}}
@@ -130,43 +139,39 @@ spec:
       expression: 'request.resource.group == "admissionregistration.k8s.io"'
     - name: newState
       expression: {{ printf `has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
-    - name: oldState
-      expression: {{ printf `request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
     - name: newRelease
       expression: {{ printf `has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" | quote }}
-    - name: oldRelease
-      expression: {{ printf `request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0` "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" | quote }}
+    - name: activationValid
+      expression: {{ $activationValid | quote }}
     - name: activeRelease
       expression: {{ printf `params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1` "active-release-sequence" "active-release-sequence" "active-release-sequence" | quote }}
+    - name: activeState
+      expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
+    - name: activeAdmission
+      expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
     - name: isReleaseHook
       expression: {{ printf `request.userInfo.username.matches(%q + string(variables.newRelease) + "-[0-9a-f]{12}$")` $hookUsernamePatternPrefix | quote }}
     - name: newAdmission
       expression: {{ printf `variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
-    - name: oldAdmission
-      expression: {{ printf `variables.isAdmission && request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
+    - name: isActiveIdentity
+      expression: {{ $rolloutActiveIdentity | quote }}
+    - name: stopTransition
+      expression: {{ $stopTransition | quote }}
   validations:
+    - expression: 'variables.activationValid'
+      message: {{ $rolloutMessage | quote }}
     - expression: '!has(request.subResource) || request.subResource != "scale"'
       message: {{ $rolloutMessage | quote }}
     - expression: {{ printf `!variables.isDeployment || !variables.isReleaseHook || request.name in [%q, %q]` $controllerDeployment $certificateDeployment | quote }}
       message: {{ $rolloutMessage | quote }}
     - expression: '!variables.isDeployment || request.operation != "CREATE" || !variables.isReleaseHook || request.dryRun == true'
       message: {{ $rolloutMessage | quote }}
-    - expression: {{ printf `variables.newState >= %s` $stateVersion | quote }}
+    - expression: 'variables.isActiveIdentity || variables.stopTransition'
       message: {{ $rolloutMessage | quote }}
-    - expression: {{ printf `request.operation != "UPDATE" || variables.oldState > 0 || (variables.isReleaseHook && variables.newState == %s)` $stateVersion | quote }}
+    - expression: {{ printf `variables.newRelease != %s || variables.newState == %s` $sequence $stateVersion | quote }}
       message: {{ $rolloutMessage | quote }}
-    - expression: 'request.operation != "UPDATE" || variables.oldState == 0 || variables.newState >= variables.oldState'
-      message: {{ $rolloutMessage | quote }}
-    - expression: {{ printf `variables.newRelease >= %s` $sequence | quote }}
-      message: {{ $rolloutMessage | quote }}
-    - expression: 'request.operation != "UPDATE" || variables.oldRelease > 0 || variables.isReleaseHook'
-      message: {{ $rolloutMessage | quote }}
-    - expression: 'request.operation != "UPDATE" || variables.oldRelease == 0 || variables.newRelease >= variables.oldRelease'
-      message: {{ $rolloutMessage | quote }}
-    - expression: '(variables.activeRelease >= 0 && variables.newRelease <= variables.activeRelease) || (variables.isDeployment && variables.isReleaseHook)'
-      message: {{ $rolloutMessage | quote }}
-    - expression: {{ printf `!variables.isAdmission || variables.newRelease > %s || (variables.newRelease == %s && (has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q))`
-        $sequence $sequence
+    - expression: {{ printf `!variables.isAdmission || variables.newRelease != %s || (variables.newAdmission == %s && (has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q))`
+        $sequence $admissionVersion
         "operator.ptah.dev/release-name" "operator.ptah.dev/release-name" .Release.Name
         "operator.ptah.dev/release-namespace" "operator.ptah.dev/release-namespace" .Release.Namespace
         "operator.ptah.dev/coordination-namespace" "operator.ptah.dev/coordination-namespace" (include "ptah-operator.coordinationNamespace" .)
@@ -177,12 +182,6 @@ spec:
         "operator.ptah.dev/controller-service-account-name" "operator.ptah.dev/controller-service-account-name" (include "ptah-operator.serviceAccountName" .)
         "operator.ptah.dev/controller-deployment-name" "operator.ptah.dev/controller-deployment-name" $controllerDeployment
         "operator.ptah.dev/certificate-deployment-name" "operator.ptah.dev/certificate-deployment-name" $certificateDeployment | quote }}
-      message: {{ $rolloutMessage | quote }}
-    - expression: {{ printf `!variables.isAdmission || variables.newAdmission >= %s` $admissionVersion | quote }}
-      message: {{ $rolloutMessage | quote }}
-    - expression: {{ printf `!variables.isAdmission || request.operation != "UPDATE" || variables.oldAdmission > 0 || (variables.isReleaseHook && variables.newAdmission == %s)` $admissionVersion | quote }}
-      message: {{ $rolloutMessage | quote }}
-    - expression: '!variables.isAdmission || request.operation != "UPDATE" || variables.oldAdmission == 0 || variables.newAdmission >= variables.oldAdmission'
       message: {{ $rolloutMessage | quote }}
 ---
 {{- end }}
@@ -269,22 +268,22 @@ spec:
     - name: fixed-runtime-deployment
       expression: {{ printf `request.namespace == %q && request.name in [%q, %q]` .Release.Namespace $controllerDeployment $certificateDeployment | quote }}
   variables:
+    - name: isDeployment
+      expression: 'true'
     - name: newState
       expression: {{ printf `has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
-    - name: oldState
-      expression: {{ printf `request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
     - name: newRelease
       expression: {{ printf `has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" | quote }}
-    - name: oldRelease
-      expression: {{ printf `request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0` "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" | quote }}
+    - name: activationValid
+      expression: {{ $activationValid | quote }}
     - name: activeRelease
       expression: {{ printf `params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1` "active-release-sequence" "active-release-sequence" "active-release-sequence" | quote }}
+    - name: activeState
+      expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
+    - name: activeImage
+      expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations ? params.metadata.annotations[%q] : ""` "operator.ptah.dev/manager-image" "operator.ptah.dev/manager-image" | quote }}
     - name: isReleaseHook
       expression: {{ printf `request.userInfo.username.matches(%q + string(variables.newRelease) + "-[0-9a-f]{12}$")` $hookUsernamePatternPrefix | quote }}
-    - name: isStopped
-      expression: 'has(object.spec.replicas) && object.spec.replicas == 0'
-    - name: stopTransition
-      expression: 'request.operation == "UPDATE" && variables.isStopped && variables.isReleaseHook && object.spec.template == oldObject.spec.template && object.spec.selector == oldObject.spec.selector && object.spec.strategy == oldObject.spec.strategy && object.spec.minReadySeconds == oldObject.spec.minReadySeconds && (has(object.spec.revisionHistoryLimit) == has(oldObject.spec.revisionHistoryLimit)) && (!has(object.spec.revisionHistoryLimit) || object.spec.revisionHistoryLimit == oldObject.spec.revisionHistoryLimit) && (has(object.spec.paused) == has(oldObject.spec.paused)) && (!has(object.spec.paused) || object.spec.paused == oldObject.spec.paused) && (has(object.spec.progressDeadlineSeconds) == has(oldObject.spec.progressDeadlineSeconds)) && (!has(object.spec.progressDeadlineSeconds) || object.spec.progressDeadlineSeconds == oldObject.spec.progressDeadlineSeconds)'
     - name: runtimeContainerName
       expression: {{ printf `request.name == %q ? "manager" : "certificate-rotator"` $controllerDeployment | quote }}
     - name: runtimeCommand
@@ -295,19 +294,19 @@ spec:
       expression: {{ printf `has(object.spec.template.metadata.annotations) && %q in object.spec.template.metadata.annotations ? object.spec.template.metadata.annotations[%q] : ""` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
     - name: templateRelease
       expression: {{ printf `has(object.spec.template.metadata.annotations) && %q in object.spec.template.metadata.annotations ? object.spec.template.metadata.annotations[%q] : ""` "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" | quote }}
+    - name: isActiveIdentity
+      expression: {{ $runtimeActiveIdentity | quote }}
+    - name: stopTransition
+      expression: {{ $stopTransition | quote }}
   validations:
-    - expression: {{ printf `variables.newState >= %s && variables.newRelease >= %s` $stateVersion $sequence | quote }}
+    - expression: 'variables.activationValid'
       message: {{ $runtimeMessage | quote }}
-    - expression: 'request.operation != "UPDATE" || (variables.oldState > 0 && variables.oldRelease > 0) || variables.stopTransition'
+    - expression: 'variables.isActiveIdentity || variables.stopTransition'
       message: {{ $runtimeMessage | quote }}
-    - expression: 'request.operation != "UPDATE" || variables.oldState == 0 || variables.newState >= variables.oldState'
-      message: {{ $runtimeMessage | quote }}
-    - expression: 'request.operation != "UPDATE" || variables.oldRelease == 0 || variables.newRelease >= variables.oldRelease'
-      message: {{ $runtimeMessage | quote }}
-    - expression: 'variables.stopTransition || variables.activeRelease >= variables.newRelease'
+    - expression: {{ printf `variables.newRelease != %s || variables.newState == %s` $sequence $stateVersion | quote }}
       message: {{ $runtimeMessage | quote }}
     {{- range $expression := $runtimeExpressions }}
-    - expression: {{ printf `variables.stopTransition || variables.newRelease > %s || (variables.newRelease == %s && (%s))` $sequence $sequence $expression | quote }}
+    - expression: {{ printf `variables.stopTransition || variables.newRelease != %s || (%s)` $sequence $expression | quote }}
       message: {{ $runtimeMessage | quote }}
     {{- end }}
 ---

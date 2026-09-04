@@ -14,10 +14,13 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-const workloadInventoryPageSize int64 = 500
+const (
+	workloadInventoryPageSize                     int64 = 500
+	workloadInventoryGeneratedNameMaxPrefixLength       = 58
+)
 
 var (
-	workloadInventoryHashPattern   = regexp.MustCompile(`^[a-z0-9]{5,16}$`)
+	workloadInventoryHashPattern   = regexp.MustCompile(`^[a-z0-9]{1,10}$`)
 	workloadInventorySuffixPattern = regexp.MustCompile(`^[a-z0-9]{5}$`)
 )
 
@@ -609,10 +612,19 @@ func verifyExactControllerReference(description string, references []metav1.Owne
 }
 
 func verifyGeneratedObjectName(description, name, generateName, expectedPrefix string) error {
-	if generateName != expectedPrefix || !strings.HasPrefix(name, expectedPrefix) {
+	if generateName != expectedPrefix {
 		return fmt.Errorf("%s name %q and generateName %q do not link to parent prefix %q", description, name, generateName, expectedPrefix)
 	}
-	suffix := strings.TrimPrefix(name, expectedPrefix)
+	effectivePrefix := expectedPrefix
+	if len(effectivePrefix) > workloadInventoryGeneratedNameMaxPrefixLength {
+		// Kubernetes names are ASCII, so the API server's byte truncation also
+		// preserves the first 58 characters of the submitted generateName.
+		effectivePrefix = effectivePrefix[:workloadInventoryGeneratedNameMaxPrefixLength]
+	}
+	if !strings.HasPrefix(name, effectivePrefix) {
+		return fmt.Errorf("%s name %q and generateName %q do not link to parent prefix %q", description, name, generateName, expectedPrefix)
+	}
+	suffix := strings.TrimPrefix(name, effectivePrefix)
 	if !workloadInventorySuffixPattern.MatchString(suffix) {
 		return fmt.Errorf("%s name %q does not have one exact generated-name suffix", description, name)
 	}

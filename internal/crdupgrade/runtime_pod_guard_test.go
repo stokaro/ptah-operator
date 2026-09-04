@@ -9,10 +9,13 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	celgo "github.com/google/cel-go/cel"
+	"github.com/google/cel-go/ext"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -50,8 +53,9 @@ func TestRuntimePodIdentityPolicyPinsServiceAccountExecutableAndSubresources(t *
 		`request.userInfo.username in [\"system:kube-controller-manager\", \"system:serviceaccount:kube-system:replicaset-controller\"]`,
 		`object.spec.serviceAccountName == \"ptah-controller\"`,
 		`object.spec.serviceAccountName == \"ptah-cert-rotator\"`,
-		`variables.newRelease \u003e 1`,
-		`variables.activeRelease \u003e= variables.newRelease`,
+		`variables.activationValid`,
+		`variables.newRelease == variables.activeRelease`,
+		`variables.newState == variables.activeState`,
 		`object.spec.automountServiceAccountToken`,
 		`!object.spec.automountServiceAccountToken`,
 		`v.name == \"api-access\"`,
@@ -113,25 +117,36 @@ func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	shortNameShape := func(deploymentName string) string {
+		prefix := deploymentName + "-"
+		return fmt.Sprintf(
+			`((request.name.startsWith(%q) && request.name.substring(%d).matches("^[a-z0-9]{1,10}-[a-z0-9]{5}$")))`,
+			prefix,
+			len(prefix),
+		)
+	}
 	wantMatch := fmt.Sprintf(
-		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q))))`,
+		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
 		guard.ReleaseNamespace,
 		guard.ControllerServiceAccountName,
 		guard.CertificateDeploymentName,
 		guard.ControllerServiceAccountName,
 		guard.CertificateDeploymentName,
-		guard.ControllerDeploymentName+"-",
-		guard.CertificateDeploymentName+"-",
+		shortNameShape(guard.ControllerDeploymentName),
+		shortNameShape(guard.CertificateDeploymentName),
 	)
 	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 		t.Fatal("runtime Pod identity policy is not fail-closed")
 	}
-	if len(policy.Spec.MatchConditions) != 1 || policy.Spec.MatchConditions[0].Expression != wantMatch {
+	if len(policy.Spec.MatchConditions) != 2 || policy.Spec.MatchConditions[0].Expression != wantMatch ||
+		policy.Spec.MatchConditions[1].Name != "activation-gated-runtime-pod" ||
+		policy.Spec.MatchConditions[1].Expression != guard.runtimePodActivationMatchExpression() {
 		t.Fatalf("optional ServiceAccount match condition\n got: %#v\nwant: %q", policy.Spec.MatchConditions, wantMatch)
 	}
 	wantVariables := map[string]string{
-		"isController":  fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.ControllerServiceAccountName),
-		"isCertificate": fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.CertificateDeploymentName),
+		"isController":    fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.ControllerServiceAccountName),
+		"isCertificate":   fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.CertificateDeploymentName),
+		"activationValid": guard.releaseActivationParameterShapeExpression(),
 	}
 	for _, variable := range policy.Spec.Variables {
 		if want, ok := wantVariables[variable.Name]; ok {
@@ -150,6 +165,311 @@ func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 	}
 	if !reflect.DeepEqual(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
 		t.Fatalf("binding validation actions = %#v, want Deny", binding.Spec.ValidationActions)
+	}
+}
+
+// This is intentionally a white-box test because skipping the candidate
+// policy for predecessor Pods before activation is an API-server overlap
+// contract, not an exported Go behavior.
+func TestRuntimePodActivationTruthTable(t *testing.T) {
+	t.Parallel()
+
+	guard := runtimePodGuardFixture()
+	guard.ReleaseSequence = 2
+	guard.ControllerStateVersion = 2
+	guard.AdmissionContractVersion = 2
+	guard.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("2", 64)
+	guard.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
+	policy, err := guard.runtimePodIdentityPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAdmissionPolicyCELHeadroom(t, "activation-aware runtime Pod policy", policy)
+
+	tests := []struct {
+		name        string
+		active      int64
+		activeState int64
+		marker      int64
+		markerState int64
+		operation   string
+		subresource string
+		actor       string
+		params      func(map[string]any) any
+		wantMatch   bool
+		wantAllow   bool
+	}{
+		{name: "bootstrap annotation-free create is unaffected", operation: "CREATE", actor: "unrelated"},
+		{name: "bootstrap candidate create is denied", marker: 2, markerState: 2, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
+		{name: "active predecessor create is unaffected", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "CREATE", actor: "unrelated"},
+		{name: "active predecessor update is unaffected", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "UPDATE", actor: "system:node:test"},
+		{name: "active predecessor connect is unaffected", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "CONNECT", subresource: "exec", actor: "developer"},
+		{name: "candidate create before activation is denied", active: 1, activeState: 1, marker: 2, markerState: 2, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
+		{name: "future create before activation is denied", active: 1, activeState: 1, marker: 3, markerState: 3, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
+		{name: "forged predecessor state is denied", active: 1, activeState: 1, marker: 1, markerState: 9, operation: "UPDATE", actor: "system:node:test", wantMatch: true},
+		{name: "activated candidate reaches exact contract", active: 2, activeState: 2, marker: 2, markerState: 2, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true, wantAllow: true},
+		{name: "activated predecessor is denied", active: 2, activeState: 2, marker: 1, markerState: 1, operation: "UPDATE", actor: "system:node:test", wantMatch: true},
+		{name: "activated connect is denied", active: 2, activeState: 2, marker: 2, markerState: 2, operation: "CONNECT", subresource: "exec", actor: "developer", wantMatch: true},
+		{name: "future active release passes retained gate", active: 3, activeState: 3, marker: 3, markerState: 3, operation: "UPDATE", actor: "system:node:test", wantMatch: true, wantAllow: true},
+		{name: "malformed activation fails closed", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "UPDATE", actor: "system:node:test", params: func(params map[string]any) any {
+			params["metadata"].(map[string]any)["labels"].(map[string]any)["app.kubernetes.io/component"] = "foreign"
+			return params
+		}, wantMatch: true},
+		{name: "missing activation fails closed", marker: 2, markerState: 2, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", params: func(map[string]any) any { return nil }, wantMatch: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			activeState := test.activeState
+			if activeState == 0 {
+				activeState = int64(guard.ControllerStateVersion)
+			}
+			paramsRelease := test.active
+			if paramsRelease == 0 {
+				paramsRelease = int64(guard.ReleaseSequence)
+			}
+			params := rolloutActivationCELObject(guard, test.active, activeState, activeState, paramsRelease, guard.ManagerImage)
+			var parameter any = params
+			if test.params != nil {
+				parameter = test.params(params)
+			}
+			object := runtimePodActivationCELObject(guard, test.marker, test.markerState)
+			oldObject := runtimePodActivationCELObject(guard, test.marker, test.markerState)
+			request := runtimePodActivationCELRequest(guard, test.operation, test.subresource, test.actor)
+			matched := evaluatePolicyMatchConditions(t, policy, object, oldObject, request, parameter)
+			if matched != test.wantMatch {
+				t.Fatalf("policy match = %t, want %t", matched, test.wantMatch)
+			}
+			if !matched {
+				return
+			}
+			if got := evaluatePolicyValidationPrefix(t, policy, 5, object, oldObject, request, parameter); got != test.wantAllow {
+				t.Fatalf("activation gate decision = %t, want %t", got, test.wantAllow)
+			}
+		})
+	}
+}
+
+func runtimePodActivationCELObject(g *RolloutGuard, marker, state int64) map[string]any {
+	metadata := map[string]any{
+		"name": g.ControllerDeploymentName + "-abc12-xy789",
+	}
+	if marker > 0 {
+		metadata["annotations"] = map[string]any{
+			ControllerStateVersionAnnotation: strconv.FormatInt(state, 10),
+			ReleaseSequenceAnnotation:        strconv.FormatInt(marker, 10),
+		}
+	}
+	return map[string]any{
+		"metadata": metadata,
+		"spec": map[string]any{
+			"serviceAccountName": g.ControllerServiceAccountName,
+		},
+	}
+}
+
+func runtimePodActivationCELRequest(g *RolloutGuard, operation, subresource, actor string) map[string]any {
+	request := map[string]any{
+		"operation": operation,
+		"namespace": g.ReleaseNamespace,
+		"name":      g.ControllerDeploymentName + "-abc12-xy789",
+		"userInfo":  map[string]any{"username": actor},
+	}
+	if subresource != "" {
+		request["subResource"] = subresource
+	}
+	return request
+}
+
+// This is intentionally a white-box test because subresource requests do not
+// carry the parent ReplicaSet object, so their retained-policy name boundary is
+// observable only through the compiled CEL expression.
+func TestRuntimePodRequestNameExpressionMatchesGeneratedNameBoundaries(t *testing.T) {
+	t.Parallel()
+
+	environment, err := celgo.NewEnv(
+		celgo.Variable("podName", celgo.StringType),
+		ext.Strings(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name           string
+		deploymentName string
+		podName        string
+		want           bool
+	}{
+		{name: "short name", deploymentName: "ptah-controller", podName: "ptah-controller-abc12-xy789", want: true},
+		{name: "minimum hash", deploymentName: "ptah-controller", podName: "ptah-controller-a-012ab", want: true},
+		{name: "maximum hash", deploymentName: "ptah-controller", podName: "ptah-controller-abcdefghij-012ab", want: true},
+		{name: "empty hash", deploymentName: "ptah-controller", podName: "ptah-controller--012ab"},
+		{name: "long hash", deploymentName: "ptah-controller", podName: "ptah-controller-abcdefghijk-012ab"},
+		{name: "short suffix", deploymentName: "ptah-controller", podName: "ptah-controller-abc12-012a"},
+		{name: "invalid suffix alphabet", deploymentName: "ptah-controller", podName: "ptah-controller-abc12-012A_"},
+		{name: "extra suffix", deploymentName: "ptah-controller", podName: "ptah-controller-abc12-012abc"},
+		{
+			name:           "58-character untruncated generateName",
+			deploymentName: strings.Repeat("a", 46),
+			podName:        strings.Repeat("a", 46) + "-abcdefghij-012ab",
+			want:           true,
+		},
+		{
+			name:           "truncated at ReplicaSet hash boundary",
+			deploymentName: strings.Repeat("b", 47),
+			podName:        strings.Repeat("b", 47) + "-abcdefghij012ab",
+			want:           true,
+		},
+		{
+			name:           "untruncated alternative beside boundary",
+			deploymentName: strings.Repeat("b", 47),
+			podName:        strings.Repeat("b", 47) + "-abcdefghi-012ab",
+			want:           true,
+		},
+		{
+			name:           "unexpected separator after truncation",
+			deploymentName: strings.Repeat("b", 47),
+			podName:        strings.Repeat("b", 47) + "-abcdefghij-012ab",
+		},
+		{
+			name:           "long Deployment",
+			deploymentName: strings.Repeat("c", 60),
+			podName:        strings.Repeat("c", 58) + "012ab",
+			want:           true,
+		},
+		{
+			name:           "wrong long Deployment prefix",
+			deploymentName: strings.Repeat("c", 60),
+			podName:        strings.Repeat("c", 57) + "x012ab",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			ast, issues := environment.Compile(runtimePodRequestNameExpression("podName", test.deploymentName))
+			if issues != nil && issues.Err() != nil {
+				t.Fatalf("compile runtime Pod request-name CEL: %v", issues.Err())
+			}
+			program, err := environment.Program(ast)
+			if err != nil {
+				t.Fatalf("build runtime Pod request-name CEL program: %v", err)
+			}
+			result, _, err := program.Eval(map[string]any{"podName": test.podName})
+			if err != nil {
+				t.Fatalf("evaluate runtime Pod request-name CEL: %v", err)
+			}
+			got, ok := result.Value().(bool)
+			if !ok {
+				t.Fatalf("runtime Pod request-name CEL result = %T(%v), want bool", result.Value(), result.Value())
+			}
+			if got != test.want {
+				t.Fatalf("runtime Pod request-name CEL = %t, want %t for %q", got, test.want, test.podName)
+			}
+		})
+	}
+}
+
+// This is intentionally a white-box test because the complete generated-name
+// and owner chain is an internal retained-policy invariant.
+func TestRuntimePodMetadataExpressionPinsReplicaSetGeneratedName(t *testing.T) {
+	t.Parallel()
+
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		ext.Strings(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := func(replicaSetName, generateName, podName string, includeGenerateName bool) map[string]any {
+		metadata := map[string]any{
+			"name": podName,
+			"labels": map[string]any{
+				instanceLabel:                 "ptah",
+				"app.kubernetes.io/component": "controller",
+			},
+			"ownerReferences": []any{map[string]any{
+				"apiVersion":         "apps/v1",
+				"kind":               "ReplicaSet",
+				"name":               replicaSetName,
+				"uid":                "replicaset-uid",
+				"controller":         true,
+				"blockOwnerDeletion": true,
+			}},
+		}
+		if includeGenerateName {
+			metadata["generateName"] = generateName
+		}
+		return map[string]any{"metadata": metadata}
+	}
+	tests := []struct {
+		name           string
+		deploymentName string
+		object         map[string]any
+		want           bool
+	}{
+		{
+			name:           "short generated name",
+			deploymentName: "ptah-controller",
+			object:         object("ptah-controller-abc12", "ptah-controller-abc12-", "ptah-controller-abc12-xy789", true),
+			want:           true,
+		},
+		{
+			name:           "long generated name",
+			deploymentName: strings.Repeat("d", 60),
+			object: object(
+				strings.Repeat("d", 60)+"-abc12",
+				strings.Repeat("d", 60)+"-abc12-",
+				strings.Repeat("d", 58)+"xy789",
+				true,
+			),
+			want: true,
+		},
+		{
+			name:           "missing generateName",
+			deploymentName: "ptah-controller",
+			object:         object("ptah-controller-abc12", "", "ptah-controller-abc12-xy789", false),
+		},
+		{
+			name:           "foreign generateName tail",
+			deploymentName: "ptah-controller",
+			object:         object("ptah-controller-abc12", "ptah-controller-foreign-", "ptah-controller-foreign-xy789", true),
+		},
+		{
+			name:           "invalid ReplicaSet hash",
+			deploymentName: "ptah-controller",
+			object:         object("ptah-controller-ab_12", "ptah-controller-ab_12-", "ptah-controller-ab_12-xy789", true),
+		},
+		{
+			name:           "invalid generated suffix",
+			deploymentName: "ptah-controller",
+			object:         object("ptah-controller-abc12", "ptah-controller-abc12-", "ptah-controller-abc12-xy78_", true),
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			guard := runtimePodGuardFixture()
+			guard.ControllerDeploymentName = test.deploymentName
+			ast, issues := environment.Compile(guard.runtimePodMetadataExpression(test.deploymentName, "controller"))
+			if issues != nil && issues.Err() != nil {
+				t.Fatalf("compile runtime Pod metadata CEL: %v", issues.Err())
+			}
+			program, err := environment.Program(ast)
+			if err != nil {
+				t.Fatalf("build runtime Pod metadata CEL program: %v", err)
+			}
+			result, _, err := program.Eval(map[string]any{"object": test.object})
+			if err != nil {
+				t.Fatalf("evaluate runtime Pod metadata CEL: %v", err)
+			}
+			got, ok := result.Value().(bool)
+			if !ok {
+				t.Fatalf("runtime Pod metadata CEL result = %T(%v), want bool", result.Value(), result.Value())
+			}
+			if got != test.want {
+				t.Fatalf("runtime Pod metadata CEL = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 
@@ -220,9 +540,31 @@ func TestRuntimePodIdentityVerificationRejectsSpecOrDigestMutation(t *testing.T)
 }
 
 func TestRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T) {
-	path := os.Getenv("PTAH_RUNTIME_POD_GUARD_RENDER")
+	testRenderedRuntimePodGuardMatchesCompiledContract(
+		t,
+		"PTAH_RUNTIME_POD_GUARD_RENDER",
+		"ptah-e2e-ptah-operator",
+		"ptah-e2e-ptah-operator-cert-rotator",
+		"ptah-e2e-ptah-operator",
+	)
+}
+
+func TestRenderedLongNameRuntimePodGuardMatchesCompiledContract(t *testing.T) {
+	const controllerName = "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+	testRenderedRuntimePodGuardMatchesCompiledContract(
+		t,
+		"PTAH_RUNTIME_POD_GUARD_LONG_RENDER",
+		controllerName,
+		controllerName[:39]+"-cert-rotator",
+		controllerName[:24],
+	)
+}
+
+func testRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T, environmentVariable, controllerName, certificateName, hookBase string) {
+	t.Helper()
+	path := os.Getenv(environmentVariable)
 	if path == "" {
-		t.Skip("PTAH_RUNTIME_POD_GUARD_RENDER is set by the chart contract gate")
+		t.Skip(environmentVariable + " is set by the chart contract gate")
 	}
 	rendered, err := os.ReadFile(path)
 	if err != nil {
@@ -270,8 +612,8 @@ func TestRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T) {
 	}
 
 	managerImage := "ghcr.io/stokaro/ptah-operator@sha256:" + strings.Repeat("2", 64)
-	controller := deployments["ptah-e2e-ptah-operator"]
-	certificate := deployments["ptah-e2e-ptah-operator-cert-rotator"]
+	controller := deployments[controllerName]
+	certificate := deployments[certificateName]
 	if controller == nil || certificate == nil || controller.Spec.Replicas == nil || len(controller.Spec.Template.Spec.Containers) != 1 || len(certificate.Spec.Template.Spec.Containers) != 1 {
 		t.Fatal("rendered runtime Deployments are missing their single application containers")
 	}
@@ -279,11 +621,11 @@ func TestRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T) {
 	guard.ReleaseName = "ptah-e2e"
 	guard.ReleaseNamespace = "ptah-e2e"
 	guard.CoordinationNamespace = "ptah-e2e"
-	guard.WebhookServiceName = "ptah-e2e-ptah-operator-webhook"
+	guard.WebhookServiceName = truncateTestResourceBase(controllerName, 55) + "-webhook"
 	guard.WebhookTimeoutSeconds = 5
-	guard.WebhookSecretName = "ptah-e2e-ptah-operator-webhook-cert"
-	guard.HookServiceAccountName = "ptah-e2e-ptah-operator-crd-v1-" + hookIdentityDigest("ptah-e2e", "ptah-e2e", 1, managerImage)[:12]
-	guard.ControllerServiceAccountName = "ptah-e2e-ptah-operator"
+	guard.WebhookSecretName = truncateTestResourceBase(controllerName, 50) + "-webhook-cert"
+	guard.HookServiceAccountName = hookBase + "-crd-v1-" + hookIdentityDigest("ptah-e2e", "ptah-e2e", 1, managerImage)[:12]
+	guard.ControllerServiceAccountName = controller.Spec.Template.Spec.ServiceAccountName
 	guard.ControllerDeploymentName = controller.Name
 	guard.ControllerReplicas = *controller.Spec.Replicas
 	guard.CertificateDeploymentName = certificate.Name
@@ -311,6 +653,13 @@ func TestRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T) {
 	if err := guard.verifyRuntimePodIdentityBinding(bindings[name]); err != nil {
 		t.Fatalf("rendered runtime Pod binding: %v", err)
 	}
+}
+
+func truncateTestResourceBase(name string, limit int) string {
+	if len(name) > limit {
+		name = name[:limit]
+	}
+	return strings.TrimSuffix(name, "-")
 }
 
 func runtimePodGuardFixture() *RolloutGuard {

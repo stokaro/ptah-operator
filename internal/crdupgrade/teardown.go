@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const hookIdentityProbeMarkerWeight = "-125"
@@ -214,25 +216,37 @@ func (t *ReleaseTeardown) targets() ([]teardownTarget, error) {
 		t.mutatingWebhookTarget(expectedAdmission),
 		t.validatingWebhookTarget(expectedAdmission),
 	)
+	activationName := ReleaseActivationGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	var activationContract *teardownGuardContract
 	for _, contract := range contracts {
+		if contract.name == activationName {
+			candidate := contract
+			activationContract = &candidate
+			continue
+		}
 		if contract.parameterized {
 			targets = append(targets, t.bindingTarget(contract))
 		}
 	}
+	if activationContract == nil {
+		return nil, fmt.Errorf("release activation teardown contract is missing")
+	}
 	for _, contract := range contracts {
-		if !contract.parameterized && !contract.final {
+		if contract.name != activationName && !contract.parameterized && !contract.final {
 			targets = append(targets, t.bindingTarget(contract))
 		}
 	}
 	for _, contract := range contracts {
-		if !contract.final {
+		if contract.name != activationName && !contract.final {
 			targets = append(targets, t.policyTarget(contract))
 		}
 	}
-	// Retained namespaced markers are removed while the namespace deletion
-	// boundary is still enforced. Its binding and policy are the only objects
-	// intentionally deleted after the release activation parameter.
+	// Keep the activation self-guard bound until every policy that consults the
+	// parameter is unbound. The probe marker is unrelated to the activation
+	// parameter and remains protected by the namespace deletion boundary.
 	targets = append(targets, t.hookIdentityProbeMarkerTarget(guard))
+	targets = append(targets, t.bindingTarget(*activationContract))
+	targets = append(targets, t.policyTarget(*activationContract))
 	targets = append(targets, t.activationTarget(guard.releaseActivationGuard(), guard))
 	for _, contract := range contracts {
 		if contract.final {
@@ -358,7 +372,7 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 	for _, entry := range controllerObjects.entries() {
 		entry := entry
 		contracts = append(contracts, teardownGuardContract{
-			name: entry.name,
+			name: entry.name, parameterized: true,
 			verifyPolicy: func(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
 				return controllerObjects.verifyPolicy(entry, policy)
 			},
@@ -568,7 +582,26 @@ func (t *ReleaseTeardown) activationTarget(activation *ReleaseActivationGuard, g
 			return deleteIdentity, true, nil
 		},
 		delete: func(ctx context.Context, options metav1.DeleteOptions) error {
-			return t.configMaps.Delete(ctx, ReleaseActivationName, options)
+			var lastCacheDenial error
+			err := wait.PollUntilContextCancel(ctx, guard.PollEvery, true, func(pollCtx context.Context) (bool, error) {
+				deleteErr := t.configMaps.Delete(pollCtx, ReleaseActivationName, options)
+				if deleteErr == nil || apierrors.IsNotFound(deleteErr) {
+					return true, nil
+				}
+				if !apierrors.IsForbidden(deleteErr) || !strings.Contains(deleteErr.Error(), releaseActivationGuardDenialMessage()) {
+					return false, deleteErr
+				}
+				// The binding and policy were deleted immediately before this
+				// target, but admission may still evaluate a stale cached copy.
+				// Retry only its exact denial and keep the original UID/resource-
+				// version preconditions on every attempt.
+				lastCacheDenial = deleteErr
+				return false, nil
+			})
+			if err != nil && lastCacheDenial != nil {
+				return fmt.Errorf("wait for release activation self-guard cache propagation after %v: %w", lastCacheDenial, err)
+			}
+			return err
 		},
 	}
 }

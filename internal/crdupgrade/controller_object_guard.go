@@ -23,7 +23,7 @@ const (
 	controllerPlanWriteGuardComponent  = "controller-plan-write-guard"
 
 	controllerObjectPolicyWeight  = "-152"
-	controllerObjectBindingWeight = "-151"
+	controllerObjectBindingWeight = "-147"
 )
 
 // ControllerJobWriteGuardPolicyName returns the stable release-owned name of
@@ -61,10 +61,11 @@ type controllerObjectGuardEntry struct {
 	validations   []admissionregistrationv1.Validation
 }
 
-// ControllerObjectGuard verifies the typed, parameterless structural
-// boundaries around every main-resource object the manager may create or
-// update. The validating webhook remains the authoritative reconstruction
-// boundary; these policies independently reject broad or privileged shapes.
+// ControllerObjectGuard verifies the typed, activation-parameterized
+// structural boundaries around every main-resource object the manager may
+// create or update. The validating webhook remains the authoritative
+// reconstruction boundary; these policies independently reject broad or
+// privileged shapes.
 type ControllerObjectGuard struct {
 	Policies                     ValidatingAdmissionPolicyReader
 	Bindings                     ValidatingAdmissionPolicyBindingReader
@@ -187,37 +188,93 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
 	username := "system:serviceaccount:" + g.ReleaseNamespace + ":" + g.ControllerServiceAccountName
+	validations := make([]admissionregistrationv1.Validation, 0, len(entry.validations)+1)
+	validations = append(validations, admissionregistrationv1.Validation{
+		Expression: g.activationParameterExpression(),
+		Message:    entry.denialMessage,
+	})
+	validations = append(validations, entry.validations...)
 	return &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: g.metadata(entry),
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
+			ParamKind:        &admissionregistrationv1.ParamKind{APIVersion: "v1", Kind: "ConfigMap"},
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(entry),
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name:       "exact-controller-service-account",
 				Expression: fmt.Sprintf(`request.userInfo.username == %q`, username),
 			}},
-			Validations: entry.validations,
+			Variables:   controllerObjectActivationVariables(),
+			Validations: validations,
 		},
 	}
 }
 
 func (g *ControllerObjectGuard) binding(entry controllerObjectGuardEntry) *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
+	deny := admissionregistrationv1.DenyAction
 	return &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicyBinding"},
 		ObjectMeta: g.metadata(entry),
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
-			PolicyName:        entry.name,
-			MatchResources:    g.matchResources(entry),
+			PolicyName:     entry.name,
+			MatchResources: g.matchResources(entry),
+			ParamRef: &admissionregistrationv1.ParamRef{
+				Name:                    ReleaseActivationName,
+				Namespace:               g.ReleaseNamespace,
+				ParameterNotFoundAction: &deny,
+			},
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
+	}
+}
+
+func (g *ControllerObjectGuard) activationParameterExpression() string {
+	activation := &ReleaseActivationGuard{
+		ReleaseName:      g.ReleaseName,
+		ReleaseNamespace: g.ReleaseNamespace,
+	}
+	return activation.activationObjectShapeExpression("params")
+}
+
+func controllerObjectActivationVariables() []admissionregistrationv1.Variable {
+	return []admissionregistrationv1.Variable{
+		{Name: "activeRelease", Expression: decimalCEL("params", activeReleaseDataKey, true)},
+		{
+			Name: "activeControllerStateString",
+			Expression: fmt.Sprintf(
+				`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations ? params.metadata.annotations[%q] : ""`,
+				ControllerStateVersionAnnotation,
+				ControllerStateVersionAnnotation,
+			),
+		},
+		{
+			Name: "activeControllerState",
+			Expression: fmt.Sprintf(
+				`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : 0`,
+				ControllerStateVersionAnnotation,
+				ControllerStateVersionAnnotation,
+				ControllerStateVersionAnnotation,
+			),
+		},
+		{
+			Name: "activeControllerImage",
+			Expression: fmt.Sprintf(
+				`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations ? params.metadata.annotations[%q] : ""`,
+				ManagerImageAnnotation,
+				ManagerImageAnnotation,
+			),
+		},
+		{Name: "isBootstrap", Expression: `variables.activeRelease == 0`},
 	}
 }
 
 func (g *ControllerObjectGuard) matchResources(entry controllerObjectGuardEntry) *admissionregistrationv1.MatchResources {
 	exact := admissionregistrationv1.Exact
 	return &admissionregistrationv1.MatchResources{
-		MatchPolicy: &exact,
+		MatchPolicy:       &exact,
+		NamespaceSelector: &metav1.LabelSelector{},
+		ObjectSelector:    &metav1.LabelSelector{},
 		ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{{
 			RuleWithOperations: admissionregistrationv1.RuleWithOperations{
 				Operations: entry.operations,
@@ -312,7 +369,7 @@ func (g *ControllerObjectGuard) validate(requirePoll bool) error {
 }
 
 func controllerJobWriteValidations(message string) []admissionregistrationv1.Validation {
-	return controllerObjectValidations(message,
+	validations := controllerObjectValidations(message,
 		`has(object.metadata.labels) && object.metadata.labels.size() == 5 && ["app.kubernetes.io/managed-by", "app.kubernetes.io/component", "operator.ptah.dev/schema", "operator.ptah.dev/operation", "operator.ptah.dev/operation-id"].all(key, key in object.metadata.labels) && object.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" && object.metadata.labels["app.kubernetes.io/component"] == "schema-operation" && object.metadata.labels["operator.ptah.dev/schema"] != "" && object.metadata.labels["operator.ptah.dev/operation"] in ["resolve", "verify", "observe", "plan", "apply"] && object.metadata.labels["operator.ptah.dev/operation-id"].matches("^[0-9a-f]{16}$") && object.metadata.name.startsWith("ptah-" + object.metadata.labels["operator.ptah.dev/operation"] + "-") && object.metadata.name.matches("^ptah-(resolve|verify|observe|plan|apply)-[a-z0-9]([-a-z0-9.]*[a-z0-9])?-[0-9a-f]{16}$") && (!has(object.metadata.generateName) || object.metadata.generateName == "") && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.dev/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchema" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.dev/schema"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion`,
 		`(request.operation == "UPDATE" && object.metadata.labels["operator.ptah.dev/operation"] in ["resolve", "verify", "observe", "plan"] && has(object.metadata.annotations) && object.metadata.annotations.size() == 5 && ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations["operator.ptah.dev/operation-id"] != "" && object.metadata.annotations["operator.ptah.dev/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/ptah-version"] != "" && object.metadata.annotations["operator.ptah.dev/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$")) || (request.operation == "UPDATE" && object.metadata.labels["operator.ptah.dev/operation"] == "apply" && has(object.metadata.annotations) && object.metadata.annotations.size() == 7 && ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/plan-fingerprint", "operator.ptah.dev/plan-content-digest", "operator.ptah.dev/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations["operator.ptah.dev/operation-id"] != "" && object.metadata.annotations["operator.ptah.dev/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/ptah-version"] != "" && object.metadata.annotations["operator.ptah.dev/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.dev/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$")) || (has(object.metadata.annotations) && ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/controller-image", "operator.ptah.dev/controller-revision", "operator.ptah.dev/controller-state-version", "operator.ptah.dev/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations.all(key, key in ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/controller-image", "operator.ptah.dev/controller-revision", "operator.ptah.dev/controller-state-version", "operator.ptah.dev/admission-snapshot-digest", "operator.ptah.dev/plan-fingerprint", "operator.ptah.dev/plan-content-digest"]) && object.metadata.annotations["operator.ptah.dev/operation-id"] != "" && object.metadata.annotations["operator.ptah.dev/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/ptah-version"] != "" && object.metadata.annotations["operator.ptah.dev/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.dev/controller-image"].matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/controller-revision"] != "" && object.metadata.annotations["operator.ptah.dev/controller-state-version"].matches("^[1-9][0-9]*$") && object.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$") && ((object.metadata.labels["operator.ptah.dev/operation"] == "apply" && "operator.ptah.dev/plan-fingerprint" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && "operator.ptah.dev/plan-content-digest" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$")) || (object.metadata.labels["operator.ptah.dev/operation"] != "apply" && !("operator.ptah.dev/plan-fingerprint" in object.metadata.annotations) && !("operator.ptah.dev/plan-content-digest" in object.metadata.annotations))))`,
 		`has(object.spec.parallelism) && object.spec.parallelism == 1 && has(object.spec.completions) && object.spec.completions == 1 && has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds >= 30 && object.spec.activeDeadlineSeconds <= 86400 && has(object.spec.backoffLimit) && object.spec.backoffLimit == 0 && !has(object.spec.backoffLimitPerIndex) && !has(object.spec.maxFailedIndexes) && has(object.spec.manualSelector) && !object.spec.manualSelector && has(object.spec.completionMode) && object.spec.completionMode == "NonIndexed" && has(object.spec.suspend) && !object.spec.suspend && has(object.spec.podReplacementPolicy) && object.spec.podReplacementPolicy == "Failed" && !has(object.spec.podFailurePolicy) && !has(object.spec.successPolicy) && !has(object.spec.managedBy) && ((request.operation == "CREATE" && !has(object.spec.ttlSecondsAfterFinished)) || (request.operation == "UPDATE" && has(object.spec.ttlSecondsAfterFinished) && object.spec.ttlSecondsAfterFinished == 300))`,
@@ -330,6 +387,22 @@ func controllerJobWriteValidations(message string) []admissionregistrationv1.Val
 		controllerJobPreviousObjectExpression(controllerJobSupportedWindowContainerExpression("oldObject")),
 		`request.operation != "CREATE" || !has(object.status)`,
 		`request.operation != "UPDATE" || (oldObject != null && !has(oldObject.spec.ttlSecondsAfterFinished) && has(object.spec.ttlSecondsAfterFinished) && object.spec.ttlSecondsAfterFinished == 300 && has(oldObject.status.conditions) && oldObject.status.conditions.exists(condition, condition.status == "True" && condition.type in ["Complete", "Failed"]) && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && object.metadata.uid == oldObject.metadata.uid && object.metadata.labels == oldObject.metadata.labels && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.ownerReferences == oldObject.metadata.ownerReferences && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.status) == has(oldObject.status) && (!has(object.status) || object.status == oldObject.status) && object.spec.parallelism == oldObject.spec.parallelism && object.spec.completions == oldObject.spec.completions && object.spec.activeDeadlineSeconds == oldObject.spec.activeDeadlineSeconds && has(object.spec.podFailurePolicy) == has(oldObject.spec.podFailurePolicy) && (!has(object.spec.podFailurePolicy) || object.spec.podFailurePolicy == oldObject.spec.podFailurePolicy) && has(object.spec.successPolicy) == has(oldObject.spec.successPolicy) && (!has(object.spec.successPolicy) || object.spec.successPolicy == oldObject.spec.successPolicy) && object.spec.backoffLimit == oldObject.spec.backoffLimit && has(object.spec.backoffLimitPerIndex) == has(oldObject.spec.backoffLimitPerIndex) && (!has(object.spec.backoffLimitPerIndex) || object.spec.backoffLimitPerIndex == oldObject.spec.backoffLimitPerIndex) && has(object.spec.maxFailedIndexes) == has(oldObject.spec.maxFailedIndexes) && (!has(object.spec.maxFailedIndexes) || object.spec.maxFailedIndexes == oldObject.spec.maxFailedIndexes) && has(object.spec.selector) == has(oldObject.spec.selector) && (!has(object.spec.selector) || object.spec.selector == oldObject.spec.selector) && object.spec.manualSelector == oldObject.spec.manualSelector && object.spec.template == oldObject.spec.template && object.spec.completionMode == oldObject.spec.completionMode && object.spec.suspend == oldObject.spec.suspend && object.spec.podReplacementPolicy == oldObject.spec.podReplacementPolicy && has(object.spec.managedBy) == has(oldObject.spec.managedBy) && (!has(object.spec.managedBy) || object.spec.managedBy == oldObject.spec.managedBy))`,
+	)
+	validations[1].Expression = controllerJobAnnotationContractExpression()
+	return validations
+}
+
+func controllerJobAnnotationContractExpression() string {
+	legacyReadOnly := `object.metadata.labels["operator.ptah.dev/operation"] in ["resolve", "verify", "observe", "plan"] && has(object.metadata.annotations) && object.metadata.annotations.size() == 5 && ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations["operator.ptah.dev/operation-id"] != "" && object.metadata.annotations["operator.ptah.dev/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/ptah-version"] != "" && object.metadata.annotations["operator.ptah.dev/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$")`
+	legacyApply := `object.metadata.labels["operator.ptah.dev/operation"] == "apply" && has(object.metadata.annotations) && object.metadata.annotations.size() == 7 && ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/plan-fingerprint", "operator.ptah.dev/plan-content-digest", "operator.ptah.dev/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations["operator.ptah.dev/operation-id"] != "" && object.metadata.annotations["operator.ptah.dev/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/ptah-version"] != "" && object.metadata.annotations["operator.ptah.dev/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.dev/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$")`
+	current := `has(object.metadata.annotations) && ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/controller-image", "operator.ptah.dev/controller-revision", "operator.ptah.dev/controller-state-version", "operator.ptah.dev/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations.all(key, key in ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/controller-image", "operator.ptah.dev/controller-revision", "operator.ptah.dev/controller-state-version", "operator.ptah.dev/admission-snapshot-digest", "operator.ptah.dev/plan-fingerprint", "operator.ptah.dev/plan-content-digest"]) && object.metadata.annotations["operator.ptah.dev/operation-id"] != "" && object.metadata.annotations["operator.ptah.dev/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/ptah-version"] != "" && object.metadata.annotations["operator.ptah.dev/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.dev/controller-image"].matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/controller-revision"] != "" && object.metadata.annotations["operator.ptah.dev/controller-state-version"].matches("^[1-9][0-9]*$") && object.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$") && ((object.metadata.labels["operator.ptah.dev/operation"] == "apply" && "operator.ptah.dev/plan-fingerprint" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && "operator.ptah.dev/plan-content-digest" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$")) || (object.metadata.labels["operator.ptah.dev/operation"] != "apply" && !("operator.ptah.dev/plan-fingerprint" in object.metadata.annotations) && !("operator.ptah.dev/plan-content-digest" in object.metadata.annotations)))`
+	activeIdentity := `object.metadata.annotations["operator.ptah.dev/controller-image"] == variables.activeControllerImage && object.metadata.annotations["operator.ptah.dev/controller-state-version"] == variables.activeControllerStateString`
+	return fmt.Sprintf(
+		`((request.operation == "UPDATE" || (request.operation == "CREATE" && variables.isBootstrap)) && ((%s) || (%s))) || (variables.activeRelease > 0 && (%s) && (request.operation == "UPDATE" || (request.operation == "CREATE" && (%s))))`,
+		legacyReadOnly,
+		legacyApply,
+		current,
+		activeIdentity,
 	)
 }
 
@@ -382,12 +455,24 @@ func controllerChunkWriteValidations(message string) []admissionregistrationv1.V
 }
 
 func controllerPlanWriteValidations(message string) []admissionregistrationv1.Validation {
-	return controllerObjectValidations(message,
+	// Candidate-only v3 fields are accessed through dyn because this policy is
+	// installed and type-checked before the predecessor CRD is upgraded. The
+	// only identity-free branch is the exact v2 bootstrap contract.
+	validations := controllerObjectValidations(message,
 		`has(object.metadata.labels) && object.metadata.labels.size() == 1 && "operator.ptah.dev/schema" in object.metadata.labels && object.metadata.labels["operator.ptah.dev/schema"] != "" && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}$") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.dev/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchema" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.dev/schema"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion && object.spec.schemaRef.name == object.metadata.labels["operator.ptah.dev/schema"] && object.spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
-		`object.spec.contractVersion == 3 && object.spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.contentDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.actualStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.desiredStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.verificationPolicyUID != "" && object.spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && object.spec.controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.controllerRevision != "" && object.spec.controllerStateVersion >= 1 && object.spec.ptahVersion != "" && object.spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerProtocolVersion >= 1 && object.spec.dialect != "" && object.spec.statementCount >= 1 && object.spec.size >= 1 && object.spec.size <= 8388608`,
+		`object.spec.contractVersion == 3 && object.spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.contentDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.actualStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.desiredStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.verificationPolicyUID != "" && object.spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && has(dyn(object.spec).controllerImage) && dyn(object.spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && has(dyn(object.spec).controllerRevision) && dyn(object.spec).controllerRevision != "" && has(dyn(object.spec).controllerStateVersion) && dyn(object.spec).controllerStateVersion >= 1 && object.spec.ptahVersion != "" && object.spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerProtocolVersion >= 1 && object.spec.dialect != "" && object.spec.statementCount >= 1 && object.spec.size >= 1 && object.spec.size <= 8388608`,
 		`object.spec.chunks.size() >= 1 && object.spec.chunks.size() <= 16 && object.spec.chunks.all(chunk, chunk.key == "chunk" && chunk.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && chunk.name.startsWith(object.metadata.name + "-") && chunk.index >= 0 && chunk.index < object.spec.chunks.size() && chunk.digest.matches("^sha256:[0-9a-f]{64}$") && chunk.size >= 1 && chunk.size <= 524288)`,
 		`!has(object.status)`,
 	)
+	validations[1].Expression = controllerPlanContractExpression()
+	return validations
+}
+
+func controllerPlanContractExpression() string {
+	common := `object.spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.contentDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.actualStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.desiredStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.verificationPolicyUID != "" && object.spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && object.spec.ptahVersion != "" && object.spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerProtocolVersion >= 1 && object.spec.dialect != "" && object.spec.statementCount >= 1 && object.spec.size >= 1 && object.spec.size <= 8388608`
+	legacy := `variables.isBootstrap && object.spec.contractVersion == 2 && !has(dyn(object.spec).controllerImage) && !has(dyn(object.spec).controllerRevision) && !has(dyn(object.spec).controllerStateVersion)`
+	current := `variables.activeRelease > 0 && object.spec.contractVersion == 3 && has(dyn(object.spec).controllerImage) && dyn(object.spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object.spec).controllerImage == variables.activeControllerImage && has(dyn(object.spec).controllerRevision) && dyn(object.spec).controllerRevision != "" && has(dyn(object.spec).controllerStateVersion) && dyn(object.spec).controllerStateVersion >= 1 && dyn(object.spec).controllerStateVersion == variables.activeControllerState`
+	return fmt.Sprintf(`(%s) && ((%s) || (%s))`, common, legacy, current)
 }
 
 func controllerObjectValidations(message string, expressions ...string) []admissionregistrationv1.Validation {

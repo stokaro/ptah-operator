@@ -148,6 +148,7 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 	teardownServiceAccountPattern := "^" + regexp.QuoteMeta(hookBase+"-cleanup-v") + `[1-9][0-9]*-[0-9a-f]{12}$`
 	teardownUsernamePattern := "^" + regexp.QuoteMeta("system:serviceaccount:"+g.ReleaseNamespace+":"+hookBase+"-cleanup-v") + `[1-9][0-9]*-[0-9a-f]{12}$`
 	teardownPodPattern := "^" + regexp.QuoteMeta(hookBase+"-cleanup-v") + `[1-9][0-9]*-[0-9a-f]{12}-`
+	quiescePodPattern := "^" + regexp.QuoteMeta(hookBase+"-quiesce-v") + `[1-9][0-9]*-[0-9a-f]{12}-`
 	hookIdentityPodPattern := `^ptah-hook-identity-v[1-9][0-9]*-[0-9a-f]{12}-`
 	controllerUsername := "system:serviceaccount:" + g.ReleaseNamespace + ":" + g.ControllerServiceAccountName
 	certificateUsername := "system:serviceaccount:" + g.ReleaseNamespace + ":" + g.CertificateServiceAccountName
@@ -206,25 +207,27 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 			Validations: []admissionregistrationv1.Validation{
 				{
 					Expression: fmt.Sprintf(
-						`!variables.isProtectedCaller || (variables.callerPodName != "" && variables.callerPodUID != "" && ((variables.isHookCaller && (variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q))) || (variables.isControllerCaller && variables.callerPodName.startsWith(%q)) || (variables.isCertificateCaller && variables.callerPodName.startsWith(%q))))`,
+						`!variables.isProtectedCaller || (variables.callerPodName != "" && variables.callerPodUID != "" && ((variables.isHookCaller && (variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q))) || (variables.isControllerCaller && %s) || (variables.isCertificateCaller && %s)))`,
 						hookPodPattern,
 						hookIdentityPodPattern,
 						teardownPodPattern,
-						g.ControllerDeploymentName+"-",
-						g.CertificateDeploymentName+"-",
+						quiescePodPattern,
+						runtimePodRequestNameExpression("variables.callerPodName", g.ControllerDeploymentName),
+						runtimePodRequestNameExpression("variables.callerPodName", g.CertificateDeploymentName),
 					),
 					Message: denial,
 				},
 				{
 					Expression: fmt.Sprintf(
-						`!variables.isProtectedTokenRequest || (request.userInfo.username.matches("^system:node:.+$") && request.userInfo.groups.filter(group, group == "system:nodes").size() == 1 && has(object.spec.boundObjectRef) && has(object.spec.boundObjectRef.apiVersion) && object.spec.boundObjectRef.apiVersion == "v1" && has(object.spec.boundObjectRef.kind) && object.spec.boundObjectRef.kind == "Pod" && has(object.spec.boundObjectRef.name) && object.spec.boundObjectRef.name != "" && has(object.spec.boundObjectRef.uid) && object.spec.boundObjectRef.uid != "" && ((request.name == %q && object.spec.boundObjectRef.name.startsWith(%q)) || (request.name == %q && object.spec.boundObjectRef.name.startsWith(%q)) || (request.name.matches(%q) && (object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q))) || (request.name.matches(%q) && object.spec.boundObjectRef.name.matches(%q))))`,
+						`!variables.isProtectedTokenRequest || (request.userInfo.username.matches("^system:node:.+$") && request.userInfo.groups.filter(group, group == "system:nodes").size() == 1 && has(object.spec.boundObjectRef) && has(object.spec.boundObjectRef.apiVersion) && object.spec.boundObjectRef.apiVersion == "v1" && has(object.spec.boundObjectRef.kind) && object.spec.boundObjectRef.kind == "Pod" && has(object.spec.boundObjectRef.name) && object.spec.boundObjectRef.name != "" && has(object.spec.boundObjectRef.uid) && object.spec.boundObjectRef.uid != "" && ((request.name == %q && %s) || (request.name == %q && %s) || (request.name.matches(%q) && (object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q))) || (request.name.matches(%q) && object.spec.boundObjectRef.name.matches(%q))))`,
 						g.ControllerServiceAccountName,
-						g.ControllerDeploymentName+"-",
+						runtimePodRequestNameExpression("object.spec.boundObjectRef.name", g.ControllerDeploymentName),
 						g.CertificateServiceAccountName,
-						g.CertificateDeploymentName+"-",
+						runtimePodRequestNameExpression("object.spec.boundObjectRef.name", g.CertificateDeploymentName),
 						hookServiceAccountPattern,
 						hookPodPattern,
 						hookIdentityPodPattern,
+						quiescePodPattern,
 						teardownServiceAccountPattern,
 						teardownPodPattern,
 					),

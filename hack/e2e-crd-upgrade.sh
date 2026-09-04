@@ -4,6 +4,7 @@ set -eu
 
 E2E_KUBECONFIG=${E2E_KUBECONFIG:?E2E_KUBECONFIG is required}
 E2E_OPERATOR_NAMESPACE=${E2E_OPERATOR_NAMESPACE:?E2E_OPERATOR_NAMESPACE is required}
+E2E_PROOF_NAMESPACE=${E2E_PROOF_NAMESPACE:?E2E_PROOF_NAMESPACE is required}
 E2E_HELM_RELEASE=${E2E_HELM_RELEASE:?E2E_HELM_RELEASE is required}
 E2E_CHART_PACKAGE=${E2E_CHART_PACKAGE:?E2E_CHART_PACKAGE is required}
 E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION:?E2E_KUBERNETES_VERSION is required}
@@ -13,7 +14,7 @@ E2E_EXTERNAL_POSTGRES_CONTAINER_ID=${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:-}
 
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-crd.XXXXXX")
-PROOF_NAMESPACE=${E2E_OPERATOR_NAMESPACE}-crd-proof
+PROOF_NAMESPACE=$E2E_PROOF_NAMESPACE
 PROOF_SCHEMA=crd-upgrade-proof
 PROOF_PLAN=crd-upgrade-proof
 PROOF_APPROVAL=crd-upgrade-proof
@@ -21,6 +22,17 @@ PROOF_CONTROLLER_IMAGE=
 UPGRADE_VALUES_FILE=
 EXPECTED_SINGLETON_ANNOTATIONS_FILE=$WORK_DIR/expected-singleton-annotations.json
 EXPECTED_SINGLETON_RENDER_FILE=$WORK_DIR/expected-singleton-render.yaml
+EXPECTED_CRD_UPGRADE_RENDER_FILE=$WORK_DIR/expected-crd-upgrade-render.yaml
+EXPECTED_IDENTITY_HOOK_NAME=
+EXPECTED_PREFLIGHT_HOOK_NAME=
+IDENTITY_HOOK_CAPTURE_PID=
+IDENTITY_HOOK_LOG_FILE=$WORK_DIR/identity-hook.log
+IDENTITY_HOOK_CAPTURE_STATUS_FILE=$WORK_DIR/identity-hook-capture-status
+IDENTITY_HOOK_CAPTURE_ERRORS_FILE=$WORK_DIR/identity-hook-capture-errors
+IDENTITY_HOOK_WAIT_FILE=$WORK_DIR/identity-hook-wait
+IDENTITY_HOOK_PODS_FILE=$WORK_DIR/identity-hook-pods.json
+IDENTITY_HOOK_JOB_FILE=$WORK_DIR/identity-hook-job.json
+IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE=$WORK_DIR/identity-hook-credential-patterns
 PREDECESSOR_SCHEMA=predecessor-live
 PREDECESSOR_PLAN=predecessor-live
 PREDECESSOR_APPROVAL=predecessor-live
@@ -34,6 +46,7 @@ PREDECESSOR_APPLY_DATABASE=predecessor-apply-database
 PREDECESSOR_APPLY_PULL_SECRET=predecessor-apply-pull
 PREDECESSOR_APPLY_PLAN_NAME=
 PREDECESSOR_APPLY_PLAN_UID=
+PREDECESSOR_PLAN_GUARD_PROBE_FILE=
 PREDECESSOR_APPLY_JOB_NAME=
 PREDECESSOR_APPLY_JOB_UID=
 PREDECESSOR_APPLY_POD_NAME=
@@ -43,6 +56,7 @@ PREDECESSOR_APPLY_BARRIER_ACTIVE=0
 BLOCKED_STABILITY_SECONDS=10
 BLOCKED_FAILURE_TIMEOUT_SECONDS=150
 FOREIGN_TEARDOWN_BINDING=
+LATE_ACTIVATION_BLOCKER_WEBHOOK=
 CONTROLLER_IMPERSONATION_USERNAME=
 CONTROLLER_IMPERSONATION_UID=
 CONTROLLER_IMPERSONATION_POD_NAME=
@@ -62,6 +76,11 @@ CANDIDATE_CRD_SCHEMA_VERSION=$(awk '
 cleanup() {
 	status=$?
 	trap - EXIT HUP INT TERM
+	if [ -n "$IDENTITY_HOOK_CAPTURE_PID" ]; then
+		kill "$IDENTITY_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
+		wait "$IDENTITY_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
+		IDENTITY_HOOK_CAPTURE_PID=
+	fi
 	if [ "$PREDECESSOR_APPLY_BARRIER_ACTIVE" -eq 1 ]; then
 		if ! docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
 			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = '\''ptah-operator-predecessor-apply-barrier'\'' AND pid <> pg_backend_pid()"' \
@@ -77,6 +96,12 @@ cleanup() {
 	fi
 	if [ -n "$FOREIGN_TEARDOWN_BINDING" ]; then
 		if ! kube delete clusterrolebinding "$FOREIGN_TEARDOWN_BINDING" \
+			--ignore-not-found=true >/dev/null 2>&1; then
+			status=1
+		fi
+	fi
+	if [ -n "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ]; then
+		if ! kube delete validatingwebhookconfiguration "$LATE_ACTIVATION_BLOCKER_WEBHOOK" \
 			--ignore-not-found=true >/dev/null 2>&1; then
 			status=1
 		fi
@@ -104,6 +129,11 @@ fail() {
 	exit 1
 }
 
+printf '%s\n' "$PROOF_NAMESPACE" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
+	fail "E2E_PROOF_NAMESPACE must be a DNS-1123 label"
+[ "${#PROOF_NAMESPACE}" -le 63 ] ||
+	fail "E2E_PROOF_NAMESPACE must not exceed 63 characters"
+
 require_mode_0600_regular_file() {
 	mode_file=$1
 	mode_description=$2
@@ -117,6 +147,18 @@ require_mode_0600_regular_file() {
 			fail "could not inspect $mode_description permissions"
 	fi
 	[ "$mode_value" = 600 ] || fail "$mode_description must have mode 0600"
+}
+
+file_sha256() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | awk '{print $1}'
+		return
+	fi
+	if command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$1" | awk '{print $1}'
+		return
+	fi
+	fail "sha256sum or shasum is required for identity-hook diagnostics"
 }
 
 case "$CANDIDATE_CRD_SCHEMA_VERSION" in
@@ -283,6 +325,359 @@ prepare_expected_singleton_annotations() {
 		fail "candidate render does not contain the complete 13-field admission singleton tuple"
 }
 
+rendered_hook_job_name() {
+	rendered_hook_component=$1
+	rendered_hook_weight=$2
+	awk -v expected_component="$rendered_hook_component" -v expected_weight="$rendered_hook_weight" '
+      function reset_document() {
+        is_job = 0
+        name = ""
+        component = ""
+        weight = ""
+      }
+      function emit_match() {
+        if (is_job && name != "" && component == expected_component && weight == expected_weight) {
+          print name
+        }
+      }
+      /^---$/ {
+        emit_match()
+        reset_document()
+        next
+      }
+      /^kind: Job$/ {
+        is_job = 1
+        next
+      }
+      is_job && /^  name: / && name == "" {
+        name = $2
+        gsub(/^"|"$/, "", name)
+        next
+      }
+      is_job && /^    helm.sh\/hook-weight: / {
+        weight = $2
+        gsub(/^"|"$/, "", weight)
+        next
+      }
+      is_job && /^    app.kubernetes.io\/component: / {
+        component = $2
+        gsub(/^"|"$/, "", component)
+        next
+      }
+      END { emit_match() }
+    ' "$EXPECTED_CRD_UPGRADE_RENDER_FILE"
+}
+
+prepare_expected_hook_names() {
+	helm_e2e template "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
+		--show-only templates/crd-upgrade.yaml >"$EXPECTED_CRD_UPGRADE_RENDER_FILE"
+	identity_matches=$(rendered_hook_job_name hook-identity-probe -105)
+	preflight_matches=$(rendered_hook_job_name crd-manager-preflight -60)
+	[ "$(printf '%s\n' "$identity_matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] ||
+		fail "candidate render does not contain exactly one -105 identity hook Job"
+	[ "$(printf '%s\n' "$preflight_matches" | awk 'NF { count++ } END { print count + 0 }')" -eq 1 ] ||
+		fail "candidate render does not contain exactly one -60 preflight hook Job"
+	EXPECTED_IDENTITY_HOOK_NAME=$identity_matches
+	EXPECTED_PREFLIGHT_HOOK_NAME=$preflight_matches
+	for rendered_hook_name in "$EXPECTED_IDENTITY_HOOK_NAME" "$EXPECTED_PREFLIGHT_HOOK_NAME"; do
+		printf '%s\n' "$rendered_hook_name" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
+			fail "candidate render contains an invalid hook Job name"
+		[ "${#rendered_hook_name}" -le 63 ] || fail "candidate render contains an overlong hook Job name"
+	done
+}
+
+materialize_identity_hook_credential_patterns() {
+	E2E_REGISTRY_CREDENTIALS_FILE=${E2E_REGISTRY_CREDENTIALS_FILE:?E2E_REGISTRY_CREDENTIALS_FILE is required for identity-hook diagnostics}
+	E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=${E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE:?E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE is required for identity-hook diagnostics}
+	require_mode_0600_regular_file "$E2E_REGISTRY_CREDENTIALS_FILE" E2E_REGISTRY_CREDENTIALS_FILE
+	require_mode_0600_regular_file "$E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE" \
+		E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE
+	(umask 077 && : >"$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE")
+	registry_username=$(jq -er '.username | select(type == "string" and length > 0)' \
+		"$E2E_REGISTRY_CREDENTIALS_FILE")
+	registry_password=$(jq -er '.password | select(type == "string" and length >= 8)' \
+		"$E2E_REGISTRY_CREDENTIALS_FILE")
+	database_username=$(jq -er '.username | select(type == "string" and length > 0)' \
+		"$E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE")
+	database_password=$(jq -er '.password | select(type == "string" and length >= 8)' \
+		"$E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE")
+	database_name=$(jq -er '.database | select(type == "string" and length > 0)' \
+		"$E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE")
+	{
+		printf '%s\n' "$registry_password"
+		printf '%s:%s' "$registry_username" "$registry_password" | base64 | tr -d '\n'
+		printf '\n'
+		printf '%s\n' "$database_password"
+		printf 'postgres://%s:%s@%s.%s.svc.cluster.local:5432/%s?sslmode=disable\n' \
+			"$database_username" "$database_password" "$PREDECESSOR_APPLY_DATABASE" \
+			"$PROOF_NAMESPACE" "$database_name"
+		jq -r '(.url? // empty) | select(type == "string" and length > 0)' \
+			"$E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE"
+	} >>"$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE"
+	chmod 600 "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE"
+	awk 'length($0) < 8 { exit 1 } END { if (NR < 4) exit 1 }' \
+		"$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" ||
+		fail "identity-hook credential scanner lacks the complete non-empty pattern set"
+}
+
+identity_hook_capture_worker() (
+	set +e
+	expected_identity_hook_name=$1
+	capture_child_pid=
+	capture_interrupted=0
+	capture_status=job-wait-failed
+	# shellcheck disable=SC2329 # Invoked through the signal trap below.
+	terminate_capture() {
+		capture_interrupted=1
+		if [ -n "$capture_child_pid" ]; then
+			kill "$capture_child_pid" >/dev/null 2>&1 || true
+			wait "$capture_child_pid" >/dev/null 2>&1 || true
+			capture_child_pid=
+		fi
+	}
+	trap terminate_capture HUP INT TERM
+
+	kubectl --kubeconfig "$E2E_KUBECONFIG" --request-timeout=155s \
+		-n "$E2E_OPERATOR_NAMESPACE" wait --for=create \
+		"job/$expected_identity_hook_name" --timeout=150s -o json \
+		>"$IDENTITY_HOOK_JOB_FILE" 2>"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE" &
+	capture_child_pid=$!
+	wait "$capture_child_pid"
+	job_wait_status=$?
+	capture_child_pid=
+	if [ "$capture_interrupted" -eq 1 ]; then
+		capture_status=terminated
+	elif [ "$job_wait_status" -eq 0 ]; then
+		capture_status=job-invalid
+		if jq -e --arg expected_name "$expected_identity_hook_name" \
+			--arg expected_namespace "$E2E_OPERATOR_NAMESPACE" '
+      .apiVersion == "batch/v1" and
+      .kind == "Job" and
+      .metadata.name == $expected_name and
+      .metadata.namespace == $expected_namespace and
+      ((.metadata.uid // "") | length > 0) and
+      .metadata.annotations["helm.sh/hook-weight"] == "-105" and
+      .metadata.labels["app.kubernetes.io/component"] == "hook-identity-probe" and
+      (.spec.template.spec.containers | length) == 1 and
+      .spec.template.spec.containers[0].name == "identity-probe"
+		    ' "$IDENTITY_HOOK_JOB_FILE" >/dev/null; then
+			capture_status=pod-wait-failed
+			kubectl --kubeconfig "$E2E_KUBECONFIG" --request-timeout=155s \
+				-n "$E2E_OPERATOR_NAMESPACE" wait --for=create pod \
+				--selector="batch.kubernetes.io/job-name=$expected_identity_hook_name" \
+				--timeout=150s -o jsonpath='{.metadata.name}{"\n"}' \
+				>"$IDENTITY_HOOK_WAIT_FILE" 2>>"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE" &
+			capture_child_pid=$!
+			wait "$capture_child_pid"
+			pod_wait_status=$?
+			capture_child_pid=
+			if [ "$capture_interrupted" -eq 1 ]; then
+				capture_status=terminated
+			elif [ "$pod_wait_status" -eq 0 ] &&
+				[ "$(awk 'NF { count++ } END { print count + 0 }' "$IDENTITY_HOOK_WAIT_FILE")" -eq 1 ]; then
+				identity_pod_name=$(sed -n '1p' "$IDENTITY_HOOK_WAIT_FILE")
+				if printf '%s\n' "$identity_pod_name" |
+					grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' &&
+					[ "${#identity_pod_name}" -le 63 ]; then
+					capture_status=pod-read-failed
+					kubectl --kubeconfig "$E2E_KUBECONFIG" --request-timeout=70s \
+						-n "$E2E_OPERATOR_NAMESPACE" logs --follow "pod/$identity_pod_name" \
+						-c identity-probe --pod-running-timeout=60s \
+						>"$IDENTITY_HOOK_LOG_FILE" 2>>"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE" &
+					capture_child_pid=$!
+					if kubectl --kubeconfig "$E2E_KUBECONFIG" --request-timeout=15s \
+						-n "$E2E_OPERATOR_NAMESPACE" get pod "$identity_pod_name" \
+						-o json >"$IDENTITY_HOOK_PODS_FILE" 2>>"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE"; then
+						capture_status=identity-invalid
+						if jq -e --arg expected_name "$expected_identity_hook_name" \
+							--arg expected_pod_name "$identity_pod_name" \
+							--slurpfile job "$IDENTITY_HOOK_JOB_FILE" '
+      ($job[0]) as $job |
+      .metadata.name == $expected_pod_name and
+      .metadata.namespace == $job.metadata.namespace and
+      .metadata.labels["batch.kubernetes.io/job-name"] == $expected_name and
+      .metadata.labels["app.kubernetes.io/component"] == "hook-identity-probe" and
+      (.metadata.ownerReferences | length) == 1 and
+      .metadata.ownerReferences[0].apiVersion == "batch/v1" and
+      .metadata.ownerReferences[0].kind == "Job" and
+      .metadata.ownerReferences[0].name == $expected_name and
+      .metadata.ownerReferences[0].uid == $job.metadata.uid and
+      .metadata.ownerReferences[0].controller == true and
+      .metadata.ownerReferences[0].blockOwnerDeletion == true and
+      (.spec.containers | length) == 1 and
+      .spec.containers[0].name == "identity-probe"
+						    ' "$IDENTITY_HOOK_PODS_FILE" >/dev/null; then
+							wait "$capture_child_pid"
+							log_status=$?
+							capture_child_pid=
+							if [ "$capture_interrupted" -eq 1 ]; then
+								capture_status=terminated
+							elif [ -s "$IDENTITY_HOOK_LOG_FILE" ]; then
+								capture_status=captured
+							elif [ "$log_status" -eq 0 ]; then
+								capture_status=log-empty
+							else
+								capture_status=log-read-failed
+							fi
+						else
+							kill "$capture_child_pid" >/dev/null 2>&1 || true
+							wait "$capture_child_pid" >/dev/null 2>&1 || true
+							capture_child_pid=
+							: >"$IDENTITY_HOOK_LOG_FILE"
+						fi
+					else
+						kill "$capture_child_pid" >/dev/null 2>&1 || true
+						wait "$capture_child_pid" >/dev/null 2>&1 || true
+						capture_child_pid=
+						: >"$IDENTITY_HOOK_LOG_FILE"
+					fi
+				else
+					capture_status=pod-identity-invalid
+				fi
+			fi
+		fi
+	fi
+	printf '%s\n' "$capture_status" >"$IDENTITY_HOOK_CAPTURE_STATUS_FILE"
+)
+
+arm_identity_hook_log_capture() {
+	[ -n "$EXPECTED_IDENTITY_HOOK_NAME" ] || fail "rendered identity hook name is unavailable"
+	[ -z "$IDENTITY_HOOK_CAPTURE_PID" ] || fail "identity-hook log capture is already armed"
+	(umask 077 && : >"$IDENTITY_HOOK_LOG_FILE" && \
+		: >"$IDENTITY_HOOK_CAPTURE_STATUS_FILE" && \
+		: >"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE" && \
+		: >"$IDENTITY_HOOK_WAIT_FILE" && \
+		: >"$IDENTITY_HOOK_PODS_FILE" && \
+		: >"$IDENTITY_HOOK_JOB_FILE")
+	for identity_capture_file in \
+		"$IDENTITY_HOOK_LOG_FILE" \
+		"$IDENTITY_HOOK_CAPTURE_STATUS_FILE" \
+		"$IDENTITY_HOOK_CAPTURE_ERRORS_FILE" \
+		"$IDENTITY_HOOK_WAIT_FILE" \
+		"$IDENTITY_HOOK_PODS_FILE" \
+		"$IDENTITY_HOOK_JOB_FILE"; do
+		require_mode_0600_regular_file "$identity_capture_file" identity-hook-capture-file
+	done
+	identity_hook_capture_worker "$EXPECTED_IDENTITY_HOOK_NAME" &
+	IDENTITY_HOOK_CAPTURE_PID=$!
+}
+
+finish_identity_hook_log_capture() {
+	[ -n "$IDENTITY_HOOK_CAPTURE_PID" ] || fail "identity-hook log capture is not armed"
+	identity_capture_grace=0
+	while [ ! -s "$IDENTITY_HOOK_CAPTURE_STATUS_FILE" ] && \
+		kill -0 "$IDENTITY_HOOK_CAPTURE_PID" >/dev/null 2>&1 && \
+		[ "$identity_capture_grace" -lt 10 ]; do
+		sleep 1
+		identity_capture_grace=$((identity_capture_grace + 1))
+	done
+	if [ ! -s "$IDENTITY_HOOK_CAPTURE_STATUS_FILE" ] && \
+		kill -0 "$IDENTITY_HOOK_CAPTURE_PID" >/dev/null 2>&1; then
+		kill "$IDENTITY_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
+	fi
+	wait "$IDENTITY_HOOK_CAPTURE_PID" >/dev/null 2>&1 || true
+	IDENTITY_HOOK_CAPTURE_PID=
+}
+
+emit_identity_hook_diagnostic() {
+	require_mode_0600_regular_file "$IDENTITY_HOOK_LOG_FILE" identity-hook-log
+	require_mode_0600_regular_file "$IDENTITY_HOOK_CAPTURE_STATUS_FILE" identity-hook-capture-status
+	require_mode_0600_regular_file "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" identity-hook-credential-patterns
+	[ -s "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" ] ||
+		fail "identity-hook credential scanner has no protected patterns"
+	if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		fail "identity-hook diagnostic contained a protected task credential"
+	else
+		credential_scan_status=$?
+		[ "$credential_scan_status" -eq 1 ] || fail "identity-hook credential scan failed closed"
+	fi
+	if grep -Eq '(^|[^[:alnum:]_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+($|[^[:alnum:]_-])|[Aa]uthorization:[[:space:]]*|[Bb]earer[[:space:]]+|://[^[:space:]@/:]+:[^[:space:]@/]+@' \
+		"$IDENTITY_HOOK_LOG_FILE"; then
+		fail "identity-hook diagnostic contained a credential-shaped value"
+	fi
+	capture_status=$(sed -n '1p' "$IDENTITY_HOOK_CAPTURE_STATUS_FILE")
+	case "$capture_status" in
+	captured | identity-invalid | job-invalid | job-wait-failed | log-empty | log-read-failed | pod-identity-invalid | pod-read-failed | pod-wait-failed | terminated) ;;
+	*) capture_status=invalid-status ;;
+	esac
+	raw_sha256=$(file_sha256 "$IDENTITY_HOOK_LOG_FILE")
+	printf '%s\n' "$raw_sha256" | grep -Eq '^[0-9a-f]{64}$' ||
+		fail "identity-hook diagnostic hash is invalid"
+	log_size=$(wc -c <"$IDENTITY_HOOK_LOG_FILE" | tr -d '[:space:]')
+	log_lines=$(awk 'END { print NR + 0 }' "$IDENTITY_HOOK_LOG_FILE")
+	category=unclassified
+	failure_class=unclassified
+	format_status=safe
+	if [ "$log_size" -eq 0 ]; then
+		category=no-log
+	elif [ "$log_size" -gt 8192 ] || [ "$log_lines" -ne 1 ] ||
+		! grep -Eq '^ptah-crd-manager: [[:print:]]+$' "$IDENTITY_HOOK_LOG_FILE"; then
+		format_status=unsafe
+	fi
+	if grep -F 'service account origin guard policy has CEL type-check warnings' \
+		"$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=origin-policy-typecheck
+	elif grep -F 'probe service account origin guard enforcement' \
+		"$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=origin-enforcement-probe
+	elif grep -F 'prepare service account origin guard' \
+		"$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=origin-guard-contract
+	elif grep -F 'verify pre-staged hook workloads' \
+		"$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=workload-inventory
+	elif grep -F 'hook identity' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=hook-identity-policy
+	elif grep -E '(^|: )(verify|wait for) namespace deletion guard' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=namespace-deletion-guard
+	elif grep -E '(^|: )(verify|wait for) controller write guard' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=controller-write-guard
+	elif grep -E '(^|: )(verify|wait for) certificate write guards' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=certificate-write-guard
+	elif grep -E '(^|: )(verify|wait for) controller object guards' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=controller-object-guard
+	elif grep -E '(^|: )(verify|wait for) parent workload guards' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=parent-workload-guard
+	elif grep -F 'load in-cluster configuration' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=in-cluster-configuration
+	elif grep -F 'create Kubernetes client' "$IDENTITY_HOOK_LOG_FILE" >/dev/null ||
+		grep -F 'create apiextensions client' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=client-bootstrap
+	elif grep -F 'runtime arguments' "$IDENTITY_HOOK_LOG_FILE" >/dev/null ||
+		grep -F 'runtime admission contract' "$IDENTITY_HOOK_LOG_FILE" >/dev/null ||
+		grep -F 'release-sequence' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		category=input-contract
+	fi
+	if [ "$format_status" = unsafe ] && [ "$category" = unclassified ]; then
+		category=unsafe-log-format
+	fi
+	if grep -F 'CEL type-check warnings' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		failure_class=cel-typecheck
+	elif grep -F 'differs from' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		failure_class=contract-drift
+	elif grep -F 'foreign or incomplete' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		failure_class=ownership
+	elif grep -Fi 'forbidden' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		failure_class=authorization
+	elif grep -Fi 'not found' "$IDENTITY_HOOK_LOG_FILE" >/dev/null ||
+		grep -F ' is missing' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		failure_class=missing
+	elif grep -F 'unexpectedly succeeded' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		failure_class=denial-bypass
+	elif grep -Fi 'timeout' "$IDENTITY_HOOK_LOG_FILE" >/dev/null ||
+		grep -Fi 'deadline' "$IDENTITY_HOOK_LOG_FILE" >/dev/null; then
+		failure_class=timeout
+	fi
+	jq -cn \
+		--arg category "$category" \
+		--arg failureClass "$failure_class" \
+		--arg formatStatus "$format_status" \
+		--arg captureStatus "$capture_status" \
+		--arg rawSha256 "sha256:$raw_sha256" \
+		'{component: "identity-hook", category: $category, failureClass: $failureClass, formatStatus: $formatStatus, captureStatus: $captureStatus, rawSha256: $rawSha256}'
+}
+
 assert_singleton_annotation_free() {
 	for singleton_resource in mutatingwebhookconfiguration validatingwebhookconfiguration; do
 		count=$(owned_singleton_annotation_count "$singleton_resource")
@@ -325,24 +720,30 @@ expect_upgrade_failure_without_deployment_change() {
 	before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json | jq -er '.version | select(type == "number" and . >= 1)')
 	failed_revision=$((before_revision + 1))
-	hook_service_account=$(jq -er '."operator.ptah.dev/hook-service-account-name"' \
-		"$EXPECTED_SINGLETON_ANNOTATIONS_FILE")
-	expected_hook_name=$(printf '%s' "$hook_service_account" | cut -c1-53 | sed 's/-$//')-preflight
+	[ -n "$EXPECTED_IDENTITY_HOOK_NAME" ] || fail "rendered identity hook name is unavailable"
+	[ -n "$EXPECTED_PREFLIGHT_HOOK_NAME" ] || fail "rendered preflight hook name is unavailable"
 	deployment_evidence >"$before"
+	arm_identity_hook_log_capture
 	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$UPGRADE_VALUES_FILE" \
 		--wait --timeout 2m "$@" >"$WORK_DIR/failed-upgrade.out" 2>"$WORK_DIR/failed-upgrade.err"; then
+		finish_identity_hook_log_capture
 		fail "$description unexpectedly succeeded"
 	fi
+	finish_identity_hook_log_capture
 	if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \
 		--revision "$failed_revision" -o json >"$status_file"; then
 		fail "$description did not retain structured Helm evidence for failed revision $failed_revision"
 	fi
 	if ! jq -e \
 		--argjson expected_revision "$failed_revision" \
-		--arg expected_name "$expected_hook_name" \
+		--arg expected_name "$EXPECTED_PREFLIGHT_HOOK_NAME" \
 		--argjson expected_weight -60 \
+		--arg expected_identity_name "$EXPECTED_IDENTITY_HOOK_NAME" \
+		--argjson expected_identity_weight -105 \
 		-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$status_file" >/dev/null; then
+		emit_identity_hook_diagnostic >&2 ||
+			fail "$description identity-hook diagnostic failed closed"
 		jq -c '{version, status: .info.status, description: .info.description, hooks: [(.hooks // [])[] | {name, kind, weight, events, last_run}]}' \
 			"$status_file" >&2 || true
 		fail "$description lacks exact revision-bound failed preflight evidence"
@@ -371,6 +772,127 @@ expect_upgrade_render_failure_without_deployment_change() {
 		fail "$description created Helm revision $after_revision before template validation, expected $before_revision"
 	deployment_evidence >"$after"
 	cmp "$before" "$after" || fail "$description mutated runtime Deployments"
+}
+
+create_late_activation_blocker() {
+	LATE_ACTIVATION_BLOCKER_WEBHOOK=ptah-operator-e2e-late-activation-blocker
+	kube apply -f - >/dev/null <<EOF
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: $LATE_ACTIVATION_BLOCKER_WEBHOOK
+webhooks:
+  - name: late-activation-blocker.operator.ptah.dev
+    admissionReviewVersions: ["v1"]
+    clientConfig:
+      service:
+        name: ptah-operator-e2e-missing-blocker
+        namespace: $E2E_OPERATOR_NAMESPACE
+        path: /deny
+        port: 443
+    failurePolicy: Fail
+    matchPolicy: Exact
+    timeoutSeconds: 2
+    sideEffects: None
+    matchConditions:
+      - name: exact-release-activation-update
+        expression: 'request.namespace == "$E2E_OPERATOR_NAMESPACE" && request.name == "ptah-operator-release-activation"'
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+EOF
+}
+
+delete_late_activation_blocker() {
+	[ -n "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ] || return
+	kube delete validatingwebhookconfiguration "$LATE_ACTIVATION_BLOCKER_WEBHOOK" \
+		--wait=true >/dev/null
+	LATE_ACTIVATION_BLOCKER_WEBHOOK=
+}
+
+restore_runtime_deployment_snapshot() {
+	deployment_name=$1
+	snapshot=$2
+	live=$WORK_DIR/${deployment_name}-late-failure-live.json
+	restored=$WORK_DIR/${deployment_name}-late-failure-restored.json
+	kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$deployment_name" -o json >"$live"
+	jq --slurpfile desired "$snapshot" '
+      .metadata.labels = $desired[0].metadata.labels |
+      .metadata.annotations = $desired[0].metadata.annotations |
+      .metadata.ownerReferences = ($desired[0].metadata.ownerReferences // []) |
+      .metadata.finalizers = ($desired[0].metadata.finalizers // []) |
+      .spec = $desired[0].spec |
+      del(.status)
+    ' "$live" >"$restored"
+	kube replace -f "$restored" >/dev/null ||
+		fail "candidate rollout guards blocked exact predecessor Deployment recovery for $deployment_name"
+}
+
+prove_late_activation_failure_recovery() {
+	printf '%s\n' 'e2e crd: proving predecessor recovery after a late pre-activation failure'
+	runtime_deployment_names
+	controller_snapshot=$WORK_DIR/controller-before-late-activation-failure.json
+	rotator_snapshot=$WORK_DIR/rotator-before-late-activation-failure.json
+	snapshot_runtime_deployment "$CONTROLLER_DEPLOYMENT" "$controller_snapshot"
+	snapshot_runtime_deployment "$ROTATOR_DEPLOYMENT" "$rotator_snapshot"
+	before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
+		jq -er '.version | select(type == "number" and . >= 1)')
+	late_revision=$((before_revision + 1))
+	create_late_activation_blocker
+	late_upgrade_succeeded=false
+	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
+		--wait --timeout 2m >"$WORK_DIR/late-activation-failure.out" \
+		2>"$WORK_DIR/late-activation-failure.err"; then
+		late_upgrade_succeeded=true
+	fi
+	delete_late_activation_blocker
+	[ "$late_upgrade_succeeded" = false ] ||
+		fail "upgrade with a late activation blocker unexpectedly succeeded"
+
+	helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \
+		--revision "$late_revision" -o json >"$WORK_DIR/late-activation-failure-status.json"
+	jq -e --argjson expected_revision "$late_revision" '
+      .version == $expected_revision and
+      .info.status == "failed" and
+      any((.hooks // [])[];
+        .kind == "Job" and (.weight | tonumber) == 0 and
+        ((.events // []) | index("pre-upgrade") != null) and
+        .last_run.phase == "Failed" and
+        ((.last_run.started_at // "") | length > 0) and
+        ((.last_run.completed_at // "") | length > 0))
+    ' "$WORK_DIR/late-activation-failure-status.json" >/dev/null ||
+		fail "late activation failure lacks exact failed reconcile-hook evidence"
+
+	kube -n "$E2E_OPERATOR_NAMESPACE" get configmap ptah-operator-release-activation -o json |
+		jq -e '.data["active-release-sequence"] == "0"' >/dev/null ||
+		fail "late failure advanced the release activation marker"
+	for deployment_name in "$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT"; do
+		kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$deployment_name" -o json |
+			jq -e --arg image "$E2E_PREDECESSOR_IMAGE" '
+              .spec.replicas == 0 and
+              .metadata.annotations["operator.ptah.dev/release-sequence"] == "1" and
+              .metadata.annotations["operator.ptah.dev/controller-state-version"] == "1" and
+              any(.spec.template.spec.containers[]; .image == $image)
+            ' >/dev/null || fail "late failure did not leave $deployment_name at the exact staged boundary"
+	done
+
+	restore_runtime_deployment_snapshot "$CONTROLLER_DEPLOYMENT" "$controller_snapshot"
+	restore_runtime_deployment_snapshot "$ROTATOR_DEPLOYMENT" "$rotator_snapshot"
+	wait_runtime_ready
+	snapshot_runtime_deployment "$CONTROLLER_DEPLOYMENT" \
+		"$WORK_DIR/controller-after-late-activation-recovery.json"
+	snapshot_runtime_deployment "$ROTATOR_DEPLOYMENT" \
+		"$WORK_DIR/rotator-after-late-activation-recovery.json"
+	cmp "$controller_snapshot" "$WORK_DIR/controller-after-late-activation-recovery.json" ||
+		fail "controller Deployment was not restored exactly after the late activation failure"
+	cmp "$rotator_snapshot" "$WORK_DIR/rotator-after-late-activation-recovery.json" ||
+		fail "certificate Deployment was not restored exactly after the late activation failure"
+	printf '%s\n' 'e2e crd: predecessor late-failure recovery passed'
 }
 
 wait_for_suspended() {
@@ -435,18 +957,113 @@ wait_for_predecessor_read_only_job() {
 	fail "predecessor controller did not dispatch a read-only Job with a committed UID"
 }
 
+set_predecessor_pod_webhook_failure_policy() {
+	expected_policy=$1
+	desired_policy=$2
+	case "$expected_policy:$desired_policy" in
+	Fail:Ignore | Ignore:Fail) ;;
+	*) fail "unsupported predecessor Pod webhook failurePolicy transition $expected_policy -> $desired_policy" ;;
+	esac
+	predecessor_pod_webhook_index=$(kube get validatingwebhookconfiguration ptah-operator-admission -o json |
+		jq -er '
+		  [.webhooks | to_entries[] | select(.value.name == "vpodintent.operator.ptah.dev")] |
+		  select(length == 1) | .[0].key
+		')
+	predecessor_pod_webhook_policy=$(kube get validatingwebhookconfiguration ptah-operator-admission -o json |
+		jq -er --argjson index "$predecessor_pod_webhook_index" '.webhooks[$index].failurePolicy')
+	[ "$predecessor_pod_webhook_policy" = "$expected_policy" ] ||
+		fail "predecessor Pod webhook failurePolicy is $predecessor_pod_webhook_policy, expected $expected_policy"
+	predecessor_pod_webhook_patch=$(jq -nc \
+		--argjson index "$predecessor_pod_webhook_index" \
+		--arg expected "$expected_policy" \
+		--arg desired "$desired_policy" '[
+		  {op: "test", path: ("/webhooks/" + ($index | tostring) + "/name"), value: "vpodintent.operator.ptah.dev"},
+		  {op: "test", path: ("/webhooks/" + ($index | tostring) + "/failurePolicy"), value: $expected},
+		  {op: "replace", path: ("/webhooks/" + ($index | tostring) + "/failurePolicy"), value: $desired}
+		]')
+	kube patch validatingwebhookconfiguration ptah-operator-admission \
+		--type=json -p "$predecessor_pod_webhook_patch" >/dev/null
+	kube get validatingwebhookconfiguration ptah-operator-admission -o json |
+		jq -e \
+			--argjson index "$predecessor_pod_webhook_index" \
+			--arg desired "$desired_policy" '
+			.webhooks[$index].name == "vpodintent.operator.ptah.dev" and
+			.webhooks[$index].failurePolicy == $desired
+			' >/dev/null || fail "predecessor Pod webhook failurePolicy transition was not persisted"
+}
+
 stage_predecessor_read_only_job_completion() {
 	[ -n "$PREDECESSOR_JOB_NAME" ] || fail "predecessor read-only Job name is missing"
 	[ -n "$PREDECESSOR_JOB_UID" ] || fail "predecessor read-only Job UID is missing"
-	completed_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-	kube -n "$PROOF_NAMESPACE" patch job "$PREDECESSOR_JOB_NAME" --subresource=status \
-		--type=merge -p "{\"status\":{\"completionTime\":\"$completed_at\",\"conditions\":[{\"type\":\"Failed\",\"status\":\"True\",\"reason\":\"PredecessorUpgradeProof\",\"message\":\"terminal read-only Job retained across quiescence\",\"lastProbeTime\":\"$completed_at\",\"lastTransitionTime\":\"$completed_at\"}]}}" >/dev/null
+	terminal_reason=PredecessorUpgradeProof
+	terminal_message='terminal read-only Job retained across quiescence'
 	kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json |
 		jq -e --arg uid "$PREDECESSOR_JOB_UID" '
-          .metadata.uid == $uid and
-          (.status.conditions | any(.type == "Failed" and .status == "True")) and
-          (.spec | has("ttlSecondsAfterFinished") | not)
-        ' >/dev/null || fail "predecessor read-only Job did not survive quiescence at a terminal cleanup boundary"
+		  .metadata.uid == $uid and
+		  ((.status.conditions // []) | all(.status != "True" or (.type != "Complete" and .type != "Failed" and .type != "FailureTarget"))) and
+		  (.status | has("completionTime") | not)
+		' >/dev/null || fail "predecessor read-only Job was already terminal before FailureTarget staging"
+	failure_target_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	failure_target_patch=$(jq -nc \
+		--arg failure_target_at "$failure_target_at" \
+		--arg reason "$terminal_reason" \
+		--arg message "$terminal_message" '{
+	  status: {
+	    conditions: [{
+	      type: "FailureTarget", status: "True",
+	      reason: $reason, message: $message,
+	      lastProbeTime: $failure_target_at,
+	      lastTransitionTime: $failure_target_at
+	    }]
+	  }
+	}')
+	kube -n "$PROOF_NAMESPACE" patch job "$PREDECESSOR_JOB_NAME" --subresource=status \
+		--type=merge -p "$failure_target_patch" >/dev/null
+
+	predecessor_job_terminal=0
+	deadline=$(($(date +%s) + 120))
+	while [ "$(date +%s)" -lt "$deadline" ]; do
+		if kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json \
+			>"$WORK_DIR/predecessor-read-only-job-terminal.json" 2>/dev/null &&
+			jq -e \
+				--arg uid "$PREDECESSOR_JOB_UID" \
+				--arg reason "$terminal_reason" \
+				--arg message "$terminal_message" '
+				  .metadata.uid == $uid and
+				  (.status.startTime != null) and
+				  ((.status.active // 0) == 0) and
+				  ((.status.ready // 0) == 0) and
+				  ((.status.terminating // 0) == 0) and
+				  (((.status.uncountedTerminatedPods.succeeded // []) | length) == 0) and
+				  (((.status.uncountedTerminatedPods.failed // []) | length) == 0) and
+				  (.status | has("completionTime") | not) and
+				  ((.status.conditions // []) | any(
+				    .type == "FailureTarget" and .status == "True" and
+				    .reason == $reason and .message == $message
+				  )) and
+				  ((.status.conditions // []) | any(
+				    .type == "Failed" and .status == "True" and
+				    .reason == $reason and .message == $message
+				  )) and
+				  (.spec | has("ttlSecondsAfterFinished") | not)
+				' "$WORK_DIR/predecessor-read-only-job-terminal.json" >/dev/null; then
+			predecessor_job_terminal=1
+			break
+		fi
+		sleep 1
+	done
+	if [ "$predecessor_job_terminal" -ne 1 ]; then
+		kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json \
+			>"$WORK_DIR/predecessor-read-only-job-terminal.json" 2>/dev/null || true
+		kube -n "$PROOF_NAMESPACE" get pods \
+			-l "batch.kubernetes.io/job-name=$PREDECESSOR_JOB_NAME" -o json \
+			>"$WORK_DIR/predecessor-read-only-job-pods.json" 2>/dev/null || true
+		jq -c '{name: .metadata.name, uid: .metadata.uid, status: .status}' \
+			"$WORK_DIR/predecessor-read-only-job-terminal.json" >&2 || true
+		jq -c '[.items[]? | {name: .metadata.name, uid: .metadata.uid, phase: .status.phase, deletionTimestamp: .metadata.deletionTimestamp}]' \
+			"$WORK_DIR/predecessor-read-only-job-pods.json" >&2 || true
+		fail "Job controller did not retire the predecessor read-only Job after FailureTarget staging"
+	fi
 	kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json |
 		jq -S '{
           uid: .metadata.uid,
@@ -819,6 +1436,15 @@ EOF
       (.plan.spec.chunks | length) == 1
     ' "$WORK_DIR/predecessor-apply-bundle.json" >/dev/null ||
 		fail "generated predecessor Apply plan does not have the exact contract-v2 shape"
+	PREDECESSOR_PLAN_GUARD_PROBE_FILE=$WORK_DIR/predecessor-plan-guard-probe.json
+	jq '
+      .plan |
+      .metadata.name = "ptah-plan-eeeeeeeeeeeeeeeeeeeeeeee" |
+      .spec.chunks = [
+        .spec.chunks[0] |
+        .name = "ptah-plan-eeeeeeeeeeeeeeeeeeeeeeee-000"
+      ]
+    ' "$WORK_DIR/predecessor-apply-bundle.json" >"$PREDECESSOR_PLAN_GUARD_PROBE_FILE"
 	jq '.plan' "$WORK_DIR/predecessor-apply-bundle.json" | kube create -f - >/dev/null
 	PREDECESSOR_APPLY_PLAN_NAME=$(jq -er '.plan.metadata.name' "$WORK_DIR/predecessor-apply-bundle.json")
 	PREDECESSOR_APPLY_PLAN_UID=$(kube -n "$PROOF_NAMESPACE" get ptahschemaplan \
@@ -853,6 +1479,153 @@ EOF
 		--subresource=status --type=merge -p "{\"status\":{\"observedGeneration\":$predecessor_plan_generation,\"publishedChunks\":[{\"name\":\"$predecessor_chunk_name\",\"uid\":\"$predecessor_chunk_uid\",\"index\":0}],\"conditions\":[{\"type\":\"Ready\",\"status\":\"True\",\"reason\":\"Published\",\"message\":\"Verified 1 immutable plan chunks\",\"observedGeneration\":$predecessor_plan_generation,\"lastTransitionTime\":\"$plan_ready_at\"}]}}" >/dev/null
 }
 
+emit_predecessor_apply_diagnostic() {
+	diagnostic_file=$WORK_DIR/predecessor-apply-diagnostic.jsonl
+	(umask 077 && : >"$diagnostic_file")
+
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_APPLY_SCHEMA" -o json |
+		jq -c '{
+		  component: "schema",
+		  name: .metadata.name,
+		  uid: .metadata.uid,
+		  generation: .metadata.generation,
+		  finalizers: (.metadata.finalizers // []),
+		  suspend: .spec.suspend,
+		  observedGeneration: (.status.observedGeneration // 0),
+		  phase: (.status.phase // ""),
+		  plan: (if .status.plan == null then null else {
+		    name: .status.plan.name, uid: (.status.plan.uid // ""),
+		    executionBindingID: (.status.plan.executionBindingID // "")
+		  } end),
+		  activeOperation: (if .status.activeOperation == null then null else {
+		    type: .status.activeOperation.type,
+		    id: .status.activeOperation.id,
+		    attempt: .status.activeOperation.attempt,
+		    jobName: (.status.activeOperation.jobName // ""),
+		    jobUID: (.status.activeOperation.jobUID // ""),
+		    startedAt: (.status.activeOperation.startedAt // ""),
+		    dispatchNotAfter: (.status.activeOperation.dispatchNotAfter // ""),
+		    executionNotAfter: (.status.activeOperation.executionNotAfter // ""),
+		    terminationGracePeriodSeconds: (.status.activeOperation.terminationGracePeriodSeconds // 0),
+		    dispatchStarted: (.status.activeOperation.dispatchStarted // false),
+		    admissionSnapshotPresent: (.status.activeOperation.admissionSnapshot != null)
+		  } end),
+		  pendingObservation: (if .status.pendingObservation == null then null else {
+		    outcome: .status.pendingObservation.outcome,
+		    applyOperationID: .status.pendingObservation.applyOperationID,
+		    applyJobName: (.status.pendingObservation.applyJobName // ""),
+		    applyJobUID: (.status.pendingObservation.applyJobUID // ""),
+		    applyPodCount: (.status.pendingObservation.applyPodCount // 0),
+		    applyPodUIDs: (.status.pendingObservation.applyPodUIDs // []),
+		    applyGeneration: (.status.pendingObservation.applyGeneration // 0),
+		    observeAfter: (.status.pendingObservation.observeAfter // ""),
+		    planRequired: (.status.pendingObservation.planRequired // false),
+		    leaseEpoch: (.status.pendingObservation.leaseEpoch // "")
+		  } end),
+		  conditions: [(.status.conditions // [])[] | {
+		    type, status, reason, message, observedGeneration, lastTransitionTime
+		  }]
+		}' >>"$diagnostic_file" 2>/dev/null || true
+
+	if [ -n "$PREDECESSOR_APPLY_PLAN_NAME" ]; then
+		kube -n "$PROOF_NAMESPACE" get ptahschemaplan "$PREDECESSOR_APPLY_PLAN_NAME" -o json |
+			jq -c '{
+			  component: "plan",
+			  name: .metadata.name,
+			  uid: .metadata.uid,
+			  generation: .metadata.generation,
+			  contractVersion: .spec.contractVersion,
+			  observedGeneration: (.status.observedGeneration // 0),
+			  publishedChunks: [(.status.publishedChunks // [])[] | {name, uid, index}],
+			  conditions: [(.status.conditions // [])[] | {
+			    type, status, reason, message, observedGeneration, lastTransitionTime
+			  }]
+			}' >>"$diagnostic_file" 2>/dev/null || true
+	fi
+
+	kube -n "$PROOF_NAMESPACE" get jobs -o json |
+		jq -c '{component: "jobs", objects: [.items[] | {
+		  name: .metadata.name,
+		  uid: .metadata.uid,
+		  schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
+		  operation: (.metadata.labels["operator.ptah.dev/operation"] // ""),
+		  active: (.status.active // 0),
+		  ready: (.status.ready // 0),
+		  succeeded: (.status.succeeded // 0),
+		  failed: (.status.failed // 0),
+		  conditions: [(.status.conditions // [])[] | {type, status, reason, message}]
+		}]}' >>"$diagnostic_file" 2>/dev/null || true
+
+	kube -n "$PROOF_NAMESPACE" get pods -o json |
+		jq -c '{component: "pods", objects: [.items[] | {
+		  name: .metadata.name,
+		  uid: .metadata.uid,
+		  phase: (.status.phase // ""),
+		  serviceAccountName: (.spec.serviceAccountName // ""),
+		  owners: [(.metadata.ownerReferences // [])[] | {apiVersion, kind, name, uid, controller}],
+		  conditions: [(.status.conditions // [])[] | {type, status, reason}]
+		}]}' >>"$diagnostic_file" 2>/dev/null || true
+
+	kube -n "$E2E_OPERATOR_NAMESPACE" get configmap ptah-operator-release-activation -o json |
+		jq -c '{
+		  component: "release-activation",
+		  activeReleaseSequence: (.data["active-release-sequence"] // ""),
+		  declaredReleaseSequence: (.metadata.annotations["operator.ptah.dev/release-sequence"] // ""),
+		  controllerStateVersion: (.metadata.annotations["operator.ptah.dev/controller-state-version"] // ""),
+		  admissionContractVersion: (.metadata.annotations["operator.ptah.dev/admission-contract-version"] // "")
+		}' >>"$diagnostic_file" 2>/dev/null || true
+
+	for admission_resource in validatingadmissionpolicy validatingadmissionpolicybinding; do
+		kube get "$admission_resource" -l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" -o json |
+			jq -c \
+				--arg resource "$admission_resource" \
+				--arg release "$E2E_HELM_RELEASE" \
+				--arg namespace "$E2E_OPERATOR_NAMESPACE" '{
+			  component: $resource,
+			  objects: [.items[] | select(
+			    .metadata.annotations["operator.ptah.dev/release-name"] == $release and
+			    .metadata.annotations["operator.ptah.dev/release-namespace"] == $namespace
+			  ) | {
+			    name: .metadata.name,
+			    uid: .metadata.uid,
+			    creationTimestamp: (.metadata.creationTimestamp // ""),
+			    hookWeight: (.metadata.annotations["helm.sh/hook-weight"] // ""),
+			    guardComponent: (.metadata.labels["app.kubernetes.io/component"] // ""),
+			    policyName: (.spec.policyName // ""),
+			    parameterized: (.spec.paramKind != null or .spec.paramRef != null),
+			    parameterNotFoundAction: (.spec.paramRef.parameterNotFoundAction // "")
+			  }]
+			}' >>"$diagnostic_file" 2>/dev/null || true
+	done
+
+	kube -n "$PROOF_NAMESPACE" get events -o json |
+		jq -c '{component: "events", objects: [.items[] | {
+		  type: (.type // ""),
+		  reason: (.reason // ""),
+		  message: (.message // ""),
+		  involvedKind: (.involvedObject.kind // ""),
+		  involvedName: (.involvedObject.name // ""),
+		  count: (.count // 1),
+		  time: (.eventTime // .lastTimestamp // .metadata.creationTimestamp // "")
+		}]}' >>"$diagnostic_file" 2>/dev/null || true
+
+	require_mode_0600_regular_file "$diagnostic_file" predecessor-apply-diagnostic
+	require_mode_0600_regular_file "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" identity-hook-credential-patterns
+	[ -s "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" ] ||
+		fail "predecessor Apply diagnostic credential scanner has no protected patterns"
+	if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$diagnostic_file" >/dev/null; then
+		fail "predecessor Apply diagnostic contained a protected task credential"
+	else
+		diagnostic_scan_status=$?
+		[ "$diagnostic_scan_status" -eq 1 ] || fail "predecessor Apply credential scan failed closed"
+	fi
+	if grep -Eq '(^|[^[:alnum:]_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+($|[^[:alnum:]_-])|[Aa]uthorization:[[:space:]]*|[Bb]earer[[:space:]]+|://[^[:space:]@/:]+:[^[:space:]@/]+@' \
+		"$diagnostic_file"; then
+		fail "predecessor Apply diagnostic contained a credential-shaped value"
+	fi
+	cat "$diagnostic_file" >&2
+}
+
 start_predecessor_apply_fixture() {
 	[ -n "$PREDECESSOR_APPLY_PLAN_NAME" ] || fail "predecessor Apply plan name is missing"
 	[ -n "$PREDECESSOR_APPLY_PLAN_UID" ] || fail "predecessor Apply plan UID is missing"
@@ -882,6 +1655,15 @@ start_predecessor_apply_fixture() {
 	while [ "$(date +%s)" -lt "$deadline" ]; do
 		kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_APPLY_SCHEMA" -o json \
 			>"$WORK_DIR/predecessor-apply-running-schema.json"
+		if jq -e '
+		  .status.pendingObservation.outcome == "OutcomeUnknown" or
+		  ((.status.conditions // []) | any(
+		    .type == "ReconciliationFailed" and .status == "True"
+		  ))
+		' "$WORK_DIR/predecessor-apply-running-schema.json" >/dev/null; then
+			emit_predecessor_apply_diagnostic
+			fail "predecessor Apply entered a terminal failure before its running Pod was observed"
+		fi
 		PREDECESSOR_APPLY_JOB_NAME=$(jq -r \
 			'.status.activeOperation | select(.type == "Apply" and .dispatchStarted == true) | .jobName // empty' \
 			"$WORK_DIR/predecessor-apply-running-schema.json")
@@ -913,8 +1695,11 @@ start_predecessor_apply_fixture() {
 			fi
 		fi
 		sleep 1
-	done
-	[ -n "$PREDECESSOR_APPLY_POD_UID" ] || fail "predecessor Apply Job did not reach a running Pod"
+		done
+	if [ -z "$PREDECESSOR_APPLY_POD_UID" ]; then
+		emit_predecessor_apply_diagnostic
+		fail "predecessor Apply Job did not reach a running Pod"
+	fi
 	jq -e --arg schema "$PREDECESSOR_APPLY_SCHEMA" '
       .metadata.labels as $labels |
       $labels == {
@@ -1115,6 +1900,32 @@ runtime_deployment_names() {
 	[ -n "$ROTATOR_DEPLOYMENT" ] || fail "certificate-rotation Deployment is missing"
 }
 
+capture_controller_impersonation_identity() {
+	runtime_deployment_names
+	controller_pod_json=$WORK_DIR/controller-impersonation-pod.json
+	kube -n "$E2E_OPERATOR_NAMESPACE" get pods \
+		-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE,app.kubernetes.io/component=controller" \
+		-o json | jq -e '
+          [.items[] | select(.status.phase == "Running")] |
+          if length > 0 then sort_by(.metadata.name)[0] else error("no running controller Pod") end
+        ' >"$controller_pod_json"
+	controller_service_account=$(jq -er '.spec.serviceAccountName' "$controller_pod_json")
+	controller_service_account_uid=$(kube -n "$E2E_OPERATOR_NAMESPACE" get serviceaccount \
+		"$controller_service_account" -o jsonpath='{.metadata.uid}')
+	[ -n "$controller_service_account_uid" ] || fail "controller ServiceAccount UID is empty"
+	CONTROLLER_IMPERSONATION_USERNAME="system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$controller_service_account"
+	CONTROLLER_IMPERSONATION_UID=$controller_service_account_uid
+	CONTROLLER_IMPERSONATION_POD_NAME=$(jq -er '.metadata.name' "$controller_pod_json")
+	CONTROLLER_IMPERSONATION_POD_UID=$(jq -er '.metadata.uid' "$controller_pod_json")
+}
+
+clear_controller_impersonation_identity() {
+	CONTROLLER_IMPERSONATION_USERNAME=
+	CONTROLLER_IMPERSONATION_UID=
+	CONTROLLER_IMPERSONATION_POD_NAME=
+	CONTROLLER_IMPERSONATION_POD_UID=
+}
+
 runtime_deployment_evidence() {
 	runtime_deployment_names
 	kube -n "$E2E_OPERATOR_NAMESPACE" get deployment \
@@ -1234,7 +2045,7 @@ stop_runtime_deployments() {
 	snapshot_runtime_deployment "$ROTATOR_DEPLOYMENT" "$ROTATOR_DEPLOYMENT_SNAPSHOT"
 	kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment \
 		"$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT" \
-		--cascade=foreground --wait=true >/dev/null
+		--cascade=foreground --wait=true --timeout=2m >/dev/null
 	for component in controller certificate-rotation; do
 		kube -n "$E2E_OPERATOR_NAMESPACE" wait pod \
 			-l "app.kubernetes.io/component=$component" \
@@ -1247,7 +2058,7 @@ stop_controller_deployment() {
 	CONTROLLER_DEPLOYMENT_SNAPSHOT=$WORK_DIR/controller-deployment.json
 	snapshot_runtime_deployment "$CONTROLLER_DEPLOYMENT" "$CONTROLLER_DEPLOYMENT_SNAPSHOT"
 	kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_DEPLOYMENT" \
-		--cascade=foreground --wait=true >/dev/null
+		--cascade=foreground --wait=true --timeout=2m >/dev/null
 	kube -n "$E2E_OPERATOR_NAMESPACE" wait pod \
 		-l 'app.kubernetes.io/component=controller' \
 		--for=delete --timeout=2m >/dev/null
@@ -1370,6 +2181,133 @@ expect_controller_job_vap_denial() {
 		cat "$stderr" >&2
 		fail "controller $description probe failed without the exact controller-object VAP denial"
 	fi
+}
+
+prove_legacy_job_activation_boundary() {
+	expected_state=$1
+	legacy_job_source=$WORK_DIR/predecessor-read-only-job-terminal.json
+	[ -s "$legacy_job_source" ] ||
+		fail "legacy Job activation-boundary source is missing"
+	legacy_job_probe=$WORK_DIR/predecessor-job-guard-probe.json
+	jq '
+      del(
+        .metadata.creationTimestamp,
+        .metadata.deletionGracePeriodSeconds,
+        .metadata.deletionTimestamp,
+        .metadata.generateName,
+        .metadata.generation,
+        .metadata.managedFields,
+        .metadata.resourceVersion,
+        .metadata.selfLink,
+        .metadata.uid,
+        .spec.selector,
+        .spec.ttlSecondsAfterFinished,
+        .status,
+        .spec.template.metadata.creationTimestamp,
+        .spec.template.metadata.deletionGracePeriodSeconds,
+        .spec.template.metadata.deletionTimestamp,
+        .spec.template.metadata.generateName,
+        .spec.template.metadata.generation,
+        .spec.template.metadata.managedFields,
+        .spec.template.metadata.namespace,
+        .spec.template.metadata.resourceVersion,
+        .spec.template.metadata.selfLink,
+        .spec.template.metadata.uid,
+        .spec.template.metadata.labels["batch.kubernetes.io/controller-uid"],
+        .spec.template.metadata.labels["batch.kubernetes.io/job-name"],
+        .spec.template.metadata.labels["controller-uid"],
+        .spec.template.metadata.labels["job-name"]
+      ) |
+      .metadata.name = "ptah-resolve-vap-probe-0123456789abcdef" |
+      .spec.template.metadata.annotations = .metadata.annotations
+    ' "$legacy_job_source" >"$legacy_job_probe"
+	jq -e '
+      (.metadata.annotations | keys | sort) == [
+        "operator.ptah.dev/admission-snapshot-digest",
+        "operator.ptah.dev/execution-binding-id",
+        "operator.ptah.dev/input-fingerprint",
+        "operator.ptah.dev/operation-id",
+        "operator.ptah.dev/ptah-version"
+      ] and
+      (.metadata.annotations | has("operator.ptah.dev/controller-image") | not) and
+      (.metadata.annotations | has("operator.ptah.dev/controller-revision") | not) and
+      (.metadata.annotations | has("operator.ptah.dev/controller-state-version") | not) and
+      (.spec | has("selector") | not) and
+      (.spec | has("ttlSecondsAfterFinished") | not) and
+      (has("status") | not)
+    ' "$legacy_job_probe" >/dev/null ||
+		fail "legacy Job activation-boundary probe is not the exact predecessor contract"
+
+	CONTROLLER_OBJECT_GUARD_PROBE_INDEX=$((CONTROLLER_OBJECT_GUARD_PROBE_INDEX + 1))
+	stdout=$WORK_DIR/controller-job-activation-${expected_state}-${CONTROLLER_OBJECT_GUARD_PROBE_INDEX}.out
+	stderr=$WORK_DIR/controller-job-activation-${expected_state}-${CONTROLLER_OBJECT_GUARD_PROBE_INDEX}.err
+	case "$expected_state" in
+	bootstrap)
+		if controller_kube create --dry-run=server -o json -f "$legacy_job_probe" \
+			>"$stdout" 2>"$stderr"; then
+			fail "legacy Job bootstrap probe bypassed the semantic controller-write boundary"
+		fi
+		if grep -F 'Ptah controller Job write guard rejected an unsafe workload shape' \
+			"$stdout" "$stderr" >/dev/null; then
+			fail "legacy Job CREATE was blocked before candidate activation"
+		fi
+		grep -F 'Job does not match a not-yet-created active operation' \
+			"$stdout" "$stderr" >/dev/null || {
+			cat "$stderr" >&2
+			fail "legacy Job bootstrap probe did not reach the semantic controller-write boundary"
+		}
+		;;
+	active)
+		if controller_kube create --dry-run=server -o json -f "$legacy_job_probe" \
+			>"$stdout" 2>"$stderr"; then
+			fail "legacy Job CREATE remained available after candidate activation"
+		fi
+		grep -F 'Ptah controller Job write guard rejected an unsafe workload shape' \
+			"$stdout" "$stderr" >/dev/null || {
+			cat "$stderr" >&2
+			fail "legacy Job post-activation probe lacked the exact structural guard denial"
+		}
+		;;
+	*) fail "unsupported legacy Job activation-boundary state $expected_state" ;;
+	esac
+}
+
+prove_legacy_plan_activation_boundary() {
+	expected_state=$1
+	[ -s "$PREDECESSOR_PLAN_GUARD_PROBE_FILE" ] ||
+		fail "legacy plan activation-boundary probe is missing"
+	CONTROLLER_OBJECT_GUARD_PROBE_INDEX=$((CONTROLLER_OBJECT_GUARD_PROBE_INDEX + 1))
+	stdout=$WORK_DIR/controller-plan-activation-${expected_state}-${CONTROLLER_OBJECT_GUARD_PROBE_INDEX}.out
+	stderr=$WORK_DIR/controller-plan-activation-${expected_state}-${CONTROLLER_OBJECT_GUARD_PROBE_INDEX}.err
+	case "$expected_state" in
+	bootstrap)
+		if controller_kube create --dry-run=server -o json \
+			-f "$PREDECESSOR_PLAN_GUARD_PROBE_FILE" >"$stdout" 2>"$stderr"; then
+			fail "legacy plan bootstrap probe bypassed the semantic controller-write boundary"
+		fi
+		if grep -F 'Ptah controller plan write guard rejected an unsafe manifest shape' \
+			"$stdout" "$stderr" >/dev/null; then
+			fail "legacy plan CREATE was blocked before candidate activation"
+		fi
+		grep -F 'PtahSchemaPlan metadata is invalid: plan name is not derived from its fingerprint' \
+			"$stdout" "$stderr" >/dev/null || {
+			cat "$stderr" >&2
+			fail "legacy plan bootstrap probe did not reach the semantic controller-write boundary"
+		}
+		;;
+	active)
+		if controller_kube create --dry-run=server -o json \
+			-f "$PREDECESSOR_PLAN_GUARD_PROBE_FILE" >"$stdout" 2>"$stderr"; then
+			fail "legacy plan CREATE remained available after candidate activation"
+		fi
+		grep -F 'Ptah controller plan write guard rejected an unsafe manifest shape' \
+			"$stdout" "$stderr" >/dev/null || {
+			cat "$stderr" >&2
+			fail "legacy plan post-activation probe lacked the exact structural guard denial"
+		}
+		;;
+	*) fail "unsupported legacy plan activation-boundary state $expected_state" ;;
+	esac
 }
 
 prove_controller_object_supported_window_guard() {
@@ -1506,26 +2444,13 @@ EOF
 
 prove_controller_write_guard() {
 	printf '%s\n' 'e2e crd: proving the controller desired-state write boundary'
-	runtime_deployment_names
-	controller_pod_json=$WORK_DIR/controller-impersonation-pod.json
-	kube -n "$E2E_OPERATOR_NAMESPACE" get pods \
-		-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE,app.kubernetes.io/component=controller" \
-		-o json | jq -e '
-          [.items[] | select(.status.phase == "Running")] |
-          if length > 0 then sort_by(.metadata.name)[0] else error("no running controller Pod") end
-        ' >"$controller_pod_json"
-	controller_service_account=$(jq -er '.spec.serviceAccountName' "$controller_pod_json")
-	controller_service_account_uid=$(kube -n "$E2E_OPERATOR_NAMESPACE" get serviceaccount \
-		"$controller_service_account" -o jsonpath='{.metadata.uid}')
-	[ -n "$controller_service_account_uid" ] || fail "controller ServiceAccount UID is empty"
-	CONTROLLER_IMPERSONATION_USERNAME="system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$controller_service_account"
-	CONTROLLER_IMPERSONATION_UID=$controller_service_account_uid
-	CONTROLLER_IMPERSONATION_POD_NAME=$(jq -er '.metadata.name' "$controller_pod_json")
-	CONTROLLER_IMPERSONATION_POD_UID=$(jq -er '.metadata.uid' "$controller_pod_json")
+	capture_controller_impersonation_identity
 
 	controller_write_evidence "$WORK_DIR/controller-write-before.json"
 	prove_controller_direct_write_webhook
 	prove_controller_object_supported_window_guard
+	prove_legacy_job_activation_boundary active
+	prove_legacy_plan_activation_boundary active
 	stop_controller_deployment
 
 	current_suspend=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
@@ -1593,10 +2518,7 @@ prove_controller_write_guard() {
 
 	start_controller_deployment
 	wait_runtime_ready
-	CONTROLLER_IMPERSONATION_USERNAME=
-	CONTROLLER_IMPERSONATION_UID=
-	CONTROLLER_IMPERSONATION_POD_NAME=
-	CONTROLLER_IMPERSONATION_POD_UID=
+	clear_controller_impersonation_identity
 	printf '%s\n' 'e2e crd: controller desired-state and direct-write boundaries passed'
 }
 
@@ -1877,6 +2799,8 @@ run_predecessor_upgrade_proof() {
 	[ -d "$E2E_PREDECESSOR_SOURCE_DIR" ] || fail "predecessor source archive is missing"
 	UPGRADE_VALUES_FILE=$E2E_CANDIDATE_VALUES_FILE
 	prepare_expected_singleton_annotations
+	prepare_expected_hook_names
+	materialize_identity_hook_credential_patterns
 
 	printf '%s\n' 'e2e crd: proving exact predecessor-to-candidate upgrade'
 	runtime_deployment_names
@@ -1911,7 +2835,9 @@ run_predecessor_upgrade_proof() {
 	assert_predecessor_certificate_update_allowed
 
 	stop_runtime_deployments
+	set_predecessor_pod_webhook_failure_policy Fail Ignore
 	stage_predecessor_read_only_job_completion
+	set_predecessor_pod_webhook_failure_policy Ignore Fail
 	stage_predecessor_read_only_job_uid_gap
 	stage_predecessor_deletion
 
@@ -1953,10 +2879,15 @@ run_predecessor_upgrade_proof() {
 	done
 	assert_singleton_annotation_free
 	restore_predecessor_crd "$drift_crd"
-
-	printf '%s\n' 'e2e crd: starting a predecessor Apply across the candidate upgrade'
 	start_runtime_deployments
 	wait_runtime_ready
+	prove_late_activation_failure_recovery
+	capture_controller_impersonation_identity
+	prove_legacy_job_activation_boundary bootstrap
+	prove_legacy_plan_activation_boundary bootstrap
+	clear_controller_impersonation_identity
+
+	printf '%s\n' 'e2e crd: starting a predecessor Apply across the candidate upgrade'
 	start_predecessor_apply_barrier
 	start_predecessor_apply_fixture
 	wait_for_predecessor_apply_barrier_contention

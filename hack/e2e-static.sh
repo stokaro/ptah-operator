@@ -30,6 +30,7 @@ CRD_INSTALL_RENDER=$WORK_DIR/crd-install.yaml
 CRD_UPGRADE_RENDER=$WORK_DIR/crd-upgrade.yaml
 CRD_FULL_RENDER=$WORK_DIR/crd-full.yaml
 ROLLOUT_GUARD_RENDER=$WORK_DIR/rollout-guard.yaml
+RUNTIME_POD_GUARD_LONG_RENDER=$WORK_DIR/runtime-pod-guard-long.yaml
 TEARDOWN_RENDER=$WORK_DIR/teardown.yaml
 TEARDOWN_EXTERNAL_CERT_RENDER=$WORK_DIR/teardown-external-cert.yaml
 TEARDOWN_EXTERNAL_SA_RENDER=$WORK_DIR/teardown-external-sa.yaml
@@ -102,6 +103,56 @@ command -v shellcheck >/dev/null 2>&1 || {
 command -v dash >/dev/null 2>&1 || {
 	printf '%s\n' 'e2e static: dash is required for POSIX shell checks' >&2
 	exit 1
+}
+
+assert_crd_manager_job_container_contract() {
+	contract_file=$1
+	expected_jobs=$2
+	awk -v expected_jobs="$expected_jobs" '
+    function finish_document() {
+      if (kind == "Job" && manager_command) {
+        jobs++
+        if (termination_path_fields != 1 || safe_termination_paths != 1 ||
+            termination_policy_fields != 1 || safe_termination_policies != 1 ||
+            pod_restart_policy != 1 || container_restart_fields != 0) {
+          invalid = 1
+        }
+      }
+      kind = ""
+      manager_command = 0
+      termination_path_fields = 0
+      safe_termination_paths = 0
+      termination_policy_fields = 0
+      safe_termination_policies = 0
+      pod_restart_policy = 0
+      container_restart_fields = 0
+    }
+    /^---$/ {
+      finish_document()
+      next
+    }
+    $0 == "kind: Job" { kind = "Job" }
+    $0 == "          command: [\"/ptah-crd-manager\"]" { manager_command = 1 }
+    /^          terminationMessagePath:/ {
+      termination_path_fields++
+      if ($0 == "          terminationMessagePath: /dev/termination-log") {
+        safe_termination_paths++
+      }
+    }
+    /^          terminationMessagePolicy:/ {
+      termination_policy_fields++
+      if ($0 == "          terminationMessagePolicy: File") {
+        safe_termination_policies++
+      }
+    }
+    $0 == "      restartPolicy: Never" { pod_restart_policy++ }
+    /^          restartPolicy(Rules)?:/ { container_restart_fields++ }
+    END {
+      finish_document()
+      if (jobs != expected_jobs) invalid = 1
+      exit invalid
+    }
+  ' "$contract_file"
 }
 
 for script in "$ROOT_DIR"/hack/e2e-*.sh; do
@@ -358,12 +409,14 @@ release_values_section=$(sed -n '/^render_release_values()/,/^}/p' "$ROOT_DIR/ha
 export E2E_EXECUTOR_IMAGE=e2e.invalid/executor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export E2E_RUNNER_IMAGE=e2e.invalid/runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 export E2E_PTAH_VERSION=predecessor-values-proof
+export RUNTIME_FULLNAME=rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
 eval "$release_values_section"
 render_release_values "$PREDECESSOR_VALUES_FIXTURE" predecessor.invalid/operator old ""
 render_release_values "$CANDIDATE_VALUES_FIXTURE" candidate.invalid/operator new \
 	sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
 	candidate-registry-pull
 jq -e '
+  .fullnameOverride == "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr" and
   .image.repository == "predecessor.invalid/operator" and
   .image.tag == "old" and
   (.image | has("testIdentityDigest") | not)
@@ -372,6 +425,7 @@ jq -e '
 	exit 1
 }
 jq -e '
+  .fullnameOverride == "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr" and
   .image.repository == "candidate.invalid/operator" and
   .image.tag == "new" and
   .image.digest == "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" and
@@ -510,9 +564,9 @@ grep -F 'RegistryCASHA256SecretKey = "caSHA256"' \
 	exit 1
 }
 
-grep -F "printf '%s\\n' 'e2e data plane: PASS active Pod oldObject selector enforcement'" \
+grep -F "printf '%s\\n' 'e2e data plane: PASS active Pod managed-identity enforcement'" \
 	"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null || {
-	printf '%s\n' 'e2e static: active-Pod oldObject selector PASS marker is missing' >&2
+	printf '%s\n' 'e2e static: active-Pod managed-identity PASS marker is missing' >&2
 	exit 1
 }
 
@@ -894,6 +948,21 @@ jq -e '
 }
 
 grep -F '__API_SERVER_PORT__' "$ROOT_DIR/testdata/e2e/kind.yaml.tmpl" >/dev/null
+for kubelet_user_namespace_marker in \
+	'    kubeadmConfigPatches:' \
+	'        kind: KubeletConfiguration' \
+	'        apiVersion: kubelet.config.k8s.io/v1beta1' \
+	'        featureGates:' \
+	'          KubeletInUserNamespace: true'; do
+	grep -Fx "$kubelet_user_namespace_marker" "$ROOT_DIR/testdata/e2e/kind.yaml.tmpl" >/dev/null || {
+		printf '%s\n' 'e2e static: kind template lacks the exact kubelet-only user-namespace compatibility patch' >&2
+		exit 1
+	}
+done
+[ "$(grep -Fc 'KubeletInUserNamespace: true' "$ROOT_DIR/testdata/e2e/kind.yaml.tmpl")" -eq 1 ] || {
+	printf '%s\n' 'e2e static: kind template must enable KubeletInUserNamespace exactly once' >&2
+	exit 1
+}
 grep -F 'application/vnd.stokaro.ptah.schema.v1' \
 	"$ROOT_DIR/testdata/e2e/verification-policy.yaml" >/dev/null
 if grep -F 'require_digest_pin: true' "$ROOT_DIR/testdata/e2e/verification-policy.yaml" >/dev/null; then
@@ -1810,9 +1879,19 @@ static_require_order "$engine_lifecycle_section" 'binding upgrade and registry o
 	'"$TAG_MOVE_INTERVAL" true'
 
 # shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
+grep -Fx 'EXTERNAL_PG_SCHEMA=e2e-postgresql-external-longpod' \
+	"$ROOT_DIR/hack/e2e-dataplane.sh" >/dev/null || {
+	printf '%s\n' 'e2e static: operation Pod generated-name boundary fixture is missing' >&2
+	exit 1
+}
+
+# shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
 for external_lifecycle_marker in \
 	'create_schema_resource "$EXTERNAL_PG_SCHEMA" PostgreSQL "$EXTERNAL_PG_SECRET"' \
 	'assert_plan "$EXTERNAL_PG_SCHEMA"' \
+	'[ "${#CAPTURED_JOB_NAME}" -eq 58 ]' \
+	'[ "${#CAPTURED_POD_GENERATE_NAME}" -eq 59 ]' \
+	'[ "${#CAPTURED_POD_NAME}" -eq 63 ]' \
 	'for external_plan_operation in resolve verify observe plan; do' \
 	'assert_no_job_between_checkpoints "$EXTERNAL_PG_SCHEMA" apply' \
 	'assert_read_only_chain_between_checkpoints "$EXTERNAL_PG_SCHEMA"' \
@@ -4329,7 +4408,7 @@ grep -F 'name: vpodintent.operator.ptah.dev' "$ADMISSION_RENDER" >/dev/null
 grep -F 'path: /validate-v1-pod-ptah-operation-intent' "$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["pods", "pods/ephemeralcontainers", "pods/resize"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'operations: ["CREATE", "UPDATE"]' "$ADMISSION_RENDER" >/dev/null
-grep -F 'name: job-owned-pod' "$ADMISSION_RENDER" >/dev/null
+grep -F 'name: managed-or-operation-job-pod' "$ADMISSION_RENDER" >/dev/null
 grep -F 'name: vcontrollerwrite.operator.ptah.dev' "$ADMISSION_RENDER" >/dev/null
 grep -F 'path: /validate-operator-controller-write' "$ADMISSION_RENDER" >/dev/null
 grep -F 'name: controller-service-account' "$ADMISSION_RENDER" >/dev/null
@@ -4338,10 +4417,10 @@ grep -F "'system:serviceaccount:ptah-e2e:ptah-e2e-ptah-operator'" "$ADMISSION_RE
 grep -F 'resources: ["jobs"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["configmaps"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["ptahschemaplans"]' "$ADMISSION_RENDER" >/dev/null
-[ "$(grep -c '^[[:space:]]*objectSelector:$' "$ADMISSION_RENDER")" -eq 1 ] || {
-	printf '%s\n' 'e2e static: only the Pod intent webhook may have an object selector' >&2
+if grep -Eq '^[[:space:]]*objectSelector:' "$ADMISSION_RENDER"; then
+	printf '%s\n' 'e2e static: admission webhooks must not trust user-controlled object selectors' >&2
 	exit 1
-}
+fi
 rendered_webhook_block() {
 	awk -v target="$1" '
       /^  - name: / {
@@ -4372,19 +4451,10 @@ pod_intent_webhook=$(rendered_webhook_block vpodintent.operator.ptah.dev)
 	printf '%s\n' 'e2e static: rendered Pod intent webhook is missing' >&2
 	exit 1
 }
-pod_intent_selector=$(printf '%s\n' "$pod_intent_webhook" | awk '
-  /^    objectSelector:$/ { selected = 1; print; next }
-  selected && /^    [^ ]/ { exit }
-  selected { print }
-')
-expected_pod_intent_selector='    objectSelector:
-      matchLabels:
-        app.kubernetes.io/managed-by: ptah-operator
-        app.kubernetes.io/component: schema-operation'
-[ "$pod_intent_selector" = "$expected_pod_intent_selector" ] || {
-	printf '%s\n' 'e2e static: Pod intent webhook lacks its exact object selector' >&2
+if printf '%s\n' "$pod_intent_webhook" | grep -Eq '^[[:space:]]*objectSelector:'; then
+	printf '%s\n' 'e2e static: Pod intent webhook has a bypassable object selector' >&2
 	exit 1
-}
+fi
 grep -F -- '--default-tolerations-enabled=true' "$RENDERED_WEBHOOKS" >/dev/null
 grep -F -- '--extended-resource-toleration-enabled=false' "$RENDERED_WEBHOOKS" >/dev/null
 grep -F -- '--always-pull-images-enabled=false' "$RENDERED_WEBHOOKS" >/dev/null
@@ -4627,11 +4697,21 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/controller-object-guard.yaml \
 	--show-only templates/certificate-write-guard.yaml \
 	--show-only templates/parent-workload-guard.yaml \
+	--show-only templates/service-account-origin-guard.yaml \
 	--show-only templates/rollout-guard.yaml \
 	--show-only templates/runtime-pod-guard.yaml \
 	--show-only templates/deployment.yaml \
 	--show-only templates/certificate-rotation.yaml \
 	$crd_render_args >"$ROLLOUT_GUARD_RENDER"
+# Exercise API-server generated-name truncation with a maximal runtime name.
+# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
+	--show-only templates/service-account-origin-guard.yaml \
+	--show-only templates/runtime-pod-guard.yaml \
+	--show-only templates/deployment.yaml \
+	--show-only templates/certificate-rotation.yaml \
+	--set-string fullnameOverride=rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr \
+	$crd_render_args >"$RUNTIME_POD_GUARD_LONG_RENDER"
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/teardown.yaml \
@@ -4724,6 +4804,10 @@ done
 [ "$(grep -Fc -- '- "identity-probe"' "$CRD_UPGRADE_RENDER")" -eq 1 ]
 [ "$(grep -Fc -- '- "preflight"' "$CRD_UPGRADE_RENDER")" -eq 1 ]
 [ "$(grep -Fc -- '- "reconcile"' "$CRD_UPGRADE_RENDER")" -eq 1 ]
+assert_crd_manager_job_container_contract "$CRD_UPGRADE_RENDER" 4 || {
+	printf '%s\n' 'e2e static: CRD hook containers expose an unsafe termination or restart contract' >&2
+	exit 1
+}
 crd_hook_resource_count=$(grep -Ec '^apiVersion:' "$CRD_UPGRADE_RENDER")
 [ "$crd_hook_resource_count" -gt 0 ]
 [ "$(grep -Fc 'helm.sh/hook: pre-install,pre-upgrade' "$CRD_UPGRADE_RENDER")" -eq "$crd_hook_resource_count" ]
@@ -4800,6 +4884,10 @@ teardown_resource_count=$(grep -Ec '^apiVersion:' "$TEARDOWN_RENDER")
 [ "$(grep -Fc 'kind: Job' "$TEARDOWN_RENDER")" -eq 2 ]
 [ "$(grep -Fc -- '- "teardown-quiesce"' "$TEARDOWN_RENDER")" -eq 1 ]
 [ "$(grep -Fc -- '- "teardown"' "$TEARDOWN_RENDER")" -eq 1 ]
+assert_crd_manager_job_container_contract "$TEARDOWN_RENDER" 2 || {
+	printf '%s\n' 'e2e static: teardown hook containers expose an unsafe termination or restart contract' >&2
+	exit 1
+}
 [ "$(grep -Fc 'helm.sh/hook-weight: "-10"' "$TEARDOWN_RENDER")" -eq 1 ]
 [ "$(grep -Fc 'helm.sh/hook-weight: "0"' "$TEARDOWN_RENDER")" -eq 1 ]
 if grep -F 'hook-failed' "$TEARDOWN_RENDER" >/dev/null || grep -F '["*"]' "$TEARDOWN_RENDER" >/dev/null; then
@@ -4908,14 +4996,81 @@ for controller_object_guard_name in $controller_object_guard_names; do
 		exit 1
 	}
 done
+controller_job_guard_name=$(printf '%s\n' "$controller_object_guard_names" |
+	grep -E '^ptah-operator-job-write-guard-v1-')
+controller_chunk_guard_name=$(printf '%s\n' "$controller_object_guard_names" |
+	grep -E '^ptah-operator-chunk-write-guard-v1-')
+controller_plan_guard_name=$(printf '%s\n' "$controller_object_guard_names" |
+	grep -E '^ptah-operator-plan-write-guard-v1-')
+controller_object_guard_contracts=$(awk '
+  function reset() {
+    kind = ""
+    name = ""
+    weight = ""
+    metadata = 0
+    section = ""
+    param_kind = ""
+    param_name = ""
+    param_namespace = ""
+    parameter_not_found = ""
+  }
+  function emit() {
+    if (name ~ /^ptah-operator-(job|chunk|plan)-write-guard-v1-/) {
+      print kind ":" name ":" weight ":" param_kind ":" param_name ":" param_namespace ":" parameter_not_found
+    }
+    reset()
+  }
+  BEGIN {reset()}
+  /^---$/ {emit(); next}
+  /^kind:/ {kind = $2; next}
+  /^metadata:/ {metadata = 1; next}
+  /^spec:/ {metadata = 0; section = ""; next}
+  metadata && /^  name:/ {name = $2; next}
+  /helm[.]sh\/hook-weight:/ {
+    weight = $2
+    gsub(/"/, "", weight)
+    next
+  }
+  /^  paramKind:/ {section = "kind"; next}
+  /^  paramRef:/ {section = "reference"; next}
+  section == "kind" && /^    kind:/ {param_kind = $2; next}
+  section == "reference" && /^    name:/ {param_name = $2; next}
+  section == "reference" && /^    namespace:/ {param_namespace = $2; next}
+  section == "reference" && /^    parameterNotFoundAction:/ {parameter_not_found = $2; next}
+  /^  [[:alnum:]]/ {section = ""}
+  END {emit()}
+' "$ROLLOUT_GUARD_RENDER")
+for controller_object_guard_contract in \
+	"ValidatingAdmissionPolicy:$controller_job_guard_name:-152:ConfigMap:::" \
+	"ValidatingAdmissionPolicyBinding:$controller_job_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny" \
+	"ValidatingAdmissionPolicy:$controller_chunk_guard_name:-152:ConfigMap:::" \
+	"ValidatingAdmissionPolicyBinding:$controller_chunk_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny" \
+	"ValidatingAdmissionPolicy:$controller_plan_guard_name:-152:ConfigMap:::" \
+	"ValidatingAdmissionPolicyBinding:$controller_plan_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny"; do
+	[ "$(printf '%s\n' "$controller_object_guard_contracts" |
+		grep -Fxc -- "$controller_object_guard_contract")" -eq 1 ] || {
+		printf 'e2e static: controller object guard lacks exact activation contract %s\n' \
+			"$controller_object_guard_contract" >&2
+		exit 1
+	}
+done
 for controller_object_marker in \
 	'helm.sh/hook-weight: "-152"' \
-	'helm.sh/hook-weight: "-151"' \
+	'helm.sh/hook-weight: "-147"' \
+	'parameterNotFoundAction: Deny' \
+	'params.metadata.name == \"ptah-operator-release-activation\"' \
+	'variables.isBootstrap' \
+	'variables.activeRelease > 0' \
+	'request.operation == \"UPDATE\" || (request.operation == \"CREATE\" && (object.metadata.annotations[\"operator.ptah.dev/controller-image\"] == variables.activeControllerImage && object.metadata.annotations[\"operator.ptah.dev/controller-state-version\"] == variables.activeControllerStateString))' \
+	'== variables.activeControllerImage' \
+	'== variables.activeControllerStateString' \
+	'== variables.activeControllerState' \
 	'resources: ["jobs"]' \
 	'resources: ["configmaps"]' \
 	'resources: ["ptahschemaplans"]' \
 	'object.spec.ttlSecondsAfterFinished == 300' \
 	'object.binaryData[\"chunk\"].size() <= 524288' \
+	'object.spec.contractVersion == 2' \
 	'object.spec.contractVersion == 3' \
 	'Ptah controller Job write guard rejected an unsafe workload shape' \
 	'Ptah controller chunk write guard rejected an unsafe ConfigMap shape' \
@@ -5008,7 +5163,9 @@ done
 activation_hook_order=$(awk '
   function emit() {
     if (component == "release-activation-guard" ||
-        (kind == "ConfigMap" && name == "ptah-operator-release-activation")) {
+        (kind == "ConfigMap" && name == "ptah-operator-release-activation") ||
+        (kind == "ValidatingAdmissionPolicyBinding" &&
+         component ~ /^controller-(job|chunk|plan)-write-guard$/)) {
       print kind ":" weight
     }
     kind = ""
@@ -5036,15 +5193,21 @@ for activation_hook in \
 		exit 1
 	}
 done
+[ "$(printf '%s\n' "$activation_hook_order" |
+	grep -Fxc -- 'ValidatingAdmissionPolicyBinding:-147')" -eq 3 ] || {
+	printf '%s\n' 'e2e static: controller object bindings do not render after the activation self-guard' >&2
+	exit 1
+}
 (cd "$ROOT_DIR" && \
 	PTAH_ROLLOUT_GUARD_RENDER="$ROLLOUT_GUARD_RENDER" \
 	PTAH_RUNTIME_POD_GUARD_RENDER="$ROLLOUT_GUARD_RENDER" \
+	PTAH_RUNTIME_POD_GUARD_LONG_RENDER="$RUNTIME_POD_GUARD_LONG_RENDER" \
 	PTAH_ADMISSION_RENDER="$ADMISSION_RENDER" \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_RENDER" \
 	PTAH_PRIVILEGE_RENDER="$CRD_FULL_RENDER" \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
-		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
+		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedServiceAccountOriginGuardMatchesCompiledContract|TestRenderedLongNameServiceAccountOriginGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_EXTERNAL_CERT_RENDER" \
 	PTAH_TEARDOWN_CERTIFICATE_RUNTIME_ENABLED=false \

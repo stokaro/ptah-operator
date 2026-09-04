@@ -31,27 +31,36 @@ const (
 	AdmissionContractVersionAnnotation       = "operator.ptah.dev/admission-contract-version"
 	CurrentAdmissionContractVersion    int32 = 1
 
-	mutatingApprovalWebhookName                = "mapproval.operator.ptah.dev"
-	validatingApprovalWebhookName              = "vapproval.operator.ptah.dev"
-	podIntentWebhookName                       = "vpodintent.operator.ptah.dev"
-	controllerWriteWebhookName                 = "vcontrollerwrite.operator.ptah.dev"
-	mutatingApprovalPath                       = "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
-	validatingApprovalPath                     = "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
-	podIntentPath                              = "/validate-v1-pod-ptah-operation-intent"
-	controllerWritePath                        = "/validate-operator-controller-write"
-	podIntentMatchConditionName                = "job-owned-pod"
-	podIntentMatchExpression                   = `object.metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true) || (request.operation == 'UPDATE' && oldObject != null && oldObject.metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true))`
+	mutatingApprovalWebhookName   = "mapproval.operator.ptah.dev"
+	validatingApprovalWebhookName = "vapproval.operator.ptah.dev"
+	podIntentWebhookName          = "vpodintent.operator.ptah.dev"
+	controllerWriteWebhookName    = "vcontrollerwrite.operator.ptah.dev"
+	mutatingApprovalPath          = "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
+	validatingApprovalPath        = "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
+	podIntentPath                 = "/validate-v1-pod-ptah-operation-intent"
+	controllerWritePath           = "/validate-operator-controller-write"
+	podIntentMatchConditionName   = "managed-or-operation-job-pod"
+	podIntentMatchExpression      = `(has(object.metadata.labels) &&
+  'app.kubernetes.io/managed-by' in object.metadata.labels &&
+  object.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&
+  'app.kubernetes.io/component' in object.metadata.labels &&
+  object.metadata.labels['app.kubernetes.io/component'] == 'schema-operation') ||
+object.metadata.ownerReferences.exists(ref,
+  ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&
+  ref.name.matches('^ptah-(resolve|verify|observe|plan|apply)-')) ||
+(request.operation == 'UPDATE' && oldObject != null && (
+  (has(oldObject.metadata.labels) &&
+    'app.kubernetes.io/managed-by' in oldObject.metadata.labels &&
+    oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&
+    'app.kubernetes.io/component' in oldObject.metadata.labels &&
+    oldObject.metadata.labels['app.kubernetes.io/component'] == 'schema-operation') ||
+  oldObject.metadata.ownerReferences.exists(ref,
+    ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&
+    ref.name.matches('^ptah-(resolve|verify|observe|plan|apply)-'))))`
 	controllerWriteMatchConditionName          = "controller-service-account"
 	controllerWriteWebhookTimeoutSeconds       = int32(30)
 	storedControllerStatePageSize        int64 = 500
 )
-
-func exactPodIntentObjectSelector() *metav1.LabelSelector {
-	return &metav1.LabelSelector{MatchLabels: map[string]string{
-		managedByLabel:                "ptah-operator",
-		"app.kubernetes.io/component": "schema-operation",
-	}}
-}
 
 type MutatingWebhookClient interface {
 	Get(context.Context, string, metav1.GetOptions) (*admissionregistrationv1.MutatingWebhookConfiguration, error)
@@ -350,7 +359,6 @@ func verifyValidatingWebhookContracts(
 			name: podIntentWebhookName, path: podIntentPath,
 			operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
 			apiGroups:  []string{""}, apiVersions: []string{"v1"}, resources: []string{"pods", "pods/ephemeralcontainers", "pods/resize"},
-			objectSelector:     exactPodIntentObjectSelector(),
 			matchConditionName: podIntentMatchConditionName,
 			matchExpression:    podIntentMatchExpression,
 		},

@@ -189,6 +189,18 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "kind version binding",
 		},
 		{
+			name:        "runtime generated-name boundary fixture shortened",
+			old:         `RUNTIME_FULLNAME=$(dns_name ptah-runtime-generated-name-prefix-boundary-proof "$identity" 60)`,
+			replacement: `RUNTIME_FULLNAME=$(dns_name ptah-runtime "$identity" 35)`,
+			wantError:   "runtime generated-name boundary fixture",
+		},
+		{
+			name:        "runtime fullname omitted from release values",
+			old:         `fullnameOverride: $fullnameOverride,`,
+			replacement: `# fullname boundary omitted`,
+			wantError:   "runtime fullname release-values binding",
+		},
+		{
 			name:        "guarded API feature gate omitted",
 			old:         `			printf '%s\n' '        value: EmptyDirVolumeMode=true,EvictionRequestAPI=true,GenericWorkload=true,VolumeBindMountOptions=true,WorkloadWithJob=true'`,
 			replacement: `			printf '%s\n' '        value: EmptyDirVolumeMode=true,EvictionRequestAPI=true,GenericWorkload=true,VolumeBindMountOptions=true'`,
@@ -242,6 +254,12 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			name:        "kubelet and kube-proxy scope assertion omitted",
 			old:         `		-n kube-system get configmaps kubelet-config kube-proxy -o json >"$component_configs_file"`,
 			replacement: `		-n kube-system get configmaps kubelet-config -o json >"$component_configs_file"`,
+			wantError:   "API-server feature gate contract",
+		},
+		{
+			name:        "user namespace kubelet assertion omitted",
+			old:         `      (($kubelet_configs[0].data.kubelet // "") | contains("KubeletInUserNamespace: true")) and`,
+			replacement: `      true and`,
 			wantError:   "API-server feature gate contract",
 		},
 		{
@@ -806,6 +824,36 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 			wantError:   "failure-preserving trap",
 		},
 		{
+			name:        "operation Pod create-origin proof omitted",
+			old:         `printf '%s\n' 'e2e data plane: PASS operation Pod create-origin enforcement'`,
+			replacement: `printf '%s\n' 'operation Pod clone check skipped'`,
+			wantError:   "operation Pod create-origin evidence",
+		},
+		{
+			name:        "operation Pod clone retains bypassable selector labels",
+			old:         `.metadata.labels["app.kubernetes.io/managed-by"],`,
+			replacement: `.metadata.labels["unrelated.example/label"],`,
+			wantError:   "label-less operation Pod clone",
+		},
+		{
+			name:        "operation Pod generated-name binding omitted",
+			old:         `[ "$CAPTURED_POD_GENERATE_NAME" = "${CAPTURED_JOB_NAME}-" ] ||`,
+			replacement: `true ||`,
+			wantError:   "operation Pod generated-name binding",
+		},
+		{
+			name:        "operation generated-name fixture shortened",
+			old:         `EXTERNAL_PG_SCHEMA=e2e-postgresql-external-longpod`,
+			replacement: `EXTERNAL_PG_SCHEMA=e2e-postgresql-external`,
+			wantError:   "operation Job generated-name boundary fixture",
+		},
+		{
+			name:        "operation generated-name boundary proof weakened",
+			old:         `[ "${#CAPTURED_POD_GENERATE_NAME}" -eq 59 ] ||`,
+			replacement: `[ "${#CAPTURED_POD_GENERATE_NAME}" -gt 0 ] ||`,
+			wantError:   "operation generated-name boundary proof",
+		},
+		{
 			name:        "OCI lifecycle implementation omitted",
 			old:         `run_engine_lifecycle() {`,
 			replacement: `run_engine_lifecycle_omitted() {`,
@@ -958,9 +1006,9 @@ func TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "hook name is not derived from rendered identity",
-			old:         `expected_hook_name=$(printf '%s' "$hook_service_account" | cut -c1-53 | sed 's/-$//')-preflight`,
-			replacement: `expected_hook_name=ptah-crd-preflight`,
-			wantError:   "rendered preflight hook identity binding",
+			old:         `[ -n "$EXPECTED_PREFLIGHT_HOOK_NAME" ] || fail "rendered preflight hook name is unavailable"`,
+			replacement: `EXPECTED_PREFLIGHT_HOOK_NAME=ptah-crd-preflight`,
+			wantError:   "rendered hook identity binding",
 		},
 		{
 			name:        "failed revision is not selected explicitly",
@@ -976,7 +1024,7 @@ func TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "evidence omits exact hook name",
-			old:         `--arg expected_name "$expected_hook_name" \`,
+			old:         `--arg expected_name "$EXPECTED_PREFLIGHT_HOOK_NAME" \`,
 			replacement: `--arg expected_name "" \`,
 			wantError:   "exact failed preflight evidence evaluation",
 		},
@@ -984,6 +1032,38 @@ func TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations(t *testing.T) {
 			name:        "evidence omits exact hook weight",
 			old:         `--argjson expected_weight -60 \`,
 			replacement: `--argjson expected_weight -50 \`,
+			wantError:   "exact failed preflight evidence evaluation",
+		},
+		{
+			name:        "evidence omits successful identity hook",
+			old:         `--arg expected_identity_name "$EXPECTED_IDENTITY_HOOK_NAME" \`,
+			replacement: `--arg expected_identity_name "" \`,
+			wantError:   "exact failed preflight evidence evaluation",
+		},
+		{
+			name:        "evidence omits identity hook weight",
+			old:         `--argjson expected_identity_weight -105 \`,
+			replacement: `--argjson expected_identity_weight -104 \`,
+			wantError:   "exact failed preflight evidence evaluation",
+		},
+		{
+			name:        "identity capture is not armed before Helm",
+			old:         "\tarm_identity_hook_log_capture\n",
+			replacement: "\t: # identity capture omitted\n",
+			wantError:   "rendered hook identity binding",
+		},
+		{
+			name: "identity capture is not stopped on unexpected success",
+			old: "\t\tfinish_identity_hook_log_capture\n" +
+				"\t\tfail \"$description unexpectedly succeeded\"",
+			replacement: "\t\tfail \"$description unexpectedly succeeded\"",
+			wantError:   "failed upgrade execution and explicit revision retrieval",
+		},
+		{
+			name: "safe identity diagnostic is omitted",
+			old: "\t\temit_identity_hook_diagnostic >&2 ||\n" +
+				"\t\t\tfail \"$description identity-hook diagnostic failed closed\"",
+			replacement: "\t\ttrue",
 			wantError:   "exact failed preflight evidence evaluation",
 		},
 		{
@@ -1140,12 +1220,16 @@ func TestVerifyFailedHookEvidenceFilterRejectsContractMutations(t *testing.T) {
 		{name: "release status", old: `(.info.status == "failed")`, replacement: `(.info.status != "deployed")`},
 		{name: "single failed hook", old: `($failed | length == 1)`, replacement: `($failed | length >= 1)`},
 		{name: "hook name", old: `.name == $expected_name`, replacement: `.name != ""`},
-		{name: "hook kind", old: `.kind == "Job"`, replacement: `.kind != ""`},
-		{name: "hook weight", old: `(.weight | tonumber) == $expected_weight`, replacement: `(.weight | tonumber) <= $expected_weight`},
-		{name: "hook event", old: `((.events // []) | index("pre-upgrade") != null)`, replacement: `((.events // []) | length > 0)`},
-		{name: "started timestamp", old: `((.last_run.started_at // "") | length > 0)`, replacement: `true`},
-		{name: "completed timestamp", old: `((.last_run.completed_at // "") | length > 0))`, replacement: `true)`},
-		{name: "later hook cutoff", old: `((.weight | tonumber) > $expected_weight)`, replacement: `((.weight | tonumber) >= $expected_weight)`},
+		{name: "hook kind", old: ".name == $expected_name and\n  .kind == \"Job\"", replacement: ".name == $expected_name and\n  .kind != \"\""},
+		{name: "weight default", old: `if .weight == null then 0 else (.weight | tonumber) end;`, replacement: `if .weight == null then -1 else (.weight | tonumber) end;`},
+		{name: "hook weight", old: `hook_weight == $expected_weight`, replacement: `hook_weight <= $expected_weight`},
+		{name: "hook event", old: "hook_weight == $expected_weight and\n  ((.events // []) | index(\"pre-upgrade\") != null)", replacement: "hook_weight == $expected_weight and\n  ((.events // []) | length > 0)"},
+		{name: "started timestamp", old: "((.events // []) | index(\"pre-upgrade\") != null) and\n  ((.last_run.started_at // \"\") | length > 0)", replacement: "((.events // []) | index(\"pre-upgrade\") != null) and\n  true"},
+		{name: "completed timestamp", old: "((.events // []) | index(\"pre-upgrade\") != null) and\n  ((.last_run.started_at // \"\") | length > 0) and\n  ((.last_run.completed_at // \"\") | length > 0))", replacement: "((.events // []) | index(\"pre-upgrade\") != null) and\n  ((.last_run.started_at // \"\") | length > 0) and\n  true)"},
+		{name: "identity name", old: `.name == $expected_identity_name`, replacement: `.name != ""`},
+		{name: "identity weight", old: `hook_weight == $expected_identity_weight`, replacement: `hook_weight <= $expected_identity_weight`},
+		{name: "identity success", old: `hook_phase == "Succeeded"`, replacement: `hook_phase != "Failed"`},
+		{name: "later hook cutoff", old: `(hook_weight > $expected_weight)`, replacement: `(hook_weight >= $expected_weight)`},
 		{name: "later hook exclusion", old: `hook_phase == ""`, replacement: `hook_phase != "Failed"`},
 	}
 	for _, test := range tests {
@@ -1352,6 +1436,90 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "predecessor Apply schema fixture",
 		},
 		{
+			name:        "CRD legacy plan activation probe manifest removed",
+			child:       "crd-upgrade",
+			old:         `PREDECESSOR_PLAN_GUARD_PROBE_FILE=$WORK_DIR/predecessor-plan-guard-probe.json`,
+			replacement: `PREDECESSOR_PLAN_GUARD_PROBE_FILE=`,
+			wantError:   "legacy plan activation probe manifest",
+		},
+		{
+			name:        "CRD legacy Job activation probe source removed",
+			child:       "crd-upgrade",
+			old:         `legacy_job_source=$WORK_DIR/predecessor-read-only-job-terminal.json`,
+			replacement: `legacy_job_source=`,
+			wantError:   "legacy Job activation probe source",
+		},
+		{
+			name:        "CRD legacy Job bootstrap boundary is bypassed",
+			child:       "crd-upgrade",
+			old:         `fail "legacy Job bootstrap probe did not reach the semantic controller-write boundary"`,
+			replacement: `true # legacy Job semantic boundary removed`,
+			wantError:   "legacy Job bootstrap semantic boundary",
+		},
+		{
+			name:        "CRD legacy Job active denial is bypassed",
+			child:       "crd-upgrade",
+			old:         `fail "legacy Job post-activation probe lacked the exact structural guard denial"`,
+			replacement: `true # legacy Job active denial removed`,
+			wantError:   "legacy Job active structural denial",
+		},
+		{
+			name:        "CRD legacy plan bootstrap boundary is bypassed",
+			child:       "crd-upgrade",
+			old:         `fail "legacy plan bootstrap probe did not reach the semantic controller-write boundary"`,
+			replacement: `true # legacy plan semantic boundary removed`,
+			wantError:   "legacy plan bootstrap semantic boundary",
+		},
+		{
+			name:        "CRD legacy plan active denial is bypassed",
+			child:       "crd-upgrade",
+			old:         `fail "legacy plan post-activation probe lacked the exact structural guard denial"`,
+			replacement: `true # legacy plan active denial removed`,
+			wantError:   "legacy plan active structural denial",
+		},
+		{
+			name:        "CRD late activation blocker broadens its target",
+			child:       "crd-upgrade",
+			old:         `expression: 'request.namespace == "$E2E_OPERATOR_NAMESPACE" && request.name == "ptah-operator-release-activation"'`,
+			replacement: `expression: 'true'`,
+			wantError:   "late activation exact update blocker",
+		},
+		{
+			name:        "CRD late failure skips the activation marker check",
+			child:       "crd-upgrade",
+			old:         `fail "late failure advanced the release activation marker"`,
+			replacement: `true # activation marker check removed`,
+			wantError:   "late activation marker remains uncommitted",
+		},
+		{
+			name:        "CRD late failure skips predecessor Deployment restore",
+			child:       "crd-upgrade",
+			old:         `restore_runtime_deployment_snapshot "$CONTROLLER_DEPLOYMENT" "$controller_snapshot"`,
+			replacement: `true # predecessor restore removed`,
+			wantError:   "predecessor Deployment restore",
+		},
+		{
+			name:        "CRD predecessor upgrade skips late-failure recovery",
+			child:       "crd-upgrade",
+			old:         "\tprove_late_activation_failure_recovery\n",
+			replacement: "\ttrue # late-failure recovery removed\n",
+			wantError:   "predecessor late activation recovery call",
+		},
+		{
+			name:        "CRD predecessor upgrade skips legacy Job bootstrap proof",
+			child:       "crd-upgrade",
+			old:         "\tprove_legacy_job_activation_boundary bootstrap\n",
+			replacement: "\ttrue # legacy Job bootstrap proof removed\n",
+			wantError:   "legacy Job bootstrap boundary call",
+		},
+		{
+			name:        "CRD controller proof skips legacy Job active boundary",
+			child:       "crd-upgrade",
+			old:         "\tprove_legacy_job_activation_boundary active\n",
+			replacement: "\ttrue # legacy Job active proof removed\n",
+			wantError:   "legacy Job active boundary call",
+		},
+		{
 			name:        "CRD predecessor fixture completion polling rejects missing conditions",
 			child:       "crd-upgrade",
 			old:         `(.status.conditions // []) | any(.type == "Complete" and .status == "True")`,
@@ -1364,6 +1532,95 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			old:         `(.status.conditions // []) | any(.type == "Failed" and .status == "True")`,
 			replacement: `.status.conditions | any(.type == "Failed" and .status == "True")`,
 			wantError:   "predecessor fixture Job nil-safe failure polling",
+		},
+		{
+			name:        "CRD predecessor Apply diagnostic broadens guard ownership",
+			child:       "crd-upgrade",
+			old:         `.metadata.annotations["operator.ptah.dev/release-namespace"] == $namespace`,
+			replacement: `true`,
+			wantError:   "predecessor Apply diagnostic exact guard ownership",
+		},
+		{
+			name:  "CRD predecessor Apply diagnostic drops the credential scan",
+			child: "crd-upgrade",
+			old: "if grep -F -f \"$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE\" \"$diagnostic_file\" >/dev/null; then\n" +
+				"\t\tfail \"predecessor Apply diagnostic contained a protected task credential\"\n" +
+				"\telse\n" +
+				"\t\tdiagnostic_scan_status=$?\n" +
+				"\t\t[ \"$diagnostic_scan_status\" -eq 1 ] || fail \"predecessor Apply credential scan failed closed\"\n" +
+				"\tfi",
+			replacement: `: # credential scan removed`,
+			wantError:   "predecessor Apply diagnostic credential scan",
+		},
+		{
+			name:        "CRD predecessor Apply failure waits through outcome unknown",
+			child:       "crd-upgrade",
+			old:         `.status.pendingObservation.outcome == "OutcomeUnknown" or`,
+			replacement: `false or`,
+			wantError:   "predecessor Apply terminal failure fast path",
+		},
+		{
+			name:        "CRD predecessor terminal fixture bypasses Job controller",
+			child:       "crd-upgrade",
+			old:         `type: "FailureTarget", status: "True",`,
+			replacement: `type: "Failed", status: "True",`,
+			wantError:   "predecessor read-only Job controller-owned failure staging",
+		},
+		{
+			name:        "CRD predecessor terminal fixture alters active status",
+			child:       "crd-upgrade",
+			old:         "status: {\n\t    conditions: [{",
+			replacement: "status: {\n\t    active: 0,\n\t    conditions: [{",
+			wantError:   "predecessor read-only Job controller-owned failure staging",
+		},
+		{
+			name:        "CRD predecessor terminal fixture loses native wait",
+			child:       "crd-upgrade",
+			old:         `fail "Job controller did not retire the predecessor read-only Job after FailureTarget staging"`,
+			replacement: `true # native terminal wait removed`,
+			wantError:   "predecessor read-only Job native terminal wait",
+		},
+		{
+			name:        "CRD predecessor terminal fixture accepts partial invariant",
+			child:       "crd-upgrade",
+			old:         "predecessor_job_terminal=1\n\t\t\tbreak",
+			replacement: "break",
+			wantError:   "predecessor read-only Job full terminal invariant latch",
+		},
+		{
+			name:        "CRD predecessor terminal fixture ignores active Pod accounting",
+			child:       "crd-upgrade",
+			old:         `((.status.active // 0) == 0) and`,
+			replacement: `true and`,
+			wantError:   "predecessor read-only Job complete native terminal predicate",
+		},
+		{
+			name:  "CRD predecessor Pod webhook failure policy is not restored",
+			child: "crd-upgrade",
+			old: "set_predecessor_pod_webhook_failure_policy Fail Ignore\n" +
+				"\tstage_predecessor_read_only_job_completion\n" +
+				"\tset_predecessor_pod_webhook_failure_policy Ignore Fail",
+			replacement: "set_predecessor_pod_webhook_failure_policy Fail Ignore\n" +
+				"\tstage_predecessor_read_only_job_completion",
+			wantError: "predecessor read-only Job bounded webhook outage bridge",
+		},
+		{
+			name:  "CRD runtime Deployment deletion loses its timeout",
+			child: "crd-upgrade",
+			old: `"$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT" \
+		--cascade=foreground --wait=true --timeout=2m >/dev/null`,
+			replacement: `"$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT" \
+		--cascade=foreground --wait=true >/dev/null`,
+			wantError: "bounded runtime Deployment deletion",
+		},
+		{
+			name:  "CRD controller Deployment deletion loses its timeout",
+			child: "crd-upgrade",
+			old: `kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_DEPLOYMENT" \
+		--cascade=foreground --wait=true --timeout=2m >/dev/null`,
+			replacement: `kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_DEPLOYMENT" \
+		--cascade=foreground --wait=true >/dev/null`,
+			wantError: "bounded controller Deployment deletion",
 		},
 		{
 			name:        "CRD proof call removed",

@@ -28,6 +28,13 @@ type ValidationHandler struct {
 	Decoder cradmission.Decoder
 }
 
+const (
+	kubernetesControllerManagerUsername = "system:kube-controller-manager"
+	kubernetesJobControllerUsername     = "system:serviceaccount:kube-system:job-controller"
+	generatedNameMaxPrefixLength        = 58
+	generatedNameSuffixLength           = 5
+)
+
 // Handle implements controller-runtime admission.Handler.
 func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request) cradmission.Response {
 	if h.Reader == nil || h.Decoder == nil {
@@ -63,6 +70,9 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 			return cradmission.Denied("Pod update does not preserve the exact request name, namespace, and UID")
 		}
 		if exactJobTrackingFinalizerRemoval(oldPod, pod, req.SubResource) {
+			if !isKubernetesJobController(req.UserInfo.Username) {
+				return cradmission.Denied("only the Kubernetes Job controller may remove its Pod tracking finalizer")
+			}
 			return cradmission.Allowed("Job controller removed only its Pod tracking finalizer")
 		}
 	}
@@ -101,6 +111,15 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 		return cradmission.Denied("managed Pod has ambiguous ownership")
 	}
 	if req.Operation == admissionv1.Create {
+		if jobOwner.BlockOwnerDeletion == nil || !*jobOwner.BlockOwnerDeletion {
+			return cradmission.Denied("managed Pod does not have the exact Job controller owner reference")
+		}
+		if !isKubernetesJobController(req.UserInfo.Username) {
+			return cradmission.Denied("managed Pod was not created by the Kubernetes Job controller")
+		}
+		if err := ValidateGeneratedPodName(pod, job.Name); err != nil {
+			return cradmission.Denied("managed Pod does not have the exact Job-generated name: " + err.Error())
+		}
 		if !apiequality.Semantic.DeepEqual(pod.Finalizers, []string{batchv1.JobTrackingFinalizer}) {
 			return cradmission.Denied("managed Pod does not have the exact Job tracking finalizer")
 		}
@@ -184,6 +203,38 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 func managedPodIdentity(labels map[string]string) bool {
 	return labels[workload.LabelManagedBy] == "ptah-operator" &&
 		labels[workload.LabelComponent] == "schema-operation"
+}
+
+func isKubernetesJobController(username string) bool {
+	return username == kubernetesControllerManagerUsername || username == kubernetesJobControllerUsername
+}
+
+// ValidateGeneratedPodName verifies the API-server name-generation chain for
+// a Pod created by the Kubernetes Job controller. Kubernetes preserves at most
+// 58 bytes of generateName before appending its five-byte random suffix.
+func ValidateGeneratedPodName(pod *corev1.Pod, jobName string) error {
+	if pod == nil || jobName == "" {
+		return fmt.Errorf("Pod and Job names must be present")
+	}
+	expectedGenerateName := jobName + "-"
+	if pod.GenerateName != expectedGenerateName {
+		return fmt.Errorf("generateName %q does not match Job prefix %q", pod.GenerateName, expectedGenerateName)
+	}
+	prefix := pod.GenerateName
+	if len(prefix) > generatedNameMaxPrefixLength {
+		prefix = prefix[:generatedNameMaxPrefixLength]
+	}
+	if !strings.HasPrefix(pod.Name, prefix) || len(pod.Name) != len(prefix)+generatedNameSuffixLength {
+		return fmt.Errorf("name %q does not contain one generated suffix after prefix %q", pod.Name, prefix)
+	}
+	for _, character := range pod.Name[len(prefix):] {
+		if character < 'a' || character > 'z' {
+			if character < '0' || character > '9' {
+				return fmt.Errorf("name %q has a non-lowercase-alphanumeric generated suffix", pod.Name)
+			}
+		}
+	}
+	return nil
 }
 
 func validateJobExecutionEnvelope(job *batchv1.Job) error {

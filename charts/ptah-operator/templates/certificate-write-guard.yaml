@@ -46,6 +46,8 @@ spec:
   failurePolicy: Fail
   matchConstraints:
     matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
     resourceRules:
       - apiGroups: ["admissionregistration.k8s.io"]
         apiVersions: ["v1"]
@@ -85,6 +87,8 @@ spec:
   policyName: {{ $mutatingName }}
   matchResources:
     matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
     resourceRules:
       - apiGroups: ["admissionregistration.k8s.io"]
         apiVersions: ["v1"]
@@ -115,6 +119,8 @@ spec:
   failurePolicy: Fail
   matchConstraints:
     matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
     resourceRules:
       - apiGroups: ["admissionregistration.k8s.io"]
         apiVersions: ["v1"]
@@ -154,6 +160,8 @@ spec:
   policyName: {{ $validatingName }}
   matchResources:
     matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
     resourceRules:
       - apiGroups: ["admissionregistration.k8s.io"]
         apiVersions: ["v1"]

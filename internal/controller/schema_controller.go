@@ -4691,6 +4691,9 @@ func validatePodIntent(
 		!exactControllerOwner(pod.OwnerReferences, batchv1.SchemeGroupVersion.String(), "Job", job.Name, job.UID) {
 		return fmt.Errorf("Pod is not controller-owned by the exact Job UID")
 	}
+	if err := podintent.ValidateGeneratedPodName(pod, job.Name); err != nil {
+		return fmt.Errorf("Pod does not have the exact Job-generated name: %w", err)
+	}
 	for key, expected := range job.Spec.Template.Labels {
 		if pod.Labels[key] != expected {
 			return fmt.Errorf("Pod operation labels do not match the Job template")

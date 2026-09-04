@@ -262,14 +262,15 @@ func (g *ParentWorkloadGuard) replicaSetPolicy() *admissionregistrationv1.Valida
 				{Name: "isController", Expression: fmt.Sprintf(`object.spec.template.spec.serviceAccountName == %q`, controllerSA)},
 				{Name: "expectedDeployment", Expression: fmt.Sprintf(`object.spec.template.spec.serviceAccountName == %q ? %q : %q`, controllerSA, controllerDeployment, certificateDeployment)},
 				{Name: "expectedComponent", Expression: fmt.Sprintf(`object.spec.template.spec.serviceAccountName == %q ? "controller" : "certificate-rotation"`, controllerSA)},
+				{Name: "isGarbageCollectorCleanup", Expression: replicaSetGarbageCollectorCleanupExpression()},
 			},
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: `!has(request.subResource) || request.subResource == ""`, Message: message},
-				{Expression: `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:deployment-controller"]`, Message: message},
+				{Expression: `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:deployment-controller"] || variables.isGarbageCollectorCleanup`, Message: message},
 				{Expression: fmt.Sprintf(`has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]`, controllerSA, certificateSA), Message: message},
 				{Expression: `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`, Message: message},
 				{Expression: `variables.owner.apiVersion == "apps/v1" && variables.owner.kind == "Deployment" && variables.owner.name == variables.expectedDeployment && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion`, Message: message},
-				{Expression: `has(object.metadata.labels) && "pod-template-hash" in object.metadata.labels && variables.hash.matches("^[a-z0-9]{5,16}$")`, Message: message},
+				{Expression: `has(object.metadata.labels) && "pod-template-hash" in object.metadata.labels && variables.hash.matches("^[a-z0-9]{1,10}$")`, Message: message},
 				{Expression: `object.metadata.name == variables.expectedDeployment + "-" + variables.hash && (!has(object.metadata.generateName) || object.metadata.generateName == "")`, Message: message},
 				{Expression: `has(object.spec.selector.matchLabels) && object.spec.selector.matchLabels.size() == 4 && (!has(object.spec.selector.matchExpressions) || object.spec.selector.matchExpressions.size() == 0)`, Message: message},
 				{Expression: `object.spec.selector.matchLabels.all(key, key in ["app.kubernetes.io/name", "app.kubernetes.io/instance", "app.kubernetes.io/component", "pod-template-hash"])`, Message: message},
@@ -278,6 +279,14 @@ func (g *ParentWorkloadGuard) replicaSetPolicy() *admissionregistrationv1.Valida
 			},
 		},
 	}
+}
+
+func replicaSetGarbageCollectorCleanupExpression() string {
+	// ResourceVersion is protected by storage optimistic concurrency, while
+	// managedFields is API-machinery bookkeeping. Neither grants workload
+	// authority, and pinning either here would make legitimate cleanup depend on
+	// server-side mutation order.
+	return `request.operation == "UPDATE" && request.userInfo.username == "system:serviceaccount:kube-system:generic-garbage-collector" && oldObject != null && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && object.metadata.uid == oldObject.metadata.uid && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.creationTimestamp) == has(oldObject.metadata.creationTimestamp) && (!has(object.metadata.creationTimestamp) || object.metadata.creationTimestamp == oldObject.metadata.creationTimestamp) && object.metadata.generation == oldObject.metadata.generation && has(oldObject.metadata.deletionTimestamp) && has(object.metadata.deletionTimestamp) && object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp && has(object.metadata.deletionGracePeriodSeconds) == has(oldObject.metadata.deletionGracePeriodSeconds) && (!has(object.metadata.deletionGracePeriodSeconds) || object.metadata.deletionGracePeriodSeconds == oldObject.metadata.deletionGracePeriodSeconds) && object.spec == oldObject.spec && has(object.status) == has(oldObject.status) && (!has(object.status) || object.status == oldObject.status) && has(object.metadata.labels) == has(oldObject.metadata.labels) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && has(object.metadata.annotations) == has(oldObject.metadata.annotations) && (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(oldObject.metadata.finalizers) && oldObject.metadata.finalizers.filter(finalizer, finalizer == "foregroundDeletion").size() == 1 && ((!has(object.metadata.finalizers) && oldObject.metadata.finalizers.size() == 1) || (has(object.metadata.finalizers) && object.metadata.finalizers == oldObject.metadata.finalizers.filter(finalizer, finalizer != "foregroundDeletion")))`
 }
 
 func (g *ParentWorkloadGuard) hookPodOriginPolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {
@@ -316,7 +325,7 @@ func (g *ParentWorkloadGuard) hookPodOriginPolicy() *admissionregistrationv1.Val
 				{Expression: `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`, Message: message},
 				{Expression: `variables.owner.apiVersion == "batch/v1" && variables.owner.kind == "Job" && has(variables.owner.name) && variables.owner.name != "" && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion`, Message: message},
 				{Expression: `has(object.metadata.labels) && ["batch.kubernetes.io/job-name", "batch.kubernetes.io/controller-uid"].all(key, key in object.metadata.labels) && object.metadata.labels["batch.kubernetes.io/job-name"] == variables.owner.name && object.metadata.labels["batch.kubernetes.io/controller-uid"] == variables.owner.uid`, Message: message},
-				{Expression: `has(object.metadata.generateName) && object.metadata.generateName == variables.owner.name + "-" && object.metadata.name.startsWith(object.metadata.generateName) && object.metadata.name.size() == object.metadata.generateName.size() + 5`, Message: message},
+				{Expression: generatedPodNameValidationExpression("variables.owner.name"), Message: message},
 			},
 		},
 	}
@@ -443,7 +452,7 @@ func (g *ParentWorkloadGuard) hookJobContractExpressions(identityJob, preflightJ
 		fmt.Sprintf(`request.name != %q || %s`, reconcileJob, g.rollout.hookArgsValidationExpression(container, "reconcile")),
 		fmt.Sprintf(`!variables.isQuiesce || %s`, g.rollout.hookArgsValidationExpression(container, "teardown-quiesce")),
 		fmt.Sprintf(`!variables.isTeardown || %s`, g.rollout.hookArgsValidationExpression(container, "teardown")),
-		fmt.Sprintf(`!has(%[1]s.lifecycle) && (!has(%[1]s.env) || %[1]s.env.size() == 0) && (!has(%[1]s.envFrom) || %[1]s.envFrom.size() == 0) && (!has(%[1]s.ports) || %[1]s.ports.size() == 0) && !has(%[1]s.livenessProbe) && !has(%[1]s.readinessProbe) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "")`, container),
+		hookContainerNoExecutionSideChannelsExpression(container),
 		fmt.Sprintf(`has(%[1]s.securityContext) && has(%[1]s.securityContext.allowPrivilegeEscalation) && !%[1]s.securityContext.allowPrivilegeEscalation && has(%[1]s.securityContext.readOnlyRootFilesystem) && %[1]s.securityContext.readOnlyRootFilesystem && (!has(%[1]s.securityContext.privileged) || !%[1]s.securityContext.privileged) && !has(%[1]s.securityContext.runAsUser) && !has(%[1]s.securityContext.runAsGroup) && !has(%[1]s.securityContext.runAsNonRoot) && !has(%[1]s.securityContext.procMount) && !has(%[1]s.securityContext.seLinuxOptions) && !has(%[1]s.securityContext.windowsOptions) && !has(%[1]s.securityContext.seccompProfile) && !has(%[1]s.securityContext.appArmorProfile) && has(%[1]s.securityContext.capabilities) && (!has(%[1]s.securityContext.capabilities.add) || %[1]s.securityContext.capabilities.add.size() == 0) && has(%[1]s.securityContext.capabilities.drop) && %[1]s.securityContext.capabilities.drop == ["ALL"]`, container),
 		fmt.Sprintf(`has(dyn(%[1]s.resources).requests) && dyn(%[1]s.resources).requests.size() == 2 && quantity(string(dyn(%[1]s.resources).requests["cpu"])).compareTo(quantity("5m")) == 0 && quantity(string(dyn(%[1]s.resources).requests["memory"])).compareTo(quantity("16Mi")) == 0 && has(dyn(%[1]s.resources).limits) && dyn(%[1]s.resources).limits.size() == 1 && quantity(string(dyn(%[1]s.resources).limits["memory"])).compareTo(quantity("32Mi")) == 0 && (!has(dyn(%[1]s.resources).claims) || dyn(%[1]s.resources).claims.size() == 0) && (!has(%[1]s.resizePolicy) || %[1]s.resizePolicy.size() == 0)`, container),
 		fmt.Sprintf(`has(%[1]s.volumeMounts) && %[1]s.volumeMounts.size() == 1 && %[1]s.volumeMounts[0].name == "api-access" && %[1]s.volumeMounts[0].mountPath == "/var/run/secrets/kubernetes.io/serviceaccount" && has(%[1]s.volumeMounts[0].readOnly) && %[1]s.volumeMounts[0].readOnly && !has(%[1]s.volumeMounts[0].mountPropagation) && !has(%[1]s.volumeMounts[0].subPath) && !has(%[1]s.volumeMounts[0].subPathExpr) && !has(%[1]s.volumeMounts[0].recursiveReadOnly)`, container),

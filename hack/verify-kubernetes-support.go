@@ -1463,15 +1463,19 @@ const apiServerFeatureGateScopeContract = `assert_api_server_feature_gate_scope(
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		-n kube-system get configmaps kubelet-config kube-proxy -o json >"$component_configs_file"
 	jq -e '
+      (.items | map(select(.metadata.name == "kubelet-config"))) as $kubelet_configs |
       ([.items[].data | to_entries[].value] | join("\n")) as $configs |
-      [
+      (.items | length) == 2 and
+      ($kubelet_configs | length) == 1 and
+      (($kubelet_configs[0].data.kubelet // "") | contains("KubeletInUserNamespace: true")) and
+      ([
         "EmptyDirVolumeMode",
         "EvictionRequestAPI",
         "GenericWorkload",
         "VolumeBindMountOptions",
         "WorkloadWithJob"
       ] |
-      all(.[]; . as $gate | ($configs | contains($gate) | not))
+      all(.[]; . as $gate | ($configs | contains($gate) | not)))
     ' "$component_configs_file" >/dev/null ||
 		fail "API-server-only feature gates leaked into kubelet or kube-proxy configuration"
 }`
@@ -1527,6 +1531,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`[ "$ACTUAL_KIND_VERSION" = "$EXPECTED_KIND_VERSION" ] ||`,
 			`fail "kind $EXPECTED_KIND_VERSION is required, got $ACTUAL_KIND_VERSION"`,
 		}),
+		exactSourceLine("bounded CRD proof namespace", `CRD_PROOF_NAMESPACE=$(dns_name ptah-crd-proof "$identity")`),
+		exactSourceLine("runtime generated-name boundary fixture", `RUNTIME_FULLNAME=$(dns_name ptah-runtime-generated-name-prefix-boundary-proof "$identity" 60)`),
+		exactSourceLine("runtime generated-name boundary length", `[ "${#RUNTIME_FULLNAME}" -eq 60 ] || fail "runtime fullname boundary fixture must be exactly 60 characters"`),
 		exactSourceLine("node readiness snapshot path", `NODE_READINESS_FILE=$WORK_DIR/node-readiness.json`),
 		exactSourceLineSequence("credential-safe node readiness diagnostics", []string{
 			`collect_node_readiness_diagnostics() {`,
@@ -1649,6 +1656,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`"$CONTROLLER_BATCH_OPENAPI_FILE" >/dev/null ||`,
 			`fail "Kubernetes $K8S_VERSION Job/Pod API exceeds the reviewed controller write boundary"`,
 		}),
+		exactSourceLine("runtime fullname release-values argument", `--arg fullnameOverride "$RUNTIME_FULLNAME" \`),
+		exactSourceLine("runtime fullname release-values binding", `fullnameOverride: $fullnameOverride,`),
 		exactSourceLineSequence("immediate predecessor install readiness gate", []string{
 			`require_ready_nodes "immediately before predecessor Helm install"`,
 			`if command helm --kubeconfig "$KUBECONFIG_FILE" install "$HELM_RELEASE" \`,
@@ -1670,6 +1679,12 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`fail "infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)"`,
 			`fi`,
 		}),
+		exactSourceLineSequence("candidate upgrade bounded proof namespace", []string{
+			`E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \`,
+			`E2E_HELM_RELEASE=$HELM_RELEASE \`,
+			`E2E_CHART_PACKAGE=$CHART_PACKAGE \`,
+			`E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \`,
+		}),
 		exactSourceLineSequence("candidate guarded API version propagation", []string{
 			`E2E_KUBERNETES_VERSION=$K8S_VERSION \`,
 			`E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \`,
@@ -1683,6 +1698,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("certificate lifecycle", `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`),
 		exactSourceLine("data-plane and OCI lifecycle", `"$ROOT_DIR/hack/e2e-dataplane.sh"`),
 		exactSourceLineSequence("uninstall lifecycle", []string{
+			`E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \`,
+			`E2E_HELM_RELEASE=$HELM_RELEASE \`,
+			`E2E_CHART_PACKAGE=$CHART_PACKAGE \`,
 			`E2E_KUBERNETES_VERSION=$K8S_VERSION \`,
 			`E2E_PHASE=uninstall \`,
 			`"$ROOT_DIR/hack/e2e-crd-upgrade.sh"`,
@@ -1749,6 +1767,19 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	}
 	dataPlaneContract := []sourceContractStep{
 		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLine("operation Pod admission proof implementation", `assert_active_pod_ephemeral_container_rejected() {`),
+		exactSourceLineSequence("label-less operation Pod clone", []string{
+			`.metadata.labels["app.kubernetes.io/managed-by"],`,
+			`.metadata.labels["app.kubernetes.io/component"],`,
+		}),
+		exactSourceLineSequence("operation Pod create-origin refusal", []string{
+			`if k -n "$TEST_NAMESPACE" create --dry-run=server -f "$RESOURCE_FILE" >"$ADMISSION_ERROR_FILE" 2>&1; then`,
+			`fail "Pod intent admission allowed a namespace actor to clone active Job Pod $active_pod_name"`,
+			`fi`,
+		}),
+		exactSourceLine("operation Pod create-origin evidence", `printf '%s\n' 'e2e data plane: PASS operation Pod create-origin enforcement'`),
+		exactSourceLine("operation Pod generated-name binding", `[ "$CAPTURED_POD_GENERATE_NAME" = "${CAPTURED_JOB_NAME}-" ] ||`),
+		exactSourceLine("operation Job generated-name boundary fixture", `EXTERNAL_PG_SCHEMA=e2e-postgresql-external-longpod`),
 		exactSourceLineSequence("safe-default persistence proof", []string{
 			`k -n "$TEST_NAMESPACE" get ptahschema "$resource_schema" -o json |`,
 			`jq -e '`,
@@ -1769,6 +1800,14 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`create_schema_resource "$EXTERNAL_PG_SCHEMA" PostgreSQL "$EXTERNAL_PG_SECRET" \`,
 			`"$external_reference" "$EXTERNAL_PG_COORDINATION_KEY" \`,
 			`e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 45s "$QUIESCENT_INTERVAL"`,
+		}),
+		exactSourceLineSequence("operation generated-name boundary proof", []string{
+			`[ "${#CAPTURED_JOB_NAME}" -eq 58 ] ||`,
+			`fail "external PostgreSQL plan Job did not reach the generated-name truncation boundary"`,
+			`[ "${#CAPTURED_POD_GENERATE_NAME}" -eq 59 ] ||`,
+			`fail "external PostgreSQL plan Pod generateName did not cross the truncation boundary"`,
+			`[ "${#CAPTURED_POD_NAME}" -eq 63 ] ||`,
+			`fail "external PostgreSQL plan Pod did not preserve the bounded generated name"`,
 		}),
 		exactSourceLine("external per-lifecycle evidence", `printf '%s\n' 'e2e data plane: PASS external PostgreSQL bridge lifecycle'`),
 		exactSourceLine("OCI lifecycle implementation", `run_engine_lifecycle() {`),
@@ -1794,16 +1833,16 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := rejectEarlySuccessfulReturn(
 		dataPlane,
 		dataPlaneContents,
-		dataPlaneContract[4].pattern,
-		dataPlaneContract[9].pattern,
+		dataPlaneContract[10].pattern,
+		dataPlaneContract[16].pattern,
 	); err != nil {
 		return err
 	}
 	if err := rejectEarlySuccessfulReturn(
 		dataPlane,
 		dataPlaneContents,
-		dataPlaneContract[10].pattern,
-		dataPlaneContract[13].pattern,
+		dataPlaneContract[17].pattern,
+		dataPlaneContract[20].pattern,
 	); err != nil {
 		return err
 	}
@@ -1847,20 +1886,159 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			exitTrap: "cleanup",
 			steps: []sourceContractStep{
 				exactSourceLine("fail-fast shell mode", "set -eu"),
+				exactSourceLine("required bounded proof namespace", `E2E_PROOF_NAMESPACE=${E2E_PROOF_NAMESPACE:?E2E_PROOF_NAMESPACE is required}`),
 				exactSourceLine("required live Kubernetes version", `E2E_KUBERNETES_VERSION=${E2E_KUBERNETES_VERSION:?E2E_KUBERNETES_VERSION is required}`),
 				exactSourceLine("cleanup implementation", `cleanup() {`),
 				exactSourceLine("cleanup status capture", `status=$?`),
+				exactSourceLine("late activation blocker cleanup", `if [ -n "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ]; then`),
 				exactSourceLine("cleanup status preservation", `exit "$status"`),
 				exactSourceLine("live server version verification", `verify_supported_server_version`),
+				exactSourceLineSequence("late activation exact update blocker", []string{
+					`- name: exact-release-activation-update`,
+					`expression: 'request.namespace == "$E2E_OPERATOR_NAMESPACE" && request.name == "ptah-operator-release-activation"'`,
+				}),
+				exactSourceLine("predecessor top-level Deployment recovery", `fail "candidate rollout guards blocked exact predecessor Deployment recovery for $deployment_name"`),
+				exactSourceLine("late activation failure implementation", `prove_late_activation_failure_recovery() {`),
+				exactSourceLineSequence("late activation failed revision evidence", []string{
+					`.version == $expected_revision and`,
+					`.info.status == "failed" and`,
+					`any((.hooks // [])[];`,
+					`.kind == "Job" and (.weight | tonumber) == 0 and`,
+					`((.events // []) | index("pre-upgrade") != null) and`,
+					`.last_run.phase == "Failed" and`,
+				}),
+				exactSourceLine("late activation marker remains uncommitted", `fail "late failure advanced the release activation marker"`),
+				exactSourceLine("predecessor Deployment restore", `restore_runtime_deployment_snapshot "$CONTROLLER_DEPLOYMENT" "$controller_snapshot"`),
+				exactSourceLine("predecessor late-failure recovery completion", `printf '%s\n' 'e2e crd: predecessor late-failure recovery passed'`),
 				exactSourceLine("predecessor read-only Job fixture", `wait_for_predecessor_read_only_job() {`),
+				exactSourceLine("predecessor Pod webhook bounded failure-policy helper", `set_predecessor_pod_webhook_failure_policy() {`),
+				exactSourceLineSequence("predecessor Pod webhook bounded failure-policy transitions", []string{
+					`case "$expected_policy:$desired_policy" in`,
+					`Fail:Ignore | Ignore:Fail) ;;`,
+					`*) fail "unsupported predecessor Pod webhook failurePolicy transition $expected_policy -> $desired_policy" ;;`,
+					`esac`,
+				}),
+				exactSourceLine("predecessor Pod webhook exact identity lookup", `[.webhooks | to_entries[] | select(.value.name == "vpodintent.operator.ptah.dev")] |`),
+				exactSourceLineSequence("predecessor Pod webhook compare-and-swap", []string{
+					`{op: "test", path: ("/webhooks/" + ($index | tostring) + "/name"), value: "vpodintent.operator.ptah.dev"},`,
+					`{op: "test", path: ("/webhooks/" + ($index | tostring) + "/failurePolicy"), value: $expected},`,
+					`{op: "replace", path: ("/webhooks/" + ($index | tostring) + "/failurePolicy"), value: $desired}`,
+				}),
+				exactSourceLine("predecessor Pod webhook transition persistence", `' >/dev/null || fail "predecessor Pod webhook failurePolicy transition was not persisted"`),
+				exactSourceLineSequence("predecessor read-only Job controller-owned failure staging", []string{
+					`failure_target_patch=$(jq -nc \`,
+					`--arg failure_target_at "$failure_target_at" \`,
+					`--arg reason "$terminal_reason" \`,
+					`--arg message "$terminal_message" '{`,
+					`status: {`,
+					`conditions: [{`,
+					`type: "FailureTarget", status: "True",`,
+					`reason: $reason, message: $message,`,
+					`lastProbeTime: $failure_target_at,`,
+					`lastTransitionTime: $failure_target_at`,
+					`}]`,
+					`}`,
+					`}')`,
+					`kube -n "$PROOF_NAMESPACE" patch job "$PREDECESSOR_JOB_NAME" --subresource=status \`,
+					`--type=merge -p "$failure_target_patch" >/dev/null`,
+				}),
+				exactSourceLineSequence("predecessor read-only Job complete native terminal predicate", []string{
+					`.metadata.uid == $uid and`,
+					`(.status.startTime != null) and`,
+					`((.status.active // 0) == 0) and`,
+					`((.status.ready // 0) == 0) and`,
+					`((.status.terminating // 0) == 0) and`,
+					`(((.status.uncountedTerminatedPods.succeeded // []) | length) == 0) and`,
+					`(((.status.uncountedTerminatedPods.failed // []) | length) == 0) and`,
+					`(.status | has("completionTime") | not) and`,
+					`((.status.conditions // []) | any(`,
+					`.type == "FailureTarget" and .status == "True" and`,
+					`.reason == $reason and .message == $message`,
+					`)) and`,
+					`((.status.conditions // []) | any(`,
+					`.type == "Failed" and .status == "True" and`,
+					`.reason == $reason and .message == $message`,
+					`)) and`,
+					`(.spec | has("ttlSecondsAfterFinished") | not)`,
+				}),
+				exactSourceLineSequence("predecessor read-only Job full terminal invariant latch", []string{
+					`predecessor_job_terminal=1`,
+					`break`,
+				}),
+				exactSourceLine("predecessor read-only Job native terminal wait", `fail "Job controller did not retire the predecessor read-only Job after FailureTarget staging"`),
 				exactSourceLine("predecessor fixture Job nil-safe completion polling", `if jq -e '(.status.conditions // []) | any(.type == "Complete" and .status == "True")' \`),
 				exactSourceLine("predecessor fixture Job nil-safe failure polling", `if jq -e '(.status.conditions // []) | any(.type == "Failed" and .status == "True")' \`),
 				exactSourceLine("predecessor running Apply fixture", `prepare_predecessor_apply_fixture() {`),
 				exactSourceLine("predecessor Apply schema fixture", `cp "$ROOT_DIR/testdata/e2e/postgresql-v1.sql" "$predecessor_plan_source"`),
+				exactSourceLine("legacy plan activation probe manifest", `PREDECESSOR_PLAN_GUARD_PROBE_FILE=$WORK_DIR/predecessor-plan-guard-probe.json`),
+				exactSourceLine("credential-safe predecessor Apply diagnostic", `emit_predecessor_apply_diagnostic() {`),
+				exactSourceLineSequence("predecessor Apply outcome-unknown diagnostic fields", []string{
+					`pendingObservation: (if .status.pendingObservation == null then null else {`,
+					`outcome: .status.pendingObservation.outcome,`,
+					`applyOperationID: .status.pendingObservation.applyOperationID,`,
+					`applyJobName: (.status.pendingObservation.applyJobName // ""),`,
+					`applyJobUID: (.status.pendingObservation.applyJobUID // ""),`,
+					`applyPodCount: (.status.pendingObservation.applyPodCount // 0),`,
+					`applyPodUIDs: (.status.pendingObservation.applyPodUIDs // []),`,
+					`applyGeneration: (.status.pendingObservation.applyGeneration // 0),`,
+					`observeAfter: (.status.pendingObservation.observeAfter // ""),`,
+					`planRequired: (.status.pendingObservation.planRequired // false),`,
+					`leaseEpoch: (.status.pendingObservation.leaseEpoch // "")`,
+					`} end),`,
+				}),
+				exactSourceLineSequence("predecessor Apply diagnostic exact guard ownership", []string{
+					`objects: [.items[] | select(`,
+					`.metadata.annotations["operator.ptah.dev/release-name"] == $release and`,
+					`.metadata.annotations["operator.ptah.dev/release-namespace"] == $namespace`,
+					`) | {`,
+				}),
+				exactSourceLineSequence("predecessor Apply diagnostic credential scan", []string{
+					`if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$diagnostic_file" >/dev/null; then`,
+					`fail "predecessor Apply diagnostic contained a protected task credential"`,
+					`else`,
+					`diagnostic_scan_status=$?`,
+					`[ "$diagnostic_scan_status" -eq 1 ] || fail "predecessor Apply credential scan failed closed"`,
+					`fi`,
+				}),
+				exactSourceLineSequence("predecessor Apply terminal failure fast path", []string{
+					`.status.pendingObservation.outcome == "OutcomeUnknown" or`,
+					`((.status.conditions // []) | any(`,
+					`.type == "ReconciliationFailed" and .status == "True"`,
+					`))`,
+					`' "$WORK_DIR/predecessor-apply-running-schema.json" >/dev/null; then`,
+					`emit_predecessor_apply_diagnostic`,
+					`fail "predecessor Apply entered a terminal failure before its running Pod was observed"`,
+					`fi`,
+				}),
+				exactSourceLineSequence("bounded runtime Deployment deletion", []string{
+					`kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment \`,
+					`"$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT" \`,
+					`--cascade=foreground --wait=true --timeout=2m >/dev/null`,
+				}),
+				exactSourceLineSequence("bounded controller Deployment deletion", []string{
+					`kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_DEPLOYMENT" \`,
+					`--cascade=foreground --wait=true --timeout=2m >/dev/null`,
+				}),
+				exactSourceLine("legacy Job activation boundary implementation", `prove_legacy_job_activation_boundary() {`),
+				exactSourceLine("legacy Job activation probe source", `legacy_job_source=$WORK_DIR/predecessor-read-only-job-terminal.json`),
+				exactSourceLine("legacy Job bootstrap semantic boundary", `fail "legacy Job bootstrap probe did not reach the semantic controller-write boundary"`),
+				exactSourceLine("legacy Job active structural denial", `fail "legacy Job post-activation probe lacked the exact structural guard denial"`),
+				exactSourceLine("legacy plan activation boundary implementation", `prove_legacy_plan_activation_boundary() {`),
+				exactSourceLine("legacy plan bootstrap semantic boundary", `fail "legacy plan bootstrap probe did not reach the semantic controller-write boundary"`),
+				exactSourceLine("legacy plan active structural denial", `fail "legacy plan post-activation probe lacked the exact structural guard denial"`),
 				exactSourceLine("controller guarded-field proof implementation", `prove_controller_object_supported_window_guard() {`),
 				exactSourceLine("controller guarded-field proof call", `prove_controller_object_supported_window_guard`),
-				exactSourceLine("predecessor read-only Job terminal staging", `stage_predecessor_read_only_job_completion`),
+				exactSourceLine("legacy Job active boundary call", `prove_legacy_job_activation_boundary active`),
+				exactSourceLine("legacy plan active boundary call", `prove_legacy_plan_activation_boundary active`),
+				exactSourceLineSequence("predecessor read-only Job bounded webhook outage bridge", []string{
+					`set_predecessor_pod_webhook_failure_policy Fail Ignore`,
+					`stage_predecessor_read_only_job_completion`,
+					`set_predecessor_pod_webhook_failure_policy Ignore Fail`,
+				}),
 				exactSourceLine("predecessor read-only Job late-create UID gap", `stage_predecessor_read_only_job_uid_gap`),
+				exactSourceLine("predecessor late activation recovery call", `prove_late_activation_failure_recovery`),
+				exactSourceLine("legacy Job bootstrap boundary call", `prove_legacy_job_activation_boundary bootstrap`),
+				exactSourceLine("legacy plan bootstrap boundary call", `prove_legacy_plan_activation_boundary bootstrap`),
 				exactSourceLine("predecessor Apply database barrier start", `start_predecessor_apply_barrier`),
 				exactSourceLine("predecessor running Apply start", `start_predecessor_apply_fixture`),
 				exactSourceLine("predecessor Apply database barrier contention", `wait_for_predecessor_apply_barrier_contention`),
@@ -1972,17 +2150,20 @@ func verifyFailedUpgradeEvidenceSource(path string) error {
 			`--namespace "$E2E_OPERATOR_NAMESPACE" -o json | jq -er '.version | select(type == "number" and . >= 1)')`,
 			`failed_revision=$((before_revision + 1))`,
 		}),
-		exactSourceLineSequence("rendered preflight hook identity binding", []string{
-			`hook_service_account=$(jq -er '."operator.ptah.dev/hook-service-account-name"' \`,
-			`"$EXPECTED_SINGLETON_ANNOTATIONS_FILE")`,
-			`expected_hook_name=$(printf '%s' "$hook_service_account" | cut -c1-53 | sed 's/-$//')-preflight`,
+		exactSourceLineSequence("rendered hook identity binding", []string{
+			`[ -n "$EXPECTED_IDENTITY_HOOK_NAME" ] || fail "rendered identity hook name is unavailable"`,
+			`[ -n "$EXPECTED_PREFLIGHT_HOOK_NAME" ] || fail "rendered preflight hook name is unavailable"`,
+			`deployment_evidence >"$before"`,
+			`arm_identity_hook_log_capture`,
 		}),
 		exactSourceLineSequence("failed upgrade execution and explicit revision retrieval", []string{
 			`if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \`,
 			`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$UPGRADE_VALUES_FILE" \`,
 			`--wait --timeout 2m "$@" >"$WORK_DIR/failed-upgrade.out" 2>"$WORK_DIR/failed-upgrade.err"; then`,
+			`finish_identity_hook_log_capture`,
 			`fail "$description unexpectedly succeeded"`,
 			`fi`,
+			`finish_identity_hook_log_capture`,
 			`if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`,
 			`--revision "$failed_revision" -o json >"$status_file"; then`,
 			`fail "$description did not retain structured Helm evidence for failed revision $failed_revision"`,
@@ -1991,9 +2172,13 @@ func verifyFailedUpgradeEvidenceSource(path string) error {
 		exactSourceLineSequence("exact failed preflight evidence evaluation", []string{
 			`if ! jq -e \`,
 			`--argjson expected_revision "$failed_revision" \`,
-			`--arg expected_name "$expected_hook_name" \`,
+			`--arg expected_name "$EXPECTED_PREFLIGHT_HOOK_NAME" \`,
 			`--argjson expected_weight -60 \`,
+			`--arg expected_identity_name "$EXPECTED_IDENTITY_HOOK_NAME" \`,
+			`--argjson expected_identity_weight -105 \`,
 			`-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$status_file" >/dev/null; then`,
+			`emit_identity_hook_diagnostic >&2 ||`,
+			`fail "$description identity-hook diagnostic failed closed"`,
 		}),
 		exactSourceLine("failed preflight evidence refusal", `fail "$description lacks exact revision-bound failed preflight evidence"`),
 	}
@@ -2019,22 +2204,35 @@ func verifyFailedUpgradeEvidenceSource(path string) error {
 const failedHookEvidenceContract = `def hook_phase:
   .last_run.phase // "";
 
+def hook_weight:
+  if .weight == null then 0 else (.weight | tonumber) end;
+
 (.hooks // []) as $hooks |
 ($hooks | map(select(hook_phase == "Failed"))) as $failed |
+($hooks | map(select(
+  .name == $expected_identity_name and
+  .kind == "Job" and
+  hook_weight == $expected_identity_weight and
+  ((.events // []) | index("pre-upgrade") != null)))) as $identity |
 (.version == $expected_revision) and
 (.info.status == "failed") and
+($identity | length == 1) and
+($identity[0] |
+  hook_phase == "Succeeded" and
+  ((.last_run.started_at // "") | length > 0) and
+  ((.last_run.completed_at // "") | length > 0)) and
 ($failed | length == 1) and
 ($failed[0] |
   .name == $expected_name and
   .kind == "Job" and
-  (.weight | tonumber) == $expected_weight and
+  hook_weight == $expected_weight and
   ((.events // []) | index("pre-upgrade") != null) and
   ((.last_run.started_at // "") | length > 0) and
   ((.last_run.completed_at // "") | length > 0)) and
 ($hooks | all(.[];
   if
     (((.events // []) | index("pre-upgrade")) != null) and
-    ((.weight | tonumber) > $expected_weight)
+    (hook_weight > $expected_weight)
   then
     hook_phase == ""
   else
@@ -2068,6 +2266,8 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 			`--argjson expected_revision 7 \`,
 			`--arg expected_name ptah-crd-preflight \`,
 			`--argjson expected_weight -60 \`,
+			`--arg expected_identity_name ptah-hook-identity \`,
+			`--argjson expected_identity_weight -105 \`,
 			`-f "$ROOT_DIR/hack/failed-hook-evidence.jq" "$1" >/dev/null`,
 		}),
 		exactSourceLine("negative-fixture implementation", `expect_rejected() {`),
@@ -2083,8 +2283,12 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		exactSourceLine("wrong hook name refusal", `expect_rejected wrong-name '.hooks[1].name = "other-preflight"'`),
 		exactSourceLine("wrong hook weight refusal", `expect_rejected wrong-weight '.hooks[1].weight = -59'`),
 		exactSourceLine("wrong hook event refusal", `expect_rejected wrong-event '.hooks[1].events = ["post-upgrade"]'`),
+		exactSourceLine("missing identity hook refusal", `expect_rejected missing-identity '.hooks[0].name = "other-identity"'`),
+		exactSourceLine("failed identity hook refusal", `expect_rejected failed-identity '.hooks[0].last_run.phase = "Failed"'`),
+		exactSourceLine("wrong identity hook weight refusal", `expect_rejected wrong-identity-weight '.hooks[0].weight = -104'`),
 		exactSourceLine("multiple failed hooks refusal", `expect_rejected two-failures '.hooks[2].last_run = .hooks[1].last_run'`),
 		exactSourceLine("later hook execution refusal", `expect_rejected later-hook-ran '.hooks[2].last_run = .hooks[0].last_run'`),
+		exactSourceLine("malformed later hook weight refusal", `expect_rejected malformed-later-weight '.hooks[2].weight = "not-a-weight"'`),
 		exactSourceLine("terminal failed-hook self-test evidence", `printf '%s\n' 'failed hook evidence self-test: PASS'`),
 	}
 	if err := verifyOrderedSourceContract(files.failedHookEvidenceSelftest, selftestContents, selftestContract); err != nil {

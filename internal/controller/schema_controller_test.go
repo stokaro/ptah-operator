@@ -2396,7 +2396,7 @@ func terminalWorkload(schema *operatorv1alpha1.PtahSchema, conditionType batchv1
 	preemption := corev1.PreemptLowerPriority
 	seconds := int64(300)
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-		Namespace: schema.Namespace, Name: job.Name + "-pod", UID: "pod-uid",
+		Namespace: schema.Namespace, Name: generatedTerminalPodName(job.Name, "abc12"), GenerateName: job.Name + "-", UID: "pod-uid",
 		Labels: map[string]string{"job-name": job.Name}, Annotations: annotations, OwnerReferences: []metav1.OwnerReference{jobControllerReference(job)},
 	}, Spec: corev1.PodSpec{
 		ServiceAccountName: "default", Priority: &priority, PreemptionPolicy: &preemption,
@@ -2408,6 +2408,14 @@ func terminalWorkload(schema *operatorv1alpha1.PtahSchema, conditionType batchv1
 		Name: executorContainerName, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
 	}}}}
 	return job, pod
+}
+
+func generatedTerminalPodName(jobName, suffix string) string {
+	prefix := jobName + "-"
+	if len(prefix) > 58 {
+		prefix = prefix[:58]
+	}
+	return prefix + suffix
 }
 
 func ensureTestAdmissionSnapshot(schema *operatorv1alpha1.PtahSchema) {
@@ -2461,6 +2469,66 @@ func TestTerminalWorkloadFixtureMatchesImmutableIntent(t *testing.T) {
 	}
 	if err := validatePodIntent(pod, job, schema.Status.ActiveOperation.AdmissionSnapshot); err != nil {
 		t.Fatalf("Pod fixture: %v", err)
+	}
+}
+
+func TestValidatePodIntentRequiresAPIServerGeneratedName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		jobName string
+		mutate  func(*corev1.Pod)
+		wantErr bool
+	}{
+		{name: "normal name", jobName: "fixture-job"},
+		{name: "truncated long name", jobName: strings.Repeat("a", 60)},
+		{
+			name:    "explicit clone",
+			jobName: "fixture-job",
+			mutate:  func(pod *corev1.Pod) { pod.GenerateName = "" },
+			wantErr: true,
+		},
+		{
+			name:    "malformed suffix",
+			jobName: "fixture-job",
+			mutate:  func(pod *corev1.Pod) { pod.Name = "fixture-job-ab-c1" },
+			wantErr: true,
+		},
+		{
+			name:    "untruncated long prefix",
+			jobName: strings.Repeat("a", 60),
+			mutate:  func(pod *corev1.Pod) { pod.Name = pod.GenerateName + "abc12" },
+			wantErr: true,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			schema := schemaFixture()
+			schema.Status.ActiveOperation = &operatorv1alpha1.ActiveOperationStatus{
+				Type: operatorv1alpha1.OperationResolve, ID: "fixture-operation", JobName: test.jobName, Attempt: 1,
+			}
+			job, pod := terminalWorkload(schema, batchv1.JobComplete)
+			if test.mutate != nil {
+				test.mutate(pod)
+			}
+			err := validatePodIntent(pod, job, schema.Status.ActiveOperation.AdmissionSnapshot)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("validatePodIntent() accepted a Pod without the exact API-server generated-name chain")
+				}
+				if !strings.Contains(err.Error(), "exact Job-generated name") {
+					t.Fatalf("validatePodIntent() error = %q, want generated-name failure", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validatePodIntent() rejected a valid generated Pod name: %v", err)
+			}
+		})
 	}
 }
 

@@ -44,6 +44,8 @@ const (
 	rolloutGuardVersion           = "1"
 	rolloutGuardComponent         = "rollout-guard"
 	rolloutGuardManagedBy         = "ptah-operator"
+	kubernetesDNSLabelMaxLength   = 63
+	kubernetesGeneratedSuffixLen  = 5
 
 	// ReleaseActivationName is the retained namespaced parameter consulted by
 	// every rollout/runtime guard before accepting a higher release sequence.
@@ -769,8 +771,8 @@ func (g *RolloutGuard) waitEnforced(ctx context.Context, denialMessage string, p
 			probe := deployment.DeepCopy()
 			if probeRuntime {
 				g.makeRuntimeProbeInvalid(probe)
-			} else if probe.Annotations != nil {
-				delete(probe.Annotations, ControllerStateVersionAnnotation)
+			} else {
+				g.makeRolloutProbeInvalid(probe)
 			}
 			_, err = g.Deployments.Update(pollCtx, probe, metav1.UpdateOptions{DryRun: []string{metav1.DryRunAll}})
 		}
@@ -800,10 +802,21 @@ func (g *RolloutGuard) probeDeployment(runtimeProbe bool) *appsv1.Deployment {
 			},
 		},
 	}
+	if !runtimeProbe {
+		g.makeRolloutProbeInvalid(probe)
+	}
 	if runtimeProbe {
 		g.makeRuntimeProbeInvalid(probe)
 	}
 	return probe
+}
+
+func (g *RolloutGuard) makeRolloutProbeInvalid(probe *appsv1.Deployment) {
+	if probe.Annotations == nil {
+		probe.Annotations = map[string]string{}
+	}
+	delete(probe.Annotations, ControllerStateVersionAnnotation)
+	probe.Annotations[ReleaseSequenceAnnotation] = strconv.FormatInt(int64(g.ReleaseSequence), 10)
 }
 
 func (g *RolloutGuard) makeRuntimeProbeInvalid(probe *appsv1.Deployment) {
@@ -934,6 +947,38 @@ func (g *RolloutGuard) waitDeploymentStopped(ctx context.Context, target deploym
 	})
 }
 
+func (g *RolloutGuard) releaseActivationParameterShapeExpression() string {
+	return fmt.Sprintf(`params != null && (%s)`, g.releaseActivationGuard().activationObjectShapeExpression("params"))
+}
+
+func annotationAbsentExpression(object, annotation string) string {
+	return fmt.Sprintf(`(!has(%[1]s.metadata.annotations) || !(%[2]q in %[1]s.metadata.annotations))`, object, annotation)
+}
+
+// deploymentStopTransitionExpression permits the candidate hook to stamp and
+// stop an active Deployment without changing its executable or ownership. It
+// deliberately becomes false as soon as that candidate sequence is active.
+func deploymentStopTransitionExpression() string {
+	stateAnnotation := strconv.Quote(ControllerStateVersionAnnotation)
+	releaseAnnotation := strconv.Quote(ReleaseSequenceAnnotation)
+	return fmt.Sprintf(
+		`variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation == "UPDATE" && oldObject != null && variables.activationValid && variables.newRelease > variables.activeRelease && variables.newState > 0 && variables.isReleaseHook && has(object.spec.replicas) && object.spec.replicas == 0 && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) == has(oldObject.metadata.uid) && (!has(object.metadata.uid) || object.metadata.uid == oldObject.metadata.uid) && object.metadata.labels == oldObject.metadata.labels && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.metadata.annotations) && %[1]s in object.metadata.annotations && object.metadata.annotations[%[1]s] == string(variables.newState) && %[2]s in object.metadata.annotations && object.metadata.annotations[%[2]s] == string(variables.newRelease) && object.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (has(oldObject.metadata.annotations) && key in oldObject.metadata.annotations && object.metadata.annotations[key] == oldObject.metadata.annotations[key])) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (key in object.metadata.annotations && oldObject.metadata.annotations[key] == object.metadata.annotations[key]))) && object.spec.template == oldObject.spec.template && object.spec.selector == oldObject.spec.selector && object.spec.strategy == oldObject.spec.strategy && object.spec.minReadySeconds == oldObject.spec.minReadySeconds && (has(object.spec.revisionHistoryLimit) == has(oldObject.spec.revisionHistoryLimit)) && (!has(object.spec.revisionHistoryLimit) || object.spec.revisionHistoryLimit == oldObject.spec.revisionHistoryLimit) && (has(object.spec.paused) == has(oldObject.spec.paused)) && (!has(object.spec.paused) || object.spec.paused == oldObject.spec.paused) && (has(object.spec.progressDeadlineSeconds) == has(oldObject.spec.progressDeadlineSeconds)) && (!has(object.spec.progressDeadlineSeconds) || object.spec.progressDeadlineSeconds == oldObject.spec.progressDeadlineSeconds)`,
+		stateAnnotation,
+		releaseAnnotation,
+	)
+}
+
+func rolloutActiveIdentityExpression() string {
+	bootstrap := strings.Join([]string{
+		`variables.activeRelease == 0`,
+		annotationAbsentExpression("object", ControllerStateVersionAnnotation),
+		annotationAbsentExpression("object", ReleaseSequenceAnnotation),
+		fmt.Sprintf(`(!variables.isAdmission || %s)`, annotationAbsentExpression("object", AdmissionContractVersionAnnotation)),
+	}, " && ")
+	active := `variables.activeRelease > 0 && variables.newState == variables.activeState && variables.newRelease == variables.activeRelease && (!variables.isAdmission || variables.newAdmission == variables.activeAdmission)`
+	return fmt.Sprintf(`variables.activationValid && ((%s) || (%s))`, bootstrap, active)
+}
+
 func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
 	exact := admissionregistrationv1.Exact
@@ -986,29 +1031,24 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 				{Name: "isDeployment", Expression: `request.resource.group == "apps"`},
 				{Name: "isAdmission", Expression: `request.resource.group == "admissionregistration.k8s.io"`},
 				{Name: "newState", Expression: fmt.Sprintf(`has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
-				{Name: "oldState", Expression: fmt.Sprintf(`request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "newRelease", Expression: fmt.Sprintf(`has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
-				{Name: "oldRelease", Expression: fmt.Sprintf(`request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
+				{Name: "activationValid", Expression: g.releaseActivationParameterShapeExpression()},
 				{Name: "activeRelease", Expression: fmt.Sprintf(`params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1`, activeReleaseDataKey, activeReleaseDataKey, activeReleaseDataKey)},
+				{Name: "activeState", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
+				{Name: "activeAdmission", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
 				{Name: "isReleaseHook", Expression: g.releaseHookUsernameExpression()},
 				{Name: "newAdmission", Expression: fmt.Sprintf(`variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
-				{Name: "oldAdmission", Expression: fmt.Sprintf(`variables.isAdmission && request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
+				{Name: "isActiveIdentity", Expression: rolloutActiveIdentityExpression()},
+				{Name: "stopTransition", Expression: deploymentStopTransitionExpression()},
 			},
 			Validations: []admissionregistrationv1.Validation{
+				{Expression: `variables.activationValid`, Message: denialMessage},
 				{Expression: `!has(request.subResource) || request.subResource != "scale"`, Message: denialMessage},
 				{Expression: fmt.Sprintf(`!variables.isDeployment || !variables.isReleaseHook || request.name in [%q, %q]`, g.ControllerDeploymentName, g.CertificateDeploymentName), Message: denialMessage},
 				{Expression: `!variables.isDeployment || request.operation != "CREATE" || !variables.isReleaseHook || request.dryRun == true`, Message: denialMessage},
-				{Expression: fmt.Sprintf(`variables.newState >= %d`, stateVersion), Message: denialMessage},
-				{Expression: fmt.Sprintf(`request.operation != "UPDATE" || variables.oldState > 0 || (variables.isReleaseHook && variables.newState == %d)`, stateVersion), Message: denialMessage},
-				{Expression: `request.operation != "UPDATE" || variables.oldState == 0 || variables.newState >= variables.oldState`, Message: denialMessage},
-				{Expression: fmt.Sprintf(`variables.newRelease >= %d`, g.ReleaseSequence), Message: denialMessage},
-				{Expression: `request.operation != "UPDATE" || variables.oldRelease > 0 || variables.isReleaseHook`, Message: denialMessage},
-				{Expression: `request.operation != "UPDATE" || variables.oldRelease == 0 || variables.newRelease >= variables.oldRelease`, Message: denialMessage},
-				{Expression: `(variables.activeRelease >= 0 && variables.newRelease <= variables.activeRelease) || (variables.isDeployment && variables.isReleaseHook)`, Message: denialMessage},
-				{Expression: fmt.Sprintf(`!variables.isAdmission || variables.newRelease > %d || (variables.newRelease == %d && %s)`, g.ReleaseSequence, g.ReleaseSequence, admissionIdentity), Message: denialMessage},
-				{Expression: fmt.Sprintf(`!variables.isAdmission || variables.newAdmission >= %d`, admissionVersion), Message: denialMessage},
-				{Expression: fmt.Sprintf(`!variables.isAdmission || request.operation != "UPDATE" || variables.oldAdmission > 0 || (variables.isReleaseHook && variables.newAdmission == %d)`, admissionVersion), Message: denialMessage},
-				{Expression: `!variables.isAdmission || request.operation != "UPDATE" || variables.oldAdmission == 0 || variables.newAdmission >= variables.oldAdmission`, Message: denialMessage},
+				{Expression: `variables.isActiveIdentity || variables.stopTransition`, Message: denialMessage},
+				{Expression: fmt.Sprintf(`variables.newRelease != %d || variables.newState == %d`, g.ReleaseSequence, stateVersion), Message: denialMessage},
+				{Expression: fmt.Sprintf(`!variables.isAdmission || variables.newRelease != %d || (variables.newAdmission == %d && %s)`, g.ReleaseSequence, admissionVersion, admissionIdentity), Message: denialMessage},
 			},
 		},
 	}
@@ -1066,8 +1106,9 @@ func (g *RolloutGuard) hookIdentityPolicy() *admissionregistrationv1.ValidatingA
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "fixed-hook-identity",
 				Expression: fmt.Sprintf(
-					`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))`,
-					g.ReleaseNamespace, g.HookServiceAccountName, teardownServiceAccount, g.HookServiceAccountName, teardownServiceAccount, identityJob+"-", preflightJob+"-", reconcileJob+"-", quiesceJob+"-", teardownJob+"-",
+					`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
+					g.ReleaseNamespace, g.HookServiceAccountName, teardownServiceAccount, g.HookServiceAccountName, teardownServiceAccount,
+					generatedPodRequestNameExpression(identityJob), generatedPodRequestNameExpression(preflightJob), generatedPodRequestNameExpression(reconcileJob), generatedPodRequestNameExpression(quiesceJob), generatedPodRequestNameExpression(teardownJob),
 				),
 			}},
 			Validations: validations,
@@ -1133,6 +1174,33 @@ func (g *RolloutGuard) hookJobName(mode string) string {
 	}
 }
 
+func generatedNamePrefix(generateName string) string {
+	maxPrefixLength := kubernetesDNSLabelMaxLength - kubernetesGeneratedSuffixLen
+	if len(generateName) > maxPrefixLength {
+		return generateName[:maxPrefixLength]
+	}
+	return generateName
+}
+
+func generatedPodRequestNameExpression(jobName string) string {
+	prefix := generatedNamePrefix(jobName + "-")
+	return fmt.Sprintf(
+		`(request.name.startsWith(%[1]q) && request.name.size() == %[2]d && request.name.substring(%[3]d).matches("^[a-z0-9]{%[4]d}$"))`,
+		prefix, len(prefix)+kubernetesGeneratedSuffixLen, len(prefix), kubernetesGeneratedSuffixLen,
+	)
+}
+
+func generatedPodNameValidationExpression(ownerName string) string {
+	generateName := "object.metadata.generateName"
+	name := "object.metadata.name"
+	maxPrefixLength := kubernetesDNSLabelMaxLength - kubernetesGeneratedSuffixLen
+	prefix := fmt.Sprintf(`(%[1]s.size() > %[2]d ? %[1]s.substring(0, %[2]d) : %[1]s)`, generateName, maxPrefixLength)
+	return fmt.Sprintf(
+		`has(%[1]s) && %[1]s == %[3]s + "-" && %[2]s.size() == %[4]s.size() + %[5]d && %[2]s.startsWith(%[4]s) && %[2]s.substring(%[4]s.size()).matches("^[a-z0-9]{%[5]d}$")`,
+		generateName, name, ownerName, prefix, kubernetesGeneratedSuffixLen,
+	)
+}
+
 func (g *RolloutGuard) hookPodValidationExpressions(identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, teardownServiceAccount string) []string {
 	pod := "object.spec"
 	container := pod + ".containers[0]"
@@ -1146,7 +1214,7 @@ func (g *RolloutGuard) hookPodValidationExpressions(identityJob, preflightJob, r
 		fmt.Sprintf(`has(%[1]s.serviceAccountName) && %[1]s.serviceAccountName == (%[2]s == %[3]q ? %[4]q : %[5]q)`, pod, jobLabel, teardownJob, teardownServiceAccount, g.HookServiceAccountName),
 		fmt.Sprintf(`has(object.metadata.labels) && "batch.kubernetes.io/job-name" in object.metadata.labels && %s in [%q, %q, %q, %q, %q]`, jobLabel, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob),
 		fmt.Sprintf(`has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && %s.apiVersion == "batch/v1" && %s.kind == "Job" && %s.name == %s && has(%s.controller) && %s.controller`, owner, owner, owner, jobLabel, owner, owner),
-		fmt.Sprintf(`has(%[1]s.uid) && %[1]s.uid != "" && has(%[1]s.blockOwnerDeletion) && %[1]s.blockOwnerDeletion && has(object.metadata.generateName) && object.metadata.generateName == %[1]s.name + "-" && object.metadata.name.startsWith(object.metadata.generateName) && object.metadata.name.size() == object.metadata.generateName.size() + 5`, owner),
+		fmt.Sprintf(`has(%[1]s.uid) && %[1]s.uid != "" && has(%[1]s.blockOwnerDeletion) && %[1]s.blockOwnerDeletion && %[2]s`, owner, generatedPodNameValidationExpression(owner+".name")),
 		fmt.Sprintf(`%s.restartPolicy == "Never"`, pod),
 		fmt.Sprintf(`request.operation != "CREATE" || !has(%[1]s.nodeName) || %[1]s.nodeName == ""`, pod),
 		fmt.Sprintf(`request.operation != "UPDATE" || ((!has(%[1]s.nodeName) && !has(oldObject.spec.nodeName)) || (has(%[1]s.nodeName) && has(oldObject.spec.nodeName) && %[1]s.nodeName == oldObject.spec.nodeName))`, pod),
@@ -1164,7 +1232,7 @@ func (g *RolloutGuard) hookPodValidationExpressions(identityJob, preflightJob, r
 		fmt.Sprintf(`%s != %q || %s`, jobLabel, reconcileJob, g.hookArgsValidationExpression(container, "reconcile")),
 		fmt.Sprintf(`%s != %q || %s`, jobLabel, quiesceJob, g.hookArgsValidationExpression(container, "teardown-quiesce")),
 		fmt.Sprintf(`%s != %q || %s`, jobLabel, teardownJob, g.hookArgsValidationExpression(container, "teardown")),
-		fmt.Sprintf(`!has(%[1]s.lifecycle) && (!has(%[1]s.env) || %[1]s.env.size() == 0) && (!has(%[1]s.envFrom) || %[1]s.envFrom.size() == 0) && (!has(%[1]s.ports) || %[1]s.ports.size() == 0) && !has(%[1]s.livenessProbe) && !has(%[1]s.readinessProbe) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.tty) || !%[1]s.tty)`, container),
+		hookContainerNoExecutionSideChannelsExpression(container),
 		fmt.Sprintf(`has(%s.securityContext) && has(%s.securityContext.allowPrivilegeEscalation) && !%s.securityContext.allowPrivilegeEscalation && has(%s.securityContext.readOnlyRootFilesystem) && %s.securityContext.readOnlyRootFilesystem && (!has(%s.securityContext.privileged) || !%s.securityContext.privileged) && !has(%s.securityContext.runAsUser) && !has(%s.securityContext.runAsGroup) && !has(%s.securityContext.procMount) && has(%s.securityContext.capabilities) && (!has(%s.securityContext.capabilities.add) || %s.securityContext.capabilities.add.size() == 0) && has(%s.securityContext.capabilities.drop) && %s.securityContext.capabilities.drop == ["ALL"]`, container, container, container, container, container, container, container, container, container, container, container, container, container, container, container),
 		fmt.Sprintf(`has(%s.volumeMounts) && %s.volumeMounts.size() == 1 && %s.volumeMounts[0].name == "api-access" && %s.volumeMounts[0].mountPath == "/var/run/secrets/kubernetes.io/serviceaccount" && has(%s.volumeMounts[0].readOnly) && %s.volumeMounts[0].readOnly && !has(%s.volumeMounts[0].mountPropagation) && !has(%s.volumeMounts[0].subPath) && !has(%s.volumeMounts[0].subPathExpr) && !has(%s.volumeMounts[0].recursiveReadOnly)`, container, container, container, container, container, container, container, container, container, container),
 		fmt.Sprintf(`has(%s.volumes) && %s.volumes.size() == 1 && %s.name == "api-access" && has(%s.projected) && has(%s.projected.defaultMode) && %s.projected.defaultMode == 420 && %s.size() == 3`, pod, pod, volume, volume, volume, volume, sources),
@@ -1177,6 +1245,13 @@ func (g *RolloutGuard) hookPodValidationExpressions(identityJob, preflightJob, r
 
 func (g *RolloutGuard) hookArgsValidationExpression(container, mode string) string {
 	return fmt.Sprintf(`%s.args == %s`, container, celStringList(g.hookArgs(mode)))
+}
+
+func hookContainerNoExecutionSideChannelsExpression(container string) string {
+	return fmt.Sprintf(
+		`!has(%[1]s.lifecycle) && (!has(%[1]s.env) || %[1]s.env.size() == 0) && (!has(%[1]s.envFrom) || %[1]s.envFrom.size() == 0) && (!has(%[1]s.ports) || %[1]s.ports.size() == 0) && !has(%[1]s.livenessProbe) && !has(%[1]s.readinessProbe) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File" && !has(%[1]s.restartPolicy) && (!has(%[1]s.restartPolicyRules) || %[1]s.restartPolicyRules.size() == 0)`,
+		container,
+	)
 }
 
 func (g *RolloutGuard) hookArgs(mode string) []string {
@@ -1270,7 +1345,7 @@ func containerNoExecutionSideChannelsExpression(container string, allowEnv bool)
 	if allowEnv {
 		env = ""
 	}
-	return fmt.Sprintf(`%[2]s!has(%[1]s.lifecycle) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && !has(%[1]s.restartPolicy) && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File"`, container, env)
+	return fmt.Sprintf(`%[2]s!has(%[1]s.lifecycle) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File" && !has(%[1]s.restartPolicy) && (!has(%[1]s.restartPolicyRules) || %[1]s.restartPolicyRules.size() == 0)`, container, env)
 }
 
 func containerSecurityExpression(container string) string {
@@ -1308,6 +1383,18 @@ func controllerVolumesExpression(pod, secretName string) string {
 	return fmt.Sprintf(`%s && %[2]s.volumes.all(v, v.name in ["api-access", "webhook-cert", "tmp"]) && %[2]s.volumes.exists(v, v.name == "webhook-cert" && has(v.secret) && v.secret.secretName == %q && (!has(v.secret.optional) || !v.secret.optional) && has(v.secret.items) && v.secret.items.size() == 2 && v.secret.items.exists(i, i.key == "tls.crt" && i.path == "tls.crt" && !has(i.mode)) && v.secret.items.exists(i, i.key == "tls.key" && i.path == "tls.key" && !has(i.mode))) && %[2]s.volumes.exists(v, v.name == "tmp" && has(v.emptyDir) && (!has(v.emptyDir.medium) || v.emptyDir.medium == ""))`, apiAccess, pod, secretName)
 }
 
+func runtimeActiveDeploymentIdentityExpression() string {
+	bootstrap := strings.Join([]string{
+		`variables.activeRelease == 0`,
+		annotationAbsentExpression("object", ControllerStateVersionAnnotation),
+		annotationAbsentExpression("object", ReleaseSequenceAnnotation),
+		annotationAbsentExpression("object.spec.template", ControllerStateVersionAnnotation),
+		annotationAbsentExpression("object.spec.template", ReleaseSequenceAnnotation),
+	}, " && ")
+	active := `variables.activeRelease > 0 && variables.newState == variables.activeState && variables.newRelease == variables.activeRelease && variables.templateState == string(variables.activeState) && variables.templateRelease == string(variables.activeRelease) && object.spec.template.spec.containers.size() == 1 && object.spec.template.spec.containers[0].image == variables.activeImage && has(object.spec.template.spec.initContainers) && object.spec.template.spec.initContainers.size() == 1 && object.spec.template.spec.initContainers[0].image == variables.activeImage`
+	return fmt.Sprintf(`variables.activationValid && ((%s) || (%s))`, bootstrap, active)
+}
+
 func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, managerImage string) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
 	exact := admissionregistrationv1.Exact
@@ -1317,21 +1404,19 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 	metadata.Annotations[ManagerImageAnnotation] = managerImage
 	denialMessage := runtimeGuardDenialMessage(g.ReleaseSequence)
 	validations := []admissionregistrationv1.Validation{
-		{Expression: fmt.Sprintf(`variables.newState >= %d && variables.newRelease >= %d`, stateVersion, releaseSequence), Message: denialMessage},
-		{Expression: `request.operation != "UPDATE" || (variables.oldState > 0 && variables.oldRelease > 0) || variables.stopTransition`, Message: denialMessage},
-		{Expression: `request.operation != "UPDATE" || variables.oldState == 0 || variables.newState >= variables.oldState`, Message: denialMessage},
-		{Expression: `request.operation != "UPDATE" || variables.oldRelease == 0 || variables.newRelease >= variables.oldRelease`, Message: denialMessage},
-		{Expression: `variables.stopTransition || variables.activeRelease >= variables.newRelease`, Message: denialMessage},
+		{Expression: `variables.activationValid`, Message: denialMessage},
+		{Expression: `variables.isActiveIdentity || variables.stopTransition`, Message: denialMessage},
+		{Expression: fmt.Sprintf(`variables.newRelease != %d || variables.newState == %d`, releaseSequence, stateVersion), Message: denialMessage},
 	}
 	for _, expression := range g.runtimeDeploymentValidationExpressions(managerImage) {
 		validations = append(validations, admissionregistrationv1.Validation{
-			Expression: fmt.Sprintf(`variables.stopTransition || variables.newRelease > %d || (variables.newRelease == %d && (%s))`, releaseSequence, releaseSequence, expression),
+			Expression: fmt.Sprintf(`variables.stopTransition || variables.newRelease != %d || (%s)`, releaseSequence, expression),
 			Message:    denialMessage,
 		})
 	}
 	for _, expression := range g.RuntimeDeploymentConfigExpressions {
 		validations = append(validations, admissionregistrationv1.Validation{
-			Expression: fmt.Sprintf(`variables.stopTransition || variables.newRelease > %d || (variables.newRelease == %d && (%s))`, releaseSequence, releaseSequence, expression),
+			Expression: fmt.Sprintf(`variables.stopTransition || variables.newRelease != %d || (%s)`, releaseSequence, expression),
 			Message:    denialMessage,
 		})
 	}
@@ -1360,19 +1445,21 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 				),
 			}},
 			Variables: []admissionregistrationv1.Variable{
+				{Name: "isDeployment", Expression: `true`},
 				{Name: "newState", Expression: fmt.Sprintf(`has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
-				{Name: "oldState", Expression: fmt.Sprintf(`request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "newRelease", Expression: fmt.Sprintf(`has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
-				{Name: "oldRelease", Expression: fmt.Sprintf(`request.operation == "UPDATE" && has(oldObject.metadata.annotations) && %q in oldObject.metadata.annotations && oldObject.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(oldObject.metadata.annotations[%q]) : 0`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
+				{Name: "activationValid", Expression: g.releaseActivationParameterShapeExpression()},
 				{Name: "activeRelease", Expression: fmt.Sprintf(`params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1`, activeReleaseDataKey, activeReleaseDataKey, activeReleaseDataKey)},
+				{Name: "activeState", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
+				{Name: "activeImage", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations ? params.metadata.annotations[%q] : ""`, ManagerImageAnnotation, ManagerImageAnnotation)},
 				{Name: "isReleaseHook", Expression: g.releaseHookUsernameExpression()},
-				{Name: "isStopped", Expression: `has(object.spec.replicas) && object.spec.replicas == 0`},
-				{Name: "stopTransition", Expression: `request.operation == "UPDATE" && variables.isStopped && variables.isReleaseHook && object.spec.template == oldObject.spec.template && object.spec.selector == oldObject.spec.selector && object.spec.strategy == oldObject.spec.strategy && object.spec.minReadySeconds == oldObject.spec.minReadySeconds && (has(object.spec.revisionHistoryLimit) == has(oldObject.spec.revisionHistoryLimit)) && (!has(object.spec.revisionHistoryLimit) || object.spec.revisionHistoryLimit == oldObject.spec.revisionHistoryLimit) && (has(object.spec.paused) == has(oldObject.spec.paused)) && (!has(object.spec.paused) || object.spec.paused == oldObject.spec.paused) && (has(object.spec.progressDeadlineSeconds) == has(oldObject.spec.progressDeadlineSeconds)) && (!has(object.spec.progressDeadlineSeconds) || object.spec.progressDeadlineSeconds == oldObject.spec.progressDeadlineSeconds)`},
 				{Name: "runtimeContainerName", Expression: fmt.Sprintf(`request.name == %q ? "manager" : "certificate-rotator"`, g.ControllerDeploymentName)},
 				{Name: "runtimeCommand", Expression: fmt.Sprintf(`request.name == %q ? "/manager" : "/ptah-cert-rotator"`, g.ControllerDeploymentName)},
 				{Name: "runtimeServiceAccount", Expression: fmt.Sprintf(`request.name == %q ? %q : %q`, g.ControllerDeploymentName, g.ControllerServiceAccountName, g.CertificateDeploymentName)},
 				{Name: "templateState", Expression: fmt.Sprintf(`has(object.spec.template.metadata.annotations) && %q in object.spec.template.metadata.annotations ? object.spec.template.metadata.annotations[%q] : ""`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "templateRelease", Expression: fmt.Sprintf(`has(object.spec.template.metadata.annotations) && %q in object.spec.template.metadata.annotations ? object.spec.template.metadata.annotations[%q] : ""`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
+				{Name: "isActiveIdentity", Expression: runtimeActiveDeploymentIdentityExpression()},
+				{Name: "stopTransition", Expression: deploymentStopTransitionExpression()},
 			},
 			Validations: validations,
 		},

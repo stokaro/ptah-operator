@@ -201,6 +201,11 @@ fi
 identity="${K8S_VERSION}-${E2E_RUN_ID}"
 CLUSTER_NAME=$(dns_name ptah-e2e "$identity" 48)
 OPERATOR_NAMESPACE=$(dns_name ptah-system "$identity")
+CRD_PROOF_NAMESPACE=$(dns_name ptah-crd-proof "$identity")
+# Force the runtime ReplicaSet-to-Pod generated-name truncation boundary in
+# every supported-minor run, independently of the caller's run ID length.
+RUNTIME_FULLNAME=$(dns_name ptah-runtime-generated-name-prefix-boundary-proof "$identity" 60)
+[ "${#RUNTIME_FULLNAME}" -eq 60 ] || fail "runtime fullname boundary fixture must be exactly 60 characters"
 MANAGER_PULL_SECRET=$(dns_name ptah-manager-pull "$identity")
 HA_TEST_NAMESPACE=$(dns_name ptah-test-ha "$identity")
 TEST_NAMESPACE=$(dns_name ptah-test-a "$identity")
@@ -580,15 +585,19 @@ assert_api_server_feature_gate_scope() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		-n kube-system get configmaps kubelet-config kube-proxy -o json >"$component_configs_file"
 	jq -e '
+      (.items | map(select(.metadata.name == "kubelet-config"))) as $kubelet_configs |
       ([.items[].data | to_entries[].value] | join("\n")) as $configs |
-      [
+      (.items | length) == 2 and
+      ($kubelet_configs | length) == 1 and
+      (($kubelet_configs[0].data.kubelet // "") | contains("KubeletInUserNamespace: true")) and
+      ([
         "EmptyDirVolumeMode",
         "EvictionRequestAPI",
         "GenericWorkload",
         "VolumeBindMountOptions",
         "WorkloadWithJob"
       ] |
-      all(.[]; . as $gate | ($configs | contains($gate) | not))
+      all(.[]; . as $gate | ($configs | contains($gate) | not)))
     ' "$component_configs_file" >/dev/null ||
 		fail "API-server-only feature gates leaked into kubelet or kube-proxy configuration"
 }
@@ -1307,6 +1316,7 @@ render_release_values() {
 	values_image_digest=$4
 	values_pull_secret=${5:-}
 	jq -n \
+		--arg fullnameOverride "$RUNTIME_FULLNAME" \
 		--arg repository "$values_image_repository" \
 		--arg tag "$values_image_tag" \
 		--arg digest "$values_image_digest" \
@@ -1315,6 +1325,7 @@ render_release_values() {
 		--arg runnerImage "$E2E_RUNNER_IMAGE" \
 		--arg ptahVersion "$E2E_PTAH_VERSION" '
       {
+        fullnameOverride: $fullnameOverride,
         image: {
           repository: $repository,
           tag: $tag,
@@ -1394,6 +1405,7 @@ jq -n \
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
 E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \
@@ -1471,6 +1483,7 @@ E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
 E2E_KUBERNETES_VERSION=$K8S_VERSION \

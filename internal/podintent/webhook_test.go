@@ -3,9 +3,11 @@ package podintent_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	admissionv1 "k8s.io/api/admission/v1"
+	authenticationv1 "k8s.io/api/authentication/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
@@ -30,6 +32,122 @@ func TestValidationHandlerAcceptsResolvedPodBeforeScheduling(t *testing.T) {
 	response := handler.Handle(context.Background(), podRequest(t, pod))
 	if !response.Allowed {
 		t.Fatalf("Handle() denied resolved Pod: %#v", response.Result)
+	}
+}
+
+func TestValidationHandlerAcceptsControllerManagerJobCreate(t *testing.T) {
+	t.Parallel()
+
+	handler, pod := validationHandlerFixture(t)
+	request := podRequest(t, pod)
+	request.UserInfo.Username = "system:kube-controller-manager"
+	response := handler.Handle(context.Background(), request)
+	if !response.Allowed {
+		t.Fatalf("Handle() denied a Pod created through the shared Kubernetes controller-manager identity: %#v", response.Result)
+	}
+}
+
+func TestValidationHandlerAcceptsTruncatedAPIServerGeneratedName(t *testing.T) {
+	t.Parallel()
+
+	jobName := strings.Repeat("a", 60)
+	handler, pod := validationHandlerFixtureForJobName(t, jobName)
+	response := handler.Handle(context.Background(), podRequest(t, pod))
+	if !response.Allowed {
+		t.Fatalf("Handle() denied a valid Pod generated from a long Job name: %#v", response.Result)
+	}
+}
+
+func TestValidationHandlerRejectsCreateFromNonJobController(t *testing.T) {
+	t.Parallel()
+
+	handler, pod := validationHandlerFixture(t)
+	request := podRequest(t, pod)
+	request.UserInfo.Username = "system:serviceaccount:team-a:operator"
+	response := handler.Handle(context.Background(), request)
+	if response.Allowed {
+		t.Fatal("Handle() allowed a managed Pod CREATE from a non-Job-controller identity")
+	}
+	if !strings.Contains(response.Result.Message, "not created by the Kubernetes Job controller") {
+		t.Fatalf("Handle() denial = %q, want Job-controller origin failure", response.Result.Message)
+	}
+}
+
+func TestValidationHandlerRejectsIncompleteJobControllerOwnerOnCreate(t *testing.T) {
+	t.Parallel()
+
+	handler, pod := validationHandlerFixture(t)
+	blocked := false
+	pod.OwnerReferences[0].BlockOwnerDeletion = &blocked
+	response := handler.Handle(context.Background(), podRequest(t, pod))
+	if response.Allowed {
+		t.Fatal("Handle() allowed a managed Pod without the exact Job controller owner reference")
+	}
+	if !strings.Contains(response.Result.Message, "exact Job controller owner reference") {
+		t.Fatalf("Handle() denial = %q, want exact-owner failure", response.Result.Message)
+	}
+}
+
+func TestValidationHandlerRejectsClonedAndMalformedGeneratedNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		jobName string
+		mutate  func(*corev1.Pod)
+	}{
+		{
+			name:    "explicit clone",
+			jobName: "apply-job",
+			mutate:  func(pod *corev1.Pod) { pod.GenerateName = "" },
+		},
+		{
+			name:    "malformed suffix",
+			jobName: "apply-job",
+			mutate:  func(pod *corev1.Pod) { pod.Name = "apply-job-ab-c1" },
+		},
+		{
+			name:    "uppercase suffix",
+			jobName: "apply-job",
+			mutate:  func(pod *corev1.Pod) { pod.Name = "apply-job-ABC12" },
+		},
+		{
+			name:    "short suffix",
+			jobName: "apply-job",
+			mutate:  func(pod *corev1.Pod) { pod.Name = "apply-job-abc1" },
+		},
+		{
+			name:    "foreign generateName",
+			jobName: "apply-job",
+			mutate: func(pod *corev1.Pod) {
+				pod.GenerateName = "foreign-"
+				pod.Name = "foreign-abc12"
+			},
+		},
+		{
+			name:    "untruncated long prefix",
+			jobName: strings.Repeat("a", 60),
+			mutate: func(pod *corev1.Pod) {
+				pod.Name = pod.GenerateName + "abc12"
+			},
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler, pod := validationHandlerFixtureForJobName(t, test.jobName)
+			test.mutate(pod)
+			request := podRequest(t, pod)
+			response := handler.Handle(context.Background(), request)
+			if response.Allowed {
+				t.Fatal("Handle() allowed a Pod without the exact API-server generated-name chain")
+			}
+			if !strings.Contains(response.Result.Message, "exact Job-generated name") {
+				t.Fatalf("Handle() denial = %q, want generated-name failure", response.Result.Message)
+			}
+		})
 	}
 }
 
@@ -169,6 +287,34 @@ func TestValidationHandlerRejectsResizeUpdate(t *testing.T) {
 	}
 }
 
+func TestValidationHandlerPreservesBoundUpdatesFromOtherPrincipals(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name        string
+		subresource string
+	}{
+		{name: "main resource"},
+		{name: "resize", subresource: "resize"},
+		{name: "ephemeral containers", subresource: "ephemeralcontainers"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			handler, pod := validationHandlerFixture(t)
+			original := pod.DeepCopy()
+			request := podUpdateRequest(t, original, pod)
+			request.SubResource = test.subresource
+			request.UserInfo.Username = "system:node:worker-a"
+			response := handler.Handle(context.Background(), request)
+			if !response.Allowed {
+				t.Fatalf("Handle() denied an unchanged bound Pod update for subresource %q: %#v", test.subresource, response.Result)
+			}
+		})
+	}
+}
+
 func TestValidationHandlerRejectsUpdateForDifferentPodUID(t *testing.T) {
 	t.Parallel()
 
@@ -235,6 +381,24 @@ func TestValidationHandlerAllowsExactJobTrackingFinalizerCleanupWithoutLiveJob(t
 	response := handler.Handle(context.Background(), podUpdateRequest(t, original, pod))
 	if !response.Allowed {
 		t.Fatalf("Handle() denied exact Job tracking finalizer cleanup without a live Job: %#v", response.Result)
+	}
+}
+
+func TestValidationHandlerRejectsJobTrackingFinalizerCleanupFromNonJobController(t *testing.T) {
+	t.Parallel()
+
+	handler, pod := validationHandlerFixture(t)
+	pod.Status.Phase = corev1.PodSucceeded
+	original := pod.DeepCopy()
+	pod.Finalizers = nil
+	request := podUpdateRequest(t, original, pod)
+	request.UserInfo.Username = "system:serviceaccount:team-a:operator"
+	response := handler.Handle(context.Background(), request)
+	if response.Allowed {
+		t.Fatal("Handle() allowed Job tracking finalizer cleanup from a non-Job-controller identity")
+	}
+	if !strings.Contains(response.Result.Message, "only the Kubernetes Job controller") {
+		t.Fatalf("Handle() denial = %q, want Job-controller finalizer failure", response.Result.Message)
 	}
 }
 
@@ -436,7 +600,9 @@ func TestValidationHandlerAllowsUnmanagedJobPodForCertificateRecovery(t *testing
 	}
 	pod.Labels[workload.LabelManagedBy] = "Helm"
 	pod.Labels[workload.LabelComponent] = "certificate-rotation"
-	response := handler.Handle(context.Background(), podRequest(t, pod))
+	request := podRequest(t, pod)
+	request.UserInfo.Username = "system:serviceaccount:team-a:certificate-rotation"
+	response := handler.Handle(context.Background(), request)
 	if !response.Allowed {
 		t.Fatalf("Handle() denied an unrelated certificate-rotation Job Pod: %#v", response.Result)
 	}
@@ -484,6 +650,11 @@ func TestValidationHandlerRejectsUpdateRemovingSelectorIdentity(t *testing.T) {
 
 func validationHandlerFixture(t *testing.T) (*podintent.ValidationHandler, *corev1.Pod) {
 	t.Helper()
+	return validationHandlerFixtureForJobName(t, "apply-job")
+}
+
+func validationHandlerFixtureForJobName(t *testing.T, jobName string) (*podintent.ValidationHandler, *corev1.Pod) {
+	t.Helper()
 
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
@@ -523,9 +694,9 @@ func validationHandlerFixture(t *testing.T) (*podintent.ValidationHandler, *core
 	}
 	for key, value := range map[string]string{
 		batchv1.ControllerUidLabel: "job-uid",
-		batchv1.JobNameLabel:       "apply-job",
+		batchv1.JobNameLabel:       jobName,
 		"controller-uid":           "job-uid",
-		"job-name":                 "apply-job",
+		"job-name":                 jobName,
 	} {
 		labels[key] = value
 	}
@@ -533,7 +704,7 @@ func validationHandlerFixture(t *testing.T) (*podintent.ValidationHandler, *core
 	schema := &operatorv1alpha1.PtahSchema{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "app", UID: "schema-uid", ResourceVersion: "21"},
 		Status: operatorv1alpha1.PtahSchemaStatus{ActiveOperation: &operatorv1alpha1.ActiveOperationStatus{
-			Type: operatorv1alpha1.OperationApply, ID: operationID, JobName: "apply-job", AdmissionSnapshot: snapshot,
+			Type: operatorv1alpha1.OperationApply, ID: operationID, JobName: jobName, AdmissionSnapshot: snapshot,
 		}},
 	}
 	parallelism := int32(1)
@@ -542,7 +713,7 @@ func validationHandlerFixture(t *testing.T) (*podintent.ValidationHandler, *core
 	replacementPolicy := batchv1.Failed
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "team-a", Name: "apply-job", UID: "job-uid", ResourceVersion: "22",
+			Namespace: "team-a", Name: jobName, UID: "job-uid", ResourceVersion: "22",
 			Labels: labels, Annotations: annotations,
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(schema, operatorv1alpha1.GroupVersion.WithKind("PtahSchema"))},
 		},
@@ -557,7 +728,7 @@ func validationHandlerFixture(t *testing.T) (*podintent.ValidationHandler, *core
 	}
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "team-a", Name: "apply-job-pod", GenerateName: "apply-job-", UID: "pod-uid", ResourceVersion: "23",
+			Namespace: "team-a", Name: testGeneratedPodName(jobName, "abc12"), GenerateName: jobName + "-", UID: "pod-uid", ResourceVersion: "23",
 			Labels: labels, Annotations: annotations, Finalizers: []string{batchv1.JobTrackingFinalizer},
 			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(job, batchv1.SchemeGroupVersion.WithKind("Job"))},
 		},
@@ -566,6 +737,14 @@ func validationHandlerFixture(t *testing.T) (*podintent.ValidationHandler, *core
 	objects := append(admissionFixtureObjects(), schema, job)
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build()
 	return &podintent.ValidationHandler{Reader: reader, Decoder: cradmission.NewDecoder(scheme)}, pod
+}
+
+func testGeneratedPodName(jobName, suffix string) string {
+	prefix := jobName + "-"
+	if len(prefix) > 58 {
+		prefix = prefix[:58]
+	}
+	return prefix + suffix
 }
 
 func podRequest(t *testing.T, pod *corev1.Pod) cradmission.Request {
@@ -577,6 +756,7 @@ func podRequest(t *testing.T, pod *corev1.Pod) cradmission.Request {
 	return cradmission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
 		UID: types.UID("admission-request"), Namespace: pod.Namespace, Name: pod.Name,
 		Operation: admissionv1.Create, Object: runtime.RawExtension{Raw: raw},
+		UserInfo: authenticationv1.UserInfo{Username: "system:serviceaccount:kube-system:job-controller"},
 	}}
 }
 

@@ -167,7 +167,9 @@ func (g *ControllerWriteGuard) binding() *admissionregistrationv1.ValidatingAdmi
 func (g *ControllerWriteGuard) matchResources() *admissionregistrationv1.MatchResources {
 	exact := admissionregistrationv1.Exact
 	return &admissionregistrationv1.MatchResources{
-		MatchPolicy: &exact,
+		MatchPolicy:       &exact,
+		NamespaceSelector: &metav1.LabelSelector{},
+		ObjectSelector:    &metav1.LabelSelector{},
 		ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{{
 			RuleWithOperations: admissionregistrationv1.RuleWithOperations{
 				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},

@@ -47,6 +47,15 @@ accepted; executable, environment, volume, and security fields remain exact.
 The controller retains read-only Pod evidence permissions and is not granted
 Pod create or delete permission.
 
+Operation Pod creation is additionally bound to the built-in Kubernetes Job
+controller and to the API server's generated-name chain. The submitted
+`generateName` must equal the exact Job name plus `-`; the concrete Pod name
+must contain the API server's at-most-58-character effective prefix and one
+five-character lowercase alphanumeric suffix. The reconciler repeats this
+check before trusting terminal Pod evidence. Exact Job tracking-finalizer
+removal is restricted to the same controller identity and cannot carry any
+other Pod mutation.
+
 Because the manager watches `PtahSchema` across namespaces and each operation
 runs in its resource's namespace, the controller has cluster-wide `get` on ServiceAccounts
 and `list` on LimitRanges. It has no ServiceAccount `list` or `watch`, no

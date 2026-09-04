@@ -613,8 +613,11 @@ func assertExactCertificateWriteMatch(t *testing.T, match *admissionregistration
 	if match == nil || match.MatchPolicy == nil || *match.MatchPolicy != admissionregistrationv1.Exact {
 		t.Fatal("certificate write guard matching is not Exact")
 	}
-	if match.NamespaceSelector != nil || match.ObjectSelector != nil || len(match.ExcludeResourceRules) != 0 {
-		t.Fatalf("certificate write guard must not rely on selectors or exclusions: %#v", match)
+	if match.NamespaceSelector == nil || len(match.NamespaceSelector.MatchLabels) != 0 ||
+		len(match.NamespaceSelector.MatchExpressions) != 0 || match.ObjectSelector == nil ||
+		len(match.ObjectSelector.MatchLabels) != 0 || len(match.ObjectSelector.MatchExpressions) != 0 ||
+		len(match.ExcludeResourceRules) != 0 {
+		t.Fatalf("certificate write guard must declare exact match-all selectors without exclusions: %#v", match)
 	}
 	if len(match.ResourceRules) != 1 {
 		t.Fatalf("certificate write guard rules = %d, want one", len(match.ResourceRules))

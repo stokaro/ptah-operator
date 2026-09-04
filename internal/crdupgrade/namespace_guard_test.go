@@ -188,8 +188,11 @@ func assertExactNamespaceDeletionMatch(t *testing.T, match *admissionregistratio
 	if match == nil || match.MatchPolicy == nil || *match.MatchPolicy != admissionregistrationv1.Exact {
 		t.Fatal("namespace deletion guard matching is not Exact")
 	}
-	if match.NamespaceSelector != nil || match.ObjectSelector != nil || len(match.ExcludeResourceRules) != 0 {
-		t.Fatalf("namespace deletion guard must not rely on mutable selectors or exclusions: %#v", match)
+	if match.NamespaceSelector == nil || len(match.NamespaceSelector.MatchLabels) != 0 ||
+		len(match.NamespaceSelector.MatchExpressions) != 0 || match.ObjectSelector == nil ||
+		len(match.ObjectSelector.MatchLabels) != 0 || len(match.ObjectSelector.MatchExpressions) != 0 ||
+		len(match.ExcludeResourceRules) != 0 {
+		t.Fatalf("namespace deletion guard must declare exact match-all selectors without exclusions: %#v", match)
 	}
 	if len(match.ResourceRules) != 1 {
 		t.Fatalf("namespace deletion guard rules = %d, want one", len(match.ResourceRules))

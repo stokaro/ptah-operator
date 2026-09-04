@@ -166,18 +166,26 @@ webhooks:
     failurePolicy: Fail
     matchPolicy: Equivalent
     timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
-    objectSelector:
-      matchLabels:
-        app.kubernetes.io/managed-by: ptah-operator
-        app.kubernetes.io/component: schema-operation
     matchConditions:
-      - name: job-owned-pod
+      - name: managed-or-operation-job-pod
         expression: >-
+          (has(object.metadata.labels) &&
+            'app.kubernetes.io/managed-by' in object.metadata.labels &&
+            object.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&
+            'app.kubernetes.io/component' in object.metadata.labels &&
+            object.metadata.labels['app.kubernetes.io/component'] == 'schema-operation') ||
           object.metadata.ownerReferences.exists(ref,
-            ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true) ||
-          (request.operation == 'UPDATE' && oldObject != null &&
+            ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&
+            ref.name.matches('^ptah-(resolve|verify|observe|plan|apply)-')) ||
+          (request.operation == 'UPDATE' && oldObject != null && (
+            (has(oldObject.metadata.labels) &&
+              'app.kubernetes.io/managed-by' in oldObject.metadata.labels &&
+              oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&
+              'app.kubernetes.io/component' in oldObject.metadata.labels &&
+              oldObject.metadata.labels['app.kubernetes.io/component'] == 'schema-operation') ||
             oldObject.metadata.ownerReferences.exists(ref,
-              ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true))
+              ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&
+              ref.name.matches('^ptah-(resolve|verify|observe|plan|apply)-'))))
     clientConfig:
       caBundle: {{ index $entryBundles "podValidating" }}
       service:

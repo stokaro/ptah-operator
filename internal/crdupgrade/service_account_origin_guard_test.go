@@ -20,9 +20,31 @@ import (
 )
 
 func TestRenderedServiceAccountOriginGuardMatchesCompiledContract(t *testing.T) {
-	path := os.Getenv("PTAH_ROLLOUT_GUARD_RENDER")
+	testRenderedServiceAccountOriginGuardMatchesCompiledContract(
+		t,
+		"PTAH_ROLLOUT_GUARD_RENDER",
+		"ptah-e2e-ptah-operator",
+		"ptah-e2e-ptah-operator-cert-rotator",
+		"ptah-e2e-ptah-operator",
+	)
+}
+
+func TestRenderedLongNameServiceAccountOriginGuardMatchesCompiledContract(t *testing.T) {
+	const controllerName = "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+	testRenderedServiceAccountOriginGuardMatchesCompiledContract(
+		t,
+		"PTAH_RUNTIME_POD_GUARD_LONG_RENDER",
+		controllerName,
+		controllerName[:39]+"-cert-rotator",
+		controllerName[:24],
+	)
+}
+
+func testRenderedServiceAccountOriginGuardMatchesCompiledContract(t *testing.T, environmentVariable, controllerName, certificateName, hookBase string) {
+	t.Helper()
+	path := os.Getenv(environmentVariable)
 	if path == "" {
-		t.Skip("PTAH_ROLLOUT_GUARD_RENDER is set by the chart contract gate")
+		t.Skip(environmentVariable + " is set by the chart contract gate")
 	}
 	rendered, err := os.ReadFile(path)
 	if err != nil {
@@ -31,12 +53,12 @@ func TestRenderedServiceAccountOriginGuardMatchesCompiledContract(t *testing.T) 
 	guard := testServiceAccountOriginGuard()
 	guard.ReleaseName = "ptah-e2e"
 	guard.ReleaseNamespace = "ptah-e2e"
-	guard.ControllerServiceAccountName = "ptah-e2e-ptah-operator"
-	guard.ControllerDeploymentName = "ptah-e2e-ptah-operator"
-	guard.CertificateServiceAccountName = "ptah-e2e-ptah-operator-cert-rotator"
-	guard.CertificateDeploymentName = "ptah-e2e-ptah-operator-cert-rotator"
+	guard.ControllerServiceAccountName = controllerName
+	guard.ControllerDeploymentName = controllerName
+	guard.CertificateServiceAccountName = certificateName
+	guard.CertificateDeploymentName = certificateName
 	guard.ManagerImage = "ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222"
-	guard.HookServiceAccountName = "ptah-e2e-ptah-operator-crd-v1-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
+	guard.HookServiceAccountName = hookBase + "-crd-v1-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
 	name := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	var policy *admissionregistrationv1.ValidatingAdmissionPolicy
 	var binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding
@@ -132,10 +154,20 @@ func TestServiceAccountOriginGuardCoversCallerAndTokenRequestBypasses(t *testing
 		`object.spec.boundObjectRef.kind == \"Pod\"`,
 		`object.spec.boundObjectRef.uid != \"\"`,
 		`ptah-hook-identity-v[1-9][0-9]*-[0-9a-f]{12}-`,
+		`ptah-quiesce-v[1-9][0-9]*-[0-9a-f]{12}-`,
+		`matches(\"^[a-z0-9]{1,10}-[a-z0-9]{5}$\")`,
 	} {
 		if !strings.Contains(contract, required) {
 			t.Fatalf("service account origin contract does not contain %q", required)
 		}
+	}
+	quiescePodPattern := `^ptah-quiesce-v[1-9][0-9]*-[0-9a-f]{12}-`
+	callerNeedle := `variables.callerPodName.matches("` + quiescePodPattern + `")`
+	tokenNeedle := `object.spec.boundObjectRef.name.matches("` + quiescePodPattern + `")`
+	if len(policy.Spec.Validations) != 2 ||
+		!strings.Contains(policy.Spec.Validations[0].Expression, callerNeedle) ||
+		!strings.Contains(policy.Spec.Validations[1].Expression, tokenNeedle) {
+		t.Fatalf("service account origin guard does not cover the quiesce Pod in both caller and bound-token branches: %#v", policy.Spec.Validations)
 	}
 }
 

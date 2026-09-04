@@ -38,6 +38,8 @@ spec:
   failurePolicy: Fail
   matchConstraints:
     matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]
@@ -70,6 +72,8 @@ spec:
   policyName: {{ $guardName }}
   matchResources:
     matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]

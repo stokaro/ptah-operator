@@ -171,13 +171,12 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
           operations: ["CREATE", "UPDATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"}])) and
       (map(select(.name == "vpodintent.operator.ptah.dev")) | length == 1 and all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Equivalent" and
-        ((.namespaceSelector // {}) == {}) and
-        .objectSelector == {matchLabels: {
-          "app.kubernetes.io/managed-by": "ptah-operator",
-          "app.kubernetes.io/component": "schema-operation"
-        }} and
-        (.matchConditions | length == 1 and .[0].name == "job-owned-pod" and
-          (.[0].expression | contains("batch/v1") and contains("oldObject"))) and
+        ((.namespaceSelector // {}) == {}) and ((.objectSelector // {}) == {}) and
+        (.matchConditions | length == 1 and .[0].name == "managed-or-operation-job-pod" and
+          (.[0].expression |
+            contains("batch/v1") and contains("oldObject") and
+            contains("^ptah-(resolve|verify|observe|plan|apply)-") and
+            contains("app.kubernetes.io/managed-by"))) and
         (.admissionReviewVersions | index("v1")) != null and .clientConfig.caBundle != "" and
         .clientConfig.service.namespace == $namespace and .clientConfig.service.name == $service and
         .clientConfig.service.path == "/validate-v1-pod-ptah-operation-intent" and
@@ -480,7 +479,7 @@ k create -f "$webhook_scope_job_file" >/dev/null
 unrelated_job_uid=$(k -n "$TEST_NAMESPACE" get job "$WEBHOOK_UNRELATED_JOB" \
 	-o jsonpath='{.metadata.uid}')
 wait_for_job_pod_admission "$WEBHOOK_UNRELATED_JOB" "$unrelated_job_uid" ||
-	fail "webhook outage blocked an unrelated Job Pod outside the object selector"
+	fail "webhook outage blocked an unrelated non-operation Job Pod"
 
 write_webhook_scope_job "$WEBHOOK_OUTAGE_JOB" true
 k create -f "$webhook_scope_job_file" >/dev/null

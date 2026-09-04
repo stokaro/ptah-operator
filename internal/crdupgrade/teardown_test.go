@@ -56,9 +56,12 @@ func TestReleaseTeardownDeletesExactInventoryInSafeOrder(t *testing.T) {
 			)
 		}
 	}
-	tail := fixture.recorder.deletes[len(fixture.recorder.deletes)-4:]
+	activationName := ReleaseActivationGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)
+	tail := fixture.recorder.deletes[len(fixture.recorder.deletes)-6:]
 	wantTail := []string{
 		teardownKey("ConfigMap", HookIdentityProbeObjectName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, fixture.guard.ReleaseSequence, fixture.guard.ManagerImage)),
+		teardownKey("ValidatingAdmissionPolicyBinding", activationName),
+		teardownKey("ValidatingAdmissionPolicy", activationName),
 		teardownKey("ConfigMap", ReleaseActivationName),
 		teardownKey("ValidatingAdmissionPolicyBinding", NamespaceDeletionGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)),
 		teardownKey("ValidatingAdmissionPolicy", NamespaceDeletionGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)),
@@ -66,6 +69,119 @@ func TestReleaseTeardownDeletesExactInventoryInSafeOrder(t *testing.T) {
 	if !reflect.DeepEqual(tail, wantTail) {
 		t.Fatalf("teardown tail = %v, want %v", tail, wantTail)
 	}
+}
+
+func TestReleaseTeardownKeepsActivationSelfGuardUntilConsumersAreRemoved(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t)
+	targets, err := fixture.teardown.targets()
+	if err != nil {
+		t.Fatalf("targets() error = %v", err)
+	}
+	activationName := ReleaseActivationGuardPolicyName(
+		fixture.guard.ReleaseNamespace,
+		fixture.guard.ReleaseName,
+	)
+	index := func(kind, name string) int {
+		t.Helper()
+		for targetIndex, target := range targets {
+			if target.kind == kind && target.name == name {
+				return targetIndex
+			}
+		}
+		t.Fatalf("teardown target %s/%s is missing", kind, name)
+		return -1
+	}
+	activationBindingIndex := index("ValidatingAdmissionPolicyBinding", activationName)
+	activationPolicyIndex := index("ValidatingAdmissionPolicy", activationName)
+	activationConfigMapIndex := index("ConfigMap", ReleaseActivationName)
+	if activationBindingIndex >= activationPolicyIndex || activationPolicyIndex >= activationConfigMapIndex {
+		t.Fatalf(
+			"activation self-guard order = binding %d, policy %d, ConfigMap %d",
+			activationBindingIndex,
+			activationPolicyIndex,
+			activationConfigMapIndex,
+		)
+	}
+	for _, name := range []string{
+		RolloutGuardPolicyName(fixture.guard.ReleaseSequence),
+		RuntimeGuardPolicyName(fixture.guard.ReleaseSequence),
+		RuntimePodGuardPolicyName(fixture.guard.ReleaseSequence),
+		ControllerJobWriteGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName),
+		ControllerChunkWriteGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName),
+		ControllerPlanWriteGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName),
+	} {
+		if bindingIndex := index("ValidatingAdmissionPolicyBinding", name); bindingIndex >= activationBindingIndex {
+			t.Fatalf("activation self-guard binding precedes consumer binding %s", name)
+		}
+		if policyIndex := index("ValidatingAdmissionPolicy", name); policyIndex >= activationBindingIndex {
+			t.Fatalf("activation self-guard binding precedes consumer policy %s", name)
+		}
+	}
+}
+
+func TestReleaseTeardownRetriesOnlyActivationSelfGuardCacheDenial(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stale self-guard denial", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixture(t)
+		order := expectedReleaseTeardownOrder(fixture.guard)
+		activationKey := teardownKey("ConfigMap", ReleaseActivationName)
+		activationIndex := slicesIndex(order, activationKey)
+		attempts := 0
+		fixture.recorder.beforeDelete[activationKey] = func() {
+			attempts++
+			if attempts == 1 {
+				fixture.recorder.errors[activationKey] = apierrors.NewForbidden(
+					teardownGroupResource("ConfigMap"),
+					ReleaseActivationName,
+					errors.New(releaseActivationGuardDenialMessage()),
+				)
+				return
+			}
+			delete(fixture.recorder.errors, activationKey)
+		}
+
+		if err := fixture.teardown.Teardown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if attempts != 2 {
+			t.Fatalf("activation delete attempts = %d, want 2", attempts)
+		}
+		want := append([]string{}, order[:activationIndex]...)
+		want = append(want, activationKey, activationKey)
+		want = append(want, order[activationIndex+1:]...)
+		if !reflect.DeepEqual(fixture.recorder.deletes, want) {
+			t.Fatalf("delete calls = %v, want one exact activation retry in %v", fixture.recorder.deletes, want)
+		}
+	})
+
+	t.Run("foreign forbidden error", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixture(t)
+		activationKey := teardownKey("ConfigMap", ReleaseActivationName)
+		fixture.recorder.errors[activationKey] = apierrors.NewForbidden(
+			teardownGroupResource("ConfigMap"),
+			ReleaseActivationName,
+			errors.New("foreign admission denial"),
+		)
+
+		err := fixture.teardown.Teardown(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "foreign admission denial") {
+			t.Fatalf("Teardown error = %v, want foreign denial", err)
+		}
+		attempts := 0
+		for _, key := range fixture.recorder.deletes {
+			if key == activationKey {
+				attempts++
+			}
+		}
+		if attempts != 1 {
+			t.Fatalf("foreign activation denial attempts = %d, want 1", attempts)
+		}
+	})
 }
 
 func TestReleaseTeardownRejectsSequenceWithoutPredecessorIdentityInventory(t *testing.T) {
@@ -513,15 +629,24 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 	certificateValidatingWriteName := CertificateValidatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	namespaceName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 
-	parameterized := []string{activationName, rolloutName, runtimeName, runtimePodName}
+	parameterized := []string{
+		rolloutName, runtimeName, runtimePodName,
+		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
+	}
 	remaining := []string{
+		hookName, hookProbeName,
+		parentReplicaSetName, parentHookOriginName, parentHookPodOriginName, parentHookContractName,
+		serviceAccountName, controllerWriteName,
+		certificateMutatingWriteName, certificateValidatingWriteName,
+	}
+	policies := []string{
+		rolloutName, runtimeName, runtimePodName,
 		hookName, hookProbeName,
 		parentReplicaSetName, parentHookOriginName, parentHookPodOriginName, parentHookContractName,
 		serviceAccountName, controllerWriteName,
 		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
 		certificateMutatingWriteName, certificateValidatingWriteName,
 	}
-	policies := append(append([]string(nil), parameterized...), remaining...)
 
 	order := []string{
 		teardownKey("MutatingWebhookConfiguration", AdmissionConfigurationName),
@@ -538,6 +663,8 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 	}
 	order = append(order,
 		teardownKey("ConfigMap", HookIdentityProbeObjectName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)),
+		teardownKey("ValidatingAdmissionPolicyBinding", activationName),
+		teardownKey("ValidatingAdmissionPolicy", activationName),
 		teardownKey("ConfigMap", ReleaseActivationName),
 		teardownKey("ValidatingAdmissionPolicyBinding", namespaceName),
 		teardownKey("ValidatingAdmissionPolicy", namespaceName),

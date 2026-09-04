@@ -44,6 +44,8 @@ spec:
           image: {{ include "ptah-operator.managerImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           args:
             - image-check
             - --release-sequence={{ include "ptah-operator.releaseSequence" . }}
@@ -249,6 +251,8 @@ spec:
           image: {{ include "ptah-operator.managerImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           args:
             {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "identity-probe" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
             - {{ . | quote }}
@@ -495,6 +499,8 @@ spec:
           image: {{ include "ptah-operator.managerImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           args:
             {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "preflight" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
             - {{ . | quote }}
@@ -618,6 +624,8 @@ spec:
           image: {{ include "ptah-operator.managerImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           args:
             {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "reconcile" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
             - {{ . | quote }}

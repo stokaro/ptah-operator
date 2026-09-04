@@ -512,6 +512,46 @@ func TestWorkloadInventoryVerifyRuntimeBeforeQuiesce(t *testing.T) {
 	}
 }
 
+func TestWorkloadInventoryRuntimeReplicaSetHashBounds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		hash string
+		want string
+	}{
+		{name: "one character", hash: "a"},
+		{name: "ten characters", hash: "6f7d8c9b5a"},
+		{name: "empty", hash: "", want: "invalid pod-template-hash"},
+		{name: "eleven characters", hash: "abcdefghijk", want: "invalid pod-template-hash"},
+		{name: "invalid alphabet", hash: "abc12_", want: "invalid pod-template-hash"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			guard := workloadInventoryTestGuard()
+			deployment, replicaSet, _ := runtimeInventoryChain(
+				guard,
+				guard.ControllerDeploymentName,
+				guard.ControllerServiceAccountName,
+				"controller",
+				test.hash,
+			)
+			inventory := NewWorkloadInventory(guard, nil, nil, nil, nil)
+			err := inventory.verifyRuntimeReplicaSet(replicaSet, deployment, guard.ControllerDeploymentName, "controller")
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("verifyRuntimeReplicaSet() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("verifyRuntimeReplicaSet() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestWorkloadInventoryVerifiesDormantRuntimeReplicaSets(t *testing.T) {
 	fixture := newRuntimeInventoryFixture()
 	currentName := fixture.pods.result.Items[0].OwnerReferences[0].Name
@@ -684,6 +724,83 @@ func TestWorkloadInventoryProtectedRuntimePodsRemain(t *testing.T) {
 	fixture.pods.result.Continue = "next"
 	if _, err := fixture.inventory.ProtectedRuntimePodsRemain(context.Background()); err == nil || !strings.Contains(err.Error(), "repeated current continue token") {
 		t.Fatalf("ProtectedRuntimePodsRemain() continued error = %v", err)
+	}
+}
+
+func TestVerifyGeneratedObjectName(t *testing.T) {
+	longJobName := strings.Repeat("j", 60)
+	longGenerateName := longJobName + "-"
+	truncatedPrefix := longGenerateName[:workloadInventoryGeneratedNameMaxPrefixLength]
+
+	tests := []struct {
+		name         string
+		objectName   string
+		generateName string
+		expected     string
+		want         string
+	}{
+		{
+			name:         "normal prefix",
+			objectName:   "parent-abc12",
+			generateName: "parent-",
+			expected:     "parent-",
+		},
+		{
+			name:         "truncated prefix for sixty character Job",
+			objectName:   truncatedPrefix + "abc12",
+			generateName: longGenerateName,
+			expected:     longGenerateName,
+		},
+		{
+			name:         "wrong generateName",
+			objectName:   "parent-abc12",
+			generateName: "foreign-",
+			expected:     "parent-",
+			want:         "do not link to parent prefix",
+		},
+		{
+			name:         "wrong truncated prefix",
+			objectName:   strings.Repeat("k", workloadInventoryGeneratedNameMaxPrefixLength) + "abc12",
+			generateName: longGenerateName,
+			expected:     longGenerateName,
+			want:         "do not link to parent prefix",
+		},
+		{
+			name:         "untruncated long prefix",
+			objectName:   longGenerateName + "abc12",
+			generateName: longGenerateName,
+			expected:     longGenerateName,
+			want:         "does not have one exact generated-name suffix",
+		},
+		{
+			name:         "short suffix",
+			objectName:   "parent-abc1",
+			generateName: "parent-",
+			expected:     "parent-",
+			want:         "does not have one exact generated-name suffix",
+		},
+		{
+			name:         "invalid suffix character",
+			objectName:   "parent-abc_2",
+			generateName: "parent-",
+			expected:     "parent-",
+			want:         "does not have one exact generated-name suffix",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := verifyGeneratedObjectName("generated object", test.objectName, test.generateName, test.expected)
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("verifyGeneratedObjectName() error = %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("verifyGeneratedObjectName() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

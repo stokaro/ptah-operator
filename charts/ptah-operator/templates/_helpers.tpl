@@ -70,12 +70,14 @@ app.kubernetes.io/component: controller
 {{- end -}}
 
 {{- define "ptah-operator.crdManagerServiceAccountName" -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 30 | trimSuffix "-" -}}
+{{- /* Keep every generated Pod prefix intact through the largest positive int32 release sequence. */ -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 24 | trimSuffix "-" -}}
 {{- printf "%s-crd-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.teardownServiceAccountName" -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 30 | trimSuffix "-" -}}
+{{- /* Keep every generated Pod prefix intact through the largest positive int32 release sequence. */ -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 24 | trimSuffix "-" -}}
 {{- printf "%s-cleanup-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
@@ -95,7 +97,8 @@ app.kubernetes.io/component: controller
 {{- end -}}
 
 {{- define "ptah-operator.teardownQuiesceJobName" -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 30 | trimSuffix "-" -}}
+{{- /* Keep the generated Pod separator intact through the largest positive int32 release sequence. */ -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 24 | trimSuffix "-" -}}
 {{- printf "%s-quiesce-v%s-%s" $base (include "ptah-operator.releaseSequence" .) (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 

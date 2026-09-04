@@ -10,10 +10,15 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	celgo "github.com/google/cel-go/cel"
+	"github.com/google/cel-go/common/types"
+	"github.com/google/cel-go/common/types/ref"
+	"github.com/google/cel-go/ext"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -182,9 +187,9 @@ func TestHookIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 	teardownJob := guard.hookJobName("teardown")
 	policy := guard.hookIdentityPolicy()
 	wantMatch := fmt.Sprintf(
-		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q) || request.name.startsWith(%q))))`,
+		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
 		guard.ReleaseNamespace, guard.HookServiceAccountName, teardownServiceAccount, guard.HookServiceAccountName, teardownServiceAccount,
-		identityJob+"-", preflightJob+"-", reconcileJob+"-", quiesceJob+"-", teardownJob+"-",
+		generatedPodRequestNameExpression(identityJob), generatedPodRequestNameExpression(preflightJob), generatedPodRequestNameExpression(reconcileJob), generatedPodRequestNameExpression(quiesceJob), generatedPodRequestNameExpression(teardownJob),
 	)
 	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 		t.Fatal("hook identity policy is not fail-closed")
@@ -407,7 +412,7 @@ func TestRolloutGuardQuiesceWaitsForSelectedPodsToDisappear(t *testing.T) {
 	}
 }
 
-func TestRolloutPolicyCoversScaleAndAdmissionResourcesWithMonotonicFloors(t *testing.T) {
+func TestRolloutPolicyCoversScaleAndActivationAwareRecovery(t *testing.T) {
 	guard, _, _, _ := readyRolloutGuard()
 	policy := guard.policy(7, 5)
 	serializedBytes, err := json.Marshal(policy.Spec)
@@ -430,9 +435,10 @@ func TestRolloutPolicyCoversScaleAndAdmissionResourcesWithMonotonicFloors(t *tes
 	}
 	joined := strings.Join(expressions, "\n")
 	for _, required := range []string{
-		"variables.newState >= 7",
-		"variables.newAdmission >= 5",
-		"variables.newRelease >= 1",
+		"variables.activationValid",
+		"variables.isActiveIdentity || variables.stopTransition",
+		"variables.newRelease != 1 || variables.newState == 7",
+		"variables.newAdmission == 5",
 		ControllerDeploymentAnnotation,
 		ControllerServiceAccountAnnotation,
 		rolloutGuardDenialMessage(guard.ReleaseSequence),
@@ -440,6 +446,19 @@ func TestRolloutPolicyCoversScaleAndAdmissionResourcesWithMonotonicFloors(t *tes
 		if !strings.Contains(joined, required) {
 			t.Fatalf("policy validations do not contain %q", required)
 		}
+	}
+}
+
+func TestRolloutEnforcementProbeCannotUseBootstrapRecoveryException(t *testing.T) {
+	t.Parallel()
+
+	guard, _, _, _ := readyRolloutGuard()
+	probe := guard.probeDeployment(false)
+	if got := probe.Annotations[ReleaseSequenceAnnotation]; got != strconv.FormatInt(int64(guard.ReleaseSequence), 10) {
+		t.Fatalf("probe release sequence = %q, want candidate sequence", got)
+	}
+	if _, found := probe.Annotations[ControllerStateVersionAnnotation]; found {
+		t.Fatal("rollout enforcement probe unexpectedly has a valid controller-state marker")
 	}
 }
 
@@ -463,6 +482,8 @@ func TestRuntimePolicyBindsSingleTrustedContainerAndExactVerifierShape(t *testin
 		`--verify-controller-state=true`,
 		"volumeMounts.size() == 3",
 		`terminationMessagePath == \"/dev/termination-log\"`,
+		`(!has(object.spec.template.spec.initContainers[0].restartPolicyRules) || object.spec.template.spec.initContainers[0].restartPolicyRules.size() == 0)`,
+		`(!has(object.spec.template.spec.containers[0].restartPolicyRules) || object.spec.template.spec.containers[0].restartPolicyRules.size() == 0)`,
 		`!has(object.spec.template.spec.containers[0].securityContext.seccompProfile)`,
 		"!has(object.spec.template.spec.containers[0].lifecycle)",
 	} {
@@ -470,6 +491,387 @@ func TestRuntimePolicyBindsSingleTrustedContainerAndExactVerifierShape(t *testin
 			t.Fatalf("runtime policy does not contain %q", required)
 		}
 	}
+}
+
+// This is intentionally a white-box test because the activation-aware
+// transition matrix is an internal retained-policy contract that is observable
+// only while two release policies overlap in the API server.
+func TestRolloutAndRuntimeDeploymentActivationTruthTable(t *testing.T) {
+	t.Parallel()
+
+	guard := runtimePodGuardFixture()
+	guard.ReleaseSequence = 2
+	guard.ControllerStateVersion = 2
+	guard.AdmissionContractVersion = 2
+	guard.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("2", 64)
+	guard.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
+	rolloutPolicy := guard.policy(guard.ControllerStateVersion, guard.AdmissionContractVersion)
+	runtimePolicy := guard.runtimePolicy(guard.ControllerStateVersion, guard.ReleaseSequence, guard.ManagerImage)
+	assertAdmissionPolicyCELHeadroom(t, "activation-aware rollout policy", rolloutPolicy)
+	assertAdmissionPolicyCELHeadroom(t, "activation-aware runtime policy", runtimePolicy)
+	predecessorImage := "registry.example/ptah@sha256:" + strings.Repeat("1", 64)
+
+	tests := []struct {
+		name          string
+		active        int64
+		activeState   int64
+		activeImage   string
+		operation     string
+		subresource   string
+		actor         string
+		oldMarker     int64
+		newMarker     int64
+		changeRuntime bool
+		wantRollout   bool
+		wantRuntime   bool
+		malformed     bool
+	}{
+		{name: "bootstrap annotation-free create", operation: "CREATE", actor: "helm", activeImage: guard.ManagerImage, wantRollout: true, wantRuntime: true},
+		{name: "bootstrap candidate create denied", operation: "CREATE", actor: rolloutHookUsername(guard), newMarker: 2, activeImage: guard.ManagerImage},
+		{name: "bootstrap candidate stop", operation: "UPDATE", actor: rolloutHookUsername(guard), newMarker: 2, activeImage: guard.ManagerImage, wantRollout: true, wantRuntime: true},
+		{name: "active predecessor create", active: 1, activeState: 1, activeImage: predecessorImage, operation: "CREATE", actor: "helm", newMarker: 1, wantRollout: true, wantRuntime: true},
+		{name: "active predecessor update", active: 1, activeState: 1, activeImage: predecessorImage, operation: "UPDATE", actor: "helm", oldMarker: 1, newMarker: 1, wantRollout: true, wantRuntime: true},
+		{name: "rollback staged stop to active predecessor", active: 1, activeState: 1, activeImage: predecessorImage, operation: "UPDATE", actor: "helm", oldMarker: 2, newMarker: 1, wantRollout: true, wantRuntime: true},
+		{name: "candidate stop before activation", active: 1, activeState: 1, activeImage: predecessorImage, operation: "UPDATE", actor: rolloutHookUsername(guard), oldMarker: 1, newMarker: 2, wantRollout: true, wantRuntime: true},
+		{name: "candidate stop requires exact preserved runtime", active: 1, activeState: 1, activeImage: predecessorImage, operation: "UPDATE", actor: rolloutHookUsername(guard), oldMarker: 1, newMarker: 2, changeRuntime: true},
+		{name: "candidate stop requires hook", active: 1, activeState: 1, activeImage: predecessorImage, operation: "UPDATE", actor: "helm", oldMarker: 1, newMarker: 2},
+		{name: "scale is always denied", active: 1, activeState: 1, activeImage: predecessorImage, operation: "UPDATE", subresource: "scale", actor: "helm", oldMarker: 1, newMarker: 1, wantRuntime: true},
+		{name: "activated candidate update", active: 2, activeState: 2, activeImage: guard.ManagerImage, operation: "UPDATE", actor: "helm", oldMarker: 2, newMarker: 2, wantRollout: true, wantRuntime: true},
+		{name: "activated predecessor denied", active: 2, activeState: 2, activeImage: guard.ManagerImage, operation: "UPDATE", actor: "helm", oldMarker: 1, newMarker: 1},
+		{name: "malformed activation denied", active: 1, activeState: 1, activeImage: predecessorImage, operation: "UPDATE", actor: "helm", oldMarker: 1, newMarker: 1, malformed: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			activeState := test.activeState
+			if activeState == 0 {
+				activeState = int64(guard.ControllerStateVersion)
+			}
+			paramsRelease := test.active
+			if paramsRelease == 0 {
+				paramsRelease = int64(guard.ReleaseSequence)
+			}
+			params := rolloutActivationCELObject(guard, test.active, activeState, activeState, paramsRelease, test.activeImage)
+			if test.malformed {
+				params["metadata"].(map[string]any)["labels"].(map[string]any)["app.kubernetes.io/component"] = "foreign"
+			}
+			oldObject := rolloutDeploymentCELObject(guard, test.oldMarker, test.activeState, test.activeImage)
+			object := rolloutDeploymentCELObject(guard, test.newMarker, markerState(test.newMarker, guard.ControllerStateVersion), test.activeImage)
+			if test.operation == "UPDATE" && test.newMarker == int64(guard.ReleaseSequence) && test.oldMarker != test.newMarker {
+				object["spec"].(map[string]any)["replicas"] = int64(0)
+				object["spec"].(map[string]any)["template"] = rolloutCELClone(t, oldObject["spec"].(map[string]any)["template"])
+			}
+			if test.changeRuntime {
+				object["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = guard.ManagerImage
+			}
+			request := rolloutRequestCELObject(guard, test.operation, test.subresource, test.actor)
+			if got := evaluatePolicyValidationPrefix(t, rolloutPolicy, 7, object, oldObject, request, params); got != test.wantRollout {
+				t.Fatalf("rollout activation decision = %t, want %t", got, test.wantRollout)
+			}
+			if test.subresource == "scale" {
+				return
+			}
+			if got := evaluatePolicyValidationPrefix(t, runtimePolicy, 3, object, oldObject, request, params); got != test.wantRuntime {
+				t.Fatalf("runtime activation decision = %t, want %t", got, test.wantRuntime)
+			}
+		})
+	}
+}
+
+// This is intentionally a white-box test because an admission configuration
+// must remain on the active identity until the retained activation parameter
+// commits the candidate sequence.
+func TestRolloutAdmissionActivationTruthTable(t *testing.T) {
+	t.Parallel()
+
+	guard := runtimePodGuardFixture()
+	guard.ReleaseSequence = 2
+	guard.ControllerStateVersion = 2
+	guard.AdmissionContractVersion = 2
+	guard.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("2", 64)
+	guard.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
+	policy := guard.policy(guard.ControllerStateVersion, guard.AdmissionContractVersion)
+	predecessorImage := "registry.example/ptah@sha256:" + strings.Repeat("1", 64)
+
+	for _, test := range []struct {
+		name        string
+		active      int64
+		activeState int64
+		marker      int64
+		markerState int64
+		admission   int64
+		image       string
+		want        bool
+	}{
+		{name: "bootstrap annotation-free recovery", image: guard.ManagerImage, want: true},
+		{name: "bootstrap candidate mutation denied", marker: 2, markerState: 2, admission: 2, image: guard.ManagerImage},
+		{name: "active predecessor recovery", active: 1, activeState: 1, marker: 1, markerState: 1, admission: 1, image: predecessorImage, want: true},
+		{name: "candidate mutation before activation denied", active: 1, activeState: 1, marker: 2, markerState: 2, admission: 2, image: predecessorImage},
+		{name: "activated candidate exact identity", active: 2, activeState: 2, marker: 2, markerState: 2, admission: 2, image: guard.ManagerImage, want: true},
+		{name: "activated predecessor denied", active: 2, activeState: 2, marker: 1, markerState: 1, admission: 1, image: guard.ManagerImage},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			activeState := test.activeState
+			if activeState == 0 {
+				activeState = int64(guard.ControllerStateVersion)
+			}
+			paramsRelease := test.active
+			if paramsRelease == 0 {
+				paramsRelease = int64(guard.ReleaseSequence)
+			}
+			params := rolloutActivationCELObject(guard, test.active, activeState, activeState, paramsRelease, test.image)
+			object := rolloutAdmissionCELObject(guard, test.marker, test.markerState, test.admission)
+			request := map[string]any{
+				"operation": "UPDATE",
+				"name":      AdmissionConfigurationName,
+				"dryRun":    false,
+				"resource":  map[string]any{"group": "admissionregistration.k8s.io"},
+				"userInfo":  map[string]any{"username": "helm"},
+			}
+			if got := evaluatePolicyValidationPrefix(t, policy, 7, object, object, request, params); got != test.want {
+				t.Fatalf("admission activation decision = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func rolloutAdmissionCELObject(g *RolloutGuard, marker, state, admission int64) map[string]any {
+	metadata := map[string]any{"name": AdmissionConfigurationName}
+	if marker > 0 {
+		metadata["annotations"] = map[string]any{
+			ControllerStateVersionAnnotation:   strconv.FormatInt(state, 10),
+			AdmissionContractVersionAnnotation: strconv.FormatInt(admission, 10),
+			ReleaseSequenceAnnotation:          strconv.FormatInt(marker, 10),
+			ReleaseNameAnnotation:              g.ReleaseName,
+			ReleaseNamespaceAnnotation:         g.ReleaseNamespace,
+			CoordinationAnnotation:             g.CoordinationNamespace,
+			LeaderElectionAnnotation:           strconv.FormatBool(g.LeaderElection),
+			LeaderElectionIDAnnotation:         g.LeaderElectionID,
+			WebhookServiceAnnotation:           g.WebhookServiceName,
+			HookServiceAccountAnnotation:       g.HookServiceAccountName,
+			ControllerServiceAccountAnnotation: g.ControllerServiceAccountName,
+			ControllerDeploymentAnnotation:     g.ControllerDeploymentName,
+			CertificateDeploymentAnnotation:    g.CertificateDeploymentName,
+		}
+	}
+	return map[string]any{"metadata": metadata}
+}
+
+func markerState(marker int64, candidate int32) int64 {
+	if marker == 0 {
+		return 0
+	}
+	if marker == int64(candidate) {
+		return int64(candidate)
+	}
+	return marker
+}
+
+func rolloutHookUsername(g *RolloutGuard) string {
+	return "system:serviceaccount:" + g.ReleaseNamespace + ":" + g.HookServiceAccountName
+}
+
+func rolloutActivationCELObject(g *RolloutGuard, active, state, admission, release int64, image string) map[string]any {
+	return map[string]any{
+		"metadata": map[string]any{
+			"name":      ReleaseActivationName,
+			"namespace": g.ReleaseNamespace,
+			"annotations": map[string]any{
+				"helm.sh/hook":                     "pre-install,pre-upgrade",
+				"helm.sh/hook-weight":              releaseActivationHookWeight,
+				"helm.sh/resource-policy":          "keep",
+				rolloutGuardVersionAnnotation:      rolloutGuardVersion,
+				ReleaseNameAnnotation:              g.ReleaseName,
+				ReleaseNamespaceAnnotation:         g.ReleaseNamespace,
+				ControllerStateVersionAnnotation:   strconv.FormatInt(state, 10),
+				AdmissionContractVersionAnnotation: strconv.FormatInt(admission, 10),
+				ReleaseSequenceAnnotation:          strconv.FormatInt(release, 10),
+				ManagerImageAnnotation:             image,
+			},
+			"labels": map[string]any{
+				managedByLabel:                rolloutGuardManagedBy,
+				instanceLabel:                 g.ReleaseName,
+				"app.kubernetes.io/component": rolloutGuardComponent,
+			},
+		},
+		"data": map[string]any{activeReleaseDataKey: strconv.FormatInt(active, 10)},
+	}
+}
+
+func rolloutDeploymentCELObject(g *RolloutGuard, marker, state int64, image string) map[string]any {
+	metadata := map[string]any{
+		"name":      g.ControllerDeploymentName,
+		"namespace": g.ReleaseNamespace,
+		"uid":       "deployment-uid",
+		"labels":    map[string]any{instanceLabel: g.ReleaseName},
+	}
+	templateMetadata := map[string]any{"labels": map[string]any{instanceLabel: g.ReleaseName}}
+	if marker > 0 {
+		metadata["annotations"] = map[string]any{
+			ControllerStateVersionAnnotation: strconv.FormatInt(state, 10),
+			ReleaseSequenceAnnotation:        strconv.FormatInt(marker, 10),
+		}
+		templateMetadata["annotations"] = map[string]any{
+			ControllerStateVersionAnnotation: strconv.FormatInt(state, 10),
+			ReleaseSequenceAnnotation:        strconv.FormatInt(marker, 10),
+		}
+	}
+	return map[string]any{
+		"metadata": metadata,
+		"spec": map[string]any{
+			"replicas":        int64(1),
+			"selector":        map[string]any{"matchLabels": map[string]any{instanceLabel: g.ReleaseName}},
+			"strategy":        map[string]any{"type": "Recreate"},
+			"minReadySeconds": int64(0),
+			"template": map[string]any{
+				"metadata": templateMetadata,
+				"spec": map[string]any{
+					"serviceAccountName": g.ControllerServiceAccountName,
+					"containers":         []any{map[string]any{"name": "manager", "image": image}},
+					"initContainers":     []any{map[string]any{"name": "verify-candidate-runtime", "image": image}},
+				},
+			},
+		},
+	}
+}
+
+func rolloutRequestCELObject(g *RolloutGuard, operation, subresource, actor string) map[string]any {
+	request := map[string]any{
+		"operation": operation,
+		"namespace": g.ReleaseNamespace,
+		"name":      g.ControllerDeploymentName,
+		"dryRun":    false,
+		"resource":  map[string]any{"group": "apps"},
+		"userInfo":  map[string]any{"username": actor},
+	}
+	if subresource != "" {
+		request["subResource"] = subresource
+	}
+	return request
+}
+
+func evaluatePolicyValidationPrefix(
+	t *testing.T,
+	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
+	validationCount int,
+	object, oldObject, request map[string]any,
+	params any,
+) bool {
+	t.Helper()
+	values := map[string]any{
+		"object":    object,
+		"oldObject": oldObject,
+		"request":   request,
+		"params":    params,
+	}
+	variables := make(map[string]any, len(policy.Spec.Variables))
+	for _, variable := range policy.Spec.Variables {
+		variables[variable.Name] = evaluateRolloutCEL(t, variable.Expression, values, variables)
+	}
+	for index := 0; index < validationCount; index++ {
+		result := evaluateRolloutCEL(t, policy.Spec.Validations[index].Expression, values, variables)
+		allowed, ok := result.(bool)
+		if !ok {
+			t.Fatalf("validation %d result = %T(%v), want bool", index, result, result)
+		}
+		if !allowed {
+			return false
+		}
+	}
+	return true
+}
+
+func evaluatePolicyMatchConditions(
+	t *testing.T,
+	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
+	object, oldObject, request map[string]any,
+	params any,
+) bool {
+	t.Helper()
+	values := map[string]any{
+		"object":    object,
+		"oldObject": oldObject,
+		"request":   request,
+		"params":    params,
+	}
+	for index, condition := range policy.Spec.MatchConditions {
+		result := evaluateRolloutCEL(t, condition.Expression, values, map[string]any{})
+		matches, ok := result.(bool)
+		if !ok {
+			t.Fatalf("match condition %d result = %T(%v), want bool", index, result, result)
+		}
+		if !matches {
+			return false
+		}
+	}
+	return true
+}
+
+func evaluateRolloutCEL(t *testing.T, expression string, values, variables map[string]any) any {
+	t.Helper()
+	expression = strings.ReplaceAll(expression, " int(", " testInt(")
+	expression = strings.ReplaceAll(expression, " string(", " testString(")
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("oldObject", celgo.DynType),
+		celgo.Variable("request", celgo.DynType),
+		celgo.Variable("params", celgo.DynType),
+		celgo.Variable("variables", celgo.DynType),
+		celgo.Function("testInt", celgo.Overload(
+			"ptah_test_dyn_to_int",
+			[]*celgo.Type{celgo.DynType},
+			celgo.IntType,
+			celgo.UnaryBinding(func(value ref.Val) ref.Val {
+				parsed, err := strconv.ParseInt(fmt.Sprint(value.Value()), 10, 64)
+				if err != nil {
+					return types.NewErr("parse integer: %v", err)
+				}
+				return types.Int(parsed)
+			}),
+		)),
+		celgo.Function("testString", celgo.Overload(
+			"ptah_test_dyn_to_string",
+			[]*celgo.Type{celgo.DynType},
+			celgo.StringType,
+			celgo.UnaryBinding(func(value ref.Val) ref.Val {
+				return types.String(fmt.Sprint(value.Value()))
+			}),
+		)),
+		ext.Strings(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast, issues := environment.Compile(expression)
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile CEL %q: %v", expression, issues.Err())
+	}
+	program, err := environment.Program(ast)
+	if err != nil {
+		t.Fatalf("build CEL %q: %v", expression, err)
+	}
+	activation := make(map[string]any, len(values)+1)
+	for name, value := range values {
+		activation[name] = value
+	}
+	activation["variables"] = variables
+	result, _, err := program.Eval(activation)
+	if err != nil {
+		t.Fatalf("evaluate CEL %q: %v", expression, err)
+	}
+	return result.Value()
+}
+
+func rolloutCELClone(t *testing.T, source any) any {
+	t.Helper()
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone any
+	if err := json.Unmarshal(encoded, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone
 }
 
 func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingClient, *rolloutDeploymentClient) {

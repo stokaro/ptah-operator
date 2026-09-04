@@ -642,6 +642,8 @@ spec:
           image: {{ include "ptah-operator.managerImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           args:
             {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown-quiesce" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
             - {{ . | quote }}
@@ -720,6 +722,8 @@ spec:
           image: {{ include "ptah-operator.managerImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
           args:
             {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
             - {{ . | quote }}

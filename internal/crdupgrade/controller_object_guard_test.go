@@ -85,8 +85,8 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			}
 			policy := guard.policy(entry)
 			binding := guard.binding(entry)
-			if policy.Spec.ParamKind != nil || binding.Spec.ParamRef != nil {
-				t.Fatal("controller object guard must not depend on admission parameters")
+			if policy.Spec.ParamKind == nil || policy.Spec.ParamKind.APIVersion != "v1" || policy.Spec.ParamKind.Kind != "ConfigMap" {
+				t.Fatalf("controller object guard does not use the release activation ConfigMap: %#v", policy.Spec.ParamKind)
 			}
 			if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 				t.Fatal("controller object guard is not fail-closed")
@@ -102,6 +102,33 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			if binding.Spec.PolicyName != policy.Name ||
 				!reflect.DeepEqual(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
 				t.Fatalf("controller object binding is not exact deny-only enforcement: %#v", binding.Spec)
+			}
+			if binding.Spec.ParamRef == nil || binding.Spec.ParamRef.Name != ReleaseActivationName ||
+				binding.Spec.ParamRef.Namespace != guard.ReleaseNamespace ||
+				binding.Spec.ParamRef.ParameterNotFoundAction == nil ||
+				*binding.Spec.ParamRef.ParameterNotFoundAction != admissionregistrationv1.DenyAction {
+				t.Fatalf("controller object binding is not fail-closed on the exact activation parameter: %#v", binding.Spec.ParamRef)
+			}
+			if !reflect.DeepEqual(policy.Spec.Variables, controllerObjectActivationVariables()) {
+				t.Fatalf("controller object activation variables differ from the exact contract: %#v", policy.Spec.Variables)
+			}
+			variableNames := make([]string, len(policy.Spec.Variables))
+			for index, variable := range policy.Spec.Variables {
+				variableNames[index] = variable.Name
+			}
+			wantVariableNames := []string{
+				"activeRelease",
+				"activeControllerStateString",
+				"activeControllerState",
+				"activeControllerImage",
+				"isBootstrap",
+			}
+			if !reflect.DeepEqual(variableNames, wantVariableNames) {
+				t.Fatalf("controller object activation variable order = %v, want %v", variableNames, wantVariableNames)
+			}
+			if len(policy.Spec.Validations) != len(entry.validations)+1 ||
+				policy.Spec.Validations[0].Expression != guard.activationParameterExpression() {
+				t.Fatalf("controller object guard does not validate its activation parameter first: %#v", policy.Spec.Validations)
 			}
 		})
 		if _, exists := seenResources[entry.resource]; exists {
@@ -199,26 +226,35 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		}
 	}
 	legacyEnvelope := entries[0].validations[1].Expression
-	if !strings.HasPrefix(legacyEnvelope, `(request.operation == "UPDATE"`) {
-		t.Fatalf("predecessor annotation envelope is not restricted to Job updates: %s", legacyEnvelope)
+	bootstrapMarker := `(request.operation == "CREATE" && variables.isBootstrap)`
+	currentMarker := `|| (variables.activeRelease > 0 && (`
+	bootstrapIndex := strings.Index(legacyEnvelope, bootstrapMarker)
+	currentIndex := strings.Index(legacyEnvelope, currentMarker)
+	if bootstrapIndex < 0 || currentIndex < 0 || bootstrapIndex >= currentIndex {
+		t.Fatalf("legacy Job CREATE is not isolated to bootstrap before the active contract: %s", legacyEnvelope)
 	}
-	applyBranch := `) || (request.operation == "UPDATE" && object.metadata.labels["operator.ptah.dev/operation"] == "apply"`
-	applyIndex := strings.Index(legacyEnvelope, applyBranch)
-	currentIndex := strings.Index(legacyEnvelope, `) || (has(object.metadata.annotations)`)
-	if applyIndex < 0 || currentIndex < 0 || applyIndex >= currentIndex {
-		t.Fatalf("predecessor Apply cleanup branch is not separated from current envelopes: %s", legacyEnvelope)
+	legacyPart := legacyEnvelope[:currentIndex]
+	currentPart := legacyEnvelope[currentIndex:]
+	if !strings.Contains(legacyPart, `request.operation == "UPDATE"`) ||
+		!strings.Contains(legacyPart, `object.metadata.labels["operator.ptah.dev/operation"] == "apply"`) {
+		t.Fatalf("legacy terminal Job update envelopes are incomplete: %s", legacyPart)
 	}
-	if strings.Contains(legacyEnvelope[:applyIndex], `"apply"`) {
-		t.Fatal("predecessor read-only cleanup annotation envelope permits Apply Jobs")
-	}
-	applyEnvelope := legacyEnvelope[applyIndex:currentIndex]
 	for _, forbidden := range []string{
 		`operator.ptah.dev/controller-image`,
 		`operator.ptah.dev/controller-revision`,
 		`operator.ptah.dev/controller-state-version`,
 	} {
-		if strings.Contains(applyEnvelope, forbidden) {
-			t.Fatalf("predecessor Apply cleanup envelope permits %s", forbidden)
+		if strings.Contains(legacyPart, forbidden) {
+			t.Fatalf("legacy Job envelope permits %s", forbidden)
+		}
+	}
+	for _, required := range []string{
+		`request.operation == "UPDATE" || (request.operation == "CREATE" && (`,
+		`object.metadata.annotations["operator.ptah.dev/controller-image"] == variables.activeControllerImage`,
+		`object.metadata.annotations["operator.ptah.dev/controller-state-version"] == variables.activeControllerStateString`,
+	} {
+		if !strings.Contains(currentPart, required) {
+			t.Fatalf("current Job envelope is not bound to active controller identity: missing %q", required)
 		}
 	}
 	chunk := strings.Join(validationExpressions(entries[1].validations), "\n")
@@ -238,7 +274,17 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`object.metadata.labels.size() == 1`,
 		`object.spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
 		`object.spec.contractVersion == 3`,
+		`variables.isBootstrap && object.spec.contractVersion == 2`,
+		`variables.activeRelease > 0`,
 		`object.spec.executionBindingID.matches`,
+		`has(dyn(object.spec).controllerImage)`,
+		`dyn(object.spec).controllerImage.matches`,
+		`has(dyn(object.spec).controllerRevision)`,
+		`dyn(object.spec).controllerRevision != ""`,
+		`has(dyn(object.spec).controllerStateVersion)`,
+		`dyn(object.spec).controllerStateVersion >= 1`,
+		`dyn(object.spec).controllerImage == variables.activeControllerImage`,
+		`dyn(object.spec).controllerStateVersion == variables.activeControllerState`,
 		`object.spec.statementCount >= 1`,
 		`object.spec.chunks.size() <= 16`,
 		`chunk.key == "chunk"`,
@@ -248,6 +294,193 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 			t.Fatalf("plan structural contract lacks %q", marker)
 		}
 	}
+	for _, staticReference := range []string{
+		`object.spec.controllerImage`,
+		`object.spec.controllerRevision`,
+		`object.spec.controllerStateVersion`,
+	} {
+		if strings.Contains(plan, staticReference) {
+			t.Fatalf("plan structural contract statically references candidate-only field %q and cannot type-check against the predecessor CRD", staticReference)
+		}
+	}
+}
+
+// This white-box test evaluates the unexported CEL fragments directly because
+// their bootstrap-to-active transition is not observable through a public Go
+// API until the policy is installed in an API server.
+func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
+	t.Parallel()
+
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("request", celgo.DynType),
+		celgo.Variable("variables", celgo.DynType),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluate := func(expression string, object map[string]any, operation string, variables map[string]any) bool {
+		t.Helper()
+		ast, issues := environment.Compile(expression)
+		if issues != nil && issues.Err() != nil {
+			t.Fatalf("compile activation contract: %v", issues.Err())
+		}
+		program, programErr := environment.Program(ast)
+		if programErr != nil {
+			t.Fatalf("build activation contract: %v", programErr)
+		}
+		result, _, evaluationErr := program.Eval(map[string]any{
+			"object":    object,
+			"request":   map[string]any{"operation": operation},
+			"variables": variables,
+		})
+		if evaluationErr != nil {
+			t.Fatalf("evaluate activation contract: %v", evaluationErr)
+		}
+		allowed, ok := result.Value().(bool)
+		if !ok {
+			t.Fatalf("activation contract result = %T(%v), want bool", result.Value(), result.Value())
+		}
+		return allowed
+	}
+
+	const activeImage = "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	bootstrap := map[string]any{
+		"activeRelease":               int64(0),
+		"activeControllerStateString": "1",
+		"activeControllerState":       int64(1),
+		"activeControllerImage":       activeImage,
+		"isBootstrap":                 true,
+	}
+	active := map[string]any{
+		"activeRelease":               int64(1),
+		"activeControllerStateString": "1",
+		"activeControllerState":       int64(1),
+		"activeControllerImage":       activeImage,
+		"isBootstrap":                 false,
+	}
+	const nextActiveImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	nextActive := map[string]any{
+		"activeRelease":               int64(2),
+		"activeControllerStateString": "2",
+		"activeControllerState":       int64(2),
+		"activeControllerImage":       nextActiveImage,
+		"isBootstrap":                 false,
+	}
+
+	legacyJob := controllerObjectLegacyJobCELObject(false)
+	legacyApplyJob := controllerObjectLegacyJobCELObject(true)
+	currentJob := controllerObjectCurrentJobCELObject(activeImage, int64(1))
+	jobExpression := controllerJobAnnotationContractExpression()
+	for _, test := range []struct {
+		name      string
+		object    map[string]any
+		operation string
+		variables map[string]any
+		want      bool
+	}{
+		{name: "legacy create during bootstrap", object: legacyJob, operation: "CREATE", variables: bootstrap, want: true},
+		{name: "legacy create after activation", object: legacyJob, operation: "CREATE", variables: active, want: false},
+		{name: "legacy terminal update after activation", object: legacyJob, operation: "UPDATE", variables: active, want: true},
+		{name: "legacy apply create during bootstrap", object: legacyApplyJob, operation: "CREATE", variables: bootstrap, want: true},
+		{name: "legacy apply create after activation", object: legacyApplyJob, operation: "CREATE", variables: active, want: false},
+		{name: "legacy apply terminal update after activation", object: legacyApplyJob, operation: "UPDATE", variables: active, want: true},
+		{name: "current create after activation", object: currentJob, operation: "CREATE", variables: active, want: true},
+		{name: "current create during bootstrap", object: currentJob, operation: "CREATE", variables: bootstrap, want: false},
+		{name: "current update during bootstrap", object: currentJob, operation: "UPDATE", variables: bootstrap, want: false},
+		{name: "previous current update after newer activation", object: currentJob, operation: "UPDATE", variables: nextActive, want: true},
+		{name: "previous current create after newer activation", object: currentJob, operation: "CREATE", variables: nextActive, want: false},
+		{name: "current create with foreign image", object: controllerObjectCurrentJobCELObject(nextActiveImage, int64(1)), operation: "CREATE", variables: active, want: false},
+		{name: "current create with foreign state", object: controllerObjectCurrentJobCELObject(activeImage, int64(2)), operation: "CREATE", variables: active, want: false},
+	} {
+		t.Run("Job/"+test.name, func(t *testing.T) {
+			if got := evaluate(jobExpression, test.object, test.operation, test.variables); got != test.want {
+				t.Fatalf("Job activation contract = %t, want %t", got, test.want)
+			}
+		})
+	}
+
+	legacyPlan := controllerObjectPlanCELObject(2, "", 0)
+	currentPlan := controllerObjectPlanCELObject(3, activeImage, 1)
+	planExpression := controllerPlanContractExpression()
+	for _, test := range []struct {
+		name      string
+		object    map[string]any
+		variables map[string]any
+		want      bool
+	}{
+		{name: "legacy v2 during bootstrap", object: legacyPlan, variables: bootstrap, want: true},
+		{name: "legacy v2 after activation", object: legacyPlan, variables: active, want: false},
+		{name: "current v3 after activation", object: currentPlan, variables: active, want: true},
+		{name: "current v3 during bootstrap", object: currentPlan, variables: bootstrap, want: false},
+		{name: "current v3 with foreign image", object: controllerObjectPlanCELObject(3, "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 1), variables: active, want: false},
+		{name: "current v3 with foreign state", object: controllerObjectPlanCELObject(3, activeImage, 2), variables: active, want: false},
+	} {
+		t.Run("Plan/"+test.name, func(t *testing.T) {
+			if got := evaluate(planExpression, test.object, "CREATE", test.variables); got != test.want {
+				t.Fatalf("Plan activation contract = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func controllerObjectLegacyJobCELObject(apply bool) map[string]any {
+	operation := "plan"
+	annotations := map[string]any{
+		"operator.ptah.dev/operation-id":              "operation-id",
+		"operator.ptah.dev/input-fingerprint":         "sha256:" + strings.Repeat("1", 64),
+		"operator.ptah.dev/ptah-version":              "v1",
+		"operator.ptah.dev/execution-binding-id":      "v1-" + strings.Repeat("2", 32),
+		"operator.ptah.dev/admission-snapshot-digest": "sha256:" + strings.Repeat("3", 64),
+	}
+	if apply {
+		operation = "apply"
+		annotations["operator.ptah.dev/plan-fingerprint"] = "sha256:" + strings.Repeat("4", 64)
+		annotations["operator.ptah.dev/plan-content-digest"] = "sha256:" + strings.Repeat("5", 64)
+	}
+	return map[string]any{"metadata": map[string]any{
+		"labels":      map[string]any{"operator.ptah.dev/operation": operation},
+		"annotations": annotations,
+	}}
+}
+
+func controllerObjectCurrentJobCELObject(image string, state int64) map[string]any {
+	object := controllerObjectLegacyJobCELObject(false)
+	annotations := object["metadata"].(map[string]any)["annotations"].(map[string]any)
+	annotations["operator.ptah.dev/controller-image"] = image
+	annotations["operator.ptah.dev/controller-revision"] = "revision"
+	annotations["operator.ptah.dev/controller-state-version"] = strconv.FormatInt(state, 10)
+	return object
+}
+
+func controllerObjectPlanCELObject(contractVersion int64, image string, state int64) map[string]any {
+	spec := map[string]any{
+		"contractVersion":          contractVersion,
+		"fingerprint":              "sha256:" + strings.Repeat("1", 64),
+		"contentDigest":            "sha256:" + strings.Repeat("2", 64),
+		"artifactDigest":           "sha256:" + strings.Repeat("3", 64),
+		"coordinationDigest":       "sha256:" + strings.Repeat("4", 64),
+		"targetIdentityDigest":     "sha256:" + strings.Repeat("5", 64),
+		"actualStateFingerprint":   "sha256:" + strings.Repeat("6", 64),
+		"desiredStateFingerprint":  "sha256:" + strings.Repeat("7", 64),
+		"policyFingerprint":        "sha256:" + strings.Repeat("8", 64),
+		"verificationPolicyUID":    "uid",
+		"verificationPolicyDigest": "sha256:" + strings.Repeat("9", 64),
+		"executionBindingID":       "v1-" + strings.Repeat("a", 32),
+		"ptahVersion":              "v1",
+		"executorImage":            "registry.example/executor@sha256:" + strings.Repeat("b", 64),
+		"runnerImage":              "registry.example/runner@sha256:" + strings.Repeat("c", 64),
+		"runnerProtocolVersion":    int64(1),
+		"dialect":                  "postgresql",
+		"statementCount":           int64(1),
+		"size":                     int64(1),
+	}
+	if contractVersion == 3 {
+		spec["controllerImage"] = image
+		spec["controllerRevision"] = "revision"
+		spec["controllerStateVersion"] = state
+	}
+	return map[string]any{"spec": spec}
 }
 
 func TestControllerJobSupportedWindowExpressionsEvaluate(t *testing.T) {
@@ -430,8 +663,10 @@ func TestControllerObjectGuardsPrecedeControllerPrivileges(t *testing.T) {
 	weights := []string{
 		certificateValidatingWriteBindingWeight,
 		controllerObjectPolicyWeight,
-		controllerObjectBindingWeight,
 		releaseActivationHookWeight,
+		"-149",
+		"-148",
+		controllerObjectBindingWeight,
 	}
 	previous, err := strconv.Atoi(weights[0])
 	if err != nil {
@@ -443,7 +678,7 @@ func TestControllerObjectGuardsPrecedeControllerPrivileges(t *testing.T) {
 			t.Fatal(err)
 		}
 		if current <= previous {
-			t.Fatalf("controller object guard hook order is not strictly increasing: %v", weights)
+			t.Fatalf("controller object policy, activation parameter/guard, and binding order is not strictly increasing: %v", weights)
 		}
 		previous = current
 	}
@@ -613,8 +848,11 @@ func assertExactControllerObjectMatch(
 	if match == nil || match.MatchPolicy == nil || *match.MatchPolicy != admissionregistrationv1.Exact {
 		t.Fatal("controller object guard matching is not Exact")
 	}
-	if match.NamespaceSelector != nil || match.ObjectSelector != nil || len(match.ExcludeResourceRules) != 0 {
-		t.Fatalf("controller object guard must not rely on selectors or exclusions: %#v", match)
+	if match.NamespaceSelector == nil || len(match.NamespaceSelector.MatchLabels) != 0 ||
+		len(match.NamespaceSelector.MatchExpressions) != 0 || match.ObjectSelector == nil ||
+		len(match.ObjectSelector.MatchLabels) != 0 || len(match.ObjectSelector.MatchExpressions) != 0 ||
+		len(match.ExcludeResourceRules) != 0 {
+		t.Fatalf("controller object guard must declare exact match-all selectors without exclusions: %#v", match)
 	}
 	if len(match.ResourceRules) != 1 {
 		t.Fatalf("controller object guard rules = %d, want one", len(match.ResourceRules))

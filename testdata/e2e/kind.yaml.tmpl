@@ -6,3 +6,9 @@ networking:
   apiServerPort: __API_SERVER_PORT__
 nodes:
   - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: KubeletConfiguration
+        apiVersion: kubelet.config.k8s.io/v1beta1
+        featureGates:
+          KubeletInUserNamespace: true

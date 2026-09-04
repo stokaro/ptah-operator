@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	celgo "github.com/google/cel-go/cel"
+	"github.com/google/cel-go/ext"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -85,7 +87,9 @@ func TestParentHookPodOriginGuardPinsJobControllerUIDChain(t *testing.T) {
 		`batch.kubernetes.io/job-name`,
 		`batch.kubernetes.io/controller-uid`,
 		`object.metadata.generateName == variables.owner.name + \"-\"`,
-		`object.metadata.name.size() == object.metadata.generateName.size() + 5`,
+		`object.metadata.generateName.substring(0, 58)`,
+		`object.metadata.name.substring(`,
+		`matches(\"^[a-z0-9]{5}$\")`,
 	} {
 		if !strings.Contains(contract, required) {
 			t.Fatalf("stable hook Pod origin contract does not contain %q", required)
@@ -93,6 +97,68 @@ func TestParentHookPodOriginGuardPinsJobControllerUIDChain(t *testing.T) {
 	}
 	if strings.Contains(contract, `"operations":["UPDATE"]`) || strings.Contains(contract, `"resources":["jobs"]`) {
 		t.Fatal("stable hook Pod origin policy is not isolated to Pod CREATE")
+	}
+}
+
+func TestGeneratedPodNameValidationMatchesAPIServerTruncation(t *testing.T) {
+	t.Parallel()
+
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("ownerName", celgo.StringType),
+		ext.Strings(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast, issues := environment.Compile(generatedPodNameValidationExpression("ownerName"))
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile generated Pod name CEL: %v", issues.Err())
+	}
+	program, err := environment.Program(ast)
+	if err != nil {
+		t.Fatalf("build generated Pod name CEL program: %v", err)
+	}
+
+	ownerAtLimit := strings.Repeat("a", 57)
+	longOwner := strings.Repeat("b", 60)
+	tests := []struct {
+		name         string
+		ownerName    string
+		generateName string
+		podName      string
+		want         bool
+	}{
+		{name: "short name", ownerName: "hook-job", generateName: "hook-job-", podName: "hook-job-abc12", want: true},
+		{name: "58-character base", ownerName: ownerAtLimit, generateName: ownerAtLimit + "-", podName: ownerAtLimit + "-abc12", want: true},
+		{name: "truncated base", ownerName: longOwner, generateName: longOwner + "-", podName: strings.Repeat("b", 58) + "abc12", want: true},
+		{name: "untruncated long base", ownerName: longOwner, generateName: longOwner + "-", podName: longOwner + "-abc12"},
+		{name: "wrong truncated prefix", ownerName: longOwner, generateName: longOwner + "-", podName: strings.Repeat("b", 57) + "xabc12"},
+		{name: "short suffix", ownerName: "hook-job", generateName: "hook-job-", podName: "hook-job-abc1"},
+		{name: "invalid suffix alphabet", ownerName: "hook-job", generateName: "hook-job-", podName: "hook-job-ab-c1"},
+		{name: "foreign generateName", ownerName: "hook-job", generateName: "foreign-", podName: "foreign-abc12"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			result, _, err := program.Eval(map[string]any{
+				"ownerName": test.ownerName,
+				"object": map[string]any{"metadata": map[string]any{
+					"generateName": test.generateName,
+					"name":         test.podName,
+				}},
+			})
+			if err != nil {
+				t.Fatalf("evaluate generated Pod name CEL: %v", err)
+			}
+			got, ok := result.Value().(bool)
+			if !ok {
+				t.Fatalf("generated Pod name CEL result = %T(%v), want bool", result.Value(), result.Value())
+			}
+			if got != test.want {
+				t.Fatalf("generated Pod name CEL = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 
@@ -132,8 +198,15 @@ func TestParentReplicaSetGuardPinsControllerOriginAndHashChain(t *testing.T) {
 		`variables.owner.uid != \"\"`,
 		`variables.owner.blockOwnerDeletion`,
 		`pod-template-hash`,
+		`matches(\"^[a-z0-9]{1,10}$\")`,
 		`object.spec.selector.matchLabels.size() == 4`,
 		`object.metadata.name == variables.expectedDeployment + \"-\" + variables.hash`,
+		`system:serviceaccount:kube-system:generic-garbage-collector`,
+		`variables.isGarbageCollectorCleanup`,
+		`object.spec == oldObject.spec`,
+		`object.status == oldObject.status`,
+		`oldObject.metadata.finalizers.filter(finalizer, finalizer == \"foregroundDeletion\").size() == 1`,
+		`object.metadata.finalizers == oldObject.metadata.finalizers.filter(finalizer, finalizer != \"foregroundDeletion\")`,
 	} {
 		if !strings.Contains(contract, required) {
 			t.Fatalf("ReplicaSet parent contract does not contain %q", required)
@@ -142,6 +215,177 @@ func TestParentReplicaSetGuardPinsControllerOriginAndHashChain(t *testing.T) {
 	if strings.Contains(contract, `resources\":[\"jobs\"`) {
 		t.Fatal("ReplicaSet policy mixes the Job schema into one CEL environment")
 	}
+}
+
+func TestReplicaSetGarbageCollectorCleanupIsFinalizerRemovalOnly(t *testing.T) {
+	t.Parallel()
+
+	expression := replicaSetGarbageCollectorCleanupExpression()
+	for _, apiManagedField := range []string{"resourceVersion", "managedFields"} {
+		if strings.Contains(expression, apiManagedField) {
+			t.Fatalf("garbage-collector cleanup pins API-managed field %q", apiManagedField)
+		}
+	}
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("oldObject", celgo.DynType),
+		celgo.Variable("request", celgo.DynType),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast, issues := environment.Compile(expression)
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile ReplicaSet garbage-collector cleanup CEL: %v", issues.Err())
+	}
+	program, err := environment.Program(ast)
+	if err != nil {
+		t.Fatalf("build ReplicaSet garbage-collector cleanup CEL program: %v", err)
+	}
+
+	base := map[string]any{
+		"metadata": map[string]any{
+			"name":                       "ptah-controller-abc12",
+			"namespace":                  "ptah-system",
+			"uid":                        "replicaset-uid",
+			"generateName":               "",
+			"creationTimestamp":          "2026-09-04T12:00:00Z",
+			"generation":                 int64(3),
+			"deletionTimestamp":          "2026-09-04T13:00:00Z",
+			"deletionGracePeriodSeconds": int64(0),
+			"resourceVersion":            "17",
+			"managedFields":              []any{map[string]any{"manager": "deployment-controller"}},
+			"labels":                     map[string]any{"pod-template-hash": "abc12"},
+			"annotations":                map[string]any{"deployment.kubernetes.io/revision": "3"},
+			"ownerReferences": []any{map[string]any{
+				"apiVersion": "apps/v1",
+				"kind":       "Deployment",
+				"name":       "ptah-controller",
+				"uid":        "deployment-uid",
+			}},
+			"finalizers": []any{"foregroundDeletion", "operator.ptah.dev/protect"},
+		},
+		"spec":   map[string]any{"replicas": int64(0), "selector": map[string]any{"matchLabels": map[string]any{"pod-template-hash": "abc12"}}},
+		"status": map[string]any{"replicas": int64(0)},
+	}
+	tests := []struct {
+		name   string
+		mutate func(object, oldObject, request map[string]any)
+		want   bool
+	}{
+		{name: "remove one finalizer", want: true},
+		{name: "remove all finalizers including a foreign finalizer", mutate: func(object, _, _ map[string]any) {
+			delete(object["metadata"].(map[string]any), "finalizers")
+		}},
+		{name: "remove sole foreground finalizer", mutate: func(object, oldObject, _ map[string]any) {
+			oldObject["metadata"].(map[string]any)["finalizers"] = []any{"foregroundDeletion"}
+			delete(object["metadata"].(map[string]any), "finalizers")
+		}, want: true},
+		{name: "remove foreign finalizer instead", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["finalizers"] = []any{"foregroundDeletion"}
+		}},
+		{name: "reorder preserved finalizers", mutate: func(object, oldObject, _ map[string]any) {
+			oldObject["metadata"].(map[string]any)["finalizers"] = []any{"before.example/finalizer", "foregroundDeletion", "after.example/finalizer"}
+			object["metadata"].(map[string]any)["finalizers"] = []any{"after.example/finalizer", "before.example/finalizer"}
+		}},
+		{name: "same finalizers", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["finalizers"] = []any{"foregroundDeletion", "operator.ptah.dev/protect"}
+		}},
+		{name: "add finalizer", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["finalizers"] = []any{"foregroundDeletion", "operator.ptah.dev/protect", "foreign.example/finalizer"}
+		}},
+		{name: "replace finalizer", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["finalizers"] = []any{"foreign.example/finalizer"}
+		}},
+		{name: "change spec", mutate: func(object, _, _ map[string]any) {
+			object["spec"].(map[string]any)["replicas"] = int64(1)
+		}},
+		{name: "change status", mutate: func(object, _, _ map[string]any) {
+			object["status"].(map[string]any)["replicas"] = int64(1)
+		}},
+		{name: "change labels", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["labels"] = map[string]any{"pod-template-hash": "other"}
+		}},
+		{name: "change annotations", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["annotations"] = map[string]any{"deployment.kubernetes.io/revision": "4"}
+		}},
+		{name: "change owner references", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["ownerReferences"] = []any{map[string]any{"uid": "foreign"}}
+		}},
+		{name: "change generated-name identity", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["generateName"] = "foreign-"
+		}},
+		{name: "change creation identity", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["creationTimestamp"] = "2026-09-04T12:01:00Z"
+		}},
+		{name: "change generation", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["generation"] = int64(4)
+		}},
+		{name: "change UID", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["uid"] = "foreign"
+		}},
+		{name: "change deletion timestamp", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["deletionTimestamp"] = "2026-09-04T13:01:00Z"
+		}},
+		{name: "change deletion grace period", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["deletionGracePeriodSeconds"] = int64(1)
+		}},
+		{name: "not deleting", mutate: func(object, oldObject, _ map[string]any) {
+			delete(object["metadata"].(map[string]any), "deletionTimestamp")
+			delete(oldObject["metadata"].(map[string]any), "deletionTimestamp")
+		}},
+		{name: "wrong principal", mutate: func(_, _, request map[string]any) {
+			request["userInfo"].(map[string]any)["username"] = "system:kube-controller-manager"
+		}},
+		{name: "create operation", mutate: func(_, _, request map[string]any) {
+			request["operation"] = "CREATE"
+		}},
+		{name: "API-managed resource version", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["resourceVersion"] = "18"
+		}, want: true},
+		{name: "API-managed field ownership", mutate: func(object, _, _ map[string]any) {
+			object["metadata"].(map[string]any)["managedFields"] = []any{map[string]any{"manager": "generic-garbage-collector"}}
+		}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			oldObject := parentGuardCELClone(t, base)
+			object := parentGuardCELClone(t, oldObject)
+			object["metadata"].(map[string]any)["finalizers"] = []any{"operator.ptah.dev/protect"}
+			request := map[string]any{
+				"operation": "UPDATE",
+				"userInfo":  map[string]any{"username": "system:serviceaccount:kube-system:generic-garbage-collector"},
+			}
+			if test.mutate != nil {
+				test.mutate(object, oldObject, request)
+			}
+			result, _, err := program.Eval(map[string]any{"object": object, "oldObject": oldObject, "request": request})
+			if err != nil {
+				t.Fatalf("evaluate ReplicaSet garbage-collector cleanup CEL: %v", err)
+			}
+			got, ok := result.Value().(bool)
+			if !ok {
+				t.Fatalf("ReplicaSet garbage-collector cleanup CEL result = %T(%v), want bool", result.Value(), result.Value())
+			}
+			if got != test.want {
+				t.Fatalf("ReplicaSet garbage-collector cleanup CEL = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func parentGuardCELClone(t *testing.T, source map[string]any) map[string]any {
+	t.Helper()
+	encoded, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clone map[string]any
+	if err := json.Unmarshal(encoded, &clone); err != nil {
+		t.Fatal(err)
+	}
+	return clone
 }
 
 func TestParentHookJobGuardsCloseFutureGapAndPinExecutable(t *testing.T) {
@@ -185,6 +429,50 @@ func TestParentHookJobGuardsCloseFutureGapAndPinExecutable(t *testing.T) {
 	}
 	if strings.Contains(contract, `resources\":[\"replicasets\"`) {
 		t.Fatal("hook Job policy mixes the ReplicaSet schema into one CEL environment")
+	}
+}
+
+// This is intentionally a white-box test because these generated CEL
+// expressions are an internal admission boundary rather than an exported API.
+func TestHookAdmissionContractsCloseContainerStatusAndRestartSideChannels(t *testing.T) {
+	t.Parallel()
+
+	rollout := runtimePodGuardFixture()
+	tests := []struct {
+		name      string
+		policy    *admissionregistrationv1.ValidatingAdmissionPolicy
+		container string
+	}{
+		{
+			name:      "hook Job template",
+			policy:    NewParentWorkloadGuard(rollout).hookJobContractPolicy(),
+			container: "object.spec.template.spec.containers[0]",
+		},
+		{
+			name:      "hook Pod",
+			policy:    rollout.hookIdentityPolicy(),
+			container: "object.spec.containers[0]",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			expressions := make([]string, 0, len(test.policy.Spec.Validations))
+			for _, validation := range test.policy.Spec.Validations {
+				expressions = append(expressions, validation.Expression)
+			}
+			contract := strings.Join(expressions, "\n")
+			for _, required := range []string{
+				fmt.Sprintf(`(!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce)`, test.container),
+				fmt.Sprintf(`(!has(%[1]s.workingDir) || %[1]s.workingDir == "") && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File" && !has(%[1]s.restartPolicy) && (!has(%[1]s.restartPolicyRules) || %[1]s.restartPolicyRules.size() == 0)`, test.container),
+			} {
+				if !strings.Contains(contract, required) {
+					t.Fatalf("hook admission contract does not contain %q", required)
+				}
+			}
+		})
 	}
 }
 

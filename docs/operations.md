@@ -333,30 +333,39 @@ controller rejects a non-nil Pod-level resource stanza before dispatch. A
 future or customized API server that injects Pod-level resources fails closed
 until that mutation has an explicit, versioned snapshot model.
 
-Admission selects Pods carrying both
-`app.kubernetes.io/managed-by=ptah-operator` and
-`app.kubernetes.io/component=schema-operation`, then requires an exact Job
-controller owner on create or on either side of an update. Kubernetes evaluates
-the object selector against both the new and old object, so removing either
-identity label from an existing operation Pod still invokes the webhook and is
-denied. The same scope covers the `ephemeralcontainers` and `resize`
-subresources. A foreign Job cannot gain admission by copying the labels: the
-handler also binds the Job to the exact current PtahSchema, operation, and
-persisted Pod intent.
+Admission does not trust an `objectSelector`, because a Pod creator controls
+those labels. Its match condition selects either side of an update when the Pod
+has the complete managed identity or a controlling Job whose name has one of
+the reserved operation prefixes. A label-less clone of a real operation Pod
+therefore still reaches the webhook, while unrelated non-operation Job Pods
+remain outside its outage scope. The handler then requires an exact Job
+controller owner and binds that Job to the current PtahSchema, operation, and
+persisted Pod intent. The same scope covers the `ephemeralcontainers` and
+`resize` subresources.
 
-While the webhook is unavailable, matching operation Pods fail closed, but
-unrelated Job Pods remain available. The controller and certificate-rotation
-Deployments remain recoverable because their Pods are ReplicaSet-owned. Run at
-least two controller replicas and preserve the PodDisruptionBudget during
-maintenance.
+On create, the webhook also requires the built-in Kubernetes Job-controller
+identity. The Pod must preserve the full `<job-name>-` `generateName`, while
+its concrete name must use the API server's effective prefix (at most 58
+characters) followed by exactly five lowercase alphanumeric characters. This
+prevents a namespace Pod creator from cloning an active Job's owner UID,
+labels, and executable template. The controller independently rechecks the
+same generated-name chain before accepting terminal evidence or recovery
+state. Only the Job controller may remove its tracking finalizer, and that
+exception permits no other Pod mutation.
 
-The object selector and Job-owner match condition are evaluated after mutating
+While the webhook is unavailable, managed Pods and Pods controlled by Jobs
+using a reserved operation prefix fail closed, but unrelated non-operation Job
+Pods remain available. The controller and certificate-rotation Deployments
+remain recoverable because their Pods are ReplicaSet-owned. Run at least two
+controller replicas and preserve the PodDisruptionBudget during maintenance.
+
+The managed-identity and Job-owner match condition is evaluated after mutating
 admission. A cluster administrator who can install or change a cluster-scoped
 mutating webhook is therefore inside the admission trust boundary: such a
-webhook could remove the managed identity labels or Job owner reference before
-validation. Ordinary workload creators cannot use copied labels or extra owner
-references to gain operation admission; matching requests enter the rule, and
-the handler rejects foreign or ambiguous ownership.
+webhook could rewrite both the managed identity and reserved Job owner before
+validation. Ordinary workload creators cannot use missing or copied labels or
+extra owner references to gain operation admission; matching requests enter
+the rule, and the handler rejects foreign or ambiguous ownership.
 
 ## Webhook certificate lifecycle
 
