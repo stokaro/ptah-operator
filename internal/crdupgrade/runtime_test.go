@@ -25,6 +25,26 @@ func TestRuntimeVerifierAcceptsExactSingleton(t *testing.T) {
 	}
 }
 
+func TestRuntimeVerifierAcceptsAPIDefaultedMatchAllSelectors(t *testing.T) {
+	verifier := readyRuntimeVerifier(t)
+	applyAdmissionSelectorDefaults(
+		verifier.Mutating.(*mutatingAdmissionClient).object,
+		verifier.Validating.(*validatingAdmissionClient).object,
+	)
+	if err := verifier.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify API-defaulted selectors: %v", err)
+	}
+}
+
+func TestRuntimeVerifierAcceptsValidatingWebhookPermutation(t *testing.T) {
+	verifier := readyRuntimeVerifier(t)
+	webhooks := verifier.Validating.(*validatingAdmissionClient).object.Webhooks
+	webhooks[0], webhooks[2] = webhooks[2], webhooks[0]
+	if err := verifier.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify permuted validating webhooks: %v", err)
+	}
+}
+
 func TestRuntimeVerifierRejectsMismatchedOwner(t *testing.T) {
 	verifier := readyRuntimeVerifier(t)
 	verifier.Mutating.(*mutatingAdmissionClient).object.Annotations[ReleaseNameAnnotation] = "other-release"
@@ -108,17 +128,24 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			},
 		},
 		{
-			name: "validating cardinality", want: "expected exactly 3",
+			name: "validating missing webhook", want: "expected exactly 3",
 			mutate: func(verifier *RuntimeVerifier) {
 				client := verifier.Validating.(*validatingAdmissionClient)
 				client.object.Webhooks = client.object.Webhooks[:1]
 			},
 		},
 		{
-			name: "validating order", want: "has name",
+			name: "validating duplicate webhook", want: "duplicate webhook",
 			mutate: func(verifier *RuntimeVerifier) {
 				webhooks := verifier.Validating.(*validatingAdmissionClient).object.Webhooks
-				webhooks[1], webhooks[2] = webhooks[2], webhooks[1]
+				webhooks[2].Name = webhooks[0].Name
+			},
+		},
+		{
+			name: "validating unknown webhook", want: "unknown webhook",
+			mutate: func(verifier *RuntimeVerifier) {
+				webhooks := verifier.Validating.(*validatingAdmissionClient).object.Webhooks
+				webhooks[1].Name = "foreign.operator.ptah.dev"
 			},
 		},
 		{
@@ -198,19 +225,27 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 		{
 			name: "mutating approval selector", want: "objectSelector",
 			mutate: func(verifier *RuntimeVerifier) {
-				verifier.Mutating.(*mutatingAdmissionClient).object.Webhooks[0].ObjectSelector = &metav1.LabelSelector{}
+				verifier.Mutating.(*mutatingAdmissionClient).object.Webhooks[0].ObjectSelector = &metav1.LabelSelector{
+					MatchLabels: map[string]string{"operator.ptah.dev/foreign": "true"},
+				}
 			},
 		},
 		{
 			name: "validating approval selector", want: "objectSelector",
 			mutate: func(verifier *RuntimeVerifier) {
-				validatingWebhook(t, verifier, validatingApprovalWebhookName).ObjectSelector = &metav1.LabelSelector{}
+				validatingWebhook(t, verifier, validatingApprovalWebhookName).ObjectSelector = &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{{
+						Key: "operator.ptah.dev/foreign", Operator: metav1.LabelSelectorOpExists,
+					}},
+				}
 			},
 		},
 		{
 			name: "namespace selector", want: "namespaceSelector",
 			mutate: func(verifier *RuntimeVerifier) {
-				validatingWebhook(t, verifier, validatingApprovalWebhookName).NamespaceSelector = &metav1.LabelSelector{}
+				validatingWebhook(t, verifier, validatingApprovalWebhookName).NamespaceSelector = &metav1.LabelSelector{
+					MatchLabels: map[string]string{"operator.ptah.dev/foreign": "true"},
+				}
 			},
 		},
 		{
@@ -221,12 +256,6 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			},
 		},
 		{
-			name: "pod selector empty", want: "objectSelector",
-			mutate: func(verifier *RuntimeVerifier) {
-				validatingWebhook(t, verifier, podIntentWebhookName).ObjectSelector = &metav1.LabelSelector{}
-			},
-		},
-		{
 			name: "pod selector nonempty", want: "objectSelector",
 			mutate: func(verifier *RuntimeVerifier) {
 				validatingWebhook(t, verifier, podIntentWebhookName).ObjectSelector = &metav1.LabelSelector{
@@ -234,6 +263,16 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 						managedByLabel:                "ptah-operator",
 						"app.kubernetes.io/component": "foreign",
 					},
+				}
+			},
+		},
+		{
+			name: "controller write selector", want: "objectSelector",
+			mutate: func(verifier *RuntimeVerifier) {
+				validatingWebhook(t, verifier, controllerWriteWebhookName).ObjectSelector = &metav1.LabelSelector{
+					MatchExpressions: []metav1.LabelSelectorRequirement{{
+						Key: "operator.ptah.dev/foreign", Operator: metav1.LabelSelectorOpExists,
+					}},
 				}
 			},
 		},
@@ -934,6 +973,30 @@ func validatingWebhook(t *testing.T, verifier *RuntimeVerifier, name string) *ad
 	return nil
 }
 
+func applyAdmissionSelectorDefaults(
+	mutating *admissionregistrationv1.MutatingWebhookConfiguration,
+	validating *admissionregistrationv1.ValidatingWebhookConfiguration,
+) {
+	for index := range mutating.Webhooks {
+		webhook := &mutating.Webhooks[index]
+		if webhook.NamespaceSelector == nil {
+			webhook.NamespaceSelector = &metav1.LabelSelector{}
+		}
+		if webhook.ObjectSelector == nil {
+			webhook.ObjectSelector = &metav1.LabelSelector{}
+		}
+	}
+	for index := range validating.Webhooks {
+		webhook := &validating.Webhooks[index]
+		if webhook.NamespaceSelector == nil {
+			webhook.NamespaceSelector = &metav1.LabelSelector{}
+		}
+		if webhook.ObjectSelector == nil {
+			webhook.ObjectSelector = &metav1.LabelSelector{}
+		}
+	}
+}
+
 func valuePointer[T any](value T) *T {
 	return &value
 }
@@ -948,17 +1011,23 @@ func copyStrings(source map[string]string) map[string]string {
 
 type mutatingAdmissionClient struct {
 	object        *admissionregistrationv1.MutatingWebhookConfiguration
+	calls         int
 	onGet         func()
+	onGetCall     func(int)
 	dryRunUpdates int
 	realUpdates   int
 	dryRunError   error
 }
 
 func (c *mutatingAdmissionClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*admissionregistrationv1.MutatingWebhookConfiguration, error) {
+	c.calls++
 	if c.onGet != nil {
 		onGet := c.onGet
 		c.onGet = nil
 		onGet()
+	}
+	if c.onGetCall != nil {
+		c.onGetCall(c.calls)
 	}
 	if c.object == nil {
 		return nil, apierrors.NewNotFound(schema.GroupResource{Group: admissionregistrationv1.GroupName, Resource: "mutatingwebhookconfigurations"}, name)

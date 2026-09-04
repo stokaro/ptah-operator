@@ -94,18 +94,19 @@ func (a *AdmissionAdopter) adopt(ctx context.Context, apply bool) error {
 	if err != nil {
 		return err
 	}
+	requireSupportedPredecessorContract := mutatingMetadataState.legacy || validatingMetadataState.legacy
 	legacyExpected := a.Expected
-	if mutatingMetadataState.legacy || validatingMetadataState.legacy {
+	if requireSupportedPredecessorContract {
 		legacyExpected, err = legacyRuntimeInvariants(mutating, validating, a.Expected)
 		if err != nil {
 			return err
 		}
 	}
-	mutatingState, err := a.validateMutatingForAdoption(mutating, legacyExpected)
+	mutatingState, err := a.validateMutatingForAdoption(mutating, legacyExpected, requireSupportedPredecessorContract)
 	if err != nil {
 		return err
 	}
-	validatingState, err := a.validateValidatingForAdoption(validating, legacyExpected)
+	validatingState, err := a.validateValidatingForAdoption(validating, legacyExpected, requireSupportedPredecessorContract)
 	if err != nil {
 		return err
 	}
@@ -136,9 +137,19 @@ func (a *AdmissionAdopter) adopt(ctx context.Context, apply bool) error {
 		if getErr != nil {
 			return getErr
 		}
-		state, validateErr := a.validateMutatingForAdoption(current, legacyExpected)
-		if validateErr != nil || !state.needsUpdate {
+		currentValidating, getErr := a.Validating.Get(ctx, AdmissionConfigurationName, metav1.GetOptions{})
+		if getErr != nil {
+			return getErr
+		}
+		state, validateErr := a.validateMutatingForAdoption(current, legacyExpected, requireSupportedPredecessorContract)
+		if validateErr != nil {
 			return validateErr
+		}
+		if _, validateErr := a.validateValidatingForAdoption(currentValidating, legacyExpected, requireSupportedPredecessorContract); validateErr != nil {
+			return validateErr
+		}
+		if !state.needsUpdate {
+			return nil
 		}
 		copyExpectedAnnotations(&current.ObjectMeta, a.Expected.annotations())
 		_, updateErr := a.Mutating.Update(ctx, current, metav1.UpdateOptions{})
@@ -147,11 +158,18 @@ func (a *AdmissionAdopter) adopt(ctx context.Context, apply bool) error {
 		return fmt.Errorf("adopt legacy MutatingWebhookConfiguration: %w", err)
 	}
 	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		currentMutating, getErr := a.Mutating.Get(ctx, AdmissionConfigurationName, metav1.GetOptions{})
+		if getErr != nil {
+			return getErr
+		}
 		current, getErr := a.Validating.Get(ctx, AdmissionConfigurationName, metav1.GetOptions{})
 		if getErr != nil {
 			return getErr
 		}
-		state, validateErr := a.validateValidatingForAdoption(current, legacyExpected)
+		if _, validateErr := a.validateMutatingForAdoption(currentMutating, legacyExpected, requireSupportedPredecessorContract); validateErr != nil {
+			return validateErr
+		}
+		state, validateErr := a.validateValidatingForAdoption(current, legacyExpected, requireSupportedPredecessorContract)
 		if validateErr != nil || !state.needsUpdate {
 			return validateErr
 		}
@@ -166,7 +184,7 @@ func (a *AdmissionAdopter) adopt(ctx context.Context, apply bool) error {
 	if err != nil {
 		return fmt.Errorf("re-read adopted MutatingWebhookConfiguration: %w", err)
 	}
-	mutatingFinal, err := a.validateMutatingForAdoption(mutating, legacyExpected)
+	mutatingFinal, err := a.validateMutatingForAdoption(mutating, legacyExpected, requireSupportedPredecessorContract)
 	if err != nil {
 		return fmt.Errorf("verify adopted MutatingWebhookConfiguration: %w", err)
 	}
@@ -177,7 +195,7 @@ func (a *AdmissionAdopter) adopt(ctx context.Context, apply bool) error {
 	if err != nil {
 		return fmt.Errorf("re-read adopted ValidatingWebhookConfiguration: %w", err)
 	}
-	validatingFinal, err := a.validateValidatingForAdoption(validating, legacyExpected)
+	validatingFinal, err := a.validateValidatingForAdoption(validating, legacyExpected, requireSupportedPredecessorContract)
 	if err != nil {
 		return fmt.Errorf("verify adopted ValidatingWebhookConfiguration: %w", err)
 	}
@@ -190,6 +208,7 @@ func (a *AdmissionAdopter) adopt(ctx context.Context, apply bool) error {
 func (a *AdmissionAdopter) validateMutatingForAdoption(
 	configuration *admissionregistrationv1.MutatingWebhookConfiguration,
 	legacyExpected RuntimeInvariants,
+	requireSupportedPredecessorContract bool,
 ) (singletonAdoptionState, error) {
 	if configuration == nil {
 		return singletonAdoptionState{}, fmt.Errorf("fixed MutatingWebhookConfiguration is required")
@@ -198,8 +217,8 @@ func (a *AdmissionAdopter) validateMutatingForAdoption(
 	if err != nil {
 		return singletonAdoptionState{}, err
 	}
-	if state.legacy {
-		if err := verifyMutatingWebhookContract(configuration, legacyExpected); err != nil {
+	if requireSupportedPredecessorContract {
+		if err := verifySupportedPredecessorMutatingWebhookContract(configuration, legacyExpected); err != nil {
 			return singletonAdoptionState{}, err
 		}
 	}
@@ -209,6 +228,7 @@ func (a *AdmissionAdopter) validateMutatingForAdoption(
 func (a *AdmissionAdopter) validateValidatingForAdoption(
 	configuration *admissionregistrationv1.ValidatingWebhookConfiguration,
 	legacyExpected RuntimeInvariants,
+	requireSupportedPredecessorContract bool,
 ) (singletonAdoptionState, error) {
 	if configuration == nil {
 		return singletonAdoptionState{}, fmt.Errorf("fixed ValidatingWebhookConfiguration is required")
@@ -217,8 +237,8 @@ func (a *AdmissionAdopter) validateValidatingForAdoption(
 	if err != nil {
 		return singletonAdoptionState{}, err
 	}
-	if state.legacy {
-		if err := verifyLegacyValidatingWebhookContract(configuration, legacyExpected); err != nil {
+	if requireSupportedPredecessorContract {
+		if err := verifySupportedPredecessorValidatingWebhookContract(configuration, legacyExpected); err != nil {
 			return singletonAdoptionState{}, err
 		}
 	}

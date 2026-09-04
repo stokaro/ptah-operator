@@ -7,8 +7,15 @@ import (
 	"strings"
 	"testing"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+const supportedPredecessorPodIntentMatchExpressionFixture = `object.metadata.ownerReferences.exists(ref,
+  ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true) ||
+(request.operation == 'UPDATE' && oldObject != null &&
+  oldObject.metadata.ownerReferences.exists(ref,
+    ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true))`
 
 func TestAdmissionAdopterStampsExactLegacySingleton(t *testing.T) {
 	adopter, mutating, validating := readyAdmissionAdopter(t, true, true)
@@ -54,14 +61,61 @@ func TestAdmissionAdopterPreflightDryRunsLegacyTupleWithoutPersisting(t *testing
 }
 
 func TestAdmissionAdopterResumesPartialExactAdoption(t *testing.T) {
-	adopter, mutating, validating := readyAdmissionAdopter(t, false, true)
-	if err := adopter.Adopt(context.Background()); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name                             string
+		mutatingLegacy, validatingLegacy bool
+		wantMutating, wantValidating     int
+	}{
+		{name: "mutating already stamped", validatingLegacy: true, wantValidating: 1},
+		{name: "validating already stamped", mutatingLegacy: true, wantMutating: 1},
 	}
-	if mutating.dryRunUpdates != 0 || mutating.realUpdates != 0 ||
-		validating.dryRunUpdates != 1 || validating.realUpdates != 1 {
-		t.Fatalf("partial adoption updates mutating=%d/%d validating=%d/%d",
-			mutating.dryRunUpdates, mutating.realUpdates, validating.dryRunUpdates, validating.realUpdates)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adopter, mutating, validating := readyAdmissionAdopter(t, test.mutatingLegacy, test.validatingLegacy)
+			if err := adopter.Adopt(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if mutating.dryRunUpdates != test.wantMutating || mutating.realUpdates != test.wantMutating ||
+				validating.dryRunUpdates != test.wantValidating || validating.realUpdates != test.wantValidating {
+				t.Fatalf("partial adoption updates mutating=%d/%d validating=%d/%d",
+					mutating.dryRunUpdates, mutating.realUpdates, validating.dryRunUpdates, validating.realUpdates)
+			}
+		})
+	}
+}
+
+func TestAdmissionAdopterRejectsDriftedStampedPeerDuringPartialResume(t *testing.T) {
+	tests := []struct {
+		name                             string
+		mutatingLegacy, validatingLegacy bool
+		mutate                           func(*mutatingAdmissionClient, *validatingAdmissionClient)
+	}{
+		{
+			name: "mutating peer drift", validatingLegacy: true,
+			mutate: func(mutating *mutatingAdmissionClient, _ *validatingAdmissionClient) {
+				mutating.object.Webhooks[0].ClientConfig.Service.Name = "foreign-service"
+			},
+		},
+		{
+			name: "validating peer drift", mutatingLegacy: true,
+			mutate: func(_ *mutatingAdmissionClient, validating *validatingAdmissionClient) {
+				validating.object.Webhooks[0].ClientConfig.Service.Name = "foreign-service"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adopter, mutating, validating := readyAdmissionAdopter(t, test.mutatingLegacy, test.validatingLegacy)
+			test.mutate(mutating, validating)
+			err := adopter.Adopt(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "Service target does not match") {
+				t.Fatalf("Adopt error = %v, want stamped peer contract refusal", err)
+			}
+			if mutating.dryRunUpdates != 0 || validating.dryRunUpdates != 0 ||
+				mutating.realUpdates != 0 || validating.realUpdates != 0 {
+				t.Fatal("partial adoption mutated a pair with stamped-peer contract drift")
+			}
+		})
 	}
 }
 
@@ -106,6 +160,136 @@ func TestAdmissionAdopterRecognizesLegacyContractWithPreviousTimeout(t *testing.
 	adopter.Expected.WebhookTimeoutSeconds = 7
 	if err := adopter.Adopt(context.Background()); err != nil {
 		t.Fatalf("exact legacy contract with an older timeout was rejected: %v", err)
+	}
+}
+
+func TestAdmissionAdopterRecognizesAPIDefaultedSupportedPredecessorContract(t *testing.T) {
+	adopter, mutating, validating := readyAdmissionAdopter(t, true, true)
+	applyAdmissionSelectorDefaults(mutating.object, validating.object)
+	if err := adopter.Preflight(context.Background()); err != nil {
+		t.Fatalf("preflight API-defaulted predecessor contract: %v", err)
+	}
+	if mutating.dryRunUpdates != 1 || validating.dryRunUpdates != 1 {
+		t.Fatalf("dry-run updates mutating=%d validating=%d, want 1 each", mutating.dryRunUpdates, validating.dryRunUpdates)
+	}
+}
+
+func TestAdmissionAdopterAcceptsSupportedPredecessorWebhookPermutation(t *testing.T) {
+	adopter, mutating, validating := readyAdmissionAdopter(t, true, true)
+	applyAdmissionSelectorDefaults(mutating.object, validating.object)
+	validating.object.Webhooks[0], validating.object.Webhooks[1] =
+		validating.object.Webhooks[1], validating.object.Webhooks[0]
+	if err := adopter.Preflight(context.Background()); err != nil {
+		t.Fatalf("preflight permuted predecessor webhooks: %v", err)
+	}
+}
+
+func TestAdmissionAdopterRejectsSupportedPredecessorApprovalContractDrift(t *testing.T) {
+	tests := []struct {
+		name   string
+		want   string
+		mutate func(*admissionregistrationv1.MutatingWebhook, *admissionregistrationv1.ValidatingWebhook)
+	}{
+		{
+			name: "mutating review version", want: "admissionReviewVersions",
+			mutate: func(mutating *admissionregistrationv1.MutatingWebhook, _ *admissionregistrationv1.ValidatingWebhook) {
+				mutating.AdmissionReviewVersions = []string{"v1beta1"}
+			},
+		},
+		{
+			name: "mutating reinvocation", want: "reinvocationPolicy",
+			mutate: func(mutating *admissionregistrationv1.MutatingWebhook, _ *admissionregistrationv1.ValidatingWebhook) {
+				ifNeeded := admissionregistrationv1.IfNeededReinvocationPolicy
+				mutating.ReinvocationPolicy = &ifNeeded
+			},
+		},
+		{
+			name: "mutating rules", want: "rules do not match",
+			mutate: func(mutating *admissionregistrationv1.MutatingWebhook, _ *admissionregistrationv1.ValidatingWebhook) {
+				mutating.Rules[0].Operations = append(mutating.Rules[0].Operations, admissionregistrationv1.Update)
+			},
+		},
+		{
+			name: "validating failure policy", want: "failurePolicy must be Fail",
+			mutate: func(_ *admissionregistrationv1.MutatingWebhook, validating *admissionregistrationv1.ValidatingWebhook) {
+				ignore := admissionregistrationv1.Ignore
+				validating.FailurePolicy = &ignore
+			},
+		},
+		{
+			name: "validating service path", want: "Service target does not match",
+			mutate: func(_ *admissionregistrationv1.MutatingWebhook, validating *admissionregistrationv1.ValidatingWebhook) {
+				path := "/foreign"
+				validating.ClientConfig.Service.Path = &path
+			},
+		},
+		{
+			name: "validating match condition", want: "must not have matchConditions",
+			mutate: func(_ *admissionregistrationv1.MutatingWebhook, validating *admissionregistrationv1.ValidatingWebhook) {
+				validating.MatchConditions = []admissionregistrationv1.MatchCondition{{Name: "foreign", Expression: "true"}}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adopter, mutating, validating := readyAdmissionAdopter(t, true, true)
+			applyAdmissionSelectorDefaults(mutating.object, validating.object)
+			test.mutate(&mutating.object.Webhooks[0], &validating.object.Webhooks[0])
+			err := adopter.Preflight(context.Background())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Preflight error = %v, want %q", err, test.want)
+			}
+			if mutating.dryRunUpdates != 0 || validating.dryRunUpdates != 0 {
+				t.Fatal("drifted predecessor approval contract was dry-run updated")
+			}
+		})
+	}
+}
+
+func TestAdmissionAdopterRejectsSupportedPredecessorPodContractDrift(t *testing.T) {
+	tests := []struct {
+		name   string
+		want   string
+		mutate func(*admissionregistrationv1.ValidatingWebhook)
+	}{
+		{
+			name: "match-all object selector", want: "objectSelector",
+			mutate: func(webhook *admissionregistrationv1.ValidatingWebhook) {
+				webhook.ObjectSelector = &metav1.LabelSelector{}
+			},
+		},
+		{
+			name: "object selector label", want: "objectSelector",
+			mutate: func(webhook *admissionregistrationv1.ValidatingWebhook) {
+				webhook.ObjectSelector.MatchLabels["app.kubernetes.io/component"] = "foreign"
+			},
+		},
+		{
+			name: "match condition name", want: "matchConditions",
+			mutate: func(webhook *admissionregistrationv1.ValidatingWebhook) {
+				webhook.MatchConditions[0].Name = "foreign"
+			},
+		},
+		{
+			name: "match condition expression", want: "matchConditions",
+			mutate: func(webhook *admissionregistrationv1.ValidatingWebhook) {
+				webhook.MatchConditions[0].Expression = "true"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adopter, mutating, validating := readyAdmissionAdopter(t, true, true)
+			applyAdmissionSelectorDefaults(mutating.object, validating.object)
+			test.mutate(&validating.object.Webhooks[1])
+			err := adopter.Preflight(context.Background())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Preflight error = %v, want %q", err, test.want)
+			}
+			if mutating.dryRunUpdates != 0 || validating.dryRunUpdates != 0 {
+				t.Fatal("drifted predecessor contract was dry-run updated")
+			}
+		})
 	}
 }
 
@@ -194,6 +378,24 @@ func TestAdmissionAdopterPreflightsBothObjectsBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestAdmissionAdopterRechecksPairAfterFirstRealUpdate(t *testing.T) {
+	adopter, mutating, validating := readyAdmissionAdopter(t, true, true)
+	mutating.onGetCall = func(call int) {
+		if call == 3 {
+			mutating.object.Webhooks[0].ClientConfig.Service.Name = "foreign-service"
+		}
+	}
+	err := adopter.Adopt(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "Service target does not match") {
+		t.Fatalf("Adopt error = %v, want drift refusal at second retry boundary", err)
+	}
+	if mutating.dryRunUpdates != 1 || validating.dryRunUpdates != 1 ||
+		mutating.realUpdates != 1 || validating.realUpdates != 0 {
+		t.Fatalf("drifted retry updates mutating=%d/%d validating=%d/%d, want dry-run/real 1/1 and 1/0",
+			mutating.dryRunUpdates, mutating.realUpdates, validating.dryRunUpdates, validating.realUpdates)
+	}
+}
+
 func readyAdmissionAdopter(t *testing.T, mutatingLegacy, validatingLegacy bool) (*AdmissionAdopter, *mutatingAdmissionClient, *validatingAdmissionClient) {
 	t.Helper()
 	verifier := readyRuntimeVerifier(t)
@@ -201,14 +403,90 @@ func readyAdmissionAdopter(t *testing.T, mutatingLegacy, validatingLegacy bool) 
 	validating := verifier.Validating.(*validatingAdmissionClient)
 	setHelmOwnership(&mutating.object.ObjectMeta, verifier.Expected)
 	setHelmOwnership(&validating.object.ObjectMeta, verifier.Expected)
+	if mutatingLegacy || validatingLegacy {
+		mutating.object.Webhooks = []admissionregistrationv1.MutatingWebhook{
+			readySupportedPredecessorMutatingApprovalWebhook(verifier.Expected),
+		}
+		validating.object.Webhooks = []admissionregistrationv1.ValidatingWebhook{
+			readySupportedPredecessorValidatingApprovalWebhook(verifier.Expected),
+			readySupportedPredecessorPodIntentWebhook(verifier.Expected),
+		}
+	}
 	if mutatingLegacy {
 		removeOwnedAnnotations(&mutating.object.ObjectMeta, verifier.Expected)
 	}
 	if validatingLegacy {
 		removeOwnedAnnotations(&validating.object.ObjectMeta, verifier.Expected)
-		validating.object.Webhooks = validating.object.Webhooks[:2]
 	}
 	return &AdmissionAdopter{Mutating: mutating, Validating: validating, Expected: verifier.Expected}, mutating, validating
+}
+
+func readySupportedPredecessorMutatingApprovalWebhook(expected RuntimeInvariants) admissionregistrationv1.MutatingWebhook {
+	fail := admissionregistrationv1.Fail
+	none := admissionregistrationv1.SideEffectClassNone
+	equivalent := admissionregistrationv1.Equivalent
+	never := admissionregistrationv1.NeverReinvocationPolicy
+	scope := admissionregistrationv1.NamespacedScope
+	return admissionregistrationv1.MutatingWebhook{
+		Name: "mapproval.operator.ptah.dev", AdmissionReviewVersions: []string{"v1"},
+		FailurePolicy: &fail, SideEffects: &none, MatchPolicy: &equivalent,
+		ReinvocationPolicy: &never, TimeoutSeconds: valuePointer(expected.WebhookTimeoutSeconds),
+		ClientConfig: readyWebhookClientConfig(expected, "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"),
+		Rules: []admissionregistrationv1.RuleWithOperations{{
+			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+			Rule: admissionregistrationv1.Rule{
+				APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"},
+				Resources: []string{"ptahschemaapprovals"}, Scope: &scope,
+			},
+		}},
+	}
+}
+
+func readySupportedPredecessorValidatingApprovalWebhook(expected RuntimeInvariants) admissionregistrationv1.ValidatingWebhook {
+	fail := admissionregistrationv1.Fail
+	none := admissionregistrationv1.SideEffectClassNone
+	equivalent := admissionregistrationv1.Equivalent
+	scope := admissionregistrationv1.NamespacedScope
+	return admissionregistrationv1.ValidatingWebhook{
+		Name: "vapproval.operator.ptah.dev", AdmissionReviewVersions: []string{"v1"},
+		FailurePolicy: &fail, SideEffects: &none, MatchPolicy: &equivalent,
+		TimeoutSeconds: valuePointer(expected.WebhookTimeoutSeconds),
+		ClientConfig:   readyWebhookClientConfig(expected, "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"),
+		Rules: []admissionregistrationv1.RuleWithOperations{{
+			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
+			Rule: admissionregistrationv1.Rule{
+				APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"},
+				Resources: []string{"ptahschemaapprovals"}, Scope: &scope,
+			},
+		}},
+	}
+}
+
+func readySupportedPredecessorPodIntentWebhook(expected RuntimeInvariants) admissionregistrationv1.ValidatingWebhook {
+	fail := admissionregistrationv1.Fail
+	none := admissionregistrationv1.SideEffectClassNone
+	equivalent := admissionregistrationv1.Equivalent
+	scope := admissionregistrationv1.NamespacedScope
+	return admissionregistrationv1.ValidatingWebhook{
+		Name: "vpodintent.operator.ptah.dev", AdmissionReviewVersions: []string{"v1"},
+		FailurePolicy: &fail, SideEffects: &none, MatchPolicy: &equivalent,
+		TimeoutSeconds: valuePointer(expected.WebhookTimeoutSeconds),
+		ClientConfig:   readyWebhookClientConfig(expected, "/validate-v1-pod-ptah-operation-intent"),
+		Rules: []admissionregistrationv1.RuleWithOperations{{
+			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
+			Rule: admissionregistrationv1.Rule{
+				APIGroups: []string{""}, APIVersions: []string{"v1"},
+				Resources: []string{"pods", "pods/ephemeralcontainers", "pods/resize"}, Scope: &scope,
+			},
+		}},
+		ObjectSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+			"app.kubernetes.io/managed-by": "ptah-operator",
+			"app.kubernetes.io/component":  "schema-operation",
+		}},
+		MatchConditions: []admissionregistrationv1.MatchCondition{{
+			Name: "job-owned-pod", Expression: supportedPredecessorPodIntentMatchExpressionFixture,
+		}},
+	}
 }
 
 func setHelmOwnership(metadata *metav1.ObjectMeta, expected RuntimeInvariants) {
