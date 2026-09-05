@@ -174,7 +174,7 @@ shellcheck "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
 
 predecessor_revision=$(jq -er '.revision' "$PREDECESSOR_IDENTITY")
-[ "$predecessor_revision" = 2c516a4b61073fefa694907d9f8623767d9e5542 ] || {
+[ "$predecessor_revision" = 210c9673e6ad8e339278d99cc4735557332df7bd ] || {
 	printf '%s\n' 'e2e static: predecessor revision identity changed unexpectedly' >&2
 	exit 1
 }
