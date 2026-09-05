@@ -18,6 +18,19 @@ import (
 	"time"
 )
 
+// serviceTestWait bounds every wait in this file for something that should
+// already have happened: a listener stopping, a runner starting, a connection
+// closing. Each one fires only when that thing never happens, so the bound
+// costs nothing on the passing path and everything on a slow one.
+//
+// It has to be generous rather than tight. The race detector and a two-core
+// hosted runner stretch these waits well past what they take on a developer
+// machine: TestCandidateHTTPRequestsNeverReuseConnections failed in CI at one
+// second while passing locally, three times in a row, in under two seconds
+// total. A budget that a slower machine cannot meet reports a timing accident
+// as a defect, which is the one thing a test must not do.
+const serviceTestWait = 20 * time.Second
+
 func TestRunServiceServesCandidateTLSAndStopsBothListeners(t *testing.T) {
 	t.Parallel()
 
@@ -100,7 +113,7 @@ func TestRunServiceServesCandidateTLSAndStopsBothListeners(t *testing.T) {
 		if err != nil {
 			t.Fatalf("runServiceOnListeners() error = %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(serviceTestWait):
 		t.Fatal("runServiceOnListeners() did not stop after cancellation")
 	}
 	if !healthListener.IsClosed() || !candidateListener.IsClosed() {
@@ -294,7 +307,7 @@ func TestCandidateHTTPRequestsNeverReuseConnections(t *testing.T) {
 		}
 		select {
 		case <-connectionClosed:
-		case <-time.After(time.Second):
+		case <-time.After(serviceTestWait):
 			t.Fatalf("candidate request %d connection was not closed", requestNumber)
 		}
 	}
@@ -391,7 +404,7 @@ func startTestCandidateService(
 	}()
 	select {
 	case <-runnerStarted:
-	case <-time.After(time.Second):
+	case <-time.After(serviceTestWait):
 		cancel()
 		t.Fatal("candidate test service did not start")
 	}
@@ -402,7 +415,7 @@ func startTestCandidateService(
 			if err != nil {
 				t.Errorf("runServiceOnListeners() error = %v", err)
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(serviceTestWait):
 			t.Error("runServiceOnListeners() did not stop after cancellation")
 		}
 	})
