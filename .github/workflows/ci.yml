@@ -120,11 +120,33 @@ jobs:
           CRD_SCHEMA_BASELINE_REF: ${{ steps.crd-baseline.outputs.baseline }}
           CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE: "true"
         shell: bash
-        run: make verify
+        run: make verify-source
+
+  race:
+    name: Race detector
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        id: race-checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        id: race-setup-go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Run complete race coverage
+        id: project-race
+        shell: bash
+        run: make test-race
 
   kubernetes-e2e:
     name: Kubernetes ${{ matrix.minor }} full lifecycle
-    needs: [support-matrix, verify]
+    needs: [support-matrix, verify, race]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -223,7 +245,7 @@ jobs:
   kubernetes-support-gate:
     name: Kubernetes support gate
     if: ${{ always() }}
-    needs: [support-matrix, verify, kubernetes-e2e]
+    needs: [support-matrix, verify, race, kubernetes-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -232,6 +254,7 @@ jobs:
         env:
           SUPPORT_MATRIX_RESULT: ${{ needs.support-matrix.result }}
           VERIFY_RESULT: ${{ needs.verify.result }}
+          RACE_RESULT: ${{ needs.race.result }}
           KUBERNETES_E2E_RESULT: ${{ needs.kubernetes-e2e.result }}
         shell: bash
         run: |
@@ -239,6 +262,7 @@ jobs:
           for result in \
             "$SUPPORT_MATRIX_RESULT" \
             "$VERIFY_RESULT" \
+            "$RACE_RESULT" \
             "$KUBERNETES_E2E_RESULT"
           do
             if [[ "$result" != success ]]; then

@@ -66,16 +66,21 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256       = "02860adce242a5852bd3640050c39d57fa24350c54d4c6928d2c4ce6a6b99b81"
-	updateWorkflowSHA256   = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
-	controllerSchemaSHA256 = "b73a7b8718abd34b4a8f45a1342c31c50690bf82358b378621dfbbe6e30892e5"
+	ciWorkflowSHA256         = "e032ebc28387ec121de0de669d4960acb99414c70d82f9c3e81e189701ea131e"
+	updateWorkflowSHA256     = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
+	controllerSchemaSHA256   = "b73a7b8718abd34b4a8f45a1342c31c50690bf82358b378621dfbbe6e30892e5"
+	raceValidationRuleSHA256 = "41883b775532ad9be0035521d4363052137a8debb4f4a4185ec6a0f3c4a97ae9"
+	raceBaseRuleSHA256       = "53a29b937246901f0b2f285964ea3a2b7580e016ab447ff2b9cb10189df83b49"
+	raceMutationRuleSHA256   = "1b9d7a915e91728ce653c78534382d5d59935bdf09ceec8cba3470900c3fc2dc"
+	raceAggregateSHA256      = "c4ebaf33f633432020b25919b04b70b8715ab64ef63118fbe47dee45553915f1"
 
 	ciSupportMatrixTimeoutMinutes     = 10
 	ciVerifyTimeoutMinutes            = 20
+	ciRaceTimeoutMinutes              = 20
 	ciKubernetesE2ETimeoutMinutes     = 90
 	ciKubernetesSupportTimeoutMinutes = 5
 	releaseQueueAPIMarginMinutes      = 5
-	releaseSupportPollTimeoutMinutes  = max(ciSupportMatrixTimeoutMinutes, ciVerifyTimeoutMinutes) + ciKubernetesE2ETimeoutMinutes + ciKubernetesSupportTimeoutMinutes + releaseQueueAPIMarginMinutes
+	releaseSupportPollTimeoutMinutes  = max(ciSupportMatrixTimeoutMinutes, ciVerifyTimeoutMinutes, ciRaceTimeoutMinutes) + ciKubernetesE2ETimeoutMinutes + ciKubernetesSupportTimeoutMinutes + releaseQueueAPIMarginMinutes
 	releasePreflightOverheadMinutes   = 10
 	releasePreflightJobTimeoutMinutes = releaseSupportPollTimeoutMinutes + releasePreflightOverheadMinutes
 )
@@ -548,6 +553,8 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		"EVENT_BEFORE_SHA: ${{ github.event.before }}",
 		"CRD_SCHEMA_BASELINE_REF: ${{ steps.crd-baseline.outputs.baseline }}",
 		"CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE: \"true\"",
+		"run: make verify-source",
+		"run: make test-race",
 		"DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}",
 		"KIND_NODE_IMAGE: ${{ matrix.node_image }}",
 		"K8S_VERSION: ${{ matrix.kubernetes_version }}",
@@ -564,7 +571,7 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 	if !equalStringMap(workflow.Env, map[string]string{"GOFLAGS": "-mod=readonly"}) {
 		return fmt.Errorf("%s: workflow environment must contain only the audited GOFLAGS value", path)
 	}
-	for _, jobName := range []string{"support-matrix", "verify", "kubernetes-e2e", "kubernetes-support-gate"} {
+	for _, jobName := range []string{"support-matrix", "verify", "race", "kubernetes-e2e", "kubernetes-support-gate"} {
 		job, err := requireWorkflowJob(path, workflow, jobName)
 		if err != nil {
 			return err
@@ -695,7 +702,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: crd-baseline must select the exact audited event-specific Git commit", path)
 	}
 	if verifySteps[4].Name != "Run project verification" ||
-		verifySteps[4].If != "" || verifySteps[4].Uses != "" || verifySteps[4].Run != "make verify" ||
+		verifySteps[4].If != "" || verifySteps[4].Uses != "" || verifySteps[4].Run != "make verify-source" ||
 		verifySteps[4].Shell != "bash" || verifySteps[4].WorkingDirectory != "" ||
 		len(verifySteps[4].With) != 0 || !equalStringMap(verifySteps[4].Env, map[string]string{
 		"CRD_SCHEMA_BASELINE_REF":              "${{ steps.crd-baseline.outputs.baseline }}",
@@ -704,11 +711,55 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: project verification must consume only the explicit audited CRD baseline", path)
 	}
 
+	race := workflow.Jobs["race"]
+	if race.Name != "Race detector" || race.If != "" || len(race.Needs) != 0 ||
+		race.RunsOn != "ubuntu-latest" || race.TimeoutMinutes != ciRaceTimeoutMinutes ||
+		len(race.Permissions) != 0 || race.Environment != "" || race.Strategy.FailFast != nil ||
+		len(race.Strategy.Matrix) != 0 {
+		return fmt.Errorf("%s: race must be an unconditional isolated ubuntu-latest job with a %d-minute timeout", path, ciRaceTimeoutMinutes)
+	}
+	raceSteps, err := requireWorkflowStepOrder(path, "race", race, []string{
+		"race-checkout", "race-setup-go", "project-race",
+	})
+	if err != nil {
+		return err
+	}
+	if raceSteps[0].Name != "Check out repository" {
+		return fmt.Errorf("%s: race checkout step has unexpected name %q", path, raceSteps[0].Name)
+	}
+	if err := verifyUpdaterActionStep(
+		path,
+		"race",
+		raceSteps[0],
+		"actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+		map[string]string{"fetch-depth": "0", "persist-credentials": "false"},
+	); err != nil {
+		return err
+	}
+	if raceSteps[1].Name != "Set up Go" {
+		return fmt.Errorf("%s: race Go setup step has unexpected name %q", path, raceSteps[1].Name)
+	}
+	if err := verifyUpdaterActionStep(
+		path,
+		"race",
+		raceSteps[1],
+		"actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16",
+		map[string]string{"go-version-file": "go.mod", "cache-dependency-path": "go.sum"},
+	); err != nil {
+		return err
+	}
+	if raceSteps[2].Name != "Run complete race coverage" || raceSteps[2].If != "" ||
+		raceSteps[2].Uses != "" || raceSteps[2].Run != "make test-race" ||
+		raceSteps[2].Shell != "bash" || raceSteps[2].WorkingDirectory != "" ||
+		len(raceSteps[2].With) != 0 || len(raceSteps[2].Env) != 0 {
+		return fmt.Errorf("%s: race coverage must be the unconditional audited make test-race invocation", path)
+	}
+
 	e2e := workflow.Jobs["kubernetes-e2e"]
 	if e2e.If != "" || e2e.TimeoutMinutes != ciKubernetesE2ETimeoutMinutes {
 		return fmt.Errorf("%s: kubernetes-e2e must run unconditionally with a %d-minute timeout", path, ciKubernetesE2ETimeoutMinutes)
 	}
-	if !equalStringSet(e2e.Needs, []string{"support-matrix", "verify"}) {
+	if !equalStringSet(e2e.Needs, []string{"support-matrix", "verify", "race"}) {
 		return fmt.Errorf("%s: kubernetes-e2e dependencies are %v", path, e2e.Needs)
 	}
 	if e2e.Strategy.FailFast == nil || *e2e.Strategy.FailFast ||
@@ -753,7 +804,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	if gate.TimeoutMinutes != ciKubernetesSupportTimeoutMinutes {
 		return fmt.Errorf("%s: Kubernetes support gate timeout must be %d minutes", path, ciKubernetesSupportTimeoutMinutes)
 	}
-	if !equalStringSet(gate.Needs, []string{"support-matrix", "verify", "kubernetes-e2e"}) {
+	if !equalStringSet(gate.Needs, []string{"support-matrix", "verify", "race", "kubernetes-e2e"}) {
 		return fmt.Errorf("%s: Kubernetes support gate dependencies are %v", path, gate.Needs)
 	}
 	step, err := requireWorkflowStep(path, "kubernetes-support-gate", gate, "require-results")
@@ -763,6 +814,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	wantEnv := map[string]string{
 		"SUPPORT_MATRIX_RESULT": "${{ needs.support-matrix.result }}",
 		"VERIFY_RESULT":         "${{ needs.verify.result }}",
+		"RACE_RESULT":           "${{ needs.race.result }}",
 		"KUBERNETES_E2E_RESULT": "${{ needs.kubernetes-e2e.result }}",
 	}
 	if !equalStringMap(step.Env, wantEnv) {
@@ -772,6 +824,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 for result in \
   "$SUPPORT_MATRIX_RESULT" \
   "$VERIFY_RESULT" \
+  "$RACE_RESULT" \
   "$KUBERNETES_E2E_RESULT"
 do
   if [[ "$result" != success ]]; then
@@ -1482,6 +1535,9 @@ const apiServerFeatureGateScopeContract = `assert_api_server_feature_gate_scope(
 
 func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyMakeE2ETarget(files.makefile); err != nil {
+		return err
+	}
+	if err := verifyMakeRaceTargets(files.makefile); err != nil {
 		return err
 	}
 	if err := verifyFailedHookEvidenceAssets(files); err != nil {
@@ -3001,6 +3057,100 @@ func equalStrings(actual, expected []string) bool {
 	return true
 }
 
+type auditedMakeRule struct {
+	line             int
+	raw              string
+	operator         string
+	conditionalDepth int
+}
+
+type auditedMakefile struct {
+	lines []string
+	rules map[string][]auditedMakeRule
+	phony map[string]int
+}
+
+func parseAuditedMakefile(path string, contents []byte) (auditedMakefile, error) {
+	if regexp.MustCompile(`(?m)^[ ]*(?:-?include|sinclude)[ \t]+|\$(?:\(|\{)(?:eval|file)[ \t]+`).Match(contents) {
+		return auditedMakefile{}, fmt.Errorf("%s: Makefile must not inject unaudited rules through include, eval, or file directives", path)
+	}
+	parsed := auditedMakefile{
+		lines: strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n"),
+		rules: make(map[string][]auditedMakeRule),
+		phony: make(map[string]int),
+	}
+	conditionalDepth := 0
+	makeRule := regexp.MustCompile(`^[ ]*([^#:=][^:=#]*?)[ \t]*(::?|&:)(.*)$`)
+	makeConditionalStart := regexp.MustCompile(`^(?:ifeq|ifneq|ifdef|ifndef)(?:[ \t(]|$)`)
+	for index, line := range parsed.lines {
+		trimmedLine := strings.TrimSpace(line)
+		switch {
+		case makeConditionalStart.MatchString(trimmedLine):
+			conditionalDepth++
+		case trimmedLine == "else" || strings.HasPrefix(trimmedLine, "else "):
+			if conditionalDepth == 0 {
+				return auditedMakefile{}, fmt.Errorf("%s:%d: unmatched Make else directive", path, index+1)
+			}
+		case trimmedLine == "endif" || strings.HasPrefix(trimmedLine, "endif "):
+			if conditionalDepth == 0 {
+				return auditedMakefile{}, fmt.Errorf("%s:%d: unmatched Make endif directive", path, index+1)
+			}
+			conditionalDepth--
+		}
+
+		match := makeRule.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
+		if strings.Contains(match[1], "$") {
+			return auditedMakefile{}, fmt.Errorf("%s:%d: dynamically named Make targets are outside the audited contract", path, index+1)
+		}
+		targets := strings.Fields(match[1])
+		for _, target := range targets {
+			if target == ".IGNORE" {
+				return auditedMakefile{}, fmt.Errorf("%s:%d: .IGNORE rules are forbidden because they can suppress audited target failures", path, index+1)
+			}
+			parsed.rules[target] = append(parsed.rules[target], auditedMakeRule{
+				line:             index,
+				raw:              line,
+				operator:         match[2],
+				conditionalDepth: conditionalDepth,
+			})
+		}
+		if len(targets) == 1 && targets[0] == ".PHONY" && match[2] == ":" && conditionalDepth == 0 {
+			prerequisites := match[3]
+			if comment := strings.IndexByte(prerequisites, '#'); comment >= 0 {
+				prerequisites = prerequisites[:comment]
+			}
+			for _, target := range strings.Fields(prerequisites) {
+				parsed.phony[target]++
+			}
+		}
+	}
+	if conditionalDepth != 0 {
+		return auditedMakefile{}, fmt.Errorf("%s: unterminated Make conditional", path)
+	}
+	return parsed, nil
+}
+
+func (parsed auditedMakefile) requireTarget(path, target, header string) (auditedMakeRule, error) {
+	rules := parsed.rules[target]
+	if len(rules) != 1 {
+		return auditedMakeRule{}, fmt.Errorf("%s: %s target must be declared exactly once", path, target)
+	}
+	rule := rules[0]
+	if rule.raw != header || rule.operator != ":" {
+		return auditedMakeRule{}, fmt.Errorf("%s:%d: %s target has unexpected prerequisites, whitespace, or rule syntax", path, rule.line+1, target)
+	}
+	if rule.conditionalDepth != 0 {
+		return auditedMakeRule{}, fmt.Errorf("%s:%d: %s target must not be conditional", path, rule.line+1, target)
+	}
+	if parsed.phony[target] != 1 {
+		return auditedMakeRule{}, fmt.Errorf("%s: %s target must have exactly one unconditional .PHONY declaration", path, target)
+	}
+	return rule, nil
+}
+
 func verifyMakeE2ETarget(path string) error {
 	contents, err := os.ReadFile(path)
 	if err != nil {
@@ -3010,9 +3160,6 @@ func verifyMakeE2ETarget(path string) error {
 	unsafeMakeControl := regexp.MustCompile(`(?m)^[ ]*(?:(?:export|override|private|unexport)[ \t]+)*(?:MAKEFLAGS|MFLAGS|MAKEFILES)(?:[ \t]*[:+?!]?=|[ \t]*(?:#.*)?$)`)
 	if unsafeMakeControl.Match(contents) {
 		return fmt.Errorf("%s: Makefile must not set or export MAKEFLAGS, MFLAGS, or MAKEFILES because they can suppress or replace the e2e recipe", path)
-	}
-	if regexp.MustCompile(`(?m)^[ ]*(?:-?include|sinclude)[ \t]+|\$\((?:eval|file)[ \t]+`).Match(contents) {
-		return fmt.Errorf("%s: Makefile must not inject unaudited rules through include, eval, or file directives", path)
 	}
 	if regexp.MustCompile(`(?m)^[ ]*\.RECIPEPREFIX[ \t]*[:+?!]?=`).Match(contents) {
 		return fmt.Errorf("%s: .RECIPEPREFIX must not alter audited recipe parsing", path)
@@ -3024,80 +3171,15 @@ func verifyMakeE2ETarget(path string) error {
 	if regexp.MustCompile(`(?m)^[ \t]*(?:(?:export|override|private)[ \t]+)*\.SHELLFLAGS[ \t]*[:+?]?=`).Match(contents) {
 		return fmt.Errorf("%s: .SHELLFLAGS must not override Make recipe execution", path)
 	}
-	phony := false
-	targetLine := -1
-	e2eRuleCount := 0
-	conditionalDepth := 0
-	makeRule := regexp.MustCompile(`^[ ]*([^#:=][^:=#]*?)[ \t]*(::?|&:)(.*)$`)
-	makeConditionalStart := regexp.MustCompile(`^(?:ifeq|ifneq|ifdef|ifndef)(?:[ \t(]|$)`)
-	makeIgnore := regexp.MustCompile(`^[ \t]*\.IGNORE[ \t]*:(.*)$`)
-	for index, line := range lines {
-		trimmedLine := strings.TrimSpace(line)
-		switch {
-		case makeConditionalStart.MatchString(trimmedLine):
-			conditionalDepth++
-		case trimmedLine == "else" || strings.HasPrefix(trimmedLine, "else "):
-			if conditionalDepth == 0 {
-				return fmt.Errorf("%s:%d: unmatched Make else directive", path, index+1)
-			}
-		case trimmedLine == "endif" || strings.HasPrefix(trimmedLine, "endif "):
-			if conditionalDepth == 0 {
-				return fmt.Errorf("%s:%d: unmatched Make endif directive", path, index+1)
-			}
-			conditionalDepth--
-		}
-		if match := makeIgnore.FindStringSubmatch(line); match != nil {
-			ignoredTargets := strings.Fields(match[1])
-			ignoreE2E := len(ignoredTargets) == 0
-			for _, target := range ignoredTargets {
-				ignoreE2E = ignoreE2E || target == "e2e"
-			}
-			if ignoreE2E {
-				return fmt.Errorf("%s: Make must not ignore e2e recipe failures", path)
-			}
-		}
-		if strings.HasPrefix(line, ".PHONY:") {
-			for _, target := range strings.Fields(strings.TrimPrefix(line, ".PHONY:")) {
-				if target == "e2e" {
-					phony = true
-				}
-			}
-		}
-		match := makeRule.FindStringSubmatch(line)
-		if match == nil {
-			continue
-		}
-		if strings.Contains(match[1], "$") {
-			return fmt.Errorf("%s:%d: dynamically named Make targets are outside the audited e2e contract", path, index+1)
-		}
-		isE2ETarget := false
-		for _, target := range strings.Fields(match[1]) {
-			if target == "e2e" {
-				isE2ETarget = true
-				break
-			}
-		}
-		if !isE2ETarget {
-			continue
-		}
-		e2eRuleCount++
-		if line != "e2e:" || match[2] != ":" || strings.TrimSpace(match[3]) != "" {
-			return fmt.Errorf("%s:%d: e2e target must be the unconditional exact rule e2e:", path, index+1)
-		}
-		if conditionalDepth != 0 {
-			return fmt.Errorf("%s:%d: e2e target must not be conditional", path, index+1)
-		}
-		targetLine = index
+	parsed, err := parseAuditedMakefile(path, contents)
+	if err != nil {
+		return err
 	}
-	if conditionalDepth != 0 {
-		return fmt.Errorf("%s: unterminated Make conditional", path)
+	rule, err := parsed.requireTarget(path, "e2e", "e2e:")
+	if err != nil {
+		return err
 	}
-	if !phony {
-		return fmt.Errorf("%s: e2e target must be phony", path)
-	}
-	if targetLine < 0 || e2eRuleCount != 1 {
-		return fmt.Errorf("%s: e2e target must be declared exactly once", path)
-	}
+	targetLine := rule.line
 
 	var recipe []string
 	for _, line := range lines[targetLine+1:] {
@@ -3119,6 +3201,60 @@ func verifyMakeE2ETarget(path string) error {
 		return fmt.Errorf("%s: e2e target must contain only %q", path, expected)
 	}
 	return nil
+}
+
+func verifyMakeRaceTargets(path string) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	for assignment, expected := range map[string]string{
+		"RACE_MUTATION_SHARDS": "RACE_MUTATION_SHARDS ?= 8",
+		"RACE_MUTATION_SHARD":  "RACE_MUTATION_SHARD ?=",
+		"RACE_MUTATION_TESTS": "override RACE_MUTATION_TESTS := " +
+			"TestVerifyE2EHarnessRejectsCriticalMutations|" +
+			"TestVerifyE2EDataPlaneRejectsCriticalMutations|" +
+			"TestVerifyFailedUpgradeEvidenceRejectsCriticalMutations|" +
+			"TestVerifyE2EChildScriptsRejectCriticalMutations",
+	} {
+		pattern := regexp.MustCompile(`(?m)^(?:override[ \t]+)?` + regexp.QuoteMeta(assignment) + `[ \t]*[:+?!]?=[^\r\n]*$`)
+		matches := pattern.FindAll(contents, -1)
+		if len(matches) != 1 || string(matches[0]) != expected {
+			return fmt.Errorf("%s: %s must have the exact audited race-shard assignment", path, assignment)
+		}
+	}
+	parsed, err := parseAuditedMakefile(path, contents)
+	if err != nil {
+		return err
+	}
+	for target, contract := range map[string]struct {
+		header string
+		digest string
+	}{
+		"validate-race-shards": {header: "validate-race-shards:", digest: raceValidationRuleSHA256},
+		"test-race-base":       {header: "test-race-base: validate-race-shards", digest: raceBaseRuleSHA256},
+		"test-race-mutation":   {header: "test-race-mutation: validate-race-shards", digest: raceMutationRuleSHA256},
+		"test-race":            {header: "test-race: validate-race-shards test-race-base", digest: raceAggregateSHA256},
+	} {
+		rule, ruleErr := parsed.requireTarget(path, target, contract.header)
+		if ruleErr != nil {
+			return ruleErr
+		}
+		ruleSource := exactMakeRule(parsed.lines, rule.line)
+		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(ruleSource)))
+		if digest != contract.digest {
+			return fmt.Errorf("%s: %s differs from the audited complete race-shard contract", path, target)
+		}
+	}
+	return nil
+}
+
+func exactMakeRule(lines []string, start int) string {
+	end := start + 1
+	for end < len(lines) && strings.HasPrefix(lines[end], "\t") {
+		end++
+	}
+	return strings.Join(lines[start:end], "\n")
 }
 
 func verifyShellScriptEntrypoint(path string, contents []byte) error {

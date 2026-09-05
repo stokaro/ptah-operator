@@ -375,9 +375,17 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			old: "          CRD_SCHEMA_BASELINE_REF: ${{ steps.crd-baseline.outputs.baseline }}\n",
 			new: "          CRD_SCHEMA_BASELINE_REF: ${{ github.sha }}\n",
 		},
+		"project verification includes race work": {
+			old: "        run: make verify-source\n",
+			new: "        run: make verify\n",
+		},
+		"race target bypassed": {
+			old: "        run: make test-race\n",
+			new: "        run: go test ./...\n",
+		},
 		"E2E dependencies": {
-			old: "    needs: [support-matrix, verify]\n",
-			new: "    needs: [support-matrix]\n",
+			old: "    needs: [support-matrix, verify, race]\n",
+			new: "    needs: [support-matrix, verify]\n",
 		},
 		"static E2E matrix": {
 			old: "        include: ${{ fromJSON(needs.support-matrix.outputs.matrix) }}\n",
@@ -412,8 +420,12 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "        run: make e2e\n      - name: Duplicate lifecycle\n        run: make e2e\n      - name: Remove explicit Docker context\n",
 		},
 		"verify timeout drift": {
-			old: "    timeout-minutes: 20\n",
-			new: "    timeout-minutes: 25\n",
+			old: "    name: Verify source and generated files\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n",
+			new: "    name: Verify source and generated files\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n",
+		},
+		"race timeout drift": {
+			old: "    name: Race detector\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n",
+			new: "    name: Race detector\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n",
 		},
 		"matrix timeout drift": {
 			old: "    timeout-minutes: 10\n",
@@ -436,12 +448,20 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "    if: ${{ success() }}\n",
 		},
 		"missing lifecycle dependency": {
-			old: "    needs: [support-matrix, verify, kubernetes-e2e]\n",
-			new: "    needs: [support-matrix, verify]\n",
+			old: "    needs: [support-matrix, verify, race, kubernetes-e2e]\n",
+			new: "    needs: [support-matrix, verify, race]\n",
+		},
+		"missing race dependency": {
+			old: "    needs: [support-matrix, verify, race, kubernetes-e2e]\n",
+			new: "    needs: [support-matrix, verify, kubernetes-e2e]\n",
 		},
 		"unbound lifecycle result": {
 			old: "          KUBERNETES_E2E_RESULT: ${{ needs.kubernetes-e2e.result }}\n",
 			new: "          KUBERNETES_E2E_RESULT: success\n",
+		},
+		"unbound race result": {
+			old: "          RACE_RESULT: ${{ needs.race.result }}\n",
+			new: "          RACE_RESULT: success\n",
 		},
 		"successful failure branch": {
 			old: "              echo \"required Kubernetes support job concluded: $result\" >&2\n              exit 1\n",
