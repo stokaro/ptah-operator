@@ -18,6 +18,7 @@ import (
 
 const (
 	kubernetesServiceNamespace     = metav1.NamespaceDefault
+	kubernetesServiceName          = "kubernetes"
 	kubernetesServiceTLSServerName = "kubernetes.default.svc"
 	authorizationPollEvery         = 250 * time.Millisecond
 	authorizationStabilityDuration = 5 * time.Second

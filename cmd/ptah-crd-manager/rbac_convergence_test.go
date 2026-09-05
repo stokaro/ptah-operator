@@ -26,7 +26,6 @@ import (
 )
 
 const (
-	kubernetesServiceName                       = "kubernetes"
 	kubernetesServiceTLSPortName                = "https"
 	kubernetesAPIEndpointSlicePageSize  int64   = 200
 	directKubernetesAPIQueriesPerSecond float32 = 100

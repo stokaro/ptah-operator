@@ -16,7 +16,10 @@ REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 all: verify build
 
 build:
-	$(GO) build ./cmd/manager ./cmd/ptah-runner ./cmd/ptah-cert-rotator ./cmd/ptah-crd-manager
+	@# ./... rather than a list of commands: a command left out of the list
+	@# is a binary nothing builds, and the list was already complete only by
+	@# coincidence. Non-main packages type-check and write nothing.
+	$(GO) build ./...
 
 test:
 	$(GO) test ./...
@@ -86,7 +89,7 @@ manifests:
 
 verify: verify-source test-race
 
-verify-source: fmt-check generate manifests verify-crd-schema-history verify-kubernetes-support verify-release e2e-static vet test
+verify-source: fmt-check generate manifests verify-crd-schema-history verify-kubernetes-support verify-release e2e-static vet build test
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets
 
 verify-crd-schema-history: manifests
