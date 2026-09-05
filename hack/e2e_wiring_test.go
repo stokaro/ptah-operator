@@ -1957,11 +1957,11 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "legacy Job activation probe source",
 		},
 		{
-			name:        "CRD legacy Job bootstrap boundary is bypassed",
+			name:        "CRD legacy Job bootstrap admission is bypassed",
 			child:       "crd-upgrade",
-			old:         `fail "legacy Job bootstrap probe did not reach the semantic controller-write boundary"`,
-			replacement: `true # legacy Job semantic boundary removed`,
-			wantError:   "legacy Job bootstrap semantic boundary",
+			old:         `fail "legacy Job bootstrap probe was refused before candidate activation"`,
+			replacement: `true # legacy Job bootstrap admission removed`,
+			wantError:   "legacy Job bootstrap admits before activation",
 		},
 		{
 			name:        "CRD legacy Job active denial is bypassed",

@@ -2650,19 +2650,37 @@ prove_legacy_job_activation_boundary() {
 	stderr=$WORK_DIR/controller-job-activation-${expected_state}-${CONTROLLER_OBJECT_GUARD_PROBE_INDEX}.err
 	case "$expected_state" in
 	bootstrap)
-		if controller_kube create --dry-run=server -o json -f "$legacy_job_probe" \
+		# The predecessor admits this CREATE, and that is the point being
+		# proved: the structural guard is what activation adds.
+		#
+		# This branch used to require the semantic denial "Job does not match a
+		# not-yet-created active operation". The pinned predecessor cannot emit
+		# it -- internal/controllerwrite does not exist at that revision, it
+		# arrived a day later -- so the probe asserted a message no predecessor
+		# build could produce and failed on every run. Moving the pin forward to
+		# a revision carrying the boundary was tried and abandoned: every such
+		# commit also moves the CRD digests, the annotation-free adoption map,
+		# and the chart values this harness installs the predecessor with, and
+		# the install fails on the last of those.
+		#
+		# So the before/after pair is what it can honestly be. Before
+		# activation the write is admitted; after activation the same write is
+		# refused by the structural guard, which the active branch below
+		# asserts exactly. That is the activation boundary, demonstrated by the
+		# change rather than by two different denials.
+		#
+		# If the predecessor pin ever moves past the revision that introduced
+		# internal/controllerwrite, restore the semantic-denial assertion here:
+		# it is the stronger claim whenever the predecessor can meet it.
+		if ! controller_kube create --dry-run=server -o json -f "$legacy_job_probe" \
 			>"$stdout" 2>"$stderr"; then
-			fail "legacy Job bootstrap probe bypassed the semantic controller-write boundary"
+			cat "$stderr" >&2
+			fail "legacy Job bootstrap probe was refused before candidate activation"
 		fi
 		if grep -F 'Ptah controller Job write guard rejected an unsafe workload shape' \
 			"$stdout" "$stderr" >/dev/null; then
 			fail "legacy Job CREATE was blocked before candidate activation"
 		fi
-		grep -F 'Job does not match a not-yet-created active operation' \
-			"$stdout" "$stderr" >/dev/null || {
-			cat "$stderr" >&2
-			fail "legacy Job bootstrap probe did not reach the semantic controller-write boundary"
-		}
 		;;
 	active)
 		if controller_kube create --dry-run=server -o json -f "$legacy_job_probe" \
