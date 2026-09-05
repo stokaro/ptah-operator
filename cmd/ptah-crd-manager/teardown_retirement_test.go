@@ -759,7 +759,9 @@ func TestConfiguredTeardownRetirementGuardAddsOnlyExactCertificateRecoveryPair(t
 	}
 
 	rollout := teardownRetirementManagerTestRollout()
+	rollout.CertificateRuntimeEnabled = true
 	rollout.CertificateArgs = append(rollout.CertificateArgs,
+		"--staging-secret-name=ptah-webhook-cert-stage",
 		"--recreate-missing-secret=true",
 		"--secret-create-policy-name="+rollout.CertificateDeploymentName,
 		"--secret-create-policy-binding-name="+rollout.CertificateDeploymentName,
@@ -772,6 +774,19 @@ func TestConfiguredTeardownRetirementGuardAddsOnlyExactCertificateRecoveryPair(t
 	configured, err := newConfiguredTeardownRetirementGuard(rollout, contract)
 	if err != nil {
 		t.Fatal(err)
+	}
+	recoveryConfig := certificateRecoveryRetirementConfig(
+		rollout,
+		rollout.CertificateDeploymentName,
+		rollout.CertificateDeploymentName,
+		rollout.CertificateDeploymentName,
+	)
+	if recoveryConfig.ReleaseName != rollout.ReleaseName {
+		t.Fatalf(
+			"certificate recovery retirement release name = %q, want %q",
+			recoveryConfig.ReleaseName,
+			rollout.ReleaseName,
+		)
 	}
 	_, err = configured.WithOriginalPairs(crdupgrade.TeardownOriginalPairVerifier{
 		Name: rollout.CertificateDeploymentName,

@@ -73,14 +73,7 @@ func newConfiguredTeardownRetirementGuard(
 			rollout.CertificateDeploymentName,
 		)
 	}
-	config := certrotation.Config{
-		Namespace:                      rollout.ReleaseNamespace,
-		SecretName:                     rollout.WebhookSecretName,
-		SecretCreatePolicyName:         policyName,
-		SecretCreatePolicyBindingName:  bindingName,
-		SecretCreateServiceAccountName: serviceAccountName,
-		RecreateMissingSecret:          true,
-	}
+	config := certificateRecoveryRetirementConfig(rollout, policyName, bindingName, serviceAccountName)
 	pair := crdupgrade.TeardownOriginalPairVerifier{
 		Name: policyName,
 		VerifyPolicy: func(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
@@ -103,6 +96,21 @@ func newConfiguredTeardownRetirementGuard(
 		},
 	}
 	return guard.WithOriginalPairs(pair)
+}
+
+func certificateRecoveryRetirementConfig(
+	rollout *crdupgrade.RolloutGuard,
+	policyName, bindingName, serviceAccountName string,
+) certrotation.Config {
+	return certrotation.Config{
+		Namespace:                      rollout.ReleaseNamespace,
+		ReleaseName:                    rollout.ReleaseName,
+		SecretName:                     rollout.WebhookSecretName,
+		SecretCreatePolicyName:         policyName,
+		SecretCreatePolicyBindingName:  bindingName,
+		SecretCreateServiceAccountName: serviceAccountName,
+		RecreateMissingSecret:          true,
+	}
 }
 
 type teardownRetirementMetadataObject interface {

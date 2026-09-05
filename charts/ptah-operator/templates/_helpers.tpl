@@ -361,6 +361,11 @@ app.kubernetes.io/component: controller
 {{- printf "%s-cert-rotator" $base -}}
 {{- end -}}
 
+{{- define "ptah-operator.certificateDiscoveryRoleName" -}}
+{{- $digest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 40 -}}
+{{- printf "ptah-cert-discovery-v1-%s" $digest -}}
+{{- end -}}
+
 {{- define "ptah-operator.certRotationLeaseName" -}}
 {{- $base := include "ptah-operator.fullname" . | trunc 49 | trimSuffix "-" -}}
 {{- printf "%s-cert-rotation" $base -}}
@@ -372,8 +377,13 @@ app.kubernetes.io/component: controller
 {{- end -}}
 
 {{- define "ptah-operator.certificateTransitionServiceName" -}}
-{{- $base := include "ptah-operator.fullname" . | trunc 43 | trimSuffix "-" -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 39 | trimSuffix "-" -}}
 {{- printf "%s-cert-transition" $base -}}
+{{- end -}}
+
+{{- define "ptah-operator.certificateCanaryConfigMapName" -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 39 | trimSuffix "-" -}}
+{{- printf "%s-cert-canary" $base -}}
 {{- end -}}
 
 {{- define "ptah-operator.webhookSecretName" -}}
@@ -443,11 +453,13 @@ app.kubernetes.io/component: controller
 {{- $controllerServiceAccount := include "ptah-operator.serviceAccountName" . -}}
 {{- $controllerRuntimeRole := printf "%s-runtime-admission" $controllerName -}}
 {{- $certificateName := include "ptah-operator.certRotatorServiceAccountName" . -}}
+{{- $certificateDiscoveryRoleName := include "ptah-operator.certificateDiscoveryRoleName" . -}}
 {{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
 {{- $webhookSecretName := include "ptah-operator.webhookSecretName" . -}}
 {{- $webhookServiceName := include "ptah-operator.webhookServiceName" . -}}
 {{- $certificateStagingSecretName := include "ptah-operator.certRotationStagingSecretName" . -}}
 {{- $certificateTransitionServiceName := include "ptah-operator.certificateTransitionServiceName" . -}}
+{{- $certificateCanaryConfigMapName := include "ptah-operator.certificateCanaryConfigMapName" . -}}
 {{- $hookName := include "ptah-operator.crdManagerServiceAccountName" . -}}
 {{- $bootstrapName := printf "%s-bootstrap" ($hookName | trunc 53 | trimSuffix "-") -}}
 {{- $probeName := printf "%s-probe" ($hookName | trunc 57 | trimSuffix "-") -}}
@@ -500,16 +512,27 @@ app.kubernetes.io/component: controller
       (dict "kind" "Job" "namespace" $releaseNamespace "name" $quiesceName "source" "teardown quiesce Job")
       (dict "kind" "Job" "namespace" $releaseNamespace "name" $cleanupName "source" "teardown cleanup Job")
 -}}
+{{- if ne $releaseNamespace "default" -}}
+{{- $identities = append $identities (dict "kind" "Role" "namespace" "default" "name" $hookName "source" "CRD manager API discovery Role") -}}
+{{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" "default" "name" $hookName "source" "CRD manager API discovery RoleBinding") -}}
+{{- $identities = append $identities (dict "kind" "Role" "namespace" "default" "name" $quiesceName "source" "teardown quiesce API discovery Role") -}}
+{{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" "default" "name" $quiesceName "source" "teardown quiesce API discovery RoleBinding") -}}
+{{- end -}}
 {{- if $certificateRuntimeEnabled -}}
 {{- $identities = append $identities (dict "kind" "ServiceAccount" "namespace" $releaseNamespace "name" $certificateName "source" "certificate ServiceAccount") -}}
 {{- $identities = append $identities (dict "kind" "ClusterRole" "namespace" "" "name" $certificateName "source" "certificate ClusterRole") -}}
 {{- $identities = append $identities (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $certificateName "source" "certificate ClusterRoleBinding") -}}
 {{- $identities = append $identities (dict "kind" "Role" "namespace" $releaseNamespace "name" $certificateName "source" "certificate Role") -}}
 {{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $certificateName "source" "certificate RoleBinding") -}}
+{{- if ne $releaseNamespace "default" -}}
+{{- $identities = append $identities (dict "kind" "Role" "namespace" "default" "name" $certificateDiscoveryRoleName "source" "certificate API discovery Role") -}}
+{{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" "default" "name" $certificateDiscoveryRoleName "source" "certificate API discovery RoleBinding") -}}
+{{- end -}}
 {{- $identities = append $identities (dict "kind" "Secret" "namespace" $releaseNamespace "name" $webhookSecretName "source" "webhook TLS Secret") -}}
 {{- $identities = append $identities (dict "kind" "Secret" "namespace" $releaseNamespace "name" $certificateStagingSecretName "source" "certificate staging Secret") -}}
 {{- $identities = append $identities (dict "kind" "Service" "namespace" $releaseNamespace "name" $webhookServiceName "source" "webhook Service") -}}
 {{- $identities = append $identities (dict "kind" "Service" "namespace" $releaseNamespace "name" $certificateTransitionServiceName "source" "certificate transition Service") -}}
+{{- $identities = append $identities (dict "kind" "ConfigMap" "namespace" $releaseNamespace "name" $certificateCanaryConfigMapName "source" "certificate canary ConfigMap") -}}
 {{- end -}}
 {{- if .Values.approverClusterRole.create -}}
 {{- $identities = append $identities (dict "kind" "ClusterRole" "namespace" "" "name" (printf "%s-approver" $controllerName) "source" "approver ClusterRole") -}}
@@ -517,6 +540,10 @@ app.kubernetes.io/component: controller
 {{- if ne $coordinationNamespace $releaseNamespace -}}
 {{- $identities = append $identities (dict "kind" "Role" "namespace" $coordinationNamespace "name" $cleanupPrivilegeName "source" "teardown privilege coordination Role") -}}
 {{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" $coordinationNamespace "name" $cleanupPrivilegeName "source" "teardown privilege coordination RoleBinding") -}}
+{{- end -}}
+{{- if and (ne $releaseNamespace "default") (ne $coordinationNamespace "default") -}}
+{{- $identities = append $identities (dict "kind" "Role" "namespace" "default" "name" $cleanupPrivilegeName "source" "teardown privilege API discovery Role") -}}
+{{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" "default" "name" $cleanupPrivilegeName "source" "teardown privilege API discovery RoleBinding") -}}
 {{- end -}}
 {{- $seen := dict -}}
 {{- range $identity := $identities -}}
@@ -534,7 +561,9 @@ app.kubernetes.io/component: controller
 
 {{- define "ptah-operator.controllerStateVersion" -}}1{{- end -}}
 
-{{- define "ptah-operator.admissionContractVersion" -}}1{{- end -}}
+{{- define "ptah-operator.admissionContractVersion" -}}
+{{- if and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}2{{- else -}}1{{- end -}}
+{{- end -}}
 
 {{- /* Increase for every published operator release. Guard resources are
       append-only, so reusing a sequence would make a different runtime target
@@ -559,6 +588,10 @@ app.kubernetes.io/component: controller
 
 {{- define "ptah-operator.admissionConvergencePolicyName" -}}
 {{- printf "ptah-operator-admission-convergence-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- end -}}
+
+{{- define "ptah-operator.stagingSecretGuardPolicyName" -}}
+{{- printf "ptah-operator-cert-stage-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.admissionConvergenceMarkerName" -}}
@@ -668,11 +701,26 @@ app.kubernetes.io/component: controller
 
 {{- define "ptah-operator.certificateRuntimeArgsJSON" -}}
 {{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
+{{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
+{{- $mutatingWebhookNames := "mapproval.operator.ptah.dev" -}}
+{{- $validatingWebhookNames := "vapproval.operator.ptah.dev,vpodintent.operator.ptah.dev,vcontrollerwrite.operator.ptah.dev" -}}
 {{- $args := list
       (printf "--namespace=%s" .Release.Namespace)
+      (printf "--release-name=%s" .Release.Name)
       (printf "--secret-name=%s" (include "ptah-operator.webhookSecretName" .))
       (printf "--staging-secret-name=%s" (include "ptah-operator.certRotationStagingSecretName" .))
       (printf "--candidate-service-name=%s" (include "ptah-operator.certificateTransitionServiceName" .)) -}}
+{{- if $certificateRuntimeEnabled -}}
+{{- $args = concat $args (list
+      (printf "--candidate-bind-address=:%v" .Values.certificateRotation.candidatePort)
+      (printf "--candidate-probe-config-map-name=%s" (include "ptah-operator.certificateCanaryConfigMapName" .))
+      (printf "--candidate-probe-username=system:serviceaccount:%s:%s" .Release.Namespace $rotatorName)
+      "--candidate-mutating-field-manager=ptah-certificate-rotation-canary-mutate-v1"
+      "--candidate-validating-field-manager=ptah-certificate-rotation-canary-validate-v1"
+      (printf "--candidate-stability-duration=%s" .Values.certificateRotation.admissionConvergence.stabilityDuration)
+      (printf "--candidate-poll-interval=%s" .Values.certificateRotation.admissionConvergence.pollInterval)
+      (printf "--candidate-request-timeout=%s" .Values.certificateRotation.admissionConvergence.requestTimeout)) -}}
+{{- end -}}
 {{- if .Values.certificateRotation.recreateMissingSecret -}}
 {{- $args = append $args "--recreate-missing-secret=true" -}}
 {{- $args = append $args (printf "--secret-create-policy-name=%s" $rotatorName) -}}
@@ -682,9 +730,9 @@ app.kubernetes.io/component: controller
 {{- $args = concat $args (list
       (printf "--lease-name=%s" (include "ptah-operator.certRotationLeaseName" .))
       (printf "--mutating-webhook-configuration=%s" (include "ptah-operator.approvalWebhookConfigurationName" .))
-      "--mutating-webhook-names=mapproval.operator.ptah.dev"
+      (printf "--mutating-webhook-names=%s" $mutatingWebhookNames)
       (printf "--validating-webhook-configuration=%s" (include "ptah-operator.approvalWebhookConfigurationName" .))
-      "--validating-webhook-names=vapproval.operator.ptah.dev,vpodintent.operator.ptah.dev,vcontrollerwrite.operator.ptah.dev"
+      (printf "--validating-webhook-names=%s" $validatingWebhookNames)
       (printf "--service-name=%s" (include "ptah-operator.webhookServiceName" .))
       (printf "--service-namespace=%s" .Release.Namespace)
       "--endpoint-port-name=https"
@@ -739,8 +787,10 @@ app.kubernetes.io/component: controller
 {{- $newWebhook := "webhook" -}}
 {{- $oldWebhook := "previous" -}}
 {{- $exactServiceTarget := printf `has(%[1]s.clientConfig.service) && %[1]s.clientConfig.service.namespace == %[2]q && %[1]s.clientConfig.service.name == %[3]q && (!has(%[1]s.clientConfig.service.port) || %[1]s.clientConfig.service.port == 443)` $newWebhook .serviceNamespace .serviceName -}}
+{{- $exactCanaryTarget := printf `%[1]s.name == %[2]q && has(%[1]s.clientConfig.service) && %[1]s.clientConfig.service.namespace == %[3]q && %[1]s.clientConfig.service.name == %[4]q && (!has(%[1]s.clientConfig.service.port) || %[1]s.clientConfig.service.port == 443)` $newWebhook .canaryName .serviceNamespace .candidateServiceName -}}
+{{- $mutableTarget := printf `((%s) || (%s))` $exactServiceTarget $exactCanaryTarget -}}
 {{- $caBundleEquality := include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.caBundle" $newWebhook) "oldPath" (printf "%s.clientConfig.caBundle" $oldWebhook)) -}}
-{{- $mutableCABundle := printf `((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= 262144) || (!(%[1]s) && %[3]s)` $exactServiceTarget $newWebhook $caBundleEquality -}}
+{{- $mutableCABundle := printf `((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= 262144) || (!(%[1]s) && %[3]s)` $mutableTarget $newWebhook $caBundleEquality -}}
 {{- $parts := list
       (printf `%s.name == %s.name` $oldWebhook $newWebhook)
       (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.service" $newWebhook) "oldPath" (printf "%s.clientConfig.service" $oldWebhook)))
@@ -1162,5 +1212,14 @@ app.kubernetes.io/component: controller
 {{- define "ptah-operator.validateLeaderElection" -}}
 {{- if and (gt (int .Values.replicaCount) 1) (not .Values.leaderElection) -}}
 {{- fail "leaderElection must be true when replicaCount is greater than 1" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.validateCertificatePorts" -}}
+{{- if and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
+{{- $candidatePort := int .Values.certificateRotation.candidatePort -}}
+{{- if eq $candidatePort (int .Values.certificateRotation.healthPort) -}}
+{{- fail "certificateRotation.candidatePort must differ from certificateRotation.healthPort" -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}

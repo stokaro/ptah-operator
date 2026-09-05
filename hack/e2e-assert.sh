@@ -104,11 +104,17 @@ expect_invalid_schema_reference() {
 }
 
 CONTROLLER_NAME="${HELM_RELEASE}-ptah-operator"
-SERVICE_ACCOUNT="system:serviceaccount:${OPERATOR_NAMESPACE}:${CONTROLLER_NAME}"
 
 printf '%s\n' 'e2e assertions: checking manager readiness and chart state'
 h -n "$OPERATOR_NAMESPACE" status "$HELM_RELEASE" >/dev/null
 k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" --timeout=180s
+controller_service_account=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
+	jq -er '.spec.template.spec.serviceAccountName | select(type == "string" and length > 0)')
+admission_service_account=$(k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
+	jq -er '.metadata.annotations["operator.ptah.dev/controller-service-account-name"] | select(type == "string" and length > 0)')
+[ "$controller_service_account" = "$admission_service_account" ] ||
+	fail "controller Deployment and admission singleton disagree on the active ServiceAccount"
+SERVICE_ACCOUNT="system:serviceaccount:${OPERATOR_NAMESPACE}:${controller_service_account}"
 k -n "$OPERATOR_NAMESPACE" get endpointslice \
 	-l "kubernetes.io/service-name=${CONTROLLER_NAME}-webhook" -o json |
 	jq -e '.items | any(.[]?.endpoints[]?; .conditions.ready == true)' >/dev/null ||
@@ -141,48 +147,148 @@ done
 printf '%s\n' 'e2e assertions: checking webhook failure policy and scope'
 k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
 	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "${CONTROLLER_NAME}-webhook" '
-      .webhooks | length == 1 and all(.[];
+      .webhooks |
+      (map(.name) | sort) == [
+        "certificate-rotation-canary-mutate.operator.ptah.dev",
+        "mapproval.operator.ptah.dev"
+      ] and
+      (map(select(.name == "mapproval.operator.ptah.dev")) | all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and
 	        .matchPolicy == "Equivalent" and
+	        .reinvocationPolicy == "Never" and .timeoutSeconds == 5 and
 	        ((.namespaceSelector // {}) == {}) and
 	        ((.objectSelector // {}) == {}) and
 	        ((.matchConditions // []) == []) and
-        (.admissionReviewVersions | index("v1")) != null and
-        .clientConfig.caBundle != "" and
+        .admissionReviewVersions == ["v1"] and
+        (.clientConfig.caBundle | type == "string" and length > 0) and
+        (.clientConfig | has("url") | not) and
         .clientConfig.service.namespace == $namespace and
         .clientConfig.service.name == $service and
+        .clientConfig.service.port == 443 and
         .clientConfig.service.path == "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval" and
         .rules == [{
           apiGroups: ["operator.ptah.dev"], apiVersions: ["v1alpha1"],
           operations: ["CREATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"
-        }])
+        }]))
     ' >/dev/null || fail "approval mutating webhook is not exact and fail-closed"
 k get validatingwebhookconfiguration/ptah-operator-admission -o json |
-	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "${CONTROLLER_NAME}-webhook" '
-      .webhooks | length == 2 and
+	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "${CONTROLLER_NAME}-webhook" \
+		--arg controller "$SERVICE_ACCOUNT" --arg quote "'" '
+      def operation_labels($object):
+        "(has(" + $object + ".metadata.labels) && " +
+        $quote + "app.kubernetes.io/managed-by" + $quote + " in " + $object + ".metadata.labels && " +
+        $object + ".metadata.labels[" + $quote + "app.kubernetes.io/managed-by" + $quote + "] == " + $quote + "ptah-operator" + $quote + " && " +
+        $quote + "app.kubernetes.io/component" + $quote + " in " + $object + ".metadata.labels && " +
+        $object + ".metadata.labels[" + $quote + "app.kubernetes.io/component" + $quote + "] == " + $quote + "schema-operation" + $quote + ")";
+      def operation_owner($object):
+        $object + ".metadata.ownerReferences.exists(ref, ref.apiVersion == " + $quote + "batch/v1" + $quote +
+        " && ref.kind == " + $quote + "Job" + $quote + " && ref.controller == true && ref.name.matches(" +
+        $quote + "^ptah-(resolve|verify|observe|plan|apply)-" + $quote + "))";
+      def operation_pod_condition:
+        operation_labels("object") + " || " + operation_owner("object") +
+        " || (request.operation == " + $quote + "UPDATE" + $quote + " && oldObject != null && ( " +
+        operation_labels("oldObject") + " || " + operation_owner("oldObject") + "))";
+      .webhooks |
+      (map(.name) | sort) == [
+        "certificate-rotation-canary-validate.operator.ptah.dev",
+        "vapproval.operator.ptah.dev",
+        "vcontrollerwrite.operator.ptah.dev",
+        "vpodintent.operator.ptah.dev"
+      ] and
       (map(select(.name == "vapproval.operator.ptah.dev")) | length == 1 and all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Equivalent" and
+        .timeoutSeconds == 5 and
         ((.namespaceSelector // {}) == {}) and ((.objectSelector // {}) == {}) and
         ((.matchConditions // []) == []) and
-        (.admissionReviewVersions | index("v1")) != null and .clientConfig.caBundle != "" and
+        .admissionReviewVersions == ["v1"] and
+        (.clientConfig.caBundle | type == "string" and length > 0) and
+        (.clientConfig | has("url") | not) and .clientConfig.service.port == 443 and
         .clientConfig.service.namespace == $namespace and .clientConfig.service.name == $service and
         .clientConfig.service.path == "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval" and
         .rules == [{apiGroups: ["operator.ptah.dev"], apiVersions: ["v1alpha1"],
           operations: ["CREATE", "UPDATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"}])) and
       (map(select(.name == "vpodintent.operator.ptah.dev")) | length == 1 and all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Equivalent" and
+        .timeoutSeconds == 5 and
         ((.namespaceSelector // {}) == {}) and ((.objectSelector // {}) == {}) and
         (.matchConditions | length == 1 and .[0].name == "managed-or-operation-job-pod" and
-          (.[0].expression |
-            contains("batch/v1") and contains("oldObject") and
-            contains("^ptah-(resolve|verify|observe|plan|apply)-") and
-            contains("app.kubernetes.io/managed-by"))) and
-        (.admissionReviewVersions | index("v1")) != null and .clientConfig.caBundle != "" and
+          (.[0].expression | gsub("\\s+"; " ")) == operation_pod_condition) and
+        .admissionReviewVersions == ["v1"] and
+        (.clientConfig.caBundle | type == "string" and length > 0) and
+        (.clientConfig | has("url") | not) and .clientConfig.service.port == 443 and
         .clientConfig.service.namespace == $namespace and .clientConfig.service.name == $service and
         .clientConfig.service.path == "/validate-v1-pod-ptah-operation-intent" and
         .rules == [{apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE", "UPDATE"],
-          resources: ["pods", "pods/ephemeralcontainers", "pods/resize"], scope: "Namespaced"}]))
+          resources: ["pods", "pods/ephemeralcontainers", "pods/resize"], scope: "Namespaced"}])) and
+      (map(select(.name == "vcontrollerwrite.operator.ptah.dev")) | all(.[];
+        .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Exact" and
+        .timeoutSeconds == 30 and .admissionReviewVersions == ["v1"] and
+        ((.namespaceSelector // {}) == {}) and ((.objectSelector // {}) == {}) and
+        .matchConditions == [{
+          name: "controller-service-account",
+          expression: ("request.userInfo.username == " + $quote + $controller + $quote)
+        }] and
+        (.clientConfig.caBundle | type == "string" and length > 0) and
+        (.clientConfig | has("url") | not) and
+        .clientConfig.service == {
+          namespace: $namespace, name: $service,
+          path: "/validate-operator-controller-write", port: 443
+        } and
+        .rules == [
+          {apiGroups: ["batch"], apiVersions: ["v1"], operations: ["CREATE", "UPDATE"],
+            resources: ["jobs"], scope: "Namespaced"},
+          {apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE"],
+            resources: ["configmaps"], scope: "Namespaced"},
+          {apiGroups: ["operator.ptah.dev"], apiVersions: ["v1alpha1"], operations: ["CREATE"],
+            resources: ["ptahschemaplans"], scope: "Namespaced"}
+        ]))
     ' >/dev/null || fail "validating webhooks are not exact and fail-closed"
+
+assert_certificate_canary() {
+	canary_resource=$1
+	canary_suffix=$2
+	canary_condition=$3
+	k get "$canary_resource/ptah-operator-admission" -o json |
+		jq -e --arg namespace "$OPERATOR_NAMESPACE" \
+			--arg service "${CONTROLLER_NAME}-cert-transition" \
+			--arg marker "${CONTROLLER_NAME}-cert-canary" \
+			--arg username "system:serviceaccount:${OPERATOR_NAMESPACE}:${CONTROLLER_NAME}-cert-rotator" \
+			--arg suffix "$canary_suffix" --arg condition "$canary_condition" '
+          [.webhooks[] | select(.name == ("certificate-rotation-canary-" + $suffix + ".operator.ptah.dev"))] |
+          length == 1 and all(.[];
+            .admissionReviewVersions == ["v1"] and
+            .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Exact" and
+            .timeoutSeconds == 5 and
+            (if $suffix == "mutate" then .reinvocationPolicy == "Never"
+             else (has("reinvocationPolicy") | not) end) and
+            .namespaceSelector == {matchLabels: {"kubernetes.io/metadata.name": $namespace}} and
+            .objectSelector == {matchLabels: {"operator.ptah.dev/certificate-rotation-canary": "v1"}} and
+            .matchConditions == [{
+              name: $condition,
+              expression: (
+                "request.operation == \"UPDATE\" && request.resource.group == \"\" && " +
+                "request.resource.version == \"v1\" && request.resource.resource == \"configmaps\" && " +
+                "(!has(request.subResource) || request.subResource == \"\") && " +
+                "request.namespace == " + ($namespace | tojson) + " && " +
+                "request.name == " + ($marker | tojson) + " && " +
+                "request.userInfo.username == " + ($username | tojson) + " && " +
+                "request.dryRun == true && has(request.options) && has(request.options.fieldManager) && " +
+                "request.options.fieldManager == \"ptah-certificate-rotation-canary-" + $suffix + "-v1\" && " +
+                "has(request.options.fieldValidation) && request.options.fieldValidation == \"Strict\""
+              )
+            }] and
+            (.clientConfig.caBundle | type == "string" and length > 0) and
+            (.clientConfig | has("url") | not) and
+            .clientConfig.service == {
+              namespace: $namespace, name: $service, path: ("/candidate/" + $suffix), port: 443
+            } and
+            .rules == [{apiGroups: [""], apiVersions: ["v1"], operations: ["UPDATE"],
+              resources: ["configmaps"], scope: "Namespaced"}])
+        ' >/dev/null || fail "$canary_resource certificate canary does not match its exact admission contract"
+}
+
+assert_certificate_canary mutatingwebhookconfiguration mutate exact-certificate-rotation-mutating-canary
+assert_certificate_canary validatingwebhookconfiguration validate exact-certificate-rotation-validating-canary
 
 printf '%s\n' 'e2e assertions: checking controller Secret isolation'
 k create namespace "$TEST_NAMESPACE" >/dev/null

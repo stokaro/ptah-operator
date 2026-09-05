@@ -238,7 +238,7 @@ func TestRenderedControllerPrincipalGuardCarriesRetryTuple(t *testing.T) {
 	guardName := "ptah-operator-service-account-origin-guard-v2-" + provenanceHookIdentityDigest()[:12]
 	wantAnnotations := map[string]string{
 		"operator.ptah.dev/controller-state-version":                    "1",
-		"operator.ptah.dev/admission-contract-version":                  "1",
+		"operator.ptah.dev/admission-contract-version":                  "2",
 		"operator.ptah.dev/release-sequence":                            "1",
 		"operator.ptah.dev/manager-image":                               provenanceManagerImage(),
 		"operator.ptah.dev/hook-service-account-name":                   provenanceHookServiceAccount(),
@@ -328,7 +328,7 @@ func retainedControllerPrincipalObject(kind, weight, previousName string) map[st
 				"operator.ptah.dev/release-name":                                releaseName,
 				"operator.ptah.dev/release-namespace":                           releaseNamespace,
 				"operator.ptah.dev/controller-state-version":                    "1",
-				"operator.ptah.dev/admission-contract-version":                  "1",
+				"operator.ptah.dev/admission-contract-version":                  "2",
 				"operator.ptah.dev/release-sequence":                            "1",
 				"operator.ptah.dev/manager-image":                               provenanceManagerImage(),
 				"operator.ptah.dev/hook-service-account-name":                   provenanceHookServiceAccount(),
@@ -473,6 +473,12 @@ func renderPredecessorProvenance(t *testing.T, fixture map[string]any) (*unstruc
 		"serviceAccount": map[string]any{
 			"create": true,
 			"name":   "",
+		},
+		"certificateRotation": map[string]any{
+			"enabled": true,
+		},
+		"webhook": map[string]any{
+			"existingSecret": "",
 		},
 		"image": map[string]any{
 			"repository":         "ghcr.io/stokaro/ptah-operator",

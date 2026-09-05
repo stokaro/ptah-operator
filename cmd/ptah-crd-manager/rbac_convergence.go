@@ -606,6 +606,10 @@ func buildTeardownAuthorizationChecks(
 	if err != nil {
 		return teardownAuthorizationCheckSets{}, fmt.Errorf("derive teardown quiesce identity: %w", err)
 	}
+	certificateDiscoveryName, err := crdupgrade.CertificateDiscoveryRoleName(rollout.ReleaseNamespace, rollout.ReleaseName)
+	if err != nil {
+		return teardownAuthorizationCheckSets{}, fmt.Errorf("derive certificate discovery identity: %w", err)
+	}
 	bootstrapName, err := teardownBoundedRoleName(rollout.HookServiceAccountName, 53, "bootstrap")
 	if err != nil {
 		return teardownAuthorizationCheckSets{}, err
@@ -741,6 +745,8 @@ func buildTeardownAuthorizationChecks(
 		}
 		appendResource(teardownCheckCertificate, "update webhook Secret", "", "v1", "secrets", "", rollout.ReleaseNamespace, "update", rollout.WebhookSecretName)
 		appendResource(teardownCheckCertificate, "update certificate staging Secret", "", "v1", "secrets", "", rollout.ReleaseNamespace, "update", certificateStagingSecretName)
+		appendResource(teardownCheckCleanup, "clear certificate staging Secret", "", "v1", "secrets", "", rollout.ReleaseNamespace, "update", certificateStagingSecretName)
+		appendResource(teardownCheckCleanup, "delete certificate staging Secret", "", "v1", "secrets", "", rollout.ReleaseNamespace, "delete", certificateStagingSecretName)
 		recreateMissingSecret, recreateErr := optionalExactBooleanRuntimeArgument(rollout.CertificateArgs, "--recreate-missing-secret=")
 		if recreateErr != nil {
 			return teardownAuthorizationCheckSets{}, recreateErr
@@ -786,6 +792,14 @@ func buildTeardownAuthorizationChecks(
 		{kind: "RoleBinding", resource: "rolebindings", namespace: rollout.ReleaseNamespace, names: namespacedRBACNames},
 	}
 	if rollout.CoordinationNamespace != rollout.ReleaseNamespace {
+		coordinationNames := []string{rollout.ControllerDeploymentName}
+		if rollout.CoordinationNamespace == metav1.NamespaceDefault {
+			coordinationNames = append(coordinationNames, rollout.HookServiceAccountName, quiesceName)
+			if contract.CertificateRuntimeEnabled {
+				coordinationNames = append(coordinationNames, certificateDiscoveryName)
+			}
+		}
+		coordinationNames = append(coordinationNames, cleanupPrivilegeName)
 		rbacTargets = append(rbacTargets, struct {
 			kind      string
 			resource  string
@@ -795,13 +809,41 @@ func buildTeardownAuthorizationChecks(
 			kind:      "RoleBinding",
 			resource:  "rolebindings",
 			namespace: rollout.CoordinationNamespace,
-			names:     []string{rollout.ControllerDeploymentName, cleanupPrivilegeName},
+			names:     coordinationNames,
 		})
+	}
+	if rollout.ReleaseNamespace != metav1.NamespaceDefault &&
+		rollout.CoordinationNamespace != metav1.NamespaceDefault {
+		defaultNames := []string{rollout.HookServiceAccountName, quiesceName}
+		if contract.CertificateRuntimeEnabled {
+			defaultNames = append(defaultNames, certificateDiscoveryName)
+		}
+		defaultNames = append(defaultNames, cleanupPrivilegeName)
+		rbacTargets = append(rbacTargets, struct {
+			kind      string
+			resource  string
+			namespace string
+			names     []string
+		}{
+			kind:      "RoleBinding",
+			resource:  "rolebindings",
+			namespace: metav1.NamespaceDefault,
+			names:     defaultNames,
+		})
+	}
+	roleBindingNameCounts := map[string]int{}
+	for _, target := range rbacTargets {
+		if target.resource != "rolebindings" {
+			continue
+		}
+		for _, name := range target.names {
+			roleBindingNameCounts[name]++
+		}
 	}
 	for _, target := range rbacTargets {
 		for _, name := range target.names {
 			diagnosticName := "delete " + target.kind + " " + name
-			if target.resource == "rolebindings" && name == cleanupPrivilegeName {
+			if target.resource == "rolebindings" && (name == cleanupPrivilegeName || roleBindingNameCounts[name] > 1) {
 				diagnosticName = "delete " + target.kind + " " + target.namespace + "/" + name
 			}
 			appendResource(teardownCheckCleanup, diagnosticName, "rbac.authorization.k8s.io", "v1", target.resource, "", target.namespace, "delete", name)

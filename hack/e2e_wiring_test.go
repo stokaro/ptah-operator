@@ -38,6 +38,282 @@ func TestVerifyE2EWiring(t *testing.T) {
 	}
 }
 
+func TestKubernetesSupportImageResolverFollowsShiftedManifest(t *testing.T) {
+	t.Parallel()
+
+	digest := func(character string) string { return strings.Repeat(character, 64) }
+	manifest := supportManifest{
+		SchemaVersion: 1,
+		Policy:        "upstream-active-minors",
+		WindowSize:    3,
+		LastVerified:  "2026-09-05",
+		KindVersion:   "v0.33.0",
+		Releases: []release{
+			{Minor: "1.36", NodeImage: "kindest/node:v1.36.7@sha256:" + digest("6")},
+			{Minor: "1.37", NodeImage: "kindest/node:v1.37.3@sha256:" + digest("7")},
+			{Minor: "1.38", NodeImage: "kindest/node:v1.38.0@sha256:" + digest("8")},
+		},
+	}
+	contents, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(t.TempDir(), "kubernetes.json")
+	if err := os.WriteFile(manifestPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolver := repositoryE2EWiringFiles().supportImageResolver
+
+	output, err := exec.Command(resolver, manifestPath, "1.38.0").Output()
+	if err != nil {
+		t.Fatalf("resolve shifted-window newest release: %v", err)
+	}
+	want := "kindest/node:v1.38.0@sha256:" + digest("8") + "\n"
+	if string(output) != want {
+		t.Fatalf("resolved image = %q, want %q", output, want)
+	}
+
+	if err := exec.Command(resolver, manifestPath, "1.35.9").Run(); err == nil {
+		t.Fatal("resolver accepted a release outside the shifted support manifest")
+	}
+}
+
+func TestVerifyKubernetesSupportWindowWiringRejectsHardCodedAllowlists(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	tests := []struct {
+		name     string
+		path     string
+		marker   string
+		variable string
+		apply    func(*e2eWiringFiles, string)
+	}{
+		{
+			name:     "root harness",
+			path:     files.harness,
+			marker:   `K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)`,
+			variable: "K8S_MAJOR_MINOR",
+			apply:    func(files *e2eWiringFiles, path string) { files.harness = path },
+		},
+		{
+			name:     "CRD upgrade child",
+			path:     files.crdUpgrade,
+			marker:   `KUBERNETES_MAJOR_MINOR=$(printf '%s\n' "$E2E_KUBERNETES_VERSION" | cut -d. -f1,2)`,
+			variable: "KUBERNETES_MAJOR_MINOR",
+			apply:    func(files *e2eWiringFiles, path string) { files.crdUpgrade = path },
+		},
+	}
+	mutants := []struct {
+		name      string
+		allowlist func(string) string
+		wantError string
+	}{
+		{
+			name: "joined case label",
+			allowlist: func(variable string) string {
+				return fmt.Sprintf("case \"$%s\" in\n1.35 | 1.36 | 1.37) ;;\nesac", variable)
+			},
+			wantError: "Kubernetes minor case blocks",
+		},
+		{
+			name: "split case labels",
+			allowlist: func(variable string) string {
+				return fmt.Sprintf("case \"$%s\" in\n1.35) ;;\n1.36) ;;\n1.37) ;;\nesac", variable)
+			},
+			wantError: "Kubernetes minor case blocks",
+		},
+		{
+			name: "extended grep expression",
+			allowlist: func(variable string) string {
+				return fmt.Sprintf("printf '%%s\\n' \"$%s\" | grep -Eq '^(1\\.35|1\\.36|1\\.37)$'", variable)
+			},
+			wantError: "extended-regexp grep",
+		},
+	}
+	for _, script := range tests {
+		for _, mutant := range mutants {
+			t.Run(script.name+"/"+mutant.name, func(t *testing.T) {
+				t.Parallel()
+				source := readE2ESource(t, script.path)
+				replacement := script.marker + "\n" + mutant.allowlist(script.variable)
+				mutatedPath := writeMutatedE2ESource(t, filepath.Base(script.path), source, script.marker, replacement)
+				mutated := files
+				script.apply(&mutated, mutatedPath)
+				err := verifyKubernetesSupportWindowWiring(mutated)
+				if err == nil || !strings.Contains(err.Error(), mutant.wantError) {
+					t.Fatalf("verifyKubernetesSupportWindowWiring() error = %v, want substring %q", err, mutant.wantError)
+				}
+			})
+		}
+	}
+}
+
+func TestVerifyE2ESourceSnapshotRejectsLivePathMutations(t *testing.T) {
+	t.Parallel()
+
+	source := readE2ESource(t, repositoryE2EWiringFiles().harness)
+	tests := []struct {
+		name        string
+		old         string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "chart metadata read from live checkout",
+			old:         `chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")`,
+			replacement: `chart_version=$(sed -n 's/^version: //p' "$SOURCE_REPOSITORY_ROOT/charts/ptah-operator/Chart.yaml")`,
+			wantError:   "live checkout path escapes",
+		},
+		{
+			name:        "operator build context read from live checkout",
+			old:         `--tag "$OPERATOR_IMAGE" "$ROOT_DIR"`,
+			replacement: `--tag "$OPERATOR_IMAGE" "$SOURCE_REPOSITORY_ROOT"`,
+			wantError:   "original checkout must have only",
+		},
+		{
+			name:        "admission contract read from live checkout",
+			old:         `jq -e -f "$ROOT_DIR/hack/admission-schema-contract.jq" \`,
+			replacement: `jq -e -f "$SOURCE_REPOSITORY_ROOT/hack/admission-schema-contract.jq" \`,
+			wantError:   "live checkout path escapes",
+		},
+		{
+			name:        "child evidence script read from live checkout",
+			old:         `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
+			replacement: `"$SOURCE_REPOSITORY_ROOT/hack/e2e-cert-rotation.sh"`,
+			wantError:   "live checkout path escapes",
+		},
+		{
+			name:        "snapshot archive replaced by live copy",
+			old:         `git -C "$BOOTSTRAP_ROOT_DIR" archive --format=tar \`,
+			replacement: `tar -cf "$SOURCE_SNAPSHOT_ARCHIVE" -C "$BOOTSTRAP_ROOT_DIR" .`,
+			wantError:   "exact source archive",
+		},
+		{
+			name:        "caller-controlled environment bypass",
+			old:         `if [ "${1:-}" != --source-snapshot ]; then`,
+			replacement: `if [ "${E2E_SOURCE_SNAPSHOT_ACTIVE:-0}" -eq 0 ]; then`,
+			wantError:   "outer snapshot branch",
+		},
+		{
+			name:        "snapshot comparison omitted",
+			old:         "\nverify_snapshot_source\n",
+			replacement: "\n: snapshot verification skipped\n",
+			wantError:   "snapshot content verification",
+		},
+		{
+			name:        "Docker access before snapshot comparison",
+			old:         "\nverify_snapshot_source\n",
+			replacement: "\ndocker --context \"$DOCKER_CONTEXT\" info >/dev/null\nverify_snapshot_source\n",
+			wantError:   "snapshot must be active before first Docker access",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutated := writeMutatedE2ESource(t, "e2e-kind.sh", source, test.old, test.replacement)
+			err := verifyE2ESourceSnapshot(mutated, []byte(readE2ESource(t, mutated)))
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2ESourceSnapshot() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestE2ESnapshotComparisonRejectsUncommittedInputs(t *testing.T) {
+	t.Parallel()
+
+	source := readE2ESource(t, repositoryE2EWiringFiles().harness)
+	start := strings.Index(source, "verify_snapshot_source() (\n")
+	if start < 0 {
+		t.Fatal("snapshot comparison function is missing")
+	}
+	end := strings.Index(source[start:], "\n)\n")
+	if end < 0 {
+		t.Fatal("snapshot comparison function terminator is missing")
+	}
+	comparison := source[start : start+end+3]
+	run := func(t *testing.T, dir, name string, args ...string) []byte {
+		t.Helper()
+		command := exec.Command(name, args...)
+		command.Dir = dir
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s %v: %v\n%s", name, args, err, output)
+		}
+		return output
+	}
+	repository := t.TempDir()
+	run(t, repository, "git", "init", "--quiet", "--object-format=sha1")
+	for path, content := range map[string]string{
+		".gitignore": "ignored\n",
+		"input":      "committed source\n",
+		"entry.sh":   "#!/bin/sh\nexit 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(repository, path), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(repository, "entry.sh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run(t, repository, "git", "add", ".")
+	run(t, repository, "git", "-c", "user.name=Snapshot Test", "-c", "user.email=snapshot@example.invalid",
+		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "Test fixture")
+	revision := strings.TrimSpace(string(run(t, repository, "git", "rev-parse", "HEAD")))
+	archive := filepath.Join(t.TempDir(), "source.tar")
+	run(t, repository, "git", "archive", "--format=tar", "--output="+archive, revision)
+
+	tests := []struct {
+		name   string
+		mutate func(string) error
+	}{
+		{name: "exact archive"},
+		{name: "modified tracked source", mutate: func(root string) error {
+			return os.WriteFile(filepath.Join(root, "input"), []byte("uncommitted source\n"), 0o600)
+		}},
+		{name: "ignored build input", mutate: func(root string) error {
+			return os.WriteFile(filepath.Join(root, "ignored"), []byte("not in the commit\n"), 0o600)
+		}},
+		{name: "executable mode changed", mutate: func(root string) error {
+			return os.Chmod(filepath.Join(root, "entry.sh"), 0o600)
+		}},
+		{name: "same-content external symlink", mutate: func(root string) error {
+			path := filepath.Join(root, "input")
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+			return os.Symlink(filepath.Join(repository, "input"), path)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			run(t, root, "tar", "-xf", archive, "-C", root)
+			if test.mutate != nil {
+				if err := test.mutate(root); err != nil {
+					t.Fatal(err)
+				}
+			}
+			temporary := t.TempDir()
+			command := exec.Command("sh", "-eu", "-c", "fail() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"+comparison+"\nverify_snapshot_source\n")
+			command.Env = append(os.Environ(), "ROOT_DIR="+root, "SOURCE_REPOSITORY_ROOT="+repository,
+				"CONTROLLER_REVISION="+revision, "TMPDIR="+temporary)
+			output, err := command.CombinedOutput()
+			if test.mutate == nil && err != nil {
+				t.Fatalf("exact source was rejected: %v\n%s", err, output)
+			}
+			if test.mutate != nil && (err == nil || !strings.Contains(string(output), "snapshot differs from the exact operator commit")) {
+				t.Fatalf("uncommitted input was not rejected: %v\n%s", err, output)
+			}
+			leftovers, err := filepath.Glob(filepath.Join(temporary, "ptah-operator-e2e-source-verification.*"))
+			if err != nil || len(leftovers) != 0 {
+				t.Fatalf("snapshot comparison left temporary files: entries=%v err=%v", leftovers, err)
+			}
+		})
+	}
+}
+
 func TestAPIServerEndpointInventoryFilterFixtures(t *testing.T) {
 	t.Parallel()
 
@@ -1968,10 +2244,16 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "exact Kubernetes version syntax",
 		},
 		{
-			name:        "supported Kubernetes minor binding omitted",
+			name:        "Kubernetes minor behavior selector omitted",
 			old:         `K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)`,
 			replacement: `K8S_MAJOR_MINOR=1.37`,
-			wantError:   "supported Kubernetes minor binding",
+			wantError:   "Kubernetes minor behavior selector",
+		},
+		{
+			name:        "support manifest resolver bypassed",
+			old:         `SUPPORTED_KIND_NODE_IMAGE=$("$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \`,
+			replacement: `SUPPORTED_KIND_NODE_IMAGE=$(printf '%s\n' "$KIND_NODE_IMAGE" \`,
+			wantError:   "manifest-backed Kubernetes support membership",
 		},
 		{
 			name:        "support manifest image lookup omitted",
@@ -1996,6 +2278,25 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			old:         `[ "$ACTUAL_KIND_VERSION" = "$EXPECTED_KIND_VERSION" ] ||`,
 			replacement: `[ "$EXPECTED_KIND_VERSION" = "$EXPECTED_KIND_VERSION" ] ||`,
 			wantError:   "kind version binding",
+		},
+		{
+			name:        "clean source guard ignores untracked files",
+			old:         `E2E_SOURCE_STATUS=$(git -C "$BOOTSTRAP_ROOT_DIR" status --porcelain=v1 --untracked-files=all) ||`,
+			replacement: `E2E_SOURCE_STATUS=$(git -C "$BOOTSTRAP_ROOT_DIR" status --porcelain=v1 --untracked-files=no) ||`,
+			wantError:   "clean checkout preflight",
+		},
+		{
+			name:        "clean source guard result ignored",
+			old:         `[ -z "$E2E_SOURCE_STATUS" ] ||`,
+			replacement: `: ||`,
+			wantError:   "clean checkout preflight",
+		},
+		{
+			name: "Docker accessed before source snapshot activation",
+			old:  `ROOT_DIR=$BOOTSTRAP_ROOT_DIR`,
+			replacement: "docker --context \"$DOCKER_CONTEXT\" version >/dev/null\n" +
+				`ROOT_DIR=$BOOTSTRAP_ROOT_DIR`,
+			wantError: "snapshot must be active before first Docker access",
 		},
 		{
 			name:        "daemon-side task claim omitted",
@@ -5041,6 +5342,7 @@ func repositoryE2EWiringFiles() e2eWiringFiles {
 	return e2eWiringFiles{
 		makefile:                   filepath.Join("..", makefilePath),
 		harness:                    filepath.Join("..", e2eHarnessPath),
+		supportImageResolver:       filepath.Join("..", e2eSupportImageResolverPath),
 		kindConfig:                 filepath.Join("..", e2eKindConfigPath),
 		apiServerEndpointFilter:    filepath.Join("..", apiServerEndpointFilterPath),
 		staticChecks:               filepath.Join("..", e2eStaticPath),

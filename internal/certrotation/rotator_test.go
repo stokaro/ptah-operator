@@ -8,6 +8,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"maps"
 	"net"
@@ -26,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -199,7 +203,32 @@ func TestCertificateLifetimePolicyAllowsOnlyBoundedClockSkew(t *testing.T) {
 	}
 }
 
-func TestNoopCurrentCertificateDoesNotProbeOrWrite(t *testing.T) {
+func TestServingCertificateAuthenticityRequiresIssuerSubjectChain(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	config := testConfig()
+	material := mustGenerateMaterial(t, now, config)
+	reissued := mustReissueCAWithSubject(t, material, "different-ca-subject")
+	if err := material.leaf.CheckSignatureFrom(reissued.ca); err != nil {
+		t.Fatalf("test precondition: same-key CA did not verify the old leaf signature: %v", err)
+	}
+	if servingCertificateAuthentic(material.leaf, reissued.ca, requiredDNSNames(config)) {
+		t.Fatal("same-key CA with a different subject authenticated a leaf issued under the original subject")
+	}
+
+	secret := secretForMaterial(config, material)
+	secret.Data[CACertificateKey] = append([]byte(nil), reissued.caPEM...)
+	state, err := inspectSecret(secret, config, now)
+	if err != nil {
+		t.Fatalf("inspectSecret() error = %v", err)
+	}
+	if !state.rotateCA || state.currentServingChainAuthentic {
+		t.Fatalf("same-key reissued CA state = rotateCA:%v authentic:%v, want true/false", state.rotateCA, state.currentServingChainAuthentic)
+	}
+}
+
+func TestCurrentCertificateReprovesTrustWithoutProductionWrite(t *testing.T) {
 	t.Parallel()
 	config := testConfig()
 	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)
@@ -211,9 +240,7 @@ func TestNoopCurrentCertificateDoesNotProbeOrWrite(t *testing.T) {
 	if err := rotator.Run(context.Background()); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if got := prober.addresses(); len(got) != 0 {
-		t.Fatalf("probe addresses = %v, want none", got)
-	}
+	assertProbedAddresses(t, prober.addresses(), "10.0.0.10:9443", "10.0.0.11:9443")
 	for _, action := range client.Actions() {
 		if action.GetVerb() == "update" && action.GetResource().Resource != "leases" {
 			t.Fatalf("unexpected update action: %s %s", action.GetVerb(), action.GetResource().Resource)
@@ -250,9 +277,7 @@ func TestValidMaterialWithWrongSecretTypeIsNormalizedWithoutRotation(t *testing.
 			if !secretContainsMaterial(updated, material) {
 				t.Fatal("normalization changed valid certificate material")
 			}
-			if got := prober.addresses(); len(got) != 0 {
-				t.Fatalf("normalization probed endpoints = %v, want none", got)
-			}
+			assertProbedAddresses(t, prober.addresses(), "10.0.0.10:9443", "10.0.0.11:9443")
 			secretUpdates := 0
 			for _, action := range client.Actions() {
 				if action.GetVerb() != "update" {
@@ -377,8 +402,9 @@ func TestMissingSecretIsRecreatedOnlyBehindEstablishedGuard(t *testing.T) {
 	if state.rotateCA || state.rotateServing {
 		t.Fatalf("recreated Secret still needs rotation: %+v", state)
 	}
-	if !maps.Equal(created.Labels, map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue}) {
-		t.Fatalf("recreated Secret labels = %v", created.Labels)
+	if !maps.Equal(created.Labels, generatedSecretLabels()) ||
+		!maps.Equal(created.Annotations, helmOwnershipAnnotations(config)) {
+		t.Fatalf("recreated Secret ownership metadata = labels=%v annotations=%v", created.Labels, created.Annotations)
 	}
 	assertFinalBundles(t, client, config, state.current.caPEM)
 }
@@ -637,9 +663,40 @@ func TestConfigRejectsInvalidSecretCreateServiceAccountName(t *testing.T) {
 	t.Parallel()
 	config := testConfig()
 	config.SecretCreateServiceAccountName = "Bad_Name"
-	if _, err := New(fake.NewClientset(), config, &recordingCandidateSink{}); err == nil ||
+	client := fake.NewClientset()
+	if _, err := newRotator(client, config, &recordingCandidateSink{}, newTestAdmissionCanaryController(client, config)); err == nil ||
 		!bytes.Contains([]byte(err.Error()), []byte("Secret CREATE ServiceAccount name")) {
 		t.Fatalf("New() error = %v, want invalid Secret CREATE ServiceAccount name", err)
+	}
+}
+
+func TestNewRotatorRejectsTypedNilDependencies(t *testing.T) {
+	t.Parallel()
+
+	client := fake.NewClientset()
+	canary := newTestAdmissionCanaryController(client, testConfig())
+	var nilClient *fake.Clientset
+	var nilSink *recordingCandidateSink
+	var nilCanary *testAdmissionCanaryController
+
+	tests := []struct {
+		name   string
+		client kubernetes.Interface
+		sink   CandidateCertificateSink
+		canary admissionCanaryController
+		want   string
+	}{
+		{name: "Kubernetes client", client: nilClient, sink: &recordingCandidateSink{}, canary: canary, want: "Kubernetes client is required"},
+		{name: "candidate sink", client: client, sink: nilSink, canary: canary, want: "candidate certificate sink is required"},
+		{name: "admission canary", client: client, sink: &recordingCandidateSink{}, canary: nilCanary, want: "admission canary controller is required"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := newRotator(test.client, testConfig(), test.sink, test.canary); err == nil || err.Error() != test.want {
+				t.Fatalf("newRotator() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -647,7 +704,8 @@ func TestConfigRejectsSecretCreateGuardNamesWhenRecreationIsDisabled(t *testing.
 	t.Parallel()
 	config := testConfig()
 	config.RecreateMissingSecret = false
-	if _, err := New(fake.NewClientset(), config, &recordingCandidateSink{}); err == nil ||
+	client := fake.NewClientset()
+	if _, err := newRotator(client, config, &recordingCandidateSink{}, newTestAdmissionCanaryController(client, config)); err == nil ||
 		!strings.Contains(err.Error(), "must be empty") {
 		t.Fatalf("New() error = %v, want disabled guard-name rejection", err)
 	}
@@ -1580,8 +1638,9 @@ func installSecretCreateAdmission(t *testing.T, client *fake.Clientset, config C
 func secretMatchesCreateContract(secret *corev1.Secret, config Config) bool {
 	if secret.Name != config.SecretName || secret.Namespace != config.Namespace ||
 		secret.GenerateName != "" || secret.Type != corev1.SecretTypeTLS ||
-		!maps.Equal(secret.Labels, map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue}) ||
-		len(secret.Annotations) != 0 || len(secret.OwnerReferences) != 0 || len(secret.Finalizers) != 0 ||
+		!maps.Equal(secret.Labels, generatedSecretLabels()) ||
+		!maps.Equal(secret.Annotations, helmOwnershipAnnotations(config)) ||
+		len(secret.OwnerReferences) != 0 || len(secret.Finalizers) != 0 ||
 		secret.Immutable != nil || len(secret.StringData) != 0 || len(secret.Data) != 4 {
 		return false
 	}
@@ -1596,6 +1655,7 @@ func secretMatchesCreateContract(secret *corev1.Secret, config Config) bool {
 func testConfig() Config {
 	return Config{
 		Namespace:                      "ptah-system",
+		ReleaseName:                    "ptah",
 		SecretName:                     "ptah-webhook-cert",
 		StagingSecretName:              "ptah-webhook-cert-stage",
 		LeaseName:                      "ptah-cert-rotation",
@@ -1638,7 +1698,8 @@ func secretForMaterial(config Config, material certificateMaterial) *corev1.Secr
 			Namespace:       config.Namespace,
 			UID:             "primary-secret-uid",
 			ResourceVersion: "1",
-			Labels:          map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue},
+			Labels:          generatedSecretLabels(),
+			Annotations:     helmOwnershipAnnotations(config),
 		},
 		Type: corev1.SecretTypeTLS,
 		Data: map[string][]byte{
@@ -1675,7 +1736,8 @@ func newTestClient(
 				Namespace:       config.Namespace,
 				UID:             "staging-secret-uid",
 				ResourceVersion: "1",
-				Labels:          map[string]string{StagingSecretLabel: StagingSecretLabelValue},
+				Labels:          stagingSecretLabels(),
+				Annotations:     helmOwnershipAnnotations(config),
 			},
 			Type: corev1.SecretTypeOpaque,
 		},
@@ -1740,6 +1802,92 @@ func podReference(name, uid, namespace string) *corev1.ObjectReference {
 
 func boolPointer(value bool) *bool { return &value }
 
+// testAdmissionCanaryController keeps the broad lifecycle tests focused on
+// production bundle transitions. admission_canary_test.go exercises the real
+// singleton publication and all-API-server proof implementation in isolation.
+type testAdmissionCanaryController struct {
+	client *fake.Clientset
+	config Config
+}
+
+func newTestAdmissionCanaryController(client *fake.Clientset, config Config) *testAdmissionCanaryController {
+	return &testAdmissionCanaryController{client: client, config: config}
+}
+
+func (c *testAdmissionCanaryController) PublishMutating(
+	ctx context.Context,
+	desired AdmissionCanaryDesiredState,
+) error {
+	if err := validateAdmissionCanaryDesiredState(desired); err != nil {
+		return err
+	}
+	client := c.client.AdmissionregistrationV1().MutatingWebhookConfigurations()
+	configuration, err := client.Get(ctx, c.config.MutatingWebhookConfiguration, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	webhooks, err := managedMutatingWebhooks(configuration.Webhooks, c.config)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, webhook := range webhooks {
+		bundle, err := desired.productionBundleFor(webhook.ClientConfig.CABundle)
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(webhook.ClientConfig.CABundle, bundle) {
+			continue
+		}
+		webhook.ClientConfig.CABundle = bundle
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	_, err = client.Update(ctx, configuration, metav1.UpdateOptions{})
+	return err
+}
+
+func (c *testAdmissionCanaryController) PublishValidating(
+	ctx context.Context,
+	desired AdmissionCanaryDesiredState,
+) error {
+	if err := validateAdmissionCanaryDesiredState(desired); err != nil {
+		return err
+	}
+	client := c.client.AdmissionregistrationV1().ValidatingWebhookConfigurations()
+	configuration, err := client.Get(ctx, c.config.ValidatingWebhookConfiguration, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	webhooks, err := managedValidatingWebhooks(configuration.Webhooks, c.config)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, webhook := range webhooks {
+		bundle, err := desired.productionBundleFor(webhook.ClientConfig.CABundle)
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(webhook.ClientConfig.CABundle, bundle) {
+			continue
+		}
+		webhook.ClientConfig.CABundle = bundle
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	_, err = client.Update(ctx, configuration, metav1.UpdateOptions{})
+	return err
+}
+
+func (*testAdmissionCanaryController) Wait(context.Context, AdmissionCanaryDesiredState) error {
+	return nil
+}
+
 func mustNewTestRotator(
 	t *testing.T,
 	client *fake.Clientset,
@@ -1748,7 +1896,7 @@ func mustNewTestRotator(
 	prober certificateProber,
 ) *Rotator {
 	t.Helper()
-	rotator, err := New(client, config, &recordingCandidateSink{})
+	rotator, err := newRotator(client, config, &recordingCandidateSink{}, newTestAdmissionCanaryController(client, config))
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
@@ -1928,4 +2076,34 @@ func assertProbedAddresses(t *testing.T, got []string, want ...string) {
 			t.Fatalf("invalid test address %q: %v", address, err)
 		}
 	}
+}
+
+func mustReissueCAWithSubject(t *testing.T, source certificateMaterial, commonName string) certificateMaterial {
+	t.Helper()
+	serial, err := randomSerial(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate reissued CA serial: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             source.ca.NotBefore,
+		NotAfter:              source.ca.NotAfter,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		SubjectKeyId:          slices.Clone(source.ca.SubjectKeyId),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, source.caKey.Public(), source.caKey)
+	if err != nil {
+		t.Fatalf("reissue CA certificate: %v", err)
+	}
+	certificate, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse reissued CA certificate: %v", err)
+	}
+	reissued := source
+	reissued.ca = certificate
+	reissued.caPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	return reissued
 }

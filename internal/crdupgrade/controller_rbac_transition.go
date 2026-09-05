@@ -875,7 +875,6 @@ func currentControllerClusterRoleRules(rollout *RolloutGuard) []rbacv1.PolicyRul
 			currentControllerRuntimeGuardNames(rollout),
 			[]string{"get"},
 		),
-		privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
 		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas"}, nil, []string{"get", "list", "watch", "patch"}),
 		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, nil, []string{"update"}),
 		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, nil, []string{"get", "update", "patch"}),
@@ -920,7 +919,7 @@ func currentControllerRuntimeGuardNames(rollout *RolloutGuard) []string {
 }
 
 func currentRetainedAdmissionGuardNames(rollout *RolloutGuard) []string {
-	return []string{
+	names := []string{
 		RolloutGuardPolicyName(rollout.ReleaseSequence),
 		RuntimeGuardPolicyName(rollout.ReleaseSequence),
 		RuntimePodGuardPolicyName(rollout.ReleaseSequence),
@@ -942,6 +941,10 @@ func currentRetainedAdmissionGuardNames(rollout *RolloutGuard) []string {
 		ParentHookJobOriginGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
 		ParentHookJobContractPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
 	}
+	if rollout.CertificateRuntimeEnabled {
+		names = append(names, StagingSecretGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName))
+	}
+	return names
 }
 
 func currentCRDManagerAdmissionGuardNames(rollout *RolloutGuard) []string {

@@ -12,6 +12,7 @@ import (
 const (
 	admissionConvergenceDependencyContractVersion = "1"
 	admissionConvergenceProbeFieldManagerPrefix   = "ptah-admission-convergence-v1-"
+	stableAdmissionConvergenceProbePrefix         = "ptah-admission-stable-v1-"
 	admissionConvergenceProbePersistenceMessage   = "Ptah admission convergence probe field manager is reserved for dry-run verification"
 )
 
@@ -29,6 +30,35 @@ func newAdmissionConvergenceDependencyProbe(policyName, attempt string) admissio
 		FieldManager: fieldManager,
 		Message:      "Ptah admission convergence confirmed exact workload guard " + fieldManager,
 	}
+}
+
+// newStableAdmissionConvergenceDependencyProbe gives a retained policy a
+// policy-specific field-manager namespace while keeping the current attempt in
+// the trailing digest. The saved policy can therefore remain release-stable,
+// and a direct probe can still produce exactly one denial when several stable
+// dependencies are installed together.
+func newStableAdmissionConvergenceDependencyProbe(policyName, attempt string) admissionConvergenceDependencyProbe {
+	attemptDigest := sha256.Sum256([]byte(admissionConvergenceDependencyContractVersion + "\n" + policyName + "\n" + attempt))
+	fieldManager := stableAdmissionConvergenceProbeFieldManagerPrefix(policyName) + fmt.Sprintf("%x", attemptDigest)
+	return admissionConvergenceDependencyProbe{
+		PolicyName:   policyName,
+		FieldManager: fieldManager,
+		Message:      "Ptah admission convergence confirmed exact workload guard " + fieldManager,
+	}
+}
+
+func stableAdmissionConvergenceProbeFieldManagerPrefix(policyName string) string {
+	policyDigest := sha256.Sum256([]byte(admissionConvergenceDependencyContractVersion + "\n" + policyName))
+	return stableAdmissionConvergenceProbePrefix + fmt.Sprintf("%x", policyDigest)[:32] + "-"
+}
+
+func stableAdmissionConvergenceProbeRequestExpression(policyName, releaseNamespace, markerNamePattern string) string {
+	return fmt.Sprintf(
+		`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name.matches(%q) && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)`,
+		releaseNamespace,
+		markerNamePattern,
+		"^"+stableAdmissionConvergenceProbeFieldManagerPrefix(policyName)+`[0-9a-f]{64}$`,
+	)
 }
 
 func admissionConvergenceProbeRequestExpression(releaseNamespace, markerName, fieldManager string) string {
@@ -118,12 +148,7 @@ func addStableAdmissionConvergenceDependencyProbe(
 	releaseNamespace string,
 	markerNamePattern string,
 ) {
-	expression := fmt.Sprintf(
-		`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name.matches(%q) && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)`,
-		releaseNamespace,
-		markerNamePattern,
-		"^"+admissionConvergenceProbeFieldManagerPrefix+`[0-9a-f]{64}$`,
-	)
+	expression := stableAdmissionConvergenceProbeRequestExpression(policy.Name, releaseNamespace, markerNamePattern)
 	policy.Spec.MatchConstraints.ResourceRules = append(
 		policy.Spec.MatchConstraints.ResourceRules,
 		admissionregistrationv1.NamedRuleWithOperations{

@@ -139,8 +139,8 @@ func TestNewTeardownRBACConvergenceBarrierDiscoversEveryDirectEndpoint(t *testin
 	if len(configs) != 2 {
 		t.Fatalf("client factory calls = %d, want 2", len(configs))
 	}
-	if got := authorizationSweepSize(barrier); got != 57 {
-		t.Fatalf("authorization sweep size = %d, want 57 exact retired-subject plus current-credential probes", got)
+	if got := authorizationSweepSize(barrier); got != 63 {
+		t.Fatalf("authorization sweep size = %d, want 63 exact retired-subject plus current-credential probes", got)
 	}
 	for index, config := range configs {
 		if config == base {
@@ -865,16 +865,33 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 	if _, found := probeChecks["hook-quiesce"]["update PtahSchema"]; found {
 		t.Error("hook probe includes a controller-only custom resource update grant")
 	}
-	if len(selfChecks) != 16 {
-		t.Fatalf("current cleanup credential check count = %d, want 16", len(selfChecks))
+	if len(selfChecks) != 22 {
+		t.Fatalf("current cleanup credential check count = %d, want 22", len(selfChecks))
 	}
 	selfCheckNames := authorizationCheckNames(selfChecks)
-	if _, found := selfCheckNames["delete RoleBinding ptah-system/"+mustTeardownPrivilegeRoleName(t, rollout.HookServiceAccountName)]; !found {
-		t.Error("current cleanup credential checks omit release cleanup RoleBinding self-revocation")
+	privilegeName := mustTeardownPrivilegeRoleName(t, rollout.HookServiceAccountName)
+	for _, namespace := range []string{rollout.ReleaseNamespace, metav1.NamespaceDefault} {
+		name := "delete RoleBinding " + namespace + "/" + privilegeName
+		if _, found := selfCheckNames[name]; !found {
+			t.Errorf("current cleanup credential checks omit self-revocation %q", name)
+		}
+	}
+	for _, name := range []string{"clear certificate staging Secret", "delete certificate staging Secret"} {
+		if _, found := selfCheckNames[name]; !found {
+			t.Errorf("current cleanup credential checks omit %q", name)
+		}
 	}
 	for _, check := range selfChecks {
-		if check.ResourceAttributes == nil || check.ResourceAttributes.Verb != "delete" {
-			t.Errorf("current cleanup credential check is not a revoked exact delete: %#v", check)
+		if check.ResourceAttributes == nil {
+			t.Errorf("current cleanup credential check is not an exact teardown mutation: %#v", check)
+			continue
+		}
+		wantVerb := "delete"
+		if check.Name == "clear certificate staging Secret" {
+			wantVerb = "update"
+		}
+		if check.ResourceAttributes.Verb != wantVerb {
+			t.Errorf("current cleanup credential check %q verb = %q, want %q", check.Name, check.ResourceAttributes.Verb, wantVerb)
 		}
 		if check.ResourceAttributes.Resource == "clusterrolebindings" && check.ResourceAttributes.Name == mustTeardownPrivilegeRoleName(t, rollout.HookServiceAccountName) {
 			t.Errorf("current cleanup credential checks include residual ClusterRoleBinding deletion: %#v", check)
@@ -886,6 +903,14 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		t.Fatalf("teardownAuthorizationChecks() error = %v", err)
 	}
 	cleanupPrivilegeName, err := crdupgrade.TeardownPrivilegeRoleName(rollout.HookServiceAccountName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificateDiscoveryName, err := crdupgrade.CertificateDiscoveryRoleName(rollout.ReleaseNamespace, rollout.ReleaseName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiesceName, err := crdupgrade.TeardownQuiesceJobName(rollout.HookServiceAccountName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -901,6 +926,8 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		"create SubjectAccessReview",
 		"update webhook Secret",
 		"update certificate staging Secret",
+		"clear certificate staging Secret",
+		"delete certificate staging Secret",
 		"create webhook Secret",
 		"update mutating admission singleton",
 		"update validating admission singleton",
@@ -920,7 +947,12 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		"update leader-election Lease",
 		"update certificate rotation Lease",
 		"update admission convergence marker ConfigMap",
+		"delete RoleBinding " + rollout.CertificateDeploymentName,
+		"delete RoleBinding default/" + rollout.HookServiceAccountName,
+		"delete RoleBinding default/" + quiesceName,
+		"delete RoleBinding " + certificateDiscoveryName,
 		"delete RoleBinding ptah-system/" + cleanupPrivilegeName,
+		"delete RoleBinding default/" + cleanupPrivilegeName,
 	}
 	byName := make(map[string]*authorizationv1.ResourceAttributes, len(checks))
 	cleanupGuardName, err := crdupgrade.TeardownGuardRoleName(rollout.HookServiceAccountName)
@@ -942,8 +974,8 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 			t.Errorf("check %q includes intentional residual RBAC deletion for %q", check.Name, attributes.Name)
 		}
 	}
-	if len(checks) != 53 || len(byName) != 53 {
-		t.Fatalf("authorization checks = %d total/%d unique, want 53/53", len(checks), len(byName))
+	if len(checks) != 59 || len(byName) != 59 {
+		t.Fatalf("authorization checks = %d total/%d unique, want 59/59", len(checks), len(byName))
 	}
 	for _, name := range wantChecks {
 		if byName[name] == nil {
@@ -955,6 +987,15 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 	}
 	if got := byName["update certificate staging Secret"]; got.Namespace != rollout.ReleaseNamespace || got.Group != "" || got.Resource != "secrets" || got.Verb != "update" || got.Name != "ptah-cert-rotation-stage" {
 		t.Errorf("certificate staging Secret check = %#v", got)
+	}
+	if got := byName["delete RoleBinding "+certificateDiscoveryName]; got == nil || got.Namespace != metav1.NamespaceDefault || got.Group != "rbac.authorization.k8s.io" || got.Resource != "rolebindings" || got.Verb != "delete" || got.Name != certificateDiscoveryName {
+		t.Errorf("default certificate discovery RoleBinding check = %#v", got)
+	}
+	for _, name := range []string{rollout.HookServiceAccountName, quiesceName} {
+		got := byName["delete RoleBinding default/"+name]
+		if got == nil || got.Namespace != metav1.NamespaceDefault || got.Group != "rbac.authorization.k8s.io" || got.Resource != "rolebindings" || got.Verb != "delete" || got.Name != name {
+			t.Errorf("default discovery RoleBinding check for %q = %#v", name, got)
+		}
 	}
 	if got := byName["update PtahSchema status"]; got.Group != "operator.ptah.dev" || got.Resource != "ptahschemas" || got.Subresource != "status" {
 		t.Errorf("PtahSchema status check = %#v", got)
@@ -1081,23 +1122,101 @@ func TestTeardownAuthorizationChecksUseSeparateCoordinationNamespace(t *testing.
 			t.Errorf("check %q namespace = %q, want %q", name, attributes.Namespace, rollout.CoordinationNamespace)
 		}
 	}
-	if len(checks) != 54 {
-		t.Fatalf("split-namespace authorization check count = %d, want 54", len(checks))
+	if len(checks) != 60 {
+		t.Fatalf("split-namespace authorization check count = %d, want 60", len(checks))
 	}
 	_, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
 	if err != nil {
 		t.Fatalf("teardownAuthorizationProbes() error = %v", err)
 	}
-	if len(selfChecks) != 17 {
-		t.Fatalf("split-namespace current cleanup credential check count = %d, want 17", len(selfChecks))
+	if len(selfChecks) != 23 {
+		t.Fatalf("split-namespace current cleanup credential check count = %d, want 23", len(selfChecks))
 	}
 	privilegeName := mustTeardownPrivilegeRoleName(t, rollout.HookServiceAccountName)
 	selfNames := authorizationCheckNames(selfChecks)
-	for _, namespace := range []string{rollout.ReleaseNamespace, rollout.CoordinationNamespace} {
+	for _, namespace := range []string{rollout.ReleaseNamespace, rollout.CoordinationNamespace, metav1.NamespaceDefault} {
 		name := "delete RoleBinding " + namespace + "/" + privilegeName
 		if _, found := selfNames[name]; !found {
 			t.Errorf("current cleanup credential checks omit self-revocation %q", name)
 		}
+	}
+}
+
+func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *testing.T) {
+	for _, test := range []struct {
+		name                  string
+		releaseNamespace      string
+		coordinationNamespace string
+		wantSelfChecks        int
+		wantAllChecks         int
+		wantCleanupNamespaces []string
+	}{
+		{
+			name:                  "all coincide",
+			releaseNamespace:      metav1.NamespaceDefault,
+			coordinationNamespace: metav1.NamespaceDefault,
+			wantSelfChecks:        18,
+			wantAllChecks:         55,
+			wantCleanupNamespaces: []string{metav1.NamespaceDefault},
+		},
+		{
+			name:                  "release and discovery coincide",
+			releaseNamespace:      metav1.NamespaceDefault,
+			coordinationNamespace: "ptah-coordination",
+			wantSelfChecks:        19,
+			wantAllChecks:         56,
+			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-coordination"},
+		},
+		{
+			name:                  "coordination and discovery coincide",
+			releaseNamespace:      "ptah-system",
+			coordinationNamespace: metav1.NamespaceDefault,
+			wantSelfChecks:        22,
+			wantAllChecks:         59,
+			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-system"},
+		},
+		{
+			name:                  "all split",
+			releaseNamespace:      "ptah-system",
+			coordinationNamespace: "ptah-coordination",
+			wantSelfChecks:        23,
+			wantAllChecks:         60,
+			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-coordination", "ptah-system"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rollout := validRBACRolloutGuard()
+			rollout.ReleaseNamespace = test.releaseNamespace
+			rollout.CoordinationNamespace = test.coordinationNamespace
+			contract := validRBACAdmissionContract()
+			contract.Namespace = test.releaseNamespace
+
+			checks, err := teardownAuthorizationChecks(rollout, contract)
+			if err != nil {
+				t.Fatalf("teardownAuthorizationChecks() error = %v", err)
+			}
+			if len(checks) != test.wantAllChecks || len(authorizationCheckNames(checks)) != test.wantAllChecks {
+				t.Fatalf("authorization checks = %d total/%d unique, want %d", len(checks), len(authorizationCheckNames(checks)), test.wantAllChecks)
+			}
+			_, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
+			if err != nil {
+				t.Fatalf("teardownAuthorizationProbes() error = %v", err)
+			}
+			if len(selfChecks) != test.wantSelfChecks {
+				t.Fatalf("cleanup checks = %d, want %d", len(selfChecks), test.wantSelfChecks)
+			}
+			selfNames := authorizationCheckNames(selfChecks)
+			privilegeName := mustTeardownPrivilegeRoleName(t, rollout.HookServiceAccountName)
+			for _, namespace := range test.wantCleanupNamespaces {
+				name := "delete RoleBinding " + namespace + "/" + privilegeName
+				if _, found := selfNames[name]; !found {
+					t.Errorf("cleanup checks omit exact self-revocation %q", name)
+				}
+			}
+			if _, found := selfNames["delete RoleBinding unrelated/"+privilegeName]; found {
+				t.Fatal("cleanup checks include an unrelated namespace")
+			}
+		})
 	}
 }
 
@@ -1139,7 +1258,7 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 						t.Fatalf("retired subject probe counts = %#v, want %#v", counts, wantCounts)
 					}
 
-					wantSelfChecks := 12
+					wantSelfChecks := 15
 					if splitCoordinationNamespace {
 						wantSelfChecks++
 					}
@@ -1147,7 +1266,7 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 						wantSelfChecks++
 					}
 					if certificateEnabled {
-						wantSelfChecks += 3
+						wantSelfChecks += 6
 					}
 					if len(selfChecks) != wantSelfChecks {
 						t.Fatalf("current cleanup credential checks = %d, want %d", len(selfChecks), wantSelfChecks)

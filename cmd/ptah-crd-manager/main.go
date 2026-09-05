@@ -783,6 +783,7 @@ func newRolloutGuard(
 		WebhookSecretName:                       webhookSecretName,
 		WebhookPort:                             webhookPort,
 		CertificateHealthPort:                   certificateHealthPort,
+		CertificateRuntimeEnabled:               runtimeAdmissionContract.CertificateRuntimeEnabled,
 		HookServiceAccountName:                  expected.HookServiceAccountName,
 		ControllerServiceAccountName:            expected.ControllerServiceAccountName,
 		ControllerServiceAccountManaged:         expected.ControllerServiceAccountManaged,
@@ -975,6 +976,14 @@ func runTeardownMode(
 		}
 		if err := verifyTeardownRetirementTransitionState(ctx, guard, configMaps, policies, bindings, phase, true); err != nil {
 			return fmt.Errorf("recheck teardown retirement state before privilege removal: %w", err)
+		}
+		if rollout.CertificateRuntimeEnabled {
+			if err := crdupgrade.NewStagingSecretGuard(rollout).Cleanup(
+				ctx,
+				clientset.CoreV1().Secrets(rollout.ReleaseNamespace),
+			); err != nil {
+				return fmt.Errorf("drain certificate staging Secret before guard retirement: %w", err)
+			}
 		}
 		if err := privilegeTeardown.Teardown(ctx); err != nil {
 			return fmt.Errorf("remove release privilege: %w", err)

@@ -45,6 +45,105 @@ func TestRuntimeVerifierAcceptsValidatingWebhookPermutation(t *testing.T) {
 	}
 }
 
+func TestRuntimeVerifierAcceptsVersionOneExternalCertificateContractWithoutCanaries(t *testing.T) {
+	verifier := readyRuntimeVerifier(t)
+	verifier.Expected.AdmissionContractVersion = 1
+	for _, annotations := range []map[string]string{
+		verifier.Mutating.(*mutatingAdmissionClient).object.Annotations,
+		verifier.Validating.(*validatingAdmissionClient).object.Annotations,
+	} {
+		annotations[AdmissionContractVersionAnnotation] = "1"
+	}
+	mutating := verifier.Mutating.(*mutatingAdmissionClient).object
+	mutating.Webhooks = mutating.Webhooks[:1]
+	validating := verifier.Validating.(*validatingAdmissionClient).object
+	validating.Webhooks = validating.Webhooks[:3]
+	if err := verifier.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify version-one external certificate contract: %v", err)
+	}
+}
+
+func TestRuntimeVerifierRejectsCertificateCanaryContractDrift(t *testing.T) {
+	tests := []struct {
+		name   string
+		want   string
+		mutate func(*RuntimeVerifier)
+	}{
+		{
+			name: "mutating target", want: "Service target does not match",
+			mutate: func(verifier *RuntimeVerifier) {
+				mutatingWebhook(t, verifier, mutatingCertificateCanaryWebhookName).ClientConfig.Service.Name = "foreign"
+			},
+		},
+		{
+			name: "mutating field manager", want: "matchConditions",
+			mutate: func(verifier *RuntimeVerifier) {
+				mutatingWebhook(t, verifier, mutatingCertificateCanaryWebhookName).MatchConditions[0].Expression = "true"
+			},
+		},
+		{
+			name: "mutating strict field validation", want: "matchConditions",
+			mutate: func(verifier *RuntimeVerifier) {
+				condition := &mutatingWebhook(t, verifier, mutatingCertificateCanaryWebhookName).MatchConditions[0]
+				condition.Expression = strings.ReplaceAll(
+					condition.Expression,
+					` && has(request.options.fieldValidation) && request.options.fieldValidation == "Strict"`,
+					"",
+				)
+			},
+		},
+		{
+			name: "mutating selector", want: "objectSelector",
+			mutate: func(verifier *RuntimeVerifier) {
+				mutatingWebhook(t, verifier, mutatingCertificateCanaryWebhookName).ObjectSelector.MatchLabels[certificateCanaryLabel] = "foreign"
+			},
+		},
+		{
+			name: "validating path", want: "Service target does not match",
+			mutate: func(verifier *RuntimeVerifier) {
+				path := "/foreign"
+				validatingWebhook(t, verifier, validatingCertificateCanaryWebhookName).ClientConfig.Service.Path = &path
+			},
+		},
+		{
+			name: "validating rule", want: "rules do not match",
+			mutate: func(verifier *RuntimeVerifier) {
+				validatingWebhook(t, verifier, validatingCertificateCanaryWebhookName).Rules[0].Operations = []admissionregistrationv1.OperationType{admissionregistrationv1.Create}
+			},
+		},
+		{
+			name: "validating strict field validation", want: "matchConditions",
+			mutate: func(verifier *RuntimeVerifier) {
+				condition := &validatingWebhook(t, verifier, validatingCertificateCanaryWebhookName).MatchConditions[0]
+				condition.Expression = strings.ReplaceAll(
+					condition.Expression,
+					` && has(request.options.fieldValidation) && request.options.fieldValidation == "Strict"`,
+					"",
+				)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			verifier := readyRuntimeVerifier(t)
+			test.mutate(verifier)
+			err := verifier.Verify(context.Background())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Verify error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestRuntimeInvariantsRequireDerivableCanaryIdentitiesForAdmissionV2(t *testing.T) {
+	verifier := readyRuntimeVerifier(t)
+	verifier.Expected.CertificateDeploymentName = "foreign-certificate-runtime"
+	err := verifier.Expected.validate()
+	if err == nil || !strings.Contains(err.Error(), certificateRotatorNameSuffix) {
+		t.Fatalf("validate() error = %v, want exact certificate rotator suffix refusal", err)
+	}
+}
+
 func TestRuntimeVerifierRejectsMismatchedOwner(t *testing.T) {
 	verifier := readyRuntimeVerifier(t)
 	verifier.Mutating.(*mutatingAdmissionClient).object.Annotations[ReleaseNameAnnotation] = "other-release"
@@ -121,14 +220,14 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 		mutate func(*RuntimeVerifier)
 	}{
 		{
-			name: "cardinality", want: "expected exactly 1",
+			name: "cardinality", want: "expected exactly 2",
 			mutate: func(verifier *RuntimeVerifier) {
 				client := verifier.Mutating.(*mutatingAdmissionClient)
 				client.object.Webhooks = append(client.object.Webhooks, client.object.Webhooks[0])
 			},
 		},
 		{
-			name: "validating missing webhook", want: "expected exactly 3",
+			name: "validating missing webhook", want: "expected exactly 4",
 			mutate: func(verifier *RuntimeVerifier) {
 				client := verifier.Validating.(*validatingAdmissionClient)
 				client.object.Webhooks = client.object.Webhooks[:1]
@@ -149,7 +248,7 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			},
 		},
 		{
-			name: "webhook name", want: "has name",
+			name: "webhook name", want: "unknown webhook",
 			mutate: func(verifier *RuntimeVerifier) {
 				verifier.Mutating.(*mutatingAdmissionClient).object.Webhooks[0].Name = "foreign.operator.ptah.dev"
 			},
@@ -835,7 +934,10 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 	annotations := expected.annotations()
 	mutatingClient := &mutatingAdmissionClient{object: &admissionregistrationv1.MutatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{Name: AdmissionConfigurationName, Annotations: copyStrings(annotations)},
-		Webhooks:   []admissionregistrationv1.MutatingWebhook{readyMutatingApprovalWebhook(expected)},
+		Webhooks: []admissionregistrationv1.MutatingWebhook{
+			readyMutatingApprovalWebhook(expected),
+			readyMutatingCertificateCanaryWebhook(expected),
+		},
 	}}
 	validatingClient := &validatingAdmissionClient{object: &admissionregistrationv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{Name: AdmissionConfigurationName, Annotations: copyStrings(annotations)},
@@ -843,11 +945,30 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 			readyValidatingApprovalWebhook(expected),
 			readyPodIntentWebhook(expected),
 			readyControllerWriteWebhook(expected),
+			readyValidatingCertificateCanaryWebhook(expected),
 		},
 	}}
 	return &RuntimeVerifier{
 		CRDs: crdManager, Mutating: mutatingClient, Validating: validatingClient,
 		Expected: expected, PollEvery: time.Millisecond,
+	}
+}
+
+func readyMutatingCertificateCanaryWebhook(expected RuntimeInvariants) admissionregistrationv1.MutatingWebhook {
+	contract := currentMutatingCertificateCanaryWebhookContract(expected)
+	return admissionregistrationv1.MutatingWebhook{
+		Name: contract.name, AdmissionReviewVersions: contract.admissionReviewVersions,
+		FailurePolicy: &contract.failurePolicy, SideEffects: &contract.sideEffects, MatchPolicy: &contract.matchPolicy,
+		ReinvocationPolicy: contract.reinvocationPolicy, TimeoutSeconds: valuePointer(contract.timeoutSeconds),
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: []byte("test canary CA"),
+			Service: &admissionregistrationv1.ServiceReference{
+				Namespace: contract.serviceNamespace, Name: contract.serviceName,
+				Path: valuePointer(contract.path), Port: valuePointer(contract.servicePort),
+			},
+		},
+		Rules: contract.rules, NamespaceSelector: contract.namespaceSelector,
+		ObjectSelector: contract.objectSelector, MatchConditions: contract.matchConditions,
 	}
 }
 
@@ -938,6 +1059,24 @@ func readyControllerWriteWebhook(expected RuntimeInvariants) admissionregistrati
 	}
 }
 
+func readyValidatingCertificateCanaryWebhook(expected RuntimeInvariants) admissionregistrationv1.ValidatingWebhook {
+	contract := currentValidatingCertificateCanaryWebhookContract(expected)
+	return admissionregistrationv1.ValidatingWebhook{
+		Name: contract.name, AdmissionReviewVersions: contract.admissionReviewVersions,
+		FailurePolicy: &contract.failurePolicy, SideEffects: &contract.sideEffects, MatchPolicy: &contract.matchPolicy,
+		TimeoutSeconds: valuePointer(contract.timeoutSeconds),
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			CABundle: []byte("test canary CA"),
+			Service: &admissionregistrationv1.ServiceReference{
+				Namespace: contract.serviceNamespace, Name: contract.serviceName,
+				Path: valuePointer(contract.path), Port: valuePointer(contract.servicePort),
+			},
+		},
+		Rules: contract.rules, NamespaceSelector: contract.namespaceSelector,
+		ObjectSelector: contract.objectSelector, MatchConditions: contract.matchConditions,
+	}
+}
+
 func readyWebhookClientConfig(expected RuntimeInvariants, path string) admissionregistrationv1.WebhookClientConfig {
 	return admissionregistrationv1.WebhookClientConfig{
 		CABundle: []byte("test CA"),
@@ -970,6 +1109,18 @@ func validatingWebhook(t *testing.T, verifier *RuntimeVerifier, name string) *ad
 		}
 	}
 	t.Fatalf("validating webhook %s is missing", name)
+	return nil
+}
+
+func mutatingWebhook(t *testing.T, verifier *RuntimeVerifier, name string) *admissionregistrationv1.MutatingWebhook {
+	t.Helper()
+	webhooks := verifier.Mutating.(*mutatingAdmissionClient).object.Webhooks
+	for i := range webhooks {
+		if webhooks[i].Name == name {
+			return &webhooks[i]
+		}
+	}
+	t.Fatalf("mutating webhook %q not found", name)
 	return nil
 }
 

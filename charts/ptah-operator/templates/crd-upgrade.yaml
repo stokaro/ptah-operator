@@ -11,6 +11,7 @@
 {{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
 {{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
 {{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest -}}
+{{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
 {{- $previousAdmissionConvergenceMarkerName := printf "ptah-admission-convergence-v1-%s-%s" $previousSequence $releaseDigest -}}
 apiVersion: batch/v1
 kind: Job
@@ -116,6 +117,9 @@ rules:
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
+      {{- end }}
     verbs: ["get"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["validatingadmissionpolicybindings"]
@@ -135,6 +139,9 @@ rules:
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
+      {{- end }}
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -347,6 +354,9 @@ rules:
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
+      {{- end }}
     verbs: ["get"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["validatingadmissionpolicybindings"]
@@ -371,6 +381,9 @@ rules:
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
+      {{- end }}
     verbs: ["get"]
   - apiGroups: ["scheduling.k8s.io"]
     resources: ["priorityclasses"]
@@ -407,9 +420,6 @@ rules:
   - apiGroups: ["authorization.k8s.io"]
     resources: ["subjectaccessreviews"]
     verbs: ["create"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -488,6 +498,11 @@ rules:
     resourceNames: [{{ $previousAdmissionConvergenceMarkerName | quote }}]
     verbs: ["get", "delete"]
   {{- end }}
+  {{- if eq .Release.Namespace "default" }}
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -511,6 +526,51 @@ subjects:
   - kind: ServiceAccount
     name: {{ $serviceAccountName }}
     namespace: {{ .Release.Namespace }}
+{{ if ne .Release.Namespace "default" }}
+---
+# Direct API-server convergence reads only the default Kubernetes Service.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $clusterRoleName }}
+  namespace: default
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-80"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+rules:
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $clusterRoleName }}
+  namespace: default
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-70"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $clusterRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $serviceAccountName }}
+    namespace: {{ .Release.Namespace }}
+{{ end }}
 ---
 apiVersion: batch/v1
 kind: Job

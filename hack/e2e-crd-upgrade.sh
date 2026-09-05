@@ -292,10 +292,9 @@ verify_supported_server_version() {
 	printf '%s\n' "$E2E_KUBERNETES_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
 		fail "E2E_KUBERNETES_VERSION must be an exact major.minor.patch version"
 	KUBERNETES_MAJOR_MINOR=$(printf '%s\n' "$E2E_KUBERNETES_VERSION" | cut -d. -f1,2)
-	case "$KUBERNETES_MAJOR_MINOR" in
-	1.35 | 1.36 | 1.37) ;;
-	*) fail "Kubernetes $KUBERNETES_MAJOR_MINOR is outside the supported 1.35-1.37 window" ;;
-	esac
+	"$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \
+		"$ROOT_DIR/support/kubernetes.json" "$E2E_KUBERNETES_VERSION" >/dev/null ||
+		fail "Kubernetes $E2E_KUBERNETES_VERSION is not an exact member of support/kubernetes.json"
 	server_version=$(kube version -o json | jq -er '.serverVersion.gitVersion')
 	case "$server_version" in
 	v"$E2E_KUBERNETES_VERSION" | v"$E2E_KUBERNETES_VERSION"-*) ;;

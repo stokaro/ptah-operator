@@ -348,6 +348,8 @@
         "retryInitial",
         "retryMax",
         "healthPort",
+        "candidatePort",
+        "admissionConvergence",
         "renewalThreshold",
         "servingCertificateValidity",
         "caCertificateValidity",
@@ -380,6 +382,27 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 65535
+        },
+        "candidatePort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "admissionConvergence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["stabilityDuration", "pollInterval", "requestTimeout"],
+          "properties": {
+            "stabilityDuration": {
+              "$ref": "#/definitions/positiveDuration"
+            },
+            "pollInterval": {
+              "$ref": "#/definitions/positiveDuration"
+            },
+            "requestTimeout": {
+              "$ref": "#/definitions/positiveDuration"
+            }
+          }
         },
         "renewalThreshold": {
           "$ref": "#/definitions/positiveDuration"

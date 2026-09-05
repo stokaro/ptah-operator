@@ -111,7 +111,8 @@ func TestRenderedRolloutGuardMatchesCompiledContract(t *testing.T) {
 		ControllerReplicas:                 *controllerDeployment.Spec.Replicas,
 		CertificateDeploymentName:          "ptah-e2e-ptah-operator-cert-rotator",
 		ControllerStateVersion:             1,
-		AdmissionContractVersion:           1,
+		AdmissionContractVersion:           CurrentAdmissionContractVersion,
+		CertificateRuntimeEnabled:          true,
 		ReleaseSequence:                    1,
 		ManagerImage:                       managerImage,
 		ControllerArgs:                     append([]string(nil), controllerDeployment.Spec.Template.Spec.Containers[0].Args...),
@@ -131,6 +132,7 @@ func TestRenderedRolloutGuardMatchesCompiledContract(t *testing.T) {
 	if _, _, _, err := guard.verifyRuntimePolicy(policies[runtimeName]); err != nil {
 		t.Fatalf("rendered runtime policy: %v", err)
 	}
+	assertRenderedCertificatePortContract(t, policies[runtimeName], 9444)
 	if err := guard.verifyHookIdentityPolicy(policies[hookName]); err != nil {
 		t.Fatalf("rendered hook identity policy: %v", err)
 	}
@@ -141,6 +143,151 @@ func TestRenderedRolloutGuardMatchesCompiledContract(t *testing.T) {
 		if err := guard.verifyBinding(bindings[name], name); err != nil {
 			t.Fatalf("rendered %s binding: %v", name, err)
 		}
+	}
+}
+
+func TestRenderedRolloutGuardKeepsV1CertificatePortContract(t *testing.T) {
+	path := os.Getenv("PTAH_ROLLOUT_GUARD_V1_RENDER")
+	if path == "" {
+		t.Skip("PTAH_ROLLOUT_GUARD_V1_RENDER is set by the chart contract gate")
+	}
+	policy := renderedAdmissionPolicy(t, path, RuntimeGuardPolicyName(1))
+	assertRenderedCertificatePortContract(t, policy, 0)
+}
+
+func TestCertificatePortsAndProbesExpressionEnforcesVersionedPortShape(t *testing.T) {
+	t.Parallel()
+	health := map[string]any{"name": "health", "containerPort": int64(8081), "protocol": "TCP"}
+	candidate := map[string]any{"name": "candidate", "containerPort": int64(9444), "protocol": "TCP"}
+	wrongCandidate := map[string]any{"name": "candidate", "containerPort": int64(9445), "protocol": "TCP"}
+	extra := map[string]any{"name": "metrics", "containerPort": int64(8080), "protocol": "TCP"}
+	for _, test := range []struct {
+		name          string
+		candidatePort int64
+		ports         []any
+		want          bool
+	}{
+		{name: "v1 exact health port", ports: []any{health}, want: true},
+		{name: "v1 rejects candidate port", ports: []any{health, candidate}},
+		{name: "v2 exact health and candidate ports", candidatePort: 9444, ports: []any{health, candidate}, want: true},
+		{name: "v2 rejects missing candidate port", candidatePort: 9444, ports: []any{health}},
+		{name: "v2 rejects wrong candidate port", candidatePort: 9444, ports: []any{health, wrongCandidate}},
+		{name: "v2 rejects extra port", candidatePort: 9444, ports: []any{health, candidate, extra}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			expression := certificatePortsAndProbesExpression(
+				"object.spec.template.spec.containers[0]",
+				8081,
+				test.candidatePort,
+			)
+			object := certificateDeploymentPortCELObject(test.ports)
+			got, ok := evaluateRolloutCEL(t, expression, map[string]any{
+				"object": object, "oldObject": nil, "request": map[string]any{}, "params": nil,
+			}, map[string]any{}).(bool)
+			if !ok || got != test.want {
+				t.Fatalf("certificate port contract = %v, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func renderedAdmissionPolicy(
+	t *testing.T,
+	path string,
+	name string,
+) *admissionregistrationv1.ValidatingAdmissionPolicy {
+	t.Helper()
+	rendered, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := utilyaml.NewYAMLToJSONDecoder(bytes.NewReader(rendered))
+	var result *admissionregistrationv1.ValidatingAdmissionPolicy
+	for {
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			t.Fatal(err)
+		}
+		if len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		var typeMeta metav1.TypeMeta
+		if err := json.Unmarshal(raw, &typeMeta); err != nil {
+			t.Fatal(err)
+		}
+		if typeMeta.Kind != "ValidatingAdmissionPolicy" {
+			continue
+		}
+		var policy admissionregistrationv1.ValidatingAdmissionPolicy
+		if err := json.Unmarshal(raw, &policy); err != nil {
+			t.Fatal(err)
+		}
+		if policy.Name != name {
+			continue
+		}
+		if result != nil {
+			t.Fatalf("rendered policy %q appears more than once", name)
+		}
+		result = &policy
+	}
+	if result == nil {
+		t.Fatalf("rendered policy %q is missing", name)
+	}
+	return result
+}
+
+func assertRenderedCertificatePortContract(
+	t *testing.T,
+	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
+	candidatePort int64,
+) {
+	t.Helper()
+	portExpression := certificatePortsAndProbesExpression(
+		"object.spec.template.spec.containers[0]",
+		8081,
+		candidatePort,
+	)
+	portExpression = fmt.Sprintf(
+		`request.name == %q ? (%s) : (%s)`,
+		"ptah-e2e-ptah-operator",
+		controllerPortsAndProbesExpression("object.spec.template.spec.containers[0]", 9443),
+		portExpression,
+	)
+	want := fmt.Sprintf(
+		`variables.isAnyAdmissionConvergenceProbe || (variables.stopTransition || variables.newRelease != 1 || (%s))`,
+		portExpression,
+	)
+	matches := 0
+	for _, validation := range policy.Spec.Validations {
+		if validation.Expression == want {
+			matches++
+		}
+	}
+	if matches != 1 {
+		t.Fatalf("rendered runtime policy contains %d exact certificate port contracts, want 1", matches)
+	}
+}
+
+func certificateDeploymentPortCELObject(ports []any) map[string]any {
+	return map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers": []any{map[string]any{
+						"ports": ports,
+						"livenessProbe": map[string]any{
+							"httpGet": map[string]any{"path": "/healthz", "port": "health"},
+						},
+						"readinessProbe": map[string]any{
+							"httpGet": map[string]any{"path": "/readyz", "port": "health"},
+						},
+					}},
+				},
+			},
+		},
 	}
 }
 

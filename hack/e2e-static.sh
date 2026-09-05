@@ -30,6 +30,7 @@ CRD_INSTALL_RENDER=$WORK_DIR/crd-install.yaml
 CRD_UPGRADE_RENDER=$WORK_DIR/crd-upgrade.yaml
 CRD_FULL_RENDER=$WORK_DIR/crd-full.yaml
 ROLLOUT_GUARD_RENDER=$WORK_DIR/rollout-guard.yaml
+ROLLOUT_GUARD_V1_RENDER=$WORK_DIR/rollout-guard-v1.yaml
 RUNTIME_POD_GUARD_LONG_RENDER=$WORK_DIR/runtime-pod-guard-long.yaml
 TEARDOWN_RENDER=$WORK_DIR/teardown.yaml
 TEARDOWN_EXTERNAL_CERT_RENDER=$WORK_DIR/teardown-external-cert.yaml
@@ -293,7 +294,7 @@ while [ "$predecessor_crd_index" -lt "$predecessor_crd_count" ]; do
 	predecessor_crd_index=$((predecessor_crd_index + 1))
 done
 # shellcheck disable=SC2016 # These checks intentionally match literal script variables.
-grep -F 'git -C "$ROOT_DIR" archive --format=tar' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+grep -F 'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 	printf '%s\n' 'e2e static: predecessor source is not materialized with git archive' >&2
 	exit 1
 }
@@ -1501,10 +1502,10 @@ static_require_count "$next_release_harness_source" \
 static_require_count "$next_release_harness_source" \
 	'E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE' 2 \
 	'candidate image handoff to upgrade and fresh-install proofs'
-# shellcheck disable=SC2016 # Count the literal archive command without expanding ROOT_DIR.
+# shellcheck disable=SC2016 # Count the literal immutable source repository reads.
 static_require_count "$next_release_harness_source" \
-	'git -C "$ROOT_DIR" archive --format=tar' 2 \
-	'exact predecessor and next-release source archives'
+	'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' 3 \
+	'exact snapshot verification, predecessor, and next-release source archives'
 # shellcheck disable=SC2016 # Exact sequence-derivation markers retain runtime variables literally.
 for release_sequence_derivation_marker in \
 	'go_release_sequence_from_source() {' \
@@ -1532,7 +1533,7 @@ static_require_count "$next_release_harness_source" \
 static_require_order "$next_release_harness_source" \
 	'synthetic next-release archive, image, registry, values, and uninstall handoff' \
 	'NEXT_SOURCE_ARCHIVE=$WORK_DIR/next-source.tar' \
-	'git -C "$ROOT_DIR" archive --format=tar' \
+	'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' \
 	'--output="$NEXT_SOURCE_ARCHIVE" "$CONTROLLER_REVISION"' \
 	'tar -xf "$NEXT_SOURCE_ARCHIVE" -C "$NEXT_BUILD_CONTEXT"' \
 	'CURRENT_GO_RELEASE_SEQUENCE=$(go_release_sequence_from_source "$NEXT_GO_SEQUENCE_FILE")' \
@@ -5311,12 +5312,45 @@ for helm_lookup_marker in \
 	'generate_upgrade_ca pod-validating' \
 	'assert_entry_bundle mutatingwebhookconfiguration' \
 	'assert_entry_bundle validatingwebhookconfiguration' \
+	'--reuse-values --dry-run=server --hide-secret' \
+	'exactly owned legacy Secret without ca.key' \
 	'--reuse-values --wait --timeout 5m' \
 	"caBundle for \${webhook_name} gained another entry" \
 	'assert_approval_admission_callable "after the Helm upgrade"'; do
 	grep -F -- "$helm_lookup_marker" "$ROOT_DIR/hack/e2e-kind.sh" \
 		"$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
 done
+for failure_atomic_restore_marker in \
+	"chmod 700 \"\$UPGRADE_WORK_DIR\"" \
+	"LEGACY_SECRET_BEFORE=\$UPGRADE_WORK_DIR/legacy-secret-before.json" \
+	'LEGACY_SECRET_RESTORE_REQUIRED=1' \
+	'restore_legacy_secret()' \
+	"--patch-file \"\$LEGACY_SECRET_REMOVE_PATCH\"" \
+	"--patch-file \"\$LEGACY_SECRET_RESTORE_PATCH\"" \
+	"\$live.metadata.resourceVersion == \$after.metadata.resourceVersion" \
+	"legacy_secret_matches \"\$LEGACY_SECRET_VERIFIED\" original" \
+	'protected recovery files retained at %s' \
+	'verify_legacy_secret_lookup_state()' \
+	"rotation_transition_complete \"\$NEW_CA\"" \
+	"rotation_transition_complete \"\$RECREATED_CA\"" \
+	'refusing to overwrite a concurrently changed legacy Secret' \
+	'failure-atomic legacy Secret restoration failed'; do
+	grep -F -- "$failure_atomic_restore_marker" \
+		"$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
+done
+[ "$(grep -Fc '"op":"test","path":"/metadata/uid"' \
+	"$ROOT_DIR/hack/e2e-cert-rotation.sh")" -eq 2 ]
+[ "$(grep -Fc '"op":"test","path":"/metadata/resourceVersion"' \
+	"$ROOT_DIR/hack/e2e-cert-rotation.sh")" -eq 2 ]
+[ "$(grep -Fc '"op":"test","path":"/data"' \
+	"$ROOT_DIR/hack/e2e-cert-rotation.sh")" -eq 2 ]
+[ "$(grep -Fc 'LEGACY_SECRET_RESTORE_REQUIRED=0' \
+	"$ROOT_DIR/hack/e2e-cert-rotation.sh")" -eq 3 ]
+if grep -Eq -- 'OLD_CA_KEY=|--arg[[:space:]]+caKey|-p=.*ca\.key' \
+	"$ROOT_DIR/hack/e2e-cert-rotation.sh"; then
+	printf '%s\n' 'e2e static: legacy Secret restoration exposes private key material through shell arguments' >&2
+	exit 1
+fi
 for per_entry_marker in \
 	'"mutating"' \
 	'"approvalValidating"' \
@@ -5423,6 +5457,14 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/certificate-rotation.yaml \
 	--set-string 'tolerations[0].key=dedicated' \
 	$crd_render_args >"$ROLLOUT_GUARD_RENDER"
+# Keep the retained admission-contract v1 policy compatible with its historical
+# single health-port certificate runtime shape.
+# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
+	--show-only templates/rollout-guard.yaml \
+	--set-string webhook.existingSecret=external-tls \
+	--set-string webhook.caBundle=Y2E= \
+	$crd_render_args >"$ROLLOUT_GUARD_V1_RENDER"
 # Exercise API-server generated-name truncation with a maximal runtime name.
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
@@ -5552,20 +5594,19 @@ done
 printf '%s\n' "$crd_role_section" | grep -F 'verbs: ["get", "update"]' >/dev/null
 printf '%s\n' "$crd_role_section" |
 	grep -F 'resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]' >/dev/null
-[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["list"]')" -eq 4 ]
+[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["list"]')" -eq 3 ]
 [ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["get", "patch"]')" -eq 2 ]
 [ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["create"]')" -eq 1 ]
 for crd_manager_rbac_marker in \
 	'resources: ["clusterrolebindings"]' \
 	'resources: ["rolebindings"]' \
-	'resources: ["subjectaccessreviews"]' \
-	'resources: ["endpointslices"]'; do
+	'resources: ["subjectaccessreviews"]'; do
 	printf '%s\n' "$crd_role_section" |
 		grep -F -- "$crd_manager_rbac_marker" >/dev/null
 done
 if printf '%s\n' "$crd_role_section" |
-	grep -Eq 'verbs:.*(delete|watch)|resources:.*\*'; then
-	printf '%s\n' 'e2e static: CRD manager hook RBAC contains an unsafe verb or wildcard resource' >&2
+	grep -Eq 'verbs:.*(delete|watch)|resources:.*(\*|endpointslices)'; then
+	printf '%s\n' 'e2e static: CRD manager hook ClusterRole contains an unsafe verb, wildcard, or cluster-wide EndpointSlice access' >&2
 	exit 1
 fi
 for crd_runtime_marker in \
@@ -5592,7 +5633,7 @@ grep -F -- '--controller-image=ghcr.io/stokaro/ptah-operator@sha256:222222222222
 [ "$(grep -Fc 'resources: ["customresourcedefinitions"]' "$CRD_FULL_RENDER")" -eq 3 ]
 [ "$(grep -Fc 'resourceNames: ["ptah-operator-admission"]' "$CRD_FULL_RENDER")" -eq 11 ]
 teardown_resource_count=$(grep -Ec '^apiVersion:' "$TEARDOWN_RENDER")
-[ "$teardown_resource_count" -eq 18 ]
+[ "$teardown_resource_count" -eq 22 ]
 [ "$(grep -Fc 'helm.sh/hook: pre-delete' "$TEARDOWN_RENDER")" -eq "$teardown_resource_count" ]
 [ "$(grep -Fc 'helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded' "$TEARDOWN_RENDER")" -eq "$teardown_resource_count" ]
 [ "$(grep -Fc 'kind: Job' "$TEARDOWN_RENDER")" -eq 2 ]
@@ -5923,6 +5964,7 @@ done
 }
 (cd "$ROOT_DIR" && \
 	PTAH_ROLLOUT_GUARD_RENDER="$ROLLOUT_GUARD_RENDER" \
+	PTAH_ROLLOUT_GUARD_V1_RENDER="$ROLLOUT_GUARD_V1_RENDER" \
 	PTAH_RUNTIME_POD_GUARD_RENDER="$ROLLOUT_GUARD_RENDER" \
 	PTAH_RUNTIME_POD_GUARD_LONG_RENDER="$RUNTIME_POD_GUARD_LONG_RENDER" \
 	PTAH_ADMISSION_RENDER="$ADMISSION_RENDER" \
@@ -5930,7 +5972,7 @@ done
 	PTAH_PRIVILEGE_RENDER="$CRD_FULL_RENDER" \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
-		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedAdmissionConvergenceSentinelMatchesCompiledContract|TestRenderedReleaseActivationGuardMatchesCompiledContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedServiceAccountOriginGuardMatchesCompiledContract|TestRenderedLongNameServiceAccountOriginGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
+		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedAdmissionConvergenceSentinelMatchesCompiledContract|TestRenderedReleaseActivationGuardMatchesCompiledContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRolloutGuardKeepsV1CertificatePortContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedServiceAccountOriginGuardMatchesCompiledContract|TestRenderedLongNameServiceAccountOriginGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
 (cd "$ROOT_DIR" && \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_EXTERNAL_CERT_RENDER" \
 	PTAH_TEARDOWN_CERTIFICATE_RUNTIME_ENABLED=false \
@@ -5952,6 +5994,32 @@ done
 	PTAH_TEARDOWN_RELEASE_NAMESPACE=default \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade -run '^TestRenderedPrivilegeTeardownRulesMatchCompiledContract$' -count=1)
+# Exercise each namespace merge branch in both the cleanup and retired grants.
+for namespace_pair in default:ptah-coordination ptah-e2e:default; do
+	release_namespace=${namespace_pair%:*}
+	coordination_namespace=${namespace_pair#*:}
+	merged_privilege_render=$WORK_DIR/privilege-${release_namespace}-${coordination_namespace}.yaml
+	merged_teardown_render=$WORK_DIR/teardown-${release_namespace}-${coordination_namespace}.yaml
+	# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+	helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+		--namespace "$release_namespace" \
+		--set-string "coordination.namespace=$coordination_namespace" \
+		$crd_render_args >"$merged_privilege_render"
+	# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+	helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+		--namespace "$release_namespace" \
+		--set-string "coordination.namespace=$coordination_namespace" \
+		--show-only templates/teardown.yaml \
+		$crd_render_args >"$merged_teardown_render"
+	(cd "$ROOT_DIR" && \
+		PTAH_TEARDOWN_RENDER="$merged_teardown_render" \
+		PTAH_PRIVILEGE_RENDER="$merged_privilege_render" \
+		PTAH_TEARDOWN_RELEASE_NAMESPACE="$release_namespace" \
+		PTAH_TEARDOWN_COORDINATION_NAMESPACE="$coordination_namespace" \
+		GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
+		go test ./internal/crdupgrade \
+			-run '^(TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)
+done
 for singleton_guard_marker in \
 	'lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration"' \
 	'lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration"' \
@@ -6243,7 +6311,7 @@ done
 crd_script_invocation='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"'
 [ "$(grep -Fc "$crd_script_invocation" "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ]
 # shellcheck disable=SC2016 # Match literal runtime provenance expressions in the harness.
-controller_revision_assignment='CONTROLLER_REVISION=$(git -C "$ROOT_DIR" rev-parse HEAD)'
+controller_revision_assignment='CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:?E2E_CONTROLLER_REVISION is required inside the source snapshot}'
 grep -F -- "$controller_revision_assignment" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 grep -F "operator source revision must be an exact 40-character lowercase Git commit" \
 	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null

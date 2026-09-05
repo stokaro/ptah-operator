@@ -563,6 +563,7 @@ spec:
 {{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
 {{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
 {{- $certificateName := include "ptah-operator.certRotatorServiceAccountName" . -}}
+{{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
 {{- $quiesceJob := include "ptah-operator.teardownQuiesceJobName" . -}}
 {{- $cleanupJob := $cleanupServiceAccount -}}
 {{- $markerContext := dict "name" $markerName "namespace" .Release.Namespace "releaseName" .Release.Name "sequence" $sequence "managerImage" $managerImage "attempt" $attempt -}}
@@ -600,7 +601,10 @@ spec:
       (include "ptah-operator.certificateValidatingWriteGuardPolicyName" .)
       (include "ptah-operator.namespaceDeletionGuardPolicyName" .)
       (include "ptah-operator.admissionConvergencePolicyName" .) -}}
-{{- $certificateRecoveryEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) .Values.certificateRotation.recreateMissingSecret -}}
+{{- if $certificateRuntimeEnabled -}}
+{{- $guardNames = append $guardNames (include "ptah-operator.stagingSecretGuardPolicyName" .) -}}
+{{- end -}}
+{{- $certificateRecoveryEnabled := and $certificateRuntimeEnabled .Values.certificateRotation.recreateMissingSecret -}}
 {{- if $certificateRecoveryEnabled -}}
 {{- $guardNames = append $guardNames $certificateName -}}
 {{- end -}}
@@ -698,6 +702,30 @@ rules:
     resources: ["configmaps"]
     resourceNames: [{{ $markerName | quote }}]
     verbs: ["get", "update"]
+  {{- if eq .Release.Namespace "default" }}
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+  {{- end }}
+{{ if ne .Release.Namespace "default" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $bootstrapName }}
+  namespace: default
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-326"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: teardown-retirement-bootstrap
+rules:
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+{{ end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -711,9 +739,6 @@ metadata:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: teardown-retirement-bootstrap
 rules:
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
     verbs: ["get"]
@@ -738,6 +763,29 @@ subjects:
   - kind: ServiceAccount
     name: {{ $bootstrapName }}
     namespace: {{ .Release.Namespace }}
+{{ if ne .Release.Namespace "default" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $bootstrapName }}
+  namespace: default
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-325"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: teardown-retirement-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $bootstrapName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $bootstrapName }}
+    namespace: {{ .Release.Namespace }}
+{{ end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

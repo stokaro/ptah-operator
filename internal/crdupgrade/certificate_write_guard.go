@@ -53,7 +53,7 @@ func certificateValidatingWriteGuardDenialMessage() string {
 }
 
 func certificateMutatingWebhookNames() []string {
-	return []string{mutatingApprovalWebhookName}
+	return []string{mutatingApprovalWebhookName, mutatingCertificateCanaryWebhookName}
 }
 
 // certificateValidatingWebhookNames is the single ordered admission-entry
@@ -65,6 +65,7 @@ func certificateValidatingWebhookNames() []string {
 		validatingApprovalWebhookName,
 		podIntentWebhookName,
 		controllerWriteWebhookName,
+		validatingCertificateCanaryWebhookName,
 	}
 }
 
@@ -76,12 +77,14 @@ type certificateWriteGuardEntry struct {
 	bindingWeight       string
 	denialMessage       string
 	includeReinvocation bool
+	canaryName          string
 }
 
 // CertificateWriteGuard confines the certificate ServiceAccount's admission
 // singleton updates to bounded, nonempty CA bundles on entries targeting the
-// exact release Service and effective port 443. Every other entry's bundle and
-// all other behavioral and caller-controlled fields remain immutable.
+// exact release Service and on the one typed canary entry targeting the exact
+// candidate Service, all on effective port 443. Every other entry's bundle and
+// all behavioral and caller-controlled fields remain immutable.
 // Kubernetes field management may still rewrite or reset
 // metadata.managedFields before validating admission; that unavoidable
 // bookkeeping exception carries no webhook behavior. The mutating and
@@ -183,6 +186,7 @@ func (g *CertificateWriteGuard) entries() []certificateWriteGuardEntry {
 			bindingWeight:       certificateMutatingWriteBindingWeight,
 			denialMessage:       certificateMutatingWriteGuardDenialMessage(),
 			includeReinvocation: true,
+			canaryName:          mutatingCertificateCanaryWebhookName,
 		},
 		{
 			name:          CertificateValidatingWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
@@ -191,6 +195,7 @@ func (g *CertificateWriteGuard) entries() []certificateWriteGuardEntry {
 			policyWeight:  certificateValidatingWritePolicyWeight,
 			bindingWeight: certificateValidatingWriteBindingWeight,
 			denialMessage: certificateValidatingWriteGuardDenialMessage(),
+			canaryName:    validatingCertificateCanaryWebhookName,
 		},
 	}
 }
@@ -201,9 +206,15 @@ func (g *CertificateWriteGuard) policy(entry certificateWriteGuardEntry) *admiss
 	validations := []admissionregistrationv1.Validation{
 		{Expression: certificateMetadataValidation(), Message: entry.denialMessage},
 		{Expression: certificateWebhookNamesValidation(), Message: entry.denialMessage},
-		{Expression: certificateWebhookEntriesValidation(g.ReleaseNamespace, g.WebhookServiceName, entry.includeReinvocation), Message: entry.denialMessage},
+		{Expression: certificateWebhookEntriesValidation(
+			g.ReleaseNamespace,
+			g.WebhookServiceName,
+			g.candidateServiceName(),
+			entry.canaryName,
+			entry.includeReinvocation,
+		), Message: entry.denialMessage},
 	}
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: g.metadata(entry),
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
@@ -216,10 +227,16 @@ func (g *CertificateWriteGuard) policy(entry certificateWriteGuardEntry) *admiss
 			Validations: validations,
 		},
 	}
+	addStableAdmissionConvergenceDependencyProbe(
+		policy,
+		g.ReleaseNamespace,
+		serviceAccountObjectGuardMarkerPattern(g.ReleaseNamespace, g.ReleaseName),
+	)
+	return policy
 }
 
 func (g *CertificateWriteGuard) binding(entry certificateWriteGuardEntry) *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
-	return &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
+	binding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicyBinding"},
 		ObjectMeta: g.metadata(entry),
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
@@ -228,6 +245,8 @@ func (g *CertificateWriteGuard) binding(entry certificateWriteGuardEntry) *admis
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
+	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources)
+	return binding
 }
 
 func (g *CertificateWriteGuard) matchResources(resource string) *admissionregistrationv1.MatchResources {
@@ -328,7 +347,15 @@ func (g *CertificateWriteGuard) validate(requirePoll bool) error {
 	if requirePoll && g.PollEvery <= 0 {
 		return fmt.Errorf("certificate write guard poll interval must be positive")
 	}
+	if _, _, err := deriveCertificateCanaryNames(g.CertificateServiceAccountName, g.WebhookServiceName); err != nil {
+		return fmt.Errorf("certificate write guard canary identity: %w", err)
+	}
 	return nil
+}
+
+func (g *CertificateWriteGuard) candidateServiceName() string {
+	name, _, _ := deriveCertificateCanaryNames(g.CertificateServiceAccountName, g.WebhookServiceName)
+	return name
 }
 
 func certificateWebhookNamesValidation() string {
@@ -362,7 +389,13 @@ func certificateMetadataValidation() string {
 	return strings.Join(parts, " && ")
 }
 
-func certificateWebhookEntriesValidation(serviceNamespace, serviceName string, includeReinvocation bool) string {
+func certificateWebhookEntriesValidation(
+	serviceNamespace,
+	serviceName,
+	candidateServiceName,
+	canaryName string,
+	includeReinvocation bool,
+) string {
 	newWebhook := "webhook"
 	oldWebhook := "previous"
 	exactServiceTarget := fmt.Sprintf(
@@ -372,9 +405,18 @@ func certificateWebhookEntriesValidation(serviceNamespace, serviceName string, i
 		serviceName,
 		certificateWebhookServicePort,
 	)
+	exactCanaryTarget := fmt.Sprintf(
+		`%[1]s.name == %[2]q && has(%[1]s.clientConfig.service) && %[1]s.clientConfig.service.namespace == %[3]q && %[1]s.clientConfig.service.name == %[4]q && (!has(%[1]s.clientConfig.service.port) || %[1]s.clientConfig.service.port == %[5]d)`,
+		newWebhook,
+		canaryName,
+		serviceNamespace,
+		candidateServiceName,
+		certificateWebhookServicePort,
+	)
+	mutableTarget := fmt.Sprintf(`((%s) || (%s))`, exactServiceTarget, exactCanaryTarget)
 	mutableCABundle := fmt.Sprintf(
 		`((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= %[4]d) || (!(%[1]s) && %[3]s)`,
-		exactServiceTarget,
+		mutableTarget,
 		newWebhook,
 		certificatePresenceEqual(newWebhook+".clientConfig.caBundle", oldWebhook+".clientConfig.caBundle"),
 		maximumCertificateCABundleBytes,

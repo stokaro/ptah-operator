@@ -45,6 +45,7 @@ const (
 	docsPath                       = "docs/kubernetes-support.md"
 	makefilePath                   = "Makefile"
 	e2eHarnessPath                 = "hack/e2e-kind.sh"
+	e2eSupportImageResolverPath    = "hack/e2e-kubernetes-support-image.sh"
 	e2eKindConfigPath              = "testdata/e2e/kind.yaml.tmpl"
 	apiServerEndpointFilterPath    = "hack/api-server-endpoint-inventory.jq"
 	e2eStaticPath                  = "hack/e2e-static.sh"
@@ -184,6 +185,7 @@ func main() {
 	if err := verifyE2EWiring(e2eWiringFiles{
 		makefile:                   makefilePath,
 		harness:                    e2eHarnessPath,
+		supportImageResolver:       e2eSupportImageResolverPath,
 		kindConfig:                 e2eKindConfigPath,
 		apiServerEndpointFilter:    apiServerEndpointFilterPath,
 		staticChecks:               e2eStaticPath,
@@ -1536,6 +1538,7 @@ type sourceContractStep struct {
 type e2eWiringFiles struct {
 	makefile                   string
 	harness                    string
+	supportImageResolver       string
 	kindConfig                 string
 	apiServerEndpointFilter    string
 	staticChecks               string
@@ -1600,6 +1603,50 @@ const apiServerFeatureGatePatchContract = `append_api_server_feature_gate_patch(
 		;;
 	esac
 }`
+
+const controllerGuardedFieldVersionCaseContract = `case "$KUBERNETES_MAJOR_MINOR" in
+	1.35)
+		manifest=$WORK_DIR/controller-object-workload-ref.json
+		jq '.spec.template.spec.workloadRef = {name: "probe", podGroup: "probe"}' \
+			"$base_manifest" >"$manifest"
+		expect_controller_job_api_acceptance PodSpec.workloadRef "$manifest" \
+			'.spec.template.spec.workloadRef == {name: "probe", podGroup: "probe"}'
+		expect_controller_job_vap_denial PodSpec.workloadRef "$manifest"
+		;;
+	1.36)
+		printf '%s\n' \
+			'e2e crd: Kubernetes 1.36 has no requested version-specific guarded-field probe'
+		;;
+	1.37)
+		manifest=$WORK_DIR/controller-object-job-scheduling.json
+		jq '.spec.scheduling = {schedulingPolicy: {basic: {}}}' \
+			"$base_manifest" >"$manifest"
+		expect_controller_job_api_acceptance JobSpec.scheduling "$manifest" \
+			'.spec.scheduling.schedulingPolicy.basic == {}'
+		expect_controller_job_vap_denial JobSpec.scheduling "$manifest"
+
+		manifest=$WORK_DIR/controller-object-eviction-responders.json
+		jq '.spec.template.spec.evictionResponders = [{name: "example.com/probe", priority: 1000}]' \
+			"$base_manifest" >"$manifest"
+		expect_controller_job_api_acceptance PodSpec.evictionResponders "$manifest" \
+			'.spec.template.spec.evictionResponders == [{name: "example.com/probe", priority: 1000}]'
+		expect_controller_job_vap_denial PodSpec.evictionResponders "$manifest"
+
+		manifest=$WORK_DIR/controller-object-empty-dir-mode.json
+		jq '(.spec.template.spec.volumes[] | select(.name == "work").emptyDir.mode) = 448' \
+			"$base_manifest" >"$manifest"
+		expect_controller_job_api_acceptance EmptyDirVolumeSource.mode "$manifest" \
+			'any(.spec.template.spec.volumes[]; .name == "work" and .emptyDir.mode == 448)'
+		expect_controller_job_vap_denial EmptyDirVolumeSource.mode "$manifest"
+
+		manifest=$WORK_DIR/controller-object-bind-mount-options.json
+		jq '(.spec.template.spec.containers[0].volumeMounts[] | select(.name == "work").bindMountOptions) = ["noexec"]' \
+			"$base_manifest" >"$manifest"
+		expect_controller_job_api_acceptance VolumeMount.bindMountOptions "$manifest" \
+			'any(.spec.template.spec.containers[0].volumeMounts[]; .name == "work" and .bindMountOptions == ["noexec"])'
+		expect_controller_job_vap_denial VolumeMount.bindMountOptions "$manifest"
+		;;
+	esac`
 
 const apiServerFeatureGateScopeContract = `assert_api_server_feature_gate_scope() {
 	expected_api_server_feature_gates=$1
@@ -1819,7 +1866,330 @@ const registryHostsOnKindNodesContract = `configure_registry_hosts_on_kind_nodes
 	done
 }`
 
+type kubernetesMinorCaseBlock struct {
+	source string
+	minors map[string]struct{}
+}
+
+func parseKubernetesMinorCaseBlocks(contents []byte) ([]kubernetesMinorCaseBlock, error) {
+	logicalShell := normalizeShellContinuations(maskShellHeredocBodies(contents))
+	caseStart := regexp.MustCompile(`^[ \t]*case[ \t]+.+[ \t]+in[ \t]*(?:#[^\r\n]*)?\r?$`)
+	caseEnd := regexp.MustCompile(`^[ \t]*esac[ \t]*(?:#[^\r\n]*)?\r?$`)
+	minorLabel := regexp.MustCompile(`(?m)^[ \t]*([0-9]+\.[0-9]+(?:[ \t]*\|[ \t]*[0-9]+\.[0-9]+)*)[ \t]*\)`)
+	minorLiteral := regexp.MustCompile(`[0-9]+\.[0-9]+`)
+
+	type caseFrame struct {
+		lines []string
+	}
+	frames := make([]caseFrame, 0, 2)
+	blocks := make([]kubernetesMinorCaseBlock, 0, 2)
+	for _, line := range strings.Split(string(logicalShell), "\n") {
+		lineBytes := []byte(line)
+		startsCase := firstUnquotedShellMatch(lineBytes, caseStart) != nil
+		endsCase := firstUnquotedShellMatch(lineBytes, caseEnd) != nil
+		for index := range frames {
+			frames[index].lines = append(frames[index].lines, line)
+		}
+		if startsCase {
+			frames = append(frames, caseFrame{lines: []string{line}})
+		}
+		if !endsCase {
+			continue
+		}
+		if len(frames) == 0 {
+			return nil, errors.New("shell source has an unmatched esac")
+		}
+		frame := frames[len(frames)-1]
+		frames = frames[:len(frames)-1]
+		source := strings.Join(frame.lines, "\n")
+		minors := make(map[string]struct{})
+		for _, label := range minorLabel.FindAllStringSubmatch(source, -1) {
+			for _, minor := range minorLiteral.FindAllString(label[1], -1) {
+				minors[minor] = struct{}{}
+			}
+		}
+		if len(minors) >= 3 {
+			blocks = append(blocks, kubernetesMinorCaseBlock{source: source, minors: minors})
+		}
+	}
+	if len(frames) != 0 {
+		return nil, errors.New("shell source has an unterminated case statement")
+	}
+	return blocks, nil
+}
+
+func containsKubernetesWindowGrep(contents []byte) bool {
+	logicalShell := normalizeShellContinuations(maskShellHeredocBodies(contents))
+	grepExtendedRegexp := regexp.MustCompile(
+		`(?:^|[|;&()][ \t]*)(?:command[ \t]+)?(?:[^ \t;&|()]+/)?grep[ \t]+(?:-[A-Za-z]*E[A-Za-z]*|--extended-regexp)(?:[ \t]|$)`,
+	)
+	minorLiteral := regexp.MustCompile(`([0-9]+)(?:\.|\\\.)([0-9]+)`)
+	for _, line := range strings.Split(string(logicalShell), "\n") {
+		lineBytes := []byte(line)
+		if firstUnquotedShellMatch(lineBytes, grepExtendedRegexp) == nil {
+			continue
+		}
+		minors := make(map[string]struct{})
+		for _, match := range minorLiteral.FindAllStringSubmatch(line, -1) {
+			minors[match[1]+"."+match[2]] = struct{}{}
+		}
+		if len(minors) >= 3 {
+			return true
+		}
+	}
+	return false
+}
+
+func verifyAuditedKubernetesMinorSelection(path string, contents []byte, allowedCaseSources ...string) error {
+	actual, err := parseKubernetesMinorCaseBlocks(contents)
+	if err != nil {
+		return fmt.Errorf("%s: parse Kubernetes minor case statements: %w", path, err)
+	}
+	expected := make([]kubernetesMinorCaseBlock, 0, len(allowedCaseSources))
+	for _, source := range allowedCaseSources {
+		blocks, parseErr := parseKubernetesMinorCaseBlocks([]byte(source))
+		if parseErr != nil || len(blocks) != 1 {
+			return fmt.Errorf("internal Kubernetes minor case contract is invalid")
+		}
+		expected = append(expected, blocks[0])
+	}
+	if len(actual) != len(expected) {
+		return fmt.Errorf("%s: found %d Kubernetes minor case blocks, want exactly %d audited version-specific behavior blocks", path, len(actual), len(expected))
+	}
+	matched := make([]bool, len(expected))
+	for _, block := range actual {
+		found := false
+		for index, contract := range expected {
+			if matched[index] || !equalStrings(
+				normalizedNonemptyLines(block.source),
+				normalizedNonemptyLines(contract.source),
+			) {
+				continue
+			}
+			matched[index] = true
+			found = true
+			break
+		}
+		if !found {
+			return fmt.Errorf("%s: Kubernetes minor case block differs from the audited version-specific behavior contract", path)
+		}
+	}
+	if containsKubernetesWindowGrep(contents) {
+		return fmt.Errorf("%s: extended-regexp grep must not encode a private Kubernetes support window", path)
+	}
+	return nil
+}
+
+func verifyKubernetesSupportWindowWiring(files e2eWiringFiles) error {
+	resolverContents, err := os.ReadFile(files.supportImageResolver)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.supportImageResolver, err)
+	}
+	if err := verifyShellScriptEntrypoint(files.supportImageResolver, resolverContents); err != nil {
+		return err
+	}
+	resolverContract := []sourceContractStep{
+		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLine("exact resolver argument count", `[ "$#" -eq 2 ] || fail "usage: $0 SUPPORT_MANIFEST KUBERNETES_VERSION"`),
+		exactSourceLine("support manifest argument", `support_manifest=$1`),
+		exactSourceLine("exact Kubernetes version argument", `kubernetes_version=$2`),
+		exactSourceLine("exact Kubernetes version syntax", `printf '%s\n' "$kubernetes_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||`),
+		exactSourceLine("manifest lookup minor", `kubernetes_minor=${kubernetes_version%.*}`),
+		exactSourceLine("manifest lookup", `resolved_image=$(jq -er \`),
+		exactSourceLine("manifest release iteration", `.releases[]`),
+		exactSourceLine("manifest minor membership", `| select((.minor | type) == "string" and .minor == $minor)`),
+		exactSourceLine("exact node version binding", `| select(startswith("kindest/node:v" + $version + "@sha256:"))`),
+		exactSourceLine("unique membership", `| if length == 1`),
+		exactSourceLine("resolved node image output", `printf '%s\n' "$resolved_image"`),
+	}
+	if err := verifyOrderedSourceContract(files.supportImageResolver, resolverContents, resolverContract); err != nil {
+		return err
+	}
+	if err := verifyAuditedKubernetesMinorSelection(files.supportImageResolver, resolverContents); err != nil {
+		return err
+	}
+
+	harnessContents, err := os.ReadFile(files.harness)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.harness, err)
+	}
+	crdUpgradeContents, err := os.ReadFile(files.crdUpgrade)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.crdUpgrade, err)
+	}
+	if err := verifyAuditedKubernetesMinorSelection(files.harness, harnessContents, apiServerFeatureGatePatchContract); err != nil {
+		return fmt.Errorf("API-server feature gate contract: %w", err)
+	}
+	if err := verifyAuditedKubernetesMinorSelection(files.crdUpgrade, crdUpgradeContents, controllerGuardedFieldVersionCaseContract); err != nil {
+		return err
+	}
+
+	if err := verifyOrderedSourceContract(files.harness, harnessContents, []sourceContractStep{
+		exactSourceLine("Kubernetes minor behavior selector", `K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)`),
+		exactSourceLineSequence("manifest-backed Kubernetes support membership", []string{
+			`SUPPORTED_KIND_NODE_IMAGE=$("$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \`,
+			`"$ROOT_DIR/support/kubernetes.json" "$K8S_VERSION") ||`,
+			`fail "Kubernetes $K8S_VERSION is not an exact member of support/kubernetes.json"`,
+		}),
+		exactSourceLineSequence("support-manifest image selection", []string{
+			`if [ -z "$KIND_NODE_IMAGE" ]; then`,
+			`KIND_NODE_IMAGE=$SUPPORTED_KIND_NODE_IMAGE`,
+			`fi`,
+		}),
+		exactSourceLineSequence("support-manifest image equality", []string{
+			`[ "$KIND_NODE_IMAGE" = "$SUPPORTED_KIND_NODE_IMAGE" ] ||`,
+			`fail "KIND_NODE_IMAGE must match the digest-pinned support manifest entry for Kubernetes $K8S_VERSION"`,
+		}),
+	}); err != nil {
+		return err
+	}
+
+	return verifyOrderedSourceContract(files.crdUpgrade, crdUpgradeContents, []sourceContractStep{
+		exactSourceLine("Kubernetes minor behavior selector", `KUBERNETES_MAJOR_MINOR=$(printf '%s\n' "$E2E_KUBERNETES_VERSION" | cut -d. -f1,2)`),
+		exactSourceLineSequence("manifest-backed Kubernetes support membership", []string{
+			`"$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \`,
+			`"$ROOT_DIR/support/kubernetes.json" "$E2E_KUBERNETES_VERSION" >/dev/null ||`,
+			`fail "Kubernetes $E2E_KUBERNETES_VERSION is not an exact member of support/kubernetes.json"`,
+		}),
+	})
+}
+
+func verifyE2ESourceSnapshot(path string, contents []byte) error {
+	snapshotContract := []sourceContractStep{
+		exactSourceLine("bootstrap checkout root", `BOOTSTRAP_ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)`),
+		exactSourceLine("outer snapshot branch", `if [ "${1:-}" != --source-snapshot ]; then`),
+		exactSourceLineSequence("exact HEAD capture", []string{
+			`SNAPSHOT_REVISION=$(git -C "$BOOTSTRAP_ROOT_DIR" rev-parse --verify 'HEAD^{commit}') ||`,
+			`snapshot_fail "could not resolve the operator source HEAD"`,
+		}),
+		exactSourceLineSequence("clean checkout preflight", []string{
+			`E2E_SOURCE_STATUS=$(git -C "$BOOTSTRAP_ROOT_DIR" status --porcelain=v1 --untracked-files=all) ||`,
+			`snapshot_fail "could not inspect the operator source tree before snapshot creation"`,
+			`[ -z "$E2E_SOURCE_STATUS" ] ||`,
+			`snapshot_fail "operator source tree must exactly match HEAD before snapshot creation"`,
+		}),
+		exactSourceLine("isolated snapshot directory", `SOURCE_SNAPSHOT_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-source.XXXXXX")`),
+		exactSourceLineSequence("snapshot cleanup status capture", []string{
+			`snapshot_cleanup() {`,
+			`status=$?`,
+		}),
+		exactSourceLine("snapshot cleanup path bound", `"${TMPDIR:-/tmp}"/ptah-operator-e2e-source.*)`),
+		exactSourceLine("snapshot cleanup removal", `rm -rf -- "$SOURCE_SNAPSHOT_WORK_DIR"`),
+		exactSourceLineSequence("snapshot failure-preserving trap", []string{
+			`exit "$status"`,
+			`}`,
+			`trap snapshot_cleanup EXIT`,
+		}),
+		exactSourceLineSequence("exact source archive", []string{
+			`git -C "$BOOTSTRAP_ROOT_DIR" archive --format=tar \`,
+			`--output="$SOURCE_SNAPSHOT_ARCHIVE" "$SNAPSHOT_REVISION"`,
+			`tar -xf "$SOURCE_SNAPSHOT_ARCHIVE" -C "$SOURCE_SNAPSHOT_ROOT"`,
+		}),
+		exactSourceLineSequence("snapshot execution identity", []string{
+			`E2E_SOURCE_REPOSITORY_ROOT=$BOOTSTRAP_ROOT_DIR`,
+			`E2E_CONTROLLER_REVISION=$SNAPSHOT_REVISION`,
+		}),
+		exactSourceLine("exact snapshot child execution", `"$SOURCE_SNAPSHOT_ROOT/hack/e2e-kind.sh" --source-snapshot "$@"`),
+		exactSourceLine("snapshot root activation", `ROOT_DIR=$BOOTSTRAP_ROOT_DIR`),
+		exactSourceLine("immutable object repository activation", `SOURCE_REPOSITORY_ROOT=${E2E_SOURCE_REPOSITORY_ROOT:?E2E_SOURCE_REPOSITORY_ROOT is required inside the source snapshot}`),
+		exactSourceLine("controller revision activation", `CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:?E2E_CONTROLLER_REVISION is required inside the source snapshot}`),
+		exactSourceLine("snapshot verification implementation", `verify_snapshot_source() (`),
+		exactSourceLineSequence("snapshot comparison with exact commit", []string{
+			`git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \`,
+			`--output="$verification_dir/source.tar" "$CONTROLLER_REVISION"`,
+			`tar -xf "$verification_dir/source.tar" -C "$verification_dir/source"`,
+			`git -c core.filemode=true diff --no-index --quiet --no-ext-diff --no-textconv -- \`,
+			`"$verification_dir/source" "$ROOT_DIR" ||`,
+			`fail "E2E source snapshot differs from the exact operator commit"`,
+		}),
+		exactSourceLineSequence("isolated snapshot validation", []string{
+			`[ "$ROOT_DIR" != "$SOURCE_REPOSITORY_ROOT" ] ||`,
+			`fail "E2E source snapshot must be isolated from the operator checkout"`,
+			`[ ! -e "$ROOT_DIR/.git" ] ||`,
+			`fail "E2E source snapshot must not contain Git worktree metadata"`,
+		}),
+		exactSourceLineSequence("exact controller object validation", []string{
+			`printf '%s\n' "$CONTROLLER_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||`,
+			`fail "operator source revision must be an exact 40-character lowercase Git commit"`,
+			`resolved_controller=$(git -C "$SOURCE_REPOSITORY_ROOT" rev-parse --verify "${CONTROLLER_REVISION}^{commit}") ||`,
+			`fail "exact operator source commit $CONTROLLER_REVISION is unavailable"`,
+			`[ "$resolved_controller" = "$CONTROLLER_REVISION" ] ||`,
+			`fail "operator source revision resolved to $resolved_controller, expected $CONTROLLER_REVISION"`,
+		}),
+		exactSourceLine("snapshot content verification", `verify_snapshot_source`),
+	}
+	if err := verifyOrderedSourceContract(path, contents, snapshotContract); err != nil {
+		return err
+	}
+
+	innerStart := exactSourceLine("snapshot root activation", `ROOT_DIR=$BOOTSTRAP_ROOT_DIR`).pattern.FindIndex(contents)
+	if innerStart == nil {
+		return fmt.Errorf("%s: snapshot root activation is missing", path)
+	}
+	innerContents := contents[innerStart[0]:]
+	if regexp.MustCompile(`\$(?:\{SOURCE_REPOSITORY_ROOT\}|SOURCE_REPOSITORY_ROOT)/`).Match(innerContents) {
+		return fmt.Errorf("%s: live checkout path escapes the exact source snapshot", path)
+	}
+	immutableObjectReads := []struct {
+		line  string
+		count int
+	}{
+		{line: `resolved_controller=$(git -C "$SOURCE_REPOSITORY_ROOT" rev-parse --verify "${CONTROLLER_REVISION}^{commit}") ||`, count: 1},
+		{line: `resolved_predecessor=$(git -C "$SOURCE_REPOSITORY_ROOT" rev-parse --verify "${PREDECESSOR_REVISION}^{commit}" 2>/dev/null) ||`, count: 1},
+		{line: `git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \`, count: 3},
+		{line: `chart_source_epoch=$(git -C "$SOURCE_REPOSITORY_ROOT" show -s --format=%ct "$CONTROLLER_REVISION")`, count: 1},
+	}
+	for _, read := range immutableObjectReads {
+		if count := bytes.Count(innerContents, []byte(read.line)); count != read.count {
+			return fmt.Errorf("%s: immutable Git object read %q occurs %d times, want %d", path, read.line, count, read.count)
+		}
+	}
+	if count := bytes.Count(innerContents, []byte(`$SOURCE_REPOSITORY_ROOT`)); count != 8 {
+		return fmt.Errorf("%s: original checkout must have only two isolation checks and six audited immutable Git object reads, found %d references", path, count)
+	}
+
+	snapshotPaths := []struct {
+		marker string
+		count  int
+	}{
+		{marker: `go -C "$ROOT_DIR" run ./test/e2e/handcraftoci verify-certificate \`, count: 1},
+		{marker: `go -C "$ROOT_DIR" run ./hack/crdschemadigest \`, count: 1},
+		{marker: `chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")`, count: 1},
+		{marker: `go -C "$ROOT_DIR" run ./hack/chartpackage \`, count: 1},
+		{marker: `"$ROOT_DIR/testdata/e2e/kind.yaml.tmpl" >"$KIND_CONFIG"`, count: 1},
+		{marker: `cp "$ROOT_DIR/test/e2e/Dockerfile.ptah" "$PTAH_BUILD_CONTEXT/Dockerfile.e2e"`, count: 1},
+		{marker: `--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \`, count: 2},
+		{marker: `--tag "$OPERATOR_IMAGE" "$ROOT_DIR"`, count: 1},
+		{marker: `--tag "$FIXTURE_BUILD_IMAGE" "$ROOT_DIR"`, count: 1},
+		{marker: `jq -e -f "$ROOT_DIR/hack/admission-schema-contract.jq" \`, count: 1},
+		{marker: `-f "$ROOT_DIR/hack/controller-object-schema-contract.jq" \`, count: 1},
+		{marker: `"$ROOT_DIR/hack/e2e-crd-upgrade.sh"`, count: 2},
+		{marker: `"$ROOT_DIR/hack/e2e-ha.sh"`, count: 1},
+		{marker: `"$ROOT_DIR/hack/e2e-assert.sh"`, count: 1},
+		{marker: `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`, count: 1},
+		{marker: `"$ROOT_DIR/hack/e2e-dataplane.sh"`, count: 1},
+	}
+	for _, pathContract := range snapshotPaths {
+		if count := bytes.Count(innerContents, []byte(pathContract.marker)); count != pathContract.count {
+			return fmt.Errorf("%s: exact snapshot path %q occurs %d times, want %d", path, pathContract.marker, count, pathContract.count)
+		}
+	}
+
+	firstDockerAccess := bytes.Index(contents, []byte(`docker --context "$DOCKER_CONTEXT"`))
+	if firstDockerAccess < 0 {
+		return fmt.Errorf("%s: Docker access is missing", path)
+	}
+	verificationCall := exactSourceLine("snapshot content verification", `verify_snapshot_source`).pattern.FindIndex(contents)
+	if firstDockerAccess < verificationCall[1] {
+		return fmt.Errorf("%s: exact source snapshot must be active before first Docker access", path)
+	}
+	return nil
+}
+
 func verifyE2EWiring(files e2eWiringFiles) error {
+	if err := verifyKubernetesSupportWindowWiring(files); err != nil {
+		return err
+	}
 	if err := verifyMakeE2ETarget(files.makefile); err != nil {
 		return err
 	}
@@ -1850,21 +2220,28 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyShellScriptEntrypoint(harness, harnessContents); err != nil {
 		return err
 	}
-	if err := verifyFailurePreservingExitTrap(harness, harnessContents, "cleanup"); err != nil {
+	if err := verifyFailurePreservingExitTrap(harness, harnessContents, "snapshot_cleanup", "snapshot_verification_cleanup", "cleanup"); err != nil {
 		return err
 	}
 	harnessContract := []sourceContractStep{
 		exactSourceLine("fail-fast shell mode", "set -eu"),
 		exactSourceLine("required Kubernetes version", `[ -n "$K8S_VERSION" ] || fail "K8S_VERSION is required (for example, 1.37.0)"`),
 		exactSourceLine("exact Kubernetes version syntax", `printf '%s\n' "$K8S_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||`),
-		exactSourceLineSequence("supported Kubernetes minor binding", []string{
+		exactSourceLineSequence("manifest-backed Kubernetes support membership", []string{
 			`K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)`,
-			`case "$K8S_MAJOR_MINOR" in`,
-			`1.35 | 1.36 | 1.37) ;;`,
-			`*) fail "Kubernetes $K8S_MAJOR_MINOR is outside the supported 1.35-1.37 window" ;;`,
-			`esac`,
+			`SUPPORTED_KIND_NODE_IMAGE=$("$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \`,
+			`"$ROOT_DIR/support/kubernetes.json" "$K8S_VERSION") ||`,
+			`fail "Kubernetes $K8S_VERSION is not an exact member of support/kubernetes.json"`,
 		}),
-		exactSourceLine("support-manifest image selection", `if [ -z "$KIND_NODE_IMAGE" ]; then`),
+		exactSourceLineSequence("support-manifest image selection", []string{
+			`if [ -z "$KIND_NODE_IMAGE" ]; then`,
+			`KIND_NODE_IMAGE=$SUPPORTED_KIND_NODE_IMAGE`,
+			`fi`,
+		}),
+		exactSourceLineSequence("support-manifest image equality", []string{
+			`[ "$KIND_NODE_IMAGE" = "$SUPPORTED_KIND_NODE_IMAGE" ] ||`,
+			`fail "KIND_NODE_IMAGE must match the digest-pinned support manifest entry for Kubernetes $K8S_VERSION"`,
+		}),
 		exactSourceLine("digest-pinned node image", `is_pinned_image "$KIND_NODE_IMAGE" ||`),
 		exactSourceLineSequence("node image version binding", []string{
 			`case "$KIND_NODE_IMAGE" in`,
@@ -2155,6 +2532,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("terminal Kubernetes lifecycle evidence", `printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"`),
 	}
 	if err := verifyOrderedSourceContract(harness, harnessContents, harnessContract); err != nil {
+		return err
+	}
+	if err := verifyE2ESourceSnapshot(harness, harnessContents); err != nil {
 		return err
 	}
 	if err := verifyAuditedShellFunctionDigest(
@@ -2744,6 +3124,11 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				}),
 				exactSourceLine("late activation blocker cleanup", `if [ -n "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ]; then`),
 				exactSourceLine("cleanup status preservation", `exit "$status"`),
+				exactSourceLineSequence("manifest-backed Kubernetes support membership", []string{
+					`"$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \`,
+					`"$ROOT_DIR/support/kubernetes.json" "$E2E_KUBERNETES_VERSION" >/dev/null ||`,
+					`fail "Kubernetes $E2E_KUBERNETES_VERSION is not an exact member of support/kubernetes.json"`,
+				}),
 				exactSourceLine("live server version verification", `verify_supported_server_version`),
 				exactSourceLine("exact rendered reconcile hook identity", `reconcile_matches=$(rendered_hook_job_name crd-manager 0)`),
 				exactSourceLineSequence("unique rendered reconcile hook identity", []string{
@@ -4309,24 +4694,27 @@ func verifyShellScriptEntrypoint(path string, contents []byte) error {
 	return nil
 }
 
-func verifyFailurePreservingExitTrap(path string, contents []byte, cleanup string) error {
-	expected := "trap " + cleanup + " EXIT"
+func verifyFailurePreservingExitTrap(path string, contents []byte, cleanups ...string) error {
+	expected := make(map[string]int, len(cleanups))
+	for _, cleanup := range cleanups {
+		expected["trap "+cleanup+" EXIT"] = 0
+	}
 	exitTraps := regexp.MustCompile(`(?m)^[ \t]*trap[ \t]+[^\r\n]*(?:^|[ \t])(?:EXIT|0)(?:[ \t]|$)[^\r\n]*\r?$`).FindAll(contents, -1)
-	expectedCount := 0
 	for _, raw := range exitTraps {
 		line := strings.TrimSpace(string(raw))
-		switch {
-		case line == expected:
-			expectedCount++
-		case strings.HasPrefix(line, "trap - "):
+		if _, ok := expected[line]; ok {
+			expected[line]++
+		} else if strings.HasPrefix(line, "trap - ") {
 			// A cleanup routine may disable its own trap before preserving the
 			// captured status. This is not an alternate EXIT handler.
-		default:
+		} else {
 			return fmt.Errorf("%s: lifecycle script has an unaudited failure-preserving trap replacement %q", path, line)
 		}
 	}
-	if expectedCount != 1 {
-		return fmt.Errorf("%s: lifecycle script must have exactly one failure-preserving %s", path, expected)
+	for trap, count := range expected {
+		if count != 1 {
+			return fmt.Errorf("%s: lifecycle script must have exactly one failure-preserving %s", path, trap)
+		}
 	}
 	return nil
 }

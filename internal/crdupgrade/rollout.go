@@ -193,6 +193,7 @@ type RolloutGuard struct {
 	WebhookSecretName                       string
 	WebhookPort                             int32
 	CertificateHealthPort                   int32
+	CertificateRuntimeEnabled               bool
 	HookServiceAccountName                  string
 	ControllerServiceAccountName            string
 	ControllerServiceAccountManaged         bool
@@ -230,6 +231,11 @@ func (g *RolloutGuard) Prepare(ctx context.Context) error {
 	}
 	if err := NewCertificateWriteGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for certificate write guards: %w", err)
+	}
+	if g.CertificateRuntimeEnabled {
+		if err := NewStagingSecretGuard(g).WaitReady(ctx); err != nil {
+			return fmt.Errorf("wait for staging Secret guard: %w", err)
+		}
 	}
 	if err := NewControllerObjectGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for controller object guards: %w", err)
@@ -272,6 +278,11 @@ func (g *RolloutGuard) Verify(ctx context.Context) error {
 	}
 	if err := NewCertificateWriteGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify certificate write guards: %w", err)
+	}
+	if g.CertificateRuntimeEnabled {
+		if err := NewStagingSecretGuard(g).Verify(ctx); err != nil {
+			return fmt.Errorf("verify staging Secret guard: %w", err)
+		}
 	}
 	if err := NewControllerObjectGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify controller object guards: %w", err)
@@ -367,6 +378,11 @@ func (g *RolloutGuard) VerifyHookIdentity(ctx context.Context) error {
 	if err := NewCertificateWriteGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify certificate write guards: %w", err)
 	}
+	if g.CertificateRuntimeEnabled {
+		if err := NewStagingSecretGuard(g).Verify(ctx); err != nil {
+			return fmt.Errorf("verify staging Secret guard: %w", err)
+		}
+	}
 	if err := NewControllerObjectGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify controller object guards: %w", err)
 	}
@@ -421,6 +437,11 @@ func (g *RolloutGuard) PrepareHookIdentity(ctx context.Context) error {
 	}
 	if err := NewCertificateWriteGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for certificate write guards: %w", err)
+	}
+	if g.CertificateRuntimeEnabled {
+		if err := NewStagingSecretGuard(g).WaitReady(ctx); err != nil {
+			return fmt.Errorf("wait for staging Secret guard: %w", err)
+		}
 	}
 	if err := NewControllerObjectGuard(g).WaitReady(ctx); err != nil {
 		return fmt.Errorf("wait for controller object guards: %w", err)
@@ -603,6 +624,17 @@ func (g *RolloutGuard) validateIdentity() error {
 	}
 	if g.AdmissionContractVersion < 1 {
 		return fmt.Errorf("admission-contract version must be positive")
+	}
+	if g.AdmissionContractVersion > CurrentAdmissionContractVersion {
+		return fmt.Errorf("admission-contract version %d is newer than supported version %d", g.AdmissionContractVersion, CurrentAdmissionContractVersion)
+	}
+	if g.AdmissionContractVersion >= 2 {
+		if !g.CertificateRuntimeEnabled {
+			return fmt.Errorf("admission-contract version 2 requires built-in certificate rotation")
+		}
+		if _, err := g.certificateCandidateRuntimePort(); err != nil {
+			return err
+		}
 	}
 	if g.WebhookTimeoutSeconds < 1 || g.WebhookTimeoutSeconds > 30 {
 		return fmt.Errorf("webhook timeout seconds must be between 1 and 30")
@@ -1533,6 +1565,7 @@ func (g *RolloutGuard) runtimeDeploymentValidationExpressions(managerImage strin
 	initContainer := pod + ".initContainers[0]"
 	container := pod + ".containers[0]"
 	isController := fmt.Sprintf(`request.name == %q`, g.ControllerDeploymentName)
+	candidatePort, _ := g.certificateCandidateRuntimePort()
 	return []string{
 		`object.spec.strategy.type == "Recreate" && variables.templateState == string(variables.newState) && variables.templateRelease == string(variables.newRelease)`,
 		fmt.Sprintf(`%[1]s.serviceAccountName == variables.runtimeServiceAccount && has(%[1]s.automountServiceAccountToken) && !%[1]s.automountServiceAccountToken && has(%[1]s.enableServiceLinks) && !%[1]s.enableServiceLinks`, pod),
@@ -1550,7 +1583,7 @@ func (g *RolloutGuard) runtimeDeploymentValidationExpressions(managerImage strin
 		containerSecurityExpression(container),
 		resourceKeysExpression(container),
 		fmt.Sprintf(`%s ? (%s) : (%s)`, isController, controllerMountsExpression(container), apiAccessMountExpression(container, 1)),
-		fmt.Sprintf(`%s ? (%s) : (%s)`, isController, controllerPortsAndProbesExpression(container, g.WebhookPort), certificatePortsAndProbesExpression(container, g.CertificateHealthPort)),
+		fmt.Sprintf(`%s ? (%s) : (%s)`, isController, controllerPortsAndProbesExpression(container, g.WebhookPort), certificatePortsAndProbesExpression(container, g.CertificateHealthPort, candidatePort)),
 		fmt.Sprintf(`%s ? (%s) : (%s)`, isController, controllerVolumesExpression(pod, g.WebhookSecretName), apiAccessVolumesExpression(pod, 1)),
 	}
 }
@@ -1583,7 +1616,10 @@ func controllerPortsAndProbesExpression(container string, webhookPort int32) str
 	return fmt.Sprintf(`%[1]s.ports.size() == 3 && %[1]s.ports.exists(p, p.name == "metrics" && p.containerPort == 8080 && p.protocol == "TCP" && (!has(p.hostPort) || p.hostPort == 0) && (!has(p.hostIP) || p.hostIP == "")) && %[1]s.ports.exists(p, p.name == "health" && p.containerPort == 8081 && p.protocol == "TCP" && (!has(p.hostPort) || p.hostPort == 0) && (!has(p.hostIP) || p.hostIP == "")) && %[1]s.ports.exists(p, p.name == "webhook" && p.containerPort == %d && p.protocol == "TCP" && (!has(p.hostPort) || p.hostPort == 0) && (!has(p.hostIP) || p.hostIP == "")) && has(%[1]s.livenessProbe) && has(%[1]s.livenessProbe.httpGet) && %[1]s.livenessProbe.httpGet.path == "/healthz" && %[1]s.livenessProbe.httpGet.port == "health" && has(%[1]s.readinessProbe) && has(%[1]s.readinessProbe.httpGet) && %[1]s.readinessProbe.httpGet.path == "/readyz" && %[1]s.readinessProbe.httpGet.port == "health"`, container, webhookPort)
 }
 
-func certificatePortsAndProbesExpression(container string, healthPort int32) string {
+func certificatePortsAndProbesExpression(container string, healthPort int32, candidatePort int64) string {
+	if candidatePort > 0 {
+		return fmt.Sprintf(`%[1]s.ports.size() == 2 && %[1]s.ports.all(p, p.protocol == "TCP" && (!has(p.hostPort) || p.hostPort == 0) && (!has(p.hostIP) || p.hostIP == "")) && %[1]s.ports.exists(p, p.name == "health" && p.containerPort == %[2]d) && %[1]s.ports.exists(p, p.name == "candidate" && p.containerPort == %[3]d) && has(%[1]s.livenessProbe) && has(%[1]s.livenessProbe.httpGet) && %[1]s.livenessProbe.httpGet.path == "/healthz" && %[1]s.livenessProbe.httpGet.port == "health" && has(%[1]s.readinessProbe) && has(%[1]s.readinessProbe.httpGet) && %[1]s.readinessProbe.httpGet.path == "/readyz" && %[1]s.readinessProbe.httpGet.port == "health"`, container, healthPort, candidatePort)
+	}
 	return fmt.Sprintf(`%[1]s.ports.size() == 1 && %[1]s.ports[0].name == "health" && %[1]s.ports[0].containerPort == %d && %[1]s.ports[0].protocol == "TCP" && (!has(%[1]s.ports[0].hostPort) || %[1]s.ports[0].hostPort == 0) && (!has(%[1]s.ports[0].hostIP) || %[1]s.ports[0].hostIP == "") && has(%[1]s.livenessProbe) && has(%[1]s.livenessProbe.httpGet) && %[1]s.livenessProbe.httpGet.path == "/healthz" && %[1]s.livenessProbe.httpGet.port == "health" && has(%[1]s.readinessProbe) && has(%[1]s.readinessProbe.httpGet) && %[1]s.readinessProbe.httpGet.path == "/readyz" && %[1]s.readinessProbe.httpGet.port == "health"`, container, healthPort)
 }
 

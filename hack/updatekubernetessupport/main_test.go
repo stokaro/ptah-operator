@@ -84,6 +84,43 @@ func TestBuildUpdatePlanSelectsNewestCompleteStableKindRelease(t *testing.T) {
 	}
 }
 
+func TestBuildUpdatePlanMovesSupportWindowForward(t *testing.T) {
+	t.Parallel()
+
+	digest := func(character string) string { return strings.Repeat(character, 64) }
+	releases := []githubRelease{{
+		TagName: "v0.35.0",
+		Body: strings.Join([]string{
+			"kindest/node:v1.36.8@sha256:" + digest("6"),
+			"kindest/node:v1.37.4@sha256:" + digest("7"),
+			"kindest/node:v1.38.1@sha256:" + digest("8"),
+		}, "\n"),
+	}}
+	kindContents, err := json.Marshal(releases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	date, _ := time.Parse("2006-01-02", "2026-09-05")
+	plan, err := buildUpdatePlan(baseManifest(), []byte("v1.38.2\n"), kindContents, date)
+	if err != nil {
+		t.Fatalf("buildUpdatePlan() error = %v", err)
+	}
+	if plan.oldest != "1.36" || plan.newest != "1.38" {
+		t.Fatalf("window = %s-%s, want 1.36-1.38", plan.oldest, plan.newest)
+	}
+	if len(plan.manifest.Releases) != 3 {
+		t.Fatalf("release count = %d, want 3", len(plan.manifest.Releases))
+	}
+	if plan.manifest.Releases[0].Minor != "1.36" || plan.manifest.Releases[2].Minor != "1.38" {
+		t.Fatalf("shifted releases = %#v, want 1.36 through 1.38", plan.manifest.Releases)
+	}
+	for _, item := range plan.manifest.Releases {
+		if item.Minor == "1.35" {
+			t.Fatalf("shifted support manifest retained retired minor 1.35: %#v", plan.manifest.Releases)
+		}
+	}
+}
+
 func TestBuildUpdatePlanRequiresOneCompatibleKindRelease(t *testing.T) {
 	t.Parallel()
 

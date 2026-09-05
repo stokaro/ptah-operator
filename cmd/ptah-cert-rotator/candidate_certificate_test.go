@@ -73,8 +73,9 @@ func TestCandidateCertificateStoreAtomicallyReplacesCompleteKeyPair(t *testing.T
 	if bytes.Equal(second.Certificate[0], first.Certificate[0]) {
 		t.Fatal("successful replacement retained the prior certificate")
 	}
-	if config := store.tlsConfig(); config.MinVersion != tls.VersionTLS12 || config.GetCertificate == nil {
-		t.Fatalf("TLS config = %#v, want TLS 1.2 minimum with dynamic certificate callback", config)
+	if config := store.tlsConfig(); config.MinVersion != tls.VersionTLS12 || config.GetCertificate == nil ||
+		!config.SessionTicketsDisabled || len(config.NextProtos) != 1 || config.NextProtos[0] != "http/1.1" {
+		t.Fatalf("TLS config = %#v, want non-resumable HTTP/1.1 TLS with a dynamic certificate callback", config)
 	}
 }
 

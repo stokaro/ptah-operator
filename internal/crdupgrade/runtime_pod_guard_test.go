@@ -271,7 +271,7 @@ func TestRuntimePodActivationTruthTable(t *testing.T) {
 	guard := runtimePodGuardFixture()
 	guard.ReleaseSequence = 2
 	guard.ControllerStateVersion = 2
-	guard.AdmissionContractVersion = 2
+	enableCertificateCanaryRuntime(guard)
 	guard.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("2", 64)
 	guard.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
 	policy, err := guard.runtimePodIdentityPolicy()
@@ -612,6 +612,67 @@ func TestRuntimePodIdentityContractRejectsIncoherentRuntimeArguments(t *testing.
 	}
 }
 
+func TestRuntimePodIdentityContractRejectsIncoherentCanaryArguments(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*RolloutGuard)
+		want   string
+	}{
+		{name: "missing candidate port", mutate: func(g *RolloutGuard) {
+			g.CertificateArgs = removeRuntimeArg(g.CertificateArgs, "--candidate-bind-address=:")
+		}, want: "runtime arg --candidate-bind-address=: is required"},
+		{name: "candidate port aliases health", mutate: func(g *RolloutGuard) {
+			replaceRuntimeArg(g.CertificateArgs, "--candidate-bind-address=:", "--candidate-bind-address=:8081")
+		}, want: "must differ from its health port"},
+		{name: "foreign marker", mutate: func(g *RolloutGuard) {
+			replaceRuntimeArg(g.CertificateArgs, "--candidate-probe-config-map-name=", "--candidate-probe-config-map-name=foreign")
+		}, want: "differs from exact canary contract"},
+		{name: "missing release namespace", mutate: func(g *RolloutGuard) {
+			g.CertificateArgs = removeRuntimeArg(g.CertificateArgs, "--namespace=")
+		}, want: "runtime arg --namespace= is required"},
+		{name: "foreign release namespace", mutate: func(g *RolloutGuard) {
+			replaceRuntimeArg(g.CertificateArgs, "--namespace=", "--namespace=foreign")
+		}, want: "differs from exact canary contract"},
+		{name: "missing release name", mutate: func(g *RolloutGuard) {
+			g.CertificateArgs = removeRuntimeArg(g.CertificateArgs, "--release-name=")
+		}, want: "runtime arg --release-name= is required"},
+		{name: "foreign release name", mutate: func(g *RolloutGuard) {
+			replaceRuntimeArg(g.CertificateArgs, "--release-name=", "--release-name=foreign")
+		}, want: "differs from exact canary contract"},
+		{name: "foreign username", mutate: func(g *RolloutGuard) {
+			replaceRuntimeArg(g.CertificateArgs, "--candidate-probe-username=", "--candidate-probe-username=system:serviceaccount:ptah-system:foreign")
+		}, want: "differs from exact canary contract"},
+		{name: "shared field managers", mutate: func(g *RolloutGuard) {
+			replaceRuntimeArg(g.CertificateArgs, "--candidate-validating-field-manager=", "--candidate-validating-field-manager="+mutatingCertificateCanaryFieldManager)
+		}, want: "differs from exact canary contract"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			guard := runtimePodGuardFixture()
+			enableCertificateCanaryRuntime(guard)
+			test.mutate(guard)
+			_, err := guard.runtimePodIdentityPolicy()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("runtimePodIdentityPolicy error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestRuntimePodIdentityContractAllowsCandidatePortUsedByControllerPod(t *testing.T) {
+	t.Parallel()
+
+	guard := runtimePodGuardFixture()
+	replaceRuntimeArg(
+		guard.CertificateArgs,
+		"--candidate-bind-address=:",
+		fmt.Sprintf("--candidate-bind-address=:%d", guard.WebhookPort),
+	)
+	if _, err := guard.runtimePodIdentityPolicy(); err != nil {
+		t.Fatalf("runtimePodIdentityPolicy() rejected a port reused by a different Pod: %v", err)
+	}
+}
+
 func TestRuntimePodIdentityVerificationRejectsSpecOrDigestMutation(t *testing.T) {
 	guard := runtimePodGuardFixture()
 	policy, err := guard.runtimePodIdentityPolicy()
@@ -726,6 +787,8 @@ func testRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T, environmen
 		t.Fatal("rendered runtime Deployments are missing their single application containers")
 	}
 	guard := runtimePodGuardFixture()
+	guard.AdmissionContractVersion = 2
+	guard.CertificateRuntimeEnabled = true
 	guard.ReleaseName = "ptah-e2e"
 	guard.ReleaseNamespace = "ptah-e2e"
 	guard.CoordinationNamespace = "ptah-e2e"
@@ -988,6 +1051,7 @@ func runtimePodGuardFixture() *RolloutGuard {
 	}
 	guard.CertificateArgs = []string{
 		"--namespace=ptah-system",
+		"--release-name=ptah",
 		"--secret-name=ptah-webhook-cert",
 		"--staging-secret-name=ptah-webhook-cert-stage",
 		"--candidate-service-name=ptah-cert-transition",
@@ -1014,6 +1078,18 @@ func runtimePodGuardFixture() *RolloutGuard {
 		"--lease-acquire-timeout=30s",
 	}
 	return guard
+}
+
+func enableCertificateCanaryRuntime(guard *RolloutGuard) {
+	guard.AdmissionContractVersion = 2
+	guard.CertificateRuntimeEnabled = true
+	guard.CertificateArgs = append(guard.CertificateArgs,
+		"--candidate-bind-address=:9444",
+		"--candidate-probe-config-map-name=ptah-cert-canary",
+		"--candidate-probe-username=system:serviceaccount:ptah-system:ptah-cert-rotator",
+		"--candidate-mutating-field-manager="+mutatingCertificateCanaryFieldManager,
+		"--candidate-validating-field-manager="+validatingCertificateCanaryFieldManager,
+	)
 }
 
 func decodeRenderedRuntimeExpressions(t *testing.T, args []string, prefix string) []string {

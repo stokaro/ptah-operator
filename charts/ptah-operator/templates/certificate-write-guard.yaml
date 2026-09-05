@@ -2,7 +2,16 @@
 {{- $validatingName := include "ptah-operator.certificateValidatingWriteGuardPolicyName" . -}}
 {{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
+{{- $candidateServiceName := include "ptah-operator.certificateTransitionServiceName" . -}}
 {{- $certificateUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.certRotatorServiceAccountName" .) -}}
+{{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $markerPattern := printf "^ptah-admission-convergence-v1-[1-9][0-9]*-%s$" $releaseDigest -}}
+{{- $mutatingProbePolicyDigest := printf "1\n%s" $mutatingName | sha256sum | trunc 32 -}}
+{{- $mutatingProbeFieldManagerPattern := printf "^ptah-admission-stable-v1-%s-[0-9a-f]{64}$" $mutatingProbePolicyDigest -}}
+{{- $mutatingProbeExpression := printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name.matches(%q) && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)` .Release.Namespace $markerPattern $mutatingProbeFieldManagerPattern -}}
+{{- $validatingProbePolicyDigest := printf "1\n%s" $validatingName | sha256sum | trunc 32 -}}
+{{- $validatingProbeFieldManagerPattern := printf "^ptah-admission-stable-v1-%s-[0-9a-f]{64}$" $validatingProbePolicyDigest -}}
+{{- $validatingProbeExpression := printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name.matches(%q) && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)` .Release.Namespace $markerPattern $validatingProbeFieldManagerPattern -}}
 {{- $mutatingPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $mutatingName -}}
 {{- $mutatingBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $mutatingName -}}
 {{- $validatingPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $validatingName -}}
@@ -55,16 +64,30 @@ spec:
         resources: ["mutatingwebhookconfigurations"]
         resourceNames: [{{ $configurationName | quote }}]
         scope: Cluster
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
   matchConditions:
     - name: exact-certificate-service-account
-      expression: {{ printf `request.userInfo.username == %q` $certificateUsername | quote }}
+      expression: {{ printf `(%s) || (request.userInfo.username == %q)` $mutatingProbeExpression $certificateUsername | quote }}
+  variables:
+    - name: isAnyAdmissionConvergenceProbe
+      expression: {{ $mutatingProbeExpression | quote }}
+    - name: isAdmissionConvergenceProbe
+      expression: {{ $mutatingProbeExpression | quote }}
   validations:
-    - expression: {{ include "ptah-operator.certificateMetadataValidation" . | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateMetadataValidation" .) | quote }}
       message: "Ptah certificate mutating write guard rejected an unsafe mutation"
-    - expression: {{ include "ptah-operator.certificateWebhookNamesValidation" . | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateWebhookNamesValidation" .) | quote }}
       message: "Ptah certificate mutating write guard rejected an unsafe mutation"
-    - expression: {{ include "ptah-operator.certificateWebhookEntriesValidation" (dict "includeReinvocation" true "serviceNamespace" .Release.Namespace "serviceName" $serviceName) | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateWebhookEntriesValidation" (dict "includeReinvocation" true "serviceNamespace" .Release.Namespace "serviceName" $serviceName "candidateServiceName" $candidateServiceName "canaryName" "certificate-rotation-canary-mutate.operator.ptah.dev")) | quote }}
       message: "Ptah certificate mutating write guard rejected an unsafe mutation"
+    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
+      message: "Ptah admission convergence probe field manager is reserved for dry-run verification"
+    - expression: '!variables.isAdmissionConvergenceProbe'
+      messageExpression: '"Ptah admission convergence confirmed exact workload guard " + request.options.fieldManager'
 ---
 {{- end }}
 {{- if not $mutatingBinding }}
@@ -96,6 +119,11 @@ spec:
         resources: ["mutatingwebhookconfigurations"]
         resourceNames: [{{ $configurationName | quote }}]
         scope: Cluster
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
   validationActions: [Deny]
 ---
 {{- end }}
@@ -128,16 +156,30 @@ spec:
         resources: ["validatingwebhookconfigurations"]
         resourceNames: [{{ $configurationName | quote }}]
         scope: Cluster
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
   matchConditions:
     - name: exact-certificate-service-account
-      expression: {{ printf `request.userInfo.username == %q` $certificateUsername | quote }}
+      expression: {{ printf `(%s) || (request.userInfo.username == %q)` $validatingProbeExpression $certificateUsername | quote }}
+  variables:
+    - name: isAnyAdmissionConvergenceProbe
+      expression: {{ $validatingProbeExpression | quote }}
+    - name: isAdmissionConvergenceProbe
+      expression: {{ $validatingProbeExpression | quote }}
   validations:
-    - expression: {{ include "ptah-operator.certificateMetadataValidation" . | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateMetadataValidation" .) | quote }}
       message: "Ptah certificate validating write guard rejected an unsafe mutation"
-    - expression: {{ include "ptah-operator.certificateWebhookNamesValidation" . | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateWebhookNamesValidation" .) | quote }}
       message: "Ptah certificate validating write guard rejected an unsafe mutation"
-    - expression: {{ include "ptah-operator.certificateWebhookEntriesValidation" (dict "includeReinvocation" false "serviceNamespace" .Release.Namespace "serviceName" $serviceName) | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateWebhookEntriesValidation" (dict "includeReinvocation" false "serviceNamespace" .Release.Namespace "serviceName" $serviceName "candidateServiceName" $candidateServiceName "canaryName" "certificate-rotation-canary-validate.operator.ptah.dev")) | quote }}
       message: "Ptah certificate validating write guard rejected an unsafe mutation"
+    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
+      message: "Ptah admission convergence probe field manager is reserved for dry-run verification"
+    - expression: '!variables.isAdmissionConvergenceProbe'
+      messageExpression: '"Ptah admission convergence confirmed exact workload guard " + request.options.fieldManager'
 ---
 {{- end }}
 {{- if not $validatingBinding }}
@@ -169,5 +211,10 @@ spec:
         resources: ["validatingwebhookconfigurations"]
         resourceNames: [{{ $configurationName | quote }}]
         scope: Cluster
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
   validationActions: [Deny]
 {{- end }}

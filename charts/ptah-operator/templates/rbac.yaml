@@ -1,6 +1,7 @@
 {{- $coordinationNamespace := default .Release.Namespace .Values.coordination.namespace -}}
 {{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
 {{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest -}}
+{{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -42,12 +43,10 @@ rules:
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
+      {{- end }}
     verbs: ["get"]
-  # Direct admission convergence must address every ready API server rather
-  # than repeatedly sampling the Kubernetes Service virtual IP.
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
   - apiGroups: ["operator.ptah.dev"]
     resources: ["ptahschemas"]
     verbs: ["get", "list", "watch", "patch"]

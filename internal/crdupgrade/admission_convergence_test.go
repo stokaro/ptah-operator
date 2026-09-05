@@ -683,6 +683,7 @@ func TestAdmissionConvergenceProbeBundleSelectsExactlyOnePolicyCause(t *testing.
 
 	fixture := newAdmissionConvergenceFixture(t)
 	guard := fixture.guard
+	guard.dependencyRollout.CertificateRuntimeEnabled = true
 	rollout, err := guard.rolloutForDependencies()
 	if err != nil {
 		t.Fatal(err)
@@ -696,6 +697,20 @@ func TestAdmissionConvergenceProbeBundleSelectsExactlyOnePolicyCause(t *testing.
 	for _, blueprint := range blueprints {
 		policies[blueprint.name] = blueprint.policy
 	}
+	stablePolicies := map[string]bool{}
+	certificateWrite := NewCertificateWriteGuard(rollout)
+	for _, entry := range certificateWrite.entries() {
+		policies[entry.name] = certificateWrite.policy(entry)
+		stablePolicies[entry.name] = true
+	}
+	if rollout.CertificateRuntimeEnabled {
+		stagingPolicy, policyErr := NewStagingSecretGuard(rollout).ExpectedPolicy()
+		if policyErr != nil {
+			t.Fatal(policyErr)
+		}
+		policies[stagingPolicy.Name] = stagingPolicy
+		stablePolicies[stagingPolicy.Name] = true
+	}
 	probes := guard.dependencyProbes()
 	if len(policies) != len(probes) {
 		t.Fatalf("compiled dependency policies = %d, probes = %d", len(policies), len(probes))
@@ -707,20 +722,45 @@ func TestAdmissionConvergenceProbeBundleSelectsExactlyOnePolicyCause(t *testing.
 		if policy == nil {
 			t.Fatalf("probe %s has no compiled dependency policy", probe.PolicyName)
 		}
-		stripAdmissionConvergenceDependencyProbe(t, policy)
-		if got := policy.Spec.Variables[0].Expression; got != commonAnyExpression {
-			t.Fatalf("policy %s any-probe selector = %q, want %q", probe.PolicyName, got, commonAnyExpression)
-		}
-		wantExact := admissionConvergenceProbeRequestExpression(
-			guard.ReleaseNamespace,
-			AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence),
-			probe.FieldManager,
-		)
-		if got := policy.Spec.Variables[1].Expression; got != wantExact {
-			t.Fatalf("policy %s exact selector = %q, want %q", probe.PolicyName, got, wantExact)
-		}
-		if got := policy.Spec.Validations[len(policy.Spec.Validations)-1]; got.Expression != `!variables.isAdmissionConvergenceProbe` || got.Message != probe.Message {
-			t.Fatalf("policy %s proof validation = %#v, want unique exact denial %q", probe.PolicyName, got, probe.Message)
+		if stablePolicies[probe.PolicyName] {
+			stripStableAdmissionConvergenceDependencyProbeForTest(
+				t,
+				policy,
+				guard.ReleaseNamespace,
+				guard.ReleaseName,
+			)
+			wantSelector := stableAdmissionConvergenceProbeRequestExpression(
+				policy.Name,
+				guard.ReleaseNamespace,
+				serviceAccountObjectGuardMarkerPattern(guard.ReleaseNamespace, guard.ReleaseName),
+			)
+			if got := policy.Spec.Variables[0].Expression; got != wantSelector || policy.Spec.Variables[1].Expression != wantSelector {
+				t.Fatalf("stable policy %s selectors differ from the policy-specific contract", probe.PolicyName)
+			}
+			if !strings.HasPrefix(probe.FieldManager, stableAdmissionConvergenceProbeFieldManagerPrefix(probe.PolicyName)) {
+				t.Fatalf("stable policy %s probe field manager is outside its policy-specific namespace", probe.PolicyName)
+			}
+			got := policy.Spec.Validations[len(policy.Spec.Validations)-1]
+			if got.Expression != `!variables.isAdmissionConvergenceProbe` || got.Message != "" ||
+				got.MessageExpression != `"Ptah admission convergence confirmed exact workload guard " + request.options.fieldManager` {
+				t.Fatalf("stable policy %s proof validation = %#v, want dynamic exact denial %q", probe.PolicyName, got, probe.Message)
+			}
+		} else {
+			stripAdmissionConvergenceDependencyProbe(t, policy)
+			if got := policy.Spec.Variables[0].Expression; got != commonAnyExpression {
+				t.Fatalf("policy %s any-probe selector = %q, want %q", probe.PolicyName, got, commonAnyExpression)
+			}
+			wantExact := admissionConvergenceProbeRequestExpression(
+				guard.ReleaseNamespace,
+				AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence),
+				probe.FieldManager,
+			)
+			if got := policy.Spec.Variables[1].Expression; got != wantExact {
+				t.Fatalf("policy %s exact selector = %q, want %q", probe.PolicyName, got, wantExact)
+			}
+			if got := policy.Spec.Validations[len(policy.Spec.Validations)-1]; got.Expression != `!variables.isAdmissionConvergenceProbe` || got.Message != probe.Message {
+				t.Fatalf("policy %s proof validation = %#v, want unique exact denial %q", probe.PolicyName, got, probe.Message)
+			}
 		}
 		if previous := seenFieldManagers[probe.FieldManager]; previous != "" {
 			t.Fatalf("policies %s and %s share field manager %q", previous, probe.PolicyName, probe.FieldManager)
@@ -747,12 +787,20 @@ func TestAdmissionConvergenceProbeBundleSelectsExactlyOnePolicyCause(t *testing.
 		if strings.Contains(sentinelVariables["isMarkerProbe"], probe.FieldManager) {
 			t.Fatalf("sentinel exact selector also selects dependency %s", probe.PolicyName)
 		}
+		request := map[string]any{
+			"operation": "UPDATE",
+			"namespace": guard.ReleaseNamespace,
+			"name":      AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence),
+			"resource":  map[string]any{"group": "", "version": "v1", "resource": "configmaps"},
+			"options":   map[string]any{"fieldManager": probe.FieldManager},
+		}
 		for _, policy := range policies {
-			if policy.Name == probe.PolicyName {
-				continue
+			selected, ok := evaluateRolloutCEL(t, policy.Spec.Variables[1].Expression, map[string]any{"request": request}, map[string]any{}).(bool)
+			if !ok {
+				t.Fatalf("policy %s selector did not evaluate to bool", policy.Name)
 			}
-			if strings.Contains(policy.Spec.Variables[1].Expression, probe.FieldManager) {
-				t.Fatalf("non-target policy %s exact selector also selects %s", policy.Name, probe.PolicyName)
+			if selected != (policy.Name == probe.PolicyName) {
+				t.Fatalf("policy %s selection for probe %s = %t, want %t", policy.Name, probe.PolicyName, selected, policy.Name == probe.PolicyName)
 			}
 		}
 	}
@@ -901,6 +949,22 @@ func TestAdmissionConvergenceGuardAcceptsOnlyExactStoredContract(t *testing.T) {
 				delete(f.bindings.objects, name)
 			},
 			want: "get admission convergence dependency binding",
+		},
+		{
+			name: "certificate write dependency policy spec",
+			mutate: func(f *admissionConvergenceFixture) {
+				name := CertificateMutatingWriteGuardPolicyName(f.guard.ReleaseNamespace, f.guard.ReleaseName)
+				f.policies.objects[name].Spec.Validations[0].Expression = "true"
+			},
+			want: "verify admission convergence certificate write dependencies",
+		},
+		{
+			name: "certificate write dependency binding missing",
+			mutate: func(f *admissionConvergenceFixture) {
+				name := CertificateValidatingWriteGuardPolicyName(f.guard.ReleaseNamespace, f.guard.ReleaseName)
+				delete(f.bindings.objects, name)
+			},
+			want: "verify admission convergence certificate write dependencies",
 		},
 	}
 	for _, test := range tests {

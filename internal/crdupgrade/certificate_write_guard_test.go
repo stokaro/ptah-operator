@@ -82,8 +82,13 @@ func TestCertificateWriteGuardsAreTypedExactAndFailClosed(t *testing.T) {
 		entry := entry
 		t.Run(entry.resource, func(t *testing.T) {
 			t.Parallel()
-			policy := guard.policy(entry)
-			binding := guard.binding(entry)
+			policy := stripStableAdmissionConvergenceDependencyProbeForTest(
+				t,
+				guard.policy(entry),
+				guard.ReleaseNamespace,
+				guard.ReleaseName,
+			)
+			binding := stripAdmissionConvergenceProbeBindingForTest(t, guard.binding(entry))
 			if policy.Spec.ParamKind != nil || binding.Spec.ParamRef != nil {
 				t.Fatal("certificate write guard must not depend on admission parameters")
 			}
@@ -92,7 +97,7 @@ func TestCertificateWriteGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			}
 			assertExactCertificateWriteMatch(t, policy.Spec.MatchConstraints, entry.resource)
 			assertExactCertificateWriteMatch(t, binding.Spec.MatchResources, entry.resource)
-			wantUsername := `request.userInfo.username == "system:serviceaccount:ptah-system:ptah-certificate"`
+			wantUsername := `request.userInfo.username == "system:serviceaccount:ptah-system:ptah-cert-rotator"`
 			if !reflect.DeepEqual(policy.Spec.MatchConditions, []admissionregistrationv1.MatchCondition{{
 				Name: "exact-certificate-service-account", Expression: wantUsername,
 			}}) {
@@ -114,7 +119,13 @@ func TestCertificateWriteGuardCELContracts(t *testing.T) {
 		entry := entry
 		t.Run(entry.resource, func(t *testing.T) {
 			t.Parallel()
-			validations := guard.policy(entry).Spec.Validations
+			policy := stripStableAdmissionConvergenceDependencyProbeForTest(
+				t,
+				guard.policy(entry),
+				guard.ReleaseNamespace,
+				guard.ReleaseName,
+			)
+			validations := policy.Spec.Validations
 			if len(validations) != 3 {
 				t.Fatalf("%s validations = %d, want 3", entry.resource, len(validations))
 			}
@@ -149,6 +160,8 @@ func TestCertificateWriteGuardCELContracts(t *testing.T) {
 				"clientConfig.service",
 				`clientConfig.service.namespace == "ptah-system"`,
 				`clientConfig.service.name == "ptah-webhook"`,
+				`clientConfig.service.name == "ptah-cert-transition"`,
+				entry.canaryName,
 				"clientConfig.service.port == 443",
 				"clientConfig.url",
 				"clientConfig.caBundle",
@@ -174,12 +187,82 @@ func TestCertificateWriteGuardCELContracts(t *testing.T) {
 			}
 		})
 	}
+	if !reflect.DeepEqual(certificateMutatingWebhookNames(), []string{
+		mutatingApprovalWebhookName,
+		mutatingCertificateCanaryWebhookName,
+	}) {
+		t.Fatalf("mutating webhook order is not the exact release inventory: %#v", certificateMutatingWebhookNames())
+	}
 	if !reflect.DeepEqual(certificateValidatingWebhookNames(), []string{
 		validatingApprovalWebhookName,
 		podIntentWebhookName,
 		controllerWriteWebhookName,
+		validatingCertificateCanaryWebhookName,
 	}) {
 		t.Fatalf("validating webhook order is not the exact release inventory: %#v", certificateValidatingWebhookNames())
+	}
+}
+
+func TestCertificateWriteGuardConvergenceProbesHaveOnePolicyCause(t *testing.T) {
+	t.Parallel()
+
+	guard := testCertificateWriteGuard()
+	entries := guard.entries()
+	policies := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicy, len(entries))
+	for _, entry := range entries {
+		policies[entry.name] = guard.policy(entry)
+	}
+	markerName := AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, 1)
+	object := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name": markerName, "namespace": guard.ReleaseNamespace,
+		},
+	}
+	for _, entry := range entries {
+		probe := newStableAdmissionConvergenceDependencyProbe(entry.name, strings.Repeat("a", 64))
+		request := map[string]any{
+			"operation": "UPDATE",
+			"namespace": guard.ReleaseNamespace,
+			"name":      markerName,
+			"dryRun":    true,
+			"resource":  map[string]any{"group": "", "version": "v1", "resource": "configmaps"},
+			"options":   map[string]any{"fieldManager": probe.FieldManager},
+			"userInfo":  map[string]any{"username": "system:serviceaccount:ptah-system:probe"},
+		}
+		matched := 0
+		for name, policy := range policies {
+			if !evaluatePolicyMatchConditions(t, policy, object, object, request, nil) {
+				continue
+			}
+			matched++
+			if name != entry.name {
+				t.Fatalf("probe for %s also selected certificate policy %s", entry.name, name)
+			}
+			results := evaluatePolicyValidations(t, policy, object, object, request, nil)
+			denied := 0
+			for index, allowed := range results {
+				if allowed {
+					continue
+				}
+				denied++
+				validation := policy.Spec.Validations[index]
+				if validation.MessageExpression == "" {
+					t.Fatalf("probe for %s was denied by a native validation %d", entry.name, index)
+				}
+				message := evaluateRolloutCEL(t, validation.MessageExpression, map[string]any{"request": request}, map[string]any{})
+				if message != probe.Message {
+					t.Fatalf("probe for %s denial = %v, want %q", entry.name, message, probe.Message)
+				}
+			}
+			if denied != 1 {
+				t.Fatalf("probe for %s denial count = %d, want one", entry.name, denied)
+			}
+		}
+		if matched != 1 {
+			t.Fatalf("probe for %s matched %d certificate policies, want one", entry.name, matched)
+		}
 	}
 }
 
@@ -190,6 +273,7 @@ func TestCertificateWebhookEntriesValidationEvaluatesServiceAuthority(t *testing
 	port8443 := int64(8443)
 	managedDefault := certificateWebhookCELTarget{serviceNamespace: "ptah-system", serviceName: "ptah-webhook"}
 	managed443 := certificateWebhookCELTarget{serviceNamespace: "ptah-system", serviceName: "ptah-webhook", port: &port443}
+	candidateService := certificateWebhookCELTarget{serviceNamespace: "ptah-system", serviceName: "ptah-cert-transition"}
 	foreignService := certificateWebhookCELTarget{serviceNamespace: "ptah-system", serviceName: "foreign-webhook"}
 	foreignURL := certificateWebhookCELTarget{url: "https://foreign.example/validate"}
 	otherPort := certificateWebhookCELTarget{serviceNamespace: "ptah-system", serviceName: "ptah-webhook", port: &port8443}
@@ -266,6 +350,18 @@ func TestCertificateWebhookEntriesValidationEvaluatesServiceAuthority(t *testing
 			},
 			want: false,
 		},
+		{
+			name: "exact candidate canary bundle may rotate",
+			old:  []certificateWebhookCELEntry{{name: "canary.example", target: candidateService, bundle: oldCA}},
+			new:  []certificateWebhookCELEntry{{name: "canary.example", target: candidateService, bundle: newCA}},
+			want: true,
+		},
+		{
+			name: "foreign candidate Service entry bundle is immutable",
+			old:  []certificateWebhookCELEntry{{name: "foreign.example", target: candidateService, bundle: oldCA}},
+			new:  []certificateWebhookCELEntry{{name: "foreign.example", target: candidateService, bundle: newCA}},
+			want: false,
+		},
 	}
 
 	for _, includeReinvocation := range []bool{false, true} {
@@ -279,7 +375,13 @@ func TestCertificateWebhookEntriesValidationEvaluatesServiceAuthority(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			expression := certificateWebhookEntriesValidation("ptah-system", "ptah-webhook", includeReinvocation)
+			expression := certificateWebhookEntriesValidation(
+				"ptah-system",
+				"ptah-webhook",
+				"ptah-cert-transition",
+				"canary.example",
+				includeReinvocation,
+			)
 			ast, issues := environment.Compile(expression)
 			if issues != nil && issues.Err() != nil {
 				t.Fatalf("compile certificate write CEL: %v", issues.Err())
@@ -633,6 +735,81 @@ func assertExactCertificateWriteMatch(t *testing.T, match *admissionregistration
 	}
 }
 
+func stripStableAdmissionConvergenceDependencyProbeForTest(
+	t *testing.T,
+	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
+	releaseNamespace,
+	releaseName string,
+) *admissionregistrationv1.ValidatingAdmissionPolicy {
+	t.Helper()
+	if policy == nil || policy.Spec.MatchConstraints == nil {
+		t.Fatal("stable dependency policy or match constraints are nil")
+	}
+	wantExpression := stableAdmissionConvergenceProbeRequestExpression(
+		policy.Name,
+		releaseNamespace,
+		serviceAccountObjectGuardMarkerPattern(releaseNamespace, releaseName),
+	)
+	if len(policy.Spec.Variables) < 2 ||
+		policy.Spec.Variables[0] != (admissionregistrationv1.Variable{Name: "isAnyAdmissionConvergenceProbe", Expression: wantExpression}) ||
+		policy.Spec.Variables[1] != (admissionregistrationv1.Variable{Name: "isAdmissionConvergenceProbe", Expression: wantExpression}) {
+		t.Fatalf("stable dependency variables differ from the policy-specific selector: %#v", policy.Spec.Variables)
+	}
+	resourceRules := policy.Spec.MatchConstraints.ResourceRules
+	if len(resourceRules) < 2 || !reflect.DeepEqual(resourceRules[len(resourceRules)-1], admissionConvergenceProbeResourceRule()) {
+		t.Fatalf("stable dependency marker rule differs from the exact wrapper: %#v", resourceRules)
+	}
+	if len(policy.Spec.Validations) < 2 {
+		t.Fatal("stable dependency policy lacks proof validations")
+	}
+	proof := policy.Spec.Validations[len(policy.Spec.Validations)-2:]
+	if proof[0].Expression != `!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true` ||
+		proof[0].Message != admissionConvergenceProbePersistenceMessage ||
+		proof[1].Expression != `!variables.isAdmissionConvergenceProbe` ||
+		proof[1].MessageExpression != `"Ptah admission convergence confirmed exact workload guard " + request.options.fieldManager` {
+		t.Fatalf("stable dependency proof validations differ from the exact wrapper: %#v", proof)
+	}
+
+	native := policy.DeepCopy()
+	native.Spec.MatchConstraints.ResourceRules = native.Spec.MatchConstraints.ResourceRules[:len(native.Spec.MatchConstraints.ResourceRules)-1]
+	native.Spec.Variables = native.Spec.Variables[2:]
+	native.Spec.Validations = native.Spec.Validations[:len(native.Spec.Validations)-2]
+	matchPrefix := "(" + wantExpression + ") || ("
+	for index := range native.Spec.MatchConditions {
+		expression := native.Spec.MatchConditions[index].Expression
+		if !strings.HasPrefix(expression, matchPrefix) || !strings.HasSuffix(expression, ")") {
+			t.Fatalf("stable dependency match condition %d differs from the exact wrapper", index)
+		}
+		native.Spec.MatchConditions[index].Expression = strings.TrimSuffix(strings.TrimPrefix(expression, matchPrefix), ")")
+	}
+	validationPrefix := "variables.isAnyAdmissionConvergenceProbe || ("
+	for index := range native.Spec.Validations {
+		expression := native.Spec.Validations[index].Expression
+		if !strings.HasPrefix(expression, validationPrefix) || !strings.HasSuffix(expression, ")") {
+			t.Fatalf("stable dependency validation %d differs from the exact wrapper", index)
+		}
+		native.Spec.Validations[index].Expression = strings.TrimSuffix(strings.TrimPrefix(expression, validationPrefix), ")")
+	}
+	return native
+}
+
+func stripAdmissionConvergenceProbeBindingForTest(
+	t *testing.T,
+	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
+) *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
+	t.Helper()
+	if binding == nil || binding.Spec.MatchResources == nil {
+		t.Fatal("dependency binding or match resources are nil")
+	}
+	rules := binding.Spec.MatchResources.ResourceRules
+	if len(rules) < 2 || !reflect.DeepEqual(rules[len(rules)-1], admissionConvergenceProbeResourceRule()) {
+		t.Fatalf("dependency binding marker rule differs from the exact wrapper: %#v", rules)
+	}
+	native := binding.DeepCopy()
+	native.Spec.MatchResources.ResourceRules = native.Spec.MatchResources.ResourceRules[:len(native.Spec.MatchResources.ResourceRules)-1]
+	return native
+}
+
 func testCertificateWriteGuard() *CertificateWriteGuard {
 	return &CertificateWriteGuard{
 		Policies:                      &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{}},
@@ -640,7 +817,7 @@ func testCertificateWriteGuard() *CertificateWriteGuard {
 		ReleaseName:                   "ptah",
 		ReleaseNamespace:              "ptah-system",
 		WebhookServiceName:            "ptah-webhook",
-		CertificateServiceAccountName: "ptah-certificate",
+		CertificateServiceAccountName: "ptah-cert-rotator",
 		PollEvery:                     time.Millisecond,
 	}
 }

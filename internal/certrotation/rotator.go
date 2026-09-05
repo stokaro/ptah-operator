@@ -30,6 +30,11 @@ const (
 	GeneratedSecretLabel      = "operator.ptah.dev/generated-webhook-certificate"
 	GeneratedSecretLabelValue = "true"
 
+	HelmManagedByLabel             = "app.kubernetes.io/managed-by"
+	HelmManagedByLabelValue        = "Helm"
+	HelmReleaseNameAnnotation      = "meta.helm.sh/release-name"
+	HelmReleaseNamespaceAnnotation = "meta.helm.sh/release-namespace"
+
 	secretCreateGuardDenialMessage = "certificate rotator Secret CREATE is outside its exact recovery contract"
 	webhookServicePort             = int32(443)
 
@@ -43,6 +48,7 @@ const (
 // It contains no credentials or certificate material.
 type Config struct {
 	Namespace                      string
+	ReleaseName                    string
 	SecretName                     string
 	StagingSecretName              string
 	LeaseName                      string
@@ -78,15 +84,64 @@ type Rotator struct {
 	random        io.Reader
 	probe         certificateProber
 	candidateSink CandidateCertificateSink
+	canary        admissionCanaryController
+}
+
+type admissionCanaryController interface {
+	PublishMutating(context.Context, AdmissionCanaryDesiredState) error
+	PublishValidating(context.Context, AdmissionCanaryDesiredState) error
+	Wait(context.Context, AdmissionCanaryDesiredState) error
 }
 
 // New returns a Rotator after validating all names and lifecycle durations.
-func New(client kubernetes.Interface, config Config, candidateSink CandidateCertificateSink) (*Rotator, error) {
-	if client == nil {
+func New(
+	client kubernetes.Interface,
+	config Config,
+	candidateSink CandidateCertificateSink,
+	canary *AdmissionCanary,
+) (*Rotator, error) {
+	if canary == nil {
+		return nil, errors.New("admission canary controller is required")
+	}
+	rotator, err := newRotator(client, config, candidateSink, canary)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateAdmissionCanaryRelationship(config, canary.config); err != nil {
+		return nil, err
+	}
+	return rotator, nil
+}
+
+func validateAdmissionCanaryRelationship(config Config, canary AdmissionCanaryConfig) error {
+	if canary.ReleaseName != config.ReleaseName ||
+		canary.MarkerNamespace != config.Namespace ||
+		canary.MutatingWebhookConfiguration != config.MutatingWebhookConfiguration ||
+		!slices.Equal(canary.MutatingWebhookNames, config.MutatingWebhookNames) ||
+		canary.ValidatingWebhookConfiguration != config.ValidatingWebhookConfiguration ||
+		!slices.Equal(canary.ValidatingWebhookNames, config.ValidatingWebhookNames) ||
+		canary.PrimaryServiceName != config.ServiceName ||
+		canary.CandidateServiceName != config.CandidateServiceName ||
+		canary.ServiceNamespace != config.ServiceNamespace {
+		return errors.New("admission canary identity differs from the certificate rotation contract")
+	}
+	return nil
+}
+
+func newRotator(
+	client kubernetes.Interface,
+	config Config,
+	candidateSink CandidateCertificateSink,
+	canary admissionCanaryController,
+) (*Rotator, error) {
+	if nilDependency(client) {
 		return nil, errors.New("Kubernetes client is required")
 	}
-	if candidateSink == nil {
+	if nilDependency(candidateSink) {
 		return nil, errors.New("candidate certificate sink is required")
+	}
+	if nilDependency(canary) {
+		return nil, errors.New("admission canary controller is required")
 	}
 	if config.AcquireTimeout == 0 {
 		config.AcquireTimeout = defaultAcquireTimeout
@@ -101,6 +156,7 @@ func New(client kubernetes.Interface, config Config, candidateSink CandidateCert
 		random:        rand.Reader,
 		probe:         tlsCertificateProber{},
 		candidateSink: candidateSink,
+		canary:        canary,
 	}, nil
 }
 
@@ -158,19 +214,22 @@ func (r *Rotator) reconcile(ctx context.Context) error {
 		relationship := relatePendingCandidate(secret, pending, r.config)
 		if relationship == pendingUnrelated {
 			if pending.sourceState == stagingSourceMissing && exactGeneratedSecretShape(secret, r.config) {
-				if err := r.loadPendingCandidate(pending); err != nil {
-					return err
-				}
 				return r.recoverMissingSecretCreateRace(ctx, staging, secret)
 			}
 			r.candidateSink.ClearCandidateCertificate()
 			return errors.New("durable pending CA transition is unrelated to the current generated TLS Secret")
 		}
-		if err := r.loadPendingCandidate(pending); err != nil {
-			return err
+		if temporalErr := pendingCandidateTemporalUsability(pending, r.now()); temporalErr != nil {
+			if err := r.clearPendingCandidate(ctx, staging); err != nil {
+				return fmt.Errorf("clear unusable durable pending CA transition: %w", err)
+			}
+			return fmt.Errorf(
+				"retired unusable durable pending CA transition; retry reconciliation from authoritative primary state: %w",
+				temporalErr,
+			)
 		}
 		if relationship == pendingAfterPrimaryWrite {
-			return r.finishPendingCARotation(ctx, staging, pending)
+			return r.runPendingCATransition(ctx, staging, pending, nil)
 		}
 		if pending.sourceState == stagingSourceMissing {
 			if !r.config.RecreateMissingSecret {
@@ -273,17 +332,7 @@ func (r *Rotator) rotateStagedCA(
 		}
 	}
 
-	additions := [][]byte{pending.material.caPEM}
-	if len(trustedCurrentCA) != 0 {
-		additions = append([][]byte{trustedCurrentCA}, additions...)
-	}
-	if err := r.publishPerEntryTransition(ctx, additions...); err != nil {
-		return fmt.Errorf("publish entry-local overlapping CA trust: %w", err)
-	}
-	if err := r.updateSecret(ctx, secret, pending.material); err != nil {
-		return err
-	}
-	return r.finishPendingCARotation(ctx, staging, pending)
+	return r.runPendingCATransition(ctx, staging, pending, trustedCurrentCA)
 }
 
 func (r *Rotator) recreateMissingSecret(ctx context.Context, staging *corev1.Secret) error {
@@ -320,13 +369,7 @@ func (r *Rotator) resumeMissingSecret(
 	if err := r.ensureSecretCreateGuard(ctx, desired); err != nil {
 		return err
 	}
-	if err := r.publishPerEntryTransition(ctx, pending.material.caPEM); err != nil {
-		return fmt.Errorf("publish replacement trust before recreating TLS Secret: %w", err)
-	}
-	if err := r.createSecret(ctx, desired, pending.material); err != nil {
-		return err
-	}
-	return r.finishPendingCARotation(ctx, staging, pending)
+	return r.runPendingCATransition(ctx, staging, pending, nil)
 }
 
 func (r *Rotator) recoverMissingSecretCreateRace(
@@ -358,40 +401,6 @@ func (r *Rotator) recoverMissingSecretCreateRace(
 	return nil
 }
 
-func (r *Rotator) finishPendingCARotation(
-	ctx context.Context,
-	staging *corev1.Secret,
-	pending *pendingCandidate,
-) error {
-	// A crash may happen after either webhook configuration or the primary
-	// Secret changes. Re-establish overlap from each entry's own trust before
-	// proving and contracting so every restart follows the same safe suffix.
-	if err := r.publishPerEntryTransition(ctx, pending.material.caPEM); err != nil {
-		return fmt.Errorf("restore pending CA transition trust: %w", err)
-	}
-	if err := r.probeCurrentCertificate(ctx, pending.material); err != nil {
-		return err
-	}
-	if err := r.setBothBundles(ctx, pending.material.caPEM); err != nil {
-		return fmt.Errorf("contract CA trust after pending serving-certificate proof: %w", err)
-	}
-	if err := r.clearPendingCandidate(ctx, staging); err != nil {
-		return fmt.Errorf("retire completed pending CA transition: %w", err)
-	}
-	needsRenewal, err := pendingMaterialNeedsCurrentPolicyRenewal(pending.material, r.config, r.now())
-	if err != nil {
-		return fmt.Errorf("reevaluate completed pending CA transition: %w", err)
-	}
-	if needsRenewal {
-		// Durable material is decoded against absolute safety limits so a policy
-		// change cannot strand a transition after the primary write. Complete
-		// that transition first, then fail this attempt to request an immediate
-		// reconciliation under the current policy.
-		return errors.New("completed pending CA transition requires immediate renewal under the current certificate policy")
-	}
-	return nil
-}
-
 func pendingMaterialNeedsCurrentPolicyRenewal(
 	material certificateMaterial,
 	config Config,
@@ -409,10 +418,11 @@ func (r *Rotator) rotateServingCertificate(
 	secret *corev1.Secret,
 	state secretState,
 ) error {
-	// The CA does not change. Append it independently to each entry without
-	// dropping existing trust, then prove the current exact leaf before update.
-	if err := r.publishPerEntryTransition(ctx, state.current.caPEM); err != nil {
-		return fmt.Errorf("publish serving-certificate trust precondition: %w", err)
+	// The CA does not change. Prove additive trust through both admission
+	// singletons before replacing the leaf, then positively prove contraction.
+	parkedListener, err := r.prepareCurrentTrust(ctx, state.current)
+	if err != nil {
+		return err
 	}
 	if state.currentServingChainAuthentic {
 		if err := r.probeCertificateIdentity(ctx, state.current.caPEM, state.current.leaf); err != nil {
@@ -430,10 +440,7 @@ func (r *Rotator) rotateServingCertificate(
 	if err := r.probeCurrentCertificate(ctx, next); err != nil {
 		return err
 	}
-	if err := r.setBothBundles(ctx, next.caPEM); err != nil {
-		return fmt.Errorf("contract repaired CA trust after serving-certificate proof: %w", err)
-	}
-	return nil
+	return r.contractAndParkCurrentTrust(ctx, next, parkedListener)
 }
 
 func (r *Rotator) repairTrustBundles(
@@ -442,21 +449,22 @@ func (r *Rotator) repairTrustBundles(
 	mutatingBundles observedCABundles,
 	validatingBundles observedCABundles,
 ) error {
-	if mutatingBundles.allEqual(current.caPEM) && validatingBundles.allEqual(current.caPEM) {
-		return nil
+	// The observations establish that all named production entries still have
+	// the exact Service contract before any whole-object update. Even an
+	// already-exact bundle is re-proven: it may be the stored result of a crash
+	// that occurred before every API server evicted broader cached trust.
+	if mutatingBundles.total != len(r.config.MutatingWebhookNames) ||
+		validatingBundles.total != len(r.config.ValidatingWebhookNames) {
+		return errors.New("managed webhook inventory changed before CA trust convergence")
 	}
-	// Append the Secret-authoritative CA independently to every entry while
-	// retaining that entry's existing trust until exact endpoint proof.
-	if err := r.publishPerEntryTransition(ctx, current.caPEM); err != nil {
-		return fmt.Errorf("repair interrupted CA trust transition: %w", err)
+	parkedListener, err := r.prepareCurrentTrust(ctx, current)
+	if err != nil {
+		return err
 	}
 	if err := r.probeCurrentCertificate(ctx, current); err != nil {
 		return err
 	}
-	if err := r.setBothBundles(ctx, current.caPEM); err != nil {
-		return fmt.Errorf("contract interrupted CA trust transition: %w", err)
-	}
-	return nil
+	return r.contractAndParkCurrentTrust(ctx, current, parkedListener)
 }
 
 func (r *Rotator) updateSecret(ctx context.Context, previous *corev1.Secret, next certificateMaterial) error {
@@ -664,8 +672,9 @@ func secretCreateValidationExpression(config Config) string {
 		object.metadata.namespace == '%s' &&
 		(!has(object.metadata.generateName) || object.metadata.generateName == '') &&
 		has(object.metadata.labels) &&
-		object.metadata.labels == {'%s': '%s'} &&
-		(!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) &&
+		object.metadata.labels == {'%s': '%s', '%s': '%s'} &&
+		has(object.metadata.annotations) &&
+		object.metadata.annotations == {'%s': '%s', '%s': '%s'} &&
 		(!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
 		(!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&
 		object.type == 'kubernetes.io/tls' &&
@@ -676,7 +685,18 @@ func secretCreateValidationExpression(config Config) string {
 		'ca.key' in object.data && object.data['ca.key'].size() > 0 &&
 		'tls.crt' in object.data && object.data['tls.crt'].size() > 0 &&
 		'tls.key' in object.data && object.data['tls.key'].size() > 0
-	`, config.SecretName, config.Namespace, GeneratedSecretLabel, GeneratedSecretLabelValue)
+	`,
+		config.SecretName,
+		config.Namespace,
+		GeneratedSecretLabel,
+		GeneratedSecretLabelValue,
+		HelmManagedByLabel,
+		HelmManagedByLabelValue,
+		HelmReleaseNameAnnotation,
+		config.ReleaseName,
+		HelmReleaseNamespaceAnnotation,
+		config.Namespace,
+	)
 }
 
 func compactCEL(expression string) string {
@@ -696,12 +716,18 @@ func secretCreateGuardAttacks(desired *corev1.Secret) []secretCreateGuardAttack 
 	}
 	extraLabel := desired.DeepCopy()
 	extraLabel.Labels["operator.ptah.dev/uncontrolled"] = "true"
+	wrongManagedBy := desired.DeepCopy()
+	wrongManagedBy.Labels[HelmManagedByLabel] = "foreign"
 	extraData := desired.DeepCopy()
 	extraData.Data["uncontrolled"] = []byte("x")
 	wrongType := desired.DeepCopy()
 	wrongType.Type = corev1.SecretTypeOpaque
-	annotation := desired.DeepCopy()
-	annotation.Annotations = map[string]string{"operator.ptah.dev/uncontrolled": "true"}
+	extraAnnotation := desired.DeepCopy()
+	extraAnnotation.Annotations["operator.ptah.dev/uncontrolled"] = "true"
+	wrongReleaseName := desired.DeepCopy()
+	wrongReleaseName.Annotations[HelmReleaseNameAnnotation] = "foreign"
+	missingReleaseNamespace := desired.DeepCopy()
+	delete(missingReleaseNamespace.Annotations, HelmReleaseNamespaceAnnotation)
 	stringData := desired.DeepCopy()
 	stringData.StringData = map[string]string{"uncontrolled": "x"}
 	generatedName := desired.DeepCopy()
@@ -728,6 +754,7 @@ func secretCreateGuardAttacks(desired *corev1.Secret) []secretCreateGuardAttack 
 		{name: "generateName", secret: generatedName},
 		{name: "a missing managed label", secret: missingLabel},
 		{name: "an extra label", secret: extraLabel},
+		{name: "a foreign Helm manager label", secret: wrongManagedBy},
 		{name: "an owner reference", secret: ownerReference},
 		{name: "a finalizer", secret: finalizer},
 		{name: "an explicit immutable field", secret: immutable},
@@ -735,7 +762,9 @@ func secretCreateGuardAttacks(desired *corev1.Secret) []secretCreateGuardAttack 
 		{name: "a missing data field", secret: missingKey},
 		{name: "an empty data field", secret: emptyKey},
 		{name: "a non-TLS type", secret: wrongType},
-		{name: "an annotation", secret: annotation},
+		{name: "an extra annotation", secret: extraAnnotation},
+		{name: "a foreign Helm release name", secret: wrongReleaseName},
+		{name: "a missing Helm release namespace", secret: missingReleaseNamespace},
 		{name: "stringData", secret: stringData},
 	}
 }
@@ -743,9 +772,10 @@ func secretCreateGuardAttacks(desired *corev1.Secret) []secretCreateGuardAttack 
 func generatedSecret(config Config, material certificateMaterial) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      config.SecretName,
-			Namespace: config.Namespace,
-			Labels:    map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue},
+			Name:        config.SecretName,
+			Namespace:   config.Namespace,
+			Labels:      generatedSecretLabels(),
+			Annotations: helmOwnershipAnnotations(config),
 		},
 		Type: corev1.SecretTypeTLS,
 		Data: map[string][]byte{
@@ -771,8 +801,8 @@ func exactGeneratedSecretShape(secret *corev1.Secret, config Config) bool {
 		secret.ResourceVersion != "" &&
 		secret.DeletionTimestamp == nil &&
 		secret.Type == corev1.SecretTypeTLS &&
-		maps.Equal(secret.Labels, map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue}) &&
-		len(secret.Annotations) == 0 &&
+		maps.Equal(secret.Labels, generatedSecretLabels()) &&
+		maps.Equal(secret.Annotations, helmOwnershipAnnotations(config)) &&
 		len(secret.OwnerReferences) == 0 &&
 		len(secret.Finalizers) == 0 &&
 		secret.Immutable == nil &&
@@ -1066,6 +1096,7 @@ func validateConfig(config Config) error {
 		"Lease name":                          config.LeaseName,
 		"MutatingWebhookConfiguration name":   config.MutatingWebhookConfiguration,
 		"ValidatingWebhookConfiguration name": config.ValidatingWebhookConfiguration,
+		"Helm release name":                   config.ReleaseName,
 	} {
 		if problems := validation.IsDNS1123Subdomain(value); len(problems) != 0 {
 			return fmt.Errorf("%s is invalid: %s", label, problems[0])
@@ -1086,6 +1117,9 @@ func validateConfig(config Config) error {
 	}
 	if config.CandidateServiceName == config.ServiceName && config.Namespace == config.ServiceNamespace {
 		return errors.New("candidate Service must differ from the primary webhook Service")
+	}
+	if config.Namespace != config.ServiceNamespace {
+		return errors.New("certificate and webhook Service namespaces must be identical")
 	}
 	if config.RecreateMissingSecret {
 		for label, value := range map[string]string{
@@ -1134,6 +1168,27 @@ func validateConfig(config Config) error {
 		return errors.New("Lease acquire timeout must be positive and at most 24 hours")
 	}
 	return nil
+}
+
+func generatedSecretLabels() map[string]string {
+	return map[string]string{
+		GeneratedSecretLabel: GeneratedSecretLabelValue,
+		HelmManagedByLabel:   HelmManagedByLabelValue,
+	}
+}
+
+func stagingSecretLabels() map[string]string {
+	return map[string]string{
+		StagingSecretLabel: StagingSecretLabelValue,
+		HelmManagedByLabel: HelmManagedByLabelValue,
+	}
+}
+
+func helmOwnershipAnnotations(config Config) map[string]string {
+	return map[string]string{
+		HelmReleaseNameAnnotation:      config.ReleaseName,
+		HelmReleaseNamespaceAnnotation: config.Namespace,
+	}
 }
 
 // managedMutatingWebhooks treats configured names as required identity

@@ -241,6 +241,18 @@ func renderedPrivilegeTeardownContract(t *testing.T) *PrivilegeTeardown {
 		}, "\n")))
 		controllerServiceAccountName = fmt.Sprintf("%s-v1-%x", base, principalDigest)[:len(base)+4+12]
 	}
+	admissionContractVersion := int32(1)
+	certificateArgs := []string{
+		"--lease-name=" + controllerName + "-cert-rotation",
+		"--staging-secret-name=" + controllerName + "-cert-rotation-stage",
+	}
+	if settings.certificateRuntimeEnabled {
+		admissionContractVersion = CurrentAdmissionContractVersion
+		certificateArgs = append(certificateArgs,
+			"--candidate-bind-address=:9444",
+			"--candidate-probe-config-map-name="+controllerName+"-cert-canary",
+		)
+	}
 	guard := &RolloutGuard{
 		ReleaseName:                  renderedPrivilegeReleaseName,
 		ReleaseNamespace:             settings.releaseNamespace,
@@ -251,11 +263,10 @@ func renderedPrivilegeTeardownContract(t *testing.T) *PrivilegeTeardown {
 		ControllerServiceAccountName: controllerServiceAccountName,
 		ControllerDeploymentName:     controllerName,
 		CertificateDeploymentName:    controllerName + "-cert-rotator",
+		CertificateRuntimeEnabled:    settings.certificateRuntimeEnabled,
+		AdmissionContractVersion:     admissionContractVersion,
 		WebhookSecretName:            controllerName + "-webhook-cert",
-		CertificateArgs: []string{
-			"--lease-name=" + controllerName + "-cert-rotation",
-			"--staging-secret-name=" + controllerName + "-cert-rotation-stage",
-		},
+		CertificateArgs:              certificateArgs,
 	}
 	cleanup, err := TeardownServiceAccountName(guard.HookServiceAccountName, guard.ReleaseSequence)
 	if err != nil {
@@ -507,10 +518,13 @@ func TestPrivilegeTeardownDeletesExactPrivilegesBeforeServiceAccounts(t *testing
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + fixture.guard.ControllerDeploymentName + "-runtime-admission",
 		"RoleBinding/" + fixture.guard.CoordinationNamespace + "/" + fixture.guard.ControllerDeploymentName,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + fixture.contract.CertificateServiceAccountName,
+		"RoleBinding/" + corev1.NamespaceDefault + "/" + mustCertificateDiscoveryRoleName(t, fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName),
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + hook,
+		"RoleBinding/" + corev1.NamespaceDefault + "/" + hook,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + bootstrap,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + probe,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + quiesce,
+		"RoleBinding/" + corev1.NamespaceDefault + "/" + quiesce,
 		"ClusterRoleBinding/" + fixture.guard.ControllerDeploymentName,
 		"ClusterRoleBinding/" + fixture.contract.CertificateServiceAccountName,
 		"ClusterRoleBinding/" + hook,
@@ -521,6 +535,7 @@ func TestPrivilegeTeardownDeletesExactPrivilegesBeforeServiceAccounts(t *testing
 		"ServiceAccount/" + hook,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + fixture.cleanupPrivilege,
 		"RoleBinding/" + fixture.guard.CoordinationNamespace + "/" + fixture.cleanupPrivilege,
+		"RoleBinding/" + corev1.NamespaceDefault + "/" + fixture.cleanupPrivilege,
 		"ClusterRoleBinding/" + fixture.cleanupPrivilege,
 		"ClusterRole/" + fixture.cleanupPrivilege,
 	}
@@ -871,22 +886,35 @@ func TestPrivilegeTeardownOmitsDisabledCertificateRuntime(t *testing.T) {
 
 func TestPrivilegeTeardownSharesReleaseScopedPrivilegeWhenCoordinationMatches(t *testing.T) {
 	fixture := newPrivilegeTeardownFixtureWithCoordination(t, true, true, "ptah-system")
-	cleanupBindingKey := privilegeBindingKey(fixture.guard.ReleaseNamespace, fixture.cleanupPrivilege)
+	releaseCleanupBindingKey := privilegeBindingKey(fixture.guard.ReleaseNamespace, fixture.cleanupPrivilege)
+	defaultCleanupBindingKey := privilegeBindingKey(corev1.NamespaceDefault, fixture.cleanupPrivilege)
 	cleanupBindingCount := 0
-	for key, binding := range fixture.roleBindings.objects {
+	for _, binding := range fixture.roleBindings.objects {
 		if binding.Name == fixture.cleanupPrivilege {
 			cleanupBindingCount++
-			if key != cleanupBindingKey {
-				t.Fatalf("cleanup privilege RoleBinding key = %q, want %q", key, cleanupBindingKey)
-			}
 		}
 	}
-	if cleanupBindingCount != 1 {
-		t.Fatalf("cleanup privilege RoleBinding count = %d, want 1", cleanupBindingCount)
+	if cleanupBindingCount != 2 || fixture.roleBindings.objects[releaseCleanupBindingKey] == nil || fixture.roleBindings.objects[defaultCleanupBindingKey] == nil {
+		t.Fatalf("cleanup privilege RoleBindings = %#v, want release and default", sortedPrivilegeRoleBindingKeys(fixture.roleBindings.objects))
 	}
-	role := fixture.roles.objects[cleanupBindingKey]
+	role := fixture.roles.objects[releaseCleanupBindingKey]
 	if role == nil || len(role.Rules) == 0 || !stringSliceContains(role.Rules[0].ResourceNames, fixture.guard.ControllerDeploymentName) {
 		t.Fatalf("shared release cleanup Role does not include coordination RoleBinding deletion: %#v", role)
+	}
+	defaultRole := fixture.roles.objects[defaultCleanupBindingKey]
+	discoveryName := mustCertificateDiscoveryRoleName(t, fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)
+	quiesce, err := TeardownQuiesceJobName(fixture.guard.HookServiceAccountName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultRole == nil || len(defaultRole.Rules) != 1 ||
+		!reflect.DeepEqual(defaultRole.Rules[0].ResourceNames, []string{
+			fixture.guard.HookServiceAccountName,
+			quiesce,
+			discoveryName,
+			fixture.cleanupPrivilege,
+		}) {
+		t.Fatalf("default cleanup Role does not match exact certificate discovery revocation contract: %#v", defaultRole)
 	}
 
 	if err := fixture.teardown.Teardown(context.Background()); err != nil {
@@ -1483,6 +1511,215 @@ func TestPrivilegeTeardownRejectsInvalidCertificateStagingSecretIdentity(t *test
 	}
 }
 
+func TestPrivilegeTeardownAdmissionV2RequiresExactCertificateCanaryConfigMap(t *testing.T) {
+	const candidateArgument = "--candidate-probe-config-map-name="
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing",
+			want: "requires exactly one --candidate-probe-config-map-name argument, found 0",
+		},
+		{
+			name: "duplicate",
+			args: []string{
+				candidateArgument + "ptah-e2e-operator-cert-canary",
+				candidateArgument + "ptah-e2e-operator-cert-canary-2",
+			},
+			want: "requires exactly one --candidate-probe-config-map-name argument, found 2",
+		},
+		{
+			name: "empty",
+			args: []string{candidateArgument},
+			want: "must have a nonempty, unpadded value",
+		},
+		{
+			name: "padded",
+			args: []string{candidateArgument + " ptah-e2e-operator-cert-canary"},
+			want: "must have a nonempty, unpadded value",
+		},
+		{
+			name: "foreign identity",
+			args: []string{candidateArgument + "foreign"},
+			want: "differs from derived identity",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newPrivilegeTeardownFixture(t, true, true)
+			fixture.guard.AdmissionContractVersion = CurrentAdmissionContractVersion
+			fixture.guard.CertificateArgs = append(
+				fixture.guard.CertificateArgs,
+				"--candidate-bind-address=:9444",
+			)
+			fixture.guard.CertificateArgs = append(fixture.guard.CertificateArgs, test.args...)
+			err := fixture.teardown.validate()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validate() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestPrivilegeTeardownAdmissionV2CompilesCertificateCanaryConfigMapRevocation(t *testing.T) {
+	const canaryConfigMapName = "ptah-e2e-operator-cert-canary"
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+	fixture.guard.AdmissionContractVersion = CurrentAdmissionContractVersion
+	fixture.guard.CertificateArgs = append(
+		fixture.guard.CertificateArgs,
+		"--candidate-bind-address=:9444",
+		"--candidate-probe-config-map-name="+canaryConfigMapName,
+	)
+	if err := fixture.teardown.validate(); err != nil {
+		t.Fatalf("validate() error = %v", err)
+	}
+
+	wantRule := privilegePolicyRule(
+		[]string{""},
+		[]string{"configmaps"},
+		[]string{canaryConfigMapName},
+		[]string{"get", "update"},
+	)
+	foundRule := false
+	for _, contract := range fixture.teardown.retiredAuthorizationContracts() {
+		if contract.cluster || contract.namespace != fixture.guard.ReleaseNamespace || contract.name != fixture.guard.CertificateDeploymentName {
+			continue
+		}
+		for _, rule := range contract.rules {
+			if reflect.DeepEqual(rule, wantRule) {
+				foundRule = true
+			}
+		}
+	}
+	if !foundRule {
+		t.Fatalf("retired certificate Role is missing exact canary ConfigMap rule %#v", wantRule)
+	}
+
+	grants, err := RevokedPrivilegeMutationGrants(fixture.guard, fixture.contract)
+	if err != nil {
+		t.Fatalf("RevokedPrivilegeMutationGrants() error = %v", err)
+	}
+	foundGrant := false
+	for _, grant := range grants {
+		if grant.SubjectName == "certificate" && grant.Namespace == fixture.guard.ReleaseNamespace && !grant.ClusterWide &&
+			grant.APIGroup == "" && grant.Resource == "configmaps" && grant.Subresource == "" && grant.Verb == "update" &&
+			reflect.DeepEqual(grant.ResourceNames, []string{canaryConfigMapName}) {
+			foundGrant = true
+		}
+	}
+	if !foundGrant {
+		t.Fatalf("revoked privilege grants do not contain exact canary ConfigMap update: %#v", grants)
+	}
+}
+
+func TestPrivilegeTeardownAdmissionV1OmitsCertificateCanaryConfigMapRule(t *testing.T) {
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+	for _, contract := range fixture.teardown.retiredAuthorizationContracts() {
+		if contract.cluster || contract.namespace != fixture.guard.ReleaseNamespace || contract.name != fixture.guard.CertificateDeploymentName {
+			continue
+		}
+		for _, rule := range contract.rules {
+			if containsString(rule.Resources, "configmaps") {
+				t.Fatalf("admission contract v1 certificate Role contains a canary ConfigMap rule: %#v", rule)
+			}
+		}
+	}
+}
+
+func TestPrivilegeTeardownCertificateEndpointSliceRolesAreNamespaceBound(t *testing.T) {
+	for _, test := range []struct {
+		name                  string
+		releaseNamespace      string
+		coordinationNamespace string
+		wantCertificateRoles  []string
+		wantCleanupRoles      []string
+	}{
+		{
+			name:                  "separate release coordination and discovery",
+			releaseNamespace:      "ptah-system",
+			coordinationNamespace: "ptah-coordination",
+			wantCertificateRoles:  []string{"default", "ptah-system"},
+			wantCleanupRoles:      []string{"default", "ptah-coordination", "ptah-system"},
+		},
+		{
+			name:                  "release and discovery coincide",
+			releaseNamespace:      "default",
+			coordinationNamespace: "default",
+			wantCertificateRoles:  []string{"default"},
+			wantCleanupRoles:      []string{"default"},
+		},
+		{
+			name:                  "coordination and discovery coincide",
+			releaseNamespace:      "ptah-system",
+			coordinationNamespace: "default",
+			wantCertificateRoles:  []string{"default", "ptah-system"},
+			wantCleanupRoles:      []string{"default", "ptah-system"},
+		},
+		{
+			name:                  "release discovery and coordination split",
+			releaseNamespace:      "default",
+			coordinationNamespace: "ptah-coordination",
+			wantCertificateRoles:  []string{"default"},
+			wantCleanupRoles:      []string{"default", "ptah-coordination"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newPrivilegeTeardownFixture(t, true, true)
+			fixture.guard.ReleaseNamespace = test.releaseNamespace
+			fixture.guard.CoordinationNamespace = test.coordinationNamespace
+			fixture.contract.Namespace = test.releaseNamespace
+			fixture.teardown.contract.Namespace = test.releaseNamespace
+
+			discoveryName := mustCertificateDiscoveryRoleName(t, test.releaseNamespace, fixture.guard.ReleaseName)
+			var certificateRoles []string
+			for _, contract := range fixture.teardown.retiredAuthorizationContracts() {
+				if contract.component != "certificate-rotation" ||
+					(contract.name != fixture.contract.CertificateServiceAccountName && contract.name != discoveryName) {
+					continue
+				}
+				for _, rule := range contract.rules {
+					if containsString(rule.APIGroups, "discovery.k8s.io") &&
+						containsString(rule.Resources, "endpointslices") && containsString(rule.Verbs, "list") {
+						if contract.cluster {
+							t.Fatal("certificate EndpointSlice LIST remains cluster-wide")
+						}
+						certificateRoles = append(certificateRoles, contract.namespace)
+					}
+				}
+			}
+			sort.Strings(certificateRoles)
+			if !reflect.DeepEqual(certificateRoles, test.wantCertificateRoles) {
+				t.Fatalf("certificate EndpointSlice Role namespaces = %#v, want %#v", certificateRoles, test.wantCertificateRoles)
+			}
+
+			var certificateBindings []string
+			var cleanupBindings []string
+			for _, contract := range fixture.teardown.bindingContracts() {
+				if !contract.cluster && contract.component == "certificate-rotation" {
+					certificateBindings = append(certificateBindings, contract.namespace)
+				}
+				if !contract.cluster && contract.name == fixture.cleanupPrivilege && contract.selfRevoke {
+					cleanupBindings = append(cleanupBindings, contract.namespace)
+				}
+			}
+			sort.Strings(certificateBindings)
+			sort.Strings(cleanupBindings)
+			if !reflect.DeepEqual(certificateBindings, test.wantCertificateRoles) {
+				t.Fatalf("certificate EndpointSlice RoleBinding namespaces = %#v, want %#v", certificateBindings, test.wantCertificateRoles)
+			}
+			if !reflect.DeepEqual(cleanupBindings, test.wantCleanupRoles) {
+				t.Fatalf("cleanup RoleBinding namespaces = %#v, want %#v", cleanupBindings, test.wantCleanupRoles)
+			}
+			for _, namespace := range append(append([]string(nil), certificateBindings...), cleanupBindings...) {
+				if namespace == "unrelated" {
+					t.Fatal("certificate discovery RBAC reached an unrelated namespace")
+				}
+			}
+		})
+	}
+}
+
 func TestPrivilegeTeardownFailsClosedWithoutPredecessorInventory(t *testing.T) {
 	fixture := newPrivilegeTeardownFixture(t, true, true)
 	fixture.guard.ReleaseSequence = 2
@@ -1557,6 +1794,7 @@ func newPrivilegeTeardownFixtureWithCoordination(
 		ControllerDeploymentName:     "ptah-e2e-operator",
 		ControllerReplicas:           1,
 		CertificateDeploymentName:    "ptah-e2e-operator-cert-rotator",
+		CertificateRuntimeEnabled:    certificateEnabled,
 		ControllerStateVersion:       1,
 		AdmissionContractVersion:     1,
 		ReleaseSequence:              1,
@@ -1639,6 +1877,7 @@ func newPrivilegeTeardownFixtureWithCoordination(
 			}
 		}
 	}
+
 	for _, account := range fixture.teardown.serviceAccountContracts() {
 		fixture.nextObjectIdentity++
 		identity := fmt.Sprintf("account-%02d", fixture.nextObjectIdentity)
@@ -1663,6 +1902,56 @@ func newPrivilegeTeardownFixtureWithCoordination(
 		}
 	}
 	return fixture
+}
+
+func TestPrivilegeTeardownEndpointSliceDiscoveryNeverCompilesClusterWide(t *testing.T) {
+	for _, releaseNamespace := range []string{corev1.NamespaceDefault, "ptah-system"} {
+		fixture := newPrivilegeTeardownFixture(t, true, true)
+		fixture.guard.ReleaseNamespace = releaseNamespace
+		fixture.guard.CoordinationNamespace = releaseNamespace
+		fixture.contract.Namespace = releaseNamespace
+		fixture.teardown.contract.Namespace = releaseNamespace
+
+		counts := map[string]int{}
+		for _, contract := range fixture.teardown.authorizationContracts() {
+			for _, rule := range contract.rules {
+				if !containsString(rule.APIGroups, "discovery.k8s.io") ||
+					!containsString(rule.Resources, "endpointslices") {
+					continue
+				}
+				if contract.cluster {
+					t.Fatalf("%s/%s compiles cluster-wide EndpointSlice authority", contract.component, contract.name)
+				}
+				if contract.namespace != corev1.NamespaceDefault &&
+					!(contract.component == "certificate-rotation" && contract.namespace == releaseNamespace) {
+					t.Fatalf("%s/%s compiles EndpointSlice authority in namespace %q", contract.component, contract.name, contract.namespace)
+				}
+				counts[contract.component]++
+			}
+		}
+		certificateRoleCount := 1
+		if releaseNamespace != corev1.NamespaceDefault {
+			certificateRoleCount++
+		}
+		want := map[string]int{
+			"certificate-rotation":         certificateRoleCount,
+			"crd-manager":                  1,
+			"crd-manager-teardown":         1,
+			"crd-manager-teardown-quiesce": 1,
+		}
+		if !reflect.DeepEqual(counts, want) {
+			t.Fatalf("EndpointSlice discovery contracts = %#v, want %#v", counts, want)
+		}
+	}
+}
+
+func mustCertificateDiscoveryRoleName(t *testing.T, releaseNamespace, releaseName string) string {
+	t.Helper()
+	name, err := CertificateDiscoveryRoleName(releaseNamespace, releaseName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return name
 }
 
 func (f *privilegeTeardownFixture) assertOnlyCleanupAccessRemains(t *testing.T) {

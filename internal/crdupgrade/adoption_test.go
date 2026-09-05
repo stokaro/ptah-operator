@@ -135,8 +135,11 @@ func TestAdmissionAdopterAllowsOwnedContractToChangeAfterPreflight(t *testing.T)
 
 func TestAdmissionAdopterLeavesOlderOwnedVersionForAtomicHelmUpdate(t *testing.T) {
 	adopter, mutating, validating := readyAdmissionAdopter(t, false, false)
+	mutating.object.Annotations[AdmissionContractVersionAnnotation] = "1"
+	validating.object.Annotations[AdmissionContractVersionAnnotation] = "1"
+	mutating.object.Webhooks = mutating.object.Webhooks[:1]
+	validating.object.Webhooks = validating.object.Webhooks[:3]
 	adopter.Expected.ControllerStateVersion = 2
-	adopter.Expected.AdmissionContractVersion = 2
 	if err := adopter.Adopt(context.Background()); err != nil {
 		t.Fatal(err)
 	}

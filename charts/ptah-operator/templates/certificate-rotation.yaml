@@ -1,7 +1,11 @@
 {{- if and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) }}
+{{- include "ptah-operator.validateCertificatePorts" . -}}
 {{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
+{{- $discoveryRoleName := include "ptah-operator.certificateDiscoveryRoleName" . -}}
 {{- $secretName := include "ptah-operator.webhookSecretName" . -}}
 {{- $stagingSecretName := include "ptah-operator.certRotationStagingSecretName" . -}}
+{{- $candidateServiceName := include "ptah-operator.certificateTransitionServiceName" . -}}
+{{- $canaryConfigMapName := include "ptah-operator.certificateCanaryConfigMapName" . -}}
 {{- $leaseName := include "ptah-operator.certRotationLeaseName" . -}}
 {{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
@@ -36,8 +40,12 @@ spec:
         (!has(object.metadata.generateName) || object.metadata.generateName == '') &&
         has(object.metadata.labels) &&
         object.metadata.labels ==
-          {'operator.ptah.dev/generated-webhook-certificate': 'true'} &&
-        (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) &&
+          {'operator.ptah.dev/generated-webhook-certificate': 'true',
+           'app.kubernetes.io/managed-by': 'Helm'} &&
+        has(object.metadata.annotations) &&
+        object.metadata.annotations ==
+          {'meta.helm.sh/release-name': '{{ .Release.Name }}',
+           'meta.helm.sh/release-namespace': '{{ .Release.Namespace }}'} &&
         (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
         (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&
         object.type == 'kubernetes.io/tls' &&
@@ -91,9 +99,46 @@ kind: Secret
 metadata:
   name: {{ $stagingSecretName }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
   labels:
+    app.kubernetes.io/managed-by: Helm
     operator.ptah.dev/certificate-rotation-staging: "true"
 type: Opaque
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $canaryConfigMapName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    operator.ptah.dev/certificate-rotation-canary: "v1"
+immutable: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $candidateServiceName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certificate-rotation
+spec:
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: {{ include "ptah-operator.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: certificate-rotation
+  ports:
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: candidate
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -130,6 +175,13 @@ rules:
   - apiGroups: [""]
     resources: ["limitranges"]
     verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $canaryConfigMapName | quote }}]
+    verbs: ["get", "update"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -146,6 +198,40 @@ subjects:
   - kind: ServiceAccount
     name: {{ $rotatorName }}
     namespace: {{ .Release.Namespace }}
+{{ if ne .Release.Namespace "default" }}
+---
+# Direct API-server convergence discovers only the default Kubernetes
+# Service. Keep that discovery authority in the one namespace it reads.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $discoveryRoleName }}
+  namespace: default
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certificate-rotation
+rules:
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $discoveryRoleName }}
+  namespace: default
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certificate-rotation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $discoveryRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $rotatorName }}
+    namespace: {{ .Release.Namespace }}
+{{ end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -192,12 +278,10 @@ rules:
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+      - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
       - {{ printf "ptah-operator-hook-pod-origin-guard-v1-%s" $legacyParentOriginDigest }}
       - {{ printf "ptah-operator-hook-parent-origin-guard-v1-%s" $legacyParentOriginDigest }}
     verbs: ["get"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
   - apiGroups: ["scheduling.k8s.io"]
     resources: ["priorityclasses"]
     verbs: ["get", "list"]
@@ -311,6 +395,9 @@ spec:
           ports:
             - name: health
               containerPort: {{ .Values.certificateRotation.healthPort }}
+              protocol: TCP
+            - name: candidate
+              containerPort: {{ .Values.certificateRotation.candidatePort }}
               protocol: TCP
           livenessProbe:
             httpGet:

@@ -45,7 +45,7 @@ func TestCARotationStagesCandidateBeforePublishingTrust(t *testing.T) {
 			checked[resource] = true
 			overlapChecks++
 			staging := mustGetTrackedSecret(t, client, config.Namespace, config.StagingSecretName)
-			pending, err := decodePendingCandidate(staging.Data, config, now)
+			pending, err := decodePendingCandidate(staging.Data, config)
 			if err != nil {
 				t.Fatalf("decode staged candidate before %s update: %v", resource, err)
 			}
@@ -90,7 +90,7 @@ func TestCARotationStagesCandidateBeforePublishingTrust(t *testing.T) {
 		t.Fatalf("completed staging data has %d fields, want empty", len(staging.Data))
 	}
 	certificatePEM, privateKeyPEM, stores, clears := sink.snapshot()
-	if len(certificatePEM) != 0 || len(privateKeyPEM) != 0 || stores != 1 || clears < 2 {
+	if len(certificatePEM) != 0 || len(privateKeyPEM) != 0 || stores != 3 || clears < 2 {
 		t.Fatalf("completed candidate sink = cert:%d key:%d stores:%d clears:%d", len(certificatePEM), len(privateKeyPEM), stores, clears)
 	}
 }
@@ -111,7 +111,7 @@ func TestInterruptedCARotationReusesExactDurableCandidate(t *testing.T) {
 	}
 
 	stagingAfterFailure := mustGetStagingSecret(t, client, config)
-	pending, err := decodePendingCandidate(stagingAfterFailure.Data, config, now)
+	pending, err := decodePendingCandidate(stagingAfterFailure.Data, config)
 	if err != nil {
 		t.Fatalf("decode durable pending candidate: %v", err)
 	}
@@ -136,8 +136,8 @@ func TestInterruptedCARotationReusesExactDurableCandidate(t *testing.T) {
 	if err := second.Run(context.Background()); err != nil {
 		t.Fatalf("recovery Run() error = %v", err)
 	}
-	if got := countStagingUpdates(client.Actions(), config) - updatesBeforeRecovery; got != 1 {
-		t.Fatalf("recovery staging updates = %d, want one clear without candidate regeneration", got)
+	if got := countStagingUpdates(client.Actions(), config) - updatesBeforeRecovery; got != 7 {
+		t.Fatalf("recovery staging updates = %d, want six proven phase advances and one clear", got)
 	}
 	if maps.EqualFunc(mustGetStagingSecret(t, client, config).Data, stagedData, bytes.Equal) {
 		t.Fatal("recovery left the durable candidate record in place")
@@ -175,7 +175,7 @@ func TestInterruptedCARotationBeforePrimaryWriteReusesExactDurableCandidate(t *t
 	}
 
 	stagingAfterFailure := mustGetStagingSecret(t, client, config)
-	pending, err := decodePendingCandidate(stagingAfterFailure.Data, config, now)
+	pending, err := decodePendingCandidate(stagingAfterFailure.Data, config)
 	if err != nil {
 		t.Fatalf("decode durable pending candidate: %v", err)
 	}
@@ -191,8 +191,8 @@ func TestInterruptedCARotationBeforePrimaryWriteReusesExactDurableCandidate(t *t
 	if err := second.Run(context.Background()); err != nil {
 		t.Fatalf("recovery Run() error = %v", err)
 	}
-	if got := countStagingUpdates(client.Actions(), config) - updatesBeforeRecovery; got != 1 {
-		t.Fatalf("recovery staging updates = %d, want one clear without candidate regeneration", got)
+	if got := countStagingUpdates(client.Actions(), config) - updatesBeforeRecovery; got != 11 {
+		t.Fatalf("recovery staging updates = %d, want ten proven phase advances and one clear", got)
 	}
 	if maps.EqualFunc(mustGetStagingSecret(t, client, config).Data, stagedData, bytes.Equal) ||
 		len(mustGetStagingSecret(t, client, config).Data) != 0 {
@@ -202,7 +202,7 @@ func TestInterruptedCARotationBeforePrimaryWriteReusesExactDurableCandidate(t *t
 		t.Fatal("recovery replaced the durable candidate with new primary material")
 	}
 	certificatePEM, privateKeyPEM, stores, clears := secondSink.snapshot()
-	if len(certificatePEM) != 0 || len(privateKeyPEM) != 0 || stores != 1 || clears != 1 {
+	if len(certificatePEM) != 0 || len(privateKeyPEM) != 0 || stores != 3 || clears != 1 {
 		t.Fatalf("recovery candidate sink = cert:%d key:%d stores:%d clears:%d", len(certificatePEM), len(privateKeyPEM), stores, clears)
 	}
 }
@@ -308,6 +308,11 @@ func TestCertificateRotationConfigRequiresStagingBoundaries(t *testing.T) {
 			want:   "staging Secret name",
 		},
 		{
+			name:   "empty Helm release name",
+			mutate: func(config *Config) { config.ReleaseName = "" },
+			want:   "Helm release name",
+		},
+		{
 			name:   "staging Secret aliases primary",
 			mutate: func(config *Config) { config.StagingSecretName = config.SecretName },
 			want:   "must differ",
@@ -328,14 +333,20 @@ func TestCertificateRotationConfigRequiresStagingBoundaries(t *testing.T) {
 			t.Parallel()
 			config := testConfig()
 			test.mutate(&config)
-			_, err := New(fake.NewClientset(), config, &recordingCandidateSink{})
+			client := fake.NewClientset()
+			_, err := newRotator(client, config, &recordingCandidateSink{}, newTestAdmissionCanaryController(client, config))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("New() error = %v, want %q", err, test.want)
 			}
 		})
 	}
-	if _, err := New(fake.NewClientset(), testConfig(), nil); err == nil || !strings.Contains(err.Error(), "sink is required") {
+	client := fake.NewClientset()
+	if _, err := newRotator(client, testConfig(), nil, newTestAdmissionCanaryController(client, testConfig())); err == nil || !strings.Contains(err.Error(), "sink is required") {
 		t.Fatalf("New() nil-sink error = %v, want required sink", err)
+	}
+	if _, err := New(client, testConfig(), &recordingCandidateSink{}, nil); err == nil ||
+		!strings.Contains(err.Error(), "canary controller is required") {
+		t.Fatalf("New() nil-canary error = %v, want required canary controller", err)
 	}
 }
 
@@ -500,9 +511,8 @@ func TestStagingSecretMetadataRequiresExactLiveShape(t *testing.T) {
 			Namespace:       config.Namespace,
 			UID:             "staging-uid",
 			ResourceVersion: "1",
-			Labels: map[string]string{
-				StagingSecretLabel: StagingSecretLabelValue,
-			},
+			Labels:          stagingSecretLabels(),
+			Annotations:     helmOwnershipAnnotations(config),
 		},
 		Type: corev1.SecretTypeOpaque,
 	}
@@ -525,8 +535,26 @@ func TestStagingSecretMetadataRequiresExactLiveShape(t *testing.T) {
 		{name: "wrong type", mutate: func(secret *corev1.Secret) { secret.Type = corev1.SecretTypeTLS }},
 		{name: "missing label", mutate: func(secret *corev1.Secret) { secret.Labels = nil }},
 		{name: "extra label", mutate: func(secret *corev1.Secret) { secret.Labels["operator.ptah.dev/foreign"] = "true" }},
-		{name: "annotation", mutate: func(secret *corev1.Secret) {
+		{name: "missing Helm managed-by label", mutate: func(secret *corev1.Secret) {
+			delete(secret.Labels, HelmManagedByLabel)
+		}},
+		{name: "wrong Helm managed-by label", mutate: func(secret *corev1.Secret) {
+			secret.Labels[HelmManagedByLabel] = "foreign"
+		}},
+		{name: "foreign annotation", mutate: func(secret *corev1.Secret) {
 			secret.Annotations = map[string]string{"operator.ptah.dev/foreign": "true"}
+		}},
+		{name: "missing release name annotation", mutate: func(secret *corev1.Secret) {
+			delete(secret.Annotations, HelmReleaseNameAnnotation)
+		}},
+		{name: "wrong release name annotation", mutate: func(secret *corev1.Secret) {
+			secret.Annotations[HelmReleaseNameAnnotation] = "foreign"
+		}},
+		{name: "missing release namespace annotation", mutate: func(secret *corev1.Secret) {
+			delete(secret.Annotations, HelmReleaseNamespaceAnnotation)
+		}},
+		{name: "wrong release namespace annotation", mutate: func(secret *corev1.Secret) {
+			secret.Annotations[HelmReleaseNamespaceAnnotation] = "foreign"
 		}},
 		{name: "owner reference", mutate: func(secret *corev1.Secret) {
 			secret.OwnerReferences = []metav1.OwnerReference{{APIVersion: "v1", Kind: "ConfigMap", Name: "foreign", UID: "foreign", Controller: &controller}}
@@ -550,7 +578,38 @@ func TestStagingSecretMetadataRequiresExactLiveShape(t *testing.T) {
 	}
 }
 
-func TestPendingCandidateDecodeUsesDurableSafetyLimits(t *testing.T) {
+func TestPrimarySecretMetadataRequiresExactHelmOwnership(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	base := secretForMaterial(config, certificateMaterial{})
+	if err := validatePrimarySecretSource(base, config); err != nil {
+		t.Fatalf("exact primary Secret metadata: %v", err)
+	}
+	tests := []struct {
+		name   string
+		mutate func(*corev1.Secret)
+	}{
+		{name: "missing labels", mutate: func(secret *corev1.Secret) { secret.Labels = nil }},
+		{name: "extra label", mutate: func(secret *corev1.Secret) { secret.Labels["operator.ptah.dev/foreign"] = "true" }},
+		{name: "wrong Helm manager", mutate: func(secret *corev1.Secret) { secret.Labels[HelmManagedByLabel] = "foreign" }},
+		{name: "missing annotations", mutate: func(secret *corev1.Secret) { secret.Annotations = nil }},
+		{name: "extra annotation", mutate: func(secret *corev1.Secret) { secret.Annotations["operator.ptah.dev/foreign"] = "true" }},
+		{name: "wrong release name", mutate: func(secret *corev1.Secret) { secret.Annotations[HelmReleaseNameAnnotation] = "foreign" }},
+		{name: "wrong release namespace", mutate: func(secret *corev1.Secret) { secret.Annotations[HelmReleaseNamespaceAnnotation] = "foreign" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			candidate := base.DeepCopy()
+			test.mutate(candidate)
+			if err := validatePrimarySecretSource(candidate, config); err == nil {
+				t.Fatal("validatePrimarySecretSource() accepted foreign ownership metadata")
+			}
+		})
+	}
+}
+
+func TestPendingCandidateDecodeSeparatesDurableSafetyFromTemporalUsability(t *testing.T) {
 	t.Parallel()
 	originalConfig := testConfig()
 	createdAt := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
@@ -562,11 +621,11 @@ func TestPendingCandidateDecodeUsesDurableSafetyLimits(t *testing.T) {
 	data := encodePendingCandidate(pending)
 
 	tests := []struct {
-		name       string
-		config     Config
-		now        time.Time
-		wantErr    bool
-		wantPolicy bool
+		name            string
+		config          Config
+		now             time.Time
+		wantTemporalErr bool
+		wantPolicy      bool
 	}{
 		{
 			name: "shorter current validity policy",
@@ -586,20 +645,30 @@ func TestPendingCandidateDecodeUsesDurableSafetyLimits(t *testing.T) {
 			wantPolicy: true,
 		},
 		{
-			name:    "expired durable serving certificate",
-			config:  originalConfig,
-			now:     createdAt.Add(31 * 24 * time.Hour),
-			wantErr: true,
+			name:            "expired durable serving certificate",
+			config:          originalConfig,
+			now:             createdAt.Add(31 * 24 * time.Hour),
+			wantTemporalErr: true,
+		},
+		{
+			name:            "durable certificates are not yet valid",
+			config:          originalConfig,
+			now:             createdAt.Add(-certificateBackdate - time.Second),
+			wantTemporalErr: true,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			decoded, err := decodePendingCandidate(data, test.config, test.now)
-			if (err != nil) != test.wantErr {
-				t.Fatalf("decodePendingCandidate() error = %v, wantErr %v", err, test.wantErr)
+			decoded, err := decodePendingCandidate(data, test.config)
+			if err != nil {
+				t.Fatalf("timeless decodePendingCandidate() error = %v", err)
 			}
-			if test.wantErr {
+			temporalErr := pendingCandidateTemporalUsability(decoded, test.now)
+			if (temporalErr != nil) != test.wantTemporalErr {
+				t.Fatalf("pendingCandidateTemporalUsability() error = %v, wantError %v", temporalErr, test.wantTemporalErr)
+			}
+			if test.wantTemporalErr {
 				return
 			}
 			needsRenewal, err := pendingMaterialNeedsCurrentPolicyRenewal(decoded.material, test.config, test.now)
@@ -610,6 +679,181 @@ func TestPendingCandidateDecodeUsesDurableSafetyLimits(t *testing.T) {
 				t.Fatalf("pendingMaterialNeedsCurrentPolicyRenewal() = %v, want %v", needsRenewal, test.wantPolicy)
 			}
 		})
+	}
+}
+
+func TestUnusableRelatedPendingCandidateIsRetiredForRetry(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		sourceState stagingSourceState
+		afterWrite  bool
+	}{
+		{name: "before primary write", sourceState: stagingSourcePresent},
+		{name: "after primary write", sourceState: stagingSourcePresent, afterWrite: true},
+		{name: "missing primary", sourceState: stagingSourceMissing},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			config := testConfig()
+			createdAt := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+			sourceMaterial := mustGenerateMaterial(t, createdAt, config)
+			source := secretForMaterial(config, sourceMaterial)
+			var pendingSource *corev1.Secret
+			var primary *corev1.Secret
+			switch test.sourceState {
+			case stagingSourcePresent:
+				pendingSource = source
+				primary = source.DeepCopy()
+			case stagingSourceMissing:
+				pendingSource = nil
+				primary = nil
+			default:
+				t.Fatalf("unsupported source state %q", test.sourceState)
+			}
+			pending, err := generatePendingCandidate(rand.Reader, createdAt, config, pendingSource)
+			if err != nil {
+				t.Fatalf("generatePendingCandidate() error = %v", err)
+			}
+			if test.afterWrite {
+				primary = generatedSecret(config, pending.material)
+				primary.UID = source.UID
+				primary.ResourceVersion = "2"
+			}
+
+			client := newTestClient(config, primary, sourceMaterial.caPEM, twoReadyEndpoints(config))
+			updateStagingForTest(t, client, config, func(secret *corev1.Secret) {
+				secret.Data = encodePendingCandidate(pending)
+			})
+			var primaryData map[string][]byte
+			if primary != nil {
+				primaryData = cloneBytesMap(mustGetSecret(t, client, config).Data)
+			}
+			actionStart := len(client.Actions())
+			sink := &recordingCandidateSink{}
+			if err := sink.StoreCandidateCertificate(pending.listenerCertPEM, pending.listenerKeyPEM); err != nil {
+				t.Fatalf("seed candidate sink: %v", err)
+			}
+			rotator := mustNewTestRotator(
+				t,
+				client,
+				config,
+				createdAt.Add(config.ServingCertificateValidity+time.Second),
+				&recordingProber{},
+			)
+			rotator.candidateSink = sink
+			err = rotator.Run(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "retry reconciliation from authoritative primary state") {
+				t.Fatalf("Run() error = %v, want retriable unusable-staging result", err)
+			}
+			if len(mustGetStagingSecret(t, client, config).Data) != 0 {
+				t.Fatal("unusable related pending candidate was not retired")
+			}
+			certificatePEM, privateKeyPEM, stores, clears := sink.snapshot()
+			if len(certificatePEM) != 0 || len(privateKeyPEM) != 0 || stores != 1 || clears != 1 {
+				t.Fatalf("candidate sink after retirement = cert:%d key:%d stores:%d clears:%d", len(certificatePEM), len(privateKeyPEM), stores, clears)
+			}
+			for _, action := range client.Actions()[actionStart:] {
+				if action.GetVerb() != "update" || action.GetResource().Resource == "leases" {
+					continue
+				}
+				if action.GetResource().Resource != "secrets" ||
+					action.(k8stesting.UpdateAction).GetObject().(*corev1.Secret).Name != config.StagingSecretName {
+					t.Fatalf("unusable pending candidate triggered unsafe update to %s", action.GetResource().Resource)
+				}
+			}
+			if primary != nil && !maps.EqualFunc(mustGetSecret(t, client, config).Data, primaryData, bytes.Equal) {
+				t.Fatal("retiring unusable staging material changed the authoritative primary Secret")
+			}
+		})
+	}
+}
+
+func TestUnusableUnrelatedPendingCandidateStaysFailClosed(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	createdAt := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	source := secretForMaterial(config, mustGenerateMaterial(t, createdAt, config))
+	pending, err := generatePendingCandidate(rand.Reader, createdAt, config, source)
+	if err != nil {
+		t.Fatalf("generatePendingCandidate() error = %v", err)
+	}
+	foreign := secretForMaterial(config, mustGenerateMaterial(t, createdAt.Add(time.Hour), config))
+	foreign.UID = source.UID
+	foreign.ResourceVersion = "2"
+	client := newTestClient(config, foreign, foreign.Data[CACertificateKey], twoReadyEndpoints(config))
+	updateStagingForTest(t, client, config, func(secret *corev1.Secret) {
+		secret.Data = encodePendingCandidate(pending)
+	})
+	stagedData := cloneBytesMap(mustGetStagingSecret(t, client, config).Data)
+	actionStart := len(client.Actions())
+
+	err = mustNewTestRotator(
+		t,
+		client,
+		config,
+		createdAt.Add(config.ServingCertificateValidity+time.Second),
+		&recordingProber{},
+	).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "unrelated to the current generated TLS Secret") {
+		t.Fatalf("Run() error = %v, want unrelated durable-transition failure", err)
+	}
+	if !maps.EqualFunc(mustGetStagingSecret(t, client, config).Data, stagedData, bytes.Equal) {
+		t.Fatal("unrelated unusable pending material was changed")
+	}
+	for _, action := range client.Actions()[actionStart:] {
+		if action.GetVerb() == "update" && action.GetResource().Resource != "leases" {
+			t.Fatalf("unrelated unusable pending material triggered update to %s", action.GetResource().Resource)
+		}
+	}
+}
+
+func TestUnusablePendingCandidateClearFailureRetainsSinkAndRecord(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	createdAt := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	sourceMaterial := mustGenerateMaterial(t, createdAt, config)
+	source := secretForMaterial(config, sourceMaterial)
+	pending, err := generatePendingCandidate(rand.Reader, createdAt, config, source)
+	if err != nil {
+		t.Fatalf("generatePendingCandidate() error = %v", err)
+	}
+	client := newTestClient(config, source, sourceMaterial.caPEM, twoReadyEndpoints(config))
+	updateStagingForTest(t, client, config, func(secret *corev1.Secret) {
+		secret.Data = encodePendingCandidate(pending)
+	})
+	stagedData := cloneBytesMap(mustGetStagingSecret(t, client, config).Data)
+	client.PrependReactor("update", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		secret := action.(k8stesting.UpdateAction).GetObject().(*corev1.Secret)
+		if secret.Name == config.StagingSecretName {
+			return true, nil, errors.New("injected staging clear failure")
+		}
+		return false, nil, nil
+	})
+	sink := &recordingCandidateSink{}
+	if err := sink.StoreCandidateCertificate(pending.listenerCertPEM, pending.listenerKeyPEM); err != nil {
+		t.Fatalf("seed candidate sink: %v", err)
+	}
+	rotator := mustNewTestRotator(
+		t,
+		client,
+		config,
+		createdAt.Add(config.ServingCertificateValidity+time.Second),
+		&recordingProber{},
+	)
+	rotator.candidateSink = sink
+	err = rotator.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "clear unusable durable pending CA transition") {
+		t.Fatalf("Run() error = %v, want failed exact-clear result", err)
+	}
+	if !maps.EqualFunc(mustGetStagingSecret(t, client, config).Data, stagedData, bytes.Equal) {
+		t.Fatal("failed staging clear changed the durable pending record")
+	}
+	certificatePEM, privateKeyPEM, stores, clears := sink.snapshot()
+	if !bytes.Equal(certificatePEM, pending.listenerCertPEM) ||
+		!bytes.Equal(privateKeyPEM, pending.listenerKeyPEM) || stores != 1 || clears != 0 {
+		t.Fatalf("candidate sink changed before confirmed clear: cert:%d key:%d stores:%d clears:%d", len(certificatePEM), len(privateKeyPEM), stores, clears)
 	}
 }
 
@@ -687,10 +931,47 @@ func TestPendingCandidateRecordRejectsTampering(t *testing.T) {
 			},
 		},
 		{
+			name: "unknown operation",
+			mutate: func(data map[string][]byte) {
+				data[stagingOperationKey] = []byte("foreign-operation")
+			},
+		},
+		{
+			name: "unknown phase",
+			mutate: func(data map[string][]byte) {
+				data[stagingPhaseKey] = []byte("foreign-phase")
+			},
+		},
+		{
+			name: "noncanonical transition digest",
+			mutate: func(data map[string][]byte) {
+				data[stagingTransitionDigestKey] = []byte(strings.Repeat("A", stagingTransitionHexSize))
+			},
+		},
+		{
+			name: "staged material changed without digest",
+			mutate: func(data map[string][]byte) {
+				data[stagingCandidateKeyKey][len(data[stagingCandidateKeyKey])-2] ^= 1
+			},
+		},
+		{
 			name: "listener reuses primary certificate",
 			mutate: func(data map[string][]byte) {
 				data[stagingCandidateCertKey] = append([]byte(nil), data[stagingServingCertKey]...)
 				data[stagingCandidateKeyKey] = append([]byte(nil), data[stagingServingKeyKey]...)
+			},
+		},
+		{
+			name: "proof CA reuses candidate CA",
+			mutate: func(data map[string][]byte) {
+				data[stagingProofCACertificateKey] = append([]byte(nil), data[stagingCACertificateKey]...)
+			},
+		},
+		{
+			name: "proof listener reuses expansion listener",
+			mutate: func(data map[string][]byte) {
+				data[stagingProofListenerCertKey] = append([]byte(nil), data[stagingCandidateCertKey]...)
+				data[stagingProofListenerKeyKey] = append([]byte(nil), data[stagingCandidateKeyKey]...)
 			},
 		},
 		{
@@ -705,10 +986,192 @@ func TestPendingCandidateRecordRejectsTampering(t *testing.T) {
 			t.Parallel()
 			data := encodePendingCandidate(pending)
 			test.mutate(data)
-			if _, err := decodePendingCandidate(data, config, now); err == nil {
+			if _, err := decodePendingCandidate(data, config); err == nil {
 				t.Fatal("decodePendingCandidate() accepted tampered data")
 			}
 		})
+	}
+}
+
+func TestPendingCandidateV2CarriesBoundProofMaterialWithoutProofCAKey(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	source := secretForMaterial(config, mustGenerateMaterial(t, now, config))
+	pending, err := generatePendingCandidate(rand.Reader, now, config, source)
+	if err != nil {
+		t.Fatalf("generatePendingCandidate() error = %v", err)
+	}
+	data := encodePendingCandidate(pending)
+	if len(data) != 16 {
+		t.Fatalf("staging v2 field count = %d, want 16", len(data))
+	}
+	for _, key := range []string{
+		stagingFormatKey,
+		stagingOperationKey,
+		stagingPhaseKey,
+		stagingTransitionDigestKey,
+		stagingProofCACertificateKey,
+		stagingProofListenerCertKey,
+		stagingProofListenerKeyKey,
+	} {
+		if len(data[key]) == 0 {
+			t.Fatalf("staging v2 field %q is empty", key)
+		}
+	}
+	if _, found := data["proof.ca.key"]; found {
+		t.Fatal("staging v2 persisted the contraction-proof CA private key")
+	}
+	if string(data[stagingFormatKey]) != stagingFormat ||
+		string(data[stagingOperationKey]) != string(stagingOperationCA) ||
+		string(data[stagingPhaseKey]) != string(stagingPhasePrepared) {
+		t.Fatalf("staging v2 tags are not exact: format=%q operation=%q phase=%q",
+			data[stagingFormatKey], data[stagingOperationKey], data[stagingPhaseKey])
+	}
+	decoded, err := decodePendingCandidate(data, config)
+	if err != nil {
+		t.Fatalf("decodePendingCandidate() error = %v", err)
+	}
+	if decoded.transitionDigest != pendingCandidateDigest(decoded) || decoded.transitionDigest != pending.transitionDigest {
+		t.Fatal("transition digest does not bind the exact decoded staged material")
+	}
+	for _, phase := range []stagingPhase{
+		stagingPhasePrepared,
+		stagingPhaseExpansionMutatingStored,
+		stagingPhaseExpansionBothStored,
+		stagingPhaseExpansionProven,
+		stagingPhasePrimaryWritten,
+		stagingPhasePrimaryServed,
+		stagingPhaseContractionMutatingStored,
+		stagingPhaseContractionBothStored,
+		stagingPhaseContractionProven,
+		stagingPhaseMutatingParked,
+		stagingPhaseBothParked,
+	} {
+		phaseData := cloneBytesMap(data)
+		phaseData[stagingPhaseKey] = []byte(phase)
+		phasePending, err := decodePendingCandidate(phaseData, config)
+		if err != nil {
+			t.Fatalf("decode supported phase %q: %v", phase, err)
+		}
+		if phasePending.transitionDigest != pending.transitionDigest {
+			t.Fatalf("phase %q changed the material transition digest", phase)
+		}
+	}
+}
+
+func TestPendingCandidateRejectsSameKeyProofCA(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	source := secretForMaterial(config, mustGenerateMaterial(t, now, config))
+	pending, err := generatePendingCandidate(rand.Reader, now, config, source)
+	if err != nil {
+		t.Fatalf("generatePendingCandidate() error = %v", err)
+	}
+	proof := mustReissueCAWithSubject(t, pending.material, "same-key-proof")
+	proof, err = generateServingMaterialForService(
+		rand.Reader,
+		now,
+		config.ServingCertificateValidity,
+		config.CandidateServiceName,
+		config.Namespace,
+		proof,
+	)
+	if err != nil {
+		t.Fatalf("generate same-key proof listener: %v", err)
+	}
+	pending.proofCACertPEM = append([]byte(nil), proof.caPEM...)
+	pending.proofCA = proof.ca
+	pending.proofListenerCertPEM = append([]byte(nil), proof.certPEM...)
+	pending.proofListenerKeyPEM = append([]byte(nil), proof.keyPEM...)
+	pending.proofListenerLeaf = proof.leaf
+	pending.transitionDigest = pendingCandidateDigest(pending)
+
+	if _, err := decodePendingCandidate(encodePendingCandidate(pending), config); err == nil ||
+		!strings.Contains(err.Error(), "must be distinct") {
+		t.Fatalf("decodePendingCandidate() error = %v, want same-key proof rejection", err)
+	}
+}
+
+func TestPendingCandidateRejectsSameKeyReissuedCandidateCA(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	source := secretForMaterial(config, mustGenerateMaterial(t, now, config))
+	pending, err := generatePendingCandidate(rand.Reader, now, config, source)
+	if err != nil {
+		t.Fatalf("generatePendingCandidate() error = %v", err)
+	}
+	pending.material = mustReissueCAWithSubject(t, pending.material, "different-candidate-subject")
+	pending.transitionDigest = pendingCandidateDigest(pending)
+
+	if _, err := decodePendingCandidate(encodePendingCandidate(pending), config); err == nil ||
+		!strings.Contains(err.Error(), "candidate primary serving material") {
+		t.Fatalf("decodePendingCandidate() error = %v, want candidate issuer-chain rejection", err)
+	}
+}
+
+func TestPendingCandidatePhaseCursorAdvancesOneDurableStepAtATime(t *testing.T) {
+	t.Parallel()
+	config := testConfig()
+	now := time.Date(2026, time.September, 5, 12, 0, 0, 0, time.UTC)
+	sourceMaterial := mustGenerateMaterial(t, now, config)
+	source := secretForMaterial(config, sourceMaterial)
+	pending, err := generatePendingCandidate(rand.Reader, now, config, source)
+	if err != nil {
+		t.Fatalf("generatePendingCandidate() error = %v", err)
+	}
+	client := newTestClient(config, source, sourceMaterial.caPEM, twoReadyEndpoints(config))
+	staging := mustGetStagingSecret(t, client, config)
+	updateStagingForTest(t, client, config, func(secret *corev1.Secret) {
+		secret.Data = encodePendingCandidate(pending)
+	})
+	staging = mustGetStagingSecret(t, client, config)
+	rotator := mustNewTestRotator(t, client, config, now, &recordingProber{})
+	originalDigest := pending.transitionDigest
+
+	if _, err := rotator.advancePendingPhase(
+		context.Background(), staging, pending, stagingPhaseExpansionBothStored,
+	); err == nil {
+		t.Fatal("advancePendingPhase() accepted a skipped phase")
+	}
+	if pending.phase != stagingPhasePrepared {
+		t.Fatalf("rejected phase skip changed in-memory cursor to %q", pending.phase)
+	}
+
+	sequence := []stagingPhase{
+		stagingPhaseExpansionMutatingStored,
+		stagingPhaseExpansionBothStored,
+		stagingPhaseExpansionProven,
+		stagingPhasePrimaryWritten,
+		stagingPhasePrimaryServed,
+		stagingPhaseContractionMutatingStored,
+		stagingPhaseContractionBothStored,
+		stagingPhaseContractionProven,
+		stagingPhaseMutatingParked,
+		stagingPhaseBothParked,
+	}
+	for _, phase := range sequence {
+		staging, err = rotator.advancePendingPhase(context.Background(), staging, pending, phase)
+		if err != nil {
+			t.Fatalf("advancePendingPhase(%q) error = %v", phase, err)
+		}
+		decoded, err := decodePendingCandidate(staging.Data, config)
+		if err != nil {
+			t.Fatalf("decode phase %q: %v", phase, err)
+		}
+		if decoded.phase != phase || pending.phase != phase {
+			t.Fatalf("durable/in-memory phases = %q/%q, want %q", decoded.phase, pending.phase, phase)
+		}
+		if decoded.transitionDigest != originalDigest {
+			t.Fatalf("phase %q changed transition digest", phase)
+		}
+	}
+	if _, ok := nextStagingPhase(stagingPhaseBothParked); ok {
+		t.Fatal("terminal staging phase has a successor")
 	}
 }
 

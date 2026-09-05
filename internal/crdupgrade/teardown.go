@@ -466,6 +466,22 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 		name:         namespaceName,
 		verifyPolicy: namespace.verifyPolicy, verifyBinding: namespace.verifyBinding,
 	})
+	if guard.CertificateRuntimeEnabled {
+		staging := NewStagingSecretGuard(guard)
+		stagingPolicy, stagingBinding, stagingErr := staging.ExpectedObjects()
+		if stagingErr != nil {
+			return nil, fmt.Errorf("build release teardown staging Secret guard contract: %w", stagingErr)
+		}
+		contracts = append(contracts, teardownGuardContract{
+			name: stagingPolicy.Name, parameterized: true,
+			verifyPolicy: func(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
+				return staging.verifyPolicy(policy, stagingPolicy)
+			},
+			verifyBinding: func(binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding) error {
+				return staging.verifyBinding(binding, stagingBinding)
+			},
+		})
+	}
 	admissionConvergence := NewAdmissionConvergenceGuard(guard)
 	contracts = append(contracts, teardownGuardContract{
 		name: AdmissionConvergencePolicyName(guard.ReleaseNamespace, guard.ReleaseName), sentinel: true,

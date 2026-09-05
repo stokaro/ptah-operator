@@ -3,7 +3,74 @@
 set -eu
 
 unset CDPATH
-ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
+BOOTSTRAP_ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
+# The private re-entry argument only selects the verification phase. It never
+# permits a caller-provided tree to bypass comparison with the committed source.
+if [ "${1:-}" != --source-snapshot ]; then
+	snapshot_fail() {
+		printf 'e2e snapshot: %s\n' "$*" >&2
+		exit 1
+	}
+	for snapshot_command in git grep mkdir mktemp rm tar; do
+		command -v "$snapshot_command" >/dev/null 2>&1 ||
+			snapshot_fail "required command is not installed: $snapshot_command"
+	done
+	SNAPSHOT_REVISION=$(git -C "$BOOTSTRAP_ROOT_DIR" rev-parse --verify 'HEAD^{commit}') ||
+		snapshot_fail "could not resolve the operator source HEAD"
+	printf '%s\n' "$SNAPSHOT_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||
+		snapshot_fail "operator source HEAD must resolve to an exact lowercase commit"
+	E2E_SOURCE_STATUS=$(git -C "$BOOTSTRAP_ROOT_DIR" status --porcelain=v1 --untracked-files=all) ||
+		snapshot_fail "could not inspect the operator source tree before snapshot creation"
+	[ -z "$E2E_SOURCE_STATUS" ] ||
+		snapshot_fail "operator source tree must exactly match HEAD before snapshot creation"
+	SOURCE_SNAPSHOT_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-source.XXXXXX")
+	SOURCE_SNAPSHOT_ARCHIVE=$SOURCE_SNAPSHOT_WORK_DIR/source.tar
+	SOURCE_SNAPSHOT_ROOT=$SOURCE_SNAPSHOT_WORK_DIR/source
+	# shellcheck disable=SC2329 # Invoked by the EXIT trap installed below.
+	snapshot_cleanup() {
+		status=$?
+		trap - EXIT HUP INT TERM
+		cleanup_failed=0
+		case "$SOURCE_SNAPSHOT_WORK_DIR" in
+			"${TMPDIR:-/tmp}"/ptah-operator-e2e-source.*)
+				rm -rf -- "$SOURCE_SNAPSHOT_WORK_DIR"
+				[ ! -e "$SOURCE_SNAPSHOT_WORK_DIR" ] || cleanup_failed=1
+			;;
+			*) cleanup_failed=1 ;;
+		esac
+		if [ "$cleanup_failed" -ne 0 ]; then
+			printf 'e2e snapshot: could not remove exact-source snapshot %s\n' \
+				"$SOURCE_SNAPSHOT_WORK_DIR" >&2
+			[ "$status" -ne 0 ] || status=1
+		fi
+		exit "$status"
+	}
+	trap snapshot_cleanup EXIT
+	trap 'exit 130' HUP INT TERM
+	mkdir -p "$SOURCE_SNAPSHOT_ROOT"
+	git -C "$BOOTSTRAP_ROOT_DIR" archive --format=tar \
+		--output="$SOURCE_SNAPSHOT_ARCHIVE" "$SNAPSHOT_REVISION"
+	tar -xf "$SOURCE_SNAPSHOT_ARCHIVE" -C "$SOURCE_SNAPSHOT_ROOT"
+	[ -x "$SOURCE_SNAPSHOT_ROOT/hack/e2e-kind.sh" ] ||
+		snapshot_fail "exact-source snapshot lacks an executable E2E entrypoint"
+	E2E_SOURCE_REPOSITORY_ROOT=$BOOTSTRAP_ROOT_DIR
+	E2E_CONTROLLER_REVISION=$SNAPSHOT_REVISION
+	E2E_PTAH_SIBLING_SOURCE_DIR=
+	if [ -z "${E2E_PTAH_SOURCE_DIR:-}" ] &&
+		git -C "$BOOTSTRAP_ROOT_DIR/../ptah" rev-parse --git-dir >/dev/null 2>&1; then
+		E2E_PTAH_SIBLING_SOURCE_DIR=$BOOTSTRAP_ROOT_DIR/../ptah
+	fi
+	export E2E_SOURCE_REPOSITORY_ROOT
+	export E2E_CONTROLLER_REVISION E2E_PTAH_SIBLING_SOURCE_DIR
+	"$SOURCE_SNAPSHOT_ROOT/hack/e2e-kind.sh" --source-snapshot "$@"
+	exit $?
+fi
+shift
+
+ROOT_DIR=$BOOTSTRAP_ROOT_DIR
+SOURCE_REPOSITORY_ROOT=${E2E_SOURCE_REPOSITORY_ROOT:?E2E_SOURCE_REPOSITORY_ROOT is required inside the source snapshot}
+CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:?E2E_CONTROLLER_REVISION is required inside the source snapshot}
+E2E_PTAH_SIBLING_SOURCE_DIR=${E2E_PTAH_SIBLING_SOURCE_DIR:-}
 PREDECESSOR_IDENTITY_FILE=$ROOT_DIR/internal/crdupgrade/assets/predecessor.json
 
 DOCKER_CONTEXT=${DOCKER_CONTEXT:-remote-dev-container}
@@ -42,6 +109,33 @@ require_command() {
 	command -v "$1" >/dev/null 2>&1 || fail "required command is not installed: $1"
 }
 
+verify_snapshot_source() (
+	# A separate extraction also validates direct private re-entry: ignored files,
+	# changed executable modes, and symlinks must not change the tested inputs.
+	verification_dir=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-source-verification.XXXXXX")
+	# shellcheck disable=SC2329 # Invoked by the EXIT trap installed below.
+	snapshot_verification_cleanup() {
+		status=$?
+		trap - EXIT HUP INT TERM
+		case "$verification_dir" in
+			"${TMPDIR:-/tmp}"/ptah-operator-e2e-source-verification.*)
+				rm -rf -- "$verification_dir" || status=1
+				;;
+			*) status=1 ;;
+		esac
+		exit "$status"
+	}
+	trap snapshot_verification_cleanup EXIT
+	trap 'exit 130' HUP INT TERM
+	mkdir "$verification_dir/source"
+	git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \
+		--output="$verification_dir/source.tar" "$CONTROLLER_REVISION"
+	tar -xf "$verification_dir/source.tar" -C "$verification_dir/source"
+	git -c core.filemode=true diff --no-index --quiet --no-ext-diff --no-textconv -- \
+		"$verification_dir/source" "$ROOT_DIR" ||
+		fail "E2E source snapshot differs from the exact operator commit"
+)
+
 sha256() {
 	if command -v sha256sum >/dev/null 2>&1; then
 		sha256sum | awk '{print $1}'
@@ -75,6 +169,22 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 	fail "sha256sum or shasum is required"
 fi
 
+case "$SOURCE_REPOSITORY_ROOT" in
+	/*) ;;
+	*) fail "E2E_SOURCE_REPOSITORY_ROOT must be an absolute path" ;;
+esac
+[ "$ROOT_DIR" != "$SOURCE_REPOSITORY_ROOT" ] ||
+	fail "E2E source snapshot must be isolated from the operator checkout"
+[ ! -e "$ROOT_DIR/.git" ] ||
+	fail "E2E source snapshot must not contain Git worktree metadata"
+printf '%s\n' "$CONTROLLER_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||
+	fail "operator source revision must be an exact 40-character lowercase Git commit"
+resolved_controller=$(git -C "$SOURCE_REPOSITORY_ROOT" rev-parse --verify "${CONTROLLER_REVISION}^{commit}") ||
+	fail "exact operator source commit $CONTROLLER_REVISION is unavailable"
+[ "$resolved_controller" = "$CONTROLLER_REVISION" ] ||
+	fail "operator source revision resolved to $resolved_controller, expected $CONTROLLER_REVISION"
+verify_snapshot_source
+
 [ -f "$PREDECESSOR_IDENTITY_FILE" ] ||
 	fail "predecessor identity fixture is missing: $PREDECESSOR_IDENTITY_FILE"
 PREDECESSOR_REVISION=$(jq -er '.revision' "$PREDECESSOR_IDENTITY_FILE")
@@ -88,7 +198,7 @@ esac
 case "$PREDECESSOR_CHART" in
 	/* | ../* | */../* | */..) fail "predecessor chart path must stay inside its archive" ;;
 esac
-resolved_predecessor=$(git -C "$ROOT_DIR" rev-parse --verify "${PREDECESSOR_REVISION}^{commit}" 2>/dev/null) ||
+resolved_predecessor=$(git -C "$SOURCE_REPOSITORY_ROOT" rev-parse --verify "${PREDECESSOR_REVISION}^{commit}" 2>/dev/null) ||
 	fail "exact predecessor commit $PREDECESSOR_REVISION is unavailable; fetch repository history"
 [ "$resolved_predecessor" = "$PREDECESSOR_REVISION" ] ||
 	fail "predecessor revision resolved to $resolved_predecessor, expected $PREDECESSOR_REVISION"
@@ -97,19 +207,16 @@ resolved_predecessor=$(git -C "$ROOT_DIR" rev-parse --verify "${PREDECESSOR_REVI
 printf '%s\n' "$K8S_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
 	fail "K8S_VERSION must be an exact major.minor.patch version"
 K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)
-case "$K8S_MAJOR_MINOR" in
-1.35 | 1.36 | 1.37) ;;
-*) fail "Kubernetes $K8S_MAJOR_MINOR is outside the supported 1.35-1.37 window" ;;
-esac
+SUPPORTED_KIND_NODE_IMAGE=$("$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \
+	"$ROOT_DIR/support/kubernetes.json" "$K8S_VERSION") ||
+	fail "Kubernetes $K8S_VERSION is not an exact member of support/kubernetes.json"
 printf '%s\n' "$E2E_PTAH_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||
 	fail "E2E_PTAH_REVISION must be an exact 40-character lowercase Git commit"
 if [ -z "$KIND_NODE_IMAGE" ]; then
-	KIND_NODE_IMAGE=$(jq -r --arg version "v${K8S_VERSION}" '
-    [.releases[].nodeImage | select(startswith("kindest/node:" + $version + "@sha256:"))][0] // empty
-  ' "$ROOT_DIR/support/kubernetes.json")
+	KIND_NODE_IMAGE=$SUPPORTED_KIND_NODE_IMAGE
 fi
-[ -n "$KIND_NODE_IMAGE" ] ||
-	fail "KIND_NODE_IMAGE is required when K8S_VERSION is outside the support manifest"
+[ "$KIND_NODE_IMAGE" = "$SUPPORTED_KIND_NODE_IMAGE" ] ||
+	fail "KIND_NODE_IMAGE must match the digest-pinned support manifest entry for Kubernetes $K8S_VERSION"
 is_pinned_image "$KIND_NODE_IMAGE" ||
 	fail "KIND_NODE_IMAGE must be pinned with @sha256:<64 lowercase hex>"
 case "$KIND_NODE_IMAGE" in
@@ -131,9 +238,6 @@ if [ -n "$E2E_RUNNER_IMAGE" ]; then
 	is_pinned_image "$E2E_RUNNER_IMAGE" ||
 		fail "E2E_RUNNER_IMAGE must be pinned with @sha256:<64 lowercase hex> when provided"
 fi
-CONTROLLER_REVISION=$(git -C "$ROOT_DIR" rev-parse HEAD)
-printf '%s\n' "$CONTROLLER_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||
-	fail "operator source revision must be an exact 40-character lowercase Git commit"
 for source_image in "$E2E_REGISTRY_IMAGE" "$E2E_POSTGRES_SOURCE_IMAGE" "$E2E_MYSQL_SOURCE_IMAGE"; do
 	is_pinned_image "$source_image" ||
 		fail "registry and database source images must be pinned by digest: $source_image"
@@ -210,7 +314,7 @@ if [ "$E2E_DEBUG_LOGS" -eq 1 ] && [ "${CI:-}" = true ]; then
 fi
 
 if [ -z "$E2E_RUN_ID" ]; then
-	git_revision=$(git -C "$ROOT_DIR" rev-parse --short=10 HEAD 2>/dev/null || printf 'worktree')
+	git_revision=$(printf '%s' "$CONTROLLER_REVISION" | cut -c1-10)
 	E2E_RUN_ID="local-${git_revision}-$$"
 fi
 identity="${K8S_VERSION}-${E2E_RUN_ID}"
@@ -1334,7 +1438,7 @@ if ! go -C "$ROOT_DIR" run ./test/e2e/handcraftoci verify-certificate \
 fi
 
 mkdir -p "$PREDECESSOR_BUILD_CONTEXT"
-git -C "$ROOT_DIR" archive --format=tar \
+git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \
 	--output="$PREDECESSOR_SOURCE_ARCHIVE" "$PREDECESSOR_REVISION"
 tar -xf "$PREDECESSOR_SOURCE_ARCHIVE" -C "$PREDECESSOR_BUILD_CONTEXT"
 [ -f "$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_DOCKERFILE" ] ||
@@ -1361,7 +1465,7 @@ while [ "$predecessor_crd_index" -lt "$predecessor_crd_count" ]; do
 done
 
 mkdir -p "$NEXT_BUILD_CONTEXT"
-git -C "$ROOT_DIR" archive --format=tar \
+git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \
 	--output="$NEXT_SOURCE_ARCHIVE" "$CONTROLLER_REVISION"
 tar -xf "$NEXT_SOURCE_ARCHIVE" -C "$NEXT_BUILD_CONTEXT"
 NEXT_GO_SEQUENCE_FILE=$NEXT_BUILD_CONTEXT/internal/crdupgrade/rollout.go
@@ -1406,7 +1510,7 @@ replace_exact_line_once \
 
 chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")
 [ -n "$chart_version" ] || fail "Helm chart version is missing"
-chart_source_epoch=$(git -C "$ROOT_DIR" show -s --format=%ct "$CONTROLLER_REVISION")
+chart_source_epoch=$(git -C "$SOURCE_REPOSITORY_ROOT" show -s --format=%ct "$CONTROLLER_REVISION")
 printf '%s\n' "$chart_source_epoch" | grep -Eq '^[0-9]+$' ||
 	fail "source commit does not have a valid release epoch"
 printf 'e2e: reproducibly packaging Helm chart %s\n' "$chart_version"
@@ -1563,8 +1667,9 @@ fi
 
 if [ -z "$E2E_EXECUTOR_IMAGE" ]; then
 	if [ -z "$E2E_PTAH_SOURCE_DIR" ]; then
-		if git -C "$ROOT_DIR/../ptah" rev-parse --git-dir >/dev/null 2>&1; then
-			E2E_PTAH_SOURCE_DIR=$ROOT_DIR/../ptah
+		if [ -n "$E2E_PTAH_SIBLING_SOURCE_DIR" ] &&
+			git -C "$E2E_PTAH_SIBLING_SOURCE_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+			E2E_PTAH_SOURCE_DIR=$E2E_PTAH_SIBLING_SOURCE_DIR
 		else
 			E2E_PTAH_SOURCE_DIR=$WORK_DIR/ptah-repository
 			printf 'e2e: cloning Ptah source from %s\n' "$E2E_PTAH_GIT_URL"

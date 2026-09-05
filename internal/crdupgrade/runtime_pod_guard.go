@@ -3,6 +3,7 @@ package crdupgrade
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -37,6 +38,7 @@ type runtimePodContract struct {
 	webhookSecretName   string
 	controllerPort      int64
 	certificatePort     int64
+	candidatePort       int64
 	digest              string
 }
 
@@ -307,6 +309,40 @@ func (g *RolloutGuard) runtimePodContract() (runtimePodContract, error) {
 	if candidateServiceName == g.WebhookServiceName {
 		return runtimePodContract{}, fmt.Errorf("certificate runtime candidate Service must differ from serving Service %q", g.WebhookServiceName)
 	}
+	candidatePort := int64(0)
+	if g.AdmissionContractVersion >= 2 {
+		expectedCandidateService, expectedMarker, err := deriveCertificateCanaryNames(g.CertificateDeploymentName, g.WebhookServiceName)
+		if err != nil {
+			return runtimePodContract{}, fmt.Errorf("derive certificate canary runtime identities: %w", err)
+		}
+		if candidateServiceName != expectedCandidateService {
+			return runtimePodContract{}, fmt.Errorf("certificate runtime candidate Service %q differs from derived identity %q", candidateServiceName, expectedCandidateService)
+		}
+		arguments := []struct {
+			prefix   string
+			expected string
+		}{
+			{prefix: "--namespace=", expected: g.ReleaseNamespace},
+			{prefix: "--release-name=", expected: g.ReleaseName},
+			{prefix: "--candidate-probe-config-map-name=", expected: expectedMarker},
+			{prefix: "--candidate-probe-username=", expected: "system:serviceaccount:" + g.ReleaseNamespace + ":" + g.CertificateDeploymentName},
+			{prefix: "--candidate-mutating-field-manager=", expected: mutatingCertificateCanaryFieldManager},
+			{prefix: "--candidate-validating-field-manager=", expected: validatingCertificateCanaryFieldManager},
+		}
+		for _, argument := range arguments {
+			actual, argErr := uniqueRuntimeArg(g.CertificateArgs, argument.prefix)
+			if argErr != nil {
+				return runtimePodContract{}, argErr
+			}
+			if actual != argument.expected {
+				return runtimePodContract{}, fmt.Errorf("certificate runtime arg %s%q differs from exact canary contract %q", argument.prefix, actual, argument.expected)
+			}
+		}
+		candidatePort, err = g.certificateCandidateRuntimePort()
+		if err != nil {
+			return runtimePodContract{}, err
+		}
+	}
 	controllerPort, err := runtimePortArg(g.ControllerArgs, "--webhook-port=")
 	if err != nil {
 		return runtimePodContract{}, err
@@ -343,6 +379,7 @@ func (g *RolloutGuard) runtimePodContract() (runtimePodContract, error) {
 		webhookSecretName:   webhookSecretName,
 		controllerPort:      controllerPort,
 		certificatePort:     certificatePort,
+		candidatePort:       candidatePort,
 		digest:              fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(identity))),
 	}, nil
 }
@@ -429,7 +466,7 @@ func (g *RolloutGuard) certificatePodContractExpressions(contract runtimePodCont
 		g.runtimeInitContainerExpression(false),
 		g.runtimeApplicationContainerExpression("certificate-rotator", "/ptah-cert-rotator", contract.certificateArgsJSON),
 		runtimeCertificateEnvironmentExpression(),
-		g.certificatePortsAndProbesExpression(contract.certificatePort),
+		g.certificatePortsAndProbesExpression(contract.certificatePort, contract.candidatePort),
 		runtimeCertificateVolumesExpression(),
 	}
 }
@@ -608,8 +645,18 @@ func (g *RolloutGuard) controllerPortsAndProbesExpression(webhookPort int64) str
 	)
 }
 
-func (g *RolloutGuard) certificatePortsAndProbesExpression(healthPort int64) string {
+func (g *RolloutGuard) certificatePortsAndProbesExpression(healthPort, candidatePort int64) string {
 	container := "object.spec.containers[0]"
+	if g.AdmissionContractVersion >= 2 {
+		return fmt.Sprintf(
+			`has(%[1]s.ports) && %[1]s.ports.size() == 2 && %[1]s.ports.all(p, p.protocol == "TCP" && (!has(p.hostIP) || p.hostIP == "") && (!has(p.hostPort) || p.hostPort == 0)) && %[1]s.ports.exists(p, p.name == "health" && p.containerPort == %[2]d) && %[1]s.ports.exists(p, p.name == "candidate" && p.containerPort == %[3]d) && %[4]s && %[5]s && !has(%[1]s.startupProbe)`,
+			container,
+			healthPort,
+			candidatePort,
+			runtimeHTTPProbeExpression(container+".livenessProbe", "/healthz", 5, 10, 1, 3),
+			runtimeHTTPProbeExpression(container+".readinessProbe", "/readyz", 0, 5, 1, 1),
+		)
+	}
 	return fmt.Sprintf(
 		`has(%s.ports) && %s.ports.size() == 1 && %s.ports[0].name == "health" && %s.ports[0].containerPort == %d && %s.ports[0].protocol == "TCP" && (!has(%s.ports[0].hostIP) || %s.ports[0].hostIP == "") && (!has(%s.ports[0].hostPort) || %s.ports[0].hostPort == 0) && %s && %s && !has(%s.startupProbe)`,
 		container, container, container, container, healthPort, container,
@@ -618,6 +665,20 @@ func (g *RolloutGuard) certificatePortsAndProbesExpression(healthPort int64) str
 		runtimeHTTPProbeExpression(container+".readinessProbe", "/readyz", 0, 5, 1, 1),
 		container,
 	)
+}
+
+func (g *RolloutGuard) certificateCandidateRuntimePort() (int64, error) {
+	if g.AdmissionContractVersion < 2 {
+		return 0, nil
+	}
+	port, err := runtimePortArg(g.CertificateArgs, "--candidate-bind-address=:")
+	if err != nil {
+		return 0, err
+	}
+	if port == int64(g.CertificateHealthPort) {
+		return 0, errors.New("certificate runtime candidate port must differ from its health port")
+	}
+	return port, nil
 }
 
 func runtimeHTTPProbeExpression(probe, path string, initialDelay, period, timeout, failure int32) string {

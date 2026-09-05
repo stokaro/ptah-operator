@@ -112,6 +112,30 @@ func TestAdmissionConvergenceDependencyProbeUsesFullAttemptIdentity(t *testing.T
 	}
 }
 
+func TestStableAdmissionConvergenceDependencyProbeIsPolicySpecific(t *testing.T) {
+	t.Parallel()
+
+	attempt := strings.Repeat("a", 64)
+	left := newStableAdmissionConvergenceDependencyProbe("stable-policy-left", attempt)
+	right := newStableAdmissionConvergenceDependencyProbe("stable-policy-right", attempt)
+	if left.FieldManager == right.FieldManager || left.Message == right.Message {
+		t.Fatal("stable dependency probes share a field-manager namespace")
+	}
+	for _, probe := range []admissionConvergenceDependencyProbe{left, right} {
+		prefix := stableAdmissionConvergenceProbeFieldManagerPrefix(probe.PolicyName)
+		if !strings.HasPrefix(probe.FieldManager, prefix) {
+			t.Fatalf("stable probe %s is outside its policy-specific namespace", probe.PolicyName)
+		}
+		digest := strings.TrimPrefix(probe.FieldManager, prefix)
+		if len(digest) != 64 || strings.Trim(digest, "0123456789abcdef") != "" {
+			t.Fatalf("stable probe %s does not retain a full attempt digest", probe.PolicyName)
+		}
+		if len(probe.FieldManager) > 128 {
+			t.Fatalf("stable probe field manager exceeds the Kubernetes 128-byte limit: %d", len(probe.FieldManager))
+		}
+	}
+}
+
 func TestRemoveAdmissionConvergenceDependencyProbeRequiresExactWrapper(t *testing.T) {
 	t.Parallel()
 

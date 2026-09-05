@@ -114,6 +114,14 @@ certificateRotation:
   retryInitial: "5s"
   retryMax: "5m"
   healthPort: 8081
+  candidatePort: 9444
+  # A transition is accepted only after every directly addressed API server
+  # observes both canary webhooks continuously for this stability window.
+  admissionConvergence:
+    stabilityDuration: "10s"
+    pollInterval: "1s"
+    # Bounds one endpoint observation: marker GET plus both denial probes.
+    requestTimeout: "5s"
   renewalThreshold: "720h"
   servingCertificateValidity: "2160h"
   caCertificateValidity: "26280h"

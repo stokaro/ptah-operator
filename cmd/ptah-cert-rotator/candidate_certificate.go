@@ -49,7 +49,9 @@ func (s *candidateCertificateStore) GetCertificate(*tls.ClientHelloInfo) (*tls.C
 
 func (s *candidateCertificateStore) tlsConfig() *tls.Config {
 	return &tls.Config{
-		MinVersion:     tls.VersionTLS12,
-		GetCertificate: s.GetCertificate,
+		MinVersion:             tls.VersionTLS12,
+		GetCertificate:         s.GetCertificate,
+		NextProtos:             []string{"http/1.1"},
+		SessionTicketsDisabled: true,
 	}
 }

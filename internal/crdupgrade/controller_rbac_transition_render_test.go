@@ -64,7 +64,7 @@ func TestControllerRBACCutoverHookRenderHasExactBoundedAuthority(t *testing.T) {
 	assertTransitionRenderRule(t, role, "rbac.authorization.k8s.io", "clusterroles", []string{controllerName}, []string{"get"})
 	assertTransitionRenderRule(t, role, "rbac.authorization.k8s.io", "roles", []string{controllerName, controllerName + "-runtime-admission"}, []string{"get"})
 	assertTransitionRenderRule(t, role, "authorization.k8s.io", "subjectaccessreviews", nil, []string{"create"})
-	assertTransitionRenderRule(t, role, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
+	assertTransitionRenderNoResourceVerb(t, role, "discovery.k8s.io", "endpointslices", "list")
 	assertTransitionRenderNoBindingCreate(t, role)
 
 	rollout := &RolloutGuard{
@@ -75,6 +75,7 @@ func TestControllerRBACCutoverHookRenderHasExactBoundedAuthority(t *testing.T) {
 		ControllerServiceAccountName: controllerName + "-v1-4d0b8e1c5cc7",
 		ControllerDeploymentName:     controllerName,
 		CertificateDeploymentName:    controllerName + "-cert-rotator",
+		CertificateRuntimeEnabled:    true,
 		ReleaseSequence:              1,
 		ManagerImage:                 "ghcr.io/stokaro/ptah-operator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}
@@ -88,6 +89,7 @@ func TestControllerRBACCutoverHookRenderHasExactBoundedAuthority(t *testing.T) {
 	teardown := &PrivilegeTeardown{rollout: rollout, contract: runtimeContract}
 	clusterContract := findTransitionAuthorizationContract(t, teardown.retiredAuthorizationContracts(), hookServiceAccount, "", true)
 	roleContract := findTransitionAuthorizationContract(t, teardown.retiredAuthorizationContracts(), hookServiceAccount, rollout.ReleaseNamespace, false)
+	discoveryContract := findTransitionAuthorizationContract(t, teardown.retiredAuthorizationContracts(), hookServiceAccount, "default", false)
 	var renderedClusterRole rbacv1.ClusterRole
 	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(role.Object, &renderedClusterRole); err != nil {
 		t.Fatalf("decode rendered controller RBAC cutover ClusterRole: %v", err)
@@ -95,14 +97,12 @@ func TestControllerRBACCutoverHookRenderHasExactBoundedAuthority(t *testing.T) {
 	if !reflect.DeepEqual(renderedClusterRole.Rules, clusterContract.rules) {
 		t.Fatal("rendered controller RBAC cutover ClusterRole differs from the exact teardown inventory")
 	}
-	roleObject := findTransitionRenderObject(t, objects, "Role", hookServiceAccount)
-	var renderedRole rbacv1.Role
-	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(roleObject.Object, &renderedRole); err != nil {
-		t.Fatalf("decode rendered controller RBAC cutover Role: %v", err)
-	}
-	if !reflect.DeepEqual(renderedRole.Rules, roleContract.rules) {
-		t.Fatal("rendered controller RBAC cutover Role differs from the exact teardown inventory")
-	}
+	assertTransitionRenderedRoleRules(t, objects, rollout.ReleaseNamespace, hookServiceAccount, roleContract.rules)
+	assertTransitionRenderedRoleRules(t, objects, "default", hookServiceAccount, discoveryContract.rules)
+	assertTransitionRenderedBinding(
+		t, objects, "RoleBinding", "default", hookServiceAccount, "Role", hookServiceAccount,
+		map[string]any{"kind": "ServiceAccount", "name": hookServiceAccount, "namespace": rollout.ReleaseNamespace},
+	)
 
 	assertTransitionRenderedClusterRoleRules(t, objects, controllerName, currentControllerClusterRoleRules(rollout))
 	assertTransitionRenderedRoleRules(t, objects, rollout.ReleaseNamespace, controllerName, currentControllerCoordinationRoleRules())
@@ -221,10 +221,7 @@ func assertTransitionRenderedRoleRules(
 	want []rbacv1.PolicyRule,
 ) {
 	t.Helper()
-	object := findTransitionRenderObject(t, objects, "Role", name)
-	if object.GetNamespace() != namespace {
-		t.Fatalf("rendered Role/%s namespace = %q, want %q", name, object.GetNamespace(), namespace)
-	}
+	object := findTransitionRenderObjectInNamespace(t, objects, "Role", namespace, name)
 	var role rbacv1.Role
 	if err := k8sruntime.DefaultUnstructuredConverter.FromUnstructured(object.Object, &role); err != nil {
 		t.Fatalf("decode rendered Role/%s/%s: %v", namespace, name, err)
@@ -241,10 +238,7 @@ func assertTransitionRenderedBinding(
 	wantSubjects ...map[string]any,
 ) {
 	t.Helper()
-	object := findTransitionRenderObject(t, objects, kind, name)
-	if object.GetNamespace() != namespace {
-		t.Fatalf("rendered %s/%s namespace = %q, want %q", kind, name, object.GetNamespace(), namespace)
-	}
+	object := findTransitionRenderObjectInNamespace(t, objects, kind, namespace, name)
 	roleRef, found, err := unstructured.NestedMap(object.Object, "roleRef")
 	if err != nil || !found || !reflect.DeepEqual(roleRef, map[string]any{
 		"apiGroup": "rbac.authorization.k8s.io", "kind": roleKind, "name": roleName,
@@ -288,6 +282,21 @@ func findTransitionRenderObject(t *testing.T, objects []*unstructured.Unstructur
 		}
 	}
 	t.Fatalf("rendered %s/%s was not found", kind, name)
+	return nil
+}
+
+func findTransitionRenderObjectInNamespace(
+	t *testing.T,
+	objects []*unstructured.Unstructured,
+	kind, namespace, name string,
+) *unstructured.Unstructured {
+	t.Helper()
+	for _, object := range objects {
+		if object.GetKind() == kind && object.GetNamespace() == namespace && object.GetName() == name {
+			return object
+		}
+	}
+	t.Fatalf("rendered %s/%s/%s was not found", kind, namespace, name)
 	return nil
 }
 
@@ -339,6 +348,26 @@ func assertTransitionRenderNoBindingCreate(t *testing.T, role *unstructured.Unst
 			if resource == "rolebindings" || resource == "clusterrolebindings" {
 				t.Fatalf("%s/%s grants forbidden create on %s", role.GetKind(), role.GetName(), resource)
 			}
+		}
+	}
+}
+
+func assertTransitionRenderNoResourceVerb(
+	t *testing.T,
+	role *unstructured.Unstructured,
+	apiGroup, resource, verb string,
+) {
+	t.Helper()
+	rawRules, found, err := unstructured.NestedSlice(role.Object, "rules")
+	if err != nil || !found {
+		t.Fatalf("%s/%s has no rules", role.GetKind(), role.GetName())
+	}
+	for _, rawRule := range rawRules {
+		rule := rawRule.(map[string]any)
+		if slices.Contains(transitionRenderStringSlice(rule["apiGroups"]), apiGroup) &&
+			slices.Contains(transitionRenderStringSlice(rule["resources"]), resource) &&
+			slices.Contains(transitionRenderStringSlice(rule["verbs"]), verb) {
+			t.Fatalf("%s/%s grants forbidden %s on %s/%s", role.GetKind(), role.GetName(), verb, apiGroup, resource)
 		}
 	}
 }

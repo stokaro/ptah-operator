@@ -2,6 +2,7 @@ package crdupgrade
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"reflect"
@@ -380,21 +381,29 @@ func (t *PrivilegeTeardown) inspect(ctx context.Context) (privilegeTeardownState
 	for _, binding := range state.privilegeRoleBindings {
 		privilegeRoleBindings[binding.namespace] = struct{}{}
 	}
-	needsReleasePrivilege := len(state.serviceAccounts) != 0
-	needsCoordinationPrivilege := false
+	requiredPrivilegeNamespaces := make([]string, 0, 3)
+	requiredPrivilegeNamespaceSet := make(map[string]struct{}, 3)
+	requirePrivilegeNamespace := func(namespace string) {
+		if _, found := requiredPrivilegeNamespaceSet[namespace]; found {
+			return
+		}
+		requiredPrivilegeNamespaceSet[namespace] = struct{}{}
+		requiredPrivilegeNamespaces = append(requiredPrivilegeNamespaces, namespace)
+	}
+	if len(state.serviceAccounts) != 0 {
+		requirePrivilegeNamespace(t.rollout.ReleaseNamespace)
+	}
 	for _, binding := range state.normalRoleBindings {
-		if binding.namespace == t.rollout.ReleaseNamespace {
-			needsReleasePrivilege = true
-		}
-		if binding.namespace == t.rollout.CoordinationNamespace && t.rollout.CoordinationNamespace != t.rollout.ReleaseNamespace {
-			needsCoordinationPrivilege = true
-		}
+		requirePrivilegeNamespace(binding.namespace)
 	}
-	if _, found := privilegeRoleBindings[t.rollout.ReleaseNamespace]; needsReleasePrivilege && !found {
-		return privilegeTeardownState{}, fmt.Errorf("cleanup privilege RoleBinding/%s/%s is required while release privilege targets remain", t.rollout.ReleaseNamespace, t.cleanupPrivilege)
-	}
-	if _, found := privilegeRoleBindings[t.rollout.CoordinationNamespace]; needsCoordinationPrivilege && !found {
-		return privilegeTeardownState{}, fmt.Errorf("cleanup privilege RoleBinding/%s/%s is required while coordination privilege targets remain", t.rollout.CoordinationNamespace, t.cleanupPrivilege)
+	for _, namespace := range requiredPrivilegeNamespaces {
+		if _, found := privilegeRoleBindings[namespace]; !found {
+			return privilegeTeardownState{}, fmt.Errorf(
+				"cleanup privilege RoleBinding/%s/%s is required while namespaced privilege targets remain",
+				namespace,
+				t.cleanupPrivilege,
+			)
+		}
 	}
 	return state, nil
 }
@@ -583,6 +592,7 @@ func (t *PrivilegeTeardown) bindingContracts() []privilegeBindingContract {
 	bootstrap := privilegeHookBindingName(hook, 53, "-bootstrap")
 	probe := privilegeHookBindingName(hook, 57, "-probe")
 	quiesce, _ := TeardownQuiesceJobName(hook)
+	certificateDiscovery, _ := CertificateDiscoveryRoleName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName)
 
 	var predecessorSubject *rbacv1.Subject
 	if t.rollout.PreviousControllerServiceAccountName != "" {
@@ -643,12 +653,31 @@ func (t *PrivilegeTeardown) bindingContracts() []privilegeBindingContract {
 		contracts = append(contracts, privilegeBindingContract{
 			name: certificate, namespace: t.rollout.ReleaseNamespace, roleRef: roleRef("Role", certificate), subject: serviceAccountSubject(certificate), component: "certificate-rotation",
 		})
+		if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+			contracts = append(contracts, privilegeBindingContract{
+				name: certificateDiscovery, namespace: corev1.NamespaceDefault, roleRef: roleRef("Role", certificateDiscovery), subject: serviceAccountSubject(certificate), component: "certificate-rotation",
+			})
+		}
 	}
 	contracts = append(contracts,
 		privilegeBindingContract{name: hook, namespace: t.rollout.ReleaseNamespace, roleRef: roleRef("Role", hook), subject: serviceAccountSubject(hook), component: "crd-manager"},
+	)
+	if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+		contracts = append(contracts, privilegeBindingContract{
+			name: hook, namespace: corev1.NamespaceDefault, roleRef: roleRef("Role", hook), subject: serviceAccountSubject(hook), component: "crd-manager",
+		})
+	}
+	contracts = append(contracts,
 		privilegeBindingContract{name: bootstrap, namespace: t.rollout.ReleaseNamespace, roleRef: roleRef("Role", bootstrap), subject: serviceAccountSubject(hook), component: "hook-identity-bootstrap"},
 		privilegeBindingContract{name: probe, namespace: t.rollout.ReleaseNamespace, roleRef: roleRef("Role", probe), subject: serviceAccountSubject(hook), component: "crd-manager"},
 		privilegeBindingContract{name: quiesce, namespace: t.rollout.ReleaseNamespace, roleRef: roleRef("Role", quiesce), subject: serviceAccountSubject(hook), component: "crd-manager-teardown-quiesce"},
+	)
+	if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+		contracts = append(contracts, privilegeBindingContract{
+			name: quiesce, namespace: corev1.NamespaceDefault, roleRef: roleRef("Role", quiesce), subject: serviceAccountSubject(hook), component: "crd-manager-teardown-quiesce",
+		})
+	}
+	contracts = append(contracts,
 		privilegeBindingContract{name: t.cleanupPrivilege, namespace: t.rollout.ReleaseNamespace, roleRef: roleRef("Role", t.cleanupPrivilege), subject: serviceAccountSubject(t.cleanupAccountName), component: "crd-manager-teardown", selfRevoke: true},
 		privilegeBindingContract{name: t.residualRelease, namespace: t.rollout.ReleaseNamespace, roleRef: roleRef("Role", t.residualRelease), subject: serviceAccountSubject(t.cleanupAccountName), component: "crd-manager-teardown", retained: true, required: true},
 		privilegeBindingContract{name: t.residualDiscovery, namespace: t.discoveryNamespace, roleRef: roleRef("Role", t.residualDiscovery), subject: serviceAccountSubject(t.cleanupAccountName), component: "crd-manager-teardown", retained: true, required: true},
@@ -656,6 +685,14 @@ func (t *PrivilegeTeardown) bindingContracts() []privilegeBindingContract {
 	if t.rollout.CoordinationNamespace != t.rollout.ReleaseNamespace {
 		contracts = append(contracts, privilegeBindingContract{
 			name: t.cleanupPrivilege, namespace: t.rollout.CoordinationNamespace,
+			roleRef: roleRef("Role", t.cleanupPrivilege), subject: serviceAccountSubject(t.cleanupAccountName),
+			component: "crd-manager-teardown", selfRevoke: true,
+		})
+	}
+	if t.rollout.ReleaseNamespace != corev1.NamespaceDefault &&
+		t.rollout.CoordinationNamespace != corev1.NamespaceDefault {
+		contracts = append(contracts, privilegeBindingContract{
+			name: t.cleanupPrivilege, namespace: corev1.NamespaceDefault,
 			roleRef: roleRef("Role", t.cleanupPrivilege), subject: serviceAccountSubject(t.cleanupAccountName),
 			component: "crd-manager-teardown", selfRevoke: true,
 		})
@@ -743,7 +780,6 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterroles"}, []string{controller}, []string{"get"}),
 				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"roles"}, []string{controller, controller + "-runtime-admission"}, []string{"get"}),
 				privilegePolicyRule([]string{"authorization.k8s.io"}, []string{"subjectaccessreviews"}, nil, []string{"create"}),
-				privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
 			},
 		},
 		{
@@ -777,6 +813,11 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 						[]string{"get", "delete"},
 					))
 				}
+				if t.rollout.ReleaseNamespace == corev1.NamespaceDefault {
+					rules = append(rules, privilegePolicyRule(
+						[]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"},
+					))
+				}
 				return rules
 			}(),
 		},
@@ -802,6 +843,14 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 			},
 		},
 	}
+	if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+		contracts = append(contracts, privilegeAuthorizationContract{
+			name: hook, namespace: corev1.NamespaceDefault, component: "crd-manager", retired: true, probeSubject: "hook-quiesce",
+			rules: []rbacv1.PolicyRule{
+				privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
+			},
+		})
+	}
 
 	if t.contract.CertificateRuntimeEnabled {
 		certificate := t.contract.CertificateServiceAccountName
@@ -810,7 +859,6 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 			privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"mutatingwebhookconfigurations"}, []string{AdmissionConfigurationName}, []string{"get", "update"}),
 			privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingwebhookconfigurations"}, []string{AdmissionConfigurationName}, []string{"get", "update"}),
 			privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicies", "validatingadmissionpolicybindings"}, runtimeGuardNames, []string{"get"}),
-			privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
 			privilegePolicyRule([]string{"scheduling.k8s.io"}, []string{"priorityclasses"}, nil, []string{"get", "list"}),
 		}
 		certificateRoleRules := []rbacv1.PolicyRule{
@@ -839,10 +887,30 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 			),
 			privilegePolicyRule([]string{""}, []string{"limitranges"}, nil, []string{"list"}),
 		)
+		if t.rollout.AdmissionContractVersion >= 2 {
+			certificateRoleRules = append(certificateRoleRules, privilegePolicyRule(
+				[]string{""},
+				[]string{"configmaps"},
+				[]string{t.certificateCanaryConfigMapName()},
+				[]string{"get", "update"},
+			))
+		}
+		certificateRoleRules = append(certificateRoleRules,
+			privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
+		)
 		contracts = append(contracts,
 			privilegeAuthorizationContract{name: certificate, component: "certificate-rotation", cluster: true, retired: true, probeSubject: "certificate", rules: certificateClusterRules},
 			privilegeAuthorizationContract{name: certificate, namespace: t.rollout.ReleaseNamespace, component: "certificate-rotation", retired: true, probeSubject: "certificate", rules: certificateRoleRules},
 		)
+		if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+			certificateDiscovery, _ := CertificateDiscoveryRoleName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName)
+			contracts = append(contracts, privilegeAuthorizationContract{
+				name: certificateDiscovery, namespace: corev1.NamespaceDefault, component: "certificate-rotation", retired: true, probeSubject: "certificate",
+				rules: []rbacv1.PolicyRule{
+					privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
+				},
+			})
+		}
 	}
 	return contracts
 }
@@ -915,6 +983,9 @@ func RevokedPrivilegeMutationGrants(
 	if contract.CertificateRuntimeEnabled && teardown.certificateLeaseName() == "" {
 		return nil, errors.New("certificate rotation --lease-name is required for revoked privilege grants")
 	}
+	if contract.CertificateRuntimeEnabled && rollout.AdmissionContractVersion >= 2 && teardown.certificateCanaryConfigMapName() == "" {
+		return nil, errors.New("certificate rotation --candidate-probe-config-map-name is required for revoked privilege grants")
+	}
 
 	var grants []RevokedPrivilegeMutationGrant
 	for _, authorization := range teardown.authorizationContracts() {
@@ -985,6 +1056,7 @@ func exactPrivilegeAuthorizationRules(contract privilegeAuthorizationContract) [
 func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthorizationContract {
 	hook := t.rollout.HookServiceAccountName
 	quiesce, _ := TeardownQuiesceJobName(hook)
+	certificateDiscovery, _ := CertificateDiscoveryRoleName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName)
 	bootstrap := privilegeHookBindingName(hook, 53, "-bootstrap")
 	probe := privilegeHookBindingName(hook, 57, "-probe")
 	clusterRoleNames := []string{t.rollout.ControllerDeploymentName}
@@ -995,6 +1067,9 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 	if t.contract.CertificateRuntimeEnabled {
 		clusterRoleNames = append(clusterRoleNames, t.contract.CertificateServiceAccountName)
 		roleNames = append(roleNames, t.contract.CertificateServiceAccountName)
+		if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+			roleNames = append(roleNames, certificateDiscovery)
+		}
 	}
 	clusterRoleNames = append(clusterRoleNames, hook, bootstrap, quiesce, t.cleanupPrivilege, t.residualGuard)
 	roleNames = append(roleNames, hook, bootstrap, probe, quiesce, t.cleanupPrivilege, t.residualRelease, t.residualDiscovery)
@@ -1003,12 +1078,6 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 		{
 			name: quiesce, component: "crd-manager-teardown-quiesce", cluster: true, probeSubject: "hook-quiesce",
 			rules: []rbacv1.PolicyRule{
-				privilegePolicyRule(
-					[]string{"discovery.k8s.io"},
-					[]string{"endpointslices"},
-					nil,
-					[]string{"list"},
-				),
 				privilegePolicyRule(
 					[]string{"admissionregistration.k8s.io"},
 					[]string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"},
@@ -1043,32 +1112,40 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 		},
 		{
 			name: quiesce, namespace: t.rollout.ReleaseNamespace, component: "crd-manager-teardown-quiesce", probeSubject: "hook-quiesce",
-			rules: []rbacv1.PolicyRule{
-				privilegePolicyRule(
-					[]string{"apps"}, []string{"deployments"},
-					[]string{t.rollout.ControllerDeploymentName, t.rollout.CertificateDeploymentName},
-					[]string{"get", "update"},
-				),
-				privilegePolicyRule([]string{"apps"}, []string{"replicasets"}, nil, []string{"list"}),
-				privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"list"}),
-				privilegePolicyRule([]string{""}, []string{"serviceaccounts"}, t.privilegeServiceAccountNames(), []string{"get"}),
-				privilegePolicyRule(
-					[]string{""}, []string{"configmaps"},
-					[]string{
-						ReleaseActivationName,
-						AdmissionConvergenceMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence),
-						t.retirementMarkerName(),
-					},
-					[]string{"get", "update"},
-				),
-				privilegePolicyRule(
-					[]string{""}, []string{"configmaps"},
-					[]string{
-						HookIdentityProbeObjectName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
-					},
-					[]string{"get"},
-				),
-			},
+			rules: func() []rbacv1.PolicyRule {
+				rules := []rbacv1.PolicyRule{
+					privilegePolicyRule(
+						[]string{"apps"}, []string{"deployments"},
+						[]string{t.rollout.ControllerDeploymentName, t.rollout.CertificateDeploymentName},
+						[]string{"get", "update"},
+					),
+					privilegePolicyRule([]string{"apps"}, []string{"replicasets"}, nil, []string{"list"}),
+					privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"list"}),
+					privilegePolicyRule([]string{""}, []string{"serviceaccounts"}, t.privilegeServiceAccountNames(), []string{"get"}),
+					privilegePolicyRule(
+						[]string{""}, []string{"configmaps"},
+						[]string{
+							ReleaseActivationName,
+							AdmissionConvergenceMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence),
+							t.retirementMarkerName(),
+						},
+						[]string{"get", "update"},
+					),
+					privilegePolicyRule(
+						[]string{""}, []string{"configmaps"},
+						[]string{
+							HookIdentityProbeObjectName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
+						},
+						[]string{"get"},
+					),
+				}
+				if t.rollout.ReleaseNamespace == corev1.NamespaceDefault {
+					rules = append(rules, privilegePolicyRule(
+						[]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"},
+					))
+				}
+				return rules
+			}(),
 		},
 		t.cleanupPrivilegeContract(),
 		{
@@ -1085,12 +1162,52 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 			},
 		},
 	}
+	if t.contract.CertificateRuntimeEnabled {
+		cleanupIndex := len(contracts) - 1
+		contracts[cleanupIndex].rules = append(contracts[cleanupIndex].rules, privilegePolicyRule(
+			[]string{""},
+			[]string{"secrets"},
+			[]string{t.certificateStagingSecretName()},
+			[]string{"get", "update", "delete"},
+		))
+	}
+	if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+		contracts = append(contracts, privilegeAuthorizationContract{
+			name: quiesce, namespace: corev1.NamespaceDefault, component: "crd-manager-teardown-quiesce", probeSubject: "hook-quiesce",
+			rules: []rbacv1.PolicyRule{
+				privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
+			},
+		})
+	}
 	if t.rollout.CoordinationNamespace != t.rollout.ReleaseNamespace {
+		coordinationDeletionNames := []string{t.rollout.ControllerDeploymentName}
+		if t.rollout.CoordinationNamespace == corev1.NamespaceDefault {
+			coordinationDeletionNames = append(coordinationDeletionNames, hook, quiesce)
+			if t.contract.CertificateRuntimeEnabled {
+				coordinationDeletionNames = append(coordinationDeletionNames, certificateDiscovery)
+			}
+		}
+		coordinationDeletionNames = append(coordinationDeletionNames, t.cleanupPrivilege)
 		contracts = append(contracts, privilegeAuthorizationContract{
 			name: t.cleanupPrivilege, namespace: t.rollout.CoordinationNamespace, component: "crd-manager-teardown", probeSubject: "cleanup",
 			rules: []rbacv1.PolicyRule{privilegePolicyRule(
 				[]string{rbacv1.GroupName}, []string{"rolebindings"},
-				[]string{t.rollout.ControllerDeploymentName, t.cleanupPrivilege}, []string{"delete"},
+				coordinationDeletionNames, []string{"delete"},
+			)},
+		})
+	}
+	if t.rollout.ReleaseNamespace != corev1.NamespaceDefault &&
+		t.rollout.CoordinationNamespace != corev1.NamespaceDefault {
+		defaultDeletionNames := []string{hook, quiesce}
+		if t.contract.CertificateRuntimeEnabled {
+			defaultDeletionNames = append(defaultDeletionNames, certificateDiscovery)
+		}
+		defaultDeletionNames = append(defaultDeletionNames, t.cleanupPrivilege)
+		contracts = append(contracts, privilegeAuthorizationContract{
+			name: t.cleanupPrivilege, namespace: corev1.NamespaceDefault, component: "crd-manager-teardown", probeSubject: "cleanup",
+			rules: []rbacv1.PolicyRule{privilegePolicyRule(
+				[]string{rbacv1.GroupName}, []string{"rolebindings"},
+				defaultDeletionNames, []string{"delete"},
 			)},
 		})
 	}
@@ -1209,7 +1326,7 @@ func (t *PrivilegeTeardown) runtimeAdmissionGuardNames() []string {
 }
 
 func (t *PrivilegeTeardown) bootstrapAdmissionGuardNames() []string {
-	return []string{
+	names := []string{
 		HookIdentityGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
 		HookIdentityProbeGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
 		ServiceAccountObjectGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName),
@@ -1226,6 +1343,10 @@ func (t *PrivilegeTeardown) bootstrapAdmissionGuardNames() []string {
 		ParentHookJobOriginGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName),
 		ParentHookJobContractPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
 	}
+	if t.contract.CertificateRuntimeEnabled {
+		names = append(names, StagingSecretGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName))
+	}
+	return names
 }
 
 func (t *PrivilegeTeardown) certificateLeaseName() string {
@@ -1240,6 +1361,16 @@ func (t *PrivilegeTeardown) certificateLeaseName() string {
 
 func (t *PrivilegeTeardown) certificateStagingSecretName() string {
 	const prefix = "--staging-secret-name="
+	for _, argument := range t.rollout.CertificateArgs {
+		if strings.HasPrefix(argument, prefix) {
+			return strings.TrimPrefix(argument, prefix)
+		}
+	}
+	return ""
+}
+
+func (t *PrivilegeTeardown) certificateCanaryConfigMapName() string {
+	const prefix = "--candidate-probe-config-map-name="
 	for _, argument := range t.rollout.CertificateArgs {
 		if strings.HasPrefix(argument, prefix) {
 			return strings.TrimPrefix(argument, prefix)
@@ -1627,6 +1758,7 @@ func (t *PrivilegeTeardown) validate() error {
 	if t.contract.CertificateRuntimeEnabled {
 		leaseArguments := 0
 		stagingSecretArguments := 0
+		candidateProbeConfigMapArguments := 0
 		recreateArguments := 0
 		for _, argument := range t.rollout.CertificateArgs {
 			if strings.HasPrefix(argument, "--lease-name=") {
@@ -1652,6 +1784,13 @@ func (t *PrivilegeTeardown) validate() error {
 					return errors.New("certificate rotation --recreate-missing-secret must be exactly true or false")
 				}
 			}
+			if strings.HasPrefix(argument, "--candidate-probe-config-map-name=") {
+				candidateProbeConfigMapArguments++
+				value := strings.TrimPrefix(argument, "--candidate-probe-config-map-name=")
+				if value == "" || value != strings.TrimSpace(value) {
+					return errors.New("certificate rotation --candidate-probe-config-map-name must have a nonempty, unpadded value")
+				}
+			}
 		}
 		if leaseArguments != 1 {
 			return fmt.Errorf("certificate rotation requires exactly one --lease-name argument, found %d", leaseArguments)
@@ -1661,6 +1800,25 @@ func (t *PrivilegeTeardown) validate() error {
 		}
 		if recreateArguments > 1 {
 			return fmt.Errorf("certificate rotation allows at most one --recreate-missing-secret argument, found %d", recreateArguments)
+		}
+		if t.rollout.AdmissionContractVersion >= 2 {
+			if candidateProbeConfigMapArguments != 1 {
+				return fmt.Errorf("certificate rotation requires exactly one --candidate-probe-config-map-name argument, found %d", candidateProbeConfigMapArguments)
+			}
+			_, expectedCandidateProbeConfigMapName, err := deriveCertificateCanaryNames(
+				t.rollout.CertificateDeploymentName,
+				t.rollout.WebhookServiceName,
+			)
+			if err != nil {
+				return fmt.Errorf("derive certificate rotation canary identities: %w", err)
+			}
+			if actual := t.certificateCanaryConfigMapName(); actual != expectedCandidateProbeConfigMapName {
+				return fmt.Errorf(
+					"certificate rotation candidate probe ConfigMap %q differs from derived identity %q",
+					actual,
+					expectedCandidateProbeConfigMapName,
+				)
+			}
 		}
 	}
 	names := []string{t.contract.ControllerServiceAccountName, t.contract.CertificateServiceAccountName, t.rollout.HookServiceAccountName, cleanup}
@@ -1724,6 +1882,21 @@ func TeardownDiscoveryRoleName(hookServiceAccountName string) (string, error) {
 		return "", fmt.Errorf("teardown discovery role name exceeds 63 characters")
 	}
 	return name, nil
+}
+
+// CertificateDiscoveryRoleName returns the cross-namespace Role and
+// RoleBinding name used to discover the default Kubernetes Service API
+// endpoints. Its release identity digest prevents two equal release names in
+// different namespaces from sharing authority in the default namespace.
+func CertificateDiscoveryRoleName(releaseNamespace, releaseName string) (string, error) {
+	if problems := utilvalidation.IsDNS1123Label(releaseNamespace); len(problems) > 0 {
+		return "", fmt.Errorf("release namespace is not a DNS label: %s", strings.Join(problems, "; "))
+	}
+	if problems := utilvalidation.IsDNS1123Subdomain(releaseName); len(problems) > 0 {
+		return "", fmt.Errorf("release name is not a DNS subdomain: %s", strings.Join(problems, "; "))
+	}
+	digest := sha256.Sum256([]byte(releaseNamespace + "\n" + releaseName))
+	return fmt.Sprintf("ptah-cert-discovery-v1-%x", digest[:20]), nil
 }
 
 func privilegeBindingTouchesProtected(subjects []rbacv1.Subject, protected privilegeProtectedSubjects) bool {

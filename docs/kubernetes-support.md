@@ -60,3 +60,10 @@ If live discovery or parsing fails, the workflow makes no support claim and open
 Patch-level image refreshes are independent from minor-window changes. The same scheduled updater inspects official kind releases, opens or refreshes a pull request changing `kindVersion`, `lastVerified`, and affected `nodeImage` values, and lets the full matrix validate the update. A tag alone is not accepted: the manifest requires the registry digest so a later tag mutation cannot change CI silently.
 
 The matrix installs the chart, serves the CRDs, and exercises OCI resolution and verification, observation, planning, approval, application, failure recovery, and post-apply convergence. It also verifies the exact three-control-plane, one-worker topology, requires every control-plane component to run once on every control-plane node, and configures the isolated registry on every node. The suite must consume the generated matrix and must not introduce a private list of Kubernetes versions.
+
+Local lifecycle runs use the same manifest: `K8S_VERSION` must select an exact
+patch entry, and any explicit `KIND_NODE_IMAGE` must match that entry's digest.
+Before creating Docker resources, the harness archives the selected Git commit
+into an isolated directory. Chart packaging, image builds, and child test scripts
+consume that snapshot. Ignored files or later edits in the original checkout
+therefore cannot change the artifacts attributed to the tested commit.

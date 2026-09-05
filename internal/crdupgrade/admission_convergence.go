@@ -351,6 +351,14 @@ func (g *AdmissionConvergenceGuard) verifyDependencies(ctx context.Context) erro
 			return metadataErr
 		}
 	}
+	if err := NewCertificateWriteGuard(rollout).Verify(ctx); err != nil {
+		return fmt.Errorf("verify admission convergence certificate write dependencies: %w", err)
+	}
+	if rollout.CertificateRuntimeEnabled {
+		if err := NewStagingSecretGuard(rollout).Verify(ctx); err != nil {
+			return fmt.Errorf("verify admission convergence staging Secret dependency: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -1099,6 +1107,18 @@ func (g *AdmissionConvergenceGuard) dependencyProbes() []admissionConvergenceDep
 	probes := make([]admissionConvergenceDependencyProbe, 0, (len(entries)-1)/2)
 	for index := 0; index+1 < len(entries); index += 2 {
 		probes = append(probes, newAdmissionConvergenceDependencyProbe(entries[index].Name, attempt))
+	}
+	for _, policyName := range []string{
+		CertificateMutatingWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
+		CertificateValidatingWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
+	} {
+		probes = append(probes, newStableAdmissionConvergenceDependencyProbe(policyName, attempt))
+	}
+	if g.dependencyRollout != nil && g.dependencyRollout.CertificateRuntimeEnabled {
+		probes = append(probes, newStableAdmissionConvergenceDependencyProbe(
+			StagingSecretGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
+			attempt,
+		))
 	}
 	return probes
 }

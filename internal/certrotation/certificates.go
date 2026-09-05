@@ -56,7 +56,7 @@ func inspectSecret(secret *corev1.Secret, config Config, now time.Time) (secretS
 	if caKeyErr == nil {
 		current.caKey = caKey
 	}
-	rotateCA := caErr != nil || caKeyErr != nil || ca == nil || !ca.IsCA || !publicKeysEqual(ca.PublicKey, signerPublicKey(caKey)) ||
+	rotateCA := caErr != nil || caKeyErr != nil || !selfSignedCertificateAuthority(ca) || !publicKeysEqual(ca.PublicKey, signerPublicKey(caKey)) ||
 		!certificateCurrentlyValid(ca, now) || !now.Add(config.RenewalThreshold).Before(ca.NotAfter) ||
 		certificateLifetimeExceedsPolicy(ca, now, config.CACertificateValidity)
 
@@ -276,7 +276,7 @@ func servingCertificateValid(
 // uses this to decide whether an expired current CA may safely remain in the
 // overlap while the newly generated CA is deployed.
 func servingCertificateAuthentic(leaf *x509.Certificate, ca *x509.Certificate, requiredNames []string) bool {
-	if leaf == nil || ca == nil || leaf.CheckSignatureFrom(ca) != nil || leaf.IsCA {
+	if leaf == nil || ca == nil || leaf.IsCA || !bytes.Equal(leaf.RawIssuer, ca.RawSubject) || leaf.CheckSignatureFrom(ca) != nil {
 		return false
 	}
 	if !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageAny) {
@@ -288,6 +288,13 @@ func servingCertificateAuthentic(leaf *x509.Certificate, ca *x509.Certificate, r
 		}
 	}
 	return true
+}
+
+func selfSignedCertificateAuthority(certificate *x509.Certificate) bool {
+	return certificate != nil && certificate.IsCA && certificate.BasicConstraintsValid &&
+		certificate.KeyUsage&x509.KeyUsageCertSign != 0 &&
+		bytes.Equal(certificate.RawIssuer, certificate.RawSubject) &&
+		certificate.CheckSignatureFrom(certificate) == nil
 }
 
 func certificateCurrentlyValid(certificate *x509.Certificate, now time.Time) bool {

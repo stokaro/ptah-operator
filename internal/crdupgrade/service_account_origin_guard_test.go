@@ -54,6 +54,7 @@ func testRenderedServiceAccountOriginGuardMatchesCompiledContract(t *testing.T, 
 	guard.ManagerImage = renderedGuardManagerImage
 	guard.ControllerDeploymentName = controllerName
 	guard.CertificateDeploymentName = certificateName
+	guard.AdmissionContractVersion = CurrentAdmissionContractVersion
 	guard.ControllerServiceAccountName = renderedDeploymentServiceAccount(t, rendered, controllerName)
 	guard.CertificateServiceAccountName = renderedDeploymentServiceAccount(t, rendered, certificateName)
 	guard.HookServiceAccountName = hookBase + "-crd-v1-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]

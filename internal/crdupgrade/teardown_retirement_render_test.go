@@ -88,7 +88,7 @@ func TestRenderedTeardownRetirementMatchesCompiledContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantCount := 28
+			wantCount := 29
 			if test.certificateRecovery {
 				wantCount++
 			}
@@ -145,12 +145,71 @@ func TestRenderedTeardownRetirementStableAnchorsDoNotDriftAcrossImages(t *testin
 	}
 }
 
+func TestRenderedTeardownRetirementBootstrapEndpointSliceDiscoveryIsDefaultScoped(t *testing.T) {
+	for _, namespace := range []string{"ptah-e2e", corev1.NamespaceDefault} {
+		t.Run(namespace, func(t *testing.T) {
+			objects := renderTeardownRetirementChartInNamespaceWithDigest(t, namespace, false, strings.Repeat("2", 64))
+			guard := teardownRetirementGuardFromRender(t, objects)
+			name := guard.bootstrapServiceAccountName()
+
+			clusterRoleObject := findTeardownRetirementNamespacedObject(t, objects, "ClusterRole", "", name)
+			var clusterRole rbacv1.ClusterRole
+			decodeTeardownRetirementObject(t, clusterRoleObject, &clusterRole)
+			for _, rule := range clusterRole.Rules {
+				if slices.Contains(rule.APIGroups, "discovery.k8s.io") && slices.Contains(rule.Resources, "endpointslices") {
+					t.Fatalf("retirement bootstrap ClusterRole/%s retains EndpointSlice authority", name)
+				}
+			}
+
+			endpointRoles := 0
+			for _, object := range objects {
+				if object.GetKind() != "Role" || object.GetName() != name {
+					continue
+				}
+				var role rbacv1.Role
+				decodeTeardownRetirementObject(t, object, &role)
+				for _, rule := range role.Rules {
+					if slices.Contains(rule.APIGroups, "discovery.k8s.io") &&
+						slices.Contains(rule.Resources, "endpointslices") && slices.Contains(rule.Verbs, "list") {
+						endpointRoles++
+						if object.GetNamespace() != corev1.NamespaceDefault {
+							t.Fatalf("retirement bootstrap EndpointSlice Role rendered in namespace %q", object.GetNamespace())
+						}
+					}
+				}
+			}
+			if endpointRoles != 1 {
+				t.Fatalf("retirement bootstrap EndpointSlice Role count = %d, want 1", endpointRoles)
+			}
+
+			bindingObject := findTeardownRetirementNamespacedObject(t, objects, "RoleBinding", corev1.NamespaceDefault, name)
+			var binding rbacv1.RoleBinding
+			decodeTeardownRetirementObject(t, bindingObject, &binding)
+			wantSubject := rbacv1.Subject{Kind: rbacv1.ServiceAccountKind, Name: name, Namespace: namespace}
+			if binding.RoleRef != (rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: name}) ||
+				!reflect.DeepEqual(binding.Subjects, []rbacv1.Subject{wantSubject}) {
+				t.Fatalf("retirement bootstrap default RoleBinding differs from exact subject/ref contract: %#v", binding)
+			}
+		})
+	}
+}
+
 func renderTeardownRetirementChart(t *testing.T, certificateRecovery bool) []*unstructured.Unstructured {
 	t.Helper()
 	return renderTeardownRetirementChartWithDigest(t, certificateRecovery, strings.Repeat("2", 64))
 }
 
 func renderTeardownRetirementChartWithDigest(t *testing.T, certificateRecovery bool, digest string) []*unstructured.Unstructured {
+	t.Helper()
+	return renderTeardownRetirementChartInNamespaceWithDigest(t, "ptah-e2e", certificateRecovery, digest)
+}
+
+func renderTeardownRetirementChartInNamespaceWithDigest(
+	t *testing.T,
+	namespace string,
+	certificateRecovery bool,
+	digest string,
+) []*unstructured.Unstructured {
 	t.Helper()
 	helm, err := exec.LookPath("helm")
 	if err != nil {
@@ -160,7 +219,7 @@ func renderTeardownRetirementChartWithDigest(t *testing.T, certificateRecovery b
 	repositoryRoot := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
 	args := []string{
 		"template", "ptah-e2e", filepath.Join(repositoryRoot, "charts", "ptah-operator"),
-		"--namespace", "ptah-e2e",
+		"--namespace", namespace,
 		"--show-only", "templates/teardown-retirement.yaml",
 		"--set-string", "image.digest=sha256:" + digest,
 		"--set-string", "execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -246,6 +305,7 @@ func teardownRetirementGuardFromRender(t *testing.T, objects []*unstructured.Uns
 		ControllerDeploymentName:                teardownRetirementRenderArgument(t, args, "--controller-deployment-name="),
 		ControllerReplicas:                      parseInt32("--controller-replicas="),
 		CertificateDeploymentName:               teardownRetirementRenderArgument(t, args, "--certificate-deployment-name="),
+		CertificateRuntimeEnabled:               true,
 		ControllerStateVersion:                  1,
 		AdmissionContractVersion:                1,
 		ReleaseSequence:                         parseInt32("--release-sequence="),
@@ -399,6 +459,21 @@ func findTeardownRetirementObject(t *testing.T, objects []*unstructured.Unstruct
 		t.Fatalf("rendered %s/%s at weight %s is missing", kind, name, weight)
 	}
 	return found
+}
+
+func findTeardownRetirementNamespacedObject(
+	t *testing.T,
+	objects []*unstructured.Unstructured,
+	kind, namespace, name string,
+) *unstructured.Unstructured {
+	t.Helper()
+	for _, object := range objects {
+		if object.GetKind() == kind && object.GetNamespace() == namespace && object.GetName() == name {
+			return object
+		}
+	}
+	t.Fatalf("rendered %s/%s/%s is missing", kind, namespace, name)
+	return nil
 }
 
 func findTeardownRetirementObjectByComponent(t *testing.T, objects []*unstructured.Unstructured, kind, component, weight string) *unstructured.Unstructured {
