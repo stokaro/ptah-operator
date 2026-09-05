@@ -771,14 +771,19 @@ nodes_ready_now() {
 
 assert_kind_ha_topology() {
 	kind get nodes --name "$CLUSTER_NAME" | LC_ALL=C sort >"$KIND_NODE_INVENTORY_FILE"
+	# kind counts the load balancer among a cluster's nodes and Kubernetes
+	# does not, which is why this list carries one more name than the node
+	# inventory asserted below. Measured on kind v0.31: "kind get nodes" on
+	# a two-control-plane cluster returns the balancer as a third line.
 	if ! {
 		printf '%s\n' \
 			"${CLUSTER_NAME}-control-plane" \
 			"${CLUSTER_NAME}-control-plane2" \
 			"${CLUSTER_NAME}-control-plane3" \
-			"${CLUSTER_NAME}-worker"
+			"${CLUSTER_NAME}-worker" \
+			"${CLUSTER_NAME}-external-load-balancer"
 	} | LC_ALL=C sort | cmp -s - "$KIND_NODE_INVENTORY_FILE"; then
-		fail "kind cluster does not have the exact three-control-plane, one-worker topology"
+		fail "kind cluster does not have the exact three-control-plane, one-worker, one-load-balancer topology"
 	fi
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		get nodes -o json >"$NODE_READINESS_FILE"
