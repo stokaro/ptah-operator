@@ -2562,6 +2562,24 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "require_ready_nodes must have exactly one function definition",
 		},
 		{
+			name:        "predecessor Helm values use local tag instead of registry digest",
+			old:         `"$PREDECESSOR_CONTROLLER_DIGEST" "$MANAGER_PULL_SECRET"`,
+			replacement: `"" "$MANAGER_PULL_SECRET"`,
+			wantError:   "digest-pinned predecessor Helm values",
+		},
+		{
+			name:        "predecessor image-pull namespace bootstrap omitted",
+			old:         `kubectl --kubeconfig "$KUBECONFIG_FILE" create namespace "$OPERATOR_NAMESPACE" >/dev/null`,
+			replacement: `: # namespace bootstrap omitted`,
+			wantError:   "predecessor namespace and image-pull bootstrap",
+		},
+		{
+			name:        "predecessor upgrade proof uses local build tag",
+			old:         `E2E_PREDECESSOR_IMAGE=$PREDECESSOR_CONTROLLER_IMAGE \`,
+			replacement: `E2E_PREDECESSOR_IMAGE=$PREDECESSOR_OPERATOR_IMAGE \`,
+			wantError:   "installed predecessor image upgrade binding",
+		},
+		{
 			name:        "post-creation node readiness omitted",
 			old:         `require_ready_nodes "after kind cluster creation"`,
 			replacement: `: # post-creation node readiness omitted`,

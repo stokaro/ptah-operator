@@ -499,8 +499,9 @@ export E2E_RUNNER_IMAGE=e2e.invalid/runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 export E2E_PTAH_VERSION=predecessor-values-proof
 export RUNTIME_FULLNAME=rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
 eval "$release_values_section"
-render_release_values "$PREDECESSOR_VALUES_FIXTURE" predecessor.invalid/operator old "" "" \
-	sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+render_release_values "$PREDECESSOR_VALUES_FIXTURE" predecessor.invalid/operator old \
+	sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
+	predecessor-registry-pull
 render_release_values "$CANDIDATE_VALUES_FIXTURE" candidate.invalid/operator new \
 	sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
 	candidate-registry-pull
@@ -508,11 +509,13 @@ jq -e '
   .fullnameOverride == "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr" and
   .image.repository == "predecessor.invalid/operator" and
   .image.tag == "old" and
-  .image.allowMutableTag == true and
-  (.image.testIdentityDigest | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
-  (.image | has("digest") | not)
+  .image.digest == "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" and
+  .image.allowMutableTag == false and
+  .image.pullPolicy == "IfNotPresent" and
+  .imagePullSecrets == [{name: "predecessor-registry-pull"}] and
+  (.image | has("testIdentityDigest") | not)
 ' "$PREDECESSOR_VALUES_FIXTURE" >/dev/null || {
-	printf '%s\n' 'e2e static: mutable-tag predecessor values lost the exact image identity the chart requires' >&2
+	printf '%s\n' 'e2e static: predecessor values lost the production digest-pinned image contract' >&2
 	exit 1
 }
 jq -e '
@@ -6332,9 +6335,12 @@ if grep -F 'kind load docker-image "$OPERATOR_IMAGE"' \
 fi
 grep -F 'type: "kubernetes.io/dockerconfigjson"' \
 	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
-# shellcheck disable=SC2016 # Match the literal pull-secret apply pipeline.
-grep -F '| kubectl --kubeconfig "$KUBECONFIG_FILE" apply -f - >/dev/null' \
-	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
+# shellcheck disable=SC2016 # Match the literal pull-secret creation pipeline.
+grep -F '| kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null' \
+	"$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+	printf '%s\n' 'e2e static: registry pull Secret creation is missing' >&2
+	exit 1
+}
 # shellcheck disable=SC2016 # Match literal runtime controller identity expressions.
 for controller_identity_assignment in \
 	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE' \

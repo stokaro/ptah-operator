@@ -1791,8 +1791,6 @@ assert_kind_ha_topology
 assert_api_server_endpoint_inventory
 assert_api_server_feature_gate_scope "$EXPECTED_API_SERVER_FEATURE_GATES"
 
-kind load docker-image "$PREDECESSOR_OPERATOR_IMAGE" --name "$CLUSTER_NAME"
-
 server_version=$(kubectl --kubeconfig "$KUBECONFIG_FILE" version -o json |
 	jq -r '.serverVersion.gitVersion')
 case "$server_version" in
@@ -1909,6 +1907,14 @@ NEXT_CONTROLLER_DIGEST=${NEXT_CONTROLLER_IMAGE#*@}
 	fail "synthetic next-release operator image is not repository-and-digest pinned"
 printf '%s\n' "$NEXT_CONTROLLER_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
 	fail "synthetic next-release operator image digest is invalid"
+push_task_image "$PREDECESSOR_OPERATOR_IMAGE" ptah-operator-predecessor
+PREDECESSOR_CONTROLLER_IMAGE=$PUSHED_IMAGE_REF
+PREDECESSOR_CONTROLLER_REPOSITORY=${PREDECESSOR_CONTROLLER_IMAGE%@*}
+PREDECESSOR_CONTROLLER_DIGEST=${PREDECESSOR_CONTROLLER_IMAGE#*@}
+[ "$PREDECESSOR_CONTROLLER_REPOSITORY" != "$PREDECESSOR_CONTROLLER_IMAGE" ] ||
+	fail "predecessor operator image is not repository-and-digest pinned"
+printf '%s\n' "$PREDECESSOR_CONTROLLER_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
+	fail "predecessor operator image digest is invalid"
 mirror_task_image "$FIXTURE_BUILD_IMAGE" e2e-fixture
 E2E_FIXTURE_IMAGE=$PUSHED_IMAGE_REF
 mirror_task_image "$EXECUTOR_SOURCE_IMAGE" ptah-executor
@@ -1986,8 +1992,7 @@ render_release_values() {
 	values_image_repository=$2
 	values_image_tag=$3
 	values_image_digest=$4
-	values_pull_secret=${5:-}
-	values_test_identity_digest=${6:-}
+	values_pull_secret=$5
 	jq -n \
 		--arg fullnameOverride "$RUNTIME_FULLNAME" \
 		--arg repository "$values_image_repository" \
@@ -1996,16 +2001,17 @@ render_release_values() {
 		--arg pullSecret "$values_pull_secret" \
 		--arg executorImage "$E2E_EXECUTOR_IMAGE" \
 		--arg runnerImage "$E2E_RUNNER_IMAGE" \
-		--arg ptahVersion "$E2E_PTAH_VERSION" \
-		--arg testIdentityDigest "$values_test_identity_digest" '
+		--arg ptahVersion "$E2E_PTAH_VERSION" '
       {
         fullnameOverride: $fullnameOverride,
         image: {
           repository: $repository,
           tag: $tag,
-          allowMutableTag: true,
-          pullPolicy: "Never"
+          digest: $digest,
+          allowMutableTag: false,
+          pullPolicy: "IfNotPresent"
         },
+        imagePullSecrets: [{name: $pullSecret}],
         execution: {
           executorImage: $executorImage,
           runnerImage: $runnerImage,
@@ -2018,29 +2024,12 @@ render_release_values() {
         replicaCount: 2,
         podDisruptionBudget: {enabled: false}
       }
-      | if $digest == "" then
-          .image.testIdentityDigest = $testIdentityDigest
-        else
-          .image.digest = $digest
-          | .image.allowMutableTag = false
-          | .image.pullPolicy = "IfNotPresent"
-          | .imagePullSecrets = [{name: $pullSecret}]
-        end
     ' >"$values_destination"
 }
 
-# A release that keeps its mutable tag names the manager by the local Docker
-# image ID: managerImage still renders repository:tag for every container,
-# and controllerImage uses this to state which image that tag resolved to.
-# A digest-pinned release must not carry the field, and the chart refuses
-# both mistakes by name.
-PREDECESSOR_IMAGE_ID=$(docker --context "$DOCKER_CONTEXT" image inspect \
-	--format '{{.Id}}' "$PREDECESSOR_OPERATOR_IMAGE")
-printf '%s\n' "$PREDECESSOR_IMAGE_ID" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
-	fail "predecessor operator image has no exact sha256 Docker image ID"
 render_release_values \
-	"$PREDECESSOR_VALUES_FILE" "$PREDECESSOR_IMAGE_REPOSITORY" "$IMAGE_TAG" "" "" \
-	"$PREDECESSOR_IMAGE_ID"
+	"$PREDECESSOR_VALUES_FILE" "$PREDECESSOR_CONTROLLER_REPOSITORY" "$IMAGE_TAG" \
+	"$PREDECESSOR_CONTROLLER_DIGEST" "$MANAGER_PULL_SECRET"
 render_release_values \
 	"$CANDIDATE_VALUES_FILE" "$CANDIDATE_OPERATOR_REPOSITORY" "$IMAGE_TAG" \
 	"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET"
@@ -2048,13 +2037,36 @@ render_release_values \
 	"$NEXT_VALUES_FILE" "$NEXT_CONTROLLER_REPOSITORY" "$IMAGE_TAG" \
 	"$NEXT_CONTROLLER_DIGEST" "$MANAGER_PULL_SECRET"
 
+kubectl --kubeconfig "$KUBECONFIG_FILE" create namespace "$OPERATOR_NAMESPACE" >/dev/null
+jq -n \
+	--arg name "$MANAGER_PULL_SECRET" \
+	--arg namespace "$OPERATOR_NAMESPACE" \
+	--arg registry "$REGISTRY_HOST" \
+	--slurpfile credentials "$REGISTRY_CREDENTIALS_FILE" '
+  {
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: {name: $name, namespace: $namespace},
+    immutable: true,
+    type: "kubernetes.io/dockerconfigjson",
+    data: {
+      ".dockerconfigjson": ({
+        auths: {($registry): {
+          username: $credentials[0].username,
+          password: $credentials[0].password,
+          auth: (($credentials[0].username + ":" + $credentials[0].password) | @base64)
+        }}
+      } | tojson | @base64)
+    }
+  }
+' | kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null
+
 printf 'e2e: installing exact predecessor release %s/%s from %s\n' \
 	"$OPERATOR_NAMESPACE" "$HELM_RELEASE" "$PREDECESSOR_REVISION"
 require_ready_nodes "immediately before predecessor Helm install"
 if command helm --kubeconfig "$KUBECONFIG_FILE" install "$HELM_RELEASE" \
 	"$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_CHART" \
 	--namespace "$OPERATOR_NAMESPACE" \
-	--create-namespace \
 	--wait \
 	--timeout 5m \
 	--values "$PREDECESSOR_VALUES_FILE"; then
@@ -2068,30 +2080,6 @@ else
 	fail "infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)"
 fi
 
-jq -n \
-	--arg name "$MANAGER_PULL_SECRET" \
-	--arg namespace "$OPERATOR_NAMESPACE" \
-	--arg registry "$REGISTRY_HOST" \
-	--arg username "$REGISTRY_USERNAME" \
-	--arg password "$REGISTRY_PASSWORD" '
-  {
-    apiVersion: "v1",
-    kind: "Secret",
-    metadata: {name: $name, namespace: $namespace},
-    immutable: true,
-    type: "kubernetes.io/dockerconfigjson",
-    data: {
-      ".dockerconfigjson": ({
-        auths: {($registry): {
-          username: $username,
-          password: $password,
-          auth: (($username + ":" + $password) | @base64)
-        }}
-      } | tojson | @base64)
-    }
-  }
-' | kubectl --kubeconfig "$KUBECONFIG_FILE" apply -f - >/dev/null
-
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
@@ -2100,7 +2088,7 @@ E2E_CHART_PACKAGE=$CHART_PACKAGE \
 E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \
 E2E_PREDECESSOR_IDENTITY_FILE=$PREDECESSOR_IDENTITY_FILE \
 E2E_PREDECESSOR_SOURCE_DIR=$PREDECESSOR_BUILD_CONTEXT \
-E2E_PREDECESSOR_IMAGE=$PREDECESSOR_OPERATOR_IMAGE \
+E2E_PREDECESSOR_IMAGE=$PREDECESSOR_CONTROLLER_IMAGE \
 E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_KUBERNETES_VERSION=$K8S_VERSION \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
