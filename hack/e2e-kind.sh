@@ -202,9 +202,11 @@ fi
 identity="${K8S_VERSION}-${E2E_RUN_ID}"
 # kind names an HA cluster's load balancer container
 # "<cluster>-external-load-balancer". That suffix is 23 bytes and appears
-# nowhere in this script, so the bound has to be written from the Docker
-# hostname limit rather than from the longest name spelled here: 64 - 23.
-CLUSTER_NAME=$(dns_name ptah-e2e "$identity" 41)
+# nowhere in this script, so the bound comes from the limit rather than
+# from the longest name spelled here. The limit is the 63-byte DNS label,
+# not Docker's 64-byte hostname: at 64 the daemon accepts the container
+# and CNI installation then fails resolving it. 63 - 23 = 40.
+CLUSTER_NAME=$(dns_name ptah-e2e "$identity" 40)
 OPERATOR_NAMESPACE=$(dns_name ptah-system "$identity")
 CRD_PROOF_NAMESPACE=$(dns_name ptah-crd-proof "$identity")
 # Force the runtime ReplicaSet-to-Pod generated-name truncation boundary in

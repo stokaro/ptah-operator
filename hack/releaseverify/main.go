@@ -73,7 +73,7 @@ const (
 	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "b13abe6e881cb04d69e4697d81d1b78a56ed5e425d5d89530596107527eae619"
+	releaseWorkflowSHA256 = "fb27f9d93cb0bee270e8724386b3141dd4b374664860fa7b63992f25448dcef8"
 )
 
 func main() {
