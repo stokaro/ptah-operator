@@ -16,8 +16,8 @@ ROTATOR_RECREATE_RENDER=$WORK_DIR/rotator-recreate.yaml
 OBSOLETE_RENDER=$WORK_DIR/obsolete-webhooks.yaml
 OBSOLETE_ERROR=$WORK_DIR/obsolete-webhooks.err
 MUTABLE_MANAGER_ERROR=$WORK_DIR/mutable-manager.err
-MISSING_TEST_IDENTITY_ERROR=$WORK_DIR/missing-test-identity.err
-AMBIGUOUS_MANAGER_IDENTITY_ERROR=$WORK_DIR/ambiguous-manager-identity.err
+REJECTED_MANAGER_IMAGE_ERROR=$WORK_DIR/rejected-manager-image.err
+LOCAL_REGISTRY_MANAGER_RENDER=$WORK_DIR/local-registry-manager.yaml
 LEADER_ELECTION_ERROR=$WORK_DIR/leader-election.err
 NO_ELECTION_DEPLOYMENT_RENDER=$WORK_DIR/no-election-deployment.yaml
 HA_DEPLOYMENT_RENDER=$WORK_DIR/ha-deployment.yaml
@@ -4930,42 +4930,83 @@ if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 fi
 grep -F 'image.digest must pin the manager' "$MUTABLE_MANAGER_ERROR" >/dev/null
 
-if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
-	--namespace ptah-e2e \
-	--set image.allowMutableTag=true \
-	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
-	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
-	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
-	--set-string webhook.existingSecret=e2e-webhook-cert \
-	--set-string webhook.caBundle=e2e-ca \
-	>/dev/null 2>"$MISSING_TEST_IDENTITY_ERROR"; then
-	printf '%s\n' 'e2e static: mutable test manager lacked an exact content identity' >&2
-	exit 1
-fi
-grep -F 'image.testIdentityDigest must be the exact sha256 Docker image ID' \
-	"$MISSING_TEST_IDENTITY_ERROR" >/dev/null || {
-	printf '%s\n' 'e2e static: missing test manager identity did not fail explicitly' >&2
-	exit 1
+assert_rejected_manager_image_values() {
+	manager_image_error=$1
+	shift
+	if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+		--namespace ptah-e2e \
+		--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+		--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+		--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+		--set-string webhook.existingSecret=e2e-webhook-cert \
+		--set-string webhook.caBundle=e2e-ca \
+		"$@" >/dev/null 2>"$REJECTED_MANAGER_IMAGE_ERROR"; then
+		printf '%s\n' 'e2e static: chart accepted an unsupported manager image configuration' >&2
+		exit 1
+	fi
+	grep -F "$manager_image_error" "$REJECTED_MANAGER_IMAGE_ERROR" >/dev/null || {
+		printf 'e2e static: manager image rejection did not identify %s\n' "$manager_image_error" >&2
+		exit 1
+	}
 }
 
-if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
+for manager_image_validation in schema template; do
+	set --
+	mutable_tag_error=allowMutableTag
+	test_identity_error=testIdentityDigest
+	if [ "$manager_image_validation" = template ]; then
+		set -- --skip-schema-validation
+		mutable_tag_error='image.allowMutableTag is no longer supported; use image.digest with a registry manifest digest'
+		test_identity_error='image.testIdentityDigest is no longer supported; use image.digest with a registry manifest digest'
+	fi
+	assert_rejected_manager_image_values "$mutable_tag_error" "$@" \
+		--set image.allowMutableTag=true \
+		--set-string image.testIdentityDigest=sha256:3333333333333333333333333333333333333333333333333333333333333333
+	assert_rejected_manager_image_values "$mutable_tag_error" "$@" \
+		--set image.allowMutableTag=true \
+		--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222
+	assert_rejected_manager_image_values "$test_identity_error" "$@" \
+		--set-string image.testIdentityDigest=sha256:3333333333333333333333333333333333333333333333333333333333333333
+	assert_rejected_manager_image_values "$test_identity_error" "$@" \
+		--set-string image.testIdentityDigest=sha256:3333333333333333333333333333333333333333333333333333333333333333 \
+		--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222
+	assert_rejected_manager_image_values 'digest' "$@" \
+		--set-string image.digest=sha256:invalid
+done
+
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--namespace ptah-e2e \
+	--show-only templates/deployment.yaml \
+	--show-only templates/crd-upgrade.yaml \
+	--show-only templates/certificate-rotation.yaml \
+	--set-string image.repository=registry.local:5000/ptah-operator \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
-	--set-string image.testIdentityDigest=sha256:3333333333333333333333333333333333333333333333333333333333333333 \
+	--set image.allowMutableTag=false \
+	--set-string image.testIdentityDigest= \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
-	--set-string webhook.existingSecret=e2e-webhook-cert \
-	--set-string webhook.caBundle=e2e-ca \
-	>/dev/null 2>"$AMBIGUOUS_MANAGER_IDENTITY_ERROR"; then
-	printf '%s\n' 'e2e static: production manager accepted an ambiguous test identity' >&2
-	exit 1
-fi
-grep -F 'image.testIdentityDigest must be empty when image.digest pins the production manager' \
-	"$AMBIGUOUS_MANAGER_IDENTITY_ERROR" >/dev/null || {
-	printf '%s\n' 'e2e static: ambiguous production manager identity did not fail explicitly' >&2
+	>"$LOCAL_REGISTRY_MANAGER_RENDER"
+local_registry_manager=registry.local:5000/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222
+rendered_manager_images=$(awk '/^[[:space:]]+image: / { print $2 }' \
+	"$LOCAL_REGISTRY_MANAGER_RENDER" | sort -u)
+[ "$rendered_manager_images" = "$local_registry_manager" ] || {
+	printf '%s\n' 'e2e static: runtime and hook images do not share the registry manifest identity' >&2
 	exit 1
 }
+for manager_image_argument in manager-image controller-image; do
+	rendered_manager_identity=$(awk -v argument="$manager_image_argument" '
+    $0 ~ "^[[:space:]]+- \"?--" argument "=" {
+      sub("^.*--" argument "=", "")
+      sub(/"$/, "")
+      print
+    }
+  ' "$LOCAL_REGISTRY_MANAGER_RENDER" | sort -u)
+	[ "$rendered_manager_identity" = "$local_registry_manager" ] || {
+		printf 'e2e static: --%s does not match the runtime and hook image\n' "$manager_image_argument" >&2
+		exit 1
+	}
+done
 
 if helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--namespace ptah-e2e \

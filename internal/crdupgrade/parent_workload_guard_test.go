@@ -1084,6 +1084,44 @@ func TestParentHookJobPriorityClassContract(t *testing.T) {
 	}
 }
 
+// This white-box test isolates startup image validation from Kubernetes
+// admission convergence, using the shared internal rollout fixture.
+func TestParentWorkloadGuardRequiresImmutableManagerImage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		image     string
+		wantError bool
+	}{
+		{name: "sha256 digest", image: "registry.example/ptah@sha256:" + strings.Repeat("a", 64)},
+		{name: "tag", image: "registry.example/ptah:v1.2.3", wantError: true},
+		{name: "implicit latest", image: "registry.example/ptah", wantError: true},
+		{name: "empty digest", image: "registry.example/ptah@sha256:", wantError: true},
+		{name: "short digest", image: "registry.example/ptah@sha256:" + strings.Repeat("a", 63), wantError: true},
+		{name: "nonhex digest", image: "registry.example/ptah@sha256:" + strings.Repeat("g", 64), wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			rollout := runtimePodGuardFixture()
+			rollout.ManagerImage = test.image
+			rollout.HookServiceAccountName = "ptah-crd-v1-" + hookIdentityDigest(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)[:12]
+			err := NewParentWorkloadGuard(rollout).validate()
+			if test.wantError {
+				if err == nil || !strings.Contains(err.Error(), "manager image must use an immutable sha256 digest") {
+					t.Fatalf("parent workload guard validation error = %v, want immutable manager image refusal", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parent workload guard rejected a digest-pinned manager image: %v", err)
+			}
+		})
+	}
+}
+
 func TestParentWorkloadGuardRejectsPaddedPriorityClass(t *testing.T) {
 	rollout := runtimePodGuardFixture()
 	rollout.PriorityClassName = " runtime-critical"

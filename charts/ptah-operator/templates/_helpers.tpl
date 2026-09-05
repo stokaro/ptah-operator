@@ -1162,30 +1162,20 @@ app.kubernetes.io/component: controller
 {{- end -}}
 
 {{- define "ptah-operator.managerImage" -}}
-{{- if .Values.image.digest -}}
+{{- if .Values.image.allowMutableTag -}}
+{{- fail "image.allowMutableTag is no longer supported; use image.digest with a registry manifest digest, including for local registries" -}}
+{{- end -}}
 {{- if .Values.image.testIdentityDigest -}}
-{{- fail "image.testIdentityDigest must be empty when image.digest pins the production manager" -}}
+{{- fail "image.testIdentityDigest is no longer supported; use image.digest with a registry manifest digest, not a Docker image ID" -}}
+{{- end -}}
+{{- if not (regexMatch `^sha256:[0-9a-f]{64}$` (default "" .Values.image.digest)) -}}
+{{- fail "image.digest must pin the manager with sha256:<64 lowercase hex>; use a registry manifest digest, including for local registries" -}}
 {{- end -}}
 {{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
-{{- else if .Values.image.allowMutableTag -}}
-{{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
-{{- else -}}
-{{- fail "image.digest must pin the manager with sha256:<64 lowercase hex>; image.allowMutableTag is test-only" -}}
-{{- end -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerImage" -}}
-{{- $pattern := `^sha256:[0-9a-f]{64}$` -}}
-{{- if .Values.image.digest -}}
 {{- include "ptah-operator.managerImage" . -}}
-{{- else if .Values.image.allowMutableTag -}}
-{{- if not (regexMatch $pattern .Values.image.testIdentityDigest) -}}
-{{- fail "image.testIdentityDigest must be the exact sha256 Docker image ID when image.allowMutableTag=true" -}}
-{{- end -}}
-{{- printf "%s@%s" .Values.image.repository .Values.image.testIdentityDigest -}}
-{{- else -}}
-{{- fail "image.digest must pin the manager with sha256:<64 lowercase hex>; image.allowMutableTag is test-only" -}}
-{{- end -}}
 {{- end -}}
 
 {{- define "ptah-operator.validateExecutionImages" -}}

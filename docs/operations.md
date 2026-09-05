@@ -4,12 +4,24 @@
 
 Install CRDs and the controller through the Helm chart. Supply digest-pinned
 manager, executor, and runner images. The chart refuses all three when only a
-tag is supplied. `image.allowMutableTag=true` exists solely for isolated test
-clusters that load a locally built image and is never a production setting. It
-also requires `image.testIdentityDigest` to equal that loaded image's exact
-lowercase `sha256:` Docker image ID; the manager records
-`<repository>@<image-ID>` as its content identity while the Pod still pulls the
-test tag. Production `image.digest` mode forbids `image.testIdentityDigest`.
+tag is supplied. Manager Pods, hooks, and controller identity all use the same
+`image.repository@image.digest` reference. See the
+[installation example](../README.md#install-from-this-checkout) for the required
+values.
+
+For local development, push the built image to a registry reachable from every
+cluster node and use the registry's manifest digest in `image.digest`; set
+`image.repository` to that registry's repository. A Docker image ID is not a
+manifest digest. For kind, follow its [local registry setup](https://kind.sigs.k8s.io/docs/user/local-registry/)
+to configure node access. If authentication is required, create the release
+namespace and image pull Secret before running Helm, then select the Secret
+through `imagePullSecrets` so installation hooks can pull their image too.
+
+The former local-tag mode is unsupported. `image.allowMutableTag` and
+`image.testIdentityDigest` remain only for compatibility with existing values
+files and must be `false` and empty, respectively. Replace the former test
+settings with `image.digest`; the chart rejects them even when a digest is
+also supplied.
 
 An initial installation has an explicit bootstrap trust boundary. The same
 boundary applies to the first upgrade from a release that did not install the

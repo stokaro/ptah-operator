@@ -82,6 +82,118 @@
 {{- join " && " $parts -}}
 {{- end -}}
 
+{{- define "ptah-operator.validatePreV1ParentOriginBootstrap" -}}
+{{- /* This is bootstrap recognition, not schema or admission adoption. Only
+      the first managed release may establish guards around the Helm-owned
+      annotation-free predecessor. The read-only Go preflight still verifies
+      every legacy CRD digest, webhook contract, and stored object before the
+      write hook can quiesce the runtime or adopt any identity metadata. */ -}}
+{{- $root := .root -}}
+{{- $sequence := include "ptah-operator.releaseSequence" $root -}}
+{{- $principal := .previousPrincipal -}}
+{{- if or (ne $sequence "1") (eq (default "" $principal.name) "") (eq (default "" $principal.uid) "") (ne (default "" $principal.releaseSequence) "0") -}}
+{{- fail "pre-v1 parent-origin bootstrap requires the exact epoch-zero predecessor principal and first managed release" -}}
+{{- end -}}
+{{- $active := "" -}}
+{{- $phase := "" -}}
+{{- with .activation -}}
+{{- $metadata := default (dict) .metadata -}}
+{{- $annotations := default (dict) $metadata.annotations -}}
+{{- $labels := default (dict) $metadata.labels -}}
+{{- $data := default (dict) .data -}}
+{{- $active = default "" (index $data "active-release-sequence") -}}
+{{- $phase = default "" (index $data "controller-credentials") -}}
+{{- $activeData := and (eq $phase "active") (eq (len $data) 2) -}}
+{{- $drainingData := and (eq $phase "draining") (eq (len $data) 4)
+      (eq (default "" (index $data "controller-credentials-target-release-sequence")) $sequence)
+      (eq (default "" (index $data "controller-credentials-attempt")) (include "ptah-operator.hookIdentityDigest" $root)) -}}
+{{- if or
+      (ne .apiVersion "v1") (ne .kind "ConfigMap")
+      (ne $metadata.name "ptah-operator-release-activation")
+      (ne (default "" $metadata.namespace) $root.Release.Namespace)
+      (ne (default "" $metadata.generateName) "")
+      (eq (default "" $metadata.uid) "") (eq (default "" $metadata.resourceVersion) "")
+      (not (empty $metadata.deletionTimestamp)) (not (empty $metadata.deletionGracePeriodSeconds))
+      (ne (len $annotations) 10)
+      (ne (default "" (index $annotations "helm.sh/hook")) "pre-install,pre-upgrade")
+      (ne (default "" (index $annotations "helm.sh/hook-weight")) "-166")
+      (ne (default "" (index $annotations "helm.sh/resource-policy")) "keep")
+      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $root.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $root.Release.Namespace)
+      (ne (default "" (index $annotations "operator.ptah.dev/controller-state-version")) (include "ptah-operator.controllerStateVersion" $root))
+      (ne (default "" (index $annotations "operator.ptah.dev/admission-contract-version")) (include "ptah-operator.admissionContractVersion" $root))
+      (ne (default "" (index $annotations "operator.ptah.dev/release-sequence")) $sequence)
+      (ne (default "" (index $annotations "operator.ptah.dev/manager-image")) (include "ptah-operator.managerImage" $root))
+      (ne (len $labels) 3)
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index $labels "app.kubernetes.io/instance")) $root.Release.Name)
+      (ne (default "" (index $labels "app.kubernetes.io/component")) "rollout-guard")
+      (not (has $active (list "0" $sequence))) (not (or $activeData $drainingData))
+      (ne (len (default (dict) .binaryData)) 0) (default false .immutable)
+      (ne (len (default (list) $metadata.ownerReferences)) 0)
+      (ne (len (default (list) $metadata.finalizers)) 0) -}}
+{{- fail "pre-v1 parent-origin bootstrap found a different or malformed activation ratchet" -}}
+{{- end -}}
+{{- end -}}
+{{- if .convergenceMarker -}}
+{{- include "ptah-operator.validateAdmissionConvergenceMarker" (dict "root" $root
+      "marker" .convergenceMarker "name" (include "ptah-operator.admissionConvergenceMarkerName" $root)
+      "sequence" $sequence "managerImage" (include "ptah-operator.managerImage" $root)
+      "requireSealed" (eq $active $sequence)) -}}
+{{- end -}}
+{{- if .currentComplete -}}
+{{- /* Activation precedes CRD writes. A crash after activation may leave a
+      mixed exact legacy/candidate CRD set without the ordinary ready marker.
+      Resume only the complete retained boundary and this exact attempt; Go
+      preflight rechecks that mixed set without resetting the activation. */ -}}
+{{- if or (not .activation) (not .convergenceMarker) -}}
+{{- fail "pre-v1 parent-origin retry requires exact activation and convergence evidence" -}}
+{{- end -}}
+{{- else -}}
+{{- if or (and .activation (or (ne $active "0") (ne $phase "active"))) (and .convergenceMarker (default false .convergenceMarker.immutable)) -}}
+{{- fail "pre-v1 parent-origin bootstrap cannot recreate a missing managed boundary" -}}
+{{- end -}}
+{{- if ne (len .crds) 3 -}}
+{{- fail "pre-v1 parent-origin bootstrap requires the complete legacy CRD inventory" -}}
+{{- end -}}
+{{- range $entry := .crds -}}
+{{- $object := $entry.object -}}
+{{- $metadata := default (dict) $object.metadata -}}
+{{- $annotations := default (dict) $metadata.annotations -}}
+{{- if or (not $object) (ne (default "" $object.apiVersion) "apiextensions.k8s.io/v1")
+      (ne (default "" $object.kind) "CustomResourceDefinition") (ne (default "" $metadata.name) $entry.name)
+      (ne (default "" $metadata.namespace) "") (eq (default "" $metadata.uid) "")
+      (eq (default "" $metadata.resourceVersion) "") (not (empty $metadata.deletionTimestamp))
+      (hasKey $annotations "operator.ptah.dev/crd-schema-version")
+      (hasKey $annotations "operator.ptah.dev/crd-schema-digest")
+      (hasKey $annotations "operator.ptah.dev/controller-state-version") -}}
+{{- fail (printf "pre-v1 parent-origin bootstrap requires annotation-free live CRD %s" $entry.name) -}}
+{{- end -}}
+{{- end -}}
+{{- if ne (len .singletons) 2 -}}
+{{- fail "pre-v1 parent-origin bootstrap requires both legacy admission singletons" -}}
+{{- end -}}
+{{- range $entry := .singletons -}}
+{{- $object := $entry.object -}}
+{{- if not $object -}}
+{{- fail "pre-v1 parent-origin bootstrap requires both legacy admission singletons" -}}
+{{- end -}}
+{{- include "ptah-operator.validateHelmReleaseObject" (dict "root" $root "object" $object
+      "apiVersion" "admissionregistration.k8s.io/v1" "kind" $entry.kind "namespace" ""
+      "name" (include "ptah-operator.approvalWebhookConfigurationName" $root)) -}}
+{{- if or (eq (default "" $object.metadata.resourceVersion) "") (not (empty $object.metadata.deletionTimestamp)) -}}
+{{- fail "pre-v1 parent-origin bootstrap found a non-live admission singleton" -}}
+{{- end -}}
+{{- range $key, $_ := default (dict) $object.metadata.annotations -}}
+{{- if hasPrefix "operator.ptah.dev/" $key -}}
+{{- fail "pre-v1 parent-origin bootstrap cannot adopt a managed admission singleton without its boundary" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "ptah-operator.validateParentOriginLifecycle" -}}
 {{- if not .live -}}
 {{- /* Client-only rendering cannot observe retained cluster state. */ -}}
@@ -226,6 +338,8 @@
 {{- if ne $currentCount (len .current) -}}
 {{- fail "v2-aware upgrade is missing its complete exact parent-origin boundary" -}}
 {{- end -}}
+{{- else if eq $legacyCount 0 -}}
+{{- include "ptah-operator.validatePreV1ParentOriginBootstrap" (merge (dict "root" .root "currentComplete" (eq $currentCount (len .current))) .preV1) -}}
 {{- else if or (ne $legacyOriginalCount (len .legacy)) (and (ne $currentCount 0) (ne $currentCount (len .current))) -}}
 {{- fail "first v2 upgrade requires the complete exact v1 predecessor and no sparse v2 repair" -}}
 {{- end -}}
@@ -577,10 +691,28 @@
       (eq (len (default (list) .metadata.ownerReferences)) 0)
       (eq (len (default (list) .metadata.finalizers)) 0) -}}
 {{- end -}}
+{{- $preV1 := dict -}}
+{{- if and .Release.IsUpgrade (not $parentOriginReadyMarker)
+      (not $legacyHookOriginPolicy) (not $legacyHookOriginBinding)
+      (not $legacyHookPodOriginPolicy) (not $legacyHookPodOriginBinding) -}}
+{{- $singletons := list -}}
+{{- range $kind := list "MutatingWebhookConfiguration" "ValidatingWebhookConfiguration" -}}
+{{- $singletons = append $singletons (dict "kind" $kind "object" (lookup "admissionregistration.k8s.io/v1" $kind "" (include "ptah-operator.approvalWebhookConfigurationName" $))) -}}
+{{- end -}}
+{{- $crds := list -}}
+{{- range $name := list "ptahschemaapprovals.operator.ptah.dev" "ptahschemaplans.operator.ptah.dev" "ptahschemas.operator.ptah.dev" -}}
+{{- $crds = append $crds (dict "name" $name "object" (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" $name)) -}}
+{{- end -}}
+{{- $preV1 = dict "activation" $activation
+      "previousPrincipal" (include "ptah-operator.previousControllerPrincipalJSON" . | fromJson)
+      "singletons" $singletons "crds" $crds
+      "convergenceMarker" (lookup "v1" "ConfigMap" .Release.Namespace (include "ptah-operator.admissionConvergenceMarkerName" .)) -}}
+{{- end -}}
 {{- include "ptah-operator.validateParentOriginLifecycle" (dict
       "root" .
       "live" (not (empty $releaseNamespaceObject))
       "activationBootstrap" $activationBootstrap
+      "preV1" $preV1
       "marker" $parentOriginReadyMarker
       "markerName" $parentOriginReadyName
       "markerData" $parentOriginReadyData

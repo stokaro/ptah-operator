@@ -101,11 +101,14 @@
           "pattern": "^$|^sha256:[0-9a-f]{64}$"
         },
         "allowMutableTag": {
-          "type": "boolean"
+          "type": "boolean",
+          "const": false,
+          "description": "Deprecated compatibility value; must be false. Use image.digest with a registry manifest digest."
         },
         "testIdentityDigest": {
           "type": "string",
-          "pattern": "^$|^sha256:[0-9a-f]{64}$"
+          "const": "",
+          "description": "Deprecated compatibility value; must be empty. Use image.digest with a registry manifest digest, not a Docker image ID."
         },
         "pullPolicy": {
           "type": "string",
