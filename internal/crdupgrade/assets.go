@@ -31,16 +31,16 @@ const (
 	CurrentCRDSchemaVersion uint64 = 1
 )
 
-const predecessorRevision = "210c9673e6ad8e339278d99cc4735557332df7bd"
+const predecessorRevision = "2c516a4b61073fefa694907d9f8623767d9e5542"
 
 // predecessorSchemaDigests is the one annotation-free CRD set that may be
 // adopted automatically. The values are normalized-spec digests from the
 // exact predecessor revision above. Recognition is all-or-nothing so an
 // unknown or mixed legacy schema cannot acquire trusted identity metadata.
 var predecessorSchemaDigests = map[string]string{
-	PtahSchemaApprovalCRDName: "sha256:ac6edef2a9b4ecf8a876bcbd8c7797882bf9d7646f0df4afd553e907978922d6",
-	PtahSchemaPlanCRDName:     "sha256:0f711f12bf36e78f8de583b80b2bbbbcb0f6b7b3b05cedcb0da1227b42eeab41",
-	PtahSchemaCRDName:         "sha256:a9a088e6d376d0bfa629e6ee514e4c357a66d7e1297eba6341503e18e05ba936",
+	PtahSchemaApprovalCRDName: "sha256:3c2034e1292b0d074341262c06ed511af7a45835d4da98d9ff2a8003475e296a",
+	PtahSchemaPlanCRDName:     "sha256:83ee43f4ae970c262e1abd0d619fa7b6761d52ed70a16f97272cd3893d01cd7a",
+	PtahSchemaCRDName:         "sha256:5b71df79920a3599a61be7fe3ecb94153860c8c5c22e8d43b19138ecc7370288",
 }
 
 var expectedNames = []string{
