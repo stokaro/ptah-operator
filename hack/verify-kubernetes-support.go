@@ -74,7 +74,7 @@ const (
 	releaseWorkflowSHA256           = "145331b91d4223ccfb41260e8295c8e523d5bfdf737aa53efe4c25b2d48b85c7"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
-	releaseChartExportRunSHA256     = "379f2ef33a474b55234e43060e2782bf4f36a12fc2be0c8ec9525afccdb862e3"
+	releaseChartExportRunSHA256     = "a34800805204a2caa071d03939f9337f3472028ecb8b9c11ed26723294eb8082"
 	controllerSchemaSHA256          = "b73a7b8718abd34b4a8f45a1342c31c50690bf82358b378621dfbbe6e30892e5"
 	raceValidationRuleSHA256        = "41883b775532ad9be0035521d4363052137a8debb4f4a4185ec6a0f3c4a97ae9"
 	raceBaseRuleSHA256              = "53a29b937246901f0b2f285964ea3a2b7580e016ab447ff2b9cb10189df83b49"
@@ -3043,10 +3043,12 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("controller downgrade proof call", `prove_controller_downgrade_guard`),
 				exactSourceLine("uninstall proof implementation", `run_uninstall_proof() {`),
 				exactSourceLineSequence("released chart fresh-install inputs", []string{
-					`[ -f "$E2E_CHART_PACKAGE" ] && [ ! -L "$E2E_CHART_PACKAGE" ] ||`,
+					`if [ ! -f "$E2E_CHART_PACKAGE" ] || [ -L "$E2E_CHART_PACKAGE" ]; then`,
 					`fail "E2E_CHART_PACKAGE must name the regular non-symlink current-release chart package"`,
-					`[ -f "$E2E_CANDIDATE_VALUES_FILE" ] && [ ! -L "$E2E_CANDIDATE_VALUES_FILE" ] ||`,
+					`fi`,
+					`if [ ! -f "$E2E_CANDIDATE_VALUES_FILE" ] || [ -L "$E2E_CANDIDATE_VALUES_FILE" ]; then`,
 					`fail "E2E_CANDIDATE_VALUES_FILE must name the regular non-symlink current-release values file"`,
+					`fi`,
 				}),
 				exactSourceLineSequence("upgraded release exact uninstall absence", []string{
 					`assert_inventory_resources_absent \`,

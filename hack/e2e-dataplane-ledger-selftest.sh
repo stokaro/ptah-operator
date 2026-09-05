@@ -745,6 +745,7 @@ job_evidence_credential_escape() (
 live_job_and_pod_exact_successful_path() (
 	reset_fixture
 	fixture_archive=$(write_valid_job_evidence uid-selected schema-1 plan)
+	# shellcheck disable=SC2317 # Invoked indirectly by the extracted helper in this test path.
 	kubectl() {
 		require_ignore_not_found_argument "$@"
 		case " $* " in
@@ -763,6 +764,7 @@ live_job_and_pod_exact_gc_absence_successful_path() (
 	fixture_archive=$(write_valid_job_evidence uid-selected schema-1 plan)
 	live_calls=$WORK_DIR/live-gc-calls.txt
 	: >"$live_calls"
+	# shellcheck disable=SC2317 # Invoked indirectly by the extracted helper in this test path.
 	kubectl() {
 		require_ignore_not_found_argument "$@"
 		printf '%s\n' "$*" >>"$live_calls"
@@ -849,11 +851,13 @@ selected_job_gc_fallback_successful_path() (
 		'{"uid":"uid-selected","name":"job-plan","created":"2026-01-01T00:00:00Z","schema":"schema-1","operation":"plan"}' \
 		>"$OBSERVED_JOBS_FILE"
 	fixture_archive=$(write_valid_job_evidence uid-selected schema-1 plan)
+	# shellcheck disable=SC2317 # Invoked indirectly by the extracted helper in this test path.
 	record_observed_jobs() {
 		:
 	}
 	live_calls=$WORK_DIR/selected-gc-calls.txt
 	: >"$live_calls"
+	# shellcheck disable=SC2317 # Invoked indirectly by the extracted helper in this test path.
 	kubectl() {
 		require_ignore_not_found_argument "$@"
 		printf '%s\n' "$*" >>"$live_calls"
@@ -924,6 +928,7 @@ prepare_existing_archive_publish_input() {
 existing_archive_exact_identity_successful_path() (
 	prepare_existing_archive_publish_input exact
 	RESULT_ASSERT_BINARY=$WORK_DIR/resultassert-must-not-run
+	# shellcheck disable=SC2317 # Fail-fast stub detects an extracted-helper regression in this test path.
 	kubectl() {
 		test_fail "matching existing archive unexpectedly recaptured live transport"
 	}
@@ -1034,6 +1039,7 @@ archive_publication_uses_uid_bounded_log_during_name_reuse() (
 		printf '%s\n' "jq -n --arg operationID '$TEST_OPERATION_ID' '{protocolVersion: 5, operation: \"plan\", operationId: \$operationID, truncation: null, error: null, childExitCode: 0, stdout: \"\"}'"
 	} >"$RESULT_ASSERT_BINARY"
 	chmod 700 "$RESULT_ASSERT_BINARY"
+	# shellcheck disable=SC2317 # Fail-fast stub detects an extracted-helper regression in this test path.
 	kubectl() {
 		printf '%s\n' 'replacement Pod raw transport'
 	}

@@ -4652,10 +4652,12 @@ run_next_release_upgrade_proof() {
 	validate_release_sequence_transition
 	current_release_sequence=$E2E_CURRENT_RELEASE_SEQUENCE
 	next_release_sequence=$E2E_NEXT_RELEASE_SEQUENCE
-	[ -f "$E2E_NEXT_CHART_PACKAGE" ] && [ ! -L "$E2E_NEXT_CHART_PACKAGE" ] ||
+	if [ ! -f "$E2E_NEXT_CHART_PACKAGE" ] || [ -L "$E2E_NEXT_CHART_PACKAGE" ]; then
 		fail "E2E_NEXT_CHART_PACKAGE must name a regular synthetic next-release chart package"
-	[ -f "$E2E_NEXT_VALUES_FILE" ] && [ ! -L "$E2E_NEXT_VALUES_FILE" ] ||
+	fi
+	if [ ! -f "$E2E_NEXT_VALUES_FILE" ] || [ -L "$E2E_NEXT_VALUES_FILE" ]; then
 		fail "E2E_NEXT_VALUES_FILE must name a regular synthetic next-release values file"
+	fi
 	printf '%s\n' "$E2E_NEXT_CONTROLLER_IMAGE" |
 		grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$' ||
 		fail "E2E_NEXT_CONTROLLER_IMAGE must be an exact repository-and-digest identity"
@@ -4738,10 +4740,12 @@ run_next_release_upgrade_proof() {
 }
 
 run_uninstall_proof() {
-	[ -f "$E2E_CHART_PACKAGE" ] && [ ! -L "$E2E_CHART_PACKAGE" ] ||
+	if [ ! -f "$E2E_CHART_PACKAGE" ] || [ -L "$E2E_CHART_PACKAGE" ]; then
 		fail "E2E_CHART_PACKAGE must name the regular non-symlink current-release chart package"
-	[ -f "$E2E_CANDIDATE_VALUES_FILE" ] && [ ! -L "$E2E_CANDIDATE_VALUES_FILE" ] ||
+	fi
+	if [ ! -f "$E2E_CANDIDATE_VALUES_FILE" ] || [ -L "$E2E_CANDIDATE_VALUES_FILE" ]; then
 		fail "E2E_CANDIDATE_VALUES_FILE must name the regular non-symlink current-release values file"
+	fi
 	printf '%s\n' "$E2E_CANDIDATE_IMAGE" |
 		grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$' ||
 		fail "E2E_CANDIDATE_IMAGE must be an exact repository-and-digest identity"

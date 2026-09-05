@@ -394,8 +394,9 @@ replace_exact_line_once() {
 	replacement_line=$3
 	transformation_description=$4
 	temporary_file=${transformation_file}.e2e-next
-	[ -f "$transformation_file" ] && [ ! -L "$transformation_file" ] ||
+	if [ ! -f "$transformation_file" ] || [ -L "$transformation_file" ]; then
 		fail "$transformation_description target must be a regular non-symlink file"
+	fi
 	match_count=$(awk -v expected="$expected_line" '
       $0 == expected { count++ }
       END { print count + 0 }
@@ -478,8 +479,9 @@ export_release_chart() {
 	esac
 	release_chart_output_parent=${E2E_RELEASE_CHART_OUTPUT%/*}
 	[ -n "$release_chart_output_parent" ] || release_chart_output_parent=/
-	[ -d "$release_chart_output_parent" ] && [ ! -L "$release_chart_output_parent" ] ||
+	if [ ! -d "$release_chart_output_parent" ] || [ -L "$release_chart_output_parent" ]; then
 		fail "E2E_RELEASE_CHART_OUTPUT parent must be an existing non-symlink directory"
+	fi
 	RELEASE_CHART_OUTPUT_PARENT=$(cd -P "$release_chart_output_parent" && pwd) ||
 		fail "could not resolve E2E_RELEASE_CHART_OUTPUT parent"
 	case "$RELEASE_CHART_OUTPUT_PARENT" in
@@ -493,10 +495,12 @@ export_release_chart() {
 			fail "E2E_RELEASE_CHART_OUTPUT must be outside the task work directory"
 		;;
 	esac
-	[ ! -e "$RELEASE_CHART_OUTPUT_TARGET" ] && [ ! -L "$RELEASE_CHART_OUTPUT_TARGET" ] ||
+	if [ -e "$RELEASE_CHART_OUTPUT_TARGET" ] || [ -L "$RELEASE_CHART_OUTPUT_TARGET" ]; then
 		fail "refusing to replace existing E2E_RELEASE_CHART_OUTPUT target"
-	[ -f "$CHART_PACKAGE" ] && [ ! -L "$CHART_PACKAGE" ] ||
+	fi
+	if [ ! -f "$CHART_PACKAGE" ] || [ -L "$CHART_PACKAGE" ]; then
 		fail "release-form sequence-$CURRENT_RELEASE_SEQUENCE chart package is not a regular non-symlink file"
+	fi
 	RELEASE_CHART_OUTPUT_TEMP=$(mktemp \
 		"$RELEASE_CHART_OUTPUT_PARENT/.ptah-operator-release-chart.XXXXXX") ||
 		fail "could not create the atomic release chart output"
@@ -511,11 +515,11 @@ export_release_chart() {
 		RELEASE_CHART_OUTPUT_TEMP=
 		fail "atomic release chart output differs from the sequence-$CURRENT_RELEASE_SEQUENCE chart package"
 	fi
-	[ ! -e "$RELEASE_CHART_OUTPUT_TARGET" ] && [ ! -L "$RELEASE_CHART_OUTPUT_TARGET" ] || {
+	if [ -e "$RELEASE_CHART_OUTPUT_TARGET" ] || [ -L "$RELEASE_CHART_OUTPUT_TARGET" ]; then
 		rm -f -- "$RELEASE_CHART_OUTPUT_TEMP"
 		RELEASE_CHART_OUTPUT_TEMP=
 		fail "E2E_RELEASE_CHART_OUTPUT target appeared during export"
-	}
+	fi
 	# The hard-link creation is the atomic publication step and, unlike a plain
 	# rename, cannot replace a target that appears after the checks above.
 	if ! ln "$RELEASE_CHART_OUTPUT_TEMP" "$RELEASE_CHART_OUTPUT_TARGET"; then
@@ -1286,8 +1290,9 @@ tar -xf "$NEXT_SOURCE_ARCHIVE" -C "$NEXT_BUILD_CONTEXT"
 NEXT_GO_SEQUENCE_FILE=$NEXT_BUILD_CONTEXT/internal/crdupgrade/rollout.go
 NEXT_HELM_SEQUENCE_FILE=$NEXT_BUILD_CONTEXT/charts/ptah-operator/templates/_helpers.tpl
 for next_sequence_source in "$NEXT_GO_SEQUENCE_FILE" "$NEXT_HELM_SEQUENCE_FILE"; do
-	[ -f "$next_sequence_source" ] && [ ! -L "$next_sequence_source" ] ||
+	if [ ! -f "$next_sequence_source" ] || [ -L "$next_sequence_source" ]; then
 		fail "synthetic next-release sequence source must be a regular non-symlink file: $next_sequence_source"
+	fi
 done
 CURRENT_GO_RELEASE_SEQUENCE=$(go_release_sequence_from_source "$NEXT_GO_SEQUENCE_FILE") ||
 	fail "archived Go source must contain exactly one positive CurrentReleaseSequence declaration"
