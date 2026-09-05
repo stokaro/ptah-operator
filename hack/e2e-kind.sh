@@ -1087,7 +1087,15 @@ debug_logs_start_following() {
 					get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
 					2>/dev/null); do
 					debug_log_file=$DEBUG_LOG_DIR/$debug_namespace.$debug_pod.log
-					if [ ! -e "$debug_log_file" ]; then
+					# Probe before following. "logs --follow" against a container
+					# still in ContainerCreating returns at once with a message
+					# saying so, and claiming the pod on that answer is how the
+					# output of a Job that failed a moment later goes missing.
+					if [ ! -e "$debug_log_file" ] &&
+						kubectl --kubeconfig "$KUBECONFIG_FILE" \
+							-n "$debug_namespace" --request-timeout=15s \
+							logs "$debug_pod" --all-containers --tail=1 \
+							>/dev/null 2>&1; then
 						: >"$debug_log_file"
 						kubectl --kubeconfig "$KUBECONFIG_FILE" \
 							-n "$debug_namespace" \
