@@ -31,7 +31,7 @@ const (
 	CurrentCRDSchemaVersion uint64 = 1
 )
 
-const predecessorRevision = "3405d26c1003329fe44f019e1eb030a982fc25e5"
+const predecessorRevision = "71c57634f78fbe8dab79ade8b5d0133e199204b3"
 
 // predecessorSchemaDigests is the one annotation-free CRD set that may be
 // adopted automatically. The values are normalized-spec digests from the

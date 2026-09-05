@@ -1,5 +1,5 @@
 {
-  "revision": "3405d26c1003329fe44f019e1eb030a982fc25e5",
+  "revision": "71c57634f78fbe8dab79ade8b5d0133e199204b3",
   "dockerfile": "Dockerfile",
   "chart": "charts/ptah-operator",
   "crds": [
