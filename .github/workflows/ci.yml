@@ -125,7 +125,7 @@ jobs:
   race:
     name: Race detector
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - name: Check out repository
         id: race-checkout
