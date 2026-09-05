@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,7 +19,9 @@ import (
 	"github.com/google/cel-go/ext"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
@@ -41,8 +44,9 @@ func TestParentWorkloadGuardSeparatesStableOriginAndExactCandidateContracts(t *t
 			*policy.Spec.MatchConstraints.MatchPolicy != admissionregistrationv1.Exact {
 			t.Fatalf("%s policy is not explicitly fail-closed with exact matching", name)
 		}
-		if len(policy.Spec.Validations) == 0 || policy.Spec.Validations[0].Expression != `!has(request.subResource) || request.subResource == ""` {
-			t.Fatalf("%s policy does not safely restrict admission to the main resource", name)
+		native := stripParentAdmissionConvergenceDependencyProbe(t, policy)
+		if len(native.Spec.Validations) == 0 {
+			t.Fatalf("%s policy has no fail-closed validation contract", name)
 		}
 	}
 
@@ -50,9 +54,10 @@ func TestParentWorkloadGuardSeparatesStableOriginAndExactCandidateContracts(t *t
 	otherRollout.ReleaseSequence = 2
 	otherRollout.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("b", 64)
 	otherRollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(otherRollout.ReleaseNamespace, otherRollout.ReleaseName, otherRollout.ReleaseSequence, otherRollout.ManagerImage)[:12]
+	otherRollout.ControllerServiceAccountName = "ptah-controller-v2"
 	other := NewParentWorkloadGuard(&otherRollout)
-	if replicaSet.Name != other.replicaSetPolicy().Name || !reflect.DeepEqual(replicaSet.Spec, other.replicaSetPolicy().Spec) {
-		t.Fatal("stable ReplicaSet parent contract changed across release sequences")
+	if replicaSet.Name == other.replicaSetPolicy().Name || reflect.DeepEqual(stripParentAdmissionConvergenceDependencyProbe(t, replicaSet).Spec, stripParentAdmissionConvergenceDependencyProbe(t, other.replicaSetPolicy()).Spec) {
+		t.Fatal("candidate ReplicaSet parent contract did not change across release identities")
 	}
 	if hookOrigin.Name != other.hookJobOriginPolicy().Name || !reflect.DeepEqual(hookOrigin.Spec, other.hookJobOriginPolicy().Spec) {
 		t.Fatal("stable hook Job origin contract changed across release sequences")
@@ -60,22 +65,150 @@ func TestParentWorkloadGuardSeparatesStableOriginAndExactCandidateContracts(t *t
 	if hookPodOrigin.Name != other.hookPodOriginPolicy().Name || !reflect.DeepEqual(hookPodOrigin.Spec, other.hookPodOriginPolicy().Spec) {
 		t.Fatal("stable hook Pod origin contract changed across release sequences")
 	}
-	if hookContract.Name == other.hookJobContractPolicy().Name || reflect.DeepEqual(hookContract.Spec, other.hookJobContractPolicy().Spec) {
+	if hookContract.Name == other.hookJobContractPolicy().Name || reflect.DeepEqual(stripParentAdmissionConvergenceDependencyProbe(t, hookContract).Spec, stripParentAdmissionConvergenceDependencyProbe(t, other.hookJobContractPolicy()).Spec) {
 		t.Fatal("candidate hook Job contract did not change with release identity")
 	}
 }
 
+func TestParentOriginV2SpecsAreByteStableAcrossReleaseAttempts(t *testing.T) {
+	t.Parallel()
+
+	firstRollout := runtimePodGuardFixture()
+	secondRollout := *firstRollout
+	secondRollout.ReleaseSequence = firstRollout.ReleaseSequence + 1
+	secondRollout.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("c", 64)
+	secondRollout.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(secondRollout.ReleaseNamespace, secondRollout.ReleaseName, secondRollout.ReleaseSequence, secondRollout.ManagerImage)[:12]
+	secondRollout.ControllerServiceAccountName = "ptah-controller-v2"
+	first := NewParentWorkloadGuard(firstRollout)
+	second := NewParentWorkloadGuard(&secondRollout)
+
+	for _, test := range []struct {
+		name   string
+		first  *admissionregistrationv1.ValidatingAdmissionPolicy
+		second *admissionregistrationv1.ValidatingAdmissionPolicy
+	}{
+		{name: "Job origin", first: first.hookJobOriginPolicy(), second: second.hookJobOriginPolicy()},
+		{name: "Pod origin", first: first.hookPodOriginPolicy(), second: second.hookPodOriginPolicy()},
+	} {
+		firstPolicy, err := json.Marshal(test.first.Spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		secondPolicy, err := json.Marshal(test.second.Spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(firstPolicy, secondPolicy) {
+			t.Fatalf("stable v2 %s policy spec changed across release attempts", test.name)
+		}
+		firstBinding, err := json.Marshal(first.binding(test.first.Name, false).Spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		secondBinding, err := json.Marshal(second.binding(test.second.Name, false).Spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(firstBinding, secondBinding) {
+			t.Fatalf("stable v2 %s binding spec changed across release attempts", test.name)
+		}
+	}
+
+	firstCandidatePolicy, err := json.Marshal(first.hookJobContractPolicy().Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCandidate := second.hookJobContractPolicy()
+	secondCandidatePolicy, err := json.Marshal(secondCandidate.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(firstCandidatePolicy, secondCandidatePolicy) {
+		t.Fatal("candidate Job policy spec did not change across release attempts")
+	}
+	firstCandidateBinding, err := json.Marshal(first.binding(first.hookJobContractPolicy().Name, true).Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCandidateBinding, err := json.Marshal(second.binding(secondCandidate.Name, true).Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(firstCandidateBinding, secondCandidateBinding) {
+		t.Fatal("candidate Job binding spec did not change across release attempts")
+	}
+}
+
+func stripParentAdmissionConvergenceDependencyProbe(
+	t *testing.T,
+	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
+) *admissionregistrationv1.ValidatingAdmissionPolicy {
+	t.Helper()
+	if policy == nil {
+		t.Fatal("parent workload guard policy is nil")
+	}
+	if strings.HasPrefix(policy.Name, parentHookOriginGuardPrefix) ||
+		strings.HasPrefix(policy.Name, parentHookPodOriginPrefix) {
+		if len(policy.Spec.Variables) >= 2 &&
+			policy.Spec.Variables[0].Name == "isAnyAdmissionConvergenceProbe" &&
+			policy.Spec.Variables[1].Name == "isAdmissionConvergenceProbe" {
+			t.Fatal("release-stable parent origin guard unexpectedly embeds a candidate convergence probe")
+		}
+		return policy.DeepCopy()
+	}
+	if len(policy.Spec.Variables) < 2 ||
+		policy.Spec.Variables[0].Name != "isAnyAdmissionConvergenceProbe" ||
+		policy.Spec.Variables[1].Name != "isAdmissionConvergenceProbe" ||
+		policy.Spec.Variables[0].Expression != policy.Spec.Variables[1].Expression {
+		return stripAdmissionConvergenceDependencyProbe(t, policy)
+	}
+
+	stripped := policy.DeepCopy()
+	probeExpression := stripped.Spec.Variables[0].Expression
+	if len(stripped.Spec.MatchConstraints.ResourceRules) == 0 || len(stripped.Spec.Validations) < 2 {
+		t.Fatal("stable admission convergence wrapper is incomplete")
+	}
+	last := stripped.Spec.Validations[len(stripped.Spec.Validations)-2:]
+	if last[0].Expression != `!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true` ||
+		last[0].Message != admissionConvergenceProbePersistenceMessage ||
+		last[1].Expression != `!variables.isAdmissionConvergenceProbe` ||
+		last[1].MessageExpression != `"Ptah admission convergence confirmed exact workload guard " + request.options.fieldManager` {
+		t.Fatal("stable admission convergence validations differ from the exact wrapper")
+	}
+	matchPrefix := "(" + probeExpression + ") || ("
+	for index := range stripped.Spec.MatchConditions {
+		expression := stripped.Spec.MatchConditions[index].Expression
+		if !strings.HasPrefix(expression, matchPrefix) || !strings.HasSuffix(expression, ")") {
+			t.Fatalf("stable admission convergence match condition %d differs from the exact wrapper", index)
+		}
+		stripped.Spec.MatchConditions[index].Expression = strings.TrimSuffix(strings.TrimPrefix(expression, matchPrefix), ")")
+	}
+	validationPrefix := "variables.isAnyAdmissionConvergenceProbe || ("
+	for index := range stripped.Spec.Validations[:len(stripped.Spec.Validations)-2] {
+		expression := stripped.Spec.Validations[index].Expression
+		if !strings.HasPrefix(expression, validationPrefix) || !strings.HasSuffix(expression, ")") {
+			t.Fatalf("stable admission convergence validation %d differs from the exact wrapper", index)
+		}
+		stripped.Spec.Validations[index].Expression = strings.TrimSuffix(strings.TrimPrefix(expression, validationPrefix), ")")
+	}
+	stripped.Spec.MatchConstraints.ResourceRules = stripped.Spec.MatchConstraints.ResourceRules[:len(stripped.Spec.MatchConstraints.ResourceRules)-1]
+	stripped.Spec.Variables = stripped.Spec.Variables[2:]
+	stripped.Spec.Validations = stripped.Spec.Validations[:len(stripped.Spec.Validations)-2]
+	return stripped
+}
+
 func TestParentHookPodOriginGuardPinsJobControllerUIDChain(t *testing.T) {
 	guard := NewParentWorkloadGuard(runtimePodGuardFixture())
-	policy := guard.hookPodOriginPolicy()
+	policy := stripParentAdmissionConvergenceDependencyProbe(t, guard.hookPodOriginPolicy())
 	serialized, err := json.Marshal(policy.Spec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	contract := string(serialized)
 	for _, required := range []string{
-		`"operations":["CREATE"]`,
+		`"operations":["CREATE","UPDATE"]`,
 		`"resources":["pods"]`,
+		`"resources":["pods/status"]`,
 		`system:kube-controller-manager`,
 		`system:serviceaccount:kube-system:job-controller`,
 		`object.metadata.ownerReferences.size() == 1`,
@@ -90,13 +223,326 @@ func TestParentHookPodOriginGuardPinsJobControllerUIDChain(t *testing.T) {
 		`object.metadata.generateName.substring(0, 58)`,
 		`object.metadata.name.substring(`,
 		`matches(\"^[a-z0-9]{5}$\")`,
+		`variables.isMainUpdate`,
+		`batch.kubernetes.io/job-tracking`,
+		`oldObject.metadata.labels`,
+		`oldObject.metadata.ownerReferences`,
 	} {
 		if !strings.Contains(contract, required) {
 			t.Fatalf("stable hook Pod origin contract does not contain %q", required)
 		}
 	}
-	if strings.Contains(contract, `"operations":["UPDATE"]`) || strings.Contains(contract, `"resources":["jobs"]`) {
-		t.Fatal("stable hook Pod origin policy is not isolated to Pod CREATE")
+	if strings.Contains(contract, `"resources":["jobs"]`) {
+		t.Fatal("stable hook Pod origin policy mixes the Job schema into one CEL environment")
+	}
+}
+
+func TestParentHookControllerPrincipalsRequireExactGroups(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		username string
+		groups   []string
+		want     bool
+	}{
+		{name: "controller manager", username: "system:kube-controller-manager", groups: []string{"system:authenticated"}, want: true},
+		{name: "Job controller ServiceAccount", username: "system:serviceaccount:kube-system:job-controller", groups: []string{"system:serviceaccounts", "system:serviceaccounts:kube-system", "system:authenticated"}, want: true},
+		{name: "controller manager injected group", username: "system:kube-controller-manager", groups: []string{"system:authenticated", "system:masters"}},
+		{name: "Job controller missing namespace group", username: "system:serviceaccount:kube-system:job-controller", groups: []string{"system:serviceaccounts", "system:authenticated"}},
+		{name: "namespace writer", username: "developer", groups: []string{"system:authenticated"}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := evaluateRolloutCEL(t, parentHookJobControllerPrincipalExpression(), map[string]any{
+				"request": map[string]any{"userInfo": map[string]any{"username": test.username, "groups": test.groups}},
+			}, nil)
+			if got != test.want {
+				t.Fatalf("Job controller principal = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestParentHookJobDeleteRequiresTerminalStatusAndAdmissionAuthority(t *testing.T) {
+	t.Parallel()
+
+	guard := NewParentWorkloadGuard(runtimePodGuardFixture())
+	namespaceGuard := NamespaceDeletionGuardPolicyName(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName)
+	expression := "(" + parentHookTerminalJobExpression("oldObject") + ") && (" + parentHookAdmissionAuthorityExpression(namespaceGuard) + ")"
+	tests := []struct {
+		name       string
+		condition  string
+		authorized bool
+		want       bool
+	}{
+		{name: "running Job denied", condition: "Running", authorized: true},
+		{name: "failed Job namespace writer denied", condition: "Failed"},
+		{name: "complete Job namespace writer denied", condition: "Complete"},
+		{name: "failed Job trusted Helm caller allowed", condition: "Failed", authorized: true, want: true},
+		{name: "complete Job trusted Helm caller allowed", condition: "Complete", authorized: true, want: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			resolved := resolveParentHookAuthorizerChecks(expression, namespaceGuard, test.authorized)
+			got := evaluateRolloutCEL(t, resolved, map[string]any{
+				"oldObject": map[string]any{"status": map[string]any{"conditions": []any{map[string]any{"type": test.condition, "status": "True"}}}},
+			}, nil)
+			if got != test.want {
+				t.Fatalf("Job DELETE admission = %v, want %v", got, test.want)
+			}
+		})
+	}
+
+	for _, policy := range []*admissionregistrationv1.ValidatingAdmissionPolicy{guard.hookJobOriginPolicy(), guard.hookJobContractPolicy()} {
+		native := stripParentAdmissionConvergenceDependencyProbe(t, policy)
+		encoded, err := json.Marshal(native.Spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contract := string(encoded)
+		for _, required := range []string{`"operations":["CREATE","UPDATE","DELETE"]`, `"resources":["jobs/status"]`, `condition.type in [\"Complete\", \"Failed\"]`, `validatingadmissionpolicybindings`} {
+			if !strings.Contains(contract, required) {
+				t.Fatalf("Job guard %s lacks DELETE/status fragment %q", policy.Name, required)
+			}
+		}
+	}
+}
+
+func resolveParentHookAuthorizerChecks(expression, namespaceGuard string, allowed bool) string {
+	replacements := []string{
+		`authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed()`,
+		`authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed()`,
+		fmt.Sprintf(`authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").name(%q).check("delete").allowed()`, namespaceGuard),
+		fmt.Sprintf(`authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").name(%q).check("delete").allowed()`, namespaceGuard),
+	}
+	for _, check := range replacements {
+		expression = strings.ReplaceAll(expression, check, strconv.FormatBool(allowed))
+	}
+	return expression
+}
+
+func TestParentHookPodStatusWritersAreExact(t *testing.T) {
+	t.Parallel()
+
+	expression := fmt.Sprintf(`((%s) || ((%s) && (%s))) && (%s)`, parentHookNodePrincipalExpression(), parentHookSchedulerPrincipalExpression(), parentHookSchedulerStatusDeltaExpression(), parentHookStatusPreservesIdentityExpression())
+	tests := []struct {
+		name      string
+		username  string
+		groups    []string
+		nodeName  string
+		oldStatus map[string]any
+		newStatus map[string]any
+		want      bool
+	}{
+		{name: "bound node reports success", username: "system:node:worker-1", groups: []string{"system:nodes", "system:authenticated"}, nodeName: "worker-1", oldStatus: map[string]any{"phase": "Running"}, newStatus: map[string]any{"phase": "Succeeded"}, want: true},
+		{name: "different node denied", username: "system:node:worker-2", groups: []string{"system:nodes", "system:authenticated"}, nodeName: "worker-1", oldStatus: map[string]any{"phase": "Running"}, newStatus: map[string]any{"phase": "Succeeded"}},
+		{name: "scheduler nominates", username: "system:kube-scheduler", groups: []string{"system:authenticated"}, oldStatus: map[string]any{"phase": "Pending"}, newStatus: map[string]any{"phase": "Pending", "nominatedNodeName": "worker-1"}, want: true},
+		{name: "scheduler ServiceAccount nominates", username: "system:serviceaccount:kube-system:kube-scheduler", groups: []string{"system:serviceaccounts", "system:serviceaccounts:kube-system", "system:authenticated"}, oldStatus: map[string]any{"phase": "Pending"}, newStatus: map[string]any{"phase": "Pending", "nominatedNodeName": "worker-1"}, want: true},
+		{name: "scheduler cannot forge success", username: "system:kube-scheduler", groups: []string{"system:authenticated"}, oldStatus: map[string]any{"phase": "Pending"}, newStatus: map[string]any{"phase": "Succeeded"}},
+		{name: "scheduler injected group denied", username: "system:kube-scheduler", groups: []string{"system:authenticated", "system:masters"}, oldStatus: map[string]any{"phase": "Pending"}, newStatus: map[string]any{"phase": "Pending", "nominatedNodeName": "worker-1"}},
+		{name: "namespace writer denied", username: "developer", groups: []string{"system:authenticated"}, oldStatus: map[string]any{"phase": "Pending"}, newStatus: map[string]any{"phase": "Succeeded"}},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			oldObject := parentHookPodStatusObject(test.nodeName, test.oldStatus)
+			object := parentGuardCELClone(t, oldObject)
+			object["status"] = test.newStatus
+			got := evaluateRolloutCEL(t, expression, map[string]any{
+				"request":   map[string]any{"userInfo": map[string]any{"username": test.username, "groups": test.groups}},
+				"object":    object,
+				"oldObject": oldObject,
+			}, nil)
+			if got != test.want {
+				t.Fatalf("Pod status admission = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestParentHookPodStatusFieldInventoryIsComplete(t *testing.T) {
+	t.Parallel()
+
+	typeOfStatus := reflect.TypeOf(corev1.PodStatus{})
+	got := make([]string, 0, typeOfStatus.NumField())
+	for index := range typeOfStatus.NumField() {
+		name := strings.Split(typeOfStatus.Field(index).Tag.Get("json"), ",")[0]
+		if name != "" && name != "-" {
+			got = append(got, name)
+		}
+	}
+	if want := parentHookPodStatusFields(); !slices.Equal(got, want) {
+		t.Fatalf("PodStatus field inventory changed\n got: %v\nwant: %v", got, want)
+	}
+}
+
+func parentHookPodStatusObject(nodeName string, status map[string]any) map[string]any {
+	spec := map[string]any{"containers": []any{map[string]any{"name": "image-check"}}}
+	if nodeName != "" {
+		spec["nodeName"] = nodeName
+	}
+	return map[string]any{
+		"metadata": map[string]any{
+			"name":            "image-check-abc12",
+			"namespace":       "ptah-system",
+			"uid":             "pod-uid",
+			"resourceVersion": "7",
+			"generation":      int64(1),
+			"labels":          map[string]any{"app.kubernetes.io/instance": "ptah", "app.kubernetes.io/component": "crd-manager-image-check"},
+			"ownerReferences": []any{map[string]any{"apiVersion": "batch/v1", "kind": "Job", "name": "image-check", "uid": "job-uid", "controller": true, "blockOwnerDeletion": true}},
+		},
+		"spec":   spec,
+		"status": status,
+	}
+}
+
+func TestParentHookPodMainUpdateCannotEraseProtectionBoundary(t *testing.T) {
+	t.Parallel()
+
+	guard := NewParentWorkloadGuard(runtimePodGuardFixture())
+	native := stripParentAdmissionConvergenceDependencyProbe(t, guard.hookPodOriginPolicy())
+	oldObject := parentHookImageCheckPod(guard)
+	object := parentGuardCELClone(t, oldObject)
+	objectMetadata := object["metadata"].(map[string]any)
+	objectMetadata["finalizers"] = []any{"example.test/preserve"}
+	objectMetadata["labels"].(map[string]any)["app.kubernetes.io/component"] = "unprotected"
+	request := map[string]any{
+		"namespace": guard.rollout.ReleaseNamespace,
+		"operation": "UPDATE",
+		"userInfo": map[string]any{
+			"username": "system:serviceaccount:kube-system:job-controller",
+			"groups":   []string{"system:serviceaccounts", "system:serviceaccounts:kube-system", "system:authenticated"},
+		},
+	}
+	match := evaluateRolloutCEL(t, native.Spec.MatchConditions[0].Expression, map[string]any{
+		"request": request, "object": object, "oldObject": oldObject,
+	}, nil)
+	if match != true {
+		t.Fatal("main Pod UPDATE escaped the v2 match after changing its protected label")
+	}
+
+	variables := map[string]any{"isCreate": false, "isMainUpdate": true, "isStatusUpdate": false, "owner": objectMetadata["ownerReferences"].([]any)[0]}
+	for _, validation := range native.Spec.Validations {
+		if !strings.Contains(validation.Expression, "variables.isMainUpdate") || !strings.Contains(validation.Expression, "job-tracking") {
+			continue
+		}
+		if got := evaluateRolloutCEL(t, validation.Expression, map[string]any{
+			"request": request, "object": object, "oldObject": oldObject,
+		}, variables); got != false {
+			t.Fatalf("protected-label removal through main Pod UPDATE = %v, want false", got)
+		}
+		mutatedOld := parentGuardCELClone(t, object)
+		delete(mutatedOld["metadata"].(map[string]any), "ownerReferences")
+		statusRequest := map[string]any{"namespace": guard.rollout.ReleaseNamespace, "operation": "UPDATE", "subResource": "status"}
+		if got := evaluateRolloutCEL(t, native.Spec.MatchConditions[0].Expression, map[string]any{
+			"request": statusRequest, "object": mutatedOld, "oldObject": mutatedOld,
+		}, nil); got != false {
+			t.Fatalf("hypothetical second-step forged status match = %v, want false after erased labels and owner", got)
+		}
+		return
+	}
+	t.Fatal("stable Pod guard has no tracking-finalizer-only main UPDATE validation")
+}
+
+func TestLegacyParentOriginContractsRemainFrozenAndCoexistWithImageCheck(t *testing.T) {
+	t.Parallel()
+
+	guard := NewParentWorkloadGuard(runtimePodGuardFixture())
+	hookPattern, teardownPattern := guard.hookServiceAccountPatterns()
+	legacyJob := guard.legacyHookJobOriginPolicy()
+	legacyPod := guard.legacyHookPodOriginPolicy()
+	if legacyJob.Name != legacyParentHookJobOriginGuardPolicyName(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName) ||
+		legacyPod.Name != legacyParentHookPodOriginGuardPolicyName(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName) {
+		t.Fatal("legacy parent-origin names differ from the frozen v1 identities")
+	}
+	for _, entry := range guard.legacyOriginEntries() {
+		if entry.policy.Annotations["helm.sh/resource-policy"] != "keep" || entry.binding.Annotations["helm.sh/resource-policy"] != "keep" ||
+			entry.policy.Annotations["helm.sh/hook"] != "pre-install,pre-upgrade" || entry.binding.Annotations["helm.sh/hook"] != "pre-install,pre-upgrade" {
+			t.Fatalf("legacy parent-origin pair %s no longer proves Helm retention across upgrade", entry.name)
+		}
+	}
+	if len(legacyJob.Spec.MatchConstraints.ResourceRules) != 1 ||
+		!reflect.DeepEqual(legacyJob.Spec.MatchConstraints.ResourceRules[0].Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update}) ||
+		!reflect.DeepEqual(legacyJob.Spec.MatchConstraints.ResourceRules[0].Resources, []string{"jobs"}) ||
+		len(legacyJob.Spec.Variables) != 0 || len(legacyJob.Spec.Validations) != 3 {
+		t.Fatalf("legacy Job origin contract drifted: %#v", legacyJob.Spec)
+	}
+	wantJobMatch := fmt.Sprintf(
+		`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))`,
+		guard.rollout.ReleaseNamespace, hookPattern, teardownPattern, hookPattern, teardownPattern,
+	)
+	if len(legacyJob.Spec.MatchConditions) != 1 || legacyJob.Spec.MatchConditions[0].Expression != wantJobMatch ||
+		legacyJob.Spec.Validations[0].Expression != `!has(request.subResource) || request.subResource == ""` ||
+		legacyJob.Spec.Validations[2].Expression != parentHookAdmissionAuthorityExpression(NamespaceDeletionGuardPolicyName(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName)) {
+		t.Fatal("legacy Job origin CEL differs from the frozen v1 contract")
+	}
+	if len(legacyPod.Spec.MatchConstraints.ResourceRules) != 1 ||
+		!reflect.DeepEqual(legacyPod.Spec.MatchConstraints.ResourceRules[0].Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create}) ||
+		!reflect.DeepEqual(legacyPod.Spec.MatchConstraints.ResourceRules[0].Resources, []string{"pods"}) ||
+		len(legacyPod.Spec.Variables) != 1 || legacyPod.Spec.Variables[0].Name != "owner" || len(legacyPod.Spec.Validations) != 7 {
+		t.Fatalf("legacy Pod origin contract drifted: %#v", legacyPod.Spec)
+	}
+	wantPodMatch := fmt.Sprintf(`request.namespace == %q && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))`, guard.rollout.ReleaseNamespace, hookPattern, teardownPattern)
+	if len(legacyPod.Spec.MatchConditions) != 1 || legacyPod.Spec.MatchConditions[0].Expression != wantPodMatch ||
+		legacyPod.Spec.Validations[1].Expression != `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]` ||
+		legacyPod.Spec.Validations[6].Expression != generatedPodNameValidationExpression("variables.owner.name") {
+		t.Fatal("legacy Pod origin CEL differs from the frozen v1 contract")
+	}
+
+	imageCheckJob := map[string]any{"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"automountServiceAccountToken": false}}}}
+	jobRequest := map[string]any{
+		"namespace": guard.rollout.ReleaseNamespace,
+		"operation": "CREATE",
+		"name":      guard.hookImageCheckJobName(),
+		"resource":  map[string]any{"group": "batch", "version": "v1", "resource": "jobs"},
+	}
+	if got := evaluateRolloutCEL(t, legacyJob.Spec.MatchConditions[0].Expression, map[string]any{"request": jobRequest, "object": imageCheckJob, "oldObject": nil}, nil); got != false {
+		t.Fatalf("legacy v1 Job origin unexpectedly matches credentialless image-check: %v", got)
+	}
+	currentJob := stripParentAdmissionConvergenceDependencyProbe(t, guard.hookJobOriginPolicy())
+	if got := evaluateRolloutCEL(t, currentJob.Spec.MatchConditions[0].Expression, map[string]any{"request": jobRequest, "object": imageCheckJob, "oldObject": nil}, nil); got != true {
+		t.Fatalf("v2 Job origin does not match credentialless image-check: %v", got)
+	}
+
+	imageCheckPod := parentHookImageCheckPod(guard)
+	podRequest := map[string]any{"namespace": guard.rollout.ReleaseNamespace, "operation": "CREATE"}
+	if got := evaluateRolloutCEL(t, legacyPod.Spec.MatchConditions[0].Expression, map[string]any{"request": podRequest, "object": imageCheckPod, "oldObject": nil}, nil); got != false {
+		t.Fatalf("legacy v1 Pod origin unexpectedly matches credentialless image-check Pod: %v", got)
+	}
+	currentPod := stripParentAdmissionConvergenceDependencyProbe(t, guard.hookPodOriginPolicy())
+	if got := evaluateRolloutCEL(t, currentPod.Spec.MatchConditions[0].Expression, map[string]any{"request": podRequest, "object": imageCheckPod, "oldObject": nil}, nil); got != true {
+		t.Fatalf("v2 Pod origin does not match credentialless image-check Pod: %v", got)
+	}
+}
+
+func parentHookImageCheckPod(guard *ParentWorkloadGuard) map[string]any {
+	jobName := guard.hookImageCheckJobName()
+	return map[string]any{
+		"metadata": map[string]any{
+			"name":              jobName + "-abc12",
+			"namespace":         guard.rollout.ReleaseNamespace,
+			"uid":               "pod-uid",
+			"resourceVersion":   "7",
+			"generation":        int64(1),
+			"creationTimestamp": "2026-09-05T10:00:00Z",
+			"generateName":      jobName + "-",
+			"labels": map[string]any{
+				"app.kubernetes.io/instance":         guard.rollout.ReleaseName,
+				"app.kubernetes.io/component":        "crd-manager-image-check",
+				"batch.kubernetes.io/job-name":       jobName,
+				"batch.kubernetes.io/controller-uid": "job-uid",
+			},
+			"ownerReferences": []any{map[string]any{"apiVersion": "batch/v1", "kind": "Job", "name": jobName, "uid": "job-uid", "controller": true, "blockOwnerDeletion": true}},
+			"finalizers":      []any{"batch.kubernetes.io/job-tracking", "example.test/preserve"},
+		},
+		"spec":   map[string]any{"containers": []any{map[string]any{"name": "image-check"}}},
+		"status": map[string]any{"phase": "Pending"},
 	}
 }
 
@@ -432,6 +878,124 @@ func TestParentHookJobGuardsCloseFutureGapAndPinExecutable(t *testing.T) {
 	}
 }
 
+func TestParentHookIdentityProbeDeadlineLeavesTerminationMargin(t *testing.T) {
+	t.Parallel()
+
+	rollout := runtimePodGuardFixture()
+	policy := stripParentAdmissionConvergenceDependencyProbe(t, NewParentWorkloadGuard(rollout).hookJobContractPolicy())
+	deadlineExpression := ""
+	for _, validation := range policy.Spec.Validations {
+		if strings.Contains(validation.Expression, "object.spec.activeDeadlineSeconds") && !strings.Contains(validation.Expression, "oldObject.spec.activeDeadlineSeconds") {
+			deadlineExpression = validation.Expression
+			break
+		}
+	}
+	if deadlineExpression == "" {
+		t.Fatal("candidate hook Job contract has no active deadline validation")
+	}
+
+	tests := []struct {
+		name       string
+		deadline   int64
+		variables  map[string]any
+		wantAccept bool
+	}{
+		{
+			name:     "identity receives full budget",
+			deadline: 210,
+			variables: map[string]any{"isMainWrite": true, "isImageCheck": false, "isIdentity": true,
+				"isPreflight": false, "isQuiesce": false, "isTeardown": false},
+			wantAccept: true,
+		},
+		{
+			name:     "identity rejects obsolete deadline",
+			deadline: 120,
+			variables: map[string]any{"isMainWrite": true, "isImageCheck": false, "isIdentity": true,
+				"isPreflight": false, "isQuiesce": false, "isTeardown": false},
+		},
+		{
+			name:     "image check keeps short deadline",
+			deadline: 120,
+			variables: map[string]any{"isMainWrite": true, "isImageCheck": true, "isIdentity": false,
+				"isPreflight": false, "isQuiesce": false, "isTeardown": false},
+			wantAccept: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := evaluateRolloutCEL(t, deadlineExpression, map[string]any{
+				"object": map[string]any{"spec": map[string]any{"activeDeadlineSeconds": test.deadline}},
+			}, test.variables)
+			if got != test.wantAccept {
+				t.Fatalf("active deadline contract = %v, want %t", got, test.wantAccept)
+			}
+		})
+	}
+
+	const identityDeadline = 210 * time.Second
+	var managerTimeout time.Duration
+	for _, argument := range rollout.hookArgs("identity-probe") {
+		value, found := strings.CutPrefix(argument, "--timeout=")
+		if !found {
+			continue
+		}
+		parsed, err := time.ParseDuration(value)
+		if err != nil {
+			t.Fatalf("parse identity-probe timeout %q: %v", argument, err)
+		}
+		managerTimeout = parsed
+		break
+	}
+	if managerTimeout == 0 {
+		t.Fatal("identity-probe args have no positive manager timeout")
+	}
+	if margin := identityDeadline - managerTimeout; margin != 30*time.Second {
+		t.Fatalf("identity-probe scheduling and termination margin = %s, want 30s", margin)
+	}
+}
+
+func TestRenderedHookIdentityProbeDeadlineLeavesTerminationMargin(t *testing.T) {
+	t.Parallel()
+
+	objects := renderControllerRBACCutoverChart(t)
+	var identityJob *unstructured.Unstructured
+	var identityArgs []string
+	for _, object := range objects {
+		if object.GetKind() != "Job" {
+			continue
+		}
+		containers, found, err := unstructured.NestedSlice(object.Object, "spec", "template", "spec", "containers")
+		if err != nil || !found || len(containers) != 1 {
+			continue
+		}
+		args := transitionRenderStringSlice(containers[0].(map[string]any)["args"])
+		if !slices.Contains(args, "identity-probe") {
+			continue
+		}
+		if identityJob != nil {
+			t.Fatal("rendered chart contains more than one identity-probe Job")
+		}
+		identityJob = object
+		identityArgs = args
+	}
+	if identityJob == nil {
+		t.Fatal("rendered chart has no identity-probe Job")
+	}
+
+	deadlineSeconds, found, err := unstructured.NestedInt64(identityJob.Object, "spec", "activeDeadlineSeconds")
+	if err != nil || !found {
+		t.Fatalf("rendered identity-probe active deadline is missing: found=%t, error=%v", found, err)
+	}
+	if !slices.Contains(identityArgs, "--timeout=180s") {
+		t.Fatal("rendered identity-probe manager timeout differs from 180s")
+	}
+	const managerTimeout = 180 * time.Second
+	deadline := time.Duration(deadlineSeconds) * time.Second
+	if margin := deadline - managerTimeout; margin != 30*time.Second {
+		t.Fatalf("rendered identity-probe scheduling and termination margin = %s, want 30s", margin)
+	}
+}
+
 // This is intentionally a white-box test because the generated CEL expression
 // is the immutable admission boundary for candidate hook Job templates.
 func TestParentHookJobPriorityClassContract(t *testing.T) {
@@ -439,10 +1003,11 @@ func TestParentHookJobPriorityClassContract(t *testing.T) {
 	rollout.PriorityClassName = "runtime-critical"
 	guard := NewParentWorkloadGuard(rollout)
 	reconcileJob := rollout.hookJobName("reconcile")
+	policy := stripParentAdmissionConvergenceDependencyProbe(t, guard.hookJobContractPolicy())
 
 	var expression string
-	for _, validation := range guard.hookJobContractPolicy().Spec.Validations {
-		if strings.Contains(validation.Expression, ".priorityClassName") {
+	for _, validation := range policy.Spec.Validations {
+		if strings.Contains(validation.Expression, ".priorityClassName") && strings.Contains(validation.Expression, "variables.isMainWrite") && !strings.Contains(validation.Expression, "oldObject.") {
 			if expression != "" {
 				t.Fatal("candidate hook Job contract has more than one PriorityClass validation")
 			}
@@ -455,6 +1020,7 @@ func TestParentHookJobPriorityClassContract(t *testing.T) {
 	environment, err := celgo.NewEnv(
 		celgo.Variable("object", celgo.DynType),
 		celgo.Variable("request", celgo.DynType),
+		celgo.Variable("variables", celgo.DynType),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -500,8 +1066,9 @@ func TestParentHookJobPriorityClassContract(t *testing.T) {
 				pod["preemptionPolicy"] = "PreemptLowerPriority"
 			}
 			result, _, err := program.Eval(map[string]any{
-				"object":  map[string]any{"spec": map[string]any{"template": map[string]any{"spec": pod}}},
-				"request": map[string]any{"name": test.jobName},
+				"object":    map[string]any{"spec": map[string]any{"template": map[string]any{"spec": pod}}},
+				"request":   map[string]any{"name": test.jobName},
+				"variables": map[string]any{"isMainWrite": true, "effectiveName": test.jobName},
 			})
 			if err != nil {
 				t.Fatalf("evaluate hook Job PriorityClass CEL: %v", err)
@@ -574,55 +1141,32 @@ func TestParentWorkloadGuardsScopeOptionalServiceAccounts(t *testing.T) {
 
 	rollout := runtimePodGuardFixture()
 	guard := NewParentWorkloadGuard(rollout)
-	hookPattern, teardownPattern := guard.hookServiceAccountPatterns()
 	teardownServiceAccount, err := TeardownServiceAccountName(rollout.HookServiceAccountName, rollout.ReleaseSequence)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	tests := []struct {
-		name             string
-		policy           *admissionregistrationv1.ValidatingAdmissionPolicy
-		match            string
-		validationPrefix string
-		candidate        bool
+		name      string
+		policy    *admissionregistrationv1.ValidatingAdmissionPolicy
+		required  []string
+		candidate bool
 	}{
 		{
-			name:   "ReplicaSet",
-			policy: guard.replicaSetPolicy(),
-			match: fmt.Sprintf(
-				`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))`,
-				rollout.ReleaseNamespace, rollout.ControllerServiceAccountName, rollout.CertificateDeploymentName, rollout.ControllerServiceAccountName, rollout.CertificateDeploymentName,
-			),
-			validationPrefix: `has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in`,
+			name: "ReplicaSet", policy: guard.replicaSetPolicy(),
+			required: []string{rollout.ControllerServiceAccountName, rollout.CertificateDeploymentName, "oldObject.spec.template.spec.serviceAccountName"},
 		},
 		{
-			name:   "stable hook Job",
-			policy: guard.hookJobOriginPolicy(),
-			match: fmt.Sprintf(
-				`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))`,
-				rollout.ReleaseNamespace, hookPattern, teardownPattern, hookPattern, teardownPattern,
-			),
-			validationPrefix: `has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches`,
+			name: "stable hook Job", policy: guard.hookJobOriginPolicy(),
+			required: []string{"object.spec.template.spec.serviceAccountName.matches", "oldObject.spec.template.spec.serviceAccountName.matches", guard.hookImageCheckJobPattern()},
 		},
 		{
-			name:   "stable hook Pod",
-			policy: guard.hookPodOriginPolicy(),
-			match: fmt.Sprintf(
-				`request.namespace == %q && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))`,
-				rollout.ReleaseNamespace, hookPattern, teardownPattern,
-			),
-			validationPrefix: `object.metadata.namespace == request.namespace && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches`,
+			name: "stable hook Pod", policy: guard.hookPodOriginPolicy(),
+			required: []string{"object.spec.serviceAccountName.matches", "oldObject.spec.serviceAccountName.matches", "variables.isMainUpdate", "crd-manager-image-check"},
 		},
 		{
-			name:   "candidate hook Job",
-			policy: guard.hookJobContractPolicy(),
-			match: fmt.Sprintf(
-				`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && oldObject.spec.template.spec.serviceAccountName in [%q, %q]))`,
-				rollout.ReleaseNamespace, rollout.HookServiceAccountName, teardownServiceAccount, rollout.HookServiceAccountName, teardownServiceAccount,
-			),
-			validationPrefix: `has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName ==`,
-			candidate:        true,
+			name: "candidate hook Job", policy: guard.hookJobContractPolicy(), candidate: true,
+			required: []string{rollout.HookServiceAccountName, teardownServiceAccount, guard.hookImageCheckJobName(), "oldObject.spec.template.spec.serviceAccountName"},
 		},
 	}
 	for _, test := range tests {
@@ -631,18 +1175,15 @@ func TestParentWorkloadGuardsScopeOptionalServiceAccounts(t *testing.T) {
 			if test.policy.Spec.FailurePolicy == nil || *test.policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 				t.Fatal("policy is not fail-closed")
 			}
-			if len(test.policy.Spec.MatchConditions) != 1 || test.policy.Spec.MatchConditions[0].Expression != test.match {
-				t.Fatalf("optional ServiceAccount match condition\n got: %q\nwant: %q", test.policy.Spec.MatchConditions, test.match)
+			native := stripParentAdmissionConvergenceDependencyProbe(t, test.policy)
+			encoded, err := json.Marshal(native.Spec)
+			if err != nil {
+				t.Fatal(err)
 			}
-			foundValidation := false
-			for _, validation := range test.policy.Spec.Validations {
-				if strings.HasPrefix(validation.Expression, test.validationPrefix) {
-					foundValidation = true
-					break
+			for _, required := range test.required {
+				if !strings.Contains(string(encoded), required) {
+					t.Fatalf("policy does not contain protected identity fragment %q", required)
 				}
-			}
-			if !foundValidation {
-				t.Fatalf("policy does not explicitly reject removal of its protected ServiceAccount with prefix %q", test.validationPrefix)
 			}
 			binding := guard.binding(test.policy.Name, test.candidate)
 			if !reflect.DeepEqual(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
@@ -727,7 +1268,7 @@ func TestRenderedParentWorkloadGuardsMatchCompiledContracts(t *testing.T) {
 		}
 	}
 
-	managerImage := "ghcr.io/stokaro/ptah-operator@sha256:" + strings.Repeat("2", 64)
+	managerImage := renderedGuardManagerImage
 	controller := deployments["ptah-e2e-ptah-operator"]
 	certificate := deployments["ptah-e2e-ptah-operator-cert-rotator"]
 	if controller == nil || certificate == nil || controller.Spec.Replicas == nil || len(controller.Spec.Template.Spec.Containers) != 1 || len(certificate.Spec.Template.Spec.Containers) != 1 {
@@ -741,7 +1282,8 @@ func TestRenderedParentWorkloadGuardsMatchCompiledContracts(t *testing.T) {
 	rollout.WebhookTimeoutSeconds = 5
 	rollout.WebhookSecretName = "ptah-e2e-ptah-operator-webhook-cert"
 	rollout.HookServiceAccountName = "ptah-e2e-ptah-operator-crd-v1-" + hookIdentityDigest("ptah-e2e", "ptah-e2e", 1, managerImage)[:12]
-	rollout.ControllerServiceAccountName = "ptah-e2e-ptah-operator"
+	rollout.ControllerServiceAccountName = controller.Spec.Template.Spec.ServiceAccountName
+	rollout.ControllerServiceAccountManaged = true
 	rollout.ControllerDeploymentName = controller.Name
 	rollout.ControllerReplicas = *controller.Spec.Replicas
 	rollout.CertificateDeploymentName = certificate.Name
@@ -756,14 +1298,19 @@ func TestRenderedParentWorkloadGuardsMatchCompiledContracts(t *testing.T) {
 	for _, entry := range guard.entries() {
 		assertAdmissionPolicyCELHeadroom(t, "rendered "+entry.description+" policy", policies[entry.name])
 		if err := entry.verifyPolicy(policies[entry.name]); err != nil {
-			t.Fatalf("rendered %s policy: %v", entry.description, err)
+			t.Fatalf("rendered %s policy: %v: %s", entry.description, err, admissionConvergencePolicyDifference(policies[entry.name].Spec, entry.policy.Spec))
 		}
 		if err := entry.verifyBinding(bindings[entry.name]); err != nil {
 			t.Fatalf("rendered %s binding: %v", entry.description, err)
 		}
 	}
+	for _, legacy := range guard.legacyOriginEntries() {
+		if policies[legacy.name] != nil || bindings[legacy.name] != nil {
+			t.Fatalf("fresh chart unexpectedly renders legacy v1 parent-origin pair %s", legacy.name)
+		}
+	}
 	weights := map[string][2]string{
-		ParentReplicaSetGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName):                                                {parentReplicaSetPolicyWeight, parentReplicaSetBindingWeight},
+		ParentReplicaSetGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage): {parentReplicaSetPolicyWeight, parentReplicaSetBindingWeight},
 		ParentHookJobOriginGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName):                                             {parentHookOriginPolicyWeight, parentHookOriginBindingWeight},
 		ParentHookPodOriginGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName):                                             {parentHookPodOriginPolicyWeight, parentHookPodOriginBindingWeight},
 		ParentHookJobContractPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage): {parentHookContractPolicyWeight, parentHookContractBindingWeight},

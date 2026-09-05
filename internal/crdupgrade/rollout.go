@@ -9,6 +9,7 @@ import (
 	"maps"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 )
@@ -164,42 +166,54 @@ type ConfigMapWriter interface {
 	Update(context.Context, *corev1.ConfigMap, metav1.UpdateOptions) (*corev1.ConfigMap, error)
 }
 
+// ConfigMapDeleter is separated from ConfigMapWriter so read/update-only
+// runtime verifiers do not accidentally acquire marker retirement authority.
+type ConfigMapDeleter interface {
+	Delete(context.Context, string, metav1.DeleteOptions) error
+}
+
 // RolloutGuard verifies the persistent admission-policy ratchet and performs
 // the explicit old-runtime quiescence step. Helm creates each versioned guard
 // as an earlier, retained hook resource; this process has read-only access to
 // the guards and cannot weaken them.
 type RolloutGuard struct {
-	Policies                           ValidatingAdmissionPolicyReader
-	Bindings                           ValidatingAdmissionPolicyBindingReader
-	Deployments                        DeploymentWriter
-	Pods                               PodLister
-	ConfigMaps                         ConfigMapWriter
-	ReleaseName                        string
-	ReleaseNamespace                   string
-	CoordinationNamespace              string
-	LeaderElection                     bool
-	LeaderElectionID                   string
-	WebhookServiceName                 string
-	WebhookTimeoutSeconds              int32
-	WebhookSecretName                  string
-	WebhookPort                        int32
-	CertificateHealthPort              int32
-	HookServiceAccountName             string
-	ControllerServiceAccountName       string
-	ControllerDeploymentName           string
-	ControllerReplicas                 int32
-	CertificateDeploymentName          string
-	ControllerStateVersion             int32
-	AdmissionContractVersion           int32
-	ReleaseSequence                    int32
-	ManagerImage                       string
-	ControllerArgs                     []string
-	CertificateArgs                    []string
-	RuntimeDeploymentConfigExpressions []string
-	RuntimePodConfigExpressions        []string
-	PriorityClassName                  string
-	RuntimeAdmissionContractB64        string
-	PollEvery                          time.Duration
+	Policies                                ValidatingAdmissionPolicyReader
+	Bindings                                ValidatingAdmissionPolicyBindingReader
+	Deployments                             DeploymentWriter
+	Pods                                    PodLister
+	ConfigMaps                              ConfigMapWriter
+	ConfigMapDeleter                        ConfigMapDeleter
+	ReleaseName                             string
+	ReleaseNamespace                        string
+	CoordinationNamespace                   string
+	LeaderElection                          bool
+	LeaderElectionID                        string
+	WebhookServiceName                      string
+	WebhookTimeoutSeconds                   int32
+	WebhookSecretName                       string
+	WebhookPort                             int32
+	CertificateHealthPort                   int32
+	HookServiceAccountName                  string
+	ControllerServiceAccountName            string
+	ControllerServiceAccountManaged         bool
+	PreviousControllerServiceAccountName    string
+	PreviousControllerServiceAccountUID     types.UID
+	PreviousControllerServiceAccountManaged bool
+	PreviousControllerReleaseSequence       int32
+	ControllerDeploymentName                string
+	ControllerReplicas                      int32
+	CertificateDeploymentName               string
+	ControllerStateVersion                  int32
+	AdmissionContractVersion                int32
+	ReleaseSequence                         int32
+	ManagerImage                            string
+	ControllerArgs                          []string
+	CertificateArgs                         []string
+	RuntimeDeploymentConfigExpressions      []string
+	RuntimePodConfigExpressions             []string
+	PriorityClassName                       string
+	RuntimeAdmissionContractB64             string
+	PollEvery                               time.Duration
 }
 
 // Prepare establishes and proves the API-server-side ratchet before adopting
@@ -265,7 +279,7 @@ func (g *RolloutGuard) Verify(ctx context.Context) error {
 	if err := NewParentWorkloadGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify parent workload guards: %w", err)
 	}
-	if err := NewServiceAccountOriginGuard(g, nil).Verify(ctx); err != nil {
+	if err := NewServiceAccountOriginGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify service account origin guard: %w", err)
 	}
 	if err := g.releaseActivationGuard().Verify(ctx); err != nil {
@@ -359,7 +373,7 @@ func (g *RolloutGuard) VerifyHookIdentity(ctx context.Context) error {
 	if err := NewParentWorkloadGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify parent workload guards: %w", err)
 	}
-	if err := NewServiceAccountOriginGuard(g, nil).Verify(ctx); err != nil {
+	if err := NewServiceAccountOriginGuard(g).Verify(ctx); err != nil {
 		return fmt.Errorf("verify service account origin guard: %w", err)
 	}
 	name := HookIdentityGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
@@ -458,6 +472,18 @@ func (g *RolloutGuard) Quiesce(ctx context.Context) error {
 // updater cannot bypass them by merely inventing a future annotation.
 func (g *RolloutGuard) Activate(ctx context.Context) error {
 	return g.releaseActivationGuard().Activate(ctx)
+}
+
+// ReleaseActivationState returns the exact durable activation and controller
+// credential phase for cutover orchestration.
+func (g *RolloutGuard) ReleaseActivationState(ctx context.Context) (ReleaseActivationState, error) {
+	return g.releaseActivationGuard().CurrentState(ctx)
+}
+
+// BeginControllerCredentialDrain persists the candidate-specific drain tuple
+// before any credential grace period begins.
+func (g *RolloutGuard) BeginControllerCredentialDrain(ctx context.Context) (ReleaseActivationState, error) {
+	return g.releaseActivationGuard().BeginDraining(ctx)
 }
 
 func (g *RolloutGuard) quiesce(ctx context.Context, apply bool) error {
@@ -565,6 +591,10 @@ func (g *RolloutGuard) validateIdentity() error {
 	if g.ControllerDeploymentName == g.CertificateDeploymentName {
 		return fmt.Errorf("controller and certificate Deployment names must differ")
 	}
+	if g.PreviousControllerServiceAccountName != "" &&
+		g.PreviousControllerServiceAccountName != strings.TrimSpace(g.PreviousControllerServiceAccountName) {
+		return fmt.Errorf("previous controller service account name must not contain surrounding whitespace")
+	}
 	if g.ControllerReplicas < 1 {
 		return fmt.Errorf("controller replicas must be positive")
 	}
@@ -611,11 +641,25 @@ func (g *RolloutGuard) validateIdentity() error {
 	if g.releaseHookUsernamePrefix() == "" {
 		return fmt.Errorf("hook service account does not encode the candidate release sequence")
 	}
-	if _, err := TeardownServiceAccountName(g.HookServiceAccountName, g.ReleaseSequence); err != nil {
+	cleanupServiceAccountName, err := TeardownServiceAccountName(g.HookServiceAccountName, g.ReleaseSequence)
+	if err != nil {
 		return err
 	}
-	if _, err := TeardownQuiesceJobName(g.HookServiceAccountName); err != nil {
+	quiesceJobName, err := TeardownQuiesceJobName(g.HookServiceAccountName)
+	if err != nil {
 		return err
+	}
+	if g.PreviousControllerServiceAccountName != "" {
+		reserved := map[string]string{
+			g.ControllerServiceAccountName: "candidate controller ServiceAccount",
+			g.HookServiceAccountName:       "CRD manager hook ServiceAccount",
+			cleanupServiceAccountName:      "teardown ServiceAccount",
+			quiesceJobName:                 "teardown quiesce identity",
+			g.CertificateDeploymentName:    "certificate ServiceAccount",
+		}
+		if description, found := reserved[g.PreviousControllerServiceAccountName]; found {
+			return fmt.Errorf("previous controller ServiceAccount must differ from %s", description)
+		}
 	}
 	if g.PollEvery <= 0 {
 		return fmt.Errorf("rollout guard poll interval must be positive")
@@ -963,6 +1007,11 @@ func (g *RolloutGuard) verifierArgs(verifyControllerState bool) []string {
 		"--certificate-health-port=" + strconv.FormatInt(int64(g.CertificateHealthPort), 10),
 		"--hook-service-account-name=" + g.HookServiceAccountName,
 		"--controller-service-account-name=" + g.ControllerServiceAccountName,
+		"--controller-service-account-managed=" + strconv.FormatBool(g.ControllerServiceAccountManaged),
+		"--previous-controller-service-account-name=" + g.PreviousControllerServiceAccountName,
+		"--previous-controller-service-account-uid=" + string(g.PreviousControllerServiceAccountUID),
+		"--previous-controller-service-account-managed=" + strconv.FormatBool(g.PreviousControllerServiceAccountManaged),
+		"--previous-controller-release-sequence=" + strconv.FormatInt(int64(g.PreviousControllerReleaseSequence), 10),
 		"--controller-deployment-name=" + g.ControllerDeploymentName,
 		"--controller-replicas=" + strconv.FormatInt(int64(g.ControllerReplicas), 10),
 		"--certificate-deployment-name=" + g.CertificateDeploymentName,
@@ -976,8 +1025,14 @@ func (g *RolloutGuard) verifierArgs(verifyControllerState bool) []string {
 	}
 	if verifyControllerState {
 		args = append(args, "--verify-controller-state=true")
+	} else if g.certificateRecoveryEnabled() {
+		args = append(args, "--verify-certificate-recovery=true")
 	}
 	return args
+}
+
+func (g *RolloutGuard) certificateRecoveryEnabled() bool {
+	return slices.Contains(g.CertificateArgs, "--recreate-missing-secret=true")
 }
 
 func (g *RolloutGuard) verifyDeployment(target deploymentTarget, deployment *appsv1.Deployment) error {
@@ -988,6 +1043,18 @@ func (g *RolloutGuard) verifyDeployment(target deploymentTarget, deployment *app
 		deployment.Labels[instanceLabel] != g.ReleaseName ||
 		deployment.Labels["app.kubernetes.io/component"] != target.component {
 		return fmt.Errorf("%s Deployment %s/%s has foreign or incomplete Helm ownership", target.component, g.ReleaseNamespace, target.name)
+	}
+	serviceAccountName := deployment.Spec.Template.Spec.ServiceAccountName
+	switch target.component {
+	case "controller":
+		if serviceAccountName != g.ControllerServiceAccountName &&
+			(g.PreviousControllerServiceAccountName == "" || serviceAccountName != g.PreviousControllerServiceAccountName) {
+			return fmt.Errorf("controller Deployment %s/%s uses unrecognized ServiceAccount %q", g.ReleaseNamespace, target.name, serviceAccountName)
+		}
+	case "certificate-rotation":
+		if serviceAccountName != g.CertificateDeploymentName {
+			return fmt.Errorf("certificate-rotation Deployment %s/%s uses ServiceAccount %q instead of %q", g.ReleaseNamespace, target.name, serviceAccountName, g.CertificateDeploymentName)
+		}
 	}
 	return nil
 }
@@ -1110,7 +1177,7 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 		ControllerDeploymentAnnotation:     g.ControllerDeploymentName,
 		CertificateDeploymentAnnotation:    g.CertificateDeploymentName,
 	})
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: metadata,
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
@@ -1166,6 +1233,13 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 			},
 		},
 	}
+	addAdmissionConvergenceDependencyProbe(
+		policy,
+		g.ReleaseNamespace,
+		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
+		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+	)
+	return policy
 }
 
 func (g *RolloutGuard) hookIdentityPolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {
@@ -1187,7 +1261,7 @@ func (g *RolloutGuard) hookIdentityPolicy() *admissionregistrationv1.ValidatingA
 			Message:    hookIdentityGuardDenialMessage(g.ReleaseSequence),
 		})
 	}
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: metadata,
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
@@ -1228,6 +1302,13 @@ func (g *RolloutGuard) hookIdentityPolicy() *admissionregistrationv1.ValidatingA
 			Validations: validations,
 		},
 	}
+	addAdmissionConvergenceDependencyProbe(
+		policy,
+		g.ReleaseNamespace,
+		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
+		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+	)
+	return policy
 }
 
 func (g *RolloutGuard) hookIdentityProbePolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {
@@ -1237,7 +1318,7 @@ func (g *RolloutGuard) hookIdentityProbePolicy() *admissionregistrationv1.Valida
 	metadata := g.guardMetadata(name)
 	metadata.Annotations[ManagerImageAnnotation] = g.ManagerImage
 	probeObject := HookIdentityProbeObjectName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: metadata,
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
@@ -1271,6 +1352,13 @@ func (g *RolloutGuard) hookIdentityProbePolicy() *admissionregistrationv1.Valida
 			}},
 		},
 	}
+	addAdmissionConvergenceDependencyProbe(
+		policy,
+		g.ReleaseNamespace,
+		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
+		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+	)
+	return policy
 }
 
 func (g *RolloutGuard) hookJobName(mode string) string {
@@ -1369,9 +1457,13 @@ func hookContainerNoExecutionSideChannelsExpression(container string) string {
 }
 
 func (g *RolloutGuard) hookArgs(mode string) []string {
+	timeout := "180s"
+	if mode == "reconcile" {
+		timeout = "360s"
+	}
 	return []string{
 		mode,
-		"--timeout=180s",
+		"--timeout=" + timeout,
 		"--release-name=" + g.ReleaseName,
 		"--release-namespace=" + g.ReleaseNamespace,
 		"--coordination-namespace=" + g.CoordinationNamespace,
@@ -1384,6 +1476,11 @@ func (g *RolloutGuard) hookArgs(mode string) []string {
 		"--certificate-health-port=" + strconv.FormatInt(int64(g.CertificateHealthPort), 10),
 		"--hook-service-account-name=" + g.HookServiceAccountName,
 		"--controller-service-account-name=" + g.ControllerServiceAccountName,
+		"--controller-service-account-managed=" + strconv.FormatBool(g.ControllerServiceAccountManaged),
+		"--previous-controller-service-account-name=" + g.PreviousControllerServiceAccountName,
+		"--previous-controller-service-account-uid=" + string(g.PreviousControllerServiceAccountUID),
+		"--previous-controller-service-account-managed=" + strconv.FormatBool(g.PreviousControllerServiceAccountManaged),
+		"--previous-controller-release-sequence=" + strconv.FormatInt(int64(g.PreviousControllerReleaseSequence), 10),
 		"--controller-deployment-name=" + g.ControllerDeploymentName,
 		"--controller-replicas=" + strconv.FormatInt(int64(g.ControllerReplicas), 10),
 		"--certificate-deployment-name=" + g.CertificateDeploymentName,
@@ -1550,7 +1647,7 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 			Message:    denialMessage,
 		},
 	)
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: metadata,
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
@@ -1595,6 +1692,13 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 			Validations: validations,
 		},
 	}
+	addAdmissionConvergenceDependencyProbe(
+		policy,
+		g.ReleaseNamespace,
+		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
+		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+	)
+	return policy
 }
 
 func (g *RolloutGuard) binding(name string) *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
@@ -1614,6 +1718,7 @@ func (g *RolloutGuard) binding(name string) *admissionregistrationv1.ValidatingA
 			Namespace:               g.ReleaseNamespace,
 			ParameterNotFoundAction: &action,
 		}
+		addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources)
 	}
 	return binding
 }

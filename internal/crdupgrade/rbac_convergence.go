@@ -14,6 +14,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const defaultAuthorizationReviewRequestTimeout = 5 * time.Second
+
 // AuthorizationReviewClient is the exact API surface required from one
 // independently addressed API server. SubjectAccessReview probes canonical
 // retired identities; SelfSubjectAccessReview probes the cleanup Job's current
@@ -27,10 +29,14 @@ type AuthorizationReviewClient interface {
 }
 
 // NamedAuthorizationReviewClient identifies one independently addressed API
-// server participating in authorization convergence.
+// server participating in authorization convergence. TopologyIdentity is an
+// optional opaque identity shared by every endpoint from one complete
+// discovery snapshot. A changed identity resets the stability window even
+// when the advertised address set is unchanged.
 type NamedAuthorizationReviewClient struct {
-	Name   string
-	Client AuthorizationReviewClient
+	Name             string
+	TopologyIdentity string
+	Client           AuthorizationReviewClient
 }
 
 // AuthorizationEndpointProvider returns the complete current set of directly
@@ -38,6 +44,15 @@ type NamedAuthorizationReviewClient struct {
 // every authorization sweep so topology churn cannot leave a newly advertised
 // endpoint outside the stability window.
 type AuthorizationEndpointProvider func(context.Context) ([]NamedAuthorizationReviewClient, error)
+
+// ConvergenceStabilityObserver contributes a second, independently refreshed
+// invariant to one uninterrupted convergence window. Identity must change
+// whenever an observation stream restarts or sees a security-relevant event;
+// Proven is true only while the current observation proves the invariant.
+type ConvergenceStabilityObserver interface {
+	Observe(context.Context) (identity string, proven bool, err error)
+	Close()
+}
 
 // AuthorizationSubject is the exact authenticated identity presented to
 // every SubjectAccessReview. Name is a diagnostic identifier and is not sent
@@ -79,6 +94,10 @@ type RBACConvergenceBarrier struct {
 	SelfChecks        []AuthorizationCheck
 	PollEvery         time.Duration
 	StabilityDuration time.Duration
+	// RequestTimeout bounds each individual SubjectAccessReview and
+	// SelfSubjectAccessReview. A request deadline is an inconclusive
+	// observation that resets convergence rather than evidence of denial.
+	RequestTimeout time.Duration
 
 	now   func() time.Time
 	sleep func(context.Context, time.Duration) error
@@ -86,7 +105,9 @@ type RBACConvergenceBarrier struct {
 
 // NewRBACConvergenceBarrier constructs an authorization revocation barrier.
 // Callers that mutate privileges should invoke Validate during their read-only
-// preflight; Wait validates again before making any API request.
+// preflight; Wait validates again before making any API request. The default
+// request timeout may be replaced before validation when a caller needs a
+// different positive per-request bound.
 func NewRBACConvergenceBarrier(
 	endpoints []NamedAuthorizationReviewClient,
 	probes []AuthorizationProbe,
@@ -100,6 +121,7 @@ func NewRBACConvergenceBarrier(
 		SelfChecks:        selfChecks,
 		PollEvery:         pollEvery,
 		StabilityDuration: stabilityDuration,
+		RequestTimeout:    defaultAuthorizationReviewRequestTimeout,
 	}
 }
 
@@ -113,11 +135,73 @@ func (b *RBACConvergenceBarrier) Validate() error {
 // global stability window and are retried. A normal no-opinion result is the
 // expected Kubernetes RBAC outcome once no rule authorizes the request; the
 // SubjectAccessReview API represents it as allowed=false, denied=false. An
-// evaluationError is ambiguous and fails immediately. Context cancellation and
-// deadlines are returned to the caller.
+// evaluationError is ambiguous and fails immediately. An individual request
+// deadline is inconclusive and retried; cancellation or expiry of the parent
+// context is returned to the caller.
 func (b *RBACConvergenceBarrier) Wait(ctx context.Context) error {
+	if b == nil {
+		return errors.New("authorization convergence barrier is nil")
+	}
+	return b.wait(ctx, b.StabilityDuration, nil)
+}
+
+// WaitWithStabilityObserver requires authorization denial and the observer's
+// invariant to remain true together for stabilityDuration. Either side resets
+// the whole window, so credential expiry cannot be measured across a topology
+// change, observation gap, or protected workload event.
+func (b *RBACConvergenceBarrier) WaitWithStabilityObserver(
+	ctx context.Context,
+	stabilityDuration time.Duration,
+	observer ConvergenceStabilityObserver,
+) error {
+	if observer == nil {
+		return errors.New("authorization convergence stability observer is nil")
+	}
+	defer observer.Close()
+	return b.wait(ctx, stabilityDuration, observer)
+}
+
+// Observe performs one complete, freshly discovered authorization sweep and
+// returns the exact endpoint-set identity used for that sweep. It lets a
+// higher-level barrier join authorization denial to admission and workload
+// invariants without measuring independent stability windows.
+func (b *RBACConvergenceBarrier) Observe(ctx context.Context) (string, bool, error) {
+	if err := b.Validate(); err != nil {
+		return "", false, err
+	}
+	if ctx == nil {
+		return "", false, errors.New("authorization convergence context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	if b.EndpointProvider != nil {
+		endpoints, err := b.EndpointProvider(ctx)
+		if err != nil {
+			return "", false, err
+		}
+		if err := validateAuthorizationEndpoints(endpoints); err != nil {
+			return "", false, fmt.Errorf("validate refreshed authorization endpoints: %w", err)
+		}
+		b.Endpoints = endpoints
+	}
+	proven, err := b.pollOnce(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	return authorizationEndpointSetKey(b.Endpoints), proven, nil
+}
+
+func (b *RBACConvergenceBarrier) wait(
+	ctx context.Context,
+	stabilityDuration time.Duration,
+	observer ConvergenceStabilityObserver,
+) error {
 	if err := b.Validate(); err != nil {
 		return err
+	}
+	if stabilityDuration <= 0 {
+		return errors.New("authorization convergence stability duration must be positive")
 	}
 	if ctx == nil {
 		return errors.New("authorization convergence context is nil")
@@ -137,8 +221,9 @@ func (b *RBACConvergenceBarrier) Wait(ctx context.Context) error {
 
 	var stableSince time.Time
 	endpointSet := authorizationEndpointSetKey(b.Endpoints)
+	observerIdentity := ""
 	for {
-		endpointSetChanged := false
+		changed := false
 		if b.EndpointProvider != nil {
 			endpoints, refreshErr := b.EndpointProvider(ctx)
 			if refreshErr != nil {
@@ -159,24 +244,51 @@ func (b *RBACConvergenceBarrier) Wait(ctx context.Context) error {
 				return fmt.Errorf("validate refreshed authorization endpoints: %w", err)
 			}
 			refreshedSet := authorizationEndpointSetKey(endpoints)
-			endpointSetChanged = refreshedSet != endpointSet
+			changed = refreshedSet != endpointSet
 			endpointSet = refreshedSet
 			b.Endpoints = endpoints
 		}
 
-		allDenied, err := b.pollOnce(ctx)
+		allProven, err := b.pollOnce(ctx)
 		if err != nil {
 			return err
 		}
+		if observer != nil {
+			identity, proven, observeErr := observer.Observe(ctx)
+			if observeErr != nil {
+				if contextErr := ctx.Err(); contextErr != nil {
+					return contextErr
+				}
+				stableSince = time.Time{}
+				if sleepErr := sleep(ctx, b.PollEvery); sleepErr != nil {
+					return fmt.Errorf(
+						"authorization convergence stability observer did not recover; last observation: %v: %w",
+						observeErr,
+						sleepErr,
+					)
+				}
+				continue
+			}
+			if identity == "" || identity != strings.TrimSpace(identity) {
+				return errors.New("authorization convergence stability observer returned an empty or padded identity")
+			}
+			if observerIdentity != "" && identity != observerIdentity {
+				changed = true
+			}
+			observerIdentity = identity
+			if !proven {
+				allProven = false
+			}
+		}
 
 		observedAt := now()
-		if endpointSetChanged {
+		if changed {
 			stableSince = time.Time{}
 		}
-		if allDenied {
+		if allProven {
 			if stableSince.IsZero() || observedAt.Before(stableSince) {
 				stableSince = observedAt
-			} else if observedAt.Sub(stableSince) >= b.StabilityDuration {
+			} else if observedAt.Sub(stableSince) >= stabilityDuration {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
@@ -201,13 +313,20 @@ func (b *RBACConvergenceBarrier) pollOnce(ctx context.Context) (bool, error) {
 					return false, err
 				}
 				review := subjectAccessReview(probe.Subject, check)
-				result, err := endpoint.Client.CreateSubjectAccessReview(ctx, review, metav1.CreateOptions{})
+				requestCtx, cancel := context.WithTimeout(ctx, b.RequestTimeout)
+				result, err := endpoint.Client.CreateSubjectAccessReview(requestCtx, review, metav1.CreateOptions{})
+				requestContextErr := requestCtx.Err()
+				cancel()
+				if contextErr := ctx.Err(); contextErr != nil {
+					return false, contextErr
+				}
+				if err == nil && requestContextErr != nil {
+					err = requestContextErr
+				}
 				if err != nil {
-					if contextErr := ctx.Err(); contextErr != nil {
-						return false, contextErr
-					}
 					// A temporary endpoint or transport failure cannot prove
-					// revocation. Retry it after resetting the stable window.
+					// revocation. A per-request deadline is equally
+					// inconclusive. Retry after resetting the stable window.
 					allDenied = false
 					continue
 				}
@@ -238,13 +357,20 @@ func (b *RBACConvergenceBarrier) pollOnce(ctx context.Context) (bool, error) {
 				return false, err
 			}
 			review := selfSubjectAccessReview(check)
-			result, err := endpoint.Client.CreateSelfSubjectAccessReview(ctx, review, metav1.CreateOptions{})
+			requestCtx, cancel := context.WithTimeout(ctx, b.RequestTimeout)
+			result, err := endpoint.Client.CreateSelfSubjectAccessReview(requestCtx, review, metav1.CreateOptions{})
+			requestContextErr := requestCtx.Err()
+			cancel()
+			if contextErr := ctx.Err(); contextErr != nil {
+				return false, contextErr
+			}
+			if err == nil && requestContextErr != nil {
+				err = requestContextErr
+			}
 			if err != nil {
-				if contextErr := ctx.Err(); contextErr != nil {
-					return false, contextErr
-				}
 				// As with canonical probes, a transport failure is
-				// inconclusive and resets the stability window.
+				// inconclusive and resets the stability window. The same
+				// applies when only this request reaches its deadline.
 				allDenied = false
 				continue
 			}
@@ -281,16 +407,15 @@ func (b *RBACConvergenceBarrier) validate() error {
 	if b.StabilityDuration <= 0 {
 		return errors.New("authorization convergence stability duration must be positive")
 	}
+	if b.RequestTimeout <= 0 {
+		return errors.New("authorization convergence request timeout must be positive")
+	}
 	if len(b.Endpoints) == 0 {
 		return errors.New("authorization convergence endpoints are empty")
 	}
 	if len(b.Probes) == 0 {
 		return errors.New("authorization convergence probes are empty")
 	}
-	if len(b.SelfChecks) == 0 {
-		return errors.New("authorization convergence current-subject checks are empty")
-	}
-
 	if err := validateAuthorizationEndpoints(b.Endpoints); err != nil {
 		return err
 	}
@@ -308,6 +433,9 @@ func (b *RBACConvergenceBarrier) validate() error {
 		subjectNames[subject.Name] = struct{}{}
 		if subject.User != strings.TrimSpace(subject.User) {
 			return fmt.Errorf("authorization convergence subject %q has a padded user", subject.Name)
+		}
+		if subject.UID != strings.TrimSpace(subject.UID) {
+			return fmt.Errorf("authorization convergence subject %q has a padded UID", subject.Name)
 		}
 		if err := validateSubjectSets(subject); err != nil {
 			return err
@@ -327,7 +455,10 @@ func (b *RBACConvergenceBarrier) validate() error {
 			return err
 		}
 	}
-	return validateAuthorizationChecks(b.SelfChecks, "current cleanup credential")
+	if len(b.SelfChecks) != 0 {
+		return validateAuthorizationChecks(b.SelfChecks, "current cleanup credential")
+	}
+	return nil
 }
 
 func validateAuthorizationChecks(checks []AuthorizationCheck, owner string) error {
@@ -364,9 +495,21 @@ func validateAuthorizationEndpoints(endpoints []NamedAuthorizationReviewClient) 
 		return errors.New("authorization convergence endpoints are empty")
 	}
 	endpointNames := make(map[string]struct{}, len(endpoints))
+	topologyIdentity := endpoints[0].TopologyIdentity
 	for index, endpoint := range endpoints {
 		if err := validateDiagnosticName(endpoint.Name, "endpoint", index); err != nil {
 			return err
+		}
+		if endpoint.TopologyIdentity != strings.TrimSpace(endpoint.TopologyIdentity) {
+			return fmt.Errorf("authorization convergence endpoint %q has a padded topology identity", endpoint.Name)
+		}
+		if endpoint.TopologyIdentity != topologyIdentity {
+			return fmt.Errorf(
+				"authorization convergence endpoint %q has topology identity %q, want snapshot identity %q",
+				endpoint.Name,
+				endpoint.TopologyIdentity,
+				topologyIdentity,
+			)
 		}
 		if isNilAuthorizationReviewClient(endpoint.Client) {
 			return fmt.Errorf("authorization convergence endpoint %q has a nil client", endpoint.Name)
@@ -385,7 +528,7 @@ func authorizationEndpointSetKey(endpoints []NamedAuthorizationReviewClient) str
 		names = append(names, endpoint.Name)
 	}
 	sort.Strings(names)
-	return strings.Join(names, "\x00")
+	return endpoints[0].TopologyIdentity + "\x00" + strings.Join(names, "\x00")
 }
 
 func isNilAuthorizationReviewClient(client AuthorizationReviewClient) bool {

@@ -6,10 +6,19 @@
 {{- $cleanupGuardName := include "ptah-operator.teardownGuardRoleName" . -}}
 {{- $cleanupDiscoveryName := include "ptah-operator.teardownDiscoveryRoleName" . -}}
 {{- $controllerName := include "ptah-operator.fullname" . -}}
+{{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
 {{- $coordinationNamespace := include "ptah-operator.coordinationNamespace" . -}}
 {{- $controllerRuntimeRoleName := printf "%s-runtime-admission" $controllerName -}}
 {{- $certificateName := include "ptah-operator.certRotatorServiceAccountName" . -}}
 {{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
+{{- $certificateRecoveryEnabled := and $certificateRuntimeEnabled .Values.certificateRotation.recreateMissingSecret -}}
+{{- $releaseSequence := include "ptah-operator.releaseSequence" . -}}
+{{- $managerImage := include "ptah-operator.managerImage" . -}}
+{{- $retirementAttempt := printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $releaseSequence $managerImage | sha256sum -}}
+{{- $retirementMarkerName := printf "ptah-teardown-probe-v1-%s-%s" $releaseSequence (trunc 12 $retirementAttempt) -}}
+{{- $retirementFenceDigest := printf "1\n%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $retirementFenceAName := printf "ptah-operator-teardown-fence-a-v1-%s" $retirementFenceDigest -}}
+{{- $retirementFenceBName := printf "ptah-operator-teardown-fence-b-v1-%s" $retirementFenceDigest -}}
 {{- $identityBootstrapName := printf "%s-bootstrap" ($hookServiceAccountName | trunc 53 | trimSuffix "-") -}}
 {{- $probeRoleName := printf "%s-probe" ($hookServiceAccountName | trunc 57 | trimSuffix "-") -}}
 {{- $admissionName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
@@ -21,6 +30,8 @@
 {{- $hookIdentityGuardName := include "ptah-operator.hookIdentityGuardPolicyName" . -}}
 {{- $hookProbeGuardName := include "ptah-operator.hookIdentityProbeGuardPolicyName" . -}}
 {{- $activationGuardName := include "ptah-operator.releaseActivationGuardPolicyName" . -}}
+{{- $admissionConvergenceGuardName := include "ptah-operator.admissionConvergencePolicyName" . -}}
+{{- $admissionConvergenceMarkerName := include "ptah-operator.admissionConvergenceMarkerName" . -}}
 {{- $serviceAccountOriginGuardName := include "ptah-operator.serviceAccountOriginGuardPolicyName" . -}}
 {{- $controllerWriteGuardName := include "ptah-operator.controllerWriteGuardPolicyName" . -}}
 {{- $controllerJobWriteGuardName := include "ptah-operator.controllerJobWriteGuardPolicyName" . -}}
@@ -33,6 +44,14 @@
 {{- $parentHookPodOriginGuardName := include "ptah-operator.parentHookPodOriginGuardPolicyName" . -}}
 {{- $parentHookJobOriginGuardName := include "ptah-operator.parentHookJobOriginGuardPolicyName" . -}}
 {{- $parentHookJobContractGuardName := include "ptah-operator.parentHookJobContractPolicyName" . -}}
+{{- $legacyControllerGuardDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyControllerWriteGuardName := printf "ptah-operator-controller-write-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyControllerJobWriteGuardName := printf "ptah-operator-job-write-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyControllerChunkWriteGuardName := printf "ptah-operator-chunk-write-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyControllerPlanWriteGuardName := printf "ptah-operator-plan-write-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyServiceAccountOriginGuardName := printf "ptah-operator-service-account-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyRuntimeParentGuardName := printf "ptah-operator-runtime-parent-guard-v1-%s" $legacyControllerGuardDigest -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -81,6 +100,9 @@ metadata:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: crd-manager-teardown-quiesce
 rules:
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
     resourceNames: [{{ $admissionName | quote }}]
@@ -94,6 +116,8 @@ rules:
       - {{ $hookIdentityGuardName }}
       - {{ $hookProbeGuardName }}
       - {{ $activationGuardName }}
+      - {{ $admissionConvergenceGuardName }}
+      - {{ $serviceAccountObjectGuardName }}
       - {{ $serviceAccountOriginGuardName }}
       - {{ $controllerWriteGuardName }}
       - {{ $controllerJobWriteGuardName }}
@@ -106,6 +130,17 @@ rules:
       - {{ $parentHookPodOriginGuardName }}
       - {{ $parentHookJobOriginGuardName }}
       - {{ $parentHookJobContractGuardName }}
+      - {{ $legacyControllerWriteGuardName }}
+      - {{ $legacyControllerJobWriteGuardName }}
+      - {{ $legacyControllerChunkWriteGuardName }}
+      - {{ $legacyControllerPlanWriteGuardName }}
+      - {{ $legacyServiceAccountOriginGuardName }}
+      - {{ $legacyRuntimeParentGuardName }}
+      - {{ $retirementFenceAName }}
+      - {{ $retirementFenceBName }}
+      {{- if $certificateRecoveryEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
     verbs: ["get"]
   # Kubernetes RBAC cannot scope LIST by subject or resourceName. A complete
   # cluster-wide inventory is required to reject any foreign binding that
@@ -174,6 +209,9 @@ rules:
       {{- if .Values.serviceAccount.create }}
       - {{ include "ptah-operator.serviceAccountName" . }}
       {{- end }}
+      {{- if $previousControllerServiceAccount }}
+      - {{ $previousControllerServiceAccount }}
+      {{- end }}
       {{- if $certificateRuntimeEnabled }}
       - {{ $certificateName }}
       {{- end }}
@@ -182,7 +220,11 @@ rules:
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: [{{ $activationName | quote }}, {{ $probeObjectName | quote }}]
+    resourceNames: [{{ $activationName | quote }}, {{ $admissionConvergenceMarkerName | quote }}, {{ $retirementMarkerName | quote }}]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $probeObjectName | quote }}]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -394,9 +436,9 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{ end }}
 ---
-# This residual ClusterRole deliberately excludes workload mutation. It keeps
-# only the reads and exact deletes needed to prove revocation and remove the
-# candidate's admission boundary after broad cleanup access is gone.
+# This residual boundary excludes workload and admission-object mutation. It
+# retains exact reads for revocation proof; the paired Role adds only the
+# marker deletions required for the final monotonic retirement step.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -454,7 +496,7 @@ rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
     resourceNames: [{{ $admissionName | quote }}]
-    verbs: ["get", "delete"]
+    verbs: ["get"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
     resourceNames:
@@ -464,6 +506,8 @@ rules:
       - {{ $hookIdentityGuardName }}
       - {{ $hookProbeGuardName }}
       - {{ $activationGuardName }}
+      - {{ $admissionConvergenceGuardName }}
+      - {{ $serviceAccountObjectGuardName }}
       - {{ $serviceAccountOriginGuardName }}
       - {{ $controllerWriteGuardName }}
       - {{ $controllerJobWriteGuardName }}
@@ -476,7 +520,18 @@ rules:
       - {{ $parentHookPodOriginGuardName }}
       - {{ $parentHookJobOriginGuardName }}
       - {{ $parentHookJobContractGuardName }}
-    verbs: ["get", "delete"]
+      - {{ $legacyControllerWriteGuardName }}
+      - {{ $legacyControllerJobWriteGuardName }}
+      - {{ $legacyControllerChunkWriteGuardName }}
+      - {{ $legacyControllerPlanWriteGuardName }}
+      - {{ $legacyServiceAccountOriginGuardName }}
+      - {{ $legacyRuntimeParentGuardName }}
+      - {{ $retirementFenceAName }}
+      - {{ $retirementFenceBName }}
+      {{- if $certificateRecoveryEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+    verbs: ["get"]
   - apiGroups: ["authorization.k8s.io"]
     resources: ["subjectaccessreviews", "selfsubjectaccessreviews"]
     verbs: ["create"]
@@ -505,6 +560,9 @@ rules:
       {{- if .Values.serviceAccount.create }}
       - {{ include "ptah-operator.serviceAccountName" . }}
       {{- end }}
+      {{- if $previousControllerServiceAccount }}
+      - {{ $previousControllerServiceAccount }}
+      {{- end }}
       {{- if $certificateRuntimeEnabled }}
       - {{ $certificateName }}
       {{- end }}
@@ -512,9 +570,25 @@ rules:
       - {{ $cleanupServiceAccountName }}
     verbs: ["get"]
   - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames: [{{ $cleanupServiceAccountName | quote }}]
+    verbs: ["delete"]
+  - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: [{{ $activationName | quote }}, {{ $probeObjectName | quote }}]
+    resourceNames: [{{ $probeObjectName | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $activationName | quote }}]
     verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $admissionConvergenceMarkerName | quote }}]
+    verbs: ["get", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $retirementMarkerName | quote }}]
+    verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -533,7 +607,7 @@ metadata:
 rules:
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
-    verbs: ["list"]
+    verbs: ["list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

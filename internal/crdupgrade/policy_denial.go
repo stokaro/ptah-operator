@@ -34,3 +34,10 @@ func hasExactValidatingAdmissionPolicyDenial(err error, policyName, bindingName,
 	cause := status.Details.Causes[0]
 	return cause.Type == "" && cause.Field == "" && cause.Message == want
 }
+
+// HasExactValidatingAdmissionPolicyDenial exposes the supported-window denial
+// envelope check to command adapters that probe a separately owned policy.
+// Callers must still validate that policy's immutable stored contract.
+func HasExactValidatingAdmissionPolicyDenial(err error, policyName, bindingName, denialMessage string) bool {
+	return hasExactValidatingAdmissionPolicyDenial(err, policyName, bindingName, denialMessage)
+}

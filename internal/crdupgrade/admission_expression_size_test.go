@@ -34,17 +34,20 @@ func TestHookExecutableArgumentsUseBoundedCELExpressions(t *testing.T) {
 	tests := []struct {
 		name                    string
 		policy                  *admissionregistrationv1.ValidatingAdmissionPolicy
+		validationPrefix        string
 		argumentValidationExprs []string
 	}{
 		{
-			name:   "compiled parent hook Job contract",
-			policy: parentGuard.hookJobContractPolicy(),
+			name:             "compiled parent hook Job contract",
+			policy:           parentGuard.hookJobContractPolicy(),
+			validationPrefix: "!variables.isMainWrite ||",
 			argumentValidationExprs: []string{
-				fmt.Sprintf(`!variables.isIdentity || %s`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "identity-probe")),
-				fmt.Sprintf(`!variables.isPreflight || %s`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "preflight")),
-				fmt.Sprintf(`request.name != %q || %s`, reconcileJob, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "reconcile")),
-				fmt.Sprintf(`!variables.isQuiesce || %s`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "teardown-quiesce")),
-				fmt.Sprintf(`!variables.isTeardown || %s`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "teardown")),
+				fmt.Sprintf(`!variables.isMainWrite || (!variables.isImageCheck || object.spec.template.spec.containers[0].args == ["image-check", %q, %q])`, "--release-sequence="+fmt.Sprint(rollout.ReleaseSequence), "--manager-image="+rollout.ManagerImage),
+				fmt.Sprintf(`!variables.isMainWrite || (!variables.isIdentity || %s)`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "identity-probe")),
+				fmt.Sprintf(`!variables.isMainWrite || (!variables.isPreflight || %s)`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "preflight")),
+				fmt.Sprintf(`!variables.isMainWrite || (variables.effectiveName != %q || %s)`, reconcileJob, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "reconcile")),
+				fmt.Sprintf(`!variables.isMainWrite || (!variables.isQuiesce || %s)`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "teardown-quiesce")),
+				fmt.Sprintf(`!variables.isMainWrite || (!variables.isTeardown || %s)`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "teardown")),
 			},
 		},
 		{
@@ -63,10 +66,11 @@ func TestHookExecutableArgumentsUseBoundedCELExpressions(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			assertAdmissionPolicyCELHeadroom(t, test.name, test.policy)
+			policy := stripAdmissionConvergenceDependencyProbe(t, test.policy)
 
 			var got []string
-			for _, validation := range test.policy.Spec.Validations {
-				if strings.Contains(validation.Expression, ".args ==") {
+			for _, validation := range policy.Spec.Validations {
+				if strings.Contains(validation.Expression, ".args ==") && (test.validationPrefix == "" || strings.HasPrefix(validation.Expression, test.validationPrefix)) {
 					got = append(got, validation.Expression)
 				}
 			}

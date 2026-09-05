@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -48,27 +49,33 @@ const (
 )
 
 type hookProfile struct {
-	mode          hookMode
-	component     string
-	containerName string
-	hookWeight    string
+	mode                  hookMode
+	component             string
+	containerName         string
+	hookWeight            string
+	managerTimeout        string
+	activeDeadlineSeconds int64
 }
 
 func profileForHookMode(mode hookMode) (hookProfile, error) {
 	switch mode {
 	case hookModePreflight:
 		return hookProfile{
-			mode:          mode,
-			component:     "crd-manager-preflight",
-			containerName: "crd-manager-preflight",
-			hookWeight:    "-60",
+			mode:                  mode,
+			component:             "crd-manager-preflight",
+			containerName:         "crd-manager-preflight",
+			hookWeight:            "-60",
+			managerTimeout:        "180s",
+			activeDeadlineSeconds: 210,
 		}, nil
 	case hookModeReconcile:
 		return hookProfile{
-			mode:          mode,
-			component:     "crd-manager",
-			containerName: "crd-manager",
-			hookWeight:    "0",
+			mode:                  mode,
+			component:             "crd-manager",
+			containerName:         "crd-manager",
+			hookWeight:            "0",
+			managerTimeout:        "360s",
+			activeDeadlineSeconds: 390,
 		}, nil
 	default:
 		return hookProfile{}, errors.New("hook mode must be exactly preflight or reconcile")
@@ -105,6 +112,11 @@ var managerArgumentPrefixes = []string{
 	"--certificate-health-port=",
 	"--hook-service-account-name=",
 	"--controller-service-account-name=",
+	"--controller-service-account-managed=",
+	"--previous-controller-service-account-name=",
+	"--previous-controller-service-account-uid=",
+	"--previous-controller-service-account-managed=",
+	"--previous-controller-release-sequence=",
 	"--controller-deployment-name=",
 	"--controller-replicas=",
 	"--certificate-deployment-name=",
@@ -224,7 +236,7 @@ type logResult struct {
 
 func capture(ctx context.Context, client resourceClient, config captureConfig, output *captureOutputs) error {
 	if err := validateCaptureConfig(config); err != nil {
-		return err
+		return classifyFailure(failureClassConfiguration, err)
 	}
 	captureContext, cancelCapture := context.WithCancel(ctx)
 	var activeLogResult <-chan logResult
@@ -256,25 +268,25 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 	jobSelector := fields.OneTermEqualSelector("metadata.name", config.jobName).String()
 	jobList, err := client.listJobs(captureContext, config.namespace, metav1.ListOptions{FieldSelector: jobSelector})
 	if err != nil {
-		return fmt.Errorf("list exact hook Job: %w", err)
+		return classifiedFailuref(failureClassJobInventory, "list exact hook Job: %w", err)
 	}
 	if len(jobList.Items) != 0 {
-		return errors.New("exact hook Job already exists before capture watches are established")
+		return classifyFailure(failureClassJobInventory, errors.New("exact hook Job already exists before capture watches are established"))
 	}
 	if jobList.ResourceVersion == "" {
-		return errors.New("exact hook Job list has an empty resourceVersion")
+		return classifyFailure(failureClassJobInventory, errors.New("exact hook Job list has an empty resourceVersion"))
 	}
 
 	podSelector := labels.Set{batchv1.JobNameLabel: config.jobName}.AsSelector().String()
 	podList, err := client.listPods(captureContext, config.namespace, metav1.ListOptions{LabelSelector: podSelector})
 	if err != nil {
-		return fmt.Errorf("list hook Pods: %w", err)
+		return classifiedFailuref(failureClassPodInventory, "list hook Pods: %w", err)
 	}
 	if len(podList.Items) != 0 {
-		return errors.New("a label-selected hook Pod already exists before capture watches are established")
+		return classifyFailure(failureClassPodInventory, errors.New("a label-selected hook Pod already exists before capture watches are established"))
 	}
 	if podList.ResourceVersion == "" {
-		return errors.New("hook Pod list has an empty resourceVersion")
+		return classifyFailure(failureClassPodInventory, errors.New("hook Pod list has an empty resourceVersion"))
 	}
 
 	jobWatch, err := client.watchJobs(captureContext, config.namespace, metav1.ListOptions{
@@ -283,13 +295,13 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 		AllowWatchBookmarks: true,
 	})
 	if err != nil {
-		return fmt.Errorf("watch exact hook Job: %w", err)
+		return classifiedFailuref(failureClassJobWatch, "watch exact hook Job: %w", err)
 	}
 	if jobWatch == nil || jobWatch.ResultChan() == nil {
 		if jobWatch != nil {
 			jobWatch.Stop()
 		}
-		return errors.New("exact hook Job watch did not provide an event channel")
+		return classifyFailure(failureClassJobWatch, errors.New("exact hook Job watch did not provide an event channel"))
 	}
 	defer jobWatch.Stop()
 
@@ -299,24 +311,24 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 		AllowWatchBookmarks: true,
 	})
 	if err != nil {
-		return fmt.Errorf("watch hook Pods: %w", err)
+		return classifiedFailuref(failureClassPodWatch, "watch hook Pods: %w", err)
 	}
 	if podWatch == nil || podWatch.ResultChan() == nil {
 		if podWatch != nil {
 			podWatch.Stop()
 		}
-		return errors.New("hook Pod watch did not provide an event channel")
+		return classifyFailure(failureClassPodWatch, errors.New("hook Pod watch did not provide an event channel"))
 	}
 	defer podWatch.Stop()
 
 	if err := drainPriorityClassEvents(priorityClassEvents, priorityClasses, config.preflightPriority); err != nil {
-		return err
+		return classifyFailure(failureClassPriorityWatch, err)
 	}
 	if err := output.setStatus(statusWatching); err != nil {
-		return fmt.Errorf("write watching status: %w", err)
+		return classifiedFailuref(failureClassOutput, "write watching status: %w", err)
 	}
 	if err := output.markReady(); err != nil {
-		return fmt.Errorf("write readiness marker: %w", err)
+		return classifiedFailuref(failureClassOutput, "write readiness marker: %w", err)
 	}
 
 	jobEvents := jobWatch.ResultChan()
@@ -328,43 +340,43 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 
 	for {
 		if captureContext.Err() != nil {
-			return captureContext.Err()
+			return classifyContextFailure(captureContext.Err())
 		}
 		if observedJob != nil && observedPod != nil && completedLog != nil {
 			if err := drainPriorityClassEvents(priorityClassEvents, priorityClasses, config.preflightPriority); err != nil {
-				return err
+				return classifyFailure(failureClassPriorityWatch, err)
 			}
 			if completedLog.err != nil {
 				return completedLog.err
 			}
 			if completedLog.bytes == 0 {
-				return errors.New("hook log stream completed without any bytes")
+				return classifyFailure(failureClassLogEmpty, errors.New("hook log stream completed without any bytes"))
 			}
 			if err := output.publishLog(); err != nil {
-				return fmt.Errorf("publish captured hook log: %w", err)
+				return classifiedFailuref(failureClassOutput, "publish captured hook log: %w", err)
 			}
 			if captureContext.Err() != nil {
-				return captureContext.Err()
+				return classifyContextFailure(captureContext.Err())
 			}
 			if err := output.setStatus(statusCaptured); err != nil {
-				return fmt.Errorf("write captured status: %w", err)
+				return classifiedFailuref(failureClassOutput, "write captured status: %w", err)
 			}
 			return nil
 		}
 
 		select {
 		case <-captureContext.Done():
-			return captureContext.Err()
+			return classifyContextFailure(captureContext.Err())
 		case event, open := <-priorityClassEvents:
 			if !open {
-				return errors.New("PriorityClass watch closed before capture completed")
+				return classifyFailure(failureClassPriorityWatch, errors.New("PriorityClass watch closed before capture completed"))
 			}
 			if err := handlePriorityClassEvent(event, priorityClasses, config.preflightPriority); err != nil {
-				return err
+				return classifyFailure(failureClassPriorityWatch, err)
 			}
 		case event, open := <-jobEvents:
 			if !open {
-				return errors.New("exact hook Job watch closed before capture completed")
+				return classifyFailure(failureClassJobWatch, errors.New("exact hook Job watch closed before capture completed"))
 			}
 			job, eventErr := handleJobEvent(event, config, observedJob)
 			if eventErr != nil {
@@ -377,16 +389,16 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 				observedJob = job
 				if observedPod != nil {
 					if err := validatePodOwner(observedPod, observedJob, config); err != nil {
-						return err
+						return classifyFailure(failureClassPodOwner, err)
 					}
 				}
 				if err := output.setStatus(statusJobObserved); err != nil {
-					return fmt.Errorf("write Job-observed status: %w", err)
+					return classifiedFailuref(failureClassOutput, "write Job-observed status: %w", err)
 				}
 			}
 		case event, open := <-podEvents:
 			if !open {
-				return errors.New("hook Pod watch closed before capture completed")
+				return classifyFailure(failureClassPodWatch, errors.New("hook Pod watch closed before capture completed"))
 			}
 			pod, eventErr := handlePodEvent(event, config, observedPod)
 			if eventErr != nil {
@@ -399,17 +411,17 @@ func capture(ctx context.Context, client resourceClient, config captureConfig, o
 				observedPod = pod
 				if observedJob != nil {
 					if err := validatePodOwner(observedPod, observedJob, config); err != nil {
-						return err
+						return classifyFailure(failureClassPodOwner, err)
 					}
 				}
 				if err := output.setStatus(statusPodObserved); err != nil {
-					return fmt.Errorf("write Pod-observed status: %w", err)
+					return classifiedFailuref(failureClassOutput, "write Pod-observed status: %w", err)
 				}
 				if err := output.setStatus(statusStreaming); err != nil {
-					return fmt.Errorf("write streaming status: %w", err)
+					return classifiedFailuref(failureClassOutput, "write streaming status: %w", err)
 				}
 				if err := output.validateLogDestination(); err != nil {
-					return fmt.Errorf("validate hook log destination before streaming: %w", err)
+					return classifiedFailuref(failureClassOutput, "validate hook log destination before streaming: %w", err)
 				}
 				results := make(chan logResult, 1)
 				logEvents = results
@@ -437,19 +449,19 @@ func establishPreflightPriorityContract(
 	options := metav1.ListOptions{Limit: priorityClassListLimit}
 	list, err := client.listPriorityClasses(ctx, options)
 	if err != nil {
-		return priorityAdmissionDefaults{}, nil, nil, fmt.Errorf("list PriorityClasses: %w", err)
+		return priorityAdmissionDefaults{}, nil, nil, classifiedFailuref(failureClassPriorityInventory, "list PriorityClasses: %w", err)
 	}
 	if list == nil {
-		return priorityAdmissionDefaults{}, nil, nil, errors.New("PriorityClass list returned a nil result")
+		return priorityAdmissionDefaults{}, nil, nil, classifyFailure(failureClassPriorityInventory, errors.New("PriorityClass list returned a nil result"))
 	}
 	if list.ResourceVersion == "" {
-		return priorityAdmissionDefaults{}, nil, nil, errors.New("PriorityClass list has an empty resourceVersion")
+		return priorityAdmissionDefaults{}, nil, nil, classifyFailure(failureClassPriorityInventory, errors.New("PriorityClass list has an empty resourceVersion"))
 	}
 	if list.Continue != "" || list.RemainingItemCount != nil {
-		return priorityAdmissionDefaults{}, nil, nil, errors.New("PriorityClass inventory exceeds its single-page consistency bound")
+		return priorityAdmissionDefaults{}, nil, nil, classifyFailure(failureClassPriorityInventory, errors.New("PriorityClass inventory exceeds its single-page consistency bound"))
 	}
 	if int64(len(list.Items)) > priorityClassListLimit {
-		return priorityAdmissionDefaults{}, nil, nil, errors.New("PriorityClass list exceeds the requested item limit")
+		return priorityAdmissionDefaults{}, nil, nil, classifyFailure(failureClassPriorityInventory, errors.New("PriorityClass list exceeds the requested item limit"))
 	}
 
 	inventory := make(map[string]schedulingv1.PriorityClass, len(list.Items))
@@ -457,13 +469,13 @@ func establishPreflightPriorityContract(
 	for index := range list.Items {
 		priorityClass := list.Items[index].DeepCopy()
 		if err := validatePriorityClassObject(priorityClass); err != nil {
-			return priorityAdmissionDefaults{}, nil, nil, fmt.Errorf("validate PriorityClass inventory item: %w", err)
+			return priorityAdmissionDefaults{}, nil, nil, classifiedFailuref(failureClassPriorityInventory, "validate PriorityClass inventory item: %w", err)
 		}
 		if _, found := inventory[priorityClass.Name]; found {
-			return priorityAdmissionDefaults{}, nil, nil, fmt.Errorf("PriorityClass inventory contains duplicate name %q", priorityClass.Name)
+			return priorityAdmissionDefaults{}, nil, nil, classifiedFailuref(failureClassPriorityInventory, "PriorityClass inventory contains duplicate name %q", priorityClass.Name)
 		}
 		if previous, found := observedUIDs[priorityClass.UID]; found {
-			return priorityAdmissionDefaults{}, nil, nil, fmt.Errorf(
+			return priorityAdmissionDefaults{}, nil, nil, classifiedFailuref(failureClassPriorityInventory,
 				"PriorityClass inventory reuses one UID for %q and %q",
 				previous,
 				priorityClass.Name,
@@ -474,7 +486,7 @@ func establishPreflightPriorityContract(
 	}
 	defaults, err := resolveGlobalPriorityDefaults(inventory)
 	if err != nil {
-		return priorityAdmissionDefaults{}, nil, nil, err
+		return priorityAdmissionDefaults{}, nil, nil, classifyFailure(failureClassPriorityInventory, err)
 	}
 
 	priorityClassWatch, err := client.watchPriorityClasses(ctx, metav1.ListOptions{
@@ -482,13 +494,13 @@ func establishPreflightPriorityContract(
 		AllowWatchBookmarks: true,
 	})
 	if err != nil {
-		return priorityAdmissionDefaults{}, nil, nil, fmt.Errorf("watch PriorityClasses: %w", err)
+		return priorityAdmissionDefaults{}, nil, nil, classifiedFailuref(failureClassPriorityWatch, "watch PriorityClasses: %w", err)
 	}
 	if priorityClassWatch == nil || priorityClassWatch.ResultChan() == nil {
 		if priorityClassWatch != nil {
 			priorityClassWatch.Stop()
 		}
-		return priorityAdmissionDefaults{}, nil, nil, errors.New("PriorityClass watch did not provide an event channel")
+		return priorityAdmissionDefaults{}, nil, nil, classifyFailure(failureClassPriorityWatch, errors.New("PriorityClass watch did not provide an event channel"))
 	}
 	return defaults, inventory, priorityClassWatch, nil
 }
@@ -680,32 +692,32 @@ func handleJobEvent(event watch.Event, config captureConfig, observed *batchv1.J
 		return nil, nil
 	}
 	if event.Type == watch.Error {
-		return nil, fmt.Errorf("exact hook Job watch error: %w", apierrors.FromObject(event.Object))
+		return nil, classifiedFailuref(failureClassJobWatch, "exact hook Job watch error: %w", apierrors.FromObject(event.Object))
 	}
 	job, ok := event.Object.(*batchv1.Job)
 	if !ok || job == nil {
-		return nil, fmt.Errorf("exact hook Job watch returned %T", event.Object)
+		return nil, classifiedFailuref(failureClassJobWatch, "exact hook Job watch returned %T", event.Object)
 	}
 	if event.Type != watch.Added {
 		if event.Type != watch.Modified && event.Type != watch.Deleted {
-			return nil, fmt.Errorf("exact hook Job watch returned unsupported event type %q", event.Type)
+			return nil, classifiedFailuref(failureClassJobWatch, "exact hook Job watch returned unsupported event type %q", event.Type)
 		}
 		if observed == nil {
-			return nil, fmt.Errorf("exact hook Job was first observed through a %s event", event.Type)
+			return nil, classifiedFailuref(failureClassJobWatch, "exact hook Job was first observed through a %s event", event.Type)
 		}
 		if job.Namespace != observed.Namespace || job.Name != observed.Name || job.UID != observed.UID {
-			return nil, errors.New("exact hook Job identity changed after its ADDED event")
+			return nil, classifyFailure(failureClassJobWatch, errors.New("exact hook Job identity changed after its ADDED event"))
 		}
 		return nil, nil
 	}
 	if observed != nil {
-		return nil, errors.New("exact hook Job produced more than one ADDED event")
+		return nil, classifyFailure(failureClassJobWatch, errors.New("exact hook Job produced more than one ADDED event"))
 	}
 	if err := validateJob(job, config); err != nil {
-		return nil, err
+		return nil, classifyFailure(failureClassJobContract, err)
 	}
 	if err := validateJobAgainstRender(job, config.expectedJob); err != nil {
-		return nil, err
+		return nil, classifyFailure(failureClassJobContract, err)
 	}
 	return job.DeepCopy(), nil
 }
@@ -715,29 +727,29 @@ func handlePodEvent(event watch.Event, config captureConfig, observed *corev1.Po
 		return nil, nil
 	}
 	if event.Type == watch.Error {
-		return nil, fmt.Errorf("hook Pod watch error: %w", apierrors.FromObject(event.Object))
+		return nil, classifiedFailuref(failureClassPodWatch, "hook Pod watch error: %w", apierrors.FromObject(event.Object))
 	}
 	pod, ok := event.Object.(*corev1.Pod)
 	if !ok || pod == nil {
-		return nil, fmt.Errorf("hook Pod watch returned %T", event.Object)
+		return nil, classifiedFailuref(failureClassPodWatch, "hook Pod watch returned %T", event.Object)
 	}
 	if event.Type != watch.Added {
 		if event.Type != watch.Modified && event.Type != watch.Deleted {
-			return nil, fmt.Errorf("hook Pod watch returned unsupported event type %q", event.Type)
+			return nil, classifiedFailuref(failureClassPodWatch, "hook Pod watch returned unsupported event type %q", event.Type)
 		}
 		if observed == nil {
-			return nil, fmt.Errorf("hook Pod was first observed through a %s event", event.Type)
+			return nil, classifiedFailuref(failureClassPodWatch, "hook Pod was first observed through a %s event", event.Type)
 		}
 		if pod.Namespace != observed.Namespace || pod.Name != observed.Name || pod.UID != observed.UID {
-			return nil, errors.New("hook Pod identity changed after its ADDED event")
+			return nil, classifyFailure(failureClassPodWatch, errors.New("hook Pod identity changed after its ADDED event"))
 		}
 		return nil, nil
 	}
 	if observed != nil {
-		return nil, errors.New("hook Job produced more than one Pod ADDED event")
+		return nil, classifyFailure(failureClassPodWatch, errors.New("hook Job produced more than one Pod ADDED event"))
 	}
 	if err := validatePod(pod, config); err != nil {
-		return nil, err
+		return nil, classifyFailure(failureClassPodContract, err)
 	}
 	return pod.DeepCopy(), nil
 }
@@ -801,7 +813,7 @@ func validateJobShape(job *batchv1.Job, config captureConfig) error {
 	if job.Labels[managedByLabel] != "Helm" {
 		return errors.New("hook Job is not labeled as Helm-managed")
 	}
-	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 210 {
+	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != profile.activeDeadlineSeconds {
 		return errors.New("hook Job does not have the exact active deadline")
 	}
 	if job.Spec.BackoffLimit == nil || *job.Spec.BackoffLimit != 0 {
@@ -1033,7 +1045,7 @@ func validateManagerArguments(arguments []string, config captureConfig, image st
 			return fmt.Errorf("container manager argument %d does not match %s", index, prefix)
 		}
 	}
-	if arguments[1] != "--timeout=180s" {
+	if arguments[1] != "--timeout="+profile.managerTimeout {
 		return errors.New("container manager timeout argument is invalid")
 	}
 	if arguments[3] != "--release-namespace="+config.namespace {
@@ -1046,7 +1058,7 @@ func validateManagerArguments(arguments []string, config captureConfig, image st
 	if arguments[12] != "--hook-service-account-name="+expectedServiceAccount {
 		return errors.New("container hook service account argument is invalid")
 	}
-	if arguments[18] != "--manager-image="+image {
+	if arguments[23] != "--manager-image="+image {
 		return errors.New("container manager image argument does not match its image")
 	}
 	return nil
@@ -1321,7 +1333,7 @@ func runtimePodDefaultsFromTemplate(template corev1.PodSpec, mode hookMode) (run
 		return runtimePodDefaults{}, errors.New("manager mode does not match the exact hook mode")
 	}
 	var controllerArguments []string
-	if err := decodeArgumentJSON(arguments[19], managerArgumentPrefixes[19], &controllerArguments); err != nil {
+	if err := decodeArgumentJSON(arguments[24], managerArgumentPrefixes[24], &controllerArguments); err != nil {
 		return runtimePodDefaults{}, fmt.Errorf("decode controller runtime arguments: %w", err)
 	}
 	enabledValue, err := exactArgumentValue(controllerArguments, "--default-tolerations-enabled=")
@@ -1363,7 +1375,7 @@ func runtimePodDefaultsFromTemplate(template corev1.PodSpec, mode hookMode) (run
 	}
 
 	var contract renderedRuntimeAdmissionContract
-	if err := decodeArgumentJSON(arguments[23], managerArgumentPrefixes[23], &contract); err != nil {
+	if err := decodeArgumentJSON(arguments[28], managerArgumentPrefixes[28], &contract); err != nil {
 		return runtimePodDefaults{}, fmt.Errorf("decode runtime admission contract: %w", err)
 	}
 	if contract.Version != 1 {
@@ -1564,89 +1576,129 @@ func capturePodLog(
 ) (int64, error) {
 	profile, err := profileForHookMode(config.hookMode)
 	if err != nil {
-		return 0, err
+		return 0, classifyFailure(failureClassConfiguration, err)
 	}
 	streamContext, cancelStream := context.WithCancel(ctx)
 	defer cancelStream()
-	startTimer := time.AfterFunc(config.logStartTimeout, cancelStream)
+	var startMu sync.Mutex
+	firstByteObserved := false
+	startDeadlineExpired := false
+	var startTimer *time.Timer
+	startTimer = time.AfterFunc(config.logStartTimeout, func() {
+		startMu.Lock()
+		if firstByteObserved {
+			startMu.Unlock()
+			return
+		}
+		startDeadlineExpired = true
+		startMu.Unlock()
+		cancelStream()
+	})
 	defer startTimer.Stop()
+	observeFirstByte := func() bool {
+		startMu.Lock()
+		defer startMu.Unlock()
+		if startDeadlineExpired {
+			return false
+		}
+		firstByteObserved = true
+		startTimer.Stop()
+		return true
+	}
+	startTimedOut := func() bool {
+		startMu.Lock()
+		defer startMu.Unlock()
+		return startDeadlineExpired
+	}
 
 	for {
 		stream, err := client.streamPodLogs(streamContext, config.namespace, podName, profile.containerName)
 		if err != nil {
 			if ctx.Err() != nil {
-				return 0, ctx.Err()
+				return 0, classifyContextFailure(ctx.Err())
 			}
 			if streamContext.Err() != nil {
-				return 0, errLogStartTimeout
+				return 0, classifyFailure(failureClassLogStartTimeout, errLogStartTimeout)
 			}
 			if !isTransientLogStartError(err, podName, profile.containerName) {
-				return 0, fmt.Errorf("start hook Pod log stream: %w", err)
+				return 0, classifiedFailuref(failureClassLogStart, "start hook Pod log stream: %w", err)
 			}
 			if err := waitForRetry(streamContext, config.logRetryInterval); err != nil {
 				if ctx.Err() != nil {
-					return 0, ctx.Err()
+					return 0, classifyContextFailure(ctx.Err())
 				}
 				if streamContext.Err() != nil {
-					return 0, errLogStartTimeout
+					return 0, classifyFailure(failureClassLogStartTimeout, errLogStartTimeout)
 				}
-				return 0, fmt.Errorf("wait for hook Pod log stream: %w", err)
+				return 0, classifiedFailuref(failureClassLogStart, "wait for hook Pod log stream: %w", err)
 			}
 			continue
 		}
 		if streamContext.Err() != nil {
 			_ = stream.Close()
 			if ctx.Err() != nil {
-				return 0, ctx.Err()
+				return 0, classifyContextFailure(ctx.Err())
 			}
-			return 0, errLogStartTimeout
+			return 0, classifyFailure(failureClassLogStartTimeout, errLogStartTimeout)
 		}
 
-		bytes, copyErr := copyBounded(streamContext, destination, stream, config.maxLogBytes)
-		closeErr := stream.Close()
+		observedStream := &firstByteReadCloser{
+			ReadCloser:  stream,
+			onFirstByte: observeFirstByte,
+		}
+		bytes, copyErr := copyBounded(streamContext, destination, observedStream, config.maxLogBytes)
+		closeErr := observedStream.Close()
 		if ctx.Err() != nil {
-			return bytes, ctx.Err()
+			return bytes, classifyContextFailure(ctx.Err())
+		}
+		if !observedStream.firstByteAccepted && startTimedOut() {
+			return bytes, classifyFailure(failureClassLogStartTimeout, errLogStartTimeout)
 		}
 		var destinationErr *destinationWriteError
 		if errors.As(copyErr, &destinationErr) {
-			return bytes, destinationErr
+			return bytes, classifyFailure(failureClassOutput, destinationErr)
 		}
 		if errors.Is(copyErr, errLogTooLarge) {
-			return bytes, copyErr
-		}
-		if bytes > 0 {
-			startTimer.Stop()
-			return bytes, nil
+			return bytes, classifyFailure(failureClassLogTooLarge, copyErr)
 		}
 		if copyErr != nil {
-			return 0, fmt.Errorf("read hook Pod log stream: %w", copyErr)
+			return bytes, classifiedFailuref(failureClassLogRead, "read hook Pod log stream: %w", copyErr)
 		}
 		if closeErr != nil {
-			return 0, fmt.Errorf("close empty hook Pod log stream: %w", closeErr)
+			return bytes, classifiedFailuref(failureClassLogRead, "close hook Pod log stream: %w", closeErr)
 		}
-		// An empty stream is retried, not failed. The API server serves a log
-		// stream as soon as the container exists, so a Pod whose hook has
-		// started but not yet written produces exactly this: a clean open and
-		// zero bytes. Only the open was retried before, so a capture that won
-		// the race to the container and lost it to the first write reported
-		// "completed without any bytes" and the whole lifecycle proof failed --
-		// intermittently, on one supported minor at a time.
-		//
-		// The deadline is unchanged and still bounds the whole attempt: the
-		// start timer is no longer stopped when a stream merely opens, so it
-		// keeps running until bytes actually arrive and cancels streamContext
-		// otherwise. A hook that genuinely writes nothing still fails, just at
-		// its deadline rather than on the first poll.
+		if bytes > 0 {
+			return bytes, nil
+		}
+		// The API server can open the log stream before the hook writes its
+		// first byte. Retry that empty stream under the original start deadline;
+		// an always-empty hook still fails at the same bounded deadline.
 		if err := waitForRetry(streamContext, config.logRetryInterval); err != nil {
 			if ctx.Err() != nil {
-				return 0, ctx.Err()
+				return 0, classifyContextFailure(ctx.Err())
 			}
 			if streamContext.Err() != nil {
-				return 0, errLogStartTimeout
+				return 0, classifyFailure(failureClassLogStartTimeout, errLogStartTimeout)
 			}
-			return 0, fmt.Errorf("wait for hook Pod log stream: %w", err)
+			return 0, classifiedFailuref(failureClassLogStart, "wait for hook Pod log stream: %w", err)
 		}
 	}
+}
+
+type firstByteReadCloser struct {
+	io.ReadCloser
+	onFirstByte       func() bool
+	firstByteObserved bool
+	firstByteAccepted bool
+}
+
+func (reader *firstByteReadCloser) Read(destination []byte) (int, error) {
+	written, err := reader.ReadCloser.Read(destination)
+	if written > 0 && !reader.firstByteObserved {
+		reader.firstByteObserved = true
+		reader.firstByteAccepted = reader.onFirstByte()
+	}
+	return written, err
 }
 
 func isTransientLogStartError(err error, podName, containerName string) bool {

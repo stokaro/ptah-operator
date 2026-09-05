@@ -88,10 +88,12 @@ func TestRenderedReleaseActivationGuardMatchesCompiledContract(t *testing.T) {
 	if err := guard.verifyBinding(binding); err != nil {
 		t.Fatalf("rendered release activation binding: %v", err)
 	}
+	activation.UID = "rendered-activation"
+	activation.ResourceVersion = "1"
 	if _, err := guard.verifyActivationObject(activation); err != nil {
 		t.Fatalf("rendered release activation parameter: %v", err)
 	}
-	if activation.Annotations["helm.sh/hook-weight"] != releaseActivationHookWeight || policy.Annotations["helm.sh/hook-weight"] != "-149" || binding.Annotations["helm.sh/hook-weight"] != "-148" {
+	if activation.Annotations["helm.sh/hook-weight"] != releaseActivationHookWeight || policy.Annotations["helm.sh/hook-weight"] != releaseActivationPolicyWeight || binding.Annotations["helm.sh/hook-weight"] != releaseActivationBindingWeight {
 		t.Fatal("release activation parameter must exist before any fail-closed parameter binding")
 	}
 }
@@ -112,8 +114,11 @@ func TestReleaseActivationGuardPolicyIsStableAndExact(t *testing.T) {
 		t.Fatalf("release activation binding is not isolated to namespace %q: %#v", guard.ReleaseNamespace, binding.Spec.MatchResources)
 	}
 	if len(binding.Spec.MatchResources.ResourceRules) != 1 ||
-		!reflect.DeepEqual(binding.Spec.MatchResources.ResourceRules[0].ResourceNames, []string{ReleaseActivationName}) {
-		t.Fatalf("release activation binding is not isolated to ConfigMap %q: %#v", ReleaseActivationName, binding.Spec.MatchResources.ResourceRules)
+		len(binding.Spec.MatchResources.ResourceRules[0].ResourceNames) != 0 {
+		t.Fatalf("release activation binding must leave name filtering to the DELETE-safe policy condition: %#v", binding.Spec.MatchResources.ResourceRules)
+	}
+	if len(policy.Spec.MatchConditions) != 1 || !strings.Contains(policy.Spec.MatchConditions[0].Expression, "oldObject.metadata.name") {
+		t.Fatalf("release activation policy does not derive the DELETE target from oldObject: %#v", policy.Spec.MatchConditions)
 	}
 	serialized, err := json.Marshal(policy.Spec)
 	if err != nil {
@@ -121,7 +126,10 @@ func TestReleaseActivationGuardPolicyIsStableAndExact(t *testing.T) {
 	}
 	for _, required := range []string{
 		`[0-9a-f]{12}$`,
+		`[0-9a-f]{64}$`,
+		`substring(0, 12)`,
 		`system:kube-controller-manager`,
+		`request.userInfo.groups.size() == 3`,
 		`variables.paramsActive == variables.oldActive`,
 		`object.metadata.annotations == oldObject.metadata.annotations`,
 	} {
@@ -137,6 +145,66 @@ func TestReleaseActivationGuardPolicyIsStableAndExact(t *testing.T) {
 	if policy.Name != other.policy().Name || !reflect.DeepEqual(policy.Spec, other.policy().Spec) ||
 		binding.Name != other.binding().Name || !reflect.DeepEqual(binding.Spec, other.binding().Spec) {
 		t.Fatal("retained release activation policy changed across release sequences")
+	}
+}
+
+func TestReleaseActivationGuardMatchesCollectionDeleteByOldObjectName(t *testing.T) {
+	guard := testReleaseActivationGuard()
+	expression := guard.policy().Spec.MatchConditions[0].Expression
+	tests := []struct {
+		name        string
+		operation   string
+		requestName string
+		oldName     string
+		want        bool
+	}{
+		{name: "named update", operation: "UPDATE", requestName: ReleaseActivationName, want: true},
+		{name: "collection delete", operation: "DELETE", oldName: ReleaseActivationName, want: true},
+		{name: "foreign collection member", operation: "DELETE", oldName: "foreign"},
+		{name: "delete without old object", operation: "DELETE"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var oldObject any
+			if test.oldName != "" {
+				oldObject = map[string]any{"metadata": map[string]any{"name": test.oldName}}
+			}
+			got := evaluateRolloutCEL(t, expression, map[string]any{
+				"request": map[string]any{
+					"operation": test.operation,
+					"namespace": guard.ReleaseNamespace,
+					"name":      test.requestName,
+				},
+				"oldObject": oldObject,
+			}, nil)
+			if got != test.want {
+				t.Fatalf("activation match = %v, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestReleaseActivationDeleteControllerPrincipalsRequireExactGroups(t *testing.T) {
+	tests := []struct {
+		name     string
+		username string
+		groups   []any
+		want     bool
+	}{
+		{name: "legacy controller", username: "system:kube-controller-manager", groups: []any{"system:authenticated"}, want: true},
+		{name: "service account controller", username: "system:serviceaccount:kube-system:namespace-controller", groups: []any{"system:serviceaccounts", "system:serviceaccounts:kube-system", "system:authenticated"}, want: true},
+		{name: "legacy injected group", username: "system:kube-controller-manager", groups: []any{"system:authenticated", "system:masters"}},
+		{name: "service account missing namespace group", username: "system:serviceaccount:kube-system:namespace-controller", groups: []any{"system:serviceaccounts", "system:authenticated"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := evaluateRolloutCEL(t, activationNamespaceControllerExpression(), map[string]any{
+				"request": map[string]any{"userInfo": map[string]any{"username": test.username, "groups": test.groups}},
+			}, nil)
+			if got != test.want {
+				t.Fatalf("namespace-controller principal = %v, want %t", got, test.want)
+			}
+		})
 	}
 }
 
@@ -262,6 +330,80 @@ func TestReleaseActivationPrepareProvesLiveDenial(t *testing.T) {
 	}
 }
 
+func TestReleaseActivationBeginDrainingPersistsFullAttemptAndResumesLostResponse(t *testing.T) {
+	t.Parallel()
+	guard := testReleaseActivationGuard()
+	client := &activationConfigMapClient{
+		object:             activationObject(guard, 0),
+		persistError:       errors.New("response stream reset"),
+		persistBeforeError: true,
+	}
+	guard.ConfigMaps = client
+	state, err := guard.BeginDraining(context.Background())
+	if err != nil {
+		t.Fatalf("BeginDraining() after lost response error = %v", err)
+	}
+	wantAttempt := hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	if state != (ReleaseActivationState{
+		ActiveReleaseSequence: 0, ControllerCredentialPhase: ControllerCredentialsDraining,
+		DrainTargetReleaseSequence: guard.ReleaseSequence,
+		DrainAttempt:               wantAttempt,
+	}) {
+		t.Fatalf("BeginDraining() state = %#v", state)
+	}
+	if len(wantAttempt) != 64 || client.object.Data[controllerCredentialsAttemptDataKey] != wantAttempt {
+		t.Fatalf("persisted attempt = %q, want full digest %q", client.object.Data[controllerCredentialsAttemptDataKey], wantAttempt)
+	}
+	client.persistError = nil
+	if _, err := guard.BeginDraining(context.Background()); err != nil {
+		t.Fatalf("same-tuple BeginDraining() retry error = %v", err)
+	}
+	if client.realUpdates != 1 {
+		t.Fatalf("persistent drain updates = %d, want one", client.realUpdates)
+	}
+}
+
+func TestReleaseActivationRejectsSamePrefixDifferentFullDrainAttempt(t *testing.T) {
+	t.Parallel()
+	guard := testReleaseActivationGuard()
+	object := activationObject(guard, 0)
+	attempt := guard.candidateAttempt()
+	object.Data = map[string]string{
+		activeReleaseDataKey:                "0",
+		controllerCredentialsDataKey:        string(ControllerCredentialsDraining),
+		controllerCredentialsTargetDataKey:  "1",
+		controllerCredentialsAttemptDataKey: attempt[:len(attempt)-1] + differentHexDigit(attempt[len(attempt)-1]),
+	}
+	guard.ConfigMaps = &activationConfigMapClient{object: object}
+	_, err := guard.CurrentState(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "want candidate") {
+		t.Fatalf("CurrentState() error = %v, want full-attempt collision refusal", err)
+	}
+}
+
+func TestReleaseActivationRejectsFailedBootstrapSequenceGap(t *testing.T) {
+	t.Parallel()
+	guard := testReleaseActivationGuard()
+	guard.ReleaseSequence = 2
+	guard.ManagerImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	guard.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
+	residue := activationObject(guard, 0)
+	residue.Annotations[ReleaseSequenceAnnotation] = "1"
+	residue.Annotations[ManagerImageAnnotation] = "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	guard.ConfigMaps = &activationConfigMapClient{object: residue}
+	_, err := guard.CurrentState(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "bootstrap attempt 1 cannot be superseded by candidate 2") {
+		t.Fatalf("CurrentState() error = %v, want failed-bootstrap gap refusal", err)
+	}
+}
+
+func differentHexDigit(value byte) string {
+	if value == '0' {
+		return "1"
+	}
+	return "0"
+}
+
 func testReleaseActivationGuard() *ReleaseActivationGuard {
 	managerImage := "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	hook := "ptah-crd-v1-" + hookIdentityDigest("ptah-system", "ptah", 1, managerImage)[:12]
@@ -287,8 +429,10 @@ func activationObject(guard *ReleaseActivationGuard, active int) *corev1.ConfigM
 	}
 	return &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      ReleaseActivationName,
-			Namespace: guard.ReleaseNamespace,
+			Name:            ReleaseActivationName,
+			Namespace:       guard.ReleaseNamespace,
+			UID:             "activation-uid",
+			ResourceVersion: "1",
 			Annotations: map[string]string{
 				"helm.sh/hook":                     "pre-install,pre-upgrade",
 				"helm.sh/hook-weight":              releaseActivationHookWeight,
@@ -307,7 +451,10 @@ func activationObject(guard *ReleaseActivationGuard, active int) *corev1.ConfigM
 				"app.kubernetes.io/component": rolloutGuardComponent,
 			},
 		},
-		Data: map[string]string{activeReleaseDataKey: activationDecimal(int32(active))},
+		Data: map[string]string{
+			activeReleaseDataKey:         activationDecimal(int32(active)),
+			controllerCredentialsDataKey: string(ControllerCredentialsActive),
+		},
 	}
 }
 
@@ -320,13 +467,15 @@ func activationBoolPtr(value bool) *bool {
 }
 
 type activationConfigMapClient struct {
-	object            *corev1.ConfigMap
-	preUpdateDenials  int
-	postUpdateDenials int
-	denyMalformed     bool
-	denialMessage     string
-	dryUpdates        int
-	realUpdates       int
+	object             *corev1.ConfigMap
+	preUpdateDenials   int
+	postUpdateDenials  int
+	denyMalformed      bool
+	denialMessage      string
+	dryUpdates         int
+	realUpdates        int
+	persistError       error
+	persistBeforeError bool
 }
 
 func (c *activationConfigMapClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*corev1.ConfigMap, error) {
@@ -343,7 +492,7 @@ func (c *activationConfigMapClient) Create(_ context.Context, _ *corev1.ConfigMa
 func (c *activationConfigMapClient) Update(_ context.Context, object *corev1.ConfigMap, options metav1.UpdateOptions) (*corev1.ConfigMap, error) {
 	if len(options.DryRun) != 0 {
 		c.dryUpdates++
-		if c.denyMalformed && len(object.Data) != 1 {
+		if _, malformed := object.Data["unexpected"]; c.denyMalformed && malformed {
 			return nil, errors.New(c.denialMessage)
 		}
 		candidate := object.Data[activeReleaseDataKey]
@@ -362,6 +511,12 @@ func (c *activationConfigMapClient) Update(_ context.Context, object *corev1.Con
 		return object.DeepCopy(), nil
 	}
 	c.realUpdates++
+	if c.persistError != nil && !c.persistBeforeError {
+		return nil, c.persistError
+	}
 	c.object = object.DeepCopy()
+	if c.persistError != nil {
+		return nil, c.persistError
+	}
 	return c.object.DeepCopy(), nil
 }

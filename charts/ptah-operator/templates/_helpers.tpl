@@ -24,12 +24,336 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: controller
 {{- end -}}
 
-{{- define "ptah-operator.serviceAccountName" -}}
+{{- define "ptah-operator.serviceAccountBaseName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- default (include "ptah-operator.fullname" .) .Values.serviceAccount.name -}}
 {{- else -}}
-{{- required "serviceAccount.name is required when serviceAccount.create=false" .Values.serviceAccount.name -}}
+{{- $base := required "serviceAccount.name is required when serviceAccount.create=false" .Values.serviceAccount.name -}}
+{{- /* Reserve room for -v plus the largest positive int32 release sequence. */ -}}
+{{- if gt (len $base) 241 -}}
+{{- fail "serviceAccount.name must be at most 241 characters when serviceAccount.create=false" -}}
 {{- end -}}
+{{- $base -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+{{- /* Keep the controller principal distinct for every immutable release identity. */ -}}
+{{- $sourceBase := include "ptah-operator.serviceAccountBaseName" . -}}
+{{- $base := $sourceBase | trunc 38 | trimSuffix "-" -}}
+{{- $digest := printf "%s\n%s\n%s" $sourceBase (include "ptah-operator.controllerStateVersion" .) (include "ptah-operator.hookIdentityDigest" .) | sha256sum | trunc 12 -}}
+{{- printf "%s-v%s-%s" $base (include "ptah-operator.releaseSequence" .) $digest -}}
+{{- else -}}
+{{- /* External identities use the same stable base but a fresh object epoch. */ -}}
+{{- printf "%s-v%s" (include "ptah-operator.serviceAccountBaseName" .) (include "ptah-operator.releaseSequence" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.validateHelmReleaseObject" -}}
+{{- $metadata := default (dict) .object.metadata -}}
+{{- $annotations := default (dict) $metadata.annotations -}}
+{{- $labels := default (dict) $metadata.labels -}}
+{{- if or
+      (ne (default "" .object.apiVersion) .apiVersion)
+      (ne (default "" .object.kind) .kind)
+      (ne (default "" $metadata.name) .name)
+      (ne (default "" $metadata.namespace) .namespace)
+      (eq (default "" $metadata.uid) "") -}}
+{{- fail (printf "legacy controller provenance %s %s/%s has an invalid live identity" .kind (default "<cluster>" .namespace) .name) -}}
+{{- end -}}
+{{- if or
+      (ne (default "" (index $annotations "meta.helm.sh/release-name")) .root.Release.Name)
+      (ne (default "" (index $annotations "meta.helm.sh/release-namespace")) .root.Release.Namespace)
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "Helm")
+      (ne (default "" (index $labels "app.kubernetes.io/instance")) .root.Release.Name) -}}
+{{- fail (printf "legacy controller provenance %s %s/%s is not owned by Helm release %s/%s" .kind (default "<cluster>" .namespace) .name .root.Release.Namespace .root.Release.Name) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.validateControllerServiceAccountIdentityJSON" -}}
+{{- if not .object -}}
+{{- fail (printf "legacy controller ServiceAccount %s/%s is missing" .root.Release.Namespace .name) -}}
+{{- end -}}
+{{- $metadata := default (dict) .object.metadata -}}
+{{- if or
+      (ne (default "" .object.apiVersion) "v1")
+      (ne (default "" .object.kind) "ServiceAccount")
+      (ne (default "" $metadata.name) .name)
+      (ne (default "" $metadata.namespace) .root.Release.Namespace)
+      (eq (default "" $metadata.uid) "") -}}
+{{- fail (printf "legacy controller ServiceAccount %s/%s has an invalid live identity" .root.Release.Namespace .name) -}}
+{{- end -}}
+{{- $annotations := default (dict) $metadata.annotations -}}
+{{- $labels := default (dict) $metadata.labels -}}
+{{- $hasHelmOwnership := or
+      (hasKey $annotations "meta.helm.sh/release-name")
+      (hasKey $annotations "meta.helm.sh/release-namespace")
+      (eq (default "" (index $labels "app.kubernetes.io/managed-by")) "Helm") -}}
+{{- $managed := "false" -}}
+{{- if $hasHelmOwnership -}}
+{{- include "ptah-operator.validateHelmReleaseObject" (dict "root" .root "object" .object "apiVersion" "v1" "kind" "ServiceAccount" "namespace" .root.Release.Namespace "name" .name) -}}
+{{- end -}}
+{{- /* Live ownership metadata can be copied onto an external ServiceAccount.
+      Only Helm's stored predecessor manifest is authoritative for deletion. */ -}}
+{{- dict "uid" $metadata.uid "managed" $managed | toJson -}}
+{{- end -}}
+
+{{- define "ptah-operator.validatePreviousControllerServiceAccountName" -}}
+{{- if and .name (or (ne (trim .name) .name) (gt (len .name) 253) (not (regexMatch `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$` .name))) -}}
+{{- fail "previous controller ServiceAccount name is not an exact DNS subdomain" -}}
+{{- end -}}
+{{- if .name -}}
+{{- range $reserved := default (list .candidate) .reserved -}}
+{{- if eq $.name $reserved.name -}}
+{{- fail (printf "previous controller ServiceAccount must differ from %s" $reserved.description) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.validateRetainedControllerPrincipalObject" -}}
+{{- $metadata := default (dict) .object.metadata -}}
+{{- $annotations := default (dict) $metadata.annotations -}}
+{{- $labels := default (dict) $metadata.labels -}}
+{{- if or
+      (ne (default "" .object.apiVersion) "admissionregistration.k8s.io/v1")
+      (ne (default "" .object.kind) .kind)
+      (ne (default "" $metadata.name) .name)
+      (ne (default "" $metadata.namespace) "")
+      (eq (default "" $metadata.uid) "") -}}
+{{- fail (printf "retained %s %s has an invalid live identity" .kind .name) -}}
+{{- end -}}
+{{- $expectedAnnotations := dict
+      "helm.sh/hook" "pre-install,pre-upgrade"
+      "helm.sh/hook-weight" .weight
+      "helm.sh/resource-policy" "keep"
+      "operator.ptah.dev/rollout-guard-version" "1"
+      "operator.ptah.dev/release-name" .root.Release.Name
+      "operator.ptah.dev/release-namespace" .root.Release.Namespace
+      "operator.ptah.dev/controller-state-version" (include "ptah-operator.controllerStateVersion" .root)
+      "operator.ptah.dev/admission-contract-version" (include "ptah-operator.admissionContractVersion" .root)
+      "operator.ptah.dev/release-sequence" (include "ptah-operator.releaseSequence" .root)
+      "operator.ptah.dev/manager-image" (include "ptah-operator.managerImage" .root)
+      "operator.ptah.dev/hook-service-account-name" (include "ptah-operator.crdManagerServiceAccountName" .root)
+      "operator.ptah.dev/controller-service-account-name" (include "ptah-operator.serviceAccountName" .root)
+      "operator.ptah.dev/controller-service-account-managed" (printf "%t" .root.Values.serviceAccount.create)
+      "operator.ptah.dev/previous-controller-release-sequence" "0" -}}
+{{- range $key, $expected := $expectedAnnotations -}}
+{{- if or (not (hasKey $annotations $key)) (ne (index $annotations $key) $expected) -}}
+{{- fail (printf "retained %s %s has a foreign or incomplete immutable annotation %s" $.kind $.name $key) -}}
+{{- end -}}
+{{- end -}}
+{{- if not (hasKey $annotations "operator.ptah.dev/previous-controller-service-account-name") -}}
+{{- fail (printf "retained %s %s has an incomplete previous controller identity" .kind .name) -}}
+{{- end -}}
+{{- include "ptah-operator.validatePreviousControllerServiceAccountName" (dict
+      "name" (index $annotations "operator.ptah.dev/previous-controller-service-account-name")
+      "reserved" (list
+        (dict "name" (include "ptah-operator.serviceAccountName" .root) "description" "candidate controller ServiceAccount")
+        (dict "name" (include "ptah-operator.crdManagerServiceAccountName" .root) "description" "CRD manager hook ServiceAccount")
+        (dict "name" (include "ptah-operator.teardownServiceAccountName" .root) "description" "teardown ServiceAccount")
+        (dict "name" (include "ptah-operator.teardownQuiesceJobName" .root) "description" "teardown quiesce identity")
+        (dict "name" (include "ptah-operator.certRotatorServiceAccountName" .root) "description" "certificate ServiceAccount"))) -}}
+{{- if or
+      (not (hasKey $annotations "operator.ptah.dev/previous-controller-service-account-uid"))
+      (not (hasKey $annotations "operator.ptah.dev/previous-controller-service-account-managed")) -}}
+{{- fail (printf "retained %s %s has incomplete previous controller ServiceAccount provenance" .kind .name) -}}
+{{- end -}}
+{{- $previousName := index $annotations "operator.ptah.dev/previous-controller-service-account-name" -}}
+{{- $previousUID := index $annotations "operator.ptah.dev/previous-controller-service-account-uid" -}}
+{{- $previousManaged := index $annotations "operator.ptah.dev/previous-controller-service-account-managed" -}}
+{{- if not (has $previousManaged (list "true" "false")) -}}
+{{- fail (printf "retained %s %s has a malformed previous controller managed flag" .kind .name) -}}
+{{- end -}}
+{{- if and $previousUID (or (ne (trim $previousUID) $previousUID) (gt (len $previousUID) 128)) -}}
+{{- fail (printf "retained %s %s has a malformed previous controller UID" .kind .name) -}}
+{{- end -}}
+{{- if or
+      (and (eq $previousName "") (or (ne $previousUID "") (ne $previousManaged "false")))
+      (and (ne $previousName "") (eq $previousUID "")) -}}
+{{- fail (printf "retained %s %s has an inconsistent previous controller identity" .kind .name) -}}
+{{- end -}}
+{{- if or
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index $labels "app.kubernetes.io/instance")) .root.Release.Name)
+      (ne (default "" (index $labels "app.kubernetes.io/component")) "service-account-origin-guard") -}}
+{{- fail (printf "retained %s %s has foreign or incomplete service-account-origin ownership" .kind .name) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.legacyControllerPrincipalCoreJSON" -}}
+{{- $root := .root -}}
+{{- $deployment := .deployment -}}
+{{- $clusterRoleBinding := .clusterRoleBinding -}}
+{{- $coordinationRoleBinding := .coordinationRoleBinding -}}
+{{- $present := 0 -}}
+{{- range $object := list $deployment $clusterRoleBinding $coordinationRoleBinding -}}
+{{- if $object -}}
+{{- $present = add1 $present -}}
+{{- end -}}
+{{- end -}}
+{{- if eq $present 0 -}}
+{{- dict "name" "" "releaseSequence" "0" | toJson -}}
+{{- else -}}
+{{- if ne $present 3 -}}
+{{- fail "legacy controller provenance is incomplete; Deployment and both stable bindings must all exist or all be absent" -}}
+{{- end -}}
+{{- $name := include "ptah-operator.fullname" $root -}}
+{{- include "ptah-operator.validateHelmReleaseObject" (dict "root" $root "object" $deployment "apiVersion" "apps/v1" "kind" "Deployment" "namespace" $root.Release.Namespace "name" $name) -}}
+{{- include "ptah-operator.validateHelmReleaseObject" (dict "root" $root "object" $clusterRoleBinding "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "ClusterRoleBinding" "namespace" "" "name" $name) -}}
+{{- include "ptah-operator.validateHelmReleaseObject" (dict "root" $root "object" $coordinationRoleBinding "apiVersion" "rbac.authorization.k8s.io/v1" "kind" "RoleBinding" "namespace" (include "ptah-operator.coordinationNamespace" $root) "name" $name) -}}
+{{- $deploymentLabels := default (dict) $deployment.metadata.labels -}}
+{{- if or
+      (ne (default "" (index $deploymentLabels "app.kubernetes.io/name")) (include "ptah-operator.name" $root))
+      (ne (default "" (index $deploymentLabels "app.kubernetes.io/component")) "controller") -}}
+{{- fail "legacy controller Deployment has an unexpected component identity" -}}
+{{- end -}}
+{{- $deploymentAnnotations := default (dict) $deployment.metadata.annotations -}}
+{{- $podAnnotations := default (dict) (dig "spec" "template" "metadata" "annotations" (dict) $deployment) -}}
+{{- if or
+      (hasKey $deploymentAnnotations "operator.ptah.dev/controller-state-version")
+      (hasKey $deploymentAnnotations "operator.ptah.dev/release-sequence")
+      (hasKey $podAnnotations "operator.ptah.dev/controller-state-version")
+      (hasKey $podAnnotations "operator.ptah.dev/release-sequence") -}}
+{{- fail "same-sequence controller Deployment is not a supported predecessor" -}}
+{{- end -}}
+{{- $clusterRoleRef := default (dict) $clusterRoleBinding.roleRef -}}
+{{- if or
+      (ne (default "" $clusterRoleRef.apiGroup) "rbac.authorization.k8s.io")
+      (ne (default "" $clusterRoleRef.kind) "ClusterRole")
+      (ne (default "" $clusterRoleRef.name) $name) -}}
+{{- fail "legacy controller ClusterRoleBinding roleRef differs from the supported predecessor" -}}
+{{- end -}}
+{{- $coordinationRoleRef := default (dict) $coordinationRoleBinding.roleRef -}}
+{{- if or
+      (ne (default "" $coordinationRoleRef.apiGroup) "rbac.authorization.k8s.io")
+      (ne (default "" $coordinationRoleRef.kind) "Role")
+      (ne (default "" $coordinationRoleRef.name) $name) -}}
+{{- fail "legacy controller coordination RoleBinding roleRef differs from the supported predecessor" -}}
+{{- end -}}
+{{- $clusterSubjects := default (list) $clusterRoleBinding.subjects -}}
+{{- $coordinationSubjects := default (list) $coordinationRoleBinding.subjects -}}
+{{- if or (ne (len $clusterSubjects) 1) (ne (len $coordinationSubjects) 1) -}}
+{{- fail "legacy controller stable bindings must each have exactly one subject" -}}
+{{- end -}}
+{{- $clusterSubject := first $clusterSubjects -}}
+{{- $coordinationSubject := first $coordinationSubjects -}}
+{{- range $entry := list
+      (dict "kind" "ClusterRoleBinding" "subject" $clusterSubject)
+      (dict "kind" "coordination RoleBinding" "subject" $coordinationSubject) -}}
+{{- if or
+      (ne (default "" $entry.subject.apiGroup) "")
+      (ne (default "" $entry.subject.kind) "ServiceAccount")
+      (eq (default "" $entry.subject.name) "")
+      (ne (default "" $entry.subject.namespace) $root.Release.Namespace) -}}
+{{- fail (printf "legacy controller %s has an invalid ServiceAccount subject" $entry.kind) -}}
+{{- end -}}
+{{- end -}}
+{{- $deploymentServiceAccount := default "" (dig "spec" "template" "spec" "serviceAccountName" "" $deployment) -}}
+{{- if or
+      (eq $deploymentServiceAccount "")
+      (ne $deploymentServiceAccount $clusterSubject.name)
+      (ne $deploymentServiceAccount $coordinationSubject.name) -}}
+{{- fail "legacy controller Deployment and stable binding subjects disagree" -}}
+{{- end -}}
+{{- include "ptah-operator.validatePreviousControllerServiceAccountName" (dict
+      "name" $deploymentServiceAccount
+      "reserved" (list
+        (dict "name" (include "ptah-operator.serviceAccountName" $root) "description" "candidate controller ServiceAccount")
+        (dict "name" (include "ptah-operator.crdManagerServiceAccountName" $root) "description" "CRD manager hook ServiceAccount")
+        (dict "name" (include "ptah-operator.teardownServiceAccountName" $root) "description" "teardown ServiceAccount")
+        (dict "name" (include "ptah-operator.teardownQuiesceJobName" $root) "description" "teardown quiesce identity")
+        (dict "name" (include "ptah-operator.certRotatorServiceAccountName" $root) "description" "certificate ServiceAccount"))) -}}
+{{- dict "name" $deploymentServiceAccount "releaseSequence" "0" | toJson -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.previousControllerPrincipalFromObjectsJSON" -}}
+{{- $root := .root -}}
+{{- $guardPolicy := .guardPolicy -}}
+{{- $guardBinding := .guardBinding -}}
+{{- if or $guardPolicy $guardBinding -}}
+{{- $guardName := include "ptah-operator.serviceAccountOriginGuardPolicyName" $root -}}
+{{- with $guardPolicy -}}
+{{- include "ptah-operator.validateRetainedControllerPrincipalObject" (dict "root" $root "object" . "apiVersion" "admissionregistration.k8s.io/v1" "kind" "ValidatingAdmissionPolicy" "name" $guardName "weight" "-129") -}}
+{{- end -}}
+{{- with $guardBinding -}}
+{{- include "ptah-operator.validateRetainedControllerPrincipalObject" (dict "root" $root "object" . "apiVersion" "admissionregistration.k8s.io/v1" "kind" "ValidatingAdmissionPolicyBinding" "name" $guardName "weight" "-128") -}}
+{{- end -}}
+{{- $source := $guardPolicy -}}
+{{- if not $source -}}
+{{- $source = $guardBinding -}}
+{{- end -}}
+{{- $annotations := default (dict) $source.metadata.annotations -}}
+{{- $previousName := index $annotations "operator.ptah.dev/previous-controller-service-account-name" -}}
+{{- $previousUID := index $annotations "operator.ptah.dev/previous-controller-service-account-uid" -}}
+{{- $previousManaged := index $annotations "operator.ptah.dev/previous-controller-service-account-managed" -}}
+{{- if and $guardPolicy $guardBinding -}}
+{{- $bindingAnnotations := default (dict) $guardBinding.metadata.annotations -}}
+{{- if or
+      (ne $previousName (index $bindingAnnotations "operator.ptah.dev/previous-controller-service-account-name"))
+      (ne $previousUID (index $bindingAnnotations "operator.ptah.dev/previous-controller-service-account-uid"))
+      (ne $previousManaged (index $bindingAnnotations "operator.ptah.dev/previous-controller-service-account-managed")) -}}
+{{- fail "retained service-account-origin policy and binding disagree on the previous controller identity" -}}
+{{- end -}}
+{{- end -}}
+{{- dict "name" $previousName "uid" $previousUID "managed" $previousManaged "releaseSequence" "0" | toJson -}}
+{{- else -}}
+{{- $principal := include "ptah-operator.legacyControllerPrincipalCoreJSON" . | fromJson -}}
+{{- if $principal.name -}}
+{{- $serviceAccount := include "ptah-operator.validateControllerServiceAccountIdentityJSON" (dict "root" $root "object" .serviceAccount "name" $principal.name) | fromJson -}}
+{{- $principal = dict "name" $principal.name "uid" $serviceAccount.uid "managed" $serviceAccount.managed "releaseSequence" "0" -}}
+{{- else -}}
+{{- $principal = dict "name" "" "uid" "" "managed" "false" "releaseSequence" "0" -}}
+{{- end -}}
+{{- $principal | toJson -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.previousControllerPrincipalJSON" -}}
+{{- $guardName := include "ptah-operator.serviceAccountOriginGuardPolicyName" . -}}
+{{- $guardPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $guardName -}}
+{{- $guardBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $guardName -}}
+{{- if or $guardPolicy $guardBinding -}}
+{{- include "ptah-operator.previousControllerPrincipalFromObjectsJSON" (dict "root" . "guardPolicy" $guardPolicy "guardBinding" $guardBinding) -}}
+{{- else -}}
+{{- $name := include "ptah-operator.fullname" . -}}
+{{- $deployment := lookup "apps/v1" "Deployment" .Release.Namespace $name -}}
+{{- $clusterRoleBinding := lookup "rbac.authorization.k8s.io/v1" "ClusterRoleBinding" "" $name -}}
+{{- $coordinationRoleBinding := lookup "rbac.authorization.k8s.io/v1" "RoleBinding" (include "ptah-operator.coordinationNamespace" .) $name -}}
+{{- $objects := dict "root" . "deployment" $deployment "clusterRoleBinding" $clusterRoleBinding "coordinationRoleBinding" $coordinationRoleBinding -}}
+{{- $principal := include "ptah-operator.legacyControllerPrincipalCoreJSON" $objects | fromJson -}}
+{{- $serviceAccount := dict -}}
+{{- if $principal.name -}}
+{{- $serviceAccount = lookup "v1" "ServiceAccount" .Release.Namespace $principal.name -}}
+{{- end -}}
+{{- include "ptah-operator.previousControllerPrincipalFromObjectsJSON" (merge (dict "serviceAccount" $serviceAccount) $objects) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.previousControllerServiceAccountName" -}}
+{{- $principal := include "ptah-operator.previousControllerPrincipalJSON" . | fromJson -}}
+{{- $principal.name -}}
+{{- end -}}
+
+{{- define "ptah-operator.previousControllerReleaseSequence" -}}
+{{- $principal := include "ptah-operator.previousControllerPrincipalJSON" . | fromJson -}}
+{{- $principal.releaseSequence -}}
+{{- end -}}
+
+{{- define "ptah-operator.previousControllerServiceAccountUID" -}}
+{{- $principal := include "ptah-operator.previousControllerPrincipalJSON" . | fromJson -}}
+{{- $principal.uid -}}
+{{- end -}}
+
+{{- define "ptah-operator.previousControllerServiceAccountManaged" -}}
+{{- $principal := include "ptah-operator.previousControllerPrincipalJSON" . | fromJson -}}
+{{- $principal.managed -}}
+{{- end -}}
+
+{{- define "ptah-operator.serviceAccountOriginGuardPolicyName" -}}
+{{- printf "ptah-operator-service-account-origin-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.certRotatorServiceAccountName" -}}
@@ -215,24 +539,48 @@ app.kubernetes.io/component: controller
 {{- printf "ptah-operator-release-activation-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- end -}}
 
+{{- define "ptah-operator.admissionConvergencePolicyName" -}}
+{{- printf "ptah-operator-admission-convergence-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- end -}}
+
+{{- define "ptah-operator.admissionConvergenceMarkerName" -}}
+{{- printf "ptah-admission-convergence-v1-%s-%s" (include "ptah-operator.releaseSequence" .) (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- end -}}
+
+{{- define "ptah-operator.admissionConvergenceProbeFieldManager" -}}
+{{- printf "ptah-admission-convergence-v1-%s" (printf "1\n%s\n%s" .policyName (include "ptah-operator.hookIdentityDigest" .root) | sha256sum) -}}
+{{- end -}}
+
+{{- define "ptah-operator.admissionConvergenceProbeRequest" -}}
+{{- printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager == %q` .root.Release.Namespace (include "ptah-operator.admissionConvergenceMarkerName" .root) .fieldManager -}}
+{{- end -}}
+
+{{- define "ptah-operator.admissionConvergenceAnyProbeRequest" -}}
+{{- printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches("^ptah-admission-convergence-v1-[0-9a-f]{64}$")` .Release.Namespace (include "ptah-operator.admissionConvergenceMarkerName" .) -}}
+{{- end -}}
+
+{{- define "ptah-operator.admissionConvergenceProbeMessage" -}}
+{{- printf "Ptah admission convergence confirmed exact workload guard %s" .fieldManager -}}
+{{- end -}}
+
 {{- define "ptah-operator.namespaceDeletionGuardPolicyName" -}}
 {{- printf "ptah-operator-namespace-deletion-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-controller-write-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- printf "ptah-operator-controller-write-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerJobWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-job-write-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- printf "ptah-operator-job-write-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerChunkWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-chunk-write-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- printf "ptah-operator-chunk-write-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.controllerPlanWriteGuardPolicyName" -}}
-{{- printf "ptah-operator-plan-write-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- printf "ptah-operator-plan-write-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.certificateMutatingWriteGuardPolicyName" -}}
@@ -264,15 +612,15 @@ app.kubernetes.io/component: controller
 {{- end -}}
 
 {{- define "ptah-operator.parentReplicaSetGuardPolicyName" -}}
-{{- printf "ptah-operator-runtime-parent-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- printf "ptah-operator-runtime-parent-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.parentHookPodOriginGuardPolicyName" -}}
-{{- printf "ptah-operator-hook-pod-origin-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- printf "ptah-operator-hook-pod-origin-guard-v2-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.parentHookJobOriginGuardPolicyName" -}}
-{{- printf "ptah-operator-hook-parent-origin-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
+{{- printf "ptah-operator-hook-parent-origin-guard-v2-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.parentHookJobContractPolicyName" -}}
@@ -612,6 +960,11 @@ app.kubernetes.io/component: controller
       (printf "--certificate-health-port=%v" $root.Values.certificateRotation.healthPort)
       (printf "--hook-service-account-name=%s" (include "ptah-operator.crdManagerServiceAccountName" $root))
       (printf "--controller-service-account-name=%s" (include "ptah-operator.serviceAccountName" $root))
+      (printf "--controller-service-account-managed=%t" $root.Values.serviceAccount.create)
+      (printf "--previous-controller-service-account-name=%s" (include "ptah-operator.previousControllerServiceAccountName" $root))
+      (printf "--previous-controller-service-account-uid=%s" (include "ptah-operator.previousControllerServiceAccountUID" $root))
+      (printf "--previous-controller-service-account-managed=%s" (include "ptah-operator.previousControllerServiceAccountManaged" $root))
+      (printf "--previous-controller-release-sequence=%s" (include "ptah-operator.previousControllerReleaseSequence" $root))
       (printf "--controller-deployment-name=%s" (include "ptah-operator.fullname" $root))
       (printf "--controller-replicas=%v" $root.Values.replicaCount)
       (printf "--certificate-deployment-name=%s" (include "ptah-operator.certRotatorServiceAccountName" $root))
@@ -624,6 +977,9 @@ app.kubernetes.io/component: controller
       (printf "--runtime-admission-contract-b64=%s" (include "ptah-operator.runtimeAdmissionContractJSON" $root | b64enc)) -}}
 {{- if .verifyControllerState -}}
 {{- $args = append $args "--verify-controller-state=true" -}}
+{{- end -}}
+{{- if and (eq .mode "runtime-verify") $root.Values.certificateRotation.recreateMissingSecret -}}
+{{- $args = append $args "--verify-certificate-recovery=true" -}}
 {{- end -}}
 {{- $args | toJson -}}
 {{- end -}}
@@ -640,7 +996,7 @@ app.kubernetes.io/component: controller
 {{- fail (printf "fixed admission singleton %s/%s is not owned by Helm release %s/%s" .kind .object.metadata.name .releaseNamespace .releaseName) -}}
 {{- end -}}
 {{- $present := 0 -}}
-{{- $expected := merge (dict) .expectedImmutable .expectedVersions (dict "operator.ptah.dev/hook-service-account-name" .expectedHook) -}}
+{{- $expected := merge (dict) .expectedImmutable .expectedVersions (dict "operator.ptah.dev/hook-service-account-name" .expectedHook "operator.ptah.dev/controller-service-account-name" .expectedController) -}}
 {{- range $key := keys $expected -}}
 {{- if hasKey $annotations $key -}}
 {{- $present = add1 $present -}}
@@ -666,12 +1022,22 @@ app.kubernetes.io/component: controller
 {{- end -}}
 {{- end -}}
 {{- $actualRelease := index $annotations "operator.ptah.dev/release-sequence" -}}
+{{- $actualController := index $annotations "operator.ptah.dev/controller-service-account-name" -}}
 {{- $actualHook := index $annotations "operator.ptah.dev/hook-service-account-name" -}}
 {{- if eq $actualRelease (index .expectedVersions "operator.ptah.dev/release-sequence") -}}
+{{- if ne $actualController .expectedController -}}
+{{- fail (printf "fixed admission singleton %s/%s annotation operator.ptah.dev/controller-service-account-name is %q, expected %q" .kind .object.metadata.name $actualController .expectedController) -}}
+{{- end -}}
 {{- if ne $actualHook .expectedHook -}}
 {{- fail (printf "fixed admission singleton %s/%s annotation operator.ptah.dev/hook-service-account-name is %q, expected %q" .kind .object.metadata.name $actualHook .expectedHook) -}}
 {{- end -}}
 {{- else -}}
+{{- if ne $actualRelease .expectedPreviousRelease -}}
+{{- fail (printf "fixed admission singleton %s/%s has unexpected predecessor release sequence %s" .kind .object.metadata.name $actualRelease) -}}
+{{- end -}}
+{{- if or (eq .expectedPreviousController "") (ne $actualController .expectedPreviousController) -}}
+{{- fail (printf "fixed admission singleton %s/%s has unexpected predecessor controller ServiceAccount identity %q" .kind .object.metadata.name $actualController) -}}
+{{- end -}}
 {{- $currentSuffix := printf `-crd-v%s-[0-9a-f]{12}$` (index .expectedVersions "operator.ptah.dev/release-sequence") -}}
 {{- $prefix := regexReplaceAll $currentSuffix .expectedHook "-crd-v" -}}
 {{- $historicalPattern := printf `^%s%s-[0-9a-f]{12}$` $prefix $actualRelease -}}
@@ -699,14 +1065,13 @@ app.kubernetes.io/component: controller
       "operator.ptah.dev/leader-election" (printf "%t" .Values.leaderElection)
       "operator.ptah.dev/leader-election-id" (include "ptah-operator.leaderElectionID" .)
       "operator.ptah.dev/webhook-service-name" (include "ptah-operator.webhookServiceName" .)
-      "operator.ptah.dev/controller-service-account-name" (include "ptah-operator.serviceAccountName" .)
       "operator.ptah.dev/controller-deployment-name" (include "ptah-operator.fullname" .)
       "operator.ptah.dev/certificate-deployment-name" (include "ptah-operator.certRotatorServiceAccountName" .) -}}
 {{- $expectedVersions := dict
       "operator.ptah.dev/controller-state-version" (include "ptah-operator.controllerStateVersion" .)
       "operator.ptah.dev/admission-contract-version" (include "ptah-operator.admissionContractVersion" .)
       "operator.ptah.dev/release-sequence" (include "ptah-operator.releaseSequence" .) -}}
-{{- $context := dict "expectedImmutable" $expectedImmutable "expectedVersions" $expectedVersions "expectedHook" (include "ptah-operator.crdManagerServiceAccountName" .) "releaseName" .Release.Name "releaseNamespace" .Release.Namespace -}}
+{{- $context := dict "expectedImmutable" $expectedImmutable "expectedVersions" $expectedVersions "expectedHook" (include "ptah-operator.crdManagerServiceAccountName" .) "expectedController" (include "ptah-operator.serviceAccountName" .) "expectedPreviousController" (include "ptah-operator.previousControllerServiceAccountName" .) "expectedPreviousRelease" (include "ptah-operator.previousControllerReleaseSequence" .) "releaseName" .Release.Name "releaseNamespace" .Release.Namespace -}}
 {{- include "ptah-operator.validateAdmissionSingletonObject" (merge (dict "kind" "MutatingWebhookConfiguration" "object" $mutating) $context) -}}
 {{- include "ptah-operator.validateAdmissionSingletonObject" (merge (dict "kind" "ValidatingWebhookConfiguration" "object" $validating) $context) -}}
 {{- end -}}

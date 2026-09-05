@@ -10,6 +10,11 @@ invocation, and an otherwise-unused kind network created by that invocation.
 Images and networks that predated the run are preserved; a newly created kind
 network is also preserved if another container attaches to it. Containers are
 removed by their captured full Docker IDs rather than reusable names.
+Before any collision checks or mutable work, the harness atomically claims its
+derived identity with a labeled volume on the selected daemon. Docker preserves
+the first creator's immutable label nonce, so concurrent runs with the same
+explicit `E2E_RUN_ID` cannot both enter creation or cleanup. The claim itself is
+removed only after its exact owner labels are revalidated.
 Content-addressed BuildKit cache layers are managed by Docker and are never
 removed with a broad cleanup operation.
 
@@ -28,7 +33,7 @@ Required inputs:
   callers must provide it explicitly for any other version.
 
 The harness builds its Ptah executor from commit
-`5451155ed00de348abbb6dbabc5370401dc23772` in a sibling Ptah checkout by
+`00fc362c943bfb9d0363d5890bf449a2a9b5e7cf` in a sibling Ptah checkout by
 default. Set `E2E_PTAH_SOURCE_DIR` and `E2E_PTAH_REVISION` to select another
 checkout and exact commit. When no sibling checkout exists, the harness clones
 `E2E_PTAH_GIT_URL` into its task-owned temporary directory.

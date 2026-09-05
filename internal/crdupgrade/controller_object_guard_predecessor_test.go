@@ -27,10 +27,11 @@ func TestControllerJobGuardAcceptsExactPredecessorCreateDuringBootstrap(t *testi
 	object := predecessorControllerJobProbe(t, job)
 	activation := map[string]any{
 		"activeRelease":               int64(0),
+		"candidateRelease":            int64(1),
+		"previousRelease":             int64(0),
 		"activeControllerStateString": "1",
 		"activeControllerState":       int64(1),
 		"activeControllerImage":       predecessorControllerImage,
-		"isBootstrap":                 true,
 	}
 	validations, evaluate := controllerJobValidationEvaluator(t, activation)
 	for index, validation := range validations {
@@ -75,10 +76,11 @@ func TestControllerJobGuardAcceptsCurrentCreateAfterActivation(t *testing.T) {
 	object := controllerJobCreateProbe(t, predecessorControllerJobFixture(t), false)
 	activation := map[string]any{
 		"activeRelease":               int64(1),
+		"candidateRelease":            int64(1),
+		"previousRelease":             int64(0),
 		"activeControllerStateString": "1",
 		"activeControllerState":       int64(1),
 		"activeControllerImage":       predecessorControllerImage,
-		"isBootstrap":                 false,
 	}
 	validations, evaluate := controllerJobValidationEvaluator(t, activation)
 	for index, validation := range validations {
@@ -131,10 +133,11 @@ func TestControllerPlanGuardAcceptsExactContractV2PredecessorCreateDuringBootstr
 
 	activation := map[string]any{
 		"activeRelease":               int64(0),
+		"candidateRelease":            int64(1),
+		"previousRelease":             int64(0),
 		"activeControllerStateString": "1",
 		"activeControllerState":       int64(1),
 		"activeControllerImage":       predecessorControllerImage,
-		"isBootstrap":                 true,
 	}
 	validations, evaluate := controllerPlanValidationEvaluator(t, activation)
 	for index, validation := range validations {

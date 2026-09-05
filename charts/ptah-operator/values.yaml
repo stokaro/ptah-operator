@@ -47,9 +47,11 @@ coordination:
   namespace: ""
 
 serviceAccount:
-  # With create=false, name must identify an existing ServiceAccount dedicated
-  # to this release. Any additional RoleBinding or ClusterRoleBinding for that
-  # identity blocks fail-closed uninstall.
+  # With create=false, name is a stable base, not a complete object name. For
+  # every release sequence N, pre-create the dedicated ServiceAccount
+  # <name>-v<N>. The chart never reuses or deletes these user-owned identities.
+  # Any additional RoleBinding or ClusterRoleBinding for an active or retained
+  # epoch blocks fail-closed upgrade and uninstall.
   create: true
   name: ""
   annotations: {}

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -22,14 +24,15 @@ import (
 )
 
 const (
-	kubernetesServiceNamespace             = metav1.NamespaceDefault
-	kubernetesServiceName                  = "kubernetes"
-	kubernetesServiceTLSPortName           = "https"
-	kubernetesServiceTLSServerName         = "kubernetes.default.svc"
-	teardownEndpointSlicePageSize  int64   = 200
-	teardownRBACPollEvery                  = 250 * time.Millisecond
-	teardownRBACStabilityDuration          = 5 * time.Second
-	teardownRBACQueriesPerSecond   float32 = 100
+	kubernetesServiceNamespace                  = metav1.NamespaceDefault
+	kubernetesServiceName                       = "kubernetes"
+	kubernetesServiceTLSPortName                = "https"
+	kubernetesServiceTLSServerName              = "kubernetes.default.svc"
+	kubernetesAPIEndpointSlicePageSize  int64   = 200
+	authorizationPollEvery                      = 250 * time.Millisecond
+	authorizationStabilityDuration              = 5 * time.Second
+	authorizationRequestTimeout                 = 5 * time.Second
+	directKubernetesAPIQueriesPerSecond float32 = 100
 )
 
 type endpointSliceLister interface {
@@ -37,6 +40,43 @@ type endpointSliceLister interface {
 }
 
 type authorizationReviewClientFactory func(*rest.Config) (crdupgrade.AuthorizationReviewClient, error)
+
+// kubernetesAPIServerEndpoint is one directly addressable API server from a
+// complete EndpointSlice inventory snapshot. RESTConfig retains the
+// in-cluster credential and CA while pinning transport to Address and TLS SNI
+// to the Kubernetes Service DNS name.
+type kubernetesAPIServerEndpoint struct {
+	Address    string
+	RESTConfig *rest.Config
+}
+
+// kubernetesAPIServerEndpointSnapshot is a complete, internally consistent
+// view of the API endpoints advertised by the default Kubernetes Service.
+// InventoryIdentity fingerprints each selected EndpointSlice
+// name/UID/resourceVersion and the canonical advertised address set. The LIST
+// collection resourceVersion is retained separately for coherent pagination
+// and diagnostics: unrelated EndpointSlice churn may advance it and must not
+// starve a stability window. Consumers restart their window when the selected
+// inventory identity changes.
+type kubernetesAPIServerEndpointSnapshot struct {
+	InventoryResourceVersion string
+	InventoryIdentity        string
+	Endpoints                []kubernetesAPIServerEndpoint
+}
+
+type kubernetesAPIServerEndpointProvider func(context.Context) (kubernetesAPIServerEndpointSnapshot, error)
+
+type kubernetesAPIServerTopology struct {
+	InventoryResourceVersion string
+	InventoryIdentity        string
+	Addresses                []string
+}
+
+type kubernetesAPIServerSliceIdentity struct {
+	Name            string `json:"name"`
+	UID             string `json:"uid"`
+	ResourceVersion string `json:"resourceVersion"`
+}
 
 // newTeardownRBACConvergenceBarrier discovers every ready address advertised
 // by the in-cluster Kubernetes Service and creates one directly addressed
@@ -70,42 +110,137 @@ func newTeardownRBACConvergenceBarrierWith(
 	contract crdupgrade.RuntimeAdmissionContract,
 	clientFactory authorizationReviewClientFactory,
 ) (*crdupgrade.RBACConvergenceBarrier, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("authorization convergence discovery context is nil")
-	}
-	if err := ctx.Err(); err != nil {
+	if err := validateAuthorizationConvergenceInputs(ctx, config, endpointSlices, clientFactory); err != nil {
 		return nil, err
-	}
-	if config == nil {
-		return nil, fmt.Errorf("in-cluster REST configuration is required for authorization convergence")
-	}
-	if config.Insecure {
-		return nil, fmt.Errorf("in-cluster REST configuration must verify API server TLS certificates")
-	}
-	if config.CAFile == "" && len(config.CAData) == 0 {
-		return nil, fmt.Errorf("in-cluster REST configuration has no API server CA")
-	}
-	if endpointSlices == nil {
-		return nil, fmt.Errorf("EndpointSlice client is required for authorization convergence")
-	}
-	if clientFactory == nil {
-		return nil, fmt.Errorf("authorization client factory is required")
 	}
 
 	probes, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
 	if err != nil {
 		return nil, err
 	}
+	return newAuthorizationConvergenceBarrier(
+		ctx,
+		config,
+		endpointSlices,
+		probes,
+		selfChecks,
+		clientFactory,
+		"teardown",
+	)
+}
+
+func newControllerRBACConvergenceBarrier(
+	ctx context.Context,
+	config *rest.Config,
+	clientset kubernetes.Interface,
+	transition *crdupgrade.ControllerRBACTransition,
+) (*crdupgrade.RBACConvergenceBarrier, error) {
+	if clientset == nil {
+		return nil, fmt.Errorf("kubernetes client is required for controller authorization convergence")
+	}
+	if transition == nil {
+		return nil, fmt.Errorf("controller RBAC transition is required for authorization convergence")
+	}
+	probe, err := transition.PredecessorAuthorizationProbe()
+	if err != nil {
+		return nil, err
+	}
+	return newControllerRBACConvergenceBarrierWith(
+		ctx,
+		config,
+		clientset.DiscoveryV1().EndpointSlices(kubernetesServiceNamespace),
+		probe,
+		newDirectAuthorizationReviewClient,
+	)
+}
+
+func newControllerRBACConvergenceBarrierWith(
+	ctx context.Context,
+	config *rest.Config,
+	endpointSlices endpointSliceLister,
+	probe crdupgrade.AuthorizationProbe,
+	clientFactory authorizationReviewClientFactory,
+) (*crdupgrade.RBACConvergenceBarrier, error) {
+	if err := validateAuthorizationConvergenceInputs(ctx, config, endpointSlices, clientFactory); err != nil {
+		return nil, err
+	}
+	return newAuthorizationConvergenceBarrier(
+		ctx,
+		config,
+		endpointSlices,
+		[]crdupgrade.AuthorizationProbe{probe},
+		nil,
+		clientFactory,
+		"controller RBAC cutover",
+	)
+}
+
+func validateAuthorizationConvergenceInputs(
+	ctx context.Context,
+	config *rest.Config,
+	endpointSlices endpointSliceLister,
+	clientFactory authorizationReviewClientFactory,
+) error {
+	if ctx == nil {
+		return fmt.Errorf("authorization convergence discovery context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := validateKubernetesAPIServerEndpointInputs(config, endpointSlices); err != nil {
+		return err
+	}
+	if clientFactory == nil {
+		return fmt.Errorf("authorization client factory is required")
+	}
+	return nil
+}
+
+func newAuthorizationConvergenceBarrier(
+	ctx context.Context,
+	config *rest.Config,
+	endpointSlices endpointSliceLister,
+	probes []crdupgrade.AuthorizationProbe,
+	selfChecks []crdupgrade.AuthorizationCheck,
+	clientFactory authorizationReviewClientFactory,
+	description string,
+) (*crdupgrade.RBACConvergenceBarrier, error) {
 	sweepBurst := len(selfChecks)
 	for _, probe := range probes {
 		sweepBurst += len(probe.Checks)
 	}
-	endpointProvider := newTeardownAuthorizationEndpointProvider(
+	apiEndpointProvider, err := newKubernetesAPIServerEndpointProvider(
 		config,
 		endpointSlices,
 		sweepBurst,
-		clientFactory,
 	)
+	if err != nil {
+		return nil, err
+	}
+	initialSnapshot, err := waitForInitialKubernetesAPIServerEndpointSnapshot(
+		ctx,
+		apiEndpointProvider,
+		authorizationPollEvery,
+		sleepForKubernetesAPIServerEndpointDiscovery,
+	)
+	if err != nil {
+		return nil, err
+	}
+	seededProvider := apiEndpointProvider
+	initialPending := true
+	endpointProvider := newAuthorizationEndpointProvider(func(providerCtx context.Context) (kubernetesAPIServerEndpointSnapshot, error) {
+		if providerCtx == nil {
+			return kubernetesAPIServerEndpointSnapshot{}, fmt.Errorf("Kubernetes API endpoint discovery context is nil")
+		}
+		if err := providerCtx.Err(); err != nil {
+			return kubernetesAPIServerEndpointSnapshot{}, err
+		}
+		if initialPending {
+			initialPending = false
+			return initialSnapshot, nil
+		}
+		return seededProvider(providerCtx)
+	}, clientFactory)
 	clients, err := endpointProvider(ctx)
 	if err != nil {
 		return nil, err
@@ -115,58 +250,184 @@ func newTeardownRBACConvergenceBarrierWith(
 		clients,
 		probes,
 		selfChecks,
-		teardownRBACPollEvery,
-		teardownRBACStabilityDuration,
+		authorizationPollEvery,
+		authorizationStabilityDuration,
 	)
+	barrier.RequestTimeout = authorizationRequestTimeout
 	barrier.EndpointProvider = endpointProvider
 	if err := barrier.Validate(); err != nil {
-		return nil, fmt.Errorf("validate teardown authorization convergence barrier: %w", err)
+		return nil, fmt.Errorf("validate %s authorization convergence barrier: %w", description, err)
 	}
 	return barrier, nil
 }
 
-func newTeardownAuthorizationEndpointProvider(
+func waitForInitialKubernetesAPIServerEndpointSnapshot(
+	ctx context.Context,
+	provider kubernetesAPIServerEndpointProvider,
+	pollEvery time.Duration,
+	sleep func(context.Context, time.Duration) error,
+) (kubernetesAPIServerEndpointSnapshot, error) {
+	if ctx == nil {
+		return kubernetesAPIServerEndpointSnapshot{}, fmt.Errorf("Kubernetes API endpoint discovery context is nil")
+	}
+	if provider == nil || pollEvery <= 0 || sleep == nil {
+		return kubernetesAPIServerEndpointSnapshot{}, fmt.Errorf("Kubernetes API endpoint discovery retry configuration is invalid")
+	}
+	// The raw provider contains only dynamic EndpointSlice discovery and direct
+	// REST-config derivation. Retry every fail-closed observation so a temporary
+	// empty, non-ready, or malformed inventory cannot abort a safe transition.
+	// Authorization client construction happens after this loop and remains
+	// immediately fatal.
+	for {
+		snapshot, err := provider(ctx)
+		if contextErr := ctx.Err(); contextErr != nil {
+			return kubernetesAPIServerEndpointSnapshot{}, contextErr
+		}
+		if err == nil {
+			return snapshot, nil
+		}
+		if sleepErr := sleep(ctx, pollEvery); sleepErr != nil {
+			if contextErr := ctx.Err(); contextErr != nil {
+				return kubernetesAPIServerEndpointSnapshot{}, contextErr
+			}
+			return kubernetesAPIServerEndpointSnapshot{}, fmt.Errorf(
+				"Kubernetes API endpoint discovery did not recover; last observation: %v: %w",
+				err,
+				sleepErr,
+			)
+		}
+	}
+}
+
+func sleepForKubernetesAPIServerEndpointDiscovery(ctx context.Context, duration time.Duration) error {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func validateKubernetesAPIServerEndpointInputs(config *rest.Config, endpointSlices endpointSliceLister) error {
+	if config == nil {
+		return fmt.Errorf("in-cluster REST configuration is required for direct Kubernetes API endpoints")
+	}
+	if config.Insecure {
+		return fmt.Errorf("in-cluster REST configuration must verify API server TLS certificates")
+	}
+	if config.CAFile == "" && len(config.CAData) == 0 {
+		return fmt.Errorf("in-cluster REST configuration has no API server CA")
+	}
+	if endpointSlices == nil {
+		return fmt.Errorf("EndpointSlice client is required for direct Kubernetes API endpoints")
+	}
+	return nil
+}
+
+func newKubernetesAPIServerEndpointProvider(
 	config *rest.Config,
 	endpointSlices endpointSliceLister,
-	sweepBurst int,
+	burst int,
+) (kubernetesAPIServerEndpointProvider, error) {
+	if err := validateKubernetesAPIServerEndpointInputs(config, endpointSlices); err != nil {
+		return nil, err
+	}
+	if burst <= 0 {
+		return nil, fmt.Errorf("direct Kubernetes API endpoint burst must be positive")
+	}
+	baseConfig := rest.CopyConfig(config)
+
+	return func(ctx context.Context) (kubernetesAPIServerEndpointSnapshot, error) {
+		if ctx == nil {
+			return kubernetesAPIServerEndpointSnapshot{}, fmt.Errorf("Kubernetes API endpoint discovery context is nil")
+		}
+		if err := ctx.Err(); err != nil {
+			return kubernetesAPIServerEndpointSnapshot{}, err
+		}
+		topology, err := discoverKubernetesAPIServerTopology(ctx, endpointSlices)
+		if err != nil {
+			return kubernetesAPIServerEndpointSnapshot{}, err
+		}
+		endpoints := make([]kubernetesAPIServerEndpoint, 0, len(topology.Addresses))
+		for _, address := range topology.Addresses {
+			endpointConfig := rest.CopyConfig(baseConfig)
+			endpointConfig.Host = "https://" + address
+			endpointConfig.ServerName = kubernetesServiceTLSServerName
+			// A process-level HTTPS proxy would collapse independently addressed
+			// requests back onto shared infrastructure. Advertised addresses are
+			// reached directly from the in-cluster hook Pod.
+			endpointConfig.Proxy = directEndpointProxy
+			// One convergence sweep is a bounded burst. Other direct API consumers
+			// supply their own operation bound when constructing this provider.
+			endpointConfig.RateLimiter = nil
+			endpointConfig.QPS = directKubernetesAPIQueriesPerSecond
+			endpointConfig.Burst = burst
+			endpoints = append(endpoints, kubernetesAPIServerEndpoint{
+				Address:    address,
+				RESTConfig: endpointConfig,
+			})
+		}
+		return kubernetesAPIServerEndpointSnapshot{
+			InventoryResourceVersion: topology.InventoryResourceVersion,
+			InventoryIdentity:        topology.InventoryIdentity,
+			Endpoints:                endpoints,
+		}, nil
+	}, nil
+}
+
+func newAuthorizationEndpointProvider(
+	apiEndpoints kubernetesAPIServerEndpointProvider,
 	clientFactory authorizationReviewClientFactory,
 ) crdupgrade.AuthorizationEndpointProvider {
 	clientsByAddress := make(map[string]crdupgrade.AuthorizationReviewClient)
+	cachedInventoryIdentity := ""
 	return func(ctx context.Context) ([]crdupgrade.NamedAuthorizationReviewClient, error) {
-		addresses, err := discoverKubernetesAPIServerAddresses(ctx, endpointSlices)
+		if apiEndpoints == nil {
+			return nil, fmt.Errorf("Kubernetes API endpoint provider is required")
+		}
+		if clientFactory == nil {
+			return nil, fmt.Errorf("authorization client factory is required")
+		}
+		snapshot, err := apiEndpoints(ctx)
 		if err != nil {
 			return nil, err
 		}
-		clients := make([]crdupgrade.NamedAuthorizationReviewClient, 0, len(addresses))
-		for _, address := range addresses {
-			client := clientsByAddress[address]
+		if snapshot.InventoryIdentity == "" || snapshot.InventoryIdentity != strings.TrimSpace(snapshot.InventoryIdentity) {
+			return nil, fmt.Errorf("Kubernetes API endpoint snapshot has an empty or padded inventory identity")
+		}
+		if len(snapshot.Endpoints) == 0 {
+			return nil, fmt.Errorf("Kubernetes API endpoint snapshot is empty")
+		}
+		if snapshot.InventoryIdentity != cachedInventoryIdentity {
+			clientsByAddress = make(map[string]crdupgrade.AuthorizationReviewClient)
+			cachedInventoryIdentity = snapshot.InventoryIdentity
+		}
+		clients := make([]crdupgrade.NamedAuthorizationReviewClient, 0, len(snapshot.Endpoints))
+		for _, endpoint := range snapshot.Endpoints {
+			if strings.TrimSpace(endpoint.Address) == "" || endpoint.Address != strings.TrimSpace(endpoint.Address) {
+				return nil, fmt.Errorf("Kubernetes API endpoint snapshot has an empty or padded address")
+			}
+			if endpoint.RESTConfig == nil {
+				return nil, fmt.Errorf("Kubernetes API endpoint %q has a nil REST configuration", endpoint.Address)
+			}
+			client := clientsByAddress[endpoint.Address]
 			if client == nil {
-				endpointConfig := rest.CopyConfig(config)
-				endpointConfig.Host = "https://" + address
-				endpointConfig.ServerName = kubernetesServiceTLSServerName
-				// A process-level HTTPS proxy would collapse independently addressed
-				// probes back onto shared infrastructure. Advertised addresses are
-				// reached directly from the in-cluster teardown Pod.
-				endpointConfig.Proxy = directEndpointProxy
-				// client-go otherwise installs its conservative 5 QPS / 10 burst
-				// default independently for every direct client. One convergence
-				// sweep intentionally covers every subject/check pair; allow exactly
-				// that bounded burst. API-server throttling remains inconclusive and
-				// resets the stability window.
-				endpointConfig.RateLimiter = nil
-				endpointConfig.QPS = teardownRBACQueriesPerSecond
-				endpointConfig.Burst = sweepBurst
-
-				client, err = clientFactory(endpointConfig)
+				client, err = clientFactory(endpoint.RESTConfig)
 				if err != nil {
-					return nil, fmt.Errorf("create authorization client for advertised API endpoint %q: %w", address, err)
+					return nil, fmt.Errorf("create authorization client for advertised API endpoint %q: %w", endpoint.Address, err)
 				}
 				if client == nil {
-					return nil, fmt.Errorf("authorization client factory returned nil for advertised API endpoint %q", address)
+					return nil, fmt.Errorf("authorization client factory returned nil for advertised API endpoint %q", endpoint.Address)
 				}
-				clientsByAddress[address] = client
+				clientsByAddress[endpoint.Address] = client
 			}
-			clients = append(clients, crdupgrade.NamedAuthorizationReviewClient{Name: address, Client: client})
+			clients = append(clients, crdupgrade.NamedAuthorizationReviewClient{
+				Name:             endpoint.Address,
+				TopologyIdentity: snapshot.InventoryIdentity,
+				Client:           client,
+			})
 		}
 		return clients, nil
 	}
@@ -205,6 +466,14 @@ func directEndpointProxy(*http.Request) (*url.URL, error) {
 }
 
 func discoverKubernetesAPIServerAddresses(ctx context.Context, endpointSlices endpointSliceLister) ([]string, error) {
+	topology, err := discoverKubernetesAPIServerTopology(ctx, endpointSlices)
+	if err != nil {
+		return nil, err
+	}
+	return append([]string(nil), topology.Addresses...), nil
+}
+
+func discoverKubernetesAPIServerTopology(ctx context.Context, endpointSlices endpointSliceLister) (*kubernetesAPIServerTopology, error) {
 	const selector = discoveryv1.LabelServiceName + "=" + kubernetesServiceName
 
 	seenTokens := map[string]struct{}{"": {}}
@@ -212,6 +481,7 @@ func discoverKubernetesAPIServerAddresses(ctx context.Context, endpointSlices en
 	seenSliceUIDs := make(map[string]string)
 	seenAddresses := make(map[string]struct{})
 	var addresses []string
+	var sliceIdentities []kubernetesAPIServerSliceIdentity
 	continueToken := ""
 	resourceVersion := ""
 	firstPage := true
@@ -219,7 +489,7 @@ func discoverKubernetesAPIServerAddresses(ctx context.Context, endpointSlices en
 	for {
 		page, err := endpointSlices.List(ctx, metav1.ListOptions{
 			LabelSelector: selector,
-			Limit:         teardownEndpointSlicePageSize,
+			Limit:         kubernetesAPIEndpointSlicePageSize,
 			Continue:      continueToken,
 		})
 		if err != nil {
@@ -256,6 +526,9 @@ func discoverKubernetesAPIServerAddresses(ctx context.Context, endpointSlices en
 			if slice.UID == "" {
 				return nil, fmt.Errorf("default Kubernetes Service EndpointSlice %q has an empty UID", slice.Name)
 			}
+			if strings.TrimSpace(slice.ResourceVersion) == "" || slice.ResourceVersion != strings.TrimSpace(slice.ResourceVersion) {
+				return nil, fmt.Errorf("default Kubernetes Service EndpointSlice %q has an empty or padded resourceVersion", slice.Name)
+			}
 			if previous, duplicate := seenSliceUIDs[string(slice.UID)]; duplicate {
 				return nil, fmt.Errorf(
 					"default Kubernetes Service EndpointSlices %q and %q share UID %q",
@@ -272,6 +545,11 @@ func discoverKubernetesAPIServerAddresses(ctx context.Context, endpointSlices en
 				return nil, fmt.Errorf("default Kubernetes Service EndpointSlice %q appeared more than once", slice.Name)
 			}
 			seenSlices[slice.Name] = struct{}{}
+			sliceIdentities = append(sliceIdentities, kubernetesAPIServerSliceIdentity{
+				Name:            slice.Name,
+				UID:             string(slice.UID),
+				ResourceVersion: slice.ResourceVersion,
+			})
 
 			port, portErr := endpointSliceHTTPSPort(slice)
 			if portErr != nil {
@@ -321,7 +599,25 @@ func discoverKubernetesAPIServerAddresses(ctx context.Context, endpointSlices en
 		return nil, fmt.Errorf("default Kubernetes Service has no ready, serving, non-terminating API server endpoints")
 	}
 	sort.Strings(addresses)
-	return addresses, nil
+	sort.Slice(sliceIdentities, func(i, j int) bool {
+		return sliceIdentities[i].Name < sliceIdentities[j].Name
+	})
+	fingerprintInput, err := json.Marshal(struct {
+		Slices    []kubernetesAPIServerSliceIdentity `json:"slices"`
+		Addresses []string                           `json:"addresses"`
+	}{
+		Slices:    sliceIdentities,
+		Addresses: addresses,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode default Kubernetes Service EndpointSlice inventory identity: %w", err)
+	}
+	fingerprint := sha256.Sum256(fingerprintInput)
+	return &kubernetesAPIServerTopology{
+		InventoryResourceVersion: resourceVersion,
+		InventoryIdentity:        fmt.Sprintf("sha256:%x", fingerprint),
+		Addresses:                addresses,
+	}, nil
 }
 
 func endpointSliceHTTPSPort(slice *discoveryv1.EndpointSlice) (int32, error) {
@@ -418,9 +714,19 @@ func teardownAuthorizationSubjects(
 	type serviceAccountIdentity struct {
 		name           string
 		serviceAccount string
+		uid            string
 	}
 	identities := []serviceAccountIdentity{
 		{name: "controller", serviceAccount: contract.ControllerServiceAccountName},
+	}
+	if rollout.PreviousControllerServiceAccountName != "" {
+		if rollout.PreviousControllerServiceAccountUID == "" {
+			return nil, fmt.Errorf("previous controller ServiceAccount UID is required for authorization convergence")
+		}
+		identities = append(identities, serviceAccountIdentity{
+			name: "previous-controller", serviceAccount: rollout.PreviousControllerServiceAccountName,
+			uid: string(rollout.PreviousControllerServiceAccountUID),
+		})
 	}
 	if contract.CertificateRuntimeEnabled {
 		identities = append(identities, serviceAccountIdentity{name: "certificate", serviceAccount: contract.CertificateServiceAccountName})
@@ -449,15 +755,21 @@ func teardownAuthorizationSubjects(
 			)
 		}
 		seen[identity.serviceAccount] = identity.name
-		subjects = append(subjects, serviceAccountAuthorizationSubject(identity.name, rollout.ReleaseNamespace, identity.serviceAccount))
+		subjects = append(subjects, serviceAccountAuthorizationSubject(
+			identity.name,
+			rollout.ReleaseNamespace,
+			identity.serviceAccount,
+			identity.uid,
+		))
 	}
 	return subjects, nil
 }
 
-func serviceAccountAuthorizationSubject(name, namespace, serviceAccount string) crdupgrade.AuthorizationSubject {
+func serviceAccountAuthorizationSubject(name, namespace, serviceAccount, uid string) crdupgrade.AuthorizationSubject {
 	return crdupgrade.AuthorizationSubject{
 		Name: name,
 		User: "system:serviceaccount:" + namespace + ":" + serviceAccount,
+		UID:  uid,
 		Groups: []string{
 			"system:serviceaccounts",
 			"system:serviceaccounts:" + namespace,
@@ -479,9 +791,10 @@ func teardownAuthorizationProbes(
 		return nil, nil, err
 	}
 	checksBySubject := map[string][]crdupgrade.AuthorizationCheck{
-		"controller":   sets.controller,
-		"certificate":  sets.certificate,
-		"hook-quiesce": sets.hook,
+		"controller":          sets.controller,
+		"previous-controller": sets.controller,
+		"certificate":         sets.certificate,
+		"hook-quiesce":        sets.hook,
 	}
 	probes := make([]crdupgrade.AuthorizationProbe, 0, len(subjects))
 	for _, subject := range subjects {
@@ -688,6 +1001,11 @@ func buildTeardownAuthorizationChecks(
 		rollout.ReleaseSequence,
 		rollout.ManagerImage,
 	)
+	markerName := crdupgrade.AdmissionConvergenceMarkerName(
+		rollout.ReleaseNamespace,
+		rollout.ReleaseName,
+		rollout.ReleaseSequence,
+	)
 	const arbitraryObjectName = "ptah-authorization-revocation-probe"
 
 	sets := teardownAuthorizationCheckSets{all: make([]crdupgrade.AuthorizationCheck, 0, 64)}
@@ -734,12 +1052,31 @@ func buildTeardownAuthorizationChecks(
 	appendResource(teardownCheckHook|teardownCheckCertificate, "update validating admission singleton", "admissionregistration.k8s.io", "v1", "validatingwebhookconfigurations", "", "", "update", crdupgrade.AdmissionConfigurationName)
 	appendResource(teardownCheckHook, "update release activation ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", crdupgrade.ReleaseActivationName)
 	appendResource(teardownCheckHook, "update hook identity probe ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", probeObjectName)
-	appendResource(teardownCheckHook, "mint hook ServiceAccount token", "", "v1", "serviceaccounts", "token", rollout.ReleaseNamespace, "create", rollout.HookServiceAccountName)
+	markerTargets := teardownCheckHook | teardownCheckController
+	if contract.CertificateRuntimeEnabled {
+		markerTargets |= teardownCheckCertificate
+	}
+	appendResource(markerTargets, "update admission convergence marker ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", markerName)
+	if rollout.PreviousControllerReleaseSequence > 0 {
+		previousMarkerName := crdupgrade.AdmissionConvergenceMarkerName(
+			rollout.ReleaseNamespace,
+			rollout.ReleaseName,
+			rollout.PreviousControllerReleaseSequence,
+		)
+		appendResource(teardownCheckHook, "delete predecessor admission convergence marker ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "delete", previousMarkerName)
+	}
+	appendResource(teardownCheckHook, "patch stable controller ClusterRoleBinding", "rbac.authorization.k8s.io", "v1", "clusterrolebindings", "", "", "patch", rollout.ControllerDeploymentName)
+	appendResource(teardownCheckHook, "patch stable controller RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", rollout.CoordinationNamespace, "patch", rollout.ControllerDeploymentName)
+	appendResource(teardownCheckHook, "patch runtime admission RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", rollout.ReleaseNamespace, "patch", rollout.ControllerDeploymentName+"-runtime-admission")
+	appendResource(teardownCheckHook, "create SubjectAccessReview", "authorization.k8s.io", "v1", "subjectaccessreviews", "", "", "create", arbitraryObjectName)
 
 	// Controller mutations. Every resource/subresource and mutating verb from
 	// the installed controller roles gets a distinct probe; this does not rely
 	// on one cached RBAC rule being observed atomically.
 	appendResource(teardownCheckController, "patch PtahSchema", "operator.ptah.dev", "v1alpha1", "ptahschemas", "", rollout.ReleaseNamespace, "patch", arbitraryObjectName)
+	if rollout.PreviousControllerServiceAccountName != "" {
+		appendResource(teardownCheckController, "update PtahSchema legacy grant", "operator.ptah.dev", "v1alpha1", "ptahschemas", "", rollout.ReleaseNamespace, "update", arbitraryObjectName)
+	}
 	appendResource(teardownCheckController, "update PtahSchema finalizer", "operator.ptah.dev", "v1alpha1", "ptahschemas", "finalizers", rollout.ReleaseNamespace, "update", arbitraryObjectName)
 	appendResource(teardownCheckController, "update PtahSchemaPlan finalizer", "operator.ptah.dev", "v1alpha1", "ptahschemaplans", "finalizers", rollout.ReleaseNamespace, "update", arbitraryObjectName)
 	for _, target := range []struct {

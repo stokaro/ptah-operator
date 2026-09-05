@@ -4,10 +4,12 @@
       (printf `%s.metadata.name == %q` $object "ptah-operator-release-activation")
       (printf `%s.metadata.namespace == %q` $object .namespace)
       (printf `(!has(%s.metadata.generateName) || %s.metadata.generateName == "")` $object $object)
+      (printf `has(%s.metadata.uid) && %s.metadata.uid != ""` $object $object)
+      (printf `has(%s.metadata.resourceVersion) && %s.metadata.resourceVersion != ""` $object $object)
       (printf `has(%s.metadata.annotations)` $object)
       (printf `%s.metadata.annotations.size() == 10` $object)
       (printf `%s.metadata.annotations[%q] == "pre-install,pre-upgrade"` $object "helm.sh/hook")
-      (printf `%s.metadata.annotations[%q] == %q` $object "helm.sh/hook-weight" "-150")
+      (printf `%s.metadata.annotations[%q] == %q` $object "helm.sh/hook-weight" "-166")
       (printf `%s.metadata.annotations[%q] == "keep"` $object "helm.sh/resource-policy")
       (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/rollout-guard-version" "1")
       (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/release-name" .releaseName)
@@ -22,13 +24,16 @@
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/instance" .releaseName)
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/component" "rollout-guard")
       (printf `has(%s.data)` $object)
-      (printf `%s.data.size() == 1` $object)
       (printf `%q in %s.data` "active-release-sequence" $object)
       (printf `%s.data[%q].matches("^(0|[1-9][0-9]*)$")` $object "active-release-sequence")
+      (printf `%q in %s.data` "controller-credentials" $object)
+      (printf `((%s.data[%q] == "active" && %s.data.size() == 2) || (%s.data[%q] == "draining" && %s.data.size() == 4 && %q in %s.data && %s.data[%q].matches("^[1-9][0-9]*$") && %q in %s.data && %s.data[%q].matches("^[0-9a-f]{64}$")))` $object "controller-credentials" $object $object "controller-credentials" $object "controller-credentials-target-release-sequence" $object $object "controller-credentials-target-release-sequence" "controller-credentials-attempt" $object $object "controller-credentials-attempt")
       (printf `(!has(%s.binaryData) || %s.binaryData.size() == 0)` $object $object)
       (printf `(!has(%s.immutable) || !%s.immutable)` $object $object)
       (printf `(!has(%s.metadata.ownerReferences) || %s.metadata.ownerReferences.size() == 0)` $object $object)
       (printf `(!has(%s.metadata.finalizers) || %s.metadata.finalizers.size() == 0)` $object $object)
+      (printf `!has(%s.metadata.deletionTimestamp)` $object)
+      (printf `!has(%s.metadata.deletionGracePeriodSeconds)` $object)
       (printf `(%s.data[%q] == "0" || %s.metadata.annotations[%q] == %s.data[%q])` $object "active-release-sequence" $object "operator.ptah.dev/release-sequence" $object "active-release-sequence") -}}
 {{- join " && " $parts -}}
 {{- end -}}
@@ -41,6 +46,8 @@
 {{- $hookBase := trimSuffix $hookSuffix $hookServiceAccount -}}
 {{- $hookUsernamePrefix := printf "system:serviceaccount:%s:%s-crd-v" .Release.Namespace $hookBase -}}
 {{- $hookPattern := printf "^%s" (regexQuoteMeta $hookUsernamePrefix) -}}
+{{- $hookGroups := printf `request.userInfo.groups.size() == 3 && "system:serviceaccounts" in request.userInfo.groups && %q in request.userInfo.groups && "system:authenticated" in request.userInfo.groups` (printf "system:serviceaccounts:%s" .Release.Namespace) -}}
+{{- $namespaceController := `(request.userInfo.username == "system:kube-controller-manager" && request.userInfo.groups.size() == 1 && "system:authenticated" in request.userInfo.groups) || (request.userInfo.username == "system:serviceaccount:kube-system:namespace-controller" && request.userInfo.groups.size() == 3 && "system:serviceaccounts" in request.userInfo.groups && "system:serviceaccounts:kube-system" in request.userInfo.groups && "system:authenticated" in request.userInfo.groups)` -}}
 {{- $denialMessage := "Ptah release activation guard rejected an unsafe activation transition" -}}
 {{- $shapeContext := dict "namespace" .Release.Namespace "releaseName" .Release.Name -}}
 {{- $objectShape := include "ptah-operator.releaseActivationShape" (merge (dict "object" "object") $shapeContext) -}}
@@ -49,6 +56,13 @@
 {{- $decimal := printf `%s != null && has(%s.data) && %q in %s.data && %s.data[%q].matches(%q) ? int(%s.data[%q]) : -1` "params" "params" "active-release-sequence" "params" "params" "active-release-sequence" "^(0|[1-9][0-9]*)$" "params" "active-release-sequence" -}}
 {{- $newDecimal := printf `%s != null && has(%s.data) && %q in %s.data && %s.data[%q].matches(%q) ? int(%s.data[%q]) : -1` "object" "object" "active-release-sequence" "object" "object" "active-release-sequence" "^(0|[1-9][0-9]*)$" "object" "active-release-sequence" -}}
 {{- $oldDecimal := printf `%s != null && has(%s.data) && %q in %s.data && %s.data[%q].matches(%q) ? int(%s.data[%q]) : -1` "oldObject" "oldObject" "active-release-sequence" "oldObject" "oldObject" "active-release-sequence" "^(0|[1-9][0-9]*)$" "oldObject" "active-release-sequence" -}}
+{{- $paramsPhase := printf `%s != null && has(%s.data) && %q in %s.data ? %s.data[%q] : ""` "params" "params" "controller-credentials" "params" "params" "controller-credentials" -}}
+{{- $newPhase := printf `request.operation == "UPDATE" ? (%s) : ""` (printf `%s != null && has(%s.data) && %q in %s.data ? %s.data[%q] : ""` "object" "object" "controller-credentials" "object" "object" "controller-credentials") -}}
+{{- $oldPhase := printf `request.operation == "UPDATE" ? (%s) : ""` (printf `%s != null && has(%s.data) && %q in %s.data ? %s.data[%q] : ""` "oldObject" "oldObject" "controller-credentials" "oldObject" "oldObject" "controller-credentials") -}}
+{{- $newTarget := printf `request.operation == "UPDATE" ? (%s) : -1` (printf `%s != null && has(%s.data) && %q in %s.data && %s.data[%q].matches(%q) ? int(%s.data[%q]) : -1` "object" "object" "controller-credentials-target-release-sequence" "object" "object" "controller-credentials-target-release-sequence" "^[1-9][0-9]*$" "object" "controller-credentials-target-release-sequence") -}}
+{{- $oldTarget := printf `request.operation == "UPDATE" ? (%s) : -1` (printf `%s != null && has(%s.data) && %q in %s.data && %s.data[%q].matches(%q) ? int(%s.data[%q]) : -1` "oldObject" "oldObject" "controller-credentials-target-release-sequence" "oldObject" "oldObject" "controller-credentials-target-release-sequence" "^[1-9][0-9]*$" "oldObject" "controller-credentials-target-release-sequence") -}}
+{{- $newAttempt := printf `request.operation == "UPDATE" ? (%s) : ""` (printf `%s != null && has(%s.data) && %q in %s.data ? %s.data[%q] : ""` "object" "object" "controller-credentials-attempt" "object" "object" "controller-credentials-attempt") -}}
+{{- $oldAttempt := printf `request.operation == "UPDATE" ? (%s) : ""` (printf `%s != null && has(%s.data) && %q in %s.data ? %s.data[%q] : ""` "oldObject" "oldObject" "controller-credentials-attempt" "oldObject" "oldObject" "controller-credentials-attempt") -}}
 {{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $guardName -}}
 {{- $binding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $guardName -}}
 {{- range $entry := list
@@ -75,7 +89,7 @@ metadata:
   name: {{ $guardName }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-149"
+    helm.sh/hook-weight: "-168"
     helm.sh/resource-policy: keep
     operator.ptah.dev/rollout-guard-version: "1"
     operator.ptah.dev/release-name: {{ .Release.Name | quote }}
@@ -101,14 +115,28 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: fixed-release-activation
-      expression: {{ printf `request.namespace == %q && request.name == %q` .Release.Namespace "ptah-operator-release-activation" | quote }}
+      expression: {{ printf `request.namespace == %q && ((request.operation == "DELETE" && oldObject != null && oldObject.metadata.name == %q) || (request.operation != "DELETE" && request.name == %q))` .Release.Namespace "ptah-operator-release-activation" "ptah-operator-release-activation" | quote }}
   variables:
     - name: paramsActive
       expression: {{ $decimal | quote }}
+    - name: paramsCredentialPhase
+      expression: {{ $paramsPhase | quote }}
     - name: newActive
       expression: {{ printf `request.operation == "UPDATE" ? (%s) : -1` $newDecimal | quote }}
     - name: oldActive
       expression: {{ printf `request.operation == "UPDATE" ? (%s) : -1` $oldDecimal | quote }}
+    - name: newCredentialPhase
+      expression: {{ $newPhase | quote }}
+    - name: oldCredentialPhase
+      expression: {{ $oldPhase | quote }}
+    - name: newDrainTarget
+      expression: {{ $newTarget | quote }}
+    - name: oldDrainTarget
+      expression: {{ $oldTarget | quote }}
+    - name: newDrainAttempt
+      expression: {{ $newAttempt | quote }}
+    - name: oldDrainAttempt
+      expression: {{ $oldAttempt | quote }}
     - name: newState
       expression: {{ printf `request.operation == "UPDATE" && has(%s.metadata.annotations) && %q in %s.metadata.annotations && %s.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(%s.metadata.annotations[%q]) : 0` "object" "operator.ptah.dev/controller-state-version" "object" "object" "operator.ptah.dev/controller-state-version" "object" "operator.ptah.dev/controller-state-version" | quote }}
     - name: oldState
@@ -122,21 +150,25 @@ spec:
     - name: oldRelease
       expression: {{ printf `request.operation == "UPDATE" && has(%s.metadata.annotations) && %q in %s.metadata.annotations && %s.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(%s.metadata.annotations[%q]) : 0` "oldObject" "operator.ptah.dev/release-sequence" "oldObject" "oldObject" "operator.ptah.dev/release-sequence" "oldObject" "operator.ptah.dev/release-sequence" | quote }}
     - name: isReleaseHook
-      expression: {{ printf `request.operation == "UPDATE" && variables.newActive > 0 && request.userInfo.username.matches(%q + string(variables.newActive) + "-[0-9a-f]{12}$")` $hookPattern | quote }}
+      expression: {{ printf `request.operation == "UPDATE" && variables.newActive > 0 && request.userInfo.username.matches(%q + string(variables.newActive) + "-[0-9a-f]{12}$") && (%s)` $hookPattern $hookGroups | quote }}
+    - name: isDrainHook
+      expression: {{ printf `request.operation == "UPDATE" && variables.newDrainTarget > 0 && variables.newDrainAttempt.matches("^[0-9a-f]{64}$") && request.userInfo.username.matches(%q + string(variables.newDrainTarget) + "-" + variables.newDrainAttempt.substring(0, 12) + "$") && (%s)` $hookPattern $hookGroups | quote }}
+    - name: isDrainedActivationHook
+      expression: {{ printf `request.operation == "UPDATE" && variables.oldDrainTarget > 0 && variables.oldDrainAttempt.matches("^[0-9a-f]{64}$") && request.userInfo.username.matches(%q + string(variables.oldDrainTarget) + "-" + variables.oldDrainAttempt.substring(0, 12) + "$") && (%s)` $hookPattern $hookGroups | quote }}
     - name: isReleaseHookCaller
-      expression: {{ printf `request.userInfo.username.matches(%q + "[1-9][0-9]*-[0-9a-f]{12}$")` $hookPattern | quote }}
+      expression: {{ printf `request.userInfo.username.matches(%q + "[1-9][0-9]*-[0-9a-f]{12}$") && (%s)` $hookPattern $hookGroups | quote }}
+    - name: isNamespaceController
+      expression: {{ $namespaceController | quote }}
   validations:
-    - expression: 'request.operation != "DELETE" || request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:namespace-controller"] || variables.isReleaseHookCaller'
+    - expression: 'request.operation != "DELETE" || variables.isNamespaceController || variables.isReleaseHookCaller'
       message: {{ $denialMessage | quote }}
     - expression: {{ printf `request.operation == "DELETE" || (%s)` $objectShape | quote }}
       message: {{ $denialMessage | quote }}
-    - expression: {{ printf `request.operation != "UPDATE" || (%s)` $oldObjectShape | quote }}
+    - expression: {{ printf `request.operation == "CREATE" || (%s)` $oldObjectShape | quote }}
       message: {{ $denialMessage | quote }}
-    - expression: {{ printf `request.operation == "DELETE" || (params != null && (%s) && variables.paramsActive == variables.oldActive)` $paramsShape | quote }}
+    - expression: {{ printf `request.operation == "DELETE" || (params != null && (%s) && params.data == oldObject.data && params.metadata.annotations == oldObject.metadata.annotations && params.metadata.labels == oldObject.metadata.labels && variables.paramsActive == variables.oldActive && variables.paramsCredentialPhase == variables.oldCredentialPhase)` $paramsShape | quote }}
       message: {{ $denialMessage | quote }}
-    - expression: 'request.operation != "UPDATE" || (variables.newActive >= variables.oldActive && (variables.oldActive == 0 || variables.newActive <= variables.oldActive + 1) && variables.newRelease == variables.newActive && variables.newRelease >= variables.oldRelease && variables.newState >= variables.oldState && variables.newAdmission >= variables.oldAdmission && variables.isReleaseHook)'
-      message: {{ $denialMessage | quote }}
-    - expression: 'request.operation != "UPDATE" || variables.newActive != variables.oldActive || (object.data == oldObject.data && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels)'
+    - expression: 'request.operation != "UPDATE" || (object.data == oldObject.data && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels && variables.isReleaseHookCaller) || (variables.oldCredentialPhase == "active" && variables.newCredentialPhase == "draining" && variables.newActive == variables.oldActive && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels && variables.newDrainTarget >= variables.oldRelease && variables.newDrainTarget <= variables.oldRelease + 1 && ((variables.oldActive == 0 && variables.newDrainTarget == variables.oldRelease) || (variables.oldActive > 0 && variables.newDrainTarget <= variables.oldActive + 1)) && variables.isDrainHook) || (variables.oldCredentialPhase == "draining" && variables.newCredentialPhase == "active" && variables.newActive == variables.oldDrainTarget && variables.newRelease == variables.newActive && variables.newRelease >= variables.oldRelease && variables.newState >= variables.oldState && variables.newAdmission >= variables.oldAdmission && variables.isDrainedActivationHook) || (variables.oldCredentialPhase == "active" && variables.oldActive == 0 && variables.newCredentialPhase == "active" && variables.newActive == variables.oldRelease && variables.newRelease == variables.newActive && variables.newState >= variables.oldState && variables.newAdmission >= variables.oldAdmission && variables.isReleaseHook)'
       message: {{ $denialMessage | quote }}
 ---
 {{- end }}
@@ -147,7 +179,7 @@ metadata:
   name: {{ $guardName }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-148"
+    helm.sh/hook-weight: "-167"
     helm.sh/resource-policy: keep
     operator.ptah.dev/rollout-guard-version: "1"
     operator.ptah.dev/release-name: {{ .Release.Name | quote }}
@@ -169,7 +201,6 @@ spec:
         apiVersions: ["v1"]
         operations: ["UPDATE", "DELETE"]
         resources: ["configmaps"]
-        resourceNames: ["ptah-operator-release-activation"]
         scope: Namespaced
   paramRef:
     name: ptah-operator-release-activation

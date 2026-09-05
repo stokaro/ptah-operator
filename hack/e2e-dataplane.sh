@@ -80,6 +80,21 @@ require_mode_0600_regular_file() {
 	[ "$mode_value" = 600 ] || fail "$mode_description must have mode 0600"
 }
 
+require_mode_0700_directory() {
+	mode_directory=$1
+	mode_description=$2
+	if [ ! -d "$mode_directory" ] || [ -L "$mode_directory" ]; then
+		fail "$mode_description must name a directory, not a symlink"
+	fi
+	if mode_value=$(stat -c '%a' "$mode_directory" 2>/dev/null); then
+		:
+	else
+		mode_value=$(stat -f '%Lp' "$mode_directory" 2>/dev/null) ||
+			fail "could not inspect $mode_description permissions"
+	fi
+	[ "$mode_value" = 700 ] || fail "$mode_description must have mode 0700"
+}
+
 sha256() {
 	if command -v sha256sum >/dev/null 2>&1; then
 		sha256sum | awk '{print $1}'
@@ -99,7 +114,7 @@ coordination_digest() {
 	printf 'sha256:%s\n' "$(printf '%s' "$coordination_canonical" | sha256)"
 }
 
-for command_name in docker kubectl helm jq awk sed grep tr cksum mktemp date sleep tail stat wc cmp cut go env curl; do
+for command_name in docker kubectl helm jq awk sed grep tr cksum mktemp date sleep tail stat wc cmp cut go env curl find cp; do
 	require_command "$command_name"
 done
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
@@ -241,6 +256,11 @@ LOG_FILE=$WORK_DIR/logs.txt
 # certifies every exact owned Pod and started-container log for TTL/GC skips.
 AUDITED_JOBS_FILE=$WORK_DIR/audited-jobs.txt
 FULLY_AUDITED_JOBS_FILE=$WORK_DIR/fully-audited-jobs.txt
+JOB_EVIDENCE_DIR=$WORK_DIR/job-evidence
+JOB_EVIDENCE_ENTRIES_FILE=$WORK_DIR/job-evidence-entries.txt
+LIVE_JOB_EVIDENCE_ERROR_FILE=$WORK_DIR/live-job-evidence-api-error.txt
+ARCHIVED_SCHEMA_JOB_RECORDS_FILE=$WORK_DIR/archived-schema-job-records.jsonl
+ARCHIVED_SCHEMA_JOB_LINES_FILE=$WORK_DIR/archived-schema-job-lines.jsonl
 OBSERVED_JOBS_FILE=$WORK_DIR/observed-jobs.jsonl
 OBSERVED_JOBS_SNAPSHOT_FILE=$WORK_DIR/observed-jobs-snapshot.json
 OBSERVED_JOB_RECORDS_FILE=$WORK_DIR/observed-job-records.jsonl
@@ -283,6 +303,9 @@ PERIODIC_NOOP_CHECKPOINT=
 : >"$AUDITED_JOBS_FILE"
 : >"$FULLY_AUDITED_JOBS_FILE"
 : >"$OBSERVED_JOBS_FILE"
+: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"
+mkdir "$JOB_EVIDENCE_DIR"
+chmod 700 "$JOB_EVIDENCE_DIR"
 RBAC_PAUSED=0
 RBAC_RULE_INDEX=
 RBAC_ORIGINAL_VERBS=
@@ -813,6 +836,447 @@ materialize_manager_pod_names() {
 	fi
 }
 
+job_evidence_key() {
+	evidence_uid=$1
+	[ -n "$evidence_uid" ] || fail "cannot address Job evidence without an exact UID"
+	evidence_key=$(printf '%s' "$evidence_uid" | sha256) ||
+		fail "could not hash exact Job UID evidence"
+	printf '%s\n' "$evidence_key" | grep -Eq '^[0-9a-f]{64}$' ||
+		fail "exact Job UID evidence did not produce a lowercase SHA-256 path key"
+	printf '%s\n' "$evidence_key"
+}
+
+validate_job_evidence_directory() {
+	validated_archive=$1
+	validated_schema=$2
+	validated_operation=$3
+	validated_uid=$4
+	validated_expected_schema_uid=${5:-}
+	validated_key=$(job_evidence_key "$validated_uid")
+	require_mode_0700_directory "$validated_archive" "Job evidence archive"
+	if ! find "$validated_archive" -mindepth 1 -maxdepth 1 -print >"$JOB_EVIDENCE_ENTRIES_FILE"; then
+		fail "could not inventory exact Job evidence archive $validated_key"
+	fi
+	archive_entry_count=$(wc -l <"$JOB_EVIDENCE_ENTRIES_FILE" | tr -d '[:space:]')
+	[ "$archive_entry_count" -eq 5 ] ||
+		fail "Job evidence archive $validated_key is partial or contains colliding material"
+
+	validated_job_file=$validated_archive/job.json
+	validated_pod_file=$validated_archive/pod.json
+	validated_log_file=$validated_archive/ptah.log
+	validated_result_file=$validated_archive/result.json
+	validated_manifest_file=$validated_archive/manifest.json
+	for validated_file_spec in \
+		"$validated_job_file:Job JSON" \
+		"$validated_pod_file:Pod JSON" \
+		"$validated_log_file:raw ptah log" \
+		"$validated_result_file:normalized result" \
+		"$validated_manifest_file:manifest"; do
+		validated_file=${validated_file_spec%%:*}
+		validated_description=${validated_file_spec#*:}
+		require_mode_0600_regular_file "$validated_file" \
+			"Job evidence $validated_description"
+	done
+
+	validated_job_digest=$(sha256 <"$validated_job_file")
+	validated_pod_digest=$(sha256 <"$validated_pod_file")
+	validated_log_digest=$(sha256 <"$validated_log_file")
+	validated_result_digest=$(sha256 <"$validated_result_file")
+	if ! validated_identity=$(jq -cer \
+		--arg key "$validated_key" \
+		--arg schema "$validated_schema" \
+		--arg operation "$validated_operation" \
+		--arg uid "$validated_uid" \
+		--arg expectedSchemaUID "$validated_expected_schema_uid" \
+		--arg jobDigest "$validated_job_digest" \
+		--arg podDigest "$validated_pod_digest" \
+		--arg logDigest "$validated_log_digest" \
+		--arg resultDigest "$validated_result_digest" '
+      if
+        keys == ["archiveVersion", "digests", "job", "operation", "operationID",
+          "pathKey", "pod", "schema"] and
+        .archiveVersion == 1 and .pathKey == $key and
+        .schema == $schema and .operation == $operation and
+        (.operationID | type) == "string" and
+        (.operationID | test("^sha256:[0-9a-f]{64}$")) and
+        (.job | keys) == ["name", "owner", "uid"] and
+        .job.uid == $uid and (.job.name | type) == "string" and (.job.name | length) > 0 and
+        (.job.owner | keys) == ["apiVersion", "controller", "kind", "name", "uid"] and
+        .job.owner.apiVersion == "operator.ptah.dev/v1alpha1" and
+        .job.owner.kind == "PtahSchema" and .job.owner.name == $schema and
+        (.job.owner.uid | type) == "string" and (.job.owner.uid | length) > 0 and
+        ($expectedSchemaUID == "" or .job.owner.uid == $expectedSchemaUID) and
+        .job.owner.controller == true and
+        (.pod | keys) == ["name", "owner", "uid"] and
+        (.pod.name | type) == "string" and (.pod.name | length) > 0 and
+        (.pod.uid | type) == "string" and (.pod.uid | length) > 0 and
+        (.pod.owner | keys) == ["apiVersion", "controller", "kind", "name", "uid"] and
+        .pod.owner.apiVersion == "batch/v1" and .pod.owner.kind == "Job" and
+        .pod.owner.name == .job.name and .pod.owner.uid == .job.uid and
+        .pod.owner.controller == true and
+        (.digests | keys) == ["jobSHA256", "podSHA256", "rawLogSHA256", "resultSHA256"] and
+        .digests.jobSHA256 == $jobDigest and .digests.podSHA256 == $podDigest and
+        .digests.rawLogSHA256 == $logDigest and .digests.resultSHA256 == $resultDigest
+      then {
+        operationID: .operationID,
+        schemaUID: .job.owner.uid,
+        jobName: .job.name,
+        podName: .pod.name,
+        podUID: .pod.uid
+      }
+      else error("Job evidence manifest identity or digest mismatch") end
+    ' "$validated_manifest_file"); then
+		fail "Job evidence archive $validated_key has a mismatched identity or content hash"
+	fi
+	validated_operation_id=$(printf '%s\n' "$validated_identity" | jq -er '.operationID')
+	validated_schema_uid=$(printf '%s\n' "$validated_identity" | jq -er '.schemaUID')
+	validated_job_name=$(printf '%s\n' "$validated_identity" | jq -er '.jobName')
+	validated_pod_name=$(printf '%s\n' "$validated_identity" | jq -er '.podName')
+	validated_pod_uid=$(printf '%s\n' "$validated_identity" | jq -er '.podUID')
+	validated_operation_label=$(printf '%s' "$validated_operation_id" | sha256 | cut -c1-16)
+
+	jq -e \
+		--arg schema "$validated_schema" \
+		--arg operation "$validated_operation" \
+		--arg operationID "$validated_operation_id" \
+		--arg operationLabel "$validated_operation_label" \
+		--arg schemaUID "$validated_schema_uid" \
+		--arg uid "$validated_uid" \
+		--arg name "$validated_job_name" '
+      .metadata.uid == $uid and .metadata.name == $name and
+      .metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and
+      .metadata.labels["app.kubernetes.io/component"] == "schema-operation" and
+      .metadata.labels["operator.ptah.dev/schema"] == $schema and
+      .metadata.labels["operator.ptah.dev/operation"] == $operation and
+      .metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and
+      .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      .spec.template.metadata.labels["operator.ptah.dev/schema"] == $schema and
+      .spec.template.metadata.labels["operator.ptah.dev/operation"] == $operation and
+      .spec.template.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and
+      .spec.template.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      ([.metadata.ownerReferences[]? | select(
+        .apiVersion == "operator.ptah.dev/v1alpha1" and .kind == "PtahSchema" and
+        .name == $schema and .uid == $schemaUID and .controller == true)] | length) == 1 and
+      .spec.podReplacementPolicy == "Failed" and .spec.backoffLimit == 0 and
+      (.status.conditions // [] | any(.type == "Complete" and .status == "True")) and
+      (.status.conditions // [] | all(.type != "Failed" or .status != "True"))
+    ' "$validated_job_file" >/dev/null ||
+		fail "Job evidence archive $validated_key has mismatched exact Job JSON"
+	jq -e \
+		--arg schema "$validated_schema" \
+		--arg operation "$validated_operation" \
+		--arg operationID "$validated_operation_id" \
+		--arg operationLabel "$validated_operation_label" \
+		--arg jobUID "$validated_uid" \
+		--arg jobName "$validated_job_name" \
+		--arg podUID "$validated_pod_uid" \
+		--arg podName "$validated_pod_name" '
+      .metadata.uid == $podUID and .metadata.name == $podName and
+      .metadata.generateName == ($jobName + "-") and
+      .metadata.labels["operator.ptah.dev/schema"] == $schema and
+      .metadata.labels["operator.ptah.dev/operation"] == $operation and
+      .metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and
+      .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      ([.metadata.ownerReferences[]? | select(
+        .apiVersion == "batch/v1" and .kind == "Job" and
+        .name == $jobName and .uid == $jobUID and .controller == true)] | length) == 1 and
+      .status.phase == "Succeeded" and
+      ([.status.containerStatuses[]? |
+        select(.name == "ptah" and .state.terminated.exitCode == 0)] | length) == 1 and
+      ([.status.initContainerStatuses // [], .status.containerStatuses // [],
+        .status.ephemeralContainerStatuses // []] | add |
+        all(.[]; (.restartCount // 0) == 0))
+    ' "$validated_pod_file" >/dev/null ||
+		fail "Job evidence archive $validated_key has mismatched exact Pod JSON"
+	jq -e \
+		--arg operation "$validated_operation" \
+		--arg operationID "$validated_operation_id" '
+      .protocolVersion == 5 and .operation == $operation and
+      .operationId == $operationID and .truncation == null
+    ' "$validated_result_file" >/dev/null ||
+		fail "Job evidence archive $validated_key lost its normalized protocol-v5 binding"
+	for validated_material in \
+		"$validated_job_file:exact archived Job JSON" \
+		"$validated_pod_file:exact archived Pod JSON" \
+		"$validated_log_file:archived raw ptah log" \
+		"$validated_result_file:archived normalized result" \
+		"$validated_manifest_file:archived evidence manifest"; do
+		scan_file_for_credentials "${validated_material%%:*}" "${validated_material#*:}"
+	done
+
+	VALIDATED_JOB_EVIDENCE_DIR=$validated_archive
+	VALIDATED_JOB_EVIDENCE_OPERATION_ID=$validated_operation_id
+	VALIDATED_JOB_EVIDENCE_SCHEMA_UID=$validated_schema_uid
+	VALIDATED_JOB_EVIDENCE_JOB_NAME=$validated_job_name
+	VALIDATED_JOB_EVIDENCE_POD_NAME=$validated_pod_name
+	VALIDATED_JOB_EVIDENCE_POD_UID=$validated_pod_uid
+}
+
+validate_completed_job_evidence() {
+	evidence_schema=$1
+	evidence_operation=$2
+	evidence_uid=$3
+	require_mode_0700_directory "$JOB_EVIDENCE_DIR" "Job evidence root"
+	evidence_key=$(job_evidence_key "$evidence_uid")
+	evidence_archive=$JOB_EVIDENCE_DIR/$evidence_key
+	if [ ! -e "$evidence_archive" ] && [ ! -L "$evidence_archive" ]; then
+		fail "completed managed Job UID $evidence_uid has no durable evidence archive"
+	fi
+	validate_job_evidence_directory "$evidence_archive" \
+		"$evidence_schema" "$evidence_operation" "$evidence_uid"
+}
+
+validate_supplied_job_evidence_identity() {
+	supplied_job_file=$1
+	supplied_pod_file=$2
+	supplied_schema=$3
+	supplied_schema_uid=$4
+	supplied_operation=$5
+	supplied_operation_id=$6
+	supplied_job_uid=$7
+	supplied_job_name=$8
+	supplied_pod_uid=$9
+	supplied_pod_name=${10}
+	supplied_operation_label=$(printf '%s' "$supplied_operation_id" | sha256 | cut -c1-16)
+	if ! jq -e -s \
+		--arg schema "$supplied_schema" \
+		--arg schemaUID "$supplied_schema_uid" \
+		--arg operation "$supplied_operation" \
+		--arg operationID "$supplied_operation_id" \
+		--arg operationLabel "$supplied_operation_label" \
+		--arg jobUID "$supplied_job_uid" \
+		--arg jobName "$supplied_job_name" \
+		--arg podUID "$supplied_pod_uid" \
+		--arg podName "$supplied_pod_name" '
+      .[0] as $job | .[1] as $pod |
+      $job.metadata.uid == $jobUID and $job.metadata.name == $jobName and
+      $job.metadata.labels["operator.ptah.dev/schema"] == $schema and
+      $job.metadata.labels["operator.ptah.dev/operation"] == $operation and
+      $job.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and
+      $job.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      ([$job.metadata.ownerReferences[]? | select(
+        .apiVersion == "operator.ptah.dev/v1alpha1" and .kind == "PtahSchema" and
+        .name == $schema and .uid == $schemaUID and .controller == true)] | length) == 1 and
+      $job.spec.template.metadata.labels["operator.ptah.dev/schema"] == $schema and
+      $job.spec.template.metadata.labels["operator.ptah.dev/operation"] == $operation and
+      $job.spec.template.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and
+      $job.spec.template.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      $pod.metadata.uid == $podUID and $pod.metadata.name == $podName and
+      $pod.metadata.generateName == ($jobName + "-") and
+      $pod.metadata.labels["operator.ptah.dev/schema"] == $schema and
+      $pod.metadata.labels["operator.ptah.dev/operation"] == $operation and
+      $pod.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and
+      $pod.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      ([$pod.metadata.ownerReferences[]? | select(
+        .apiVersion == "batch/v1" and .kind == "Job" and
+        .uid == $jobUID and .name == $jobName and .controller == true)] | length) == 1
+    ' "$supplied_job_file" "$supplied_pod_file" >/dev/null; then
+		fail "supplied Job and Pod evidence has a mismatched immutable identity or owner binding"
+	fi
+}
+
+assert_existing_job_evidence_matches_supplied() {
+	existing_archive=$1
+	existing_schema=$2
+	existing_schema_uid=$3
+	existing_operation=$4
+	existing_operation_id=$5
+	existing_job_uid=$6
+	existing_job_name=$7
+	existing_pod_uid=$8
+	existing_pod_name=$9
+	validate_job_evidence_directory "$existing_archive" \
+		"$existing_schema" "$existing_operation" "$existing_job_uid" \
+		"$existing_schema_uid"
+	if [ "$VALIDATED_JOB_EVIDENCE_SCHEMA_UID" != "$existing_schema_uid" ] ||
+		[ "$VALIDATED_JOB_EVIDENCE_OPERATION_ID" != "$existing_operation_id" ] ||
+		[ "$VALIDATED_JOB_EVIDENCE_JOB_NAME" != "$existing_job_name" ] ||
+		[ "$VALIDATED_JOB_EVIDENCE_POD_UID" != "$existing_pod_uid" ] ||
+		[ "$VALIDATED_JOB_EVIDENCE_POD_NAME" != "$existing_pod_name" ]; then
+		fail "existing Job evidence archive collides with the supplied immutable identity"
+	fi
+}
+
+publish_completed_job_evidence() {
+	publish_job_file=$1
+	publish_pod_file=$2
+	publish_log_file=$3
+	require_mode_0700_directory "$JOB_EVIDENCE_DIR" "Job evidence root"
+	require_mode_0600_regular_file "$publish_log_file" "supplied UID-bounded ptah log"
+	publish_schema=$(jq -er '.metadata.labels["operator.ptah.dev/schema"]' "$publish_job_file")
+	publish_operation=$(jq -er '.metadata.labels["operator.ptah.dev/operation"]' "$publish_job_file")
+	publish_operation_id=$(jq -er '.metadata.annotations["operator.ptah.dev/operation-id"]' "$publish_job_file")
+	publish_job_uid=$(jq -er '.metadata.uid' "$publish_job_file")
+	publish_job_name=$(jq -er '.metadata.name' "$publish_job_file")
+	if ! publish_schema_uid=$(jq -er \
+		--arg schema "$publish_schema" '
+      [.metadata.ownerReferences[]? | select(
+        .apiVersion == "operator.ptah.dev/v1alpha1" and .kind == "PtahSchema" and
+        .name == $schema and .controller == true and
+        (.uid | type) == "string" and (.uid | length) > 0)] |
+      if length == 1 then .[0].uid
+      else error("Job must have one exact PtahSchema controller owner") end
+    ' "$publish_job_file"); then
+		fail "supplied Job evidence lacks one exact PtahSchema controller owner UID"
+	fi
+	publish_pod_uid=$(jq -er '.metadata.uid' "$publish_pod_file")
+	publish_pod_name=$(jq -er '.metadata.name' "$publish_pod_file")
+	validate_supplied_job_evidence_identity \
+		"$publish_job_file" "$publish_pod_file" \
+		"$publish_schema" "$publish_schema_uid" \
+		"$publish_operation" "$publish_operation_id" \
+		"$publish_job_uid" "$publish_job_name" "$publish_pod_uid" "$publish_pod_name"
+	publish_key=$(job_evidence_key "$publish_job_uid")
+	publish_archive=$JOB_EVIDENCE_DIR/$publish_key
+	if [ -e "$publish_archive" ] || [ -L "$publish_archive" ]; then
+		assert_existing_job_evidence_matches_supplied \
+			"$publish_archive" "$publish_schema" "$publish_schema_uid" \
+			"$publish_operation" \
+			"$publish_operation_id" "$publish_job_uid" "$publish_job_name" \
+			"$publish_pod_uid" "$publish_pod_name"
+		return 0
+	fi
+
+	publish_stage=$(mktemp -d "$JOB_EVIDENCE_DIR/.${publish_key}.XXXXXX") ||
+		fail "could not stage durable evidence for Job UID $publish_job_uid"
+	chmod 700 "$publish_stage"
+	printf '%s\n' "$(jq -c . "$publish_job_file")" >"$publish_stage/job.json"
+	printf '%s\n' "$(jq -c . "$publish_pod_file")" >"$publish_stage/pod.json"
+	cp "$publish_log_file" "$publish_stage/ptah.log" ||
+		fail "could not stage the UID-bounded ptah transport for exact Pod $publish_pod_name UID $publish_pod_uid"
+	"$RESULT_ASSERT_BINARY" \
+		--logs "$publish_stage/ptah.log" \
+		--operation "$publish_operation" \
+		--operation-id "$publish_operation_id" >"$publish_stage/result.json"
+	chmod 600 "$publish_stage/job.json" "$publish_stage/pod.json" \
+		"$publish_stage/ptah.log" "$publish_stage/result.json"
+	for publish_material in \
+		"$publish_stage/job.json:staged exact Job JSON" \
+		"$publish_stage/pod.json:staged exact Pod JSON" \
+		"$publish_stage/ptah.log:staged raw ptah log" \
+		"$publish_stage/result.json:staged normalized result"; do
+		scan_file_for_credentials "${publish_material%%:*}" "${publish_material#*:}"
+	done
+	publish_job_digest=$(sha256 <"$publish_stage/job.json")
+	publish_pod_digest=$(sha256 <"$publish_stage/pod.json")
+	publish_log_digest=$(sha256 <"$publish_stage/ptah.log")
+	publish_result_digest=$(sha256 <"$publish_stage/result.json")
+	jq -n \
+		--arg key "$publish_key" \
+		--arg schema "$publish_schema" \
+		--arg schemaUID "$publish_schema_uid" \
+		--arg operation "$publish_operation" \
+		--arg operationID "$publish_operation_id" \
+		--arg jobUID "$publish_job_uid" \
+		--arg jobName "$publish_job_name" \
+		--arg podUID "$publish_pod_uid" \
+		--arg podName "$publish_pod_name" \
+		--arg jobDigest "$publish_job_digest" \
+		--arg podDigest "$publish_pod_digest" \
+		--arg logDigest "$publish_log_digest" \
+		--arg resultDigest "$publish_result_digest" '
+      {
+        archiveVersion: 1,
+        pathKey: $key,
+        schema: $schema,
+        operation: $operation,
+        operationID: $operationID,
+        job: {
+          uid: $jobUID,
+          name: $jobName,
+          owner: {
+            apiVersion: "operator.ptah.dev/v1alpha1",
+            kind: "PtahSchema",
+            uid: $schemaUID,
+            name: $schema,
+            controller: true
+          }
+        },
+        pod: {
+          uid: $podUID,
+          name: $podName,
+          owner: {
+            apiVersion: "batch/v1",
+            kind: "Job",
+            uid: $jobUID,
+            name: $jobName,
+            controller: true
+          }
+        },
+        digests: {
+          jobSHA256: $jobDigest,
+          podSHA256: $podDigest,
+          rawLogSHA256: $logDigest,
+          resultSHA256: $resultDigest
+        }
+      }
+    ' >"$publish_stage/manifest.json"
+	chmod 600 "$publish_stage/manifest.json"
+	scan_file_for_credentials "$publish_stage/manifest.json" \
+		"the staged Job evidence manifest"
+	validate_job_evidence_directory "$publish_stage" \
+		"$publish_schema" "$publish_operation" "$publish_job_uid" \
+		"$publish_schema_uid"
+	if [ -e "$publish_archive" ] || [ -L "$publish_archive" ]; then
+		fail "Job evidence archive $publish_key collided before atomic publication"
+	fi
+	mv "$publish_stage" "$publish_archive" ||
+		fail "could not atomically publish Job evidence archive $publish_key"
+	validate_job_evidence_directory "$publish_archive" \
+		"$publish_schema" "$publish_operation" "$publish_job_uid" \
+		"$publish_schema_uid"
+}
+
+assert_live_job_evidence_consistent() {
+	live_evidence_archive=$1
+	live_evidence_job_name=$2
+	live_evidence_job_uid=$3
+	live_evidence_pod_name=$4
+	live_evidence_pod_uid=$5
+	live_evidence_operation_id=$6
+	if live_evidence_job=$(k -n "$TEST_NAMESPACE" get job "$live_evidence_job_name" \
+		-o json --ignore-not-found 2>"$LIVE_JOB_EVIDENCE_ERROR_FILE"); then
+		:
+	else
+		: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"
+		fail "live Job consistency read failed before exact GC absence could be established"
+	fi
+	: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"
+	if [ -n "$live_evidence_job" ]; then
+		printf '%s\n' "$live_evidence_job" | jq -e \
+			--arg name "$live_evidence_job_name" \
+			--arg uid "$live_evidence_job_uid" \
+			--arg operationID "$live_evidence_operation_id" '
+          .metadata.name == $name and .metadata.uid == $uid and
+          .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID
+        ' >/dev/null || fail "live Job conflicts with its durable evidence archive"
+	fi
+	if live_evidence_pod=$(k -n "$TEST_NAMESPACE" get pod "$live_evidence_pod_name" \
+		-o json --ignore-not-found 2>"$LIVE_JOB_EVIDENCE_ERROR_FILE"); then
+		:
+	else
+		: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"
+		fail "live Pod consistency read failed before exact GC absence could be established"
+	fi
+	: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"
+	if [ -n "$live_evidence_pod" ]; then
+		printf '%s\n' "$live_evidence_pod" | jq -e \
+			--arg podName "$live_evidence_pod_name" \
+			--arg podUID "$live_evidence_pod_uid" \
+			--arg jobUID "$live_evidence_job_uid" \
+			--arg jobName "$live_evidence_job_name" '
+          .metadata.name == $podName and .metadata.uid == $podUID and
+          ([.metadata.ownerReferences[]? | select(
+            .apiVersion == "batch/v1" and .kind == "Job" and
+            .uid == $jobUID and .name == $jobName and .controller == true)] | length) == 1
+        ' >/dev/null || fail "live Pod conflicts with its durable evidence archive"
+	fi
+	for live_evidence_file in job.json pod.json ptah.log result.json manifest.json; do
+		require_mode_0600_regular_file "$live_evidence_archive/$live_evidence_file" \
+			"validated Job evidence $live_evidence_file"
+	done
+}
+
 audit_completed_jobs() {
 	if [ "$EPHEMERAL_SUBRESOURCE_TESTED" -eq 0 ] &&
 		assert_active_pod_ephemeral_container_rejected; then
@@ -847,6 +1311,23 @@ audit_completed_jobs() {
         ')
 		[ "$(printf '%s\n' "$audit_owned_pods" | jq '.items | length')" -gt 0 ] ||
 			fail "terminal Job $audit_name UID $audit_uid has no exact owned Pod to audit"
+		audit_managed_complete=0
+		if printf '%s\n' "$audit_job_object" | jq -e '
+          .metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and
+          .metadata.labels["app.kubernetes.io/component"] == "schema-operation" and
+          (.metadata.labels["operator.ptah.dev/schema"] | type) == "string" and
+          (.metadata.labels["operator.ptah.dev/schema"] | length) > 0 and
+          (.metadata.labels["operator.ptah.dev/operation"] |
+            IN("resolve", "verify", "observe", "plan", "apply")) and
+          (.status.conditions // [] |
+            any(.type == "Complete" and .status == "True")) and
+          (.status.conditions // [] |
+            all(.type != "Failed" or .status != "True"))
+        ' >/dev/null; then
+			audit_managed_complete=1
+			[ "$(printf '%s\n' "$audit_owned_pods" | jq '.items | length')" -eq 1 ] ||
+				fail "completed managed Job $audit_name UID $audit_uid does not own one exact Pod"
+		fi
 		if printf '%s\n' "$audit_job_object" | jq -e \
 			--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" '
           .metadata.labels["app.kubernetes.io/component"] == "schema-operation" and
@@ -875,6 +1356,15 @@ audit_completed_jobs() {
 		scan_file_for_credentials "$RESOURCE_FILE" \
 			"Job $audit_name UID $audit_uid and its exact owned Pods"
 		materialize_owned_pod_records "$audit_owned_pods"
+		audit_evidence_pod_object=
+		audit_evidence_log_file=
+		if [ "$audit_managed_complete" -eq 1 ]; then
+			audit_key=$(job_evidence_key "$audit_uid")
+			audit_evidence_log_file=$WORK_DIR/audit-ptah-$audit_key.log
+			if [ -e "$audit_evidence_log_file" ] || [ -L "$audit_evidence_log_file" ]; then
+				fail "UID-bounded ptah log evidence already exists for Job UID $audit_uid"
+			fi
+		fi
 		while IFS="$(printf '\t')" read -r audit_pod_uid audit_pod_name; do
 			[ -n "$audit_pod_uid" ] || continue
 			audit_pod_object=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" -o json 2>/dev/null || true)
@@ -953,8 +1443,15 @@ audit_completed_jobs() {
 				fi
 				scan_file_for_credentials "$LOG_FILE" \
 					"$audit_container logs for exact Pod $audit_pod_name UID $audit_pod_uid"
+				if [ "$audit_managed_complete" -eq 1 ] && [ "$audit_container" = ptah ]; then
+					cp "$LOG_FILE" "$audit_evidence_log_file" ||
+						fail "could not retain UID-bounded ptah logs for exact Pod $audit_pod_name UID $audit_pod_uid"
+					chmod 600 "$audit_evidence_log_file"
+				fi
 			done
-			k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" -o json | jq -e \
+			audit_pod_after=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" -o json 2>/dev/null) ||
+				fail "exact Pod $audit_pod_name UID $audit_pod_uid disappeared during its log audit"
+			printf '%s\n' "$audit_pod_after" | jq -e \
 				--arg podUID "$audit_pod_uid" \
 				--arg jobUID "$audit_uid" '
               .metadata.uid == $podUID and
@@ -963,14 +1460,33 @@ audit_completed_jobs() {
                 .uid == $jobUID and .controller == true))
             ' >/dev/null ||
 				fail "exact Pod $audit_pod_name changed identity during its log audit"
+			if [ "$audit_managed_complete" -eq 1 ]; then
+				audit_evidence_pod_object=$audit_pod_after
+			fi
 		done <"$OWNED_POD_RECORDS_FILE"
-		k -n "$TEST_NAMESPACE" get job "$audit_name" -o json | jq -e \
+		audit_job_after=$(k -n "$TEST_NAMESPACE" get job "$audit_name" -o json 2>/dev/null) ||
+			fail "terminal Job $audit_name UID $audit_uid disappeared during its exact Pod audit"
+		printf '%s\n' "$audit_job_after" | jq -e \
 			--arg uid "$audit_uid" '
           .metadata.uid == $uid and
           (.status.conditions // [] |
             any((.type == "Complete" or .type == "Failed") and .status == "True"))
         ' >/dev/null ||
 			fail "terminal Job $audit_name changed identity during its exact Pod audit"
+		if [ "$audit_managed_complete" -eq 1 ]; then
+			[ -n "$audit_evidence_pod_object" ] ||
+				fail "completed managed Job $audit_name lost its exact Pod evidence"
+			require_mode_0600_regular_file "$audit_evidence_log_file" \
+				"UID-bounded ptah log evidence for Job UID $audit_uid"
+			audit_job_evidence_file=$WORK_DIR/audit-job-$audit_key.json
+			audit_pod_evidence_file=$WORK_DIR/audit-pod-$audit_key.json
+			printf '%s\n' "$audit_job_after" >"$audit_job_evidence_file"
+			printf '%s\n' "$audit_evidence_pod_object" >"$audit_pod_evidence_file"
+			chmod 600 "$audit_job_evidence_file" "$audit_pod_evidence_file"
+			publish_completed_job_evidence \
+				"$audit_job_evidence_file" "$audit_pod_evidence_file" \
+				"$audit_evidence_log_file"
+		fi
 		if ! grep -Fx "$audit_uid" "$AUDITED_JOBS_FILE" >/dev/null 2>&1; then
 			printf '%s\n' "$audit_uid" >>"$AUDITED_JOBS_FILE"
 		fi
@@ -1206,6 +1722,82 @@ checkpoint_schema_jobs() {
 		--arg schema "$checkpoint_schema" '
       [.[] | select(.schema == $schema) | .uid] | unique | sort
     ' "$OBSERVED_JOBS_FILE" >"$checkpoint_file"
+}
+
+assert_schema_job_boundary_unchanged() {
+	boundary_schema=$1
+	boundary_before=$2
+	boundary_expected=$3
+	boundary_expected_count=$4
+	boundary_actual=$5
+	if ! jq -s \
+		--slurpfile before "$boundary_before" \
+		--slurpfile expected "$boundary_expected" \
+		--arg schema "$boundary_schema" \
+		--argjson expectedCount "$boundary_expected_count" '
+      ([.[] |
+        select(.schema == $schema) |
+        .uid as $uid |
+        select(($before[0] | index($uid)) == null) |
+        $uid] | unique | sort) as $actual |
+      if
+        ($before[0] | type) == "array" and
+        ($expected[0] | type) == "array" and
+        ($expected[0] | length) == $expectedCount and
+        ($actual | length) == $expectedCount and
+        $actual == $expected[0]
+      then $actual
+      else error("schema Job boundary changed")
+      end
+    ' "$OBSERVED_JOBS_FILE" >"$boundary_actual"; then
+		fail "$boundary_schema durable Job boundary changed after result capture"
+	fi
+	chmod 600 "$boundary_actual"
+}
+
+materialize_archived_schema_jobs() {
+	archived_schema=$1
+	archived_before=$2
+	archived_expected_count=$3
+	archived_uids_file=$4
+	archived_jobs_file=$5
+	if ! jq -c -s \
+		--slurpfile before "$archived_before" \
+		--arg schema "$archived_schema" \
+		--argjson expectedCount "$archived_expected_count" '
+      [.[] |
+        select(.schema == $schema) |
+        .uid as $uid |
+        select(($before[0] | index($uid)) == null)] |
+      unique_by(.uid) |
+      if length == $expectedCount then .[]
+      else error("durable schema Job boundary has an unexpected cardinality") end
+    ' "$OBSERVED_JOBS_FILE" >"$ARCHIVED_SCHEMA_JOB_RECORDS_FILE"; then
+		fail "$archived_schema durable Job history is not exactly $archived_expected_count unique UIDs"
+	fi
+	chmod 600 "$ARCHIVED_SCHEMA_JOB_RECORDS_FILE"
+	jq -s '[.[].uid] | sort' "$ARCHIVED_SCHEMA_JOB_RECORDS_FILE" >"$archived_uids_file" ||
+		fail "$archived_schema could not materialize its exact durable Job UID set"
+	chmod 600 "$archived_uids_file"
+	: >"$ARCHIVED_SCHEMA_JOB_LINES_FILE"
+	chmod 600 "$ARCHIVED_SCHEMA_JOB_LINES_FILE"
+	while IFS= read -r archived_record; do
+		archived_uid=$(printf '%s\n' "$archived_record" | jq -er '.uid') ||
+			fail "$archived_schema durable Job record has no exact UID"
+		archived_operation=$(printf '%s\n' "$archived_record" | jq -er '.operation') ||
+			fail "$archived_schema durable Job record has no exact operation"
+		validate_completed_job_evidence \
+			"$archived_schema" "$archived_operation" "$archived_uid"
+		jq -c . "$VALIDATED_JOB_EVIDENCE_DIR/job.json" \
+			>>"$ARCHIVED_SCHEMA_JOB_LINES_FILE" ||
+			fail "$archived_schema could not consume archived Job UID $archived_uid"
+	done <"$ARCHIVED_SCHEMA_JOB_RECORDS_FILE"
+	jq -s '{apiVersion: "batch/v1", kind: "JobList", items: .}' \
+		"$ARCHIVED_SCHEMA_JOB_LINES_FILE" >"$archived_jobs_file" ||
+		fail "$archived_schema could not assemble its archived Job lifecycle"
+	chmod 600 "$archived_jobs_file"
+	scan_file_for_credentials "$archived_jobs_file" \
+		"the archived $archived_schema Job lifecycle"
 }
 
 job_count_between_checkpoints() {
@@ -1540,6 +2132,42 @@ capture_one_new_job_result() {
 		fail "validated result lost its protocol-v5 binding or complete-output guarantee"
 	grep -Fx "$CAPTURED_JOB_UID" "$AUDITED_JOBS_FILE" >/dev/null 2>&1 ||
 		printf '%s\n' "$CAPTURED_JOB_UID" >>"$AUDITED_JOBS_FILE"
+}
+
+capture_selected_job_result() {
+	selected_schema=$1
+	selected_operation=$2
+	selected_uid=$3
+	selected_output=$4
+
+	record_observed_jobs
+	selected_count=$(jq -s \
+		--arg schema "$selected_schema" \
+		--arg operation "$selected_operation" \
+		--arg uid "$selected_uid" '
+      [.[] | select(
+        .schema == $schema and .operation == $operation and .uid == $uid
+      )] | unique_by(.uid) | length
+    ' "$OBSERVED_JOBS_FILE")
+	[ "$selected_count" -eq 1 ] ||
+		fail "$selected_schema has $selected_count observed $selected_operation Jobs with selected UID $selected_uid"
+	validate_completed_job_evidence \
+		"$selected_schema" "$selected_operation" "$selected_uid"
+	cp "$VALIDATED_JOB_EVIDENCE_DIR/result.json" "$selected_output" ||
+		fail "could not consume archived $selected_operation result for $selected_schema"
+	chmod 600 "$selected_output"
+	scan_file_for_credentials "$selected_output" \
+		"the selected archived $selected_operation result"
+	CAPTURED_JOB_NAME=$VALIDATED_JOB_EVIDENCE_JOB_NAME
+	CAPTURED_JOB_UID=$selected_uid
+	CAPTURED_OPERATION_ID=$VALIDATED_JOB_EVIDENCE_OPERATION_ID
+	CAPTURED_POD_NAME=$VALIDATED_JOB_EVIDENCE_POD_NAME
+	CAPTURED_POD_UID=$VALIDATED_JOB_EVIDENCE_POD_UID
+	CAPTURED_POD_GENERATE_NAME=${CAPTURED_JOB_NAME}-
+	CAPTURED_JOB_EVIDENCE_DIR=$VALIDATED_JOB_EVIDENCE_DIR
+	assert_live_job_evidence_consistent \
+		"$CAPTURED_JOB_EVIDENCE_DIR" "$CAPTURED_JOB_NAME" "$CAPTURED_JOB_UID" \
+		"$CAPTURED_POD_NAME" "$CAPTURED_POD_UID" "$CAPTURED_OPERATION_ID"
 }
 
 wait_for_controller_status_authorization() {
@@ -3102,9 +3730,14 @@ create_schema_resource() {
 	resource_registry_auth_mode=${8:-Environment}
 	resource_failure_retry=${9:-5s}
 	resource_interval=${10:-$APPROVAL_INTERVAL}
+	resource_apply=${11:-}
 	case "$resource_registry_auth_mode" in
 	Environment | DockerConfigJSON) ;;
 	*) fail "unsupported E2E registry authentication mode $resource_registry_auth_mode" ;;
+	esac
+	case "$resource_apply" in
+	'' | OnApproval | Always | Never) ;;
+	*) fail "unsupported explicit E2E apply policy $resource_apply" ;;
 	esac
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
@@ -3118,7 +3751,8 @@ create_schema_resource() {
 		--arg registryAuthMode "$resource_registry_auth_mode" \
 		--arg runtimeClass "$ADMISSION_RUNTIME_CLASS" \
 		--arg failureRetry "$resource_failure_retry" \
-		--arg interval "$resource_interval" '
+		--arg interval "$resource_interval" \
+		--arg apply "$resource_apply" '
     {
       apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
       metadata: {namespace: $namespace, name: $name},
@@ -3145,9 +3779,9 @@ create_schema_resource() {
           verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
           transport: {plainHTTP: true}
         },
-        policy: {
+        policy: ({
           driftSeverity: "all", lockTimeout: "30s", transactionMode: "file"
-        },
+        } + if $apply == "" then {} else {apply: $apply} end),
         interval: $interval,
         execution: {
 	          activeDeadlineSeconds: 300, failureRetryInterval: $failureRetry, connectTimeout: "30s",
@@ -3156,11 +3790,20 @@ create_schema_resource() {
       }
     }' >"$RESOURCE_FILE"
 	k create -f "$RESOURCE_FILE" >/dev/null
-	k -n "$TEST_NAMESPACE" get ptahschema "$resource_schema" -o json |
-		jq -e '
-          .spec.policy.apply == "OnApproval" and
-          .spec.policy.allowDestructive == false
-        ' >/dev/null || fail "$resource_schema did not persist the safe apply-policy defaults"
+	if [ -z "$resource_apply" ]; then
+		k -n "$TEST_NAMESPACE" get ptahschema "$resource_schema" -o json |
+			jq -e '
+              .spec.policy.apply == "OnApproval" and
+              .spec.policy.allowDestructive == false
+            ' >/dev/null || fail "$resource_schema did not persist the safe apply-policy defaults"
+	else
+		k -n "$TEST_NAMESPACE" get ptahschema "$resource_schema" -o json |
+			jq -e --arg apply "$resource_apply" '
+              .spec.policy.apply == $apply and
+              .spec.policy.allowDestructive == false
+            ' >/dev/null ||
+			fail "$resource_schema did not persist explicit safe apply policy $resource_apply"
+	fi
 }
 
 create_custom_ca_schema_resource() {
@@ -3710,12 +4353,22 @@ assert_job_isolation() {
 	isolation_schema=$1
 	isolation_secret=$2
 	isolation_require_apply=$3
-	k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.dev/schema=${isolation_schema}" -o json |
-		jq -e \
-			--arg databaseSecret "$isolation_secret" \
-			--arg registrySecret "$REGISTRY_AUTH_SECRET" \
-			--argjson requireApply "$isolation_require_apply" \
-			-f "$ROOT_DIR/testdata/e2e/controller-job-isolation.jq" >/dev/null ||
+	isolation_archived_jobs=${4:-}
+	if [ -n "$isolation_archived_jobs" ]; then
+		require_mode_0600_regular_file "$isolation_archived_jobs" \
+			"archived Job isolation evidence"
+		isolation_jobs=$(jq -c . "$isolation_archived_jobs") ||
+			fail "$isolation_schema archived Job isolation evidence is invalid"
+	else
+		isolation_jobs=$(k -n "$TEST_NAMESPACE" get jobs \
+			-l "operator.ptah.dev/schema=${isolation_schema}" -o json) ||
+			fail "$isolation_schema live Jobs could not be read for isolation evidence"
+	fi
+	printf '%s\n' "$isolation_jobs" | jq -e \
+		--arg databaseSecret "$isolation_secret" \
+		--arg registrySecret "$REGISTRY_AUTH_SECRET" \
+		--argjson requireApply "$isolation_require_apply" \
+		-f "$ROOT_DIR/testdata/e2e/controller-job-isolation.jq" >/dev/null ||
 		fail "$isolation_schema Jobs did not isolate authenticated registry access from database credentials"
 }
 
@@ -4835,6 +5488,433 @@ assert_external_postgresql_catalog() {
 		fail "external PostgreSQL fixture login lost database ownership"
 }
 
+assert_automatic_external_postgresql_lifecycle() {
+	automatic_schema=$1
+	automatic_secret=$2
+	automatic_reference=$3
+	automatic_digest=$4
+	automatic_coordination_key=$5
+	automatic_coordination_digest=$6
+	automatic_before=$7
+	automatic_schema_file="$WORK_DIR/${automatic_schema}-automatic-final.json"
+	automatic_jobs_file="$WORK_DIR/${automatic_schema}-automatic-jobs.json"
+	automatic_observed_uids_file="$WORK_DIR/${automatic_schema}-automatic-observed-uids.json"
+	automatic_sequence_file="$WORK_DIR/${automatic_schema}-automatic-sequence.tsv"
+	automatic_plan_file="$WORK_DIR/${automatic_schema}-automatic-plan-resource.json"
+	automatic_plan_document="$WORK_DIR/${automatic_schema}-automatic-native-plan.json"
+
+	wait_for_schema "$automatic_schema" \
+		".status.phase == \"InSync\" and .status.source.digest == \"$automatic_digest\" and .status.applied.artifactDigest == \"$automatic_digest\" and .status.plan == null and .status.pendingObservation == null and .status.activeOperation == null and .status.pendingLockRelease == null and (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and .reason == \"ScopedConverged\"))" \
+		"automatic safe-plan application and independent convergence"
+	k -n "$TEST_NAMESPACE" get ptahschema "$automatic_schema" -o json >"$automatic_schema_file"
+	chmod 600 "$automatic_schema_file"
+	scan_file_for_credentials "$automatic_schema_file" \
+		"the automatic-policy final PtahSchema"
+	automatic_schema_uid=$(jq -er '.metadata.uid' "$automatic_schema_file")
+	automatic_plan_fingerprint=$(jq -er '.status.applied.planFingerprint' "$automatic_schema_file")
+	jq -e \
+		--arg reference "$automatic_reference" \
+		--arg digest "$automatic_digest" \
+		--arg coordinationKey "$automatic_coordination_key" \
+		--arg coordinationDigest "$automatic_coordination_digest" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
+		--arg type application/vnd.stokaro.ptah.schema.v1 '
+      .spec.policy.apply == "Always" and
+      .spec.policy.allowDestructive == false and
+      .status.source.requestedReference == $reference and
+      .status.source.resolvedReference == $reference and
+      .status.source.digest == $digest and
+      .status.source.verified == true and
+      .status.source.artifactType == $type and
+      (.status.source.verificationPolicyDigest | test("^sha256:[0-9a-f]{64}$")) and
+      .status.target.coordinationDigest == $coordinationDigest and
+      (.status.target.identityDigest | test("^sha256:[0-9a-f]{64}$")) and
+      (.status.target.driftReportDigest | test("^sha256:[0-9a-f]{64}$")) and
+      (.status.applied.planFingerprint | test("^sha256:[0-9a-f]{64}$")) and
+      .status.applied.artifactDigest == $digest and
+      .status.applied.coordinationDigest == $coordinationDigest and
+      .status.applied.targetIdentityDigest == .status.target.identityDigest and
+      .status.applied.executionBindingID == .status.executionBinding.epoch and
+      .status.applied.controllerImage == $controllerImage and
+      .status.applied.controllerRevision == $controllerRevision and
+      .status.applied.controllerStateVersion == $controllerStateVersion and
+      .status.applied.ptahVersion == .status.executionBinding.ptahVersion and
+      .status.applied.executorImage == .status.executionBinding.executorImage and
+      .status.applied.runnerImage == .status.executionBinding.runnerImage and
+      .status.applied.runnerProtocolVersion == .status.executionBinding.runnerProtocolVersion and
+      .status.applied.completedAt != null and
+      .status.plan == null and .status.pendingObservation == null and
+      .status.activeOperation == null and .status.pendingLockRelease == null and
+      (.status.conditions | any(
+        .type == "ArtifactResolved" and .status == "True" and .reason == "DigestPinned")) and
+      (.status.conditions | any(
+        .type == "ArtifactVerified" and .status == "True" and .reason == "PolicySatisfied")) and
+      (.status.conditions | any(
+        .type == "DatabaseReachable" and .status == "True" and .reason == "Observed")) and
+      (.status.conditions | any(
+        .type == "DriftDetected" and .status == "False" and .reason == "ScopedConverged")) and
+      (.status.conditions | any(
+        .type == "PlanReady" and .status == "False" and .reason == "NoChanges")) and
+      (.status.conditions | any(
+        .type == "ApprovalRequired" and .status == "False" and .reason == "Satisfied")) and
+      (.status.conditions | any(
+        .type == "Applying" and .status == "False" and .reason == "JobCompleted")) and
+      (.status.conditions | any(
+        .type == "InSync" and .status == "True" and .reason == "ScopedConverged")) and
+      (.status.conditions | any(
+        .type == "Ready" and .status == "True" and .reason == "InSync")) and
+      (.status.conditions | any(
+        .type == "ReconciliationFailed" and .status == "False" and .reason == "Succeeded")) and
+      ([.status | .. | scalars | select(. == $coordinationKey)] | length) == 0
+    ' "$automatic_schema_file" >/dev/null ||
+		fail "$automatic_schema did not retain exact automatic-policy convergence evidence"
+
+	audit_completed_jobs
+	record_observed_jobs
+	materialize_archived_schema_jobs "$automatic_schema" "$automatic_before" 7 \
+		"$automatic_observed_uids_file" "$automatic_jobs_file"
+	jq -er \
+		--slurpfile before "$automatic_before" \
+		--slurpfile observed "$automatic_observed_uids_file" \
+		--arg schema "$automatic_schema" \
+		--arg schemaUID "$automatic_schema_uid" '
+      def in_boundary:
+        .metadata.uid as $uid | ($before[0] | index($uid)) == null;
+      [.items[] | select(in_boundary)] as $jobs |
+      def operation($name):
+        [$jobs[] | select(.metadata.labels["operator.ptah.dev/operation"] == $name)] |
+        sort_by(.status.startTime, .metadata.creationTimestamp, .metadata.uid);
+      operation("resolve") as $resolve |
+      operation("verify") as $verify |
+      operation("observe") as $observe |
+      operation("plan") as $plan |
+      operation("apply") as $apply |
+      if
+        ($observed[0] | type) == "array" and
+        ($observed[0] | length) == 7 and
+        ($jobs | length) == 7 and
+        ([$jobs[].metadata.uid] | unique | length) == 7 and
+        ([$jobs[].metadata.uid] | unique | sort) == $observed[0] and
+        ($resolve | length) == 1 and ($verify | length) == 1 and
+        ($observe | length) == 2 and ($plan | length) == 2 and
+        ($apply | length) == 1 and
+        all($jobs[];
+          .metadata.ownerReferences | any(
+            .apiVersion == "operator.ptah.dev/v1alpha1" and
+            .kind == "PtahSchema" and .name == $schema and .uid == $schemaUID and
+            .controller == true) and
+          .spec.backoffLimit == 0 and .spec.podReplacementPolicy == "Failed" and
+          .status.startTime != null and .status.completionTime != null and
+          (.status.conditions | any(.type == "Complete" and .status == "True")) and
+          (.status.conditions | all(.type != "Failed" or .status != "True"))) and
+        $resolve[0].status.completionTime <= $verify[0].status.startTime and
+        $verify[0].status.completionTime <= $observe[0].status.startTime and
+        $observe[0].status.completionTime <= $plan[0].status.startTime and
+        $plan[0].status.completionTime <= $apply[0].status.startTime and
+        $apply[0].status.completionTime <= $observe[1].status.startTime and
+        $observe[1].status.completionTime <= $plan[1].status.startTime
+      then [
+        $resolve[0].metadata.uid,
+        $verify[0].metadata.uid,
+        $observe[0].metadata.uid,
+        $plan[0].metadata.uid,
+        $apply[0].metadata.uid,
+        $observe[1].metadata.uid,
+        $plan[1].metadata.uid
+      ] | @tsv
+      else error("automatic-policy Job history is not one exact serialized lifecycle")
+      end
+    ' "$automatic_jobs_file" >"$automatic_sequence_file" ||
+		fail "$automatic_schema did not preserve one exact serialized automatic-policy Job lifecycle"
+	IFS="$(printf '\t')" read -r \
+		automatic_resolve_uid automatic_verify_uid \
+		automatic_initial_observe_uid automatic_initial_plan_uid \
+		automatic_apply_uid automatic_final_observe_uid automatic_final_plan_uid \
+		<"$automatic_sequence_file"
+	for automatic_job_uid in \
+		"$automatic_resolve_uid" "$automatic_verify_uid" \
+		"$automatic_initial_observe_uid" "$automatic_initial_plan_uid" \
+		"$automatic_apply_uid" "$automatic_final_observe_uid" "$automatic_final_plan_uid"; do
+		[ -n "$automatic_job_uid" ] ||
+			fail "$automatic_schema automatic-policy Job sequence contains an empty UID"
+	done
+
+	automatic_resolve_result="$WORK_DIR/${automatic_schema}-automatic-resolve-result.json"
+	automatic_verify_result="$WORK_DIR/${automatic_schema}-automatic-verify-result.json"
+	automatic_initial_observe_result="$WORK_DIR/${automatic_schema}-automatic-initial-observe-result.json"
+	automatic_initial_plan_result="$WORK_DIR/${automatic_schema}-automatic-initial-plan-result.json"
+	automatic_apply_result="$WORK_DIR/${automatic_schema}-automatic-apply-result.json"
+	automatic_final_observe_result="$WORK_DIR/${automatic_schema}-automatic-final-observe-result.json"
+	automatic_final_plan_result="$WORK_DIR/${automatic_schema}-automatic-final-plan-result.json"
+
+	capture_selected_job_result "$automatic_schema" resolve "$automatic_resolve_uid" \
+		"$automatic_resolve_result"
+	jq -e \
+		--arg reference "$automatic_reference" \
+		--arg digest "$automatic_digest" '
+      .error == null and .childExitCode == 0 and .stdout == "" and
+      .resolvedReference == $reference and .resolvedDigest == $digest and
+      (.resolvedMediaType | length) > 0 and .resolvedSize > 0 and
+      (.mutationStarted // false) == false and (.uncertain // false) == false
+    ' "$automatic_resolve_result" >/dev/null ||
+		fail "$automatic_schema Resolve result did not bind the digest-selected OCI source"
+
+	capture_selected_job_result "$automatic_schema" verify "$automatic_verify_uid" \
+		"$automatic_verify_result"
+	jq -e \
+		--arg digest "$automatic_digest" \
+		--arg policyDigest "$(jq -er '.status.source.verificationPolicyDigest' "$automatic_schema_file")" \
+		--arg type application/vnd.stokaro.ptah.schema.v1 '
+      .error == null and .childExitCode == 0 and .stdout == "" and
+      .resolvedDigest == $digest and .verificationPolicyDigest == $policyDigest and
+      .observedArtifactType == $type and
+      (.verificationRequirements // []) == [] and
+      (.mutationStarted // false) == false and (.uncertain // false) == false
+    ' "$automatic_verify_result" >/dev/null ||
+		fail "$automatic_schema Verify result did not precede and authorize database access"
+
+	capture_selected_job_result "$automatic_schema" observe "$automatic_initial_observe_uid" \
+		"$automatic_initial_observe_result"
+	jq -e \
+		--arg coordinationDigest "$automatic_coordination_digest" \
+		--arg targetIdentityDigest "$(jq -er '.status.target.identityDigest' "$automatic_schema_file")" '
+      .error == null and (.childExitCode == 0 or .childExitCode == 1) and
+      .stdout == "" and
+      .observedDialect == "postgres" and .observedDrift == true and
+      .driftFindingCount > 0 and
+      (.highestDriftSeverity | IN("safe", "info", "warning", "error", "destructive")) and
+      (.driftReportDigest | test("^sha256:[0-9a-f]{64}$")) and
+      .coordinationDigest == $coordinationDigest and
+      .targetIdentityDigest == $targetIdentityDigest and
+      (.mutationStarted // false) == false and (.uncertain // false) == false
+    ' "$automatic_initial_observe_result" >/dev/null ||
+		fail "$automatic_schema initial Observe result did not prove real PostgreSQL drift"
+
+	capture_selected_job_result "$automatic_schema" plan "$automatic_initial_plan_uid" \
+		"$automatic_initial_plan_result"
+	automatic_initial_plan_job_name=$CAPTURED_JOB_NAME
+	automatic_initial_plan_job_uid=$CAPTURED_JOB_UID
+	automatic_initial_plan_operation_id=$CAPTURED_OPERATION_ID
+	automatic_initial_plan_pod_name=$CAPTURED_POD_NAME
+	automatic_initial_plan_pod_generate_name=$CAPTURED_POD_GENERATE_NAME
+	jq -e \
+		--arg coordinationDigest "$automatic_coordination_digest" \
+		--arg targetIdentityDigest "$(jq -er '.status.target.identityDigest' "$automatic_schema_file")" '
+      .error == null and .childExitCode == 0 and
+      .planOutcome == "Changes" and (.stdout | length) > 0 and
+      (.planContentDigest | test("^sha256:[0-9a-f]{64}$")) and
+      .coordinationDigest == $coordinationDigest and
+      .targetIdentityDigest == $targetIdentityDigest and
+      (.mutationStarted // false) == false and (.uncertain // false) == false
+    ' "$automatic_initial_plan_result" >/dev/null ||
+		fail "$automatic_schema initial Plan result did not describe a safe database change"
+	jq -jr '.stdout' "$automatic_initial_plan_result" >"$automatic_plan_document"
+	chmod 600 "$automatic_plan_document"
+	scan_file_for_credentials "$automatic_plan_document" \
+		"the automatic-policy native PostgreSQL plan"
+	automatic_plan_content_digest="sha256:$(sha256 <"$automatic_plan_document")"
+	[ "$automatic_plan_content_digest" = \
+		"$(jq -er '.planContentDigest' "$automatic_initial_plan_result")" ] ||
+		fail "$automatic_schema automatic Plan result did not hash its exact stdout bytes"
+	jq -e '
+      .format_version == 1 and .dialect == "postgres" and
+      .destructive == false and
+      (.from_fingerprint | test("^sha256:[0-9a-f]{64}$")) and
+      (.to_fingerprint | test("^sha256:[0-9a-f]{64}$")) and
+      .from_fingerprint != .to_fingerprint and
+      (.statements | length) > 0 and
+      all(.statements[]; .severity == "safe") and
+      any(.statements[]; .sql | test("\\bCREATE[[:space:]]+TABLE\\b"; "i")) and
+      all(.statements[]; (.sql | test("\\b(DROP|TRUNCATE|DELETE)\\b"; "i") | not))
+    ' "$automatic_plan_document" >/dev/null ||
+		fail "$automatic_schema automatic plan was not an exact safe additive CREATE TABLE change"
+
+	k -n "$TEST_NAMESPACE" get ptahschemaplans -o json |
+		jq -ce \
+			--arg schema "$automatic_schema" \
+			--arg schemaUID "$automatic_schema_uid" \
+			--arg fingerprint "$automatic_plan_fingerprint" '
+          [.items[] | select(
+            .spec.schemaRef.name == $schema and .spec.schemaRef.uid == $schemaUID and
+            .spec.fingerprint == $fingerprint
+          )] |
+          if length == 1 then .[0]
+          else error("automatic applied-plan identity is not unique") end
+        ' >"$automatic_plan_file" ||
+		fail "$automatic_schema did not retain one immutable automatically applied plan"
+	chmod 600 "$automatic_plan_file"
+	scan_file_for_credentials "$automatic_plan_file" \
+		"the automatic-policy immutable plan resource"
+	automatic_plan_name=$(jq -er '.metadata.name' "$automatic_plan_file")
+	automatic_plan_uid=$(jq -er '.metadata.uid' "$automatic_plan_file")
+	jq -e \
+		--arg digest "$automatic_digest" \
+		--arg coordinationKey "$automatic_coordination_key" \
+		--arg coordinationDigest "$automatic_coordination_digest" \
+		--arg contentDigest "$automatic_plan_content_digest" \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" \
+		--slurpfile document "$automatic_plan_document" \
+		--slurpfile schema "$automatic_schema_file" '
+      $document[0] as $document | $schema[0] as $schema |
+      .spec.contractVersion == 3 and .spec.artifactDigest == $digest and
+      .spec.fingerprint == $schema.status.applied.planFingerprint and
+      .spec.contentDigest == $contentDigest and
+      .spec.coordinationDigest == $coordinationDigest and
+      .spec.targetIdentityDigest == $schema.status.target.identityDigest and
+      .spec.actualStateFingerprint == $document.from_fingerprint and
+      .spec.desiredStateFingerprint == $document.to_fingerprint and
+      .spec.destructive == false and
+      .spec.statementCount == ($document.statements | length) and
+      (.spec.chunks | length) > 0 and
+      .spec.executionBindingID == $schema.status.executionBinding.epoch and
+      .spec.controllerImage == $controllerImage and
+      .spec.controllerRevision == $controllerRevision and
+      .spec.controllerStateVersion == $controllerStateVersion and
+      .spec.ptahVersion == $schema.status.executionBinding.ptahVersion and
+      .spec.executorImage == $schema.status.executionBinding.executorImage and
+      .spec.runnerImage == $schema.status.executionBinding.runnerImage and
+      .spec.runnerProtocolVersion == $schema.status.executionBinding.runnerProtocolVersion and
+      (.status.conditions | any(.type == "Ready" and .status == "True")) and
+      ([. | .. | scalars | select(. == $coordinationKey)] | length) == 0
+    ' "$automatic_plan_file" >/dev/null ||
+		fail "$automatic_schema automatically applied plan lost its exact immutable bindings"
+	assert_plan_storage_immutable "$automatic_schema" "$automatic_plan_name" "$automatic_plan_uid"
+
+	automatic_apply_job_file="$WORK_DIR/${automatic_schema}-automatic-apply-job.json"
+	automatic_apply_pod_file="$WORK_DIR/${automatic_schema}-automatic-apply-pod.json"
+	capture_selected_job_result "$automatic_schema" apply "$automatic_apply_uid" \
+		"$automatic_apply_result"
+	[ "$CAPTURED_JOB_UID" = "$automatic_apply_uid" ] ||
+		fail "$automatic_schema captured Apply Job UID changed before workload validation"
+	automatic_execution_binding_id=$(jq -er '.spec.executionBindingID' "$automatic_plan_file")
+	cp "$CAPTURED_JOB_EVIDENCE_DIR/job.json" "$automatic_apply_job_file" ||
+		fail "$automatic_schema could not consume its archived Apply Job"
+	cp "$CAPTURED_JOB_EVIDENCE_DIR/pod.json" "$automatic_apply_pod_file" ||
+		fail "$automatic_schema could not consume its archived Apply Pod"
+	chmod 600 "$automatic_apply_job_file" "$automatic_apply_pod_file"
+	scan_file_for_credentials "$automatic_apply_job_file" \
+		"the automatic-policy Apply Job"
+	scan_file_for_credentials "$automatic_apply_pod_file" \
+		"the automatic-policy Apply Pod"
+	jq -e -s \
+		--arg schema "$automatic_schema" \
+		--arg jobName "$CAPTURED_JOB_NAME" \
+		--arg jobUID "$automatic_apply_uid" \
+		--arg podName "$CAPTURED_POD_NAME" \
+		--arg podUID "$CAPTURED_POD_UID" \
+		--arg planFingerprint "$automatic_plan_fingerprint" \
+		--arg contentDigest "$automatic_plan_content_digest" \
+		--arg executionBinding "$automatic_execution_binding_id" \
+		--arg executorImage "$EXECUTOR_IMAGE" \
+		--arg runnerImage "$RUNNER_IMAGE" '
+      def exact_annotations:
+        .["operator.ptah.dev/plan-fingerprint"] == $planFingerprint and
+        .["operator.ptah.dev/plan-content-digest"] == $contentDigest and
+        .["operator.ptah.dev/execution-binding-id"] == $executionBinding;
+      def exact_runtime_spec:
+        ([.initContainers[]? | select(.name == "install-runner")] | length) == 1 and
+        ([.initContainers[]? |
+          select(.name == "install-runner" and .image == $runnerImage)] | length) == 1 and
+        ([.containers[]? | select(.name == "ptah")] | length) == 1 and
+        ([.containers[]? |
+          select(.name == "ptah" and .image == $executorImage)] | length) == 1 and
+        ([.containers[]? | select(.name == "ptah") | .env[]? |
+          select(.name == "PTAH_EXPECTED_DATABASE_ENGINE")] | length) == 1 and
+        ([.containers[]? | select(.name == "ptah") | .env[]? |
+          select(.name == "PTAH_EXPECTED_DATABASE_ENGINE" and
+            .value == "PostgreSQL" and (.valueFrom // null) == null)] | length) == 1;
+      .[0] as $job | .[1] as $pod |
+      $job.metadata.name == $jobName and $job.metadata.uid == $jobUID and
+      $job.metadata.labels["operator.ptah.dev/schema"] == $schema and
+      $job.metadata.labels["operator.ptah.dev/operation"] == "apply" and
+      ($job.metadata.annotations | exact_annotations) and
+      ($job.spec.template.metadata.annotations | exact_annotations) and
+      ($job.spec.template.spec | exact_runtime_spec) and
+      $pod.metadata.name == $podName and $pod.metadata.uid == $podUID and
+      any($pod.metadata.ownerReferences[]?;
+        .apiVersion == "batch/v1" and .kind == "Job" and
+        .name == $jobName and .uid == $jobUID and .controller == true) and
+      ($pod.metadata.annotations | exact_annotations) and
+      ($pod.spec | exact_runtime_spec)
+    ' "$automatic_apply_job_file" "$automatic_apply_pod_file" >/dev/null ||
+		fail "$automatic_schema Apply Job and Pod lost their immutable plan or execution binding"
+	jq -e \
+		--arg contentDigest "$automatic_plan_content_digest" \
+		--arg coordinationDigest "$automatic_coordination_digest" \
+		--arg targetIdentityDigest "$(jq -er '.status.target.identityDigest' "$automatic_schema_file")" '
+      .error == null and .childExitCode == 0 and .stdout == "" and
+      .planContentDigest == $contentDigest and
+      .coordinationDigest == $coordinationDigest and
+      .targetIdentityDigest == $targetIdentityDigest and
+      (.mutationStarted // false) == true and
+      (.uncertain // false) == false and (.planOutcome // "") == ""
+    ' "$automatic_apply_result" >/dev/null ||
+		fail "$automatic_schema automatic Apply result did not execute the exact safe plan"
+
+	capture_selected_job_result "$automatic_schema" observe "$automatic_final_observe_uid" \
+		"$automatic_final_observe_result"
+	jq -e \
+		--arg coordinationDigest "$automatic_coordination_digest" \
+		--arg targetIdentityDigest "$(jq -er '.status.target.identityDigest' "$automatic_schema_file")" \
+		--arg driftReportDigest "$(jq -er '.status.target.driftReportDigest' "$automatic_schema_file")" '
+      .error == null and .childExitCode == 0 and .stdout == "" and
+      .observedDialect == "postgres" and (.observedDrift // false) == false and
+      (.driftFindingCount // 0) == 0 and (.highestDriftSeverity // "") == "" and
+      .coordinationDigest == $coordinationDigest and
+      .targetIdentityDigest == $targetIdentityDigest and
+      .driftReportDigest == $driftReportDigest and
+      (.mutationStarted // false) == false and (.uncertain // false) == false
+    ' "$automatic_final_observe_result" >/dev/null ||
+		fail "$automatic_schema post-Apply Observe result did not prove convergence"
+
+	capture_selected_job_result "$automatic_schema" plan "$automatic_final_plan_uid" \
+		"$automatic_final_plan_result"
+	jq -e \
+		--arg coordinationDigest "$automatic_coordination_digest" \
+		--arg targetIdentityDigest "$(jq -er '.status.target.identityDigest' "$automatic_schema_file")" '
+      .error == null and .childExitCode == 0 and .stdout == "" and
+      .planOutcome == "NoChanges" and (.planContentDigest // "") == "" and
+      .coordinationDigest == $coordinationDigest and
+      .targetIdentityDigest == $targetIdentityDigest and
+      (.mutationStarted // false) == false and (.uncertain // false) == false
+    ' "$automatic_final_plan_result" >/dev/null ||
+		fail "$automatic_schema post-Apply Plan result did not independently prove no changes"
+
+	k -n "$TEST_NAMESPACE" get ptahschemaapprovals -o json |
+		jq -e \
+			--arg schema "$automatic_schema" \
+			--arg schemaUID "$automatic_schema_uid" '
+          [.items[] | select(
+            .spec.schemaRef.name == $schema and .spec.schemaRef.uid == $schemaUID
+          )] | length == 0
+        ' >/dev/null ||
+		fail "$automatic_schema automatic policy unexpectedly relied on an approval object"
+	k -n "$TEST_NAMESPACE" get events -o json |
+		jq -e \
+			--arg schema "$automatic_schema" \
+			--arg schemaUID "$automatic_schema_uid" '
+          [.items[] | select(
+            .involvedObject.kind == "PtahSchema" and
+            .involvedObject.name == $schema and .involvedObject.uid == $schemaUID and
+            (.reason == "ApprovalRequired" or .reason == "ApprovalAccepted")
+          )] | length == 0
+        ' >/dev/null ||
+		fail "$automatic_schema automatic policy emitted an approval transition"
+
+	CAPTURED_JOB_NAME=$automatic_initial_plan_job_name
+	CAPTURED_JOB_UID=$automatic_initial_plan_job_uid
+	CAPTURED_OPERATION_ID=$automatic_initial_plan_operation_id
+	CAPTURED_POD_NAME=$automatic_initial_plan_pod_name
+	CAPTURED_POD_GENERATE_NAME=$automatic_initial_plan_pod_generate_name
+	assert_job_isolation "$automatic_schema" "$automatic_secret" true \
+		"$automatic_jobs_file"
+	printf '%s\n' 'e2e data plane: PASS automatic safe-plan PostgreSQL lifecycle'
+}
+
 run_external_postgresql_lifecycle() {
 	external_publish_reference="oci://${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000/schemas/postgresql-external:stable"
 	external_coordination_digest=$(coordination_digest postgresql "$EXTERNAL_PG_COORDINATION_KEY")
@@ -4850,44 +5930,19 @@ run_external_postgresql_lifecycle() {
 	checkpoint_coordination_leases "$external_lease_before"
 	create_schema_resource "$EXTERNAL_PG_SCHEMA" PostgreSQL "$EXTERNAL_PG_SECRET" \
 		"$external_reference" "$EXTERNAL_PG_COORDINATION_KEY" \
-		e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 45s "$QUIESCENT_INTERVAL"
-	external_after_plan="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-after-plan.json"
-	assert_plan "$EXTERNAL_PG_SCHEMA" "$external_reference" "$external_digest" postgres false \
-		"$external_before" "$external_before" "$external_after_plan"
+		e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 45s "$QUIESCENT_INTERVAL" Always
+	assert_automatic_external_postgresql_lifecycle \
+		"$EXTERNAL_PG_SCHEMA" "$EXTERNAL_PG_SECRET" "$external_reference" \
+		"$external_digest" "$EXTERNAL_PG_COORDINATION_KEY" \
+		"$external_coordination_digest" "$external_before"
 	[ "${#CAPTURED_JOB_NAME}" -eq 58 ] ||
 		fail "external PostgreSQL plan Job did not reach the generated-name truncation boundary"
 	[ "${#CAPTURED_POD_GENERATE_NAME}" -eq 59 ] ||
 		fail "external PostgreSQL plan Pod generateName did not cross the truncation boundary"
 	[ "${#CAPTURED_POD_NAME}" -eq 63 ] ||
 		fail "external PostgreSQL plan Pod did not preserve the bounded generated name"
-	for external_plan_operation in resolve verify observe plan; do
-		assert_one_job_between_checkpoints "$EXTERNAL_PG_SCHEMA" \
-			"$external_plan_operation" "$external_before" "$external_after_plan"
-	done
-	assert_no_job_between_checkpoints "$EXTERNAL_PG_SCHEMA" apply \
-		"$external_before" "$external_after_plan"
-	assert_read_only_chain_between_checkpoints "$EXTERNAL_PG_SCHEMA" \
-		"$external_before" "$external_after_plan"
-	assert_coordination_boundary "$EXTERNAL_PG_SCHEMA" "$EXTERNAL_PG_COORDINATION_KEY" \
-		"$external_coordination_digest"
-	assert_job_isolation "$EXTERNAL_PG_SCHEMA" "$EXTERNAL_PG_SECRET" false
-	external_plan=$CURRENT_PLAN
-	external_plan_uid=$CURRENT_PLAN_UID
-	external_apply_before="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-apply-before.json"
-	checkpoint_schema_jobs "$EXTERNAL_PG_SCHEMA" "$external_apply_before"
-	create_exact_approval "$EXTERNAL_PG_SCHEMA" "$external_plan" \
-		"${EXTERNAL_PG_SCHEMA}-v1" "$EXTERNAL_PG_COORDINATION_KEY" \
-		"$external_coordination_digest"
-	resume_controller_status_writes ||
-		fail "could not release external PostgreSQL approval barrier"
-	wait_for_one_new_job "$EXTERNAL_PG_SCHEMA" apply "$external_apply_before"
-	wait_for_in_sync "$EXTERNAL_PG_SCHEMA" "$external_digest" \
-		"$external_apply_before" "$external_apply_before"
-	assert_approval_consumed "${EXTERNAL_PG_SCHEMA}-v1" "$external_plan_uid"
-	assert_one_new_job "$EXTERNAL_PG_SCHEMA" apply "$external_apply_before"
 	assert_coordination_lease_boundary "$EXTERNAL_PG_COORDINATION_KEY" \
 		"$external_lease_before"
-	assert_job_isolation "$EXTERNAL_PG_SCHEMA" "$EXTERNAL_PG_SECRET" true
 	assert_external_postgresql_catalog
 	k -n "$TEST_NAMESPACE" patch ptahschema "$EXTERNAL_PG_SCHEMA" --type=merge \
 		-p '{"spec":{"suspend":true}}' >/dev/null
@@ -4896,6 +5951,12 @@ run_external_postgresql_lifecycle() {
       .status.phase == "Suspended" and .status.activeOperation == null and
       .status.pendingObservation == null and .status.pendingLockRelease == null
     ' "external PostgreSQL acceptance to suspend after exact convergence"
+	external_suspended_observed_uids_file="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-automatic-suspended-observed-uids.json"
+	record_observed_jobs
+	assert_schema_job_boundary_unchanged \
+		"$EXTERNAL_PG_SCHEMA" "$external_before" \
+		"$automatic_observed_uids_file" 7 \
+		"$external_suspended_observed_uids_file"
 	assert_external_postgresql_catalog
 	audit_runtime_credentials
 	printf '%s\n' 'e2e data plane: PASS external PostgreSQL bridge lifecycle'

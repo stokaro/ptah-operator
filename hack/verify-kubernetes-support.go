@@ -32,6 +32,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -44,6 +45,8 @@ const (
 	docsPath                       = "docs/kubernetes-support.md"
 	makefilePath                   = "Makefile"
 	e2eHarnessPath                 = "hack/e2e-kind.sh"
+	e2eKindConfigPath              = "testdata/e2e/kind.yaml.tmpl"
+	apiServerEndpointFilterPath    = "hack/api-server-endpoint-inventory.jq"
 	e2eStaticPath                  = "hack/e2e-static.sh"
 	e2eDataPlanePath               = "hack/e2e-dataplane.sh"
 	e2eAssertPath                  = "hack/e2e-assert.sh"
@@ -62,17 +65,21 @@ const (
 
 	reviewedKubernetesAPIMinor       = 36
 	reviewedKubernetesSupportMaximum = 37
-	reviewedJobAPISurfaceSHA256      = "cf7bfb98b59dce0740581a34ea11d1a4813239be28241dd11c91124b7435fa48"
+	reviewedJobAPISurfaceSHA256      = "f3e0bedd7235834b17dc52727eddb1268c1c62d7f9ec7cc5bdb4fcd494f4922f"
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256         = "e032ebc28387ec121de0de669d4960acb99414c70d82f9c3e81e189701ea131e"
-	updateWorkflowSHA256     = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
-	controllerSchemaSHA256   = "b73a7b8718abd34b4a8f45a1342c31c50690bf82358b378621dfbbe6e30892e5"
-	raceValidationRuleSHA256 = "41883b775532ad9be0035521d4363052137a8debb4f4a4185ec6a0f3c4a97ae9"
-	raceBaseRuleSHA256       = "53a29b937246901f0b2f285964ea3a2b7580e016ab447ff2b9cb10189df83b49"
-	raceMutationRuleSHA256   = "1b9d7a915e91728ce653c78534382d5d59935bdf09ceec8cba3470900c3fc2dc"
-	raceAggregateSHA256      = "c4ebaf33f633432020b25919b04b70b8715ab64ef63118fbe47dee45553915f1"
+	ciWorkflowSHA256                = "1c05b98201bc6d304bc9ca460a790a3580926ebb87d694ea94522f801dd9e40d"
+	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
+	releaseWorkflowSHA256           = "145331b91d4223ccfb41260e8295c8e523d5bfdf737aa53efe4c25b2d48b85c7"
+	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
+	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
+	releaseChartExportRunSHA256     = "379f2ef33a474b55234e43060e2782bf4f36a12fc2be0c8ec9525afccdb862e3"
+	controllerSchemaSHA256          = "b73a7b8718abd34b4a8f45a1342c31c50690bf82358b378621dfbbe6e30892e5"
+	raceValidationRuleSHA256        = "41883b775532ad9be0035521d4363052137a8debb4f4a4185ec6a0f3c4a97ae9"
+	raceBaseRuleSHA256              = "53a29b937246901f0b2f285964ea3a2b7580e016ab447ff2b9cb10189df83b49"
+	raceMutationRuleSHA256          = "1b9d7a915e91728ce653c78534382d5d59935bdf09ceec8cba3470900c3fc2dc"
+	raceAggregateSHA256             = "c4ebaf33f633432020b25919b04b70b8715ab64ef63118fbe47dee45553915f1"
 
 	ciSupportMatrixTimeoutMinutes     = 10
 	ciVerifyTimeoutMinutes            = 20
@@ -177,6 +184,8 @@ func main() {
 	if err := verifyE2EWiring(e2eWiringFiles{
 		makefile:                   makefilePath,
 		harness:                    e2eHarnessPath,
+		kindConfig:                 e2eKindConfigPath,
+		apiServerEndpointFilter:    apiServerEndpointFilterPath,
 		staticChecks:               e2eStaticPath,
 		dataPlane:                  e2eDataPlanePath,
 		assertions:                 e2eAssertPath,
@@ -325,7 +334,7 @@ func verifyJobAPIBoundaryForMode(compiledMinor, supportedMaximum int, actualDige
 func verifyReviewedJobAPIBoundary(compiledMinor, supportedMaximum int, actualDigest string) error {
 	if compiledMinor != reviewedKubernetesAPIMinor || supportedMaximum != reviewedKubernetesSupportMaximum {
 		return fmt.Errorf(
-			"Kubernetes dependency/support profile %d/%d differs from reviewed Job API boundary %d/%d; review the reachable Job/Pod fields and update the structural guard",
+			"Kubernetes dependency/support profile %d/%d differs from reviewed Job/Pod API boundary %d/%d; review the reachable Job/Pod spec and status fields and update the structural guard",
 			compiledMinor,
 			supportedMaximum,
 			reviewedKubernetesAPIMinor,
@@ -334,7 +343,7 @@ func verifyReviewedJobAPIBoundary(compiledMinor, supportedMaximum int, actualDig
 	}
 	if actualDigest != reviewedJobAPISurfaceSHA256 {
 		return fmt.Errorf(
-			"compiled reachable Job API surface digest is %s, want reviewed digest %s; review the Job/Pod JSON field graph before accepting dependency drift",
+			"compiled reachable Job/Pod API surface digest is %s, want reviewed digest %s; review the Job/Pod spec and status JSON field graph before accepting dependency drift",
 			actualDigest,
 			reviewedJobAPISurfaceSHA256,
 		)
@@ -393,11 +402,20 @@ func controllerJobAPISurfaceDigest() string {
 		})
 	}
 
-	visit(reflect.TypeOf(batchv1.JobSpec{}))
+	// JobSpec reaches PodSpec through the template. Status is a separate API
+	// graph, but the admission boundary relies on both JobStatus and PodStatus
+	// when authenticating terminal progress and scheduler/node updates.
+	for _, root := range []reflect.Type{
+		reflect.TypeOf(batchv1.JobSpec{}),
+		reflect.TypeOf(batchv1.JobStatus{}),
+		reflect.TypeOf(corev1.PodStatus{}),
+	} {
+		visit(root)
+	}
 	sort.Slice(entries, func(left, right int) bool { return entries[left].Type < entries[right].Type })
 	canonical, err := json.Marshal(entries)
 	if err != nil {
-		panic(fmt.Sprintf("marshal reachable Job API surface: %v", err))
+		panic(fmt.Sprintf("marshal reachable Job/Pod API surface: %v", err))
 	}
 	digest := sha256.Sum256(canonical)
 	return fmt.Sprintf("%x", digest)
@@ -556,9 +574,11 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		"run: make verify-source",
 		"run: make test-race",
 		"DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}",
+		"E2E_RELEASE_CHART_OUTPUT: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
 		"KIND_NODE_IMAGE: ${{ matrix.node_image }}",
 		"K8S_VERSION: ${{ matrix.kubernetes_version }}",
 		"run: make e2e",
+		"uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
 	}
 	for _, marker := range required {
 		if !bytes.Contains(contents, []byte(marker)) {
@@ -769,29 +789,56 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: kubernetes-e2e strategy must consume only the verified dynamic matrix with fail-fast disabled", path)
 	}
 	lifecycleSteps := make([]workflowStep, 0, 1)
-	for _, candidate := range e2e.Steps {
+	lifecycleIndex := -1
+	for index, candidate := range e2e.Steps {
 		if candidate.Run == "make e2e" {
 			lifecycleSteps = append(lifecycleSteps, candidate)
+			lifecycleIndex = index
 		}
 	}
 	if len(lifecycleSteps) != 1 {
 		return fmt.Errorf("%s: kubernetes-e2e must contain exactly one run: make e2e step", path)
 	}
 	lifecycle := lifecycleSteps[0]
-	if lifecycle.If != "" || lifecycle.Shell != "bash" || lifecycle.WorkingDirectory != "" {
+	if lifecycle.ID != "lifecycle" || lifecycle.If != "" || lifecycle.Shell != "bash" || lifecycle.WorkingDirectory != "" {
 		return fmt.Errorf("%s: run: make e2e must be unconditional, run from the checkout root, and use explicit bash", path)
 	}
 	wantMatrixEnv := map[string]string{
-		"DOCKER_CONTEXT":         "${{ steps.docker-context.outputs.name }}",
-		"E2E_DIRECT_HOST_ACCESS": "1",
-		"E2E_PTAH_REVISION":      "5451155ed00de348abbb6dbabc5370401dc23772",
-		"E2E_PTAH_SOURCE_DIR":    "${{ runner.temp }}/ptah",
-		"E2E_RUN_ID":             "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}",
-		"KIND_NODE_IMAGE":        "${{ matrix.node_image }}",
-		"K8S_VERSION":            "${{ matrix.kubernetes_version }}",
+		"DOCKER_CONTEXT":           "${{ steps.docker-context.outputs.name }}",
+		"E2E_DIRECT_HOST_ACCESS":   "1",
+		"E2E_PTAH_REVISION":        "00fc362c943bfb9d0363d5890bf449a2a9b5e7cf",
+		"E2E_PTAH_SOURCE_DIR":      "${{ runner.temp }}/ptah",
+		"E2E_RELEASE_CHART_OUTPUT": "${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
+		"E2E_RUN_ID":               "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}",
+		"KIND_NODE_IMAGE":          "${{ matrix.node_image }}",
+		"K8S_VERSION":              "${{ matrix.kubernetes_version }}",
 	}
 	if !equalStringMap(lifecycle.Env, wantMatrixEnv) {
 		return fmt.Errorf("%s: run: make e2e must use exactly the audited lifecycle environment bindings", path)
+	}
+	upload, err := requireWorkflowStep(path, "kubernetes-e2e", e2e, "release-chart-evidence")
+	if err != nil {
+		return err
+	}
+	if upload.Name != "Preserve exact installed release chart" || lifecycleIndex < 0 ||
+		lifecycleIndex+1 >= len(e2e.Steps) || e2e.Steps[lifecycleIndex+1].ID != upload.ID {
+		return fmt.Errorf("%s: installed chart evidence must immediately follow the complete lifecycle", path)
+	}
+	if err := verifyUpdaterActionStep(
+		path,
+		"kubernetes-e2e",
+		upload,
+		"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+		map[string]string{
+			"name":              "installed-release-chart-${{ matrix.minor_slug }}",
+			"path":              "${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
+			"if-no-files-found": "error",
+			"retention-days":    "90",
+			"compression-level": "0",
+			"overwrite":         "true",
+		},
+	); err != nil {
+		return err
 	}
 
 	gate := workflow.Jobs["kubernetes-support-gate"]
@@ -1100,7 +1147,7 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 }
 
 func verifyReleaseWorkflow(path string) error {
-	workflow, _, err := readWorkflow(path)
+	workflow, contents, err := readWorkflow(path)
 	if err != nil {
 		return err
 	}
@@ -1135,8 +1182,13 @@ func verifyReleaseWorkflow(path string) error {
 	if preflight.TimeoutMinutes != releasePreflightJobTimeoutMinutes {
 		return fmt.Errorf("%s: support preflight timeout must be %d minutes", path, releasePreflightJobTimeoutMinutes)
 	}
-	if !equalStringMap(preflight.Outputs, map[string]string{"source-sha": "${{ steps.support-evidence.outputs.source-sha }}"}) {
-		return fmt.Errorf("%s: support preflight must expose its verified source SHA", path)
+	if !equalStringMap(preflight.Outputs, map[string]string{
+		"chart-sha256":              "${{ steps.support-evidence.outputs.chart-sha256 }}",
+		"kubernetes-support-window": "${{ steps.support-evidence.outputs.kubernetes-support-window }}",
+		"source-sha":                "${{ steps.support-evidence.outputs.source-sha }}",
+		"support-evidence-run-id":   "${{ steps.support-evidence.outputs.support-evidence-run-id }}",
+	}) {
+		return fmt.Errorf("%s: support preflight must expose its verified source SHA, CI run, support window, and installed chart digest", path)
 	}
 	evidence, err := requireWorkflowStep(path, "support-preflight", preflight, "support-evidence")
 	if err != nil {
@@ -1162,16 +1214,32 @@ func verifyReleaseWorkflow(path string) error {
 		".conclusion == \"success\"",
 		"<<<\"$runs\" > \"$run_ids_file\"",
 		"mapfile -t run_ids < \"$run_ids_file\"",
+		`[[ "$run_id" =~ ^[1-9][0-9]*$ ]]`,
 		"actions/runs/$run_id/jobs",
 		".name == \"Kubernetes support gate\"",
+		"actions/runs/$evidence_run/artifacts",
+		"installed-release-chart-%s\\n",
+		`(.minor_slug == (.minor | gsub("\\."; "-")))`,
+		"gh run download \"$evidence_run\"",
+		"cmp \"$canonical_chart\" \"$chart_path\"",
+		`[[ "$evidence_run" =~ ^[1-9][0-9]*$ ]]`,
+		"printf 'chart-sha256=%s\\n' \"$chart_sha256\"",
+		`kubernetes_support_window="$(jq -er '[.[].minor] | join(",")' <<<"$support_matrix")"`,
+		"printf 'kubernetes-support-window=%s\\n' \"$kubernetes_support_window\"",
 		"poll_deadline_epoch=$(( $(date -u +%s) + SUPPORT_POLL_TIMEOUT_MINUTES * 60 ))",
 		"remaining_seconds=$((poll_deadline_epoch - $(date -u +%s)))",
-		"printf 'source-sha=%s\\n' \"$GITHUB_SHA\" >> \"$GITHUB_OUTPUT\"",
+		"printf 'source-sha=%s\\n' \"$GITHUB_SHA\"",
+		"printf 'support-evidence-run-id=%s\\n' \"$evidence_run\"",
+		`} >> "$GITHUB_OUTPUT"`,
 	}
 	for _, marker := range requiredEvidence {
 		if !strings.Contains(evidence.Run, marker) {
 			return fmt.Errorf("%s: support preflight is missing exact-CI evidence marker %q", path, marker)
 		}
+	}
+	evidenceDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(evidence.Run)))
+	if evidenceDigest != releaseSupportEvidenceRunSHA256 {
+		return fmt.Errorf("%s: support preflight shell digest %s differs from the audited installed-chart evidence contract", path, evidenceDigest)
 	}
 	if strings.Contains(evidence.Run, "mapfile -t run_ids < <(jq") {
 		return fmt.Errorf("%s: support preflight must check CI-run JSON decoding before polling", path)
@@ -1184,7 +1252,53 @@ func verifyReleaseWorkflow(path string) error {
 	if publish.If != "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.support-preflight.outputs.source-sha == github.sha" {
 		return fmt.Errorf("%s: publish must bind the preflight source SHA to the tag commit", path)
 	}
-	return nil
+	chartPackage, err := requireWorkflowStep(path, "publish", publish, "chart-package")
+	if err != nil {
+		return err
+	}
+	if chartPackage.If != "" || chartPackage.Uses != "" || chartPackage.Shell != "bash" ||
+		chartPackage.WorkingDirectory != "" || len(chartPackage.With) != 0 ||
+		!equalStringMap(chartPackage.Env, map[string]string{
+			"TESTED_CHART_SHA256": "${{ needs.support-preflight.outputs.chart-sha256 }}",
+		}) {
+		return fmt.Errorf("%s: release chart package must consume only the exact installed-chart digest", path)
+	}
+	for _, marker := range []string{
+		`chart_sha256="$(sha256sum "$chart_path" | awk '{print $1}')"`,
+		`[[ "$TESTED_CHART_SHA256" =~ ^[0-9a-f]{64}$ ]]`,
+		`[[ "$chart_sha256" == "$TESTED_CHART_SHA256" ]]`,
+	} {
+		if !strings.Contains(chartPackage.Run, marker) {
+			return fmt.Errorf("%s: release chart package is missing installed-artifact binding %q", path, marker)
+		}
+	}
+	chartPackageDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(chartPackage.Run)))
+	if chartPackageDigest != releaseChartPackageRunSHA256 {
+		return fmt.Errorf("%s: release chart package shell digest %s differs from the audited installed-artifact binding", path, chartPackageDigest)
+	}
+	artifacts, err := requireWorkflowStep(path, "publish", publish, "artifacts")
+	if err != nil {
+		return err
+	}
+	if artifacts.If != "" || artifacts.Uses != "" || artifacts.Shell != "bash" ||
+		artifacts.WorkingDirectory != "" || len(artifacts.With) != 0 ||
+		!equalStringMap(artifacts.Env, map[string]string{
+			"TESTED_KUBERNETES_SUPPORT_WINDOW": "${{ needs.support-preflight.outputs.kubernetes-support-window }}",
+			"TESTED_SUPPORT_EVIDENCE_RUN_ID":   "${{ needs.support-preflight.outputs.support-evidence-run-id }}",
+		}) {
+		return fmt.Errorf("%s: immutable release manifest must consume only the verified CI run and Kubernetes support window", path)
+	}
+	for _, marker := range []string{
+		`[[ "$TESTED_SUPPORT_EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]`,
+		`[[ "$TESTED_KUBERNETES_SUPPORT_WINDOW" =~ ^[0-9]+\.[0-9]+(,[0-9]+\.[0-9]+)*$ ]]`,
+		`printf 'support-evidence-run-id=%s\n' "$TESTED_SUPPORT_EVIDENCE_RUN_ID"`,
+		`printf 'kubernetes-support-window=%s\n' "$TESTED_KUBERNETES_SUPPORT_WINDOW"`,
+	} {
+		if !strings.Contains(artifacts.Run, marker) {
+			return fmt.Errorf("%s: immutable release manifest is missing support evidence binding %q", path, marker)
+		}
+	}
+	return verifyAuditedWorkflowDigest(path, contents, releaseWorkflowSHA256)
 }
 
 type workflowDocument struct {
@@ -1422,6 +1536,8 @@ type sourceContractStep struct {
 type e2eWiringFiles struct {
 	makefile                   string
 	harness                    string
+	kindConfig                 string
+	apiServerEndpointFilter    string
 	staticChecks               string
 	dataPlane                  string
 	assertions                 string
@@ -1491,27 +1607,51 @@ const apiServerFeatureGateScopeContract = `assert_api_server_feature_gate_scope(
 	component_configs_file=$WORK_DIR/component-configs.json
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		-n kube-system get pods -o json >"$control_plane_pods_file"
-	jq -e --arg expected "$expected_api_server_feature_gates" '
-      def component_commands($component):
-        [
-          .items[]
-          | select(.metadata.labels.component == $component)
-          | .spec.containers[]
-          | .command[]
-        ];
+	jq -e --arg expected "$expected_api_server_feature_gates" --arg cluster "$CLUSTER_NAME" '
+      def component_pods($component):
+        [.items[] | select(.metadata.labels.component == $component)];
+      def command_options($pod; $prefix):
+        [$pod.spec.containers[].command[] | select(startswith($prefix))];
+      def exact_control_plane_nodes($pods):
+        ([$pods[].spec.nodeName] | sort) ==
+          ([$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3"] | sort);
+      def component_is_ready($pod; $container_name):
+        ($pod.metadata.deletionTimestamp == null) and
+        (($pod.metadata.annotations["kubernetes.io/config.mirror"] // "") | length) > 0 and
+        ($pod.metadata.name == ($container_name + "-" + $pod.spec.nodeName)) and
+        ($pod.status.phase == "Running") and
+        ([($pod.status.conditions // [])[] | select(.type == "Ready" and .status == "True")] | length) == 1 and
+        (($pod.spec.containers // []) | length) == 1 and
+        ($pod.spec.containers[0].name == $container_name) and
+        (($pod.status.containerStatuses // []) | length) == 1 and
+        ($pod.status.containerStatuses[0].name == $container_name) and
+        ($pod.status.containerStatuses[0].ready == true) and
+        (($pod.status.containerStatuses[0].state.running | type) == "object");
 
-      (component_commands("kube-apiserver")) as $api_server |
-      (component_commands("kube-controller-manager")) as $controller_manager |
-      (component_commands("kube-scheduler")) as $scheduler |
-      ([.items[] | select(.metadata.labels.component == "kube-apiserver")] | length) == 1 and
-      ([.items[] | select(.metadata.labels.component == "kube-controller-manager")] | length) == 1 and
-      ([.items[] | select(.metadata.labels.component == "kube-scheduler")] | length) == 1 and
-      ($api_server | map(select(startswith("--feature-gates=")))) ==
-        (if $expected == "" then [] else ["--feature-gates=" + $expected] end) and
-      ($api_server | map(select(startswith("--runtime-config="))) | length) == 1 and
-      ($controller_manager | map(select(startswith("--feature-gates=")))) == [] and
-      ($scheduler | map(select(startswith("--feature-gates=")))) == []
-    ' "$control_plane_pods_file" >/dev/null ||
+      (component_pods("kube-apiserver")) as $api_servers |
+      (component_pods("kube-controller-manager")) as $controller_managers |
+      (component_pods("kube-scheduler")) as $schedulers |
+      ($api_servers | length) == 3 and
+      ($controller_managers | length) == 3 and
+      ($schedulers | length) == 3 and
+      exact_control_plane_nodes($api_servers) and
+      exact_control_plane_nodes($controller_managers) and
+      exact_control_plane_nodes($schedulers) and
+      all($api_servers[];
+        component_is_ready(.; "kube-apiserver") and
+        command_options(.; "--feature-gates=") ==
+          (if $expected == "" then [] else ["--feature-gates=" + $expected] end) and
+        (command_options(.; "--runtime-config=") | length) == 1
+      ) and
+      all($controller_managers[];
+        component_is_ready(.; "kube-controller-manager") and
+        command_options(.; "--feature-gates=") == []
+      ) and
+      all($schedulers[];
+        component_is_ready(.; "kube-scheduler") and
+        command_options(.; "--feature-gates=") == []
+      )
+	' "$control_plane_pods_file" >/dev/null ||
 		fail "control-plane feature gates are not confined to the API server or kind runtime-config was replaced"
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		-n kube-system get configmaps kubelet-config kube-proxy -o json >"$component_configs_file"
@@ -1533,6 +1673,147 @@ const apiServerFeatureGateScopeContract = `assert_api_server_feature_gate_scope(
 		fail "API-server-only feature gates leaked into kubelet or kube-proxy configuration"
 }`
 
+const kindHATopologyContract = `assert_kind_ha_topology() {
+	kind get nodes --name "$CLUSTER_NAME" | LC_ALL=C sort >"$KIND_NODE_INVENTORY_FILE"
+	if ! {
+		printf '%s\n' \
+			"${CLUSTER_NAME}-control-plane" \
+			"${CLUSTER_NAME}-control-plane2" \
+			"${CLUSTER_NAME}-control-plane3" \
+			"${CLUSTER_NAME}-worker"
+	} | LC_ALL=C sort | cmp -s - "$KIND_NODE_INVENTORY_FILE"; then
+		fail "kind cluster does not have the exact three-control-plane, one-worker topology"
+	fi
+	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+		get nodes -o json >"$NODE_READINESS_FILE"
+	jq -e --arg cluster "$CLUSTER_NAME" '
+      ([.items[].metadata.name] | sort) == ([$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3", $cluster + "-worker"] | sort) and
+      ([.items[] | select(.metadata.labels["node-role.kubernetes.io/control-plane"] != null)] | length) == 3 and
+      ([.items[] | select(.metadata.labels["node-role.kubernetes.io/control-plane"] == null)] | length) == 1 and
+      all(.items[];
+        any((.status.conditions // [])[];
+          .type == "Ready" and .status == "True"
+        )
+      )
+    ' "$NODE_READINESS_FILE" >/dev/null ||
+		fail "Kubernetes node inventory does not match the ready HA kind topology"
+}`
+
+const apiServerEndpointInventoryContract = `assert_api_server_endpoint_inventory() {
+	api_endpoint_deadline=$(($(date +%s) + 60))
+	while [ "$(date +%s)" -lt "$api_endpoint_deadline" ]; do
+		if kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+			get nodes -o json >"$NODE_READINESS_FILE" &&
+			kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+			-n default get endpointslices \
+			-l kubernetes.io/service-name=kubernetes -o json >"$API_SERVER_ENDPOINT_INVENTORY_FILE" &&
+			jq -e --arg cluster "$CLUSTER_NAME" --slurpfile nodes "$NODE_READINESS_FILE" \
+				-f "$ROOT_DIR/hack/api-server-endpoint-inventory.jq" \
+				"$API_SERVER_ENDPOINT_INVENTORY_FILE" >/dev/null &&
+			probe_api_server_endpoints; then
+			return 0
+		fi
+		sleep 1
+	done
+	fail "default Kubernetes Service did not advertise and serve exactly the three control-plane API server endpoints"
+}`
+
+const apiServerEndpointProbeContract = `probe_api_server_endpoints() {
+	jq -er '
+      [.items[]
+        | select(.metadata.labels["kubernetes.io/service-name"] == "kubernetes")
+        | .endpoints[].addresses[]]
+      | sort[]
+    ' "$API_SERVER_ENDPOINT_INVENTORY_FILE" >"$API_SERVER_ENDPOINT_ADDRESS_FILE" || return 1
+	api_server_endpoint_probe_count=0
+	while IFS= read -r api_server_endpoint; do
+		api_server_endpoint_probe_count=$((api_server_endpoint_probe_count + 1))
+		if ! api_server_readyz=$(docker --context "$DOCKER_CONTEXT" exec \
+			"${CLUSTER_NAME}-control-plane" \
+			kubectl --kubeconfig /etc/kubernetes/admin.conf \
+			--server "https://${api_server_endpoint}:6443" \
+			--tls-server-name kubernetes \
+			--request-timeout=10s get --raw=/readyz 2>/dev/null); then
+			return 1
+		fi
+		[ "$api_server_readyz" = ok ] || return 1
+	done <"$API_SERVER_ENDPOINT_ADDRESS_FILE"
+	[ "$api_server_endpoint_probe_count" -eq 3 ]
+}`
+
+const apiServerEndpointInventoryFilterContract = `if ($nodes | length) != 1 then false
+else
+  [$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3"] as $control_plane_names |
+  [$nodes[0].items[]
+    | select(.metadata.labels["node-role.kubernetes.io/control-plane"] != null)
+    | select(.metadata.name as $name | any($control_plane_names[]; . == $name))
+  ] as $control_plane_nodes |
+  [$control_plane_nodes[] |
+    [(.status.addresses // [])[] | select(.type == "InternalIP") | .address] as $internal_ips |
+    select(($internal_ips | length) == 1) |
+    $internal_ips[0]
+  ] as $control_plane_addresses |
+  [.items[] | select(.metadata.labels["kubernetes.io/service-name"] == "kubernetes")] as $slices |
+  [$slices[].endpoints[]] as $endpoints |
+  [$endpoints[].addresses[]] as $addresses |
+  ($control_plane_nodes | length) == 3 and
+  ([$control_plane_nodes[].metadata.name] | sort) == ($control_plane_names | sort) and
+  ($control_plane_addresses | length) == 3 and
+  ($control_plane_addresses | unique | length) == 3 and
+  all($control_plane_addresses[]; test("^[0-9]+(\\.[0-9]+){3}$")) and
+  ($slices | length) > 0 and
+  all($slices[];
+    .addressType == "IPv4" and
+    (.ports | length) == 1 and
+    .ports[0].name == "https" and
+    (.ports[0].protocol == null or .ports[0].protocol == "TCP") and
+    .ports[0].port == 6443
+  ) and
+  ($endpoints | length) == 3 and
+  all($endpoints[];
+    .conditions.ready != false and
+    .conditions.serving != false and
+    .conditions.terminating != true and
+    (.addresses | length) == 1
+  ) and
+  ($addresses | length) == 3 and
+  ($addresses | unique | length) == 3 and
+  all($addresses[]; test("^[0-9]+(\\.[0-9]+){3}$")) and
+  ($addresses | sort) == ($control_plane_addresses | sort)
+end
+`
+
+const registryHostsOnKindNodesContract = `configure_registry_hosts_on_kind_nodes() {
+	for kind_node_container in \
+		"${CLUSTER_NAME}-control-plane" \
+		"${CLUSTER_NAME}-control-plane2" \
+		"${CLUSTER_NAME}-control-plane3" \
+		"${CLUSTER_NAME}-worker"; do
+		registry_dns_deadline=$(($(date +%s) + 30))
+		registry_dns_ready=0
+		while [ "$(date +%s)" -lt "$registry_dns_deadline" ]; do
+			if docker --context "$DOCKER_CONTEXT" exec "$kind_node_container" \
+				getent ahostsv4 "$REGISTRY_DNS_NAME" 2>/dev/null |
+				awk -v expected="$REGISTRY_IP" '$1 == expected {found = 1} END {exit !found}'; then
+				registry_dns_ready=1
+				break
+			fi
+			sleep 1
+		done
+		[ "$registry_dns_ready" -eq 1 ] ||
+			fail "registry network alias did not resolve on kind node $kind_node_container"
+		docker --context "$DOCKER_CONTEXT" exec "$kind_node_container" \
+			mkdir -p "/etc/containerd/certs.d/${REGISTRY_HOST}"
+		docker --context "$DOCKER_CONTEXT" cp "$REGISTRY_HOSTS_FILE" \
+			"${kind_node_container}:/etc/containerd/certs.d/${REGISTRY_HOST}/hosts.toml"
+		if ! docker --context "$DOCKER_CONTEXT" exec "$kind_node_container" \
+			cat "/etc/containerd/certs.d/${REGISTRY_HOST}/hosts.toml" |
+			cmp -s "$REGISTRY_HOSTS_FILE" -; then
+			fail "registry hosts configuration differs on kind node $kind_node_container"
+		fi
+	done
+}`
+
 func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyMakeE2ETarget(files.makefile); err != nil {
 		return err
@@ -1547,6 +1828,12 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		return err
 	}
 	if err := verifyControllerObjectSchemaAssets(files); err != nil {
+		return err
+	}
+	if err := verifyAPIServerEndpointInventoryFilter(files.apiServerEndpointFilter); err != nil {
+		return err
+	}
+	if err := verifyKindHAConfig(files.kindConfig); err != nil {
 		return err
 	}
 
@@ -1591,6 +1878,60 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("runtime generated-name boundary fixture", `RUNTIME_FULLNAME=$(dns_name ptah-runtime-generated-name-prefix-boundary-proof "$identity" 60)`),
 		exactSourceLine("runtime generated-name boundary length", `[ "${#RUNTIME_FULLNAME}" -eq 60 ] || fail "runtime fullname boundary fixture must be exactly 60 characters"`),
 		exactSourceLine("node readiness snapshot path", `NODE_READINESS_FILE=$WORK_DIR/node-readiness.json`),
+		exactSourceLine("kind node inventory path", `KIND_NODE_INVENTORY_FILE=$WORK_DIR/kind-node-inventory.txt`),
+		exactSourceLine("API server endpoint inventory path", `API_SERVER_ENDPOINT_INVENTORY_FILE=$WORK_DIR/api-server-endpoints.json`),
+		exactSourceLine("API server endpoint address path", `API_SERVER_ENDPOINT_ADDRESS_FILE=$WORK_DIR/api-server-endpoint-addresses.txt`),
+		exactSourceLine("daemon-side task claim name", `TASK_CLAIM_VOLUME=$(dns_name ptah-e2e-claim "$identity" 63)`),
+		exactSourceLine("daemon-side task claim nonce", `TASK_CLAIM_TOKEN=$(openssl rand -hex 16)`),
+		exactSourceLine("daemon-side task claim create latch", `TASK_CLAIM_CREATE_STARTED=0`),
+		exactSourceLine("task claim ownership verifier implementation", `task_claim_matches_owner() {`),
+		exactSourceLineSequence("task claim exact immutable labels", []string{
+			`.["operator.ptah.dev/e2e-owner"] == $owner and`,
+			`.["operator.ptah.dev/e2e-component"] == "task-claim" and`,
+			`.["operator.ptah.dev/e2e-claim-token"] == $token`,
+		}),
+		exactSourceLine("task claim acquisition implementation", `acquire_task_claim() {`),
+		exactSourceLineSequence("task claim cleanup armed before create", []string{
+			`[ "$TASK_CLAIM_CREATE_STARTED" -eq 0 ] || fail "task identity claim acquisition was attempted more than once"`,
+			`TASK_CLAIM_CREATE_STARTED=1`,
+		}),
+		exactSourceLineSequence("atomic daemon-side task claim creation", []string{
+			`if ! created_claim=$(docker --context "$DOCKER_CONTEXT" volume create \`,
+			`--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \`,
+			`--label 'operator.ptah.dev/e2e-component=task-claim' \`,
+			`--label "operator.ptah.dev/e2e-claim-token=${TASK_CLAIM_TOKEN}" \`,
+			`"$TASK_CLAIM_VOLUME"); then`,
+		}),
+		exactSourceLineSequence("task claim post-create ownership latch", []string{
+			`if ! task_claim_matches_owner; then`,
+			`fail "E2E identity $identity is already claimed on Docker context $SELECTED_DOCKER_CONTEXT; choose another E2E_RUN_ID"`,
+			`fi`,
+			`TASK_CLAIM_ACQUIRED=1`,
+		}),
+		exactSourceLine("image-audit ownership verifier implementation", `image_audit_container_matches_task() {`),
+		exactSourceLineSequence("image-audit exact full-ID labels", []string{
+			`.[0].Id == $id and`,
+			`.[0].Name == $name and`,
+			`.[0].Config.Labels["operator.ptah.dev/e2e-owner"] == $owner and`,
+			`.[0].Config.Labels["operator.ptah.dev/e2e-component"] == "image-audit" and`,
+			`.[0].Config.Labels["operator.ptah.dev/e2e-claim-token"] == $token`,
+		}),
+		exactSourceLine("image-audit creation implementation", `create_image_audit_container() {`),
+		exactSourceLine("image-audit cleanup armed before create", `IMAGE_AUDIT_CONTAINER_CREATED=1`),
+		exactSourceLineSequence("image-audit labeled creation", []string{
+			`if ! image_audit_id=$(docker --context "$DOCKER_CONTEXT" create \`,
+			`--name "$IMAGE_AUDIT_CONTAINER" \`,
+			`--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \`,
+			`--label 'operator.ptah.dev/e2e-component=image-audit' \`,
+			`--label "operator.ptah.dev/e2e-claim-token=${TASK_CLAIM_TOKEN}" \`,
+			`"$image_audit_source"); then`,
+		}),
+		exactSourceLineSequence("image-audit captured full-ID latch", []string{
+			`IMAGE_AUDIT_CONTAINER_ID=$image_audit_id`,
+			`image_audit_container_matches_task "$IMAGE_AUDIT_CONTAINER_ID" ||`,
+		}),
+		exactSourceLine("image-audit removal implementation", `remove_image_audit_container() {`),
+		exactSourceLine("image-audit removal by captured ID", `docker --context "$DOCKER_CONTEXT" container rm "$IMAGE_AUDIT_CONTAINER_ID" >/dev/null ||`),
 		exactSourceLineSequence("credential-safe node readiness diagnostics", []string{
 			`collect_node_readiness_diagnostics() {`,
 			`node_diagnostics_context=$1`,
@@ -1636,7 +1977,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`collect_node_readiness_diagnostics "$node_readiness_context"`,
 			`return 1`,
 			`fi`,
-			`if ! jq -e '.items | length > 0' "$NODE_READINESS_FILE" >/dev/null; then`,
+			`if ! jq -e '.items | length == 4' "$NODE_READINESS_FILE" >/dev/null; then`,
 			`collect_node_readiness_diagnostics "$node_readiness_context"`,
 			`return 1`,
 			`fi`,
@@ -1652,7 +1993,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \`,
 			`get nodes -o json >"$NODE_READINESS_FILE" &&`,
 			`jq -e '`,
-			`((.items | length) > 0) and`,
+			`((.items | length) == 4) and`,
 			`all(.items[];`,
 			`any((.status.conditions // [])[];`,
 			`.type == "Ready" and .status == "True"`,
@@ -1661,6 +2002,10 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`' "$NODE_READINESS_FILE" >/dev/null`,
 			`}`,
 		}),
+		exactSourceLine("kind HA topology implementation", `assert_kind_ha_topology() {`),
+		exactSourceLine("API server endpoint inventory implementation", `assert_api_server_endpoint_inventory() {`),
+		exactSourceLine("API server direct endpoint probe implementation", `probe_api_server_endpoints() {`),
+		exactSourceLine("all-node registry configuration implementation", `configure_registry_hosts_on_kind_nodes() {`),
 		exactSourceLineSequence("hard node readiness requirement", []string{
 			`require_ready_nodes() {`,
 			`required_readiness_context=$1`,
@@ -1670,8 +2015,30 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`}`,
 		}),
 		exactSourceLine("API-server feature gate runtime assertion", `assert_api_server_feature_gate_scope() {`),
+		exactSourceLine("task-owned image-audit cleanup latch", `if [ "$IMAGE_AUDIT_CONTAINER_CREATED" -eq 1 ]; then`),
+		exactSourceLine("task-owned image-audit cleanup full ID", `image_audit_cleanup_id=$IMAGE_AUDIT_CONTAINER_ID`),
+		exactSourceLine("task-owned image-audit cleanup verification", `if ! image_audit_container_matches_task "$image_audit_cleanup_id"; then`),
+		exactSourceLine("task-owned image-audit cleanup removal", `elif ! docker --context "$DOCKER_CONTEXT" container rm -f "$image_audit_cleanup_id" >/dev/null 2>&1; then`),
+		exactSourceLineSequence("task claim cleanup presence check", []string{
+			`if [ "$TASK_CLAIM_CREATE_STARTED" -eq 1 ] &&`,
+			`docker --context "$DOCKER_CONTEXT" volume inspect "$TASK_CLAIM_VOLUME" >/dev/null 2>&1; then`,
+		}),
+		exactSourceLine("task claim cleanup ownership verification", `if task_claim_matches_owner; then`),
+		exactSourceLine("task claim cleanup removal", `if ! docker --context "$DOCKER_CONTEXT" volume rm "$TASK_CLAIM_VOLUME" >/dev/null 2>&1; then`),
+		exactSourceLine("task claim changed-owner refusal", `elif [ "$TASK_CLAIM_ACQUIRED" -eq 1 ]; then`),
+		exactSourceLine("task claim before collision checks", `acquire_task_claim`),
+		exactSourceLine("post-claim cluster inventory", `if ! existing_clusters=$(kind get clusters); then`),
+		exactSourceLine("post-claim cluster collision refusal", `if printf '%s\n' "$existing_clusters" | grep -Fx "$CLUSTER_NAME" >/dev/null; then`),
 		exactSourceLine("API-server feature gate patch implementation", `append_api_server_feature_gate_patch() {`),
 		exactSourceLine("API-server feature gate patch call", `append_api_server_feature_gate_patch "$K8S_MAJOR_MINOR" "$KIND_CONFIG"`),
+		exactSourceLineSequence("operator image audit by captured ID", []string{
+			`create_image_audit_container "$OPERATOR_IMAGE"`,
+			`docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"`,
+		}),
+		exactSourceLineSequence("fixture image audit by captured ID", []string{
+			`create_image_audit_container "$FIXTURE_BUILD_IMAGE"`,
+			`docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"`,
+		}),
 		exactSourceLineSequence("kind cluster creation", []string{
 			`kind create cluster \`,
 			`--name "$CLUSTER_NAME" \`,
@@ -1680,6 +2047,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`--kubeconfig "$KUBECONFIG_FILE" \`,
 			`--wait 5m`,
 			`require_ready_nodes "after kind cluster creation"`,
+			`assert_kind_ha_topology`,
+			`assert_api_server_endpoint_inventory`,
 		}),
 		exactSourceLine("live API-server-only feature gate contract", `assert_api_server_feature_gate_scope "$EXPECTED_API_SERVER_FEATURE_GATES"`),
 		exactSourceLineSequence("API server version binding", []string{
@@ -1712,6 +2081,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`"$CONTROLLER_BATCH_OPENAPI_FILE" >/dev/null ||`,
 			`fail "Kubernetes $K8S_VERSION Job/Pod API exceeds the reviewed controller write boundary"`,
 		}),
+		exactSourceLine("all-node registry configuration call", `configure_registry_hosts_on_kind_nodes`),
 		exactSourceLine("runtime fullname release-values argument", `--arg fullnameOverride "$RUNTIME_FULLNAME" \`),
 		exactSourceLine("runtime fullname release-values binding", `fullnameOverride: $fullnameOverride,`),
 		exactSourceLineSequence("immediate predecessor install readiness gate", []string{
@@ -1740,6 +2110,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`E2E_HELM_RELEASE=$HELM_RELEASE \`,
 			`E2E_CHART_PACKAGE=$CHART_PACKAGE \`,
 			`E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \`,
+			`E2E_PREDECESSOR_IDENTITY_FILE=$PREDECESSOR_IDENTITY_FILE \`,
 		}),
 		exactSourceLineSequence("candidate guarded API version propagation", []string{
 			`E2E_KUBERNETES_VERSION=$K8S_VERSION \`,
@@ -1757,13 +2128,30 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \`,
 			`E2E_HELM_RELEASE=$HELM_RELEASE \`,
 			`E2E_CHART_PACKAGE=$CHART_PACKAGE \`,
+			`E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \`,
+			`E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \`,
+			`E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \`,
+			`E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE \`,
+			`E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE \`,
+			`E2E_CURRENT_RELEASE_SEQUENCE=$CURRENT_RELEASE_SEQUENCE \`,
+			`E2E_NEXT_RELEASE_SEQUENCE=$NEXT_RELEASE_SEQUENCE \`,
 			`E2E_KUBERNETES_VERSION=$K8S_VERSION \`,
 			`E2E_PHASE=uninstall \`,
 			`"$ROOT_DIR/hack/e2e-crd-upgrade.sh"`,
 		}),
+		exactSourceLine("post-lifecycle installed chart export", `export_release_chart`),
 		exactSourceLine("terminal Kubernetes lifecycle evidence", `printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"`),
 	}
 	if err := verifyOrderedSourceContract(harness, harnessContents, harnessContract); err != nil {
+		return err
+	}
+	if err := verifyAuditedShellFunctionDigest(
+		harness,
+		harnessContents,
+		"export_release_chart",
+		releaseChartExportRunSHA256,
+		"exact post-lifecycle installed chart export",
+	); err != nil {
 		return err
 	}
 	if err := verifyExactShellFunction(
@@ -1782,6 +2170,42 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	); err != nil {
 		return err
 	}
+	if err := verifyExactShellFunctionContract(
+		harness,
+		harnessContents,
+		"assert_kind_ha_topology",
+		kindHATopologyContract,
+		"kind HA topology contract",
+	); err != nil {
+		return err
+	}
+	if err := verifyExactShellFunctionContract(
+		harness,
+		harnessContents,
+		"assert_api_server_endpoint_inventory",
+		apiServerEndpointInventoryContract,
+		"API server endpoint inventory contract",
+	); err != nil {
+		return err
+	}
+	if err := verifyExactShellFunctionContract(
+		harness,
+		harnessContents,
+		"probe_api_server_endpoints",
+		apiServerEndpointProbeContract,
+		"API server direct endpoint probe contract",
+	); err != nil {
+		return err
+	}
+	if err := verifyExactShellFunctionContract(
+		harness,
+		harnessContents,
+		"configure_registry_hosts_on_kind_nodes",
+		registryHostsOnKindNodesContract,
+		"all-node registry hosts contract",
+	); err != nil {
+		return err
+	}
 	if bytes.Contains(harnessContents, []byte("featureGates:")) {
 		return fmt.Errorf("%s: global kind featureGates are forbidden; guarded fields must be enabled only on the API server", harness)
 	}
@@ -1792,13 +2216,25 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"collect_node_readiness_diagnostics",
 		"wait_for_ready_nodes",
 		"nodes_ready_now",
+		"assert_kind_ha_topology",
+		"assert_api_server_endpoint_inventory",
+		"probe_api_server_endpoints",
+		"configure_registry_hosts_on_kind_nodes",
 		"require_ready_nodes",
 		"append_api_server_feature_gate_patch",
 		"assert_api_server_feature_gate_scope",
+		"task_claim_matches_owner",
+		"acquire_task_claim",
+		"image_audit_container_matches_task",
+		"create_image_audit_container",
+		"remove_image_audit_container",
 	} {
 		if err := verifySingleShellFunctionDefinition(harness, harnessContents, functionName); err != nil {
 			return err
 		}
+	}
+	if count := bytes.Count(harnessContents, []byte("\nremove_image_audit_container\n")); count != 2 {
+		return fmt.Errorf("%s: expected exactly two task-owned image-audit removals, found %d", harness, count)
 	}
 	if err := verifySingleDirectHelmInstallAttempt(harness, harnessContents); err != nil {
 		return err
@@ -1823,6 +2259,18 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	}
 	dataPlaneContract := []sourceContractStep{
 		exactSourceLine("fail-fast shell mode", "set -eu"),
+		exactSourceLine("private durable Job evidence root", `JOB_EVIDENCE_DIR=$WORK_DIR/job-evidence`),
+		exactSourceLineSequence("private durable Job evidence root initialization", []string{
+			`: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"`,
+			`mkdir "$JOB_EVIDENCE_DIR"`,
+			`chmod 700 "$JOB_EVIDENCE_DIR"`,
+		}),
+		exactSourceLineSequence("credential scanner fail-closed implementation", []string{
+			`[ -s "$CREDENTIAL_PATTERNS_FILE" ] ||`,
+			`fail "credential scanner has no non-empty protected patterns"`,
+			`if grep -F -f "$CREDENTIAL_PATTERNS_FILE" "$scan_file" >/dev/null; then`,
+			`fail "a task credential escaped into $scan_context"`,
+		}),
 		exactSourceLine("operation Pod admission proof implementation", `assert_active_pod_ephemeral_container_rejected() {`),
 		exactSourceLineSequence("label-less operation Pod clone", []string{
 			`.metadata.labels["app.kubernetes.io/managed-by"],`,
@@ -1834,8 +2282,214 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`fi`,
 		}),
 		exactSourceLine("operation Pod create-origin evidence", `printf '%s\n' 'e2e data plane: PASS operation Pod create-origin enforcement'`),
+		exactSourceLine("durable Job archive validation implementation", `validate_job_evidence_directory() {`),
+		exactSourceLine("durable Job archive private directory validation", `require_mode_0700_directory "$validated_archive" "Job evidence archive"`),
+		exactSourceLine("durable Job archive exact entry count", `[ "$archive_entry_count" -eq 5 ] ||`),
+		exactSourceLineSequence("durable Job archive exact five-file inventory", []string{
+			`"$validated_job_file:Job JSON" \`,
+			`"$validated_pod_file:Pod JSON" \`,
+			`"$validated_log_file:raw ptah log" \`,
+			`"$validated_result_file:normalized result" \`,
+			`"$validated_manifest_file:manifest"; do`,
+		}),
+		exactSourceLine("durable Job archive private file validation", `require_mode_0600_regular_file "$validated_file" \`),
+		exactSourceLine("durable Job archive SHA-256 path binding", `.archiveVersion == 1 and .pathKey == $key and`),
+		exactSourceLine("durable Job archive schema-operation binding", `.schema == $schema and .operation == $operation and`),
+		exactSourceLine("durable Job archive Job identity binding", `.job.uid == $uid and (.job.name | type) == "string" and (.job.name | length) > 0 and`),
+		exactSourceLineSequence("durable Job archive schema-owner manifest binding", []string{
+			`.job.owner.apiVersion == "operator.ptah.dev/v1alpha1" and`,
+			`.job.owner.kind == "PtahSchema" and .job.owner.name == $schema and`,
+			`(.job.owner.uid | type) == "string" and (.job.owner.uid | length) > 0 and`,
+			`($expectedSchemaUID == "" or .job.owner.uid == $expectedSchemaUID) and`,
+			`.job.owner.controller == true and`,
+		}),
+		exactSourceLine("durable Job archive Pod owner binding", `.pod.owner.name == .job.name and .pod.owner.uid == .job.uid and`),
+		exactSourceLine("durable Job archive object digest binding", `.digests.jobSHA256 == $jobDigest and .digests.podSHA256 == $podDigest and`),
+		exactSourceLine("durable Job archive transport digest binding", `.digests.rawLogSHA256 == $logDigest and .digests.resultSHA256 == $resultDigest`),
+		exactSourceLine("durable Job archive Job label operation-ID binding", `.spec.template.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and`),
+		exactSourceLine("durable Job archive Job annotation operation-ID binding", `.spec.template.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and`),
+		exactSourceLineSequence("durable Job archive exact schema ownerReference", []string{
+			`([.metadata.ownerReferences[]? | select(`,
+			`.apiVersion == "operator.ptah.dev/v1alpha1" and .kind == "PtahSchema" and`,
+			`.name == $schema and .uid == $schemaUID and .controller == true)] | length) == 1 and`,
+		}),
+		exactSourceLine("durable Job archive Job completion contract", `.spec.podReplacementPolicy == "Failed" and .spec.backoffLimit == 0 and`),
+		exactSourceLineSequence("durable Job archive Pod identity binding", []string{
+			`.metadata.uid == $podUID and .metadata.name == $podName and`,
+			`.metadata.generateName == ($jobName + "-") and`,
+			`.metadata.labels["operator.ptah.dev/schema"] == $schema and`,
+			`.metadata.labels["operator.ptah.dev/operation"] == $operation and`,
+			`.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and`,
+			`.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and`,
+		}),
+		exactSourceLineSequence("durable Job archive normalized result binding", []string{
+			`.protocolVersion == 5 and .operation == $operation and`,
+			`.operationId == $operationID and .truncation == null`,
+			`' "$validated_result_file" >/dev/null ||`,
+		}),
+		exactSourceLineSequence("durable Job archive complete credential scan", []string{
+			`"$validated_job_file:exact archived Job JSON" \`,
+			`"$validated_pod_file:exact archived Pod JSON" \`,
+			`"$validated_log_file:archived raw ptah log" \`,
+			`"$validated_result_file:archived normalized result" \`,
+			`"$validated_manifest_file:archived evidence manifest"; do`,
+			`scan_file_for_credentials "${validated_material%%:*}" "${validated_material#*:}"`,
+		}),
+		exactSourceLine("supplied Job evidence identity validation implementation", `validate_supplied_job_evidence_identity() {`),
+		exactSourceLineSequence("supplied Job evidence exact Job identity binding", []string{
+			`$job.metadata.uid == $jobUID and $job.metadata.name == $jobName and`,
+			`$job.metadata.labels["operator.ptah.dev/schema"] == $schema and`,
+			`$job.metadata.labels["operator.ptah.dev/operation"] == $operation and`,
+			`$job.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and`,
+			`$job.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and`,
+		}),
+		exactSourceLineSequence("supplied Job evidence exact schema ownerReference", []string{
+			`([$job.metadata.ownerReferences[]? | select(`,
+			`.apiVersion == "operator.ptah.dev/v1alpha1" and .kind == "PtahSchema" and`,
+			`.name == $schema and .uid == $schemaUID and .controller == true)] | length) == 1 and`,
+		}),
+		exactSourceLineSequence("supplied Job evidence exact Pod identity binding", []string{
+			`$pod.metadata.uid == $podUID and $pod.metadata.name == $podName and`,
+			`$pod.metadata.generateName == ($jobName + "-") and`,
+			`$pod.metadata.labels["operator.ptah.dev/schema"] == $schema and`,
+			`$pod.metadata.labels["operator.ptah.dev/operation"] == $operation and`,
+			`$pod.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and`,
+			`$pod.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and`,
+		}),
+		exactSourceLineSequence("supplied Job evidence exact Pod owner binding", []string{
+			`([$pod.metadata.ownerReferences[]? | select(`,
+			`.apiVersion == "batch/v1" and .kind == "Job" and`,
+			`.uid == $jobUID and .name == $jobName and .controller == true)] | length) == 1`,
+		}),
+		exactSourceLine("existing Job evidence collision validation implementation", `assert_existing_job_evidence_matches_supplied() {`),
+		exactSourceLineSequence("existing Job evidence schema-operation-UID validation", []string{
+			`validate_job_evidence_directory "$existing_archive" \`,
+			`"$existing_schema" "$existing_operation" "$existing_job_uid" \`,
+			`"$existing_schema_uid"`,
+		}),
+		exactSourceLineSequence("existing Job evidence supplied identity comparison", []string{
+			`if [ "$VALIDATED_JOB_EVIDENCE_SCHEMA_UID" != "$existing_schema_uid" ] ||`,
+			`[ "$VALIDATED_JOB_EVIDENCE_OPERATION_ID" != "$existing_operation_id" ] ||`,
+			`[ "$VALIDATED_JOB_EVIDENCE_JOB_NAME" != "$existing_job_name" ] ||`,
+			`[ "$VALIDATED_JOB_EVIDENCE_POD_UID" != "$existing_pod_uid" ] ||`,
+			`[ "$VALIDATED_JOB_EVIDENCE_POD_NAME" != "$existing_pod_name" ]; then`,
+		}),
+		exactSourceLine("durable Job archive publication implementation", `publish_completed_job_evidence() {`),
+		exactSourceLine("durable Job archive supplied UID-bounded log", `publish_log_file=$3`),
+		exactSourceLine("durable Job archive supplied log private-file validation", `require_mode_0600_regular_file "$publish_log_file" "supplied UID-bounded ptah log"`),
+		exactSourceLineSequence("durable Job archive supplied schema-owner UID extraction", []string{
+			`if ! publish_schema_uid=$(jq -er \`,
+			`--arg schema "$publish_schema" '`,
+			`[.metadata.ownerReferences[]? | select(`,
+			`.apiVersion == "operator.ptah.dev/v1alpha1" and .kind == "PtahSchema" and`,
+			`.name == $schema and .controller == true and`,
+			`(.uid | type) == "string" and (.uid | length) > 0)] |`,
+		}),
+		exactSourceLineSequence("durable Job archive supplied identity validation", []string{
+			`validate_supplied_job_evidence_identity \`,
+			`"$publish_job_file" "$publish_pod_file" \`,
+			`"$publish_schema" "$publish_schema_uid" \`,
+			`"$publish_operation" "$publish_operation_id" \`,
+			`"$publish_job_uid" "$publish_job_name" "$publish_pod_uid" "$publish_pod_name"`,
+		}),
+		exactSourceLineSequence("existing durable Job archive exact identity acceptance", []string{
+			`assert_existing_job_evidence_matches_supplied \`,
+			`"$publish_archive" "$publish_schema" "$publish_schema_uid" \`,
+			`"$publish_operation" \`,
+			`"$publish_operation_id" "$publish_job_uid" "$publish_job_name" \`,
+			`"$publish_pod_uid" "$publish_pod_name"`,
+			`return 0`,
+		}),
+		exactSourceLine("durable Job archive private staging", `publish_stage=$(mktemp -d "$JOB_EVIDENCE_DIR/.${publish_key}.XXXXXX") ||`),
+		exactSourceLine("durable Job archive private staging mode", `chmod 700 "$publish_stage"`),
+		exactSourceLine("durable Job archive UID-bounded log copy", `cp "$publish_log_file" "$publish_stage/ptah.log" ||`),
+		exactSourceLineSequence("durable Job archive private staged file modes", []string{
+			`chmod 600 "$publish_stage/job.json" "$publish_stage/pod.json" \`,
+			`"$publish_stage/ptah.log" "$publish_stage/result.json"`,
+		}),
+		exactSourceLineSequence("durable Job archive persisted schema-owner binding", []string{
+			`owner: {`,
+			`apiVersion: "operator.ptah.dev/v1alpha1",`,
+			`kind: "PtahSchema",`,
+			`uid: $schemaUID,`,
+			`name: $schema,`,
+			`controller: true`,
+		}),
+		exactSourceLine("durable Job archive manifest-last staging", `' >"$publish_stage/manifest.json"`),
+		exactSourceLine("durable Job archive private manifest mode", `chmod 600 "$publish_stage/manifest.json"`),
+		exactSourceLine("durable Job archive staged validation", `validate_job_evidence_directory "$publish_stage" \`),
+		exactSourceLineSequence("atomic durable Job archive rename and validation", []string{
+			`mv "$publish_stage" "$publish_archive" ||`,
+			`fail "could not atomically publish Job evidence archive $publish_key"`,
+			`validate_job_evidence_directory "$publish_archive" \`,
+		}),
+		exactSourceLine("durable Job evidence live consistency implementation", `assert_live_job_evidence_consistent() {`),
+		exactSourceLineSequence("durable Job evidence exact live Job read", []string{
+			`if live_evidence_job=$(k -n "$TEST_NAMESPACE" get job "$live_evidence_job_name" \`,
+			`-o json --ignore-not-found 2>"$LIVE_JOB_EVIDENCE_ERROR_FILE"); then`,
+		}),
+		exactSourceLineSequence("durable Job evidence fail-closed live Job API error", []string{
+			`: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"`,
+			`fail "live Job consistency read failed before exact GC absence could be established"`,
+			`fi`,
+			`: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"`,
+			`if [ -n "$live_evidence_job" ]; then`,
+		}),
+		exactSourceLine("durable Job evidence exact live Job identity", `.metadata.name == $name and .metadata.uid == $uid and`),
+		exactSourceLineSequence("durable Job evidence exact live Pod read", []string{
+			`if live_evidence_pod=$(k -n "$TEST_NAMESPACE" get pod "$live_evidence_pod_name" \`,
+			`-o json --ignore-not-found 2>"$LIVE_JOB_EVIDENCE_ERROR_FILE"); then`,
+		}),
+		exactSourceLineSequence("durable Job evidence fail-closed live Pod API error", []string{
+			`: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"`,
+			`fail "live Pod consistency read failed before exact GC absence could be established"`,
+			`fi`,
+			`: >"$LIVE_JOB_EVIDENCE_ERROR_FILE"`,
+			`if [ -n "$live_evidence_pod" ]; then`,
+		}),
+		exactSourceLine("durable Job evidence exact live Pod identity", `.metadata.name == $podName and .metadata.uid == $podUID and`),
+		exactSourceLineSequence("durable Job evidence exact live Pod owner", []string{
+			`([.metadata.ownerReferences[]? | select(`,
+			`.apiVersion == "batch/v1" and .kind == "Job" and`,
+			`.uid == $jobUID and .name == $jobName and .controller == true)] | length) == 1`,
+		}),
+		exactSourceLineSequence("durable Job archive UID-bounded audited log capture", []string{
+			`if [ "$audit_managed_complete" -eq 1 ] && [ "$audit_container" = ptah ]; then`,
+			`cp "$LOG_FILE" "$audit_evidence_log_file" ||`,
+			`fail "could not retain UID-bounded ptah logs for exact Pod $audit_pod_name UID $audit_pod_uid"`,
+			`chmod 600 "$audit_evidence_log_file"`,
+		}),
+		exactSourceLineSequence("durable Job archive post-log exact Pod UID check", []string{
+			`audit_pod_after=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" -o json 2>/dev/null) ||`,
+			`fail "exact Pod $audit_pod_name UID $audit_pod_uid disappeared during its log audit"`,
+			`printf '%s\n' "$audit_pod_after" | jq -e \`,
+			`--arg podUID "$audit_pod_uid" \`,
+			`--arg jobUID "$audit_uid" '`,
+			`.metadata.uid == $podUID and`,
+		}),
+		exactSourceLineSequence("durable Job evidence publication before full-audit ledger", []string{
+			`publish_completed_job_evidence \`,
+			`"$audit_job_evidence_file" "$audit_pod_evidence_file" \`,
+			`"$audit_evidence_log_file"`,
+		}),
+		exactSourceLine("full-audit ledger commit after durable Job evidence", `printf '%s\n' "$audit_uid" >>"$FULLY_AUDITED_JOBS_FILE"`),
+		exactSourceLine("automatic external PostgreSQL post-capture Job-boundary implementation", `assert_schema_job_boundary_unchanged() {`),
+		exactSourceLineSequence("automatic external PostgreSQL post-capture exact Job-boundary equality", []string{
+			`($expected[0] | length) == $expectedCount and`,
+			`($actual | length) == $expectedCount and`,
+			`$actual == $expected[0]`,
+		}),
 		exactSourceLine("operation Pod generated-name binding", `[ "$CAPTURED_POD_GENERATE_NAME" = "${CAPTURED_JOB_NAME}-" ] ||`),
+		exactSourceLineSequence("selected Job archived result consumption", []string{
+			`validate_completed_job_evidence \`,
+			`"$selected_schema" "$selected_operation" "$selected_uid"`,
+		}),
+		exactSourceLine("selected Job archived result copy", `cp "$VALIDATED_JOB_EVIDENCE_DIR/result.json" "$selected_output" ||`),
+		exactSourceLine("selected Job archive path retention", `CAPTURED_JOB_EVIDENCE_DIR=$VALIDATED_JOB_EVIDENCE_DIR`),
+		exactSourceLine("selected Job optional live consistency check", `assert_live_job_evidence_consistent \`),
 		exactSourceLine("operation Job generated-name boundary fixture", `EXTERNAL_PG_SCHEMA=e2e-postgresql-external-longpod`),
+		exactSourceLine("explicit optional apply-policy input", `resource_apply=${11:-}`),
+		exactSourceLine("explicit apply-policy serialization", `} + if $apply == "" then {} else {apply: $apply} end),`),
 		exactSourceLineSequence("safe-default persistence proof", []string{
 			`k -n "$TEST_NAMESPACE" get ptahschema "$resource_schema" -o json |`,
 			`jq -e '`,
@@ -1852,10 +2506,16 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`"$ROOT_DIR/testdata/e2e/postgresql-v1.sql")`,
 		}),
 		exactSourceLine("external digest-selected OCI source", `external_reference="${external_publish_reference%:stable}@${external_digest}"`),
-		exactSourceLineSequence("external lifecycle digest-selected source call", []string{
+		exactSourceLineSequence("external lifecycle explicit Always source call", []string{
 			`create_schema_resource "$EXTERNAL_PG_SCHEMA" PostgreSQL "$EXTERNAL_PG_SECRET" \`,
 			`"$external_reference" "$EXTERNAL_PG_COORDINATION_KEY" \`,
-			`e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 45s "$QUIESCENT_INTERVAL"`,
+			`e2e-verification-policy "$REGISTRY_AUTH_SECRET" Environment 45s "$QUIESCENT_INTERVAL" Always`,
+		}),
+		exactSourceLineSequence("external automatic lifecycle assertion call", []string{
+			`assert_automatic_external_postgresql_lifecycle \`,
+			`"$EXTERNAL_PG_SCHEMA" "$EXTERNAL_PG_SECRET" "$external_reference" \`,
+			`"$external_digest" "$EXTERNAL_PG_COORDINATION_KEY" \`,
+			`"$external_coordination_digest" "$external_before"`,
 		}),
 		exactSourceLineSequence("operation generated-name boundary proof", []string{
 			`[ "${#CAPTURED_JOB_NAME}" -eq 58 ] ||`,
@@ -1864,6 +2524,14 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`fail "external PostgreSQL plan Pod generateName did not cross the truncation boundary"`,
 			`[ "${#CAPTURED_POD_NAME}" -eq 63 ] ||`,
 			`fail "external PostgreSQL plan Pod did not preserve the bounded generated name"`,
+		}),
+		exactSourceLineSequence("external PostgreSQL post-suspension durable Job-boundary proof", []string{
+			`external_suspended_observed_uids_file="$WORK_DIR/${EXTERNAL_PG_SCHEMA}-automatic-suspended-observed-uids.json"`,
+			`record_observed_jobs`,
+			`assert_schema_job_boundary_unchanged \`,
+			`"$EXTERNAL_PG_SCHEMA" "$external_before" \`,
+			`"$automatic_observed_uids_file" 7 \`,
+			`"$external_suspended_observed_uids_file"`,
 		}),
 		exactSourceLine("external per-lifecycle evidence", `printf '%s\n' 'e2e data plane: PASS external PostgreSQL bridge lifecycle'`),
 		exactSourceLine("OCI lifecycle implementation", `run_engine_lifecycle() {`),
@@ -1883,22 +2551,121 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := verifyOrderedSourceContract(dataPlane, dataPlaneContents, dataPlaneContract); err != nil {
 		return err
 	}
+	automaticFunctionPattern := regexp.MustCompile(
+		`(?ms)^assert_automatic_external_postgresql_lifecycle\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`,
+	)
+	automaticFunctionMatches := automaticFunctionPattern.FindAll(dataPlaneContents, -1)
+	if len(automaticFunctionMatches) != 1 {
+		return fmt.Errorf(
+			"%s: automatic external PostgreSQL lifecycle must have exactly one auditable function body, found %d",
+			dataPlane,
+			len(automaticFunctionMatches),
+		)
+	}
+	automaticContract := []sourceContractStep{
+		exactSourceLine("automatic external PostgreSQL lifecycle implementation", `assert_automatic_external_postgresql_lifecycle() {`),
+		exactSourceLine("automatic external PostgreSQL convergence wait", `wait_for_schema "$automatic_schema" \`),
+		exactSourceLine("automatic external PostgreSQL explicit policy evidence", `.spec.policy.apply == "Always" and`),
+		exactSourceLine("automatic external PostgreSQL approval-free status evidence", `.type == "ApprovalRequired" and .status == "False" and .reason == "Satisfied")) and`),
+		exactSourceLine("automatic external PostgreSQL durable Job-ledger refresh", `record_observed_jobs`),
+		exactSourceLineSequence("automatic external PostgreSQL archived Job materialization", []string{
+			`materialize_archived_schema_jobs "$automatic_schema" "$automatic_before" 7 \`,
+			`"$automatic_observed_uids_file" "$automatic_jobs_file"`,
+		}),
+		exactSourceLine("automatic external PostgreSQL durable Job-ledger binding", `--slurpfile observed "$automatic_observed_uids_file" \`),
+		exactSourceLineSequence("automatic external PostgreSQL exact Job history", []string{
+			`($observed[0] | type) == "array" and`,
+			`($observed[0] | length) == 7 and`,
+			`($jobs | length) == 7 and`,
+			`([$jobs[].metadata.uid] | unique | length) == 7 and`,
+			`([$jobs[].metadata.uid] | unique | sort) == $observed[0] and`,
+			`($resolve | length) == 1 and ($verify | length) == 1 and`,
+			`($observe | length) == 2 and ($plan | length) == 2 and`,
+			`($apply | length) == 1 and`,
+		}),
+		exactSourceLineSequence("automatic external PostgreSQL serialized Job order", []string{
+			`$resolve[0].status.completionTime <= $verify[0].status.startTime and`,
+			`$verify[0].status.completionTime <= $observe[0].status.startTime and`,
+			`$observe[0].status.completionTime <= $plan[0].status.startTime and`,
+			`$plan[0].status.completionTime <= $apply[0].status.startTime and`,
+			`$apply[0].status.completionTime <= $observe[1].status.startTime and`,
+			`$observe[1].status.completionTime <= $plan[1].status.startTime`,
+		}),
+		exactSourceLine("automatic external PostgreSQL Resolve result capture", `capture_selected_job_result "$automatic_schema" resolve "$automatic_resolve_uid" \`),
+		exactSourceLine("automatic external PostgreSQL Verify result capture", `capture_selected_job_result "$automatic_schema" verify "$automatic_verify_uid" \`),
+		exactSourceLine("automatic external PostgreSQL initial Observe result capture", `capture_selected_job_result "$automatic_schema" observe "$automatic_initial_observe_uid" \`),
+		exactSourceLine("automatic external PostgreSQL initial Plan result capture", `capture_selected_job_result "$automatic_schema" plan "$automatic_initial_plan_uid" \`),
+		exactSourceLine("automatic external PostgreSQL changed Plan evidence", `.planOutcome == "Changes" and (.stdout | length) > 0 and`),
+		exactSourceLine("automatic external PostgreSQL additive DDL evidence", `any(.statements[]; .sql | test("\\bCREATE[[:space:]]+TABLE\\b"; "i")) and`),
+		exactSourceLine("automatic external PostgreSQL immutable Plan evidence", `assert_plan_storage_immutable "$automatic_schema" "$automatic_plan_name" "$automatic_plan_uid"`),
+		exactSourceLine("automatic external PostgreSQL Apply result capture", `capture_selected_job_result "$automatic_schema" apply "$automatic_apply_uid" \`),
+		exactSourceLine("automatic external PostgreSQL captured Apply Job UID binding", `[ "$CAPTURED_JOB_UID" = "$automatic_apply_uid" ] ||`),
+		exactSourceLine("automatic external PostgreSQL archived Apply workload evidence", `cp "$CAPTURED_JOB_EVIDENCE_DIR/job.json" "$automatic_apply_job_file" ||`),
+		exactSourceLine("automatic external PostgreSQL archived Apply Pod evidence", `cp "$CAPTURED_JOB_EVIDENCE_DIR/pod.json" "$automatic_apply_pod_file" ||`),
+		exactSourceLineSequence("automatic external PostgreSQL Apply annotation bindings", []string{
+			`.["operator.ptah.dev/plan-fingerprint"] == $planFingerprint and`,
+			`.["operator.ptah.dev/plan-content-digest"] == $contentDigest and`,
+			`.["operator.ptah.dev/execution-binding-id"] == $executionBinding;`,
+		}),
+		exactSourceLine("automatic external PostgreSQL Apply runner image binding", `select(.name == "install-runner" and .image == $runnerImage)] | length) == 1 and`),
+		exactSourceLine("automatic external PostgreSQL Apply executor image binding", `select(.name == "ptah" and .image == $executorImage)] | length) == 1 and`),
+		exactSourceLineSequence("automatic external PostgreSQL Apply database-engine binding", []string{
+			`select(.name == "PTAH_EXPECTED_DATABASE_ENGINE" and`,
+			`.value == "PostgreSQL" and (.valueFrom // null) == null)] | length) == 1;`,
+		}),
+		exactSourceLine("automatic external PostgreSQL Apply Job object UID binding", `$job.metadata.name == $jobName and $job.metadata.uid == $jobUID and`),
+		exactSourceLineSequence("automatic external PostgreSQL Apply Job and Pod-template identity", []string{
+			`($job.metadata.annotations | exact_annotations) and`,
+			`($job.spec.template.metadata.annotations | exact_annotations) and`,
+			`($job.spec.template.spec | exact_runtime_spec) and`,
+		}),
+		exactSourceLine("automatic external PostgreSQL Apply Pod UID identity", `$pod.metadata.name == $podName and $pod.metadata.uid == $podUID and`),
+		exactSourceLine("automatic external PostgreSQL Apply Pod annotation identity", `($pod.metadata.annotations | exact_annotations) and`),
+		exactSourceLine("automatic external PostgreSQL Apply Pod runtime identity", `($pod.spec | exact_runtime_spec)`),
+		exactSourceLine("automatic external PostgreSQL mutation evidence", `(.mutationStarted // false) == true and`),
+		exactSourceLine("automatic external PostgreSQL final Observe result capture", `capture_selected_job_result "$automatic_schema" observe "$automatic_final_observe_uid" \`),
+		exactSourceLine("automatic external PostgreSQL convergence evidence", `.observedDialect == "postgres" and (.observedDrift // false) == false and`),
+		exactSourceLine("automatic external PostgreSQL final Plan result capture", `capture_selected_job_result "$automatic_schema" plan "$automatic_final_plan_uid" \`),
+		exactSourceLine("automatic external PostgreSQL no-change Plan evidence", `.planOutcome == "NoChanges" and (.planContentDigest // "") == "" and`),
+		exactSourceLine("automatic external PostgreSQL approval-object absence", `k -n "$TEST_NAMESPACE" get ptahschemaapprovals -o json |`),
+		exactSourceLine("automatic external PostgreSQL approval-event absence", `k -n "$TEST_NAMESPACE" get events -o json |`),
+		exactSourceLineSequence("automatic external PostgreSQL archived isolation", []string{
+			`assert_job_isolation "$automatic_schema" "$automatic_secret" true \`,
+			`"$automatic_jobs_file"`,
+		}),
+		exactSourceLine("automatic external PostgreSQL terminal evidence", `printf '%s\n' 'e2e data plane: PASS automatic safe-plan PostgreSQL lifecycle'`),
+	}
+	if err := verifyOrderedSourceContract(
+		dataPlane+" automatic external PostgreSQL lifecycle",
+		automaticFunctionMatches[0],
+		automaticContract,
+	); err != nil {
+		return err
+	}
 	if err := rejectStaticControlFlowBypass(dataPlane, dataPlaneContents, dataPlaneContract[len(dataPlaneContract)-1].pattern); err != nil {
 		return err
 	}
 	if err := rejectEarlySuccessfulReturn(
 		dataPlane,
 		dataPlaneContents,
-		dataPlaneContract[10].pattern,
-		dataPlaneContract[16].pattern,
+		sourceLinePattern(`run_external_postgresql_lifecycle() {`),
+		sourceLinePattern(`printf '%s\n' 'e2e data plane: PASS external PostgreSQL bridge lifecycle'`),
 	); err != nil {
 		return err
 	}
 	if err := rejectEarlySuccessfulReturn(
 		dataPlane,
 		dataPlaneContents,
-		dataPlaneContract[17].pattern,
-		dataPlaneContract[20].pattern,
+		sourceLinePattern(`assert_automatic_external_postgresql_lifecycle() {`),
+		sourceLinePattern(`printf '%s\n' 'e2e data plane: PASS automatic safe-plan PostgreSQL lifecycle'`),
+	); err != nil {
+		return err
+	}
+	if err := rejectEarlySuccessfulReturn(
+		dataPlane,
+		dataPlaneContents,
+		sourceLinePattern(`run_engine_lifecycle() {`),
+		sourceLinePattern(`printf 'e2e data plane: PASS %s lifecycle\n' "$lifecycle_engine"`),
 	); err != nil {
 		return err
 	}
@@ -1983,6 +2750,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("late activation dual capture arming implementation", `arm_late_activation_hook_log_captures() {`),
 				exactSourceLine("late activation single capture completion implementation", `finish_late_activation_hook_log_capture() {`),
 				exactSourceLine("late activation dual capture completion implementation", `finish_late_activation_hook_log_captures() {`),
+				exactSourceLine("late activation failure class summary implementation", `late_activation_failure_class_summary() {`),
+				exactSourceLine("late activation failure class size bound", `if [ "$failure_class_size" -gt 32 ]; then`),
 				exactSourceLine("late activation diagnostic scanner implementation", `hook_diagnostic_is_safe() {`),
 				exactSourceLineSequence("late activation hook diagnostic credential scan", []string{
 					`if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$diagnostic_file" >/dev/null; then`,
@@ -2011,20 +2780,20 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`fail "late activation reconcile log lacks exact blocker evidence:$missing_blocker_evidence"`,
 				}),
 				exactSourceLine("late activation bounded summary implementation", `emit_late_activation_failure_summary() {`),
+				exactSourceLineSequence("late activation failure class synthesis", []string{
+					`preflight_failure_class=$(late_activation_failure_class_summary "$LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE")`,
+					`reconcile_failure_class=$(late_activation_failure_class_summary "$LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE")`,
+				}),
 				exactSourceLineSequence("canceled reconcile is diagnostic-only target-not-reached evidence", []string{
 					`expectedReconcileFailed: any($reconcile[]; (.weight == null or ((.weight | type) == "number" and .weight == 0)) and .last_run.phase == "Failed"),`,
 					`preflightCapture: $preflight_capture,`,
 					`preflightCaptureExit: $preflight_exit,`,
-					// The phase each capture reached, from the second line of
-					// its status file. The error file that says why a capture
-					// failed is private on purpose, so without this a failure
-					// reports only "failed" for any of the helper's roughly ten
-					// exit paths. The phase is one of eight fixed words and
-					// carries nothing from the cluster.
 					`preflightCapturePhase: $preflight_phase,`,
+					`preflightFailureClass: $preflight_failure_class,`,
 					`reconcileCapture: $reconcile_capture,`,
 					`reconcileCaptureExit: $reconcile_exit,`,
 					`reconcileCapturePhase: $reconcile_phase,`,
+					`reconcileFailureClass: $reconcile_failure_class,`,
 					`reconcileTarget: (`,
 					`if any($reconcile[]; ((.last_run.started_at // "") | type) == "string" and ((.last_run.started_at // "") | length > 0)) then "reached"`,
 					`elif $reconcile_capture == "canceled" then "not-reached"`,
@@ -2112,6 +2881,10 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("late activation marker remains uncommitted", `fail "late failure advanced the release activation marker"`),
 				exactSourceLine("predecessor Deployment restore", `restore_runtime_deployment_snapshot "$CONTROLLER_DEPLOYMENT" "$controller_snapshot"`),
 				exactSourceLine("predecessor late-failure recovery completion", `printf '%s\n' 'e2e crd: predecessor late-failure recovery passed'`),
+				exactSourceLineSequence("predecessor metric source quiesce implementation", []string{
+					`quiesce_predecessor_metric_sources() {`,
+					`for schema_name in "$PREDECESSOR_JOB_SCHEMA" "$PREDECESSOR_APPLY_SCHEMA"; do`,
+				}),
 				exactSourceLine("predecessor read-only Job fixture", `wait_for_predecessor_read_only_job() {`),
 				exactSourceLine("predecessor Pod webhook bounded failure-policy helper", `set_predecessor_pod_webhook_failure_policy() {`),
 				exactSourceLineSequence("predecessor Pod webhook bounded failure-policy transitions", []string{
@@ -2223,21 +2996,22 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				}),
 				exactSourceLine("legacy Job activation boundary implementation", `prove_legacy_job_activation_boundary() {`),
 				exactSourceLine("legacy Job activation probe source", `legacy_job_source=$WORK_DIR/predecessor-read-only-job-terminal.json`),
-				// Before activation the write is admitted, because the pinned
-				// predecessor predates internal/controllerwrite and cannot
-				// refuse it. The activation boundary is proved by the change
-				// between this and the structural denial the active branch
-				// requires, not by two different denials. Restore the semantic
-				// assertion here if the predecessor pin ever moves past the
-				// revision that introduced that package.
-				exactSourceLine("legacy Job bootstrap admits before activation", `fail "legacy Job bootstrap probe was refused before candidate activation"`),
+				exactSourceLineSequence("legacy Job bootstrap admits before activation", []string{
+					`if ! controller_kube create --dry-run=server -o json -f "$legacy_job_probe" \`,
+					`>"$stdout" 2>"$stderr"; then`,
+					`cat "$stderr" >&2`,
+					`fail "legacy Job bootstrap probe was refused before candidate activation"`,
+					`fi`,
+				}),
 				exactSourceLine("legacy Job active structural denial", `fail "legacy Job post-activation probe lacked the exact structural guard denial"`),
 				exactSourceLine("legacy plan activation boundary implementation", `prove_legacy_plan_activation_boundary() {`),
-				// The plan half of the same boundary; see the Job note above.
-				// The predecessor predates internal/controllerwrite, so before
-				// activation the write is admitted and the structural denial
-				// the active branch requires is what activation adds.
-				exactSourceLine("legacy plan bootstrap admits before activation", `fail "legacy plan bootstrap probe was refused before candidate activation"`),
+				exactSourceLineSequence("legacy plan bootstrap admits before activation", []string{
+					`if ! controller_kube create --dry-run=server -o json \`,
+					`-f "$PREDECESSOR_PLAN_GUARD_PROBE_FILE" >"$stdout" 2>"$stderr"; then`,
+					`cat "$stderr" >&2`,
+					`fail "legacy plan bootstrap probe was refused before candidate activation"`,
+					`fi`,
+				}),
 				exactSourceLine("legacy plan active structural denial", `fail "legacy plan post-activation probe lacked the exact structural guard denial"`),
 				exactSourceLine("controller guarded-field proof implementation", `prove_controller_object_supported_window_guard() {`),
 				exactSourceLine("controller guarded-field proof call", `prove_controller_object_supported_window_guard`),
@@ -2262,11 +3036,55 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("predecessor Apply terminal wait", `wait_for_predecessor_apply_job_terminal`),
 				exactSourceLine("predecessor read-only Job cleanup proof", `wait_for_predecessor_read_only_job_cleanup`),
 				exactSourceLine("predecessor Apply cleanup proof", `wait_for_predecessor_apply_job_cleanup`),
+				exactSourceLine("predecessor metric source quiesce call", `quiesce_predecessor_metric_sources`),
 				exactSourceLine("upgrade proof implementation", `run_upgrade_proof() {`),
 				exactSourceLine("predecessor upgrade proof call", `run_predecessor_upgrade_proof`),
 				exactSourceLine("runtime singleton proof call", `prove_runtime_singleton_guard`),
 				exactSourceLine("controller downgrade proof call", `prove_controller_downgrade_guard`),
 				exactSourceLine("uninstall proof implementation", `run_uninstall_proof() {`),
+				exactSourceLineSequence("released chart fresh-install inputs", []string{
+					`[ -f "$E2E_CHART_PACKAGE" ] && [ ! -L "$E2E_CHART_PACKAGE" ] ||`,
+					`fail "E2E_CHART_PACKAGE must name the regular non-symlink current-release chart package"`,
+					`[ -f "$E2E_CANDIDATE_VALUES_FILE" ] && [ ! -L "$E2E_CANDIDATE_VALUES_FILE" ] ||`,
+					`fail "E2E_CANDIDATE_VALUES_FILE must name the regular non-symlink current-release values file"`,
+				}),
+				exactSourceLineSequence("upgraded release exact uninstall absence", []string{
+					`assert_inventory_resources_absent \`,
+					`"$next_sequence_inventory" "$next_sequence_marker_name"`,
+				}),
+				exactSourceLineSequence("reinstalled successor inventory capture", []string{
+					`reinstalled_next_marker=$WORK_DIR/reinstalled-sequence-${E2E_NEXT_RELEASE_SEQUENCE}-admission-convergence.json`,
+					`reinstalled_next_inventory=$WORK_DIR/reinstalled-sequence-${E2E_NEXT_RELEASE_SEQUENCE}-admission-inventory.json`,
+				}),
+				exactSourceLineSequence("reinstalled successor exact uninstall absence", []string{
+					`assert_inventory_resources_absent \`,
+					`"$reinstalled_next_inventory" "$reinstalled_next_marker_name"`,
+				}),
+				exactSourceLineSequence("exact released chart fresh install", []string{
+					`helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \`,
+					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \`,
+					`--wait --timeout 5m >/dev/null`,
+				}),
+				exactSourceLineSequence("exact released chart controller identity", []string{
+					`capture_controller_service_account_identity \`,
+					`"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \`,
+					`"$WORK_DIR/fresh-current-sequence-${E2E_CURRENT_RELEASE_SEQUENCE}-controller-identity.json"`,
+				}),
+				exactSourceLineSequence("exact released chart activation", []string{
+					`assert_release_activation_sequence \`,
+					`"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE"`,
+				}),
+				exactSourceLineSequence("exact released chart sealed inventory", []string{
+					`assert_sealed_release_inventory \`,
+					`"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \`,
+					`"$fresh_current_marker" "$fresh_current_inventory"`,
+				}),
+				exactSourceLine("exact released chart zero-residue assertion", `assert_release_sequence_candidate_residue_absent "$E2E_CURRENT_RELEASE_SEQUENCE"`),
+				exactSourceLineSequence("exact released chart inventory absence", []string{
+					`assert_inventory_resources_absent \`,
+					`"$fresh_current_inventory" "$fresh_current_marker_name"`,
+				}),
+				exactSourceLine("exact released chart installability evidence", `printf '%s\n' 'e2e crd: exact exported current-release chart passed fresh install and zero-residue uninstall'`),
 				exactSourceLineSequence("phase dispatch", []string{
 					`case "$E2E_PHASE" in`,
 					`upgrade) run_upgrade_proof ;;`,
@@ -2319,11 +3137,35 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			steps: []sourceContractStep{
 				exactSourceLine("fail-fast shell mode", "set -eu"),
 				exactSourceLine("cleanup implementation", `cleanup() {`),
+				exactSourceLine("custom metrics validator implementation", `validate_custom_operator_metrics() {`),
+				exactSourceLineSequence("custom metrics exact labeled samples", []string{
+					`if ($1 == "ptah_operator_reconciliations_total{result=\"success\"}") {`,
+					`reconciliation_sample++`,
+					`} else if ($1 == "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"}") {`,
+					`failure_sample++`,
+				}),
+				exactSourceLineSequence("custom metrics duplicate and unexpected-family refusal", []string{
+					`if (malformed || reconciliation_help > 1 || failure_help > 1 ||`,
+					`reconciliation_type > 1 || failure_type > 1 ||`,
+					`reconciliation_sample > 1 || failure_sample > 1) {`,
+				}),
+				exactSourceLineSequence("custom metrics exact two-family acceptance", []string{
+					`if (reconciliation_help == 1 && failure_help == 1 &&`,
+					`reconciliation_type == 1 && failure_type == 1 &&`,
+					`reconciliation_sample == 1 && failure_sample == 1) {`,
+				}),
+				exactSourceLine("Resolve failure counter parser implementation", `resolve_operation_failure_counter_from_metrics() {`),
+				exactSourceLine("prior Resolve metric source exclusion implementation", `assert_prior_resolve_metric_sources_quiesced() {`),
+				exactSourceLine("Resolve failure counter increase proof", `'BEGIN { exit ! ((current + 0) > (baseline + 0)) }'; then`),
 				exactSourceLine("Lease authorization proof", `printf '%s\n' 'e2e HA: verifying namespace-scoped Lease authorization'`),
 				exactSourceLine("initial leader proof", `initial_holder=$(wait_for_leader "")`),
 				exactSourceLine("leader failover proof", `second_holder=$(wait_for_leader "$initial_holder")`),
+				exactSourceLine("prior Resolve metric source exclusion call", `assert_prior_resolve_metric_sources_quiesced`),
+				exactSourceLine("pre-operation Resolve failure counter baseline", `resolve_failure_counter_before=$(read_resolve_operation_failure_counter "$second_holder")`),
 				exactSourceLine("post-failover operation proof", `operation_job=$(wait_for_admitted_operation_pod "$ha_schema_uid")`),
-				exactSourceLine("terminal high-availability lifecycle evidence", `printf '%s\n' 'e2e HA: PASS one Lease, exact RBAC, Pod failover, and admitted post-failover operation'`),
+				exactSourceLine("post-failover failed Resolve lifecycle proof", `wait_for_failed_resolve_lifecycle "$ha_schema_uid"`),
+				exactSourceLine("post-failure custom metrics proof", `assert_custom_operator_metrics "$second_holder" "$resolve_failure_counter_before"`),
+				exactSourceLine("terminal high-availability lifecycle evidence", `printf '%s\n' 'e2e HA: PASS one Lease, exact RBAC, Pod failover, admitted operation, and custom metrics'`),
 			},
 		},
 		{
@@ -2358,6 +3200,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"finish_late_activation_hook_log_captures",
 		"late_activation_capture_status_summary",
 		"late_activation_capture_exit_summary",
+		"late_activation_failure_class_summary",
 		"hook_diagnostic_is_safe",
 		"emit_late_activation_preflight_diagnostic_if_available",
 		"verify_late_activation_preflight_capture",
@@ -2392,6 +3235,15 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"finish_late_activation_hook_log_captures",
 		lateActivationHookCapturesFinishContract,
 		"exact bounded dual late activation hook capture completion contract",
+	); err != nil {
+		return err
+	}
+	if err := verifyExactShellFunctionContract(
+		files.crdUpgrade,
+		crdUpgradeContents,
+		"late_activation_failure_class_summary",
+		lateActivationFailureClassSummaryContract,
+		"exact bounded allowlisted late activation failure class summary contract",
 	); err != nil {
 		return err
 	}
@@ -2465,6 +3317,85 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		}
 		if bytes.Count(crdUpgradeContents, []byte(helperErrorFile)) != 3 {
 			return fmt.Errorf("%s: late activation helper error files must remain private non-emitted capture outputs", files.crdUpgrade)
+		}
+	}
+	for _, failureClassFile := range []string{
+		"LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE",
+		"LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE",
+	} {
+		if bytes.Count(crdUpgradeContents, []byte(failureClassFile)) != 4 {
+			return fmt.Errorf("%s: late activation failure classes must flow only through private helper output and bounded synthesis", files.crdUpgrade)
+		}
+	}
+	return nil
+}
+
+type kindClusterTemplate struct {
+	Kind       string `yaml:"kind"`
+	APIVersion string `yaml:"apiVersion"`
+	Networking struct {
+		IPFamily         string `yaml:"ipFamily"`
+		APIServerAddress string `yaml:"apiServerAddress"`
+		APIServerPort    string `yaml:"apiServerPort"`
+	} `yaml:"networking"`
+	Nodes []kindNodeTemplate `yaml:"nodes"`
+}
+
+type kindNodeTemplate struct {
+	Role                 string   `yaml:"role"`
+	KubeadmConfigPatches []string `yaml:"kubeadmConfigPatches"`
+}
+
+func verifyAPIServerEndpointInventoryFilter(path string) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	if !bytes.Equal(contents, []byte(apiServerEndpointInventoryFilterContract)) {
+		return fmt.Errorf("%s: API server endpoint inventory filter differs from the audited per-slice contract", path)
+	}
+	return nil
+}
+
+func verifyKindHAConfig(path string) error {
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(contents))
+	decoder.KnownFields(true)
+	var config kindClusterTemplate
+	if err := decoder.Decode(&config); err != nil {
+		return fmt.Errorf("decode %s: %w", path, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("%s: multiple YAML documents are forbidden", path)
+		}
+		return fmt.Errorf("decode trailing %s document: %w", path, err)
+	}
+	if config.Kind != "Cluster" || config.APIVersion != "kind.x-k8s.io/v1alpha4" {
+		return fmt.Errorf("%s: kind cluster apiVersion/kind is invalid", path)
+	}
+	if config.Networking.IPFamily != "ipv4" || config.Networking.APIServerAddress != "127.0.0.1" ||
+		config.Networking.APIServerPort != "__API_SERVER_PORT__" {
+		return fmt.Errorf("%s: kind networking contract is invalid", path)
+	}
+	wantRoles := []string{"control-plane", "control-plane", "control-plane", "worker"}
+	if len(config.Nodes) != len(wantRoles) {
+		return fmt.Errorf("%s: kind topology has %d nodes, want exactly four", path, len(config.Nodes))
+	}
+	const kubeletPatch = `kind: KubeletConfiguration
+apiVersion: kubelet.config.k8s.io/v1beta1
+featureGates:
+  KubeletInUserNamespace: true`
+	for index, node := range config.Nodes {
+		if node.Role != wantRoles[index] {
+			return fmt.Errorf("%s: kind node %d role is %q, want %q", path, index, node.Role, wantRoles[index])
+		}
+		if len(node.KubeadmConfigPatches) != 1 || strings.TrimSpace(node.KubeadmConfigPatches[0]) != kubeletPatch {
+			return fmt.Errorf("%s: kind node %d does not have the exact kubelet feature-gate patch", path, index)
 		}
 	}
 	return nil
@@ -2558,6 +3489,7 @@ const lateActivationHookCaptureArmContract = `arm_late_activation_hook_log_captu
 		--status-file "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" \
 		--ready-file "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_READY_FILE" \
 		--error-file "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE" \
+		--failure-class-file "$LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE" \
 		--timeout 3m >/dev/null 2>&1 &
 	LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=$!
 	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
@@ -2570,6 +3502,7 @@ const lateActivationHookCaptureArmContract = `arm_late_activation_hook_log_captu
 		--status-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" \
 		--ready-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE" \
 		--error-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE" \
+		--failure-class-file "$LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE" \
 		--timeout 3m >/dev/null 2>&1 &
 	LATE_ACTIVATION_RECONCILE_CAPTURE_PID=$!
 	wait_for_late_activation_hook_log_capture_ready \
@@ -2586,10 +3519,12 @@ const lateActivationHookCaptureArmContract = `arm_late_activation_hook_log_captu
 		"$LATE_ACTIVATION_PREFLIGHT_LOG_FILE" \
 		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" \
 		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE" \
+		"$LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE" \
 		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_READY_FILE" \
 		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" \
 		"$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE" \
 		"$LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE" \
+		"$LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE" \
 		"$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE"; do
 		require_mode_0600_regular_file "$activation_capture_file" late-activation-hook-capture-file
 	done
@@ -2632,6 +3567,70 @@ const lateActivationHookCapturesFinishContract = `finish_late_activation_hook_lo
 	LATE_ACTIVATION_RECONCILE_CAPTURE_PID=
 	[ "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_EXIT_STATUS" -eq 0 ] &&
 		[ "$LATE_ACTIVATION_RECONCILE_CAPTURE_EXIT_STATUS" -eq 0 ]
+}`
+
+const lateActivationFailureClassSummaryContract = `late_activation_failure_class_summary() {
+	failure_class_file=$1
+	if [ -L "$failure_class_file" ]; then
+		printf '%s\n' invalid
+		return
+	fi
+	if [ ! -e "$failure_class_file" ]; then
+		printf '%s\n' unavailable
+		return
+	fi
+	if [ ! -f "$failure_class_file" ]; then
+		printf '%s\n' invalid
+		return
+	fi
+	if failure_class_mode=$(stat -c '%a' "$failure_class_file" 2>/dev/null); then
+		:
+	else
+		failure_class_mode=$(stat -f '%Lp' "$failure_class_file" 2>/dev/null) || {
+			printf '%s\n' invalid
+			return
+		}
+	fi
+	if [ "$failure_class_mode" != 600 ]; then
+		printf '%s\n' invalid
+		return
+	fi
+	failure_class_size=$(wc -c <"$failure_class_file" 2>/dev/null | tr -d '[:space:]') || {
+		printf '%s\n' invalid
+		return
+	}
+	case "$failure_class_size" in
+	'' | *[!0-9]*)
+		printf '%s\n' invalid
+		return
+		;;
+	0)
+		printf '%s\n' unavailable
+		return
+		;;
+	esac
+	if [ "$failure_class_size" -gt 32 ]; then
+		printf '%s\n' invalid
+		return
+	fi
+	failure_class_lines=$(awk 'END { print NR + 0 }' "$failure_class_file" 2>/dev/null) || {
+		printf '%s\n' invalid
+		return
+	}
+	if [ "$failure_class_lines" -ne 1 ]; then
+		printf '%s\n' invalid
+		return
+	fi
+	failure_class=$(sed -n '1p' "$failure_class_file" 2>/dev/null) || {
+		printf '%s\n' invalid
+		return
+	}
+	case "$failure_class" in
+	configuration | output | render | kubernetes-client | priority-inventory | priority-watch | job-inventory | job-watch | job-contract | pod-inventory | pod-watch | pod-contract | pod-owner | log-start | log-start-timeout | log-read | log-empty | log-too-large | deadline | canceled | internal)
+		printf '%s\n' "$failure_class"
+		;;
+	*) printf '%s\n' invalid ;;
+	esac
 }`
 
 const lateActivationHookDiagnosticContract = `hook_diagnostic_is_safe() {
@@ -3469,6 +4468,21 @@ func verifyExactShellFunctionContract(path string, contents []byte, name, expect
 		normalizedNonemptyLines(expected),
 	) {
 		return fmt.Errorf("%s: %s differs from the %s", path, name, description)
+	}
+	return nil
+}
+
+func verifyAuditedShellFunctionDigest(path string, contents []byte, name, expected, description string) error {
+	functionPattern := regexp.MustCompile(
+		`(?ms)^` + regexp.QuoteMeta(name) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`,
+	)
+	matches := functionPattern.FindAll(contents, -1)
+	if len(matches) != 1 {
+		return fmt.Errorf("%s: %s must have exactly one auditable function body, found %d", path, name, len(matches))
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(matches[0]))
+	if digest != expected {
+		return fmt.Errorf("%s: %s digest %s differs from the %s", path, name, digest, description)
 	}
 	return nil
 }

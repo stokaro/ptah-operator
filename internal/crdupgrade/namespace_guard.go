@@ -16,8 +16,8 @@ import (
 const (
 	namespaceDeletionGuardNamePrefix = "ptah-operator-namespace-deletion-guard-v1-"
 	namespaceDeletionGuardComponent  = "namespace-deletion-guard"
-	namespaceDeletionPolicyWeight    = "-160"
-	namespaceDeletionBindingWeight   = "-159"
+	namespaceDeletionPolicyWeight    = "-170"
+	namespaceDeletionBindingWeight   = "-169"
 )
 
 // NamespaceDeletionGuardPolicyName returns the versioned, release-owned name
@@ -120,6 +120,10 @@ func (g *NamespaceDeletionGuard) policy() *admissionregistrationv1.ValidatingAdm
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(),
+			MatchConditions: []admissionregistrationv1.MatchCondition{{
+				Name:       "fixed-release-namespace",
+				Expression: fmt.Sprintf(`oldObject != null && oldObject.metadata.name == %q`, g.ReleaseNamespace),
+			}},
 			Validations: []admissionregistrationv1.Validation{{
 				Expression: "false",
 				Message:    namespaceDeletionGuardDenialMessage(),
@@ -157,7 +161,6 @@ func (g *NamespaceDeletionGuard) matchResources() *admissionregistrationv1.Match
 					Scope:       scopePtr(admissionregistrationv1.ClusterScope),
 				},
 			},
-			ResourceNames: []string{g.ReleaseNamespace},
 		}},
 	}
 }

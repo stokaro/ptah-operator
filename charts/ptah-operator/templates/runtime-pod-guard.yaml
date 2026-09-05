@@ -37,6 +37,10 @@
 {{- $contractIdentity := printf "%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $sequence $stateVersion $managerImage $controllerServiceAccount $certificateDeployment $controllerDeployment $certificateDeployment $controllerArgs $certificateArgs $deploymentConfigExpressions $podConfigExpressions $runtimeAdmissionContract -}}
 {{- $contractDigest := printf "sha256:%s" ($contractIdentity | sha256sum) -}}
 {{- $message := printf "Ptah runtime Pod identity guard v%s rejected an unsafe workload" $sequence -}}
+{{- $convergenceFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $name) -}}
+{{- $convergenceRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $convergenceFieldManager) -}}
+{{- $anyConvergenceRequest := include "ptah-operator.admissionConvergenceAnyProbeRequest" . -}}
+{{- $convergenceMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $convergenceFieldManager) -}}
 {{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
 {{- $activationValid := printf `params != null && (%s)` $activationShape -}}
 {{- $activeReleaseExpression := `params != null && has(params.data) && "active-release-sequence" in params.data && params.data["active-release-sequence"].matches("^(0|[1-9][0-9]*)$") ? int(params.data["active-release-sequence"]) : -1` -}}
@@ -172,12 +176,21 @@ spec:
         operations: ["CONNECT"]
         resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy"]
         scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
   matchConditions:
     - name: runtime-service-account-or-pod
-      expression: {{ printf `request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))` .Release.Namespace $controllerServiceAccount $certificateDeployment $controllerServiceAccount $certificateDeployment $controllerPodRequestName $certificatePodRequestName | quote }}
+      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest (printf `request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))` .Release.Namespace $controllerServiceAccount $certificateDeployment $controllerServiceAccount $certificateDeployment $controllerPodRequestName $certificatePodRequestName) | quote }}
     - name: activation-gated-runtime-pod
-      expression: {{ $activationMatch | quote }}
+      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest $activationMatch | quote }}
   variables:
+    - name: isAnyAdmissionConvergenceProbe
+      expression: {{ $anyConvergenceRequest | quote }}
+    - name: isAdmissionConvergenceProbe
+      expression: {{ $convergenceRequest | quote }}
     - name: isPod
       expression: '!has(request.subResource) || request.subResource == ""'
     - name: isController
@@ -197,24 +210,28 @@ spec:
     - name: apiVolumes
       expression: '(!has(request.subResource) || request.subResource == "") && has(object.spec.volumes) ? object.spec.volumes.filter(v, v.name == "api-access") : []'
   validations:
-    - expression: 'variables.activationValid'
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (variables.activationValid)'
       message: {{ $message | quote }}
-    - expression: '!has(request.subResource) || request.subResource == ""'
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (!has(request.subResource) || request.subResource == "")'
       message: {{ $message | quote }}
-    - expression: 'request.operation != "CREATE" || request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:replicaset-controller"]'
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (request.operation != "CREATE" || request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:replicaset-controller"])'
       message: {{ $message | quote }}
-    - expression: '!variables.isPod || variables.newRelease == variables.activeRelease'
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (!variables.isPod || variables.newRelease == variables.activeRelease)'
       message: {{ $message | quote }}
-    - expression: '!variables.isPod || variables.newState == variables.activeState'
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (!variables.isPod || variables.newState == variables.activeState)'
       message: {{ $message | quote }}
     {{- range $index, $controllerExpression := $controllerContract }}
-    - expression: {{ printf `!variables.isPod || variables.newRelease != %s || (variables.newState == %s && ((variables.isController && (%s)) || (variables.isCertificate && (%s))))` $sequence $stateVersion $controllerExpression (index $certificateContract $index) | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!variables.isPod || variables.newRelease != %s || (variables.newState == %s && ((variables.isController && (%s)) || (variables.isCertificate && (%s)))))` $sequence $stateVersion $controllerExpression (index $certificateContract $index) | quote }}
       message: {{ $message | quote }}
     {{- end }}
     {{- range $expression := ($podConfigExpressions | fromJsonArray) }}
-    - expression: {{ printf `!variables.isPod || variables.newRelease != %s || (variables.newState == %s && (%s))` $sequence $stateVersion $expression | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!variables.isPod || variables.newRelease != %s || (variables.newState == %s && (%s)))` $sequence $stateVersion $expression | quote }}
       message: {{ $message | quote }}
     {{- end }}
+    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
+      message: Ptah admission convergence probe field manager is reserved for dry-run verification
+    - expression: '!variables.isAdmissionConvergenceProbe'
+      message: {{ $convergenceMessage | quote }}
 ---
 {{- end }}
 {{- if not $binding }}

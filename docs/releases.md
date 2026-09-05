@@ -19,6 +19,32 @@ window. Advancing that sliding window adds the new minor and removes the oldest
 minor in one reviewed change; publication must not substitute a preferred-minor
 smoke test for the required matrix.
 
+Each matrix lifecycle installs a reproducibly packaged `.tgz`, rather than the
+chart source directory, and exports those exact bytes only after the complete
+upgrade and uninstall sequence succeeds. After the synthetic successor proof,
+the lifecycle fresh-installs that exact current-release package, verifies its
+active sequence and sealed admission inventory, then proves every captured
+inventory object absent after uninstall before export. CI retains one artifact
+per supported minor for the completed run. Release preflight accepts only the
+complete, unexpired artifact set from the exact successful default-branch run, requires all copies
+to be byte-identical, and passes their SHA-256 digest into the protected publish
+job. The chart rebuilt from the tagged commit must match that tested digest
+before any release asset can be materialized. A published-release claim still
+requires an actual immutable release; source CI proves package installability,
+not publication state.
+
+The checksummed and attested `release-manifest.txt` records the selected
+`support-evidence-run-id` and the canonical `kubernetes-support-window` in
+addition to the tested chart digest. The identifier intentionally names the
+run-level evidence set: a GitHub rerun keeps its run ID, successful matrix jobs
+replace their same-name per-minor artifacts, and the aggregate gate accepts the
+run only after the latest job results succeed. A prepared journal is only
+transaction intent and does not claim a CI run; recovery may select another
+successful exact-source run before the final manifest is materialized. CI
+artifacts expire after 90 days, so this pointer preserves provenance but not the
+artifact bytes. If no complete unexpired exact-source evidence set remains,
+release or recovery preflight fails closed and requires a new release commit.
+
 ## Release sequence
 
 Every published chart version advances the append-only rollout-guard sequence,

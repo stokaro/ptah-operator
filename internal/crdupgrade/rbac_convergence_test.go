@@ -43,6 +43,24 @@ func TestRBACConvergenceBarrierWaitsForEveryEndpointStableWindow(t *testing.T) {
 	}
 }
 
+func TestRBACConvergenceBarrierAcceptsPredecessorOnlyProbes(t *testing.T) {
+	t.Parallel()
+	client := &scriptedSubjectAccessReviewClient{defaultStatus: deniedAuthorizationStatus()}
+	barrier := validRBACConvergenceBarrier(client)
+	barrier.SelfChecks = nil
+	installDeterministicConvergenceClock(barrier)
+
+	if err := barrier.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if client.calls != 2 {
+		t.Fatalf("SubjectAccessReview calls = %d, want 2 stable denied sweeps", client.calls)
+	}
+	if client.selfCalls != 0 {
+		t.Fatalf("SelfSubjectAccessReview calls = %d, want 0 in predecessor-only mode", client.selfCalls)
+	}
+}
+
 func TestRBACConvergenceBarrierResetsWindowWhenAdvertisedEndpointsChange(t *testing.T) {
 	first := &scriptedSubjectAccessReviewClient{defaultStatus: authorizationv1.SubjectAccessReviewStatus{}}
 	second := &scriptedSubjectAccessReviewClient{defaultStatus: authorizationv1.SubjectAccessReviewStatus{}}
@@ -95,6 +113,34 @@ func TestRBACConvergenceBarrierDoesNotResetWindowForEndpointReordering(t *testin
 	}
 	if providerCalls != 3 || first.calls != 3 || second.calls != 3 {
 		t.Fatalf("provider/endpoint calls = %d/%d/%d, want 3/3/3", providerCalls, first.calls, second.calls)
+	}
+}
+
+func TestRBACConvergenceBarrierResetsWindowWhenTopologyIdentityChangesAtSameAddress(t *testing.T) {
+	client := &scriptedSubjectAccessReviewClient{defaultStatus: authorizationv1.SubjectAccessReviewStatus{}}
+	barrier := validRBACConvergenceBarrier(client)
+	barrier.Endpoints[0].TopologyIdentity = "snapshot-a"
+	barrier.StabilityDuration = 2 * time.Second
+	providerCalls := 0
+	barrier.EndpointProvider = func(context.Context) ([]NamedAuthorizationReviewClient, error) {
+		providerCalls++
+		identity := "snapshot-b"
+		if providerCalls == 1 {
+			identity = "snapshot-a"
+		}
+		return []NamedAuthorizationReviewClient{{
+			Name:             "api-a",
+			TopologyIdentity: identity,
+			Client:           client,
+		}}, nil
+	}
+	installDeterministicConvergenceClock(barrier)
+
+	if err := barrier.Wait(context.Background()); err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if providerCalls != 4 || client.calls != 4 {
+		t.Fatalf("provider/endpoint calls = %d/%d, want 4/4 after inventory identity reset", providerCalls, client.calls)
 	}
 }
 
@@ -263,6 +309,77 @@ func TestRBACConvergenceBarrierRetriesSelfReviewTransportErrors(t *testing.T) {
 	}
 }
 
+func TestRBACConvergenceBarrierBoundsEveryAuthorizationReviewRequest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                     string
+		blockSubject             int
+		blockSelf                int
+		denySubjectAfterDeadline bool
+		denySelfAfterDeadline    bool
+	}{
+		{name: "SubjectAccessReview", blockSubject: 1},
+		{name: "SubjectAccessReview late denial", blockSubject: 1, denySubjectAfterDeadline: true},
+		{name: "SelfSubjectAccessReview", blockSelf: 1},
+		{name: "SelfSubjectAccessReview late denial", blockSelf: 1, denySelfAfterDeadline: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			client := &deadlineBlockingAuthorizationReviewClient{
+				blockSubject:             test.blockSubject,
+				blockSelf:                test.blockSelf,
+				denySubjectAfterDeadline: test.denySubjectAfterDeadline,
+				denySelfAfterDeadline:    test.denySelfAfterDeadline,
+			}
+			barrier := validRBACConvergenceBarrier(client)
+			barrier.RequestTimeout = 50 * time.Millisecond
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			identity, proven, err := barrier.Observe(ctx)
+			if err != nil {
+				t.Fatalf("first Observe() error = %v, want retryable request deadline", err)
+			}
+			if identity == "" {
+				t.Fatal("first Observe() returned an empty endpoint identity")
+			}
+			if proven {
+				t.Fatal("first Observe() treated a request deadline as proven denial")
+			}
+			if err := ctx.Err(); err != nil {
+				t.Fatalf("per-request deadline consumed the outer context: %v", err)
+			}
+
+			secondIdentity, secondProven, err := barrier.Observe(ctx)
+			if err != nil {
+				t.Fatalf("second Observe() error = %v", err)
+			}
+			if secondIdentity != identity || !secondProven {
+				t.Fatalf("second Observe() = (%q, %t), want (%q, true)", secondIdentity, secondProven, identity)
+			}
+			if client.subjectCalls != 2 || client.selfCalls != 2 {
+				t.Fatalf("authorization review calls = Subject %d, Self %d; want 2, 2", client.subjectCalls, client.selfCalls)
+			}
+			for kind, budgets := range map[string][]time.Duration{
+				"SubjectAccessReview":     client.subjectDeadlineBudgets,
+				"SelfSubjectAccessReview": client.selfDeadlineBudgets,
+			} {
+				if len(budgets) != 2 {
+					t.Fatalf("%s deadline observations = %d, want 2", kind, len(budgets))
+				}
+				for _, budget := range budgets {
+					if budget > 500*time.Millisecond {
+						t.Fatalf("%s request deadline budget = %s, want an independent short request bound", kind, budget)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestRBACConvergenceBarrierRejectsNilSelfReview(t *testing.T) {
 	client := &scriptedSubjectAccessReviewClient{
 		defaultStatus:    deniedAuthorizationStatus(),
@@ -347,6 +464,7 @@ func TestRBACConvergenceBarrierSendsExactSubjectAndChecksToEveryEndpoint(t *test
 		},
 		PollEvery:         time.Second,
 		StabilityDuration: time.Second,
+		RequestTimeout:    time.Second,
 	}
 	installDeterministicConvergenceClock(barrier)
 
@@ -435,9 +553,12 @@ func TestRBACConvergenceBarrierRejectsInvalidAndDuplicateConfiguration(t *testin
 	}{
 		{name: "zero poll", mutate: func(b *RBACConvergenceBarrier) { b.PollEvery = 0 }, want: "poll interval"},
 		{name: "zero stability", mutate: func(b *RBACConvergenceBarrier) { b.StabilityDuration = 0 }, want: "stability duration"},
+		{name: "zero request timeout", mutate: func(b *RBACConvergenceBarrier) { b.RequestTimeout = 0 }, want: "request timeout"},
+		{name: "negative request timeout", mutate: func(b *RBACConvergenceBarrier) { b.RequestTimeout = -time.Second }, want: "request timeout"},
 		{name: "empty endpoints", mutate: func(b *RBACConvergenceBarrier) { b.Endpoints = nil }, want: "endpoints are empty"},
 		{name: "blank endpoint", mutate: func(b *RBACConvergenceBarrier) { b.Endpoints[0].Name = "" }, want: "endpoint at index"},
 		{name: "padded endpoint", mutate: func(b *RBACConvergenceBarrier) { b.Endpoints[0].Name = " api-a" }, want: "padded name"},
+		{name: "padded topology identity", mutate: func(b *RBACConvergenceBarrier) { b.Endpoints[0].TopologyIdentity = " snapshot-a" }, want: "padded topology identity"},
 		{name: "nil client", mutate: func(b *RBACConvergenceBarrier) { b.Endpoints[0].Client = nil }, want: "nil client"},
 		{
 			name: "typed nil client",
@@ -453,6 +574,18 @@ func TestRBACConvergenceBarrierRejectsInvalidAndDuplicateConfiguration(t *testin
 				b.Endpoints = append(b.Endpoints, NamedAuthorizationReviewClient{Name: "api-a", Client: validClient})
 			},
 			want: "endpoint \"api-a\" is duplicated",
+		},
+		{
+			name: "mixed topology identities",
+			mutate: func(b *RBACConvergenceBarrier) {
+				b.Endpoints[0].TopologyIdentity = "snapshot-a"
+				b.Endpoints = append(b.Endpoints, NamedAuthorizationReviewClient{
+					Name:             "api-b",
+					TopologyIdentity: "snapshot-b",
+					Client:           validClient,
+				})
+			},
+			want: "want snapshot identity",
 		},
 		{name: "empty probes", mutate: func(b *RBACConvergenceBarrier) { b.Probes = nil }, want: "probes are empty"},
 		{name: "blank subject name", mutate: func(b *RBACConvergenceBarrier) { b.Probes[0].Subject.Name = "" }, want: "subject at index"},
@@ -472,6 +605,7 @@ func TestRBACConvergenceBarrierRejectsInvalidAndDuplicateConfiguration(t *testin
 			want: "no user or groups",
 		},
 		{name: "padded user", mutate: func(b *RBACConvergenceBarrier) { b.Probes[0].Subject.User += " " }, want: "padded user"},
+		{name: "padded UID", mutate: func(b *RBACConvergenceBarrier) { b.Probes[0].Subject.UID = "uid " }, want: "padded UID"},
 		{name: "empty group", mutate: func(b *RBACConvergenceBarrier) { b.Probes[0].Subject.Groups = []string{""} }, want: "empty or padded group"},
 		{name: "padded group", mutate: func(b *RBACConvergenceBarrier) { b.Probes[0].Subject.Groups = []string{" system:authenticated"} }, want: "empty or padded group"},
 		{name: "duplicate group", mutate: func(b *RBACConvergenceBarrier) { b.Probes[0].Subject.Groups = []string{"g", "g"} }, want: "duplicate group"},
@@ -501,7 +635,6 @@ func TestRBACConvergenceBarrierRejectsInvalidAndDuplicateConfiguration(t *testin
 			want: "are duplicates",
 		},
 		{name: "empty probe checks", mutate: func(b *RBACConvergenceBarrier) { b.Probes[0].Checks = nil }, want: "checks are empty"},
-		{name: "empty current checks", mutate: func(b *RBACConvergenceBarrier) { b.SelfChecks = nil }, want: "current-subject checks are empty"},
 		{name: "blank check name", mutate: func(b *RBACConvergenceBarrier) { b.Probes[0].Checks[0].Name = "" }, want: "check at index"},
 		{
 			name: "duplicate check name",
@@ -648,6 +781,61 @@ type scriptedSubjectAccessReviewClient struct {
 	selfNilResponses  int
 	selfRequests      []*authorizationv1.SelfSubjectAccessReview
 	selfCalls         int
+}
+
+type deadlineBlockingAuthorizationReviewClient struct {
+	blockSubject             int
+	blockSelf                int
+	denySubjectAfterDeadline bool
+	denySelfAfterDeadline    bool
+	subjectCalls             int
+	selfCalls                int
+	subjectDeadlineBudgets   []time.Duration
+	selfDeadlineBudgets      []time.Duration
+}
+
+func (c *deadlineBlockingAuthorizationReviewClient) CreateSubjectAccessReview(
+	ctx context.Context,
+	_ *authorizationv1.SubjectAccessReview,
+	_ metav1.CreateOptions,
+) (*authorizationv1.SubjectAccessReview, error) {
+	c.subjectCalls++
+	c.subjectDeadlineBudgets = append(c.subjectDeadlineBudgets, contextDeadlineBudget(ctx))
+	if c.blockSubject > 0 {
+		c.blockSubject--
+		<-ctx.Done()
+		if c.denySubjectAfterDeadline {
+			return &authorizationv1.SubjectAccessReview{Status: deniedAuthorizationStatus()}, nil
+		}
+		return nil, ctx.Err()
+	}
+	return &authorizationv1.SubjectAccessReview{Status: deniedAuthorizationStatus()}, nil
+}
+
+func (c *deadlineBlockingAuthorizationReviewClient) CreateSelfSubjectAccessReview(
+	ctx context.Context,
+	_ *authorizationv1.SelfSubjectAccessReview,
+	_ metav1.CreateOptions,
+) (*authorizationv1.SelfSubjectAccessReview, error) {
+	c.selfCalls++
+	c.selfDeadlineBudgets = append(c.selfDeadlineBudgets, contextDeadlineBudget(ctx))
+	if c.blockSelf > 0 {
+		c.blockSelf--
+		<-ctx.Done()
+		if c.denySelfAfterDeadline {
+			return &authorizationv1.SelfSubjectAccessReview{Status: deniedAuthorizationStatus()}, nil
+		}
+		return nil, ctx.Err()
+	}
+	return &authorizationv1.SelfSubjectAccessReview{Status: deniedAuthorizationStatus()}, nil
+}
+
+func contextDeadlineBudget(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return time.Duration(1<<63 - 1)
+	}
+	return time.Until(deadline)
 }
 
 func (c *scriptedSubjectAccessReviewClient) CreateSubjectAccessReview(

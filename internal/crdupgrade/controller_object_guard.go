@@ -2,7 +2,6 @@ package crdupgrade
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"reflect"
 	"strings"
@@ -14,9 +13,9 @@ import (
 )
 
 const (
-	controllerJobWriteGuardNamePrefix  = "ptah-operator-job-write-guard-v1-"
-	controllerChunkWriteGuardPrefix    = "ptah-operator-chunk-write-guard-v1-"
-	controllerPlanWriteGuardNamePrefix = "ptah-operator-plan-write-guard-v1-"
+	controllerJobWriteGuardNamePrefix  = "ptah-operator-job-write-guard-v2-"
+	controllerChunkWriteGuardPrefix    = "ptah-operator-chunk-write-guard-v2-"
+	controllerPlanWriteGuardNamePrefix = "ptah-operator-plan-write-guard-v2-"
 
 	controllerJobWriteGuardComponent   = "controller-job-write-guard"
 	controllerChunkWriteGuardComponent = "controller-chunk-write-guard"
@@ -28,26 +27,24 @@ const (
 
 // ControllerJobWriteGuardPolicyName returns the stable release-owned name of
 // the manager's structural Job write boundary.
-func ControllerJobWriteGuardPolicyName(releaseNamespace, releaseName string) string {
-	return controllerObjectGuardPolicyName(controllerJobWriteGuardNamePrefix, releaseNamespace, releaseName)
+func ControllerJobWriteGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
+	return controllerObjectGuardPolicyName(controllerJobWriteGuardNamePrefix, releaseNamespace, releaseName, releaseSequence, managerImage)
 }
 
 // ControllerChunkWriteGuardPolicyName returns the stable release-owned name
 // of the manager's structural plan-chunk ConfigMap write boundary.
-func ControllerChunkWriteGuardPolicyName(releaseNamespace, releaseName string) string {
-	return controllerObjectGuardPolicyName(controllerChunkWriteGuardPrefix, releaseNamespace, releaseName)
+func ControllerChunkWriteGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
+	return controllerObjectGuardPolicyName(controllerChunkWriteGuardPrefix, releaseNamespace, releaseName, releaseSequence, managerImage)
 }
 
 // ControllerPlanWriteGuardPolicyName returns the stable release-owned name of
 // the manager's structural PtahSchemaPlan write boundary.
-func ControllerPlanWriteGuardPolicyName(releaseNamespace, releaseName string) string {
-	return controllerObjectGuardPolicyName(controllerPlanWriteGuardNamePrefix, releaseNamespace, releaseName)
+func ControllerPlanWriteGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
+	return controllerObjectGuardPolicyName(controllerPlanWriteGuardNamePrefix, releaseNamespace, releaseName, releaseSequence, managerImage)
 }
 
-func controllerObjectGuardPolicyName(prefix, releaseNamespace, releaseName string) string {
-	identity := releaseNamespace + "\n" + releaseName
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))
-	return prefix + digest[:12]
+func controllerObjectGuardPolicyName(prefix, releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
+	return prefix + controllerPrincipalGuardDigest(releaseNamespace, releaseName, releaseSequence, managerImage)
 }
 
 type controllerObjectGuardEntry struct {
@@ -67,12 +64,16 @@ type controllerObjectGuardEntry struct {
 // reconstruction boundary; these policies independently reject broad or
 // privileged shapes.
 type ControllerObjectGuard struct {
-	Policies                     ValidatingAdmissionPolicyReader
-	Bindings                     ValidatingAdmissionPolicyBindingReader
-	ReleaseName                  string
-	ReleaseNamespace             string
-	ControllerServiceAccountName string
-	PollEvery                    time.Duration
+	Policies                             ValidatingAdmissionPolicyReader
+	Bindings                             ValidatingAdmissionPolicyBindingReader
+	ReleaseName                          string
+	ReleaseNamespace                     string
+	ControllerServiceAccountName         string
+	PreviousControllerServiceAccountName string
+	PreviousControllerReleaseSequence    int32
+	ReleaseSequence                      int32
+	ManagerImage                         string
+	PollEvery                            time.Duration
 }
 
 // NewControllerObjectGuard copies the stable release and manager identity
@@ -82,12 +83,16 @@ func NewControllerObjectGuard(rollout *RolloutGuard) *ControllerObjectGuard {
 		return nil
 	}
 	return &ControllerObjectGuard{
-		Policies:                     rollout.Policies,
-		Bindings:                     rollout.Bindings,
-		ReleaseName:                  rollout.ReleaseName,
-		ReleaseNamespace:             rollout.ReleaseNamespace,
-		ControllerServiceAccountName: rollout.ControllerServiceAccountName,
-		PollEvery:                    rollout.PollEvery,
+		Policies:                             rollout.Policies,
+		Bindings:                             rollout.Bindings,
+		ReleaseName:                          rollout.ReleaseName,
+		ReleaseNamespace:                     rollout.ReleaseNamespace,
+		ControllerServiceAccountName:         rollout.ControllerServiceAccountName,
+		PreviousControllerServiceAccountName: rollout.PreviousControllerServiceAccountName,
+		PreviousControllerReleaseSequence:    rollout.PreviousControllerReleaseSequence,
+		ReleaseSequence:                      rollout.ReleaseSequence,
+		ManagerImage:                         rollout.ManagerImage,
+		PollEvery:                            rollout.PollEvery,
 	}
 }
 
@@ -152,7 +157,7 @@ func (g *ControllerObjectGuard) WaitReady(ctx context.Context) error {
 func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 	entries := []controllerObjectGuardEntry{
 		{
-			name:          ControllerJobWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
+			name:          ControllerJobWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
 			component:     controllerJobWriteGuardComponent,
 			apiGroups:     []string{"batch"},
 			apiVersions:   []string{"v1"},
@@ -161,7 +166,7 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 			denialMessage: "Ptah controller Job write guard rejected an unsafe workload shape",
 		},
 		{
-			name:          ControllerChunkWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
+			name:          ControllerChunkWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
 			component:     controllerChunkWriteGuardComponent,
 			apiGroups:     []string{""},
 			apiVersions:   []string{"v1"},
@@ -170,7 +175,7 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 			denialMessage: "Ptah controller chunk write guard rejected an unsafe ConfigMap shape",
 		},
 		{
-			name:          ControllerPlanWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName),
+			name:          ControllerPlanWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
 			component:     controllerPlanWriteGuardComponent,
 			apiGroups:     []string{"operator.ptah.dev"},
 			apiVersions:   []string{"v1alpha1"},
@@ -187,14 +192,22 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 
 func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
-	username := "system:serviceaccount:" + g.ReleaseNamespace + ":" + g.ControllerServiceAccountName
-	validations := make([]admissionregistrationv1.Validation, 0, len(entry.validations)+1)
+	validations := make([]admissionregistrationv1.Validation, 0, len(entry.validations)+2)
 	validations = append(validations, admissionregistrationv1.Validation{
 		Expression: g.activationParameterExpression(),
 		Message:    entry.denialMessage,
+	}, admissionregistrationv1.Validation{
+		Expression: controllerPrincipalAuthorityExpression(
+			g.ReleaseNamespace,
+			g.ControllerServiceAccountName,
+			g.PreviousControllerServiceAccountName,
+			g.ReleaseSequence,
+			g.PreviousControllerReleaseSequence,
+		),
+		Message: controllerPrincipalGuardDenialMessage(),
 	})
 	validations = append(validations, entry.validations...)
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: g.metadata(entry),
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
@@ -202,18 +215,29 @@ func (g *ControllerObjectGuard) policy(entry controllerObjectGuardEntry) *admiss
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(entry),
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
-				Name:       "exact-controller-service-account",
-				Expression: fmt.Sprintf(`request.userInfo.username == %q`, username),
+				Name: "candidate-or-predecessor-controller-service-account",
+				Expression: controllerPrincipalMatchExpression(
+					g.ReleaseNamespace,
+					g.ControllerServiceAccountName,
+					g.PreviousControllerServiceAccountName,
+				),
 			}},
-			Variables:   controllerObjectActivationVariables(),
+			Variables:   controllerObjectActivationVariables(g.ReleaseSequence, g.PreviousControllerReleaseSequence),
 			Validations: validations,
 		},
 	}
+	addAdmissionConvergenceDependencyProbe(
+		policy,
+		g.ReleaseNamespace,
+		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
+		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+	)
+	return policy
 }
 
 func (g *ControllerObjectGuard) binding(entry controllerObjectGuardEntry) *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
 	deny := admissionregistrationv1.DenyAction
-	return &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
+	binding := &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicyBinding"},
 		ObjectMeta: g.metadata(entry),
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
@@ -227,17 +251,16 @@ func (g *ControllerObjectGuard) binding(entry controllerObjectGuardEntry) *admis
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
+	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources)
+	return binding
 }
 
 func (g *ControllerObjectGuard) activationParameterExpression() string {
-	activation := &ReleaseActivationGuard{
-		ReleaseName:      g.ReleaseName,
-		ReleaseNamespace: g.ReleaseNamespace,
-	}
+	activation := &ReleaseActivationGuard{ReleaseName: g.ReleaseName, ReleaseNamespace: g.ReleaseNamespace}
 	return activation.activationObjectShapeExpression("params")
 }
 
-func controllerObjectActivationVariables() []admissionregistrationv1.Variable {
+func controllerObjectActivationVariables(releaseSequence, previousReleaseSequence int32) []admissionregistrationv1.Variable {
 	return []admissionregistrationv1.Variable{
 		{Name: "activeRelease", Expression: decimalCEL("params", activeReleaseDataKey, true)},
 		{
@@ -265,7 +288,8 @@ func controllerObjectActivationVariables() []admissionregistrationv1.Variable {
 				ManagerImageAnnotation,
 			),
 		},
-		{Name: "isBootstrap", Expression: `variables.activeRelease == 0`},
+		{Name: "candidateRelease", Expression: fmt.Sprintf(`%d`, releaseSequence)},
+		{Name: "previousRelease", Expression: fmt.Sprintf(`%d`, previousReleaseSequence)},
 	}
 }
 
@@ -362,6 +386,13 @@ func (g *ControllerObjectGuard) validate(requirePoll bool) error {
 			return fmt.Errorf("controller object guard %s is required and must not contain surrounding whitespace", description)
 		}
 	}
+	if g.PreviousControllerServiceAccountName != "" &&
+		g.PreviousControllerServiceAccountName != strings.TrimSpace(g.PreviousControllerServiceAccountName) {
+		return fmt.Errorf("controller object guard predecessor ServiceAccount identity must not contain surrounding whitespace")
+	}
+	if g.ReleaseSequence < 1 || g.ManagerImage == "" || g.ManagerImage != strings.TrimSpace(g.ManagerImage) {
+		return fmt.Errorf("controller object guard release identity is required")
+	}
 	if requirePoll && g.PollEvery <= 0 {
 		return fmt.Errorf("controller object guard poll interval must be positive")
 	}
@@ -398,7 +429,7 @@ func controllerJobAnnotationContractExpression() string {
 	current := `has(object.metadata.annotations) && ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/controller-image", "operator.ptah.dev/controller-revision", "operator.ptah.dev/controller-state-version", "operator.ptah.dev/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations.all(key, key in ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/controller-image", "operator.ptah.dev/controller-revision", "operator.ptah.dev/controller-state-version", "operator.ptah.dev/admission-snapshot-digest", "operator.ptah.dev/plan-fingerprint", "operator.ptah.dev/plan-content-digest"]) && object.metadata.annotations["operator.ptah.dev/operation-id"] != "" && object.metadata.annotations["operator.ptah.dev/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/ptah-version"] != "" && object.metadata.annotations["operator.ptah.dev/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.dev/controller-image"].matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/controller-revision"] != "" && object.metadata.annotations["operator.ptah.dev/controller-state-version"].matches("^[1-9][0-9]*$") && object.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$") && ((object.metadata.labels["operator.ptah.dev/operation"] == "apply" && "operator.ptah.dev/plan-fingerprint" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && "operator.ptah.dev/plan-content-digest" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$")) || (object.metadata.labels["operator.ptah.dev/operation"] != "apply" && !("operator.ptah.dev/plan-fingerprint" in object.metadata.annotations) && !("operator.ptah.dev/plan-content-digest" in object.metadata.annotations)))`
 	activeIdentity := `object.metadata.annotations["operator.ptah.dev/controller-image"] == variables.activeControllerImage && object.metadata.annotations["operator.ptah.dev/controller-state-version"] == variables.activeControllerStateString`
 	return fmt.Sprintf(
-		`((request.operation == "UPDATE" || (request.operation == "CREATE" && variables.isBootstrap)) && ((%s) || (%s))) || (variables.activeRelease > 0 && (%s) && (request.operation == "UPDATE" || (request.operation == "CREATE" && (%s))))`,
+		`((request.operation == "UPDATE" || (request.operation == "CREATE" && variables.activeRelease == variables.previousRelease)) && ((%s) || (%s))) || ((%s) && (request.operation == "UPDATE" || (request.operation == "CREATE" && (%s))))`,
 		legacyReadOnly,
 		legacyApply,
 		current,
@@ -470,8 +501,8 @@ func controllerPlanWriteValidations(message string) []admissionregistrationv1.Va
 
 func controllerPlanContractExpression() string {
 	common := `object.spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.contentDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.actualStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.desiredStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.verificationPolicyUID != "" && object.spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && object.spec.ptahVersion != "" && object.spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerProtocolVersion >= 1 && object.spec.dialect != "" && object.spec.statementCount >= 1 && object.spec.size >= 1 && object.spec.size <= 8388608`
-	legacy := `variables.isBootstrap && object.spec.contractVersion == 2 && !has(dyn(object.spec).controllerImage) && !has(dyn(object.spec).controllerRevision) && !has(dyn(object.spec).controllerStateVersion)`
-	current := `variables.activeRelease > 0 && object.spec.contractVersion == 3 && has(dyn(object.spec).controllerImage) && dyn(object.spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object.spec).controllerImage == variables.activeControllerImage && has(dyn(object.spec).controllerRevision) && dyn(object.spec).controllerRevision != "" && has(dyn(object.spec).controllerStateVersion) && dyn(object.spec).controllerStateVersion >= 1 && dyn(object.spec).controllerStateVersion == variables.activeControllerState`
+	legacy := `variables.activeRelease == variables.previousRelease && object.spec.contractVersion == 2 && !has(dyn(object.spec).controllerImage) && !has(dyn(object.spec).controllerRevision) && !has(dyn(object.spec).controllerStateVersion)`
+	current := `object.spec.contractVersion == 3 && has(dyn(object.spec).controllerImage) && dyn(object.spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object.spec).controllerImage == variables.activeControllerImage && has(dyn(object.spec).controllerRevision) && dyn(object.spec).controllerRevision != "" && has(dyn(object.spec).controllerStateVersion) && dyn(object.spec).controllerStateVersion >= 1 && dyn(object.spec).controllerStateVersion == variables.activeControllerState`
 	return fmt.Sprintf(`(%s) && ((%s) || (%s))`, common, legacy, current)
 }
 

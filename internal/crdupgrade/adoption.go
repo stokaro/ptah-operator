@@ -305,6 +305,19 @@ func classifyOwnedAnnotations(kind, name string, actual map[string]string, expec
 	if releaseSequence > uint64(expected.ReleaseSequence) {
 		return singletonAdoptionState{}, fmt.Errorf("fixed admission singleton %s/%s has newer release sequence %d", kind, name, releaseSequence)
 	}
+	actualControllerServiceAccount := actual[ControllerServiceAccountAnnotation]
+	if releaseSequence == uint64(expected.ReleaseSequence) {
+		if actualControllerServiceAccount != expected.ControllerServiceAccountName {
+			return singletonAdoptionState{}, fmt.Errorf("fixed admission singleton %s/%s annotation %s is %q, expected %q", kind, name, ControllerServiceAccountAnnotation, actualControllerServiceAccount, expected.ControllerServiceAccountName)
+		}
+	} else {
+		if releaseSequence != uint64(expected.PreviousControllerReleaseSequence) {
+			return singletonAdoptionState{}, fmt.Errorf("fixed admission singleton %s/%s has unexpected predecessor release sequence %d", kind, name, releaseSequence)
+		}
+		if expected.PreviousControllerServiceAccountName == "" || actualControllerServiceAccount != expected.PreviousControllerServiceAccountName {
+			return singletonAdoptionState{}, fmt.Errorf("fixed admission singleton %s/%s has unexpected predecessor controller ServiceAccount identity %q", kind, name, actualControllerServiceAccount)
+		}
+	}
 	actualHook := actual[HookServiceAccountAnnotation]
 	if releaseSequence == uint64(expected.ReleaseSequence) {
 		if actualHook != expected.HookServiceAccountName {

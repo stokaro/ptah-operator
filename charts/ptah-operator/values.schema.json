@@ -48,6 +48,33 @@
         },
         "required": ["webhook"]
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "serviceAccount": {
+            "properties": {
+              "create": {
+                "const": false
+              }
+            },
+            "required": ["create"]
+          }
+        },
+        "required": ["serviceAccount"]
+      },
+      "then": {
+        "properties": {
+          "serviceAccount": {
+            "properties": {
+              "name": {
+                "minLength": 1,
+                "maxLength": 241
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "properties": {
@@ -173,11 +200,11 @@
       "properties": {
         "create": {
           "type": "boolean",
-          "description": "Create the controller ServiceAccount. When false, name must identify an existing identity dedicated to this release with no additional RoleBinding or ClusterRoleBinding."
+          "description": "Create the controller ServiceAccount. When false, name is a stable base and the administrator must pre-create one dedicated <name>-v<releaseSequence> identity per release epoch with no additional RoleBinding or ClusterRoleBinding."
         },
         "name": {
           "type": "string",
-          "description": "Controller ServiceAccount name. Required when create is false; that existing identity must be dedicated to this release.",
+          "description": "Controller ServiceAccount base. Required when create is false; the chart appends -v<releaseSequence> and never reuses or deletes the resulting external identity.",
           "maxLength": 253,
           "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
         },

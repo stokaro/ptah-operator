@@ -51,7 +51,7 @@ func TestRuntimePodIdentityPolicyPinsServiceAccountExecutableAndSubresources(t *
 		`"pods/proxy"`,
 		`!has(request.subResource) || request.subResource == \"\"`,
 		`request.userInfo.username in [\"system:kube-controller-manager\", \"system:serviceaccount:kube-system:replicaset-controller\"]`,
-		`object.spec.serviceAccountName == \"ptah-controller\"`,
+		`object.spec.serviceAccountName == \"ptah-controller-v1\"`,
 		`object.spec.serviceAccountName == \"ptah-cert-rotator\"`,
 		`variables.activationValid`,
 		`variables.newRelease == variables.activeRelease`,
@@ -231,17 +231,18 @@ func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 		t.Fatal("runtime Pod identity policy is not fail-closed")
 	}
-	if len(policy.Spec.MatchConditions) != 2 || policy.Spec.MatchConditions[0].Expression != wantMatch ||
-		policy.Spec.MatchConditions[1].Name != "activation-gated-runtime-pod" ||
-		policy.Spec.MatchConditions[1].Expression != guard.runtimePodActivationMatchExpression() {
-		t.Fatalf("optional ServiceAccount match condition\n got: %#v\nwant: %q", policy.Spec.MatchConditions, wantMatch)
+	native := stripAdmissionConvergenceDependencyProbe(t, policy)
+	if len(native.Spec.MatchConditions) != 2 || native.Spec.MatchConditions[0].Expression != wantMatch ||
+		native.Spec.MatchConditions[1].Name != "activation-gated-runtime-pod" ||
+		native.Spec.MatchConditions[1].Expression != guard.runtimePodActivationMatchExpression() {
+		t.Fatalf("optional ServiceAccount match condition\n got: %#v\nwant: %q", native.Spec.MatchConditions, wantMatch)
 	}
 	wantVariables := map[string]string{
 		"isController":    fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.ControllerServiceAccountName),
 		"isCertificate":   fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.CertificateDeploymentName),
 		"activationValid": guard.releaseActivationParameterShapeExpression(),
 	}
-	for _, variable := range policy.Spec.Variables {
+	for _, variable := range native.Spec.Variables {
 		if want, ok := wantVariables[variable.Name]; ok {
 			if variable.Expression != want {
 				t.Fatalf("%s variable = %q, want %q", variable.Name, variable.Expression, want)
@@ -719,6 +720,7 @@ func testRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T, environmen
 	guard.WebhookSecretName = truncateTestResourceBase(controllerName, 50) + "-webhook-cert"
 	guard.HookServiceAccountName = hookBase + "-crd-v1-" + hookIdentityDigest("ptah-e2e", "ptah-e2e", 1, managerImage)[:12]
 	guard.ControllerServiceAccountName = controller.Spec.Template.Spec.ServiceAccountName
+	guard.ControllerServiceAccountManaged = true
 	guard.ControllerDeploymentName = controller.Name
 	guard.ControllerReplicas = *controller.Spec.Replicas
 	guard.CertificateDeploymentName = certificate.Name
@@ -934,7 +936,7 @@ func runtimePodGuardFixture() *RolloutGuard {
 		WebhookSecretName:            "ptah-webhook-cert",
 		WebhookPort:                  9443,
 		CertificateHealthPort:        8081,
-		ControllerServiceAccountName: "ptah-controller",
+		ControllerServiceAccountName: "ptah-controller-v1",
 		ControllerDeploymentName:     "ptah-controller",
 		ControllerReplicas:           1,
 		CertificateDeploymentName:    "ptah-cert-rotator",
@@ -963,7 +965,7 @@ func runtimePodGuardFixture() *RolloutGuard {
 		"--runner-image=registry.example/runner@sha256:" + strings.Repeat("c", 64),
 		"--ptah-version=test",
 		"--target-lock-namespace=ptah-system",
-		"--controller-service-account-username=system:serviceaccount:ptah-system:ptah-controller",
+		"--controller-service-account-username=system:serviceaccount:ptah-system:ptah-controller-v1",
 		"--default-tolerations-enabled=true",
 		"--default-not-ready-toleration-seconds=300",
 		"--default-unreachable-toleration-seconds=300",

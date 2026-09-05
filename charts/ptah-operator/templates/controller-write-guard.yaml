@@ -1,5 +1,20 @@
 {{- $guardName := include "ptah-operator.controllerWriteGuardPolicyName" . -}}
 {{- $controllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.serviceAccountName" .) -}}
+{{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
+{{- $controllerUsernameMatch := printf `request.userInfo.username in [%q]` $controllerUsername -}}
+{{- $candidateSequence := include "ptah-operator.releaseSequence" . -}}
+{{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
+{{- $controllerAuthority := printf `request.userInfo.username == %q && variables.activeRelease == %s` $controllerUsername $candidateSequence -}}
+{{- if and $previousControllerServiceAccount (ne $previousControllerServiceAccount (include "ptah-operator.serviceAccountName" .)) -}}
+{{- $previousControllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace $previousControllerServiceAccount -}}
+{{- $controllerUsernameMatch = printf `request.userInfo.username in [%q, %q]` $controllerUsername $previousControllerUsername -}}
+{{- $controllerAuthority = printf `(%s) || (request.userInfo.username == %q && variables.activeRelease == %s)` $controllerAuthority $previousControllerUsername $previousSequence -}}
+{{- end -}}
+{{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
+{{- $anyConvergenceRequest := include "ptah-operator.admissionConvergenceAnyProbeRequest" . -}}
+{{- $probeFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $guardName) -}}
+{{- $probeRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $probeFieldManager) -}}
+{{- $probeMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $probeFieldManager) -}}
 {{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $guardName -}}
 {{- $binding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $guardName -}}
 {{- range $entry := list
@@ -36,6 +51,9 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: controller-write-guard
 spec:
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
   failurePolicy: Fail
   matchConstraints:
     matchPolicy: Exact
@@ -47,10 +65,21 @@ spec:
         operations: ["UPDATE"]
         resources: ["ptahschemas"]
         scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
   matchConditions:
-    - name: exact-controller-service-account
-      expression: {{ printf `request.userInfo.username == %q` $controllerUsername | quote }}
+    - name: candidate-or-predecessor-controller-service-account
+      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest $controllerUsernameMatch | quote }}
   variables:
+    - name: isAnyAdmissionConvergenceProbe
+      expression: {{ $anyConvergenceRequest | quote }}
+    - name: isAdmissionConvergenceProbe
+      expression: {{ $probeRequest | quote }}
+    - name: activeRelease
+      expression: 'params != null && has(params.data) && "active-release-sequence" in params.data && params.data["active-release-sequence"].matches("^(0|[1-9][0-9]*)$") ? int(params.data["active-release-sequence"]) : -1'
     - name: oldFinalizers
       expression: 'has(oldObject.metadata.finalizers) ? oldObject.metadata.finalizers : []'
     - name: newFinalizers
@@ -62,14 +91,22 @@ spec:
     - name: newActiveCount
       expression: 'variables.newFinalizers.filter(value, value == variables.activeFinalizer).size()'
   validations:
-    - expression: 'object.spec == oldObject.spec'
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $activationShape | quote }}
       message: "Ptah controller write guard rejected a desired-state mutation"
-    - expression: 'has(object.status) == has(oldObject.status) && (!has(object.status) || object.status == oldObject.status)'
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $controllerAuthority | quote }}
+      message: "Ptah controller principal guard rejected an inactive release identity"
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (object.spec == oldObject.spec)'
       message: "Ptah controller write guard rejected a desired-state mutation"
-    - expression: 'has(object.metadata.labels) == has(oldObject.metadata.labels) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && has(object.metadata.annotations) == has(oldObject.metadata.annotations) && (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)'
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (has(object.status) == has(oldObject.status) && (!has(object.status) || object.status == oldObject.status))'
       message: "Ptah controller write guard rejected a desired-state mutation"
-    - expression: '(variables.oldActiveCount <= 1 && variables.newActiveCount <= 1) && ((variables.oldActiveCount == variables.newActiveCount && variables.oldFinalizers == variables.newFinalizers) || (variables.oldActiveCount == 0 && variables.newActiveCount == 1 && variables.newFinalizers.filter(value, value != variables.activeFinalizer) == variables.oldFinalizers) || (variables.oldActiveCount == 1 && variables.newActiveCount == 0 && variables.newFinalizers == variables.oldFinalizers.filter(value, value != variables.activeFinalizer)))'
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (has(object.metadata.labels) == has(oldObject.metadata.labels) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && has(object.metadata.annotations) == has(oldObject.metadata.annotations) && (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences))'
       message: "Ptah controller write guard rejected a desired-state mutation"
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || ((variables.oldActiveCount <= 1 && variables.newActiveCount <= 1) && ((variables.oldActiveCount == variables.newActiveCount && variables.oldFinalizers == variables.newFinalizers) || (variables.oldActiveCount == 0 && variables.newActiveCount == 1 && variables.newFinalizers.filter(value, value != variables.activeFinalizer) == variables.oldFinalizers) || (variables.oldActiveCount == 1 && variables.newActiveCount == 0 && variables.newFinalizers == variables.oldFinalizers.filter(value, value != variables.activeFinalizer))))'
+      message: "Ptah controller write guard rejected a desired-state mutation"
+    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
+      message: Ptah admission convergence probe field manager is reserved for dry-run verification
+    - expression: '!variables.isAdmissionConvergenceProbe'
+      message: {{ $probeMessage | quote }}
 ---
 {{- end }}
 {{- if not $binding }}
@@ -100,5 +137,14 @@ spec:
         operations: ["UPDATE"]
         resources: ["ptahschemas"]
         scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+  paramRef:
+    name: ptah-operator-release-activation
+    namespace: {{ .Release.Namespace }}
+    parameterNotFoundAction: Deny
   validationActions: [Deny]
 {{- end }}

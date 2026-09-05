@@ -8,6 +8,9 @@
 {{- $labels := default (dict) .metadata.labels -}}
 {{- $data := default (dict) .data -}}
 {{- $active := default "" (index $data "active-release-sequence") -}}
+{{- $credentialPhase := default "" (index $data "controller-credentials") -}}
+{{- $drainTarget := default "" (index $data "controller-credentials-target-release-sequence") -}}
+{{- $drainAttempt := default "" (index $data "controller-credentials-attempt") -}}
 {{- $state := default "" (index $annotations "operator.ptah.dev/controller-state-version") -}}
 {{- $admission := default "" (index $annotations "operator.ptah.dev/admission-contract-version") -}}
 {{- $release := default "" (index $annotations "operator.ptah.dev/release-sequence") -}}
@@ -15,8 +18,12 @@
 {{- if or
       (ne (len $annotations) 10)
       (ne (default "" .metadata.generateName) "")
+      (eq (default "" .metadata.uid) "")
+      (eq (default "" .metadata.resourceVersion) "")
+      (not (empty .metadata.deletionTimestamp))
+      (not (empty .metadata.deletionGracePeriodSeconds))
       (ne (default "" (index $annotations "helm.sh/hook")) "pre-install,pre-upgrade")
-      (ne (default "" (index $annotations "helm.sh/hook-weight")) "-150")
+      (ne (default "" (index $annotations "helm.sh/hook-weight")) "-166")
       (ne (default "" (index $annotations "helm.sh/resource-policy")) "keep")
       (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
       (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
@@ -29,18 +36,23 @@
       (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
       (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
       (ne (default "" (index $labels "app.kubernetes.io/component")) "rollout-guard")
-      (ne (len $data) 1)
       (not (regexMatch `^(0|[1-9][0-9]*)$` $active))
+      (not (has $credentialPhase (list "active" "draining")))
+      (and (eq $credentialPhase "active") (ne (len $data) 2))
+      (and (eq $credentialPhase "draining") (or (ne (len $data) 4) (not (regexMatch `^[1-9][0-9]*$` $drainTarget)) (not (regexMatch `^[0-9a-f]{64}$` $drainAttempt))))
       (ne (len (default (dict) .binaryData)) 0)
       (default false .immutable)
       (ne (len (default (list) .metadata.ownerReferences)) 0)
       (ne (len (default (list) .metadata.finalizers)) 0)
       (and (ne $active "0") (ne $release $active))
+      (and (eq $active "0") (ne $release $sequence))
       (gt (atoi $active) (atoi $sequence))
+      (and (ne $active "0") (gt (atoi $sequence) (add 1 (atoi $active))))
       (gt (atoi $state) (atoi $stateVersion))
       (gt (atoi $admission) (atoi $admissionVersion))
       (gt (atoi $release) (atoi $sequence))
-      (and (eq $active $sequence) (or (ne $state $stateVersion) (ne $admission $admissionVersion) (ne $image $managerImage))) -}}
+      (and (eq $release $sequence) (or (ne $state $stateVersion) (ne $admission $admissionVersion) (ne $image $managerImage)))
+      (and (eq $credentialPhase "draining") (or (ne $drainTarget $sequence) (ne $drainAttempt (include "ptah-operator.hookIdentityDigest" $)))) -}}
 {{- fail "retained release activation parameter has foreign, malformed, or future state" -}}
 {{- end -}}
 {{- end -}}
@@ -52,7 +64,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "-150"
+    helm.sh/hook-weight: "-166"
     helm.sh/resource-policy: keep
     operator.ptah.dev/rollout-guard-version: "1"
     operator.ptah.dev/release-name: {{ .Release.Name | quote }}
@@ -67,4 +79,5 @@ metadata:
     app.kubernetes.io/component: rollout-guard
 data:
   active-release-sequence: "0"
+  controller-credentials: active
 {{- end }}

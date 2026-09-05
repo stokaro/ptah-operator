@@ -36,10 +36,11 @@ var validStatuses = map[captureStatus]struct{}{
 }
 
 type outputPaths struct {
-	log    string
-	status string
-	ready  string
-	error  string
+	log          string
+	status       string
+	ready        string
+	error        string
+	failureClass string
 }
 
 type privatePath struct {
@@ -54,13 +55,11 @@ type captureOutputs struct {
 	status         *privatePath
 	ready          *privatePath
 	error          *privatePath
-	// reached is the last status written before a failure overwrote it. The
-	// error file says why a capture failed and is deliberately private, so
-	// without this the only thing a failure could report was "failed" -- and
-	// the helper has around ten paths that reach it, from refusing to arm a
-	// watch to losing a log stream midway. The phase is one of eight fixed
-	// words and carries nothing from the cluster, so it is safe to publish
-	// where the error text is not.
+	failureClass   *privatePath
+	// reached is the last nonterminal capture phase. The separate failure-class
+	// file identifies the bounded cause category; retaining the phase as well
+	// distinguishes a failure before the watches armed from one after streaming
+	// began without publishing cluster-derived error text.
 	reached captureStatus
 }
 
@@ -69,10 +68,11 @@ func prepareOutputs(paths outputPaths) (*captureOutputs, error) {
 	cleaned, err := uniqueOutputPaths(paths)
 	if err != nil {
 		bestEffortStartupError(paths.error, err)
+		bestEffortStartupFailureClass(paths.failureClass, failureClassOutput)
 		return nil, err
 	}
 
-	prepared := make([]*os.File, 0, 4)
+	prepared := make([]*os.File, 0, 5)
 	closePrepared := func() {
 		for _, file := range prepared {
 			_ = file.Close()
@@ -92,6 +92,12 @@ func prepareOutputs(paths outputPaths) (*captureOutputs, error) {
 		return nil, fmt.Errorf("prepare error destination: %w", err)
 	}
 	output.error = &privatePath{path: cleaned.error}
+	failureClassFile, err := prepare(cleaned.failureClass)
+	if err != nil {
+		closePrepared()
+		return output, fmt.Errorf("prepare failure class destination: %w", err)
+	}
+	output.failureClass = &privatePath{path: cleaned.failureClass}
 	statusFile, err := prepare(cleaned.status)
 	if err != nil {
 		closePrepared()
@@ -148,6 +154,10 @@ func prepareOutputs(paths outputPaths) (*captureOutputs, error) {
 		closePrepared()
 		return output, fmt.Errorf("close error destination: %w", err)
 	}
+	if err := failureClassFile.Close(); err != nil {
+		closePrepared()
+		return output, fmt.Errorf("close failure class destination: %w", err)
+	}
 	if err := logFile.Close(); err != nil {
 		closePrepared()
 		return output, fmt.Errorf("close log destination: %w", err)
@@ -172,7 +182,7 @@ func prepareOutputs(paths outputPaths) (*captureOutputs, error) {
 }
 
 func uniqueOutputPaths(paths outputPaths) (outputPaths, error) {
-	values := []*string{&paths.log, &paths.status, &paths.ready, &paths.error}
+	values := []*string{&paths.log, &paths.status, &paths.ready, &paths.error, &paths.failureClass}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		absolute, err := filepath.Abs(*value)
@@ -335,10 +345,13 @@ func (output *captureOutputs) setStatus(status captureStatus) error {
 	if output == nil || output.status == nil {
 		return errors.New("status destination is unavailable")
 	}
+	if err := output.status.writeAtomic([]byte(string(status) + "\n")); err != nil {
+		return err
+	}
 	if status != statusFailed && status != statusCanceled {
 		output.reached = status
 	}
-	return output.status.writeAtomic([]byte(string(status) + "\n"))
+	return nil
 }
 
 func (output *captureOutputs) markReady() error {
@@ -352,6 +365,7 @@ func (output *captureOutputs) reportFailure(err error) {
 	if output == nil {
 		return
 	}
+	_ = output.writeFailureClass(failureClassFor(err))
 	_ = output.setTerminalStatus(statusFailed)
 	_ = output.writeError(err)
 }
@@ -360,13 +374,14 @@ func (output *captureOutputs) reportCanceled(err error) {
 	if output == nil {
 		return
 	}
+	_ = output.writeFailureClass(failureClassCanceled)
 	_ = output.setTerminalStatus(statusCanceled)
 	_ = output.writeError(err)
 }
 
-// setTerminalStatus records the outcome on the first line and the phase the
-// capture had reached on the second. Every reader takes the first line only, so
-// the outcome is unchanged for them.
+// setTerminalStatus records the outcome on line one and the last safe,
+// allowlisted capture phase on line two. Existing outcome readers consume only
+// line one; diagnostics can use line two without exposing the private cause.
 func (output *captureOutputs) setTerminalStatus(status captureStatus) error {
 	if _, found := validStatuses[status]; !found {
 		return errors.New("invalid capture status")
@@ -379,6 +394,16 @@ func (output *captureOutputs) setTerminalStatus(status captureStatus) error {
 		reached = statusStarting
 	}
 	return output.status.writeAtomic([]byte(string(status) + "\n" + string(reached) + "\n"))
+}
+
+func (output *captureOutputs) writeFailureClass(class failureClass) error {
+	if _, found := validFailureClasses[class]; !found {
+		return errors.New("invalid failure class")
+	}
+	if output == nil || output.failureClass == nil {
+		return errors.New("failure class destination is unavailable")
+	}
+	return output.failureClass.writeAtomic([]byte(string(class) + "\n"))
 }
 
 func (output *captureOutputs) writeError(err error) error {
@@ -477,4 +502,24 @@ func bestEffortStartupError(path string, cause error) {
 		message = message[:maxErrorBytes]
 	}
 	_ = private.writeAtomic([]byte(message + "\n"))
+}
+
+func bestEffortStartupFailureClass(path string, class failureClass) {
+	if path == "" {
+		return
+	}
+	if _, found := validFailureClasses[class]; !found {
+		return
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return
+	}
+	file, err := openPrivateDestination(filepath.Clean(absolute))
+	if err != nil {
+		return
+	}
+	_ = file.Close()
+	private := &privatePath{path: filepath.Clean(absolute)}
+	_ = private.writeAtomic([]byte(string(class) + "\n"))
 }

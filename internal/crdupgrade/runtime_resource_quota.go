@@ -987,6 +987,9 @@ func runtimeQuotaPodUsage(pod *corev1.Pod) (corev1.ResourceList, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := runtimeQuotaValidateResourceStatus(pod, requests, limits); err != nil {
+		return nil, err
+	}
 	result := corev1.ResourceList{
 		runtimeResourceQuotaObjectCountPods: *resource.NewQuantity(1, resource.DecimalSI),
 		corev1.ResourcePods:                 *resource.NewQuantity(1, resource.DecimalSI),
@@ -1025,9 +1028,6 @@ func runtimeQuotaPodUsage(pod *corev1.Pod) (corev1.ResourceList, error) {
 }
 
 func runtimeQuotaAggregateResources(pod *corev1.Pod, requests bool) (corev1.ResourceList, error) {
-	if err := runtimeQuotaValidateContainerStatuses(pod); err != nil {
-		return nil, err
-	}
 	result := corev1.ResourceList{}
 	for index := range pod.Spec.Containers {
 		container := &pod.Spec.Containers[index]
@@ -1069,24 +1069,6 @@ func runtimeQuotaAggregateResources(pod *corev1.Pod, requests bool) (corev1.Reso
 	if pod.Spec.Resources != nil && (len(pod.Spec.Resources.Requests) != 0 || len(pod.Spec.Resources.Limits) != 0) {
 		return nil, errors.New("pod-level resources are outside the fixed runtime quota contract")
 	}
-	// Pod-level status.resources and status.allocatedResources are NOT refused
-	// on presence. A kubelet on every Kubernetes release in the supported
-	// window reports them for an ordinary Pod that was never resized -- measured
-	// on 1.37.0, a Running cert-rotator Pod carries
-	// status.resources{requests:{cpu:5m,memory:16Mi},limits:{memory:32Mi}} and
-	// status.allocatedResources{cpu:5m,memory:16Mi}, mirroring its container
-	// spec. Refusing their presence therefore refused every protected Pod, so
-	// the preflight hook failed on every supported minor and the release could
-	// never be upgraded.
-	//
-	// What the contract actually needs is that no resize is in effect, and
-	// runtimeQuotaValidateContainerStatuses above already establishes exactly
-	// that: it refuses a Pod carrying PodResizePending or PodResizeInProgress,
-	// and it refuses any container whose status resources or allocatedResources
-	// differ from its spec. These pod-level fields are the kubelet's aggregate
-	// of values that check has already compared one by one, so a mismatch here
-	// cannot survive it. Compare rather than refuse, exactly as the
-	// container-level rule does.
 	if err := runtimeQuotaValidateResourceList("Pod overhead", pod.Spec.Overhead); err != nil {
 		return nil, err
 	}
@@ -1105,10 +1087,60 @@ func runtimeQuotaAggregateResources(pod *corev1.Pod, requests bool) (corev1.Reso
 	return result, nil
 }
 
-func runtimeQuotaValidateContainerStatuses(pod *corev1.Pod) error {
+func runtimeQuotaValidateResourceStatus(
+	pod *corev1.Pod,
+	expectedRequests corev1.ResourceList,
+	expectedLimits corev1.ResourceList,
+) error {
+	if pod.Status.Resize != "" {
+		return fmt.Errorf(
+			"protected runtime Pod has legacy resize status %q; resized Pods cannot be projected consistently across the supported Kubernetes window",
+			pod.Status.Resize,
+		)
+	}
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodResizePending || condition.Type == corev1.PodResizeInProgress {
 			return fmt.Errorf("protected runtime Pod has %s status; resized Pods cannot be projected consistently across the supported Kubernetes window", condition.Type)
+		}
+	}
+	if len(pod.Status.ResourceClaimStatuses) != 0 || pod.Status.ExtendedResourceClaimStatus != nil ||
+		len(pod.Status.NodeAllocatableResourceClaimStatuses) != 0 {
+		return errors.New("protected runtime Pod has dynamic resource allocation status outside the fixed runtime quota contract")
+	}
+
+	// Kubernetes 1.36 and later can publish aggregate Pod resource status even
+	// when PodSpec.Resources is unset. Actuated CPU values can be rounded down
+	// when read back from cgroup v2. For resize-aware container fields,
+	// Kubernetes charges the maximum of the spec, actuated, and allocated
+	// requests, and the maximum of the spec and actuated limits. Pod aggregate
+	// status is currently selected only with pod-level spec resources, which the
+	// fixed contract forbids. Applying the same upper bound here keeps that
+	// contract conservative as the support window advances: a known nonnegative
+	// status subset no greater than the spec cannot increase quota usage, while
+	// larger or unknown values can.
+	if pod.Status.AllocatedResources != nil {
+		if err := runtimeQuotaValidateStatusResourcesAtMost(
+			"pod-level allocated requests",
+			pod.Status.AllocatedResources,
+			expectedRequests,
+		); err != nil {
+			return err
+		}
+	}
+	if pod.Status.Resources != nil {
+		if err := runtimeQuotaValidateStatusResourcesAtMost(
+			"pod-level actuated requests",
+			pod.Status.Resources.Requests,
+			expectedRequests,
+		); err != nil {
+			return err
+		}
+		if err := runtimeQuotaValidateStatusResourcesAtMost(
+			"pod-level actuated limits",
+			pod.Status.Resources.Limits,
+			expectedLimits,
+		); err != nil {
+			return err
 		}
 	}
 
@@ -1141,14 +1173,14 @@ func runtimeQuotaValidateContainerStatuses(pod *corev1.Pod) error {
 				return fmt.Errorf("container status %s has no matching runtime Pod container", status.Name)
 			}
 			if status.Resources != nil {
-				if err := runtimeQuotaValidateStableStatusResources(
+				if err := runtimeQuotaValidateStatusResourcesAtMost(
 					"actuated requests for container "+status.Name,
 					status.Resources.Requests,
 					container.Resources.Requests,
 				); err != nil {
 					return err
 				}
-				if err := runtimeQuotaValidateStableStatusResources(
+				if err := runtimeQuotaValidateStatusResourcesAtMost(
 					"actuated limits for container "+status.Name,
 					status.Resources.Limits,
 					container.Resources.Limits,
@@ -1156,7 +1188,7 @@ func runtimeQuotaValidateContainerStatuses(pod *corev1.Pod) error {
 					return err
 				}
 			}
-			if err := runtimeQuotaValidateStableStatusResources(
+			if err := runtimeQuotaValidateStatusResourcesAtMost(
 				"allocated requests for container "+status.Name,
 				status.AllocatedResources,
 				container.Resources.Requests,
@@ -1169,18 +1201,22 @@ func runtimeQuotaValidateContainerStatuses(pod *corev1.Pod) error {
 	return nil
 }
 
-func runtimeQuotaValidateStableStatusResources(description string, actual, expected corev1.ResourceList) error {
+func runtimeQuotaValidateStatusResourcesAtMost(description string, actual, expected corev1.ResourceList) error {
 	if err := runtimeQuotaValidateResourceList(description, actual); err != nil {
 		return err
 	}
-	for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory, corev1.ResourceEphemeralStorage} {
-		actualQuantity, actualFound := actual[name]
-		if !actualFound {
-			continue
+	for _, name := range sortedRuntimeResourceNames(actual) {
+		actualQuantity := actual[name]
+		expectedQuantity, expectedFound := expected[name]
+		if !expectedFound {
+			return fmt.Errorf(
+				"%s contains resource %s outside the fixed runtime Pod spec; resized protected Pods cannot be projected consistently across the supported Kubernetes window",
+				description,
+				name,
+			)
 		}
-		expectedQuantity := expected[name]
-		if actualQuantity.Cmp(expectedQuantity) != 0 {
-			return fmt.Errorf("%s %s=%s differs from the fixed runtime Pod spec value %s; resized protected Pods cannot be projected consistently across the supported Kubernetes window", description, name, actualQuantity.String(), expectedQuantity.String())
+		if actualQuantity.Cmp(expectedQuantity) > 0 {
+			return fmt.Errorf("%s %s=%s exceeds the fixed runtime Pod spec value %s; resized protected Pods cannot be projected consistently across the supported Kubernetes window", description, name, actualQuantity.String(), expectedQuantity.String())
 		}
 	}
 	return nil

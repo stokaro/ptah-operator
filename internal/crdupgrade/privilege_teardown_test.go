@@ -3,6 +3,7 @@ package crdupgrade
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -223,12 +224,23 @@ func renderedPrivilegeTeardownContract(t *testing.T) *PrivilegeTeardown {
 		t.Fatal(err)
 	}
 	const controllerName = "ptah-e2e-ptah-operator"
-	digest := hookIdentityDigest(
+	attempt := hookIdentityDigest(
 		settings.releaseNamespace,
 		renderedPrivilegeReleaseName,
 		1,
 		renderedPrivilegeManagerImage,
-	)[:12]
+	)
+	digest := attempt[:12]
+	controllerServiceAccountName := settings.controllerServiceAccountName
+	if settings.controllerServiceAccountCreate {
+		base := strings.TrimSuffix(controllerServiceAccountName[:min(len(controllerServiceAccountName), 38)], "-")
+		principalDigest := sha256.Sum256([]byte(strings.Join([]string{
+			controllerServiceAccountName,
+			"1",
+			attempt,
+		}, "\n")))
+		controllerServiceAccountName = fmt.Sprintf("%s-v1-%x", base, principalDigest)[:len(base)+4+12]
+	}
 	guard := &RolloutGuard{
 		ReleaseName:                  renderedPrivilegeReleaseName,
 		ReleaseNamespace:             settings.releaseNamespace,
@@ -236,7 +248,7 @@ func renderedPrivilegeTeardownContract(t *testing.T) *PrivilegeTeardown {
 		ReleaseSequence:              1,
 		ManagerImage:                 renderedPrivilegeManagerImage,
 		HookServiceAccountName:       "ptah-e2e-ptah-operator-crd-v1-" + digest,
-		ControllerServiceAccountName: settings.controllerServiceAccountName,
+		ControllerServiceAccountName: controllerServiceAccountName,
 		ControllerDeploymentName:     controllerName,
 		CertificateDeploymentName:    controllerName + "-cert-rotator",
 		WebhookSecretName:            controllerName + "-webhook-cert",
@@ -516,6 +528,166 @@ func TestPrivilegeTeardownDeletesExactPrivilegesBeforeServiceAccounts(t *testing
 	fixture.assertDeletePreconditions(t)
 }
 
+func TestPrivilegeTeardownRetiresCleanupServiceAccountFromExactResidualState(t *testing.T) {
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	eventsBefore := len(fixture.events)
+	callsBefore := len(fixture.serviceAccounts.calls)
+
+	if err := fixture.teardown.RetireCleanupServiceAccount(context.Background()); err != nil {
+		t.Fatalf("RetireCleanupServiceAccount() error = %v", err)
+	}
+	if fixture.serviceAccounts.objects[fixture.cleanupName] != nil {
+		t.Fatalf("cleanup ServiceAccount/%s remains", fixture.cleanupName)
+	}
+	if got := fixture.events[eventsBefore:]; !reflect.DeepEqual(got, []string{"ServiceAccount/" + fixture.cleanupName}) {
+		t.Fatalf("cleanup retirement events = %#v", got)
+	}
+	if got := fixture.serviceAccounts.calls[callsBefore:]; len(got) != 1 || got[0].name != fixture.cleanupName {
+		t.Fatalf("cleanup retirement delete calls = %#v", got)
+	}
+	fixture.assertDeletePreconditions(t)
+}
+
+func TestPrivilegeTeardownRejectsCleanupServiceAccountRetirementBeforeResidualState(t *testing.T) {
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+
+	err := fixture.teardown.RetireCleanupServiceAccount(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "non-residual privilege remains") {
+		t.Fatalf("RetireCleanupServiceAccount() error = %v, want non-residual privilege rejection", err)
+	}
+	if len(fixture.events) != 0 {
+		t.Fatalf("early cleanup retirement mutated resources: %v", fixture.events)
+	}
+}
+
+func TestPrivilegeTeardownRejectsDriftedResidualStateBeforeCleanupServiceAccountRetirement(t *testing.T) {
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	eventsBefore := len(fixture.events)
+	roleKey := privilegeBindingKey(fixture.guard.ReleaseNamespace, fixture.residualGuard)
+	fixture.roles.objects[roleKey].Rules = append(
+		fixture.roles.objects[roleKey].Rules,
+		privilegePolicyRule([]string{""}, []string{"secrets"}, nil, []string{"get"}),
+	)
+
+	err := fixture.teardown.RetireCleanupServiceAccount(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "policy rules differ from the exact ordered privilege contract") {
+		t.Fatalf("RetireCleanupServiceAccount() error = %v, want exact residual contract rejection", err)
+	}
+	if fixture.serviceAccounts.objects[fixture.cleanupName] == nil {
+		t.Fatalf("drifted residual state removed cleanup ServiceAccount/%s", fixture.cleanupName)
+	}
+	if got := fixture.events[eventsBefore:]; len(got) != 0 {
+		t.Fatalf("drifted residual state caused mutations: %v", got)
+	}
+}
+
+func TestPrivilegeTeardownCleanupServiceAccountRetirementUsesFreshPreconditions(t *testing.T) {
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	eventsBefore := len(fixture.events)
+	fixture.serviceAccounts.beforeDelete = func(name string, object *corev1.ServiceAccount) {
+		if name == fixture.cleanupName {
+			object.ResourceVersion = "raced"
+		}
+	}
+
+	err := fixture.teardown.RetireCleanupServiceAccount(context.Background())
+	if err == nil || !apierrors.IsConflict(err) {
+		t.Fatalf("RetireCleanupServiceAccount() error = %v, want delete precondition conflict", err)
+	}
+	if fixture.serviceAccounts.objects[fixture.cleanupName] == nil {
+		t.Fatalf("precondition conflict removed cleanup ServiceAccount/%s", fixture.cleanupName)
+	}
+	if got := fixture.events[eventsBefore:]; len(got) != 0 {
+		t.Fatalf("precondition conflict recorded deletion events: %v", got)
+	}
+}
+
+func TestPrivilegeTeardownCleanupServiceAccountRetirementRejectsRecreation(t *testing.T) {
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	recreated := fixture.serviceAccounts.objects[fixture.cleanupName].DeepCopy()
+	recreated.UID = "uid-recreated-cleanup"
+	recreated.ResourceVersion = "2"
+	fixture.serviceAccounts.afterDelete = func(name string) {
+		if name == fixture.cleanupName {
+			fixture.serviceAccounts.objects[name] = recreated.DeepCopy()
+		}
+	}
+
+	err := fixture.teardown.RetireCleanupServiceAccount(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "remains after exact retirement") {
+		t.Fatalf("RetireCleanupServiceAccount() error = %v, want recreation rejection", err)
+	}
+	if got := fixture.serviceAccounts.objects[fixture.cleanupName]; got == nil || got.UID != recreated.UID {
+		t.Fatalf("recreated cleanup ServiceAccount = %#v", got)
+	}
+}
+
+func TestPrivilegeTeardownCleanupServiceAccountRetirementAcceptsPostDeleteUnauthorized(t *testing.T) {
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	fixture.serviceAccounts.afterDelete = func(name string) {
+		if name == fixture.cleanupName {
+			fixture.serviceAccounts.getErr[name] = apierrors.NewUnauthorized("bound token retired")
+		}
+	}
+
+	if err := fixture.teardown.RetireCleanupServiceAccount(context.Background()); err != nil {
+		t.Fatalf("RetireCleanupServiceAccount() error = %v, want successful self-revocation", err)
+	}
+	if fixture.serviceAccounts.objects[fixture.cleanupName] != nil {
+		t.Fatalf("cleanup ServiceAccount/%s remains", fixture.cleanupName)
+	}
+}
+
+func TestPrivilegeTeardownCleanupServiceAccountRetirementRejectsPreDeleteUnauthorized(t *testing.T) {
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	fixture.serviceAccounts.getErr[fixture.cleanupName] = apierrors.NewUnauthorized("credential rejected before retirement")
+	callsBefore := len(fixture.serviceAccounts.calls)
+
+	err := fixture.teardown.RetireCleanupServiceAccount(context.Background())
+	if err == nil || !apierrors.IsUnauthorized(err) {
+		t.Fatalf("RetireCleanupServiceAccount() error = %v, want preflight Unauthorized", err)
+	}
+	if got := len(fixture.serviceAccounts.calls); got != callsBefore {
+		t.Fatalf("preflight Unauthorized caused %d cleanup deletes, want %d", got, callsBefore)
+	}
+}
+
+func TestPrivilegeTeardownCleanupServiceAccountRetirementRejectsPostDeleteReadFailure(t *testing.T) {
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatalf("Teardown() error = %v", err)
+	}
+	readFailure := errors.New("temporary cleanup identity read failure")
+	fixture.serviceAccounts.afterDelete = func(name string) {
+		if name == fixture.cleanupName {
+			fixture.serviceAccounts.getErr[name] = readFailure
+		}
+	}
+
+	err := fixture.teardown.RetireCleanupServiceAccount(context.Background())
+	if err == nil || !errors.Is(err, readFailure) {
+		t.Fatalf("RetireCleanupServiceAccount() error = %v, want post-delete read failure", err)
+	}
+}
+
 func TestPrivilegeTeardownRejectsForeignBindingsBeforeMutation(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -543,6 +715,20 @@ func TestPrivilegeTeardownRejectsForeignBindingsBeforeMutation(t *testing.T) {
 				}
 			},
 			want: "foreign ClusterRoleBinding",
+		},
+		{
+			name: "previous controller RoleBinding",
+			add: func(f *privilegeTeardownFixture) {
+				f.guard.PreviousControllerServiceAccountName = "previous-controller"
+				f.guard.PreviousControllerServiceAccountUID = "previous-controller-uid"
+				f.guard.PreviousControllerReleaseSequence = 0
+				f.roleBindings.objects[privilegeBindingKey("foreign", "previous-controller-extra")] = &rbacv1.RoleBinding{
+					ObjectMeta: privilegeObjectMeta("previous-controller-extra", "foreign", f.guard, "", "previous-controller-extra"),
+					RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "edit"},
+					Subjects:   []rbacv1.Subject{privilegeServiceAccountSubject(f.guard.ReleaseNamespace, f.guard.PreviousControllerServiceAccountName)},
+				}
+			},
+			want: "foreign RoleBinding",
 		},
 		{
 			name: "encoded ServiceAccount user",
@@ -584,6 +770,24 @@ func TestPrivilegeTeardownRejectsForeignBindingsBeforeMutation(t *testing.T) {
 				t.Fatalf("foreign binding caused mutations: %v", fixture.events)
 			}
 		})
+	}
+}
+
+func TestPrivilegeTeardownScopesLegacyControllerGuardAuthorityToFullCleanup(t *testing.T) {
+	fixture := newPrivilegeTeardownFixture(t, true, true)
+	privilegeNames := fixture.teardown.privilegeAdmissionGuardNames()
+	runtimeNames := fixture.teardown.runtimeAdmissionGuardNames()
+	bootstrapNames := fixture.teardown.bootstrapAdmissionGuardNames()
+	for _, name := range legacyControllerGuardNames(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName) {
+		if !stringSliceContains(privilegeNames, name) {
+			t.Fatalf("full cleanup admission inventory is missing %s", name)
+		}
+		if stringSliceContains(runtimeNames, name) {
+			t.Fatalf("runtime authority unexpectedly includes legacy guard %s", name)
+		}
+		if stringSliceContains(bootstrapNames, name) {
+			t.Fatalf("bootstrap authority unexpectedly includes legacy guard %s", name)
+		}
 	}
 }
 
@@ -1310,7 +1514,7 @@ func newPrivilegeTeardownFixtureWithCoordination(
 	fixture.clusterBindings = &fakePrivilegeClusterRoleBindings{objects: map[string]*rbacv1.ClusterRoleBinding{}, deleteErrors: map[string]error{}, events: &fixture.events}
 	fixture.roles = &fakePrivilegeRoles{objects: map[string]*rbacv1.Role{}, getErr: map[string]error{}}
 	fixture.clusterRoles = &fakePrivilegeClusterRoles{objects: map[string]*rbacv1.ClusterRole{}, deleteErrors: map[string]error{}, events: &fixture.events}
-	fixture.serviceAccounts = &fakePrivilegeServiceAccounts{objects: map[string]*corev1.ServiceAccount{}, deleteErrors: map[string]error{}, events: &fixture.events}
+	fixture.serviceAccounts = &fakePrivilegeServiceAccounts{objects: map[string]*corev1.ServiceAccount{}, getErr: map[string]error{}, deleteErrors: map[string]error{}, events: &fixture.events}
 	cleanupName, err := TeardownServiceAccountName(guard.HookServiceAccountName, guard.ReleaseSequence)
 	if err != nil {
 		t.Fatalf("derive cleanup ServiceAccount: %v", err)
@@ -1350,17 +1554,18 @@ func newPrivilegeTeardownFixtureWithCoordination(
 		fixture.nextObjectIdentity++
 		identity := fmt.Sprintf("binding-%02d", fixture.nextObjectIdentity)
 		metadata := privilegeObjectMeta(binding.name, binding.namespace, guard, binding.component, identity)
+		subjects := append([]rbacv1.Subject{binding.subject}, binding.fixedSubjects...)
 		if binding.cluster {
 			fixture.clusterBindings.objects[binding.name] = &rbacv1.ClusterRoleBinding{
 				ObjectMeta: metadata,
 				RoleRef:    binding.roleRef,
-				Subjects:   []rbacv1.Subject{binding.subject},
+				Subjects:   subjects,
 			}
 		} else {
 			fixture.roleBindings.objects[privilegeBindingKey(binding.namespace, binding.name)] = &rbacv1.RoleBinding{
 				ObjectMeta: metadata,
 				RoleRef:    binding.roleRef,
-				Subjects:   []rbacv1.Subject{binding.subject},
+				Subjects:   subjects,
 			}
 		}
 	}
@@ -1701,6 +1906,7 @@ type fakePrivilegeServiceAccounts struct {
 	getErr       map[string]error
 	deleteErrors map[string]error
 	beforeDelete func(string, *corev1.ServiceAccount)
+	afterDelete  func(string)
 	calls        []privilegeServiceAccountDeleteCall
 	events       *[]string
 }
@@ -1733,6 +1939,9 @@ func (f *fakePrivilegeServiceAccounts) Delete(_ context.Context, name string, op
 	}
 	delete(f.objects, name)
 	*f.events = append(*f.events, "ServiceAccount/"+name)
+	if f.afterDelete != nil {
+		f.afterDelete(name)
+	}
 	return nil
 }
 

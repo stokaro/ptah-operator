@@ -24,16 +24,17 @@ const (
 )
 
 type options struct {
-	kubeconfig string
-	namespace  string
-	jobName    string
-	hookMode   string
-	renderFile string
-	logFile    string
-	statusFile string
-	readyFile  string
-	errorFile  string
-	timeout    time.Duration
+	kubeconfig       string
+	namespace        string
+	jobName          string
+	hookMode         string
+	renderFile       string
+	logFile          string
+	statusFile       string
+	readyFile        string
+	errorFile        string
+	failureClassFile string
+	timeout          time.Duration
 }
 
 func main() {
@@ -44,18 +45,20 @@ func execute(args []string) int {
 	opts, err := parseOptions(args)
 	if err != nil {
 		bestEffortStartupError(opts.errorFile, err)
+		bestEffortStartupFailureClass(opts.failureClassFile, failureClassConfiguration)
 		return 2
 	}
 
 	output, err := prepareOutputs(outputPaths{
-		log:    opts.logFile,
-		status: opts.statusFile,
-		ready:  opts.readyFile,
-		error:  opts.errorFile,
+		log:          opts.logFile,
+		status:       opts.statusFile,
+		ready:        opts.readyFile,
+		error:        opts.errorFile,
+		failureClass: opts.failureClassFile,
 	})
 	if err != nil {
 		if output != nil {
-			output.reportFailure(err)
+			output.reportFailure(classifyFailure(failureClassOutput, err))
 			_ = output.close()
 		}
 		return 1
@@ -63,24 +66,24 @@ func execute(args []string) int {
 	defer func() { _ = output.close() }()
 
 	if err := output.setStatus(statusStarting); err != nil {
-		output.reportFailure(err)
+		output.reportFailure(classifyFailure(failureClassOutput, err))
 		return 1
 	}
 	expectedJob, err := loadRenderedJob(opts.renderFile, opts.namespace, opts.jobName)
 	if err != nil {
-		output.reportFailure(errors.New("load exact rendered hook Job: " + err.Error()))
+		output.reportFailure(classifyFailure(failureClassRender, errors.New("load exact rendered hook Job: "+err.Error())))
 		return 1
 	}
 
 	restConfig, err := clientcmd.BuildConfigFromFlags("", opts.kubeconfig)
 	if err != nil {
-		output.reportFailure(errors.New("build Kubernetes client configuration: " + err.Error()))
+		output.reportFailure(classifyFailure(failureClassKubernetesClient, errors.New("build Kubernetes client configuration: "+err.Error())))
 		return 1
 	}
 	restConfig.UserAgent = "ptah-operator-hook-log-capture"
 	clientset, err := kubernetes.NewForConfig(restConfig)
 	if err != nil {
-		output.reportFailure(errors.New("create Kubernetes client: " + err.Error()))
+		output.reportFailure(classifyFailure(failureClassKubernetesClient, errors.New("create Kubernetes client: "+err.Error())))
 		return 1
 	}
 
@@ -122,6 +125,7 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&opts.statusFile, "status-file", "", "private destination for capture status")
 	flags.StringVar(&opts.readyFile, "ready-file", "", "private readiness marker destination")
 	flags.StringVar(&opts.errorFile, "error-file", "", "private destination for errors")
+	flags.StringVar(&opts.failureClassFile, "failure-class-file", "", "private destination for the bounded failure class")
 	flags.DurationVar(&opts.timeout, "timeout", opts.timeout, "maximum lifetime of the capture")
 	if err := flags.Parse(args); err != nil {
 		return opts, err
@@ -142,6 +146,7 @@ func parseOptions(args []string) (options, error) {
 		{"--status-file", opts.statusFile},
 		{"--ready-file", opts.readyFile},
 		{"--error-file", opts.errorFile},
+		{"--failure-class-file", opts.failureClassFile},
 	}
 	for _, item := range required {
 		if item.value == "" {

@@ -53,10 +53,34 @@ func TestNamespaceDeletionGuardMatchesOnlyExactReleaseNamespaceDelete(t *testing
 	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 		t.Fatal("namespace deletion guard is not fail-closed")
 	}
-	assertExactNamespaceDeletionMatch(t, policy.Spec.MatchConstraints, guard.ReleaseNamespace)
-	assertExactNamespaceDeletionMatch(t, binding.Spec.MatchResources, guard.ReleaseNamespace)
-	if len(policy.Spec.MatchConditions) != 0 || len(policy.Spec.Variables) != 0 {
-		t.Fatal("namespace deletion guard must not widen its exact-name rule with conditions or variables")
+	assertExactNamespaceDeletionMatch(t, policy.Spec.MatchConstraints)
+	assertExactNamespaceDeletionMatch(t, binding.Spec.MatchResources)
+	if len(policy.Spec.MatchConditions) != 1 || len(policy.Spec.Variables) != 0 {
+		t.Fatal("namespace deletion guard must narrow its broad collection-safe rule with one fixed-name condition")
+	}
+	condition := policy.Spec.MatchConditions[0]
+	if condition.Name != "fixed-release-namespace" || !strings.Contains(condition.Expression, "oldObject.metadata.name") {
+		t.Fatalf("namespace deletion guard has an unsafe fixed-name condition: %#v", condition)
+	}
+	for _, test := range []struct {
+		name    string
+		oldName string
+		want    bool
+	}{
+		{name: "collection delete member", oldName: guard.ReleaseNamespace, want: true},
+		{name: "foreign namespace", oldName: "foreign"},
+		{name: "missing old object"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var oldObject any
+			if test.oldName != "" {
+				oldObject = map[string]any{"metadata": map[string]any{"name": test.oldName}}
+			}
+			got := evaluateRolloutCEL(t, condition.Expression, map[string]any{"oldObject": oldObject}, nil)
+			if got != test.want {
+				t.Fatalf("namespace deletion match = %v, want %t", got, test.want)
+			}
+		})
 	}
 	if len(policy.Spec.Validations) != 1 || policy.Spec.Validations[0].Expression != "false" ||
 		policy.Spec.Validations[0].Message != namespaceDeletionGuardDenialMessage() {
@@ -183,7 +207,7 @@ func TestRenderedNamespaceDeletionGuardMatchesCompiledContract(t *testing.T) {
 	}
 }
 
-func assertExactNamespaceDeletionMatch(t *testing.T, match *admissionregistrationv1.MatchResources, namespace string) {
+func assertExactNamespaceDeletionMatch(t *testing.T, match *admissionregistrationv1.MatchResources) {
 	t.Helper()
 	if match == nil || match.MatchPolicy == nil || *match.MatchPolicy != admissionregistrationv1.Exact {
 		t.Fatal("namespace deletion guard matching is not Exact")
@@ -202,7 +226,7 @@ func assertExactNamespaceDeletionMatch(t *testing.T, match *admissionregistratio
 		!reflect.DeepEqual(rule.APIGroups, []string{""}) ||
 		!reflect.DeepEqual(rule.APIVersions, []string{"v1"}) ||
 		!reflect.DeepEqual(rule.Resources, []string{"namespaces"}) ||
-		!reflect.DeepEqual(rule.ResourceNames, []string{namespace}) ||
+		len(rule.ResourceNames) != 0 ||
 		rule.Scope == nil || *rule.Scope != admissionregistrationv1.ClusterScope {
 		t.Fatalf("namespace deletion rule is not exact: %#v", rule)
 	}

@@ -6,6 +6,12 @@
 {{- $imageCheckJobName := printf "%s-image-check" ($clusterRoleName | trunc 51 | trimSuffix "-") -}}
 {{- $identityProbeJobName := include "ptah-operator.hookIdentityProbeJobName" . -}}
 {{- $identityBootstrapRoleName := printf "%s-bootstrap" ($clusterRoleName | trunc 53 | trimSuffix "-") -}}
+{{- $admissionConvergencePolicyName := include "ptah-operator.admissionConvergencePolicyName" . -}}
+{{- $admissionConvergenceMarkerName := include "ptah-operator.admissionConvergenceMarkerName" . -}}
+{{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
+{{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest -}}
+{{- $previousAdmissionConvergenceMarkerName := printf "ptah-admission-convergence-v1-%s-%s" $previousSequence $releaseDigest -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -97,6 +103,7 @@ rules:
     resourceNames:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
+      - {{ $serviceAccountObjectGuardName }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
@@ -115,6 +122,7 @@ rules:
     resourceNames:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
+      - {{ $serviceAccountObjectGuardName }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
@@ -173,13 +181,6 @@ rules:
     resources: ["configmaps"]
     resourceNames: [{{ include "ptah-operator.hookIdentityProbeObjectName" . }}]
     verbs: ["get", "update"]
-  # This narrowly named create grant exists only so the unprivileged identity
-  # probe can prove that the origin guard, rather than RBAC, rejects an
-  # unbound token request before any schema or workload permission is granted.
-  - apiGroups: [""]
-    resources: ["serviceaccounts/token"]
-    resourceNames: [{{ $serviceAccountName | quote }}]
-    verbs: ["create"]
   # Namespace-wide reads are required to detect Jobs and Pods that were
   # staged with any protected hook identity before the guards were installed.
   - apiGroups: ["batch"]
@@ -225,7 +226,7 @@ metadata:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: hook-identity-probe
 spec:
-  activeDeadlineSeconds: 120
+  activeDeadlineSeconds: 210
   backoffLimit: 0
   template:
     metadata:
@@ -332,6 +333,8 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
+      - {{ $admissionConvergencePolicyName }}
+      - {{ $serviceAccountObjectGuardName }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
@@ -354,6 +357,8 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
+      - {{ $admissionConvergencePolicyName }}
+      - {{ $serviceAccountObjectGuardName }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
@@ -370,6 +375,41 @@ rules:
   - apiGroups: ["scheduling.k8s.io"]
     resources: ["priorityclasses"]
     verbs: ["get", "list"]
+  # Binding LIST is cluster-wide so the manager can reject every foreign grant
+  # to either protected controller principal. GET/PATCH remains limited to the
+  # three stable names; the hook has no RBAC binding CREATE permission.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    resourceNames: [{{ include "ptah-operator.fullname" . | quote }}]
+    verbs: ["get", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    resourceNames:
+      - {{ include "ptah-operator.fullname" . | quote }}
+      - {{ printf "%s-runtime-admission" (include "ptah-operator.fullname" .) | quote }}
+    verbs: ["get", "patch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: [{{ include "ptah-operator.fullname" . | quote }}]
+    verbs: ["get"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles"]
+    resourceNames:
+      - {{ include "ptah-operator.fullname" . | quote }}
+      - {{ printf "%s-runtime-admission" (include "ptah-operator.fullname" .) | quote }}
+    verbs: ["get"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews"]
+    verbs: ["create"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -425,6 +465,9 @@ rules:
     resourceNames:
       - {{ include "ptah-operator.serviceAccountName" . }}
       - {{ include "ptah-operator.certRotatorServiceAccountName" . }}
+      {{- with (include "ptah-operator.previousControllerServiceAccountName" .) }}
+      - {{ . }}
+      {{- end }}
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["limitranges"]
@@ -434,8 +477,17 @@ rules:
     verbs: ["list"]
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["ptah-operator-release-activation"]
+    resourceNames: ["ptah-operator-release-activation", {{ $admissionConvergenceMarkerName | quote }}]
     verbs: ["get", "update"]
+  {{- if ne $previousSequence "0" }}
+  # The predecessor attempt marker is retired only after candidate activation.
+  # DELETE remains exact-name scoped and the manager supplies UID/resourceVersion
+  # preconditions, so a replacement can never be removed by a stale retry.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $previousAdmissionConvergenceMarkerName | quote }}]
+    verbs: ["get", "delete"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -598,7 +650,7 @@ metadata:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: crd-manager
 spec:
-  activeDeadlineSeconds: 210
+  activeDeadlineSeconds: 390
   backoffLimit: 0
   template:
     metadata:
@@ -630,7 +682,7 @@ spec:
           terminationMessagePath: /dev/termination-log
           terminationMessagePolicy: File
           args:
-            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "reconcile" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
+            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "reconcile" "timeout" "360s" "verifyControllerState" false) | fromJsonArray) }}
             - {{ . | quote }}
             {{- end }}
           securityContext:

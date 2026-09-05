@@ -71,9 +71,11 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	assertExactRule(t, role, "", "secrets", []string{secretName}, []string{"get", "update"})
 	assertNoResourceVerb(t, role, "", "secrets", "create")
 	assertExactRule(t, role, "coordination.k8s.io", "leases", []string{leaseName}, []string{"get", "update"})
-	assertExactRule(t, role, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
+	runtimeAdmissionRole := mustObject(t, objects, "Role", managerName+"-runtime-admission")
+	assertExactRule(t, runtimeAdmissionRole, "", "configmaps", []string{"ptah-admission-convergence-v1-1-f1e165dcd72a"}, []string{"get", "update"})
 
 	clusterRole := mustObject(t, objects, "ClusterRole", rotatorName)
+	assertExactRule(t, clusterRole, "discovery.k8s.io", "endpointslices", nil, []string{"list"})
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "mutatingwebhookconfigurations", []string{configurationName}, []string{"get", "update"})
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingwebhookconfigurations", []string{configurationName}, []string{"get", "update"})
 	runtimeGuardNames := []string{
@@ -83,14 +85,19 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		"ptah-operator-hook-identity-v1-90a0385b562b",
 		"ptah-operator-hook-probe-guard-v1-90a0385b562b",
 		"ptah-operator-release-activation-guard-v1-f1e165dcd72a",
-		"ptah-operator-service-account-origin-guard-v1-f1e165dcd72a",
-		"ptah-operator-controller-write-guard-v1-f1e165dcd72a",
-		"ptah-operator-job-write-guard-v1-f1e165dcd72a",
-		"ptah-operator-chunk-write-guard-v1-f1e165dcd72a",
-		"ptah-operator-plan-write-guard-v1-f1e165dcd72a",
+		"ptah-operator-admission-convergence-v1-f1e165dcd72a",
+		"ptah-operator-service-account-object-guard-v1-f1e165dcd72a",
+		"ptah-operator-service-account-origin-guard-v2-90a0385b562b",
+		"ptah-operator-controller-write-guard-v2-90a0385b562b",
+		"ptah-operator-job-write-guard-v2-90a0385b562b",
+		"ptah-operator-chunk-write-guard-v2-90a0385b562b",
+		"ptah-operator-plan-write-guard-v2-90a0385b562b",
 		"ptah-operator-certificate-mutate-guard-v1-f1e165dcd72a",
 		"ptah-operator-certificate-validate-guard-v1-f1e165dcd72a",
-		"ptah-operator-runtime-parent-guard-v1-f1e165dcd72a",
+		"ptah-operator-namespace-deletion-guard-v1-f1e165dcd72a",
+		"ptah-operator-runtime-parent-guard-v2-90a0385b562b",
+		"ptah-operator-hook-pod-origin-guard-v2-f1e165dcd72a",
+		"ptah-operator-hook-parent-origin-guard-v2-f1e165dcd72a",
 		"ptah-operator-hook-pod-origin-guard-v1-f1e165dcd72a",
 		"ptah-operator-hook-parent-origin-guard-v1-f1e165dcd72a",
 		"ptah-operator-hook-parent-contract-v1-90a0385b562b",
@@ -455,6 +462,50 @@ func TestChartPreservesExplicitPtahVersionAsOneExactArgument(t *testing.T) {
 	managerArgs := stringSlice(containers[0].(map[string]any)["args"])
 	if !slices.Contains(managerArgs, "--ptah-version="+version) {
 		t.Fatalf("manager args did not preserve the exact Ptah version: %v", managerArgs)
+	}
+}
+
+func TestExternalControllerServiceAccountUsesReleaseEpochName(t *testing.T) {
+	t.Parallel()
+
+	const base = "platform-controller"
+	objects := renderChart(t,
+		"--set", "serviceAccount.create=false",
+		"--set-string", "serviceAccount.name="+base,
+	)
+	deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
+	name, found, err := unstructured.NestedString(deployment.Object, "spec", "template", "spec", "serviceAccountName")
+	if err != nil || !found {
+		t.Fatalf("external controller Deployment serviceAccountName: found=%t err=%v", found, err)
+	}
+	if want := base + "-v1"; name != want {
+		t.Fatalf("external controller ServiceAccount name = %q, want %q", name, want)
+	}
+	for _, object := range objects {
+		if object.GetKind() == "ServiceAccount" && object.GetName() == name {
+			t.Fatalf("chart rendered user-owned external ServiceAccount %s/%s", releaseNamespace, name)
+		}
+	}
+}
+
+func TestExternalControllerServiceAccountBaseReservesEpochSuffix(t *testing.T) {
+	t.Parallel()
+
+	if _, err := renderChartCommand(t,
+		"--set", "serviceAccount.create=false",
+		"--set-string", "serviceAccount.name="+strings.Repeat("a", 242),
+	); err == nil {
+		t.Fatal("chart accepted an external controller ServiceAccount base that cannot fit every release epoch")
+	}
+}
+
+func TestManagedControllerServiceAccountBaseKeepsFullConfigurationRange(t *testing.T) {
+	t.Parallel()
+
+	if _, err := renderChartCommand(t,
+		"--set-string", "serviceAccount.name="+strings.Repeat("a", 242),
+	); err != nil {
+		t.Fatalf("chart rejected a valid managed controller ServiceAccount base: %v", err)
 	}
 }
 

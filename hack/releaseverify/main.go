@@ -34,20 +34,21 @@ var (
 	commitPattern          = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	transactionPattern     = regexp.MustCompile(`^[1-9][0-9]*$`)
 	sha256DigestPattern    = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	kubernetesMinorPattern = regexp.MustCompile(`^([1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 	dockerArgumentPattern  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	dockerStagePattern     = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_.-]*$`)
 	releaseSequenceHelper  = regexp.MustCompile(`(?m)^\{\{- define "ptah-operator[.]releaseSequence" -\}\}([1-9][0-9]*)\{\{- end -\}\}$`)
 	releaseRunSHA256       = map[string]string{
 		"smoke/verify-release":               "c91171f73101c06d5d1fdae3f0c4bd405ba7ea6af07e0b76ba38fbb3b1258520",
 		"smoke/chart-reproducibility":        "e4dd3906ecd98e9b694aced076f01d981e8dfa6da6e709af486cdb533d76fde7",
-		"support-preflight/support-evidence": "bf181ba760698cf2b0f89514d3f38c80b96cb3d930dcf573d1d6c864f26c74dd",
+		"support-preflight/support-evidence": "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf",
 		"publish/release":                    "7d1b4969f5c2d8a9ce63fe54113b2efe9dcea9d35be72bc5dffca2add2858752",
 		"publish/transaction":                "72cce0372380ba97e39ae01a383402b50b33122d24854487835b37572fc3c5e7",
 		"publish/immutability-preflight":     "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
 		"publish/draft":                      "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
 		"publish/stage-inspect":              "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
-		"publish/chart-package":              "d5b44cddda0c6f79697af28047accd9cf48c7bde7e2e72826078ea9937b316a2",
-		"publish/artifacts":                  "5812ca3f58b88b19f0879602e96c34e5ab27ad95e90ab5cbd6f46cbfb44dd000",
+		"publish/chart-package":              "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8",
+		"publish/artifacts":                  "d8b898954b7f77f61fd8ecde63414f2e9a423531c5982d40c805d9be8fbde64c",
 		"publish/image-structure":            "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
 		"publish/finalize-journal":           "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
 		"publish/asset-auth":                 "e1c7c1e7eefef128a64a883a73c56dab37d8f1dd24436daa84b7a077896ea8ee",
@@ -64,6 +65,7 @@ const (
 	releaseSequenceHistoryPath = "hack/releaseverify/release-sequence-history.json"
 	releaseSequenceHelperPath  = "charts/ptah-operator/templates/_helpers.tpl"
 	releaseSequenceGoPath      = "internal/crdupgrade/rollout.go"
+	kubernetesSupportPath      = "support/kubernetes.json"
 	buildxVersion              = "v0.36.1"
 	buildkitImage              = "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
 	sbomDigest                 = "sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
@@ -71,7 +73,7 @@ const (
 	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "9a5321e3808e0b10c477ad9adc1ba6daf15701082f469b901bf8c2cf422e7149"
+	releaseWorkflowSHA256 = "145331b91d4223ccfb41260e8295c8e523d5bfdf737aa53efe4c25b2d48b85c7"
 )
 
 func main() {
@@ -191,7 +193,7 @@ func main() {
 			}
 			err = verifyPreparedJournal(*journal, *tag, *sourceSHA)
 		} else {
-			err = verifyReleaseAssets(*manifest, *checksums, *chart, *tag, *sourceSHA)
+			err = verifyReleaseAssets(*root, *manifest, *checksums, *chart, *tag, *sourceSHA)
 		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -208,6 +210,20 @@ type gitObject struct {
 
 type gitReferenceResponse struct {
 	Object gitObject `json:"object"`
+}
+
+type kubernetesSupportManifest struct {
+	SchemaVersion int                        `json:"schemaVersion"`
+	Policy        string                     `json:"policy"`
+	WindowSize    int                        `json:"windowSize"`
+	LastVerified  string                     `json:"lastVerified"`
+	KindVersion   string                     `json:"kindVersion"`
+	Releases      []kubernetesSupportRelease `json:"releases"`
+}
+
+type kubernetesSupportRelease struct {
+	Minor     string `json:"minor"`
+	NodeImage string `json:"nodeImage"`
 }
 
 func verifyGitHubTagIdentity(
@@ -297,6 +313,9 @@ func fetchGitObject(
 }
 
 func verifyRepository(root, tag string) error {
+	if _, err := repositoryKubernetesSupportWindow(root); err != nil {
+		return err
+	}
 	chart, err := os.ReadFile(filepath.Join(root, "charts", "ptah-operator", "Chart.yaml"))
 	if err != nil {
 		return fmt.Errorf("read Chart.yaml: %w", err)
@@ -373,6 +392,81 @@ func verifyRepository(root, tag string) error {
 		return err
 	}
 	return nil
+}
+
+func repositoryKubernetesSupportWindow(root string) (string, error) {
+	path := filepath.Join(root, filepath.FromSlash(kubernetesSupportPath))
+	document, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read Kubernetes support manifest: %w", err)
+	}
+	window, err := parseKubernetesSupportWindow(document)
+	if err != nil {
+		return "", fmt.Errorf("parse Kubernetes support manifest: %w", err)
+	}
+	return window, nil
+}
+
+func parseKubernetesSupportWindow(document []byte) (string, error) {
+	var manifest kubernetesSupportManifest
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return "", err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return "", errors.New("trailing JSON value")
+		}
+		return "", fmt.Errorf("decode trailing JSON: %w", err)
+	}
+	if manifest.SchemaVersion != 1 {
+		return "", errors.New("schemaVersion must be 1")
+	}
+	if manifest.Policy != "upstream-active-minors" {
+		return "", errors.New("policy must be upstream-active-minors")
+	}
+	if manifest.WindowSize != 3 || len(manifest.Releases) != manifest.WindowSize {
+		return "", errors.New("windowSize and releases must describe exactly three supported minors")
+	}
+	if _, err := time.Parse("2006-01-02", manifest.LastVerified); err != nil {
+		return "", fmt.Errorf("lastVerified must use YYYY-MM-DD: %w", err)
+	}
+	if strings.TrimSpace(manifest.KindVersion) != manifest.KindVersion || manifest.KindVersion == "" {
+		return "", errors.New("kindVersion must be a nonempty canonical value")
+	}
+
+	minors := make([]string, 0, len(manifest.Releases))
+	previousMajor, previousMinor := -1, -1
+	seenImages := make(map[string]struct{}, len(manifest.Releases))
+	for index, release := range manifest.Releases {
+		match := kubernetesMinorPattern.FindStringSubmatch(release.Minor)
+		if match == nil {
+			return "", fmt.Errorf("releases[%d].minor %q must be canonical major.minor", index, release.Minor)
+		}
+		major, err := strconv.Atoi(match[1])
+		if err != nil {
+			return "", fmt.Errorf("parse releases[%d] major: %w", index, err)
+		}
+		minor, err := strconv.Atoi(match[2])
+		if err != nil {
+			return "", fmt.Errorf("parse releases[%d] minor: %w", index, err)
+		}
+		if index > 0 && (major != previousMajor || minor != previousMinor+1) {
+			return "", errors.New("supported Kubernetes minors must be ordered and consecutive")
+		}
+		if strings.TrimSpace(release.NodeImage) != release.NodeImage || release.NodeImage == "" {
+			return "", fmt.Errorf("releases[%d].nodeImage must be nonempty and canonical", index)
+		}
+		if _, duplicate := seenImages[release.NodeImage]; duplicate {
+			return "", fmt.Errorf("releases[%d].nodeImage duplicates an earlier release", index)
+		}
+		seenImages[release.NodeImage] = struct{}{}
+		minors = append(minors, release.Minor)
+		previousMajor, previousMinor = major, minor
+	}
+	return strings.Join(minors, ","), nil
 }
 
 func topLevelScalar(document []byte, key string) (string, error) {
@@ -1709,9 +1803,12 @@ func verifyWorkflowSemantics(document []byte) error {
 		return errors.New("support-preflight permissions must be actions: read and contents: read")
 	}
 	if !equalStringMap(preflight.Outputs, map[string]string{
-		"source-sha": "${{ steps.support-evidence.outputs.source-sha }}",
+		"chart-sha256":              "${{ steps.support-evidence.outputs.chart-sha256 }}",
+		"kubernetes-support-window": "${{ steps.support-evidence.outputs.kubernetes-support-window }}",
+		"source-sha":                "${{ steps.support-evidence.outputs.source-sha }}",
+		"support-evidence-run-id":   "${{ steps.support-evidence.outputs.support-evidence-run-id }}",
 	}) {
-		return errors.New("support-preflight must expose only its verified source SHA")
+		return errors.New("support-preflight must expose only its verified chart, source, run, and Kubernetes window evidence")
 	}
 	if err := verifyStepContract("support-preflight", preflight.Steps,
 		[]string{"checkout", "setup-go", "support-evidence"},
@@ -1764,7 +1861,21 @@ func verifyWorkflowSemantics(document []byte) error {
 		"remaining_seconds=$((poll_deadline_epoch - $(date -u +%s)))",
 		"if (( remaining_seconds <= 0 ))", "sleep \"$sleep_seconds\"",
 		"delay=$((delay < 30 ? delay * 2 : 30))",
-		"printf 'source-sha=%s\\n' \"$GITHUB_SHA\" >> \"$GITHUB_OUTPUT\""); err != nil {
+		"support_matrix=\"$(go run ./hack/verify-kubernetes-support.go -output=matrix)\"",
+		"kubernetes_support_window=\"$(jq -er '[.[].minor] | join(\",\")' <<<\"$support_matrix\")\"",
+		"(.minor_slug == (.minor | gsub(\"\\\\.\"; \"-\")))",
+		"repos/$GITHUB_REPOSITORY/actions/runs/$evidence_run/artifacts",
+		".total_count == $expected_count", ".expired == false", ".size_in_bytes > 0",
+		"gh run download \"$evidence_run\"", "--name \"installed-release-chart-$minor_slug\"",
+		"[[ -f \"$chart_path\" && ! -L \"$chart_path\" ]]",
+		"cmp \"$canonical_chart\" \"$chart_path\"",
+		"chart_sha256=\"$(sha256sum \"$canonical_chart\" | awk '{print $1}')\"",
+		"[[ \"$chart_sha256\" =~ ^[0-9a-f]{64}$ ]]",
+		"[[ \"$evidence_run\" =~ ^[1-9][0-9]*$ ]]",
+		"printf 'chart-sha256=%s\\n' \"$chart_sha256\"",
+		"printf 'kubernetes-support-window=%s\\n' \"$kubernetes_support_window\"",
+		"printf 'source-sha=%s\\n' \"$GITHUB_SHA\"",
+		"printf 'support-evidence-run-id=%s\\n' \"$evidence_run\""); err != nil {
 		return err
 	}
 
@@ -1869,6 +1980,38 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := requireRunBindings(steps, "release",
 		"github.event.repository.default_branch", "git fetch --no-tags origin",
 		"git merge-base --is-ancestor \"$GITHUB_SHA\""); err != nil {
+		return err
+	}
+	chartPackage, err := requireStep(steps, "chart-package")
+	if err != nil {
+		return err
+	}
+	if !equalStringMap(chartPackage.Env, map[string]string{
+		"TESTED_CHART_SHA256": "${{ needs.support-preflight.outputs.chart-sha256 }}",
+	}) {
+		return errors.New("chart package must bind only the support-tested chart digest")
+	}
+	if err := requireRunBindings(steps, "chart-package",
+		"chart_sha256=\"$(sha256sum \"$chart_path\" | awk '{print $1}')\"",
+		"[[ \"$TESTED_CHART_SHA256\" =~ ^[0-9a-f]{64}$ ]]",
+		"[[ \"$chart_sha256\" == \"$TESTED_CHART_SHA256\" ]]"); err != nil {
+		return err
+	}
+	artifacts, err := requireStep(steps, "artifacts")
+	if err != nil {
+		return err
+	}
+	if !equalStringMap(artifacts.Env, map[string]string{
+		"TESTED_KUBERNETES_SUPPORT_WINDOW": "${{ needs.support-preflight.outputs.kubernetes-support-window }}",
+		"TESTED_SUPPORT_EVIDENCE_RUN_ID":   "${{ needs.support-preflight.outputs.support-evidence-run-id }}",
+	}) {
+		return errors.New("release artifacts must bind only the support evidence run and Kubernetes window")
+	}
+	if err := requireRunBindings(steps, "artifacts",
+		"[[ \"$TESTED_SUPPORT_EVIDENCE_RUN_ID\" =~ ^[1-9][0-9]*$ ]]",
+		"[[ \"$TESTED_KUBERNETES_SUPPORT_WINDOW\" =~ ^[0-9]+\\.[0-9]+(,[0-9]+\\.[0-9]+)*$ ]]",
+		"printf 'support-evidence-run-id=%s\\n' \"$TESTED_SUPPORT_EVIDENCE_RUN_ID\"",
+		"printf 'kubernetes-support-window=%s\\n' \"$TESTED_KUBERNETES_SUPPORT_WINDOW\""); err != nil {
 		return err
 	}
 	image, err := requireStep(steps, "image")
@@ -2154,8 +2297,12 @@ func requireRunBindings(steps map[string]workflowStep, id string, bindings ...st
 	return nil
 }
 
-func verifyReleaseAssets(manifestPath, checksumsPath, chartPath, tag, sourceSHA string) error {
-	manifest, fields, err := parseReleaseManifest(manifestPath, tag, sourceSHA)
+func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA string) error {
+	supportWindow, err := repositoryKubernetesSupportWindow(root)
+	if err != nil {
+		return err
+	}
+	manifest, fields, err := parseReleaseManifest(manifestPath, tag, sourceSHA, supportWindow)
 	if err != nil {
 		return err
 	}
@@ -2232,7 +2379,7 @@ func verifyPreparedJournal(path, tag, sourceSHA string) error {
 	return nil
 }
 
-func parseReleaseManifest(path, tag, sourceSHA string) ([]byte, map[string]string, error) {
+func parseReleaseManifest(path, tag, sourceSHA, supportWindow string) ([]byte, map[string]string, error) {
 	if !commitPattern.MatchString(sourceSHA) {
 		return nil, nil, fmt.Errorf("source SHA %q is not a full lowercase commit SHA", sourceSHA)
 	}
@@ -2246,6 +2393,7 @@ func parseReleaseManifest(path, tag, sourceSHA string) ([]byte, map[string]strin
 	wantKeys := []string{
 		"version", "source-repository", "source-ref", "source-sha", "transaction",
 		"image", "image-tag", "chart-asset", "chart-asset-sha256",
+		"support-evidence-run-id", "kubernetes-support-window",
 	}
 	fields, err := exactRecords(document, wantKeys, "release manifest")
 	if err != nil {
@@ -2253,11 +2401,12 @@ func parseReleaseManifest(path, tag, sourceSHA string) ([]byte, map[string]strin
 	}
 	version := strings.TrimPrefix(tag, "v")
 	wantExact := map[string]string{
-		"version":           version,
-		"source-repository": repositoryName,
-		"source-ref":        "refs/tags/" + tag,
-		"source-sha":        sourceSHA,
-		"chart-asset":       "ptah-operator-" + version + ".tgz",
+		"version":                   version,
+		"source-repository":         repositoryName,
+		"source-ref":                "refs/tags/" + tag,
+		"source-sha":                sourceSHA,
+		"chart-asset":               "ptah-operator-" + version + ".tgz",
+		"kubernetes-support-window": supportWindow,
 	}
 	for key, want := range wantExact {
 		if fields[key] != want {
@@ -2269,6 +2418,9 @@ func parseReleaseManifest(path, tag, sourceSHA string) ([]byte, map[string]strin
 	}
 	if !transactionPattern.MatchString(fields["transaction"]) {
 		return nil, nil, errors.New("release manifest transaction identity is invalid")
+	}
+	if !transactionPattern.MatchString(fields["support-evidence-run-id"]) {
+		return nil, nil, errors.New("release manifest support evidence run identity is invalid")
 	}
 	_, err = exactDigest(fields["image"], imageName)
 	if err != nil {

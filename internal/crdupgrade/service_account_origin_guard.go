@@ -2,7 +2,6 @@ package crdupgrade
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -11,13 +10,13 @@ import (
 	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
-	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const (
-	serviceAccountOriginGuardNamePrefix = "ptah-operator-service-account-origin-guard-v1-"
+	serviceAccountOriginGuardNamePrefix = "ptah-operator-service-account-origin-guard-v2-"
 	serviceAccountOriginGuardComponent  = "service-account-origin-guard"
 	serviceAccountOriginPolicyWeight    = "-129"
 	serviceAccountOriginBindingWeight   = "-128"
@@ -28,24 +27,14 @@ const (
 
 // ServiceAccountOriginGuardPolicyName returns the versioned name of the
 // release-owned boundary around the operator's privileged ServiceAccounts.
-// It excludes the release sequence so one contract version protects every
-// compatible hook identity; incompatible future contracts use a new name and
-// retire this version only after replacement enforcement is proven.
-func ServiceAccountOriginGuardPolicyName(releaseNamespace, releaseName string) string {
-	identity := releaseNamespace + "\n" + releaseName
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))
-	return serviceAccountOriginGuardNamePrefix + digest[:12]
+// Each controller release retains its own immutable policy so the candidate
+// and predecessor principals overlap safely until the activation cutover.
+func ServiceAccountOriginGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
+	return serviceAccountOriginGuardNamePrefix + controllerPrincipalGuardDigest(releaseNamespace, releaseName, releaseSequence, managerImage)
 }
 
 func serviceAccountOriginGuardDenialMessage() string {
 	return "Ptah service account origin guard rejected a request without workload-bound identity"
-}
-
-// ServiceAccountTokenRequester is the narrow serviceaccounts/token API used
-// for the live admission-enforcement proof. A typed core ServiceAccount client
-// implements this interface directly.
-type ServiceAccountTokenRequester interface {
-	CreateToken(context.Context, string, *authenticationv1.TokenRequest, metav1.CreateOptions) (*authenticationv1.TokenRequest, error)
 }
 
 // ServiceAccountOriginGuard rejects privileged operator identities unless the
@@ -54,53 +43,65 @@ type ServiceAccountTokenRequester interface {
 // kubelet may request such a token, and it must bind that token to an expected
 // workload Pod.
 type ServiceAccountOriginGuard struct {
-	Policies                      ValidatingAdmissionPolicyReader
-	Bindings                      ValidatingAdmissionPolicyBindingReader
-	TokenRequests                 ServiceAccountTokenRequester
-	ReleaseName                   string
-	ReleaseNamespace              string
-	HookServiceAccountName        string
-	ControllerServiceAccountName  string
-	CertificateServiceAccountName string
-	ControllerDeploymentName      string
-	CertificateDeploymentName     string
-	ReleaseSequence               int32
-	ManagerImage                  string
-	PollEvery                     time.Duration
+	Policies                                ValidatingAdmissionPolicyReader
+	Bindings                                ValidatingAdmissionPolicyBindingReader
+	ReleaseName                             string
+	ReleaseNamespace                        string
+	HookServiceAccountName                  string
+	ControllerServiceAccountName            string
+	ControllerServiceAccountManaged         bool
+	PreviousControllerServiceAccountName    string
+	PreviousControllerServiceAccountUID     types.UID
+	PreviousControllerServiceAccountManaged bool
+	PreviousControllerReleaseSequence       int32
+	CertificateServiceAccountName           string
+	ControllerDeploymentName                string
+	CertificateDeploymentName               string
+	ControllerStateVersion                  int32
+	AdmissionContractVersion                int32
+	ReleaseSequence                         int32
+	ManagerImage                            string
+	PollEvery                               time.Duration
 }
 
 // NewServiceAccountOriginGuard copies the immutable identity fields from a
 // rollout guard. The certificate rotator currently uses its Deployment name
 // as its ServiceAccount name; keeping the two fields separate in this type
 // makes that security contract explicit.
-func NewServiceAccountOriginGuard(rollout *RolloutGuard, tokenRequests ServiceAccountTokenRequester) *ServiceAccountOriginGuard {
+func NewServiceAccountOriginGuard(rollout *RolloutGuard) *ServiceAccountOriginGuard {
 	if rollout == nil {
 		return nil
 	}
 	return &ServiceAccountOriginGuard{
-		Policies:                      rollout.Policies,
-		Bindings:                      rollout.Bindings,
-		TokenRequests:                 tokenRequests,
-		ReleaseName:                   rollout.ReleaseName,
-		ReleaseNamespace:              rollout.ReleaseNamespace,
-		HookServiceAccountName:        rollout.HookServiceAccountName,
-		ControllerServiceAccountName:  rollout.ControllerServiceAccountName,
-		CertificateServiceAccountName: rollout.CertificateDeploymentName,
-		ControllerDeploymentName:      rollout.ControllerDeploymentName,
-		CertificateDeploymentName:     rollout.CertificateDeploymentName,
-		ReleaseSequence:               rollout.ReleaseSequence,
-		ManagerImage:                  rollout.ManagerImage,
-		PollEvery:                     rollout.PollEvery,
+		Policies:                                rollout.Policies,
+		Bindings:                                rollout.Bindings,
+		ReleaseName:                             rollout.ReleaseName,
+		ReleaseNamespace:                        rollout.ReleaseNamespace,
+		HookServiceAccountName:                  rollout.HookServiceAccountName,
+		ControllerServiceAccountName:            rollout.ControllerServiceAccountName,
+		ControllerServiceAccountManaged:         rollout.ControllerServiceAccountManaged,
+		PreviousControllerServiceAccountName:    rollout.PreviousControllerServiceAccountName,
+		PreviousControllerServiceAccountUID:     rollout.PreviousControllerServiceAccountUID,
+		PreviousControllerServiceAccountManaged: rollout.PreviousControllerServiceAccountManaged,
+		PreviousControllerReleaseSequence:       rollout.PreviousControllerReleaseSequence,
+		CertificateServiceAccountName:           rollout.CertificateDeploymentName,
+		ControllerDeploymentName:                rollout.ControllerDeploymentName,
+		CertificateDeploymentName:               rollout.CertificateDeploymentName,
+		ControllerStateVersion:                  rollout.ControllerStateVersion,
+		AdmissionContractVersion:                rollout.AdmissionContractVersion,
+		ReleaseSequence:                         rollout.ReleaseSequence,
+		ManagerImage:                            rollout.ManagerImage,
+		PollEvery:                               rollout.PollEvery,
 	}
 }
 
 // Verify requires the retained policy and binding to match the compiled
-// release identity exactly. It is safe to call without a TokenRequest client.
+// release identity exactly.
 func (g *ServiceAccountOriginGuard) Verify(ctx context.Context) error {
-	if err := g.validate(false); err != nil {
+	if err := g.validate(); err != nil {
 		return err
 	}
-	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
+	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
 	policy, err := g.Policies.Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get service account origin guard policy: %w", err)
@@ -115,22 +116,19 @@ func (g *ServiceAccountOriginGuard) Verify(ctx context.Context) error {
 	return g.verifyBinding(binding)
 }
 
-// Prepare verifies the retained contract, waits for CEL type checking, and
-// then proves that the live API server rejects an unbound TokenRequest for the
-// exact candidate hook ServiceAccount. The returned token is never inspected
-// or retained if an API server accepts the dry-run while its admission cache
-// is still converging.
+// Prepare verifies the retained contract and waits for CEL type checking.
+// It deliberately never submits a TokenRequest: that API can generate a real
+// bearer credential even when a client supplies dry-run options. The final
+// inert admission sentinel independently carries and directly proves the
+// controller TokenRequest phase fence on every API server.
 func (g *ServiceAccountOriginGuard) Prepare(ctx context.Context) error {
-	if err := g.validate(true); err != nil {
+	if err := g.validate(); err != nil {
 		return err
 	}
 	if err := g.Verify(ctx); err != nil {
 		return err
 	}
-	if err := g.waitPolicyReady(ctx); err != nil {
-		return err
-	}
-	return g.waitUnboundTokenRequestDenied(ctx)
+	return g.waitPolicyReady(ctx)
 }
 
 func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.ValidatingAdmissionPolicy, error) {
@@ -140,7 +138,7 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 	}
 	fail := admissionregistrationv1.Fail
 	exact := admissionregistrationv1.Exact
-	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
+	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
 	denial := serviceAccountOriginGuardDenialMessage()
 	hookServiceAccountPattern := "^" + regexp.QuoteMeta(hookBase+"-crd-v") + `[1-9][0-9]*-[0-9a-f]{12}$`
 	hookUsernamePattern := "^" + regexp.QuoteMeta("system:serviceaccount:"+g.ReleaseNamespace+":"+hookBase+"-crd-v") + `[1-9][0-9]*-[0-9a-f]{12}$`
@@ -150,13 +148,32 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 	teardownPodPattern := "^" + regexp.QuoteMeta(hookBase+"-cleanup-v") + `[1-9][0-9]*-[0-9a-f]{12}-`
 	quiescePodPattern := "^" + regexp.QuoteMeta(hookBase+"-quiesce-v") + `[1-9][0-9]*-[0-9a-f]{12}-`
 	hookIdentityPodPattern := `^ptah-hook-identity-v[1-9][0-9]*-[0-9a-f]{12}-`
-	controllerUsername := "system:serviceaccount:" + g.ReleaseNamespace + ":" + g.ControllerServiceAccountName
+	controllerUsernameMatch := controllerPrincipalMatchExpression(g.ReleaseNamespace, g.ControllerServiceAccountName, g.PreviousControllerServiceAccountName)
+	controllerNames := []string{g.ControllerServiceAccountName}
+	if g.PreviousControllerServiceAccountName != "" && g.PreviousControllerServiceAccountName != g.ControllerServiceAccountName {
+		controllerNames = append(controllerNames, g.PreviousControllerServiceAccountName)
+	}
+	quotedControllerNames := make([]string, len(controllerNames))
+	for index, serviceAccountName := range controllerNames {
+		quotedControllerNames[index] = strconv.Quote(serviceAccountName)
+	}
+	controllerNameMatch := `request.name in [` + strings.Join(quotedControllerNames, ", ") + `]`
+	controllerTokenAuthority := fmt.Sprintf(`request.name == %q && variables.activeRelease == %d`, g.ControllerServiceAccountName, g.ReleaseSequence)
+	if g.PreviousControllerServiceAccountName != "" {
+		controllerTokenAuthority = fmt.Sprintf(
+			`(%s) || (request.name == %q && variables.activeRelease == %d)`,
+			controllerTokenAuthority,
+			g.PreviousControllerServiceAccountName,
+			g.PreviousControllerReleaseSequence,
+		)
+	}
 	certificateUsername := "system:serviceaccount:" + g.ReleaseNamespace + ":" + g.CertificateServiceAccountName
 
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: g.metadata(name),
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
+			ParamKind:     &admissionregistrationv1.ParamKind{APIVersion: "v1", Kind: "ConfigMap"},
 			FailurePolicy: &fail,
 			MatchConstraints: &admissionregistrationv1.MatchResources{
 				MatchPolicy:       &exact,
@@ -182,29 +199,49 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "protected-service-account-origin",
 				Expression: fmt.Sprintf(
-					`request.userInfo.username in [%q, %q] || request.userInfo.username.matches(%q) || request.userInfo.username.matches(%q) || (request.operation == "CREATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "serviceaccounts" && has(request.subResource) && request.subResource == "token" && request.namespace == %q && (request.name in [%q, %q] || request.name.matches(%q) || request.name.matches(%q)))`,
-					controllerUsername,
+					`(%s) || request.userInfo.username == %q || request.userInfo.username.matches(%q) || request.userInfo.username.matches(%q) || (request.operation == "CREATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "serviceaccounts" && has(request.subResource) && request.subResource == "token" && request.namespace == %q && ((%s) || request.name == %q || request.name.matches(%q) || request.name.matches(%q)))`,
+					controllerUsernameMatch,
 					certificateUsername,
 					hookUsernamePattern,
 					teardownUsernamePattern,
 					g.ReleaseNamespace,
-					g.ControllerServiceAccountName,
+					controllerNameMatch,
 					g.CertificateServiceAccountName,
 					hookServiceAccountPattern,
 					teardownServiceAccountPattern,
 				),
 			}},
 			Variables: []admissionregistrationv1.Variable{
+				{Name: "activeRelease", Expression: decimalCEL("params", activeReleaseDataKey, true)},
+				{Name: "controllerCredentialPhase", Expression: stringDataCEL("params", controllerCredentialsDataKey)},
 				{Name: "isTokenRequest", Expression: `request.operation == "CREATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "serviceaccounts" && has(request.subResource) && request.subResource == "token"`},
+				{Name: "isControllerTokenRequest", Expression: fmt.Sprintf(`variables.isTokenRequest && request.namespace == %q && (%s)`, g.ReleaseNamespace, controllerNameMatch)},
 				{Name: "isHookCaller", Expression: fmt.Sprintf(`request.userInfo.username.matches(%q) || request.userInfo.username.matches(%q)`, hookUsernamePattern, teardownUsernamePattern)},
-				{Name: "isControllerCaller", Expression: fmt.Sprintf(`request.userInfo.username == %q`, controllerUsername)},
+				{Name: "isControllerCaller", Expression: controllerUsernameMatch},
 				{Name: "isCertificateCaller", Expression: fmt.Sprintf(`request.userInfo.username == %q`, certificateUsername)},
 				{Name: "isProtectedCaller", Expression: `variables.isHookCaller || variables.isControllerCaller || variables.isCertificateCaller`},
-				{Name: "isProtectedTokenRequest", Expression: fmt.Sprintf(`variables.isTokenRequest && request.namespace == %q && (request.name in [%q, %q] || request.name.matches(%q) || request.name.matches(%q))`, g.ReleaseNamespace, g.ControllerServiceAccountName, g.CertificateServiceAccountName, hookServiceAccountPattern, teardownServiceAccountPattern)},
+				{Name: "isProtectedTokenRequest", Expression: fmt.Sprintf(`variables.isTokenRequest && request.namespace == %q && ((%s) || request.name == %q || request.name.matches(%q) || request.name.matches(%q))`, g.ReleaseNamespace, controllerNameMatch, g.CertificateServiceAccountName, hookServiceAccountPattern, teardownServiceAccountPattern)},
 				{Name: "callerPodName", Expression: fmt.Sprintf(`has(request.userInfo.extra) && %q in request.userInfo.extra && request.userInfo.extra[%q].size() == 1 ? request.userInfo.extra[%q][0] : ""`, serviceAccountPodNameExtra, serviceAccountPodNameExtra, serviceAccountPodNameExtra)},
 				{Name: "callerPodUID", Expression: fmt.Sprintf(`has(request.userInfo.extra) && %q in request.userInfo.extra && request.userInfo.extra[%q].size() == 1 ? request.userInfo.extra[%q][0] : ""`, serviceAccountPodUIDExtra, serviceAccountPodUIDExtra, serviceAccountPodUIDExtra)},
 			},
 			Validations: []admissionregistrationv1.Validation{
+				{Expression: g.activationParameterExpression(), Message: denial},
+				{
+					Expression: fmt.Sprintf(
+						`!variables.isControllerCaller || (variables.controllerCredentialPhase == %q && (%s))`,
+						ControllerCredentialsActive,
+						controllerPrincipalAuthorityExpression(g.ReleaseNamespace, g.ControllerServiceAccountName, g.PreviousControllerServiceAccountName, g.ReleaseSequence, g.PreviousControllerReleaseSequence),
+					),
+					Message: controllerPrincipalGuardDenialMessage(),
+				},
+				{
+					Expression: fmt.Sprintf(
+						`!variables.isControllerTokenRequest || (variables.controllerCredentialPhase == %q && (%s))`,
+						ControllerCredentialsActive,
+						controllerTokenAuthority,
+					),
+					Message: controllerPrincipalGuardDenialMessage(),
+				},
 				{
 					Expression: fmt.Sprintf(
 						`!variables.isProtectedCaller || (variables.callerPodName != "" && variables.callerPodUID != "" && ((variables.isHookCaller && (variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q))) || (variables.isControllerCaller && %s) || (variables.isCertificateCaller && %s)))`,
@@ -219,8 +256,8 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 				},
 				{
 					Expression: fmt.Sprintf(
-						`!variables.isProtectedTokenRequest || (request.userInfo.username.matches("^system:node:.+$") && request.userInfo.groups.filter(group, group == "system:nodes").size() == 1 && has(object.spec.boundObjectRef) && has(object.spec.boundObjectRef.apiVersion) && object.spec.boundObjectRef.apiVersion == "v1" && has(object.spec.boundObjectRef.kind) && object.spec.boundObjectRef.kind == "Pod" && has(object.spec.boundObjectRef.name) && object.spec.boundObjectRef.name != "" && has(object.spec.boundObjectRef.uid) && object.spec.boundObjectRef.uid != "" && ((request.name == %q && %s) || (request.name == %q && %s) || (request.name.matches(%q) && (object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q))) || (request.name.matches(%q) && object.spec.boundObjectRef.name.matches(%q))))`,
-						g.ControllerServiceAccountName,
+						`!variables.isProtectedTokenRequest || (request.userInfo.username.matches("^system:node:.+$") && request.userInfo.groups.filter(group, group == "system:nodes").size() == 1 && has(object.spec.boundObjectRef) && has(object.spec.boundObjectRef.apiVersion) && object.spec.boundObjectRef.apiVersion == "v1" && has(object.spec.boundObjectRef.kind) && object.spec.boundObjectRef.kind == "Pod" && has(object.spec.boundObjectRef.name) && object.spec.boundObjectRef.name != "" && has(object.spec.boundObjectRef.uid) && object.spec.boundObjectRef.uid != "" && (((%s) && %s) || (request.name == %q && %s) || (request.name.matches(%q) && (object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q))) || (request.name.matches(%q) && object.spec.boundObjectRef.name.matches(%q))))`,
+						controllerNameMatch,
 						runtimePodRequestNameExpression("object.spec.boundObjectRef.name", g.ControllerDeploymentName),
 						g.CertificateServiceAccountName,
 						runtimePodRequestNameExpression("object.spec.boundObjectRef.name", g.CertificateDeploymentName),
@@ -235,16 +272,34 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 				},
 			},
 		},
-	}, nil
+	}
+	addAdmissionConvergenceDependencyProbe(
+		policy,
+		g.ReleaseNamespace,
+		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
+		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+	)
+	return policy, nil
+}
+
+func (g *ServiceAccountOriginGuard) activationParameterExpression() string {
+	activation := &ReleaseActivationGuard{ReleaseName: g.ReleaseName, ReleaseNamespace: g.ReleaseNamespace}
+	return activation.activationObjectShapeExpression("params")
 }
 
 func (g *ServiceAccountOriginGuard) binding() *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
-	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
+	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
+	deny := admissionregistrationv1.DenyAction
 	return &admissionregistrationv1.ValidatingAdmissionPolicyBinding{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicyBinding"},
 		ObjectMeta: g.metadata(name),
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicyBindingSpec{
-			PolicyName:        name,
+			PolicyName: name,
+			ParamRef: &admissionregistrationv1.ParamRef{
+				Name:                    ReleaseActivationName,
+				Namespace:               g.ReleaseNamespace,
+				ParameterNotFoundAction: &deny,
+			},
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
@@ -254,9 +309,20 @@ func (g *ServiceAccountOriginGuard) metadata(name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		Name: name,
 		Annotations: map[string]string{
-			rolloutGuardVersionAnnotation: rolloutGuardVersion,
-			ReleaseNameAnnotation:         g.ReleaseName,
-			ReleaseNamespaceAnnotation:    g.ReleaseNamespace,
+			rolloutGuardVersionAnnotation:                     rolloutGuardVersion,
+			ReleaseNameAnnotation:                             g.ReleaseName,
+			ReleaseNamespaceAnnotation:                        g.ReleaseNamespace,
+			ControllerStateVersionAnnotation:                  strconv.FormatInt(int64(g.ControllerStateVersion), 10),
+			AdmissionContractVersionAnnotation:                strconv.FormatInt(int64(g.AdmissionContractVersion), 10),
+			ReleaseSequenceAnnotation:                         strconv.FormatInt(int64(g.ReleaseSequence), 10),
+			ManagerImageAnnotation:                            g.ManagerImage,
+			HookServiceAccountAnnotation:                      g.HookServiceAccountName,
+			ControllerServiceAccountAnnotation:                g.ControllerServiceAccountName,
+			ControllerServiceAccountManagedAnnotation:         strconv.FormatBool(g.ControllerServiceAccountManaged),
+			PreviousControllerServiceAccountAnnotation:        g.PreviousControllerServiceAccountName,
+			PreviousControllerServiceAccountUIDAnnotation:     string(g.PreviousControllerServiceAccountUID),
+			PreviousControllerServiceAccountManagedAnnotation: strconv.FormatBool(g.PreviousControllerServiceAccountManaged),
+			PreviousControllerReleaseSequenceAnnotation:       strconv.FormatInt(int64(g.PreviousControllerReleaseSequence), 10),
 		},
 		Labels: map[string]string{
 			managedByLabel:                rolloutGuardManagedBy,
@@ -267,7 +333,7 @@ func (g *ServiceAccountOriginGuard) metadata(name string) metav1.ObjectMeta {
 }
 
 func (g *ServiceAccountOriginGuard) verifyPolicy(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
-	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
+	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
 	if policy == nil || policy.Name != name {
 		return fmt.Errorf("fixed service account origin guard policy %s is missing", name)
 	}
@@ -285,7 +351,7 @@ func (g *ServiceAccountOriginGuard) verifyPolicy(policy *admissionregistrationv1
 }
 
 func (g *ServiceAccountOriginGuard) verifyBinding(binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding) error {
-	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
+	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
 	if binding == nil || binding.Name != name {
 		return fmt.Errorf("fixed service account origin guard binding %s is missing", name)
 	}
@@ -299,7 +365,7 @@ func (g *ServiceAccountOriginGuard) verifyBinding(binding *admissionregistration
 }
 
 func (g *ServiceAccountOriginGuard) verifyMetadata(kind string, metadata metav1.ObjectMeta) error {
-	expected := g.metadata(ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName))
+	expected := g.metadata(ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage))
 	if metadata.Name != expected.Name {
 		return fmt.Errorf("fixed service account origin guard %s has an unexpected name", kind)
 	}
@@ -317,7 +383,7 @@ func (g *ServiceAccountOriginGuard) verifyMetadata(kind string, metadata metav1.
 }
 
 func (g *ServiceAccountOriginGuard) waitPolicyReady(ctx context.Context) error {
-	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
+	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
 	return wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
 		policy, err := g.Policies.Get(pollCtx, name, metav1.GetOptions{})
 		if err != nil {
@@ -336,50 +402,9 @@ func (g *ServiceAccountOriginGuard) waitPolicyReady(ctx context.Context) error {
 	})
 }
 
-func (g *ServiceAccountOriginGuard) waitUnboundTokenRequestDenied(ctx context.Context) error {
-	return wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
-		request := &authenticationv1.TokenRequest{
-			TypeMeta: metav1.TypeMeta{APIVersion: authenticationv1.SchemeGroupVersion.String(), Kind: "TokenRequest"},
-		}
-		response, err := g.TokenRequests.CreateToken(
-			pollCtx,
-			g.HookServiceAccountName,
-			request,
-			metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}},
-		)
-		if response != nil {
-			// Do not retain an opaque credential if an API server accepts the
-			// request while its admission cache is still converging.
-			response.Status.Token = ""
-		}
-		if err == nil {
-			return false, nil
-		}
-		if strings.Contains(err.Error(), serviceAccountOriginGuardDenialMessage()) {
-			return true, nil
-		}
-		if serviceAccountOriginAdmissionMayBePropagating(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("probe service account origin guard enforcement: %w", err)
-	})
-}
-
-func serviceAccountOriginAdmissionMayBePropagating(err error) bool {
-	if err == nil {
-		return false
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "validatingadmissionpolicy") ||
-		strings.Contains(message, "validating admission policy")
-}
-
-func (g *ServiceAccountOriginGuard) validate(requireTokenRequests bool) error {
+func (g *ServiceAccountOriginGuard) validate() error {
 	if g == nil || g.Policies == nil || g.Bindings == nil {
 		return fmt.Errorf("service account origin guard policy clients are required")
-	}
-	if requireTokenRequests && g.TokenRequests == nil {
-		return fmt.Errorf("service account origin guard TokenRequest client is required")
 	}
 	for name, value := range map[string]string{
 		"release name":                     g.ReleaseName,
@@ -397,8 +422,21 @@ func (g *ServiceAccountOriginGuard) validate(requireTokenRequests bool) error {
 	if g.ReleaseSequence < 1 {
 		return fmt.Errorf("service account origin guard release sequence must be positive")
 	}
+	if g.ControllerStateVersion < 1 || g.AdmissionContractVersion < 1 {
+		return fmt.Errorf("service account origin guard controller and admission versions must be positive")
+	}
 	if g.ManagerImage == "" || strings.IndexFunc(g.ManagerImage, func(r rune) bool { return r == ' ' || r == '\t' || r == '\r' || r == '\n' }) >= 0 {
 		return fmt.Errorf("service account origin guard manager image is empty or contains whitespace")
+	}
+	if g.PreviousControllerServiceAccountName != strings.TrimSpace(g.PreviousControllerServiceAccountName) {
+		return fmt.Errorf("service account origin guard previous controller ServiceAccount contains surrounding whitespace")
+	}
+	if g.PreviousControllerServiceAccountName == "" {
+		if g.PreviousControllerServiceAccountUID != "" || g.PreviousControllerServiceAccountManaged {
+			return fmt.Errorf("service account origin guard has previous controller provenance without an identity")
+		}
+	} else if g.PreviousControllerServiceAccountUID == "" {
+		return fmt.Errorf("service account origin guard previous controller ServiceAccount UID is required")
 	}
 	if g.PollEvery <= 0 {
 		return fmt.Errorf("service account origin guard poll interval must be positive")

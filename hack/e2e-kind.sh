@@ -13,7 +13,7 @@ E2E_EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 E2E_RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 E2E_PTAH_VERSION=${E2E_PTAH_VERSION:-}
 E2E_PTAH_SOURCE_DIR=${E2E_PTAH_SOURCE_DIR:-}
-E2E_PTAH_REVISION=${E2E_PTAH_REVISION:-5451155ed00de348abbb6dbabc5370401dc23772}
+E2E_PTAH_REVISION=${E2E_PTAH_REVISION:-00fc362c943bfb9d0363d5890bf449a2a9b5e7cf}
 E2E_PTAH_GIT_URL=${E2E_PTAH_GIT_URL:-https://github.com/stokaro/ptah.git}
 E2E_REGISTRY_IMAGE=${E2E_REGISTRY_IMAGE:-registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33}
 E2E_POSTGRES_SOURCE_IMAGE=${E2E_POSTGRES_SOURCE_IMAGE:-postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73}
@@ -24,6 +24,7 @@ E2E_REGISTRY_PORT=${E2E_REGISTRY_PORT:-}
 E2E_SSH_TARGET=${E2E_SSH_TARGET:-}
 E2E_SSH_PORT=${E2E_SSH_PORT:-}
 E2E_DIRECT_HOST_ACCESS=${E2E_DIRECT_HOST_ACCESS:-0}
+E2E_RELEASE_CHART_OUTPUT=${E2E_RELEASE_CHART_OUTPUT:-}
 
 # An imported variable retains its export attribute after reassignment in POSIX
 # shells. Clear secret-bearing names before generating task credentials so no
@@ -65,7 +66,7 @@ is_pinned_image() {
 	printf '%s\n' "$1" | grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$'
 }
 
-for command_name in docker kind kubectl helm jq ssh git go tar awk sed grep tr cut cksum mktemp date sleep curl htpasswd openssl; do
+for command_name in docker kind kubectl helm jq ssh git go tar awk sed grep tr cut cksum cmp cp ln mktemp date sleep curl htpasswd openssl mv; do
 	require_command "$command_name"
 done
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
@@ -215,6 +216,8 @@ HELM_RELEASE=$(dns_name ptah "$identity" 35)
 IMAGE_REPOSITORY=ptah-operator-e2e.local/ptah-operator
 IMAGE_TAG=$(printf '%s' "$identity" | sha256 | cut -c1-16)
 OPERATOR_IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+NEXT_IMAGE_REPOSITORY=ptah-operator-e2e.local/ptah-operator-next
+NEXT_OPERATOR_IMAGE="${NEXT_IMAGE_REPOSITORY}:${IMAGE_TAG}"
 PREDECESSOR_IMAGE_REPOSITORY=ptah-operator-e2e.local/ptah-operator-predecessor
 PREDECESSOR_OPERATOR_IMAGE="${PREDECESSOR_IMAGE_REPOSITORY}:${IMAGE_TAG}"
 FIXTURE_BUILD_IMAGE="ptah-operator-e2e.local/e2e-fixture:${IMAGE_TAG}"
@@ -265,42 +268,6 @@ export DOCKER_HOST="$DOCKER_ENDPOINT"
 export KIND_EXPERIMENTAL_PROVIDER=docker
 unset DOCKER_CERT_PATH DOCKER_TLS_VERIFY
 
-if ! existing_clusters=$(kind get clusters); then
-	fail "could not list kind clusters through Docker context $DOCKER_CONTEXT"
-fi
-if printf '%s\n' "$existing_clusters" | grep -Fx "$CLUSTER_NAME" >/dev/null; then
-	fail "refusing to reuse pre-existing kind cluster $CLUSTER_NAME; choose another E2E_RUN_ID"
-fi
-if docker --context "$DOCKER_CONTEXT" image inspect "$OPERATOR_IMAGE" >/dev/null 2>&1; then
-	fail "refusing to overwrite pre-existing image $OPERATOR_IMAGE; choose another E2E_RUN_ID"
-fi
-if docker --context "$DOCKER_CONTEXT" image inspect "$PREDECESSOR_OPERATOR_IMAGE" >/dev/null 2>&1; then
-	fail "refusing to overwrite pre-existing image $PREDECESSOR_OPERATOR_IMAGE; choose another E2E_RUN_ID"
-fi
-if docker --context "$DOCKER_CONTEXT" image inspect "$FIXTURE_BUILD_IMAGE" >/dev/null 2>&1; then
-	fail "refusing to overwrite pre-existing image $FIXTURE_BUILD_IMAGE; choose another E2E_RUN_ID"
-fi
-if [ -z "$E2E_EXECUTOR_IMAGE" ] &&
-	docker --context "$DOCKER_CONTEXT" image inspect "$PTAH_IMAGE" >/dev/null 2>&1; then
-	fail "refusing to overwrite pre-existing image $PTAH_IMAGE; choose another E2E_RUN_ID"
-fi
-if docker --context "$DOCKER_CONTEXT" container inspect "$REGISTRY_CONTAINER" >/dev/null 2>&1; then
-	fail "refusing to reuse pre-existing registry container $REGISTRY_CONTAINER; choose another E2E_RUN_ID"
-fi
-if docker --context "$DOCKER_CONTEXT" container inspect "$EXTERNAL_PG_CONTAINER" >/dev/null 2>&1; then
-	fail "refusing to reuse pre-existing external PostgreSQL container $EXTERNAL_PG_CONTAINER; choose another E2E_RUN_ID"
-fi
-for task_image in \
-	"${REMOTE_REGISTRY}/ptah-operator:${IMAGE_TAG}" \
-	"${REMOTE_REGISTRY}/e2e-fixture:${IMAGE_TAG}" \
-	"${REMOTE_REGISTRY}/ptah-executor:${IMAGE_TAG}" \
-	"${REMOTE_REGISTRY}/ptah-runner:${IMAGE_TAG}" \
-	"${REMOTE_REGISTRY}/postgresql:${IMAGE_TAG}" \
-	"${REMOTE_REGISTRY}/mysql:${IMAGE_TAG}"; do
-	if docker --context "$DOCKER_CONTEXT" image inspect "$task_image" >/dev/null 2>&1; then
-		fail "refusing to overwrite pre-existing image $task_image; choose another E2E_RUN_ID"
-	fi
-done
 if [ -n "$E2E_EXECUTOR_IMAGE" ] && [ -z "$E2E_PTAH_VERSION" ]; then
 	fail "E2E_PTAH_VERSION is required when E2E_EXECUTOR_IMAGE supplies an external Ptah build"
 fi
@@ -321,6 +288,9 @@ EXTERNAL_PG_PASSWORD_FILE=$WORK_DIR/external-postgresql.password
 EXTERNAL_PG_CREDENTIALS_FILE=$WORK_DIR/external-postgresql-credentials.json
 EXTERNAL_PG_BOOTSTRAP_SQL_FILE=$WORK_DIR/external-postgresql-bootstrap.sql
 NODE_READINESS_FILE=$WORK_DIR/node-readiness.json
+KIND_NODE_INVENTORY_FILE=$WORK_DIR/kind-node-inventory.txt
+API_SERVER_ENDPOINT_INVENTORY_FILE=$WORK_DIR/api-server-endpoints.json
+API_SERVER_ENDPOINT_ADDRESS_FILE=$WORK_DIR/api-server-endpoint-addresses.txt
 TLS_PROXY_DIR=$WORK_DIR/tls-proxy
 TLS_PROXY_CA_KEY_FILE=$TLS_PROXY_DIR/ca.key
 TLS_PROXY_CA_FILE=$TLS_PROXY_DIR/ca.crt
@@ -331,13 +301,18 @@ TLS_PROXY_CERT_FILE=$TLS_PROXY_DIR/tls.crt
 TLS_PROXY_CERT_EXT_FILE=$TLS_PROXY_DIR/server.ext
 IMAGE_AUDIT_ARCHIVE=$WORK_DIR/image-audit.tar
 CHART_PACKAGE_DIR=$WORK_DIR/chart-package
+NEXT_CHART_PACKAGE_DIR=$WORK_DIR/next-chart-package
 PREDECESSOR_SOURCE_ARCHIVE=$WORK_DIR/predecessor-source.tar
 PREDECESSOR_BUILD_CONTEXT=$WORK_DIR/predecessor-source
+NEXT_SOURCE_ARCHIVE=$WORK_DIR/next-source.tar
+NEXT_BUILD_CONTEXT=$WORK_DIR/next-source
 PREDECESSOR_VALUES_FILE=$WORK_DIR/predecessor-values.json
 CANDIDATE_VALUES_FILE=$WORK_DIR/candidate-values.json
+NEXT_VALUES_FILE=$WORK_DIR/next-values.json
 CLUSTER_CREATED=0
 IMAGE_CREATED=0
 IMAGE_AUDIT_CONTAINER_CREATED=0
+IMAGE_AUDIT_CONTAINER_ID=
 REGISTRY_CREATED=0
 REGISTRY_CONTAINER_ID=
 EXTERNAL_PG_CREATED=0
@@ -346,8 +321,16 @@ EXTERNAL_PG_IP=
 KIND_NODE_IMAGE_CREATED=0
 KIND_NETWORK_CREATED=0
 CREATED_IMAGE_REFS=
+CURRENT_RELEASE_SEQUENCE=
+NEXT_RELEASE_SEQUENCE=
+RELEASE_CHART_OUTPUT_PARENT=
+RELEASE_CHART_OUTPUT_TEMP=
 TUNNEL_PID=
 IMAGE_AUDIT_CONTAINER=$(dns_name ptah-image-audit "$identity" 63)
+TASK_CLAIM_VOLUME=$(dns_name ptah-e2e-claim "$identity" 63)
+TASK_CLAIM_TOKEN=$(openssl rand -hex 16)
+TASK_CLAIM_CREATE_STARTED=0
+TASK_CLAIM_ACQUIRED=0
 
 SELECTED_DOCKER_CONTEXT=$DOCKER_CONTEXT
 TASK_DOCKER_CONTEXT=$(dns_name ptah-e2e-docker "$identity" 63)
@@ -403,6 +386,235 @@ add_created_image() {
 		CREATED_IMAGE_REFS="$1
 $CREATED_IMAGE_REFS"
 	fi
+}
+
+replace_exact_line_once() {
+	transformation_file=$1
+	expected_line=$2
+	replacement_line=$3
+	transformation_description=$4
+	temporary_file=${transformation_file}.e2e-next
+	[ -f "$transformation_file" ] && [ ! -L "$transformation_file" ] ||
+		fail "$transformation_description target must be a regular non-symlink file"
+	match_count=$(awk -v expected="$expected_line" '
+      $0 == expected { count++ }
+      END { print count + 0 }
+    ' "$transformation_file")
+	[ "$match_count" -eq 1 ] ||
+		fail "$transformation_description source line count is $match_count, expected exactly one"
+	awk -v expected="$expected_line" -v replacement="$replacement_line" '
+      $0 == expected { print replacement; next }
+      { print }
+    ' "$transformation_file" >"$temporary_file"
+	old_count=$(awk -v expected="$expected_line" '
+      $0 == expected { count++ }
+      END { print count + 0 }
+    ' "$temporary_file")
+	new_count=$(awk -v replacement="$replacement_line" '
+      $0 == replacement { count++ }
+      END { print count + 0 }
+    ' "$temporary_file")
+	if [ "$old_count" -ne 0 ] || [ "$new_count" -ne 1 ]; then
+		fail "$transformation_description did not produce exactly one replacement"
+	fi
+	mv "$temporary_file" "$transformation_file"
+}
+
+go_release_sequence_from_source() {
+	sequence_file=$1
+	sequence_prefix=$(printf '\tCurrentReleaseSequence int32 = ')
+	awk -v prefix="$sequence_prefix" '
+      index($0, prefix) == 1 {
+        candidate_lines++
+        value = substr($0, length(prefix) + 1)
+        if (value ~ /^[1-9][0-9]*$/ && $0 == prefix value) {
+          declarations++
+          sequence = value
+        }
+      }
+      END {
+        if (candidate_lines != 1 || declarations != 1) {
+          exit 1
+        }
+        print sequence
+      }
+    ' "$sequence_file"
+}
+
+helm_release_sequence_from_source() {
+	sequence_file=$1
+	helpers_prefix='{{- define "ptah-operator.releaseSequence" -}}'
+	helpers_suffix='{{- end -}}'
+	awk -v prefix="$helpers_prefix" -v suffix="$helpers_suffix" '
+      index($0, prefix) == 1 {
+        candidate_lines++
+        if (substr($0, length($0) - length(suffix) + 1) == suffix) {
+          value = substr($0, length(prefix) + 1,
+            length($0) - length(prefix) - length(suffix))
+          if (value ~ /^[1-9][0-9]*$/) {
+            declarations++
+            sequence = value
+          }
+        }
+      }
+      END {
+        if (candidate_lines != 1 || declarations != 1) {
+          exit 1
+        }
+        print sequence
+      }
+    ' "$sequence_file"
+}
+
+export_release_chart() {
+	[ -n "$E2E_RELEASE_CHART_OUTPUT" ] || return 0
+	case "$E2E_RELEASE_CHART_OUTPUT" in
+		/*) ;;
+		*) fail "E2E_RELEASE_CHART_OUTPUT must be an absolute path" ;;
+	esac
+	release_chart_output_name=${E2E_RELEASE_CHART_OUTPUT##*/}
+	case "$release_chart_output_name" in
+		'' | . | ..) fail "E2E_RELEASE_CHART_OUTPUT must name a file" ;;
+	esac
+	release_chart_output_parent=${E2E_RELEASE_CHART_OUTPUT%/*}
+	[ -n "$release_chart_output_parent" ] || release_chart_output_parent=/
+	[ -d "$release_chart_output_parent" ] && [ ! -L "$release_chart_output_parent" ] ||
+		fail "E2E_RELEASE_CHART_OUTPUT parent must be an existing non-symlink directory"
+	RELEASE_CHART_OUTPUT_PARENT=$(cd -P "$release_chart_output_parent" && pwd) ||
+		fail "could not resolve E2E_RELEASE_CHART_OUTPUT parent"
+	case "$RELEASE_CHART_OUTPUT_PARENT" in
+		/) RELEASE_CHART_OUTPUT_TARGET=/$release_chart_output_name ;;
+		*) RELEASE_CHART_OUTPUT_TARGET=$RELEASE_CHART_OUTPUT_PARENT/$release_chart_output_name ;;
+	esac
+	physical_work_dir=$(cd -P "$WORK_DIR" && pwd) ||
+		fail "could not resolve the task work directory"
+	case "$RELEASE_CHART_OUTPUT_TARGET" in
+		"$physical_work_dir" | "$physical_work_dir"/*)
+			fail "E2E_RELEASE_CHART_OUTPUT must be outside the task work directory"
+		;;
+	esac
+	[ ! -e "$RELEASE_CHART_OUTPUT_TARGET" ] && [ ! -L "$RELEASE_CHART_OUTPUT_TARGET" ] ||
+		fail "refusing to replace existing E2E_RELEASE_CHART_OUTPUT target"
+	[ -f "$CHART_PACKAGE" ] && [ ! -L "$CHART_PACKAGE" ] ||
+		fail "release-form sequence-$CURRENT_RELEASE_SEQUENCE chart package is not a regular non-symlink file"
+	RELEASE_CHART_OUTPUT_TEMP=$(mktemp \
+		"$RELEASE_CHART_OUTPUT_PARENT/.ptah-operator-release-chart.XXXXXX") ||
+		fail "could not create the atomic release chart output"
+	if ! cp "$CHART_PACKAGE" "$RELEASE_CHART_OUTPUT_TEMP"; then
+		rm -f -- "$RELEASE_CHART_OUTPUT_TEMP"
+		RELEASE_CHART_OUTPUT_TEMP=
+		fail "could not copy the release-form sequence-$CURRENT_RELEASE_SEQUENCE chart package"
+	fi
+	chmod 600 "$RELEASE_CHART_OUTPUT_TEMP"
+	if ! cmp -s "$CHART_PACKAGE" "$RELEASE_CHART_OUTPUT_TEMP"; then
+		rm -f -- "$RELEASE_CHART_OUTPUT_TEMP"
+		RELEASE_CHART_OUTPUT_TEMP=
+		fail "atomic release chart output differs from the sequence-$CURRENT_RELEASE_SEQUENCE chart package"
+	fi
+	[ ! -e "$RELEASE_CHART_OUTPUT_TARGET" ] && [ ! -L "$RELEASE_CHART_OUTPUT_TARGET" ] || {
+		rm -f -- "$RELEASE_CHART_OUTPUT_TEMP"
+		RELEASE_CHART_OUTPUT_TEMP=
+		fail "E2E_RELEASE_CHART_OUTPUT target appeared during export"
+	}
+	# The hard-link creation is the atomic publication step and, unlike a plain
+	# rename, cannot replace a target that appears after the checks above.
+	if ! ln "$RELEASE_CHART_OUTPUT_TEMP" "$RELEASE_CHART_OUTPUT_TARGET"; then
+		rm -f -- "$RELEASE_CHART_OUTPUT_TEMP"
+		RELEASE_CHART_OUTPUT_TEMP=
+		fail "could not publish the no-clobber atomic release chart output"
+	fi
+	if ! rm -f -- "$RELEASE_CHART_OUTPUT_TEMP"; then
+		fail "could not remove the temporary release chart link after publication"
+	fi
+	RELEASE_CHART_OUTPUT_TEMP=
+	printf 'e2e: exported sequence-%s release chart %s (%s)\n' \
+		"$CURRENT_RELEASE_SEQUENCE" "$RELEASE_CHART_OUTPUT_TARGET" "$CHART_PACKAGE_DIGEST"
+}
+
+# Docker preserves a named volume's original labels when a later create uses
+# the same name. A random label therefore turns create-plus-inspect into a
+# daemon-side compare-and-set without requiring a helper image.
+task_claim_matches_owner() {
+	docker --context "$DOCKER_CONTEXT" volume inspect "$TASK_CLAIM_VOLUME" \
+		--format '{{json .Labels}}' 2>/dev/null |
+		jq -e \
+			--arg owner "$CLUSTER_NAME" \
+			--arg token "$TASK_CLAIM_TOKEN" '
+        .["operator.ptah.dev/e2e-owner"] == $owner and
+        .["operator.ptah.dev/e2e-component"] == "task-claim" and
+        .["operator.ptah.dev/e2e-claim-token"] == $token
+      ' >/dev/null
+}
+
+acquire_task_claim() {
+	[ "$TASK_CLAIM_CREATE_STARTED" -eq 0 ] || fail "task identity claim acquisition was attempted more than once"
+	TASK_CLAIM_CREATE_STARTED=1
+	if ! created_claim=$(docker --context "$DOCKER_CONTEXT" volume create \
+		--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \
+		--label 'operator.ptah.dev/e2e-component=task-claim' \
+		--label "operator.ptah.dev/e2e-claim-token=${TASK_CLAIM_TOKEN}" \
+		"$TASK_CLAIM_VOLUME"); then
+		fail "could not acquire the task identity claim on Docker context $SELECTED_DOCKER_CONTEXT"
+	fi
+	[ "$created_claim" = "$TASK_CLAIM_VOLUME" ] ||
+		fail "Docker returned an unexpected task identity claim name"
+	if ! task_claim_matches_owner; then
+		fail "E2E identity $identity is already claimed on Docker context $SELECTED_DOCKER_CONTEXT; choose another E2E_RUN_ID"
+	fi
+	TASK_CLAIM_ACQUIRED=1
+}
+
+image_audit_container_matches_task() {
+	image_audit_id=$1
+	docker --context "$DOCKER_CONTEXT" container inspect "$image_audit_id" 2>/dev/null |
+		jq -e \
+			--arg id "$image_audit_id" \
+			--arg name "/${IMAGE_AUDIT_CONTAINER}" \
+			--arg owner "$CLUSTER_NAME" \
+			--arg token "$TASK_CLAIM_TOKEN" '
+        length == 1 and
+        .[0].Id == $id and
+        .[0].Name == $name and
+        .[0].Config.Labels["operator.ptah.dev/e2e-owner"] == $owner and
+        .[0].Config.Labels["operator.ptah.dev/e2e-component"] == "image-audit" and
+        .[0].Config.Labels["operator.ptah.dev/e2e-claim-token"] == $token
+      ' >/dev/null
+}
+
+create_image_audit_container() {
+	image_audit_source=$1
+	if docker --context "$DOCKER_CONTEXT" container inspect "$IMAGE_AUDIT_CONTAINER" >/dev/null 2>&1; then
+		fail "refusing to reuse pre-existing image-audit container $IMAGE_AUDIT_CONTAINER"
+	fi
+	IMAGE_AUDIT_CONTAINER_CREATED=1
+	if ! image_audit_id=$(docker --context "$DOCKER_CONTEXT" create \
+		--name "$IMAGE_AUDIT_CONTAINER" \
+		--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \
+		--label 'operator.ptah.dev/e2e-component=image-audit' \
+		--label "operator.ptah.dev/e2e-claim-token=${TASK_CLAIM_TOKEN}" \
+		"$image_audit_source"); then
+		fail "could not create the task-owned image-audit container"
+	fi
+	printf '%s\n' "$image_audit_id" | grep -Eq '^[0-9a-f]{64}$' ||
+		fail "image-audit container does not have an exact Docker ID"
+	IMAGE_AUDIT_CONTAINER_ID=$image_audit_id
+	image_audit_container_matches_task "$IMAGE_AUDIT_CONTAINER_ID" ||
+		fail "image-audit container does not have the exact task identity"
+}
+
+remove_image_audit_container() {
+	[ "$IMAGE_AUDIT_CONTAINER_CREATED" -eq 1 ] ||
+		fail "image-audit container removal was requested without task ownership"
+	[ -n "$IMAGE_AUDIT_CONTAINER_ID" ] || fail "image-audit container ID is empty"
+	image_audit_container_matches_task "$IMAGE_AUDIT_CONTAINER_ID" ||
+		fail "refusing to remove an image-audit container without the exact task identity"
+	docker --context "$DOCKER_CONTEXT" container rm "$IMAGE_AUDIT_CONTAINER_ID" >/dev/null ||
+		fail "could not remove the task-owned image-audit container"
+	if docker --context "$DOCKER_CONTEXT" container inspect "$IMAGE_AUDIT_CONTAINER_ID" >/dev/null 2>&1; then
+		fail "image-audit container still exists after removal"
+	fi
+	IMAGE_AUDIT_CONTAINER_CREATED=0
+	IMAGE_AUDIT_CONTAINER_ID=
 }
 
 external_pg_mounts_are_ephemeral() {
@@ -523,7 +735,7 @@ wait_for_ready_nodes() {
 		collect_node_readiness_diagnostics "$node_readiness_context"
 		return 1
 	fi
-	if ! jq -e '.items | length > 0' "$NODE_READINESS_FILE" >/dev/null; then
+	if ! jq -e '.items | length == 4' "$NODE_READINESS_FILE" >/dev/null; then
 		collect_node_readiness_diagnostics "$node_readiness_context"
 		return 1
 	fi
@@ -538,13 +750,112 @@ nodes_ready_now() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		get nodes -o json >"$NODE_READINESS_FILE" &&
 		jq -e '
-      ((.items | length) > 0) and
-      all(.items[];
+	  ((.items | length) == 4) and
+	  all(.items[];
         any((.status.conditions // [])[];
           .type == "Ready" and .status == "True"
         )
       )
     ' "$NODE_READINESS_FILE" >/dev/null
+}
+
+assert_kind_ha_topology() {
+	kind get nodes --name "$CLUSTER_NAME" | LC_ALL=C sort >"$KIND_NODE_INVENTORY_FILE"
+	if ! {
+		printf '%s\n' \
+			"${CLUSTER_NAME}-control-plane" \
+			"${CLUSTER_NAME}-control-plane2" \
+			"${CLUSTER_NAME}-control-plane3" \
+			"${CLUSTER_NAME}-worker"
+	} | LC_ALL=C sort | cmp -s - "$KIND_NODE_INVENTORY_FILE"; then
+		fail "kind cluster does not have the exact three-control-plane, one-worker topology"
+	fi
+	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+		get nodes -o json >"$NODE_READINESS_FILE"
+	jq -e --arg cluster "$CLUSTER_NAME" '
+      ([.items[].metadata.name] | sort) == ([$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3", $cluster + "-worker"] | sort) and
+      ([.items[] | select(.metadata.labels["node-role.kubernetes.io/control-plane"] != null)] | length) == 3 and
+      ([.items[] | select(.metadata.labels["node-role.kubernetes.io/control-plane"] == null)] | length) == 1 and
+      all(.items[];
+        any((.status.conditions // [])[];
+          .type == "Ready" and .status == "True"
+        )
+      )
+    ' "$NODE_READINESS_FILE" >/dev/null ||
+		fail "Kubernetes node inventory does not match the ready HA kind topology"
+}
+
+assert_api_server_endpoint_inventory() {
+	api_endpoint_deadline=$(($(date +%s) + 60))
+	while [ "$(date +%s)" -lt "$api_endpoint_deadline" ]; do
+		if kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+			get nodes -o json >"$NODE_READINESS_FILE" &&
+			kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+			-n default get endpointslices \
+			-l kubernetes.io/service-name=kubernetes -o json >"$API_SERVER_ENDPOINT_INVENTORY_FILE" &&
+			jq -e --arg cluster "$CLUSTER_NAME" --slurpfile nodes "$NODE_READINESS_FILE" \
+				-f "$ROOT_DIR/hack/api-server-endpoint-inventory.jq" \
+				"$API_SERVER_ENDPOINT_INVENTORY_FILE" >/dev/null &&
+			probe_api_server_endpoints; then
+			return 0
+		fi
+		sleep 1
+	done
+	fail "default Kubernetes Service did not advertise and serve exactly the three control-plane API server endpoints"
+}
+
+probe_api_server_endpoints() {
+	jq -er '
+      [.items[]
+        | select(.metadata.labels["kubernetes.io/service-name"] == "kubernetes")
+        | .endpoints[].addresses[]]
+      | sort[]
+    ' "$API_SERVER_ENDPOINT_INVENTORY_FILE" >"$API_SERVER_ENDPOINT_ADDRESS_FILE" || return 1
+	api_server_endpoint_probe_count=0
+	while IFS= read -r api_server_endpoint; do
+		api_server_endpoint_probe_count=$((api_server_endpoint_probe_count + 1))
+		if ! api_server_readyz=$(docker --context "$DOCKER_CONTEXT" exec \
+			"${CLUSTER_NAME}-control-plane" \
+			kubectl --kubeconfig /etc/kubernetes/admin.conf \
+			--server "https://${api_server_endpoint}:6443" \
+			--tls-server-name kubernetes \
+			--request-timeout=10s get --raw=/readyz 2>/dev/null); then
+			return 1
+		fi
+		[ "$api_server_readyz" = ok ] || return 1
+	done <"$API_SERVER_ENDPOINT_ADDRESS_FILE"
+	[ "$api_server_endpoint_probe_count" -eq 3 ]
+}
+
+configure_registry_hosts_on_kind_nodes() {
+	for kind_node_container in \
+		"${CLUSTER_NAME}-control-plane" \
+		"${CLUSTER_NAME}-control-plane2" \
+		"${CLUSTER_NAME}-control-plane3" \
+		"${CLUSTER_NAME}-worker"; do
+		registry_dns_deadline=$(($(date +%s) + 30))
+		registry_dns_ready=0
+		while [ "$(date +%s)" -lt "$registry_dns_deadline" ]; do
+			if docker --context "$DOCKER_CONTEXT" exec "$kind_node_container" \
+				getent ahostsv4 "$REGISTRY_DNS_NAME" 2>/dev/null |
+				awk -v expected="$REGISTRY_IP" '$1 == expected {found = 1} END {exit !found}'; then
+				registry_dns_ready=1
+				break
+			fi
+			sleep 1
+		done
+		[ "$registry_dns_ready" -eq 1 ] ||
+			fail "registry network alias did not resolve on kind node $kind_node_container"
+		docker --context "$DOCKER_CONTEXT" exec "$kind_node_container" \
+			mkdir -p "/etc/containerd/certs.d/${REGISTRY_HOST}"
+		docker --context "$DOCKER_CONTEXT" cp "$REGISTRY_HOSTS_FILE" \
+			"${kind_node_container}:/etc/containerd/certs.d/${REGISTRY_HOST}/hosts.toml"
+		if ! docker --context "$DOCKER_CONTEXT" exec "$kind_node_container" \
+			cat "/etc/containerd/certs.d/${REGISTRY_HOST}/hosts.toml" |
+			cmp -s "$REGISTRY_HOSTS_FILE" -; then
+			fail "registry hosts configuration differs on kind node $kind_node_container"
+		fi
+	done
 }
 
 require_ready_nodes() {
@@ -560,27 +871,51 @@ assert_api_server_feature_gate_scope() {
 	component_configs_file=$WORK_DIR/component-configs.json
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		-n kube-system get pods -o json >"$control_plane_pods_file"
-	jq -e --arg expected "$expected_api_server_feature_gates" '
-      def component_commands($component):
-        [
-          .items[]
-          | select(.metadata.labels.component == $component)
-          | .spec.containers[]
-          | .command[]
-        ];
+	jq -e --arg expected "$expected_api_server_feature_gates" --arg cluster "$CLUSTER_NAME" '
+      def component_pods($component):
+        [.items[] | select(.metadata.labels.component == $component)];
+      def command_options($pod; $prefix):
+        [$pod.spec.containers[].command[] | select(startswith($prefix))];
+      def exact_control_plane_nodes($pods):
+        ([$pods[].spec.nodeName] | sort) ==
+          ([$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3"] | sort);
+      def component_is_ready($pod; $container_name):
+        ($pod.metadata.deletionTimestamp == null) and
+        (($pod.metadata.annotations["kubernetes.io/config.mirror"] // "") | length) > 0 and
+        ($pod.metadata.name == ($container_name + "-" + $pod.spec.nodeName)) and
+        ($pod.status.phase == "Running") and
+        ([($pod.status.conditions // [])[] | select(.type == "Ready" and .status == "True")] | length) == 1 and
+        (($pod.spec.containers // []) | length) == 1 and
+        ($pod.spec.containers[0].name == $container_name) and
+        (($pod.status.containerStatuses // []) | length) == 1 and
+        ($pod.status.containerStatuses[0].name == $container_name) and
+        ($pod.status.containerStatuses[0].ready == true) and
+        (($pod.status.containerStatuses[0].state.running | type) == "object");
 
-      (component_commands("kube-apiserver")) as $api_server |
-      (component_commands("kube-controller-manager")) as $controller_manager |
-      (component_commands("kube-scheduler")) as $scheduler |
-      ([.items[] | select(.metadata.labels.component == "kube-apiserver")] | length) == 1 and
-      ([.items[] | select(.metadata.labels.component == "kube-controller-manager")] | length) == 1 and
-      ([.items[] | select(.metadata.labels.component == "kube-scheduler")] | length) == 1 and
-      ($api_server | map(select(startswith("--feature-gates=")))) ==
-        (if $expected == "" then [] else ["--feature-gates=" + $expected] end) and
-      ($api_server | map(select(startswith("--runtime-config="))) | length) == 1 and
-      ($controller_manager | map(select(startswith("--feature-gates=")))) == [] and
-      ($scheduler | map(select(startswith("--feature-gates=")))) == []
-    ' "$control_plane_pods_file" >/dev/null ||
+      (component_pods("kube-apiserver")) as $api_servers |
+      (component_pods("kube-controller-manager")) as $controller_managers |
+      (component_pods("kube-scheduler")) as $schedulers |
+      ($api_servers | length) == 3 and
+      ($controller_managers | length) == 3 and
+      ($schedulers | length) == 3 and
+      exact_control_plane_nodes($api_servers) and
+      exact_control_plane_nodes($controller_managers) and
+      exact_control_plane_nodes($schedulers) and
+      all($api_servers[];
+        component_is_ready(.; "kube-apiserver") and
+        command_options(.; "--feature-gates=") ==
+          (if $expected == "" then [] else ["--feature-gates=" + $expected] end) and
+        (command_options(.; "--runtime-config=") | length) == 1
+      ) and
+      all($controller_managers[];
+        component_is_ready(.; "kube-controller-manager") and
+        command_options(.; "--feature-gates=") == []
+      ) and
+      all($schedulers[];
+        component_is_ready(.; "kube-scheduler") and
+        command_options(.; "--feature-gates=") == []
+      )
+	' "$control_plane_pods_file" >/dev/null ||
 		fail "control-plane feature gates are not confined to the API server or kind runtime-config was replaced"
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		-n kube-system get configmaps kubelet-config kube-proxy -o json >"$component_configs_file"
@@ -619,6 +954,22 @@ cleanup() {
 	set +e
 	if [ "$status" -ne 0 ]; then
 		collect_diagnostics
+	fi
+	if [ -n "$RELEASE_CHART_OUTPUT_TEMP" ]; then
+		case "$RELEASE_CHART_OUTPUT_TEMP" in
+			"$RELEASE_CHART_OUTPUT_PARENT"/.ptah-operator-release-chart.*)
+				if ! rm -f -- "$RELEASE_CHART_OUTPUT_TEMP"; then
+					printf 'e2e: could not remove incomplete release chart output %s\n' \
+						"$RELEASE_CHART_OUTPUT_TEMP" >&2
+					cleanup_failed=1
+				fi
+			;;
+			*)
+				printf 'e2e: refusing to remove unexpected release chart temporary path %s\n' \
+					"$RELEASE_CHART_OUTPUT_TEMP" >&2
+				cleanup_failed=1
+			;;
+		esac
 	fi
 	if [ "$EXTERNAL_PG_CREATED" -eq 1 ]; then
 		external_cleanup_id=$EXTERNAL_PG_CONTAINER_ID
@@ -683,12 +1034,24 @@ cleanup() {
 		fi
 	fi
 	if [ "$IMAGE_AUDIT_CONTAINER_CREATED" -eq 1 ]; then
-		if ! docker --context "$DOCKER_CONTEXT" container rm -f "$IMAGE_AUDIT_CONTAINER" >/dev/null 2>&1; then
-			if ! docker --context "$DOCKER_CONTEXT" info >/dev/null 2>&1 ||
-				docker --context "$DOCKER_CONTEXT" container inspect "$IMAGE_AUDIT_CONTAINER" >/dev/null 2>&1; then
-				printf 'e2e: could not remove image-audit container %s from Docker context %s\n' \
-					"$IMAGE_AUDIT_CONTAINER" "$SELECTED_DOCKER_CONTEXT" >&2
+		image_audit_cleanup_id=$IMAGE_AUDIT_CONTAINER_ID
+		if [ -z "$image_audit_cleanup_id" ] &&
+			docker --context "$DOCKER_CONTEXT" container inspect "$IMAGE_AUDIT_CONTAINER" >/dev/null 2>&1; then
+			image_audit_cleanup_id=$(docker --context "$DOCKER_CONTEXT" container inspect \
+				--format '{{.Id}}' "$IMAGE_AUDIT_CONTAINER" 2>/dev/null)
+		fi
+		if [ -n "$image_audit_cleanup_id" ]; then
+			if ! image_audit_container_matches_task "$image_audit_cleanup_id"; then
+				printf 'e2e: refusing to remove image-audit container %s without the exact task identity\n' \
+					"$image_audit_cleanup_id" >&2
 				cleanup_failed=1
+			elif ! docker --context "$DOCKER_CONTEXT" container rm -f "$image_audit_cleanup_id" >/dev/null 2>&1; then
+				if ! docker --context "$DOCKER_CONTEXT" info >/dev/null 2>&1 ||
+					docker --context "$DOCKER_CONTEXT" container inspect "$image_audit_cleanup_id" >/dev/null 2>&1; then
+					printf 'e2e: could not remove image-audit container ID %s from Docker context %s\n' \
+						"$image_audit_cleanup_id" "$SELECTED_DOCKER_CONTEXT" >&2
+					cleanup_failed=1
+				fi
 			fi
 		fi
 	fi
@@ -747,6 +1110,26 @@ cleanup() {
 			fi
 		fi
 	done
+	if [ "$TASK_CLAIM_CREATE_STARTED" -eq 1 ] &&
+		docker --context "$DOCKER_CONTEXT" volume inspect "$TASK_CLAIM_VOLUME" >/dev/null 2>&1; then
+		if task_claim_matches_owner; then
+			if ! docker --context "$DOCKER_CONTEXT" volume rm "$TASK_CLAIM_VOLUME" >/dev/null 2>&1; then
+				if ! docker --context "$DOCKER_CONTEXT" info >/dev/null 2>&1 ||
+					docker --context "$DOCKER_CONTEXT" volume inspect "$TASK_CLAIM_VOLUME" >/dev/null 2>&1; then
+					printf 'e2e: could not remove task identity claim %s from Docker context %s\n' \
+						"$TASK_CLAIM_VOLUME" "$SELECTED_DOCKER_CONTEXT" >&2
+					cleanup_failed=1
+				fi
+			fi
+		elif [ "$TASK_CLAIM_ACQUIRED" -eq 1 ]; then
+			printf 'e2e: refusing to remove task identity claim %s after its owner labels changed\n' \
+				"$TASK_CLAIM_VOLUME" >&2
+			cleanup_failed=1
+		else
+			printf 'e2e: preserving task identity claim %s owned by another run\n' \
+				"$TASK_CLAIM_VOLUME" >&2
+			fi
+	fi
 	case "$WORK_DIR" in
 		"${TMPDIR:-/tmp}"/ptah-operator-e2e.*)
 			rm -rf -- "$WORK_DIR"
@@ -770,6 +1153,48 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
+
+acquire_task_claim
+if ! existing_clusters=$(kind get clusters); then
+	fail "could not list kind clusters through Docker context $DOCKER_CONTEXT"
+fi
+if printf '%s\n' "$existing_clusters" | grep -Fx "$CLUSTER_NAME" >/dev/null; then
+	fail "refusing to reuse pre-existing kind cluster $CLUSTER_NAME; choose another E2E_RUN_ID"
+fi
+if docker --context "$DOCKER_CONTEXT" image inspect "$OPERATOR_IMAGE" >/dev/null 2>&1; then
+	fail "refusing to overwrite pre-existing image $OPERATOR_IMAGE; choose another E2E_RUN_ID"
+fi
+if docker --context "$DOCKER_CONTEXT" image inspect "$NEXT_OPERATOR_IMAGE" >/dev/null 2>&1; then
+	fail "refusing to overwrite pre-existing image $NEXT_OPERATOR_IMAGE; choose another E2E_RUN_ID"
+fi
+if docker --context "$DOCKER_CONTEXT" image inspect "$PREDECESSOR_OPERATOR_IMAGE" >/dev/null 2>&1; then
+	fail "refusing to overwrite pre-existing image $PREDECESSOR_OPERATOR_IMAGE; choose another E2E_RUN_ID"
+fi
+if docker --context "$DOCKER_CONTEXT" image inspect "$FIXTURE_BUILD_IMAGE" >/dev/null 2>&1; then
+	fail "refusing to overwrite pre-existing image $FIXTURE_BUILD_IMAGE; choose another E2E_RUN_ID"
+fi
+if [ -z "$E2E_EXECUTOR_IMAGE" ] &&
+	docker --context "$DOCKER_CONTEXT" image inspect "$PTAH_IMAGE" >/dev/null 2>&1; then
+	fail "refusing to overwrite pre-existing image $PTAH_IMAGE; choose another E2E_RUN_ID"
+fi
+if docker --context "$DOCKER_CONTEXT" container inspect "$REGISTRY_CONTAINER" >/dev/null 2>&1; then
+	fail "refusing to reuse pre-existing registry container $REGISTRY_CONTAINER; choose another E2E_RUN_ID"
+fi
+if docker --context "$DOCKER_CONTEXT" container inspect "$EXTERNAL_PG_CONTAINER" >/dev/null 2>&1; then
+	fail "refusing to reuse pre-existing external PostgreSQL container $EXTERNAL_PG_CONTAINER; choose another E2E_RUN_ID"
+fi
+for task_image in \
+	"${REMOTE_REGISTRY}/ptah-operator:${IMAGE_TAG}" \
+	"${REMOTE_REGISTRY}/ptah-operator-next:${IMAGE_TAG}" \
+	"${REMOTE_REGISTRY}/e2e-fixture:${IMAGE_TAG}" \
+	"${REMOTE_REGISTRY}/ptah-executor:${IMAGE_TAG}" \
+	"${REMOTE_REGISTRY}/ptah-runner:${IMAGE_TAG}" \
+	"${REMOTE_REGISTRY}/postgresql:${IMAGE_TAG}" \
+	"${REMOTE_REGISTRY}/mysql:${IMAGE_TAG}"; do
+	if docker --context "$DOCKER_CONTEXT" image inspect "$task_image" >/dev/null 2>&1; then
+		fail "refusing to overwrite pre-existing image $task_image; choose another E2E_RUN_ID"
+	fi
+done
 
 mkdir -p "$TLS_PROXY_DIR"
 chmod 700 "$TLS_PROXY_DIR"
@@ -854,9 +1279,52 @@ while [ "$predecessor_crd_index" -lt "$predecessor_crd_count" ]; do
 	predecessor_crd_index=$((predecessor_crd_index + 1))
 done
 
+mkdir -p "$NEXT_BUILD_CONTEXT"
+git -C "$ROOT_DIR" archive --format=tar \
+	--output="$NEXT_SOURCE_ARCHIVE" "$CONTROLLER_REVISION"
+tar -xf "$NEXT_SOURCE_ARCHIVE" -C "$NEXT_BUILD_CONTEXT"
+NEXT_GO_SEQUENCE_FILE=$NEXT_BUILD_CONTEXT/internal/crdupgrade/rollout.go
+NEXT_HELM_SEQUENCE_FILE=$NEXT_BUILD_CONTEXT/charts/ptah-operator/templates/_helpers.tpl
+for next_sequence_source in "$NEXT_GO_SEQUENCE_FILE" "$NEXT_HELM_SEQUENCE_FILE"; do
+	[ -f "$next_sequence_source" ] && [ ! -L "$next_sequence_source" ] ||
+		fail "synthetic next-release sequence source must be a regular non-symlink file: $next_sequence_source"
+done
+CURRENT_GO_RELEASE_SEQUENCE=$(go_release_sequence_from_source "$NEXT_GO_SEQUENCE_FILE") ||
+	fail "archived Go source must contain exactly one positive CurrentReleaseSequence declaration"
+CURRENT_HELM_RELEASE_SEQUENCE=$(helm_release_sequence_from_source "$NEXT_HELM_SEQUENCE_FILE") ||
+	fail "archived Helm source must contain exactly one positive releaseSequence helper"
+[ "$CURRENT_GO_RELEASE_SEQUENCE" = "$CURRENT_HELM_RELEASE_SEQUENCE" ] ||
+	fail "archived Go release sequence $CURRENT_GO_RELEASE_SEQUENCE differs from Helm sequence $CURRENT_HELM_RELEASE_SEQUENCE"
+CURRENT_RELEASE_SEQUENCE=$CURRENT_GO_RELEASE_SEQUENCE
+printf '%s\n' "$CURRENT_RELEASE_SEQUENCE" | grep -Eq '^[1-9][0-9]{0,9}$' ||
+	fail "current release sequence must be a positive base-10 int32"
+[ "$CURRENT_RELEASE_SEQUENCE" -le 2147483646 ] ||
+	fail "current release sequence cannot be advanced within positive int32 bounds"
+NEXT_RELEASE_SEQUENCE=$((CURRENT_RELEASE_SEQUENCE + 1))
+current_go_sequence_line=$(printf '\tCurrentReleaseSequence int32 = %s' \
+	"$CURRENT_RELEASE_SEQUENCE")
+next_go_sequence_line=$(printf '\tCurrentReleaseSequence int32 = %s' \
+	"$NEXT_RELEASE_SEQUENCE")
+current_helm_sequence_line=$(printf \
+	'{{- define "ptah-operator.releaseSequence" -}}%s{{- end -}}' \
+	"$CURRENT_RELEASE_SEQUENCE")
+next_helm_sequence_line=$(printf \
+	'{{- define "ptah-operator.releaseSequence" -}}%s{{- end -}}' \
+	"$NEXT_RELEASE_SEQUENCE")
+replace_exact_line_once \
+	"$NEXT_GO_SEQUENCE_FILE" \
+	"$current_go_sequence_line" \
+	"$next_go_sequence_line" \
+	"synthetic next-release Go sequence $CURRENT_RELEASE_SEQUENCE to $NEXT_RELEASE_SEQUENCE"
+replace_exact_line_once \
+	"$NEXT_HELM_SEQUENCE_FILE" \
+	"$current_helm_sequence_line" \
+	"$next_helm_sequence_line" \
+	"synthetic next-release Helm sequence $CURRENT_RELEASE_SEQUENCE to $NEXT_RELEASE_SEQUENCE"
+
 chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.yaml")
 [ -n "$chart_version" ] || fail "Helm chart version is missing"
-chart_source_epoch=$(git -C "$ROOT_DIR" show -s --format=%ct HEAD)
+chart_source_epoch=$(git -C "$ROOT_DIR" show -s --format=%ct "$CONTROLLER_REVISION")
 printf '%s\n' "$chart_source_epoch" | grep -Eq '^[0-9]+$' ||
 	fail "source commit does not have a valid release epoch"
 printf 'e2e: reproducibly packaging Helm chart %s\n' "$chart_version"
@@ -877,6 +1345,28 @@ CHART_PACKAGE_DIGEST=$(sha256 <"$CHART_PACKAGE")
 chart_asset=${CHART_PACKAGE##*/}
 printf 'e2e: installing release-form chart %s (%s)\n' \
 	"$chart_asset" "$CHART_PACKAGE_DIGEST"
+
+printf 'e2e: reproducibly packaging synthetic sequence-%s Helm chart from commit %s\n' \
+	"$NEXT_RELEASE_SEQUENCE" "$CONTROLLER_REVISION"
+go -C "$NEXT_BUILD_CONTEXT" run -mod=readonly ./hack/chartpackage \
+	-chart charts/ptah-operator \
+	-epoch "$chart_source_epoch" \
+	-destination "$NEXT_CHART_PACKAGE_DIR"
+NEXT_CHART_PACKAGE="$NEXT_CHART_PACKAGE_DIR/ptah-operator-${chart_version}.tgz"
+[ -f "$NEXT_CHART_PACKAGE" ] ||
+	fail "synthetic next-release chart package was not created: $NEXT_CHART_PACKAGE"
+next_packaged_chart_metadata=$(helm show chart "$NEXT_CHART_PACKAGE")
+next_packaged_chart_name=$(printf '%s\n' "$next_packaged_chart_metadata" |
+	awk '$1 == "name:" {print $2}')
+next_packaged_chart_version=$(printf '%s\n' "$next_packaged_chart_metadata" |
+	awk '$1 == "version:" {print $2}')
+[ "$next_packaged_chart_name" = ptah-operator ] ||
+	fail "synthetic packaged chart name is $next_packaged_chart_name, want ptah-operator"
+[ "$next_packaged_chart_version" = "$chart_version" ] ||
+	fail "synthetic packaged chart version is $next_packaged_chart_version, want $chart_version"
+NEXT_CHART_PACKAGE_DIGEST=$(sha256 <"$NEXT_CHART_PACKAGE")
+printf 'e2e: synthetic sequence-%s chart %s has digest %s\n' \
+	"$NEXT_RELEASE_SEQUENCE" "${NEXT_CHART_PACKAGE##*/}" "$NEXT_CHART_PACKAGE_DIGEST"
 
 mkdir -p "$DOCKER_CLI_CONFIG/cli-plugins"
 ln -s "$BUILDX_PLUGIN_PATH" "$DOCKER_CLI_CONFIG/cli-plugins/docker-buildx"
@@ -913,8 +1403,8 @@ push_task_image() {
 	push_source=$1
 	push_repository=$2
 	push_target="${REMOTE_REGISTRY}/${push_repository}:${IMAGE_TAG}"
-	docker --context "$DOCKER_CONTEXT" tag "$push_source" "$push_target"
 	add_created_image "$push_target"
+	docker --context "$DOCKER_CONTEXT" tag "$push_source" "$push_target"
 	push_output=$(docker --context "$DOCKER_CONTEXT" push "$push_target")
 	printf '%s\n' "$push_output"
 	push_digest=$(printf '%s\n' "$push_output" |
@@ -1045,6 +1535,16 @@ docker --context "$DOCKER_CONTEXT" buildx build \
 	--build-arg "REVISION=$CONTROLLER_REVISION" \
 	--target operator \
 	--tag "$OPERATOR_IMAGE" "$ROOT_DIR"
+printf 'e2e: building synthetic sequence-%s image %s from exact commit archive %s\n' \
+	"$NEXT_RELEASE_SEQUENCE" "$NEXT_OPERATOR_IMAGE" "$CONTROLLER_REVISION"
+add_created_image "$NEXT_OPERATOR_IMAGE"
+docker --context "$DOCKER_CONTEXT" buildx build \
+	--builder "$DOCKER_CONTEXT" \
+	--load \
+	--file "$NEXT_BUILD_CONTEXT/test/e2e/Dockerfile.operator" \
+	--build-arg "REVISION=$CONTROLLER_REVISION" \
+	--target operator \
+	--tag "$NEXT_OPERATOR_IMAGE" "$NEXT_BUILD_CONTEXT"
 printf 'e2e: building predecessor image %s from exact commit %s\n' \
 	"$PREDECESSOR_OPERATOR_IMAGE" "$PREDECESSOR_REVISION"
 add_created_image "$PREDECESSOR_OPERATOR_IMAGE"
@@ -1068,13 +1568,8 @@ docker --context "$DOCKER_CONTEXT" buildx build \
 	--target fixture \
 	--tag "$FIXTURE_BUILD_IMAGE" "$ROOT_DIR"
 
-if docker --context "$DOCKER_CONTEXT" container inspect "$IMAGE_AUDIT_CONTAINER" >/dev/null 2>&1; then
-	fail "refusing to reuse pre-existing image-audit container $IMAGE_AUDIT_CONTAINER"
-fi
-IMAGE_AUDIT_CONTAINER_CREATED=1
-docker --context "$DOCKER_CONTEXT" create --name "$IMAGE_AUDIT_CONTAINER" \
-	"$OPERATOR_IMAGE" >/dev/null
-docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER" >"$IMAGE_AUDIT_ARCHIVE"
+create_image_audit_container "$OPERATOR_IMAGE"
+docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then
 	fail "the controller image contains the test-only OCI publisher"
 fi
@@ -1084,20 +1579,16 @@ tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-runner$' ||
 	fail "the controller image does not contain /ptah-runner"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)ptah-crd-manager$' ||
 	fail "the controller image does not contain /ptah-crd-manager"
-docker --context "$DOCKER_CONTEXT" container rm "$IMAGE_AUDIT_CONTAINER" >/dev/null
-IMAGE_AUDIT_CONTAINER_CREATED=0
+remove_image_audit_container
 
-IMAGE_AUDIT_CONTAINER_CREATED=1
-docker --context "$DOCKER_CONTEXT" create --name "$IMAGE_AUDIT_CONTAINER" \
-	"$FIXTURE_BUILD_IMAGE" >/dev/null
-docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER" >"$IMAGE_AUDIT_ARCHIVE"
+create_image_audit_container "$FIXTURE_BUILD_IMAGE"
+docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"
 tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$' ||
 	fail "the isolated fixture image does not contain /e2e-handcraft-oci"
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)(manager|ptah-runner)$'; then
 	fail "the isolated fixture image contains an operator binary"
 fi
-docker --context "$DOCKER_CONTEXT" container rm "$IMAGE_AUDIT_CONTAINER" >/dev/null
-IMAGE_AUDIT_CONTAINER_CREATED=0
+remove_image_audit_container
 
 printf 'e2e: creating kind cluster %s with Kubernetes %s\n' "$CLUSTER_NAME" "$K8S_VERSION"
 CLUSTER_CREATED=1
@@ -1108,6 +1599,8 @@ kind create cluster \
 	--kubeconfig "$KUBECONFIG_FILE" \
 	--wait 5m
 require_ready_nodes "after kind cluster creation"
+assert_kind_ha_topology
+assert_api_server_endpoint_inventory
 assert_api_server_feature_gate_scope "$EXPECTED_API_SERVER_FEATURE_GATES"
 
 kind load docker-image "$PREDECESSOR_OPERATOR_IMAGE" --name "$CLUSTER_NAME"
@@ -1209,24 +1702,7 @@ printf '%s\n' "$REGISTRY_IP" | grep -Eq '^[0-9]+(\.[0-9]+){3}$' ||
 
 printf 'server = "http://%s"\n\n[host."http://%s"]\n  capabilities = ["pull", "resolve"]\n' \
 	"$REGISTRY_HOST" "$REGISTRY_HOST" >"$REGISTRY_HOSTS_FILE"
-CONTROL_PLANE_CONTAINER="${CLUSTER_NAME}-control-plane"
-registry_dns_deadline=$(($(date +%s) + 30))
-registry_dns_ready=0
-while [ "$(date +%s)" -lt "$registry_dns_deadline" ]; do
-	if docker --context "$DOCKER_CONTEXT" exec "$CONTROL_PLANE_CONTAINER" \
-		getent ahostsv4 "$REGISTRY_DNS_NAME" 2>/dev/null |
-		awk -v expected="$REGISTRY_IP" '$1 == expected {found = 1} END {exit !found}'; then
-		registry_dns_ready=1
-		break
-	fi
-	sleep 1
-done
-[ "$registry_dns_ready" -eq 1 ] ||
-	fail "registry network alias did not resolve to its task-scoped container"
-docker --context "$DOCKER_CONTEXT" exec "$CONTROL_PLANE_CONTAINER" \
-	mkdir -p "/etc/containerd/certs.d/${REGISTRY_HOST}"
-docker --context "$DOCKER_CONTEXT" cp "$REGISTRY_HOSTS_FILE" \
-	"${CONTROL_PLANE_CONTAINER}:/etc/containerd/certs.d/${REGISTRY_HOST}/hosts.toml"
+configure_registry_hosts_on_kind_nodes
 
 printf '%s\n' 'e2e: mirroring immutable execution and database images into the isolated registry'
 push_task_image "$OPERATOR_IMAGE" ptah-operator
@@ -1237,6 +1713,14 @@ CANDIDATE_OPERATOR_DIGEST=${CANDIDATE_OPERATOR_IMAGE#*@}
 	fail "candidate operator image is not repository-and-digest pinned"
 printf '%s\n' "$CANDIDATE_OPERATOR_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
 	fail "candidate operator image digest is invalid"
+push_task_image "$NEXT_OPERATOR_IMAGE" ptah-operator-next
+NEXT_CONTROLLER_IMAGE=$PUSHED_IMAGE_REF
+NEXT_CONTROLLER_REPOSITORY=${NEXT_CONTROLLER_IMAGE%@*}
+NEXT_CONTROLLER_DIGEST=${NEXT_CONTROLLER_IMAGE#*@}
+[ "$NEXT_CONTROLLER_REPOSITORY" != "$NEXT_CONTROLLER_IMAGE" ] ||
+	fail "synthetic next-release operator image is not repository-and-digest pinned"
+printf '%s\n' "$NEXT_CONTROLLER_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
+	fail "synthetic next-release operator image digest is invalid"
 mirror_task_image "$FIXTURE_BUILD_IMAGE" e2e-fixture
 E2E_FIXTURE_IMAGE=$PUSHED_IMAGE_REF
 mirror_task_image "$EXECUTOR_SOURCE_IMAGE" ptah-executor
@@ -1358,6 +1842,9 @@ render_release_values \
 render_release_values \
 	"$CANDIDATE_VALUES_FILE" "$CANDIDATE_OPERATOR_REPOSITORY" "$IMAGE_TAG" \
 	"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET"
+render_release_values \
+	"$NEXT_VALUES_FILE" "$NEXT_CONTROLLER_REPOSITORY" "$IMAGE_TAG" \
+	"$NEXT_CONTROLLER_DIGEST" "$MANAGER_PULL_SECRET"
 
 printf 'e2e: installing exact predecessor release %s/%s from %s\n' \
 	"$OPERATOR_NAMESPACE" "$HELM_RELEASE" "$PREDECESSOR_REVISION"
@@ -1426,6 +1913,7 @@ E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_HA_TEST_NAMESPACE=$HA_TEST_NAMESPACE \
 E2E_FOREIGN_NAMESPACE=$FOREIGN_NAMESPACE \
+E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 	"$ROOT_DIR/hack/e2e-ha.sh"
 
@@ -1486,8 +1974,16 @@ E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
+E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \
+E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
+E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \
+E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE \
+E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE \
+E2E_CURRENT_RELEASE_SEQUENCE=$CURRENT_RELEASE_SEQUENCE \
+E2E_NEXT_RELEASE_SEQUENCE=$NEXT_RELEASE_SEQUENCE \
 E2E_KUBERNETES_VERSION=$K8S_VERSION \
 E2E_PHASE=uninstall \
 	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 
+export_release_chart
 printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"

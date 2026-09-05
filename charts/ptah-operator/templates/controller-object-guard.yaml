@@ -1,8 +1,19 @@
 {{- $controllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.serviceAccountName" .) -}}
+{{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
+{{- $controllerUsernameMatch := printf `request.userInfo.username in [%q]` $controllerUsername -}}
+{{- $candidateSequence := include "ptah-operator.releaseSequence" . -}}
+{{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
+{{- $controllerAuthority := printf `request.userInfo.username == %q && variables.activeRelease == %s` $controllerUsername $candidateSequence -}}
+{{- if and $previousControllerServiceAccount (ne $previousControllerServiceAccount (include "ptah-operator.serviceAccountName" .)) -}}
+{{- $previousControllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace $previousControllerServiceAccount -}}
+{{- $controllerUsernameMatch = printf `request.userInfo.username in [%q, %q]` $controllerUsername $previousControllerUsername -}}
+{{- $controllerAuthority = printf `(%s) || (request.userInfo.username == %q && variables.activeRelease == %s)` $controllerAuthority $previousControllerUsername $previousSequence -}}
+{{- end -}}
 {{- $jobMessage := "Ptah controller Job write guard rejected an unsafe workload shape" -}}
 {{- $chunkMessage := "Ptah controller chunk write guard rejected an unsafe ConfigMap shape" -}}
 {{- $planMessage := "Ptah controller plan write guard rejected an unsafe manifest shape" -}}
 {{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
+{{- $anyConvergenceRequest := include "ptah-operator.admissionConvergenceAnyProbeRequest" . -}}
 {{- $jobLegacyReadOnly := `object.metadata.labels["operator.ptah.dev/operation"] in ["resolve", "verify", "observe", "plan"] && has(object.metadata.annotations) && object.metadata.annotations.size() == 5 && ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations["operator.ptah.dev/operation-id"] != "" && object.metadata.annotations["operator.ptah.dev/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/ptah-version"] != "" && object.metadata.annotations["operator.ptah.dev/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$")` -}}
 {{- $jobLegacyApply := `object.metadata.labels["operator.ptah.dev/operation"] == "apply" && has(object.metadata.annotations) && object.metadata.annotations.size() == 7 && ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/plan-fingerprint", "operator.ptah.dev/plan-content-digest", "operator.ptah.dev/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations["operator.ptah.dev/operation-id"] != "" && object.metadata.annotations["operator.ptah.dev/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/ptah-version"] != "" && object.metadata.annotations["operator.ptah.dev/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.dev/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$")` -}}
 {{- $jobCurrent := `has(object.metadata.annotations) && ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/controller-image", "operator.ptah.dev/controller-revision", "operator.ptah.dev/controller-state-version", "operator.ptah.dev/admission-snapshot-digest"].all(key, key in object.metadata.annotations) && object.metadata.annotations.all(key, key in ["operator.ptah.dev/operation-id", "operator.ptah.dev/input-fingerprint", "operator.ptah.dev/ptah-version", "operator.ptah.dev/execution-binding-id", "operator.ptah.dev/controller-image", "operator.ptah.dev/controller-revision", "operator.ptah.dev/controller-state-version", "operator.ptah.dev/admission-snapshot-digest", "operator.ptah.dev/plan-fingerprint", "operator.ptah.dev/plan-content-digest"]) && object.metadata.annotations["operator.ptah.dev/operation-id"] != "" && object.metadata.annotations["operator.ptah.dev/input-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/ptah-version"] != "" && object.metadata.annotations["operator.ptah.dev/execution-binding-id"].matches("^v1-[0-9a-f]{32}$") && object.metadata.annotations["operator.ptah.dev/controller-image"].matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.metadata.annotations["operator.ptah.dev/controller-image"] == variables.activeControllerImage && object.metadata.annotations["operator.ptah.dev/controller-revision"] != "" && object.metadata.annotations["operator.ptah.dev/controller-state-version"].matches("^[1-9][0-9]*$") && object.metadata.annotations["operator.ptah.dev/controller-state-version"] == variables.activeControllerStateString && object.metadata.annotations["operator.ptah.dev/admission-snapshot-digest"].matches("^sha256:[0-9a-f]{64}$") && ((object.metadata.labels["operator.ptah.dev/operation"] == "apply" && "operator.ptah.dev/plan-fingerprint" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/plan-fingerprint"].matches("^sha256:[0-9a-f]{64}$") && "operator.ptah.dev/plan-content-digest" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/plan-content-digest"].matches("^sha256:[0-9a-f]{64}$")) || (object.metadata.labels["operator.ptah.dev/operation"] != "apply" && !("operator.ptah.dev/plan-fingerprint" in object.metadata.annotations) && !("operator.ptah.dev/plan-content-digest" in object.metadata.annotations)))` -}}
@@ -10,7 +21,7 @@
 {{- $jobActiveStateClause := ` && object.metadata.annotations["operator.ptah.dev/controller-state-version"] == variables.activeControllerStateString` -}}
 {{- $jobCurrentAnyIdentity := $jobCurrent | replace $jobActiveImageClause "" | replace $jobActiveStateClause "" -}}
 {{- $jobActiveIdentity := `object.metadata.annotations["operator.ptah.dev/controller-image"] == variables.activeControllerImage && object.metadata.annotations["operator.ptah.dev/controller-state-version"] == variables.activeControllerStateString` -}}
-{{- $jobAnnotationContract := printf `((request.operation == "UPDATE" || (request.operation == "CREATE" && variables.isBootstrap)) && ((%s) || (%s))) || (variables.activeRelease > 0 && (%s) && (request.operation == "UPDATE" || (request.operation == "CREATE" && (%s))))` $jobLegacyReadOnly $jobLegacyApply $jobCurrentAnyIdentity $jobActiveIdentity -}}
+{{- $jobAnnotationContract := printf `((request.operation == "UPDATE" || (request.operation == "CREATE" && variables.activeRelease == variables.previousRelease)) && ((%s) || (%s))) || ((%s) && (request.operation == "UPDATE" || (request.operation == "CREATE" && (%s))))` $jobLegacyReadOnly $jobLegacyApply $jobCurrentAnyIdentity $jobActiveIdentity -}}
 {{- $jobValidations := list
       (dict "expression" `has(object.metadata.labels) && object.metadata.labels.size() == 5 && ["app.kubernetes.io/managed-by", "app.kubernetes.io/component", "operator.ptah.dev/schema", "operator.ptah.dev/operation", "operator.ptah.dev/operation-id"].all(key, key in object.metadata.labels) && object.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" && object.metadata.labels["app.kubernetes.io/component"] == "schema-operation" && object.metadata.labels["operator.ptah.dev/schema"] != "" && object.metadata.labels["operator.ptah.dev/operation"] in ["resolve", "verify", "observe", "plan", "apply"] && object.metadata.labels["operator.ptah.dev/operation-id"].matches("^[0-9a-f]{16}$") && object.metadata.name.startsWith("ptah-" + object.metadata.labels["operator.ptah.dev/operation"] + "-") && object.metadata.name.matches("^ptah-(resolve|verify|observe|plan|apply)-[a-z0-9]([-a-z0-9.]*[a-z0-9])?-[0-9a-f]{16}$") && (!has(object.metadata.generateName) || object.metadata.generateName == "") && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.dev/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchema" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.dev/schema"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion` "message" $jobMessage)
       (dict "expression" $jobAnnotationContract "message" $jobMessage)
@@ -34,8 +45,8 @@
       (dict "expression" `has(object.immutable) && object.immutable && (!has(object.data) || object.data.size() == 0) && has(object.binaryData) && object.binaryData.size() == 1 && "chunk" in object.binaryData && object.binaryData["chunk"].size() >= 1 && object.binaryData["chunk"].size() <= 524288` "message" $chunkMessage) -}}
 {{- /* Candidate-only v3 fields stay dynamic until the predecessor CRD has been upgraded. */ -}}
 {{- $planCommon := `object.spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.contentDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.actualStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.desiredStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.verificationPolicyUID != "" && object.spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && object.spec.ptahVersion != "" && object.spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerProtocolVersion >= 1 && object.spec.dialect != "" && object.spec.statementCount >= 1 && object.spec.size >= 1 && object.spec.size <= 8388608` -}}
-{{- $planLegacy := `variables.isBootstrap && object.spec.contractVersion == 2 && !has(dyn(object.spec).controllerImage) && !has(dyn(object.spec).controllerRevision) && !has(dyn(object.spec).controllerStateVersion)` -}}
-{{- $planCurrent := `variables.activeRelease > 0 && object.spec.contractVersion == 3 && has(dyn(object.spec).controllerImage) && dyn(object.spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object.spec).controllerImage == variables.activeControllerImage && has(dyn(object.spec).controllerRevision) && dyn(object.spec).controllerRevision != "" && has(dyn(object.spec).controllerStateVersion) && dyn(object.spec).controllerStateVersion >= 1 && dyn(object.spec).controllerStateVersion == variables.activeControllerState` -}}
+{{- $planLegacy := `variables.activeRelease == variables.previousRelease && object.spec.contractVersion == 2 && !has(dyn(object.spec).controllerImage) && !has(dyn(object.spec).controllerRevision) && !has(dyn(object.spec).controllerStateVersion)` -}}
+{{- $planCurrent := `object.spec.contractVersion == 3 && has(dyn(object.spec).controllerImage) && dyn(object.spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object.spec).controllerImage == variables.activeControllerImage && has(dyn(object.spec).controllerRevision) && dyn(object.spec).controllerRevision != "" && has(dyn(object.spec).controllerStateVersion) && dyn(object.spec).controllerStateVersion >= 1 && dyn(object.spec).controllerStateVersion == variables.activeControllerState` -}}
 {{- $planContract := printf `(%s) && ((%s) || (%s))` $planCommon $planLegacy $planCurrent -}}
 {{- $planValidations := list
       (dict "expression" `has(object.metadata.labels) && object.metadata.labels.size() == 1 && "operator.ptah.dev/schema" in object.metadata.labels && object.metadata.labels["operator.ptah.dev/schema"] != "" && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}$") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.dev/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchema" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.dev/schema"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion && object.spec.schemaRef.name == object.metadata.labels["operator.ptah.dev/schema"] && object.spec.schemaRef.uid == object.metadata.ownerReferences[0].uid` "message" $planMessage)
@@ -47,6 +58,9 @@
       (dict "name" (include "ptah-operator.controllerChunkWriteGuardPolicyName" .) "component" "controller-chunk-write-guard" "apiGroups" (list "") "apiVersions" (list "v1") "resource" "configmaps" "operations" (list "CREATE") "denialMessage" $chunkMessage "validations" $chunkValidations "parameterized" true)
       (dict "name" (include "ptah-operator.controllerPlanWriteGuardPolicyName" .) "component" "controller-plan-write-guard" "apiGroups" (list "operator.ptah.dev") "apiVersions" (list "v1alpha1") "resource" "ptahschemaplans" "operations" (list "CREATE") "denialMessage" $planMessage "validations" $planValidations "parameterized" true) -}}
 {{- range $entry := $entries -}}
+{{- $probeFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" $ "policyName" $entry.name) -}}
+{{- $probeRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" $ "fieldManager" $probeFieldManager) -}}
+{{- $probeMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $probeFieldManager) -}}
 {{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $entry.name -}}
 {{- $binding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $entry.name -}}
 {{- range $object := list
@@ -99,10 +113,19 @@ spec:
         operations: {{ $entry.operations | toJson }}
         resources: [{{ $entry.resource | quote }}]
         scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
   matchConditions:
-    - name: exact-controller-service-account
-      expression: {{ printf `request.userInfo.username == %q` $controllerUsername | quote }}
+    - name: candidate-or-predecessor-controller-service-account
+      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest $controllerUsernameMatch | quote }}
   variables:
+    - name: isAnyAdmissionConvergenceProbe
+      expression: {{ $anyConvergenceRequest | quote }}
+    - name: isAdmissionConvergenceProbe
+      expression: {{ $probeRequest | quote }}
     - name: activeRelease
       expression: 'params != null && has(params.data) && "active-release-sequence" in params.data && params.data["active-release-sequence"].matches("^(0|[1-9][0-9]*)$") ? int(params.data["active-release-sequence"]) : -1'
     - name: activeControllerStateString
@@ -111,15 +134,23 @@ spec:
       expression: 'params != null && has(params.metadata.annotations) && "operator.ptah.dev/controller-state-version" in params.metadata.annotations && params.metadata.annotations["operator.ptah.dev/controller-state-version"].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations["operator.ptah.dev/controller-state-version"]) : 0'
     - name: activeControllerImage
       expression: 'params != null && has(params.metadata.annotations) && "operator.ptah.dev/manager-image" in params.metadata.annotations ? params.metadata.annotations["operator.ptah.dev/manager-image"] : ""'
-    - name: isBootstrap
-      expression: 'variables.activeRelease == 0'
+    - name: candidateRelease
+      expression: {{ $candidateSequence | quote }}
+    - name: previousRelease
+      expression: {{ $previousSequence | quote }}
   validations:
-    - expression: {{ $activationShape | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $activationShape | quote }}
       message: {{ $entry.denialMessage | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $controllerAuthority | quote }}
+      message: "Ptah controller principal guard rejected an inactive release identity"
 {{- range $validation := $entry.validations }}
-    - expression: {{ $validation.expression | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $validation.expression | quote }}
       message: {{ $validation.message | quote }}
 {{- end }}
+    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
+      message: Ptah admission convergence probe field manager is reserved for dry-run verification
+    - expression: '!variables.isAdmissionConvergenceProbe'
+      message: {{ $probeMessage | quote }}
 ---
 {{- end }}
 {{- if not $binding }}
@@ -149,6 +180,11 @@ spec:
         apiVersions: {{ $entry.apiVersions | toJson }}
         operations: {{ $entry.operations | toJson }}
         resources: [{{ $entry.resource | quote }}]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
         scope: Namespaced
 {{- if $entry.parameterized }}
   paramRef:

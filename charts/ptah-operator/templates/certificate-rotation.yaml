@@ -4,6 +4,8 @@
 {{- $leaseName := include "ptah-operator.certRotationLeaseName" . -}}
 {{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
+{{- $legacyParentOriginDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $legacyParentOriginDigest -}}
 {{- if .Values.certificateRotation.recreateMissingSecret }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -107,12 +109,6 @@ rules:
     resources: ["leases"]
     resourceNames: [{{ $leaseName | quote }}]
     verbs: ["get", "update"]
-  # EndpointSlice names are assigned by Kubernetes, and RBAC cannot combine
-  # list with resourceNames or enforce the Service label selector used by the
-  # rotator. This read-only namespace rule is the narrowest stable grant.
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     resourceNames:
@@ -170,6 +166,8 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
+      - {{ include "ptah-operator.admissionConvergencePolicyName" . }}
+      - {{ $serviceAccountObjectGuardName }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
@@ -177,11 +175,17 @@ rules:
       - {{ include "ptah-operator.controllerPlanWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateMutatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateValidatingWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
       - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
+      - {{ printf "ptah-operator-hook-pod-origin-guard-v1-%s" $legacyParentOriginDigest }}
+      - {{ printf "ptah-operator-hook-parent-origin-guard-v1-%s" $legacyParentOriginDigest }}
     verbs: ["get"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
   - apiGroups: ["scheduling.k8s.io"]
     resources: ["priorityclasses"]
     verbs: ["get", "list"]

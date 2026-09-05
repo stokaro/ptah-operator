@@ -93,10 +93,11 @@ func TestPrepareOutputsRefusesHardLinkAliases(t *testing.T) {
 		t.Fatalf("create hard link: %v", err)
 	}
 	output, err := prepareOutputs(outputPaths{
-		log:    logPath,
-		status: statusPath,
-		ready:  filepath.Join(directory, "ready"),
-		error:  filepath.Join(directory, "error"),
+		log:          logPath,
+		status:       statusPath,
+		ready:        filepath.Join(directory, "ready"),
+		error:        filepath.Join(directory, "error"),
+		failureClass: filepath.Join(directory, "failure-class"),
 	})
 	if output != nil {
 		_ = output.close()
@@ -184,6 +185,65 @@ func TestOutputsBoundStatusAndErrorContents(t *testing.T) {
 	}
 }
 
+func TestOutputsKeepCredentialShapedCauseSeparateFromFailureClass(t *testing.T) {
+	t.Parallel()
+
+	output := newTestOutputs(t)
+	defer func() { _ = output.close() }()
+	const privateCause = "Authorization: Bearer credential-shaped-private-cause"
+	output.reportFailure(classifyFailure(failureClassPodWatch, errors.New(privateCause)))
+
+	assertFileContents(t, output.status.path, "failed\nstarting\n")
+	assertFileContents(t, output.failureClass.path, "pod-watch\n")
+	assertFileContents(t, output.error.path, privateCause+"\n")
+	if contents, err := os.ReadFile(output.failureClass.path); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(contents), "credential-shaped-private-cause") {
+		t.Fatalf("failure class contains private cause: %q", contents)
+	}
+}
+
+func TestOutputsMapUnclassifiedFailureToInternal(t *testing.T) {
+	t.Parallel()
+
+	output := newTestOutputs(t)
+	defer func() { _ = output.close() }()
+	output.reportFailure(errors.New("unclassified private cause"))
+	assertFileContents(t, output.failureClass.path, "internal\n")
+}
+
+func TestPrepareOutputsRefusesFailureClassHardLinkAlias(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("hard-link behavior differs on Windows")
+	}
+
+	directory := t.TempDir()
+	errorPath := filepath.Join(directory, "error")
+	failureClassPath := filepath.Join(directory, "failure-class")
+	if err := os.WriteFile(errorPath, []byte("must remain"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(errorPath, failureClassPath); err != nil {
+		t.Fatal(err)
+	}
+	output, err := prepareOutputs(outputPaths{
+		log:          filepath.Join(directory, "log"),
+		status:       filepath.Join(directory, "status"),
+		ready:        filepath.Join(directory, "ready"),
+		error:        errorPath,
+		failureClass: failureClassPath,
+	})
+	if output != nil {
+		_ = output.close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "same file") {
+		t.Fatalf("prepareOutputs error = %v", err)
+	}
+	assertFileContents(t, errorPath, "must remain")
+	assertFileContents(t, failureClassPath, "must remain")
+}
+
 func TestPrepareOutputsReportsPartialInitializationFailurePrivately(t *testing.T) {
 	t.Parallel()
 	requirePrivateModeSemantics(t)
@@ -198,10 +258,11 @@ func TestPrepareOutputsReportsPartialInitializationFailurePrivately(t *testing.T
 		t.Fatalf("create invalid status destination: %v", err)
 	}
 	output, err := prepareOutputs(outputPaths{
-		log:    filepath.Join(directory, "log"),
-		status: statusPath,
-		ready:  filepath.Join(directory, "ready"),
-		error:  errorPath,
+		log:          filepath.Join(directory, "log"),
+		status:       statusPath,
+		ready:        filepath.Join(directory, "ready"),
+		error:        errorPath,
+		failureClass: filepath.Join(directory, "failure-class"),
 	})
 	if err == nil || output == nil {
 		t.Fatalf("prepareOutputs = (%v, %v), want partial output and error", output, err)

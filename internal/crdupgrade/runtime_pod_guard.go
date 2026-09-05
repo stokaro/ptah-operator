@@ -108,7 +108,7 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 		})
 	}
 
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
+	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: metadata,
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
@@ -171,7 +171,14 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 			},
 			Validations: validations,
 		},
-	}, nil
+	}
+	addAdmissionConvergenceDependencyProbe(
+		policy,
+		g.ReleaseNamespace,
+		AdmissionConvergenceMarkerName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence),
+		hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+	)
+	return policy, nil
 }
 
 func (g *RolloutGuard) runtimePodIdentityBinding() (*admissionregistrationv1.ValidatingAdmissionPolicyBinding, error) {

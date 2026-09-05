@@ -689,6 +689,20 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"stable support gate":       {`.name == "Kubernetes support gate"`, `.name == "Verify source and generated files"`, false},
 		"bounded evidence polling":  {`poll_deadline_epoch=$(( $(date -u +%s) + SUPPORT_POLL_TIMEOUT_MINUTES * 60 ))`, `poll_deadline_epoch=0`, false},
 		"preflight output":          {`source-sha: ${{ steps.support-evidence.outputs.source-sha }}`, `source-sha: ${{ github.sha }}`, false},
+		"tested chart output":       {`chart-sha256: ${{ steps.support-evidence.outputs.chart-sha256 }}`, `chart-sha256: unverified`, false},
+		"support window output":     {`kubernetes-support-window: ${{ steps.support-evidence.outputs.kubernetes-support-window }}`, `kubernetes-support-window: unverified`, false},
+		"support run output":        {`support-evidence-run-id: ${{ steps.support-evidence.outputs.support-evidence-run-id }}`, `support-evidence-run-id: 1`, false},
+		"support matrix derivation": {`support_matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"`, `support_matrix='[{"minor":"1.99","minor_slug":"1-99"}]'`, false},
+		"minor slug binding":        {`(.minor_slug == (.minor | gsub("\\."; "-")))`, `(.minor_slug | length > 0)`, false},
+		"artifact inventory":        {`repos/$GITHUB_REPOSITORY/actions/runs/$evidence_run/artifacts`, `repos/$GITHUB_REPOSITORY/actions/runs/1/artifacts`, false},
+		"artifact count":            {`.total_count == $expected_count`, `.total_count >= 0`, false},
+		"artifact freshness":        {`.expired == false`, `true`, false},
+		"installed chart download":  {`gh run download "$evidence_run"`, `true # chart download omitted`, false},
+		"installed chart equality":  {`cmp "$canonical_chart" "$chart_path"`, `true # byte equality omitted`, false},
+		"support run validation":    {`[[ "$evidence_run" =~ ^[1-9][0-9]*$ ]]`, `test -n "$evidence_run"`, false},
+		"chart digest evidence":     {`printf 'chart-sha256=%s\n' "$chart_sha256"`, `printf 'chart-sha256=%s\n' unknown`, false},
+		"window evidence":           {`printf 'kubernetes-support-window=%s\n' "$kubernetes_support_window"`, `printf 'kubernetes-support-window=%s\n' 1.99`, false},
+		"run evidence":              {`printf 'support-evidence-run-id=%s\n' "$evidence_run"`, `printf 'support-evidence-run-id=%s\n' 1`, false},
 		"publish dependency":        {`    needs: [support-preflight]`, `    needs: []`, false},
 		"publish evidence binding":  {`needs.support-preflight.outputs.source-sha == github.sha`, `github.sha == github.sha`, false},
 		"preflight error bypass":    {`        id: support-evidence`, "        id: support-evidence\n        continue-on-error: true", false},
@@ -705,6 +719,12 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		"image push":                {`          push: true`, `          push: false`, false},
 		"image provenance":          {`          provenance: mode=max`, `          provenance: false`, false},
 		"image SBOM":                {`          sbom: generator=docker.io/docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9`, `          sbom: true`, false},
+		"tested chart binding":      {`TESTED_CHART_SHA256: ${{ needs.support-preflight.outputs.chart-sha256 }}`, `TESTED_CHART_SHA256: unknown`, false},
+		"tested chart equality":     {`[[ "$chart_sha256" == "$TESTED_CHART_SHA256" ]]`, `test -n "$chart_sha256"`, false},
+		"artifacts run binding":     {`TESTED_SUPPORT_EVIDENCE_RUN_ID: ${{ needs.support-preflight.outputs.support-evidence-run-id }}`, `TESTED_SUPPORT_EVIDENCE_RUN_ID: 1`, false},
+		"artifacts window binding":  {`TESTED_KUBERNETES_SUPPORT_WINDOW: ${{ needs.support-preflight.outputs.kubernetes-support-window }}`, `TESTED_KUBERNETES_SUPPORT_WINDOW: 1.99`, false},
+		"manifest run evidence":     {`printf 'support-evidence-run-id=%s\n' "$TESTED_SUPPORT_EVIDENCE_RUN_ID"`, `printf 'support-evidence-run-id=%s\n' 1`, false},
+		"manifest window evidence":  {`printf 'kubernetes-support-window=%s\n' "$TESTED_KUBERNETES_SUPPORT_WINDOW"`, `printf 'kubernetes-support-window=%s\n' 1.99`, false},
 		"asset manifest binding":    {`            dist/release-manifest.txt`, `            dist/not-the-manifest.txt`, true},
 		"image attestation digest":  {`subject-digest: ${{ steps.artifacts.outputs.image-digest }}`, `subject-digest: ${{ steps.artifacts.outputs.chart-digest }}`, false},
 		"image signature digest":    {`${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}`, `${{ steps.artifacts.outputs.image-repository }}@sha256:bad`, true},
@@ -770,6 +790,48 @@ func TestVerifyWorkflowDigestIsAnIndependentTripwire(t *testing.T) {
 	}
 }
 
+func TestParseKubernetesSupportWindow(t *testing.T) {
+	t.Parallel()
+
+	valid := []byte(`{
+  "schemaVersion": 1,
+  "policy": "upstream-active-minors",
+  "windowSize": 3,
+  "lastVerified": "2026-08-31",
+  "kindVersion": "v0.33.0",
+  "releases": [
+    {"minor": "1.35", "nodeImage": "image-35"},
+    {"minor": "1.36", "nodeImage": "image-36"},
+    {"minor": "1.37", "nodeImage": "image-37"}
+  ]
+}
+`)
+	window, err := parseKubernetesSupportWindow(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window != "1.35,1.36,1.37" {
+		t.Fatalf("parseKubernetesSupportWindow() = %q, want %q", window, "1.35,1.36,1.37")
+	}
+
+	for name, document := range map[string][]byte{
+		"unknown field":     bytes.Replace(valid, []byte(`"schemaVersion": 1`), []byte(`"schemaVersion": 1, "extra": true`), 1),
+		"wrong window size": bytes.Replace(valid, []byte(`"windowSize": 3`), []byte(`"windowSize": 2`), 1),
+		"invalid date":      bytes.Replace(valid, []byte(`"2026-08-31"`), []byte(`"2026/08/31"`), 1),
+		"leading zero":      bytes.Replace(valid, []byte(`"1.35"`), []byte(`"01.35"`), 1),
+		"nonconsecutive":    bytes.Replace(valid, []byte(`"1.36"`), []byte(`"1.38"`), 1),
+		"duplicate image":   bytes.Replace(valid, []byte(`"image-36"`), []byte(`"image-35"`), 1),
+		"trailing value":    append(append([]byte(nil), valid...), []byte("{}\n")...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := parseKubernetesSupportWindow(document); err == nil {
+				t.Fatal("parseKubernetesSupportWindow() accepted an invalid support manifest")
+			}
+		})
+	}
+}
+
 func TestVerifyReleaseAssets(t *testing.T) {
 	t.Parallel()
 
@@ -777,6 +839,11 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		tag       = "v0.1.0"
 		sourceSHA = "1111111111111111111111111111111111111111"
 	)
+	root := filepath.Join("..", "..")
+	supportWindow, err := repositoryKubernetesSupportWindow(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	directory := t.TempDir()
 	chartName := "ptah-operator-0.1.0.tgz"
 	chartPath := filepath.Join(directory, chartName)
@@ -794,8 +861,10 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		"image=%s@%s\n"+
 		"image-tag=%s:tx-%s-123\n"+
 		"chart-asset=%s\n"+
-		"chart-asset-sha256=%s\n",
-		repositoryName, tag, sourceSHA, imageName, digest, imageName, sourceSHA, chartName, chartSum)
+		"chart-asset-sha256=%s\n"+
+		"support-evidence-run-id=456\n"+
+		"kubernetes-support-window=%s\n",
+		repositoryName, tag, sourceSHA, imageName, digest, imageName, sourceSHA, chartName, chartSum, supportWindow)
 	manifestPath := filepath.Join(directory, "release-manifest.txt")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
@@ -806,13 +875,31 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	if err := os.WriteFile(checksumsPath, []byte(checksums), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyReleaseAssets(manifestPath, checksumsPath, chartPath, tag, sourceSHA); err != nil {
+	if err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA); err != nil {
 		t.Fatalf("verifyReleaseAssets(valid) error = %v", err)
+	}
+	for name, mutation := range map[string]string{
+		"zero support run":     strings.Replace(manifest, "support-evidence-run-id=456", "support-evidence-run-id=0", 1),
+		"different window":     strings.Replace(manifest, "kubernetes-support-window="+supportWindow, "kubernetes-support-window=9.98,9.99,9.100", 1),
+		"missing support run":  strings.Replace(manifest, "support-evidence-run-id=456\n", "", 1),
+		"extra manifest field": manifest + "unexpected=value\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(manifestPath, []byte(mutation), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA); err == nil {
+				t.Fatal("verifyReleaseAssets() accepted a manifest evidence mutation")
+			}
+		})
+	}
+	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(chartPath, append(chart, '!'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyReleaseAssets(manifestPath, checksumsPath, chartPath, tag, sourceSHA); err == nil {
+	if err := verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA); err == nil {
 		t.Fatal("verifyReleaseAssets() accepted a changed chart")
 	}
 }
@@ -846,5 +933,16 @@ func TestVerifyPreparedJournal(t *testing.T) {
 	}
 	if err := verifyPreparedJournal(path, tag, sourceSHA); err == nil {
 		t.Fatal("verifyPreparedJournal() accepted an unstable run-attempt transaction")
+	}
+	withEvidence := strings.Replace(journal,
+		"chart-asset=ptah-operator-0.1.0.tgz\n",
+		"chart-asset=ptah-operator-0.1.0.tgz\nsupport-evidence-run-id=456\n",
+		1,
+	)
+	if err := os.WriteFile(path, []byte(withEvidence), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPreparedJournal(path, tag, sourceSHA); err == nil {
+		t.Fatal("verifyPreparedJournal() accepted final evidence in the intent-only journal")
 	}
 }

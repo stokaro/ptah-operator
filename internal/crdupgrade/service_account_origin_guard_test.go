@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
-	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
@@ -53,13 +51,13 @@ func testRenderedServiceAccountOriginGuardMatchesCompiledContract(t *testing.T, 
 	guard := testServiceAccountOriginGuard()
 	guard.ReleaseName = "ptah-e2e"
 	guard.ReleaseNamespace = "ptah-e2e"
-	guard.ControllerServiceAccountName = controllerName
+	guard.ManagerImage = renderedGuardManagerImage
 	guard.ControllerDeploymentName = controllerName
-	guard.CertificateServiceAccountName = certificateName
 	guard.CertificateDeploymentName = certificateName
-	guard.ManagerImage = "ghcr.io/stokaro/ptah-operator@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	guard.ControllerServiceAccountName = renderedDeploymentServiceAccount(t, rendered, controllerName)
+	guard.CertificateServiceAccountName = renderedDeploymentServiceAccount(t, rendered, certificateName)
 	guard.HookServiceAccountName = hookBase + "-crd-v1-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
-	name := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	name := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	var policy *admissionregistrationv1.ValidatingAdmissionPolicy
 	var binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding
 	decoder := utilyaml.NewYAMLToJSONDecoder(bytes.NewReader(rendered))
@@ -119,7 +117,8 @@ func TestServiceAccountOriginGuardCoversCallerAndTokenRequestBypasses(t *testing
 		*policy.Spec.MatchConstraints.MatchPolicy != admissionregistrationv1.Exact {
 		t.Fatal("service account origin policy is not explicitly fail-closed with exact matching")
 	}
-	rules := policy.Spec.MatchConstraints.ResourceRules
+	native := stripAdmissionConvergenceDependencyProbe(t, policy)
+	rules := native.Spec.MatchConstraints.ResourceRules
 	if len(rules) != 1 {
 		t.Fatalf("resource rules = %d, want one all-resource rule", len(rules))
 	}
@@ -135,7 +134,7 @@ func TestServiceAccountOriginGuardCoversCallerAndTokenRequestBypasses(t *testing
 		rule.Scope == nil || *rule.Scope != admissionregistrationv1.AllScopes {
 		t.Fatalf("all-resource origin rule differs from the required operation boundary: %#v", rule)
 	}
-	serialized, err := json.Marshal(policy.Spec)
+	serialized, err := json.Marshal(native.Spec)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,14 +163,14 @@ func TestServiceAccountOriginGuardCoversCallerAndTokenRequestBypasses(t *testing
 	quiescePodPattern := `^ptah-quiesce-v[1-9][0-9]*-[0-9a-f]{12}-`
 	callerNeedle := `variables.callerPodName.matches("` + quiescePodPattern + `")`
 	tokenNeedle := `object.spec.boundObjectRef.name.matches("` + quiescePodPattern + `")`
-	if len(policy.Spec.Validations) != 2 ||
-		!strings.Contains(policy.Spec.Validations[0].Expression, callerNeedle) ||
-		!strings.Contains(policy.Spec.Validations[1].Expression, tokenNeedle) {
-		t.Fatalf("service account origin guard does not cover the quiesce Pod in both caller and bound-token branches: %#v", policy.Spec.Validations)
+	if len(native.Spec.Validations) != 5 ||
+		!strings.Contains(native.Spec.Validations[3].Expression, callerNeedle) ||
+		!strings.Contains(native.Spec.Validations[4].Expression, tokenNeedle) {
+		t.Fatalf("service account origin guard does not cover the quiesce Pod in both caller and bound-token branches: %#v", native.Spec.Validations)
 	}
 }
 
-func TestServiceAccountOriginGuardPolicyIsStableAcrossReleaseSequences(t *testing.T) {
+func TestServiceAccountOriginGuardPolicyIsReleaseDistinct(t *testing.T) {
 	guard := testServiceAccountOriginGuard()
 	policy, err := guard.policy()
 	if err != nil {
@@ -185,55 +184,22 @@ func TestServiceAccountOriginGuardPolicyIsStableAcrossReleaseSequences(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy.Name != otherPolicy.Name || !reflect.DeepEqual(policy.Spec, otherPolicy.Spec) {
-		t.Fatal("retained service account origin policy changed across release sequences")
+	if policy.Name == otherPolicy.Name || reflect.DeepEqual(policy.Spec, otherPolicy.Spec) {
+		t.Fatal("service account origin policy did not change across release identities")
 	}
 }
 
-func TestServiceAccountOriginGuardPrepareWaitsForLiveDryRunDenial(t *testing.T) {
+func TestServiceAccountOriginGuardPrepareUsesOnlyReadOnlyPolicyVerification(t *testing.T) {
 	guard := testServiceAccountOriginGuard()
 	policy, err := guard.policy()
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	name := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	guard.Policies = &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{name: readyPolicy(policy)}}
 	guard.Bindings = &rolloutBindingClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding{name: guard.binding()}}
-	requests := &serviceAccountOriginTokenClient{acceptedBeforeDenial: 1}
-	guard.TokenRequests = requests
 	if err := guard.Prepare(context.Background()); err != nil {
 		t.Fatal(err)
-	}
-	if requests.calls != 2 {
-		t.Fatalf("TokenRequest probes = %d, want one accepted propagation probe and one denied proof", requests.calls)
-	}
-	if requests.serviceAccountName != guard.HookServiceAccountName {
-		t.Fatalf("TokenRequest ServiceAccount = %q, want %q", requests.serviceAccountName, guard.HookServiceAccountName)
-	}
-	if requests.request == nil || requests.request.Spec.BoundObjectRef != nil {
-		t.Fatal("origin enforcement proof must use an unbound TokenRequest")
-	}
-	if !reflect.DeepEqual(requests.options.DryRun, []string{metav1.DryRunAll}) {
-		t.Fatalf("TokenRequest dry-run = %v, want All", requests.options.DryRun)
-	}
-	if requests.acceptedResponse.Status.Token != "" {
-		t.Fatal("accepted propagation response retained an opaque credential")
-	}
-}
-
-func TestServiceAccountOriginGuardPrepareRejectsUnexpectedTokenRequestError(t *testing.T) {
-	guard := testServiceAccountOriginGuard()
-	policy, err := guard.policy()
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
-	guard.Policies = &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{name: readyPolicy(policy)}}
-	guard.Bindings = &rolloutBindingClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding{name: guard.binding()}}
-	guard.TokenRequests = &serviceAccountOriginTokenClient{err: errors.New("forbidden by unrelated authorization")}
-	err = guard.Prepare(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "unrelated authorization") {
-		t.Fatalf("Prepare error = %v, want unexpected TokenRequest failure", err)
 	}
 }
 
@@ -258,49 +224,21 @@ func TestServiceAccountOriginGuardRejectsForeignSpecAndHookIdentity(t *testing.T
 func testServiceAccountOriginGuard() *ServiceAccountOriginGuard {
 	managerImage := "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	guard := &ServiceAccountOriginGuard{
-		Policies:                      &rolloutPolicyClient{},
-		Bindings:                      &rolloutBindingClient{},
-		TokenRequests:                 &serviceAccountOriginTokenClient{},
-		ReleaseName:                   "ptah",
-		ReleaseNamespace:              "ptah-system",
-		ControllerServiceAccountName:  "ptah-controller",
-		CertificateServiceAccountName: "ptah-cert-rotator",
-		ControllerDeploymentName:      "ptah-controller",
-		CertificateDeploymentName:     "ptah-cert-rotator",
-		ReleaseSequence:               1,
-		ManagerImage:                  managerImage,
-		PollEvery:                     time.Nanosecond,
+		Policies:                        &rolloutPolicyClient{},
+		Bindings:                        &rolloutBindingClient{},
+		ReleaseName:                     "ptah",
+		ReleaseNamespace:                "ptah-system",
+		ControllerServiceAccountName:    "ptah-controller",
+		ControllerServiceAccountManaged: true,
+		CertificateServiceAccountName:   "ptah-cert-rotator",
+		ControllerDeploymentName:        "ptah-controller",
+		CertificateDeploymentName:       "ptah-cert-rotator",
+		ControllerStateVersion:          1,
+		AdmissionContractVersion:        1,
+		ReleaseSequence:                 1,
+		ManagerImage:                    managerImage,
+		PollEvery:                       time.Nanosecond,
 	}
 	guard.HookServiceAccountName = "ptah-crd-v1-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
 	return guard
-}
-
-type serviceAccountOriginTokenClient struct {
-	acceptedBeforeDenial int
-	calls                int
-	serviceAccountName   string
-	request              *authenticationv1.TokenRequest
-	options              metav1.CreateOptions
-	acceptedResponse     *authenticationv1.TokenRequest
-	err                  error
-}
-
-func (c *serviceAccountOriginTokenClient) CreateToken(
-	_ context.Context,
-	serviceAccountName string,
-	request *authenticationv1.TokenRequest,
-	options metav1.CreateOptions,
-) (*authenticationv1.TokenRequest, error) {
-	c.calls++
-	c.serviceAccountName = serviceAccountName
-	c.request = request.DeepCopy()
-	c.options = options
-	if c.err != nil {
-		return nil, c.err
-	}
-	if c.calls <= c.acceptedBeforeDenial {
-		c.acceptedResponse = &authenticationv1.TokenRequest{Status: authenticationv1.TokenRequestStatus{Token: "must-not-be-retained"}}
-		return c.acceptedResponse, nil
-	}
-	return nil, fmt.Errorf("admission denied: %s", serviceAccountOriginGuardDenialMessage())
 }

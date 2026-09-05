@@ -55,6 +55,16 @@ helm upgrade --install ptah-operator ./charts/ptah-operator \
   --set-string execution.ptahVersion=<ptah-version>
 ```
 
+Use a dedicated release namespace and keep both its first installation and its
+first upgrade from a release without retained hook-progress protection under
+exclusive administrative control until Helm reports success. Before the v2
+hook-progress policies have converged on every API server, Kubernetes cannot
+let an in-chart Job prove its own status and deletion integrity against an
+already-authorized concurrent namespace writer. Later upgrades and uninstalls
+between v2-aware releases do not rely on that bootstrap assumption. The exact
+trust boundary is documented in
+[Operations and failure recovery](docs/operations.md#installation-and-upgrades).
+
 The supplied version is recorded in plans, approvals, Jobs, and applied status
 alongside the executor digest. Verify both values from the executor's release
 provenance before installation; changing the digest requires verifying and

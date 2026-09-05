@@ -9,6 +9,7 @@ KUBECONFIG_FILE=${E2E_KUBECONFIG:-}
 OPERATOR_NAMESPACE=${E2E_OPERATOR_NAMESPACE:-}
 HA_TEST_NAMESPACE=${E2E_HA_TEST_NAMESPACE:-}
 FOREIGN_NAMESPACE=${E2E_FOREIGN_NAMESPACE:-}
+PROOF_NAMESPACE=${E2E_PROOF_NAMESPACE:-}
 HELM_RELEASE=${E2E_HELM_RELEASE:-}
 
 fail() {
@@ -17,7 +18,7 @@ fail() {
 }
 
 for value_name in \
-	KUBECONFIG_FILE OPERATOR_NAMESPACE HA_TEST_NAMESPACE FOREIGN_NAMESPACE \
+	KUBECONFIG_FILE OPERATOR_NAMESPACE HA_TEST_NAMESPACE FOREIGN_NAMESPACE PROOF_NAMESPACE \
 	HELM_RELEASE; do
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
@@ -27,6 +28,10 @@ done
 	fail "HA workload namespace must differ from the operator namespace"
 [ "$FOREIGN_NAMESPACE" != "$OPERATOR_NAMESPACE" ] ||
 	fail "foreign namespace must differ from the coordination namespace"
+[ "$PROOF_NAMESPACE" != "$OPERATOR_NAMESPACE" ] ||
+	fail "upgrade proof namespace must differ from the coordination namespace"
+[ "$PROOF_NAMESPACE" != "$HA_TEST_NAMESPACE" ] ||
+	fail "upgrade proof namespace must differ from the HA workload namespace"
 
 k() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" "$@"
@@ -36,6 +41,7 @@ MANAGER="${HELM_RELEASE}-ptah-operator"
 LEADER_LEASE=ptah-operator.operator.ptah.dev
 LEADER_TIMEOUT_SECONDS=120
 WORKLOAD_TIMEOUT_SECONDS=120
+METRICS_TIMEOUT_SECONDS=30
 HA_SCHEMA=leader-failover
 
 cleanup() {
@@ -116,6 +122,177 @@ assert_active_leader_metric() {
 		fail "$OPERATOR_NAMESPACE/$metric_pod does not report active leader status"
 }
 
+validate_custom_operator_metrics() {
+	awk '
+    function positive_finite_number(value, number, rendered) {
+      if (value !~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$/) {
+        return 0
+      }
+      number = value + 0
+      rendered = sprintf("%.17g", number)
+      return rendered !~ /^[+]?[Ii][Nn][Ff]/ && number > 0
+    }
+
+    /^# HELP ptah_operator_/ {
+      if (NF < 4) {
+        malformed = 1
+        next
+      }
+      if ($3 == "ptah_operator_reconciliations_total") {
+        reconciliation_help++
+      } else if ($3 == "ptah_operator_failures_total") {
+        failure_help++
+      } else {
+        malformed = 1
+      }
+      next
+    }
+
+    /^# TYPE ptah_operator_/ {
+      if (NF != 4 || $4 != "counter") {
+        malformed = 1
+        next
+      }
+      if ($3 == "ptah_operator_reconciliations_total") {
+        reconciliation_type++
+      } else if ($3 == "ptah_operator_failures_total") {
+        failure_type++
+      } else {
+        malformed = 1
+      }
+      next
+    }
+
+    /^ptah_operator_/ {
+      if (NF != 2 || !positive_finite_number($2)) {
+        malformed = 1
+        next
+      }
+      if ($1 == "ptah_operator_reconciliations_total{result=\"success\"}") {
+        reconciliation_sample++
+      } else if ($1 == "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"}") {
+        failure_sample++
+      } else {
+        malformed = 1
+      }
+      next
+    }
+
+    /ptah_operator_/ {
+      malformed = 1
+    }
+
+    END {
+      if (malformed || reconciliation_help > 1 || failure_help > 1 ||
+          reconciliation_type > 1 || failure_type > 1 ||
+          reconciliation_sample > 1 || failure_sample > 1) {
+        exit 2
+      }
+      if (reconciliation_help == 1 && failure_help == 1 &&
+          reconciliation_type == 1 && failure_type == 1 &&
+          reconciliation_sample == 1 && failure_sample == 1) {
+        exit 0
+      }
+      exit 1
+    }
+  '
+}
+
+resolve_operation_failure_counter_from_metrics() {
+	awk '
+    function nonnegative_finite_number(value, number, rendered) {
+      if (value !~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$/) {
+        return 0
+      }
+      number = value + 0
+      rendered = sprintf("%.17g", number)
+      return rendered !~ /^[+]?[Ii][Nn][Ff]/ && number >= 0
+    }
+
+    $1 == "ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"}" {
+      if (NF != 2 || !nonnegative_finite_number($2)) {
+        malformed = 1
+      } else {
+        samples++
+        value = $2
+      }
+    }
+
+    END {
+      if (malformed || samples > 1) {
+        exit 2
+      }
+      if (samples == 0) {
+        print "0"
+      } else {
+        print value
+      }
+    }
+  '
+}
+
+read_resolve_operation_failure_counter() {
+	metric_holder=$1
+	metric_pod=$(leader_pod_name "$metric_holder")
+	metric_body=$(k get --raw \
+		"/api/v1/namespaces/${OPERATOR_NAMESPACE}/pods/${metric_pod}:8080/proxy/metrics") ||
+		fail "$OPERATOR_NAMESPACE/$metric_pod metrics endpoint was unavailable before the HA operation"
+	metric_value=$(printf '%s\n' "$metric_body" | resolve_operation_failure_counter_from_metrics) ||
+		fail "$OPERATOR_NAMESPACE/$metric_pod exposed an invalid Resolve operation failure counter"
+	printf '%s\n' "$metric_value"
+}
+
+assert_prior_resolve_metric_sources_quiesced() {
+	k -n "$PROOF_NAMESPACE" get ptahschema predecessor-read-only-job -o json |
+		jq -e '
+          .spec.suspend == true and
+          .status.phase == "Suspended" and
+          .status.activeOperation == null
+        ' >/dev/null || fail "the carried predecessor Resolve metric source is not quiesced"
+	k get ptahschemas.operator.ptah.dev -A -o json |
+		jq -e '
+          all(.items[];
+            .spec.suspend == true and
+            .status.phase == "Suspended" and
+            .status.activeOperation == null)
+        ' >/dev/null || fail "an earlier unsuspended PtahSchema can contaminate the HA metric delta"
+	k get jobs.batch -A -l operator.ptah.dev/operation=resolve -o json |
+		jq -e '
+          [.items[] | select(
+            ((.status.active // 0) != 0) or
+            (((.status.conditions // []) |
+              any(.status == "True" and (.type == "Complete" or .type == "Failed"))) | not)
+          )] | length == 0
+        ' >/dev/null || fail "an earlier nonterminal Resolve Job can contaminate the HA metric delta"
+}
+
+assert_custom_operator_metrics() {
+	metric_holder=$1
+	metric_failure_baseline=$2
+	metric_pod=$(leader_pod_name "$metric_holder")
+	metric_deadline=$(($(date +%s) + METRICS_TIMEOUT_SECONDS))
+	while [ "$(date +%s)" -lt "$metric_deadline" ]; do
+		if metric_body=$(k get --raw \
+			"/api/v1/namespaces/${OPERATOR_NAMESPACE}/pods/${metric_pod}:8080/proxy/metrics"); then
+			if printf '%s\n' "$metric_body" | validate_custom_operator_metrics; then
+				metric_failure_value=$(printf '%s\n' "$metric_body" |
+					resolve_operation_failure_counter_from_metrics) ||
+					fail "$OPERATOR_NAMESPACE/$metric_pod exposed an invalid Resolve operation failure counter"
+				if awk -v baseline="$metric_failure_baseline" -v current="$metric_failure_value" \
+					'BEGIN { exit ! ((current + 0) > (baseline + 0)) }'; then
+					return 0
+				fi
+			else
+				metric_validation_status=$?
+				[ "$metric_validation_status" -eq 1 ] ||
+					fail "$OPERATOR_NAMESPACE/$metric_pod exposes malformed, duplicate, or unexpected custom metric evidence"
+			fi
+		fi
+		sleep 1
+	done
+	fail "$OPERATOR_NAMESPACE/$metric_pod did not expose an increased Resolve operation failure counter with the exact post-failure custom metric families"
+}
+
 assert_lease_identity() {
 	identity_expected_uid=$1
 	identity_actual_uid=$(k -n "$OPERATOR_NAMESPACE" get lease "$LEADER_LEASE" \
@@ -192,6 +369,31 @@ wait_for_admitted_operation_pod() {
 	fail "new leader did not reconcile an operation into an admitted Job Pod"
 }
 
+wait_for_failed_resolve_lifecycle() {
+	schema_uid=$1
+	workload_deadline=$(($(date +%s) + WORKLOAD_TIMEOUT_SECONDS))
+	while [ "$(date +%s)" -lt "$workload_deadline" ]; do
+		if schema=$(k -n "$HA_TEST_NAMESPACE" get ptahschema "$HA_SCHEMA" -o json 2>/dev/null) &&
+			printf '%s\n' "$schema" | jq -e --arg uid "$schema_uid" '
+        .metadata.uid == $uid and
+        .status.observedGeneration == .metadata.generation and
+        .status.phase == "Failed" and
+        .status.nextReconciliationTime != null and
+        .status.activeOperation.type == "Resolve" and
+        any(.status.conditions[]?;
+          .type == "ReconciliationFailed" and
+          .status == "True" and
+          .reason == "OperationFailed")
+      ' >/dev/null; then
+			return 0
+		fi
+		sleep 1
+	done
+	k -n "$HA_TEST_NAMESPACE" get ptahschema "$HA_SCHEMA" -o yaml >&2 || true
+	k -n "$HA_TEST_NAMESPACE" get jobs,pods -o wide >&2 || true
+	fail "post-failover Resolve did not reach its typed failed lifecycle state"
+}
+
 printf '%s\n' 'e2e HA: verifying namespace-scoped Lease authorization'
 for manager_verb in get create update; do
 	assert_can_i yes "$OPERATOR_NAMESPACE" "$manager_verb"
@@ -239,6 +441,8 @@ second_transitions=$(k -n "$OPERATOR_NAMESPACE" get lease "$LEADER_LEASE" \
 	fail "leader Pod failover did not increment leaseTransitions"
 assert_active_leader_metric "$second_holder"
 k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$MANAGER" --timeout=180s
+assert_prior_resolve_metric_sources_quiesced
+resolve_failure_counter_before=$(read_resolve_operation_failure_counter "$second_holder")
 
 printf '%s\n' 'e2e HA: creating a real operation after leader failover'
 k wait --for=condition=Established crd/ptahschemas.operator.ptah.dev --timeout=60s
@@ -273,7 +477,9 @@ ha_schema_uid=$(k -n "$HA_TEST_NAMESPACE" get ptahschema "$HA_SCHEMA" \
 	-o jsonpath='{.metadata.uid}')
 operation_job=$(wait_for_admitted_operation_pod "$ha_schema_uid")
 [ -n "$operation_job" ] || fail "failover operation Job name is empty"
+wait_for_failed_resolve_lifecycle "$ha_schema_uid"
 assert_active_leader_metric "$second_holder"
+assert_custom_operator_metrics "$second_holder" "$resolve_failure_counter_before"
 assert_lease_identity "$lease_uid"
 
 k -n "$HA_TEST_NAMESPACE" delete ptahschema "$HA_SCHEMA" --wait=false >/dev/null
@@ -288,4 +494,4 @@ remaining_operation_pods=$(k -n "$HA_TEST_NAMESPACE" get pods \
 k -n "$HA_TEST_NAMESPACE" wait --for=delete ptahschema/"$HA_SCHEMA" --timeout=60s
 k delete namespace "$HA_TEST_NAMESPACE" --wait=true --timeout=120s >/dev/null
 
-printf '%s\n' 'e2e HA: PASS one Lease, exact RBAC, Pod failover, and admitted post-failover operation'
+printf '%s\n' 'e2e HA: PASS one Lease, exact RBAC, Pod failover, admitted operation, and custom metrics'

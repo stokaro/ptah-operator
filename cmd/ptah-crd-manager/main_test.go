@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes/fake"
@@ -112,6 +113,20 @@ func TestImageCheckRejectsMismatchedSequenceAndAPIFlags(t *testing.T) {
 	}
 }
 
+func TestRuntimeInvariantsRejectSameCandidateAndPredecessorServiceAccount(t *testing.T) {
+	t.Parallel()
+
+	_, err := runtimeInvariants(
+		"release", "ptah-system", "ptah-system", "true",
+		"leader", "webhook", 10,
+		"hook", "controller", true, "controller", "previous-uid", false, "controller",
+		"certificate", crdupgrade.CurrentReleaseSequence, 0,
+	)
+	if err == nil || !strings.Contains(err.Error(), "must differ") {
+		t.Fatalf("runtimeInvariants error = %v, want distinct-principal refusal", err)
+	}
+}
+
 func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 	tests := []struct {
 		mode string
@@ -121,8 +136,11 @@ func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 		{mode: "preflight", flag: "--verify-controller-state=true"},
 		{mode: "identity-probe", flag: "--verify-controller-state=true"},
 		{mode: "reconcile", flag: "--verify-controller-state=true"},
+		{mode: "teardown-retirement-probe-a", flag: "--verify-controller-state=true"},
+		{mode: "teardown-retirement-gate", flag: "--verify-controller-state=true"},
 		{mode: "teardown-quiesce", flag: "--verify-controller-state=true"},
 		{mode: "teardown", flag: "--verify-controller-state=true"},
+		{mode: "teardown-retirement-final", flag: "--verify-controller-state=true"},
 		{mode: "image-check", flag: "--timeout=1s"},
 	}
 	for _, test := range tests {
@@ -132,6 +150,117 @@ func TestModeFlagAllowlistsRejectIgnoredInputs(t *testing.T) {
 				t.Fatalf("run error = %v, want mode allowlist refusal", err)
 			}
 		})
+	}
+}
+
+func TestTeardownRetirementBarrierRechecksInitialPhaseBeforeEveryStoredSweep(t *testing.T) {
+	guard := teardownRetirementManagerTestGuard()
+	activation := teardownRetirementManagerTestActivation(t, guard)
+	clientset := fake.NewSimpleClientset(activation)
+	configMaps := clientset.CoreV1().ConfigMaps(activation.Namespace)
+	baseCalls := 0
+	additionalCalls := 0
+	barrier := &admissionConvergenceBarrier{
+		verifyStored: func(context.Context) error {
+			baseCalls++
+			return nil
+		},
+	}
+	if err := bindTeardownRetirementPhase(
+		barrier,
+		guard,
+		configMaps,
+		crdupgrade.TeardownRetirementActive,
+		func(context.Context) error {
+			additionalCalls++
+			return nil
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := barrier.verifyStored(context.Background()); err != nil {
+		t.Fatalf("active stored sweep failed: %v", err)
+	}
+	if baseCalls != 1 || additionalCalls != 1 {
+		t.Fatalf("active stored sweep calls = base %d, additional %d, want 1/1", baseCalls, additionalCalls)
+	}
+	if err := configMaps.Delete(context.Background(), crdupgrade.ReleaseActivationName, metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := barrier.verifyStored(context.Background()); err == nil || !strings.Contains(err.Error(), "phase changed") {
+		t.Fatalf("terminal stored sweep error = %v, want phase-change refusal", err)
+	}
+	if baseCalls != 1 || additionalCalls != 1 {
+		t.Fatalf("phase-changing sweep called wrapped verifiers: base %d, additional %d", baseCalls, additionalCalls)
+	}
+}
+
+func TestTeardownRetirementBarrierClosesPhaseAroundStoredSweep(t *testing.T) {
+	guard := teardownRetirementManagerTestGuard()
+	activation := teardownRetirementManagerTestActivation(t, guard)
+	clientset := fake.NewSimpleClientset(activation)
+	configMaps := clientset.CoreV1().ConfigMaps(activation.Namespace)
+	barrier := &admissionConvergenceBarrier{verifyStored: func(context.Context) error { return nil }}
+	if err := bindTeardownRetirementPhase(
+		barrier,
+		guard,
+		configMaps,
+		crdupgrade.TeardownRetirementActive,
+		func(ctx context.Context) error {
+			return configMaps.Delete(ctx, crdupgrade.ReleaseActivationName, metav1.DeleteOptions{})
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := barrier.verifyStored(context.Background()); err == nil || !strings.Contains(err.Error(), "phase changed") {
+		t.Fatalf("phase-changing stored sweep error = %v, want closing phase refusal", err)
+	}
+}
+
+func TestTeardownRetirementDrainAuthorizationDistinguishesActiveAndTerminal(t *testing.T) {
+	guard := teardownRetirementManagerTestGuard()
+	draining := teardownRetirementManagerTestActivation(t, guard)
+	drainingClient := fake.NewSimpleClientset(draining).CoreV1().ConfigMaps(draining.Namespace)
+	if err := verifyTeardownRetirementDrainAuthorization(
+		context.Background(),
+		guard,
+		drainingClient,
+		crdupgrade.TeardownRetirementActive,
+	); err != nil {
+		t.Fatalf("exact draining authorization failed: %v", err)
+	}
+
+	active := draining.DeepCopy()
+	active.Data = map[string]string{
+		"active-release-sequence": "1",
+		"controller-credentials":  "active",
+	}
+	activeClient := fake.NewSimpleClientset(active).CoreV1().ConfigMaps(active.Namespace)
+	if err := verifyTeardownRetirementDrainAuthorization(
+		context.Background(),
+		guard,
+		activeClient,
+		crdupgrade.TeardownRetirementActive,
+	); err == nil || !strings.Contains(err.Error(), "want") {
+		t.Fatalf("credential-active authorization error = %v, want draining refusal", err)
+	}
+
+	terminalClient := fake.NewSimpleClientset().CoreV1().ConfigMaps(draining.Namespace)
+	if err := verifyTeardownRetirementDrainAuthorization(
+		context.Background(),
+		guard,
+		terminalClient,
+		crdupgrade.TeardownRetirementTerminal,
+	); err != nil {
+		t.Fatalf("terminal authorization failed: %v", err)
+	}
+	if err := verifyTeardownRetirementDrainAuthorization(
+		context.Background(),
+		guard,
+		terminalClient,
+		crdupgrade.TeardownRetirementPhase("unknown"),
+	); err == nil || !strings.Contains(err.Error(), "unknown teardown retirement phase") {
+		t.Fatalf("unknown phase error = %v, want refusal", err)
 	}
 }
 
@@ -229,7 +358,11 @@ func TestNewRolloutGuardUsesDecodedPriorityClassContract(t *testing.T) {
 
 	guard := newRolloutGuard(
 		fake.NewSimpleClientset(),
-		crdupgrade.RuntimeInvariants{ReleaseNamespace: "ptah-system"},
+		crdupgrade.RuntimeInvariants{
+			ReleaseNamespace:                     "ptah-system",
+			PreviousControllerServiceAccountName: "previous-controller",
+			PreviousControllerReleaseSequence:    4,
+		},
 		"manager-image", "webhook-secret",
 		9443, 8081, 1,
 		nil, nil, nil, nil,
@@ -241,6 +374,9 @@ func TestNewRolloutGuardUsesDecodedPriorityClassContract(t *testing.T) {
 	}
 	if guard.RuntimeAdmissionContractB64 != encoded {
 		t.Fatal("rollout lost the encoded runtime admission contract")
+	}
+	if guard.PreviousControllerServiceAccountName != "previous-controller" || guard.PreviousControllerReleaseSequence != 4 {
+		t.Fatalf("rollout predecessor identity = %q/%d, want expected invariant", guard.PreviousControllerServiceAccountName, guard.PreviousControllerReleaseSequence)
 	}
 }
 

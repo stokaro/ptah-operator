@@ -18,18 +18,18 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
-func TestControllerWriteGuardNameIsStableAndVersioned(t *testing.T) {
+func TestControllerWriteGuardNameIsReleaseDistinctAndVersioned(t *testing.T) {
 	t.Parallel()
 
-	name := ControllerWriteGuardPolicyName("ptah-system", "ptah")
+	name := ControllerWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1")
 	if !strings.HasPrefix(name, controllerWriteGuardNamePrefix) || len(name) > 63 {
 		t.Fatalf("controller write guard name %q is not a bounded versioned name", name)
 	}
-	if name != ControllerWriteGuardPolicyName("ptah-system", "ptah") {
+	if name != ControllerWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1") {
 		t.Fatal("controller write guard name is not deterministic")
 	}
-	if name == ControllerWriteGuardPolicyName("other", "ptah") ||
-		name == ControllerWriteGuardPolicyName("ptah-system", "other") {
+	if name == ControllerWriteGuardPolicyName("other", "ptah", 1, "manager:v1") ||
+		name == ControllerWriteGuardPolicyName("ptah-system", "other", 1, "manager:v1") {
 		t.Fatal("controller write guard name does not bind both release identity fields")
 	}
 
@@ -37,9 +37,9 @@ func TestControllerWriteGuardNameIsStableAndVersioned(t *testing.T) {
 	other := *rollout
 	other.ReleaseSequence++
 	other.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("b", 64)
-	if ControllerWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName) !=
-		ControllerWriteGuardPolicyName(other.ReleaseNamespace, other.ReleaseName) {
-		t.Fatal("stable controller write guard name changed with candidate release identity")
+	if ControllerWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage) ==
+		ControllerWriteGuardPolicyName(other.ReleaseNamespace, other.ReleaseName, other.ReleaseSequence, other.ManagerImage) {
+		t.Fatal("controller write guard name did not change with candidate release identity")
 	}
 }
 
@@ -48,21 +48,23 @@ func TestControllerWriteGuardIsExactAndFailClosed(t *testing.T) {
 
 	guard := testControllerWriteGuard()
 	policy := guard.policy()
+	native := stripAdmissionConvergenceDependencyProbe(t, policy)
 	binding := guard.binding()
-	if policy.Spec.ParamKind != nil || binding.Spec.ParamRef != nil {
-		t.Fatal("controller write guard must not depend on an admission parameter")
+	if policy.Spec.ParamKind == nil || policy.Spec.ParamKind.APIVersion != "v1" || policy.Spec.ParamKind.Kind != "ConfigMap" ||
+		binding.Spec.ParamRef == nil || binding.Spec.ParamRef.Name != ReleaseActivationName || binding.Spec.ParamRef.Namespace != guard.ReleaseNamespace {
+		t.Fatal("controller write guard must fail closed on the release activation parameter")
 	}
 	if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 		t.Fatal("controller write guard is not fail-closed")
 	}
-	assertExactControllerWriteMatch(t, policy.Spec.MatchConstraints)
-	assertExactControllerWriteMatch(t, binding.Spec.MatchResources)
+	assertExactControllerWriteMatch(t, native.Spec.MatchConstraints)
+	assertControllerWriteMatchWithConvergenceProbe(t, binding.Spec.MatchResources)
 
-	wantUsername := `request.userInfo.username == "system:serviceaccount:ptah-system:ptah-controller"`
-	if !reflect.DeepEqual(policy.Spec.MatchConditions, []admissionregistrationv1.MatchCondition{{
-		Name: "exact-controller-service-account", Expression: wantUsername,
+	wantUsername := `request.userInfo.username in ["system:serviceaccount:ptah-system:ptah-controller"]`
+	if !reflect.DeepEqual(native.Spec.MatchConditions, []admissionregistrationv1.MatchCondition{{
+		Name: "candidate-or-predecessor-controller-service-account", Expression: wantUsername,
 	}}) {
-		t.Fatalf("controller caller match is not exact: %#v", policy.Spec.MatchConditions)
+		t.Fatalf("controller caller match is not exact: %#v", native.Spec.MatchConditions)
 	}
 	if binding.Spec.PolicyName != policy.Name ||
 		!reflect.DeepEqual(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
@@ -73,9 +75,9 @@ func TestControllerWriteGuardIsExactAndFailClosed(t *testing.T) {
 func TestControllerWriteGuardCELContract(t *testing.T) {
 	t.Parallel()
 
-	policy := testControllerWriteGuard().policy()
-	if len(policy.Spec.Variables) != 5 {
-		t.Fatalf("controller write guard variables = %d, want five", len(policy.Spec.Variables))
+	policy := stripAdmissionConvergenceDependencyProbe(t, testControllerWriteGuard().policy())
+	if len(policy.Spec.Variables) != 6 {
+		t.Fatalf("controller write guard variables = %d, want six", len(policy.Spec.Variables))
 	}
 	variables := map[string]string{}
 	for _, variable := range policy.Spec.Variables {
@@ -89,25 +91,29 @@ func TestControllerWriteGuardCELContract(t *testing.T) {
 		t.Fatalf("controller finalizer variables are incomplete: %#v", variables)
 	}
 
-	if len(policy.Spec.Validations) != 4 {
-		t.Fatalf("controller write guard validations = %d, want four", len(policy.Spec.Validations))
+	if len(policy.Spec.Validations) != 6 {
+		t.Fatalf("controller write guard validations = %d, want six", len(policy.Spec.Validations))
 	}
-	for index, validation := range policy.Spec.Validations {
+	for index, validation := range policy.Spec.Validations[2:] {
 		if validation.Message != controllerWriteGuardDenialMessage() {
-			t.Fatalf("validation %d lacks the unique denial message", index)
+			t.Fatalf("structural validation %d lacks the unique denial message", index)
 		}
 	}
-	if policy.Spec.Validations[0].Expression != `object.spec == oldObject.spec` ||
-		!strings.Contains(policy.Spec.Validations[1].Expression, "object.status == oldObject.status") {
+	if policy.Spec.Validations[0].Expression != testControllerWriteGuard().activationParameterExpression() ||
+		policy.Spec.Validations[1].Message != controllerPrincipalGuardDenialMessage() {
+		t.Fatal("activation shape and controller authority are not validated first")
+	}
+	if policy.Spec.Validations[2].Expression != `object.spec == oldObject.spec` ||
+		!strings.Contains(policy.Spec.Validations[3].Expression, "object.status == oldObject.status") {
 		t.Fatal("spec or status immutability is not enforced")
 	}
-	metadataExpression := policy.Spec.Validations[2].Expression
+	metadataExpression := policy.Spec.Validations[4].Expression
 	for _, field := range []string{"labels", "annotations", "ownerReferences"} {
 		if !strings.Contains(metadataExpression, "object.metadata."+field+" == oldObject.metadata."+field) {
 			t.Fatalf("mutable metadata field %s is not preserved", field)
 		}
 	}
-	finalizerExpression := policy.Spec.Validations[3].Expression
+	finalizerExpression := policy.Spec.Validations[5].Expression
 	for _, contract := range []string{
 		"variables.oldActiveCount <= 1",
 		"variables.newActiveCount <= 1",
@@ -136,8 +142,8 @@ func TestControllerWriteGuardPrecedesManagerPrivileges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policyWeight >= bindingWeight || bindingWeight >= activationWeight {
-		t.Fatalf("controller write hook order %d/%d must precede activation %d", policyWeight, bindingWeight, activationWeight)
+	if activationWeight >= policyWeight || policyWeight >= bindingWeight {
+		t.Fatalf("release activation %d must precede controller write hooks %d/%d", activationWeight, policyWeight, bindingWeight)
 	}
 }
 
@@ -145,7 +151,7 @@ func TestControllerWriteGuardVerifyRejectsContractTampering(t *testing.T) {
 	t.Parallel()
 
 	guard := testControllerWriteGuard()
-	name := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	name := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	policy := guard.policy()
 	binding := guard.binding()
 	guard.Policies = &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{name: policy}}
@@ -169,7 +175,7 @@ func TestControllerWriteGuardWaitReady(t *testing.T) {
 	t.Parallel()
 
 	guard := testControllerWriteGuard()
-	name := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	name := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	guard.Policies = &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{name: readyPolicy(guard.policy())}}
 	guard.Bindings = &rolloutBindingClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding{name: guard.binding()}}
 	if err := guard.WaitReady(context.Background()); err != nil {
@@ -189,8 +195,9 @@ func TestRenderedControllerWriteGuardMatchesCompiledContract(t *testing.T) {
 	guard := testControllerWriteGuard()
 	guard.ReleaseName = "ptah-e2e"
 	guard.ReleaseNamespace = "ptah-e2e"
-	guard.ControllerServiceAccountName = "ptah-e2e-ptah-operator"
-	name := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	guard.ManagerImage = renderedGuardManagerImage
+	guard.ControllerServiceAccountName = renderedDeploymentServiceAccount(t, rendered, "ptah-e2e-ptah-operator")
+	name := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	var policy *admissionregistrationv1.ValidatingAdmissionPolicy
 	var binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding
 	decoder := utilyaml.NewYAMLToJSONDecoder(bytes.NewReader(rendered))
@@ -229,6 +236,9 @@ func TestRenderedControllerWriteGuardMatchesCompiledContract(t *testing.T) {
 		}
 	}
 	if err := guard.verifyPolicy(policy); err != nil {
+		if policy == nil {
+			t.Fatalf("rendered controller write policy: %v; compiled: %#v", err, guard.policy().Spec)
+		}
 		t.Fatalf("rendered controller write policy: %v\nrendered: %#v\ncompiled: %#v", err, policy.Spec, guard.policy().Spec)
 	}
 	if err := guard.verifyBinding(binding); err != nil {
@@ -264,6 +274,19 @@ func assertExactControllerWriteMatch(t *testing.T, match *admissionregistrationv
 	}
 }
 
+func assertControllerWriteMatchWithConvergenceProbe(t *testing.T, match *admissionregistrationv1.MatchResources) {
+	t.Helper()
+	if match == nil || len(match.ResourceRules) != 2 {
+		t.Fatalf("controller write binding rules = %#v, want native rule plus convergence marker rule", match)
+	}
+	if !reflect.DeepEqual(match.ResourceRules[1], admissionConvergenceProbeResourceRule()) {
+		t.Fatalf("controller write binding convergence rule = %#v, want %#v", match.ResourceRules[1], admissionConvergenceProbeResourceRule())
+	}
+	native := match.DeepCopy()
+	native.ResourceRules = native.ResourceRules[:1]
+	assertExactControllerWriteMatch(t, native)
+}
+
 func testControllerWriteGuard() *ControllerWriteGuard {
 	return &ControllerWriteGuard{
 		Policies:                     &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{}},
@@ -271,6 +294,8 @@ func testControllerWriteGuard() *ControllerWriteGuard {
 		ReleaseName:                  "ptah",
 		ReleaseNamespace:             "ptah-system",
 		ControllerServiceAccountName: "ptah-controller",
+		ReleaseSequence:              1,
+		ManagerImage:                 "registry.example/ptah@sha256:" + strings.Repeat("a", 64),
 		PollEvery:                    time.Millisecond,
 	}
 }

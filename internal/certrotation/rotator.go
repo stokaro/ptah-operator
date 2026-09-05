@@ -361,7 +361,7 @@ func (r *Rotator) ensureSecretCreateGuard(ctx context.Context, desired *corev1.S
 	if err != nil {
 		return fmt.Errorf("get generated-Secret CREATE guard policy %q: %w", r.config.SecretCreatePolicyName, err)
 	}
-	if err := validateSecretCreatePolicyContract(policy, r.config); err != nil {
+	if err := VerifySecretCreatePolicyContract(policy, r.config); err != nil {
 		return fmt.Errorf("generated-Secret CREATE guard policy contract: %w", err)
 	}
 	if policy.Status.ObservedGeneration != policy.Generation || policy.Status.TypeChecking == nil {
@@ -388,7 +388,7 @@ func (r *Rotator) ensureSecretCreateGuard(ctx context.Context, desired *corev1.S
 	if err != nil {
 		return fmt.Errorf("get generated-Secret CREATE guard binding %q: %w", r.config.SecretCreatePolicyBindingName, err)
 	}
-	if err := validateSecretCreateBindingContract(binding, r.config); err != nil {
+	if err := VerifySecretCreateBindingContract(binding, r.config); err != nil {
 		return fmt.Errorf("generated-Secret CREATE guard binding contract: %w", err)
 	}
 
@@ -453,6 +453,17 @@ func validateSecretCreatePolicyContract(policy *admissionregistrationv1.Validati
 	return nil
 }
 
+// VerifySecretCreatePolicyContract verifies the immutable spec of the
+// generated-Secret CREATE admission policy. Ownership metadata is deliberately
+// left to the caller because Helm, rather than the certificate runtime, owns
+// that metadata lifecycle.
+func VerifySecretCreatePolicyContract(policy *admissionregistrationv1.ValidatingAdmissionPolicy, config Config) error {
+	if policy == nil {
+		return errors.New("generated-Secret CREATE guard policy is nil")
+	}
+	return validateSecretCreatePolicyContract(policy, config)
+}
+
 func validateSecretCreateBindingContract(
 	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
 	config Config,
@@ -470,6 +481,19 @@ func validateSecretCreateBindingContract(
 		return errors.New("binding does not select only the exact release namespace")
 	}
 	return nil
+}
+
+// VerifySecretCreateBindingContract verifies the immutable spec of the
+// generated-Secret CREATE admission binding. Ownership metadata is
+// deliberately left to the caller for the same reason as the policy helper.
+func VerifySecretCreateBindingContract(
+	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
+	config Config,
+) error {
+	if binding == nil {
+		return errors.New("generated-Secret CREATE guard binding is nil")
+	}
+	return validateSecretCreateBindingContract(binding, config)
 }
 
 func emptyLabelSelector(selector *metav1.LabelSelector) bool {

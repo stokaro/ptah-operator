@@ -246,14 +246,14 @@ func TestVerifyReviewedJobAPIBoundary(t *testing.T) {
 		reviewedKubernetesAPIMinor,
 		reviewedKubernetesSupportMaximum+1,
 		actualDigest,
-	); err == nil || !strings.Contains(err.Error(), "differs from reviewed Job API boundary") {
+	); err == nil || !strings.Contains(err.Error(), "differs from reviewed Job/Pod API boundary") {
 		t.Fatalf("verifyReviewedJobAPIBoundary() support error = %v", err)
 	}
 	if err := verifyReviewedJobAPIBoundary(
 		reviewedKubernetesAPIMinor,
 		reviewedKubernetesSupportMaximum,
 		strings.Repeat("0", 64),
-	); err == nil || !strings.Contains(err.Error(), "reachable Job API surface digest") {
+	); err == nil || !strings.Contains(err.Error(), "reachable Job/Pod API surface digest") {
 		t.Fatalf("verifyReviewedJobAPIBoundary() digest error = %v", err)
 	}
 }
@@ -392,8 +392,12 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "        include: []\n",
 		},
 		"conditional lifecycle": {
-			old: "      - name: Run complete operator lifecycle\n        env:\n",
-			new: "      - name: Run complete operator lifecycle\n        if: ${{ false }}\n        env:\n",
+			old: "      - name: Run complete operator lifecycle\n        id: lifecycle\n        env:\n",
+			new: "      - name: Run complete operator lifecycle\n        id: lifecycle\n        if: ${{ false }}\n        env:\n",
+		},
+		"unidentified lifecycle": {
+			old: "        id: lifecycle\n",
+			new: "        id: untrusted-lifecycle\n",
 		},
 		"job default shell": {
 			old: "    timeout-minutes: 90\n    strategy:\n",
@@ -415,9 +419,29 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			old: "          KIND_NODE_IMAGE: ${{ matrix.node_image }}\n",
 			new: "          KIND_NODE_IMAGE: kindest/node:latest\n",
 		},
+		"unbound installed chart output": {
+			old: "          E2E_RELEASE_CHART_OUTPUT: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz\n",
+			new: "          E2E_RELEASE_CHART_OUTPUT: /tmp/unbound.tgz\n",
+		},
+		"wrong artifact action": {
+			old: "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n",
+			new: "        uses: actions/upload-artifact@main\n",
+		},
+		"wrong installed chart artifact path": {
+			old: "          path: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz\n",
+			new: "          path: charts/ptah-operator\n",
+		},
+		"conditional installed chart evidence": {
+			old: "        id: release-chart-evidence\n",
+			new: "        id: release-chart-evidence\n        if: ${{ false }}\n",
+		},
+		"rerun artifact replacement disabled": {
+			old: "          overwrite: true\n",
+			new: "          overwrite: false\n",
+		},
 		"duplicate lifecycle": {
-			old: "        run: make e2e\n      - name: Remove explicit Docker context\n",
-			new: "        run: make e2e\n      - name: Duplicate lifecycle\n        run: make e2e\n      - name: Remove explicit Docker context\n",
+			old: "        run: make e2e\n      - name: Preserve exact installed release chart\n",
+			new: "        run: make e2e\n      - name: Duplicate lifecycle\n        run: make e2e\n      - name: Preserve exact installed release chart\n",
 		},
 		"verify timeout drift": {
 			old: "    name: Verify source and generated files\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n",
@@ -723,9 +747,41 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			old: ".name == \"Kubernetes support gate\"",
 			new: ".name == \"Verify source and generated files\"",
 		},
+		"installed chart artifact inventory": {
+			old: "actions/runs/$evidence_run/artifacts",
+			new: "actions/runs/$evidence_run/jobs",
+		},
+		"installed chart download": {
+			old: "            gh run download \"$evidence_run\" \\\n",
+			new: "            true # installed chart download omitted\n",
+		},
+		"cross-version chart comparison": {
+			old: "              cmp \"$canonical_chart\" \"$chart_path\"\n",
+			new: "              true # cross-version comparison omitted\n",
+		},
+		"installed chart digest output": {
+			old: "      chart-sha256: ${{ steps.support-evidence.outputs.chart-sha256 }}\n",
+			new: "      chart-sha256: ${{ github.sha }}\n",
+		},
+		"support window output": {
+			old: "      kubernetes-support-window: ${{ steps.support-evidence.outputs.kubernetes-support-window }}\n",
+			new: "      kubernetes-support-window: 1.35,1.36,1.37\n",
+		},
 		"preflight output": {
 			old: "      source-sha: ${{ steps.support-evidence.outputs.source-sha }}\n",
 			new: "      source-sha: ${{ github.sha }}\n",
+		},
+		"support evidence run output": {
+			old: "      support-evidence-run-id: ${{ steps.support-evidence.outputs.support-evidence-run-id }}\n",
+			new: "      support-evidence-run-id: ${{ github.run_id }}\n",
+		},
+		"minor and slug binding": {
+			old: `(.minor_slug == (.minor | gsub("\\."; "-")))`,
+			new: `(.minor_slug | test("^[0-9]+-[0-9]+$"))`,
+		},
+		"positive evidence run": {
+			old: `          [[ "$evidence_run" =~ ^[1-9][0-9]*$ ]]` + "\n",
+			new: "          true # positive evidence run validation omitted\n",
 		},
 		"publish dependency": {
 			old: "    needs: [support-preflight]\n",
@@ -734,6 +790,30 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 		"publish output binding": {
 			old: "needs.support-preflight.outputs.source-sha == github.sha",
 			new: "github.sha == github.sha",
+		},
+		"release package digest input": {
+			old: "          TESTED_CHART_SHA256: ${{ needs.support-preflight.outputs.chart-sha256 }}\n",
+			new: "          TESTED_CHART_SHA256: ${{ github.sha }}\n",
+		},
+		"release package digest equality": {
+			old: "          [[ \"$chart_sha256\" == \"$TESTED_CHART_SHA256\" ]]\n",
+			new: "          true # tested chart equality omitted\n",
+		},
+		"release manifest evidence run input": {
+			old: "          TESTED_SUPPORT_EVIDENCE_RUN_ID: ${{ needs.support-preflight.outputs.support-evidence-run-id }}\n",
+			new: "          TESTED_SUPPORT_EVIDENCE_RUN_ID: ${{ github.run_id }}\n",
+		},
+		"release manifest support window input": {
+			old: "          TESTED_KUBERNETES_SUPPORT_WINDOW: ${{ needs.support-preflight.outputs.kubernetes-support-window }}\n",
+			new: "          TESTED_KUBERNETES_SUPPORT_WINDOW: 1.35,1.36,1.37\n",
+		},
+		"release manifest evidence run record": {
+			old: "              printf 'support-evidence-run-id=%s\\n' \"$TESTED_SUPPORT_EVIDENCE_RUN_ID\"\n",
+			new: "              true # support evidence run record omitted\n",
+		},
+		"release manifest support window record": {
+			old: "              printf 'kubernetes-support-window=%s\\n' \"$TESTED_KUBERNETES_SUPPORT_WINDOW\"\n",
+			new: "              true # Kubernetes support window record omitted\n",
 		},
 		"continue on error": {
 			old: "        id: support-evidence\n",
@@ -748,6 +828,21 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 				t.Fatal("verifyReleaseWorkflow() accepted a critical mutation")
 			}
 		})
+	}
+}
+
+func TestVerifyReleaseWorkflowDigestRejectsSemanticNoOp(t *testing.T) {
+	t.Parallel()
+
+	workflow := readTestWorkflow(t, filepath.Join("..", releaseWorkflowPath))
+	path := writeMutatedWorkflow(
+		t,
+		workflow,
+		"      - name: Require fresh exact-commit support evidence\n",
+		"      - name: Require fresh exact-commit support evidence # audited policy changed\n",
+	)
+	if err := verifyReleaseWorkflow(path); err == nil || !strings.Contains(err.Error(), "workflow digest") {
+		t.Fatalf("verifyReleaseWorkflow() error = %v, want whole-workflow digest rejection", err)
 	}
 }
 

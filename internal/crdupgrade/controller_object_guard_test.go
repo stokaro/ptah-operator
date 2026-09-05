@@ -20,13 +20,13 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
-func TestControllerObjectGuardNamesAreStableDistinctAndVersioned(t *testing.T) {
+func TestControllerObjectGuardNamesAreReleaseDistinctAndVersioned(t *testing.T) {
 	t.Parallel()
 
 	names := map[string]string{
-		ControllerJobWriteGuardPolicyName("ptah-system", "ptah"):   controllerJobWriteGuardNamePrefix,
-		ControllerChunkWriteGuardPolicyName("ptah-system", "ptah"): controllerChunkWriteGuardPrefix,
-		ControllerPlanWriteGuardPolicyName("ptah-system", "ptah"):  controllerPlanWriteGuardNamePrefix,
+		ControllerJobWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1"):   controllerJobWriteGuardNamePrefix,
+		ControllerChunkWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1"): controllerChunkWriteGuardPrefix,
+		ControllerPlanWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1"):  controllerPlanWriteGuardNamePrefix,
 	}
 	if len(names) != 3 {
 		t.Fatal("typed controller object guards do not have distinct names")
@@ -36,14 +36,14 @@ func TestControllerObjectGuardNamesAreStableDistinctAndVersioned(t *testing.T) {
 			t.Fatalf("controller object guard name %q is not bounded and versioned", name)
 		}
 	}
-	if ControllerJobWriteGuardPolicyName("ptah-system", "ptah") !=
-		ControllerJobWriteGuardPolicyName("ptah-system", "ptah") {
+	if ControllerJobWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1") !=
+		ControllerJobWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1") {
 		t.Fatal("controller object guard name is not deterministic")
 	}
-	if ControllerJobWriteGuardPolicyName("ptah-system", "ptah") ==
-		ControllerJobWriteGuardPolicyName("other", "ptah") ||
-		ControllerJobWriteGuardPolicyName("ptah-system", "ptah") ==
-			ControllerJobWriteGuardPolicyName("ptah-system", "other") {
+	if ControllerJobWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1") ==
+		ControllerJobWriteGuardPolicyName("other", "ptah", 1, "manager:v1") ||
+		ControllerJobWriteGuardPolicyName("ptah-system", "ptah", 1, "manager:v1") ==
+			ControllerJobWriteGuardPolicyName("ptah-system", "other", 1, "manager:v1") {
 		t.Fatal("controller object guard name does not bind both release identity fields")
 	}
 
@@ -51,9 +51,9 @@ func TestControllerObjectGuardNamesAreStableDistinctAndVersioned(t *testing.T) {
 	other := *rollout
 	other.ReleaseSequence++
 	other.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("b", 64)
-	if ControllerJobWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName) !=
-		ControllerJobWriteGuardPolicyName(other.ReleaseNamespace, other.ReleaseName) {
-		t.Fatal("stable controller object guard name changed with candidate release identity")
+	if ControllerJobWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage) ==
+		ControllerJobWriteGuardPolicyName(other.ReleaseNamespace, other.ReleaseName, other.ReleaseSequence, other.ManagerImage) {
+		t.Fatal("controller object guard name did not change with candidate release identity")
 	}
 }
 
@@ -84,6 +84,7 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 				t.Fatalf("%s guard matches %#v/%#v, want exact %q/%q", entry.resource, entry.apiGroups, entry.apiVersions, want.apiGroup, want.apiVersion)
 			}
 			policy := guard.policy(entry)
+			native := stripAdmissionConvergenceDependencyProbe(t, policy)
 			binding := guard.binding(entry)
 			if policy.Spec.ParamKind == nil || policy.Spec.ParamKind.APIVersion != "v1" || policy.Spec.ParamKind.Kind != "ConfigMap" {
 				t.Fatalf("controller object guard does not use the release activation ConfigMap: %#v", policy.Spec.ParamKind)
@@ -91,13 +92,13 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			if policy.Spec.FailurePolicy == nil || *policy.Spec.FailurePolicy != admissionregistrationv1.Fail {
 				t.Fatal("controller object guard is not fail-closed")
 			}
-			assertExactControllerObjectMatch(t, policy.Spec.MatchConstraints, entry)
-			assertExactControllerObjectMatch(t, binding.Spec.MatchResources, entry)
-			wantUsername := `request.userInfo.username == "system:serviceaccount:ptah-system:ptah-controller"`
-			if !reflect.DeepEqual(policy.Spec.MatchConditions, []admissionregistrationv1.MatchCondition{{
-				Name: "exact-controller-service-account", Expression: wantUsername,
+			assertExactControllerObjectMatch(t, native.Spec.MatchConstraints, entry)
+			assertControllerObjectMatchWithConvergenceProbe(t, binding.Spec.MatchResources, entry)
+			wantUsername := `request.userInfo.username in ["system:serviceaccount:ptah-system:ptah-controller"]`
+			if !reflect.DeepEqual(native.Spec.MatchConditions, []admissionregistrationv1.MatchCondition{{
+				Name: "candidate-or-predecessor-controller-service-account", Expression: wantUsername,
 			}}) {
-				t.Fatalf("controller caller match is not exact: %#v", policy.Spec.MatchConditions)
+				t.Fatalf("controller caller match is not exact: %#v", native.Spec.MatchConditions)
 			}
 			if binding.Spec.PolicyName != policy.Name ||
 				!reflect.DeepEqual(binding.Spec.ValidationActions, []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny}) {
@@ -109,11 +110,11 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 				*binding.Spec.ParamRef.ParameterNotFoundAction != admissionregistrationv1.DenyAction {
 				t.Fatalf("controller object binding is not fail-closed on the exact activation parameter: %#v", binding.Spec.ParamRef)
 			}
-			if !reflect.DeepEqual(policy.Spec.Variables, controllerObjectActivationVariables()) {
-				t.Fatalf("controller object activation variables differ from the exact contract: %#v", policy.Spec.Variables)
+			if !reflect.DeepEqual(native.Spec.Variables, controllerObjectActivationVariables(guard.ReleaseSequence, guard.PreviousControllerReleaseSequence)) {
+				t.Fatalf("controller object activation variables differ from the exact contract: %#v", native.Spec.Variables)
 			}
-			variableNames := make([]string, len(policy.Spec.Variables))
-			for index, variable := range policy.Spec.Variables {
+			variableNames := make([]string, len(native.Spec.Variables))
+			for index, variable := range native.Spec.Variables {
 				variableNames[index] = variable.Name
 			}
 			wantVariableNames := []string{
@@ -121,14 +122,15 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 				"activeControllerStateString",
 				"activeControllerState",
 				"activeControllerImage",
-				"isBootstrap",
+				"candidateRelease",
+				"previousRelease",
 			}
 			if !reflect.DeepEqual(variableNames, wantVariableNames) {
 				t.Fatalf("controller object activation variable order = %v, want %v", variableNames, wantVariableNames)
 			}
-			if len(policy.Spec.Validations) != len(entry.validations)+1 ||
-				policy.Spec.Validations[0].Expression != guard.activationParameterExpression() {
-				t.Fatalf("controller object guard does not validate its activation parameter first: %#v", policy.Spec.Validations)
+			if len(native.Spec.Validations) != len(entry.validations)+2 ||
+				native.Spec.Validations[0].Expression != guard.activationParameterExpression() {
+				t.Fatalf("controller object guard does not validate its activation parameter first: %#v", native.Spec.Validations)
 			}
 		})
 		if _, exists := seenResources[entry.resource]; exists {
@@ -226,8 +228,8 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		}
 	}
 	legacyEnvelope := entries[0].validations[1].Expression
-	bootstrapMarker := `(request.operation == "CREATE" && variables.isBootstrap)`
-	currentMarker := `|| (variables.activeRelease > 0 && (`
+	bootstrapMarker := `(request.operation == "CREATE" && variables.activeRelease == variables.previousRelease)`
+	currentMarker := `)) || ((has(object.metadata.annotations)`
 	bootstrapIndex := strings.Index(legacyEnvelope, bootstrapMarker)
 	currentIndex := strings.Index(legacyEnvelope, currentMarker)
 	if bootstrapIndex < 0 || currentIndex < 0 || bootstrapIndex >= currentIndex {
@@ -274,8 +276,7 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`object.metadata.labels.size() == 1`,
 		`object.spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
 		`object.spec.contractVersion == 3`,
-		`variables.isBootstrap && object.spec.contractVersion == 2`,
-		`variables.activeRelease > 0`,
+		`variables.activeRelease == variables.previousRelease && object.spec.contractVersion == 2`,
 		`object.spec.executionBindingID.matches`,
 		`has(dyn(object.spec).controllerImage)`,
 		`dyn(object.spec).controllerImage.matches`,
@@ -347,25 +348,28 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 	const activeImage = "registry.example/ptah@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	bootstrap := map[string]any{
 		"activeRelease":               int64(0),
+		"candidateRelease":            int64(1),
+		"previousRelease":             int64(0),
 		"activeControllerStateString": "1",
 		"activeControllerState":       int64(1),
 		"activeControllerImage":       activeImage,
-		"isBootstrap":                 true,
 	}
 	active := map[string]any{
 		"activeRelease":               int64(1),
+		"candidateRelease":            int64(1),
+		"previousRelease":             int64(0),
 		"activeControllerStateString": "1",
 		"activeControllerState":       int64(1),
 		"activeControllerImage":       activeImage,
-		"isBootstrap":                 false,
 	}
 	const nextActiveImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	nextActive := map[string]any{
 		"activeRelease":               int64(2),
+		"candidateRelease":            int64(1),
+		"previousRelease":             int64(0),
 		"activeControllerStateString": "2",
 		"activeControllerState":       int64(2),
 		"activeControllerImage":       nextActiveImage,
-		"isBootstrap":                 false,
 	}
 
 	legacyJob := controllerObjectLegacyJobCELObject(false)
@@ -386,8 +390,8 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 		{name: "legacy apply create after activation", object: legacyApplyJob, operation: "CREATE", variables: active, want: false},
 		{name: "legacy apply terminal update after activation", object: legacyApplyJob, operation: "UPDATE", variables: active, want: true},
 		{name: "current create after activation", object: currentJob, operation: "CREATE", variables: active, want: true},
-		{name: "current create during bootstrap", object: currentJob, operation: "CREATE", variables: bootstrap, want: false},
-		{name: "current update during bootstrap", object: currentJob, operation: "UPDATE", variables: bootstrap, want: false},
+		{name: "active predecessor identity create before cutover", object: currentJob, operation: "CREATE", variables: bootstrap, want: true},
+		{name: "active predecessor identity update before cutover", object: currentJob, operation: "UPDATE", variables: bootstrap, want: true},
 		{name: "previous current update after newer activation", object: currentJob, operation: "UPDATE", variables: nextActive, want: true},
 		{name: "previous current create after newer activation", object: currentJob, operation: "CREATE", variables: nextActive, want: false},
 		{name: "current create with foreign image", object: controllerObjectCurrentJobCELObject(nextActiveImage, int64(1)), operation: "CREATE", variables: active, want: false},
@@ -412,7 +416,7 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 		{name: "legacy v2 during bootstrap", object: legacyPlan, variables: bootstrap, want: true},
 		{name: "legacy v2 after activation", object: legacyPlan, variables: active, want: false},
 		{name: "current v3 after activation", object: currentPlan, variables: active, want: true},
-		{name: "current v3 during bootstrap", object: currentPlan, variables: bootstrap, want: false},
+		{name: "active predecessor v3 before cutover", object: currentPlan, variables: bootstrap, want: true},
 		{name: "current v3 with foreign image", object: controllerObjectPlanCELObject(3, "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 1), variables: active, want: false},
 		{name: "current v3 with foreign state", object: controllerObjectPlanCELObject(3, activeImage, 2), variables: active, want: false},
 	} {
@@ -661,9 +665,9 @@ func TestControllerObjectGuardsPrecedeControllerPrivileges(t *testing.T) {
 	t.Parallel()
 
 	weights := []string{
+		releaseActivationHookWeight,
 		certificateValidatingWriteBindingWeight,
 		controllerObjectPolicyWeight,
-		releaseActivationHookWeight,
 		"-149",
 		"-148",
 		controllerObjectBindingWeight,
@@ -767,7 +771,8 @@ func TestRenderedControllerObjectGuardsMatchCompiledContracts(t *testing.T) {
 	guard := testControllerObjectGuard()
 	guard.ReleaseName = "ptah-e2e"
 	guard.ReleaseNamespace = "ptah-e2e"
-	guard.ControllerServiceAccountName = "ptah-e2e-ptah-operator"
+	guard.ManagerImage = renderedGuardManagerImage
+	guard.ControllerServiceAccountName = renderedDeploymentServiceAccount(t, rendered, "ptah-e2e-ptah-operator")
 	policies := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicy)
 	bindings := make(map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding)
 	decoder := utilyaml.NewYAMLToJSONDecoder(bytes.NewReader(rendered))
@@ -867,6 +872,23 @@ func assertExactControllerObjectMatch(
 	}
 }
 
+func assertControllerObjectMatchWithConvergenceProbe(
+	t *testing.T,
+	match *admissionregistrationv1.MatchResources,
+	entry controllerObjectGuardEntry,
+) {
+	t.Helper()
+	if match == nil || len(match.ResourceRules) != 2 {
+		t.Fatalf("controller object binding rules = %#v, want native rule plus convergence marker rule", match)
+	}
+	if !reflect.DeepEqual(match.ResourceRules[1], admissionConvergenceProbeResourceRule()) {
+		t.Fatalf("controller object binding convergence rule = %#v, want %#v", match.ResourceRules[1], admissionConvergenceProbeResourceRule())
+	}
+	native := match.DeepCopy()
+	native.ResourceRules = native.ResourceRules[:1]
+	assertExactControllerObjectMatch(t, native, entry)
+}
+
 func testControllerObjectGuard() *ControllerObjectGuard {
 	return &ControllerObjectGuard{
 		Policies:                     &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{}},
@@ -874,6 +896,8 @@ func testControllerObjectGuard() *ControllerObjectGuard {
 		ReleaseName:                  "ptah",
 		ReleaseNamespace:             "ptah-system",
 		ControllerServiceAccountName: "ptah-controller",
+		ReleaseSequence:              1,
+		ManagerImage:                 "registry.example/ptah@sha256:" + strings.Repeat("a", 64),
 		PollEvery:                    time.Millisecond,
 	}
 }

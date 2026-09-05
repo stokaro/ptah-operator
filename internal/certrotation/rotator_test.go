@@ -118,6 +118,46 @@ func TestCertificateLifecycleRotations(t *testing.T) {
 	}
 }
 
+func TestExportedSecretCreateGuardContractVerifiers(t *testing.T) {
+	t.Parallel()
+
+	config := testConfig()
+	client := fake.NewSimpleClientset()
+	installUnestablishedSecretCreateGuard(t, client, config)
+	policy, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Get(
+		context.Background(), config.SecretCreatePolicyName, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Get(
+		context.Background(), config.SecretCreatePolicyBindingName, metav1.GetOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySecretCreatePolicyContract(policy, config); err != nil {
+		t.Fatalf("verify exact policy: %v", err)
+	}
+	if err := VerifySecretCreateBindingContract(binding, config); err != nil {
+		t.Fatalf("verify exact binding: %v", err)
+	}
+	if err := VerifySecretCreatePolicyContract(nil, config); err == nil {
+		t.Fatal("nil policy was accepted")
+	}
+	if err := VerifySecretCreateBindingContract(nil, config); err == nil {
+		t.Fatal("nil binding was accepted")
+	}
+	policy.Spec.Validations[0].Message = "foreign"
+	if err := VerifySecretCreatePolicyContract(policy, config); err == nil {
+		t.Fatal("foreign policy was accepted")
+	}
+	binding.Spec.PolicyName = "foreign"
+	if err := VerifySecretCreateBindingContract(binding, config); err == nil {
+		t.Fatal("foreign binding was accepted")
+	}
+}
+
 func TestCertificateLifetimePolicyAllowsOnlyBoundedClockSkew(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, time.August, 31, 12, 0, 0, 0, time.UTC)

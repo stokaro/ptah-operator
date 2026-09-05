@@ -53,6 +53,15 @@ type WorkloadInventory struct {
 	deployments WorkloadInventoryDeploymentReader
 }
 
+// ProtectedRuntimePodSnapshot is a complete namespaced Pod inventory point
+// used to begin a gap-free watch. ResourceVersion belongs to the consistent
+// LIST snapshot; PodsRemain reports whether that snapshot contains a Pod using
+// any candidate, predecessor, or certificate runtime ServiceAccount.
+type ProtectedRuntimePodSnapshot struct {
+	ResourceVersion string
+	PodsRemain      bool
+}
+
 // NewWorkloadInventory derives all protected identities from the rollout
 // contract and accepts only the narrow read interfaces used by each check.
 func NewWorkloadInventory(
@@ -197,22 +206,29 @@ func (i *WorkloadInventory) VerifyRuntimeBeforeQuiesce(ctx context.Context) erro
 // uses a protected runtime ServiceAccount. It intentionally ignores labels so
 // it can be used as the final namespace-wide quiescence condition.
 func (i *WorkloadInventory) ProtectedRuntimePodsRemain(ctx context.Context) (bool, error) {
+	snapshot, err := i.ProtectedRuntimePodSnapshot(ctx)
+	return snapshot.PodsRemain, err
+}
+
+// ProtectedRuntimePodSnapshot returns the zero-Pod decision together with the
+// LIST resourceVersion from which a caller can start a watch without a gap.
+func (i *WorkloadInventory) ProtectedRuntimePodSnapshot(ctx context.Context) (ProtectedRuntimePodSnapshot, error) {
 	if err := i.runtimeIdentity(); err != nil {
-		return false, err
+		return ProtectedRuntimePodSnapshot{}, err
 	}
 	if i.pods == nil {
-		return false, fmt.Errorf("runtime workload inventory Pod client is required")
+		return ProtectedRuntimePodSnapshot{}, fmt.Errorf("runtime workload inventory Pod client is required")
 	}
-	pods, err := i.listPods(ctx)
+	pods, resourceVersion, err := i.listPodsWithResourceVersion(ctx)
 	if err != nil {
-		return false, fmt.Errorf("list protected runtime Pods: %w", err)
+		return ProtectedRuntimePodSnapshot{}, fmt.Errorf("list protected runtime Pods: %w", err)
 	}
 	for index := range pods {
 		if _, _, protected := i.runtimeDeploymentForServiceAccount(pods[index].Spec.ServiceAccountName); protected {
-			return true, nil
+			return ProtectedRuntimePodSnapshot{ResourceVersion: resourceVersion, PodsRemain: true}, nil
 		}
 	}
-	return false, nil
+	return ProtectedRuntimePodSnapshot{ResourceVersion: resourceVersion}, nil
 }
 
 func (i *WorkloadInventory) hookIdentity() (*regexp.Regexp, string, error) {
@@ -233,7 +249,7 @@ func (i *WorkloadInventory) hookIdentity() (*regexp.Regexp, string, error) {
 	if g.ReleaseSequence < 1 {
 		return nil, "", fmt.Errorf("hook workload inventory release sequence must be positive")
 	}
-	base, err := NewServiceAccountOriginGuard(g, nil).hookServiceAccountBase()
+	base, err := NewServiceAccountOriginGuard(g).hookServiceAccountBase()
 	if err != nil {
 		return nil, "", fmt.Errorf("derive hook workload inventory identity: %w", err)
 	}
@@ -260,8 +276,14 @@ func (i *WorkloadInventory) runtimeIdentity() error {
 			return fmt.Errorf("runtime workload inventory %s is required and must not contain surrounding whitespace", description)
 		}
 	}
+	if i.rollout.PreviousControllerServiceAccountName != strings.TrimSpace(i.rollout.PreviousControllerServiceAccountName) {
+		return fmt.Errorf("runtime workload inventory previous controller ServiceAccount name contains surrounding whitespace")
+	}
 	if g.ControllerServiceAccountName == g.CertificateDeploymentName {
 		return fmt.Errorf("runtime workload inventory ServiceAccount names must differ")
+	}
+	if g.PreviousControllerServiceAccountName != "" && g.PreviousControllerServiceAccountName == g.CertificateDeploymentName {
+		return fmt.Errorf("runtime workload inventory previous controller and certificate ServiceAccount names must differ")
 	}
 	if g.ControllerDeploymentName == g.CertificateDeploymentName {
 		return fmt.Errorf("runtime workload inventory Deployment names must differ")
@@ -302,32 +324,37 @@ func (i *WorkloadInventory) listJobs(ctx context.Context) ([]batchv1.Job, error)
 }
 
 func (i *WorkloadInventory) listPods(ctx context.Context) ([]corev1.Pod, error) {
+	pods, _, err := i.listPodsWithResourceVersion(ctx)
+	return pods, err
+}
+
+func (i *WorkloadInventory) listPodsWithResourceVersion(ctx context.Context) ([]corev1.Pod, string, error) {
 	var result []corev1.Pod
 	state := newInventoryPageState()
 	continueToken := ""
 	for {
 		page, err := i.pods.List(ctx, metav1.ListOptions{Limit: workloadInventoryPageSize, Continue: continueToken})
 		if err != nil {
-			return nil, fmt.Errorf("list Pods in namespace %s: %w", i.rollout.ReleaseNamespace, err)
+			return nil, "", fmt.Errorf("list Pods in namespace %s: %w", i.rollout.ReleaseNamespace, err)
 		}
 		if page == nil {
-			return nil, fmt.Errorf("list Pods in namespace %s returned a nil page", i.rollout.ReleaseNamespace)
+			return nil, "", fmt.Errorf("list Pods in namespace %s returned a nil page", i.rollout.ReleaseNamespace)
 		}
 		if err := state.validatePage("Pod", continueToken, page.ListMeta, len(page.Items), workloadInventoryPageSize); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		for index := range page.Items {
 			pod := &page.Items[index]
 			if err := i.verifyListedObject("Pod", pod.Namespace, pod.Name); err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			if err := state.observeObject("Pod", pod.Namespace, pod.Name, string(pod.UID)); err != nil {
-				return nil, err
+				return nil, "", err
 			}
 		}
 		result = append(result, page.Items...)
 		if page.Continue == "" {
-			return result, nil
+			return result, state.resourceVersion, nil
 		}
 		continueToken = page.Continue
 	}
@@ -478,6 +505,8 @@ func (i *WorkloadInventory) runtimeDeploymentForServiceAccount(serviceAccount st
 	switch serviceAccount {
 	case i.rollout.ControllerServiceAccountName:
 		return i.rollout.ControllerDeploymentName, "controller", true
+	case i.rollout.PreviousControllerServiceAccountName:
+		return i.rollout.ControllerDeploymentName, "controller", i.rollout.PreviousControllerServiceAccountName != ""
 	case i.rollout.CertificateDeploymentName:
 		return i.rollout.CertificateDeploymentName, "certificate-rotation", true
 	default:

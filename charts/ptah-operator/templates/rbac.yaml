@@ -1,4 +1,6 @@
 {{- $coordinationNamespace := default .Release.Namespace .Values.coordination.namespace -}}
+{{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -26,6 +28,8 @@ rules:
       - {{ include "ptah-operator.hookIdentityGuardPolicyName" . }}
       - {{ include "ptah-operator.hookIdentityProbeGuardPolicyName" . }}
       - {{ include "ptah-operator.releaseActivationGuardPolicyName" . }}
+      - {{ include "ptah-operator.admissionConvergencePolicyName" . }}
+      - {{ $serviceAccountObjectGuardName }}
       - {{ include "ptah-operator.serviceAccountOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
@@ -33,11 +37,17 @@ rules:
       - {{ include "ptah-operator.controllerPlanWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateMutatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateValidatingWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
       - {{ include "ptah-operator.parentReplicaSetGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookPodOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
     verbs: ["get"]
+  # Direct admission convergence must address every ready API server rather
+  # than repeatedly sampling the Kubernetes Service virtual IP.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
   - apiGroups: ["operator.ptah.dev"]
     resources: ["ptahschemas"]
     verbs: ["get", "list", "watch", "patch"]
@@ -115,6 +125,10 @@ rules:
   - apiGroups: [""]
     resources: ["limitranges"]
     verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" . | quote }}]
+    verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -130,6 +144,9 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: {{ include "ptah-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+  - kind: ServiceAccount
+    name: {{ include "ptah-operator.certRotatorServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

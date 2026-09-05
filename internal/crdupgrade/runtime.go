@@ -13,23 +13,29 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 const (
-	AdmissionConfigurationName               = "ptah-operator-admission"
-	ReleaseNameAnnotation                    = "operator.ptah.dev/release-name"
-	ReleaseNamespaceAnnotation               = "operator.ptah.dev/release-namespace"
-	CoordinationAnnotation                   = "operator.ptah.dev/coordination-namespace"
-	LeaderElectionAnnotation                 = "operator.ptah.dev/leader-election"
-	LeaderElectionIDAnnotation               = "operator.ptah.dev/leader-election-id"
-	WebhookServiceAnnotation                 = "operator.ptah.dev/webhook-service-name"
-	HookServiceAccountAnnotation             = "operator.ptah.dev/hook-service-account-name"
-	ControllerServiceAccountAnnotation       = "operator.ptah.dev/controller-service-account-name"
-	ControllerDeploymentAnnotation           = "operator.ptah.dev/controller-deployment-name"
-	CertificateDeploymentAnnotation          = "operator.ptah.dev/certificate-deployment-name"
-	AdmissionContractVersionAnnotation       = "operator.ptah.dev/admission-contract-version"
-	CurrentAdmissionContractVersion    int32 = 1
+	AdmissionConfigurationName                              = "ptah-operator-admission"
+	ReleaseNameAnnotation                                   = "operator.ptah.dev/release-name"
+	ReleaseNamespaceAnnotation                              = "operator.ptah.dev/release-namespace"
+	CoordinationAnnotation                                  = "operator.ptah.dev/coordination-namespace"
+	LeaderElectionAnnotation                                = "operator.ptah.dev/leader-election"
+	LeaderElectionIDAnnotation                              = "operator.ptah.dev/leader-election-id"
+	WebhookServiceAnnotation                                = "operator.ptah.dev/webhook-service-name"
+	HookServiceAccountAnnotation                            = "operator.ptah.dev/hook-service-account-name"
+	ControllerServiceAccountAnnotation                      = "operator.ptah.dev/controller-service-account-name"
+	ControllerServiceAccountManagedAnnotation               = "operator.ptah.dev/controller-service-account-managed"
+	PreviousControllerServiceAccountAnnotation              = "operator.ptah.dev/previous-controller-service-account-name"
+	PreviousControllerServiceAccountUIDAnnotation           = "operator.ptah.dev/previous-controller-service-account-uid"
+	PreviousControllerServiceAccountManagedAnnotation       = "operator.ptah.dev/previous-controller-service-account-managed"
+	PreviousControllerReleaseSequenceAnnotation             = "operator.ptah.dev/previous-controller-release-sequence"
+	ControllerDeploymentAnnotation                          = "operator.ptah.dev/controller-deployment-name"
+	CertificateDeploymentAnnotation                         = "operator.ptah.dev/certificate-deployment-name"
+	AdmissionContractVersionAnnotation                      = "operator.ptah.dev/admission-contract-version"
+	CurrentAdmissionContractVersion                   int32 = 1
 
 	mutatingApprovalWebhookName   = "mapproval.operator.ptah.dev"
 	validatingApprovalWebhookName = "vapproval.operator.ptah.dev"
@@ -109,20 +115,25 @@ var immutableControllerStateLocation = []controllerStateLocation{
 // RuntimeInvariants identify the only Helm release allowed to run a manager or
 // certificate rotator against the fixed admission singleton.
 type RuntimeInvariants struct {
-	ReleaseName                  string
-	ReleaseNamespace             string
-	CoordinationNamespace        string
-	LeaderElection               bool
-	LeaderElectionID             string
-	WebhookServiceName           string
-	WebhookTimeoutSeconds        int32
-	HookServiceAccountName       string
-	ControllerServiceAccountName string
-	ControllerDeploymentName     string
-	CertificateDeploymentName    string
-	ControllerStateVersion       int32
-	AdmissionContractVersion     int32
-	ReleaseSequence              int32
+	ReleaseName                             string
+	ReleaseNamespace                        string
+	CoordinationNamespace                   string
+	LeaderElection                          bool
+	LeaderElectionID                        string
+	WebhookServiceName                      string
+	WebhookTimeoutSeconds                   int32
+	HookServiceAccountName                  string
+	ControllerServiceAccountName            string
+	ControllerServiceAccountManaged         bool
+	PreviousControllerServiceAccountName    string
+	PreviousControllerServiceAccountUID     types.UID
+	PreviousControllerServiceAccountManaged bool
+	PreviousControllerReleaseSequence       int32
+	ControllerDeploymentName                string
+	CertificateDeploymentName               string
+	ControllerStateVersion                  int32
+	AdmissionContractVersion                int32
+	ReleaseSequence                         int32
 }
 
 func (i RuntimeInvariants) validate() error {
@@ -150,6 +161,9 @@ func (i RuntimeInvariants) validate() error {
 		if value == "" {
 			return fmt.Errorf("%s is required", name)
 		}
+	}
+	if i.PreviousControllerServiceAccountName != strings.TrimSpace(i.PreviousControllerServiceAccountName) {
+		return fmt.Errorf("previous controller service account name contains surrounding whitespace")
 	}
 	if i.ControllerDeploymentName == i.CertificateDeploymentName {
 		return fmt.Errorf("controller and certificate Deployment names must differ")
@@ -189,15 +203,14 @@ func (i RuntimeInvariants) annotations() map[string]string {
 
 func (i RuntimeInvariants) immutableAnnotations() map[string]string {
 	return map[string]string{
-		ReleaseNameAnnotation:              i.ReleaseName,
-		ReleaseNamespaceAnnotation:         i.ReleaseNamespace,
-		CoordinationAnnotation:             i.CoordinationNamespace,
-		LeaderElectionAnnotation:           strconv.FormatBool(i.LeaderElection),
-		LeaderElectionIDAnnotation:         i.LeaderElectionID,
-		WebhookServiceAnnotation:           i.WebhookServiceName,
-		ControllerServiceAccountAnnotation: i.ControllerServiceAccountName,
-		ControllerDeploymentAnnotation:     i.ControllerDeploymentName,
-		CertificateDeploymentAnnotation:    i.CertificateDeploymentName,
+		ReleaseNameAnnotation:           i.ReleaseName,
+		ReleaseNamespaceAnnotation:      i.ReleaseNamespace,
+		CoordinationAnnotation:          i.CoordinationNamespace,
+		LeaderElectionAnnotation:        strconv.FormatBool(i.LeaderElection),
+		LeaderElectionIDAnnotation:      i.LeaderElectionID,
+		WebhookServiceAnnotation:        i.WebhookServiceName,
+		ControllerDeploymentAnnotation:  i.ControllerDeploymentName,
+		CertificateDeploymentAnnotation: i.CertificateDeploymentName,
 	}
 }
 

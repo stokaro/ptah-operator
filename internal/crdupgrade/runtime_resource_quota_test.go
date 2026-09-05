@@ -260,6 +260,265 @@ func TestRuntimeResourceQuotaPreflightRejectsPendingResizeWithoutCompleteStatus(
 	}
 }
 
+func TestRuntimeResourceQuotaPreflightAcceptsStableResourceStatusAcrossVersionWindow(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		status func(*corev1.Pod)
+	}{
+		{
+			name: "Kubernetes 1.35 lossy container CPU status",
+			status: func(pod *corev1.Pod) {
+				runtimeQuotaSetStableContainerResourceStatus(pod)
+				pod.Status.ContainerStatuses[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("28m")
+			},
+		},
+		{
+			name: "Kubernetes 1.36 lossy aggregate and container CPU status",
+			status: func(pod *corev1.Pod) {
+				runtimeQuotaSetStableContainerResourceStatus(pod)
+				runtimeQuotaSetStableControllerPodResourceStatus(pod)
+				pod.Status.Resources.Requests[corev1.ResourceCPU] = resource.MustParse("79m")
+				pod.Status.ContainerStatuses[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("28m")
+			},
+		},
+		{
+			name: "Kubernetes 1.37 exact aggregate with lossy container CPU status",
+			status: func(pod *corev1.Pod) {
+				runtimeQuotaSetStableContainerResourceStatus(pod)
+				runtimeQuotaSetStableControllerPodResourceStatus(pod)
+				pod.Status.ContainerStatuses[0].Resources.Requests[corev1.ResourceCPU] = resource.MustParse("28m")
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			preflight, _, pods := runtimeQuotaFixture()
+			preflight.Contract.CertificateRuntimeEnabled = false
+			preflight.ControllerReplicas = 1
+			pod := runtimeQuotaProtectedPod(preflight, true, 0)
+			tc.status(&pod)
+			pods.list.Items = []corev1.Pod{pod}
+
+			if err := preflight.Check(context.Background()); err != nil {
+				t.Fatalf("Check() rejected stable supported Pod status: %v", err)
+			}
+		})
+	}
+}
+
+func TestRuntimeResourceQuotaPreflightAcceptsLossyStatusReadbackAtOrBelowSpec(t *testing.T) {
+	t.Parallel()
+
+	preflight, _, pods := runtimeQuotaFixture()
+	preflight.Contract.CertificateRuntimeEnabled = false
+	preflight.ControllerReplicas = 1
+	pod := runtimeQuotaProtectedPod(preflight, true, 0)
+	runtimeQuotaSetStableContainerResourceStatus(&pod)
+	runtimeQuotaSetStableControllerPodResourceStatus(&pod)
+
+	// CPU requests can round down when kubelet converts a cgroup v2 weight back
+	// to a Kubernetes quantity. The quota evaluator still charges the larger
+	// spec value, so every known nonnegative status value at or below the spec is
+	// safe to subtract using the fixed runtime contract.
+	pod.Status.AllocatedResources = corev1.ResourceList{}
+	pod.Status.Resources.Requests = runtimeQuotaResources(map[corev1.ResourceName]string{
+		corev1.ResourceCPU:    "79m",
+		corev1.ResourceMemory: "399Mi",
+	})
+	pod.Status.Resources.Limits = runtimeQuotaResources(map[corev1.ResourceName]string{
+		corev1.ResourceCPU:    "199m",
+		corev1.ResourceMemory: "499Mi",
+	})
+	pod.Status.ContainerStatuses[0].AllocatedResources = runtimeQuotaResources(map[corev1.ResourceName]string{
+		corev1.ResourceCPU: "49m",
+	})
+	pod.Status.ContainerStatuses[0].Resources.Requests = runtimeQuotaResources(map[corev1.ResourceName]string{
+		corev1.ResourceCPU:    "28m",
+		corev1.ResourceMemory: "399Mi",
+	})
+	pod.Status.ContainerStatuses[0].Resources.Limits = runtimeQuotaResources(map[corev1.ResourceName]string{
+		corev1.ResourceCPU:              "149m",
+		corev1.ResourceMemory:           "499Mi",
+		corev1.ResourceEphemeralStorage: "1Gi",
+	})
+	pods.list.Items = []corev1.Pod{pod}
+
+	if err := preflight.Check(context.Background()); err != nil {
+		t.Fatalf("Check() rejected safe lossy status readback: %v", err)
+	}
+}
+
+func TestRuntimeResourceQuotaPreflightAcceptsStablePodStatusWithOverhead(t *testing.T) {
+	t.Parallel()
+
+	preflight, _, pods := runtimeQuotaFixture()
+	preflight.Contract.CertificateRuntimeEnabled = false
+	preflight.ControllerReplicas = 1
+	pod := runtimeQuotaProtectedPod(preflight, true, 0)
+	pod.Spec.Overhead = runtimeQuotaResources(map[corev1.ResourceName]string{
+		corev1.ResourceCPU:    "10m",
+		corev1.ResourceMemory: "16Mi",
+	})
+	runtimeQuotaSetStableContainerResourceStatus(&pod)
+	pod.Status.AllocatedResources = runtimeQuotaResources(map[corev1.ResourceName]string{
+		corev1.ResourceCPU:              "110m",
+		corev1.ResourceMemory:           "416Mi",
+		corev1.ResourceEphemeralStorage: "3Gi",
+	})
+	pod.Status.Resources = &corev1.ResourceRequirements{
+		Requests: runtimeQuotaResources(map[corev1.ResourceName]string{
+			corev1.ResourceCPU:    "110m",
+			corev1.ResourceMemory: "416Mi",
+		}),
+		Limits: runtimeQuotaResources(map[corev1.ResourceName]string{
+			corev1.ResourceCPU:    "210m",
+			corev1.ResourceMemory: "516Mi",
+		}),
+	}
+	pods.list.Items = []corev1.Pod{pod}
+
+	if err := preflight.Check(context.Background()); err != nil {
+		t.Fatalf("Check() rejected exact aggregate status with Pod overhead: %v", err)
+	}
+}
+
+func TestRuntimeResourceQuotaPreflightRejectsResourceStatusMutations(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*corev1.Pod)
+		want   string
+	}{
+		{
+			name: "legacy resize status",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.Resize = corev1.PodResizeStatus("InProgress")
+			},
+			want: "legacy resize status",
+		},
+		{
+			name: "resize in progress condition",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.Conditions = []corev1.PodCondition{{
+					Type:   corev1.PodResizeInProgress,
+					Status: corev1.ConditionTrue,
+				}}
+			},
+			want: "PodResizeInProgress status",
+		},
+		{
+			name: "allocated request exceeds aggregate",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.AllocatedResources[corev1.ResourceCPU] = resource.MustParse("101m")
+			},
+			want: "pod-level allocated requests cpu=101m exceeds",
+		},
+		{
+			name: "allocated request is negative",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.AllocatedResources[corev1.ResourceCPU] = resource.MustParse("-1m")
+			},
+			want: "pod-level allocated requests resource cpu must not be negative",
+		},
+		{
+			name: "allocated unknown zero request",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.AllocatedResources[corev1.ResourceName("example.com/device")] = resource.MustParse("0")
+			},
+			want: "pod-level allocated requests contains resource example.com/device",
+		},
+		{
+			name: "actuated pod request exceeds aggregate",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.Resources.Requests[corev1.ResourceMemory] = resource.MustParse("401Mi")
+			},
+			want: "pod-level actuated requests memory=401Mi exceeds",
+		},
+		{
+			name: "actuated pod limit exceeds aggregate",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.Resources.Limits[corev1.ResourceCPU] = resource.MustParse("201m")
+			},
+			want: "pod-level actuated limits cpu=201m exceeds",
+		},
+		{
+			name: "actuated pod request has unknown key",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.Resources.Requests[corev1.ResourceName("example.com/device")] = resource.MustParse("0")
+			},
+			want: "pod-level actuated requests contains resource example.com/device",
+		},
+		{
+			name: "container allocated request exceeds spec",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.ContainerStatuses[0].AllocatedResources[corev1.ResourceCPU] = resource.MustParse("51m")
+			},
+			want: "allocated requests for container runtime cpu=51m exceeds",
+		},
+		{
+			name: "container allocated request has unknown key",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.ContainerStatuses[0].AllocatedResources[corev1.ResourceName("example.com/device")] = resource.MustParse("0")
+			},
+			want: "allocated requests for container runtime contains resource example.com/device",
+		},
+		{
+			name: "container actuated limit has unknown key",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.ContainerStatuses[0].Resources.Limits[corev1.ResourceName("example.com/device")] = resource.MustParse("0")
+			},
+			want: "actuated limits for container runtime contains resource example.com/device",
+		},
+		{
+			name: "resource claim status",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.ResourceClaimStatuses = []corev1.PodResourceClaimStatus{{Name: "claim"}}
+			},
+			want: "dynamic resource allocation status",
+		},
+		{
+			name: "extended resource claim status",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.ExtendedResourceClaimStatus = &corev1.PodExtendedResourceClaimStatus{}
+			},
+			want: "dynamic resource allocation status",
+		},
+		{
+			name: "node allocatable resource claim status",
+			mutate: func(pod *corev1.Pod) {
+				pod.Status.NodeAllocatableResourceClaimStatuses = []corev1.NodeAllocatableResourceClaimStatus{{}}
+			},
+			want: "dynamic resource allocation status",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			preflight, _, pods := runtimeQuotaFixture()
+			preflight.Contract.CertificateRuntimeEnabled = false
+			preflight.ControllerReplicas = 1
+			pod := runtimeQuotaProtectedPod(preflight, true, 0)
+			runtimeQuotaSetStableContainerResourceStatus(&pod)
+			runtimeQuotaSetStableControllerPodResourceStatus(&pod)
+			tc.mutate(&pod)
+			pods.list.Items = []corev1.Pod{pod}
+
+			err := preflight.Check(context.Background())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Check() error = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestRuntimeResourceQuotaPreflightUsesRestartableInitSemanticsForOldPods(t *testing.T) {
 	t.Parallel()
 
@@ -1174,6 +1433,37 @@ func runtimeQuotaProtectedPod(preflight *crdupgrade.RuntimeResourceQuotaPrefligh
 	}
 }
 
+func runtimeQuotaSetStableContainerResourceStatus(pod *corev1.Pod) {
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{runtimeQuotaStableContainerStatus(pod.Spec.Containers[0])}
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{runtimeQuotaStableContainerStatus(pod.Spec.InitContainers[0])}
+}
+
+func runtimeQuotaStableContainerStatus(container corev1.Container) corev1.ContainerStatus {
+	return corev1.ContainerStatus{
+		Name:               container.Name,
+		AllocatedResources: container.Resources.Requests.DeepCopy(),
+		Resources:          container.Resources.DeepCopy(),
+	}
+}
+
+func runtimeQuotaSetStableControllerPodResourceStatus(pod *corev1.Pod) {
+	pod.Status.AllocatedResources = runtimeQuotaResources(map[corev1.ResourceName]string{
+		corev1.ResourceCPU:              "100m",
+		corev1.ResourceMemory:           "400Mi",
+		corev1.ResourceEphemeralStorage: "3Gi",
+	})
+	pod.Status.Resources = &corev1.ResourceRequirements{
+		Requests: runtimeQuotaResources(map[corev1.ResourceName]string{
+			corev1.ResourceCPU:    "100m",
+			corev1.ResourceMemory: "400Mi",
+		}),
+		Limits: runtimeQuotaResources(map[corev1.ResourceName]string{
+			corev1.ResourceCPU:    "200m",
+			corev1.ResourceMemory: "500Mi",
+		}),
+	}
+}
+
 func runtimeQuotaObject(name string, hard, used corev1.ResourceList) corev1.ResourceQuota {
 	return corev1.ResourceQuota{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1321,68 +1611,5 @@ func assertRuntimeQuotaListCalls(t *testing.T, resourceName string, calls []meta
 				wantContinue[index],
 			)
 		}
-	}
-}
-
-// A kubelet in the supported window reports pod-level status.resources and
-// status.allocatedResources for an ordinary Pod that was never resized.
-// Measured on Kubernetes 1.37.0: a Running cert-rotator Pod carries
-// status.resources{requests:{cpu:5m,memory:16Mi},limits:{memory:32Mi}} and
-// status.allocatedResources{cpu:5m,memory:16Mi}, mirroring its container spec.
-//
-// The preflight refused those fields on presence, so every protected Pod was
-// refused, the pre-upgrade hook failed on every supported minor, and no release
-// could be upgraded at all.
-func TestRuntimeResourceQuotaPreflightAcceptsUnresizedPodLevelStatusResources(t *testing.T) {
-	t.Parallel()
-
-	preflight, quotas, pods := runtimeQuotaFixture()
-	preflight.Contract.CertificateRuntimeEnabled = false
-	preflight.ControllerReplicas = 1
-	pod := runtimeQuotaProtectedPod(preflight, true, 0)
-	requests := pod.Spec.Containers[0].Resources.Requests.DeepCopy()
-	limits := pod.Spec.Containers[0].Resources.Limits.DeepCopy()
-	pod.Status.Resources = &corev1.ResourceRequirements{Requests: requests, Limits: limits}
-	pod.Status.AllocatedResources = requests.DeepCopy()
-	pods.list.Items = []corev1.Pod{pod}
-	quotas.list.Items = []corev1.ResourceQuota{runtimeQuotaObject(
-		"actuated",
-		runtimeQuotaResources(map[corev1.ResourceName]string{corev1.ResourceRequestsCPU: "10"}),
-		runtimeQuotaResources(map[corev1.ResourceName]string{corev1.ResourceRequestsCPU: "100m"}),
-	)}
-
-	if err := preflight.Check(context.Background()); err != nil {
-		t.Fatalf("Check() error = %v, want an unresized Pod to be accepted", err)
-	}
-}
-
-// The control for the change above: dropping the presence refusal must not
-// drop the guarantee it was standing in for. A container whose reported
-// allocation differs from its spec is still refused, so a real resize is still
-// caught -- by the container-level rule that was always the one doing the work.
-func TestRuntimeResourceQuotaPreflightStillRejectsResizedPodCarryingPodLevelStatus(t *testing.T) {
-	t.Parallel()
-
-	preflight, quotas, pods := runtimeQuotaFixture()
-	preflight.Contract.CertificateRuntimeEnabled = false
-	preflight.ControllerReplicas = 1
-	pod := runtimeQuotaProtectedPod(preflight, true, 0)
-	requests := pod.Spec.Containers[0].Resources.Requests.DeepCopy()
-	pod.Status.Resources = &corev1.ResourceRequirements{Requests: requests.DeepCopy()}
-	pod.Status.AllocatedResources = requests.DeepCopy()
-	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
-		Name:               "runtime",
-		AllocatedResources: runtimeQuotaResources(map[corev1.ResourceName]string{corev1.ResourceCPU: "400m"}),
-	}}
-	pods.list.Items = []corev1.Pod{pod}
-	quotas.list.Items = []corev1.ResourceQuota{runtimeQuotaObject(
-		"actuated",
-		runtimeQuotaResources(map[corev1.ResourceName]string{corev1.ResourceRequestsCPU: "10"}),
-		runtimeQuotaResources(map[corev1.ResourceName]string{corev1.ResourceRequestsCPU: "100m"}),
-	)}
-
-	err := preflight.Check(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "cannot be projected consistently across the supported Kubernetes window") {
-		t.Fatalf("Check() error = %v, want the resized container to still be rejected", err)
 	}
 }

@@ -38,6 +38,8 @@ type testHookContract struct {
 	component          string
 	containerName      string
 	hookWeight         string
+	managerTimeout     string
+	activeDeadline     int64
 }
 
 var testHookContracts = map[hookMode]testHookContract{
@@ -48,6 +50,8 @@ var testHookContracts = map[hookMode]testHookContract{
 		component:          "crd-manager-preflight",
 		containerName:      "crd-manager-preflight",
 		hookWeight:         "-60",
+		managerTimeout:     "180s",
+		activeDeadline:     210,
 	},
 	hookModeReconcile: {
 		mode:               hookModeReconcile,
@@ -56,6 +60,8 @@ var testHookContracts = map[hookMode]testHookContract{
 		component:          "crd-manager",
 		containerName:      "crd-manager",
 		hookWeight:         "0",
+		managerTimeout:     "360s",
+		activeDeadline:     390,
 	},
 }
 
@@ -63,10 +69,6 @@ type logAttempt struct {
 	stream io.ReadCloser
 	err    error
 }
-
-// repeatLogStream answers every attempt once the scripted ones run out, which
-// is how a hook that never writes is modeled without listing an unbounded
-// number of empty attempts.
 
 type fakeResourceClient struct {
 	repeatLogStream func() io.ReadCloser
@@ -1016,6 +1018,7 @@ func TestCaptureRejectsPreexistingObjectsBeforeWatching(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("capture error = %v, want preexisting Job rejection", err)
 	}
+	assertFailureClass(t, err, failureClassJobInventory)
 }
 
 func TestCaptureDoesNotPublishPodLogBeforeBindingItsWatchedJob(t *testing.T) {
@@ -1052,6 +1055,7 @@ func TestCaptureDoesNotPublishPodLogBeforeBindingItsWatchedJob(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "controlling owner does not match") {
 			t.Fatalf("capture error = %v, want watched Job binding failure", err)
 		}
+		assertFailureClass(t, err, failureClassPodOwner)
 	case <-ctx.Done():
 		t.Fatalf("capture did not reject unbound Pod: %v", ctx.Err())
 	}
@@ -1087,7 +1091,7 @@ func TestCaptureDoesNotPublishQuarantinedLogForCandidateRenderMismatch(t *testin
 		t.Fatal("capture did not start the quarantined Pod log stream promptly")
 	}
 	waitForFileContents(t, output.quarantinePath, "untrusted hook output\n")
-	job.Spec.Template.Spec.Containers[0].Args[15] = "--controller-replicas=3"
+	job.Spec.Template.Spec.Containers[0].Args[20] = "--controller-replicas=3"
 	jobWatcher.Add(job)
 
 	select {
@@ -1100,8 +1104,6 @@ func TestCaptureDoesNotPublishQuarantinedLogForCandidateRenderMismatch(t *testin
 		t.Fatalf("capture did not reject the drifted Job: %v", ctx.Err())
 	}
 	assertFileContents(t, output.logPath, "")
-	// Streaming had begun before the render mismatch was found, and the phase
-	// records that: a capture that never armed reports "starting" instead.
 	assertFileContents(t, output.status.path, "failed\nstreaming\n")
 }
 
@@ -1112,10 +1114,10 @@ func TestValidateJobAgainstRenderRejectsExecutionAndMetadataDrift(t *testing.T) 
 		"image": func(job *batchv1.Job) {
 			image := "ghcr.io/stokaro/other@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 			job.Spec.Template.Spec.Containers[0].Image = image
-			job.Spec.Template.Spec.Containers[0].Args[18] = "--manager-image=" + image
+			job.Spec.Template.Spec.Containers[0].Args[23] = "--manager-image=" + image
 		},
 		"trailing argument": func(job *batchv1.Job) {
-			job.Spec.Template.Spec.Containers[0].Args[15] = "--controller-replicas=3"
+			job.Spec.Template.Spec.Containers[0].Args[20] = "--controller-replicas=3"
 		},
 		"delete policy": func(job *batchv1.Job) {
 			job.Annotations[hookDeleteAnnotation] = "hook-succeeded"
@@ -1411,10 +1413,10 @@ func TestValidatePodAgainstRenderBindsConfiguredAdmissionDefaults(t *testing.T) 
 
 	t.Run("toleration seconds", func(t *testing.T) {
 		rendered := validRenderedJob()
-		rendered.Spec.Template.Spec.Containers[0].Args[19] = managerArgumentPrefixes[19] +
+		rendered.Spec.Template.Spec.Containers[0].Args[24] = managerArgumentPrefixes[24] +
 			encodedTestControllerRuntimeArguments(true, 17, 23, false)
 		pod := validPod(types.UID("job-uid"))
-		pod.Spec.Containers[0].Args[19] = rendered.Spec.Template.Spec.Containers[0].Args[19]
+		pod.Spec.Containers[0].Args[24] = rendered.Spec.Template.Spec.Containers[0].Args[24]
 		notReady := int64(17)
 		unreachable := int64(23)
 		pod.Spec.Tolerations[0].TolerationSeconds = &notReady
@@ -1427,10 +1429,10 @@ func TestValidatePodAgainstRenderBindsConfiguredAdmissionDefaults(t *testing.T) 
 	t.Run("priority class", func(t *testing.T) {
 		rendered := validRenderedJob()
 		rendered.Spec.Template.Spec.PriorityClassName = "hook-critical"
-		rendered.Spec.Template.Spec.Containers[0].Args[23] = managerArgumentPrefixes[23] +
+		rendered.Spec.Template.Spec.Containers[0].Args[28] = managerArgumentPrefixes[28] +
 			encodedTestRuntimeAdmissionContract("hook-critical", 1000, corev1.PreemptNever, nil)
 		pod := validPod(types.UID("job-uid"))
-		pod.Spec.Containers[0].Args[23] = rendered.Spec.Template.Spec.Containers[0].Args[23]
+		pod.Spec.Containers[0].Args[28] = rendered.Spec.Template.Spec.Containers[0].Args[28]
 		pod.Spec.PriorityClassName = "hook-critical"
 		priority := int32(1000)
 		pod.Spec.Priority = &priority
@@ -1443,10 +1445,10 @@ func TestValidatePodAgainstRenderBindsConfiguredAdmissionDefaults(t *testing.T) 
 
 	t.Run("always pull images", func(t *testing.T) {
 		rendered := validRenderedJob()
-		rendered.Spec.Template.Spec.Containers[0].Args[19] = managerArgumentPrefixes[19] +
+		rendered.Spec.Template.Spec.Containers[0].Args[24] = managerArgumentPrefixes[24] +
 			encodedTestControllerRuntimeArguments(true, 300, 300, true)
 		pod := validPod(types.UID("job-uid"))
-		pod.Spec.Containers[0].Args[19] = rendered.Spec.Template.Spec.Containers[0].Args[19]
+		pod.Spec.Containers[0].Args[24] = rendered.Spec.Template.Spec.Containers[0].Args[24]
 		if err := validatePodAgainstRender(pod, rendered, testCaptureConfig()); err == nil {
 			t.Fatal("validatePodAgainstRender accepted an unmodified pull policy with AlwaysPullImages enabled")
 		}
@@ -1463,7 +1465,7 @@ func TestValidateRenderedJobRejectsMismatchedAdmissionContract(t *testing.T) {
 	t.Run("different named class", func(t *testing.T) {
 		rendered := validRenderedJob()
 		rendered.Spec.Template.Spec.PriorityClassName = "hook-critical"
-		rendered.Spec.Template.Spec.Containers[0].Args[23] = managerArgumentPrefixes[23] +
+		rendered.Spec.Template.Spec.Containers[0].Args[28] = managerArgumentPrefixes[28] +
 			encodedTestRuntimeAdmissionContract("different-class", 1000, corev1.PreemptNever, nil)
 		if err := validateRenderedJob(rendered, testCaptureConfig()); err == nil {
 			t.Fatal("validateRenderedJob accepted a mismatched priority admission contract")
@@ -1472,7 +1474,7 @@ func TestValidateRenderedJobRejectsMismatchedAdmissionContract(t *testing.T) {
 
 	t.Run("named contract for unclassified hook", func(t *testing.T) {
 		rendered := validRenderedJob()
-		rendered.Spec.Template.Spec.Containers[0].Args[23] = managerArgumentPrefixes[23] +
+		rendered.Spec.Template.Spec.Containers[0].Args[28] = managerArgumentPrefixes[28] +
 			encodedTestRuntimeAdmissionContract("runtime-only", 1000, corev1.PreemptNever, nil)
 		if err := validateRenderedJob(rendered, testCaptureConfig()); err == nil {
 			t.Fatal("validateRenderedJob accepted a named contract for an unclassified hook template")
@@ -1524,6 +1526,13 @@ func TestHookModeProfilesAreExactAndCannotCrossAccept(t *testing.T) {
 			}
 
 			jobMutations := map[string]func(*batchv1.Job){
+				"other mode active deadline": func(candidate *batchv1.Job) {
+					value := other.activeDeadline
+					candidate.Spec.ActiveDeadlineSeconds = &value
+				},
+				"other mode timeout": func(candidate *batchv1.Job) {
+					candidate.Spec.Template.Spec.Containers[0].Args[1] = "--timeout=" + other.managerTimeout
+				},
 				"other mode weight": func(candidate *batchv1.Job) {
 					candidate.Annotations[hookWeightAnnotation] = other.hookWeight
 				},
@@ -1591,7 +1600,9 @@ func TestHookModeProfilesMatchLiteralContracts(t *testing.T) {
 			if profile.mode != contract.mode ||
 				profile.component != contract.component ||
 				profile.containerName != contract.containerName ||
-				profile.hookWeight != contract.hookWeight {
+				profile.hookWeight != contract.hookWeight ||
+				profile.managerTimeout != contract.managerTimeout ||
+				profile.activeDeadlineSeconds != contract.activeDeadline {
 				t.Fatalf("profileForHookMode(%q) = %#v, want literal contract %#v", mode, profile, contract)
 			}
 			serviceAccountName, err := profile.serviceAccountName(contract.jobName)
@@ -1602,6 +1613,50 @@ func TestHookModeProfilesMatchLiteralContracts(t *testing.T) {
 				t.Fatalf("serviceAccountName(%q) = %q, want %q", contract.jobName, serviceAccountName, contract.serviceAccountName)
 			}
 		})
+	}
+}
+
+func TestManagerArgumentPrefixesMatchRenderedHookContract(t *testing.T) {
+	t.Parallel()
+
+	expected := []string{
+		"",
+		"--timeout=",
+		"--release-name=",
+		"--release-namespace=",
+		"--coordination-namespace=",
+		"--leader-election=",
+		"--leader-election-id=",
+		"--webhook-service-name=",
+		"--webhook-timeout-seconds=",
+		"--webhook-secret-name=",
+		"--webhook-port=",
+		"--certificate-health-port=",
+		"--hook-service-account-name=",
+		"--controller-service-account-name=",
+		"--controller-service-account-managed=",
+		"--previous-controller-service-account-name=",
+		"--previous-controller-service-account-uid=",
+		"--previous-controller-service-account-managed=",
+		"--previous-controller-release-sequence=",
+		"--controller-deployment-name=",
+		"--controller-replicas=",
+		"--certificate-deployment-name=",
+		"--release-sequence=",
+		"--manager-image=",
+		"--controller-runtime-args-b64=",
+		"--certificate-runtime-args-b64=",
+		"--runtime-deployment-config-expressions-b64=",
+		"--runtime-pod-config-expressions-b64=",
+		"--runtime-admission-contract-b64=",
+	}
+	if len(managerArgumentPrefixes) != len(expected) {
+		t.Fatalf("manager argument prefix count = %d, want %d", len(managerArgumentPrefixes), len(expected))
+	}
+	for index := range expected {
+		if managerArgumentPrefixes[index] != expected[index] {
+			t.Fatalf("manager argument prefix %d = %q, want %q", index, managerArgumentPrefixes[index], expected[index])
+		}
 	}
 }
 
@@ -1623,11 +1678,11 @@ func TestPreflightModeUsesClasslessPodAdmissionDefaults(t *testing.T) {
 
 	config := testCaptureConfigForMode(hookModePreflight)
 	rendered := validRenderedJobForMode(hookModePreflight)
-	rendered.Spec.Template.Spec.Containers[0].Args[23] = managerArgumentPrefixes[23] +
+	rendered.Spec.Template.Spec.Containers[0].Args[28] = managerArgumentPrefixes[28] +
 		encodedTestRuntimeAdmissionContract("runtime-only", 1000, corev1.PreemptNever, nil)
 	config.expectedJob = rendered
 	pod := validPodForMode(hookModePreflight, types.UID("job-uid"))
-	pod.Spec.Containers[0].Args[23] = rendered.Spec.Template.Spec.Containers[0].Args[23]
+	pod.Spec.Containers[0].Args[28] = rendered.Spec.Template.Spec.Containers[0].Args[28]
 	if err := validateRenderedJob(rendered, config); err != nil {
 		t.Fatalf("validateRenderedJob rejected a classless preflight for a named runtime contract: %v", err)
 	}
@@ -1754,10 +1809,10 @@ func TestValidatePodOwnerRequiresObservedTemplateExecutionContract(t *testing.T)
 	job := validJob()
 	pod := validPod(job.UID)
 	pod.Spec.Containers[0].Image = "ghcr.io/stokaro/other@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	pod.Spec.Containers[0].Args[18] = "--manager-image=" + pod.Spec.Containers[0].Image
+	pod.Spec.Containers[0].Args[23] = "--manager-image=" + pod.Spec.Containers[0].Image
 	config := testCaptureConfig()
 	config.expectedJob.Spec.Template.Spec.Containers[0].Image = pod.Spec.Containers[0].Image
-	config.expectedJob.Spec.Template.Spec.Containers[0].Args[18] = pod.Spec.Containers[0].Args[18]
+	config.expectedJob.Spec.Template.Spec.Containers[0].Args[23] = pod.Spec.Containers[0].Args[23]
 	if err := validatePod(pod, config); err != nil {
 		t.Fatalf("validatePod rejected the independently self-consistent Pod: %v", err)
 	}
@@ -1979,7 +2034,7 @@ func TestPreflightCapturePodLogRetriesItsExactWaitingContainer(t *testing.T) {
 	}
 }
 
-func TestCapturePodLogAcceptsBytesBeforeDeletedStreamError(t *testing.T) {
+func TestCapturePodLogRejectsReadErrorAfterNonemptyStream(t *testing.T) {
 	t.Parallel()
 
 	client := &fakeResourceClient{logAttempts: []logAttempt{{
@@ -1987,10 +2042,31 @@ func TestCapturePodLogAcceptsBytesBeforeDeletedStreamError(t *testing.T) {
 	}}}
 	var destination strings.Builder
 	written, err := capturePodLog(context.Background(), client, testCaptureConfig(), "hook-pod", &destination)
-	if err != nil {
-		t.Fatalf("capturePodLog returned an error after nonempty bytes: %v", err)
+	if err == nil {
+		t.Fatal("capturePodLog accepted a partial stream with a read error")
 	}
-	if written == 0 || destination.String() != "failure details\n" {
+	assertFailureClass(t, err, failureClassLogRead)
+	if written != int64(len("failure details\n")) || destination.String() != "failure details\n" {
+		t.Fatalf("captured %d bytes %q", written, destination.String())
+	}
+}
+
+func TestCapturePodLogRejectsCloseErrorAfterNonemptyStream(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeResourceClient{logAttempts: []logAttempt{{
+		stream: &closeErrorReadCloser{
+			Reader: strings.NewReader("failure details\n"),
+			err:    errors.New("close stream"),
+		},
+	}}}
+	var destination strings.Builder
+	written, err := capturePodLog(context.Background(), client, testCaptureConfig(), "hook-pod", &destination)
+	if err == nil {
+		t.Fatal("capturePodLog accepted a nonempty stream with a close error")
+	}
+	assertFailureClass(t, err, failureClassLogRead)
+	if written != int64(len("failure details\n")) || destination.String() != "failure details\n" {
 		t.Fatalf("captured %d bytes %q", written, destination.String())
 	}
 }
@@ -2019,6 +2095,7 @@ func TestCapturePodLogRejectsOtherStartupErrors(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "start hook Pod log stream") {
 		t.Fatalf("capturePodLog error = %v", err)
 	}
+	assertFailureClass(t, err, failureClassLogStart)
 }
 
 func TestCapturePodLogRejectsStartupErrorForAnotherPod(t *testing.T) {
@@ -2032,6 +2109,7 @@ func TestCapturePodLogRejectsStartupErrorForAnotherPod(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "start hook Pod log stream") {
 		t.Fatalf("capturePodLog error = %v, want fail-closed pod scoping", err)
 	}
+	assertFailureClass(t, err, failureClassLogStart)
 }
 
 func TestCapturePodLogBoundsTransientStartupRetries(t *testing.T) {
@@ -2048,6 +2126,78 @@ func TestCapturePodLogBoundsTransientStartupRetries(t *testing.T) {
 	_, err := capturePodLog(context.Background(), client, config, "hook-pod", &destination)
 	if !errors.Is(err, errLogStartTimeout) {
 		t.Fatalf("capturePodLog error = %v, want bounded startup timeout", err)
+	}
+	assertFailureClass(t, err, failureClassLogStartTimeout)
+}
+
+func TestJobAndPodEventsCarryClosedFailureClasses(t *testing.T) {
+	t.Parallel()
+
+	job := validJob()
+	job.UID = ""
+	_, err := handleJobEvent(watch.Event{Type: watch.Added, Object: job}, testCaptureConfig(), nil)
+	if err == nil {
+		t.Fatal("invalid Job event was accepted")
+	}
+	assertFailureClass(t, err, failureClassJobContract)
+
+	pod := validPod(types.UID("job-uid"))
+	pod.UID = ""
+	_, err = handlePodEvent(watch.Event{Type: watch.Added, Object: pod}, testCaptureConfig(), nil)
+	if err == nil {
+		t.Fatal("invalid Pod event was accepted")
+	}
+	assertFailureClass(t, err, failureClassPodContract)
+
+	status := &metav1.Status{Status: metav1.StatusFailure, Message: "credential-shaped raw cause"}
+	_, err = handleJobEvent(watch.Event{Type: watch.Error, Object: status}, testCaptureConfig(), nil)
+	if err == nil {
+		t.Fatal("Job watch error was accepted")
+	}
+	assertFailureClass(t, err, failureClassJobWatch)
+
+	_, err = handlePodEvent(watch.Event{Type: watch.Error, Object: status}, testCaptureConfig(), nil)
+	if err == nil {
+		t.Fatal("Pod watch error was accepted")
+	}
+	assertFailureClass(t, err, failureClassPodWatch)
+}
+
+func TestCapturePodLogCarriesReadAndSizeFailureClasses(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		stream    io.ReadCloser
+		maxLog    int64
+		wantClass failureClass
+	}{
+		{
+			name:      "read",
+			stream:    &dataThenErrorReader{err: errors.New("credential-shaped stream failure")},
+			maxLog:    1024,
+			wantClass: failureClassLogRead,
+		},
+		{
+			name:      "too large",
+			stream:    io.NopCloser(strings.NewReader("12345")),
+			maxLog:    4,
+			wantClass: failureClassLogTooLarge,
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			client := &fakeResourceClient{logAttempts: []logAttempt{{stream: test.stream}}}
+			config := testCaptureConfig()
+			config.maxLogBytes = test.maxLog
+			_, err := capturePodLog(context.Background(), client, config, "hook-pod", io.Discard)
+			if err == nil {
+				t.Fatal("capturePodLog unexpectedly succeeded")
+			}
+			assertFailureClass(t, err, test.wantClass)
+		})
 	}
 }
 
@@ -2103,6 +2253,13 @@ func (reader *dataThenErrorReader) Read(destination []byte) (int, error) {
 
 func (*dataThenErrorReader) Close() error { return nil }
 
+type closeErrorReadCloser struct {
+	io.Reader
+	err error
+}
+
+func (reader *closeErrorReadCloser) Close() error { return reader.err }
+
 type partialFailureWriter struct {
 	err error
 }
@@ -2157,7 +2314,7 @@ func validJobForMode(mode hookMode) *batchv1.Job {
 	contract := mustTestHookContract(mode)
 	jobName := contract.jobName
 	backoffLimit := int32(0)
-	activeDeadline := int64(210)
+	activeDeadline := contract.activeDeadline
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: testNamespace,
@@ -2309,7 +2466,7 @@ func validManagerArgumentsForMode(mode hookMode) []string {
 	contract := mustTestHookContract(mode)
 	return []string{
 		string(contract.mode),
-		"--timeout=180s",
+		"--timeout=" + contract.managerTimeout,
 		"--release-name=ptah",
 		"--release-namespace=" + testNamespace,
 		"--coordination-namespace=" + testNamespace,
@@ -2322,16 +2479,21 @@ func validManagerArgumentsForMode(mode hookMode) []string {
 		"--certificate-health-port=8081",
 		"--hook-service-account-name=" + contract.serviceAccountName,
 		"--controller-service-account-name=ptah",
+		"--controller-service-account-managed=true",
+		"--previous-controller-service-account-name=ptah-previous",
+		"--previous-controller-service-account-uid=previous-controller-uid",
+		"--previous-controller-service-account-managed=true",
+		"--previous-controller-release-sequence=1",
 		"--controller-deployment-name=ptah",
 		"--controller-replicas=2",
 		"--certificate-deployment-name=ptah-cert-rotator",
 		"--release-sequence=2",
 		"--manager-image=" + testImage,
-		managerArgumentPrefixes[19] + encodedTestControllerRuntimeArguments(true, 300, 300, false),
+		managerArgumentPrefixes[24] + encodedTestControllerRuntimeArguments(true, 300, 300, false),
 		"--certificate-runtime-args-b64=W10=",
 		"--runtime-deployment-config-expressions-b64=W10=",
 		"--runtime-pod-config-expressions-b64=W10=",
-		managerArgumentPrefixes[23] + encodedTestRuntimeAdmissionContract("", 0, corev1.PreemptLowerPriority, nil),
+		managerArgumentPrefixes[28] + encodedTestRuntimeAdmissionContract("", 0, corev1.PreemptLowerPriority, nil),
 	}
 }
 
@@ -2406,10 +2568,11 @@ func newTestOutputs(t *testing.T) *captureOutputs {
 	requirePrivateModeSemantics(t)
 	directory := t.TempDir()
 	output, err := prepareOutputs(outputPaths{
-		log:    filepath.Join(directory, "capture.log"),
-		status: filepath.Join(directory, "capture.status"),
-		ready:  filepath.Join(directory, "capture.ready"),
-		error:  filepath.Join(directory, "capture.error"),
+		log:          filepath.Join(directory, "capture.log"),
+		status:       filepath.Join(directory, "capture.status"),
+		ready:        filepath.Join(directory, "capture.ready"),
+		error:        filepath.Join(directory, "capture.error"),
+		failureClass: filepath.Join(directory, "capture.failure-class"),
 	})
 	if err != nil {
 		t.Fatalf("prepareOutputs: %v", err)
@@ -2441,12 +2604,13 @@ func assertFileContents(t *testing.T, path, expected string) {
 	}
 }
 
-// The API server serves a log stream as soon as the container exists, so a hook
-// Pod that has started but not yet written produces a clean open and zero
-// bytes. Only the open was retried, so a capture that won the race to the
-// container and lost it to the first write reported "completed without any
-// bytes" and failed the whole lifecycle proof -- intermittently, one supported
-// minor at a time.
+func assertFailureClass(t *testing.T, err error, expected failureClass) {
+	t.Helper()
+	if actual := failureClassFor(err); actual != expected {
+		t.Fatalf("failure class = %q, want %q; error = %v", actual, expected, err)
+	}
+}
+
 func TestCaptureRetriesAnEmptyLogStreamUntilTheHookWrites(t *testing.T) {
 	t.Parallel()
 
@@ -2490,9 +2654,74 @@ func TestCaptureRetriesAnEmptyLogStreamUntilTheHookWrites(t *testing.T) {
 	assertFileContents(t, output.status.path, "captured\n")
 }
 
-// The control: retrying an empty stream must not make an always-empty hook
-// succeed. It still fails, at the start deadline rather than on the first poll,
-// so the bound the timer provides is unchanged.
+func TestCapturePodLogStartDeadlineStopsAfterFirstByte(t *testing.T) {
+	t.Parallel()
+
+	reader, writer := io.Pipe()
+	firstWriteCompleted := make(chan struct{})
+	releaseRemainder := make(chan struct{})
+	writerResult := make(chan error, 1)
+	defer func() {
+		select {
+		case <-releaseRemainder:
+		default:
+			close(releaseRemainder)
+		}
+		_ = reader.Close()
+		_ = writer.Close()
+	}()
+	go func() {
+		if _, err := writer.Write([]byte("first ")); err != nil {
+			writerResult <- err
+			return
+		}
+		close(firstWriteCompleted)
+		<-releaseRemainder
+		_, writeErr := writer.Write([]byte("second\n"))
+		closeErr := writer.Close()
+		writerResult <- errors.Join(writeErr, closeErr)
+	}()
+
+	client := &fakeResourceClient{logAttempts: []logAttempt{{stream: reader}}}
+	config := testCaptureConfig()
+	config.logStartTimeout = 75 * time.Millisecond
+	var destination strings.Builder
+	type captureResult struct {
+		written int64
+		err     error
+	}
+	result := make(chan captureResult, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	go func() {
+		written, err := capturePodLog(ctx, client, config, "hook-pod", &destination)
+		result <- captureResult{written: written, err: err}
+	}()
+
+	select {
+	case <-firstWriteCompleted:
+	case <-ctx.Done():
+		t.Fatalf("first log bytes were not consumed: %v", ctx.Err())
+	}
+	time.Sleep(3 * config.logStartTimeout)
+	close(releaseRemainder)
+
+	select {
+	case capture := <-result:
+		if capture.err != nil {
+			t.Fatalf("capturePodLog returned an error after a timely first byte: %v", capture.err)
+		}
+		if capture.written != int64(len("first second\n")) || destination.String() != "first second\n" {
+			t.Fatalf("captured %d bytes %q, want the complete stream", capture.written, destination.String())
+		}
+	case <-ctx.Done():
+		t.Fatalf("capturePodLog did not finish after the stream closed: %v", ctx.Err())
+	}
+	if err := <-writerResult; err != nil {
+		t.Fatalf("write delayed log remainder: %v", err)
+	}
+}
+
 func TestCaptureFailsWhenTheHookNeverWrites(t *testing.T) {
 	t.Parallel()
 
@@ -2527,7 +2756,11 @@ func TestCaptureFailsWhenTheHookNeverWrites(t *testing.T) {
 		if !errors.Is(err, errLogStartTimeout) {
 			t.Fatalf("capture error = %v, want the start deadline", err)
 		}
+		assertFailureClass(t, err, failureClassLogStartTimeout)
 	case <-ctx.Done():
 		t.Fatalf("capture did not stop at the start deadline: %v", ctx.Err())
+	}
+	if err := output.close(); err != nil {
+		t.Fatalf("close outputs: %v", err)
 	}
 }

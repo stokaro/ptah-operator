@@ -11,6 +11,23 @@ lowercase `sha256:` Docker image ID; the manager records
 `<repository>@<image-ID>` as its content identity while the Pod still pulls the
 test tag. Production `image.digest` mode forbids `image.testIdentityDigest`.
 
+An initial installation has an explicit bootstrap trust boundary. The same
+boundary applies to the first upgrade from a release that did not install the
+v2 retained hook-progress admission policies. Before those policies have
+reached every API server, no in-chart workload can prove its own Job or Pod
+status and deletion integrity against a principal that already has write
+access to those resources in the release namespace. Run either bootstrap
+operation with exclusive administrative control of that namespace: no
+untrusted principal may create, update, or delete hook Jobs or Pods, or update
+their status subresources, until Helm has reported success. A dedicated release
+namespace is the recommended way to satisfy this condition. The condition ends
+only after the v2 policies and their direct per-API-server proofs have
+converged; subsequent upgrades and uninstalls between v2-aware releases protect
+hook creation, status, and deletion without relying on namespace-writer
+exclusion. Downgrading to a release that does not understand v2 removes that
+guarantee and is unsupported. Cluster administrators and principals that can
+change admission policy remain inside the trust boundary.
+
 CRDs are stored under the chart's `crds/` directory and are installed before
 templated resources. The candidate operator image embeds the exact same
 generated CRDs. The same reconciliation hook runs for `pre-install` and
@@ -103,6 +120,66 @@ first real CRD update. The controller init verifier repeats both CRD and state
 checks after the admission singleton becomes ready. A missing client for any
 of the three durable resource collections fails closed.
 
+Release cutover also has a durable credential phase. The retained activation
+ConfigMap moves monotonically from `{active=A, phase=active}` to
+`{active=A, phase=draining, target=T, attempt=<full SHA-256>}` and only candidate
+activation can return it to `{active=T, phase=active}`. While draining, the
+ServiceAccount-origin guard denies both controller API writes and node-issued
+TokenRequests for the candidate and predecessor controller identities. The
+hook proves that exact draining tuple on every API server and quiesces the
+runtime. The full 65-second credential grace is one uninterrupted joint
+window: every sweep refreshes the API endpoint topology, repeats every direct
+admission proof, verifies the exact stored admission tuple, and observes a
+namespace-wide LIST-to-WATCH stream with no protected runtime Pod. Any endpoint
+or Pod change, watch restart, stale response, or transient error resets the
+whole window before the first grant moves. A failed
+response at any transition is retried only for the same target and full attempt
+digest; there is no cancellation or backward state transition. A fresh install
+can skip the drain only when the activation state and complete preflight prove
+that no predecessor, candidate ServiceAccount, candidate grant, protected Pod,
+or prior drain exists.
+
+Each release attempt also owns an immutable, sequence-keyed admission marker.
+The chart inventories at most the active predecessor marker and current
+candidate marker, rejects gaps, future or malformed markers, and refuses a
+same-sequence marker bound to another full manager-image attempt. A final
+ValidatingAdmissionPolicy and binding are installed after every retained
+release guard. The final policy is itself a fail-closed credential fence: in
+addition to its inert marker branch, it contains the complete protected
+controller, certificate, hook, and cleanup caller and bound-TokenRequest origin
+checks, including the controller phase ratchet. Seven credential and workload-
+provenance guards expose mutually exclusive, content-versioned field-manager
+branches on the same immutable marker: the ServiceAccount-origin guard plus
+the six workload guards that constrain the executable identities behind those
+credentials. For every
+ready API-server address, the hook sends one unchanged dry-run update per
+policy. Each request must return exactly one denial attributed to that exact
+policy and binding; removing any guard, retaining an old attempt, or adding a
+second cause makes the sweep inconclusive or fatal. The sentinel request also
+returns one exact tuple-specific denial, proving its broad binding and current
+activation fence. Each sweep re-reads and compares the complete stored policy,
+binding, activation, and marker contracts, so an old cached denial cannot hide
+a foreign stored replacement that may publish later. All endpoints must return
+the complete denial bundle for one uninterrupted five-second window; topology
+changes, stored-object changes, admitted dry-runs, stale tuple denials, and
+transient discovery, transport, or server errors reset the window. Foreign
+object shape or an unexpected denial fails
+the attempt closed. The Kubernetes Service virtual IP is never used for this
+proof. The sentinel policy/binding name versions this enforcement contract; a
+future semantic change must use a new versioned identity so a cached older
+pair cannot satisfy the proof.
+
+Other retained functional guards are still compared exactly in shared storage,
+but are outside this per-endpoint credential/provenance publication claim.
+
+Controller and certificate init verification repeats the same direct endpoint
+proof for the activated candidate before either process starts serving. The
+optional missing-Secret recovery policy is installed later and is outside the
+retained-marker claim. When enabled, certificate startup fences that pair
+separately with exact attributed negative dry-runs on every API server, and the
+rotator still verifies the pair's complete stored structure before using its
+Secret `create` permission.
+
 CRD updates are necessarily separate Kubernetes API transactions. The complete
 dry-run prevents predictable partial upgrades, but an API failure or concurrent
 administrator change can still interrupt the real update sequence. In that
@@ -116,74 +193,121 @@ Helm retains CRDs and their custom resources on uninstall. Back them up before
 schema work anyway; uninstalling the release removes the controller and
 admission resources, not the database changes previously executed by Ptah.
 
-Uninstall is a fail-closed, two-phase operation. A read/update-only hook first
-verifies the complete release, admission, RBAC, ServiceAccount, and workload
-inventory before scaling the two exact runtime Deployments to zero. A separate
-cleanup identity then removes only the candidate release's exact bindings and
-chart-created ServiceAccounts. It self-revokes that temporary delete authority
-before any admission guard is removed. The remaining identity can only read
-the teardown inventory, submit SubjectAccessReviews and
-SelfSubjectAccessReviews, and delete the exact admission and activation objects
-compiled into the candidate.
+Uninstall is a fail-closed, ordered retirement protocol. Two release-stable
+validating admission fences are ordinary chart resources and therefore exist
+before an uninstall starts. Their narrow form protects the fixed bootstrap
+ServiceAccount and the exact proof Jobs and Pods. Helm first replaces fence A
+with the complete uninstall boundary while narrow fence B remains active, then
+the bootstrap Job proves fence A directly on every advertised API server for an
+uninterrupted five-second window. Helm can replace fence B only after that
+proof; a second Job then proves A and B together. Neither publication delay nor
+an interrupted replacement can expose an unfenced bootstrap credential.
 
-Every chart workload uses a Pod-bound projected ServiceAccount token. After
-the runtime Pods are gone and the retired chart-created ServiceAccounts have
-been deleted, cleanup retains the admission boundary for another 65 seconds.
-Kubernetes invalidates a bound credential no later than 60 seconds after the
-bound Pod or ServiceAccount enters deletion, including when finalizers delay
-object removal. The five-second margin prevents a formerly mounted credential
-from outliving the admission guards. The cleanup Job's own bound credential is
-still live and is evaluated separately as described below. This delay relies
-on the documented Kubernetes authenticator contract; the authorization probes
-that follow prove revocation of chart-issued permissions, not bearer-token
-rejection.
+The broad fences constrain the controller, certificate rotator, quiesce,
+cleanup, and bootstrap identities; their bound TokenRequests; and the complete
+Job and Pod execution contracts used by the remaining hooks. Job and Pod status
+updates are restricted to exact Kubernetes controller, scheduler, or node
+principals and to the fields those principals legitimately own. Deleting a
+protected Job is allowed only to a principal with admission-management
+authority and only after its authenticated status contains a terminal
+`Complete=True` or `Failed=True` condition. This prevents a namespace writer
+from turning Job deletion into hook success while preserving Helm's
+deterministic cleanup and retry path for a genuinely finished Job.
 
-Before removing admission, the cleanup hook sends every revocation probe
-directly to every ready and serving address advertised by the
-`default/kubernetes` Service. Each connection verifies the normal Kubernetes
-Service TLS name and cluster CA. Discovery is repeated before every sweep. An
-added or removed address, or any discovery error, restarts the stable interval;
-a non-terminating address that is not ready and serving blocks completion.
-Terminating addresses may leave the set, but that smaller set must itself stay
-stable for the full interval. This proves every continuously advertised address
-rather than assuming that an EndpointSlice address maps one-to-one to an API
-server process.
+The quiesce hook verifies the complete release, admission, RBAC,
+ServiceAccount, and workload inventory before scaling the two exact runtime
+Deployments to zero. A separate cleanup identity removes only the candidate
+release's exact bindings and chart-created ServiceAccounts. Every chart
+workload uses a Pod-bound projected ServiceAccount token. After runtime Pods
+and retired chart-created ServiceAccounts disappear, the fences remain active
+through an uninterrupted 65-second credential-revocation proof. Kubernetes may
+continue accepting a bound credential for up to 60 seconds after its Pod or
+ServiceAccount enters deletion; the additional five-second stable interval
+prevents such a credential from outliving the boundary.
+
+Each authorization and admission sweep addresses every ready, serving,
+non-terminating endpoint advertised by the `default/kubernetes` Service
+directly, while verifying the normal Kubernetes Service TLS name and cluster
+CA. Discovery uses a complete, coherently paginated EndpointSlice inventory.
+Membership, readiness, canonical address, stored contract, or probe-result
+changes restart the ordinary convergence windows. Missing, malformed,
+unreachable, or TLS-invalid inventory blocks uninstall.
 
 Canonical SubjectAccessReviews bind every retired runtime and hook
-ServiceAccount to only the exact mutating permissions that its deleted
-release bindings issued; permissions issued exclusively to another identity
-are not cross-probed. A normal Kubernetes RBAC no-opinion result
-(`allowed=false`, `denied=false`) is successful; an allow or evaluation error
-is not. The cleanup Job is checked through SelfSubjectAccessReview using its
-actual bearer token on every address, so its ServiceAccount UID, Pod and node
-binding, and credential identifier come from the authenticator rather than a
-synthetic identity. The stable interval starts only after all of those results
-are not allowed. Missing, malformed, changing, unreachable, or TLS-invalid
-endpoint inventory blocks uninstall instead of assuming authorization cache
-convergence.
+ServiceAccount to the exact mutating permissions issued by this release. A
+normal Kubernetes RBAC no-opinion result (`allowed=false`, `denied=false`) is
+successful; an allow or evaluation error is not. SelfSubjectAccessReviews use
+the cleanup Job's real bearer token, so its ServiceAccount UID, Pod and node
+binding, and credential identifier come from authentication rather than a
+synthetic identity. Stored RBAC, protected-Pod absence, direct authorization,
+and topology evidence must agree for the same uninterrupted window.
 
-If `serviceAccount.create=false`, the named controller ServiceAccount must be
-dedicated to this release. Any additional direct RoleBinding or
-ClusterRoleBinding for that identity, including a binding in another
-namespace, blocks uninstall because the operator cannot prove safe privilege
-retirement without taking ownership of user RBAC. Remove or migrate that
-binding and retry. The user-created ServiceAccount itself is never deleted.
-Its use by the controller must remain limited to the chart's Pod-bound token;
-unbound credentials or grants from an external authorizer are outside the
-enumerable Kubernetes RBAC contract and must be retired by the administrator
-before uninstall.
+Helm, not a Pod credential, performs every admission-policy mutation. While A
+and B remain broad, Helm replaces each original validating policy and binding
+with an exact inert marker-only form. A retry accepts only the narrowly defined
+original, retired, or temporarily absent side states reachable from that
+ordered replacement; foreign or ambiguous combinations fail closed. The final
+Job verifies all stored retired pairs and their exact attributed denials on
+every API endpoint before deleting the secondary convergence marker and exact
+release activation object.
 
-A failed preflight leaves the runtime unchanged. Helm deletes the failed hook
-Job immediately, while the failed release revision retains the exact hook
-name, weight, event, phase, and timestamps used by the support-window proof.
-An API failure during the
-subsequent two-Deployment quiesce can leave one exact Deployment at zero, but
-the admission boundary remains and the same operation is safe to retry. A
-later cleanup failure likewise leaves admission in place and retains the
-failed Job and Pod for diagnostics. After correcting the reported conflict or
-API reachability problem, rerun the same `helm uninstall`; the hooks revalidate
-live state and resume idempotently from the exact stored identities. Do not
-delete the remaining guards by hand merely to make an uninstall pass.
+The final Job then deletes its own cleanup ServiceAccount with immutable UID
+and resource-version preconditions. Before that deletion it freezes the direct
+endpoint clients and starts an EndpointSlice watch from the inventory LIST
+resourceVersion. While an endpoint still authenticates the deleted credential,
+the release activation must remain absent and both broad fences must continue
+returning their exact denials. Only an `Unauthorized` response counts as token
+retirement; `Forbidden`, an admitted probe, a foreign phase, or a transport or
+server error fails closed. Every frozen endpoint must remain continuously
+unauthorized for five seconds after the last accepted authentication, and the
+EndpointSlice watch must remain unchanged and healthy throughout. An endpoint
+addition, removal, readiness change, watch closure, expired watch, or malformed
+event aborts the hook so a retry creates a fresh ServiceAccount and snapshot.
+After deleting its ServiceAccount, the manager performs no persistent API
+mutation: an endpoint that still authenticates the token receives only the
+exact dry-run fence probes, while an endpoint that has returned `Unauthorized`
+receives read-only phase checks to detect an authentication regression.
+
+The immutable retirement marker remains until the entire pre-delete event has
+succeeded. Helm then removes that marker and the inert retirement pairs under
+`hook-succeeded`; ordinary release deletion finally removes A and B by their
+stable manifest identities. No essential cleanup depends on a post-delete
+hook. Webhook-configuration cache retirement is outside this privilege proof;
+a stale webhook entry after uninstall is an availability residue, not evidence
+that a retired release credential still has authority. Because the protocol
+contains three bounded credential windows, use a Helm uninstall timeout of at
+least five minutes.
+
+If `serviceAccount.create=false`, `serviceAccount.name` is a stable identity
+base rather than a complete Kubernetes object name. Before installing release
+sequence `N`, create the dedicated ServiceAccount `<name>-v<N>` in the release
+namespace. Keep the base and external-management mode unchanged for all later
+release sequences. This mandatory epoch suffix prevents a new controller from
+reusing the UID or credentials of a retired controller; the chart refuses a
+same-name cutover. The base must be a DNS subdomain of at most 241 characters,
+which reserves room for every positive 32-bit release sequence.
+
+Any additional direct RoleBinding or ClusterRoleBinding for an active or
+retained epoch, including a binding in another namespace, blocks upgrade or
+uninstall because the operator cannot prove safe privilege retirement without
+taking ownership of user RBAC. Remove or migrate that binding and retry. A
+user-created ServiceAccount is never deleted by the chart, including after its
+epoch has been retired. Its use by the controller must remain limited to the
+chart's Pod-bound token; unbound credentials or grants from an external
+authorizer are outside the enumerable Kubernetes RBAC contract and must be
+retired by the administrator before upgrade or uninstall.
+
+A failed preflight leaves the runtime unchanged. A failed or still-running hook
+Job cannot be deleted as a shortcut to success; a terminal failed Job remains
+available for diagnostics and can be removed by the next exact
+`before-hook-creation` retry. An API failure during the subsequent
+two-Deployment quiesce can leave one exact Deployment at zero, but at least one
+broad fence remains active and the same operation is safe to retry. A later
+cleanup or token-retirement failure likewise leaves the admission boundary in
+place. After correcting the reported conflict or API reachability problem,
+rerun the same `helm uninstall`; the hooks revalidate live state and resume
+idempotently from the exact reachable identities. Do not delete the remaining
+guards by hand merely to make an uninstall pass.
 
 For deterministic GitOps rendering, provision the webhook TLS Secret outside
 the chart and set both `webhook.existingSecret` and the PEM-encoded
@@ -427,9 +551,11 @@ can therefore exist briefly before policy enforcement is established. The
 rotator will not use the grant during that interval, but that runtime check
 cannot constrain a compromised ServiceAccount acting outside the rotator.
 Leaving the default disabled removes both the broad verb and this ordering
-window. The rotator can only list EndpointSlices in the release namespace
-because Kubernetes assigns their names dynamically and RBAC cannot constrain a
-list by label selector.
+window. Direct API-server and webhook endpoint discovery requires a read-only,
+cluster-wide EndpointSlice `list` grant because Kubernetes assigns slice names
+dynamically and RBAC cannot constrain a list by label selector. The rotator
+filters that inventory to the exact Kubernetes and release Service identities
+before opening direct connections.
 
 Serving certificates rotate before `certificateRotation.renewalThreshold`.
 The CA rotates before its threshold, when it cannot safely issue a full-lived

@@ -452,12 +452,12 @@ func TestCertificateWriteGuardsPrecedeCertificatePrivileges(t *testing.T) {
 	t.Parallel()
 
 	weights := []string{
+		releaseActivationHookWeight,
 		controllerWriteBindingWeight,
 		certificateMutatingWritePolicyWeight,
 		certificateMutatingWriteBindingWeight,
 		certificateValidatingWritePolicyWeight,
 		certificateValidatingWriteBindingWeight,
-		releaseActivationHookWeight,
 	}
 	previous, err := strconv.Atoi(weights[0])
 	if err != nil {

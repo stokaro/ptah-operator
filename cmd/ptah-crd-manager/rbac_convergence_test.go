@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -9,11 +10,14 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 
@@ -119,14 +123,17 @@ func TestNewTeardownRBACConvergenceBarrierDiscoversEveryDirectEndpoint(t *testin
 	if err := barrier.Validate(); err != nil {
 		t.Fatalf("barrier.Validate() error = %v", err)
 	}
+	if barrier.RequestTimeout != authorizationRequestTimeout {
+		t.Fatalf("barrier request timeout = %s, want %s", barrier.RequestTimeout, authorizationRequestTimeout)
+	}
 	if got, want := endpointNames(barrier), []string{"10.0.0.12:6443", "[2001:db8::20]:7443"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("endpoint names = %#v, want %#v", got, want)
 	}
 	if len(configs) != 2 {
 		t.Fatalf("client factory calls = %d, want 2", len(configs))
 	}
-	if got := authorizationSweepSize(barrier); got != 50 {
-		t.Fatalf("authorization sweep size = %d, want 50 exact retired-subject plus current-credential probes", got)
+	if got := authorizationSweepSize(barrier); got != 56 {
+		t.Fatalf("authorization sweep size = %d, want 56 exact retired-subject plus current-credential probes", got)
 	}
 	for index, config := range configs {
 		if config == base {
@@ -141,14 +148,14 @@ func TestNewTeardownRBACConvergenceBarrierDiscoversEveryDirectEndpoint(t *testin
 		if config.BearerToken != base.BearerToken || string(config.CAData) != string(base.CAData) || config.APIPath != base.APIPath {
 			t.Errorf("client config %d did not preserve credentials, CA, and API path", index)
 		}
-		if config.RateLimiter != nil || config.QPS != teardownRBACQueriesPerSecond || config.Burst != authorizationSweepSize(barrier) {
+		if config.RateLimiter != nil || config.QPS != directKubernetesAPIQueriesPerSecond || config.Burst != authorizationSweepSize(barrier) {
 			t.Errorf(
 				"client config %d limiter = (%v, %v, %d), want (nil, %v, %d)",
 				index,
 				config.RateLimiter,
 				config.QPS,
 				config.Burst,
-				teardownRBACQueriesPerSecond,
+				directKubernetesAPIQueriesPerSecond,
 				authorizationSweepSize(barrier),
 			)
 		}
@@ -164,15 +171,279 @@ func TestNewTeardownRBACConvergenceBarrierDiscoversEveryDirectEndpoint(t *testin
 		t.Fatalf("source REST config was mutated: %#v", base)
 	}
 	wantOptions := []metav1.ListOptions{
-		{LabelSelector: discoveryv1.LabelServiceName + "=kubernetes", Limit: teardownEndpointSlicePageSize},
-		{LabelSelector: discoveryv1.LabelServiceName + "=kubernetes", Limit: teardownEndpointSlicePageSize, Continue: "second-page"},
+		{LabelSelector: discoveryv1.LabelServiceName + "=kubernetes", Limit: kubernetesAPIEndpointSlicePageSize},
+		{LabelSelector: discoveryv1.LabelServiceName + "=kubernetes", Limit: kubernetesAPIEndpointSlicePageSize, Continue: "second-page"},
 	}
 	if !reflect.DeepEqual(lister.options, wantOptions) {
 		t.Fatalf("EndpointSlice list options = %#v, want %#v", lister.options, wantOptions)
 	}
 }
 
-func TestTeardownAuthorizationEndpointProviderRefreshesAndCachesByAddress(t *testing.T) {
+func TestNewControllerRBACConvergenceBarrierUsesPredecessorOnlyDirectEndpointProof(t *testing.T) {
+	t.Parallel()
+	lister := &scriptedEndpointSliceLister{pages: oneEndpointSlicePage(validAPIEndpointSlice(
+		"kubernetes-a",
+		discoveryv1.AddressTypeIPv4,
+		6443,
+		discoveryv1.Endpoint{Addresses: []string{"10.0.0.12"}},
+	))}
+	probe := crdupgrade.AuthorizationProbe{
+		Subject: crdupgrade.AuthorizationSubject{
+			Name:   "previous-controller",
+			User:   "system:serviceaccount:ptah-system:previous-controller",
+			UID:    "previous-controller-uid",
+			Groups: []string{"system:serviceaccounts", "system:serviceaccounts:ptah-system", "system:authenticated"},
+		},
+		Checks: []crdupgrade.AuthorizationCheck{
+			{
+				Name: "list PtahSchema",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Verb: "list", Group: "operator.ptah.dev", Version: "v1alpha1", Resource: "ptahschemas",
+				},
+			},
+			{
+				Name: "update leader-election Lease",
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Verb: "update", Group: "coordination.k8s.io", Version: "v1", Resource: "leases",
+					Namespace: "ptah-system", Name: "ptah-operator-leader-election",
+				},
+			},
+		},
+	}
+	base := validRBACRESTConfig()
+	var endpointConfig *rest.Config
+	barrier, err := newControllerRBACConvergenceBarrierWith(
+		context.Background(),
+		base,
+		lister,
+		probe,
+		func(config *rest.Config) (crdupgrade.AuthorizationReviewClient, error) {
+			endpointConfig = config
+			return &deniedSubjectAccessReviewClient{}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("newControllerRBACConvergenceBarrierWith() error = %v", err)
+	}
+	if err := barrier.Validate(); err != nil {
+		t.Fatalf("barrier.Validate() error = %v", err)
+	}
+	if barrier.RequestTimeout != authorizationRequestTimeout {
+		t.Fatalf("barrier request timeout = %s, want %s", barrier.RequestTimeout, authorizationRequestTimeout)
+	}
+	if got, want := barrier.Probes, []crdupgrade.AuthorizationProbe{probe}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("predecessor probes = %#v, want %#v", got, want)
+	}
+	if len(barrier.SelfChecks) != 0 {
+		t.Fatalf("SelfChecks = %#v, want empty predecessor-only proof", barrier.SelfChecks)
+	}
+	if got, want := endpointNames(barrier), []string{"10.0.0.12:6443"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("endpoint names = %#v, want %#v", got, want)
+	}
+	if endpointConfig == nil {
+		t.Fatal("authorization client factory was not called")
+	}
+	if endpointConfig.Host != "https://10.0.0.12:6443" || endpointConfig.ServerName != kubernetesServiceTLSServerName {
+		t.Fatalf("direct endpoint REST config = host %q, serverName %q", endpointConfig.Host, endpointConfig.ServerName)
+	}
+	if endpointConfig.RateLimiter != nil || endpointConfig.QPS != directKubernetesAPIQueriesPerSecond || endpointConfig.Burst != len(probe.Checks) {
+		t.Fatalf("direct endpoint rate limits = (%v, %v, %d), want (nil, %v, %d)", endpointConfig.RateLimiter, endpointConfig.QPS, endpointConfig.Burst, directKubernetesAPIQueriesPerSecond, len(probe.Checks))
+	}
+}
+
+func TestAuthorizationBarrierInitialEndpointDiscoveryRetriesTransitions(t *testing.T) {
+	t.Parallel()
+
+	ready := validAPIEndpointSlice(
+		"kubernetes",
+		discoveryv1.AddressTypeIPv4,
+		6443,
+		discoveryv1.Endpoint{Addresses: []string{"10.0.0.12"}},
+	)
+	notReady := false
+	notReadySlice := validAPIEndpointSlice(
+		"kubernetes",
+		discoveryv1.AddressTypeIPv4,
+		6443,
+		discoveryv1.Endpoint{
+			Addresses:  []string{"10.0.0.12"},
+			Conditions: discoveryv1.EndpointConditions{Ready: &notReady},
+		},
+	)
+	validList := oneEndpointSlicePage(ready)[""]
+	for _, test := range []struct {
+		name    string
+		initial endpointSliceListResult
+	}{
+		{
+			name: "timeout",
+			initial: endpointSliceListResult{err: apierrors.NewServerTimeout(
+				schema.GroupResource{Resource: "endpointslices"},
+				"list",
+				1,
+			)},
+		},
+		{name: "non-ready", initial: endpointSliceListResult{list: oneEndpointSlicePage(notReadySlice)[""]}},
+		{name: "empty", initial: endpointSliceListResult{list: &discoveryv1.EndpointSliceList{ListMeta: metav1.ListMeta{ResourceVersion: "41"}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			lister := &sequencedEndpointSliceLister{results: []endpointSliceListResult{
+				test.initial,
+				{list: validList},
+			}}
+			provider, err := newKubernetesAPIServerEndpointProvider(validRBACRESTConfig(), lister, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clock := newAdmissionBarrierClock()
+			snapshot, err := waitForInitialKubernetesAPIServerEndpointSnapshot(
+				context.Background(),
+				provider,
+				time.Second,
+				clock.sleep,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(snapshot.Endpoints) != 1 || snapshot.Endpoints[0].Address != "10.0.0.12:6443" {
+				t.Fatalf("discovered endpoints = %#v, want recovered direct endpoint", snapshot.Endpoints)
+			}
+			if lister.calls != 2 || clock.now().Sub(clock.start) != time.Second {
+				t.Fatalf("LIST calls/elapsed = %d/%s, want 2/1s", lister.calls, clock.now().Sub(clock.start))
+			}
+		})
+	}
+}
+
+func TestAuthorizationBarrierInitialEndpointDiscoveryCancellationWins(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	clock := newAdmissionBarrierClock()
+	calls := 0
+	_, err := waitForInitialKubernetesAPIServerEndpointSnapshot(
+		ctx,
+		func(context.Context) (kubernetesAPIServerEndpointSnapshot, error) {
+			calls++
+			cancel()
+			return kubernetesAPIServerEndpointSnapshot{}, errors.New("foreign discovery response")
+		},
+		time.Second,
+		clock.sleep,
+	)
+	if !errors.Is(err, context.Canceled) || calls != 1 || clock.now() != clock.start {
+		t.Fatalf("initial discovery = %v after %d calls at %s, want immediate cancellation", err, calls, clock.now())
+	}
+}
+
+func TestKubernetesAPIServerEndpointProviderExposesStableInventoryAndDirectConfigs(t *testing.T) {
+	lister := &scriptedEndpointSliceLister{pages: oneEndpointSlicePage(validAPIEndpointSlice(
+		"kubernetes-a",
+		discoveryv1.AddressTypeIPv4,
+		6443,
+		discoveryv1.Endpoint{Addresses: []string{"10.0.0.12"}},
+	))}
+	base := &rest.Config{
+		Host:        "https://kubernetes.default.svc",
+		APIPath:     "/api",
+		BearerToken: "projected-token",
+		TLSClientConfig: rest.TLSClientConfig{
+			CAData:     []byte("cluster-ca"),
+			ServerName: "original-server-name",
+		},
+	}
+	provider, err := newKubernetesAPIServerEndpointProvider(base, lister, 7)
+	if err != nil {
+		t.Fatalf("newKubernetesAPIServerEndpointProvider() error = %v", err)
+	}
+
+	first, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("initial snapshot error = %v", err)
+	}
+	if first.InventoryResourceVersion != "42" {
+		t.Fatalf("inventory resourceVersion = %q, want 42", first.InventoryResourceVersion)
+	}
+	if !strings.HasPrefix(first.InventoryIdentity, "sha256:") || len(first.InventoryIdentity) != len("sha256:")+sha256.Size*2 {
+		t.Fatalf("inventory identity = %q, want a SHA-256 fingerprint", first.InventoryIdentity)
+	}
+	if len(first.Endpoints) != 1 || first.Endpoints[0].Address != "10.0.0.12:6443" {
+		t.Fatalf("direct endpoints = %#v", first.Endpoints)
+	}
+	direct := first.Endpoints[0].RESTConfig
+	if direct == nil || direct == base {
+		t.Fatalf("direct REST config = %#v, want independent config", direct)
+	}
+	if direct.Host != "https://10.0.0.12:6443" || direct.ServerName != kubernetesServiceTLSServerName {
+		t.Fatalf("direct REST target = host %q, serverName %q", direct.Host, direct.ServerName)
+	}
+	if direct.BearerToken != base.BearerToken || string(direct.CAData) != string(base.CAData) || direct.APIPath != base.APIPath {
+		t.Fatal("direct REST config did not preserve the in-cluster credential, CA, and API path")
+	}
+	if direct.RateLimiter != nil || direct.QPS != directKubernetesAPIQueriesPerSecond || direct.Burst != 7 {
+		t.Fatalf("direct REST rate limit = (%v, %v, %d), want (nil, %v, 7)", direct.RateLimiter, direct.QPS, direct.Burst, directKubernetesAPIQueriesPerSecond)
+	}
+	if direct.Proxy == nil {
+		t.Fatal("direct REST config has no explicit proxy bypass")
+	}
+	proxy, proxyErr := direct.Proxy(&http.Request{})
+	if proxyErr != nil || proxy != nil {
+		t.Fatalf("direct REST proxy = %v, %v; want nil, nil", proxy, proxyErr)
+	}
+
+	unchanged, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("unchanged snapshot error = %v", err)
+	}
+	if unchanged.InventoryIdentity != first.InventoryIdentity {
+		t.Fatalf("unchanged inventory identity = %q, want %q", unchanged.InventoryIdentity, first.InventoryIdentity)
+	}
+	if unchanged.Endpoints[0].RESTConfig == first.Endpoints[0].RESTConfig {
+		t.Fatal("snapshot refresh reused a mutable REST config")
+	}
+
+	collectionOnlyPage := oneEndpointSlicePage(validAPIEndpointSlice(
+		"kubernetes-a",
+		discoveryv1.AddressTypeIPv4,
+		6443,
+		discoveryv1.Endpoint{Addresses: []string{"10.0.0.12"}},
+	))
+	collectionOnlyPage[""].ResourceVersion = "43"
+	lister.pages = collectionOnlyPage
+	collectionOnly, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("collection-only snapshot error = %v", err)
+	}
+	if collectionOnly.InventoryResourceVersion != "43" || collectionOnly.InventoryIdentity != first.InventoryIdentity {
+		t.Fatalf("collection-only churn changed selected inventory identity/resourceVersion = %q/%q", collectionOnly.InventoryIdentity, collectionOnly.InventoryResourceVersion)
+	}
+
+	changedPage := oneEndpointSlicePage(validAPIEndpointSlice(
+		"kubernetes-a",
+		discoveryv1.AddressTypeIPv4,
+		6443,
+		discoveryv1.Endpoint{Addresses: []string{"10.0.0.12"}},
+	))
+	changedPage[""].ResourceVersion = "44"
+	changedPage[""].Items[0].ResourceVersion += "-changed"
+	lister.pages = changedPage
+	changed, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("changed snapshot error = %v", err)
+	}
+	if changed.InventoryResourceVersion != "44" || changed.InventoryIdentity == first.InventoryIdentity {
+		t.Fatalf("changed snapshot identity/resourceVersion = %q/%q", changed.InventoryIdentity, changed.InventoryResourceVersion)
+	}
+	if changed.Endpoints[0].Address != first.Endpoints[0].Address {
+		t.Fatalf("same-address inventory change returned %q, want %q", changed.Endpoints[0].Address, first.Endpoints[0].Address)
+	}
+	if base.Host != "https://kubernetes.default.svc" || base.ServerName != "original-server-name" || base.Proxy != nil || base.QPS != 0 || base.Burst != 0 {
+		t.Fatalf("source REST config was mutated: %#v", base)
+	}
+}
+
+func TestAuthorizationEndpointProviderCachesWithinInventoryAndRecreatesAfterInventoryChange(t *testing.T) {
 	lister := &scriptedEndpointSliceLister{pages: oneEndpointSlicePage(
 		validAPIEndpointSlice(
 			"kubernetes-a",
@@ -182,13 +453,19 @@ func TestTeardownAuthorizationEndpointProviderRefreshesAndCachesByAddress(t *tes
 		),
 	)}
 	created := make(map[string]int)
-	provider := newTeardownAuthorizationEndpointProvider(
+	apiEndpointProvider, err := newKubernetesAPIServerEndpointProvider(
 		validRBACRESTConfig(),
 		lister,
 		48,
+	)
+	if err != nil {
+		t.Fatalf("newKubernetesAPIServerEndpointProvider() error = %v", err)
+	}
+	provider := newAuthorizationEndpointProvider(
+		apiEndpointProvider,
 		func(config *rest.Config) (crdupgrade.AuthorizationReviewClient, error) {
 			created[config.Host]++
-			return &deniedSubjectAccessReviewClient{}, nil
+			return &deniedSubjectAccessReviewClient{id: created[config.Host]}, nil
 		},
 	)
 
@@ -198,6 +475,16 @@ func TestTeardownAuthorizationEndpointProviderRefreshesAndCachesByAddress(t *tes
 	}
 	if got, want := namedAuthorizationEndpointNames(first), []string{"10.0.0.12:6443"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("initial endpoints = %#v, want %#v", got, want)
+	}
+	unchanged, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("unchanged endpoint refresh error = %v", err)
+	}
+	if unchanged[0].Client != first[0].Client {
+		t.Fatal("unchanged inventory did not reuse the direct authorization client")
+	}
+	if unchanged[0].TopologyIdentity != first[0].TopologyIdentity {
+		t.Fatalf("unchanged topology identity = %q, want %q", unchanged[0].TopologyIdentity, first[0].TopologyIdentity)
 	}
 	lister.pages = oneEndpointSlicePage(validAPIEndpointSlice(
 		"kubernetes-expanded",
@@ -213,6 +500,15 @@ func TestTeardownAuthorizationEndpointProviderRefreshesAndCachesByAddress(t *tes
 	if got, want := namedAuthorizationEndpointNames(second), []string{"10.0.0.12:6443", "10.0.0.13:6443"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("expanded endpoints = %#v, want %#v", got, want)
 	}
+	if second[0].TopologyIdentity == first[0].TopologyIdentity {
+		t.Fatalf("expanded inventory retained topology identity %q", second[0].TopologyIdentity)
+	}
+	if second[0].Client == first[0].Client {
+		t.Fatal("changed inventory reused a direct authorization client")
+	}
+	if second[0].TopologyIdentity != second[1].TopologyIdentity {
+		t.Fatalf("expanded endpoints have mixed topology identities: %#v", second)
+	}
 	lister.pages = oneEndpointSlicePage(validAPIEndpointSlice(
 		"kubernetes-b",
 		discoveryv1.AddressTypeIPv4,
@@ -227,10 +523,10 @@ func TestTeardownAuthorizationEndpointProviderRefreshesAndCachesByAddress(t *tes
 		t.Fatalf("contracted endpoints = %#v, want %#v", got, want)
 	}
 	if !reflect.DeepEqual(created, map[string]int{
-		"https://10.0.0.12:6443": 1,
-		"https://10.0.0.13:6443": 1,
+		"https://10.0.0.12:6443": 2,
+		"https://10.0.0.13:6443": 2,
 	}) {
-		t.Fatalf("client creations = %#v, want one per canonical address", created)
+		t.Fatalf("client creations = %#v, want one per canonical address and inventory identity", created)
 	}
 }
 
@@ -413,6 +709,11 @@ func TestDiscoverKubernetesAPIServerAddressesRejectsIncompleteOrMalformedTopolog
 			pages: mutatedEndpointSlicePage(func(slice *discoveryv1.EndpointSlice) { slice.UID = "" }),
 			want:  "empty UID",
 		},
+		{
+			name:  "empty object resourceVersion",
+			pages: mutatedEndpointSlicePage(func(slice *discoveryv1.EndpointSlice) { slice.ResourceVersion = "" }),
+			want:  "empty or padded resourceVersion",
+		},
 	}
 
 	for _, test := range tests {
@@ -427,7 +728,7 @@ func TestDiscoverKubernetesAPIServerAddressesRejectsIncompleteOrMalformedTopolog
 
 func TestDiscoverKubernetesAPIServerAddressesAcceptsListHintsAndDeduplicatesTopology(t *testing.T) {
 	remainingEstimate := int64(17)
-	oversizedPage := make([]discoveryv1.EndpointSlice, teardownEndpointSlicePageSize+1)
+	oversizedPage := make([]discoveryv1.EndpointSlice, kubernetesAPIEndpointSlicePageSize+1)
 	for index := range oversizedPage {
 		oversizedPage[index] = validAPIEndpointSlice(
 			fmt.Sprintf("kubernetes-%03d", index),
@@ -477,8 +778,8 @@ func TestDiscoverKubernetesAPIServerAddressesAcceptsListHintsAndDeduplicatesTopo
 		t.Fatalf("EndpointSlice list calls = %d, want %d", len(lister.options), len(wantContinues))
 	}
 	for index, wantContinue := range wantContinues {
-		if lister.options[index].Continue != wantContinue || lister.options[index].Limit != teardownEndpointSlicePageSize {
-			t.Fatalf("EndpointSlice list call %d = %#v, want Continue %q and Limit %d", index, lister.options[index], wantContinue, teardownEndpointSlicePageSize)
+		if lister.options[index].Continue != wantContinue || lister.options[index].Limit != kubernetesAPIEndpointSlicePageSize {
+			t.Fatalf("EndpointSlice list call %d = %#v, want Continue %q and Limit %d", index, lister.options[index], wantContinue, kubernetesAPIEndpointSlicePageSize)
 		}
 	}
 }
@@ -530,7 +831,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		probeCounts[probe.Subject.Name] = len(probe.Checks)
 		probeChecks[probe.Subject.Name] = authorizationCheckNames(probe.Checks)
 	}
-	if want := map[string]int{"controller": 18, "certificate": 5, "hook-quiesce": 11}; !reflect.DeepEqual(probeCounts, want) {
+	if want := map[string]int{"controller": 19, "certificate": 6, "hook-quiesce": 15}; !reflect.DeepEqual(probeCounts, want) {
 		t.Fatalf("retired subject probe counts = %#v, want %#v", probeCounts, want)
 	}
 	for _, test := range []struct {
@@ -542,6 +843,13 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		{subject: "certificate", check: "update webhook Secret"},
 		{subject: "hook-quiesce", check: "update CRD ptahschemas.operator.ptah.dev"},
 		{subject: "hook-quiesce", check: "create guarded Deployment"},
+		{subject: "hook-quiesce", check: "patch stable controller ClusterRoleBinding"},
+		{subject: "hook-quiesce", check: "patch stable controller RoleBinding"},
+		{subject: "hook-quiesce", check: "patch runtime admission RoleBinding"},
+		{subject: "hook-quiesce", check: "create SubjectAccessReview"},
+		{subject: "controller", check: "update admission convergence marker ConfigMap"},
+		{subject: "certificate", check: "update admission convergence marker ConfigMap"},
+		{subject: "hook-quiesce", check: "update admission convergence marker ConfigMap"},
 	} {
 		if _, found := probeChecks[test.subject][test.check]; !found {
 			t.Errorf("retired subject %q is missing actual rendered grant check %q", test.subject, test.check)
@@ -583,7 +891,10 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		"create guarded Deployment",
 		"delete ClusterRoleBinding ptah-operator",
 		"delete ClusterRoleBinding ptah-operator-quiesce-v1-0123456789ab",
-		"mint hook ServiceAccount token",
+		"patch stable controller ClusterRoleBinding",
+		"patch stable controller RoleBinding",
+		"patch runtime admission RoleBinding",
+		"create SubjectAccessReview",
 		"update webhook Secret",
 		"create webhook Secret",
 		"update mutating admission singleton",
@@ -603,6 +914,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		"create leader-election Lease",
 		"update leader-election Lease",
 		"update certificate rotation Lease",
+		"update admission convergence marker ConfigMap",
 		"delete RoleBinding ptah-system/" + cleanupPrivilegeName,
 	}
 	byName := make(map[string]*authorizationv1.ResourceAttributes, len(checks))
@@ -625,8 +937,8 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 			t.Errorf("check %q includes intentional residual RBAC deletion for %q", check.Name, attributes.Name)
 		}
 	}
-	if len(checks) != 48 || len(byName) != 48 {
-		t.Fatalf("authorization checks = %d total/%d unique, want 48/48", len(checks), len(byName))
+	if len(checks) != 52 || len(byName) != 52 {
+		t.Fatalf("authorization checks = %d total/%d unique, want 52/52", len(checks), len(byName))
 	}
 	for _, name := range wantChecks {
 		if byName[name] == nil {
@@ -648,6 +960,94 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		if byName[name] == nil {
 			t.Errorf("missing distinct subresource/verb authorization check %q", name)
 		}
+	}
+}
+
+func TestTeardownAuthorizationProbesProtectCandidateAndPredecessorControllers(t *testing.T) {
+	rollout := validRBACRolloutGuard()
+	rollout.PreviousControllerServiceAccountName = "previous-controller"
+	rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
+	rollout.PreviousControllerReleaseSequence = 0
+	contract := validRBACAdmissionContract()
+
+	probes, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
+	if err != nil {
+		t.Fatalf("teardownAuthorizationProbes() error = %v", err)
+	}
+	byName := make(map[string]crdupgrade.AuthorizationProbe, len(probes))
+	for _, probe := range probes {
+		byName[probe.Subject.Name] = probe
+	}
+	previous, found := byName["previous-controller"]
+	if !found {
+		t.Fatalf("predecessor controller probe is missing: %#v", byName)
+	}
+	if previous.Subject.User != "system:serviceaccount:ptah-system:previous-controller" {
+		t.Fatalf("predecessor subject user = %q", previous.Subject.User)
+	}
+	if previous.Subject.UID != string(rollout.PreviousControllerServiceAccountUID) {
+		t.Fatalf("predecessor subject UID = %q, want %q", previous.Subject.UID, rollout.PreviousControllerServiceAccountUID)
+	}
+	candidate := byName["controller"]
+	if !reflect.DeepEqual(previous.Checks, candidate.Checks) {
+		t.Fatal("candidate and predecessor controller probes do not cover the same exact role-rule union")
+	}
+	if _, found := authorizationCheckNames(previous.Checks)["update PtahSchema legacy grant"]; !found {
+		t.Fatal("predecessor probe omits the sequence-zero PtahSchema update grant")
+	}
+	grants, err := crdupgrade.RevokedPrivilegeMutationGrants(rollout, contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTeardownAuthorizationProbeCompleteness(probes, selfChecks, grants); err != nil {
+		t.Fatalf("predecessor probe completeness error = %v", err)
+	}
+}
+
+func TestTeardownAuthorizationProbesCoverPreviousAdmissionMarkerDeletion(t *testing.T) {
+	t.Parallel()
+
+	rollout := validRBACRolloutGuard()
+	rollout.ReleaseSequence = 2
+	rollout.PreviousControllerReleaseSequence = 1
+	rollout.PreviousControllerServiceAccountName = "previous-controller"
+	rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
+	attempt := sha256.Sum256([]byte(strings.Join([]string{
+		rollout.ReleaseNamespace,
+		rollout.ReleaseName,
+		"2",
+		rollout.ManagerImage,
+	}, "\n")))
+	rollout.HookServiceAccountName = "ptah-operator-crd-v2-" + fmt.Sprintf("%x", attempt)[:12]
+	contract := validRBACAdmissionContract()
+
+	probes, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
+	if err != nil {
+		t.Fatalf("teardownAuthorizationProbes() error = %v", err)
+	}
+	bySubject := make(map[string]map[string]struct{}, len(probes))
+	for _, probe := range probes {
+		bySubject[probe.Subject.Name] = authorizationCheckNames(probe.Checks)
+	}
+	const checkName = "delete predecessor admission convergence marker ConfigMap"
+	if _, found := bySubject["hook-quiesce"][checkName]; !found {
+		t.Fatalf("hook authorization probe omits %q", checkName)
+	}
+	for _, subject := range []string{"controller", "previous-controller", "certificate"} {
+		if _, found := bySubject[subject][checkName]; found {
+			t.Fatalf("%s authorization probe includes hook-only %q", subject, checkName)
+		}
+	}
+	if _, found := authorizationCheckNames(selfChecks)[checkName]; found {
+		t.Fatalf("cleanup self-checks include hook-only %q", checkName)
+	}
+
+	grants, err := crdupgrade.RevokedPrivilegeMutationGrants(rollout, contract)
+	if err != nil {
+		t.Fatalf("RevokedPrivilegeMutationGrants() error = %v", err)
+	}
+	if err := validateTeardownAuthorizationProbeCompleteness(probes, selfChecks, grants); err != nil {
+		t.Fatalf("upgrade authorization probe completeness error = %v", err)
 	}
 }
 
@@ -673,8 +1073,8 @@ func TestTeardownAuthorizationChecksUseSeparateCoordinationNamespace(t *testing.
 			t.Errorf("check %q namespace = %q, want %q", name, attributes.Namespace, rollout.CoordinationNamespace)
 		}
 	}
-	if len(checks) != 49 {
-		t.Fatalf("split-namespace authorization check count = %d, want 49", len(checks))
+	if len(checks) != 53 {
+		t.Fatalf("split-namespace authorization check count = %d, want 53", len(checks))
 	}
 	_, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
 	if err != nil {
@@ -723,9 +1123,9 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					for _, probe := range probes {
 						counts[probe.Subject.Name] = len(probe.Checks)
 					}
-					wantCounts := map[string]int{"controller": 18, "hook-quiesce": 11}
+					wantCounts := map[string]int{"controller": 19, "hook-quiesce": 15}
 					if certificateEnabled {
-						wantCounts["certificate"] = 5
+						wantCounts["certificate"] = 6
 					}
 					if !reflect.DeepEqual(counts, wantCounts) {
 						t.Fatalf("retired subject probe counts = %#v, want %#v", counts, wantCounts)
@@ -748,7 +1148,7 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					if err != nil {
 						t.Fatalf("teardownAuthorizationChecks() error = %v", err)
 					}
-					wantUnion := 29 + wantSelfChecks
+					wantUnion := 33 + wantSelfChecks
 					if certificateEnabled {
 						wantUnion += 3
 					}
@@ -963,10 +1363,11 @@ func validAPIEndpointSlice(name string, addressType discoveryv1.AddressType, por
 	protocol := corev1.ProtocolTCP
 	return discoveryv1.EndpointSlice{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: kubernetesServiceNamespace,
-			Labels:    map[string]string{discoveryv1.LabelServiceName: kubernetesServiceName},
-			UID:       types.UID("uid-" + name),
+			Name:            name,
+			Namespace:       kubernetesServiceNamespace,
+			Labels:          map[string]string{discoveryv1.LabelServiceName: kubernetesServiceName},
+			UID:             types.UID("uid-" + name),
+			ResourceVersion: "rv-" + name,
 		},
 		AddressType: addressType,
 		Ports:       []discoveryv1.EndpointPort{{Name: &portName, Protocol: &protocol, Port: &port}},
@@ -1089,7 +1490,9 @@ func (l *scriptedEndpointSliceLister) List(_ context.Context, options metav1.Lis
 	return page.DeepCopy(), nil
 }
 
-type deniedSubjectAccessReviewClient struct{}
+type deniedSubjectAccessReviewClient struct {
+	id int
+}
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

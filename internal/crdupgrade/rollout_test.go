@@ -105,7 +105,8 @@ func TestRenderedRolloutGuardMatchesCompiledContract(t *testing.T) {
 		WebhookPort:                        9443,
 		CertificateHealthPort:              8081,
 		HookServiceAccountName:             hookServiceAccount,
-		ControllerServiceAccountName:       "ptah-e2e-ptah-operator",
+		ControllerServiceAccountName:       controllerDeployment.Spec.Template.Spec.ServiceAccountName,
+		ControllerServiceAccountManaged:    true,
 		ControllerDeploymentName:           "ptah-e2e-ptah-operator",
 		ControllerReplicas:                 *controllerDeployment.Spec.Replicas,
 		CertificateDeploymentName:          "ptah-e2e-ptah-operator-cert-rotator",
@@ -186,7 +187,7 @@ func TestHookIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 	reconcileJob := guard.hookJobName("reconcile")
 	quiesceJob := guard.hookJobName("teardown-quiesce")
 	teardownJob := guard.hookJobName("teardown")
-	policy := guard.hookIdentityPolicy()
+	policy := stripAdmissionConvergenceDependencyProbe(t, guard.hookIdentityPolicy())
 	wantMatch := fmt.Sprintf(
 		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
 		guard.ReleaseNamespace, guard.HookServiceAccountName, teardownServiceAccount, guard.HookServiceAccountName, teardownServiceAccount,
@@ -1103,8 +1104,10 @@ func rolloutHookUsername(g *RolloutGuard) string {
 func rolloutActivationCELObject(g *RolloutGuard, active, state, admission, release int64, image string) map[string]any {
 	return map[string]any{
 		"metadata": map[string]any{
-			"name":      ReleaseActivationName,
-			"namespace": g.ReleaseNamespace,
+			"name":            ReleaseActivationName,
+			"namespace":       g.ReleaseNamespace,
+			"uid":             "release-activation-uid",
+			"resourceVersion": "101",
 			"annotations": map[string]any{
 				"helm.sh/hook":                     "pre-install,pre-upgrade",
 				"helm.sh/hook-weight":              releaseActivationHookWeight,
@@ -1123,7 +1126,10 @@ func rolloutActivationCELObject(g *RolloutGuard, active, state, admission, relea
 				"app.kubernetes.io/component": rolloutGuardComponent,
 			},
 		},
-		"data": map[string]any{activeReleaseDataKey: strconv.FormatInt(active, 10)},
+		"data": map[string]any{
+			activeReleaseDataKey:         strconv.FormatInt(active, 10),
+			controllerCredentialsDataKey: string(ControllerCredentialsActive),
+		},
 	}
 }
 
@@ -1333,6 +1339,40 @@ func rolloutCELClone(t *testing.T, source any) any {
 	return clone
 }
 
+func TestRolloutGuardRejectsPreviousControllerIdentityCollisions(t *testing.T) {
+	t.Parallel()
+	guard, _, _, _ := readyRolloutGuard()
+	cleanup, err := TeardownServiceAccountName(guard.HookServiceAccountName, guard.ReleaseSequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quiesce, err := TeardownQuiesceJobName(guard.HookServiceAccountName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		previous string
+		want     string
+	}{
+		{name: "candidate", previous: guard.ControllerServiceAccountName, want: "candidate controller"},
+		{name: "hook", previous: guard.HookServiceAccountName, want: "CRD manager hook"},
+		{name: "cleanup", previous: cleanup, want: "teardown ServiceAccount"},
+		{name: "quiesce", previous: quiesce, want: "teardown quiesce identity"},
+		{name: "certificate", previous: guard.CertificateDeploymentName, want: "certificate ServiceAccount"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := *guard
+			candidate.PreviousControllerServiceAccountName = test.previous
+			err := candidate.validateIdentity()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validateIdentity() error = %v, want collision with %q", err, test.want)
+			}
+		})
+	}
+}
+
 func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingClient, *rolloutDeploymentClient) {
 	policies := &rolloutPolicyClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{}}
 	bindings := &rolloutBindingClient{objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding{}}
@@ -1360,7 +1400,7 @@ func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingCl
 		WebhookPort:                  9443,
 		CertificateHealthPort:        8081,
 		HookServiceAccountName:       hookServiceAccount,
-		ControllerServiceAccountName: "ptah-controller",
+		ControllerServiceAccountName: "ptah-controller-v1",
 		ControllerDeploymentName:     "ptah-controller",
 		ControllerReplicas:           2,
 		CertificateDeploymentName:    "ptah-cert-rotator",
@@ -1393,8 +1433,8 @@ func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingCl
 	activationName := ReleaseActivationGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	policies.objects[activationName] = readyPolicy(activation.policy())
 	bindings.objects[activationName] = activation.binding()
-	origin := NewServiceAccountOriginGuard(guard, nil)
-	originName := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	origin := NewServiceAccountOriginGuard(guard)
+	originName := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	originPolicy, err := origin.policy()
 	if err != nil {
 		panic(err)
@@ -1406,7 +1446,7 @@ func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingCl
 	policies.objects[namespaceGuardName] = readyPolicy(namespaceGuard.policy())
 	bindings.objects[namespaceGuardName] = namespaceGuard.binding()
 	controllerWriteGuard := NewControllerWriteGuard(guard)
-	controllerWriteGuardName := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	controllerWriteGuardName := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	policies.objects[controllerWriteGuardName] = readyPolicy(controllerWriteGuard.policy())
 	bindings.objects[controllerWriteGuardName] = controllerWriteGuard.binding()
 	certificateWriteGuard := NewCertificateWriteGuard(guard)
@@ -1481,6 +1521,10 @@ func readyPolicy(policy *admissionregistrationv1.ValidatingAdmissionPolicy) *adm
 }
 
 func legacyDeployment(guard *RolloutGuard, name, component string) *appsv1.Deployment {
+	serviceAccountName := guard.ControllerServiceAccountName
+	if component == "certificate-rotation" {
+		serviceAccountName = guard.CertificateDeploymentName
+	}
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -1498,7 +1542,10 @@ func legacyDeployment(guard *RolloutGuard, name, component string) *appsv1.Deplo
 		Spec: appsv1.DeploymentSpec{
 			Replicas: int32Ptr(1),
 			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": name}},
-			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": name}},
+				Spec:       corev1.PodSpec{ServiceAccountName: serviceAccountName},
+			},
 		},
 		Status: appsv1.DeploymentStatus{Replicas: 1, ReadyReplicas: 1, AvailableReplicas: 1, UpdatedReplicas: 1},
 	}

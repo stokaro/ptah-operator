@@ -156,7 +156,8 @@ LOG_FILE=$WORK_DIR/private.log
 AUDITED_FAULT_JOBS_FILE=$WORK_DIR/audited-job-uids.txt
 AUDITED_FAULT_PODS_FILE=$WORK_DIR/audited-pod-uids.txt
 # Targeted proofs enter the broad ledgers above. Only these full ledgers can
-# authorize a TTL/GC skip; a proven never-started Pod has no logs to collect.
+# authorize a TTL/GC skip. The running-deadline proof promotes its Pod only
+# after continuous logs and the exact watch-confirmed deletion are audited.
 FULLY_AUDITED_FAULT_PODS_FILE=$WORK_DIR/fully-audited-pod-uids.txt
 FAULT_CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
 FAULT_MANAGER_POD_NAMES_FILE=$WORK_DIR/manager-pod-names.txt
@@ -2861,103 +2862,123 @@ wait_for_apply_pod() {
 	fail "timed out waiting for the running Apply Pod for $active_schema"
 }
 
-wait_for_blocked_apply_pod() {
-	blocked_apply_schema=$1
-	blocked_apply_deadline_seconds=$2
-	[ "$READ_WORKLOAD_BARRIER_ACTIVE" -eq 1 ] ||
-		fail "$blocked_apply_schema timeout Apply started without the scheduling barrier"
-	wait_for_schema "$blocked_apply_schema" '
-      .status.phase == "Applying" and
-      .status.activeOperation.type == "Apply" and
-      .status.activeOperation.dispatchStarted == true and
-      .status.activeOperation.jobUID != null and .status.activeOperation.jobUID != ""
-    ' "one dispatched Apply Job held behind the timeout scheduling barrier"
-	ACTIVE_OPERATION_ID=$(k -n "$TEST_NAMESPACE" get ptahschema "$blocked_apply_schema" \
-		-o jsonpath='{.status.activeOperation.id}')
-	ACTIVE_JOB_NAME=$(k -n "$TEST_NAMESPACE" get ptahschema "$blocked_apply_schema" \
-		-o jsonpath='{.status.activeOperation.jobName}')
-	ACTIVE_JOB_UID=$(k -n "$TEST_NAMESPACE" get ptahschema "$blocked_apply_schema" \
-		-o jsonpath='{.status.activeOperation.jobUID}')
-	k -n "$TEST_NAMESPACE" get job "$ACTIVE_JOB_NAME" -o json | jq -e \
-		--arg uid "$ACTIVE_JOB_UID" \
-		--arg schema "$blocked_apply_schema" \
-		--arg operationID "$ACTIVE_OPERATION_ID" \
-		--argjson deadline "$blocked_apply_deadline_seconds" '
-      .metadata.uid == $uid and
+record_running_deadline_pod_evidence() {
+	deadline_schema=$1
+	deadline_seconds=$2
+	deadline_operation_id=$3
+	deadline_job_name=$4
+	deadline_job_uid=$5
+	deadline_pod_name=$6
+	deadline_pod_uid=$7
+	deadline_job_object=$(k -n "$TEST_NAMESPACE" get job "$deadline_job_name" -o json)
+	deadline_pod_object=$(k -n "$TEST_NAMESPACE" get pod "$deadline_pod_name" -o json)
+	printf '%s\n' "$deadline_job_object" | jq -e \
+		--arg uid "$deadline_job_uid" \
+		--arg schema "$deadline_schema" \
+		--arg operationID "$deadline_operation_id" \
+		--argjson deadline "$deadline_seconds" '
+      .metadata.uid == $uid and .metadata.deletionTimestamp == null and
       .metadata.labels["operator.ptah.dev/schema"] == $schema and
       .metadata.labels["operator.ptah.dev/operation"] == "apply" and
       .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
       .spec.activeDeadlineSeconds == $deadline and
       .spec.template.spec.activeDeadlineSeconds == $deadline and
       .spec.parallelism == 1 and .spec.completions == 1 and
-      .spec.backoffLimit == 0 and .spec.podReplacementPolicy == "Failed"
+      .spec.backoffLimit == 0 and .spec.podReplacementPolicy == "Failed" and
+      .status.startTime != null
     ' >/dev/null ||
-		fail "$blocked_apply_schema timeout Apply Job lost its exact deadline or one-shot contract"
-
-	blocked_apply_deadline=$(deadline_from_now)
-	while [ "$(date +%s)" -lt "$blocked_apply_deadline" ]; do
-		maybe_audit_fault_runtime
-		blocked_apply_pods=$(k -n "$TEST_NAMESPACE" get pods \
-			-l "batch.kubernetes.io/controller-uid=${ACTIVE_JOB_UID}" -o json)
-		blocked_apply_count=$(printf '%s\n' "$blocked_apply_pods" | jq '.items | length')
-		[ "$blocked_apply_count" -le 1 ] ||
-			fail "$blocked_apply_schema created overlapping timeout Apply Pods"
-		if [ "$blocked_apply_count" -eq 1 ] && printf '%s\n' "$blocked_apply_pods" | jq -e \
-			--arg jobName "$ACTIVE_JOB_NAME" \
-			--arg jobUID "$ACTIVE_JOB_UID" \
-			--arg operationID "$ACTIVE_OPERATION_ID" \
-			--arg barrierKey "$READ_WORKLOAD_BARRIER_KEY" '
-          .items[0] as $pod |
-          $pod.metadata.deletionTimestamp == null and
-          $pod.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
-          ($pod.metadata.ownerReferences // [] | length == 1 and
-            .[0].apiVersion == "batch/v1" and .[0].kind == "Job" and
-            .[0].name == $jobName and .[0].uid == $jobUID and .[0].controller == true) and
-          ($pod.spec.nodeName // "") == "" and $pod.status.phase == "Pending" and
-          ([ $pod.status.initContainerStatuses // [],
-             $pod.status.containerStatuses // [],
-             $pod.status.ephemeralContainerStatuses // [] ] | add |
-            all(.[]; .state.running == null and .state.terminated == null and
-              (.restartCount // 0) == 0)) and
-          all(($pod.spec.tolerations // [])[]; .key != $barrierKey)
-        ' >/dev/null; then
-			ACTIVE_POD_NAME=$(printf '%s\n' "$blocked_apply_pods" | jq -er '.items[0].metadata.name')
-			ACTIVE_POD_UID=$(printf '%s\n' "$blocked_apply_pods" | jq -er '.items[0].metadata.uid')
-			assert_read_workload_blocked "$ACTIVE_JOB_UID" \
-				"the exact timeout Apply Job for $blocked_apply_schema"
-			return 0
-		fi
-		sleep 1
-	done
-	fail "timed out waiting for the blocked Apply Pod for $blocked_apply_schema"
-}
-
-record_deadline_pending_pod_evidence() {
-	deadline_pod_name=$1
-	deadline_pod_uid=$2
-	deadline_job_name=$3
-	deadline_job_uid=$4
-	deadline_pod_object=$(k -n "$TEST_NAMESPACE" get pod "$deadline_pod_name" -o json)
+		fail "$deadline_schema running-deadline Apply Job lost its exact one-shot contract"
 	printf '%s\n' "$deadline_pod_object" | jq -e \
 		--arg podUID "$deadline_pod_uid" \
 		--arg jobName "$deadline_job_name" \
-		--arg jobUID "$deadline_job_uid" '
+		--arg jobUID "$deadline_job_uid" \
+		--arg operationID "$deadline_operation_id" \
+		--argjson deadline "$deadline_seconds" '
       .metadata.uid == $podUID and .metadata.deletionTimestamp == null and
+      .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
       (.metadata.ownerReferences // [] | length == 1 and
         .[0].apiVersion == "batch/v1" and .[0].kind == "Job" and
         .[0].name == $jobName and .[0].uid == $jobUID and .[0].controller == true) and
-      (.spec.nodeName // "") == "" and
+      .spec.activeDeadlineSeconds == $deadline and
+      (.spec.nodeName | type == "string" and length > 0) and
+      .status.phase == "Running" and .status.startTime != null and
+      ([.status.containerStatuses[]? |
+        select(.name == "ptah" and .state.running != null and
+          (.state.running.startedAt | type == "string" and length > 0))] | length) == 1 and
       ([.status.initContainerStatuses // [], .status.containerStatuses // [],
         .status.ephemeralContainerStatuses // []] | add |
-        all(.[]; .state.running == null and .state.terminated == null and
-          (.restartCount // 0) == 0))
+        all(.[]; (.restartCount // 0) == 0))
     ' >/dev/null ||
-		fail "timeout Apply Pod $deadline_pod_name lacks exact never-started pre-deadline evidence"
-	printf '%s\n' "$deadline_pod_object" >"$RESOURCE_FILE"
-	scan_fault_file "$RESOURCE_FILE" "the exact never-started pre-deadline Apply Pod"
-	record_audited_uid "$AUDITED_FAULT_PODS_FILE" "$deadline_pod_uid"
-	record_audited_uid "$FULLY_AUDITED_FAULT_PODS_FILE" "$deadline_pod_uid"
+		fail "timeout Apply Pod $deadline_pod_name lacks exact running pre-deadline evidence"
+	DEADLINE_PTAH_STARTED_AT=$(printf '%s\n' "$deadline_pod_object" | jq -er '
+      .status.containerStatuses[] |
+      select(.name == "ptah" and .state.running != null) |
+      .state.running.startedAt
+    ')
+	printf '%s\n%s\n' "$deadline_job_object" "$deadline_pod_object" >"$RESOURCE_FILE"
+	scan_fault_file "$RESOURCE_FILE" "the exact running pre-deadline Apply Job and Pod"
 	: >"$RESOURCE_FILE"
+}
+
+audit_running_deadline_pod_watch() {
+	deadline_watch_pod_name=$1
+	deadline_watch_pod_uid=$2
+	deadline_watch_job_name=$3
+	deadline_watch_job_uid=$4
+	deadline_watch_operation_id=$5
+	deadline_watch_started_at=$6
+	deadline_watch_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$deadline_watch_deadline" ]; do
+		snapshot_watch pods
+		if jq -s -e \
+			--arg podName "$deadline_watch_pod_name" \
+			--arg podUID "$deadline_watch_pod_uid" \
+			--arg jobName "$deadline_watch_job_name" \
+			--arg jobUID "$deadline_watch_job_uid" \
+			--arg operationID "$deadline_watch_operation_id" \
+			--arg startedAt "$deadline_watch_started_at" '
+          [to_entries[] | select(.value.object.metadata.uid == $podUID)] as $events |
+          ($events | map(select(
+            .value.object.status.phase == "Running" and
+            (.value.object.spec.nodeName | type == "string" and length > 0) and
+            (.value.object.status.containerStatuses // [] | any(
+              .name == "ptah" and .state.running.startedAt == $startedAt)))) | .[0]) as $running |
+          ($events | map(select(
+            .value.type == "DELETED" and .value.object.metadata.name == $podName)) | .[-1]) as $deleted |
+          $running != null and $deleted != null and $running.key < $deleted.key and
+          ([.[] | select(
+            .type == "ADDED" and
+            .object.metadata.labels["operator.ptah.dev/operation"] == "apply" and
+            .object.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+            (.object.metadata.ownerReferences // [] | any(
+              .apiVersion == "batch/v1" and .kind == "Job" and
+              .name == $jobName and .uid == $jobUID and .controller == true))) |
+            .object.metadata.uid] | unique) == [$podUID] and
+          all($events[];
+            .value.object.metadata.name == $podName and
+            .value.object.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+            (.value.object.metadata.ownerReferences // [] | length == 1 and
+              .[0].apiVersion == "batch/v1" and .[0].kind == "Job" and
+              .[0].name == $jobName and .[0].uid == $jobUID and .[0].controller == true) and
+            ([.value.object.status.initContainerStatuses // [],
+              .value.object.status.containerStatuses // [],
+              .value.object.status.ephemeralContainerStatuses // []] | add |
+              all(.[]; (.restartCount // 0) == 0)))
+        ' "$WATCH_SNAPSHOT_FILE" >/dev/null; then
+			jq -s -c --arg uid "$deadline_watch_pod_uid" '
+              [.[] | select(.type == "DELETED" and .object.metadata.uid == $uid)][-1].object
+            ' "$WATCH_SNAPSHOT_FILE" >"$RESOURCE_FILE"
+			scan_fault_file "$RESOURCE_FILE" \
+				"the exact watch-deleted running-deadline Apply Pod"
+			record_audited_uid "$AUDITED_FAULT_PODS_FILE" "$deadline_watch_pod_uid"
+			record_audited_uid "$FULLY_AUDITED_FAULT_PODS_FILE" "$deadline_watch_pod_uid"
+			: >"$RESOURCE_FILE"
+			return 0
+		fi
+		assert_watches_alive
+		sleep 1
+	done
+	fail "running-deadline Apply Pod $deadline_watch_pod_name lacks exact Running-to-DELETED watch evidence"
 }
 
 wait_for_exact_pod_absence_after_evidence() {
@@ -2980,10 +3001,14 @@ wait_for_deadline_job_terminal_and_audit() {
 	deadline_terminal_uid=$2
 	deadline_terminal_seconds=$3
 	deadline_terminal_pod_uid=$4
+	deadline_terminal_pod_name=$5
+	deadline_terminal_operation_id=$6
+	deadline_terminal_started_at=$7
 	[ -n "$deadline_terminal_pod_uid" ] ||
 		fail "timeout Apply Job $deadline_terminal_name has no exact fully audited Pod UID"
 	deadline_terminal_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$deadline_terminal_deadline" ]; do
+		maybe_audit_fault_runtime
 		deadline_terminal_object=$(k -n "$TEST_NAMESPACE" get job "$deadline_terminal_name" -o json 2>/dev/null || true)
 		if [ -n "$deadline_terminal_object" ]; then
 			printf '%s\n' "$deadline_terminal_object" | jq -e \
@@ -3002,6 +3027,13 @@ wait_for_deadline_job_terminal_and_audit() {
               (($condition.lastTransitionTime | fromdateiso8601) -
                 (.status.startTime | fromdateiso8601)) >= ($deadline - 1)
             ' >/dev/null; then
+				finish_follow_logs "the running Apply Pod logs through its Kubernetes deadline"
+				wait_for_exact_pod_absence_after_evidence "$deadline_terminal_pod_name" \
+					"$deadline_terminal_pod_uid"
+				audit_running_deadline_pod_watch "$deadline_terminal_pod_name" \
+					"$deadline_terminal_pod_uid" "$deadline_terminal_name" \
+					"$deadline_terminal_uid" "$deadline_terminal_operation_id" \
+					"$deadline_terminal_started_at"
 				printf '%s\n' "$deadline_terminal_object" >"$RESOURCE_FILE"
 				scan_fault_file "$RESOURCE_FILE" "the exact DeadlineExceeded Apply Job"
 				grep -Fx "$deadline_terminal_pod_uid" "$FULLY_AUDITED_FAULT_PODS_FILE" >/dev/null ||
@@ -4112,34 +4144,39 @@ checkpoint_operation_watch "$MYSQL_TIMEOUT_SCHEMA" plan 1 "$MYSQL_TIMEOUT_PLAN_C
 assert_database_column mysql "$MYSQL_TIMEOUT_DB" fault_token 0
 
 printf '%s\n' 'e2e faults: forcing one real Kubernetes Apply Job deadline'
-start_read_workload_barrier
+start_mysql_barrier "$MYSQL_TIMEOUT_DB" e2e_fault_my_timeout_barrier
 create_approval "$MYSQL_TIMEOUT_SCHEMA" "$MYSQL_TIMEOUT_APPROVAL"
-wait_for_blocked_apply_pod "$MYSQL_TIMEOUT_SCHEMA" \
-	"$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS"
+wait_for_apply_pod "$MYSQL_TIMEOUT_SCHEMA"
 MYSQL_TIMEOUT_OPERATION_ID=$ACTIVE_OPERATION_ID
 MYSQL_TIMEOUT_JOB_NAME=$ACTIVE_JOB_NAME
 MYSQL_TIMEOUT_JOB_UID=$ACTIVE_JOB_UID
 MYSQL_TIMEOUT_POD_NAME=$ACTIVE_POD_NAME
 MYSQL_TIMEOUT_POD_UID=$ACTIVE_POD_UID
-record_deadline_pending_pod_evidence "$MYSQL_TIMEOUT_POD_NAME" \
-	"$MYSQL_TIMEOUT_POD_UID" "$MYSQL_TIMEOUT_JOB_NAME" "$MYSQL_TIMEOUT_JOB_UID"
+start_read_workload_barrier
+record_running_deadline_pod_evidence "$MYSQL_TIMEOUT_SCHEMA" \
+	"$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS" "$MYSQL_TIMEOUT_OPERATION_ID" \
+	"$MYSQL_TIMEOUT_JOB_NAME" "$MYSQL_TIMEOUT_JOB_UID" \
+	"$MYSQL_TIMEOUT_POD_NAME" "$MYSQL_TIMEOUT_POD_UID"
+start_follow_logs "$TEST_NAMESPACE" "$MYSQL_TIMEOUT_POD_NAME" \
+	mysql-running-deadline "$MYSQL_TIMEOUT_POD_UID"
+assert_mysql_apply_lock_wait "$MYSQL_TIMEOUT_DB"
 wait_for_lease_reacquisition "$MYSQL_TIMEOUT_IDLE_LEASE_NAME" \
 	"$MYSQL_TIMEOUT_IDLE_LEASE_UID" "$MYSQL_TIMEOUT_IDLE_LEASE_EPOCH" \
-	"the Kubernetes-timeout Apply"
+	"the running Kubernetes-timeout Apply"
 MYSQL_TIMEOUT_LEASE_NAME=$LEASE_NAME
 MYSQL_TIMEOUT_LEASE_UID=$LEASE_UID
 MYSQL_TIMEOUT_LEASE_HOLDER=$LEASE_HOLDER
 MYSQL_TIMEOUT_LEASE_EPOCH=$LEASE_EPOCH
 wait_for_deadline_job_terminal_and_audit "$MYSQL_TIMEOUT_JOB_NAME" \
 	"$MYSQL_TIMEOUT_JOB_UID" "$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS" \
-	"$MYSQL_TIMEOUT_POD_UID"
-wait_for_exact_pod_absence_after_evidence "$MYSQL_TIMEOUT_POD_NAME" \
-	"$MYSQL_TIMEOUT_POD_UID"
+	"$MYSQL_TIMEOUT_POD_UID" "$MYSQL_TIMEOUT_POD_NAME" \
+	"$MYSQL_TIMEOUT_OPERATION_ID" "$DEADLINE_PTAH_STARTED_AT"
+stop_mysql_barrier
 capture_uncertain_read_proof_pair "$MYSQL_TIMEOUT_SCHEMA" \
 	"$MYSQL_TIMEOUT_OPERATION_ID" "$MYSQL_TIMEOUT_JOB_NAME" "$MYSQL_TIMEOUT_JOB_UID" \
 	"$MYSQL_TIMEOUT_POD_UID" "$MYSQL_TIMEOUT_LEASE_NAME" "$MYSQL_TIMEOUT_LEASE_UID" \
 	"$MYSQL_TIMEOUT_LEASE_HOLDER" "$MYSQL_TIMEOUT_LEASE_EPOCH" \
-	"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" 0
+	"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" 1
 MYSQL_TIMEOUT_RECOVERY_OBSERVE_UID=$UNCERTAIN_OBSERVE_JOB_UID
 MYSQL_TIMEOUT_RECOVERY_PLAN_UID=$UNCERTAIN_PLAN_JOB_UID
 wait_for_schema "$MYSQL_TIMEOUT_SCHEMA" '
@@ -5162,21 +5199,39 @@ jq -s -e \
 snapshot_watch pods
 jq -s -e \
 	--arg schema "$MYSQL_TIMEOUT_SCHEMA" \
-	--arg uid "$MYSQL_TIMEOUT_POD_UID" '
+	--arg uid "$MYSQL_TIMEOUT_POD_UID" \
+	--arg name "$MYSQL_TIMEOUT_POD_NAME" \
+	--arg jobName "$MYSQL_TIMEOUT_JOB_NAME" \
+	--arg jobUID "$MYSQL_TIMEOUT_JOB_UID" \
+	--arg operationID "$MYSQL_TIMEOUT_OPERATION_ID" \
+	--arg startedAt "$DEADLINE_PTAH_STARTED_AT" '
     ([.[] |
        select(.type == "ADDED") |
        select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
        select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
-       .object.metadata.uid] | unique) == [$uid] and
-    all(.[] | select(.object.metadata.uid == $uid);
-      (.object.spec.nodeName // "") == "" and
-      ([.object.status.initContainerStatuses // [],
-        .object.status.containerStatuses // [],
-        .object.status.ephemeralContainerStatuses // []] | add |
-        all(.[]; .state.running == null and .state.terminated == null and
-          (.restartCount // 0) == 0)))
+       .object.metadata.uid] | unique) as $addedUIDs |
+    [to_entries[] | select(.value.object.metadata.uid == $uid)] as $events |
+    ($events | map(select(
+      .value.object.status.phase == "Running" and
+      (.value.object.spec.nodeName | type == "string" and length > 0) and
+      (.value.object.status.containerStatuses // [] | any(
+        .name == "ptah" and .state.running.startedAt == $startedAt)))) | .[0]) as $running |
+    ($events | map(select(
+      .value.type == "DELETED" and .value.object.metadata.name == $name)) | .[-1]) as $deleted |
+    $addedUIDs == [$uid] and $running != null and $deleted != null and
+    $running.key < $deleted.key and
+    all($events[];
+      .value.object.metadata.name == $name and
+      .value.object.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      (.value.object.metadata.ownerReferences // [] | length == 1 and
+        .[0].apiVersion == "batch/v1" and .[0].kind == "Job" and
+        .[0].name == $jobName and .[0].uid == $jobUID and .[0].controller == true) and
+      ([.value.object.status.initContainerStatuses // [],
+        .value.object.status.containerStatuses // [],
+        .value.object.status.ephemeralContainerStatuses // []] | add |
+        all(.[]; (.restartCount // 0) == 0)))
   ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
-	fail "Kubernetes-timeout Apply history lost its exact never-started original Pod UID"
+	fail "Kubernetes-timeout Apply history lost its exact running-to-deleted original Pod UID"
 MANUAL_FINGERPRINT_FINAL=$(postgres_schema_fingerprint "$PG_MANUAL_DB" | tr -d '[:space:]')
 [ "$MANUAL_FINGERPRINT_FINAL" = "$MANUAL_FINGERPRINT_BEFORE" ] ||
 	fail "manual drift or its delayed read-only proof changed the database schema"
@@ -5249,7 +5304,7 @@ assert_uncertain_apply_proof_history "$MYSQL_TIMEOUT_SCHEMA" \
 	"$MYSQL_TIMEOUT_OPERATION_ID" "$MYSQL_TIMEOUT_JOB_UID" "$MYSQL_TIMEOUT_LEASE_UID" \
 	"$MYSQL_TIMEOUT_LEASE_HOLDER" "$MYSQL_TIMEOUT_LEASE_EPOCH" \
 	"$MYSQL_TIMEOUT_RECOVERY_OBSERVE_UID" "$MYSQL_TIMEOUT_RECOVERY_PLAN_UID" \
-	"$MYSQL_TIMEOUT_FRESH_PLAN_UID" "$MYSQL_TIMEOUT_POD_UID" same-plan "" 0
+	"$MYSQL_TIMEOUT_FRESH_PLAN_UID" "$MYSQL_TIMEOUT_POD_UID" same-plan "" 1
 assert_post_apply_proof_history "$PG_RESTART_SCHEMA" "$PG_OPERATION_ID" "$PG_JOB_UID" \
 	"$PG_LEASE_UID" "$PG_LEASE_HOLDER" "$PG_LEASE_EPOCH" \
 	"$PG_RESTART_PROOF_OBSERVE_JOB_UID" "$PG_RESTART_PROOF_PLAN_JOB_UID"
