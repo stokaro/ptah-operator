@@ -26,7 +26,7 @@ if [ "${1:-}" != --source-snapshot ]; then
 	SOURCE_SNAPSHOT_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-source.XXXXXX")
 	SOURCE_SNAPSHOT_ARCHIVE=$SOURCE_SNAPSHOT_WORK_DIR/source.tar
 	SOURCE_SNAPSHOT_ROOT=$SOURCE_SNAPSHOT_WORK_DIR/source
-	# shellcheck disable=SC2329 # Invoked by the EXIT trap installed below.
+	# shellcheck disable=SC2317,SC2329 # Invoked by the EXIT trap installed below.
 	snapshot_cleanup() {
 		status=$?
 		trap - EXIT HUP INT TERM
@@ -113,7 +113,7 @@ verify_snapshot_source() (
 	# A separate extraction also validates direct private re-entry: ignored files,
 	# changed executable modes, and symlinks must not change the tested inputs.
 	verification_dir=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-source-verification.XXXXXX")
-	# shellcheck disable=SC2329 # Invoked by the EXIT trap installed below.
+	# shellcheck disable=SC2317,SC2329 # Invoked by the EXIT trap installed below.
 	snapshot_verification_cleanup() {
 		status=$?
 		trap - EXIT HUP INT TERM
