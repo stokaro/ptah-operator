@@ -1323,3 +1323,66 @@ func assertRuntimeQuotaListCalls(t *testing.T, resourceName string, calls []meta
 		}
 	}
 }
+
+// A kubelet in the supported window reports pod-level status.resources and
+// status.allocatedResources for an ordinary Pod that was never resized.
+// Measured on Kubernetes 1.37.0: a Running cert-rotator Pod carries
+// status.resources{requests:{cpu:5m,memory:16Mi},limits:{memory:32Mi}} and
+// status.allocatedResources{cpu:5m,memory:16Mi}, mirroring its container spec.
+//
+// The preflight refused those fields on presence, so every protected Pod was
+// refused, the pre-upgrade hook failed on every supported minor, and no release
+// could be upgraded at all.
+func TestRuntimeResourceQuotaPreflightAcceptsUnresizedPodLevelStatusResources(t *testing.T) {
+	t.Parallel()
+
+	preflight, quotas, pods := runtimeQuotaFixture()
+	preflight.Contract.CertificateRuntimeEnabled = false
+	preflight.ControllerReplicas = 1
+	pod := runtimeQuotaProtectedPod(preflight, true, 0)
+	requests := pod.Spec.Containers[0].Resources.Requests.DeepCopy()
+	limits := pod.Spec.Containers[0].Resources.Limits.DeepCopy()
+	pod.Status.Resources = &corev1.ResourceRequirements{Requests: requests, Limits: limits}
+	pod.Status.AllocatedResources = requests.DeepCopy()
+	pods.list.Items = []corev1.Pod{pod}
+	quotas.list.Items = []corev1.ResourceQuota{runtimeQuotaObject(
+		"actuated",
+		runtimeQuotaResources(map[corev1.ResourceName]string{corev1.ResourceRequestsCPU: "10"}),
+		runtimeQuotaResources(map[corev1.ResourceName]string{corev1.ResourceRequestsCPU: "100m"}),
+	)}
+
+	if err := preflight.Check(context.Background()); err != nil {
+		t.Fatalf("Check() error = %v, want an unresized Pod to be accepted", err)
+	}
+}
+
+// The control for the change above: dropping the presence refusal must not
+// drop the guarantee it was standing in for. A container whose reported
+// allocation differs from its spec is still refused, so a real resize is still
+// caught -- by the container-level rule that was always the one doing the work.
+func TestRuntimeResourceQuotaPreflightStillRejectsResizedPodCarryingPodLevelStatus(t *testing.T) {
+	t.Parallel()
+
+	preflight, quotas, pods := runtimeQuotaFixture()
+	preflight.Contract.CertificateRuntimeEnabled = false
+	preflight.ControllerReplicas = 1
+	pod := runtimeQuotaProtectedPod(preflight, true, 0)
+	requests := pod.Spec.Containers[0].Resources.Requests.DeepCopy()
+	pod.Status.Resources = &corev1.ResourceRequirements{Requests: requests.DeepCopy()}
+	pod.Status.AllocatedResources = requests.DeepCopy()
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name:               "runtime",
+		AllocatedResources: runtimeQuotaResources(map[corev1.ResourceName]string{corev1.ResourceCPU: "400m"}),
+	}}
+	pods.list.Items = []corev1.Pod{pod}
+	quotas.list.Items = []corev1.ResourceQuota{runtimeQuotaObject(
+		"actuated",
+		runtimeQuotaResources(map[corev1.ResourceName]string{corev1.ResourceRequestsCPU: "10"}),
+		runtimeQuotaResources(map[corev1.ResourceName]string{corev1.ResourceRequestsCPU: "100m"}),
+	)}
+
+	err := preflight.Check(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "cannot be projected consistently across the supported Kubernetes window") {
+		t.Fatalf("Check() error = %v, want the resized container to still be rejected", err)
+	}
+}

@@ -1069,9 +1069,24 @@ func runtimeQuotaAggregateResources(pod *corev1.Pod, requests bool) (corev1.Reso
 	if pod.Spec.Resources != nil && (len(pod.Spec.Resources.Requests) != 0 || len(pod.Spec.Resources.Limits) != 0) {
 		return nil, errors.New("pod-level resources are outside the fixed runtime quota contract")
 	}
-	if pod.Status.Resources != nil || len(pod.Status.AllocatedResources) != 0 {
-		return nil, errors.New("pod-level resize status is outside the fixed runtime quota contract")
-	}
+	// Pod-level status.resources and status.allocatedResources are NOT refused
+	// on presence. A kubelet on every Kubernetes release in the supported
+	// window reports them for an ordinary Pod that was never resized -- measured
+	// on 1.37.0, a Running cert-rotator Pod carries
+	// status.resources{requests:{cpu:5m,memory:16Mi},limits:{memory:32Mi}} and
+	// status.allocatedResources{cpu:5m,memory:16Mi}, mirroring its container
+	// spec. Refusing their presence therefore refused every protected Pod, so
+	// the preflight hook failed on every supported minor and the release could
+	// never be upgraded.
+	//
+	// What the contract actually needs is that no resize is in effect, and
+	// runtimeQuotaValidateContainerStatuses above already establishes exactly
+	// that: it refuses a Pod carrying PodResizePending or PodResizeInProgress,
+	// and it refuses any container whose status resources or allocatedResources
+	// differ from its spec. These pod-level fields are the kubelet's aggregate
+	// of values that check has already compared one by one, so a mismatch here
+	// cannot survive it. Compare rather than refuse, exactly as the
+	// container-level rule does.
 	if err := runtimeQuotaValidateResourceList("Pod overhead", pod.Spec.Overhead); err != nil {
 		return nil, err
 	}
