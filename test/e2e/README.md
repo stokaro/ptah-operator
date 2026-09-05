@@ -63,6 +63,19 @@ context on an ephemeral runner. It sets `E2E_DIRECT_HOST_ACCESS=1` because the
 Docker daemon and clients share that one disposable host; the harness rejects
 this tunnel-free mode outside `CI=true`.
 
+Failure diagnostics print the cluster inventory and the Helm release status, and
+withhold pod logs. The manager and the execution Jobs hold the database and
+registry credentials this operator exists to keep away from the controller, and
+diagnostics run at the moment a credential boundary failed; a pull-request run
+log is public.
+
+`E2E_DEBUG_LOGS=1` prints them, and is refused under `CI=true` for that reason --
+the mirror image of `E2E_DIRECT_HOST_ACCESS`, which is refused anywhere else. It
+also has to start collecting before anything fails: a hook Job carries
+`helm.sh/hook-delete-policy: hook-failed`, so Helm removes a failed hook and its
+pod before any end-of-run diagnostic could read it, and following each pod from
+the moment the cluster exists is what holds that output.
+
 Set `E2E_RUN_ID` to a CI run identifier for deterministic, collision-resistant
 resource names. Local runs include the Git revision and process ID by default.
 Set `K8S_VERSION` once per matrix job: the complete suite runs against that one

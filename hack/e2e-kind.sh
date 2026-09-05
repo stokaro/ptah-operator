@@ -24,6 +24,8 @@ E2E_REGISTRY_PORT=${E2E_REGISTRY_PORT:-}
 E2E_SSH_TARGET=${E2E_SSH_TARGET:-}
 E2E_SSH_PORT=${E2E_SSH_PORT:-}
 E2E_DIRECT_HOST_ACCESS=${E2E_DIRECT_HOST_ACCESS:-0}
+E2E_DEBUG_LOGS=${E2E_DEBUG_LOGS:-0}
+DEBUG_LOG_FOLLOWER_PID=
 E2E_RELEASE_CHART_OUTPUT=${E2E_RELEASE_CHART_OUTPUT:-}
 
 # An imported variable retains its export attribute after reassignment in POSIX
@@ -194,6 +196,18 @@ esac
 if [ "$E2E_DIRECT_HOST_ACCESS" -eq 1 ] && [ "${CI:-}" != true ]; then
 	fail "E2E_DIRECT_HOST_ACCESS is reserved for an ephemeral CI host"
 fi
+# The mirror image of the rule above. Manager and execution-Job logs carry
+# the database and registry credentials this operator exists to keep away
+# from the controller, and diagnostics run at the moment a credential
+# boundary failed. A pull-request run log is public, so the one place the
+# raw logs must never be printed is the one place they are always kept.
+case "$E2E_DEBUG_LOGS" in
+0 | 1) ;;
+*) fail "E2E_DEBUG_LOGS must be 0 or 1" ;;
+esac
+if [ "$E2E_DEBUG_LOGS" -eq 1 ] && [ "${CI:-}" = true ]; then
+	fail "E2E_DEBUG_LOGS prints credentials and is refused on CI, where the run log is public"
+fi
 
 if [ -z "$E2E_RUN_ID" ]; then
 	git_revision=$(git -C "$ROOT_DIR" rev-parse --short=10 HEAD 2>/dev/null || printf 'worktree')
@@ -316,6 +330,7 @@ PREDECESSOR_VALUES_FILE=$WORK_DIR/predecessor-values.json
 CANDIDATE_VALUES_FILE=$WORK_DIR/candidate-values.json
 NEXT_VALUES_FILE=$WORK_DIR/next-values.json
 CLUSTER_CREATED=0
+DEBUG_LOG_DIR=$WORK_DIR/debug-pod-logs
 IMAGE_CREATED=0
 IMAGE_AUDIT_CONTAINER_CREATED=0
 IMAGE_AUDIT_CONTAINER_ID=
@@ -952,13 +967,63 @@ assert_api_server_feature_gate_scope() {
 		fail "API-server-only feature gates leaked into kubelet or kube-proxy configuration"
 }
 
+# A hook Job carries helm.sh/hook-delete-policy hook-failed, so Helm removes it
+# the moment it fails and the pod is gone before any end-of-run diagnostic can
+# read it. Following each pod as it appears is the only way to hold that output,
+# which is why this starts with the cluster rather than on failure.
+debug_logs_start_following() {
+	[ "$E2E_DEBUG_LOGS" -eq 1 ] || return 0
+	mkdir -p "$DEBUG_LOG_DIR"
+	(
+		while :; do
+			for debug_namespace in "$OPERATOR_NAMESPACE" "$CRD_PROOF_NAMESPACE" "$TEST_NAMESPACE"; do
+				# shellcheck disable=SC2046 # One pod name per word is the intent.
+				for debug_pod in $(kubectl --kubeconfig "$KUBECONFIG_FILE" \
+					-n "$debug_namespace" --request-timeout=15s \
+					get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
+					2>/dev/null); do
+					debug_log_file=$DEBUG_LOG_DIR/$debug_namespace.$debug_pod.log
+					if [ ! -e "$debug_log_file" ]; then
+						: >"$debug_log_file"
+						kubectl --kubeconfig "$KUBECONFIG_FILE" \
+							-n "$debug_namespace" \
+							logs "$debug_pod" --all-containers --follow --tail=-1 \
+							>>"$debug_log_file" 2>&1 &
+					fi
+				done
+			done
+			sleep 1
+		done
+	) &
+	DEBUG_LOG_FOLLOWER_PID=$!
+}
+
+debug_logs_stop_following() {
+	[ -n "$DEBUG_LOG_FOLLOWER_PID" ] || return 0
+	kill "$DEBUG_LOG_FOLLOWER_PID" 2>/dev/null
+	# Reap it, or the shell reports the asynchronous job itself and prints
+	# the whole loop body into the middle of the diagnostics being read.
+	wait "$DEBUG_LOG_FOLLOWER_PID" 2>/dev/null || true
+	DEBUG_LOG_FOLLOWER_PID=
+}
+
 collect_diagnostics() {
 	[ "$CLUSTER_CREATED" -eq 1 ] || return 0
 	[ -s "$KUBECONFIG_FILE" ] || return 0
 	printf '%s\n' 'e2e: collecting failure diagnostics' >&2
 	kubectl --kubeconfig "$KUBECONFIG_FILE" get nodes -o wide >&2 || true
 	kubectl --kubeconfig "$KUBECONFIG_FILE" get all -A >&2 || true
-	printf '%s\n' 'e2e: raw manager and Job logs are suppressed to protect credential-isolation failures' >&2
+	if [ "$E2E_DEBUG_LOGS" -eq 1 ]; then
+		debug_logs_stop_following
+		printf '%s\n' 'e2e: E2E_DEBUG_LOGS=1: raw pod logs follow and may contain credentials' >&2
+		for debug_log_file in "$DEBUG_LOG_DIR"/*.log; do
+			[ -e "$debug_log_file" ] || continue
+			printf '=== %s ===\n' "$(basename "$debug_log_file" .log)" >&2
+			cat "$debug_log_file" >&2
+		done
+	else
+		printf '%s\n' 'e2e: raw manager and Job logs are suppressed to protect credential-isolation failures; run off CI with E2E_DEBUG_LOGS=1 to print them' >&2
+	fi
 	helm --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" status "$HELM_RELEASE" >&2 || true
 }
 
@@ -970,6 +1035,7 @@ cleanup() {
 	if [ "$status" -ne 0 ]; then
 		collect_diagnostics
 	fi
+	debug_logs_stop_following
 	if [ -n "$RELEASE_CHART_OUTPUT_TEMP" ]; then
 		case "$RELEASE_CHART_OUTPUT_TEMP" in
 			"$RELEASE_CHART_OUTPUT_PARENT"/.ptah-operator-release-chart.*)
@@ -1608,6 +1674,7 @@ remove_image_audit_container
 
 printf 'e2e: creating kind cluster %s with Kubernetes %s\n' "$CLUSTER_NAME" "$K8S_VERSION"
 CLUSTER_CREATED=1
+debug_logs_start_following
 kind create cluster \
 	--name "$CLUSTER_NAME" \
 	--image "$KIND_NODE_IMAGE" \
