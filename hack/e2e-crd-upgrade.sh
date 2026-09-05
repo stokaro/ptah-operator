@@ -977,6 +977,27 @@ finish_late_activation_hook_log_captures() {
 		[ "$LATE_ACTIVATION_RECONCILE_CAPTURE_EXIT_STATUS" -eq 0 ]
 }
 
+# The phase a failed capture had reached, from the second line of its status
+# file. One of the eight fixed status words and nothing from the cluster, so it
+# is publishable where the error file is not -- and it is the difference between
+# "failed" and "failed before it ever armed a watch".
+late_activation_capture_phase_summary() {
+	capture_status_file=$1
+	if [ ! -f "$capture_status_file" ] || [ -L "$capture_status_file" ]; then
+		printf '%s\n' none
+		return
+	fi
+	case "$(sed -n '2p' "$capture_status_file" 2>/dev/null)" in
+	starting) printf '%s\n' starting ;;
+	watching) printf '%s\n' watching ;;
+	job-observed) printf '%s\n' job-observed ;;
+	pod-observed) printf '%s\n' pod-observed ;;
+	streaming) printf '%s\n' streaming ;;
+	captured) printf '%s\n' captured ;;
+	*) printf '%s\n' none ;;
+	esac
+}
+
 late_activation_capture_status_summary() {
 	capture_status_file=$1
 	if [ ! -f "$capture_status_file" ] || [ -L "$capture_status_file" ]; then
@@ -1082,6 +1103,8 @@ emit_late_activation_failure_summary() {
 	status_file=$1
 	preflight_capture_status=$(late_activation_capture_status_summary "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE")
 	reconcile_capture_status=$(late_activation_capture_status_summary "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE")
+	preflight_capture_phase=$(late_activation_capture_phase_summary "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE")
+	reconcile_capture_phase=$(late_activation_capture_phase_summary "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE")
 	preflight_capture_exit=$(late_activation_capture_exit_summary "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_EXIT_STATUS")
 	reconcile_capture_exit=$(late_activation_capture_exit_summary "$LATE_ACTIVATION_RECONCILE_CAPTURE_EXIT_STATUS")
 	if activation_summary=$(jq -c \
@@ -1090,6 +1113,8 @@ emit_late_activation_failure_summary() {
 		--arg expected_reconcile_name "$EXPECTED_RECONCILE_HOOK_NAME" \
 		--arg preflight_capture "$preflight_capture_status" \
 		--arg reconcile_capture "$reconcile_capture_status" \
+		--arg preflight_phase "$preflight_capture_phase" \
+		--arg reconcile_phase "$reconcile_capture_phase" \
 		--arg preflight_exit "$preflight_capture_exit" \
 		--arg reconcile_exit "$reconcile_capture_exit" '
           (if (.hooks | type) == "array" then [.hooks[] | select(type == "object")] else [] end) as $hooks |
@@ -1107,8 +1132,10 @@ emit_late_activation_failure_summary() {
             expectedReconcileFailed: any($reconcile[]; (.weight == null or ((.weight | type) == "number" and .weight == 0)) and .last_run.phase == "Failed"),
             preflightCapture: $preflight_capture,
             preflightCaptureExit: $preflight_exit,
+            preflightCapturePhase: $preflight_phase,
             reconcileCapture: $reconcile_capture,
             reconcileCaptureExit: $reconcile_exit,
+            reconcileCapturePhase: $reconcile_phase,
             reconcileTarget: (
               if any($reconcile[]; ((.last_run.started_at // "") | type) == "string" and ((.last_run.started_at // "") | length > 0)) then "reached"
               elif $reconcile_capture == "canceled" then "not-reached"
@@ -1128,8 +1155,10 @@ emit_late_activation_failure_summary() {
                 revisionStatus: "unavailable",
                 preflightCapture: $preflight_capture,
                 preflightCaptureExit: $preflight_exit,
+                preflightCapturePhase: $preflight_phase,
                 reconcileCapture: $reconcile_capture,
                 reconcileCaptureExit: $reconcile_exit,
+                reconcileCapturePhase: $reconcile_phase,
                 reconcileTarget: (if $reconcile_capture == "canceled" then "not-reached" else "indeterminate" end)
               }
             ')

@@ -54,6 +54,14 @@ type captureOutputs struct {
 	status         *privatePath
 	ready          *privatePath
 	error          *privatePath
+	// reached is the last status written before a failure overwrote it. The
+	// error file says why a capture failed and is deliberately private, so
+	// without this the only thing a failure could report was "failed" -- and
+	// the helper has around ten paths that reach it, from refusing to arm a
+	// watch to losing a log stream midway. The phase is one of eight fixed
+	// words and carries nothing from the cluster, so it is safe to publish
+	// where the error text is not.
+	reached captureStatus
 }
 
 func prepareOutputs(paths outputPaths) (*captureOutputs, error) {
@@ -327,6 +335,9 @@ func (output *captureOutputs) setStatus(status captureStatus) error {
 	if output == nil || output.status == nil {
 		return errors.New("status destination is unavailable")
 	}
+	if status != statusFailed && status != statusCanceled {
+		output.reached = status
+	}
 	return output.status.writeAtomic([]byte(string(status) + "\n"))
 }
 
@@ -341,7 +352,7 @@ func (output *captureOutputs) reportFailure(err error) {
 	if output == nil {
 		return
 	}
-	_ = output.setStatus(statusFailed)
+	_ = output.setTerminalStatus(statusFailed)
 	_ = output.writeError(err)
 }
 
@@ -349,8 +360,25 @@ func (output *captureOutputs) reportCanceled(err error) {
 	if output == nil {
 		return
 	}
-	_ = output.setStatus(statusCanceled)
+	_ = output.setTerminalStatus(statusCanceled)
 	_ = output.writeError(err)
+}
+
+// setTerminalStatus records the outcome on the first line and the phase the
+// capture had reached on the second. Every reader takes the first line only, so
+// the outcome is unchanged for them.
+func (output *captureOutputs) setTerminalStatus(status captureStatus) error {
+	if _, found := validStatuses[status]; !found {
+		return errors.New("invalid capture status")
+	}
+	if output == nil || output.status == nil {
+		return errors.New("status destination is unavailable")
+	}
+	reached := output.reached
+	if reached == "" {
+		reached = statusStarting
+	}
+	return output.status.writeAtomic([]byte(string(status) + "\n" + string(reached) + "\n"))
 }
 
 func (output *captureOutputs) writeError(err error) error {

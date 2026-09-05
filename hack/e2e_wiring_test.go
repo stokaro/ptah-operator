@@ -341,6 +341,11 @@ func TestLateActivationFailureSummaryIsBoundedAndSynthesized(t *testing.T) {
 		"--arg", "reconcile_capture", "canceled",
 		"--arg", "preflight_exit", "0",
 		"--arg", "reconcile_exit", "1",
+		// The phase each capture reached before it stopped. A canceled
+		// reconcile that never armed its watch reports "starting", which is
+		// what separates it from one that streamed and lost the stream.
+		"--arg", "preflight_phase", "captured",
+		"--arg", "reconcile_phase", "starting",
 		filter,
 	)
 	command.Stdin = strings.NewReader(string(encoded))
@@ -387,6 +392,11 @@ func TestLateActivationFailureSummaryIsBoundedAndSynthesized(t *testing.T) {
 		"--arg", "reconcile_capture", "canceled",
 		"--arg", "preflight_exit", "0",
 		"--arg", "reconcile_exit", "1",
+		// The phase each capture reached before it stopped. A canceled
+		// reconcile that never armed its watch reports "starting", which is
+		// what separates it from one that streamed and lost the stream.
+		"--arg", "preflight_phase", "captured",
+		"--arg", "reconcile_phase", "starting",
 		filter,
 	)
 	command.Stdin = strings.NewReader(string(encoded))

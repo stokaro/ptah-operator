@@ -2015,8 +2015,16 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`expectedReconcileFailed: any($reconcile[]; (.weight == null or ((.weight | type) == "number" and .weight == 0)) and .last_run.phase == "Failed"),`,
 					`preflightCapture: $preflight_capture,`,
 					`preflightCaptureExit: $preflight_exit,`,
+					// The phase each capture reached, from the second line of
+					// its status file. The error file that says why a capture
+					// failed is private on purpose, so without this a failure
+					// reports only "failed" for any of the helper's roughly ten
+					// exit paths. The phase is one of eight fixed words and
+					// carries nothing from the cluster.
+					`preflightCapturePhase: $preflight_phase,`,
 					`reconcileCapture: $reconcile_capture,`,
 					`reconcileCaptureExit: $reconcile_exit,`,
+					`reconcileCapturePhase: $reconcile_phase,`,
 					`reconcileTarget: (`,
 					`if any($reconcile[]; ((.last_run.started_at // "") | type) == "string" and ((.last_run.started_at // "") | length > 0)) then "reached"`,
 					`elif $reconcile_capture == "canceled" then "not-reached"`,

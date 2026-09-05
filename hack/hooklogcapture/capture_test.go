@@ -1092,7 +1092,9 @@ func TestCaptureDoesNotPublishQuarantinedLogForCandidateRenderMismatch(t *testin
 		t.Fatalf("capture did not reject the drifted Job: %v", ctx.Err())
 	}
 	assertFileContents(t, output.logPath, "")
-	assertFileContents(t, output.status.path, "failed\n")
+	// Streaming had begun before the render mismatch was found, and the phase
+	// records that: a capture that never armed reports "starting" instead.
+	assertFileContents(t, output.status.path, "failed\nstreaming\n")
 }
 
 func TestValidateJobAgainstRenderRejectsExecutionAndMetadataDrift(t *testing.T) {

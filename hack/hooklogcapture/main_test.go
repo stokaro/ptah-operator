@@ -65,7 +65,11 @@ func TestExecuteWritesStartupFailureOnlyToPrivateFiles(t *testing.T) {
 	}
 	assertFileContents(t, logPath, "")
 	assertFileContents(t, readyPath, "")
-	assertFileContents(t, statusPath, "failed\n")
+	// The second line is the phase the capture reached. This failure happens
+	// before any watch is armed, so it is still "starting" -- which is the
+	// distinction the status file exists to carry now that the error text
+	// stays private.
+	assertFileContents(t, statusPath, "failed\nstarting\n")
 	assertFileContents(t, stdoutPath, "")
 	assertFileContents(t, stderrPath, "")
 	errorContents, err := os.ReadFile(errorPath)
