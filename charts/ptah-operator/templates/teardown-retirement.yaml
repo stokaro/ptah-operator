@@ -1,0 +1,1023 @@
+{{/*
+Helm owns every admission mutation in this uninstall protocol. The manager
+binary receives read/probe access and, only in the final phase, exact
+ConfigMap deletion. In particular, no Pod credential can create, update,
+patch, or delete ValidatingAdmissionPolicy resources.
+*/}}
+{{- define "ptah-operator.teardownRetirementMarkerShape" -}}
+{{- $object := .object -}}
+{{- $parts := list
+      (printf `%s.metadata.name == %q` $object .name)
+      (printf `%s.metadata.namespace == %q` $object .namespace)
+      (printf `(!has(%s.metadata.generateName) || %s.metadata.generateName == "")` $object $object)
+      (printf `has(%s.metadata.uid) && %s.metadata.uid != ""` $object $object)
+      (printf `has(%s.metadata.resourceVersion) && %s.metadata.resourceVersion != ""` $object $object)
+      (printf `has(%s.metadata.annotations) && %s.metadata.annotations.size() == 9` $object $object)
+      (printf `%s.metadata.annotations[%q] == %q` $object "helm.sh/hook" "pre-delete")
+      (printf `%s.metadata.annotations[%q] == %q` $object "helm.sh/hook-delete-policy" "before-hook-creation,hook-succeeded")
+      (printf `%s.metadata.annotations[%q] == %q` $object "helm.sh/hook-weight" "-330")
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/manager-image" .managerImage)
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/release-name" .releaseName)
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/release-namespace" .namespace)
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/release-sequence" .sequence)
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/teardown-retirement-attempt" .attempt)
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/teardown-retirement-version" "1")
+      (printf `has(%s.metadata.labels) && %s.metadata.labels.size() == 3` $object $object)
+      (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/managed-by" "ptah-operator")
+      (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/instance" .releaseName)
+      (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/component" "teardown-retirement")
+      (printf `has(%s.data) && %s.data.size() == 2` $object $object)
+      (printf `%s.data[%q] == %q` $object "release-attempt" .attempt)
+      (printf `%s.data[%q] == %q` $object "release-sequence" .sequence)
+      (printf `(!has(%s.binaryData) || %s.binaryData.size() == 0)` $object $object)
+      (printf `has(%s.immutable) && %s.immutable == true` $object $object)
+      (printf `(!has(%s.metadata.ownerReferences) || %s.metadata.ownerReferences.size() == 0)` $object $object)
+      (printf `(!has(%s.metadata.finalizers) || %s.metadata.finalizers.size() == 0)` $object $object)
+      (printf `!has(%s.metadata.deletionTimestamp)` $object)
+      (printf `!has(%s.metadata.deletionGracePeriodSeconds)` $object) -}}
+{{- join " && " $parts -}}
+{{- end -}}
+
+{{- define "ptah-operator.teardownRetirementPolicy" -}}
+{{- $root := .root -}}
+{{- $fieldManager := printf "ptah-teardown-v1-%s" (printf "1\n%s\n%s" .name .attempt | sha256sum) -}}
+{{- $message := printf "Ptah teardown retirement confirmed exact policy %s with %s" .name $fieldManager -}}
+{{- $shape := dict "name" .markerName "namespace" $root.Release.Namespace "releaseName" $root.Release.Name "sequence" .sequence "managerImage" .managerImage "attempt" .attempt -}}
+{{- $objectShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "object") $shape) -}}
+{{- $oldObjectShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "oldObject") $shape) -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ .name }}
+  annotations:
+    {{ if not .ordinary }}
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: {{ .weight | quote }}
+    helm.sh/hook-delete-policy: {{ .deletePolicy | quote }}
+    {{ end }}
+    operator.ptah.dev/teardown-retirement-version: "1"
+    operator.ptah.dev/teardown-retirement-attempt: {{ .attempt | quote }}
+    operator.ptah.dev/teardown-retirement-target: {{ .name | quote }}
+    operator.ptah.dev/release-name: {{ $root.Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ $root.Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ .sequence | quote }}
+    operator.ptah.dev/manager-image: {{ .managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ $root.Release.Name }}
+    app.kubernetes.io/component: teardown-retirement
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - operations: ["UPDATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["configmaps"]
+        scope: Namespaced
+  matchConditions:
+    - name: exact-retirement-probe
+      expression: {{ printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager == %q` $root.Release.Namespace .markerName $fieldManager | quote }}
+  validations:
+    - expression: {{ printf `request.dryRun == true && oldObject != null && (%s) && (%s) && object.metadata.uid == oldObject.metadata.uid && object.metadata.resourceVersion == oldObject.metadata.resourceVersion` $objectShape $oldObjectShape | quote }}
+      message: Ptah teardown retirement probe differs from the exact immutable marker contract
+    - expression: "false"
+      message: {{ $message | quote }}
+{{- end -}}
+
+{{- define "ptah-operator.teardownRetirementBinding" -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ .name }}
+  annotations:
+    {{ if not .ordinary }}
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: {{ .weight | quote }}
+    helm.sh/hook-delete-policy: {{ .deletePolicy | quote }}
+    {{ end }}
+    operator.ptah.dev/teardown-retirement-version: "1"
+    operator.ptah.dev/teardown-retirement-attempt: {{ .attempt | quote }}
+    operator.ptah.dev/teardown-retirement-target: {{ .name | quote }}
+    operator.ptah.dev/release-name: {{ .root.Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .root.Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ .sequence | quote }}
+    operator.ptah.dev/manager-image: {{ .managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .root.Release.Name }}
+    app.kubernetes.io/component: teardown-retirement
+spec:
+  policyName: {{ .name }}
+  validationActions: [Deny]
+{{- end -}}
+
+{{- define "ptah-operator.teardownRetirementForwardArgs" -}}
+{{- $args := printf "%s.args" .container -}}
+{{- $mode := printf `%s == %q ? "teardown-retirement-probe-a" : "teardown-retirement-gate"` .selector .probeJob -}}
+{{- $timeout := printf `%s == %q ? "--timeout=60s" : "--timeout=90s"` .selector .probeJob -}}
+{{- $parts := list
+      (printf `has(%[1]s.args) && %[2]s.size() == 29` .container $args)
+      (printf `%s[0] == (%s)` $args $mode)
+      (printf `%s[1] == (%s)` $args $timeout)
+      (printf `%s[2] == %q` $args (printf "--release-name=%s" .releaseName))
+      (printf `%s[3] == %q` $args (printf "--release-namespace=%s" .namespace))
+      (printf `%s[4].matches("^--coordination-namespace=[a-z0-9]([-a-z0-9]*[a-z0-9])?$")` $args)
+      (printf `%s[5].matches("^--leader-election=(true|false)$")` $args)
+      (printf `%s[6].matches("^--leader-election-id=[a-z0-9]([-a-z0-9.]*[a-z0-9])?$")` $args)
+      (printf `%s[7].matches("^--webhook-service-name=[a-z0-9]([-a-z0-9]*[a-z0-9])?$")` $args)
+      (printf `%s[8].matches("^--webhook-timeout-seconds=[1-9][0-9]*$")` $args)
+      (printf `%s[9].matches("^--webhook-secret-name=[a-z0-9]([-a-z0-9.]*[a-z0-9])?$")` $args)
+      (printf `%s[10].matches("^--webhook-port=[1-9][0-9]*$")` $args)
+      (printf `%s[11].matches("^--certificate-health-port=[1-9][0-9]*$")` $args)
+      (printf `%s[12].matches("^--hook-service-account-name=[a-z0-9]([-a-z0-9]*[a-z0-9])?-crd-v[1-9][0-9]*-[0-9a-f]{12}$")` $args)
+      (printf `%s[13].matches("^--controller-service-account-name=[a-z0-9]([-a-z0-9]*[a-z0-9])?$")` $args)
+      (printf `%s[14].matches("^--controller-service-account-managed=(true|false)$")` $args)
+      (printf `%s[15].startsWith("--previous-controller-service-account-name=")` $args)
+      (printf `%s[16].startsWith("--previous-controller-service-account-uid=")` $args)
+      (printf `%s[17].matches("^--previous-controller-service-account-managed=(true|false)$")` $args)
+      (printf `%s[18].matches("^--previous-controller-release-sequence=(0|[1-9][0-9]*)$")` $args)
+      (printf `%s[19].matches("^--controller-deployment-name=[a-z0-9]([-a-z0-9]*[a-z0-9])?$")` $args)
+      (printf `%s[20].matches("^--controller-replicas=[1-9][0-9]*$")` $args)
+      (printf `%s[21].matches("^--certificate-deployment-name=[a-z0-9]([-a-z0-9]*[a-z0-9])?$")` $args)
+      (printf `%s[22].matches("^--release-sequence=[1-9][0-9]*$")` $args)
+      (printf `%s[23] == "--manager-image=" + %s.image` $args .container)
+      (printf `%s[24].matches("^--controller-runtime-args-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
+      (printf `%s[25].matches("^--certificate-runtime-args-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
+      (printf `%s[26].matches("^--runtime-deployment-config-expressions-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
+      (printf `%s[27].matches("^--runtime-pod-config-expressions-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
+      (printf `%s[28].matches("^--runtime-admission-contract-b64=[A-Za-z0-9+/]+={0,2}$")` $args) -}}
+{{- join " && " $parts -}}
+{{- end -}}
+
+{{- define "ptah-operator.teardownRetirementFencePolicy" -}}
+{{- $root := .root -}}
+{{- $sequence := .sequence -}}
+{{- $attempt := .attempt -}}
+{{- $managerImage := .managerImage -}}
+{{- $hookServiceAccount := .hookServiceAccount -}}
+{{- $cleanupServiceAccount := .cleanupServiceAccount -}}
+{{- $controllerServiceAccount := .controllerServiceAccount -}}
+{{- $previousControllerServiceAccount := .previousControllerServiceAccount -}}
+{{- $previousSequence := .previousSequence -}}
+{{- $controllerDeployment := .controllerDeployment -}}
+{{- $certificateServiceAccount := .certificateServiceAccount -}}
+{{- $bootstrapServiceAccount := .bootstrapServiceAccount -}}
+{{- $quiesceJob := .quiesceJob -}}
+{{- $cleanupJob := .cleanupJob -}}
+{{- $finalJob := .finalJob -}}
+{{- $probeAJob := .probeAJob -}}
+{{- $gateJob := .gateJob -}}
+{{- $hookSuffix := printf "-crd-v%s-%s" $sequence (trunc 12 $attempt) -}}
+{{- $hookBase := trimSuffix $hookSuffix $hookServiceAccount -}}
+{{- $hookNamePattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-crd-v" $hookBase)) -}}
+{{- $cleanupNamePattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-cleanup-v" $hookBase)) -}}
+{{- $hookUsernamePattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "system:serviceaccount:%s:%s-crd-v" $root.Release.Namespace $hookBase)) -}}
+{{- $cleanupUsernamePattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "system:serviceaccount:%s:%s-cleanup-v" $root.Release.Namespace $hookBase)) -}}
+{{- $controllerUsername := printf "system:serviceaccount:%s:%s" $root.Release.Namespace $controllerServiceAccount -}}
+{{- $certificateUsername := printf "system:serviceaccount:%s:%s" $root.Release.Namespace $certificateServiceAccount -}}
+{{- $bootstrapUsername := printf "system:serviceaccount:%s:%s" $root.Release.Namespace $bootstrapServiceAccount -}}
+{{- $hookUsername := printf "system:serviceaccount:%s:%s" $root.Release.Namespace $hookServiceAccount -}}
+{{- $cleanupUsername := printf "system:serviceaccount:%s:%s" $root.Release.Namespace $cleanupServiceAccount -}}
+{{- $controllerUsernames := list $controllerUsername -}}
+{{- $controllerNames := list $controllerServiceAccount -}}
+{{- if $previousControllerServiceAccount -}}
+{{- $previousUsername := printf "system:serviceaccount:%s:%s" $root.Release.Namespace $previousControllerServiceAccount -}}
+{{- $controllerUsernames = append $controllerUsernames $previousUsername -}}
+{{- $controllerNames = append $controllerNames $previousControllerServiceAccount -}}
+{{- end -}}
+{{- $controllerCallerMatch := printf `request.userInfo.username in %s` ($controllerUsernames | toJson) -}}
+{{- $controllerNameMatch := printf `request.name in %s` ($controllerNames | toJson) -}}
+{{- $markerContext := dict "name" .markerName "namespace" $root.Release.Namespace "releaseName" $root.Release.Name "sequence" $sequence "managerImage" $managerImage "attempt" $attempt -}}
+{{- $objectMarkerShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "object") $markerContext) -}}
+{{- $oldMarkerShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "oldObject") $markerContext) -}}
+{{- $markerRequest := printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager == %q` $root.Release.Namespace .markerName .fieldManager -}}
+{{- $tokenRequest := `request.operation == "CREATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "serviceaccounts" && has(request.subResource) && request.subResource == "token"` -}}
+{{- $bootstrapJobs := list $probeAJob $gateJob | toJson -}}
+{{- $allJobNames := list $quiesceJob $cleanupJob $finalJob $probeAJob $gateJob | toJson -}}
+{{- $protectedCaller := printf `request.userInfo.username == %q` $bootstrapUsername -}}
+{{- $protectedToken := printf `(%s) && request.namespace == %q && request.name == %q` $tokenRequest $root.Release.Namespace $bootstrapServiceAccount -}}
+{{- $protectedJobNames := $bootstrapJobs -}}
+{{- if not .ordinary -}}
+{{- $protectedCaller = printf `(%s) || request.userInfo.username == %q || request.userInfo.username == %q || request.userInfo.username.matches(%q) || request.userInfo.username.matches(%q)` $controllerCallerMatch $certificateUsername $bootstrapUsername $hookUsernamePattern $cleanupUsernamePattern -}}
+{{- $protectedToken = printf `(%s) && request.namespace == %q && ((%s) || request.name == %q || request.name == %q || request.name.matches(%q) || request.name.matches(%q))` $tokenRequest $root.Release.Namespace $controllerNameMatch $certificateServiceAccount $bootstrapServiceAccount $hookNamePattern $cleanupNamePattern -}}
+{{- $protectedJobNames = $allJobNames -}}
+{{- end -}}
+{{- $protectedJobMain := printf `request.resource.group == "batch" && request.resource.version == "v1" && request.resource.resource == "jobs" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q` $root.Release.Namespace -}}
+{{- $protectedJob := printf `%s && request.name in %s && request.operation in ["CREATE", "UPDATE"]` $protectedJobMain $protectedJobNames -}}
+{{- $protectedJobDelete := printf `%s && request.operation == "DELETE" && oldObject != null && oldObject.metadata.name in %s` $protectedJobMain $protectedJobNames -}}
+{{- $protectedJobStatus := printf `request.resource.group == "batch" && request.resource.version == "v1" && request.resource.resource == "jobs" && has(request.subResource) && request.subResource == "status" && request.namespace == %q && request.operation == "UPDATE" && oldObject != null && oldObject.metadata.name in %s` $root.Release.Namespace $protectedJobNames -}}
+{{- $quiescePodPrefix := printf "%s-" $quiesceJob | trunc 58 -}}
+{{- $cleanupPodPrefix := printf "%s-" $cleanupJob | trunc 58 -}}
+{{- $finalPodPrefix := printf "%s-" $finalJob | trunc 58 -}}
+{{- $probeAPodPrefix := printf "%s-" $probeAJob | trunc 58 -}}
+{{- $gatePodPrefix := printf "%s-" $gateJob | trunc 58 -}}
+{{- $quiescePod := printf `(%[1]s.startsWith(%[2]q) && %[1]s.size() == %[3]d && %[1]s.substring(%[4]d).matches("^[a-z0-9]{5}$"))` "request.name" $quiescePodPrefix (add (len $quiescePodPrefix) 5) (len $quiescePodPrefix) -}}
+{{- $cleanupPod := printf `(%[1]s.startsWith(%[2]q) && %[1]s.size() == %[3]d && %[1]s.substring(%[4]d).matches("^[a-z0-9]{5}$"))` "request.name" $cleanupPodPrefix (add (len $cleanupPodPrefix) 5) (len $cleanupPodPrefix) -}}
+{{- $finalPod := printf `(%[1]s.startsWith(%[2]q) && %[1]s.size() == %[3]d && %[1]s.substring(%[4]d).matches("^[a-z0-9]{5}$"))` "request.name" $finalPodPrefix (add (len $finalPodPrefix) 5) (len $finalPodPrefix) -}}
+{{- $probeAPod := printf `(%[1]s.startsWith(%[2]q) && %[1]s.size() == %[3]d && %[1]s.substring(%[4]d).matches("^[a-z0-9]{5}$"))` "request.name" $probeAPodPrefix (add (len $probeAPodPrefix) 5) (len $probeAPodPrefix) -}}
+{{- $gatePod := printf `(%[1]s.startsWith(%[2]q) && %[1]s.size() == %[3]d && %[1]s.substring(%[4]d).matches("^[a-z0-9]{5}$"))` "request.name" $gatePodPrefix (add (len $gatePodPrefix) 5) (len $gatePodPrefix) -}}
+{{- $podNames := printf `%s || %s` $probeAPod $gatePod -}}
+{{- if not .ordinary -}}
+{{- $podNames = printf `%s || %s || %s || %s || %s` $quiescePod $cleanupPod $finalPod $probeAPod $gatePod -}}
+{{- end -}}
+{{- $oldPodNames := replace "request.name" "oldObject.metadata.name" $podNames -}}
+{{- $protectedPodWrite := printf `request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "pods" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && (%s) && request.operation in ["CREATE", "UPDATE"]` $root.Release.Namespace $podNames -}}
+{{- $protectedPodDelete := printf `request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "pods" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.operation == "DELETE" && oldObject != null && (%s)` $root.Release.Namespace $oldPodNames -}}
+{{- $protectedPodStatus := printf `request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "pods" && has(request.subResource) && request.subResource == "status" && request.namespace == %q && request.operation == "UPDATE" && oldObject != null && (%s)` $root.Release.Namespace $oldPodNames -}}
+{{- $dangerousPodSubresource := printf `request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "pods" && has(request.subResource) && request.subResource in ["exec", "attach", "portforward", "proxy", "ephemeralcontainers", "resize"] && request.namespace == %q && (%s)` $root.Release.Namespace $podNames -}}
+{{- $retainedMarkers := list
+      "ptah-operator-release-activation"
+      (include "ptah-operator.admissionConvergenceMarkerName" $root)
+      (printf "ptah-operator-parent-origin-ready-v2-%s" (printf "%s\n%s" $root.Release.Namespace $root.Release.Name | sha256sum | trunc 12)) -}}
+{{- if gt (atoi $previousSequence) 0 -}}
+{{- $retainedMarkers = append $retainedMarkers (printf "ptah-admission-convergence-v1-%s-%s" $previousSequence (printf "%s\n%s" $root.Release.Namespace $root.Release.Name | sha256sum | trunc 12)) -}}
+{{- end -}}
+{{- $protectedRetainedMarkerDelete := printf `request.operation == "DELETE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && oldObject != null && oldObject.metadata.name in %s` $root.Release.Namespace ($retainedMarkers | toJson) -}}
+{{- $match := printf `(%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s)` $protectedCaller $protectedToken $protectedJob $protectedJobDelete $protectedJobStatus $protectedPodWrite $protectedPodDelete $protectedPodStatus $dangerousPodSubresource -}}
+{{- if not .ordinary -}}
+{{- $match = printf `(%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s)` $markerRequest $protectedRetainedMarkerDelete $protectedCaller $protectedToken $protectedJob $protectedJobDelete $protectedJobStatus $protectedPodWrite $protectedPodDelete $protectedPodStatus $dangerousPodSubresource -}}
+{{- end -}}
+{{- $callerPodName := printf `has(request.userInfo.extra) && %q in request.userInfo.extra && request.userInfo.extra[%q].size() == 1 ? request.userInfo.extra[%q][0] : ""` "authentication.kubernetes.io/pod-name" "authentication.kubernetes.io/pod-name" "authentication.kubernetes.io/pod-name" -}}
+{{- $callerPodUID := printf `has(request.userInfo.extra) && %q in request.userInfo.extra && request.userInfo.extra[%q].size() == 1 ? request.userInfo.extra[%q][0] : ""` "authentication.kubernetes.io/pod-uid" "authentication.kubernetes.io/pod-uid" "authentication.kubernetes.io/pod-uid" -}}
+{{- $quiesceCallerPod := replace "request.name" "variables.callerPodName" $quiescePod -}}
+{{- $cleanupCallerPod := replace "request.name" "variables.callerPodName" $cleanupPod -}}
+{{- $finalCallerPod := replace "request.name" "variables.callerPodName" $finalPod -}}
+{{- $probeACallerPod := replace "request.name" "variables.callerPodName" $probeAPod -}}
+{{- $gateCallerPod := replace "request.name" "variables.callerPodName" $gatePod -}}
+{{- $quiesceBoundPod := replace "request.name" "object.spec.boundObjectRef.name" $quiescePod -}}
+{{- $cleanupBoundPod := replace "request.name" "object.spec.boundObjectRef.name" $cleanupPod -}}
+{{- $finalBoundPod := replace "request.name" "object.spec.boundObjectRef.name" $finalPod -}}
+{{- $probeABoundPod := replace "request.name" "object.spec.boundObjectRef.name" $probeAPod -}}
+{{- $gateBoundPod := replace "request.name" "object.spec.boundObjectRef.name" $gatePod -}}
+{{- $finalArgs := include "ptah-operator.crdManagerArgsJSON" (dict "root" $root "mode" "teardown-retirement-final" "timeout" "240s" "verifyControllerState" false) | fromJsonArray -}}
+{{- $probeAArgs := include "ptah-operator.crdManagerArgsJSON" (dict "root" $root "mode" "teardown-retirement-probe-a" "timeout" "60s" "verifyControllerState" false) | fromJsonArray -}}
+{{- $gateArgs := include "ptah-operator.crdManagerArgsJSON" (dict "root" $root "mode" "teardown-retirement-gate" "timeout" "90s" "verifyControllerState" false) | fromJsonArray -}}
+{{- $finalArgs = without $finalArgs "--verify-certificate-recovery=true" -}}
+{{- $probeAArgs = without $probeAArgs "--verify-certificate-recovery=true" -}}
+{{- $gateArgs = without $gateArgs "--verify-certificate-recovery=true" -}}
+{{- $quiesceArgs := include "ptah-operator.crdManagerArgsJSON" (dict "root" $root "mode" "teardown-quiesce" "timeout" "180s" "verifyControllerState" false) | fromJsonArray -}}
+{{- $cleanupArgs := include "ptah-operator.crdManagerArgsJSON" (dict "root" $root "mode" "teardown" "timeout" "180s" "verifyControllerState" false) | fromJsonArray -}}
+{{- $quiesceArgs = without $quiesceArgs "--verify-certificate-recovery=true" -}}
+{{- $cleanupArgs = without $cleanupArgs "--verify-certificate-recovery=true" -}}
+{{- $jobControllerPrincipal := `(request.userInfo.username == "system:kube-controller-manager" && request.userInfo.groups.size() == 1 && "system:authenticated" in request.userInfo.groups) || (request.userInfo.username == "system:serviceaccount:kube-system:job-controller" && request.userInfo.groups.size() == 3 && "system:serviceaccounts" in request.userInfo.groups && "system:serviceaccounts:kube-system" in request.userInfo.groups && "system:authenticated" in request.userInfo.groups)` -}}
+{{- $schedulerPrincipal := `(request.userInfo.username == "system:kube-scheduler" && request.userInfo.groups.size() == 1 && "system:authenticated" in request.userInfo.groups) || (request.userInfo.username == "system:serviceaccount:kube-system:kube-scheduler" && request.userInfo.groups.size() == 3 && "system:serviceaccounts" in request.userInfo.groups && "system:serviceaccounts:kube-system" in request.userInfo.groups && "system:authenticated" in request.userInfo.groups)` -}}
+{{- $nodePrincipal := `request.userInfo.username.matches("^system:node:.+$") && request.userInfo.groups.size() == 2 && "system:nodes" in request.userInfo.groups && "system:authenticated" in request.userInfo.groups && has(oldObject.spec.nodeName) && oldObject.spec.nodeName != "" && request.userInfo.username == "system:node:" + oldObject.spec.nodeName` -}}
+{{- $helmAuthorizer := `(request.operation == "CREATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed()) || (request.operation == "UPDATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed()) || (request.operation == "DELETE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("delete").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("delete").allowed())` -}}
+{{- $jobPod := "object.spec.template.spec" -}}
+{{- $jobTemplateMetadata := "object.spec.template.metadata" -}}
+{{- $jobContainer := "object.spec.template.spec.containers[0]" -}}
+{{- $jobVolume := "object.spec.template.spec.volumes[0]" -}}
+{{- $jobSources := "object.spec.template.spec.volumes[0].projected.sources" -}}
+{{- $jobNoSideChannels := printf `!has(%[1]s.lifecycle) && (!has(%[1]s.env) || %[1]s.env.size() == 0) && (!has(%[1]s.envFrom) || %[1]s.envFrom.size() == 0) && (!has(%[1]s.ports) || %[1]s.ports.size() == 0) && !has(%[1]s.livenessProbe) && !has(%[1]s.readinessProbe) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File" && !has(%[1]s.restartPolicy) && (!has(%[1]s.restartPolicyRules) || %[1]s.restartPolicyRules.size() == 0)` $jobContainer -}}
+{{- $jobImageValidation := printf `%[1]s.image == %q && %[1]s.command == ["/ptah-crd-manager"] && %[1]s.imagePullPolicy in ["Always", "IfNotPresent", "Never"]` $jobContainer $managerImage -}}
+{{- $jobProbeArgsValidation := printf `request.name != %q || %s.args == %s` $probeAJob $jobContainer ($probeAArgs | toJson) -}}
+{{- $jobGateArgsValidation := printf `request.name != %q || %s.args == %s` $gateJob $jobContainer ($gateArgs | toJson) -}}
+{{- if .ordinary -}}
+{{- $jobImageValidation = printf `%[1]s.image.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && %[1]s.command == ["/ptah-crd-manager"] && %[1]s.imagePullPolicy in ["Always", "IfNotPresent", "Never"]` $jobContainer -}}
+{{- $jobProbeArgsValidation = include "ptah-operator.teardownRetirementForwardArgs" (dict "container" $jobContainer "selector" "request.name" "probeJob" $probeAJob "releaseName" $root.Release.Name "namespace" $root.Release.Namespace) -}}
+{{- $jobGateArgsValidation = `true` -}}
+{{- end -}}
+{{- $jobValidations := list
+      `!has(request.subResource) || request.subResource == ""`
+      (printf `request.operation in ["CREATE", "UPDATE"] && request.name in %s && object.metadata.name == request.name && object.metadata.namespace == %q && (!has(object.metadata.generateName) || object.metadata.generateName == "")` $allJobNames $root.Release.Namespace)
+      `(!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0)`
+      (printf `has(object.metadata.labels) && object.metadata.labels[%q] == %q && object.metadata.labels["app.kubernetes.io/component"] == (request.name in %s ? "teardown-retirement-bootstrap" : (request.name == %q ? "crd-manager-teardown-quiesce" : (request.name == %q ? "crd-manager-teardown" : "teardown-retirement")))` "app.kubernetes.io/instance" $root.Release.Name $bootstrapJobs $quiesceJob $cleanupJob)
+      (printf `has(object.metadata.annotations) && object.metadata.annotations.size() == 3 && object.metadata.annotations["helm.sh/hook"] == "pre-delete" && object.metadata.annotations["helm.sh/hook-delete-policy"] == "before-hook-creation,hook-succeeded" && object.metadata.annotations["helm.sh/hook-weight"] == (request.name == %q ? "-315" : (request.name == %q ? "-305" : (request.name == %q ? "-10" : (request.name == %q ? "0" : "105"))))` $probeAJob $gateJob $quiesceJob $cleanupJob)
+      (printf `(!has(%[1]s.annotations) || %[1]s.annotations.size() == 0) && (!has(%[1]s.ownerReferences) || %[1]s.ownerReferences.size() == 0) && (!has(%[1]s.finalizers) || %[1]s.finalizers.size() == 0)` $jobTemplateMetadata)
+      (printf `has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds == (request.name == %q ? 90 : (request.name == %q ? 120 : (request.name == %q ? 270 : 210)))` $probeAJob $gateJob $finalJob)
+      `has(object.spec.backoffLimit) && object.spec.backoffLimit == 0 && !has(object.spec.backoffLimitPerIndex) && !has(object.spec.maxFailedIndexes)`
+      `!has(object.spec.ttlSecondsAfterFinished) && !has(object.spec.podFailurePolicy) && !has(object.spec.successPolicy)`
+      `(!has(object.spec.suspend) || !object.spec.suspend) && (!has(object.spec.manualSelector) || !object.spec.manualSelector) && (!has(object.spec.parallelism) || object.spec.parallelism == 1) && (!has(object.spec.completions) || object.spec.completions == 1) && (!has(object.spec.completionMode) || object.spec.completionMode == "NonIndexed")`
+      (printf `has(%[1]s.serviceAccountName) && %[1]s.serviceAccountName == (request.name in %[2]s ? %[3]q : (request.name == %[4]q ? %[5]q : %[6]q)) && (!has(%[1]s.serviceAccount) || %[1]s.serviceAccount == %[1]s.serviceAccountName) && has(%[1]s.automountServiceAccountToken) && !%[1]s.automountServiceAccountToken` $jobPod $bootstrapJobs $bootstrapServiceAccount $quiesceJob $hookServiceAccount $cleanupServiceAccount)
+      (printf `%[1]s.restartPolicy == "Never" && (!has(%[1]s.nodeName) || %[1]s.nodeName == "") && (!has(%[1]s.nodeSelector) || %[1]s.nodeSelector.size() == 0) && !has(%[1]s.affinity) && (!has(%[1]s.tolerations) || %[1]s.tolerations.size() == 0)` $jobPod)
+      (printf `(!has(%[1]s.hostNetwork) || !%[1]s.hostNetwork) && (!has(%[1]s.hostPID) || !%[1]s.hostPID) && (!has(%[1]s.hostIPC) || !%[1]s.hostIPC) && (!has(%[1]s.shareProcessNamespace) || !%[1]s.shareProcessNamespace)` $jobPod)
+      (printf `!has(%[1]s.hostAliases) && !has(%[1]s.hostname) && !has(%[1]s.subdomain) && (!has(%[1]s.setHostnameAsFQDN) || !%[1]s.setHostnameAsFQDN) && !has(%[1]s.runtimeClassName) && (!has(%[1]s.readinessGates) || %[1]s.readinessGates.size() == 0) && (!has(%[1]s.resourceClaims) || %[1]s.resourceClaims.size() == 0) && (!has(%[1]s.schedulingGates) || %[1]s.schedulingGates.size() == 0)` $jobPod)
+      (printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.runAsNonRoot) && %[1]s.securityContext.runAsNonRoot && has(%[1]s.securityContext.runAsUser) && %[1]s.securityContext.runAsUser == 65532 && has(%[1]s.securityContext.runAsGroup) && %[1]s.securityContext.runAsGroup == 65532 && !has(%[1]s.securityContext.fsGroup) && has(%[1]s.securityContext.seccompProfile) && %[1]s.securityContext.seccompProfile.type == "RuntimeDefault" && (!has(%[1]s.securityContext.sysctls) || %[1]s.securityContext.sysctls.size() == 0)` $jobPod)
+      (printf `has(%[1]s.containers) && %[1]s.containers.size() == 1 && (!has(%[1]s.initContainers) || %[1]s.initContainers.size() == 0) && (!has(%[1]s.ephemeralContainers) || %[1]s.ephemeralContainers.size() == 0)` $jobPod)
+      (printf `%[1]s.name == (request.name == %[2]q ? "teardown-retirement-probe-a" : (request.name == %[3]q ? "teardown-retirement-gate" : (request.name == %[4]q ? "crd-manager-teardown-quiesce" : (request.name == %[5]q ? "crd-manager-teardown" : "teardown-retirement"))))` $jobContainer $probeAJob $gateJob $quiesceJob $cleanupJob)
+      $jobImageValidation
+      (printf `request.name != %q || %s.args == %s` $quiesceJob $jobContainer ($quiesceArgs | toJson))
+      (printf `request.name != %q || %s.args == %s` $cleanupJob $jobContainer ($cleanupArgs | toJson))
+      (printf `request.name != %q || %s.args == %s` $finalJob $jobContainer ($finalArgs | toJson))
+      $jobProbeArgsValidation
+      $jobGateArgsValidation
+      $jobNoSideChannels
+      (printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.allowPrivilegeEscalation) && !%[1]s.securityContext.allowPrivilegeEscalation && has(%[1]s.securityContext.readOnlyRootFilesystem) && %[1]s.securityContext.readOnlyRootFilesystem && (!has(%[1]s.securityContext.privileged) || !%[1]s.securityContext.privileged) && !has(%[1]s.securityContext.runAsUser) && !has(%[1]s.securityContext.runAsGroup) && !has(%[1]s.securityContext.runAsNonRoot) && !has(%[1]s.securityContext.procMount) && !has(%[1]s.securityContext.seLinuxOptions) && !has(%[1]s.securityContext.windowsOptions) && !has(%[1]s.securityContext.seccompProfile) && !has(%[1]s.securityContext.appArmorProfile) && has(%[1]s.securityContext.capabilities) && (!has(%[1]s.securityContext.capabilities.add) || %[1]s.securityContext.capabilities.add.size() == 0) && has(%[1]s.securityContext.capabilities.drop) && %[1]s.securityContext.capabilities.drop == ["ALL"]` $jobContainer)
+      (printf `has(dyn(%[1]s.resources).requests) && dyn(%[1]s.resources).requests.size() == 2 && quantity(string(dyn(%[1]s.resources).requests["cpu"])).compareTo(quantity("5m")) == 0 && quantity(string(dyn(%[1]s.resources).requests["memory"])).compareTo(quantity("16Mi")) == 0 && has(dyn(%[1]s.resources).limits) && dyn(%[1]s.resources).limits.size() == 1 && quantity(string(dyn(%[1]s.resources).limits["memory"])).compareTo(quantity("32Mi")) == 0 && (!has(dyn(%[1]s.resources).claims) || dyn(%[1]s.resources).claims.size() == 0) && (!has(%[1]s.resizePolicy) || %[1]s.resizePolicy.size() == 0)` $jobContainer)
+      (printf `has(%[1]s.volumeMounts) && %[1]s.volumeMounts.size() == 1 && %[1]s.volumeMounts[0].name == "api-access" && %[1]s.volumeMounts[0].mountPath == "/var/run/secrets/kubernetes.io/serviceaccount" && has(%[1]s.volumeMounts[0].readOnly) && %[1]s.volumeMounts[0].readOnly && !has(%[1]s.volumeMounts[0].mountPropagation) && !has(%[1]s.volumeMounts[0].subPath) && !has(%[1]s.volumeMounts[0].subPathExpr) && !has(%[1]s.volumeMounts[0].recursiveReadOnly)` $jobContainer)
+      (printf `has(%[1]s.volumes) && %[1]s.volumes.size() == 1 && %[2]s.name == "api-access" && has(%[2]s.projected) && has(%[2]s.projected.defaultMode) && %[2]s.projected.defaultMode == 420 && %[3]s.size() == 3` $jobPod $jobVolume $jobSources)
+      (printf `%s.exists(s, has(s.serviceAccountToken) && s.serviceAccountToken.path == "token" && has(s.serviceAccountToken.expirationSeconds) && s.serviceAccountToken.expirationSeconds == 3600 && !has(s.serviceAccountToken.audience))` $jobSources)
+      (printf `%s.exists(s, has(s.configMap) && s.configMap.name == "kube-root-ca.crt" && has(s.configMap.items) && s.configMap.items.size() == 1 && s.configMap.items[0].key == "ca.crt" && s.configMap.items[0].path == "ca.crt" && !has(s.configMap.items[0].mode))` $jobSources)
+      (printf `%s.exists(s, has(s.downwardAPI) && has(s.downwardAPI.items) && s.downwardAPI.items.size() == 1 && s.downwardAPI.items[0].path == "namespace" && has(s.downwardAPI.items[0].fieldRef) && s.downwardAPI.items[0].fieldRef.apiVersion == "v1" && s.downwardAPI.items[0].fieldRef.fieldPath == "metadata.namespace" && !has(s.downwardAPI.items[0].mode))` $jobSources)
+      (printf `%s.all(s, has(s.serviceAccountToken) || has(s.configMap) || has(s.downwardAPI))` $jobSources)
+      (printf `(!has(%[1]s.imagePullSecrets) || (%[1]s.imagePullSecrets.all(secret, secret.name != "") && %[1]s.imagePullSecrets.all(secret, %[1]s.imagePullSecrets.filter(other, other.name == secret.name).size() == 1)))` $jobPod)
+      (printf `(!has(%[1]s.dnsPolicy) || %[1]s.dnsPolicy == "ClusterFirst") && !has(%[1]s.dnsConfig) && (!has(%[1]s.schedulerName) || %[1]s.schedulerName == "default-scheduler") && !has(%[1]s.priority) && !has(%[1]s.priorityClassName) && !has(%[1]s.preemptionPolicy)` $jobPod)
+      (printf `(!has(%[1]s.terminationGracePeriodSeconds) || %[1]s.terminationGracePeriodSeconds == 30) && (!has(%[1]s.enableServiceLinks) || %[1]s.enableServiceLinks) && (!has(%[1]s.topologySpreadConstraints) || %[1]s.topologySpreadConstraints.size() == 0) && !has(dyn(%[1]s).overhead) && !has(%[1]s.os)` $jobPod) -}}
+{{- $statusIdentity := `oldObject != null && object.spec == oldObject.spec && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && ((!has(object.metadata.generateName) && !has(oldObject.metadata.generateName)) || (has(object.metadata.generateName) && has(oldObject.metadata.generateName) && object.metadata.generateName == oldObject.metadata.generateName)) && has(object.metadata.uid) && has(oldObject.metadata.uid) && object.metadata.uid != "" && object.metadata.uid == oldObject.metadata.uid && has(object.metadata.resourceVersion) && has(oldObject.metadata.resourceVersion) && object.metadata.resourceVersion != "" && object.metadata.resourceVersion == oldObject.metadata.resourceVersion && object.metadata.generation == oldObject.metadata.generation && has(object.metadata.labels) && has(oldObject.metadata.labels) && object.metadata.labels == oldObject.metadata.labels && ((!has(object.metadata.annotations) && !has(oldObject.metadata.annotations)) || (has(object.metadata.annotations) && has(oldObject.metadata.annotations) && object.metadata.annotations == oldObject.metadata.annotations)) && ((!has(object.metadata.ownerReferences) && !has(oldObject.metadata.ownerReferences)) || (has(object.metadata.ownerReferences) && has(oldObject.metadata.ownerReferences) && object.metadata.ownerReferences == oldObject.metadata.ownerReferences)) && ((!has(object.metadata.finalizers) && !has(oldObject.metadata.finalizers)) || (has(object.metadata.finalizers) && has(oldObject.metadata.finalizers) && object.metadata.finalizers == oldObject.metadata.finalizers))` -}}
+{{- $jobStatusValidations := list $jobControllerPrincipal $statusIdentity -}}
+{{- range $expression := rest $jobValidations -}}
+{{- $jobStatusValidations = append $jobStatusValidations (replace "object." "oldObject." $expression) -}}
+{{- end -}}
+{{- $jobDeletionValidations := list
+      `oldObject != null && (!has(request.subResource) || request.subResource == "") && request.operation == "DELETE"`
+      (printf `oldObject.metadata.name in %s && oldObject.metadata.namespace == %q && (!has(oldObject.metadata.generateName) || oldObject.metadata.generateName == "")` $allJobNames $root.Release.Namespace) -}}
+{{- range $index, $expression := $jobValidations -}}
+{{- if ge $index 2 -}}
+{{- $jobDeletionValidations = append $jobDeletionValidations (replace "object." "oldObject." $expression) -}}
+{{- end -}}
+{{- end -}}
+{{- $jobDeletionValidations = append $jobDeletionValidations `has(oldObject.status.conditions) && oldObject.status.conditions.exists(condition, condition.status == "True" && condition.type in ["Complete", "Failed"])` -}}
+{{- $podSpec := "object.spec" -}}
+{{- $podMetadata := "object.metadata" -}}
+{{- $podContainer := "object.spec.containers[0]" -}}
+{{- $podVolume := "object.spec.volumes[0]" -}}
+{{- $podSources := "object.spec.volumes[0].projected.sources" -}}
+{{- $podJobLabel := `object.metadata.labels["batch.kubernetes.io/job-name"]` -}}
+{{- $podOwner := "object.metadata.ownerReferences[0]" -}}
+{{- $generatedPrefix := `(object.metadata.generateName.size() > 58 ? object.metadata.generateName.substring(0, 58) : object.metadata.generateName)` -}}
+{{- $podGeneratedIdentity := printf `has(object.metadata.generateName) && object.metadata.generateName == %[1]s.name + "-" && object.metadata.name.size() == %[2]s.size() + 5 && object.metadata.name.startsWith(%[2]s) && object.metadata.name.substring(%[2]s.size()).matches("^[a-z0-9]{5}$")` $podOwner $generatedPrefix -}}
+{{- $podNoSideChannels := printf `!has(%[1]s.lifecycle) && (!has(%[1]s.env) || %[1]s.env.size() == 0) && (!has(%[1]s.envFrom) || %[1]s.envFrom.size() == 0) && (!has(%[1]s.ports) || %[1]s.ports.size() == 0) && !has(%[1]s.livenessProbe) && !has(%[1]s.readinessProbe) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File" && !has(%[1]s.restartPolicy) && (!has(%[1]s.restartPolicyRules) || %[1]s.restartPolicyRules.size() == 0)` $podContainer -}}
+{{- $podImageValidation := printf `%[1]s.name == (%[2]s == %[3]q ? "teardown-retirement-probe-a" : (%[2]s == %[4]q ? "teardown-retirement-gate" : (%[2]s == %[5]q ? "crd-manager-teardown-quiesce" : (%[2]s == %[6]q ? "crd-manager-teardown" : "teardown-retirement")))) && %[1]s.image == %[7]q && %[1]s.command == ["/ptah-crd-manager"]` $podContainer $podJobLabel $probeAJob $gateJob $quiesceJob $cleanupJob $managerImage -}}
+{{- $podProbeArgsValidation := printf `%[1]s != %[2]q || %[3]s.args == %s` $podJobLabel $probeAJob $podContainer ($probeAArgs | toJson) -}}
+{{- $podGateArgsValidation := printf `%[1]s != %[2]q || %[3]s.args == %s` $podJobLabel $gateJob $podContainer ($gateArgs | toJson) -}}
+{{- if .ordinary -}}
+{{- $podImageValidation = printf `%[1]s.name == (%[2]s == %[3]q ? "teardown-retirement-probe-a" : (%[2]s == %[4]q ? "teardown-retirement-gate" : (%[2]s == %[5]q ? "crd-manager-teardown-quiesce" : (%[2]s == %[6]q ? "crd-manager-teardown" : "teardown-retirement")))) && %[1]s.image.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && %[1]s.command == ["/ptah-crd-manager"]` $podContainer $podJobLabel $probeAJob $gateJob $quiesceJob $cleanupJob -}}
+{{- $podProbeArgsValidation = include "ptah-operator.teardownRetirementForwardArgs" (dict "container" $podContainer "selector" $podJobLabel "probeJob" $probeAJob "releaseName" $root.Release.Name "namespace" $root.Release.Namespace) -}}
+{{- $podGateArgsValidation = `true` -}}
+{{- end -}}
+{{- $podValidations := list
+      `!has(request.subResource) || request.subResource == ""`
+      (printf `request.operation != "CREATE" || (%s)` $jobControllerPrincipal)
+      (printf `has(%[1]s.serviceAccountName) && %[1]s.serviceAccountName == (%[2]s in %[3]s ? %[4]q : (%[2]s == %[5]q ? %[6]q : %[7]q))` $podSpec $podJobLabel $bootstrapJobs $bootstrapServiceAccount $quiesceJob $hookServiceAccount $cleanupServiceAccount)
+      (printf `has(%[1]s.labels) && "batch.kubernetes.io/job-name" in %[1]s.labels && %[2]s in %s` $podMetadata $podJobLabel $allJobNames)
+      (printf `has(%[1]s.ownerReferences) && %[1]s.ownerReferences.size() == 1 && %[2]s.apiVersion == "batch/v1" && %[2]s.kind == "Job" && %[2]s.name == %[3]s && has(%[2]s.controller) && %[2]s.controller` $podMetadata $podOwner $podJobLabel)
+      (printf `has(%[1]s.uid) && %[1]s.uid != "" && has(%[1]s.blockOwnerDeletion) && %[1]s.blockOwnerDeletion && %[2]s` $podOwner $podGeneratedIdentity)
+      (printf `%s.restartPolicy == "Never"` $podSpec)
+      (printf `request.operation != "CREATE" || !has(%[1]s.nodeName) || %[1]s.nodeName == ""` $podSpec)
+      (printf `request.operation != "UPDATE" || ((!has(%[1]s.nodeName) && !has(oldObject.spec.nodeName)) || (has(%[1]s.nodeName) && has(oldObject.spec.nodeName) && %[1]s.nodeName == oldObject.spec.nodeName))` $podSpec)
+      (printf `has(%[1]s.automountServiceAccountToken) && !%[1]s.automountServiceAccountToken && (!has(%[1]s.hostNetwork) || !%[1]s.hostNetwork) && (!has(%[1]s.hostPID) || !%[1]s.hostPID) && (!has(%[1]s.hostIPC) || !%[1]s.hostIPC) && (!has(%[1]s.shareProcessNamespace) || !%[1]s.shareProcessNamespace)` $podSpec)
+      (printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.runAsNonRoot) && %[1]s.securityContext.runAsNonRoot && has(%[1]s.securityContext.runAsUser) && %[1]s.securityContext.runAsUser == 65532 && has(%[1]s.securityContext.runAsGroup) && %[1]s.securityContext.runAsGroup == 65532 && has(%[1]s.securityContext.seccompProfile) && %[1]s.securityContext.seccompProfile.type == "RuntimeDefault" && (!has(%[1]s.securityContext.sysctls) || %[1]s.securityContext.sysctls.size() == 0)` $podSpec)
+      (printf `has(%[1]s.containers) && %[1]s.containers.size() == 1 && (!has(%[1]s.initContainers) || %[1]s.initContainers.size() == 0) && (!has(%[1]s.ephemeralContainers) || %[1]s.ephemeralContainers.size() == 0)` $podSpec)
+      $podImageValidation
+      (printf `%[1]s != %[2]q || %[3]s.args == %s` $podJobLabel $quiesceJob $podContainer ($quiesceArgs | toJson))
+      (printf `%[1]s != %[2]q || %[3]s.args == %s` $podJobLabel $cleanupJob $podContainer ($cleanupArgs | toJson))
+      (printf `%[1]s != %[2]q || %[3]s.args == %s` $podJobLabel $finalJob $podContainer ($finalArgs | toJson))
+      $podProbeArgsValidation
+      $podGateArgsValidation
+      $podNoSideChannels
+      (printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.allowPrivilegeEscalation) && !%[1]s.securityContext.allowPrivilegeEscalation && has(%[1]s.securityContext.readOnlyRootFilesystem) && %[1]s.securityContext.readOnlyRootFilesystem && (!has(%[1]s.securityContext.privileged) || !%[1]s.securityContext.privileged) && !has(%[1]s.securityContext.runAsUser) && !has(%[1]s.securityContext.runAsGroup) && !has(%[1]s.securityContext.runAsNonRoot) && !has(%[1]s.securityContext.procMount) && has(%[1]s.securityContext.capabilities) && (!has(%[1]s.securityContext.capabilities.add) || %[1]s.securityContext.capabilities.add.size() == 0) && has(%[1]s.securityContext.capabilities.drop) && %[1]s.securityContext.capabilities.drop == ["ALL"]` $podContainer)
+      (printf `has(%[1]s.volumeMounts) && %[1]s.volumeMounts.size() == 1 && %[1]s.volumeMounts[0].name == "api-access" && %[1]s.volumeMounts[0].mountPath == "/var/run/secrets/kubernetes.io/serviceaccount" && has(%[1]s.volumeMounts[0].readOnly) && %[1]s.volumeMounts[0].readOnly` $podContainer)
+      (printf `has(%[1]s.volumes) && %[1]s.volumes.size() == 1 && %[2]s.name == "api-access" && has(%[2]s.projected) && has(%[2]s.projected.defaultMode) && %[2]s.projected.defaultMode == 420 && %[3]s.size() == 3 && %[3]s.exists(s, has(s.serviceAccountToken) && s.serviceAccountToken.path == "token" && has(s.serviceAccountToken.expirationSeconds) && s.serviceAccountToken.expirationSeconds == 3600 && !has(s.serviceAccountToken.audience)) && %[3]s.exists(s, has(s.configMap) && s.configMap.name == "kube-root-ca.crt") && %[3]s.exists(s, has(s.downwardAPI))` $podSpec $podVolume $podSources) -}}
+{{- $podStatusFields := list "observedGeneration" "phase" "conditions" "message" "reason" "nominatedNodeName" "hostIP" "hostIPs" "podIP" "podIPs" "startTime" "initContainerStatuses" "containerStatuses" "qosClass" "ephemeralContainerStatuses" "resize" "resourceClaimStatuses" "extendedResourceClaimStatus" "allocatedResources" "resources" "nodeAllocatableResourceClaimStatuses" -}}
+{{- $schedulerStatusParts := list -}}
+{{- range $field := $podStatusFields -}}
+{{- if ne $field "nominatedNodeName" -}}
+{{- $schedulerStatusParts = append $schedulerStatusParts (printf `((!has(dyn(object.status).%[1]s) && !has(dyn(oldObject.status).%[1]s)) || (has(dyn(object.status).%[1]s) && has(dyn(oldObject.status).%[1]s) && dyn(object.status).%[1]s == dyn(oldObject.status).%[1]s))` $field) -}}
+{{- end -}}
+{{- end -}}
+{{- $schedulerStatusDelta := join " && " $schedulerStatusParts -}}
+{{- $podStatusValidations := list (printf `(%s) || ((%s) && (%s))` $nodePrincipal $schedulerPrincipal $schedulerStatusDelta) $statusIdentity -}}
+{{- range $expression := rest $podValidations -}}
+{{- $podStatusValidations = append $podStatusValidations (replace "object." "oldObject." $expression) -}}
+{{- end -}}
+{{- $oldPodJobLabel := `oldObject.metadata.labels["batch.kubernetes.io/job-name"]` -}}
+{{- $oldPodOwner := "oldObject.metadata.ownerReferences[0]" -}}
+{{- $podDeletionValidations := list
+      `oldObject != null && (!has(request.subResource) || request.subResource == "")`
+      (printf `has(oldObject.metadata.labels) && "batch.kubernetes.io/job-name" in oldObject.metadata.labels && %s in %s` $oldPodJobLabel $allJobNames)
+      (printf `has(oldObject.metadata.ownerReferences) && oldObject.metadata.ownerReferences.size() == 1 && %[1]s.apiVersion == "batch/v1" && %[1]s.kind == "Job" && %[1]s.name == %[2]s && has(%[1]s.uid) && %[1]s.uid != "" && has(%[1]s.controller) && %[1]s.controller && has(%[1]s.blockOwnerDeletion) && %[1]s.blockOwnerDeletion` $oldPodOwner $oldPodJobLabel)
+      (printf `has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName == (%[1]s in %[2]s ? %[3]q : (%[1]s == %[4]q ? %[5]q : %[6]q))` $oldPodJobLabel $bootstrapJobs $bootstrapServiceAccount $quiesceJob $hookServiceAccount $cleanupServiceAccount) -}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ .name }}
+  annotations:
+    {{ if not .ordinary }}
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: {{ .weight | quote }}
+    helm.sh/hook-delete-policy: before-hook-creation
+    {{ end }}
+    operator.ptah.dev/teardown-retirement-version: "1"
+    operator.ptah.dev/teardown-retirement-attempt: {{ $attempt | quote }}
+    operator.ptah.dev/teardown-retirement-target: {{ .name | quote }}
+    operator.ptah.dev/release-name: {{ $root.Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ $root.Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ $root.Release.Name }}
+    app.kubernetes.io/component: teardown-retirement
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - operations: ["CREATE", "UPDATE", "DELETE", "CONNECT"]
+        apiGroups: ["*"]
+        apiVersions: ["*"]
+        resources: ["*/*"]
+        scope: "*"
+  matchConditions:
+    - name: teardown-probe-or-protected-identity
+      expression: {{ $match | quote }}
+  variables:
+    - name: isMarkerProbe
+      expression: {{ $markerRequest | quote }}
+    - name: isControllerCaller
+      expression: {{ $controllerCallerMatch | quote }}
+    - name: isCertificateCaller
+      expression: {{ printf `request.userInfo.username == %q` $certificateUsername | quote }}
+    - name: isBootstrapCaller
+      expression: {{ printf `request.userInfo.username == %q` $bootstrapUsername | quote }}
+    - name: isHookCaller
+      expression: {{ printf `request.userInfo.username.matches(%q)` $hookUsernamePattern | quote }}
+    - name: isCleanupCaller
+      expression: {{ printf `request.userInfo.username.matches(%q)` $cleanupUsernamePattern | quote }}
+    - name: isControllerTokenRequest
+      expression: {{ printf `(%s) && (%s)` $tokenRequest $controllerNameMatch | quote }}
+    - name: isCertificateTokenRequest
+      expression: {{ printf `(%s) && request.name == %q` $tokenRequest $certificateServiceAccount | quote }}
+    - name: isBootstrapTokenRequest
+      expression: {{ printf `(%s) && request.name == %q` $tokenRequest $bootstrapServiceAccount | quote }}
+    - name: isHookTokenRequest
+      expression: {{ printf `(%s) && request.name.matches(%q)` $tokenRequest $hookNamePattern | quote }}
+    - name: isCleanupTokenRequest
+      expression: {{ printf `(%s) && request.name.matches(%q)` $tokenRequest $cleanupNamePattern | quote }}
+    - name: callerPodName
+      expression: {{ $callerPodName | quote }}
+    - name: callerPodUID
+      expression: {{ $callerPodUID | quote }}
+    - name: boundPod
+      expression: 'request.userInfo.username.matches("^system:node:.+$") && request.userInfo.groups.size() == 2 && "system:nodes" in request.userInfo.groups && "system:authenticated" in request.userInfo.groups && has(object.spec.boundObjectRef) && has(object.spec.boundObjectRef.apiVersion) && object.spec.boundObjectRef.apiVersion == "v1" && has(object.spec.boundObjectRef.kind) && object.spec.boundObjectRef.kind == "Pod" && has(object.spec.boundObjectRef.name) && object.spec.boundObjectRef.name != "" && has(object.spec.boundObjectRef.uid) && object.spec.boundObjectRef.uid != ""'
+    - name: isProtectedJob
+      expression: {{ $protectedJob | quote }}
+    - name: isProtectedJobDelete
+      expression: {{ $protectedJobDelete | quote }}
+    - name: isProtectedJobStatus
+      expression: {{ $protectedJobStatus | quote }}
+    - name: isProtectedPodWrite
+      expression: {{ $protectedPodWrite | quote }}
+    - name: isProtectedPodDelete
+      expression: {{ $protectedPodDelete | quote }}
+    - name: isProtectedPodStatus
+      expression: {{ $protectedPodStatus | quote }}
+    - name: isDangerousPodSubresource
+      expression: {{ $dangerousPodSubresource | quote }}
+    - name: isProtectedRetainedMarkerDelete
+      expression: {{ $protectedRetainedMarkerDelete | quote }}
+  validations:
+    - expression: {{ printf `!variables.isMarkerProbe || (request.dryRun == true && oldObject != null && (%s) && (%s) && object.metadata.uid == oldObject.metadata.uid && object.metadata.resourceVersion == oldObject.metadata.resourceVersion)` $objectMarkerShape $oldMarkerShape | quote }}
+      message: Ptah teardown retirement probe differs from the exact immutable marker contract
+    - expression: '!variables.isMarkerProbe || (false)'
+      message: {{ printf "Ptah teardown retirement confirmed exact policy %s with %s" .name .fieldManager | quote }}
+    - expression: variables.isMarkerProbe || !variables.isControllerCaller
+      message: Ptah teardown fence rejected a controller caller after uninstall fencing
+    - expression: variables.isMarkerProbe || !variables.isCertificateCaller
+      message: Ptah teardown fence rejected a certificate caller after uninstall fencing
+    - expression: {{ printf `variables.isMarkerProbe || !variables.isBootstrapCaller || (request.userInfo.username == %q && variables.callerPodName != "" && variables.callerPodUID != "" && ((%s) || (%s)))` $bootstrapUsername $probeACallerPod $gateCallerPod | quote }}
+      message: Ptah teardown fence rejected a bootstrap caller outside the exact probe or gate Pod
+    - expression: {{ printf `variables.isMarkerProbe || !variables.isHookCaller || (request.userInfo.username == %q && variables.callerPodName != "" && variables.callerPodUID != "" && (%s))` $hookUsername $quiesceCallerPod | quote }}
+      message: Ptah teardown fence rejected a hook caller outside the exact quiesce Pod
+    - expression: {{ printf `variables.isMarkerProbe || !variables.isCleanupCaller || (request.userInfo.username == %q && variables.callerPodName != "" && variables.callerPodUID != "" && ((%s) || (%s)))` $cleanupUsername $cleanupCallerPod $finalCallerPod | quote }}
+      message: Ptah teardown fence rejected a cleanup caller outside the exact cleanup or final Pod
+    - expression: variables.isMarkerProbe || !variables.isControllerTokenRequest
+      message: Ptah teardown fence rejected a controller TokenRequest after uninstall fencing
+    - expression: variables.isMarkerProbe || !variables.isCertificateTokenRequest
+      message: Ptah teardown fence rejected a certificate TokenRequest after uninstall fencing
+    - expression: {{ printf `variables.isMarkerProbe || !variables.isBootstrapTokenRequest || (request.name == %q && variables.boundPod && ((%s) || (%s)))` $bootstrapServiceAccount $probeABoundPod $gateBoundPod | quote }}
+      message: Ptah teardown fence rejected a bootstrap TokenRequest outside the exact probe or gate Pod
+    - expression: {{ printf `variables.isMarkerProbe || !variables.isHookTokenRequest || (request.name == %q && variables.boundPod && (%s))` $hookServiceAccount $quiesceBoundPod | quote }}
+      message: Ptah teardown fence rejected a hook TokenRequest outside the exact quiesce Pod
+    - expression: {{ printf `variables.isMarkerProbe || !variables.isCleanupTokenRequest || (request.name == %q && variables.boundPod && ((%s) || (%s)))` $cleanupServiceAccount $cleanupBoundPod $finalBoundPod | quote }}
+      message: Ptah teardown fence rejected a cleanup TokenRequest outside the exact cleanup or final Pod
+    - expression: '!variables.isDangerousPodSubresource'
+      message: Ptah teardown fence rejects interactive and mutable Pod subresources
+    - expression: {{ printf `!variables.isProtectedRetainedMarkerDelete || (variables.isCleanupCaller && variables.callerPodName != "" && variables.callerPodUID != "" && (%s))` $finalCallerPod | quote }}
+      message: Ptah teardown fence rejected retained marker deletion outside the exact final Pod
+    {{- if .ordinary }}
+    - expression: {{ printf `!variables.isProtectedJob || (%s)` $helmAuthorizer | quote }}
+      message: Ptah teardown bootstrap Job requires cluster admission-management authority
+    {{- end }}
+    {{- range $expression := $jobValidations }}
+    - expression: {{ printf `!variables.isProtectedJob || (%s)` $expression | quote }}
+      message: Ptah teardown fence rejected a Job outside the exact uninstall contract
+    {{- end }}
+    {{- range $expression := $jobStatusValidations }}
+    - expression: {{ printf `!variables.isProtectedJobStatus || (%s)` $expression | quote }}
+      message: Ptah teardown fence rejected forged Job completion
+    {{- end }}
+    - expression: {{ printf `!variables.isProtectedJobDelete || (%s)` $helmAuthorizer | quote }}
+      message: Ptah teardown Job deletion requires cluster admission-management authority
+    {{- range $expression := $jobDeletionValidations }}
+    - expression: {{ printf `!variables.isProtectedJobDelete || (%s)` $expression | quote }}
+      message: Ptah teardown fence rejected deletion of a nonterminal or foreign Job
+    {{- end }}
+    {{- range $expression := $podValidations }}
+    - expression: {{ printf `!variables.isProtectedPodWrite || (%s)` $expression | quote }}
+      message: Ptah teardown fence rejected a Pod outside the exact uninstall contract
+    {{- end }}
+    {{- range $expression := $podStatusValidations }}
+    - expression: {{ printf `!variables.isProtectedPodStatus || (%s)` $expression | quote }}
+      message: Ptah teardown fence rejected forged Pod completion
+    {{- end }}
+    {{- range $expression := $podDeletionValidations }}
+    - expression: {{ printf `!variables.isProtectedPodDelete || (%s)` $expression | quote }}
+      message: Ptah teardown fence rejected deletion of a foreign uninstall Pod
+    {{- end }}
+{{- end -}}
+
+{{- $sequence := include "ptah-operator.releaseSequence" . -}}
+{{- if ne $sequence "1" -}}
+{{- fail (printf "teardown retirement sequence %s has no explicit append-only predecessor inventory" $sequence) -}}
+{{- end -}}
+{{- $managerImage := include "ptah-operator.managerImage" . -}}
+{{- $attempt := printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $sequence $managerImage | sha256sum -}}
+{{- $attempt12 := trunc 12 $attempt -}}
+{{- $markerName := printf "ptah-teardown-probe-v1-%s-%s" $sequence $attempt12 -}}
+{{- $fenceDigest := printf "1\n%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $fenceA := printf "ptah-operator-teardown-fence-a-v1-%s" $fenceDigest -}}
+{{- $fenceB := printf "ptah-operator-teardown-fence-b-v1-%s" $fenceDigest -}}
+{{- $bootstrapName := printf "ptah-teardown-bootstrap-v1-%s" $fenceDigest -}}
+{{- $probeAJob := printf "ptah-teardown-probe-a-v1-%s" $fenceDigest -}}
+{{- $jointGateJob := printf "ptah-teardown-gate-v1-%s" $fenceDigest -}}
+{{- $hookServiceAccount := include "ptah-operator.crdManagerServiceAccountName" . -}}
+{{- $cleanupServiceAccount := include "ptah-operator.teardownServiceAccountName" . -}}
+{{- $hookSuffix := printf "-crd-v%s-%s" $sequence $attempt12 -}}
+{{- if not (hasSuffix $hookSuffix $hookServiceAccount) -}}
+{{- fail "teardown retirement hook ServiceAccount differs from the exact attempt identity" -}}
+{{- end -}}
+{{- $hookBase := trimSuffix $hookSuffix $hookServiceAccount -}}
+{{- $finalJob := printf "%s-retire-v%s-%s" $hookBase $sequence $attempt12 -}}
+{{- if gt (len $finalJob) 63 -}}
+{{- fail "teardown retirement final Job name exceeds the Kubernetes DNS label limit" -}}
+{{- end -}}
+{{- $controllerName := include "ptah-operator.fullname" . -}}
+{{- $controllerServiceAccount := include "ptah-operator.serviceAccountName" . -}}
+{{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
+{{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
+{{- $certificateName := include "ptah-operator.certRotatorServiceAccountName" . -}}
+{{- $quiesceJob := include "ptah-operator.teardownQuiesceJobName" . -}}
+{{- $cleanupJob := $cleanupServiceAccount -}}
+{{- $markerContext := dict "name" $markerName "namespace" .Release.Namespace "releaseName" .Release.Name "sequence" $sequence "managerImage" $managerImage "attempt" $attempt -}}
+{{- $objectMarkerShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "object") $markerContext) -}}
+{{- $oldMarkerShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "oldObject") $markerContext) -}}
+{{- $fenceAFieldManager := printf "ptah-teardown-v1-%s" (printf "1\n%s\n%s" $fenceA $attempt | sha256sum) -}}
+{{- $fenceBFieldManager := printf "ptah-teardown-v1-%s" (printf "1\n%s\n%s" $fenceB $attempt | sha256sum) -}}
+{{- $legacyDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $guardNames := list
+      (include "ptah-operator.releaseActivationGuardPolicyName" .)
+      (include "ptah-operator.rolloutGuardPolicyName" .)
+      (include "ptah-operator.runtimeGuardPolicyName" .)
+      (include "ptah-operator.runtimePodGuardPolicyName" .)
+      (include "ptah-operator.hookIdentityGuardPolicyName" .)
+      (include "ptah-operator.hookIdentityProbeGuardPolicyName" .)
+      (include "ptah-operator.parentReplicaSetGuardPolicyName" .)
+      (include "ptah-operator.parentHookJobOriginGuardPolicyName" .)
+      (include "ptah-operator.parentHookPodOriginGuardPolicyName" .)
+      (include "ptah-operator.parentHookJobContractPolicyName" .)
+      (printf "ptah-operator-hook-parent-origin-guard-v1-%s" $legacyDigest)
+      (printf "ptah-operator-hook-pod-origin-guard-v1-%s" $legacyDigest)
+      (printf "ptah-operator-service-account-object-guard-v1-%s" $legacyDigest)
+      (include "ptah-operator.serviceAccountOriginGuardPolicyName" .)
+      (include "ptah-operator.controllerWriteGuardPolicyName" .)
+      (include "ptah-operator.controllerJobWriteGuardPolicyName" .)
+      (include "ptah-operator.controllerChunkWriteGuardPolicyName" .)
+      (include "ptah-operator.controllerPlanWriteGuardPolicyName" .)
+      (printf "ptah-operator-controller-write-guard-v1-%s" $legacyDigest)
+      (printf "ptah-operator-job-write-guard-v1-%s" $legacyDigest)
+      (printf "ptah-operator-chunk-write-guard-v1-%s" $legacyDigest)
+      (printf "ptah-operator-plan-write-guard-v1-%s" $legacyDigest)
+      (printf "ptah-operator-service-account-origin-guard-v1-%s" $legacyDigest)
+      (printf "ptah-operator-runtime-parent-guard-v1-%s" $legacyDigest)
+      (include "ptah-operator.certificateMutatingWriteGuardPolicyName" .)
+      (include "ptah-operator.certificateValidatingWriteGuardPolicyName" .)
+      (include "ptah-operator.namespaceDeletionGuardPolicyName" .)
+      (include "ptah-operator.admissionConvergencePolicyName" .) -}}
+{{- $certificateRecoveryEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) .Values.certificateRotation.recreateMissingSecret -}}
+{{- if $certificateRecoveryEnabled -}}
+{{- $guardNames = append $guardNames $certificateName -}}
+{{- end -}}
+{{- $guardNames = $guardNames | uniq | sortAlpha -}}
+{{- if gt (len $guardNames) 45 -}}
+{{- fail (printf "teardown retirement inventory of %d pairs exceeds hook weights 10..99" (len $guardNames)) -}}
+{{- end -}}
+{{- $fenceContext := dict
+      "root" .
+      "sequence" $sequence
+      "attempt" $attempt
+      "managerImage" $managerImage
+      "markerName" $markerName
+      "hookServiceAccount" $hookServiceAccount
+      "cleanupServiceAccount" $cleanupServiceAccount
+      "controllerServiceAccount" $controllerServiceAccount
+      "previousControllerServiceAccount" $previousControllerServiceAccount
+      "previousSequence" $previousSequence
+      "controllerDeployment" $controllerName
+      "certificateServiceAccount" $certificateName
+      "bootstrapServiceAccount" $bootstrapName
+      "quiesceJob" $quiesceJob
+      "cleanupJob" $cleanupJob
+      "finalJob" $finalJob
+      "probeAJob" $probeAJob
+      "gateJob" $jointGateJob -}}
+
+{{/*
+The stable A/B identities are ordinary release resources that protect only the
+bootstrap credential and proof Job/Pod boundary. They do not match runtime
+callers or the marker probe. Pre-delete replaces these anchors with the broad
+static fence forms below; deleteRelease consequently owns their final removal
+without a non-retriable post-delete hook.
+*/}}
+{{ include "ptah-operator.teardownRetirementFencePolicy" (merge (dict "name" $fenceA "ordinary" true "fieldManager" $fenceAFieldManager) $fenceContext) }}
+---
+{{ include "ptah-operator.teardownRetirementBinding" (dict "root" . "name" $fenceA "ordinary" true "attempt" $attempt "sequence" $sequence "managerImage" $managerImage) }}
+---
+{{ include "ptah-operator.teardownRetirementFencePolicy" (merge (dict "name" $fenceB "ordinary" true "fieldManager" $fenceBFieldManager) $fenceContext) }}
+---
+{{ include "ptah-operator.teardownRetirementBinding" (dict "root" . "name" $fenceB "ordinary" true "attempt" $attempt "sequence" $sequence "managerImage" $managerImage) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $markerName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-330"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    operator.ptah.dev/teardown-retirement-version: "1"
+    operator.ptah.dev/teardown-retirement-attempt: {{ $attempt | quote }}
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: teardown-retirement
+immutable: true
+data:
+  release-attempt: {{ $attempt | quote }}
+  release-sequence: {{ $sequence | quote }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $bootstrapName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-327"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: teardown-retirement-bootstrap
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $bootstrapName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-326"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: teardown-retirement-bootstrap
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $markerName | quote }}]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $bootstrapName }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-326"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: teardown-retirement-bootstrap
+rules:
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $bootstrapName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-325"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: teardown-retirement-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $bootstrapName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $bootstrapName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $bootstrapName }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-324"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: teardown-retirement-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $bootstrapName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $bootstrapName }}
+    namespace: {{ .Release.Namespace }}
+---
+{{ include "ptah-operator.teardownRetirementFencePolicy" (merge (dict "name" $fenceA "weight" "-329" "fieldManager" $fenceAFieldManager) $fenceContext) }}
+---
+{{ include "ptah-operator.teardownRetirementBinding" (dict "root" . "name" $fenceA "weight" "-328" "deletePolicy" "before-hook-creation" "attempt" $attempt "sequence" $sequence "managerImage" $managerImage) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $probeAJob }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-315"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: teardown-retirement-bootstrap
+spec:
+  activeDeadlineSeconds: 90
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "ptah-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: teardown-retirement-bootstrap
+    spec:
+      serviceAccountName: {{ $bootstrapName }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: teardown-retirement-probe-a
+          image: {{ $managerImage }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          args:
+            {{- $args := include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown-retirement-probe-a" "timeout" "60s" "verifyControllerState" false) | fromJsonArray -}}
+            {{- $args = without $args "--verify-certificate-recovery=true" -}}
+            {{- range $args }}
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      volumes:
+        - name: api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        apiVersion: v1
+                        fieldPath: metadata.namespace
+---
+{{ range $index, $guardName := $guardNames }}
+{{- $policyWeight := add 10 (mul 2 $index) -}}
+{{- $bindingWeight := add1 $policyWeight -}}
+{{ include "ptah-operator.teardownRetirementPolicy" (dict "root" $ "name" $guardName "markerName" $markerName "weight" (toString $policyWeight) "deletePolicy" "before-hook-creation,hook-succeeded" "attempt" $attempt "sequence" $sequence "managerImage" $managerImage) }}
+---
+{{ include "ptah-operator.teardownRetirementBinding" (dict "root" $ "name" $guardName "weight" (toString $bindingWeight) "deletePolicy" "before-hook-creation,hook-succeeded" "attempt" $attempt "sequence" $sequence "managerImage" $managerImage) }}
+---
+{{ end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $finalJob }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "105"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: teardown-retirement
+spec:
+  activeDeadlineSeconds: 270
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "ptah-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: teardown-retirement
+    spec:
+      serviceAccountName: {{ $cleanupServiceAccount }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: teardown-retirement
+          image: {{ $managerImage }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          args:
+            {{- $args := include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown-retirement-final" "timeout" "240s" "verifyControllerState" false) | fromJsonArray -}}
+            {{- $args = without $args "--verify-certificate-recovery=true" -}}
+            {{- range $args }}
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      volumes:
+        - name: api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        apiVersion: v1
+                        fieldPath: metadata.namespace
+---
+{{ include "ptah-operator.teardownRetirementFencePolicy" (merge (dict "name" $fenceB "weight" "-310" "fieldManager" $fenceBFieldManager) $fenceContext) }}
+---
+{{ include "ptah-operator.teardownRetirementBinding" (dict "root" . "name" $fenceB "weight" "-309" "deletePolicy" "before-hook-creation" "attempt" $attempt "sequence" $sequence "managerImage" $managerImage) }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $jointGateJob }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-305"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: teardown-retirement-bootstrap
+spec:
+  activeDeadlineSeconds: 120
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "ptah-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: teardown-retirement-bootstrap
+    spec:
+      serviceAccountName: {{ $bootstrapName }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: teardown-retirement-gate
+          image: {{ $managerImage }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          args:
+            {{- $args := include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown-retirement-gate" "timeout" "90s" "verifyControllerState" false) | fromJsonArray -}}
+            {{- $args = without $args "--verify-certificate-recovery=true" -}}
+            {{- range $args }}
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      volumes:
+        - name: api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        apiVersion: v1
+                        fieldPath: metadata.namespace
+---

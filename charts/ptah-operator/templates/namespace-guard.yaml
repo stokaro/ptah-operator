@@ -1,0 +1,86 @@
+{{- $guardName := include "ptah-operator.namespaceDeletionGuardPolicyName" . -}}
+{{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $guardName -}}
+{{- $binding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $guardName -}}
+{{- range $entry := list
+      (dict "kind" "ValidatingAdmissionPolicy" "object" $policy)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $binding) -}}
+{{- with $entry.object -}}
+{{- $annotations := default (dict) .metadata.annotations -}}
+{{- $labels := default (dict) .metadata.labels -}}
+{{- if or
+      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
+      (ne (default "" (index $labels "app.kubernetes.io/component")) "namespace-deletion-guard") -}}
+{{- fail (printf "retained %s %s has foreign or incomplete namespace-deletion ownership" $entry.kind $guardName) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not $policy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $guardName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-170"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: namespace-deletion-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["DELETE"]
+        resources: ["namespaces"]
+        scope: Cluster
+  matchConditions:
+    - name: fixed-release-namespace
+      expression: {{ printf `oldObject != null && oldObject.metadata.name == %q` .Release.Namespace | quote }}
+  validations:
+    - expression: "false"
+      message: "Ptah namespace deletion guard rejected deletion of the release Namespace"
+---
+{{- end }}
+{{- if not $binding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $guardName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-169"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: namespace-deletion-guard
+spec:
+  policyName: {{ $guardName }}
+  matchResources:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["DELETE"]
+        resources: ["namespaces"]
+        scope: Cluster
+  validationActions: [Deny]
+{{- end }}

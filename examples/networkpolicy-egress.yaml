@@ -1,0 +1,92 @@
+# Template only: replace namespace and workload labels with identities that
+# your cluster admission policy protects from untrusted writers.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ptah-schema-operations-default-deny
+  namespace: application
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: ptah-operator
+      app.kubernetes.io/component: schema-operation
+  policyTypes: [Egress]
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ptah-schema-operations-dns
+  namespace: application
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: ptah-operator
+      app.kubernetes.io/component: schema-operation
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+# Resolve, Verify, Observe, and Plan fetch OCI content. This example assumes an
+# in-cluster registry; use an admission-controlled CIDR policy for an external
+# registry rather than opening all Internet egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ptah-schema-operations-registry
+  namespace: application
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: ptah-operator
+      app.kubernetes.io/component: schema-operation
+    matchExpressions:
+      - key: operator.ptah.dev/operation
+        operator: In
+        values: [resolve, verify, observe, plan]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: registry
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: registry
+      ports:
+        - {protocol: TCP, port: 5000}
+---
+# Observe, Plan, and Apply connect to the database. Narrow the port to the one
+# selected engine when a namespace does not manage both families.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ptah-schema-operations-database
+  namespace: application
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/managed-by: ptah-operator
+      app.kubernetes.io/component: schema-operation
+    matchExpressions:
+      - key: operator.ptah.dev/operation
+        operator: In
+        values: [observe, plan, apply]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: application-database
+      ports:
+        - {protocol: TCP, port: 5432}
+        - {protocol: TCP, port: 3306}

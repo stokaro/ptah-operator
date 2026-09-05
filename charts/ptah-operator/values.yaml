@@ -1,0 +1,136 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/stokaro/ptah-operator
+  tag: "0.1.0"
+  # Mutable tags are available only through the explicit test-only escape
+  # below. Production and ordinary installs must supply digest.
+  digest: ""
+  allowMutableTag: false
+  # Test-only exact content identity used when allowMutableTag is true. Set it
+  # to the loaded image's sha256 Docker image ID; leave it empty with digest.
+  testIdentityDigest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+execution:
+  # Both execution images are required and must include @sha256:<64 hex>.
+  # ptahVersion is also required, is limited to 128 bytes, and must identify
+  # the Ptah build verified for the exact executorImage digest; the chart
+  # deliberately has no default.
+  executorImage: ""
+  runnerImage: ""
+  ptahVersion: ""
+
+admission:
+  # These values must match kube-apiserver's enabled admission plugins and
+  # DefaultTolerationSeconds flags. Zero means an exact zero-second NoExecute
+  # toleration; it does not disable the plugin.
+  defaultTolerationsEnabled: true
+  defaultNotReadyTolerationSeconds: 300
+  defaultUnreachableTolerationSeconds: 300
+  extendedResourceTolerationEnabled: false
+  alwaysPullImagesEnabled: false
+
+# Required whenever replicaCount is greater than one. Disable only for an
+# isolated single-replica installation. Exactly one Helm release is supported
+# per cluster; scale this release for high availability.
+leaderElection: true
+
+coordination:
+  # Leave empty to use the Helm release namespace. This namespace contains
+  # both database target Leases and the manager leader-election Lease for the
+  # cluster's one supported operator release.
+  namespace: ""
+
+serviceAccount:
+  # With create=false, name is a stable base, not a complete object name. For
+  # every release sequence N, pre-create the dedicated ServiceAccount
+  # <name>-v<N>. The chart never reuses or deletes these user-owned identities.
+  # Any additional RoleBinding or ClusterRoleBinding for an active or retained
+  # epoch blocks fail-closed upgrade and uninstall.
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+# Assign this class to the runtime Deployments and to the weight-zero CRD
+# reconcile hook after preflight verifies the live class. Earlier bootstrap,
+# preflight, and uninstall hooks remain classless; Pod admission may apply the
+# cluster's global default class to those hooks.
+priorityClassName: ""
+# Pin the scheduling semantics of priorityClassName. Use 0 and
+# PreemptLowerPriority when no class is configured. The preflight refuses a
+# named class whose live value or effective preemption policy differs, so a
+# PriorityClass change cannot silently alter an approved runtime contract.
+priorityClassValue: 0
+priorityClassPreemptionPolicy: PreemptLowerPriority
+
+metrics:
+  bindAddress: ":8080"
+  service:
+    enabled: true
+    port: 8080
+
+webhook:
+  port: 9443
+  timeoutSeconds: 5
+  # The manager-write validator may read one schema, one plan, and up to 16
+  # immutable plan chunks. Kubernetes caps admission timeouts at 30 seconds;
+  # keep this fail-closed path at that bound independently of the fast paths.
+  controllerWriteTimeoutSeconds: 30
+  # Name of a pre-provisioned kubernetes.io/tls Secret. The Secret must also
+  # contain ca.crt. Set caBundle to render the chart without cluster lookup.
+  existingSecret: ""
+  # PEM-encoded CA certificate for existingSecret. Leave empty during a
+  # connected Helm install to read ca.crt from that Secret.
+  caBundle: ""
+
+certificateRotation:
+  # Built-in management is automatically omitted when webhook.existingSecret
+  # is set. The manager never receives Secret-read permission.
+  enabled: true
+  # Opt in to recreating a deleted chart-generated Secret. This necessarily
+  # grants the rotator namespace-wide Secret CREATE in RBAC; a fail-closed
+  # admission policy narrows its use to the exact generated TLS Secret.
+  recreateMissingSecret: false
+  interval: "6h"
+  operationTimeout: "15m"
+  retryInitial: "5s"
+  retryMax: "5m"
+  healthPort: 8081
+  renewalThreshold: "720h"
+  servingCertificateValidity: "2160h"
+  caCertificateValidity: "26280h"
+  probeTimeout: "5m"
+  probeInterval: "2s"
+  leaseDuration: "10m"
+  leaseAcquireTimeout: "30s"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+approverClusterRole:
+  create: true
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

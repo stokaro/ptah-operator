@@ -1,0 +1,370 @@
+{{- define "ptah-operator.validateAdmissionConvergenceMarker" -}}
+{{- $root := .root -}}
+{{- $marker := .marker -}}
+{{- $sequence := .sequence -}}
+{{- $managerImage := .managerImage -}}
+{{- $metadata := default (dict) $marker.metadata -}}
+{{- $annotations := default (dict) $metadata.annotations -}}
+{{- $labels := default (dict) $metadata.labels -}}
+{{- $data := default (dict) $marker.data -}}
+{{- $inventory := default "" (index $data "predecessor-retirement-inventory") -}}
+{{- $sealed := and (default false $marker.immutable) (eq (len $data) 3) (regexMatch `^\{"version":"1","entries":\[.+\]\}$` $inventory) -}}
+{{- $unsealed := and (not (default false $marker.immutable)) (eq (len $data) 2) (not (hasKey $data "predecessor-retirement-inventory")) -}}
+{{- $attempt := printf "%s\n%s\n%s\n%s" $root.Release.Namespace $root.Release.Name $sequence $managerImage | sha256sum -}}
+{{- $cleanupBase := include "ptah-operator.fullname" $root | trunc 24 | trimSuffix "-" -}}
+{{- $cleanupServiceAccount := printf "%s-cleanup-v%s-%s" $cleanupBase $sequence ($attempt | trunc 12) -}}
+{{- if or
+      (ne (default "" $marker.apiVersion) "v1")
+      (ne (default "" $marker.kind) "ConfigMap")
+      (ne (default "" $metadata.name) .name)
+      (ne (default "" $metadata.namespace) $root.Release.Namespace)
+      (ne (default "" $metadata.generateName) "")
+      (eq (default "" $metadata.uid) "")
+      (eq (default "" $metadata.resourceVersion) "")
+      (not (empty $metadata.deletionTimestamp))
+      (not (empty $metadata.deletionGracePeriodSeconds))
+      (ne (len $annotations) 10)
+      (ne (default "" (index $annotations "helm.sh/hook")) "pre-install,pre-upgrade")
+      (ne (default "" (index $annotations "helm.sh/hook-weight")) "-165")
+      (ne (default "" (index $annotations "helm.sh/resource-policy")) "keep")
+      (ne (default "" (index $annotations "operator.ptah.dev/admission-convergence-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.dev/predecessor-retirement-inventory-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.dev/admission-convergence-cleanup-service-account")) $cleanupServiceAccount)
+      (ne (default "" (index $annotations "operator.ptah.dev/manager-image")) $managerImage)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $root.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $root.Release.Namespace)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-sequence")) $sequence)
+      (ne (len $labels) 3)
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index $labels "app.kubernetes.io/instance")) $root.Release.Name)
+      (ne (default "" (index $labels "app.kubernetes.io/component")) "admission-convergence")
+      (ne (default "" (index $data "expected-active-release-sequence")) $sequence)
+      (ne (default "" (index $data "release-attempt")) $attempt)
+      (not (or $unsealed $sealed))
+      (and .requireSealed (not $sealed))
+      (ne (len (default (dict) $marker.binaryData)) 0)
+      (ne (len (default (list) $metadata.ownerReferences)) 0)
+      (ne (len (default (list) $metadata.finalizers)) 0) -}}
+{{- fail (printf "retained admission convergence marker %s has foreign, malformed, or different attempt identity" .name) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.validateAdmissionConvergenceInventoryMarker" -}}
+{{- $marker := .marker -}}
+{{- $name := .name -}}
+{{- $itemSequence := .itemSequence -}}
+{{- $itemAnnotations := default (dict) $marker.metadata.annotations -}}
+{{- $itemManagerImage := default "" (index $itemAnnotations "operator.ptah.dev/manager-image") -}}
+{{- if not (regexMatch `^[^[:space:]@]+@sha256:[0-9a-f]{64}$` $itemManagerImage) -}}
+{{- fail (printf "retained admission convergence marker %s has an invalid manager identity" $name) -}}
+{{- end -}}
+{{- $contractManagerImage := $itemManagerImage -}}
+{{- if eq $itemSequence .currentSequence -}}
+{{- if ne $itemManagerImage .currentManagerImage -}}
+{{- fail (printf "retained admission convergence marker %s belongs to a different current release attempt" $name) -}}
+{{- end -}}
+{{- $contractManagerImage = .currentManagerImage -}}
+{{- end -}}
+{{- include "ptah-operator.validateAdmissionConvergenceMarker" (dict "root" .root "marker" $marker "name" $name "sequence" $itemSequence "managerImage" $contractManagerImage "requireSealed" .requireSealed) -}}
+{{- end -}}
+
+{{- $policyName := include "ptah-operator.admissionConvergencePolicyName" . -}}
+{{- $markerName := include "ptah-operator.admissionConvergenceMarkerName" . -}}
+{{- $sequence := include "ptah-operator.releaseSequence" . -}}
+{{- $previousSequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
+{{- $managerImage := include "ptah-operator.managerImage" . -}}
+{{- $attempt := include "ptah-operator.hookIdentityDigest" . -}}
+{{- $hookServiceAccount := include "ptah-operator.crdManagerServiceAccountName" . -}}
+{{- $cleanupServiceAccount := include "ptah-operator.teardownServiceAccountName" . -}}
+{{- $controllerServiceAccount := include "ptah-operator.serviceAccountName" . -}}
+{{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
+{{- $controllerDeployment := include "ptah-operator.fullname" . -}}
+{{- $certificateServiceAccount := include "ptah-operator.certRotatorServiceAccountName" . -}}
+{{- $hookSuffix := printf "-crd-v%s-%s" $sequence ($attempt | trunc 12) -}}
+{{- if not (hasSuffix $hookSuffix $hookServiceAccount) -}}
+{{- fail "admission convergence hook ServiceAccount does not match the candidate release identity" -}}
+{{- end -}}
+{{- $hookBase := trimSuffix $hookSuffix $hookServiceAccount -}}
+{{- if eq $hookBase "" -}}
+{{- fail "admission convergence hook ServiceAccount has no stable name prefix" -}}
+{{- end -}}
+{{- $hookServiceAccountPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-crd-v" $hookBase)) -}}
+{{- $hookUsernamePattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "system:serviceaccount:%s:%s-crd-v" .Release.Namespace $hookBase)) -}}
+{{- $hookPodPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}-" (regexQuoteMeta (printf "%s-crd-v" $hookBase)) -}}
+{{- $teardownServiceAccountPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-cleanup-v" $hookBase)) -}}
+{{- $teardownUsernamePattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "system:serviceaccount:%s:%s-cleanup-v" .Release.Namespace $hookBase)) -}}
+{{- $teardownPodPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}-" (regexQuoteMeta (printf "%s-cleanup-v" $hookBase)) -}}
+{{- $quiescePodPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}-" (regexQuoteMeta (printf "%s-quiesce-v" $hookBase)) -}}
+{{- $hookIdentityPodPattern := `^ptah-hook-identity-v[1-9][0-9]*-[0-9a-f]{12}-` -}}
+{{- $allowedActive := uniq (list "0" $previousSequence $sequence) -}}
+{{- $fixedAnnotations := list
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "helm.sh/hook" "pre-install,pre-upgrade")
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "helm.sh/hook-weight" "-165")
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "helm.sh/resource-policy" "keep")
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/admission-convergence-cleanup-service-account" $cleanupServiceAccount)
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/admission-convergence-version" "1")
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/manager-image" $managerImage)
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/predecessor-retirement-inventory-version" "1")
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/release-name" .Release.Name)
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/release-namespace" .Release.Namespace)
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/release-sequence" $sequence) -}}
+{{- define "ptah-operator.admissionConvergenceMarkerShape" -}}
+{{- $object := .object -}}
+{{- $dataSize := 2 -}}
+{{- if .sealed -}}
+{{- $dataSize = 3 -}}
+{{- end -}}
+{{- $parts := list
+      (printf `%s.metadata.name == %q` $object .name)
+      (printf `%s.metadata.namespace == %q` $object .namespace)
+      (printf `(!has(%s.metadata.generateName) || %s.metadata.generateName == "")` $object $object)
+      (printf `has(%s.metadata.uid) && %s.metadata.uid != ""` $object $object)
+      (printf `has(%s.metadata.resourceVersion) && %s.metadata.resourceVersion != ""` $object $object)
+      (printf `has(%s.metadata.annotations) && %s.metadata.annotations.size() == 10` $object $object) -}}
+{{- range $entry := .annotations -}}
+{{- $parts = append $parts (replace "OBJECT" $object $entry) -}}
+{{- end -}}
+{{- $parts = concat $parts (list
+      (printf `has(%s.metadata.labels) && %s.metadata.labels.size() == 3` $object $object)
+      (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/managed-by" "ptah-operator")
+      (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/instance" .releaseName)
+      (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/component" "admission-convergence")
+      (printf `has(%s.data) && %s.data.size() == %d` $object $object $dataSize)
+      (printf `%s.data[%q] == %q` $object "expected-active-release-sequence" .sequence)
+      (printf `%s.data[%q] == %q` $object "release-attempt" .attempt)
+      (printf `(!has(%s.binaryData) || %s.binaryData.size() == 0)` $object $object)) -}}
+{{- if .sealed -}}
+{{- $parts = append $parts (printf `has(%s.immutable) && %s.immutable == true` $object $object) -}}
+{{- else -}}
+{{- $parts = append $parts (printf `(!has(%s.immutable) || %s.immutable == false)` $object $object) -}}
+{{- end -}}
+{{- $parts = concat $parts (list
+      (printf `(!has(%s.metadata.ownerReferences) || %s.metadata.ownerReferences.size() == 0)` $object $object)
+      (printf `(!has(%s.metadata.finalizers) || %s.metadata.finalizers.size() == 0)` $object $object)
+      (printf `!has(%s.metadata.deletionTimestamp)` $object)
+      (printf `!has(%s.metadata.deletionGracePeriodSeconds)` $object)) -}}
+{{- if .sealed -}}
+{{- $parts = append $parts (printf `%q in %s.data && %s.data[%q].matches(%q)` "predecessor-retirement-inventory" $object $object "predecessor-retirement-inventory" `^\{"version":"1","entries":\[.+\]\}$`) -}}
+{{- end -}}
+{{- join " && " $parts -}}
+{{- end -}}
+{{- $shapeContext := dict "name" $markerName "namespace" .Release.Namespace "releaseName" .Release.Name "sequence" $sequence "attempt" $attempt "annotations" $fixedAnnotations -}}
+{{- $objectUnsealedShape := include "ptah-operator.admissionConvergenceMarkerShape" (merge (dict "object" "object" "sealed" false) $shapeContext) -}}
+{{- $objectSealedShape := include "ptah-operator.admissionConvergenceMarkerShape" (merge (dict "object" "object" "sealed" true) $shapeContext) -}}
+{{- $oldObjectUnsealedShape := include "ptah-operator.admissionConvergenceMarkerShape" (merge (dict "object" "oldObject" "sealed" false) $shapeContext) -}}
+{{- $oldObjectSealedShape := include "ptah-operator.admissionConvergenceMarkerShape" (merge (dict "object" "oldObject" "sealed" true) $shapeContext) -}}
+{{- $objectShape := printf `((%s) || (%s))` $objectUnsealedShape $objectSealedShape -}}
+{{- $oldObjectShape := printf `((%s) || (%s))` $oldObjectUnsealedShape $oldObjectSealedShape -}}
+{{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
+{{- $states := list -}}
+{{- range $allowed := $allowedActive -}}
+{{- $states = append $states (dict "active" $allowed "phase" "active" "target" "-1" "attempt" "") -}}
+{{- $states = append $states (dict "active" $allowed "phase" "draining" "target" $sequence "attempt" $attempt) -}}
+{{- end -}}
+{{- $stateExpressions := list -}}
+{{- range $state := $states -}}
+{{- $stateExpressions = append $stateExpressions (printf `variables.activeRelease == %s && variables.controllerCredentialPhase == %q && variables.paramsDrainTarget == %s && variables.paramsDrainAttempt == %q` $state.active $state.phase $state.target $state.attempt) -}}
+{{- end -}}
+{{- $contractShape := printf `request.operation == "UPDATE" && oldObject != null && (%s) && (%s) && object.metadata.uid == oldObject.metadata.uid && object.metadata.resourceVersion == oldObject.metadata.resourceVersion && params != null && (%s) && variables.markerExpected == %s && variables.markerAttempt == %q && ((%s))` $objectShape $oldObjectShape $activationShape $sequence $attempt (join ") || (" $stateExpressions) -}}
+{{- $proof := printf `request.dryRun == true && (%s)` $contractShape -}}
+{{- $hookUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace $hookServiceAccount -}}
+{{- $cleanupUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace $cleanupServiceAccount -}}
+{{- $controllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace $controllerServiceAccount -}}
+{{- $certificateUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace $certificateServiceAccount -}}
+{{- $sentinelFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $policyName) -}}
+{{- $controllerUsernameMatch := printf `request.userInfo.username in [%q]` $controllerUsername -}}
+{{- $controllerNameMatch := printf `request.name in [%q]` $controllerServiceAccount -}}
+{{- $controllerAuthority := printf `request.userInfo.username == %q && variables.activeRelease == %s` $controllerUsername $sequence -}}
+{{- $controllerTokenAuthority := printf `request.name == %q && variables.activeRelease == %s` $controllerServiceAccount $sequence -}}
+{{- if $previousControllerServiceAccount -}}
+{{- $previousControllerUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace $previousControllerServiceAccount -}}
+{{- $controllerUsernameMatch = printf `request.userInfo.username in [%q, %q]` $controllerUsername $previousControllerUsername -}}
+{{- $controllerNameMatch = printf `request.name in [%q, %q]` $controllerServiceAccount $previousControllerServiceAccount -}}
+{{- $controllerAuthority = printf `(%s) || (request.userInfo.username == %q && variables.activeRelease == %s)` $controllerAuthority $previousControllerUsername $previousSequence -}}
+{{- $controllerTokenAuthority = printf `(%s) || (request.name == %q && variables.activeRelease == %s)` $controllerTokenAuthority $previousControllerServiceAccount $previousSequence -}}
+{{- end -}}
+{{- $isTokenRequest := `request.operation == "CREATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "serviceaccounts" && has(request.subResource) && request.subResource == "token"` -}}
+{{- $controllerTokenRequest := printf `variables.isTokenRequest && request.namespace == %q && (%s)` .Release.Namespace $controllerNameMatch -}}
+{{- $hookCaller := printf `request.userInfo.username.matches(%q) || request.userInfo.username.matches(%q)` $hookUsernamePattern $teardownUsernamePattern -}}
+{{- $certificateCaller := printf `request.userInfo.username == %q` $certificateUsername -}}
+{{- $protectedOriginMatch := printf `(%s) || request.userInfo.username == %q || request.userInfo.username.matches(%q) || request.userInfo.username.matches(%q) || (request.operation == "CREATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "serviceaccounts" && has(request.subResource) && request.subResource == "token" && request.namespace == %q && ((%s) || request.name == %q || request.name.matches(%q) || request.name.matches(%q)))` $controllerUsernameMatch $certificateUsername $hookUsernamePattern $teardownUsernamePattern .Release.Namespace $controllerNameMatch $certificateServiceAccount $hookServiceAccountPattern $teardownServiceAccountPattern -}}
+{{- $protectedTokenRequest := printf `variables.isTokenRequest && request.namespace == %q && ((%s) || request.name == %q || request.name.matches(%q) || request.name.matches(%q))` .Release.Namespace $controllerNameMatch $certificateServiceAccount $hookServiceAccountPattern $teardownServiceAccountPattern -}}
+{{- $markerProbeRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $sentinelFieldManager) -}}
+{{- $markerRequest := printf `(%s) && request.userInfo.username in [%q, %q, %q, %q]` $markerProbeRequest $hookUsername $cleanupUsername $controllerUsername $certificateUsername -}}
+{{- $anyConvergenceProbeRequest := include "ptah-operator.admissionConvergenceAnyProbeRequest" . -}}
+{{- $callerPodName := printf `has(request.userInfo.extra) && %q in request.userInfo.extra && request.userInfo.extra[%q].size() == 1 ? request.userInfo.extra[%q][0] : ""` "authentication.kubernetes.io/pod-name" "authentication.kubernetes.io/pod-name" "authentication.kubernetes.io/pod-name" -}}
+{{- $callerPodUID := printf `has(request.userInfo.extra) && %q in request.userInfo.extra && request.userInfo.extra[%q].size() == 1 ? request.userInfo.extra[%q][0] : ""` "authentication.kubernetes.io/pod-uid" "authentication.kubernetes.io/pod-uid" "authentication.kubernetes.io/pod-uid" -}}
+{{- $controllerCallerPodName := include "ptah-operator.runtimePodRequestNameExpression" (dict "nameExpression" "variables.callerPodName" "deploymentName" $controllerDeployment) -}}
+{{- $controllerBoundPodName := include "ptah-operator.runtimePodRequestNameExpression" (dict "nameExpression" "object.spec.boundObjectRef.name" "deploymentName" $controllerDeployment) -}}
+{{- $certificateCallerPodName := include "ptah-operator.runtimePodRequestNameExpression" (dict "nameExpression" "variables.callerPodName" "deploymentName" $certificateServiceAccount) -}}
+{{- $certificateBoundPodName := include "ptah-operator.runtimePodRequestNameExpression" (dict "nameExpression" "object.spec.boundObjectRef.name" "deploymentName" $certificateServiceAccount) -}}
+{{- $callerOrigin := printf `variables.isAnyConvergenceProbe || !variables.isProtectedCaller || (variables.callerPodName != "" && variables.callerPodUID != "" && ((variables.isHookCaller && (variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q) || variables.callerPodName.matches(%q))) || (variables.isControllerCaller && %s) || (variables.isCertificateCaller && %s)))` $hookPodPattern $hookIdentityPodPattern $teardownPodPattern $quiescePodPattern $controllerCallerPodName $certificateCallerPodName -}}
+{{- $tokenOrigin := printf `variables.isAnyConvergenceProbe || !variables.isProtectedTokenRequest || (request.userInfo.username.matches("^system:node:.+$") && request.userInfo.groups.filter(group, group == "system:nodes").size() == 1 && has(object.spec.boundObjectRef) && has(object.spec.boundObjectRef.apiVersion) && object.spec.boundObjectRef.apiVersion == "v1" && has(object.spec.boundObjectRef.kind) && object.spec.boundObjectRef.kind == "Pod" && has(object.spec.boundObjectRef.name) && object.spec.boundObjectRef.name != "" && has(object.spec.boundObjectRef.uid) && object.spec.boundObjectRef.uid != "" && (((%s) && %s) || (request.name == %q && %s) || (request.name.matches(%q) && (object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q))) || (request.name.matches(%q) && object.spec.boundObjectRef.name.matches(%q))))` $controllerNameMatch $controllerBoundPodName $certificateServiceAccount $certificateBoundPodName $hookServiceAccountPattern $hookPodPattern $hookIdentityPodPattern $quiescePodPattern $teardownServiceAccountPattern $teardownPodPattern -}}
+{{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $markerPrefix := "ptah-admission-convergence-v1-" -}}
+{{- $markerSuffix := printf "-%s" $releaseDigest -}}
+{{- $markerInventory := lookup "v1" "ConfigMap" .Release.Namespace "" -}}
+{{- $activationForMarkerInventory := lookup "v1" "ConfigMap" .Release.Namespace "ptah-operator-release-activation" -}}
+{{- $activeMarkerSequence := dig "data" "active-release-sequence" "0" $activationForMarkerInventory -}}
+{{- $markers := dict -}}
+{{- range $item := dig "items" (list) $markerInventory -}}
+{{- $name := default "" $item.metadata.name -}}
+{{- if and (hasPrefix $markerPrefix $name) (hasSuffix $markerSuffix $name) -}}
+{{- $itemSequence := trimSuffix $markerSuffix (trimPrefix $markerPrefix $name) -}}
+{{- if not (regexMatch `^[1-9][0-9]*$` $itemSequence) -}}
+{{- fail (printf "retained admission convergence marker %s has a malformed release sequence" $name) -}}
+{{- end -}}
+{{- if not (or (eq $itemSequence $sequence) (and (ne $previousSequence "0") (eq $itemSequence $previousSequence))) -}}
+{{- fail (printf "retained admission convergence marker %s is stale, future, or creates a release-sequence gap" $name) -}}
+{{- end -}}
+{{- $requireSealed := or (and (ne $previousSequence "0") (eq $itemSequence $previousSequence)) (eq $itemSequence $activeMarkerSequence) -}}
+{{- include "ptah-operator.validateAdmissionConvergenceInventoryMarker" (dict "root" $ "marker" $item "name" $name "itemSequence" $itemSequence "currentSequence" $sequence "currentManagerImage" $managerImage "requireSealed" $requireSealed) -}}
+{{- $_ := set $markers $itemSequence $item -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len $markers) 2 -}}
+{{- fail "retained admission convergence marker inventory exceeds the active/candidate bound" -}}
+{{- end -}}
+{{- $marker := default (dict) (index $markers $sequence) -}}
+{{- if not $marker }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $markerName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-165"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/admission-convergence-version: "1"
+    operator.ptah.dev/predecessor-retirement-inventory-version: "1"
+    operator.ptah.dev/admission-convergence-cleanup-service-account: {{ $cleanupServiceAccount | quote }}
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: admission-convergence
+data:
+  expected-active-release-sequence: {{ $sequence | quote }}
+  release-attempt: {{ $attempt | quote }}
+---
+{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $policyName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-38"
+    helm.sh/hook-delete-policy: before-hook-creation
+    operator.ptah.dev/admission-convergence-version: "1"
+    operator.ptah.dev/admission-convergence-cleanup-service-account: {{ $cleanupServiceAccount | quote }}
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: admission-convergence
+spec:
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE", "DELETE", "CONNECT"]
+        resources: ["*/*"]
+        scope: "*"
+  matchConditions:
+    - name: admission-probe-or-controller-credential-boundary
+      expression: {{ printf `(%s) || (%s)` $anyConvergenceProbeRequest $protectedOriginMatch | quote }}
+  variables:
+    - name: markerExpected
+      expression: 'object != null && has(object.data) && "expected-active-release-sequence" in object.data && object.data["expected-active-release-sequence"].matches("^(0|[1-9][0-9]*)$") ? int(object.data["expected-active-release-sequence"]) : -1'
+    - name: markerAttempt
+      expression: 'object != null && has(object.data) && "release-attempt" in object.data ? object.data["release-attempt"] : ""'
+    - name: activeRelease
+      expression: 'params != null && has(params.data) && "active-release-sequence" in params.data && params.data["active-release-sequence"].matches("^(0|[1-9][0-9]*)$") ? int(params.data["active-release-sequence"]) : -1'
+    - name: controllerCredentialPhase
+      expression: 'params != null && has(params.data) && "controller-credentials" in params.data ? params.data["controller-credentials"] : ""'
+    - name: paramsDrainTarget
+      expression: 'params != null && has(params.data) && "controller-credentials-target-release-sequence" in params.data && params.data["controller-credentials-target-release-sequence"].matches("^[1-9][0-9]*$") ? int(params.data["controller-credentials-target-release-sequence"]) : -1'
+    - name: paramsDrainAttempt
+      expression: 'params != null && has(params.data) && "controller-credentials-attempt" in params.data ? params.data["controller-credentials-attempt"] : ""'
+    - name: isAnyConvergenceProbe
+      expression: {{ $anyConvergenceProbeRequest | quote }}
+    - name: isMarkerProbe
+      expression: {{ $markerRequest | quote }}
+    - name: isTokenRequest
+      expression: {{ $isTokenRequest | quote }}
+    - name: isHookCaller
+      expression: {{ $hookCaller | quote }}
+    - name: isControllerCaller
+      expression: {{ $controllerUsernameMatch | quote }}
+    - name: isCertificateCaller
+      expression: {{ $certificateCaller | quote }}
+    - name: isProtectedCaller
+      expression: 'variables.isHookCaller || variables.isControllerCaller || variables.isCertificateCaller'
+    - name: isControllerTokenRequest
+      expression: {{ $controllerTokenRequest | quote }}
+    - name: isProtectedTokenRequest
+      expression: {{ $protectedTokenRequest | quote }}
+    - name: callerPodName
+      expression: {{ $callerPodName | quote }}
+    - name: callerPodUID
+      expression: {{ $callerPodUID | quote }}
+  validations:
+    - expression: '!variables.isAnyConvergenceProbe || request.dryRun == true'
+      message: "Ptah admission convergence marker rejects persistent updates"
+    - expression: {{ printf `!variables.isMarkerProbe || (%s)` $contractShape | quote }}
+      message: "Ptah admission convergence marker or activation parameter differs from the exact release contract"
+    {{- range $index, $state := $states }}
+    - expression: {{ printf `!variables.isMarkerProbe || !(%s && (%s))` $proof (index $stateExpressions $index) | quote }}
+      message: {{ if eq $state.phase "draining" }}{{ printf "Ptah admission convergence sentinel confirmed the exact controller credential fence at active=%s,phase=draining,target=%s,attempt=%s" $state.active $state.target $state.attempt | quote }}{{ else }}{{ printf "Ptah admission convergence sentinel confirmed the exact controller credential fence at active=%s,phase=active" $state.active | quote }}{{ end }}
+    {{- end }}
+    - expression: {{ printf `variables.isAnyConvergenceProbe || (%s)` $activationShape | quote }}
+      message: "Ptah service account origin guard rejected a request without workload-bound identity"
+    - expression: {{ printf `variables.isAnyConvergenceProbe || !variables.isControllerCaller || (variables.controllerCredentialPhase == %q && (%s))` "active" $controllerAuthority | quote }}
+      message: "Ptah controller principal guard rejected an inactive release identity"
+    - expression: {{ printf `variables.isAnyConvergenceProbe || !variables.isControllerTokenRequest || (variables.controllerCredentialPhase == %q && (%s))` "active" $controllerTokenAuthority | quote }}
+      message: "Ptah controller principal guard rejected an inactive release identity"
+    - expression: {{ $callerOrigin | quote }}
+      message: "Ptah service account origin guard rejected a request without workload-bound identity"
+    - expression: {{ $tokenOrigin | quote }}
+      message: "Ptah service account origin guard rejected a request without workload-bound identity"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $policyName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-37"
+    helm.sh/hook-delete-policy: before-hook-creation
+    operator.ptah.dev/admission-convergence-version: "1"
+    operator.ptah.dev/admission-convergence-cleanup-service-account: {{ $cleanupServiceAccount | quote }}
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: admission-convergence
+spec:
+  policyName: {{ $policyName }}
+  paramRef:
+    name: ptah-operator-release-activation
+    namespace: {{ .Release.Namespace }}
+    parameterNotFoundAction: Deny
+  validationActions: [Deny]

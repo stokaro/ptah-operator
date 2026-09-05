@@ -1,0 +1,408 @@
+// Package admission implements the independently authorized approval boundary.
+package admission
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"reflect"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+	"time"
+
+	admissionv1 "k8s.io/api/admission/v1"
+	authenticationv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/controllerstate"
+	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/policy"
+)
+
+const maxRecordedGroups = 64
+
+var imageDigestPattern = regexp.MustCompile(`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`)
+
+// Clock makes admission timestamps deterministic in tests.
+type Clock interface {
+	Now() time.Time
+}
+
+type realClock struct{}
+
+func (realClock) Now() time.Time { return time.Now() }
+
+// ApprovalHandler stamps authenticated identity and rejects stale approval
+// tuples against direct, uncached API reads.
+type ApprovalHandler struct {
+	Reader                 client.Reader
+	Decoder                cradmission.Decoder
+	Clock                  Clock
+	Mutate                 bool
+	ControllerImage        string
+	ControllerRevision     string
+	ControllerStateVersion int32
+}
+
+// Handle implements controller-runtime admission.Handler.
+func (h *ApprovalHandler) Handle(ctx context.Context, req cradmission.Request) cradmission.Response {
+	if h.Reader == nil || h.Decoder == nil ||
+		!imageDigestPattern.MatchString(h.ControllerImage) ||
+		controllerstate.ValidateRevision(h.ControllerRevision) != nil || h.ControllerStateVersion < 1 {
+		return cradmission.Errored(http.StatusInternalServerError, fmt.Errorf("approval webhook is not initialized"))
+	}
+	if req.Operation != admissionv1.Create && req.Operation != admissionv1.Update {
+		return cradmission.Denied("only create and metadata-preserving updates are supported")
+	}
+
+	approval := &operatorv1alpha1.PtahSchemaApproval{}
+	if err := h.Decoder.Decode(req, approval); err != nil {
+		return cradmission.Errored(http.StatusBadRequest, fmt.Errorf("decode approval: %w", err))
+	}
+	if approval.Namespace != req.Namespace {
+		return cradmission.Denied("approval namespace does not match the admission request")
+	}
+
+	if req.Operation == admissionv1.Update {
+		oldApproval := &operatorv1alpha1.PtahSchemaApproval{}
+		if err := h.Decoder.DecodeRaw(req.OldObject, oldApproval); err != nil {
+			return cradmission.Errored(http.StatusBadRequest, fmt.Errorf("decode previous approval: %w", err))
+		}
+		if !reflect.DeepEqual(approval.Spec, oldApproval.Spec) {
+			return cradmission.Denied("approval spec is immutable; create a new approval")
+		}
+		return cradmission.Allowed("approval metadata update preserves the immutable decision")
+	}
+
+	if h.Mutate {
+		h.stampIdentity(approval, req.UserInfo, req.UID)
+		if err := h.hydrateDerivedBindings(ctx, approval); err != nil {
+			return denialFor(err)
+		}
+		if err := h.validateBinding(ctx, approval); err != nil {
+			return denialFor(err)
+		}
+		mutated, err := json.Marshal(approval)
+		if err != nil {
+			return cradmission.Errored(http.StatusInternalServerError, fmt.Errorf("encode stamped approval: %w", err))
+		}
+		return cradmission.PatchResponseFromRaw(req.Object.Raw, mutated)
+	}
+
+	if err := identityMatchesRequest(approval.Spec, req.UserInfo); err != nil {
+		return cradmission.Denied(err.Error())
+	}
+	if err := h.validateBinding(ctx, approval); err != nil {
+		return denialFor(err)
+	}
+	return cradmission.Allowed("approval is bound to the current immutable plan")
+}
+
+// hydrateDerivedBindings removes error-prone transcription from an approval
+// without weakening its explicit decision. The approver must name immutable
+// schema and plan UIDs plus the exact plan fingerprint. Every other binding is
+// copied from that plan only when omitted; a conflicting value is refused
+// rather than silently corrected.
+func (h *ApprovalHandler) hydrateDerivedBindings(
+	ctx context.Context,
+	approval *operatorv1alpha1.PtahSchemaApproval,
+) error {
+	if strings.TrimSpace(approval.Spec.SchemaRef.Name) == "" || approval.Spec.SchemaRef.UID == "" {
+		return fmt.Errorf("approval must explicitly identify the schema name and UID")
+	}
+	if strings.TrimSpace(approval.Spec.PlanRef.Name) == "" || approval.Spec.PlanRef.UID == "" {
+		return fmt.Errorf("approval must explicitly identify the plan name and UID")
+	}
+	if strings.TrimSpace(approval.Spec.PlanFingerprint) == "" {
+		return fmt.Errorf("approval must explicitly identify the plan fingerprint")
+	}
+
+	plan := &operatorv1alpha1.PtahSchemaPlan{}
+	if err := h.Reader.Get(ctx, client.ObjectKey{Namespace: approval.Namespace, Name: approval.Spec.PlanRef.Name}, plan); err != nil {
+		return fmt.Errorf("read referenced plan for approval defaults: %w", err)
+	}
+	if plan.UID != approval.Spec.PlanRef.UID {
+		return fmt.Errorf("referenced plan UID does not match; the plan was replaced")
+	}
+	if err := requireCurrentPlanContract(plan.Spec.ContractVersion); err != nil {
+		return err
+	}
+	if plan.Spec.ControllerImage != h.ControllerImage ||
+		plan.Spec.ControllerRevision != h.ControllerRevision ||
+		plan.Spec.ControllerStateVersion != h.ControllerStateVersion {
+		return fmt.Errorf("referenced plan manager identity is not current")
+	}
+	if plan.Spec.SchemaRef != approval.Spec.SchemaRef {
+		return fmt.Errorf("approval schema reference does not match the plan")
+	}
+	if approval.Spec.PlanFingerprint != plan.Spec.Fingerprint {
+		return fmt.Errorf("approval plan fingerprint does not match the immutable plan")
+	}
+
+	bindings := []struct {
+		name  string
+		value *string
+		want  string
+	}{
+		{"artifact digest", &approval.Spec.ArtifactDigest, plan.Spec.ArtifactDigest},
+		{"coordination digest", &approval.Spec.CoordinationDigest, plan.Spec.CoordinationDigest},
+		{"target identity digest", &approval.Spec.TargetIdentityDigest, plan.Spec.TargetIdentityDigest},
+		{"actual state fingerprint", &approval.Spec.ActualStateFingerprint, plan.Spec.ActualStateFingerprint},
+		{"desired state fingerprint", &approval.Spec.DesiredStateFingerprint, plan.Spec.DesiredStateFingerprint},
+		{"policy fingerprint", &approval.Spec.PolicyFingerprint, plan.Spec.PolicyFingerprint},
+		{"verification policy digest", &approval.Spec.VerificationPolicyDigest, plan.Spec.VerificationPolicyDigest},
+		{"execution binding ID", &approval.Spec.ExecutionBindingID, plan.Spec.ExecutionBindingID},
+		{"controller image", &approval.Spec.ControllerImage, plan.Spec.ControllerImage},
+		{"controller revision", &approval.Spec.ControllerRevision, plan.Spec.ControllerRevision},
+		{"Ptah version", &approval.Spec.PtahVersion, plan.Spec.PtahVersion},
+		{"executor image", &approval.Spec.ExecutorImage, plan.Spec.ExecutorImage},
+		{"runner image", &approval.Spec.RunnerImage, plan.Spec.RunnerImage},
+	}
+	if approval.Spec.VerificationPolicyUID != "" && approval.Spec.VerificationPolicyUID != plan.Spec.VerificationPolicyUID {
+		return fmt.Errorf("approval verification policy UID conflicts with the immutable plan")
+	}
+	approval.Spec.VerificationPolicyUID = plan.Spec.VerificationPolicyUID
+	for _, binding := range bindings {
+		if *binding.value != "" && *binding.value != binding.want {
+			return fmt.Errorf("approval %s conflicts with the immutable plan", binding.name)
+		}
+		*binding.value = binding.want
+	}
+	if approval.Spec.RunnerProtocolVersion != 0 && approval.Spec.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
+		return fmt.Errorf("approval runner protocol version conflicts with the immutable plan")
+	}
+	approval.Spec.RunnerProtocolVersion = plan.Spec.RunnerProtocolVersion
+	if approval.Spec.ControllerStateVersion != 0 && approval.Spec.ControllerStateVersion != plan.Spec.ControllerStateVersion {
+		return fmt.Errorf("approval controller state version conflicts with the immutable plan")
+	}
+	approval.Spec.ControllerStateVersion = plan.Spec.ControllerStateVersion
+	return nil
+}
+
+func (h *ApprovalHandler) stampIdentity(
+	approval *operatorv1alpha1.PtahSchemaApproval,
+	user authenticationv1.UserInfo,
+	requestUID types.UID,
+) {
+	clock := h.Clock
+	if clock == nil {
+		clock = realClock{}
+	}
+	approval.Spec.Approver = operatorv1alpha1.ApprovalIdentity{
+		Username: strings.TrimSpace(user.Username),
+		UID:      strings.TrimSpace(user.UID),
+		Groups:   normalizedGroups(user.Groups),
+	}
+	approval.Spec.ApprovedAt = metav1.NewTime(clock.Now().UTC())
+	approval.Spec.MutationRequestUID = string(requestUID)
+}
+
+func identityMatchesRequest(
+	spec operatorv1alpha1.PtahSchemaApprovalSpec,
+	user authenticationv1.UserInfo,
+) error {
+	if strings.TrimSpace(user.Username) == "" {
+		return fmt.Errorf("authenticated approval username is empty")
+	}
+	if spec.Approver.Username != strings.TrimSpace(user.Username) ||
+		spec.Approver.UID != strings.TrimSpace(user.UID) ||
+		!slices.Equal(spec.Approver.Groups, normalizedGroups(user.Groups)) {
+		return fmt.Errorf("reserved approver identity fields do not match the authenticated request")
+	}
+	if strings.TrimSpace(spec.MutationRequestUID) == "" {
+		return fmt.Errorf("approval identity was not stamped by the mutating admission webhook")
+	}
+	if spec.ApprovedAt.IsZero() {
+		return fmt.Errorf("approvedAt was not stamped by the admission webhook")
+	}
+	return nil
+}
+
+func normalizedGroups(groups []string) []string {
+	seen := make(map[string]struct{}, len(groups))
+	normalized := make([]string, 0, min(len(groups), maxRecordedGroups))
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		normalized = append(normalized, group)
+	}
+	sort.Strings(normalized)
+	if len(normalized) > maxRecordedGroups {
+		normalized = normalized[:maxRecordedGroups]
+	}
+	return normalized
+}
+
+func (h *ApprovalHandler) validateBinding(
+	ctx context.Context,
+	approval *operatorv1alpha1.PtahSchemaApproval,
+) error {
+	namespace := approval.Namespace
+	plan := &operatorv1alpha1.PtahSchemaPlan{}
+	if err := h.Reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: approval.Spec.PlanRef.Name}, plan); err != nil {
+		return fmt.Errorf("read referenced plan: %w", err)
+	}
+	if plan.DeletionTimestamp != nil {
+		return fmt.Errorf("referenced plan is being deleted")
+	}
+	if err := requireCurrentPlanContract(plan.Spec.ContractVersion); err != nil {
+		return err
+	}
+	if plan.Spec.ControllerImage != h.ControllerImage ||
+		plan.Spec.ControllerRevision != h.ControllerRevision ||
+		plan.Spec.ControllerStateVersion != h.ControllerStateVersion {
+		return fmt.Errorf("referenced plan manager identity is not current")
+	}
+	if plan.UID != approval.Spec.PlanRef.UID {
+		return fmt.Errorf("referenced plan UID does not match; the plan was replaced")
+	}
+	if plan.Status.ObservedGeneration != plan.Generation ||
+		!meta.IsStatusConditionTrue(plan.Status.Conditions, operatorv1alpha1.ConditionPlanStorageReady) {
+		return fmt.Errorf("referenced plan storage is not ready")
+	}
+
+	schema := &operatorv1alpha1.PtahSchema{}
+	if err := h.Reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: approval.Spec.SchemaRef.Name}, schema); err != nil {
+		return fmt.Errorf("read referenced schema: %w", err)
+	}
+	if schema.DeletionTimestamp != nil {
+		return fmt.Errorf("referenced schema is being deleted")
+	}
+	if schema.UID != approval.Spec.SchemaRef.UID || plan.Spec.SchemaRef.UID != schema.UID ||
+		plan.Spec.SchemaRef.Name != schema.Name {
+		return fmt.Errorf("schema UID does not match the plan binding")
+	}
+	if schema.Status.Plan == nil || schema.Status.Plan.UID != plan.UID ||
+		schema.Status.Plan.Fingerprint != plan.Spec.Fingerprint ||
+		schema.Status.ExecutionBinding == nil || schema.Status.ExecutionBinding.Epoch == "" ||
+		schema.Status.ExecutionBinding.Epoch != plan.Spec.ExecutionBindingID ||
+		schema.Status.Plan.ExecutionBindingID != plan.Spec.ExecutionBindingID ||
+		schema.Status.Plan.ControllerImage == "" ||
+		schema.Status.Plan.ControllerImage != plan.Spec.ControllerImage ||
+		schema.Status.Plan.ControllerRevision == "" ||
+		schema.Status.Plan.ControllerRevision != plan.Spec.ControllerRevision ||
+		schema.Status.Plan.ControllerStateVersion < 1 ||
+		schema.Status.Plan.ControllerStateVersion != plan.Spec.ControllerStateVersion {
+		return fmt.Errorf("referenced plan is no longer current for the schema")
+	}
+	if schema.Status.Phase != operatorv1alpha1.PhaseAwaitingApproval {
+		return fmt.Errorf("referenced schema is not awaiting approval")
+	}
+	if !meta.IsStatusConditionTrue(schema.Status.Conditions, operatorv1alpha1.ConditionApprovalRequired) {
+		return fmt.Errorf("referenced schema does not currently require approval")
+	}
+	if schema.Status.ActiveOperation != nil {
+		return fmt.Errorf("referenced schema has an active operation")
+	}
+	if schema.Status.Plan.Approval != nil {
+		return fmt.Errorf("referenced plan already has a recorded approval")
+	}
+
+	if err := approvalMatchesPlan(approval.Spec, plan.Spec); err != nil {
+		return err
+	}
+	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(
+		string(schema.Spec.Target.Engine),
+		schema.Spec.Target.CoordinationKey,
+	)
+	if err != nil {
+		return fmt.Errorf("derive current database coordination digest: %w", err)
+	}
+	if schema.Status.Source.Digest != plan.Spec.ArtifactDigest ||
+		coordinationDigest != plan.Spec.CoordinationDigest ||
+		schema.Status.Target.CoordinationDigest != plan.Spec.CoordinationDigest ||
+		schema.Status.Target.IdentityDigest != plan.Spec.TargetIdentityDigest ||
+		schema.Status.ExecutionBinding.ControllerImage != plan.Spec.ControllerImage ||
+		schema.Status.ExecutionBinding.ControllerRevision != plan.Spec.ControllerRevision ||
+		schema.Status.ExecutionBinding.ControllerStateVersion != plan.Spec.ControllerStateVersion ||
+		schema.Status.ExecutionBinding.PtahVersion != plan.Spec.PtahVersion ||
+		schema.Status.ExecutionBinding.ExecutorImage != plan.Spec.ExecutorImage ||
+		schema.Status.ExecutionBinding.RunnerImage != plan.Spec.RunnerImage ||
+		schema.Status.ExecutionBinding.RunnerProtocolVersion != plan.Spec.RunnerProtocolVersion {
+		return fmt.Errorf("schema source or target changed after the plan was generated")
+	}
+	policyBinding, err := policy.ConfigMapBinding(ctx, h.Reader, namespace, schema.Spec.Desired.VerificationPolicyFrom)
+	if err != nil {
+		return err
+	}
+	if policyBinding.UID != plan.Spec.VerificationPolicyUID || policyBinding.Digest != plan.Spec.VerificationPolicyDigest {
+		return fmt.Errorf("verification policy changed after the plan was generated")
+	}
+	return nil
+}
+
+func approvalMatchesPlan(
+	approval operatorv1alpha1.PtahSchemaApprovalSpec,
+	plan operatorv1alpha1.PtahSchemaPlanSpec,
+) error {
+	checks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"plan fingerprint", approval.PlanFingerprint, plan.Fingerprint},
+		{"artifact digest", approval.ArtifactDigest, plan.ArtifactDigest},
+		{"coordination digest", approval.CoordinationDigest, plan.CoordinationDigest},
+		{"target identity digest", approval.TargetIdentityDigest, plan.TargetIdentityDigest},
+		{"actual state fingerprint", approval.ActualStateFingerprint, plan.ActualStateFingerprint},
+		{"desired state fingerprint", approval.DesiredStateFingerprint, plan.DesiredStateFingerprint},
+		{"policy fingerprint", approval.PolicyFingerprint, plan.PolicyFingerprint},
+		{"verification policy digest", approval.VerificationPolicyDigest, plan.VerificationPolicyDigest},
+		{"execution binding ID", approval.ExecutionBindingID, plan.ExecutionBindingID},
+		{"controller image", approval.ControllerImage, plan.ControllerImage},
+		{"controller revision", approval.ControllerRevision, plan.ControllerRevision},
+		{"Ptah version", approval.PtahVersion, plan.PtahVersion},
+		{"executor image", approval.ExecutorImage, plan.ExecutorImage},
+		{"runner image", approval.RunnerImage, plan.RunnerImage},
+	}
+	if approval.VerificationPolicyUID == "" || approval.VerificationPolicyUID != plan.VerificationPolicyUID {
+		return fmt.Errorf("approval verification policy UID does not match the immutable plan")
+	}
+	for _, check := range checks {
+		if strings.TrimSpace(check.got) == "" || check.got != check.want {
+			return fmt.Errorf("approval %s does not match the immutable plan", check.name)
+		}
+	}
+	if approval.RunnerProtocolVersion != plan.RunnerProtocolVersion {
+		return fmt.Errorf("approval runner protocol version does not match the immutable plan")
+	}
+	if approval.ControllerStateVersion < 1 || approval.ControllerStateVersion != plan.ControllerStateVersion {
+		return fmt.Errorf("approval controller state version does not match the immutable plan")
+	}
+	return nil
+}
+
+func requireCurrentPlanContract(version int32) error {
+	if err := fingerprint.ValidatePlanContractVersion(version); err != nil {
+		return fmt.Errorf("referenced plan contract is not supported: %w", err)
+	}
+	if version != fingerprint.CurrentPlanContractVersion {
+		return fmt.Errorf("referenced plan contract version %d is not current", version)
+	}
+	return nil
+}
+
+func denialFor(err error) cradmission.Response {
+	if apierrors.IsNotFound(err) {
+		return cradmission.Errored(http.StatusNotFound, err)
+	}
+	if apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+		return cradmission.Errored(http.StatusForbidden, err)
+	}
+	return cradmission.Denied(err.Error())
+}

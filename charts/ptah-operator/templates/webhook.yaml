@@ -1,0 +1,235 @@
+{{- $fullname := include "ptah-operator.fullname" . -}}
+{{- include "ptah-operator.validateAdmissionSingleton" . -}}
+{{- $secretName := include "ptah-operator.webhookSecretName" . -}}
+{{- if and (not .Values.webhook.existingSecret) (not .Values.certificateRotation.enabled) -}}
+{{- fail "certificateRotation.enabled must be true when webhook.existingSecret is empty" -}}
+{{- end -}}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $secretName -}}
+{{- $caBundle := "" -}}
+{{- $caKey := "" -}}
+{{- $tlsCrt := "" -}}
+{{- $tlsKey := "" -}}
+{{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
+{{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
+{{- $existingMutating := lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration" "" $configurationName -}}
+{{- $existingValidating := lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration" "" $configurationName -}}
+{{- if .Values.webhook.existingSecret -}}
+{{- if .Values.webhook.caBundle -}}
+{{- $caBundle = .Values.webhook.caBundle | b64enc -}}
+{{- else if $existing -}}
+{{- $caBundle = required "webhook.existingSecret must contain ca.crt" (index $existing.data "ca.crt") -}}
+{{- else -}}
+{{- fail "webhook.caBundle is required when webhook.existingSecret cannot be read" -}}
+{{- end -}}
+{{- else if $existing -}}
+{{- $caBundle = required "generated webhook Secret must contain ca.crt" (index $existing.data "ca.crt") -}}
+{{- $caKey = default "" (index $existing.data "ca.key") -}}
+{{- $tlsCrt = required "generated webhook Secret must contain tls.crt" (index $existing.data "tls.crt") -}}
+{{- $tlsKey = required "generated webhook Secret must contain tls.key" (index $existing.data "tls.key") -}}
+{{- else -}}
+{{- /* Bootstrap material is deliberately short-lived. The rotator promptly replaces it with certificates matching the configured policy. */ -}}
+{{- $ca := genCA (printf "%s-ca" $fullname) 2 -}}
+{{- $service := include "ptah-operator.webhookServiceName" . -}}
+{{- $dnsNames := list $service (printf "%s.%s" $service .Release.Namespace) (printf "%s.%s.svc" $service .Release.Namespace) (printf "%s.%s.svc.cluster.local" $service .Release.Namespace) -}}
+{{- $cert := genSignedCert $service nil $dnsNames 1 $ca -}}
+{{- $caBundle = $ca.Cert | b64enc -}}
+{{- $caKey = $ca.Key | b64enc -}}
+{{- $tlsCrt = $cert.Cert | b64enc -}}
+{{- $tlsKey = $cert.Key | b64enc -}}
+{{- end -}}
+{{- $entryBundles := dict "mutating" $caBundle "approvalValidating" $caBundle "podValidating" $caBundle "controllerWriteValidating" $caBundle -}}
+{{- if not .Values.webhook.existingSecret -}}
+{{- if $existingMutating -}}
+{{- range $existingMutating.webhooks -}}
+{{- if and (eq .name "mapproval.operator.ptah.dev") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
+{{- $_ := set $entryBundles "mutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if $existingValidating -}}
+{{- range $existingValidating.webhooks -}}
+{{- if and .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
+{{- if eq .name "vapproval.operator.ptah.dev" -}}
+{{- $_ := set $entryBundles "approvalValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
+{{- else if eq .name "vpodintent.operator.ptah.dev" -}}
+{{- $_ := set $entryBundles "podValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
+{{- else if eq .name "vcontrollerwrite.operator.ptah.dev" -}}
+{{- $_ := set $entryBundles "controllerWriteValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not .Values.webhook.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    operator.ptah.dev/generated-webhook-certificate: "true"
+type: kubernetes.io/tls
+data:
+  ca.crt: {{ $caBundle }}
+  {{- if $caKey }}
+  ca.key: {{ $caKey }}
+  {{- end }}
+  tls.crt: {{ $tlsCrt }}
+  tls.key: {{ $tlsKey }}
+---
+{{- end }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ $configurationName }}
+  annotations:
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/coordination-namespace: {{ include "ptah-operator.coordinationNamespace" . | quote }}
+    operator.ptah.dev/leader-election: {{ printf "%t" .Values.leaderElection | quote }}
+    operator.ptah.dev/leader-election-id: {{ include "ptah-operator.leaderElectionID" . | quote }}
+    operator.ptah.dev/webhook-service-name: {{ include "ptah-operator.webhookServiceName" . | quote }}
+    operator.ptah.dev/hook-service-account-name: {{ include "ptah-operator.crdManagerServiceAccountName" . | quote }}
+    operator.ptah.dev/controller-service-account-name: {{ include "ptah-operator.serviceAccountName" . | quote }}
+    operator.ptah.dev/controller-deployment-name: {{ include "ptah-operator.fullname" . | quote }}
+    operator.ptah.dev/certificate-deployment-name: {{ include "ptah-operator.certRotatorServiceAccountName" . | quote }}
+    operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+    operator.ptah.dev/admission-contract-version: {{ include "ptah-operator.admissionContractVersion" . | quote }}
+    operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+webhooks:
+  - name: mapproval.operator.ptah.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    reinvocationPolicy: Never
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    clientConfig:
+      caBundle: {{ index $entryBundles "mutating" }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $serviceName }}
+        path: /mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval
+        port: 443
+    rules:
+      - apiGroups: ["operator.ptah.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE"]
+        resources: ["ptahschemaapprovals"]
+        scope: Namespaced
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: {{ $configurationName }}
+  annotations:
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/coordination-namespace: {{ include "ptah-operator.coordinationNamespace" . | quote }}
+    operator.ptah.dev/leader-election: {{ printf "%t" .Values.leaderElection | quote }}
+    operator.ptah.dev/leader-election-id: {{ include "ptah-operator.leaderElectionID" . | quote }}
+    operator.ptah.dev/webhook-service-name: {{ include "ptah-operator.webhookServiceName" . | quote }}
+    operator.ptah.dev/hook-service-account-name: {{ include "ptah-operator.crdManagerServiceAccountName" . | quote }}
+    operator.ptah.dev/controller-service-account-name: {{ include "ptah-operator.serviceAccountName" . | quote }}
+    operator.ptah.dev/controller-deployment-name: {{ include "ptah-operator.fullname" . | quote }}
+    operator.ptah.dev/certificate-deployment-name: {{ include "ptah-operator.certRotatorServiceAccountName" . | quote }}
+    operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+    operator.ptah.dev/admission-contract-version: {{ include "ptah-operator.admissionContractVersion" . | quote }}
+    operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+webhooks:
+  - name: vapproval.operator.ptah.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    clientConfig:
+      caBundle: {{ index $entryBundles "approvalValidating" }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $serviceName }}
+        path: /validate-operator-ptah-dev-v1alpha1-ptahschemaapproval
+        port: 443
+    rules:
+      - apiGroups: ["operator.ptah.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ptahschemaapprovals"]
+        scope: Namespaced
+  - name: vpodintent.operator.ptah.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    matchConditions:
+      - name: managed-or-operation-job-pod
+        expression: >-
+          (has(object.metadata.labels) &&
+            'app.kubernetes.io/managed-by' in object.metadata.labels &&
+            object.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&
+            'app.kubernetes.io/component' in object.metadata.labels &&
+            object.metadata.labels['app.kubernetes.io/component'] == 'schema-operation') ||
+          object.metadata.ownerReferences.exists(ref,
+            ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&
+            ref.name.matches('^ptah-(resolve|verify|observe|plan|apply)-')) ||
+          (request.operation == 'UPDATE' && oldObject != null && (
+            (has(oldObject.metadata.labels) &&
+              'app.kubernetes.io/managed-by' in oldObject.metadata.labels &&
+              oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&
+              'app.kubernetes.io/component' in oldObject.metadata.labels &&
+              oldObject.metadata.labels['app.kubernetes.io/component'] == 'schema-operation') ||
+            oldObject.metadata.ownerReferences.exists(ref,
+              ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&
+              ref.name.matches('^ptah-(resolve|verify|observe|plan|apply)-'))))
+    clientConfig:
+      caBundle: {{ index $entryBundles "podValidating" }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $serviceName }}
+        path: /validate-v1-pod-ptah-operation-intent
+        port: 443
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods", "pods/ephemeralcontainers", "pods/resize"]
+        scope: Namespaced
+  - name: vcontrollerwrite.operator.ptah.dev
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Exact
+    timeoutSeconds: {{ .Values.webhook.controllerWriteTimeoutSeconds }}
+    matchConditions:
+      - name: controller-service-account
+        expression: >-
+          request.userInfo.username ==
+          'system:serviceaccount:{{ .Release.Namespace }}:{{ include "ptah-operator.serviceAccountName" . }}'
+    clientConfig:
+      caBundle: {{ index $entryBundles "controllerWriteValidating" }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $serviceName }}
+        path: /validate-operator-controller-write
+        port: 443
+    rules:
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+      - apiGroups: ["operator.ptah.dev"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE"]
+        resources: ["ptahschemaplans"]
+        scope: Namespaced

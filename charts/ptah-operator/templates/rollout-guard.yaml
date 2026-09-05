@@ -1,0 +1,409 @@
+{{- $sequence := include "ptah-operator.releaseSequence" . -}}
+{{- $rolloutName := include "ptah-operator.rolloutGuardPolicyName" . -}}
+{{- $runtimeName := include "ptah-operator.runtimeGuardPolicyName" . -}}
+{{- $stateVersion := include "ptah-operator.controllerStateVersion" . -}}
+{{- $admissionVersion := include "ptah-operator.admissionContractVersion" . -}}
+{{- $managerImage := include "ptah-operator.managerImage" . -}}
+{{- $hookServiceAccount := include "ptah-operator.crdManagerServiceAccountName" . -}}
+{{- $controllerDeployment := include "ptah-operator.fullname" . -}}
+{{- $certificateDeployment := include "ptah-operator.certRotatorServiceAccountName" . -}}
+{{- $hookUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace $hookServiceAccount -}}
+{{- $hookSuffix := printf `-crd-v%s-[0-9a-f]{12}$` $sequence -}}
+{{- $hookBase := regexReplaceAll $hookSuffix $hookServiceAccount "-crd-v" -}}
+{{- $hookUsernamePrefix := printf "system:serviceaccount:%s:%s" .Release.Namespace $hookBase -}}
+{{- $hookUsernamePatternPrefix := printf "^%s" (regexQuoteMeta $hookUsernamePrefix) -}}
+{{- $rolloutMessage := printf "Ptah rollout guard v%s rejected an unsafe release transition" $sequence -}}
+{{- $runtimeMessage := printf "Ptah runtime guard v%s rejected a non-candidate controller image" $sequence -}}
+{{- $rolloutProbeMessage := printf "Ptah rollout guard v%s rejected its exact enforcement probe" $sequence -}}
+{{- $runtimeProbeMessage := printf "Ptah runtime guard v%s rejected its exact enforcement probe" $sequence -}}
+{{- $rolloutNameBoundaryMessage := printf "Ptah rollout guard v%s rejected an arbitrary hook Deployment name" $sequence -}}
+{{- $probeAnnotation := "operator.ptah.dev/guard-enforcement-probe" -}}
+{{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
+{{- $anyConvergenceRequest := include "ptah-operator.admissionConvergenceAnyProbeRequest" . -}}
+{{- $rolloutConvergenceFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $rolloutName) -}}
+{{- $rolloutConvergenceRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $rolloutConvergenceFieldManager) -}}
+{{- $rolloutConvergenceMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $rolloutConvergenceFieldManager) -}}
+{{- $runtimeConvergenceFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $runtimeName) -}}
+{{- $runtimeConvergenceRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $runtimeConvergenceFieldManager) -}}
+{{- $runtimeConvergenceMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $runtimeConvergenceFieldManager) -}}
+{{- $activationValid := printf `params != null && (%s)` $activationShape -}}
+{{- $stopTransition := `variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation == "UPDATE" && oldObject != null && variables.activationValid && variables.newRelease > variables.activeRelease && variables.newState > 0 && variables.isReleaseHook && has(object.spec.replicas) && object.spec.replicas == 0 && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) == has(oldObject.metadata.uid) && (!has(object.metadata.uid) || object.metadata.uid == oldObject.metadata.uid) && object.metadata.labels == oldObject.metadata.labels && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.metadata.annotations) && "operator.ptah.dev/controller-state-version" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/controller-state-version"] == string(variables.newState) && "operator.ptah.dev/release-sequence" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/release-sequence"] == string(variables.newRelease) && object.metadata.annotations.all(key, key in ["operator.ptah.dev/controller-state-version", "operator.ptah.dev/release-sequence"] || (has(oldObject.metadata.annotations) && key in oldObject.metadata.annotations && object.metadata.annotations[key] == oldObject.metadata.annotations[key])) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(key, key in ["operator.ptah.dev/controller-state-version", "operator.ptah.dev/release-sequence"] || (key in object.metadata.annotations && oldObject.metadata.annotations[key] == object.metadata.annotations[key]))) && object.spec.template == oldObject.spec.template && object.spec.selector == oldObject.spec.selector && (has(object.spec.strategy) == has(oldObject.spec.strategy)) && (!has(object.spec.strategy) || object.spec.strategy == oldObject.spec.strategy) && (has(object.spec.minReadySeconds) == has(oldObject.spec.minReadySeconds)) && (!has(object.spec.minReadySeconds) || object.spec.minReadySeconds == oldObject.spec.minReadySeconds) && (has(object.spec.revisionHistoryLimit) == has(oldObject.spec.revisionHistoryLimit)) && (!has(object.spec.revisionHistoryLimit) || object.spec.revisionHistoryLimit == oldObject.spec.revisionHistoryLimit) && (has(object.spec.paused) == has(oldObject.spec.paused)) && (!has(object.spec.paused) || object.spec.paused == oldObject.spec.paused) && (has(object.spec.progressDeadlineSeconds) == has(oldObject.spec.progressDeadlineSeconds)) && (!has(object.spec.progressDeadlineSeconds) || object.spec.progressDeadlineSeconds == oldObject.spec.progressDeadlineSeconds)` -}}
+{{- $rolloutBootstrap := `variables.activeRelease == 0 && (!has(object.metadata.annotations) || !("operator.ptah.dev/controller-state-version" in object.metadata.annotations)) && (!has(object.metadata.annotations) || !("operator.ptah.dev/release-sequence" in object.metadata.annotations)) && (!variables.isAdmission || (!has(object.metadata.annotations) || !("operator.ptah.dev/admission-contract-version" in object.metadata.annotations)))` -}}
+{{- $rolloutActive := `variables.activeRelease > 0 && variables.newState == variables.activeState && variables.newRelease == variables.activeRelease && (!variables.isAdmission || variables.newAdmission == variables.activeAdmission)` -}}
+{{- $rolloutActiveIdentity := printf `variables.activationValid && ((%s) || (%s))` $rolloutBootstrap $rolloutActive -}}
+{{- $runtimeBootstrap := `variables.activeRelease == 0 && (!has(object.metadata.annotations) || !("operator.ptah.dev/controller-state-version" in object.metadata.annotations)) && (!has(object.metadata.annotations) || !("operator.ptah.dev/release-sequence" in object.metadata.annotations)) && (!has(object.spec.template.metadata.annotations) || !("operator.ptah.dev/controller-state-version" in object.spec.template.metadata.annotations)) && (!has(object.spec.template.metadata.annotations) || !("operator.ptah.dev/release-sequence" in object.spec.template.metadata.annotations))` -}}
+{{- $runtimeActive := `variables.activeRelease > 0 && variables.newState == variables.activeState && variables.newRelease == variables.activeRelease && variables.templateState == string(variables.activeState) && variables.templateRelease == string(variables.activeRelease) && object.spec.template.spec.containers.size() == 1 && object.spec.template.spec.containers[0].image == variables.activeImage && has(object.spec.template.spec.initContainers) && object.spec.template.spec.initContainers.size() == 1 && object.spec.template.spec.initContainers[0].image == variables.activeImage` -}}
+{{- $runtimeActiveIdentity := printf `variables.activationValid && ((%s) || (%s))` $runtimeBootstrap $runtimeActive -}}
+{{- $pod := "object.spec.template.spec" -}}
+{{- $initContainer := printf "%s.initContainers[0]" $pod -}}
+{{- $container := printf "%s.containers[0]" $pod -}}
+{{- $isController := printf `request.name == %q` $controllerDeployment -}}
+{{- $controllerArgs := include "ptah-operator.controllerRuntimeArgsJSON" . -}}
+{{- $certificateArgs := include "ptah-operator.certificateRuntimeArgsJSON" . -}}
+{{- $controllerVerifierArgs := include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "runtime-verify" "timeout" "60s" "verifyControllerState" true) -}}
+{{- $certificateVerifierArgs := include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "runtime-verify" "timeout" "60s" "verifyControllerState" false) -}}
+{{- $verifierArgsValidation := printf `%s.args == (request.name == %q ? %s : %s)` $initContainer $controllerDeployment $controllerVerifierArgs $certificateVerifierArgs -}}
+{{- $initNoSideChannels := printf `(!has(%[1]s.env) || %[1]s.env.size() == 0) && (!has(%[1]s.envFrom) || %[1]s.envFrom.size() == 0) && !has(%[1]s.lifecycle) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File" && !has(%[1]s.restartPolicy) && (!has(%[1]s.restartPolicyRules) || %[1]s.restartPolicyRules.size() == 0)` $initContainer -}}
+{{- $appNoSideChannels := printf `!has(%[1]s.lifecycle) && !has(%[1]s.startupProbe) && (!has(%[1]s.volumeDevices) || %[1]s.volumeDevices.size() == 0) && (!has(%[1]s.stdin) || !%[1]s.stdin) && (!has(%[1]s.stdinOnce) || !%[1]s.stdinOnce) && (!has(%[1]s.tty) || !%[1]s.tty) && (!has(%[1]s.workingDir) || %[1]s.workingDir == "") && %[1]s.terminationMessagePath == "/dev/termination-log" && %[1]s.terminationMessagePolicy == "File" && !has(%[1]s.restartPolicy) && (!has(%[1]s.restartPolicyRules) || %[1]s.restartPolicyRules.size() == 0)` $container -}}
+{{- $initSecurity := printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.allowPrivilegeEscalation) && !%[1]s.securityContext.allowPrivilegeEscalation && has(%[1]s.securityContext.readOnlyRootFilesystem) && %[1]s.securityContext.readOnlyRootFilesystem && (!has(%[1]s.securityContext.privileged) || !%[1]s.securityContext.privileged) && !has(%[1]s.securityContext.runAsUser) && !has(%[1]s.securityContext.runAsGroup) && !has(%[1]s.securityContext.runAsNonRoot) && !has(%[1]s.securityContext.procMount) && !has(%[1]s.securityContext.seLinuxOptions) && !has(%[1]s.securityContext.windowsOptions) && !has(%[1]s.securityContext.seccompProfile) && !has(%[1]s.securityContext.appArmorProfile) && has(%[1]s.securityContext.capabilities) && (!has(%[1]s.securityContext.capabilities.add) || %[1]s.securityContext.capabilities.add.size() == 0) && has(%[1]s.securityContext.capabilities.drop) && %[1]s.securityContext.capabilities.drop == ["ALL"]` $initContainer -}}
+{{- $appSecurity := printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.allowPrivilegeEscalation) && !%[1]s.securityContext.allowPrivilegeEscalation && has(%[1]s.securityContext.readOnlyRootFilesystem) && %[1]s.securityContext.readOnlyRootFilesystem && (!has(%[1]s.securityContext.privileged) || !%[1]s.securityContext.privileged) && !has(%[1]s.securityContext.runAsUser) && !has(%[1]s.securityContext.runAsGroup) && !has(%[1]s.securityContext.runAsNonRoot) && !has(%[1]s.securityContext.procMount) && !has(%[1]s.securityContext.seLinuxOptions) && !has(%[1]s.securityContext.windowsOptions) && !has(%[1]s.securityContext.seccompProfile) && !has(%[1]s.securityContext.appArmorProfile) && has(%[1]s.securityContext.capabilities) && (!has(%[1]s.securityContext.capabilities.add) || %[1]s.securityContext.capabilities.add.size() == 0) && has(%[1]s.securityContext.capabilities.drop) && %[1]s.securityContext.capabilities.drop == ["ALL"]` $container -}}
+{{- $initResources := printf `(!has(dyn(%[1]s.resources).limits) || dyn(%[1]s.resources).limits.all(key, key in ["cpu", "memory", "ephemeral-storage"])) && (!has(dyn(%[1]s.resources).requests) || dyn(%[1]s.resources).requests.all(key, key in ["cpu", "memory", "ephemeral-storage"])) && (!has(dyn(%[1]s.resources).claims) || dyn(%[1]s.resources).claims.size() == 0)` $initContainer -}}
+{{- $appResources := printf `(!has(dyn(%[1]s.resources).limits) || dyn(%[1]s.resources).limits.all(key, key in ["cpu", "memory", "ephemeral-storage"])) && (!has(dyn(%[1]s.resources).requests) || dyn(%[1]s.resources).requests.all(key, key in ["cpu", "memory", "ephemeral-storage"])) && (!has(dyn(%[1]s.resources).claims) || dyn(%[1]s.resources).claims.size() == 0)` $container -}}
+{{- $initAPIMount := printf `has(%[1]s.volumeMounts) && %[1]s.volumeMounts.size() == 1 && %[1]s.volumeMounts.exists(m, m.name == "api-access" && m.mountPath == "/var/run/secrets/kubernetes.io/serviceaccount" && has(m.readOnly) && m.readOnly && !has(m.mountPropagation) && !has(m.subPath) && !has(m.subPathExpr) && !has(m.recursiveReadOnly))` $initContainer -}}
+{{- $appAPIMount := printf `has(%[1]s.volumeMounts) && %[1]s.volumeMounts.size() == 1 && %[1]s.volumeMounts.exists(m, m.name == "api-access" && m.mountPath == "/var/run/secrets/kubernetes.io/serviceaccount" && has(m.readOnly) && m.readOnly && !has(m.mountPropagation) && !has(m.subPath) && !has(m.subPathExpr) && !has(m.recursiveReadOnly))` $container -}}
+{{- $controllerMounts := printf `has(%[1]s.volumeMounts) && %[1]s.volumeMounts.size() == 3 && %[1]s.volumeMounts.all(m, m.name in ["api-access", "webhook-cert", "tmp"]) && %[1]s.volumeMounts.exists(m, m.name == "api-access" && m.mountPath == "/var/run/secrets/kubernetes.io/serviceaccount" && has(m.readOnly) && m.readOnly && !has(m.mountPropagation) && !has(m.subPath) && !has(m.subPathExpr) && !has(m.recursiveReadOnly)) && %[1]s.volumeMounts.exists(m, m.name == "webhook-cert" && m.mountPath == "/certs" && has(m.readOnly) && m.readOnly && !has(m.mountPropagation) && !has(m.subPath) && !has(m.subPathExpr) && !has(m.recursiveReadOnly)) && %[1]s.volumeMounts.exists(m, m.name == "tmp" && m.mountPath == "/tmp" && (!has(m.readOnly) || !m.readOnly) && !has(m.mountPropagation) && !has(m.subPath) && !has(m.subPathExpr) && !has(m.recursiveReadOnly))` $container -}}
+{{- $controllerPortsAndProbes := printf `%[1]s.ports.size() == 3 && %[1]s.ports.exists(p, p.name == "metrics" && p.containerPort == 8080 && p.protocol == "TCP" && (!has(p.hostPort) || p.hostPort == 0) && (!has(p.hostIP) || p.hostIP == "")) && %[1]s.ports.exists(p, p.name == "health" && p.containerPort == 8081 && p.protocol == "TCP" && (!has(p.hostPort) || p.hostPort == 0) && (!has(p.hostIP) || p.hostIP == "")) && %[1]s.ports.exists(p, p.name == "webhook" && p.containerPort == %[2]d && p.protocol == "TCP" && (!has(p.hostPort) || p.hostPort == 0) && (!has(p.hostIP) || p.hostIP == "")) && has(%[1]s.livenessProbe) && has(%[1]s.livenessProbe.httpGet) && %[1]s.livenessProbe.httpGet.path == "/healthz" && %[1]s.livenessProbe.httpGet.port == "health" && has(%[1]s.readinessProbe) && has(%[1]s.readinessProbe.httpGet) && %[1]s.readinessProbe.httpGet.path == "/readyz" && %[1]s.readinessProbe.httpGet.port == "health"` $container (int .Values.webhook.port) -}}
+{{- $certificatePortsAndProbes := printf `%[1]s.ports.size() == 1 && %[1]s.ports[0].name == "health" && %[1]s.ports[0].containerPort == %[2]d && %[1]s.ports[0].protocol == "TCP" && (!has(%[1]s.ports[0].hostPort) || %[1]s.ports[0].hostPort == 0) && (!has(%[1]s.ports[0].hostIP) || %[1]s.ports[0].hostIP == "") && has(%[1]s.livenessProbe) && has(%[1]s.livenessProbe.httpGet) && %[1]s.livenessProbe.httpGet.path == "/healthz" && %[1]s.livenessProbe.httpGet.port == "health" && has(%[1]s.readinessProbe) && has(%[1]s.readinessProbe.httpGet) && %[1]s.readinessProbe.httpGet.path == "/readyz" && %[1]s.readinessProbe.httpGet.port == "health"` $container (int .Values.certificateRotation.healthPort) -}}
+{{- $apiVolumesOne := printf `has(%[1]s.volumes) && %[1]s.volumes.size() == 1 && %[2]s.name == "api-access" && has(%[2]s.projected) && has(%[2]s.projected.defaultMode) && %[2]s.projected.defaultMode == 420 && %[3]s.size() == 3 && %[3]s.exists(s, has(s.serviceAccountToken) && s.serviceAccountToken.path == "token" && has(s.serviceAccountToken.expirationSeconds) && s.serviceAccountToken.expirationSeconds == 3600 && !has(s.serviceAccountToken.audience)) && %[3]s.exists(s, has(s.configMap) && s.configMap.name == "kube-root-ca.crt" && has(s.configMap.items) && s.configMap.items.size() == 1 && s.configMap.items[0].key == "ca.crt" && s.configMap.items[0].path == "ca.crt" && !has(s.configMap.items[0].mode)) && %[3]s.exists(s, has(s.downwardAPI) && has(s.downwardAPI.items) && s.downwardAPI.items.size() == 1 && s.downwardAPI.items[0].path == "namespace" && has(s.downwardAPI.items[0].fieldRef) && s.downwardAPI.items[0].fieldRef.apiVersion == "v1" && s.downwardAPI.items[0].fieldRef.fieldPath == "metadata.namespace" && !has(s.downwardAPI.items[0].mode)) && %[3]s.all(s, has(s.serviceAccountToken) || has(s.configMap) || has(s.downwardAPI))` $pod (printf `%s.volumes.filter(v, v.name == "api-access")[0]` $pod) (printf `%s.volumes.filter(v, v.name == "api-access")[0].projected.sources` $pod) -}}
+{{- $apiVolumesThree := printf `has(%[1]s.volumes) && %[1]s.volumes.size() == 3 && %[2]s.name == "api-access" && has(%[2]s.projected) && has(%[2]s.projected.defaultMode) && %[2]s.projected.defaultMode == 420 && %[3]s.size() == 3 && %[3]s.exists(s, has(s.serviceAccountToken) && s.serviceAccountToken.path == "token" && has(s.serviceAccountToken.expirationSeconds) && s.serviceAccountToken.expirationSeconds == 3600 && !has(s.serviceAccountToken.audience)) && %[3]s.exists(s, has(s.configMap) && s.configMap.name == "kube-root-ca.crt" && has(s.configMap.items) && s.configMap.items.size() == 1 && s.configMap.items[0].key == "ca.crt" && s.configMap.items[0].path == "ca.crt" && !has(s.configMap.items[0].mode)) && %[3]s.exists(s, has(s.downwardAPI) && has(s.downwardAPI.items) && s.downwardAPI.items.size() == 1 && s.downwardAPI.items[0].path == "namespace" && has(s.downwardAPI.items[0].fieldRef) && s.downwardAPI.items[0].fieldRef.apiVersion == "v1" && s.downwardAPI.items[0].fieldRef.fieldPath == "metadata.namespace" && !has(s.downwardAPI.items[0].mode)) && %[3]s.all(s, has(s.serviceAccountToken) || has(s.configMap) || has(s.downwardAPI))` $pod (printf `%s.volumes.filter(v, v.name == "api-access")[0]` $pod) (printf `%s.volumes.filter(v, v.name == "api-access")[0].projected.sources` $pod) -}}
+{{- $controllerVolumes := printf `%[1]s && %[2]s.volumes.all(v, v.name in ["api-access", "webhook-cert", "tmp"]) && %[2]s.volumes.exists(v, v.name == "webhook-cert" && has(v.secret) && v.secret.secretName == %[3]q && (!has(v.secret.optional) || !v.secret.optional) && has(v.secret.items) && v.secret.items.size() == 2 && v.secret.items.exists(i, i.key == "tls.crt" && i.path == "tls.crt" && !has(i.mode)) && v.secret.items.exists(i, i.key == "tls.key" && i.path == "tls.key" && !has(i.mode))) && %[2]s.volumes.exists(v, v.name == "tmp" && has(v.emptyDir) && (!has(v.emptyDir.medium) || v.emptyDir.medium == ""))` $apiVolumesThree $pod (include "ptah-operator.webhookSecretName" .) -}}
+{{- $runtimeExpressions := list
+      `object.spec.strategy.type == "Recreate" && variables.templateState == string(variables.newState) && variables.templateRelease == string(variables.newRelease)`
+      (printf `%[1]s.serviceAccountName == variables.runtimeServiceAccount && has(%[1]s.automountServiceAccountToken) && !%[1]s.automountServiceAccountToken && has(%[1]s.enableServiceLinks) && !%[1]s.enableServiceLinks` $pod)
+      (printf `(!has(%[1]s.hostNetwork) || !%[1]s.hostNetwork) && (!has(%[1]s.hostPID) || !%[1]s.hostPID) && (!has(%[1]s.hostIPC) || !%[1]s.hostIPC) && (!has(%[1]s.shareProcessNamespace) || !%[1]s.shareProcessNamespace) && !has(%[1]s.runtimeClassName) && !has(%[1]s.activeDeadlineSeconds)` $pod)
+      (printf `has(%[1]s.securityContext) && has(%[1]s.securityContext.runAsNonRoot) && %[1]s.securityContext.runAsNonRoot && has(%[1]s.securityContext.runAsUser) && %[1]s.securityContext.runAsUser == 65532 && has(%[1]s.securityContext.runAsGroup) && %[1]s.securityContext.runAsGroup == 65532 && has(%[1]s.securityContext.seccompProfile) && %[1]s.securityContext.seccompProfile.type == "RuntimeDefault" && !has(%[1]s.securityContext.seLinuxOptions) && !has(%[1]s.securityContext.windowsOptions) && (!has(%[1]s.securityContext.sysctls) || %[1]s.securityContext.sysctls.size() == 0) && (%[2]s ? (has(%[1]s.securityContext.fsGroup) && %[1]s.securityContext.fsGroup == 65532) : !has(%[1]s.securityContext.fsGroup))` $pod $isController)
+      (printf `%[1]s.containers.size() == 1 && has(%[1]s.initContainers) && %[1]s.initContainers.size() == 1 && (!has(%[1]s.ephemeralContainers) || %[1]s.ephemeralContainers.size() == 0) && (!has(%[1]s.resourceClaims) || %[1]s.resourceClaims.size() == 0)` $pod)
+      (printf `%[1]s.name == "verify-candidate-runtime" && %[1]s.image == %[2]q && %[1]s.command == ["/ptah-crd-manager"] && %[3]s` $initContainer $managerImage $verifierArgsValidation)
+      $initNoSideChannels
+      $initSecurity
+      $initResources
+      $initAPIMount
+      (printf `%[1]s.name == variables.runtimeContainerName && %[1]s.image == %[2]q && %[1]s.command == [variables.runtimeCommand] && %[1]s.args == (%[3]s ? %[4]s : %[5]s)` $container $managerImage $isController $controllerArgs $certificateArgs)
+      (printf `(%[1]s ? (!has(%[2]s.env) || %[2]s.env.size() == 0) : (%[2]s.env.size() == 2 && %[2]s.env[0].name == "POD_NAME" && has(%[2]s.env[0].valueFrom) && has(%[2]s.env[0].valueFrom.fieldRef) && %[2]s.env[0].valueFrom.fieldRef.fieldPath == "metadata.name" && %[2]s.env[1].name == "POD_UID" && has(%[2]s.env[1].valueFrom) && has(%[2]s.env[1].valueFrom.fieldRef) && %[2]s.env[1].valueFrom.fieldRef.fieldPath == "metadata.uid")) && (!has(%[2]s.envFrom) || %[2]s.envFrom.size() == 0)` $isController $container)
+      $appNoSideChannels
+      $appSecurity
+      $appResources
+      (printf `%s ? (%s) : (%s)` $isController $controllerMounts $appAPIMount)
+      (printf `%s ? (%s) : (%s)` $isController $controllerPortsAndProbes $certificatePortsAndProbes)
+      (printf `%s ? (%s) : (%s)` $isController $controllerVolumes $apiVolumesOne) -}}
+{{- $runtimeExpressions = concat $runtimeExpressions (include "ptah-operator.runtimeDeploymentConfigExpressionsJSON" . | fromJsonArray) -}}
+{{- $rolloutPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $rolloutName -}}
+{{- $rolloutBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $rolloutName -}}
+{{- $runtimePolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $runtimeName -}}
+{{- $runtimeBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $runtimeName -}}
+{{- range $entry := list
+      (dict "kind" "ValidatingAdmissionPolicy" "name" $rolloutName "object" $rolloutPolicy)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "name" $rolloutName "object" $rolloutBinding)
+      (dict "kind" "ValidatingAdmissionPolicy" "name" $runtimeName "object" $runtimePolicy)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "name" $runtimeName "object" $runtimeBinding) -}}
+{{- with $entry.object -}}
+{{- $annotations := default (dict) .metadata.annotations -}}
+{{- $labels := default (dict) .metadata.labels -}}
+{{- if or
+      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-sequence")) $sequence)
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
+      (ne (default "" (index $labels "app.kubernetes.io/component")) "rollout-guard") -}}
+{{- fail (printf "retained %s %s has foreign or incomplete rollout-guard ownership" $entry.kind $entry.name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not $rolloutPolicy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $rolloutName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-50"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/controller-state-version: {{ $stateVersion | quote }}
+    operator.ptah.dev/admission-contract-version: {{ $admissionVersion | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: rollout-guard
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "deployments/scale"]
+        scope: Namespaced
+      - apiGroups: ["admissionregistration.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+        scope: Cluster
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+  matchConditions:
+    - name: fixed-operator-resource
+      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest (printf `(request.resource.group == "apps" && request.namespace == %q && (request.name in [%q, %q] || request.userInfo.username == %q)) || (request.resource.group == "admissionregistration.k8s.io" && request.name == %q)` .Release.Namespace $controllerDeployment $certificateDeployment $hookUsername "ptah-operator-admission") | quote }}
+  variables:
+    - name: isAnyAdmissionConvergenceProbe
+      expression: {{ $anyConvergenceRequest | quote }}
+    - name: isAdmissionConvergenceProbe
+      expression: {{ $rolloutConvergenceRequest | quote }}
+    - name: isDeployment
+      expression: 'request.resource.group == "apps"'
+    - name: isAdmission
+      expression: 'request.resource.group == "admissionregistration.k8s.io"'
+    - name: newState
+      expression: {{ printf `has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
+    - name: newRelease
+      expression: {{ printf `has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" | quote }}
+    - name: activationValid
+      expression: {{ $activationValid | quote }}
+    - name: activeRelease
+      expression: {{ printf `params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1` "active-release-sequence" "active-release-sequence" "active-release-sequence" | quote }}
+    - name: activeState
+      expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
+    - name: activeAdmission
+      expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
+    - name: isReleaseHook
+      expression: {{ printf `request.userInfo.username.matches(%q + string(variables.newRelease) + "-[0-9a-f]{12}$")` $hookUsernamePatternPrefix | quote }}
+    - name: isCandidateHook
+      expression: {{ printf `request.userInfo.username == %q` $hookUsername | quote }}
+    - name: newAdmission
+      expression: {{ printf `variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
+    - name: isActiveIdentity
+      expression: {{ $rolloutActiveIdentity | quote }}
+    - name: stopTransition
+      expression: {{ $stopTransition | quote }}
+  validations:
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (variables.activationValid)'
+      message: {{ $rolloutMessage | quote }}
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (!has(request.subResource) || request.subResource != "scale")'
+      message: {{ $rolloutMessage | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!variables.isDeployment || !variables.isCandidateHook || request.name in [%q, %q])` $controllerDeployment $certificateDeployment | quote }}
+      message: {{ $rolloutNameBoundaryMessage | quote }}
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (!variables.isDeployment || request.operation != "CREATE" || !variables.isCandidateHook || request.dryRun == true)'
+      message: {{ $rolloutMessage | quote }}
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (variables.isActiveIdentity || variables.stopTransition)'
+      message: {{ $rolloutMessage | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (variables.newRelease != %s || variables.newState == %s)` $sequence $stateVersion | quote }}
+      message: {{ $rolloutMessage | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!variables.isAdmission || variables.newRelease != %s || (variables.newAdmission == %s && (has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q && %q in object.metadata.annotations && object.metadata.annotations[%q] == %q)))`
+        $sequence $admissionVersion
+        "operator.ptah.dev/release-name" "operator.ptah.dev/release-name" .Release.Name
+        "operator.ptah.dev/release-namespace" "operator.ptah.dev/release-namespace" .Release.Namespace
+        "operator.ptah.dev/coordination-namespace" "operator.ptah.dev/coordination-namespace" (include "ptah-operator.coordinationNamespace" .)
+        "operator.ptah.dev/leader-election" "operator.ptah.dev/leader-election" (printf "%t" .Values.leaderElection)
+        "operator.ptah.dev/leader-election-id" "operator.ptah.dev/leader-election-id" (include "ptah-operator.leaderElectionID" .)
+        "operator.ptah.dev/webhook-service-name" "operator.ptah.dev/webhook-service-name" (include "ptah-operator.webhookServiceName" .)
+        "operator.ptah.dev/hook-service-account-name" "operator.ptah.dev/hook-service-account-name" $hookServiceAccount
+        "operator.ptah.dev/controller-service-account-name" "operator.ptah.dev/controller-service-account-name" (include "ptah-operator.serviceAccountName" .)
+        "operator.ptah.dev/controller-deployment-name" "operator.ptah.dev/controller-deployment-name" $controllerDeployment
+        "operator.ptah.dev/certificate-deployment-name" "operator.ptah.dev/certificate-deployment-name" $certificateDeployment | quote }}
+      message: {{ $rolloutMessage | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!(variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation in ["CREATE", "UPDATE"] && request.dryRun == true && variables.isCandidateHook && has(object.metadata.annotations) && %[1]q in object.metadata.annotations && object.metadata.annotations[%[1]q] == %[2]q))` $probeAnnotation $rolloutName | quote }}
+      message: {{ $rolloutProbeMessage | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (request.dryRun == true || !has(object.metadata.annotations) || !(%q in object.metadata.annotations))` $probeAnnotation | quote }}
+      message: {{ $rolloutMessage | quote }}
+    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
+      message: Ptah admission convergence probe field manager is reserved for dry-run verification
+    - expression: '!variables.isAdmissionConvergenceProbe'
+      message: {{ $rolloutConvergenceMessage | quote }}
+---
+{{- end }}
+{{- if not $rolloutBinding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $rolloutName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-40"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: rollout-guard
+spec:
+  policyName: {{ $rolloutName }}
+  matchResources:
+    matchPolicy: Exact
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ .Release.Namespace }}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "deployments/scale"]
+        scope: Namespaced
+      - apiGroups: ["admissionregistration.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+        resourceNames: ["ptah-operator-admission"]
+        scope: Cluster
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+  paramRef:
+    name: ptah-operator-release-activation
+    namespace: {{ .Release.Namespace }}
+    parameterNotFoundAction: Deny
+  validationActions: [Deny]
+---
+{{- end }}
+{{- if not $runtimePolicy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $runtimeName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-50"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/controller-state-version: {{ $stateVersion | quote }}
+    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: rollout-guard
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+  matchConditions:
+    - name: fixed-runtime-deployment
+      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest (printf `request.namespace == %q && request.name in [%q, %q]` .Release.Namespace $controllerDeployment $certificateDeployment) | quote }}
+  variables:
+    - name: isAnyAdmissionConvergenceProbe
+      expression: {{ $anyConvergenceRequest | quote }}
+    - name: isAdmissionConvergenceProbe
+      expression: {{ $runtimeConvergenceRequest | quote }}
+    - name: isDeployment
+      expression: 'true'
+    - name: newState
+      expression: {{ printf `has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
+    - name: newRelease
+      expression: {{ printf `has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" | quote }}
+    - name: activationValid
+      expression: {{ $activationValid | quote }}
+    - name: activeRelease
+      expression: {{ printf `params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1` "active-release-sequence" "active-release-sequence" "active-release-sequence" | quote }}
+    - name: activeState
+      expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
+    - name: activeImage
+      expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations ? params.metadata.annotations[%q] : ""` "operator.ptah.dev/manager-image" "operator.ptah.dev/manager-image" | quote }}
+    - name: isReleaseHook
+      expression: {{ printf `request.userInfo.username.matches(%q + string(variables.newRelease) + "-[0-9a-f]{12}$")` $hookUsernamePatternPrefix | quote }}
+    - name: isCandidateHook
+      expression: {{ printf `request.userInfo.username == %q` $hookUsername | quote }}
+    - name: runtimeContainerName
+      expression: {{ printf `request.name == %q ? "manager" : "certificate-rotator"` $controllerDeployment | quote }}
+    - name: runtimeCommand
+      expression: {{ printf `request.name == %q ? "/manager" : "/ptah-cert-rotator"` $controllerDeployment | quote }}
+    - name: runtimeServiceAccount
+      expression: {{ printf `request.name == %q ? %q : %q` $controllerDeployment (include "ptah-operator.serviceAccountName" .) $certificateDeployment | quote }}
+    - name: templateState
+      expression: {{ printf `has(object.spec.template.metadata.annotations) && %q in object.spec.template.metadata.annotations ? object.spec.template.metadata.annotations[%q] : ""` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
+    - name: templateRelease
+      expression: {{ printf `has(object.spec.template.metadata.annotations) && %q in object.spec.template.metadata.annotations ? object.spec.template.metadata.annotations[%q] : ""` "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" | quote }}
+    - name: isActiveIdentity
+      expression: {{ $runtimeActiveIdentity | quote }}
+    - name: stopTransition
+      expression: {{ $stopTransition | quote }}
+  validations:
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (variables.activationValid)'
+      message: {{ $runtimeMessage | quote }}
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (variables.isActiveIdentity || variables.stopTransition)'
+      message: {{ $runtimeMessage | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (variables.newRelease != %s || variables.newState == %s)` $sequence $stateVersion | quote }}
+      message: {{ $runtimeMessage | quote }}
+    {{- range $expression := $runtimeExpressions }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (variables.stopTransition || variables.newRelease != %s || (%s))` $sequence $expression | quote }}
+      message: {{ $runtimeMessage | quote }}
+    {{- end }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (!(variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation in ["CREATE", "UPDATE"] && request.dryRun == true && variables.isCandidateHook && has(object.metadata.annotations) && %[1]q in object.metadata.annotations && object.metadata.annotations[%[1]q] == %[2]q))` $probeAnnotation $runtimeName | quote }}
+      message: {{ $runtimeProbeMessage | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (request.dryRun == true || !has(object.metadata.annotations) || !(%q in object.metadata.annotations))` $probeAnnotation | quote }}
+      message: {{ $runtimeMessage | quote }}
+    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
+      message: Ptah admission convergence probe field manager is reserved for dry-run verification
+    - expression: '!variables.isAdmissionConvergenceProbe'
+      message: {{ $runtimeConvergenceMessage | quote }}
+---
+{{- end }}
+{{- if not $runtimeBinding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $runtimeName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-40"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: rollout-guard
+spec:
+  policyName: {{ $runtimeName }}
+  matchResources:
+    matchPolicy: Exact
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ .Release.Namespace }}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+        resourceNames: [{{ $controllerDeployment | quote }}, {{ $certificateDeployment | quote }}]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+  paramRef:
+    name: ptah-operator-release-activation
+    namespace: {{ .Release.Namespace }}
+    parameterNotFoundAction: Deny
+  validationActions: [Deny]
+{{- end }}

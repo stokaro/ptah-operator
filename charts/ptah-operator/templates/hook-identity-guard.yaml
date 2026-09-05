@@ -1,0 +1,282 @@
+{{- $sequence := include "ptah-operator.releaseSequence" . -}}
+{{- $managerImage := include "ptah-operator.managerImage" . -}}
+{{- $serviceAccount := include "ptah-operator.crdManagerServiceAccountName" . -}}
+{{- $teardownServiceAccount := include "ptah-operator.teardownServiceAccountName" . -}}
+{{- $reconcileJob := include "ptah-operator.crdManagerClusterRoleName" . -}}
+{{- $preflightJob := printf "%s-preflight" ($reconcileJob | trunc 53 | trimSuffix "-") -}}
+{{- $quiesceJob := include "ptah-operator.teardownQuiesceJobName" . -}}
+{{- $teardownJob := $teardownServiceAccount -}}
+{{- $identityJob := include "ptah-operator.hookIdentityProbeJobName" . -}}
+{{- $identityPodPrefix := printf "%s-" $identityJob | trunc 58 -}}
+{{- $preflightPodPrefix := printf "%s-" $preflightJob | trunc 58 -}}
+{{- $reconcilePodPrefix := printf "%s-" $reconcileJob | trunc 58 -}}
+{{- $quiescePodPrefix := printf "%s-" $quiesceJob | trunc 58 -}}
+{{- $teardownPodPrefix := printf "%s-" $teardownJob | trunc 58 -}}
+{{- $identityPodRequestName := printf `(request.name.startsWith(%q) && request.name.size() == %d && request.name.substring(%d).matches("^[a-z0-9]{5}$"))` $identityPodPrefix (add (len $identityPodPrefix) 5) (len $identityPodPrefix) -}}
+{{- $preflightPodRequestName := printf `(request.name.startsWith(%q) && request.name.size() == %d && request.name.substring(%d).matches("^[a-z0-9]{5}$"))` $preflightPodPrefix (add (len $preflightPodPrefix) 5) (len $preflightPodPrefix) -}}
+{{- $reconcilePodRequestName := printf `(request.name.startsWith(%q) && request.name.size() == %d && request.name.substring(%d).matches("^[a-z0-9]{5}$"))` $reconcilePodPrefix (add (len $reconcilePodPrefix) 5) (len $reconcilePodPrefix) -}}
+{{- $quiescePodRequestName := printf `(request.name.startsWith(%q) && request.name.size() == %d && request.name.substring(%d).matches("^[a-z0-9]{5}$"))` $quiescePodPrefix (add (len $quiescePodPrefix) 5) (len $quiescePodPrefix) -}}
+{{- $teardownPodRequestName := printf `(request.name.startsWith(%q) && request.name.size() == %d && request.name.substring(%d).matches("^[a-z0-9]{5}$"))` $teardownPodPrefix (add (len $teardownPodPrefix) 5) (len $teardownPodPrefix) -}}
+{{- $probeObject := include "ptah-operator.hookIdentityProbeObjectName" . -}}
+{{- $name := include "ptah-operator.hookIdentityGuardPolicyName" . -}}
+{{- $probeName := include "ptah-operator.hookIdentityProbeGuardPolicyName" . -}}
+{{- $message := printf "Ptah hook identity guard v%s rejected an unsafe privileged hook Pod" $sequence -}}
+{{- $probeMessage := printf "Ptah hook identity probe guard v%s rejected the enforcement probe" $sequence -}}
+{{- $convergenceFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $name) -}}
+{{- $convergenceRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $convergenceFieldManager) -}}
+{{- $anyConvergenceRequest := include "ptah-operator.admissionConvergenceAnyProbeRequest" . -}}
+{{- $convergenceMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $convergenceFieldManager) -}}
+{{- $probeConvergenceFieldManager := include "ptah-operator.admissionConvergenceProbeFieldManager" (dict "root" . "policyName" $probeName) -}}
+{{- $probeConvergenceRequest := include "ptah-operator.admissionConvergenceProbeRequest" (dict "root" . "fieldManager" $probeConvergenceFieldManager) -}}
+{{- $probeConvergenceMessage := include "ptah-operator.admissionConvergenceProbeMessage" (dict "fieldManager" $probeConvergenceFieldManager) -}}
+{{- $container := "object.spec.containers[0]" -}}
+{{- $args := printf "%s.args" $container -}}
+{{- $identityArgs := printf `%s == %s` $args (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "identity-probe" "timeout" "180s" "verifyControllerState" false)) -}}
+{{- $preflightArgs := printf `%s == %s` $args (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "preflight" "timeout" "180s" "verifyControllerState" false)) -}}
+{{- $reconcileArgs := printf `%s == %s` $args (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "reconcile" "timeout" "360s" "verifyControllerState" false)) -}}
+{{- $quiesceArgs := printf `%s == %s` $args (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown-quiesce" "timeout" "180s" "verifyControllerState" false)) -}}
+{{- $teardownArgs := printf `%s == %s` $args (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown" "timeout" "180s" "verifyControllerState" false)) -}}
+{{- $podValidations := list
+      `!has(request.subResource) || request.subResource == ""`
+      `request.operation != "CREATE" || request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]`
+      (printf `has(object.spec.serviceAccountName) && object.spec.serviceAccountName == (object.metadata.labels["batch.kubernetes.io/job-name"] == %q ? %q : %q)` $teardownJob $teardownServiceAccount $serviceAccount)
+      (printf `has(object.metadata.labels) && "batch.kubernetes.io/job-name" in object.metadata.labels && object.metadata.labels["batch.kubernetes.io/job-name"] in [%q, %q, %q, %q, %q]` $identityJob $preflightJob $reconcileJob $quiesceJob $teardownJob)
+      `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "batch/v1" && object.metadata.ownerReferences[0].kind == "Job" && object.metadata.ownerReferences[0].name == object.metadata.labels["batch.kubernetes.io/job-name"] && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller`
+      `has(object.metadata.ownerReferences[0].uid) && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion && has(object.metadata.generateName) && object.metadata.generateName == object.metadata.ownerReferences[0].name + "-" && object.metadata.name.size() == (object.metadata.generateName.size() > 58 ? object.metadata.generateName.substring(0, 58) : object.metadata.generateName).size() + 5 && object.metadata.name.startsWith((object.metadata.generateName.size() > 58 ? object.metadata.generateName.substring(0, 58) : object.metadata.generateName)) && object.metadata.name.substring((object.metadata.generateName.size() > 58 ? object.metadata.generateName.substring(0, 58) : object.metadata.generateName).size()).matches("^[a-z0-9]{5}$")`
+      `object.spec.restartPolicy == "Never"`
+      `request.operation != "CREATE" || !has(object.spec.nodeName) || object.spec.nodeName == ""`
+      `request.operation != "UPDATE" || ((!has(object.spec.nodeName) && !has(oldObject.spec.nodeName)) || (has(object.spec.nodeName) && has(oldObject.spec.nodeName) && object.spec.nodeName == oldObject.spec.nodeName))`
+      `has(object.spec.automountServiceAccountToken) && !object.spec.automountServiceAccountToken`
+      `!has(object.spec.hostNetwork) || !object.spec.hostNetwork`
+      `!has(object.spec.hostPID) || !object.spec.hostPID`
+      `!has(object.spec.hostIPC) || !object.spec.hostIPC`
+      `!has(object.spec.shareProcessNamespace) || !object.spec.shareProcessNamespace`
+      `has(object.spec.securityContext) && has(object.spec.securityContext.runAsNonRoot) && object.spec.securityContext.runAsNonRoot && has(object.spec.securityContext.runAsUser) && object.spec.securityContext.runAsUser == 65532 && has(object.spec.securityContext.runAsGroup) && object.spec.securityContext.runAsGroup == 65532 && has(object.spec.securityContext.seccompProfile) && object.spec.securityContext.seccompProfile.type == "RuntimeDefault" && (!has(object.spec.securityContext.sysctls) || object.spec.securityContext.sysctls.size() == 0)`
+      `object.spec.containers.size() == 1 && (!has(object.spec.initContainers) || object.spec.initContainers.size() == 0) && (!has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.size() == 0)`
+      (printf `object.spec.containers[0].name == (object.metadata.labels["batch.kubernetes.io/job-name"] == %q ? "identity-probe" : (object.metadata.labels["batch.kubernetes.io/job-name"] == %q ? "crd-manager-preflight" : (object.metadata.labels["batch.kubernetes.io/job-name"] == %q ? "crd-manager-teardown-quiesce" : (object.metadata.labels["batch.kubernetes.io/job-name"] == %q ? "crd-manager-teardown" : "crd-manager"))))` $identityJob $preflightJob $quiesceJob $teardownJob)
+      (printf `object.spec.containers[0].image == %q && object.spec.containers[0].command == ["/ptah-crd-manager"]` $managerImage)
+      (printf `object.metadata.labels["batch.kubernetes.io/job-name"] != %q || %s` $identityJob $identityArgs)
+      (printf `object.metadata.labels["batch.kubernetes.io/job-name"] != %q || %s` $preflightJob $preflightArgs)
+      (printf `object.metadata.labels["batch.kubernetes.io/job-name"] != %q || %s` $reconcileJob $reconcileArgs)
+      (printf `object.metadata.labels["batch.kubernetes.io/job-name"] != %q || %s` $quiesceJob $quiesceArgs)
+      (printf `object.metadata.labels["batch.kubernetes.io/job-name"] != %q || %s` $teardownJob $teardownArgs)
+      `!has(object.spec.containers[0].lifecycle) && (!has(object.spec.containers[0].env) || object.spec.containers[0].env.size() == 0) && (!has(object.spec.containers[0].envFrom) || object.spec.containers[0].envFrom.size() == 0) && (!has(object.spec.containers[0].ports) || object.spec.containers[0].ports.size() == 0) && !has(object.spec.containers[0].livenessProbe) && !has(object.spec.containers[0].readinessProbe) && !has(object.spec.containers[0].startupProbe) && (!has(object.spec.containers[0].volumeDevices) || object.spec.containers[0].volumeDevices.size() == 0) && (!has(object.spec.containers[0].stdin) || !object.spec.containers[0].stdin) && (!has(object.spec.containers[0].stdinOnce) || !object.spec.containers[0].stdinOnce) && (!has(object.spec.containers[0].tty) || !object.spec.containers[0].tty) && (!has(object.spec.containers[0].workingDir) || object.spec.containers[0].workingDir == "") && object.spec.containers[0].terminationMessagePath == "/dev/termination-log" && object.spec.containers[0].terminationMessagePolicy == "File" && !has(object.spec.containers[0].restartPolicy) && (!has(object.spec.containers[0].restartPolicyRules) || object.spec.containers[0].restartPolicyRules.size() == 0)`
+      `has(object.spec.containers[0].securityContext) && has(object.spec.containers[0].securityContext.allowPrivilegeEscalation) && !object.spec.containers[0].securityContext.allowPrivilegeEscalation && has(object.spec.containers[0].securityContext.readOnlyRootFilesystem) && object.spec.containers[0].securityContext.readOnlyRootFilesystem && (!has(object.spec.containers[0].securityContext.privileged) || !object.spec.containers[0].securityContext.privileged) && !has(object.spec.containers[0].securityContext.runAsUser) && !has(object.spec.containers[0].securityContext.runAsGroup) && !has(object.spec.containers[0].securityContext.procMount) && has(object.spec.containers[0].securityContext.capabilities) && (!has(object.spec.containers[0].securityContext.capabilities.add) || object.spec.containers[0].securityContext.capabilities.add.size() == 0) && has(object.spec.containers[0].securityContext.capabilities.drop) && object.spec.containers[0].securityContext.capabilities.drop == ["ALL"]`
+      `has(object.spec.containers[0].volumeMounts) && object.spec.containers[0].volumeMounts.size() == 1 && object.spec.containers[0].volumeMounts[0].name == "api-access" && object.spec.containers[0].volumeMounts[0].mountPath == "/var/run/secrets/kubernetes.io/serviceaccount" && has(object.spec.containers[0].volumeMounts[0].readOnly) && object.spec.containers[0].volumeMounts[0].readOnly && !has(object.spec.containers[0].volumeMounts[0].mountPropagation) && !has(object.spec.containers[0].volumeMounts[0].subPath) && !has(object.spec.containers[0].volumeMounts[0].subPathExpr) && !has(object.spec.containers[0].volumeMounts[0].recursiveReadOnly)`
+      `has(object.spec.volumes) && object.spec.volumes.size() == 1 && object.spec.volumes[0].name == "api-access" && has(object.spec.volumes[0].projected) && has(object.spec.volumes[0].projected.defaultMode) && object.spec.volumes[0].projected.defaultMode == 420 && object.spec.volumes[0].projected.sources.size() == 3`
+      `object.spec.volumes[0].projected.sources.exists(s, has(s.serviceAccountToken) && s.serviceAccountToken.path == "token" && has(s.serviceAccountToken.expirationSeconds) && s.serviceAccountToken.expirationSeconds == 3600 && !has(s.serviceAccountToken.audience))`
+      `object.spec.volumes[0].projected.sources.exists(s, has(s.configMap) && s.configMap.name == "kube-root-ca.crt" && has(s.configMap.items) && s.configMap.items.size() == 1 && s.configMap.items[0].key == "ca.crt" && s.configMap.items[0].path == "ca.crt" && !has(s.configMap.items[0].mode))`
+      `object.spec.volumes[0].projected.sources.exists(s, has(s.downwardAPI) && has(s.downwardAPI.items) && s.downwardAPI.items.size() == 1 && s.downwardAPI.items[0].path == "namespace" && has(s.downwardAPI.items[0].fieldRef) && s.downwardAPI.items[0].fieldRef.apiVersion == "v1" && s.downwardAPI.items[0].fieldRef.fieldPath == "metadata.namespace" && !has(s.downwardAPI.items[0].mode))`
+      `object.spec.volumes[0].projected.sources.all(s, has(s.serviceAccountToken) || has(s.configMap) || has(s.downwardAPI))` -}}
+{{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $name -}}
+{{- $binding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $name -}}
+{{- $probePolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $probeName -}}
+{{- $probeBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $probeName -}}
+{{- $probeMarker := lookup "v1" "ConfigMap" .Release.Namespace $probeObject -}}
+{{- range $entry := list
+      (dict "kind" "ValidatingAdmissionPolicy" "object" $policy)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $binding)
+      (dict "kind" "ValidatingAdmissionPolicy" "object" $probePolicy)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $probeBinding) -}}
+{{- with $entry.object -}}
+{{- $annotations := default (dict) .metadata.annotations -}}
+{{- $labels := default (dict) .metadata.labels -}}
+{{- if or
+      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-sequence")) $sequence)
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
+      (ne (default "" (index $labels "app.kubernetes.io/component")) "rollout-guard") -}}
+{{- fail (printf "retained %s %s has foreign or incomplete rollout-guard ownership" $entry.kind $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- with $probeMarker -}}
+{{- if or
+      (ne (default "" (index (default (dict) .metadata.annotations) "operator.ptah.dev/hook-identity-policy")) $probeName)
+      (ne (default "" (index (default (dict) .metadata.labels) "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index (default (dict) .metadata.labels) "app.kubernetes.io/instance")) $.Release.Name)
+      (ne (default "" (index (default (dict) .metadata.labels) "app.kubernetes.io/component")) "hook-identity-probe") -}}
+{{- fail (printf "retained hook identity probe marker %s has foreign ownership" $probeObject) -}}
+{{- end -}}
+{{- end -}}
+{{- if not $probeMarker }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $probeObject }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-125"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/hook-identity-policy: {{ $probeName }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: hook-identity-probe
+data:
+  probe: ready-for-denial-proof
+---
+{{- end }}
+{{- if not $policy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-120"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: rollout-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["pods/ephemeralcontainers", "pods/resize"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CONNECT"]
+        resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+  matchConditions:
+    - name: fixed-hook-identity
+      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest (printf `request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))` .Release.Namespace $serviceAccount $teardownServiceAccount $serviceAccount $teardownServiceAccount $identityPodRequestName $preflightPodRequestName $reconcilePodRequestName $quiescePodRequestName $teardownPodRequestName) | quote }}
+  variables:
+    - name: isAnyAdmissionConvergenceProbe
+      expression: {{ $anyConvergenceRequest | quote }}
+    - name: isAdmissionConvergenceProbe
+      expression: {{ $convergenceRequest | quote }}
+  validations:
+    {{- range $expression := $podValidations }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $expression | quote }}
+      message: {{ $message | quote }}
+    {{- end }}
+    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
+      message: Ptah admission convergence probe field manager is reserved for dry-run verification
+    - expression: '!variables.isAdmissionConvergenceProbe'
+      message: {{ $convergenceMessage | quote }}
+---
+{{- end }}
+{{- if not $probePolicy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $probeName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-120"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: rollout-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        scope: Namespaced
+  matchConditions:
+    - name: fixed-hook-identity-probe
+      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest (printf `request.namespace == %q && request.name == %q && request.userInfo.username == %q` .Release.Namespace $probeObject (printf "system:serviceaccount:%s:%s" .Release.Namespace $serviceAccount)) | quote }}
+  variables:
+    - name: isAnyAdmissionConvergenceProbe
+      expression: {{ $anyConvergenceRequest | quote }}
+    - name: isAdmissionConvergenceProbe
+      expression: {{ $probeConvergenceRequest | quote }}
+  validations:
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (false)'
+      message: {{ $probeMessage | quote }}
+    - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
+      message: Ptah admission convergence probe field manager is reserved for dry-run verification
+    - expression: '!variables.isAdmissionConvergenceProbe'
+      message: {{ $probeConvergenceMessage | quote }}
+---
+{{- end }}
+{{- if not $binding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-115"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: rollout-guard
+spec:
+  policyName: {{ $name }}
+  validationActions: [Deny]
+{{- end }}
+{{- if not $probeBinding }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $probeName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-115"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: rollout-guard
+spec:
+  policyName: {{ $probeName }}
+  validationActions: [Deny]
+{{- end }}

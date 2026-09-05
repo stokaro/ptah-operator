@@ -1,0 +1,449 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Ptah operator Helm values",
+  "type": "object",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "leaderElection": {
+            "const": false
+          }
+        },
+        "required": ["leaderElection"]
+      },
+      "then": {
+        "properties": {
+          "replicaCount": {
+            "maximum": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "certificateRotation": {
+            "properties": {
+              "enabled": {
+                "const": false
+              }
+            },
+            "required": ["enabled"]
+          }
+        },
+        "required": ["certificateRotation"]
+      },
+      "then": {
+        "properties": {
+          "webhook": {
+            "properties": {
+              "existingSecret": {
+                "minLength": 1
+              }
+            },
+            "required": ["existingSecret"]
+          }
+        },
+        "required": ["webhook"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "serviceAccount": {
+            "properties": {
+              "create": {
+                "const": false
+              }
+            },
+            "required": ["create"]
+          }
+        },
+        "required": ["serviceAccount"]
+      },
+      "then": {
+        "properties": {
+          "serviceAccount": {
+            "properties": {
+              "name": {
+                "minLength": 1,
+                "maxLength": 241
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag", "digest", "allowMutableTag", "testIdentityDigest", "pullPolicy"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^\\s@]+$"
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[0-9a-f]{64}$"
+        },
+        "allowMutableTag": {
+          "type": "boolean"
+        },
+        "testIdentityDigest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[0-9a-f]{64}$"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executorImage", "runnerImage", "ptahVersion"],
+      "properties": {
+        "executorImage": {
+          "type": "string",
+          "pattern": "^[^\\s@]+@sha256:[0-9a-f]{64}$"
+        },
+        "runnerImage": {
+          "type": "string",
+          "pattern": "^[^\\s@]+@sha256:[0-9a-f]{64}$"
+        },
+        "ptahVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^\\S(?:.*\\S)?$"
+        }
+      }
+    },
+    "admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defaultTolerationsEnabled", "defaultNotReadyTolerationSeconds", "defaultUnreachableTolerationSeconds", "extendedResourceTolerationEnabled", "alwaysPullImagesEnabled"],
+      "properties": {
+        "defaultTolerationsEnabled": {
+          "type": "boolean"
+        },
+        "defaultNotReadyTolerationSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "defaultUnreachableTolerationSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "extendedResourceTolerationEnabled": {
+          "type": "boolean"
+        },
+        "alwaysPullImagesEnabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "leaderElection": {
+      "type": "boolean"
+    },
+    "coordination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["namespace"],
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "maxLength": 63
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create", "name", "annotations"],
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "Create the controller ServiceAccount. When false, name is a stable base and the administrator must pre-create one dedicated <name>-v<releaseSequence> identity per release epoch with no additional RoleBinding or ClusterRoleBinding."
+        },
+        "name": {
+          "type": "string",
+          "description": "Controller ServiceAccount base. Required when create is false; the chart appends -v<releaseSequence> and never reuses or deletes the resulting external identity.",
+          "maxLength": 253,
+          "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podLabels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "resources": {
+      "type": "object"
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string",
+            "enum": ["Equal", "Exists"]
+          },
+          "value": {
+            "type": "string"
+          },
+          "effect": {
+            "type": "string",
+            "enum": ["", "NoSchedule", "PreferNoSchedule", "NoExecute"]
+          },
+          "tolerationSeconds": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "priorityClassName": {
+      "type": "string",
+      "description": "PriorityClass assigned to runtime Deployments and to the weight-zero CRD reconcile hook after preflight validates the live class. Bootstrap, preflight, and uninstall hooks remain classless and may receive the cluster global default during Pod admission."
+    },
+    "priorityClassValue": {
+      "type": "integer",
+      "description": "Expected live value of priorityClassName. Must remain 0 when priorityClassName is empty.",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "priorityClassPreemptionPolicy": {
+      "type": "string",
+      "description": "Expected effective preemption policy of priorityClassName. Must remain PreemptLowerPriority when priorityClassName is empty.",
+      "enum": ["PreemptLowerPriority", "Never"]
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bindAddress", "service"],
+      "properties": {
+        "bindAddress": {
+          "type": "string",
+          "minLength": 1
+        },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "port"],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        }
+      }
+    },
+    "webhook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["port", "timeoutSeconds", "controllerWriteTimeoutSeconds", "existingSecret", "caBundle"],
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "controllerWriteTimeoutSeconds": {
+          "type": "integer",
+          "const": 30
+        },
+        "existingSecret": {
+          "type": "string",
+          "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+          "maxLength": 253
+        },
+        "caBundle": {
+          "type": "string"
+        }
+      }
+    },
+    "certificateRotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "recreateMissingSecret",
+        "interval",
+        "operationTimeout",
+        "retryInitial",
+        "retryMax",
+        "healthPort",
+        "renewalThreshold",
+        "servingCertificateValidity",
+        "caCertificateValidity",
+        "probeTimeout",
+        "probeInterval",
+        "leaseDuration",
+        "leaseAcquireTimeout",
+        "resources"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "recreateMissingSecret": {
+          "type": "boolean"
+        },
+        "interval": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "operationTimeout": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "retryInitial": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "retryMax": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "healthPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "renewalThreshold": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "servingCertificateValidity": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "caCertificateValidity": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "probeTimeout": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "probeInterval": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "leaseDuration": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "leaseAcquireTimeout": {
+          "$ref": "#/definitions/positiveDuration"
+        },
+        "resources": {
+          "type": "object"
+        }
+      }
+    },
+    "approverClusterRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create"],
+      "properties": {
+        "create": {
+          "type": "boolean"
+        }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "minAvailable"],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minAvailable": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "string",
+              "pattern": "^(100|[0-9]{1,2})%$"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "definitions": {
+    "positiveDuration": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*(ms|s|m|h)$"
+    }
+  }
+}

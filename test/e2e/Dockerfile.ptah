@@ -1,0 +1,18 @@
+FROM golang:1.27.0-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS builder
+ARG PTAH_BUILD_VERSION=e2e
+ARG PTAH_BUILD_COMMIT=unknown
+ARG PTAH_BUILD_DATE=unknown
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 \
+    go build -trimpath \
+      -ldflags="-s -w -X go.5x5.cz/ptah/internal/buildinfo.Version=${PTAH_BUILD_VERSION} -X go.5x5.cz/ptah/internal/buildinfo.Commit=${PTAH_BUILD_COMMIT} -X go.5x5.cz/ptah/internal/buildinfo.Date=${PTAH_BUILD_DATE}" \
+      -o /out/ptah ./cmd/ptah
+
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+COPY --from=builder /out/ptah /usr/local/bin/ptah
+USER 65532:65532
+WORKDIR /work
+ENTRYPOINT ["/usr/local/bin/ptah"]

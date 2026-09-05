@@ -1,0 +1,838 @@
+{{- include "ptah-operator.validateLifecycleResourceIdentities" . -}}
+{{- $hookServiceAccountName := include "ptah-operator.crdManagerServiceAccountName" . -}}
+{{- $cleanupServiceAccountName := include "ptah-operator.teardownServiceAccountName" . -}}
+{{- $quiesceName := include "ptah-operator.teardownQuiesceJobName" . -}}
+{{- $cleanupPrivilegeName := include "ptah-operator.teardownPrivilegeRoleName" . -}}
+{{- $cleanupGuardName := include "ptah-operator.teardownGuardRoleName" . -}}
+{{- $cleanupDiscoveryName := include "ptah-operator.teardownDiscoveryRoleName" . -}}
+{{- $controllerName := include "ptah-operator.fullname" . -}}
+{{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
+{{- $coordinationNamespace := include "ptah-operator.coordinationNamespace" . -}}
+{{- $controllerRuntimeRoleName := printf "%s-runtime-admission" $controllerName -}}
+{{- $certificateName := include "ptah-operator.certRotatorServiceAccountName" . -}}
+{{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
+{{- $certificateRecoveryEnabled := and $certificateRuntimeEnabled .Values.certificateRotation.recreateMissingSecret -}}
+{{- $releaseSequence := include "ptah-operator.releaseSequence" . -}}
+{{- $managerImage := include "ptah-operator.managerImage" . -}}
+{{- $retirementAttempt := printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $releaseSequence $managerImage | sha256sum -}}
+{{- $retirementMarkerName := printf "ptah-teardown-probe-v1-%s-%s" $releaseSequence (trunc 12 $retirementAttempt) -}}
+{{- $retirementFenceDigest := printf "1\n%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $retirementFenceAName := printf "ptah-operator-teardown-fence-a-v1-%s" $retirementFenceDigest -}}
+{{- $retirementFenceBName := printf "ptah-operator-teardown-fence-b-v1-%s" $retirementFenceDigest -}}
+{{- $identityBootstrapName := printf "%s-bootstrap" ($hookServiceAccountName | trunc 53 | trimSuffix "-") -}}
+{{- $probeRoleName := printf "%s-probe" ($hookServiceAccountName | trunc 57 | trimSuffix "-") -}}
+{{- $admissionName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
+{{- $activationName := "ptah-operator-release-activation" -}}
+{{- $probeObjectName := include "ptah-operator.hookIdentityProbeObjectName" . -}}
+{{- $rolloutGuardName := include "ptah-operator.rolloutGuardPolicyName" . -}}
+{{- $runtimeGuardName := include "ptah-operator.runtimeGuardPolicyName" . -}}
+{{- $runtimePodGuardName := include "ptah-operator.runtimePodGuardPolicyName" . -}}
+{{- $hookIdentityGuardName := include "ptah-operator.hookIdentityGuardPolicyName" . -}}
+{{- $hookProbeGuardName := include "ptah-operator.hookIdentityProbeGuardPolicyName" . -}}
+{{- $activationGuardName := include "ptah-operator.releaseActivationGuardPolicyName" . -}}
+{{- $admissionConvergenceGuardName := include "ptah-operator.admissionConvergencePolicyName" . -}}
+{{- $admissionConvergenceMarkerName := include "ptah-operator.admissionConvergenceMarkerName" . -}}
+{{- $serviceAccountOriginGuardName := include "ptah-operator.serviceAccountOriginGuardPolicyName" . -}}
+{{- $controllerWriteGuardName := include "ptah-operator.controllerWriteGuardPolicyName" . -}}
+{{- $controllerJobWriteGuardName := include "ptah-operator.controllerJobWriteGuardPolicyName" . -}}
+{{- $controllerChunkWriteGuardName := include "ptah-operator.controllerChunkWriteGuardPolicyName" . -}}
+{{- $controllerPlanWriteGuardName := include "ptah-operator.controllerPlanWriteGuardPolicyName" . -}}
+{{- $certificateMutatingWriteGuardName := include "ptah-operator.certificateMutatingWriteGuardPolicyName" . -}}
+{{- $certificateValidatingWriteGuardName := include "ptah-operator.certificateValidatingWriteGuardPolicyName" . -}}
+{{- $namespaceGuardName := include "ptah-operator.namespaceDeletionGuardPolicyName" . -}}
+{{- $parentReplicaSetGuardName := include "ptah-operator.parentReplicaSetGuardPolicyName" . -}}
+{{- $parentHookPodOriginGuardName := include "ptah-operator.parentHookPodOriginGuardPolicyName" . -}}
+{{- $parentHookJobOriginGuardName := include "ptah-operator.parentHookJobOriginGuardPolicyName" . -}}
+{{- $parentHookJobContractGuardName := include "ptah-operator.parentHookJobContractPolicyName" . -}}
+{{- $legacyControllerGuardDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyControllerWriteGuardName := printf "ptah-operator-controller-write-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyControllerJobWriteGuardName := printf "ptah-operator-job-write-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyControllerChunkWriteGuardName := printf "ptah-operator-chunk-write-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyControllerPlanWriteGuardName := printf "ptah-operator-plan-write-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyServiceAccountOriginGuardName := printf "ptah-operator-service-account-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyRuntimeParentGuardName := printf "ptah-operator-runtime-parent-guard-v1-%s" $legacyControllerGuardDigest -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $hookServiceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-110"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $cleanupServiceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-109"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+automountServiceAccountToken: false
+---
+# The quiesce identity can verify the complete teardown inventory and stop the
+# two exact runtime Deployments, but it cannot change CRDs or delete anything.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $quiesceName }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-100"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown-quiesce
+rules:
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    resourceNames: [{{ $admissionName | quote }}]
+    verbs: ["get"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    resourceNames:
+      - {{ $rolloutGuardName }}
+      - {{ $runtimeGuardName }}
+      - {{ $runtimePodGuardName }}
+      - {{ $hookIdentityGuardName }}
+      - {{ $hookProbeGuardName }}
+      - {{ $activationGuardName }}
+      - {{ $admissionConvergenceGuardName }}
+      - {{ $serviceAccountObjectGuardName }}
+      - {{ $serviceAccountOriginGuardName }}
+      - {{ $controllerWriteGuardName }}
+      - {{ $controllerJobWriteGuardName }}
+      - {{ $controllerChunkWriteGuardName }}
+      - {{ $controllerPlanWriteGuardName }}
+      - {{ $certificateMutatingWriteGuardName }}
+      - {{ $certificateValidatingWriteGuardName }}
+      - {{ $namespaceGuardName }}
+      - {{ $parentReplicaSetGuardName }}
+      - {{ $parentHookPodOriginGuardName }}
+      - {{ $parentHookJobOriginGuardName }}
+      - {{ $parentHookJobContractGuardName }}
+      - {{ $legacyControllerWriteGuardName }}
+      - {{ $legacyControllerJobWriteGuardName }}
+      - {{ $legacyControllerChunkWriteGuardName }}
+      - {{ $legacyControllerPlanWriteGuardName }}
+      - {{ $legacyServiceAccountOriginGuardName }}
+      - {{ $legacyRuntimeParentGuardName }}
+      - {{ $retirementFenceAName }}
+      - {{ $retirementFenceBName }}
+      {{- if $certificateRecoveryEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+    verbs: ["get"]
+  # Kubernetes RBAC cannot scope LIST by subject or resourceName. A complete
+  # cluster-wide inventory is required to reject any foreign binding that
+  # keeps a protected release ServiceAccount usable.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings", "clusterrolebindings"]
+    verbs: ["list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames:
+      - {{ $controllerName }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+      - {{ $hookServiceAccountName }}
+      - {{ $identityBootstrapName }}
+      - {{ $quiesceName }}
+      - {{ $cleanupPrivilegeName }}
+      - {{ $cleanupGuardName }}
+    verbs: ["get"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles"]
+    resourceNames:
+      - {{ $controllerRuntimeRoleName }}
+      - {{ $controllerName }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+      - {{ $hookServiceAccountName }}
+      - {{ $identityBootstrapName }}
+      - {{ $probeRoleName }}
+      - {{ $quiesceName }}
+      - {{ $cleanupPrivilegeName }}
+      - {{ $cleanupGuardName }}
+      - {{ $cleanupDiscoveryName }}
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $quiesceName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-100"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown-quiesce
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ $controllerName | quote }}, {{ $certificateName | quote }}]
+    verbs: ["get", "update"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames:
+      {{- if .Values.serviceAccount.create }}
+      - {{ include "ptah-operator.serviceAccountName" . }}
+      {{- end }}
+      {{- if $previousControllerServiceAccount }}
+      - {{ $previousControllerServiceAccount }}
+      {{- end }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+      - {{ $hookServiceAccountName }}
+      - {{ $cleanupServiceAccountName }}
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $activationName | quote }}, {{ $admissionConvergenceMarkerName | quote }}, {{ $retirementMarkerName | quote }}]
+    verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $probeObjectName | quote }}]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $quiesceName }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-90"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown-quiesce
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $quiesceName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $hookServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $quiesceName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-90"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown-quiesce
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $quiesceName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $hookServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+# The cleanup identity can delete only the exact normal bindings and
+# chart-owned ServiceAccounts. It relies on the separate residual roles for
+# inventory reads and self-revokes before admission teardown.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $cleanupPrivilegeName }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-80"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    resourceNames:
+      - {{ $controllerName }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+      - {{ $hookServiceAccountName }}
+      - {{ $identityBootstrapName }}
+      - {{ $quiesceName }}
+    verbs: ["delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $cleanupPrivilegeName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-80"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    resourceNames:
+      - {{ $controllerRuntimeRoleName }}
+      {{- if eq $coordinationNamespace .Release.Namespace }}
+      - {{ $controllerName }}
+      {{- end }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+      - {{ $hookServiceAccountName }}
+      - {{ $identityBootstrapName }}
+      - {{ $probeRoleName }}
+      - {{ $quiesceName }}
+      - {{ $cleanupPrivilegeName }}
+    verbs: ["delete"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames:
+      {{- if .Values.serviceAccount.create }}
+      - {{ include "ptah-operator.serviceAccountName" . }}
+      {{- end }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+      - {{ $hookServiceAccountName }}
+    verbs: ["delete"]
+{{ if ne $coordinationNamespace .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $cleanupPrivilegeName }}
+  namespace: {{ $coordinationNamespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-80"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    resourceNames: [{{ $controllerName | quote }}, {{ $cleanupPrivilegeName | quote }}]
+    verbs: ["delete"]
+{{ end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $cleanupPrivilegeName }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-70"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $cleanupPrivilegeName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $cleanupServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $cleanupPrivilegeName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-70"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $cleanupPrivilegeName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $cleanupServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+{{ if ne $coordinationNamespace .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $cleanupPrivilegeName }}
+  namespace: {{ $coordinationNamespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-70"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $cleanupPrivilegeName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $cleanupServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+{{ end }}
+---
+# This residual boundary excludes workload and admission-object mutation. It
+# retains exact reads for revocation proof; the paired Role adds only the
+# marker deletions required for the final monotonic retirement step.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $cleanupGuardName }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-80"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+rules:
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings", "clusterrolebindings"]
+    verbs: ["list"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    resourceNames: [{{ $cleanupPrivilegeName | quote }}]
+    verbs: ["get", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames:
+      - {{ $controllerName }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+      - {{ $hookServiceAccountName }}
+      - {{ $identityBootstrapName }}
+      - {{ $quiesceName }}
+      - {{ $cleanupPrivilegeName }}
+      - {{ $cleanupGuardName }}
+    verbs: ["get"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: [{{ $cleanupPrivilegeName | quote }}]
+    verbs: ["delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles"]
+    resourceNames:
+      - {{ $controllerRuntimeRoleName }}
+      - {{ $controllerName }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+      - {{ $hookServiceAccountName }}
+      - {{ $identityBootstrapName }}
+      - {{ $probeRoleName }}
+      - {{ $quiesceName }}
+      - {{ $cleanupPrivilegeName }}
+      - {{ $cleanupGuardName }}
+      - {{ $cleanupDiscoveryName }}
+    verbs: ["get"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    resourceNames: [{{ $admissionName | quote }}]
+    verbs: ["get"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    resourceNames:
+      - {{ $rolloutGuardName }}
+      - {{ $runtimeGuardName }}
+      - {{ $runtimePodGuardName }}
+      - {{ $hookIdentityGuardName }}
+      - {{ $hookProbeGuardName }}
+      - {{ $activationGuardName }}
+      - {{ $admissionConvergenceGuardName }}
+      - {{ $serviceAccountObjectGuardName }}
+      - {{ $serviceAccountOriginGuardName }}
+      - {{ $controllerWriteGuardName }}
+      - {{ $controllerJobWriteGuardName }}
+      - {{ $controllerChunkWriteGuardName }}
+      - {{ $controllerPlanWriteGuardName }}
+      - {{ $certificateMutatingWriteGuardName }}
+      - {{ $certificateValidatingWriteGuardName }}
+      - {{ $namespaceGuardName }}
+      - {{ $parentReplicaSetGuardName }}
+      - {{ $parentHookPodOriginGuardName }}
+      - {{ $parentHookJobOriginGuardName }}
+      - {{ $parentHookJobContractGuardName }}
+      - {{ $legacyControllerWriteGuardName }}
+      - {{ $legacyControllerJobWriteGuardName }}
+      - {{ $legacyControllerChunkWriteGuardName }}
+      - {{ $legacyControllerPlanWriteGuardName }}
+      - {{ $legacyServiceAccountOriginGuardName }}
+      - {{ $legacyRuntimeParentGuardName }}
+      - {{ $retirementFenceAName }}
+      - {{ $retirementFenceBName }}
+      {{- if $certificateRecoveryEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+    verbs: ["get"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["subjectaccessreviews", "selfsubjectaccessreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $cleanupGuardName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-80"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames:
+      {{- if .Values.serviceAccount.create }}
+      - {{ include "ptah-operator.serviceAccountName" . }}
+      {{- end }}
+      {{- if $previousControllerServiceAccount }}
+      - {{ $previousControllerServiceAccount }}
+      {{- end }}
+      {{- if $certificateRuntimeEnabled }}
+      - {{ $certificateName }}
+      {{- end }}
+      - {{ $hookServiceAccountName }}
+      - {{ $cleanupServiceAccountName }}
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames: [{{ $cleanupServiceAccountName | quote }}]
+    verbs: ["delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $probeObjectName | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $activationName | quote }}]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $admissionConvergenceMarkerName | quote }}]
+    verbs: ["get", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $retirementMarkerName | quote }}]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $cleanupDiscoveryName }}
+  namespace: default
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-80"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+rules:
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $cleanupGuardName }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-70"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $cleanupGuardName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $cleanupServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $cleanupGuardName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-70"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $cleanupGuardName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $cleanupServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $cleanupDiscoveryName }}
+  namespace: default
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-70"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    meta.helm.sh/release-name: {{ .Release.Name | quote }}
+    meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $cleanupDiscoveryName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $cleanupServiceAccountName }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $quiesceName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown-quiesce
+spec:
+  activeDeadlineSeconds: 210
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "ptah-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: crd-manager-teardown-quiesce
+    spec:
+      serviceAccountName: {{ $hookServiceAccountName }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: crd-manager-teardown-quiesce
+          image: {{ include "ptah-operator.managerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          args:
+            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown-quiesce" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      volumes:
+        - name: api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        apiVersion: v1
+                        fieldPath: metadata.namespace
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $cleanupServiceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-manager-teardown
+spec:
+  activeDeadlineSeconds: 210
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        {{- include "ptah-operator.labels" . | nindent 8 }}
+        app.kubernetes.io/component: crd-manager-teardown
+    spec:
+      serviceAccountName: {{ $cleanupServiceAccountName }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: crd-manager-teardown
+          image: {{ include "ptah-operator.managerImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/ptah-crd-manager"]
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          args:
+            {{- range (include "ptah-operator.crdManagerArgsJSON" (dict "root" . "mode" "teardown" "timeout" "180s" "verifyControllerState" false) | fromJsonArray) }}
+            - {{ . | quote }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 32Mi
+      volumes:
+        - name: api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        apiVersion: v1
+                        fieldPath: metadata.namespace

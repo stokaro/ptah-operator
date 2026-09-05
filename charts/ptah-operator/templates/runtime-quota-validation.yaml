@@ -1,0 +1,78 @@
+{{- /*
+Kubernetes counts a Pod against CrossNamespacePodAffinity quota when any
+affinity term names at least one namespace or has a namespaceSelector. Reject
+even an empty namespaceSelector because its presence changes that accounting.
+The runtime preflight intentionally models only namespace-local affinity.
+*/ -}}
+{{- define "ptah-operator.validateRuntimeQuotaAffinityTerm" -}}
+{{- $term := .term -}}
+{{- $path := .path -}}
+{{- if not (kindIs "map" $term) -}}
+{{- fail (printf "%s must be an affinity term object so runtime ResourceQuota usage can be evaluated safely" $path) -}}
+{{- end -}}
+{{- if hasKey $term "namespaces" -}}
+{{- $namespaces := index $term "namespaces" -}}
+{{- if and (not (kindIs "invalid" $namespaces)) (not (kindIs "slice" $namespaces)) -}}
+{{- fail (printf "%s.namespaces must be a list so runtime ResourceQuota usage can be evaluated safely" $path) -}}
+{{- end -}}
+{{- if and (kindIs "slice" $namespaces) (gt (len $namespaces) 0) -}}
+{{- fail (printf "%s.namespaces must be empty: runtime ResourceQuota preflight explicitly assumes namespace-local Pod affinity and cannot account for CrossNamespacePodAffinity usage" $path) -}}
+{{- end -}}
+{{- end -}}
+{{- if hasKey $term "namespaceSelector" -}}
+{{- fail (printf "%s.namespaceSelector is not supported: runtime ResourceQuota preflight explicitly assumes namespace-local Pod affinity and cannot account for CrossNamespacePodAffinity usage" $path) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.validateRuntimeQuotaAffinitySection" -}}
+{{- $section := .section -}}
+{{- $path := .path -}}
+{{- if not (kindIs "invalid" $section) -}}
+{{- if not (kindIs "map" $section) -}}
+{{- fail (printf "%s must be an object so runtime ResourceQuota usage can be evaluated safely" $path) -}}
+{{- end -}}
+{{- $requiredKey := "requiredDuringSchedulingIgnoredDuringExecution" -}}
+{{- if hasKey $section $requiredKey -}}
+{{- $required := index $section $requiredKey -}}
+{{- if not (kindIs "invalid" $required) -}}
+{{- if not (kindIs "slice" $required) -}}
+{{- fail (printf "%s.%s must be a list so runtime ResourceQuota usage can be evaluated safely" $path $requiredKey) -}}
+{{- end -}}
+{{- range $index, $term := $required -}}
+{{- include "ptah-operator.validateRuntimeQuotaAffinityTerm" (dict "term" $term "path" (printf "%s.%s[%d]" $path $requiredKey $index)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $preferredKey := "preferredDuringSchedulingIgnoredDuringExecution" -}}
+{{- if hasKey $section $preferredKey -}}
+{{- $preferred := index $section $preferredKey -}}
+{{- if not (kindIs "invalid" $preferred) -}}
+{{- if not (kindIs "slice" $preferred) -}}
+{{- fail (printf "%s.%s must be a list so runtime ResourceQuota usage can be evaluated safely" $path $preferredKey) -}}
+{{- end -}}
+{{- range $index, $weightedTerm := $preferred -}}
+{{- $weightedPath := printf "%s.%s[%d]" $path $preferredKey $index -}}
+{{- if not (kindIs "map" $weightedTerm) -}}
+{{- fail (printf "%s must be a weighted affinity term object so runtime ResourceQuota usage can be evaluated safely" $weightedPath) -}}
+{{- end -}}
+{{- if not (hasKey $weightedTerm "podAffinityTerm") -}}
+{{- fail (printf "%s.podAffinityTerm is required so runtime ResourceQuota usage can be evaluated safely" $weightedPath) -}}
+{{- end -}}
+{{- include "ptah-operator.validateRuntimeQuotaAffinityTerm" (dict "term" (index $weightedTerm "podAffinityTerm") "path" (printf "%s.podAffinityTerm" $weightedPath)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- $affinity := .Values.affinity -}}
+{{- if not (kindIs "invalid" $affinity) -}}
+{{- if not (kindIs "map" $affinity) -}}
+{{- fail "affinity must be an object so runtime ResourceQuota usage can be evaluated safely" -}}
+{{- end -}}
+{{- range $kind := list "podAffinity" "podAntiAffinity" -}}
+{{- if hasKey $affinity $kind -}}
+{{- include "ptah-operator.validateRuntimeQuotaAffinitySection" (dict "section" (index $affinity $kind) "path" (printf "affinity.%s" $kind)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

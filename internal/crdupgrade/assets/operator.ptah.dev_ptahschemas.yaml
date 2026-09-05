@@ -1,0 +1,2147 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    operator.ptah.dev/controller-state-version: "1"
+    operator.ptah.dev/crd-schema-version: "1"
+    operator.ptah.dev/crd-schema-digest: "sha256:5b71df79920a3599a61be7fe3ecb94153860c8c5c22e8d43b19138ecc7370288"
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: ptahschemas.operator.ptah.dev
+spec:
+  group: operator.ptah.dev
+  names:
+    kind: PtahSchema
+    listKind: PtahSchemaList
+    plural: ptahschemas
+    shortNames:
+    - ptahs
+    singular: ptahschema
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.source.digest
+      name: Digest
+      priority: 1
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='DriftDetected')].status
+      name: Drift
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='ApprovalRequired')].status
+      name: Approval
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='InSync')].status
+      name: In Sync
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              desired:
+                properties:
+                  ociRef:
+                    minLength: 7
+                    pattern: ^oci://[^[:space:]?#]+$
+                    type: string
+                  registryAuthFrom:
+                    properties:
+                      dockerConfigJSONKey:
+                        default: .dockerconfigjson
+                        type: string
+                      mode:
+                        default: Environment
+                        enum:
+                        - Environment
+                        - DockerConfigJSON
+                        type: string
+                      name:
+                        type: string
+                      passwordKey:
+                        default: password
+                        type: string
+                      registryKey:
+                        default: registry
+                        enum:
+                        - registry
+                        type: string
+                      tokenKey:
+                        default: token
+                        type: string
+                      usernameKey:
+                        default: username
+                        type: string
+                    required:
+                    - name
+                    type: object
+                    x-kubernetes-validations:
+                    - message: dockerConfigJSONKey is required in DockerConfigJSON
+                        mode
+                      rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
+                  transport:
+                    properties:
+                      caFrom:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            default: ""
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      clientCertificateFrom:
+                        properties:
+                          certificateKey:
+                            default: tls.crt
+                            type: string
+                          name:
+                            type: string
+                          privateKeyKey:
+                            default: tls.key
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      plainHTTP:
+                        default: false
+                        type: boolean
+                    type: object
+                    x-kubernetes-validations:
+                    - message: caFrom cannot be used with plainHTTP
+                      rule: '!self.plainHTTP || !has(self.caFrom)'
+                    - message: clientCertificateFrom cannot be used with plainHTTP
+                      rule: '!self.plainHTTP || !has(self.clientCertificateFrom)'
+                    - message: clientCertificateFrom is not supported until the executor
+                        can scope client certificates across redirects
+                      rule: '!has(self.clientCertificateFrom)'
+                  verificationPolicyFrom:
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        default: ""
+                        type: string
+                      optional:
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
+                required:
+                - ociRef
+                - verificationPolicyFrom
+                type: object
+              dev:
+                properties:
+                  urlFrom:
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        default: ""
+                        type: string
+                      optional:
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
+                required:
+                - urlFrom
+                type: object
+              execution:
+                default: {}
+                properties:
+                  activeDeadlineSeconds:
+                    default: 900
+                    format: int64
+                    maximum: 86400
+                    minimum: 30
+                    type: integer
+                  affinity:
+                    properties:
+                      nodeAffinity:
+                        properties:
+                          preferredDuringSchedulingIgnoredDuringExecution:
+                            items:
+                              properties:
+                                preference:
+                                  properties:
+                                    matchExpressions:
+                                      items:
+                                        properties:
+                                          key:
+                                            type: string
+                                          operator:
+                                            type: string
+                                          values:
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - key
+                                        - operator
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    matchFields:
+                                      items:
+                                        properties:
+                                          key:
+                                            type: string
+                                          operator:
+                                            type: string
+                                          values:
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - key
+                                        - operator
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                  type: object
+                                  x-kubernetes-map-type: atomic
+                                weight:
+                                  format: int32
+                                  type: integer
+                              required:
+                              - preference
+                              - weight
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          requiredDuringSchedulingIgnoredDuringExecution:
+                            properties:
+                              nodeSelectorTerms:
+                                items:
+                                  properties:
+                                    matchExpressions:
+                                      items:
+                                        properties:
+                                          key:
+                                            type: string
+                                          operator:
+                                            type: string
+                                          values:
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - key
+                                        - operator
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    matchFields:
+                                      items:
+                                        properties:
+                                          key:
+                                            type: string
+                                          operator:
+                                            type: string
+                                          values:
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - key
+                                        - operator
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                  type: object
+                                  x-kubernetes-map-type: atomic
+                                type: array
+                                x-kubernetes-list-type: atomic
+                            required:
+                            - nodeSelectorTerms
+                            type: object
+                            x-kubernetes-map-type: atomic
+                        type: object
+                      podAffinity:
+                        properties:
+                          preferredDuringSchedulingIgnoredDuringExecution:
+                            items:
+                              properties:
+                                podAffinityTerm:
+                                  properties:
+                                    labelSelector:
+                                      properties:
+                                        matchExpressions:
+                                          items:
+                                            properties:
+                                              key:
+                                                type: string
+                                              operator:
+                                                type: string
+                                              values:
+                                                items:
+                                                  type: string
+                                                type: array
+                                                x-kubernetes-list-type: atomic
+                                            required:
+                                            - key
+                                            - operator
+                                            type: object
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                        matchLabels:
+                                          additionalProperties:
+                                            type: string
+                                          type: object
+                                      type: object
+                                      x-kubernetes-map-type: atomic
+                                    matchLabelKeys:
+                                      items:
+                                        type: string
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    mismatchLabelKeys:
+                                      items:
+                                        type: string
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    namespaceSelector:
+                                      properties:
+                                        matchExpressions:
+                                          items:
+                                            properties:
+                                              key:
+                                                type: string
+                                              operator:
+                                                type: string
+                                              values:
+                                                items:
+                                                  type: string
+                                                type: array
+                                                x-kubernetes-list-type: atomic
+                                            required:
+                                            - key
+                                            - operator
+                                            type: object
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                        matchLabels:
+                                          additionalProperties:
+                                            type: string
+                                          type: object
+                                      type: object
+                                      x-kubernetes-map-type: atomic
+                                    namespaces:
+                                      items:
+                                        type: string
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    topologyKey:
+                                      type: string
+                                  required:
+                                  - topologyKey
+                                  type: object
+                                weight:
+                                  format: int32
+                                  type: integer
+                              required:
+                              - podAffinityTerm
+                              - weight
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          requiredDuringSchedulingIgnoredDuringExecution:
+                            items:
+                              properties:
+                                labelSelector:
+                                  properties:
+                                    matchExpressions:
+                                      items:
+                                        properties:
+                                          key:
+                                            type: string
+                                          operator:
+                                            type: string
+                                          values:
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - key
+                                        - operator
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    matchLabels:
+                                      additionalProperties:
+                                        type: string
+                                      type: object
+                                  type: object
+                                  x-kubernetes-map-type: atomic
+                                matchLabelKeys:
+                                  items:
+                                    type: string
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                mismatchLabelKeys:
+                                  items:
+                                    type: string
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                namespaceSelector:
+                                  properties:
+                                    matchExpressions:
+                                      items:
+                                        properties:
+                                          key:
+                                            type: string
+                                          operator:
+                                            type: string
+                                          values:
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - key
+                                        - operator
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    matchLabels:
+                                      additionalProperties:
+                                        type: string
+                                      type: object
+                                  type: object
+                                  x-kubernetes-map-type: atomic
+                                namespaces:
+                                  items:
+                                    type: string
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                topologyKey:
+                                  type: string
+                              required:
+                              - topologyKey
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                      podAntiAffinity:
+                        properties:
+                          preferredDuringSchedulingIgnoredDuringExecution:
+                            items:
+                              properties:
+                                podAffinityTerm:
+                                  properties:
+                                    labelSelector:
+                                      properties:
+                                        matchExpressions:
+                                          items:
+                                            properties:
+                                              key:
+                                                type: string
+                                              operator:
+                                                type: string
+                                              values:
+                                                items:
+                                                  type: string
+                                                type: array
+                                                x-kubernetes-list-type: atomic
+                                            required:
+                                            - key
+                                            - operator
+                                            type: object
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                        matchLabels:
+                                          additionalProperties:
+                                            type: string
+                                          type: object
+                                      type: object
+                                      x-kubernetes-map-type: atomic
+                                    matchLabelKeys:
+                                      items:
+                                        type: string
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    mismatchLabelKeys:
+                                      items:
+                                        type: string
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    namespaceSelector:
+                                      properties:
+                                        matchExpressions:
+                                          items:
+                                            properties:
+                                              key:
+                                                type: string
+                                              operator:
+                                                type: string
+                                              values:
+                                                items:
+                                                  type: string
+                                                type: array
+                                                x-kubernetes-list-type: atomic
+                                            required:
+                                            - key
+                                            - operator
+                                            type: object
+                                          type: array
+                                          x-kubernetes-list-type: atomic
+                                        matchLabels:
+                                          additionalProperties:
+                                            type: string
+                                          type: object
+                                      type: object
+                                      x-kubernetes-map-type: atomic
+                                    namespaces:
+                                      items:
+                                        type: string
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    topologyKey:
+                                      type: string
+                                  required:
+                                  - topologyKey
+                                  type: object
+                                weight:
+                                  format: int32
+                                  type: integer
+                              required:
+                              - podAffinityTerm
+                              - weight
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                          requiredDuringSchedulingIgnoredDuringExecution:
+                            items:
+                              properties:
+                                labelSelector:
+                                  properties:
+                                    matchExpressions:
+                                      items:
+                                        properties:
+                                          key:
+                                            type: string
+                                          operator:
+                                            type: string
+                                          values:
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - key
+                                        - operator
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    matchLabels:
+                                      additionalProperties:
+                                        type: string
+                                      type: object
+                                  type: object
+                                  x-kubernetes-map-type: atomic
+                                matchLabelKeys:
+                                  items:
+                                    type: string
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                mismatchLabelKeys:
+                                  items:
+                                    type: string
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                namespaceSelector:
+                                  properties:
+                                    matchExpressions:
+                                      items:
+                                        properties:
+                                          key:
+                                            type: string
+                                          operator:
+                                            type: string
+                                          values:
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - key
+                                        - operator
+                                        type: object
+                                      type: array
+                                      x-kubernetes-list-type: atomic
+                                    matchLabels:
+                                      additionalProperties:
+                                        type: string
+                                      type: object
+                                  type: object
+                                  x-kubernetes-map-type: atomic
+                                namespaces:
+                                  items:
+                                    type: string
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                topologyKey:
+                                  type: string
+                              required:
+                              - topologyKey
+                              type: object
+                            type: array
+                            x-kubernetes-list-type: atomic
+                        type: object
+                    type: object
+                  connectTimeout:
+                    default: 10s
+                    maxLength: 32
+                    type: string
+                    x-kubernetes-validations:
+                    - message: connectTimeout must be between 1s and 10m
+                      rule: duration(self) >= duration('1s') && duration(self) <=
+                        duration('10m')
+                  failureRetryInterval:
+                    default: 30s
+                    maxLength: 32
+                    type: string
+                    x-kubernetes-validations:
+                    - message: failureRetryInterval must be between 5s and 1h
+                      rule: duration(self) >= duration('5s') && duration(self) <=
+                        duration('1h')
+                  imagePullSecrets:
+                    items:
+                      properties:
+                        name:
+                          default: ""
+                          type: string
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    type: array
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  priorityClassName:
+                    type: string
+                  resources:
+                    properties:
+                      claims:
+                        items:
+                          properties:
+                            name:
+                              type: string
+                            request:
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        type: object
+                    type: object
+                  runtimeClassName:
+                    type: string
+                  serviceAccountName:
+                    type: string
+                  tolerations:
+                    items:
+                      properties:
+                        effect:
+                          type: string
+                        key:
+                          type: string
+                        operator:
+                          type: string
+                        tolerationSeconds:
+                          format: int64
+                          type: integer
+                        value:
+                          type: string
+                      type: object
+                    type: array
+                type: object
+              interval:
+                default: 10m
+                maxLength: 32
+                type: string
+                x-kubernetes-validations:
+                - message: interval must be between 10s and 24h
+                  rule: duration(self) >= duration('10s') && duration(self) <= duration('24h')
+              policy:
+                default: {}
+                properties:
+                  allowDestructive:
+                    default: false
+                    type: boolean
+                  apply:
+                    default: OnApproval
+                    enum:
+                    - Never
+                    - OnApproval
+                    - Always
+                    type: string
+                  driftSeverity:
+                    default: all
+                    enum:
+                    - all
+                    - destructive
+                    type: string
+                  exclude:
+                    items:
+                      maxLength: 256
+                      minLength: 1
+                      pattern: ^[^\p{Z}\x00-\x20\x7f\x{0085}](?:[^\x00-\x1f\x7f]*[^\p{Z}\x00-\x20\x7f\x{0085}])?$
+                      type: string
+                    maxItems: 128
+                    type: array
+                    x-kubernetes-list-type: set
+                  lockTimeout:
+                    default: 30s
+                    maxLength: 32
+                    type: string
+                    x-kubernetes-validations:
+                    - message: lockTimeout must be between 1s and 10m
+                      rule: duration(self) >= duration('1s') && duration(self) <=
+                        duration('10m')
+                  transactionMode:
+                    default: file
+                    enum:
+                    - all
+                    - file
+                    - none
+                    type: string
+                type: object
+              suspend:
+                default: false
+                type: boolean
+              target:
+                properties:
+                  coordinationKey:
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$
+                    type: string
+                  engine:
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[A-Za-z][A-Za-z0-9._-]*$
+                    type: string
+                  urlFrom:
+                    properties:
+                      key:
+                        type: string
+                      name:
+                        default: ""
+                        type: string
+                      optional:
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
+                required:
+                - coordinationKey
+                - engine
+                - urlFrom
+                type: object
+            required:
+            - desired
+            - target
+            type: object
+            x-kubernetes-validations:
+            - message: execution.connectTimeout must not exceed execution.activeDeadlineSeconds
+              rule: '!has(self.execution) || !has(self.execution.connectTimeout) ||
+                !has(self.execution.activeDeadlineSeconds) || duration(self.execution.connectTimeout).getMilliseconds()
+                <= self.execution.activeDeadlineSeconds * 1000'
+            - message: policy.lockTimeout must not exceed execution.activeDeadlineSeconds
+              rule: '!has(self.policy) || !has(self.policy.lockTimeout) || !has(self.execution)
+                || !has(self.execution.activeDeadlineSeconds) || duration(self.policy.lockTimeout).getMilliseconds()
+                <= self.execution.activeDeadlineSeconds * 1000'
+            - message: target.urlFrom must name a required Secret key
+              rule: self.target.urlFrom.name.size() > 0 && self.target.urlFrom.key.size()
+                > 0 && (!has(self.target.urlFrom.optional) || !self.target.urlFrom.optional)
+            - message: desired.verificationPolicyFrom must name a required ConfigMap
+                key
+              rule: self.desired.verificationPolicyFrom.name.size() > 0 && self.desired.verificationPolicyFrom.key.size()
+                > 0 && (!has(self.desired.verificationPolicyFrom.optional) || !self.desired.verificationPolicyFrom.optional)
+            - message: dev.urlFrom must name a required Secret key
+              rule: '!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size()
+                > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))'
+            - message: desired.transport.caFrom must name a required ConfigMap key
+              rule: '!has(self.desired.transport) || !has(self.desired.transport.caFrom)
+                || (self.desired.transport.caFrom.name.size() > 0 && self.desired.transport.caFrom.key.size()
+                > 0 && (!has(self.desired.transport.caFrom.optional) || !self.desired.transport.caFrom.optional))'
+          status:
+            properties:
+              activeOperation:
+                properties:
+                  admissionSnapshot:
+                    properties:
+                      alwaysPullImagesEnabled:
+                        type: boolean
+                      defaultNotReadyTolerationSeconds:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      defaultTolerationsEnabled:
+                        type: boolean
+                      defaultUnreachableTolerationSeconds:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      digest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      extendedResourceTolerationEnabled:
+                        type: boolean
+                      limitRanges:
+                        items:
+                          properties:
+                            defaultLimits:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              maxProperties: 64
+                              type: object
+                            defaultRequests:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              maxProperties: 64
+                              type: object
+                            object:
+                              properties:
+                                name:
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                resourceVersion:
+                                  maxLength: 128
+                                  minLength: 1
+                                  type: string
+                                uid:
+                                  maxLength: 128
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              - resourceVersion
+                              - uid
+                              type: object
+                          required:
+                          - object
+                          type: object
+                        maxItems: 32
+                        type: array
+                      priorityClass:
+                        properties:
+                          name:
+                            maxLength: 253
+                            type: string
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                          preemptionPolicy:
+                            enum:
+                            - Never
+                            - PreemptLowerPriority
+                            type: string
+                          value:
+                            format: int32
+                            type: integer
+                        required:
+                        - value
+                        type: object
+                      runtimeClass:
+                        properties:
+                          handler:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                          nodeSelector:
+                            additionalProperties:
+                              type: string
+                            maxProperties: 64
+                            type: object
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                          overhead:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            maxProperties: 64
+                            type: object
+                          overheadDefined:
+                            type: boolean
+                          tolerations:
+                            items:
+                              properties:
+                                effect:
+                                  type: string
+                                key:
+                                  type: string
+                                operator:
+                                  type: string
+                                tolerationSeconds:
+                                  format: int64
+                                  type: integer
+                                value:
+                                  type: string
+                              type: object
+                            maxItems: 64
+                            type: array
+                        required:
+                        - handler
+                        - object
+                        type: object
+                      serviceAccount:
+                        properties:
+                          imagePullSecrets:
+                            items:
+                              properties:
+                                name:
+                                  default: ""
+                                  type: string
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            maxItems: 64
+                            type: array
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                        required:
+                        - object
+                        type: object
+                      templateDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      version:
+                        enum:
+                        - v1
+                        type: string
+                    required:
+                    - alwaysPullImagesEnabled
+                    - defaultNotReadyTolerationSeconds
+                    - defaultTolerationsEnabled
+                    - defaultUnreachableTolerationSeconds
+                    - digest
+                    - extendedResourceTolerationEnabled
+                    - priorityClass
+                    - serviceAccount
+                    - templateDigest
+                    - version
+                    type: object
+                  attempt:
+                    format: int32
+                    type: integer
+                  coordinationDigest:
+                    type: string
+                  dispatchNotAfter:
+                    format: date-time
+                    type: string
+                  dispatchStarted:
+                    type: boolean
+                  executionBindingID:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                  executionNotAfter:
+                    format: date-time
+                    type: string
+                  id:
+                    type: string
+                  inputFingerprint:
+                    type: string
+                  jobName:
+                    type: string
+                  jobUID:
+                    type: string
+                  leaseContinuityLost:
+                    type: boolean
+                  leaseDurationSeconds:
+                    format: int32
+                    maximum: 86460
+                    minimum: 5
+                    type: integer
+                  leaseEpoch:
+                    type: string
+                  observationConnectTimeout:
+                    type: string
+                  observationDev:
+                    properties:
+                      urlFrom:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            default: ""
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - urlFrom
+                    type: object
+                  observationExclude:
+                    items:
+                      type: string
+                    type: array
+                  observationLockTimeout:
+                    type: string
+                  observationSeverity:
+                    type: string
+                  source:
+                    properties:
+                      digest:
+                        type: string
+                      registryAuthFrom:
+                        properties:
+                          dockerConfigJSONKey:
+                            default: .dockerconfigjson
+                            type: string
+                          mode:
+                            default: Environment
+                            enum:
+                            - Environment
+                            - DockerConfigJSON
+                            type: string
+                          name:
+                            type: string
+                          passwordKey:
+                            default: password
+                            type: string
+                          registryKey:
+                            default: registry
+                            enum:
+                            - registry
+                            type: string
+                          tokenKey:
+                            default: token
+                            type: string
+                          usernameKey:
+                            default: username
+                            type: string
+                        required:
+                        - name
+                        type: object
+                        x-kubernetes-validations:
+                        - message: dockerConfigJSONKey is required in DockerConfigJSON
+                            mode
+                          rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
+                      resolvedReference:
+                        type: string
+                      transport:
+                        properties:
+                          caFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          clientCertificateFrom:
+                            properties:
+                              certificateKey:
+                                default: tls.crt
+                                type: string
+                              name:
+                                type: string
+                              privateKeyKey:
+                                default: tls.key
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          plainHTTP:
+                            default: false
+                            type: boolean
+                        type: object
+                        x-kubernetes-validations:
+                        - message: caFrom cannot be used with plainHTTP
+                          rule: '!self.plainHTTP || !has(self.caFrom)'
+                        - message: clientCertificateFrom cannot be used with plainHTTP
+                          rule: '!self.plainHTTP || !has(self.clientCertificateFrom)'
+                        - message: clientCertificateFrom is not supported until the
+                            executor can scope client certificates across redirects
+                          rule: '!has(self.clientCertificateFrom)'
+                    required:
+                    - digest
+                    - resolvedReference
+                    type: object
+                  startedAt:
+                    format: date-time
+                    type: string
+                  target:
+                    properties:
+                      engine:
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[A-Za-z][A-Za-z0-9._-]*$
+                        type: string
+                      urlFrom:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            default: ""
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - engine
+                    - urlFrom
+                    type: object
+                  targetIdentityDigest:
+                    type: string
+                  terminationGracePeriodSeconds:
+                    format: int64
+                    maximum: 300
+                    minimum: 1
+                    type: integer
+                  type:
+                    enum:
+                    - Resolve
+                    - Verify
+                    - Observe
+                    - Plan
+                    - Apply
+                    type: string
+                  verificationPolicyDigest:
+                    type: string
+                  verificationPolicyUID:
+                    type: string
+                required:
+                - attempt
+                - id
+                - inputFingerprint
+                - jobName
+                - startedAt
+                - type
+                type: object
+              applied:
+                properties:
+                  artifactDigest:
+                    type: string
+                  completedAt:
+                    format: date-time
+                    type: string
+                  controllerImage:
+                    pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                    type: string
+                  controllerRevision:
+                    maxLength: 128
+                    minLength: 1
+                    pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                    type: string
+                  controllerStateVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  coordinationDigest:
+                    type: string
+                  executionBindingID:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                  executorImage:
+                    type: string
+                  planFingerprint:
+                    type: string
+                  ptahVersion:
+                    type: string
+                  runnerImage:
+                    type: string
+                  runnerProtocolVersion:
+                    format: int32
+                    type: integer
+                  targetIdentityDigest:
+                    type: string
+                required:
+                - artifactDigest
+                - completedAt
+                - coordinationDigest
+                - executorImage
+                - planFingerprint
+                - ptahVersion
+                - runnerImage
+                - runnerProtocolVersion
+                - targetIdentityDigest
+                type: object
+              conditions:
+                items:
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    message:
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              executionBinding:
+                properties:
+                  controllerImage:
+                    pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                    type: string
+                  controllerRevision:
+                    maxLength: 128
+                    minLength: 1
+                    pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                    type: string
+                  controllerStateVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  epoch:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                  executorImage:
+                    minLength: 1
+                    type: string
+                  ptahVersion:
+                    maxLength: 128
+                    minLength: 1
+                    type: string
+                  runnerImage:
+                    minLength: 1
+                    type: string
+                  runnerProtocolVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - epoch
+                - executorImage
+                - ptahVersion
+                - runnerImage
+                - runnerProtocolVersion
+                type: object
+              lastAttemptTime:
+                format: date-time
+                type: string
+              lastSuccessfulReconciliation:
+                format: date-time
+                type: string
+              nextReconciliationTime:
+                format: date-time
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              pendingLockRelease:
+                properties:
+                  coordinationDigest:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  leaseDurationSeconds:
+                    format: int32
+                    maximum: 86460
+                    minimum: 5
+                    type: integer
+                  leaseEpoch:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                  operationID:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                required:
+                - coordinationDigest
+                - leaseDurationSeconds
+                - leaseEpoch
+                - operationID
+                type: object
+              pendingObservation:
+                properties:
+                  admissionSnapshot:
+                    properties:
+                      alwaysPullImagesEnabled:
+                        type: boolean
+                      defaultNotReadyTolerationSeconds:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      defaultTolerationsEnabled:
+                        type: boolean
+                      defaultUnreachableTolerationSeconds:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      digest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      extendedResourceTolerationEnabled:
+                        type: boolean
+                      limitRanges:
+                        items:
+                          properties:
+                            defaultLimits:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              maxProperties: 64
+                              type: object
+                            defaultRequests:
+                              additionalProperties:
+                                anyOf:
+                                - type: integer
+                                - type: string
+                                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                x-kubernetes-int-or-string: true
+                              maxProperties: 64
+                              type: object
+                            object:
+                              properties:
+                                name:
+                                  maxLength: 253
+                                  minLength: 1
+                                  type: string
+                                resourceVersion:
+                                  maxLength: 128
+                                  minLength: 1
+                                  type: string
+                                uid:
+                                  maxLength: 128
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              - resourceVersion
+                              - uid
+                              type: object
+                          required:
+                          - object
+                          type: object
+                        maxItems: 32
+                        type: array
+                      priorityClass:
+                        properties:
+                          name:
+                            maxLength: 253
+                            type: string
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                          preemptionPolicy:
+                            enum:
+                            - Never
+                            - PreemptLowerPriority
+                            type: string
+                          value:
+                            format: int32
+                            type: integer
+                        required:
+                        - value
+                        type: object
+                      runtimeClass:
+                        properties:
+                          handler:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                          nodeSelector:
+                            additionalProperties:
+                              type: string
+                            maxProperties: 64
+                            type: object
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                          overhead:
+                            additionalProperties:
+                              anyOf:
+                              - type: integer
+                              - type: string
+                              pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                              x-kubernetes-int-or-string: true
+                            maxProperties: 64
+                            type: object
+                          overheadDefined:
+                            type: boolean
+                          tolerations:
+                            items:
+                              properties:
+                                effect:
+                                  type: string
+                                key:
+                                  type: string
+                                operator:
+                                  type: string
+                                tolerationSeconds:
+                                  format: int64
+                                  type: integer
+                                value:
+                                  type: string
+                              type: object
+                            maxItems: 64
+                            type: array
+                        required:
+                        - handler
+                        - object
+                        type: object
+                      serviceAccount:
+                        properties:
+                          imagePullSecrets:
+                            items:
+                              properties:
+                                name:
+                                  default: ""
+                                  type: string
+                              type: object
+                              x-kubernetes-map-type: atomic
+                            maxItems: 64
+                            type: array
+                          object:
+                            properties:
+                              name:
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              resourceVersion:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              uid:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                            required:
+                            - name
+                            - resourceVersion
+                            - uid
+                            type: object
+                        required:
+                        - object
+                        type: object
+                      templateDigest:
+                        pattern: ^sha256:[0-9a-f]{64}$
+                        type: string
+                      version:
+                        enum:
+                        - v1
+                        type: string
+                    required:
+                    - alwaysPullImagesEnabled
+                    - defaultNotReadyTolerationSeconds
+                    - defaultTolerationsEnabled
+                    - defaultUnreachableTolerationSeconds
+                    - digest
+                    - extendedResourceTolerationEnabled
+                    - priorityClass
+                    - serviceAccount
+                    - templateDigest
+                    - version
+                    type: object
+                  applyGeneration:
+                    format: int64
+                    type: integer
+                  applyJobName:
+                    maxLength: 253
+                    type: string
+                  applyJobUID:
+                    type: string
+                  applyOperationID:
+                    type: string
+                  applyPodCount:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  applyPodUIDs:
+                    items:
+                      type: string
+                    maxItems: 8
+                    type: array
+                  connectTimeout:
+                    type: string
+                  coordinationDigest:
+                    type: string
+                  dev:
+                    properties:
+                      urlFrom:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            default: ""
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - urlFrom
+                    type: object
+                  driftSeverity:
+                    type: string
+                  exclude:
+                    items:
+                      type: string
+                    type: array
+                  leaseDurationSeconds:
+                    format: int32
+                    maximum: 86460
+                    minimum: 5
+                    type: integer
+                  leaseEpoch:
+                    type: string
+                  lockTimeout:
+                    type: string
+                  observeAfter:
+                    format: date-time
+                    type: string
+                  outcome:
+                    enum:
+                    - ApplySucceeded
+                    - OutcomeUnknown
+                    type: string
+                  plan:
+                    properties:
+                      actualStateFingerprint:
+                        type: string
+                      approval:
+                        properties:
+                          approvedAt:
+                            format: date-time
+                            type: string
+                          approver:
+                            properties:
+                              groups:
+                                items:
+                                  type: string
+                                maxItems: 64
+                                type: array
+                              uid:
+                                type: string
+                              username:
+                                type: string
+                            required:
+                            - username
+                            type: object
+                          name:
+                            type: string
+                          uid:
+                            type: string
+                        required:
+                        - approvedAt
+                        - approver
+                        - name
+                        - uid
+                        type: object
+                      artifactDigest:
+                        type: string
+                      contentDigest:
+                        type: string
+                      controllerImage:
+                        pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                        type: string
+                      controllerRevision:
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                        type: string
+                      controllerStateVersion:
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      coordinationDigest:
+                        type: string
+                      createdAt:
+                        format: date-time
+                        type: string
+                      desiredStateFingerprint:
+                        type: string
+                      destructive:
+                        type: boolean
+                      executionBindingID:
+                        pattern: ^v1-[0-9a-f]{32}$
+                        type: string
+                      executorImage:
+                        type: string
+                      fingerprint:
+                        type: string
+                      name:
+                        type: string
+                      policyFingerprint:
+                        type: string
+                      ptahVersion:
+                        type: string
+                      runnerImage:
+                        type: string
+                      runnerProtocolVersion:
+                        format: int32
+                        type: integer
+                      statementCount:
+                        format: int32
+                        type: integer
+                      targetIdentityDigest:
+                        type: string
+                      uid:
+                        type: string
+                      verificationPolicyDigest:
+                        type: string
+                      verificationPolicyUID:
+                        type: string
+                    required:
+                    - actualStateFingerprint
+                    - artifactDigest
+                    - contentDigest
+                    - coordinationDigest
+                    - createdAt
+                    - desiredStateFingerprint
+                    - destructive
+                    - executorImage
+                    - fingerprint
+                    - name
+                    - policyFingerprint
+                    - ptahVersion
+                    - runnerImage
+                    - runnerProtocolVersion
+                    - statementCount
+                    - targetIdentityDigest
+                    - uid
+                    - verificationPolicyDigest
+                    - verificationPolicyUID
+                    type: object
+                  planRequired:
+                    type: boolean
+                  source:
+                    properties:
+                      digest:
+                        type: string
+                      registryAuthFrom:
+                        properties:
+                          dockerConfigJSONKey:
+                            default: .dockerconfigjson
+                            type: string
+                          mode:
+                            default: Environment
+                            enum:
+                            - Environment
+                            - DockerConfigJSON
+                            type: string
+                          name:
+                            type: string
+                          passwordKey:
+                            default: password
+                            type: string
+                          registryKey:
+                            default: registry
+                            enum:
+                            - registry
+                            type: string
+                          tokenKey:
+                            default: token
+                            type: string
+                          usernameKey:
+                            default: username
+                            type: string
+                        required:
+                        - name
+                        type: object
+                        x-kubernetes-validations:
+                        - message: dockerConfigJSONKey is required in DockerConfigJSON
+                            mode
+                          rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
+                      resolvedReference:
+                        type: string
+                      transport:
+                        properties:
+                          caFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          clientCertificateFrom:
+                            properties:
+                              certificateKey:
+                                default: tls.crt
+                                type: string
+                              name:
+                                type: string
+                              privateKeyKey:
+                                default: tls.key
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          plainHTTP:
+                            default: false
+                            type: boolean
+                        type: object
+                        x-kubernetes-validations:
+                        - message: caFrom cannot be used with plainHTTP
+                          rule: '!self.plainHTTP || !has(self.caFrom)'
+                        - message: clientCertificateFrom cannot be used with plainHTTP
+                          rule: '!self.plainHTTP || !has(self.clientCertificateFrom)'
+                        - message: clientCertificateFrom is not supported until the
+                            executor can scope client certificates across redirects
+                          rule: '!has(self.clientCertificateFrom)'
+                    required:
+                    - digest
+                    - resolvedReference
+                    type: object
+                  target:
+                    properties:
+                      engine:
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[A-Za-z][A-Za-z0-9._-]*$
+                        type: string
+                      urlFrom:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            default: ""
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - engine
+                    - urlFrom
+                    type: object
+                required:
+                - applyGeneration
+                - applyOperationID
+                - coordinationDigest
+                - leaseDurationSeconds
+                - outcome
+                - plan
+                - source
+                - target
+                type: object
+              phase:
+                enum:
+                - Pending
+                - Resolving
+                - Verifying
+                - Observing
+                - Planning
+                - ReadyToApply
+                - AwaitingApproval
+                - Blocked
+                - Applying
+                - VerifyingConvergence
+                - InSync
+                - Suspended
+                - Failed
+                type: string
+              plan:
+                properties:
+                  actualStateFingerprint:
+                    type: string
+                  approval:
+                    properties:
+                      approvedAt:
+                        format: date-time
+                        type: string
+                      approver:
+                        properties:
+                          groups:
+                            items:
+                              type: string
+                            maxItems: 64
+                            type: array
+                          uid:
+                            type: string
+                          username:
+                            type: string
+                        required:
+                        - username
+                        type: object
+                      name:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - approvedAt
+                    - approver
+                    - name
+                    - uid
+                    type: object
+                  artifactDigest:
+                    type: string
+                  contentDigest:
+                    type: string
+                  controllerImage:
+                    pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                    type: string
+                  controllerRevision:
+                    maxLength: 128
+                    minLength: 1
+                    pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                    type: string
+                  controllerStateVersion:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  coordinationDigest:
+                    type: string
+                  createdAt:
+                    format: date-time
+                    type: string
+                  desiredStateFingerprint:
+                    type: string
+                  destructive:
+                    type: boolean
+                  executionBindingID:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                  executorImage:
+                    type: string
+                  fingerprint:
+                    type: string
+                  name:
+                    type: string
+                  policyFingerprint:
+                    type: string
+                  ptahVersion:
+                    type: string
+                  runnerImage:
+                    type: string
+                  runnerProtocolVersion:
+                    format: int32
+                    type: integer
+                  statementCount:
+                    format: int32
+                    type: integer
+                  targetIdentityDigest:
+                    type: string
+                  uid:
+                    type: string
+                  verificationPolicyDigest:
+                    type: string
+                  verificationPolicyUID:
+                    type: string
+                required:
+                - actualStateFingerprint
+                - artifactDigest
+                - contentDigest
+                - coordinationDigest
+                - createdAt
+                - desiredStateFingerprint
+                - destructive
+                - executorImage
+                - fingerprint
+                - name
+                - policyFingerprint
+                - ptahVersion
+                - runnerImage
+                - runnerProtocolVersion
+                - statementCount
+                - targetIdentityDigest
+                - uid
+                - verificationPolicyDigest
+                - verificationPolicyUID
+                type: object
+              source:
+                properties:
+                  artifactType:
+                    type: string
+                  digest:
+                    type: string
+                  mediaType:
+                    type: string
+                  requestedReference:
+                    type: string
+                  resolvedAt:
+                    format: date-time
+                    type: string
+                  resolvedReference:
+                    type: string
+                  size:
+                    format: int64
+                    type: integer
+                  verificationPolicyDigest:
+                    type: string
+                  verificationPolicyUID:
+                    type: string
+                  verified:
+                    type: boolean
+                  verifiedAt:
+                    format: date-time
+                    type: string
+                type: object
+              target:
+                properties:
+                  coordinationDigest:
+                    type: string
+                  driftFindingCount:
+                    format: int32
+                    type: integer
+                  driftFindings:
+                    items:
+                      properties:
+                        category:
+                          enum:
+                          - columns_added
+                          - columns_modified
+                          - columns_removed
+                          - constraints_added
+                          - constraints_removed
+                          - enum_values_added
+                          - enum_values_removed
+                          - enums_added
+                          - enums_removed
+                          - extensions_added
+                          - extensions_modified
+                          - extensions_removed
+                          - functions_added
+                          - functions_modified
+                          - functions_removed
+                          - indexes_added
+                          - indexes_removed
+                          - rls_enabled_tables_added
+                          - rls_enabled_tables_removed
+                          - rls_policies_added
+                          - rls_policies_modified
+                          - rls_policies_removed
+                          - roles_added
+                          - roles_modified
+                          - roles_removed
+                          - table_constraints_added
+                          - table_constraints_removed
+                          - tables_added
+                          - tables_removed
+                          - unique_protections_removed
+                          - vector_dimension_changed
+                          maxLength: 64
+                          minLength: 1
+                          pattern: ^[a-z][a-z0-9_]{0,63}$
+                          type: string
+                        count:
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        severity:
+                          enum:
+                          - safe
+                          - info
+                          - warning
+                          - error
+                          - destructive
+                          type: string
+                      required:
+                      - category
+                      - count
+                      - severity
+                      type: object
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - category
+                    x-kubernetes-list-type: map
+                  driftFindingsTruncated:
+                    type: boolean
+                  driftReportDigest:
+                    type: string
+                  engine:
+                    maxLength: 63
+                    minLength: 1
+                    pattern: ^[A-Za-z][A-Za-z0-9._-]*$
+                    type: string
+                  highestDriftSeverity:
+                    type: string
+                  identityDigest:
+                    type: string
+                  lastObservedAt:
+                    format: date-time
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: truncated drift findings require exactly 64 published summaries
+                  rule: '!has(self.driftFindingsTruncated) || !self.driftFindingsTruncated
+                    || (has(self.driftFindings) && size(self.driftFindings) == 64)'
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

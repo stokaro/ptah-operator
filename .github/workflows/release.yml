@@ -1,0 +1,1001 @@
+name: Release
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/stokaro/ptah-operator
+
+jobs:
+  smoke:
+    name: Release contract and multi-architecture build
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        id: checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        id: setup-go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Set up Helm
+        id: setup-helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+        with:
+          version: v3.21.4
+      - name: Verify release metadata
+        id: verify-release
+        run: go run ./hack/releaseverify
+      - name: Lint and reproducibly package chart
+        id: chart-reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+          helm lint charts/ptah-operator \
+            --set-string image.digest="$test_digest" \
+            --set-string execution.executorImage="example.invalid/ptah@$test_digest" \
+            --set-string execution.runnerImage="example.invalid/operator@$test_digest" \
+            --set-string execution.ptahVersion="release-smoke-explicit"
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          go run ./hack/chartpackage -epoch "$source_epoch" -destination dist-a
+          go run ./hack/chartpackage -epoch "$source_epoch" -destination dist-b
+          cmp \
+            "dist-a/ptah-operator-$(sed -n 's/^version: //p' charts/ptah-operator/Chart.yaml).tgz" \
+            "dist-b/ptah-operator-$(sed -n 's/^version: //p' charts/ptah-operator/Chart.yaml).tgz"
+      - name: Set up Docker Buildx
+        id: setup-buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+        with:
+          version: v0.36.1
+          cache-binary: false
+          driver-opts: |
+            image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+      - name: Build both release architectures
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          provenance: false
+          sbom: false
+          build-args: |
+            VERSION=dev
+            REVISION=${{ github.sha }}
+            SOURCE=https://github.com/${{ github.repository }}
+
+  support-preflight:
+    name: Verify release Kubernetes support evidence
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      chart-sha256: ${{ steps.support-evidence.outputs.chart-sha256 }}
+      kubernetes-support-window: ${{ steps.support-evidence.outputs.kubernetes-support-window }}
+      source-sha: ${{ steps.support-evidence.outputs.source-sha }}
+      support-evidence-run-id: ${{ steps.support-evidence.outputs.support-evidence-run-id }}
+    steps:
+      - name: Check out repository
+        id: checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        id: setup-go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Require fresh exact-commit support evidence
+        id: support-evidence
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # CI can use 40 minutes for its longest pre-E2E job, 90 for E2E, and
+          # 5 for the aggregate gate. Five more cover queue/API delay.
+          SUPPORT_POLL_TIMEOUT_MINUTES: "140"
+        shell: bash
+        run: |
+          set -euo pipefail
+          today="$(date -u +%Y-%m-%d)"
+          go run ./hack/verify-kubernetes-support.go -now "$today"
+          go run ./hack/releaseverify
+          [[ -n "$DEFAULT_BRANCH" ]]
+
+          evidence_run=''
+          delay=2
+          poll_deadline_epoch=$(( $(date -u +%s) + SUPPORT_POLL_TIMEOUT_MINUTES * 60 ))
+          while true; do
+            runs="$(gh api \
+              --method GET \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+              -f branch="$DEFAULT_BRANCH" \
+              -f event=push \
+              -f head_sha="$GITHUB_SHA" \
+              -f status=completed \
+              -f per_page=100)"
+            run_ids_file="$RUNNER_TEMP/successful-support-run-ids"
+            jq -r \
+              --arg branch "$DEFAULT_BRANCH" \
+              --arg sha "$GITHUB_SHA" '
+                .workflow_runs[] |
+                select(.event == "push" and
+                       .head_branch == $branch and
+                       .head_sha == $sha and
+                       .status == "completed" and
+                       .conclusion == "success") |
+                .id
+              ' <<<"$runs" > "$run_ids_file"
+            mapfile -t run_ids < "$run_ids_file"
+            for run_id in "${run_ids[@]}"; do
+              [[ "$run_id" =~ ^[1-9][0-9]*$ ]]
+              jobs="$(gh api \
+                --method GET \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs" \
+                -f filter=latest \
+                -f per_page=100)"
+              if jq -e \
+                --arg sha "$GITHUB_SHA" '
+                  [.jobs[] |
+                   select(.name == "Kubernetes support gate" and
+                          .head_sha == $sha and
+                          .status == "completed" and
+                          .conclusion == "success")] |
+                  length == 1
+                ' <<<"$jobs" >/dev/null
+              then
+                evidence_run="$run_id"
+                break
+              fi
+            done
+            if [[ -n "$evidence_run" ]]; then
+              break
+            fi
+            remaining_seconds=$((poll_deadline_epoch - $(date -u +%s)))
+            if (( remaining_seconds <= 0 )); then
+              break
+            fi
+            sleep_seconds="$delay"
+            if (( sleep_seconds > remaining_seconds )); then
+              sleep_seconds="$remaining_seconds"
+            fi
+            sleep "$sleep_seconds"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          if [[ -z "$evidence_run" ]]; then
+            echo "no exact-SHA default-branch CI run reached a successful Kubernetes support gate" >&2
+            exit 1
+          fi
+          support_matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
+          kubernetes_support_window="$(jq -er '[.[].minor] | join(",")' <<<"$support_matrix")"
+          [[ "$kubernetes_support_window" =~ ^[0-9]+\.[0-9]+(,[0-9]+\.[0-9]+)*$ ]]
+          minor_slugs_file="$RUNNER_TEMP/supported-minor-slugs"
+          jq -er '
+            if type != "array" or length != 3 then
+              error("support matrix must contain the exact three-minor window")
+            else
+              [.[].minor_slug] as $slugs |
+              if all(.[];
+                   (.minor | type) == "string" and
+                   (.minor | test("^[1-9][0-9]*\\.(0|[1-9][0-9]*)$")) and
+                   (.minor_slug == (.minor | gsub("\\."; "-")))) and
+                 ($slugs | all(type == "string" and test("^[0-9]+-[0-9]+$"))) and
+                 ($slugs | unique | length) == ($slugs | length)
+              then $slugs[]
+              else error("support matrix has invalid or duplicate minor slugs")
+              end
+            end
+          ' <<<"$support_matrix" > "$minor_slugs_file"
+          mapfile -t minor_slugs < "$minor_slugs_file"
+          [[ "${#minor_slugs[@]}" -eq 3 ]]
+
+          expected_artifact_names_file="$RUNNER_TEMP/expected-installed-chart-artifacts"
+          for minor_slug in "${minor_slugs[@]}"; do
+            printf 'installed-release-chart-%s\n' "$minor_slug"
+          done | LC_ALL=C sort > "$expected_artifact_names_file"
+          artifact_inventory="$(gh api \
+            --method GET \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$evidence_run/artifacts" \
+            -f per_page=100)"
+          jq -e \
+            --argjson expected_count "${#minor_slugs[@]}" \
+            --rawfile expected_names "$expected_artifact_names_file" '
+              ($expected_names | split("\n") | map(select(length > 0))) as $expected |
+              .total_count == $expected_count and
+              (.artifacts | length) == $expected_count and
+              ([.artifacts[].name] | sort) == $expected and
+              all(.artifacts[];
+                .expired == false and
+                (.size_in_bytes | type) == "number" and .size_in_bytes > 0
+              )
+            ' <<<"$artifact_inventory" >/dev/null
+
+          installed_charts_dir="$RUNNER_TEMP/installed-release-charts"
+          mkdir -p "$installed_charts_dir"
+          canonical_chart=''
+          for minor_slug in "${minor_slugs[@]}"; do
+            artifact_dir="$installed_charts_dir/$minor_slug"
+            mkdir "$artifact_dir"
+            gh run download "$evidence_run" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "installed-release-chart-$minor_slug" \
+              --dir "$artifact_dir"
+            chart_path="$artifact_dir/ptah-operator-$minor_slug.tgz"
+            [[ -f "$chart_path" && ! -L "$chart_path" ]]
+            [[ "$(find "$artifact_dir" -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ]]
+            if [[ -z "$canonical_chart" ]]; then
+              canonical_chart="$chart_path"
+            else
+              cmp "$canonical_chart" "$chart_path"
+            fi
+          done
+          [[ -n "$canonical_chart" ]]
+          chart_sha256="$(sha256sum "$canonical_chart" | awk '{print $1}')"
+          [[ "$chart_sha256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$evidence_run" =~ ^[1-9][0-9]*$ ]]
+          {
+            printf 'chart-sha256=%s\n' "$chart_sha256"
+            printf 'kubernetes-support-window=%s\n' "$kubernetes_support_window"
+            printf 'source-sha=%s\n' "$GITHUB_SHA"
+            printf 'support-evidence-run-id=%s\n' "$evidence_run"
+          } >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish signed image and attested chart
+    needs: [support-preflight]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.support-preflight.outputs.source-sha == github.sha
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      packages: write
+      attestations: write
+      artifact-metadata: write
+      id-token: write
+    steps:
+      - name: Check out repository
+        id: checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Set up Go
+        id: setup-go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Set up Docker Buildx
+        id: setup-buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+        with:
+          version: v0.36.1
+          cache-binary: false
+          driver-opts: |
+            image=moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8
+      - name: Validate tag and derive release metadata
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./hack/releaseverify -tag "$GITHUB_REF_NAME"
+          default_branch='${{ github.event.repository.default_branch }}'
+          [[ -n "$default_branch" ]]
+          git fetch --no-tags origin \
+            "refs/heads/$default_branch:refs/remotes/origin/$default_branch"
+          git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$default_branch"
+          version="${GITHUB_REF_NAME#v}"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+      - name: Require immutable release enforcement
+        id: immutability-preflight
+        env:
+          GH_TOKEN: ${{ secrets.IMMUTABLE_RELEASES_READ_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo 'IMMUTABLE_RELEASES_READ_TOKEN is required' >&2
+            exit 1
+          fi
+          settings="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/immutable-releases")"
+          [[ "$(jq -r '.enabled' <<<"$settings")" == true ]]
+      - name: Inspect immutable release transaction
+        id: transaction
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./hack/releaseverify \
+            -tag "$GITHUB_REF_NAME" \
+            -verify-tag-identity
+          mkdir -p dist
+          error_file="$RUNNER_TEMP/release-view-error.txt"
+          if release_json="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" 2>"$error_file")"; then
+            jq -e '(.draft | type) == "boolean" and (.immutable | type) == "boolean"' \
+              <<<"$release_json" >/dev/null
+            draft="$(jq -r '.draft' <<<"$release_json")"
+            immutable="$(jq -r '.immutable' <<<"$release_json")"
+            jq -j '.body | strings' <<<"$release_json" > dist/release-state.txt
+            if [[ "$(sed -n '1p' dist/release-state.txt)" == state=prepared ]]; then
+              [[ "$draft" == true ]]
+              jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
+              mv dist/release-state.txt dist/release-journal.txt
+              state_flag=-journal
+              release_state=prepared
+            else
+              if [[ "$draft" == true ]]; then
+                release_state=recover
+              elif [[ "$immutable" == true ]]; then
+                release_state=published
+              else
+                echo "release $GITHUB_REF_NAME is published but not immutable; refusing recovery" >&2
+                exit 1
+              fi
+              mv dist/release-state.txt dist/release-manifest.txt
+              state_flag=-manifest
+            fi
+            if [[ "$release_state" == prepared ]]; then
+              state_path=dist/release-journal.txt
+            else
+              state_path=dist/release-manifest.txt
+            fi
+            delay=2
+            for attempt in {1..8}; do
+              if gh attestation verify "$state_path" \
+                --repo "$GITHUB_REPOSITORY" \
+                --source-ref "$GITHUB_REF" \
+                --source-digest "$GITHUB_SHA" \
+                --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+              then
+                break
+              fi
+              if [[ "$attempt" == 8 ]]; then
+                exit 1
+              fi
+              sleep "$delay"
+              delay=$((delay < 30 ? delay * 2 : 30))
+            done
+            go run ./hack/releaseverify \
+              -tag "$GITHUB_REF_NAME" \
+              -source-sha "$GITHUB_SHA" \
+              "$state_flag" "$state_path"
+          elif grep -Fq '(HTTP 404)' "$error_file"; then
+            release_state=fresh
+            transaction="$GITHUB_RUN_ID"
+            image_tag="$IMAGE:tx-$GITHUB_SHA-$transaction"
+            {
+              printf 'state=prepared\n'
+              printf 'version=%s\n' '${{ steps.release.outputs.version }}'
+              printf 'source-repository=%s\n' "$GITHUB_REPOSITORY"
+              printf 'source-ref=%s\n' "$GITHUB_REF"
+              printf 'source-sha=%s\n' "$GITHUB_SHA"
+              printf 'transaction=%s\n' "$transaction"
+              printf 'image-tag=%s\n' "$image_tag"
+              printf 'chart-asset=ptah-operator-%s.tgz\n' '${{ steps.release.outputs.version }}'
+            } > dist/release-journal.txt
+            go run ./hack/releaseverify \
+              -tag "$GITHUB_REF_NAME" \
+              -source-sha "$GITHUB_SHA" \
+              -journal dist/release-journal.txt
+          else
+            cat "$error_file" >&2
+            echo 'could not determine release state; refusing to publish' >&2
+            exit 1
+          fi
+          state_path=dist/release-manifest.txt
+          if [[ "$release_state" == fresh || "$release_state" == prepared ]]; then
+            state_path=dist/release-journal.txt
+          fi
+          field() {
+            sed -n "s/^$1=//p" "$state_path"
+          }
+          {
+            printf 'mode=%s\n' "$release_state"
+            printf 'transaction=%s\n' "$(field transaction)"
+            printf 'image-tag=%s\n' "$(field image-tag)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Attest prepared release journal
+        id: journal-attestation
+        if: steps.transaction.outputs.mode == 'fresh'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: dist/release-journal.txt
+      - name: Create prepared draft transaction
+        id: draft
+        if: steps.transaction.outputs.mode == 'fresh'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./hack/releaseverify \
+            -tag "$GITHUB_REF_NAME" \
+            -verify-tag-identity
+          delay=2
+          for attempt in {1..8}; do
+            if gh attestation verify dist/release-journal.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+            then
+              break
+            fi
+            if [[ "$attempt" == 8 ]]; then
+              exit 1
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --verify-tag \
+            --latest=false \
+            --notes-file dist/release-journal.txt \
+            --title "Ptah Operator ${{ steps.release.outputs.version }}"
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
+          jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
+          jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/prepared-release-body.txt"
+          cmp dist/release-journal.txt "$RUNNER_TEMP/prepared-release-body.txt"
+      - name: Inspect prepared image transaction anonymously
+        id: stage-inspect
+        if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          reference='${{ steps.transaction.outputs.image-tag }}'
+          raw_manifest="$RUNNER_TEMP/prepared-image-index.json"
+          error_file="$RUNNER_TEMP/prepared-image-error.txt"
+          if docker buildx imagetools inspect --raw "$reference" > "$raw_manifest" 2>"$error_file"; then
+            digest="sha256:$(sha256sum "$raw_manifest" | awk '{print $1}')"
+            checkpoint_error="$RUNNER_TEMP/prepared-image-checkpoint-error.txt"
+            if gh attestation verify "oci://$IMAGE@$digest" \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              2>"$checkpoint_error"
+            then
+              {
+                printf 'reuse=true\n'
+                printf 'digest=%s\n' "$digest"
+              } >> "$GITHUB_OUTPUT"
+            else
+              cat "$checkpoint_error" >&2
+              echo 'prepared image has no authenticated build checkpoint; rebuilding it' >&2
+              printf 'reuse=false\n' >> "$GITHUB_OUTPUT"
+            fi
+          elif go run ./hack/releaseverify \
+            -registry-missing-error "$error_file" \
+            -registry-missing-reference "$reference"
+          then
+            printf 'reuse=false\n' >> "$GITHUB_OUTPUT"
+          else
+            cat "$error_file" >&2
+            echo 'could not determine prepared image state; refusing to rebuild' >&2
+            exit 1
+          fi
+      - name: Log in to GHCR
+        id: registry-login
+        if: steps.transaction.outputs.mode != 'published'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build image into transaction staging
+        id: image
+        if: >-
+          (steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared') &&
+          steps.stage-inspect.outputs.reuse != 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.transaction.outputs.image-tag }}
+          provenance: mode=max
+          sbom: generator=docker.io/docker/buildkit-syft-scanner:stable-1@sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9
+          build-args: |
+            VERSION=${{ steps.release.outputs.version }}
+            REVISION=${{ github.sha }}
+            SOURCE=https://github.com/${{ github.repository }}
+      - name: Attest exact build output checkpoint
+        id: build-checkpoint
+        if: steps.image.outcome == 'success' && steps.image.outputs.digest != ''
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+      - name: Reproducibly package chart
+        id: chart-package
+        env:
+          TESTED_CHART_SHA256: ${{ needs.support-preflight.outputs.chart-sha256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          go run ./hack/chartpackage -epoch "$source_epoch" -destination dist
+          chart_path="dist/ptah-operator-${{ steps.release.outputs.version }}.tgz"
+          test -f "$chart_path"
+          chart_sha256="$(sha256sum "$chart_path" | awk '{print $1}')"
+          [[ "$TESTED_CHART_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$chart_sha256" == "$TESTED_CHART_SHA256" ]]
+          printf 'path=%s\n' "$chart_path" >> "$GITHUB_OUTPUT"
+      - name: Materialize immutable release assets
+        id: artifacts
+        env:
+          TESTED_KUBERNETES_SUPPORT_WINDOW: ${{ needs.support-preflight.outputs.kubernetes-support-window }}
+          TESTED_SUPPORT_EVIDENCE_RUN_ID: ${{ needs.support-preflight.outputs.support-evidence-run-id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=dist/release-manifest.txt
+          chart_path='${{ steps.chart-package.outputs.path }}'
+          mode='${{ steps.transaction.outputs.mode }}'
+          if [[ "$mode" == fresh || "$mode" == prepared ]]; then
+            image_digest='${{ steps.image.outputs.digest }}'
+            if [[ '${{ steps.stage-inspect.outputs.reuse }}' == true ]]; then
+              image_digest='${{ steps.stage-inspect.outputs.digest }}'
+            fi
+            chart_asset_sha256="$(sha256sum "$chart_path" | awk '{print $1}')"
+            [[ "$TESTED_SUPPORT_EVIDENCE_RUN_ID" =~ ^[1-9][0-9]*$ ]]
+            [[ "$TESTED_KUBERNETES_SUPPORT_WINDOW" =~ ^[0-9]+\.[0-9]+(,[0-9]+\.[0-9]+)*$ ]]
+            {
+              printf 'version=%s\n' '${{ steps.release.outputs.version }}'
+              printf 'source-repository=%s\n' "$GITHUB_REPOSITORY"
+              printf 'source-ref=%s\n' "$GITHUB_REF"
+              printf 'source-sha=%s\n' "$GITHUB_SHA"
+              printf 'transaction=%s\n' '${{ steps.transaction.outputs.transaction }}'
+              printf 'image=%s@%s\n' "$IMAGE" "$image_digest"
+              printf 'image-tag=%s\n' '${{ steps.transaction.outputs.image-tag }}'
+              printf 'chart-asset=%s\n' "$(basename "$chart_path")"
+              printf 'chart-asset-sha256=%s\n' "$chart_asset_sha256"
+              printf 'support-evidence-run-id=%s\n' "$TESTED_SUPPORT_EVIDENCE_RUN_ID"
+              printf 'kubernetes-support-window=%s\n' "$TESTED_KUBERNETES_SUPPORT_WINDOW"
+            } > "$manifest"
+          fi
+          chart_name="$(basename "$chart_path")"
+          (
+            cd dist
+            sha256sum "$chart_name" release-manifest.txt > SHA256SUMS
+          )
+          go run ./hack/releaseverify \
+            -tag "$GITHUB_REF_NAME" \
+            -source-sha "$GITHUB_SHA" \
+            -manifest "$manifest" \
+            -checksums dist/SHA256SUMS \
+            -chart "$chart_path"
+          field() {
+            sed -n "s/^$1=//p" "$manifest"
+          }
+          {
+            printf 'image-digest=%s\n' "$(field image | sed 's/.*@//')"
+            printf 'image-repository=%s\n' "$(field image | sed 's/@sha256:.*//')"
+            printf 'image-tag=%s\n' "$(field image-tag)"
+          } >> "$GITHUB_OUTPUT"
+      - name: Verify staged image structure and build provenance
+        id: image-structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          reference="${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}"
+          image_dir="$RUNNER_TEMP/release-image"
+          mkdir -p "$image_dir"
+          docker buildx imagetools inspect --raw "$reference" > "$image_dir/index.json"
+          index_digest="sha256:$(sha256sum "$image_dir/index.json" | awk '{print $1}')"
+          [[ "$index_digest" == '${{ steps.artifacts.outputs.image-digest }}' ]]
+          docker buildx imagetools inspect --raw \
+            '${{ steps.artifacts.outputs.image-tag }}' > "$image_dir/tag-index.json"
+          cmp "$image_dir/index.json" "$image_dir/tag-index.json"
+
+          jq -e '
+            .schemaVersion == 2 and
+            (.mediaType == "application/vnd.oci.image.index.v1+json" or
+             .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json") and
+            (.manifests | length == 4) and
+            ([.manifests[] |
+              select(.platform.os == "linux" and
+                     (.platform.architecture == "amd64" or .platform.architecture == "arm64") and
+                     .annotations["vnd.docker.reference.type"] != "attestation-manifest")] |
+             map(.platform.os + "/" + .platform.architecture) | sort) ==
+              ["linux/amd64", "linux/arm64"] and
+            ([.manifests[] |
+              select(.annotations["vnd.docker.reference.type"] == "attestation-manifest")] |
+             length) == 2 and
+            ([.manifests[] |
+              select(.platform.os != "linux" and
+                     .annotations["vnd.docker.reference.type"] != "attestation-manifest")] |
+             length) == 0
+          ' "$image_dir/index.json" >/dev/null
+
+          source="https://github.com/$GITHUB_REPOSITORY"
+          version='${{ steps.release.outputs.version }}'
+          for platform in linux/amd64 linux/arm64; do
+            os="${platform%/*}"
+            architecture="${platform#*/}"
+            platform_digest="$(jq -er \
+              --arg os "$os" --arg architecture "$architecture" \
+              '.manifests[] |
+               select(.platform.os == $os and .platform.architecture == $architecture and
+                      .annotations["vnd.docker.reference.type"] != "attestation-manifest") |
+               .digest' "$image_dir/index.json")"
+            attestation_digest="$(jq -er --arg digest "$platform_digest" \
+              '.manifests[] |
+               select(.annotations["vnd.docker.reference.type"] == "attestation-manifest" and
+                      .annotations["vnd.docker.reference.digest"] == $digest) |
+               .digest' "$image_dir/index.json")"
+            docker buildx imagetools inspect \
+              "${{ steps.artifacts.outputs.image-repository }}@$platform_digest" \
+              --format '{{json .}}' > "$image_dir/${architecture}-image.json"
+            jq -e \
+              --arg digest "$platform_digest" \
+              --arg os "$os" \
+              --arg architecture "$architecture" \
+              --arg source "$source" \
+              --arg revision "$GITHUB_SHA" \
+              --arg version "$version" '
+                .manifest.digest == $digest and
+                .image.os == $os and .image.architecture == $architecture and
+                .image.config.Labels["org.opencontainers.image.source"] == $source and
+                .image.config.Labels["org.opencontainers.image.revision"] == $revision and
+                .image.config.Labels["org.opencontainers.image.version"] == $version
+              ' "$image_dir/${architecture}-image.json" >/dev/null
+            docker buildx imagetools inspect --raw \
+              "${{ steps.artifacts.outputs.image-repository }}@$attestation_digest" \
+              > "$image_dir/${architecture}-attestation.json"
+            jq -e --arg digest "$platform_digest" '
+              .artifactType == "application/vnd.docker.attestation.manifest.v1+json" and
+              .subject.digest == $digest and
+              ([.layers[] |
+                select(.mediaType == "application/vnd.in-toto+json" and
+                       .annotations["in-toto.io/predicate-type"] == "https://spdx.dev/Document")] |
+               length) >= 1 and
+              ([.layers[] |
+                select(.mediaType == "application/vnd.in-toto+json" and
+                       .annotations["in-toto.io/predicate-type"] == "https://slsa.dev/provenance/v1")] |
+               length) == 1
+            ' "$image_dir/${architecture}-attestation.json" >/dev/null
+          done
+
+          docker buildx imagetools inspect "$reference" \
+            --format '{{json .Provenance}}' > "$image_dir/provenance.json"
+          go run ./hack/releaseverify \
+            -provenance "$image_dir/provenance.json" \
+            -provenance-source "$source" \
+            -provenance-revision "$GITHUB_SHA" \
+            -provenance-version "$version"
+      - name: Attest release transaction assets
+        id: asset-attestation
+        if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: |
+            ${{ steps.chart-package.outputs.path }}
+            dist/release-manifest.txt
+            dist/SHA256SUMS
+      - name: Commit final manifest to prepared draft
+        id: finalize-journal
+        if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./hack/releaseverify \
+            -tag "$GITHUB_REF_NAME" \
+            -verify-tag-identity
+          delay=2
+          for attempt in {1..8}; do
+            if gh attestation verify dist/release-manifest.txt \
+              --repo "$GITHUB_REPOSITORY" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+            then
+              break
+            fi
+            if [[ "$attempt" == 8 ]]; then
+              exit 1
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
+          jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
+          jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/prepared-body-before-finalize.txt"
+          cmp dist/release-journal.txt "$RUNNER_TEMP/prepared-body-before-finalize.txt"
+          gh release edit "$GITHUB_REF_NAME" \
+            --draft \
+            --notes-file dist/release-manifest.txt
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
+          jq -e '.assets | length == 0' <<<"$release_json" >/dev/null
+          jq -j '.body | strings' <<<"$release_json" > "$RUNNER_TEMP/finalized-release-body.txt"
+          cmp dist/release-manifest.txt "$RUNNER_TEMP/finalized-release-body.txt"
+      - name: Authenticate exact transaction assets
+        id: asset-auth
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for asset in \
+            '${{ steps.chart-package.outputs.path }}' \
+            dist/release-manifest.txt \
+            dist/SHA256SUMS
+          do
+            delay=2
+            for attempt in {1..8}; do
+              if gh attestation verify "$asset" \
+                --repo "$GITHUB_REPOSITORY" \
+                --source-ref "$GITHUB_REF" \
+                --source-digest "$GITHUB_SHA" \
+                --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+              then
+                break
+              fi
+              if [[ "$attempt" == 8 ]]; then
+                exit 1
+              fi
+              sleep "$delay"
+              delay=$((delay < 30 ? delay * 2 : 30))
+            done
+          done
+      - name: Synchronize draft assets without replacement
+        id: asset-sync
+        if: steps.transaction.outputs.mode != 'published'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_names="$(printf '%s\n' \
+            "$(basename '${{ steps.chart-package.outputs.path }}')" \
+            release-manifest.txt \
+            SHA256SUMS | sort)"
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
+          jq -j '.body' <<<"$release_json" > "$RUNNER_TEMP/release-body.txt"
+          cmp dist/release-manifest.txt "$RUNNER_TEMP/release-body.txt"
+          actual_names="$(jq -r '.assets[].name' <<<"$release_json" | sort)"
+          duplicate_names="$(jq -r '.assets[].name' <<<"$release_json" | sort | uniq -d)"
+          if [[ -n "$duplicate_names" ]]; then
+            echo "draft release has duplicate asset names:" >&2
+            printf '%s\n' "$duplicate_names" >&2
+            exit 1
+          fi
+          unexpected="$(comm -13 <(printf '%s' "$expected_names") <(printf '%s' "$actual_names"))"
+          if [[ -n "$unexpected" ]]; then
+            echo "draft release has unexpected assets:" >&2
+            printf '%s\n' "$unexpected" >&2
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/existing-assets"
+          while IFS= read -r name; do
+            source="dist/$name"
+            if grep -Fxq "$name" <<<"$actual_names"; then
+              asset="$(jq -ce --arg name "$name" '[.assets[] | select(.name == $name)] | if length == 1 then .[0] else error("asset name is not unique") end' <<<"$release_json")"
+              state="$(jq -r '.state' <<<"$asset")"
+              if [[ "$state" == uploaded ]]; then
+                gh release download "$GITHUB_REF_NAME" \
+                  --pattern "$name" \
+                  --dir "$RUNNER_TEMP/existing-assets"
+                cmp "$source" "$RUNNER_TEMP/existing-assets/$name"
+              elif [[ "$state" == starter ]]; then
+                asset_id="$(jq -er '.id | numbers' <<<"$asset")"
+                gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+                gh release upload "$GITHUB_REF_NAME" "$source"
+              else
+                echo "draft asset $name has unsupported state $state" >&2
+                exit 1
+              fi
+            else
+              gh release upload "$GITHUB_REF_NAME" "$source"
+            fi
+          done <<<"$expected_names"
+          release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          actual_names="$(jq -r '.assets[].name' <<<"$release_json" | sort)"
+          [[ "$actual_names" == "$expected_names" ]]
+          jq -e '[.assets[] | select(.state != "uploaded")] | length == 0' <<<"$release_json" >/dev/null
+      - name: Attest final image provenance
+        id: image-attestation
+        if: steps.transaction.outputs.mode != 'published'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ steps.artifacts.outputs.image-repository }}
+          subject-digest: ${{ steps.artifacts.outputs.image-digest }}
+          push-to-registry: true
+      - name: Install Cosign
+        id: setup-cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6
+      - name: Sign exact image digest
+        id: image-signature
+        if: steps.transaction.outputs.mode != 'published'
+        run: cosign sign --yes "${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}"
+      - name: Verify final publication and signatures
+        id: final-verify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+          reference="${{ steps.artifacts.outputs.image-repository }}@${{ steps.artifacts.outputs.image-digest }}"
+          delay=2
+          for attempt in {1..8}; do
+            if cosign verify \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+              "$reference" && \
+              gh attestation verify "oci://$reference" \
+                --repo "$GITHUB_REPOSITORY" \
+                --source-ref "$GITHUB_REF" \
+                --source-digest "$GITHUB_SHA" \
+                --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+            then
+              break
+            fi
+            if [[ "$attempt" == 8 ]]; then
+              exit 1
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          if [[ '${{ steps.transaction.outputs.mode }}' != published ]]; then
+            docker logout ghcr.io
+          fi
+          image_dir="$RUNNER_TEMP/release-image"
+          docker buildx imagetools inspect --raw "$reference" > "$image_dir/final-index.json"
+          final_digest="sha256:$(sha256sum "$image_dir/final-index.json" | awk '{print $1}')"
+          [[ "$final_digest" == '${{ steps.artifacts.outputs.image-digest }}' ]]
+          cmp "$image_dir/index.json" "$image_dir/final-index.json"
+          docker buildx imagetools inspect --raw \
+            '${{ steps.artifacts.outputs.image-tag }}' > "$image_dir/final-tag-index.json"
+          cmp "$image_dir/final-index.json" "$image_dir/final-tag-index.json"
+      - name: Publish completed release transaction
+        id: publish-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./hack/releaseverify \
+            -tag "$GITHUB_REF_NAME" \
+            -verify-tag-identity
+          expected_names="$(printf '%s\n' \
+            "$(basename '${{ steps.chart-package.outputs.path }}')" \
+            release-manifest.txt \
+            SHA256SUMS | sort)"
+          mode='${{ steps.transaction.outputs.mode }}'
+          release_json="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          if [[ "$mode" == published ]]; then
+            [[ "$(jq -r '.draft' <<<"$release_json")" == false ]]
+            [[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]
+          else
+            [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
+          fi
+          jq -j '.body' <<<"$release_json" > "$RUNNER_TEMP/publish-gate-body.txt"
+          cmp dist/release-manifest.txt "$RUNNER_TEMP/publish-gate-body.txt"
+          actual_names="$(jq -r '.assets[].name' <<<"$release_json" | sort)"
+          [[ "$actual_names" == "$expected_names" ]]
+          jq -e '[.assets[] | select(.state != "uploaded")] | length == 0' <<<"$release_json" >/dev/null
+          gate_dir="$RUNNER_TEMP/publish-gate-assets"
+          mkdir -p "$gate_dir"
+          while IFS= read -r name; do
+            gh release download "$GITHUB_REF_NAME" --pattern "$name" --dir "$gate_dir"
+            cmp "dist/$name" "$gate_dir/$name"
+            delay=2
+            for attempt in {1..8}; do
+              if gh attestation verify "$gate_dir/$name" \
+                --repo "$GITHUB_REPOSITORY" \
+                --source-ref "$GITHUB_REF" \
+                --source-digest "$GITHUB_SHA" \
+                --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+              then
+                break
+              fi
+              if [[ "$attempt" == 8 ]]; then
+                exit 1
+              fi
+              sleep "$delay"
+              delay=$((delay < 30 ? delay * 2 : 30))
+            done
+          done <<<"$expected_names"
+          go run ./hack/releaseverify \
+            -tag "$GITHUB_REF_NAME" \
+            -source-sha "$GITHUB_SHA" \
+            -manifest "$gate_dir/release-manifest.txt" \
+            -checksums "$gate_dir/SHA256SUMS" \
+            -chart "$gate_dir/ptah-operator-${{ steps.release.outputs.version }}.tgz"
+          if [[ "$mode" != published ]]; then
+            gh release edit "$GITHUB_REF_NAME" --draft=false --latest=false
+            go run ./hack/releaseverify \
+              -tag "$GITHUB_REF_NAME" \
+              -verify-tag-identity
+          fi
+          release_json="$(gh api \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
+          [[ "$(jq -r '.draft' <<<"$release_json")" == false ]]
+          [[ "$(jq -r '.immutable' <<<"$release_json")" == true ]]
+          jq -j '.body' <<<"$release_json" > "$RUNNER_TEMP/published-body.txt"
+          cmp dist/release-manifest.txt "$RUNNER_TEMP/published-body.txt"
+          actual_names="$(jq -r '.assets[].name' <<<"$release_json" | sort)"
+          [[ "$actual_names" == "$expected_names" ]]
+          verified=false
+          error_file="$RUNNER_TEMP/release-verify-error.txt"
+          delay=2
+          for attempt in {1..8}; do
+            if gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" 2>"$error_file"; then
+              verified=true
+              break
+            fi
+            if [[ "$attempt" == 8 ]]; then
+              break
+            fi
+            sleep "$delay"
+            delay=$((delay < 30 ? delay * 2 : 30))
+          done
+          if [[ "$verified" != true ]]; then
+            cat "$error_file" >&2
+            exit 1
+          fi
+          while IFS= read -r name; do
+            verified=false
+            delay=2
+            for attempt in {1..8}; do
+              if gh release verify-asset "$GITHUB_REF_NAME" "$gate_dir/$name" \
+                --repo "$GITHUB_REPOSITORY" 2>"$error_file"
+              then
+                verified=true
+                break
+              fi
+              if [[ "$attempt" == 8 ]]; then
+                break
+              fi
+              sleep "$delay"
+              delay=$((delay < 30 ? delay * 2 : 30))
+            done
+            if [[ "$verified" != true ]]; then
+              cat "$error_file" >&2
+              exit 1
+            fi
+          done <<<"$expected_names"

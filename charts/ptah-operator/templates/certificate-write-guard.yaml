@@ -1,0 +1,173 @@
+{{- $mutatingName := include "ptah-operator.certificateMutatingWriteGuardPolicyName" . -}}
+{{- $validatingName := include "ptah-operator.certificateValidatingWriteGuardPolicyName" . -}}
+{{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
+{{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
+{{- $certificateUsername := printf "system:serviceaccount:%s:%s" .Release.Namespace (include "ptah-operator.certRotatorServiceAccountName" .) -}}
+{{- $mutatingPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $mutatingName -}}
+{{- $mutatingBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $mutatingName -}}
+{{- $validatingPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $validatingName -}}
+{{- $validatingBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $validatingName -}}
+{{- range $entry := list
+      (dict "kind" "ValidatingAdmissionPolicy" "name" $mutatingName "component" "certificate-mutating-write-guard" "object" $mutatingPolicy)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "name" $mutatingName "component" "certificate-mutating-write-guard" "object" $mutatingBinding)
+      (dict "kind" "ValidatingAdmissionPolicy" "name" $validatingName "component" "certificate-validating-write-guard" "object" $validatingPolicy)
+      (dict "kind" "ValidatingAdmissionPolicyBinding" "name" $validatingName "component" "certificate-validating-write-guard" "object" $validatingBinding) -}}
+{{- with $entry.object -}}
+{{- $annotations := default (dict) .metadata.annotations -}}
+{{- $labels := default (dict) .metadata.labels -}}
+{{- if or
+      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
+      (ne (default "" (index $labels "app.kubernetes.io/component")) $entry.component) -}}
+{{- fail (printf "retained %s %s has foreign or incomplete certificate-write ownership" $entry.kind $entry.name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if not $mutatingPolicy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $mutatingName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-156"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: certificate-mutating-write-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["admissionregistration.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["mutatingwebhookconfigurations"]
+        resourceNames: [{{ $configurationName | quote }}]
+        scope: Cluster
+  matchConditions:
+    - name: exact-certificate-service-account
+      expression: {{ printf `request.userInfo.username == %q` $certificateUsername | quote }}
+  validations:
+    - expression: {{ include "ptah-operator.certificateMetadataValidation" . | quote }}
+      message: "Ptah certificate mutating write guard rejected an unsafe mutation"
+    - expression: {{ include "ptah-operator.certificateWebhookNamesValidation" . | quote }}
+      message: "Ptah certificate mutating write guard rejected an unsafe mutation"
+    - expression: {{ include "ptah-operator.certificateWebhookEntriesValidation" (dict "includeReinvocation" true "serviceNamespace" .Release.Namespace "serviceName" $serviceName) | quote }}
+      message: "Ptah certificate mutating write guard rejected an unsafe mutation"
+---
+{{- end }}
+{{- if not $mutatingBinding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $mutatingName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-155"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: certificate-mutating-write-guard
+spec:
+  policyName: {{ $mutatingName }}
+  matchResources:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["admissionregistration.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["mutatingwebhookconfigurations"]
+        resourceNames: [{{ $configurationName | quote }}]
+        scope: Cluster
+  validationActions: [Deny]
+---
+{{- end }}
+{{- if not $validatingPolicy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $validatingName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-154"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: certificate-validating-write-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["admissionregistration.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["validatingwebhookconfigurations"]
+        resourceNames: [{{ $configurationName | quote }}]
+        scope: Cluster
+  matchConditions:
+    - name: exact-certificate-service-account
+      expression: {{ printf `request.userInfo.username == %q` $certificateUsername | quote }}
+  validations:
+    - expression: {{ include "ptah-operator.certificateMetadataValidation" . | quote }}
+      message: "Ptah certificate validating write guard rejected an unsafe mutation"
+    - expression: {{ include "ptah-operator.certificateWebhookNamesValidation" . | quote }}
+      message: "Ptah certificate validating write guard rejected an unsafe mutation"
+    - expression: {{ include "ptah-operator.certificateWebhookEntriesValidation" (dict "includeReinvocation" false "serviceNamespace" .Release.Namespace "serviceName" $serviceName) | quote }}
+      message: "Ptah certificate validating write guard rejected an unsafe mutation"
+---
+{{- end }}
+{{- if not $validatingBinding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $validatingName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-153"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
+    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: certificate-validating-write-guard
+spec:
+  policyName: {{ $validatingName }}
+  matchResources:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: ["admissionregistration.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["validatingwebhookconfigurations"]
+        resourceNames: [{{ $configurationName | quote }}]
+        scope: Cluster
+  validationActions: [Deny]
+{{- end }}

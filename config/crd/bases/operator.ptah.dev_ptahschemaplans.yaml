@@ -1,0 +1,249 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    operator.ptah.dev/controller-state-version: "1"
+    operator.ptah.dev/crd-schema-version: "1"
+    operator.ptah.dev/crd-schema-digest: "sha256:83ee43f4ae970c262e1abd0d619fa7b6761d52ed70a16f97272cd3893d01cd7a"
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: ptahschemaplans.operator.ptah.dev
+spec:
+  group: operator.ptah.dev
+  names:
+    kind: PtahSchemaPlan
+    listKind: PtahSchemaPlanList
+    plural: ptahschemaplans
+    shortNames:
+    - ptahplan
+    singular: ptahschemaplan
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.schemaRef.name
+      name: Schema
+      type: string
+    - jsonPath: .spec.fingerprint
+      name: Fingerprint
+      type: string
+    - jsonPath: .spec.statementCount
+      name: Statements
+      type: integer
+    - jsonPath: .spec.destructive
+      name: Destructive
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              actualStateFingerprint:
+                type: string
+              artifactDigest:
+                type: string
+              chunks:
+                items:
+                  properties:
+                    digest:
+                      type: string
+                    index:
+                      format: int32
+                      maximum: 15
+                      minimum: 0
+                      type: integer
+                    key:
+                      type: string
+                    name:
+                      type: string
+                    size:
+                      format: int32
+                      maximum: 524288
+                      minimum: 1
+                      type: integer
+                  required:
+                  - digest
+                  - index
+                  - key
+                  - name
+                  - size
+                  type: object
+                maxItems: 16
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - index
+                x-kubernetes-list-type: map
+              contentDigest:
+                type: string
+              contractVersion:
+                format: int32
+                maximum: 3
+                minimum: 1
+                type: integer
+              controllerImage:
+                pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                type: string
+              controllerRevision:
+                maxLength: 128
+                minLength: 1
+                pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                type: string
+              controllerStateVersion:
+                format: int32
+                minimum: 1
+                type: integer
+              coordinationDigest:
+                type: string
+              desiredStateFingerprint:
+                type: string
+              destructive:
+                type: boolean
+              dialect:
+                type: string
+              executionBindingID:
+                pattern: ^v1-[0-9a-f]{32}$
+                type: string
+              executorImage:
+                type: string
+              fingerprint:
+                type: string
+              policyFingerprint:
+                type: string
+              ptahVersion:
+                type: string
+              runnerImage:
+                type: string
+              runnerProtocolVersion:
+                format: int32
+                type: integer
+              schemaRef:
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              size:
+                format: int64
+                maximum: 8388608
+                minimum: 1
+                type: integer
+              statementCount:
+                format: int32
+                type: integer
+              targetIdentityDigest:
+                type: string
+              verificationPolicyDigest:
+                type: string
+              verificationPolicyUID:
+                type: string
+            required:
+            - actualStateFingerprint
+            - artifactDigest
+            - chunks
+            - contentDigest
+            - contractVersion
+            - coordinationDigest
+            - desiredStateFingerprint
+            - destructive
+            - dialect
+            - executorImage
+            - fingerprint
+            - policyFingerprint
+            - ptahVersion
+            - runnerImage
+            - runnerProtocolVersion
+            - schemaRef
+            - size
+            - statementCount
+            - targetIdentityDigest
+            - verificationPolicyDigest
+            - verificationPolicyUID
+            type: object
+            x-kubernetes-validations:
+            - message: a plan is immutable; generate a new plan instead
+              rule: self == oldSelf
+          status:
+            properties:
+              conditions:
+                items:
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    message:
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                format: int64
+                type: integer
+              publishedChunks:
+                items:
+                  properties:
+                    index:
+                      format: int32
+                      maximum: 15
+                      minimum: 0
+                      type: integer
+                    name:
+                      type: string
+                    uid:
+                      type: string
+                  required:
+                  - index
+                  - name
+                  - uid
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - index
+                x-kubernetes-list-type: map
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

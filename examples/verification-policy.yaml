@@ -1,0 +1,6 @@
+version: 1
+artifact_types:
+  - application/vnd.stokaro.ptah.schema.v1
+require_annotations:
+  - org.opencontainers.image.source
+  - org.opencontainers.image.revision

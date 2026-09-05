@@ -1,0 +1,22 @@
+{
+  "revision": "2c516a4b61073fefa694907d9f8623767d9e5542",
+  "dockerfile": "Dockerfile",
+  "chart": "charts/ptah-operator",
+  "crds": [
+    {
+      "name": "ptahschemaapprovals.operator.ptah.dev",
+      "path": "charts/ptah-operator/crds/operator.ptah.dev_ptahschemaapprovals.yaml",
+      "normalizedSpecDigest": "sha256:3c2034e1292b0d074341262c06ed511af7a45835d4da98d9ff2a8003475e296a"
+    },
+    {
+      "name": "ptahschemaplans.operator.ptah.dev",
+      "path": "charts/ptah-operator/crds/operator.ptah.dev_ptahschemaplans.yaml",
+      "normalizedSpecDigest": "sha256:83ee43f4ae970c262e1abd0d619fa7b6761d52ed70a16f97272cd3893d01cd7a"
+    },
+    {
+      "name": "ptahschemas.operator.ptah.dev",
+      "path": "charts/ptah-operator/crds/operator.ptah.dev_ptahschemas.yaml",
+      "normalizedSpecDigest": "sha256:5b71df79920a3599a61be7fe3ecb94153860c8c5c22e8d43b19138ecc7370288"
+    }
+  ]
+}
