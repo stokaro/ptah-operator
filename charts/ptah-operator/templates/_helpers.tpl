@@ -366,6 +366,16 @@ app.kubernetes.io/component: controller
 {{- printf "%s-cert-rotation" $base -}}
 {{- end -}}
 
+{{- define "ptah-operator.certRotationStagingSecretName" -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 43 | trimSuffix "-" -}}
+{{- printf "%s-cert-rotation-stage" $base -}}
+{{- end -}}
+
+{{- define "ptah-operator.certificateTransitionServiceName" -}}
+{{- $base := include "ptah-operator.fullname" . | trunc 43 | trimSuffix "-" -}}
+{{- printf "%s-cert-transition" $base -}}
+{{- end -}}
+
 {{- define "ptah-operator.webhookSecretName" -}}
 {{- $base := include "ptah-operator.fullname" . | trunc 50 | trimSuffix "-" -}}
 {{- default (printf "%s-webhook-cert" $base) .Values.webhook.existingSecret -}}
@@ -434,6 +444,10 @@ app.kubernetes.io/component: controller
 {{- $controllerRuntimeRole := printf "%s-runtime-admission" $controllerName -}}
 {{- $certificateName := include "ptah-operator.certRotatorServiceAccountName" . -}}
 {{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
+{{- $webhookSecretName := include "ptah-operator.webhookSecretName" . -}}
+{{- $webhookServiceName := include "ptah-operator.webhookServiceName" . -}}
+{{- $certificateStagingSecretName := include "ptah-operator.certRotationStagingSecretName" . -}}
+{{- $certificateTransitionServiceName := include "ptah-operator.certificateTransitionServiceName" . -}}
 {{- $hookName := include "ptah-operator.crdManagerServiceAccountName" . -}}
 {{- $bootstrapName := printf "%s-bootstrap" ($hookName | trunc 53 | trimSuffix "-") -}}
 {{- $probeName := printf "%s-probe" ($hookName | trunc 57 | trimSuffix "-") -}}
@@ -492,6 +506,10 @@ app.kubernetes.io/component: controller
 {{- $identities = append $identities (dict "kind" "ClusterRoleBinding" "namespace" "" "name" $certificateName "source" "certificate ClusterRoleBinding") -}}
 {{- $identities = append $identities (dict "kind" "Role" "namespace" $releaseNamespace "name" $certificateName "source" "certificate Role") -}}
 {{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" $releaseNamespace "name" $certificateName "source" "certificate RoleBinding") -}}
+{{- $identities = append $identities (dict "kind" "Secret" "namespace" $releaseNamespace "name" $webhookSecretName "source" "webhook TLS Secret") -}}
+{{- $identities = append $identities (dict "kind" "Secret" "namespace" $releaseNamespace "name" $certificateStagingSecretName "source" "certificate staging Secret") -}}
+{{- $identities = append $identities (dict "kind" "Service" "namespace" $releaseNamespace "name" $webhookServiceName "source" "webhook Service") -}}
+{{- $identities = append $identities (dict "kind" "Service" "namespace" $releaseNamespace "name" $certificateTransitionServiceName "source" "certificate transition Service") -}}
 {{- end -}}
 {{- if .Values.approverClusterRole.create -}}
 {{- $identities = append $identities (dict "kind" "ClusterRole" "namespace" "" "name" (printf "%s-approver" $controllerName) "source" "approver ClusterRole") -}}
@@ -652,7 +670,9 @@ app.kubernetes.io/component: controller
 {{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
 {{- $args := list
       (printf "--namespace=%s" .Release.Namespace)
-      (printf "--secret-name=%s" (include "ptah-operator.webhookSecretName" .)) -}}
+      (printf "--secret-name=%s" (include "ptah-operator.webhookSecretName" .))
+      (printf "--staging-secret-name=%s" (include "ptah-operator.certRotationStagingSecretName" .))
+      (printf "--candidate-service-name=%s" (include "ptah-operator.certificateTransitionServiceName" .)) -}}
 {{- if .Values.certificateRotation.recreateMissingSecret -}}
 {{- $args = append $args "--recreate-missing-secret=true" -}}
 {{- $args = append $args (printf "--secret-create-policy-name=%s" $rotatorName) -}}

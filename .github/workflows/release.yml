@@ -112,8 +112,8 @@ jobs:
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # CI can use 20 minutes for verification, 90 for E2E, and 5 for
-          # the aggregate gate. Five additional minutes cover queue/API delay.
+          # CI can use 40 minutes for its longest pre-E2E job, 90 for E2E, and
+          # 5 for the aggregate gate. Five more cover queue/API delay.
           SUPPORT_POLL_TIMEOUT_MINUTES: "140"
         shell: bash
         run: |

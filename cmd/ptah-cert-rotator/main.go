@@ -45,6 +45,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	var healthBindAddress string
 	flags.StringVar(&config.Namespace, "namespace", "", "namespace containing the generated TLS Secret and Lease")
 	flags.StringVar(&config.SecretName, "secret-name", "", "exact generated TLS Secret name")
+	flags.StringVar(&config.StagingSecretName, "staging-secret-name", "", "exact precreated Secret for durable pending certificate material")
 	flags.BoolVar(&config.RecreateMissingSecret, "recreate-missing-secret", false, "allow guarded recreation of a deleted generated TLS Secret")
 	flags.StringVar(&config.SecretCreatePolicyName, "secret-create-policy-name", "", "exact ValidatingAdmissionPolicy guarding generated TLS Secret recreation")
 	flags.StringVar(&config.SecretCreatePolicyBindingName, "secret-create-policy-binding-name", "", "exact ValidatingAdmissionPolicyBinding guarding generated TLS Secret recreation")
@@ -56,6 +57,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	flags.StringVar(&validatingWebhookNames, "validating-webhook-names", "", "required comma-separated validating webhook anchors for the exact Service")
 	flags.StringVar(&config.ServiceName, "service-name", "", "webhook Service name")
 	flags.StringVar(&config.ServiceNamespace, "service-namespace", "", "webhook Service namespace")
+	flags.StringVar(&config.CandidateServiceName, "candidate-service-name", "", "candidate certificate listener Service name")
 	flags.StringVar(&config.EndpointPortName, "endpoint-port-name", "https", "EndpointSlice port name used for direct Pod probes")
 	flags.StringVar(&config.HolderIdentity, "holder-identity", "", "unique Pod identity used to hold the rotation Lease")
 	flags.DurationVar(&runInterval, "run-interval", 6*time.Hour, "interval between successful certificate reconciliations")
@@ -106,7 +108,8 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create Kubernetes client: %w", err)
 	}
-	rotator, err := certrotation.New(client, config)
+	candidateCertificates := &candidateCertificateStore{}
+	rotator, err := certrotation.New(client, config, candidateCertificates)
 	if err != nil {
 		return fmt.Errorf("validate certificate rotation configuration: %w", err)
 	}

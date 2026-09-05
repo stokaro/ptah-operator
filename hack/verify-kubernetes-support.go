@@ -71,7 +71,7 @@ const (
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
 	ciWorkflowSHA256                = "a30ca2c550af04a0b4a6abf8a6cec7ea226121a4af6417da10403cb1a973a9c3"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
-	releaseWorkflowSHA256           = "b13abe6e881cb04d69e4697d81d1b78a56ed5e425d5d89530596107527eae619"
+	releaseWorkflowSHA256           = "fb27f9d93cb0bee270e8724386b3141dd4b374664860fa7b63992f25448dcef8"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
 	releaseChartExportRunSHA256     = "a34800805204a2caa071d03939f9337f3472028ecb8b9c11ed26723294eb8082"
@@ -2988,6 +2988,19 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`emit_predecessor_apply_diagnostic`,
 					`fail "predecessor Apply entered a terminal failure before its running Pod was observed"`,
 					`fi`,
+				}),
+				exactSourceLine("certificate Secret identity capture implementation", `capture_certificate_secret_names() {`),
+				exactSourceLineSequence("unlabeled certificate Secrets exact uninstall absence", []string{
+					`remaining=$(kube -n "$E2E_OPERATOR_NAMESPACE" get \`,
+					`"secret/$CERTIFICATE_SECRET_NAME" --ignore-not-found=true -o name)`,
+					`[ -z "$remaining" ] ||`,
+					`fail "unlabeled generated certificate Secret/$CERTIFICATE_SECRET_NAME survived uninstall"`,
+					`remaining=$(kube -n "$E2E_OPERATOR_NAMESPACE" get \`,
+					`"secret/$CERTIFICATE_STAGING_SECRET_NAME" --ignore-not-found=true -o name)`,
+					`[ -z "$remaining" ] ||`,
+					`fail "unlabeled certificate staging Secret/$CERTIFICATE_STAGING_SECRET_NAME survived uninstall"`,
+					`CERTIFICATE_SECRET_NAME=`,
+					`CERTIFICATE_STAGING_SECRET_NAME=`,
 				}),
 				exactSourceLineSequence("bounded runtime Deployment deletion", []string{
 					`kube -n "$E2E_OPERATOR_NAMESPACE" delete deployment \`,

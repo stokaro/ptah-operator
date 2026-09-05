@@ -44,6 +44,7 @@ const (
 type Config struct {
 	Namespace                      string
 	SecretName                     string
+	StagingSecretName              string
 	LeaseName                      string
 	MutatingWebhookConfiguration   string
 	MutatingWebhookNames           []string
@@ -51,6 +52,7 @@ type Config struct {
 	ValidatingWebhookNames         []string
 	ServiceName                    string
 	ServiceNamespace               string
+	CandidateServiceName           string
 	EndpointPortName               string
 	HolderIdentity                 string
 	SecretCreatePolicyName         string
@@ -70,17 +72,21 @@ type Config struct {
 // Rotator serializes and performs one fail-closed reconciliation of the
 // chart-managed webhook certificate and trust bundles.
 type Rotator struct {
-	client kubernetes.Interface
-	config Config
-	now    func() time.Time
-	random io.Reader
-	probe  certificateProber
+	client        kubernetes.Interface
+	config        Config
+	now           func() time.Time
+	random        io.Reader
+	probe         certificateProber
+	candidateSink CandidateCertificateSink
 }
 
 // New returns a Rotator after validating all names and lifecycle durations.
-func New(client kubernetes.Interface, config Config) (*Rotator, error) {
+func New(client kubernetes.Interface, config Config, candidateSink CandidateCertificateSink) (*Rotator, error) {
 	if client == nil {
 		return nil, errors.New("Kubernetes client is required")
+	}
+	if candidateSink == nil {
+		return nil, errors.New("candidate certificate sink is required")
 	}
 	if config.AcquireTimeout == 0 {
 		config.AcquireTimeout = defaultAcquireTimeout
@@ -89,11 +95,12 @@ func New(client kubernetes.Interface, config Config) (*Rotator, error) {
 		return nil, err
 	}
 	return &Rotator{
-		client: client,
-		config: config,
-		now:    time.Now,
-		random: rand.Reader,
-		probe:  tlsCertificateProber{},
+		client:        client,
+		config:        config,
+		now:           time.Now,
+		random:        rand.Reader,
+		probe:         tlsCertificateProber{},
+		candidateSink: candidateSink,
 	}, nil
 }
 
@@ -129,15 +136,68 @@ func (r *Rotator) Run(ctx context.Context) (runErr error) {
 }
 
 func (r *Rotator) reconcile(ctx context.Context) error {
+	staging, pending, err := r.readStagingSecret(ctx)
+	if err != nil {
+		return err
+	}
 	secret, err := r.client.CoreV1().Secrets(r.config.Namespace).Get(ctx, r.config.SecretName, metav1.GetOptions{})
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			if !r.config.RecreateMissingSecret {
-				return fmt.Errorf("generated TLS Secret %q is missing and recreation is disabled", r.config.SecretName)
-			}
-			return r.recreateMissingSecret(ctx)
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("get generated TLS Secret %q: %w", r.config.SecretName, err)
 		}
-		return fmt.Errorf("get generated TLS Secret %q: %w", r.config.SecretName, err)
+		secret = nil
+	}
+	if secret != nil {
+		if err := validatePrimarySecretSource(secret, r.config); err != nil {
+			r.candidateSink.ClearCandidateCertificate()
+			return fmt.Errorf("generated TLS Secret %q source contract: %w", r.config.SecretName, err)
+		}
+	}
+
+	if pending != nil {
+		relationship := relatePendingCandidate(secret, pending, r.config)
+		if relationship == pendingUnrelated {
+			if pending.sourceState == stagingSourceMissing && exactGeneratedSecretShape(secret, r.config) {
+				if err := r.loadPendingCandidate(pending); err != nil {
+					return err
+				}
+				return r.recoverMissingSecretCreateRace(ctx, staging, secret)
+			}
+			r.candidateSink.ClearCandidateCertificate()
+			return errors.New("durable pending CA transition is unrelated to the current generated TLS Secret")
+		}
+		if err := r.loadPendingCandidate(pending); err != nil {
+			return err
+		}
+		if relationship == pendingAfterPrimaryWrite {
+			return r.finishPendingCARotation(ctx, staging, pending)
+		}
+		if pending.sourceState == stagingSourceMissing {
+			if !r.config.RecreateMissingSecret {
+				return errors.New("durable missing-Secret transition cannot continue because recreation is disabled")
+			}
+			return r.resumeMissingSecret(ctx, staging, pending)
+		}
+		state, err := inspectSecret(secret, r.config, r.now())
+		if err != nil {
+			return fmt.Errorf("inspect source TLS Secret for durable CA transition: %w", err)
+		}
+		mutatingBundles, err := r.readMutatingBundles(ctx)
+		if err != nil {
+			return err
+		}
+		validatingBundles, err := r.readValidatingBundles(ctx)
+		if err != nil {
+			return err
+		}
+		return r.rotateStagedCA(ctx, staging, secret, state, mutatingBundles, validatingBundles, pending)
+	}
+
+	if secret == nil {
+		if !r.config.RecreateMissingSecret {
+			return fmt.Errorf("generated TLS Secret %q is missing and recreation is disabled", r.config.SecretName)
+		}
+		return r.recreateMissingSecret(ctx, staging)
 	}
 	state, err := inspectSecret(secret, r.config, r.now())
 	if err != nil {
@@ -155,7 +215,7 @@ func (r *Rotator) reconcile(ctx context.Context) error {
 
 	switch {
 	case state.rotateCA:
-		return r.rotateCA(ctx, secret, state, mutatingBundles, validatingBundles)
+		return r.rotateCA(ctx, staging, secret, state, mutatingBundles, validatingBundles)
 	case state.rotateServing:
 		return r.rotateServingCertificate(ctx, secret, state)
 	default:
@@ -170,10 +230,27 @@ func (r *Rotator) reconcile(ctx context.Context) error {
 
 func (r *Rotator) rotateCA(
 	ctx context.Context,
+	staging *corev1.Secret,
 	secret *corev1.Secret,
 	state secretState,
 	mutatingBundles observedCABundles,
 	validatingBundles observedCABundles,
+) error {
+	staging, pending, err := r.stageCandidate(ctx, staging, secret)
+	if err != nil {
+		return err
+	}
+	return r.rotateStagedCA(ctx, staging, secret, state, mutatingBundles, validatingBundles, pending)
+}
+
+func (r *Rotator) rotateStagedCA(
+	ctx context.Context,
+	staging *corev1.Secret,
+	secret *corev1.Secret,
+	state secretState,
+	mutatingBundles observedCABundles,
+	validatingBundles observedCABundles,
+	pending *pendingCandidate,
 ) error {
 	trustedCurrentCA := []byte(nil)
 	if state.currentServingChainAuthentic {
@@ -196,30 +273,20 @@ func (r *Rotator) rotateCA(
 		}
 	}
 
-	next, err := generateMaterial(r.random, r.now(), r.config)
-	if err != nil {
-		return fmt.Errorf("generate replacement CA and serving certificate: %w", err)
-	}
-	additions := [][]byte{next.caPEM}
+	additions := [][]byte{pending.material.caPEM}
 	if len(trustedCurrentCA) != 0 {
 		additions = append([][]byte{trustedCurrentCA}, additions...)
 	}
 	if err := r.publishPerEntryTransition(ctx, additions...); err != nil {
 		return fmt.Errorf("publish entry-local overlapping CA trust: %w", err)
 	}
-	if err := r.updateSecret(ctx, secret, next); err != nil {
+	if err := r.updateSecret(ctx, secret, pending.material); err != nil {
 		return err
 	}
-	if err := r.probeCurrentCertificate(ctx, next); err != nil {
-		return err
-	}
-	if err := r.setBothBundles(ctx, next.caPEM); err != nil {
-		return fmt.Errorf("contract CA trust after serving-certificate proof: %w", err)
-	}
-	return nil
+	return r.finishPendingCARotation(ctx, staging, pending)
 }
 
-func (r *Rotator) recreateMissingSecret(ctx context.Context) error {
+func (r *Rotator) recreateMissingSecret(ctx context.Context, staging *corev1.Secret) error {
 	// Validate every named webhook before creating new material. A missing or
 	// retargeted entry must never be papered over by Secret recovery.
 	if _, err := r.readMutatingBundles(ctx); err != nil {
@@ -228,28 +295,115 @@ func (r *Rotator) recreateMissingSecret(ctx context.Context) error {
 	if _, err := r.readValidatingBundles(ctx); err != nil {
 		return err
 	}
-	next, err := generateMaterial(r.random, r.now(), r.config)
+	staging, pending, err := r.stageCandidate(ctx, staging, nil)
 	if err != nil {
-		return fmt.Errorf("generate replacement material for missing TLS Secret: %w", err)
+		return err
 	}
-	desired := generatedSecret(r.config, next)
+	return r.resumeMissingSecret(ctx, staging, pending)
+}
+
+func (r *Rotator) resumeMissingSecret(
+	ctx context.Context,
+	staging *corev1.Secret,
+	pending *pendingCandidate,
+) error {
+	// Revalidate every named webhook and the broad-CREATE guard on every
+	// resumed attempt. Neither a durable candidate nor an earlier successful
+	// dry run makes a later foreign admission configuration acceptable.
+	if _, err := r.readMutatingBundles(ctx); err != nil {
+		return err
+	}
+	if _, err := r.readValidatingBundles(ctx); err != nil {
+		return err
+	}
+	desired := generatedSecret(r.config, pending.material)
 	if err := r.ensureSecretCreateGuard(ctx, desired); err != nil {
 		return err
 	}
-	if err := r.publishPerEntryTransition(ctx, next.caPEM); err != nil {
+	if err := r.publishPerEntryTransition(ctx, pending.material.caPEM); err != nil {
 		return fmt.Errorf("publish replacement trust before recreating TLS Secret: %w", err)
 	}
-	if err := r.createSecret(ctx, desired, next); err != nil {
+	if err := r.createSecret(ctx, desired, pending.material); err != nil {
 		return err
 	}
-	if err := r.probeCurrentCertificate(ctx, next); err != nil {
+	return r.finishPendingCARotation(ctx, staging, pending)
+}
+
+func (r *Rotator) recoverMissingSecretCreateRace(
+	ctx context.Context,
+	staging *corev1.Secret,
+	primary *corev1.Secret,
+) error {
+	state, err := inspectSecret(primary, r.config, r.now())
+	if err != nil {
+		return fmt.Errorf("inspect racing generated TLS Secret: %w", err)
+	}
+	if state.rotateCA || state.rotateServing || state.normalizeSecret {
+		return errors.New("racing generated TLS Secret is not an exact current certificate authority state")
+	}
+	mutatingBundles, err := r.readMutatingBundles(ctx)
+	if err != nil {
 		return err
 	}
-	if err := r.setBothBundles(ctx, next.caPEM); err != nil {
-		return fmt.Errorf("contract CA trust after recreated Secret proof: %w", err)
+	validatingBundles, err := r.readValidatingBundles(ctx)
+	if err != nil {
+		return err
+	}
+	if err := r.repairTrustBundles(ctx, state.current, mutatingBundles, validatingBundles); err != nil {
+		return fmt.Errorf("prove racing generated TLS Secret before abandoning pending recovery material: %w", err)
+	}
+	if err := r.clearPendingCandidate(ctx, staging); err != nil {
+		return fmt.Errorf("retire abandoned missing-Secret recovery material: %w", err)
 	}
 	return nil
 }
+
+func (r *Rotator) finishPendingCARotation(
+	ctx context.Context,
+	staging *corev1.Secret,
+	pending *pendingCandidate,
+) error {
+	// A crash may happen after either webhook configuration or the primary
+	// Secret changes. Re-establish overlap from each entry's own trust before
+	// proving and contracting so every restart follows the same safe suffix.
+	if err := r.publishPerEntryTransition(ctx, pending.material.caPEM); err != nil {
+		return fmt.Errorf("restore pending CA transition trust: %w", err)
+	}
+	if err := r.probeCurrentCertificate(ctx, pending.material); err != nil {
+		return err
+	}
+	if err := r.setBothBundles(ctx, pending.material.caPEM); err != nil {
+		return fmt.Errorf("contract CA trust after pending serving-certificate proof: %w", err)
+	}
+	if err := r.clearPendingCandidate(ctx, staging); err != nil {
+		return fmt.Errorf("retire completed pending CA transition: %w", err)
+	}
+	needsRenewal, err := pendingMaterialNeedsCurrentPolicyRenewal(pending.material, r.config, r.now())
+	if err != nil {
+		return fmt.Errorf("reevaluate completed pending CA transition: %w", err)
+	}
+	if needsRenewal {
+		// Durable material is decoded against absolute safety limits so a policy
+		// change cannot strand a transition after the primary write. Complete
+		// that transition first, then fail this attempt to request an immediate
+		// reconciliation under the current policy.
+		return errors.New("completed pending CA transition requires immediate renewal under the current certificate policy")
+	}
+	return nil
+}
+
+func pendingMaterialNeedsCurrentPolicyRenewal(
+	material certificateMaterial,
+	config Config,
+	now time.Time,
+) (bool, error) {
+	state, err := inspectSecret(generatedSecret(config, material), config, now)
+	if err != nil {
+		return false, err
+	}
+	return state.rotateCA || state.rotateServing, nil
+}
+
 func (r *Rotator) rotateServingCertificate(
 	ctx context.Context,
 	secret *corev1.Secret,
@@ -314,13 +468,17 @@ func (r *Rotator) updateSecret(ctx context.Context, previous *corev1.Secret, nex
 	updated.Data[CACertificateKey] = append([]byte(nil), next.caPEM...)
 	updated.Data[CAPrivateKeyKey] = append([]byte(nil), next.caKeyPEM...)
 
-	if _, err := r.client.CoreV1().Secrets(r.config.Namespace).Update(ctx, updated, metav1.UpdateOptions{}); err == nil {
-		return nil
+	if observed, err := r.client.CoreV1().Secrets(r.config.Namespace).Update(ctx, updated, metav1.UpdateOptions{}); err == nil {
+		if observed.UID == previous.UID && exactGeneratedSecret(observed, r.config, next) {
+			return nil
+		}
+		return errors.New("atomically update generated TLS Secret: update response differs from the exact post-write contract")
 	} else {
 		// An API timeout may hide a successful write. Read back the exact four
-		// fields before classifying the transition as interrupted.
+		// fields and object identity before classifying the transition as
+		// interrupted.
 		observed, getErr := r.client.CoreV1().Secrets(r.config.Namespace).Get(ctx, r.config.SecretName, metav1.GetOptions{})
-		if getErr == nil && observed.Type == corev1.SecretTypeTLS && secretContainsMaterial(observed, next) {
+		if getErr == nil && observed.UID == previous.UID && exactGeneratedSecret(observed, r.config, next) {
 			return nil
 		}
 		if getErr != nil {
@@ -600,9 +758,18 @@ func generatedSecret(config Config, material certificateMaterial) *corev1.Secret
 }
 
 func exactGeneratedSecret(secret *corev1.Secret, config Config, material certificateMaterial) bool {
+	return exactGeneratedSecretShape(secret, config) &&
+		secretContainsMaterial(secret, material)
+}
+
+func exactGeneratedSecretShape(secret *corev1.Secret, config Config) bool {
 	return secret != nil &&
 		secret.Name == config.SecretName &&
 		secret.Namespace == config.Namespace &&
+		secret.GenerateName == "" &&
+		secret.UID != "" &&
+		secret.ResourceVersion != "" &&
+		secret.DeletionTimestamp == nil &&
 		secret.Type == corev1.SecretTypeTLS &&
 		maps.Equal(secret.Labels, map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue}) &&
 		len(secret.Annotations) == 0 &&
@@ -610,8 +777,7 @@ func exactGeneratedSecret(secret *corev1.Secret, config Config, material certifi
 		len(secret.Finalizers) == 0 &&
 		secret.Immutable == nil &&
 		len(secret.StringData) == 0 &&
-		len(secret.Data) == 4 &&
-		secretContainsMaterial(secret, material)
+		len(secret.Data) == 4
 }
 
 func (r *Rotator) probeCurrentCertificate(ctx context.Context, material certificateMaterial) error {
@@ -896,6 +1062,7 @@ func (r *Rotator) setValidatingBundle(ctx context.Context, bundle []byte) error 
 func validateConfig(config Config) error {
 	for label, value := range map[string]string{
 		"Secret name":                         config.SecretName,
+		"staging Secret name":                 config.StagingSecretName,
 		"Lease name":                          config.LeaseName,
 		"MutatingWebhookConfiguration name":   config.MutatingWebhookConfiguration,
 		"ValidatingWebhookConfiguration name": config.ValidatingWebhookConfiguration,
@@ -905,13 +1072,20 @@ func validateConfig(config Config) error {
 		}
 	}
 	for label, value := range map[string]string{
-		"namespace":         config.Namespace,
-		"service name":      config.ServiceName,
-		"service namespace": config.ServiceNamespace,
+		"namespace":              config.Namespace,
+		"service name":           config.ServiceName,
+		"service namespace":      config.ServiceNamespace,
+		"candidate service name": config.CandidateServiceName,
 	} {
 		if problems := validation.IsDNS1123Label(value); len(problems) != 0 {
 			return fmt.Errorf("%s is invalid: %s", label, problems[0])
 		}
+	}
+	if config.StagingSecretName == config.SecretName {
+		return errors.New("staging Secret name must differ from the generated TLS Secret name")
+	}
+	if config.CandidateServiceName == config.ServiceName && config.Namespace == config.ServiceNamespace {
+		return errors.New("candidate Service must differ from the primary webhook Service")
 	}
 	if config.RecreateMissingSecret {
 		for label, value := range map[string]string{

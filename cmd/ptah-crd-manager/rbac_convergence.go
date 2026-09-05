@@ -2,81 +2,34 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
-	"net"
-	"net/http"
-	"net/url"
-	"sort"
 	"strings"
 	"time"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
-	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	authorizationclientv1 "k8s.io/client-go/kubernetes/typed/authorization/v1"
 	"k8s.io/client-go/rest"
 
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
+	"github.com/stokaro/ptah-operator/internal/kubeapi"
 )
 
 const (
-	kubernetesServiceNamespace                  = metav1.NamespaceDefault
-	kubernetesServiceName                       = "kubernetes"
-	kubernetesServiceTLSPortName                = "https"
-	kubernetesServiceTLSServerName              = "kubernetes.default.svc"
-	kubernetesAPIEndpointSlicePageSize  int64   = 200
-	authorizationPollEvery                      = 250 * time.Millisecond
-	authorizationStabilityDuration              = 5 * time.Second
-	authorizationRequestTimeout                 = 5 * time.Second
-	directKubernetesAPIQueriesPerSecond float32 = 100
+	kubernetesServiceNamespace     = metav1.NamespaceDefault
+	kubernetesServiceTLSServerName = "kubernetes.default.svc"
+	authorizationPollEvery         = 250 * time.Millisecond
+	authorizationStabilityDuration = 5 * time.Second
+	authorizationRequestTimeout    = 5 * time.Second
 )
 
-type endpointSliceLister interface {
-	List(context.Context, metav1.ListOptions) (*discoveryv1.EndpointSliceList, error)
-}
+type endpointSliceLister = kubeapi.EndpointSliceLister
+type kubernetesAPIServerEndpoint = kubeapi.Endpoint
+type kubernetesAPIServerEndpointSnapshot = kubeapi.Snapshot
+type kubernetesAPIServerEndpointProvider = kubeapi.Provider
 
 type authorizationReviewClientFactory func(*rest.Config) (crdupgrade.AuthorizationReviewClient, error)
-
-// kubernetesAPIServerEndpoint is one directly addressable API server from a
-// complete EndpointSlice inventory snapshot. RESTConfig retains the
-// in-cluster credential and CA while pinning transport to Address and TLS SNI
-// to the Kubernetes Service DNS name.
-type kubernetesAPIServerEndpoint struct {
-	Address    string
-	RESTConfig *rest.Config
-}
-
-// kubernetesAPIServerEndpointSnapshot is a complete, internally consistent
-// view of the API endpoints advertised by the default Kubernetes Service.
-// InventoryIdentity fingerprints each selected EndpointSlice
-// name/UID/resourceVersion and the canonical advertised address set. The LIST
-// collection resourceVersion is retained separately for coherent pagination
-// and diagnostics: unrelated EndpointSlice churn may advance it and must not
-// starve a stability window. Consumers restart their window when the selected
-// inventory identity changes.
-type kubernetesAPIServerEndpointSnapshot struct {
-	InventoryResourceVersion string
-	InventoryIdentity        string
-	Endpoints                []kubernetesAPIServerEndpoint
-}
-
-type kubernetesAPIServerEndpointProvider func(context.Context) (kubernetesAPIServerEndpointSnapshot, error)
-
-type kubernetesAPIServerTopology struct {
-	InventoryResourceVersion string
-	InventoryIdentity        string
-	Addresses                []string
-}
-
-type kubernetesAPIServerSliceIdentity struct {
-	Name            string `json:"name"`
-	UID             string `json:"uid"`
-	ResourceVersion string `json:"resourceVersion"`
-}
 
 // newTeardownRBACConvergenceBarrier discovers every ready address advertised
 // by the in-cluster Kubernetes Service and creates one directly addressed
@@ -187,7 +140,7 @@ func validateAuthorizationConvergenceInputs(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := validateKubernetesAPIServerEndpointInputs(config, endpointSlices); err != nil {
+	if _, err := kubeapi.NewDefaultServiceProvider(config, endpointSlices, 1); err != nil {
 		return err
 	}
 	if clientFactory == nil {
@@ -217,11 +170,10 @@ func newAuthorizationConvergenceBarrier(
 	if err != nil {
 		return nil, err
 	}
-	initialSnapshot, err := waitForInitialKubernetesAPIServerEndpointSnapshot(
+	initialSnapshot, err := kubeapi.WaitForInitialSnapshot(
 		ctx,
 		apiEndpointProvider,
 		authorizationPollEvery,
-		sleepForKubernetesAPIServerEndpointDiscovery,
 	)
 	if err != nil {
 		return nil, err
@@ -261,120 +213,12 @@ func newAuthorizationConvergenceBarrier(
 	return barrier, nil
 }
 
-func waitForInitialKubernetesAPIServerEndpointSnapshot(
-	ctx context.Context,
-	provider kubernetesAPIServerEndpointProvider,
-	pollEvery time.Duration,
-	sleep func(context.Context, time.Duration) error,
-) (kubernetesAPIServerEndpointSnapshot, error) {
-	if ctx == nil {
-		return kubernetesAPIServerEndpointSnapshot{}, fmt.Errorf("Kubernetes API endpoint discovery context is nil")
-	}
-	if provider == nil || pollEvery <= 0 || sleep == nil {
-		return kubernetesAPIServerEndpointSnapshot{}, fmt.Errorf("Kubernetes API endpoint discovery retry configuration is invalid")
-	}
-	// The raw provider contains only dynamic EndpointSlice discovery and direct
-	// REST-config derivation. Retry every fail-closed observation so a temporary
-	// empty, non-ready, or malformed inventory cannot abort a safe transition.
-	// Authorization client construction happens after this loop and remains
-	// immediately fatal.
-	for {
-		snapshot, err := provider(ctx)
-		if contextErr := ctx.Err(); contextErr != nil {
-			return kubernetesAPIServerEndpointSnapshot{}, contextErr
-		}
-		if err == nil {
-			return snapshot, nil
-		}
-		if sleepErr := sleep(ctx, pollEvery); sleepErr != nil {
-			if contextErr := ctx.Err(); contextErr != nil {
-				return kubernetesAPIServerEndpointSnapshot{}, contextErr
-			}
-			return kubernetesAPIServerEndpointSnapshot{}, fmt.Errorf(
-				"Kubernetes API endpoint discovery did not recover; last observation: %v: %w",
-				err,
-				sleepErr,
-			)
-		}
-	}
-}
-
-func sleepForKubernetesAPIServerEndpointDiscovery(ctx context.Context, duration time.Duration) error {
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
-func validateKubernetesAPIServerEndpointInputs(config *rest.Config, endpointSlices endpointSliceLister) error {
-	if config == nil {
-		return fmt.Errorf("in-cluster REST configuration is required for direct Kubernetes API endpoints")
-	}
-	if config.Insecure {
-		return fmt.Errorf("in-cluster REST configuration must verify API server TLS certificates")
-	}
-	if config.CAFile == "" && len(config.CAData) == 0 {
-		return fmt.Errorf("in-cluster REST configuration has no API server CA")
-	}
-	if endpointSlices == nil {
-		return fmt.Errorf("EndpointSlice client is required for direct Kubernetes API endpoints")
-	}
-	return nil
-}
-
 func newKubernetesAPIServerEndpointProvider(
 	config *rest.Config,
 	endpointSlices endpointSliceLister,
 	burst int,
 ) (kubernetesAPIServerEndpointProvider, error) {
-	if err := validateKubernetesAPIServerEndpointInputs(config, endpointSlices); err != nil {
-		return nil, err
-	}
-	if burst <= 0 {
-		return nil, fmt.Errorf("direct Kubernetes API endpoint burst must be positive")
-	}
-	baseConfig := rest.CopyConfig(config)
-
-	return func(ctx context.Context) (kubernetesAPIServerEndpointSnapshot, error) {
-		if ctx == nil {
-			return kubernetesAPIServerEndpointSnapshot{}, fmt.Errorf("Kubernetes API endpoint discovery context is nil")
-		}
-		if err := ctx.Err(); err != nil {
-			return kubernetesAPIServerEndpointSnapshot{}, err
-		}
-		topology, err := discoverKubernetesAPIServerTopology(ctx, endpointSlices)
-		if err != nil {
-			return kubernetesAPIServerEndpointSnapshot{}, err
-		}
-		endpoints := make([]kubernetesAPIServerEndpoint, 0, len(topology.Addresses))
-		for _, address := range topology.Addresses {
-			endpointConfig := rest.CopyConfig(baseConfig)
-			endpointConfig.Host = "https://" + address
-			endpointConfig.ServerName = kubernetesServiceTLSServerName
-			// A process-level HTTPS proxy would collapse independently addressed
-			// requests back onto shared infrastructure. Advertised addresses are
-			// reached directly from the in-cluster hook Pod.
-			endpointConfig.Proxy = directEndpointProxy
-			// One convergence sweep is a bounded burst. Other direct API consumers
-			// supply their own operation bound when constructing this provider.
-			endpointConfig.RateLimiter = nil
-			endpointConfig.QPS = directKubernetesAPIQueriesPerSecond
-			endpointConfig.Burst = burst
-			endpoints = append(endpoints, kubernetesAPIServerEndpoint{
-				Address:    address,
-				RESTConfig: endpointConfig,
-			})
-		}
-		return kubernetesAPIServerEndpointSnapshot{
-			InventoryResourceVersion: topology.InventoryResourceVersion,
-			InventoryIdentity:        topology.InventoryIdentity,
-			Endpoints:                endpoints,
-		}, nil
-	}, nil
+	return kubeapi.NewDefaultServiceProvider(config, endpointSlices, burst)
 }
 
 func newAuthorizationEndpointProvider(
@@ -459,228 +303,6 @@ func (c *directAuthorizationReviewClient) CreateSelfSubjectAccessReview(
 	options metav1.CreateOptions,
 ) (*authorizationv1.SelfSubjectAccessReview, error) {
 	return c.client.SelfSubjectAccessReviews().Create(ctx, review, options)
-}
-
-func directEndpointProxy(*http.Request) (*url.URL, error) {
-	return nil, nil
-}
-
-func discoverKubernetesAPIServerAddresses(ctx context.Context, endpointSlices endpointSliceLister) ([]string, error) {
-	topology, err := discoverKubernetesAPIServerTopology(ctx, endpointSlices)
-	if err != nil {
-		return nil, err
-	}
-	return append([]string(nil), topology.Addresses...), nil
-}
-
-func discoverKubernetesAPIServerTopology(ctx context.Context, endpointSlices endpointSliceLister) (*kubernetesAPIServerTopology, error) {
-	const selector = discoveryv1.LabelServiceName + "=" + kubernetesServiceName
-
-	seenTokens := map[string]struct{}{"": {}}
-	seenSlices := make(map[string]struct{})
-	seenSliceUIDs := make(map[string]string)
-	seenAddresses := make(map[string]struct{})
-	var addresses []string
-	var sliceIdentities []kubernetesAPIServerSliceIdentity
-	continueToken := ""
-	resourceVersion := ""
-	firstPage := true
-
-	for {
-		page, err := endpointSlices.List(ctx, metav1.ListOptions{
-			LabelSelector: selector,
-			Limit:         kubernetesAPIEndpointSlicePageSize,
-			Continue:      continueToken,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("list default Kubernetes Service EndpointSlices: %w", err)
-		}
-		if page == nil {
-			return nil, fmt.Errorf("list default Kubernetes Service EndpointSlices returned a nil page")
-		}
-		if page.ResourceVersion == "" {
-			return nil, fmt.Errorf("default Kubernetes Service EndpointSlice inventory returned an empty resourceVersion")
-		}
-		if page.RemainingItemCount != nil && *page.RemainingItemCount < 0 {
-			return nil, fmt.Errorf("default Kubernetes Service EndpointSlice inventory returned a negative remaining item count")
-		}
-		if firstPage {
-			resourceVersion = page.ResourceVersion
-			firstPage = false
-		} else if page.ResourceVersion != resourceVersion {
-			return nil, fmt.Errorf(
-				"default Kubernetes Service EndpointSlice inventory changed resourceVersion across pages: %q then %q",
-				resourceVersion,
-				page.ResourceVersion,
-			)
-		}
-
-		for index := range page.Items {
-			slice := &page.Items[index]
-			if slice.Namespace != kubernetesServiceNamespace {
-				return nil, fmt.Errorf("EndpointSlice %q has namespace %q, want %q", slice.Name, slice.Namespace, kubernetesServiceNamespace)
-			}
-			if strings.TrimSpace(slice.Name) == "" || slice.Name != strings.TrimSpace(slice.Name) {
-				return nil, fmt.Errorf("default Kubernetes Service EndpointSlice has an empty or padded name")
-			}
-			if slice.UID == "" {
-				return nil, fmt.Errorf("default Kubernetes Service EndpointSlice %q has an empty UID", slice.Name)
-			}
-			if strings.TrimSpace(slice.ResourceVersion) == "" || slice.ResourceVersion != strings.TrimSpace(slice.ResourceVersion) {
-				return nil, fmt.Errorf("default Kubernetes Service EndpointSlice %q has an empty or padded resourceVersion", slice.Name)
-			}
-			if previous, duplicate := seenSliceUIDs[string(slice.UID)]; duplicate {
-				return nil, fmt.Errorf(
-					"default Kubernetes Service EndpointSlices %q and %q share UID %q",
-					previous,
-					slice.Name,
-					slice.UID,
-				)
-			}
-			seenSliceUIDs[string(slice.UID)] = slice.Name
-			if slice.Labels[discoveryv1.LabelServiceName] != kubernetesServiceName {
-				return nil, fmt.Errorf("EndpointSlice %q is not owned by the default Kubernetes Service", slice.Name)
-			}
-			if _, duplicate := seenSlices[slice.Name]; duplicate {
-				return nil, fmt.Errorf("default Kubernetes Service EndpointSlice %q appeared more than once", slice.Name)
-			}
-			seenSlices[slice.Name] = struct{}{}
-			sliceIdentities = append(sliceIdentities, kubernetesAPIServerSliceIdentity{
-				Name:            slice.Name,
-				UID:             string(slice.UID),
-				ResourceVersion: slice.ResourceVersion,
-			})
-
-			port, portErr := endpointSliceHTTPSPort(slice)
-			if portErr != nil {
-				return nil, portErr
-			}
-			for endpointIndex := range slice.Endpoints {
-				endpoint := &slice.Endpoints[endpointIndex]
-				if endpointTerminating(endpoint) {
-					continue
-				}
-				canonicalAddresses, addressErr := endpointIPAddresses(slice, endpoint, endpointIndex)
-				if addressErr != nil {
-					return nil, addressErr
-				}
-				if endpoint.Conditions.Ready != nil && !*endpoint.Conditions.Ready {
-					return nil, fmt.Errorf("EndpointSlice %q endpoint %d is non-terminating but not ready", slice.Name, endpointIndex)
-				}
-				if endpoint.Conditions.Serving != nil && !*endpoint.Conditions.Serving {
-					return nil, fmt.Errorf("EndpointSlice %q endpoint %d is non-terminating but not serving", slice.Name, endpointIndex)
-				}
-				for _, address := range canonicalAddresses {
-					hostPort := net.JoinHostPort(address, fmt.Sprintf("%d", port))
-					if _, duplicate := seenAddresses[hostPort]; duplicate {
-						continue
-					}
-					seenAddresses[hostPort] = struct{}{}
-					addresses = append(addresses, hostPort)
-				}
-			}
-		}
-
-		next := page.Continue
-		if next == "" {
-			break
-		}
-		if _, duplicate := seenTokens[next]; duplicate {
-			return nil, fmt.Errorf("default Kubernetes Service EndpointSlice inventory repeated continue token %q", next)
-		}
-		seenTokens[next] = struct{}{}
-		continueToken = next
-	}
-
-	if len(seenSlices) == 0 {
-		return nil, fmt.Errorf("default Kubernetes Service has no EndpointSlices")
-	}
-	if len(addresses) == 0 {
-		return nil, fmt.Errorf("default Kubernetes Service has no ready, serving, non-terminating API server endpoints")
-	}
-	sort.Strings(addresses)
-	sort.Slice(sliceIdentities, func(i, j int) bool {
-		return sliceIdentities[i].Name < sliceIdentities[j].Name
-	})
-	fingerprintInput, err := json.Marshal(struct {
-		Slices    []kubernetesAPIServerSliceIdentity `json:"slices"`
-		Addresses []string                           `json:"addresses"`
-	}{
-		Slices:    sliceIdentities,
-		Addresses: addresses,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encode default Kubernetes Service EndpointSlice inventory identity: %w", err)
-	}
-	fingerprint := sha256.Sum256(fingerprintInput)
-	return &kubernetesAPIServerTopology{
-		InventoryResourceVersion: resourceVersion,
-		InventoryIdentity:        fmt.Sprintf("sha256:%x", fingerprint),
-		Addresses:                addresses,
-	}, nil
-}
-
-func endpointSliceHTTPSPort(slice *discoveryv1.EndpointSlice) (int32, error) {
-	var port int32
-	found := false
-	for index := range slice.Ports {
-		candidate := &slice.Ports[index]
-		if candidate.Name == nil || *candidate.Name != kubernetesServiceTLSPortName {
-			continue
-		}
-		if found {
-			return 0, fmt.Errorf("EndpointSlice %q has more than one %q port", slice.Name, kubernetesServiceTLSPortName)
-		}
-		if candidate.Port == nil || *candidate.Port < 1 || *candidate.Port > 65535 {
-			return 0, fmt.Errorf("EndpointSlice %q has an invalid %q port number", slice.Name, kubernetesServiceTLSPortName)
-		}
-		if candidate.Protocol != nil && *candidate.Protocol != corev1.ProtocolTCP {
-			return 0, fmt.Errorf("EndpointSlice %q has a non-TCP %q port", slice.Name, kubernetesServiceTLSPortName)
-		}
-		port = *candidate.Port
-		found = true
-	}
-	if !found {
-		return 0, fmt.Errorf("EndpointSlice %q has no named and numbered %q port", slice.Name, kubernetesServiceTLSPortName)
-	}
-	return port, nil
-}
-
-func endpointIPAddresses(
-	slice *discoveryv1.EndpointSlice,
-	endpoint *discoveryv1.Endpoint,
-	endpointIndex int,
-) ([]string, error) {
-	if slice.AddressType != discoveryv1.AddressTypeIPv4 && slice.AddressType != discoveryv1.AddressTypeIPv6 {
-		return nil, fmt.Errorf("EndpointSlice %q has unsupported address type %q", slice.Name, slice.AddressType)
-	}
-	if len(endpoint.Addresses) == 0 {
-		return nil, fmt.Errorf("EndpointSlice %q endpoint %d has no addresses", slice.Name, endpointIndex)
-	}
-
-	addresses := make([]string, 0, len(endpoint.Addresses))
-	seen := make(map[string]struct{}, len(endpoint.Addresses))
-	for _, raw := range endpoint.Addresses {
-		parsed := net.ParseIP(raw)
-		if parsed == nil || parsed.IsUnspecified() || parsed.IsMulticast() || parsed.IsLinkLocalUnicast() {
-			return nil, fmt.Errorf("EndpointSlice %q endpoint %d has invalid IP address %q", slice.Name, endpointIndex, raw)
-		}
-		isIPv4 := parsed.To4() != nil
-		if (slice.AddressType == discoveryv1.AddressTypeIPv4) != isIPv4 {
-			return nil, fmt.Errorf("EndpointSlice %q endpoint %d address %q does not match address type %q", slice.Name, endpointIndex, raw, slice.AddressType)
-		}
-		canonical := parsed.String()
-		if _, duplicate := seen[canonical]; duplicate {
-			return nil, fmt.Errorf("EndpointSlice %q endpoint %d repeats address %q", slice.Name, endpointIndex, canonical)
-		}
-		seen[canonical] = struct{}{}
-		addresses = append(addresses, canonical)
-	}
-	return addresses, nil
-}
-
-func endpointTerminating(endpoint *discoveryv1.Endpoint) bool {
-	return endpoint.Conditions.Terminating != nil && *endpoint.Conditions.Terminating
 }
 
 func teardownAuthorizationSubjects(
@@ -1109,7 +731,15 @@ func buildTeardownAuthorizationChecks(
 		if leaseErr != nil {
 			return teardownAuthorizationCheckSets{}, fmt.Errorf("certificate rotation lease identity: %w", leaseErr)
 		}
+		certificateStagingSecretName, stagingErr := exactRuntimeArgument(rollout.CertificateArgs, "--staging-secret-name=")
+		if stagingErr != nil {
+			return teardownAuthorizationCheckSets{}, fmt.Errorf("certificate rotation staging Secret identity: %w", stagingErr)
+		}
+		if certificateStagingSecretName == rollout.WebhookSecretName {
+			return teardownAuthorizationCheckSets{}, fmt.Errorf("certificate rotation staging and serving Secret identities must differ")
+		}
 		appendResource(teardownCheckCertificate, "update webhook Secret", "", "v1", "secrets", "", rollout.ReleaseNamespace, "update", rollout.WebhookSecretName)
+		appendResource(teardownCheckCertificate, "update certificate staging Secret", "", "v1", "secrets", "", rollout.ReleaseNamespace, "update", certificateStagingSecretName)
 		recreateMissingSecret, recreateErr := optionalExactBooleanRuntimeArgument(rollout.CertificateArgs, "--recreate-missing-secret=")
 		if recreateErr != nil {
 			return teardownAuthorizationCheckSets{}, recreateErr

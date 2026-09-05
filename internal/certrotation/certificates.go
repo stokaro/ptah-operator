@@ -145,6 +145,24 @@ func generateServingMaterial(
 	config Config,
 	caMaterial certificateMaterial,
 ) (certificateMaterial, error) {
+	return generateServingMaterialForService(
+		reader,
+		now,
+		config.ServingCertificateValidity,
+		config.ServiceName,
+		config.ServiceNamespace,
+		caMaterial,
+	)
+}
+
+func generateServingMaterialForService(
+	reader io.Reader,
+	now time.Time,
+	validity time.Duration,
+	serviceName string,
+	serviceNamespace string,
+	caMaterial certificateMaterial,
+) (certificateMaterial, error) {
 	if caMaterial.ca == nil || caMaterial.caKey == nil {
 		return certificateMaterial{}, errors.New("CA certificate and private key are required")
 	}
@@ -158,10 +176,10 @@ func generateServingMaterial(
 	}
 	leaf := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: config.ServiceName},
-		DNSNames:     requiredDNSNames(config),
+		Subject:      pkix.Name{CommonName: serviceName},
+		DNSNames:     serviceDNSNames(serviceName, serviceNamespace),
 		NotBefore:    now.Add(-certificateBackdate),
-		NotAfter:     now.Add(config.ServingCertificateValidity),
+		NotAfter:     now.Add(validity),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
@@ -277,11 +295,19 @@ func certificateCurrentlyValid(certificate *x509.Certificate, now time.Time) boo
 }
 
 func requiredDNSNames(config Config) []string {
+	return serviceDNSNames(config.ServiceName, config.ServiceNamespace)
+}
+
+func candidateServiceDNSNames(config Config) []string {
+	return serviceDNSNames(config.CandidateServiceName, config.Namespace)
+}
+
+func serviceDNSNames(serviceName, serviceNamespace string) []string {
 	return []string{
-		config.ServiceName,
-		fmt.Sprintf("%s.%s", config.ServiceName, config.ServiceNamespace),
-		fmt.Sprintf("%s.%s.svc", config.ServiceName, config.ServiceNamespace),
-		fmt.Sprintf("%s.%s.svc.cluster.local", config.ServiceName, config.ServiceNamespace),
+		serviceName,
+		fmt.Sprintf("%s.%s", serviceName, serviceNamespace),
+		fmt.Sprintf("%s.%s.svc", serviceName, serviceNamespace),
+		fmt.Sprintf("%s.%s.svc.cluster.local", serviceName, serviceNamespace),
 	}
 }
 

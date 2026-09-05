@@ -4403,6 +4403,29 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "exact released chart fresh install",
 		},
 		{
+			name:        "CRD certificate Secret identity capture removed",
+			child:       "crd-upgrade",
+			old:         "capture_certificate_secret_names() {\n",
+			replacement: "capture_certificate_secret_names_removed() {\n",
+			wantError:   "certificate Secret identity capture implementation",
+		},
+		{
+			name:  "CRD unlabeled certificate Secrets absence removed",
+			child: "crd-upgrade",
+			old: "\tremaining=$(kube -n \"$E2E_OPERATOR_NAMESPACE\" get \\\n" +
+				"\t\t\"secret/$CERTIFICATE_SECRET_NAME\" --ignore-not-found=true -o name)\n" +
+				"\t[ -z \"$remaining\" ] ||\n" +
+				"\t\tfail \"unlabeled generated certificate Secret/$CERTIFICATE_SECRET_NAME survived uninstall\"\n" +
+				"\tremaining=$(kube -n \"$E2E_OPERATOR_NAMESPACE\" get \\\n" +
+				"\t\t\"secret/$CERTIFICATE_STAGING_SECRET_NAME\" --ignore-not-found=true -o name)\n" +
+				"\t[ -z \"$remaining\" ] ||\n" +
+				"\t\tfail \"unlabeled certificate staging Secret/$CERTIFICATE_STAGING_SECRET_NAME survived uninstall\"\n" +
+				"\tCERTIFICATE_SECRET_NAME=\n" +
+				"\tCERTIFICATE_STAGING_SECRET_NAME=\n",
+			replacement: "\tCERTIFICATE_SECRET_NAME=\n\tCERTIFICATE_STAGING_SECRET_NAME=\n",
+			wantError:   "unlabeled certificate Secrets exact uninstall absence",
+		},
+		{
 			name:        "CRD upgraded release exact inventory absence removed",
 			child:       "crd-upgrade",
 			old:         "assert_inventory_resources_absent \\\n\t\t\"$next_sequence_inventory\" \"$next_sequence_marker_name\"",

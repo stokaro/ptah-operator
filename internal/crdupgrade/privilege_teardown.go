@@ -814,7 +814,12 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 			privilegePolicyRule([]string{"scheduling.k8s.io"}, []string{"priorityclasses"}, nil, []string{"get", "list"}),
 		}
 		certificateRoleRules := []rbacv1.PolicyRule{
-			privilegePolicyRule([]string{""}, []string{"secrets"}, []string{t.rollout.WebhookSecretName}, []string{"get", "update"}),
+			privilegePolicyRule(
+				[]string{""},
+				[]string{"secrets"},
+				[]string{t.rollout.WebhookSecretName, t.certificateStagingSecretName()},
+				[]string{"get", "update"},
+			),
 		}
 		if t.certificateRecreatesMissingSecret() {
 			certificateRoleRules = append(certificateRoleRules, privilegePolicyRule([]string{""}, []string{"secrets"}, nil, []string{"create"}))
@@ -1233,6 +1238,16 @@ func (t *PrivilegeTeardown) certificateLeaseName() string {
 	return ""
 }
 
+func (t *PrivilegeTeardown) certificateStagingSecretName() string {
+	const prefix = "--staging-secret-name="
+	for _, argument := range t.rollout.CertificateArgs {
+		if strings.HasPrefix(argument, prefix) {
+			return strings.TrimPrefix(argument, prefix)
+		}
+	}
+	return ""
+}
+
 func (t *PrivilegeTeardown) certificateRecreatesMissingSecret() bool {
 	for _, argument := range t.rollout.CertificateArgs {
 		if argument == "--recreate-missing-secret=true" {
@@ -1611,6 +1626,7 @@ func (t *PrivilegeTeardown) validate() error {
 	}
 	if t.contract.CertificateRuntimeEnabled {
 		leaseArguments := 0
+		stagingSecretArguments := 0
 		recreateArguments := 0
 		for _, argument := range t.rollout.CertificateArgs {
 			if strings.HasPrefix(argument, "--lease-name=") {
@@ -1618,6 +1634,16 @@ func (t *PrivilegeTeardown) validate() error {
 				value := strings.TrimPrefix(argument, "--lease-name=")
 				if value == "" || value != strings.TrimSpace(value) {
 					return errors.New("certificate rotation --lease-name must have a nonempty, unpadded value")
+				}
+			}
+			if strings.HasPrefix(argument, "--staging-secret-name=") {
+				stagingSecretArguments++
+				value := strings.TrimPrefix(argument, "--staging-secret-name=")
+				if value == "" || value != strings.TrimSpace(value) {
+					return errors.New("certificate rotation --staging-secret-name must have a nonempty, unpadded value")
+				}
+				if value == t.rollout.WebhookSecretName {
+					return errors.New("certificate rotation staging and serving Secret names must differ")
 				}
 			}
 			if strings.HasPrefix(argument, "--recreate-missing-secret=") {
@@ -1629,6 +1655,9 @@ func (t *PrivilegeTeardown) validate() error {
 		}
 		if leaseArguments != 1 {
 			return fmt.Errorf("certificate rotation requires exactly one --lease-name argument, found %d", leaseArguments)
+		}
+		if stagingSecretArguments != 1 {
+			return fmt.Errorf("certificate rotation requires exactly one --staging-secret-name argument, found %d", stagingSecretArguments)
 		}
 		if recreateArguments > 1 {
 			return fmt.Errorf("certificate rotation allows at most one --recreate-missing-secret argument, found %d", recreateArguments)

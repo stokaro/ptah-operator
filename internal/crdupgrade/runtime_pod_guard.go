@@ -293,6 +293,20 @@ func (g *RolloutGuard) runtimePodContract() (runtimePodContract, error) {
 	if webhookSecretName != g.WebhookSecretName {
 		return runtimePodContract{}, fmt.Errorf("certificate runtime Secret %q differs from rollout identity %q", webhookSecretName, g.WebhookSecretName)
 	}
+	stagingSecretName, err := uniqueRuntimeArg(g.CertificateArgs, "--staging-secret-name=")
+	if err != nil {
+		return runtimePodContract{}, err
+	}
+	if stagingSecretName == webhookSecretName {
+		return runtimePodContract{}, fmt.Errorf("certificate runtime staging Secret must differ from serving Secret %q", webhookSecretName)
+	}
+	candidateServiceName, err := uniqueRuntimeArg(g.CertificateArgs, "--candidate-service-name=")
+	if err != nil {
+		return runtimePodContract{}, err
+	}
+	if candidateServiceName == g.WebhookServiceName {
+		return runtimePodContract{}, fmt.Errorf("certificate runtime candidate Service must differ from serving Service %q", g.WebhookServiceName)
+	}
 	controllerPort, err := runtimePortArg(g.ControllerArgs, "--webhook-port=")
 	if err != nil {
 		return runtimePodContract{}, err

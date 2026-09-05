@@ -1415,6 +1415,8 @@ func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingCl
 		CertificateArgs: []string{
 			"--namespace=ptah-system",
 			"--secret-name=ptah-webhook-cert",
+			"--staging-secret-name=ptah-webhook-cert-stage",
+			"--candidate-service-name=ptah-cert-transition",
 			"--health-bind-address=:8081",
 		},
 		RuntimeDeploymentConfigExpressions: []string{`object.spec.replicas == 2`},

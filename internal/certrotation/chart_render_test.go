@@ -40,6 +40,8 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	managerName := releaseName + "-ptah-operator"
 	rotatorName := releaseName + "-ptah-operator-cert-rotator"
 	secretName := releaseName + "-ptah-operator-webhook-cert"
+	stagingSecretName := releaseName + "-ptah-operator-cert-rotation-stage"
+	candidateServiceName := releaseName + "-ptah-operator-cert-transition"
 	leaseName := releaseName + "-ptah-operator-cert-rotation"
 	configurationName := "ptah-operator-admission"
 
@@ -59,6 +61,27 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	if !serving.NotAfter.Before(ca.NotAfter) {
 		t.Fatalf("bootstrap serving certificate expires at %s, CA expires at %s", serving.NotAfter, ca.NotAfter)
 	}
+	stagingSecret := mustObject(t, objects, "Secret", stagingSecretName)
+	if !maps.Equal(stagingSecret.GetLabels(), map[string]string{
+		certrotation.StagingSecretLabel: certrotation.StagingSecretLabelValue,
+	}) {
+		t.Fatalf("staging Secret labels = %v, want only the staging ownership label", stagingSecret.GetLabels())
+	}
+	if stagingSecret.GetAnnotations() != nil || len(stagingSecret.GetOwnerReferences()) != 0 || len(stagingSecret.GetFinalizers()) != 0 {
+		t.Fatalf("staging Secret contains unsupported metadata: %#v", stagingSecret.Object["metadata"])
+	}
+	if secretType, _, _ := unstructured.NestedString(stagingSecret.Object, "type"); secretType != "Opaque" {
+		t.Fatalf("staging Secret type = %q, want Opaque", secretType)
+	}
+	if data, found, err := unstructured.NestedMap(stagingSecret.Object, "data"); err != nil || found || len(data) != 0 {
+		t.Fatalf("chart owns staging Secret data: found=%v data=%v err=%v", found, data, err)
+	}
+	if stringData, found, err := unstructured.NestedMap(stagingSecret.Object, "stringData"); err != nil || found || len(stringData) != 0 {
+		t.Fatalf("chart owns staging Secret stringData: found=%v data=%v err=%v", found, stringData, err)
+	}
+	if immutable, found, err := unstructured.NestedBool(stagingSecret.Object, "immutable"); err != nil || found || immutable {
+		t.Fatalf("chart sets staging Secret immutable: found=%v value=%v err=%v", found, immutable, err)
+	}
 
 	managerRole := mustObject(t, objects, "ClusterRole", managerName)
 	for _, rule := range objectRules(t, managerRole) {
@@ -68,7 +91,7 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	}
 
 	role := mustObject(t, objects, "Role", rotatorName)
-	assertExactRule(t, role, "", "secrets", []string{secretName}, []string{"get", "update"})
+	assertExactRule(t, role, "", "secrets", []string{secretName, stagingSecretName}, []string{"get", "update"})
 	assertNoResourceVerb(t, role, "", "secrets", "create")
 	assertExactRule(t, role, "coordination.k8s.io", "leases", []string{leaseName}, []string{"get", "update"})
 	runtimeAdmissionRole := mustObject(t, objects, "Role", managerName+"-runtime-admission")
@@ -125,6 +148,8 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	}
 	args := stringSlice(container["args"])
 	for _, want := range []string{
+		"--staging-secret-name=" + stagingSecretName,
+		"--candidate-service-name=" + candidateServiceName,
 		"--mutating-webhook-names=mapproval.operator.ptah.dev",
 		"--validating-webhook-names=vapproval.operator.ptah.dev,vpodintent.operator.ptah.dev,vcontrollerwrite.operator.ptah.dev",
 		"--run-interval=6h",
@@ -296,6 +321,7 @@ func TestExistingSecretDisablesBuiltInLifecycle(t *testing.T) {
 			t.Fatalf("external Secret render contains %s %q", object.GetKind(), object.GetName())
 		}
 	}
+	assertObjectAbsent(t, objects, "Secret", releaseName+"-ptah-operator-cert-rotation-stage")
 	deployment := mustObject(t, objects, "Deployment", releaseName+"-ptah-operator")
 	assertManagerTLSProjection(t, deployment, "external-webhook-cert")
 }

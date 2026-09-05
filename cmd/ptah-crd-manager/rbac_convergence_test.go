@@ -22,6 +22,14 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
+	"github.com/stokaro/ptah-operator/internal/kubeapi"
+)
+
+const (
+	kubernetesServiceName                       = "kubernetes"
+	kubernetesServiceTLSPortName                = "https"
+	kubernetesAPIEndpointSlicePageSize  int64   = 200
+	directKubernetesAPIQueriesPerSecond float32 = 100
 )
 
 func TestDirectAuthorizationReviewClientCreatesSubjectAndSelfReviews(t *testing.T) {
@@ -132,8 +140,8 @@ func TestNewTeardownRBACConvergenceBarrierDiscoversEveryDirectEndpoint(t *testin
 	if len(configs) != 2 {
 		t.Fatalf("client factory calls = %d, want 2", len(configs))
 	}
-	if got := authorizationSweepSize(barrier); got != 56 {
-		t.Fatalf("authorization sweep size = %d, want 56 exact retired-subject plus current-credential probes", got)
+	if got := authorizationSweepSize(barrier); got != 57 {
+		t.Fatalf("authorization sweep size = %d, want 57 exact retired-subject plus current-credential probes", got)
 	}
 	for index, config := range configs {
 		if config == base {
@@ -296,12 +304,10 @@ func TestAuthorizationBarrierInitialEndpointDiscoveryRetriesTransitions(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
-			clock := newAdmissionBarrierClock()
-			snapshot, err := waitForInitialKubernetesAPIServerEndpointSnapshot(
+			snapshot, err := kubeapi.WaitForInitialSnapshot(
 				context.Background(),
 				provider,
-				time.Second,
-				clock.sleep,
+				time.Millisecond,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -309,8 +315,8 @@ func TestAuthorizationBarrierInitialEndpointDiscoveryRetriesTransitions(t *testi
 			if len(snapshot.Endpoints) != 1 || snapshot.Endpoints[0].Address != "10.0.0.12:6443" {
 				t.Fatalf("discovered endpoints = %#v, want recovered direct endpoint", snapshot.Endpoints)
 			}
-			if lister.calls != 2 || clock.now().Sub(clock.start) != time.Second {
-				t.Fatalf("LIST calls/elapsed = %d/%s, want 2/1s", lister.calls, clock.now().Sub(clock.start))
+			if lister.calls != 2 {
+				t.Fatalf("LIST calls = %d, want 2", lister.calls)
 			}
 		})
 	}
@@ -320,20 +326,18 @@ func TestAuthorizationBarrierInitialEndpointDiscoveryCancellationWins(t *testing
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	clock := newAdmissionBarrierClock()
 	calls := 0
-	_, err := waitForInitialKubernetesAPIServerEndpointSnapshot(
+	_, err := kubeapi.WaitForInitialSnapshot(
 		ctx,
-		func(context.Context) (kubernetesAPIServerEndpointSnapshot, error) {
+		func(context.Context) (kubeapi.Snapshot, error) {
 			calls++
 			cancel()
-			return kubernetesAPIServerEndpointSnapshot{}, errors.New("foreign discovery response")
+			return kubeapi.Snapshot{}, errors.New("foreign discovery response")
 		},
 		time.Second,
-		clock.sleep,
 	)
-	if !errors.Is(err, context.Canceled) || calls != 1 || clock.now() != clock.start {
-		t.Fatalf("initial discovery = %v after %d calls at %s, want immediate cancellation", err, calls, clock.now())
+	if !errors.Is(err, context.Canceled) || calls != 1 {
+		t.Fatalf("initial discovery = %v after %d calls, want immediate cancellation", err, calls)
 	}
 }
 
@@ -831,7 +835,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		probeCounts[probe.Subject.Name] = len(probe.Checks)
 		probeChecks[probe.Subject.Name] = authorizationCheckNames(probe.Checks)
 	}
-	if want := map[string]int{"controller": 19, "certificate": 6, "hook-quiesce": 15}; !reflect.DeepEqual(probeCounts, want) {
+	if want := map[string]int{"controller": 19, "certificate": 7, "hook-quiesce": 15}; !reflect.DeepEqual(probeCounts, want) {
 		t.Fatalf("retired subject probe counts = %#v, want %#v", probeCounts, want)
 	}
 	for _, test := range []struct {
@@ -841,6 +845,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		{subject: "controller", check: "patch PtahSchema"},
 		{subject: "certificate", check: "update mutating admission singleton"},
 		{subject: "certificate", check: "update webhook Secret"},
+		{subject: "certificate", check: "update certificate staging Secret"},
 		{subject: "hook-quiesce", check: "update CRD ptahschemas.operator.ptah.dev"},
 		{subject: "hook-quiesce", check: "create guarded Deployment"},
 		{subject: "hook-quiesce", check: "patch stable controller ClusterRoleBinding"},
@@ -896,6 +901,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		"patch runtime admission RoleBinding",
 		"create SubjectAccessReview",
 		"update webhook Secret",
+		"update certificate staging Secret",
 		"create webhook Secret",
 		"update mutating admission singleton",
 		"update validating admission singleton",
@@ -937,8 +943,8 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 			t.Errorf("check %q includes intentional residual RBAC deletion for %q", check.Name, attributes.Name)
 		}
 	}
-	if len(checks) != 52 || len(byName) != 52 {
-		t.Fatalf("authorization checks = %d total/%d unique, want 52/52", len(checks), len(byName))
+	if len(checks) != 53 || len(byName) != 53 {
+		t.Fatalf("authorization checks = %d total/%d unique, want 53/53", len(checks), len(byName))
 	}
 	for _, name := range wantChecks {
 		if byName[name] == nil {
@@ -947,6 +953,9 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 	}
 	if got := byName["update controller Deployment"]; got.Namespace != rollout.ReleaseNamespace || got.Group != "apps" || got.Resource != "deployments" || got.Verb != "update" || got.Name != rollout.ControllerDeploymentName {
 		t.Errorf("controller Deployment check = %#v", got)
+	}
+	if got := byName["update certificate staging Secret"]; got.Namespace != rollout.ReleaseNamespace || got.Group != "" || got.Resource != "secrets" || got.Verb != "update" || got.Name != "ptah-cert-rotation-stage" {
+		t.Errorf("certificate staging Secret check = %#v", got)
 	}
 	if got := byName["update PtahSchema status"]; got.Group != "operator.ptah.dev" || got.Resource != "ptahschemas" || got.Subresource != "status" {
 		t.Errorf("PtahSchema status check = %#v", got)
@@ -1073,8 +1082,8 @@ func TestTeardownAuthorizationChecksUseSeparateCoordinationNamespace(t *testing.
 			t.Errorf("check %q namespace = %q, want %q", name, attributes.Namespace, rollout.CoordinationNamespace)
 		}
 	}
-	if len(checks) != 53 {
-		t.Fatalf("split-namespace authorization check count = %d, want 53", len(checks))
+	if len(checks) != 54 {
+		t.Fatalf("split-namespace authorization check count = %d, want 54", len(checks))
 	}
 	_, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
 	if err != nil {
@@ -1125,7 +1134,7 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					}
 					wantCounts := map[string]int{"controller": 19, "hook-quiesce": 15}
 					if certificateEnabled {
-						wantCounts["certificate"] = 6
+						wantCounts["certificate"] = 7
 					}
 					if !reflect.DeepEqual(counts, wantCounts) {
 						t.Fatalf("retired subject probe counts = %#v, want %#v", counts, wantCounts)
@@ -1150,7 +1159,7 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					}
 					wantUnion := 33 + wantSelfChecks
 					if certificateEnabled {
-						wantUnion += 3
+						wantUnion += 4
 					}
 					if len(checks) != wantUnion {
 						t.Fatalf("authorization check union = %d, want %d", len(checks), wantUnion)
@@ -1241,11 +1250,16 @@ func TestTeardownAuthorizationChecksRejectsAmbiguousCertificateArguments(t *test
 		args []string
 		want string
 	}{
-		{name: "missing lease", args: []string{"--recreate-missing-secret=true"}, want: "--lease-name= is required"},
-		{name: "duplicate lease", args: []string{"--lease-name=one", "--lease-name=two"}, want: "--lease-name= is duplicated"},
-		{name: "empty lease", args: []string{"--lease-name="}, want: "empty or padded value"},
-		{name: "invalid recovery flag", args: []string{"--lease-name=lease", "--recreate-missing-secret=yes"}, want: "exactly true or false"},
-		{name: "duplicate recovery flag", args: []string{"--lease-name=lease", "--recreate-missing-secret=true", "--recreate-missing-secret=false"}, want: "is duplicated"},
+		{name: "missing lease", args: []string{"--staging-secret-name=stage", "--recreate-missing-secret=true"}, want: "--lease-name= is required"},
+		{name: "duplicate lease", args: []string{"--lease-name=one", "--lease-name=two", "--staging-secret-name=stage"}, want: "--lease-name= is duplicated"},
+		{name: "empty lease", args: []string{"--lease-name=", "--staging-secret-name=stage"}, want: "empty or padded value"},
+		{name: "missing staging Secret", args: []string{"--lease-name=lease"}, want: "--staging-secret-name= is required"},
+		{name: "duplicate staging Secret", args: []string{"--lease-name=lease", "--staging-secret-name=stage", "--staging-secret-name=stage-2"}, want: "--staging-secret-name= is duplicated"},
+		{name: "empty staging Secret", args: []string{"--lease-name=lease", "--staging-secret-name="}, want: "empty or padded value"},
+		{name: "padded staging Secret", args: []string{"--lease-name=lease", "--staging-secret-name= stage"}, want: "empty or padded value"},
+		{name: "staging aliases serving Secret", args: []string{"--lease-name=lease", "--staging-secret-name=ptah-operator-webhook"}, want: "staging and serving Secret identities must differ"},
+		{name: "invalid recovery flag", args: []string{"--lease-name=lease", "--staging-secret-name=stage", "--recreate-missing-secret=yes"}, want: "exactly true or false"},
+		{name: "duplicate recovery flag", args: []string{"--lease-name=lease", "--staging-secret-name=stage", "--recreate-missing-secret=true", "--recreate-missing-secret=false"}, want: "is duplicated"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1387,6 +1401,26 @@ func mutatedEndpointSlicePage(mutate func(*discoveryv1.EndpointSlice)) map[strin
 	return oneEndpointSlicePage(slice)
 }
 
+func discoverKubernetesAPIServerAddresses(ctx context.Context, lister endpointSliceLister) ([]string, error) {
+	provider, err := kubeapi.NewDefaultServiceProvider(
+		&rest.Config{TLSClientConfig: rest.TLSClientConfig{CAData: []byte("test-ca")}},
+		lister,
+		1,
+	)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := provider(ctx)
+	if err != nil {
+		return nil, err
+	}
+	addresses := make([]string, 0, len(snapshot.Endpoints))
+	for _, endpoint := range snapshot.Endpoints {
+		addresses = append(addresses, endpoint.Address)
+	}
+	return addresses, nil
+}
+
 func validRBACRolloutGuard() *crdupgrade.RolloutGuard {
 	return &crdupgrade.RolloutGuard{
 		ReleaseName:                  "ptah",
@@ -1402,6 +1436,7 @@ func validRBACRolloutGuard() *crdupgrade.RolloutGuard {
 		ManagerImage:                 "registry.example.test/ptah-operator@sha256:1234",
 		CertificateArgs: []string{
 			"--lease-name=ptah-cert-rotation",
+			"--staging-secret-name=ptah-cert-rotation-stage",
 			"--recreate-missing-secret=true",
 		},
 	}

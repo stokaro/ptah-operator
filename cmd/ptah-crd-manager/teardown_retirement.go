@@ -18,6 +18,7 @@ import (
 
 	"github.com/stokaro/ptah-operator/internal/certrotation"
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
+	"github.com/stokaro/ptah-operator/internal/kubeapi"
 )
 
 const teardownRetirementCredentialTimeout = 75 * time.Second
@@ -428,11 +429,10 @@ func newTeardownRetirementCredentialObserver(
 	if err != nil {
 		return nil, err
 	}
-	snapshot, err := waitForInitialKubernetesAPIServerEndpointSnapshot(
+	snapshot, err := kubeapi.WaitForInitialSnapshot(
 		ctx,
 		provider,
 		authorizationPollEvery,
-		sleepForKubernetesAPIServerEndpointDiscovery,
 	)
 	if err != nil {
 		return nil, err

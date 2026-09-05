@@ -252,7 +252,10 @@ func renderedPrivilegeTeardownContract(t *testing.T) *PrivilegeTeardown {
 		ControllerDeploymentName:     controllerName,
 		CertificateDeploymentName:    controllerName + "-cert-rotator",
 		WebhookSecretName:            controllerName + "-webhook-cert",
-		CertificateArgs:              []string{"--lease-name=" + controllerName + "-cert-rotation"},
+		CertificateArgs: []string{
+			"--lease-name=" + controllerName + "-cert-rotation",
+			"--staging-secret-name=" + controllerName + "-cert-rotation-stage",
+		},
 	}
 	cleanup, err := TeardownServiceAccountName(guard.HookServiceAccountName, guard.ReleaseSequence)
 	if err != nil {
@@ -1417,6 +1420,69 @@ func TestPrivilegeTeardownRequiresCleanupAccessAndIdentity(t *testing.T) {
 	}
 }
 
+func TestPrivilegeTeardownRejectsInvalidCertificateStagingSecretIdentity(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "missing",
+			args: []string{"--namespace=ptah-system", "--lease-name=ptah-certificate-rotation"},
+			want: "requires exactly one --staging-secret-name argument, found 0",
+		},
+		{
+			name: "duplicate",
+			args: []string{
+				"--namespace=ptah-system",
+				"--lease-name=ptah-certificate-rotation",
+				"--staging-secret-name=ptah-certificate-rotation-stage",
+				"--staging-secret-name=ptah-certificate-rotation-stage-2",
+			},
+			want: "requires exactly one --staging-secret-name argument, found 2",
+		},
+		{
+			name: "empty",
+			args: []string{
+				"--namespace=ptah-system",
+				"--lease-name=ptah-certificate-rotation",
+				"--staging-secret-name=",
+			},
+			want: "must have a nonempty, unpadded value",
+		},
+		{
+			name: "padded",
+			args: []string{
+				"--namespace=ptah-system",
+				"--lease-name=ptah-certificate-rotation",
+				"--staging-secret-name= ptah-certificate-rotation-stage",
+			},
+			want: "must have a nonempty, unpadded value",
+		},
+		{
+			name: "serving Secret alias",
+			args: []string{
+				"--namespace=ptah-system",
+				"--lease-name=ptah-certificate-rotation",
+				"--staging-secret-name=ptah-e2e-webhook-cert",
+			},
+			want: "staging and serving Secret names must differ",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newPrivilegeTeardownFixture(t, true, true)
+			fixture.guard.CertificateArgs = append([]string(nil), test.args...)
+			err := fixture.teardown.Preflight(context.Background())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Preflight() error = %v, want %q", err, test.want)
+			}
+			if len(fixture.events) != 0 {
+				t.Fatalf("invalid certificate staging Secret identity caused mutations: %v", fixture.events)
+			}
+		})
+	}
+}
+
 func TestPrivilegeTeardownFailsClosedWithoutPredecessorInventory(t *testing.T) {
 	fixture := newPrivilegeTeardownFixture(t, true, true)
 	fixture.guard.ReleaseSequence = 2
@@ -1474,29 +1540,33 @@ func newPrivilegeTeardownFixtureWithCoordination(
 ) *privilegeTeardownFixture {
 	t.Helper()
 	guard := &RolloutGuard{
-		Policies:                           privilegePolicyReader{},
-		Bindings:                           privilegePolicyBindingReader{},
-		ReleaseName:                        "ptah-e2e",
-		ReleaseNamespace:                   "ptah-system",
-		CoordinationNamespace:              coordinationNamespace,
-		LeaderElection:                     true,
-		LeaderElectionID:                   "ptah-operator.operator.ptah.dev",
-		WebhookServiceName:                 "ptah-e2e-webhook",
-		WebhookTimeoutSeconds:              5,
-		WebhookSecretName:                  "ptah-e2e-webhook-cert",
-		WebhookPort:                        9443,
-		CertificateHealthPort:              8081,
-		HookServiceAccountName:             "ptah-e2e-operator-crd-v1-0123456789ab",
-		ControllerServiceAccountName:       "ptah-e2e-operator",
-		ControllerDeploymentName:           "ptah-e2e-operator",
-		ControllerReplicas:                 1,
-		CertificateDeploymentName:          "ptah-e2e-operator-cert-rotator",
-		ControllerStateVersion:             1,
-		AdmissionContractVersion:           1,
-		ReleaseSequence:                    1,
-		ManagerImage:                       "ghcr.io/stokaro/ptah-operator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		ControllerArgs:                     []string{"--leader-elect=true"},
-		CertificateArgs:                    []string{"--namespace=ptah-system", "--lease-name=ptah-certificate-rotation"},
+		Policies:                     privilegePolicyReader{},
+		Bindings:                     privilegePolicyBindingReader{},
+		ReleaseName:                  "ptah-e2e",
+		ReleaseNamespace:             "ptah-system",
+		CoordinationNamespace:        coordinationNamespace,
+		LeaderElection:               true,
+		LeaderElectionID:             "ptah-operator.operator.ptah.dev",
+		WebhookServiceName:           "ptah-e2e-webhook",
+		WebhookTimeoutSeconds:        5,
+		WebhookSecretName:            "ptah-e2e-webhook-cert",
+		WebhookPort:                  9443,
+		CertificateHealthPort:        8081,
+		HookServiceAccountName:       "ptah-e2e-operator-crd-v1-0123456789ab",
+		ControllerServiceAccountName: "ptah-e2e-operator",
+		ControllerDeploymentName:     "ptah-e2e-operator",
+		ControllerReplicas:           1,
+		CertificateDeploymentName:    "ptah-e2e-operator-cert-rotator",
+		ControllerStateVersion:       1,
+		AdmissionContractVersion:     1,
+		ReleaseSequence:              1,
+		ManagerImage:                 "ghcr.io/stokaro/ptah-operator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ControllerArgs:               []string{"--leader-elect=true"},
+		CertificateArgs: []string{
+			"--namespace=ptah-system",
+			"--lease-name=ptah-certificate-rotation",
+			"--staging-secret-name=ptah-certificate-rotation-stage",
+		},
 		RuntimeDeploymentConfigExpressions: []string{"true"},
 		RuntimePodConfigExpressions:        []string{"true"},
 		RuntimeAdmissionContractB64:        "e30=",

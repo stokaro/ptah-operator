@@ -581,6 +581,20 @@ func TestRuntimePodIdentityContractRejectsIncoherentRuntimeArguments(t *testing.
 		{name: "missing Secret", mutate: func(g *RolloutGuard) { g.CertificateArgs = removeRuntimeArg(g.CertificateArgs, "--secret-name=") }, want: "runtime arg --secret-name= is required"},
 		{name: "duplicate Secret", mutate: func(g *RolloutGuard) { g.CertificateArgs = append(g.CertificateArgs, "--secret-name=other") }, want: "runtime arg --secret-name= is duplicated"},
 		{name: "foreign Secret", mutate: func(g *RolloutGuard) { replaceRuntimeArg(g.CertificateArgs, "--secret-name=", "--secret-name=foreign") }, want: "differs from rollout identity"},
+		{name: "missing staging Secret", mutate: func(g *RolloutGuard) {
+			g.CertificateArgs = removeRuntimeArg(g.CertificateArgs, "--staging-secret-name=")
+		}, want: "runtime arg --staging-secret-name= is required"},
+		{name: "duplicate staging Secret", mutate: func(g *RolloutGuard) { g.CertificateArgs = append(g.CertificateArgs, "--staging-secret-name=other") }, want: "runtime arg --staging-secret-name= is duplicated"},
+		{name: "staging aliases serving Secret", mutate: func(g *RolloutGuard) {
+			replaceRuntimeArg(g.CertificateArgs, "--staging-secret-name=", "--staging-secret-name="+g.WebhookSecretName)
+		}, want: "staging Secret must differ"},
+		{name: "missing candidate Service", mutate: func(g *RolloutGuard) {
+			g.CertificateArgs = removeRuntimeArg(g.CertificateArgs, "--candidate-service-name=")
+		}, want: "runtime arg --candidate-service-name= is required"},
+		{name: "duplicate candidate Service", mutate: func(g *RolloutGuard) { g.CertificateArgs = append(g.CertificateArgs, "--candidate-service-name=other") }, want: "runtime arg --candidate-service-name= is duplicated"},
+		{name: "candidate aliases serving Service", mutate: func(g *RolloutGuard) {
+			replaceRuntimeArg(g.CertificateArgs, "--candidate-service-name=", "--candidate-service-name="+g.WebhookServiceName)
+		}, want: "candidate Service must differ"},
 		{name: "foreign webhook port", mutate: func(g *RolloutGuard) { replaceRuntimeArg(g.ControllerArgs, "--webhook-port=", "--webhook-port=9444") }, want: "differs from rollout identity"},
 		{name: "invalid health port", mutate: func(g *RolloutGuard) {
 			replaceRuntimeArg(g.CertificateArgs, "--health-bind-address=:", "--health-bind-address=:0")
@@ -975,6 +989,8 @@ func runtimePodGuardFixture() *RolloutGuard {
 	guard.CertificateArgs = []string{
 		"--namespace=ptah-system",
 		"--secret-name=ptah-webhook-cert",
+		"--staging-secret-name=ptah-webhook-cert-stage",
+		"--candidate-service-name=ptah-cert-transition",
 		"--lease-name=ptah-cert-rotation",
 		"--mutating-webhook-configuration=ptah-operator-admission",
 		"--mutating-webhook-names=mapproval.operator.ptah.dev",

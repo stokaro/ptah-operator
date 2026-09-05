@@ -504,8 +504,14 @@ For a chart-generated webhook Secret, the chart stores `tls.crt`, `tls.key`,
 manager volume projects only `tls.crt` and `tls.key`; the CA certificate and CA
 private key never enter manager Pods. The manager ClusterRole has no Secret
 access. The rotator uses its own ServiceAccount with `get` and `update` limited
-by `resourceNames` to the one generated Secret, one precreated coordination
-Lease, and the exact mutating and validating webhook configurations. RBAC
+by `resourceNames` to the generated Secret and a separate precreated `Opaque`
+staging Secret, plus one precreated coordination Lease and the exact mutating
+and validating webhook configurations. The staging Secret has one fixed
+management label and no owner references, finalizers, annotations, or
+`stringData`; every read and write requires that exact shape, a live UID and
+resource version, and an unchanged UID after update. Its chart manifest omits
+`data`, so pending private material is never copied into Helm release state.
+RBAC
 cannot limit which fields an `update` changes, so two retained, parameterless,
 fail-closed admission policies type-check the mutating and validating
 configurations separately. They require the exact rotator ServiceAccount,
@@ -571,24 +577,34 @@ call through the expired admission webhook.
 
 CA replacement is fail-closed and restart-safe:
 
-1. Every exact managed webhook entry retains its own parseable prior
+1. Before changing trust, the rotator atomically persists one pending record in
+   the staging Secret. The record binds the source Secret UID and a canonical
+   digest of its four managed fields to the new CA and key, the next primary
+   leaf and key, and a distinct listener-only leaf and key. Missing-Secret
+   recovery records the absence explicitly instead of inventing a source
+   identity.
+2. Every exact managed webhook entry retains its own parseable prior
    certificates and receives the next CA. A current signer may be shared only
    after its signature and exact live-leaf identity are independently proved;
    unauthenticated entry-local prior trust is never copied to another entry.
-2. One atomic Secret update replaces the serving certificate, serving key, CA,
+3. One atomic Secret update replaces the serving certificate, serving key, CA,
    and CA key.
-3. The rotator lists the exact Service EndpointSlices, rejects empty, unready,
+4. The rotator lists the exact Service EndpointSlices, rejects empty, unready,
    terminating, malformed, or duplicate endpoint sets, and performs a TLS
    handshake with every ready Pod IP using the Service DNS name. It requires
    the exact new leaf certificate, then requires a second identical endpoint
    snapshot.
-4. Only after that proof do both webhook configurations contract to the new CA.
+5. Only after that proof do both webhook configurations contract to the new CA,
+   after which the rotator atomically empties the staging Secret.
 
-If the rotator stops between steps, its replacement expands both configurations
-independently from each entry's own trust, repeats proof for every stable
-endpoint, and then contracts trust. A timeout leaves each entry's prior trust
-plus the authoritative CA in place. Ordinary rotation never configures the API
-server to trust neither the old nor the new serving certificate.
+If the rotator stops between steps, its replacement validates and reloads the
+same byte-exact pending listener credential, classifies the primary Secret
+against the stored source UID and digest, re-establishes overlap independently
+from each entry's own trust, repeats proof for every stable endpoint, and then
+contracts trust. It never generates a second candidate while a valid pending
+record exists. A timeout leaves both the durable record and each entry's prior
+trust plus the candidate CA in place. Ordinary rotation never configures the
+API server to trust neither the old nor the new serving certificate.
 controller-runtime watches the projected `tls.crt` and `tls.key` files and
 reloads them without restarting the manager Pods.
 

@@ -1,6 +1,7 @@
 {{- if and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) }}
 {{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
 {{- $secretName := include "ptah-operator.webhookSecretName" . -}}
+{{- $stagingSecretName := include "ptah-operator.certRotationStagingSecretName" . -}}
 {{- $leaseName := include "ptah-operator.certRotationLeaseName" . -}}
 {{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
@@ -85,6 +86,15 @@ metadata:
     app.kubernetes.io/component: certificate-rotation
 spec: {}
 ---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $stagingSecretName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    operator.ptah.dev/certificate-rotation-staging: "true"
+type: Opaque
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -95,7 +105,9 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
-    resourceNames: [{{ $secretName | quote }}]
+    resourceNames:
+      - {{ $secretName | quote }}
+      - {{ $stagingSecretName | quote }}
     verbs: ["get", "update"]
   {{- if .Values.certificateRotation.recreateMissingSecret }}
   # Kubernetes RBAC cannot scope CREATE by resourceName. The fail-closed

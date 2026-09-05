@@ -83,6 +83,8 @@ PREDECESSOR_APPLY_BARRIER_ACTIVE=0
 BLOCKED_STABILITY_SECONDS=10
 BLOCKED_FAILURE_TIMEOUT_SECONDS=150
 FOREIGN_TEARDOWN_BINDING=
+CERTIFICATE_SECRET_NAME=
+CERTIFICATE_STAGING_SECRET_NAME=
 LATE_ACTIVATION_BLOCKER_WEBHOOK=
 CONTROLLER_IMPERSONATION_USERNAME=
 CONTROLLER_IMPERSONATION_UID=
@@ -3085,6 +3087,40 @@ runtime_deployment_names() {
 	[ -n "$ROTATOR_DEPLOYMENT" ] || fail "certificate-rotation Deployment is missing"
 }
 
+capture_certificate_secret_names() {
+	runtime_deployment_names
+	if ! CERTIFICATE_SECRET_NAME=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment \
+		"$ROTATOR_DEPLOYMENT" -o json | jq -er '
+          [.spec.template.spec.containers[] |
+            select(.name == "certificate-rotator") |
+            (.args // [])[] |
+            select(startswith("--secret-name=")) |
+            ltrimstr("--secret-name=")] as $names |
+          if ($names | length) == 1 and ($names[0] | length) > 0
+          then $names[0]
+          else error("certificate rotator must carry one nonempty serving Secret identity")
+          end
+        '); then
+		fail "could not capture the exact generated certificate Secret identity"
+	fi
+	if ! CERTIFICATE_STAGING_SECRET_NAME=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment \
+		"$ROTATOR_DEPLOYMENT" -o json | jq -er '
+          [.spec.template.spec.containers[] |
+            select(.name == "certificate-rotator") |
+            (.args // [])[] |
+            select(startswith("--staging-secret-name=")) |
+            ltrimstr("--staging-secret-name=")] as $names |
+          if ($names | length) == 1 and ($names[0] | length) > 0
+          then $names[0]
+          else error("certificate rotator must carry one nonempty staging Secret identity")
+          end
+        '); then
+		fail "could not capture the exact certificate staging Secret identity"
+	fi
+	[ "$CERTIFICATE_SECRET_NAME" != "$CERTIFICATE_STAGING_SECRET_NAME" ] ||
+		fail "generated and staging certificate Secret identities must differ"
+}
+
 capture_controller_impersonation_identity() {
 	runtime_deployment_names
 	controller_pod_json=$WORK_DIR/controller-impersonation-pod.json
@@ -3436,6 +3472,10 @@ assert_release_sequence_candidate_residue_absent() {
 }
 
 assert_release_runtime_removed() {
+	[ -n "$CERTIFICATE_SECRET_NAME" ] ||
+		fail "generated certificate Secret identity was not captured before uninstall"
+	[ -n "$CERTIFICATE_STAGING_SECRET_NAME" ] ||
+		fail "certificate staging Secret identity was not captured before uninstall"
 	for singleton_resource in mutatingwebhookconfiguration validatingwebhookconfiguration; do
 		remaining=$(kube get "$singleton_resource" ptah-operator-admission \
 			--ignore-not-found=true -o name)
@@ -3467,6 +3507,16 @@ assert_release_runtime_removed() {
 		[ "$remaining" -eq 0 ] ||
 			fail "$remaining labeled $namespaced_resource objects survived uninstall"
 	done
+	remaining=$(kube -n "$E2E_OPERATOR_NAMESPACE" get \
+		"secret/$CERTIFICATE_SECRET_NAME" --ignore-not-found=true -o name)
+	[ -z "$remaining" ] ||
+		fail "unlabeled generated certificate Secret/$CERTIFICATE_SECRET_NAME survived uninstall"
+	remaining=$(kube -n "$E2E_OPERATOR_NAMESPACE" get \
+		"secret/$CERTIFICATE_STAGING_SECRET_NAME" --ignore-not-found=true -o name)
+	[ -z "$remaining" ] ||
+		fail "unlabeled certificate staging Secret/$CERTIFICATE_STAGING_SECRET_NAME survived uninstall"
+	CERTIFICATE_SECRET_NAME=
+	CERTIFICATE_STAGING_SECRET_NAME=
 }
 
 snapshot_runtime_deployment() {
@@ -4793,6 +4843,7 @@ run_uninstall_proof() {
 	kube delete clusterrolebinding "$FOREIGN_TEARDOWN_BINDING" --wait=true >/dev/null
 	FOREIGN_TEARDOWN_BINDING=
 
+	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
 		--wait --timeout 5m >/dev/null
 	assert_release_runtime_removed
@@ -4829,6 +4880,7 @@ run_uninstall_proof() {
 		"$E2E_NEXT_RELEASE_SEQUENCE" "$E2E_NEXT_CONTROLLER_IMAGE" \
 		"$reinstalled_next_marker" "$reinstalled_next_inventory"
 	reinstalled_next_marker_name=$(jq -er '.metadata.name' "$reinstalled_next_marker")
+	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
 		--wait --timeout 5m >/dev/null
 	assert_release_runtime_removed
@@ -4869,6 +4921,7 @@ run_uninstall_proof() {
 	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
+	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
 		--wait --timeout 5m >/dev/null
 	assert_release_runtime_removed

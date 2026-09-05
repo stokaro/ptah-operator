@@ -637,7 +637,7 @@ func TestConfigRejectsInvalidSecretCreateServiceAccountName(t *testing.T) {
 	t.Parallel()
 	config := testConfig()
 	config.SecretCreateServiceAccountName = "Bad_Name"
-	if _, err := New(fake.NewClientset(), config); err == nil ||
+	if _, err := New(fake.NewClientset(), config, &recordingCandidateSink{}); err == nil ||
 		!bytes.Contains([]byte(err.Error()), []byte("Secret CREATE ServiceAccount name")) {
 		t.Fatalf("New() error = %v, want invalid Secret CREATE ServiceAccount name", err)
 	}
@@ -647,7 +647,7 @@ func TestConfigRejectsSecretCreateGuardNamesWhenRecreationIsDisabled(t *testing.
 	t.Parallel()
 	config := testConfig()
 	config.RecreateMissingSecret = false
-	if _, err := New(fake.NewClientset(), config); err == nil ||
+	if _, err := New(fake.NewClientset(), config, &recordingCandidateSink{}); err == nil ||
 		!strings.Contains(err.Error(), "must be empty") {
 		t.Fatalf("New() error = %v, want disabled guard-name rejection", err)
 	}
@@ -667,7 +667,10 @@ func TestMissingSecretCreateRaceNeverOverwritesDifferentMaterial(t *testing.T) {
 		if len(options.DryRun) != 0 {
 			return false, nil, nil
 		}
-		if err := client.Tracker().Add(generatedSecret(config, racing)); err != nil {
+		racingSecret := generatedSecret(config, racing)
+		racingSecret.UID = "racing-secret-uid"
+		racingSecret.ResourceVersion = "1"
+		if err := client.Tracker().Add(racingSecret); err != nil {
 			t.Fatalf("seed racing Secret: %v", err)
 		}
 		return true, nil, apierrors.NewAlreadyExists(schema.GroupResource{Resource: "secrets"}, config.SecretName)
@@ -1400,6 +1403,41 @@ type recordingProber struct {
 	callback func(probeRequest)
 }
 
+type recordingCandidateSink struct {
+	mu          sync.Mutex
+	certificate []byte
+	privateKey  []byte
+	stores      int
+	clears      int
+	err         error
+}
+
+func (sink *recordingCandidateSink) StoreCandidateCertificate(certificatePEM, privateKeyPEM []byte) error {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if sink.err != nil {
+		return sink.err
+	}
+	sink.certificate = append([]byte(nil), certificatePEM...)
+	sink.privateKey = append([]byte(nil), privateKeyPEM...)
+	sink.stores++
+	return nil
+}
+
+func (sink *recordingCandidateSink) ClearCandidateCertificate() {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	sink.certificate = nil
+	sink.privateKey = nil
+	sink.clears++
+}
+
+func (sink *recordingCandidateSink) snapshot() (certificate, privateKey []byte, stores, clears int) {
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	return append([]byte(nil), sink.certificate...), append([]byte(nil), sink.privateKey...), sink.stores, sink.clears
+}
+
 func (prober *recordingProber) Probe(_ context.Context, request probeRequest) error {
 	prober.mu.Lock()
 	prober.requests = append(prober.requests, request)
@@ -1520,6 +1558,11 @@ func installSecretCreateAdmission(t *testing.T, client *fake.Clientset, config C
 	client.PrependReactor("create", "secrets", func(action k8stesting.Action) (bool, runtime.Object, error) {
 		options := action.(interface{ GetCreateOptions() metav1.CreateOptions }).GetCreateOptions()
 		if len(options.DryRun) == 0 {
+			secret := action.(k8stesting.CreateAction).GetObject().(*corev1.Secret)
+			if secret.Name == config.SecretName {
+				secret.UID = "created-primary-secret-uid"
+				secret.ResourceVersion = "1"
+			}
 			return false, nil, nil
 		}
 		secret := action.(k8stesting.CreateAction).GetObject().(*corev1.Secret)
@@ -1554,6 +1597,7 @@ func testConfig() Config {
 	return Config{
 		Namespace:                      "ptah-system",
 		SecretName:                     "ptah-webhook-cert",
+		StagingSecretName:              "ptah-webhook-cert-stage",
 		LeaseName:                      "ptah-cert-rotation",
 		MutatingWebhookConfiguration:   "ptah-approval",
 		MutatingWebhookNames:           []string{"mapproval.operator.ptah.dev"},
@@ -1561,6 +1605,7 @@ func testConfig() Config {
 		ValidatingWebhookNames:         []string{"vapproval.operator.ptah.dev", "vpodintent.operator.ptah.dev"},
 		ServiceName:                    "ptah-webhook",
 		ServiceNamespace:               "ptah-system",
+		CandidateServiceName:           "ptah-cert-candidate",
 		EndpointPortName:               "https",
 		HolderIdentity:                 "job-a/uid-a",
 		SecretCreatePolicyName:         "ptah-cert-rotator",
@@ -1588,8 +1633,14 @@ func mustGenerateMaterial(t *testing.T, now time.Time, config Config) certificat
 
 func secretForMaterial(config Config, material certificateMaterial) *corev1.Secret {
 	return &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: config.SecretName, Namespace: config.Namespace},
-		Type:       corev1.SecretTypeTLS,
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            config.SecretName,
+			Namespace:       config.Namespace,
+			UID:             "primary-secret-uid",
+			ResourceVersion: "1",
+			Labels:          map[string]string{GeneratedSecretLabel: GeneratedSecretLabelValue},
+		},
+		Type: corev1.SecretTypeTLS,
 		Data: map[string][]byte{
 			CACertificateKey:        append([]byte(nil), material.caPEM...),
 			CAPrivateKeyKey:         append([]byte(nil), material.caKeyPEM...),
@@ -1618,6 +1669,16 @@ func newTestClient(
 		})
 	}
 	objects := []runtime.Object{
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            config.StagingSecretName,
+				Namespace:       config.Namespace,
+				UID:             "staging-secret-uid",
+				ResourceVersion: "1",
+				Labels:          map[string]string{StagingSecretLabel: StagingSecretLabelValue},
+			},
+			Type: corev1.SecretTypeOpaque,
+		},
 		&coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: config.LeaseName, Namespace: config.Namespace}},
 		&admissionregistrationv1.MutatingWebhookConfiguration{
 			ObjectMeta: metav1.ObjectMeta{Name: config.MutatingWebhookConfiguration},
@@ -1687,7 +1748,7 @@ func mustNewTestRotator(
 	prober certificateProber,
 ) *Rotator {
 	t.Helper()
-	rotator, err := New(client, config)
+	rotator, err := New(client, config, &recordingCandidateSink{})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
