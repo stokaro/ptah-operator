@@ -2233,7 +2233,11 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("legacy Job bootstrap admits before activation", `fail "legacy Job bootstrap probe was refused before candidate activation"`),
 				exactSourceLine("legacy Job active structural denial", `fail "legacy Job post-activation probe lacked the exact structural guard denial"`),
 				exactSourceLine("legacy plan activation boundary implementation", `prove_legacy_plan_activation_boundary() {`),
-				exactSourceLine("legacy plan bootstrap semantic boundary", `fail "legacy plan bootstrap probe did not reach the semantic controller-write boundary"`),
+				// The plan half of the same boundary; see the Job note above.
+				// The predecessor predates internal/controllerwrite, so before
+				// activation the write is admitted and the structural denial
+				// the active branch requires is what activation adds.
+				exactSourceLine("legacy plan bootstrap admits before activation", `fail "legacy plan bootstrap probe was refused before candidate activation"`),
 				exactSourceLine("legacy plan active structural denial", `fail "legacy plan post-activation probe lacked the exact structural guard denial"`),
 				exactSourceLine("controller guarded-field proof implementation", `prove_controller_object_supported_window_guard() {`),
 				exactSourceLine("controller guarded-field proof call", `prove_controller_object_supported_window_guard`),

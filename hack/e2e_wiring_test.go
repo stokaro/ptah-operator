@@ -1973,9 +1973,9 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD legacy plan bootstrap boundary is bypassed",
 			child:       "crd-upgrade",
-			old:         `fail "legacy plan bootstrap probe did not reach the semantic controller-write boundary"`,
+			old:         `fail "legacy plan bootstrap probe was refused before candidate activation"`,
 			replacement: `true # legacy plan semantic boundary removed`,
-			wantError:   "legacy plan bootstrap semantic boundary",
+			wantError:   "legacy plan bootstrap admits before activation",
 		},
 		{
 			name:        "CRD legacy plan active denial is bypassed",

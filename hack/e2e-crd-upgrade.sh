@@ -2706,19 +2706,22 @@ prove_legacy_plan_activation_boundary() {
 	stderr=$WORK_DIR/controller-plan-activation-${expected_state}-${CONTROLLER_OBJECT_GUARD_PROBE_INDEX}.err
 	case "$expected_state" in
 	bootstrap)
-		if controller_kube create --dry-run=server -o json \
+		# The plan half of the same boundary, and the same reasoning as the Job
+		# probe above: the semantic denial it used to require comes from
+		# internal/controllerwrite, which the pinned predecessor does not carry.
+		# Before activation the write is admitted; the active branch below still
+		# requires the structural guard, and the change between them is the
+		# activation boundary. Restore the semantic assertion here together with
+		# the Job one if the predecessor pin ever moves forward.
+		if ! controller_kube create --dry-run=server -o json \
 			-f "$PREDECESSOR_PLAN_GUARD_PROBE_FILE" >"$stdout" 2>"$stderr"; then
-			fail "legacy plan bootstrap probe bypassed the semantic controller-write boundary"
+			cat "$stderr" >&2
+			fail "legacy plan bootstrap probe was refused before candidate activation"
 		fi
 		if grep -F 'Ptah controller plan write guard rejected an unsafe manifest shape' \
 			"$stdout" "$stderr" >/dev/null; then
 			fail "legacy plan CREATE was blocked before candidate activation"
 		fi
-		grep -F 'PtahSchemaPlan metadata is invalid: plan name is not derived from its fingerprint' \
-			"$stdout" "$stderr" >/dev/null || {
-			cat "$stderr" >&2
-			fail "legacy plan bootstrap probe did not reach the semantic controller-write boundary"
-		}
 		;;
 	active)
 		if controller_kube create --dry-run=server -o json \
