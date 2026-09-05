@@ -200,7 +200,11 @@ if [ -z "$E2E_RUN_ID" ]; then
 	E2E_RUN_ID="local-${git_revision}-$$"
 fi
 identity="${K8S_VERSION}-${E2E_RUN_ID}"
-CLUSTER_NAME=$(dns_name ptah-e2e "$identity" 48)
+# kind names an HA cluster's load balancer container
+# "<cluster>-external-load-balancer". That suffix is 23 bytes and appears
+# nowhere in this script, so the bound has to be written from the Docker
+# hostname limit rather than from the longest name spelled here: 64 - 23.
+CLUSTER_NAME=$(dns_name ptah-e2e "$identity" 41)
 OPERATOR_NAMESPACE=$(dns_name ptah-system "$identity")
 CRD_PROOF_NAMESPACE=$(dns_name ptah-crd-proof "$identity")
 # Force the runtime ReplicaSet-to-Pod generated-name truncation boundary in

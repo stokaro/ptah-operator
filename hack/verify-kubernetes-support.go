@@ -1874,6 +1874,10 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`[ "$ACTUAL_KIND_VERSION" = "$EXPECTED_KIND_VERSION" ] ||`,
 			`fail "kind $EXPECTED_KIND_VERSION is required, got $ACTUAL_KIND_VERSION"`,
 		}),
+		// 64 is Docker's hostname limit and 23 is the length of the
+		// "-external-load-balancer" container kind gives an HA cluster, a name
+		// the harness never spells and so cannot bound by inspection.
+		exactSourceLine("bounded HA cluster name", `CLUSTER_NAME=$(dns_name ptah-e2e "$identity" 41)`),
 		exactSourceLine("bounded CRD proof namespace", `CRD_PROOF_NAMESPACE=$(dns_name ptah-crd-proof "$identity")`),
 		exactSourceLine("runtime generated-name boundary fixture", `RUNTIME_FULLNAME=$(dns_name ptah-runtime-generated-name-prefix-boundary-proof "$identity" 60)`),
 		exactSourceLine("runtime generated-name boundary length", `[ "${#RUNTIME_FULLNAME}" -eq 60 ] || fail "runtime fullname boundary fixture must be exactly 60 characters"`),
