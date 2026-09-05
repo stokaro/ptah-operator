@@ -64,8 +64,13 @@ type logAttempt struct {
 	err    error
 }
 
+// repeatLogStream answers every attempt once the scripted ones run out, which
+// is how a hook that never writes is modeled without listing an unbounded
+// number of empty attempts.
+
 type fakeResourceClient struct {
-	mu sync.Mutex
+	repeatLogStream func() io.ReadCloser
+	mu              sync.Mutex
 
 	priorityClassList *schedulingv1.PriorityClassList
 	jobList           *batchv1.JobList
@@ -244,6 +249,9 @@ func (client *fakeResourceClient) streamPodLogs(
 	if len(client.logAttempts) == 0 {
 		if client.repeatLogError != nil {
 			return nil, client.repeatLogError
+		}
+		if client.repeatLogStream != nil {
+			return client.repeatLogStream(), nil
 		}
 		return nil, errors.New("unexpected log stream attempt")
 	}
@@ -2430,5 +2438,96 @@ func assertFileContents(t *testing.T, path, expected string) {
 	}
 	if string(contents) != expected {
 		t.Fatalf("%s contents = %q, want %q", path, string(contents), expected)
+	}
+}
+
+// The API server serves a log stream as soon as the container exists, so a hook
+// Pod that has started but not yet written produces a clean open and zero
+// bytes. Only the open was retried, so a capture that won the race to the
+// container and lost it to the first write reported "completed without any
+// bytes" and failed the whole lifecycle proof -- intermittently, one supported
+// minor at a time.
+func TestCaptureRetriesAnEmptyLogStreamUntilTheHookWrites(t *testing.T) {
+	t.Parallel()
+
+	jobWatcher := watch.NewRaceFreeFake()
+	podWatcher := watch.NewRaceFreeFake()
+	client := &fakeResourceClient{
+		jobList:    &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+		podList:    &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+		jobWatcher: jobWatcher,
+		podWatcher: podWatcher,
+		logAttempts: []logAttempt{
+			{stream: io.NopCloser(strings.NewReader(""))},
+			{stream: io.NopCloser(strings.NewReader(""))},
+			{stream: io.NopCloser(strings.NewReader("late activation rejected\n"))},
+		},
+		logStarted: make(chan struct{}, 1),
+	}
+	output := newTestOutputs(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- capture(ctx, client, testCaptureConfig(), output) }()
+
+	waitForFileContents(t, output.ready.path, "ready\n")
+	job := validJobForMode(hookModeReconcile)
+	jobWatcher.Add(job)
+	podWatcher.Add(validPodForMode(hookModeReconcile, job.UID))
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("capture returned an error after two empty streams: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("capture did not retry the empty log stream: %v", ctx.Err())
+	}
+	if err := output.close(); err != nil {
+		t.Fatalf("close outputs: %v", err)
+	}
+	assertFileContents(t, output.logPath, "late activation rejected\n")
+	assertFileContents(t, output.status.path, "captured\n")
+}
+
+// The control: retrying an empty stream must not make an always-empty hook
+// succeed. It still fails, at the start deadline rather than on the first poll,
+// so the bound the timer provides is unchanged.
+func TestCaptureFailsWhenTheHookNeverWrites(t *testing.T) {
+	t.Parallel()
+
+	jobWatcher := watch.NewRaceFreeFake()
+	podWatcher := watch.NewRaceFreeFake()
+	client := &fakeResourceClient{
+		jobList:    &batchv1.JobList{ListMeta: metav1.ListMeta{ResourceVersion: "job-rv"}},
+		podList:    &corev1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "pod-rv"}},
+		jobWatcher: jobWatcher,
+		podWatcher: podWatcher,
+		repeatLogStream: func() io.ReadCloser {
+			return io.NopCloser(strings.NewReader(""))
+		},
+		logStarted: make(chan struct{}, 1),
+	}
+	output := newTestOutputs(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	config := testCaptureConfig()
+	config.logStartTimeout = 300 * time.Millisecond
+	config.logRetryInterval = 20 * time.Millisecond
+	result := make(chan error, 1)
+	go func() { result <- capture(ctx, client, config, output) }()
+
+	waitForFileContents(t, output.ready.path, "ready\n")
+	job := validJobForMode(hookModeReconcile)
+	jobWatcher.Add(job)
+	podWatcher.Add(validPodForMode(hookModeReconcile, job.UID))
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, errLogStartTimeout) {
+			t.Fatalf("capture error = %v, want the start deadline", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("capture did not stop at the start deadline: %v", ctx.Err())
 	}
 }

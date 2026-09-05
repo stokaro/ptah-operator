@@ -1594,7 +1594,7 @@ func capturePodLog(
 			}
 			continue
 		}
-		if !startTimer.Stop() {
+		if streamContext.Err() != nil {
 			_ = stream.Close()
 			if ctx.Err() != nil {
 				return 0, ctx.Err()
@@ -1615,6 +1615,7 @@ func capturePodLog(
 			return bytes, copyErr
 		}
 		if bytes > 0 {
+			startTimer.Stop()
 			return bytes, nil
 		}
 		if copyErr != nil {
@@ -1623,7 +1624,28 @@ func capturePodLog(
 		if closeErr != nil {
 			return 0, fmt.Errorf("close empty hook Pod log stream: %w", closeErr)
 		}
-		return 0, errors.New("hook Pod log stream completed without any bytes")
+		// An empty stream is retried, not failed. The API server serves a log
+		// stream as soon as the container exists, so a Pod whose hook has
+		// started but not yet written produces exactly this: a clean open and
+		// zero bytes. Only the open was retried before, so a capture that won
+		// the race to the container and lost it to the first write reported
+		// "completed without any bytes" and the whole lifecycle proof failed --
+		// intermittently, on one supported minor at a time.
+		//
+		// The deadline is unchanged and still bounds the whole attempt: the
+		// start timer is no longer stopped when a stream merely opens, so it
+		// keeps running until bytes actually arrive and cancels streamContext
+		// otherwise. A hook that genuinely writes nothing still fails, just at
+		// its deadline rather than on the first poll.
+		if err := waitForRetry(streamContext, config.logRetryInterval); err != nil {
+			if ctx.Err() != nil {
+				return 0, ctx.Err()
+			}
+			if streamContext.Err() != nil {
+				return 0, errLogStartTimeout
+			}
+			return 0, fmt.Errorf("wait for hook Pod log stream: %w", err)
+		}
 	}
 }
 
