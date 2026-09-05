@@ -1815,6 +1815,7 @@ render_release_values() {
 	values_image_tag=$3
 	values_image_digest=$4
 	values_pull_secret=${5:-}
+	values_test_identity_digest=${6:-}
 	jq -n \
 		--arg fullnameOverride "$RUNTIME_FULLNAME" \
 		--arg repository "$values_image_repository" \
@@ -1823,7 +1824,8 @@ render_release_values() {
 		--arg pullSecret "$values_pull_secret" \
 		--arg executorImage "$E2E_EXECUTOR_IMAGE" \
 		--arg runnerImage "$E2E_RUNNER_IMAGE" \
-		--arg ptahVersion "$E2E_PTAH_VERSION" '
+		--arg ptahVersion "$E2E_PTAH_VERSION" \
+		--arg testIdentityDigest "$values_test_identity_digest" '
       {
         fullnameOverride: $fullnameOverride,
         image: {
@@ -1844,7 +1846,9 @@ render_release_values() {
         replicaCount: 2,
         podDisruptionBudget: {enabled: false}
       }
-      | if $digest == "" then . else
+      | if $digest == "" then
+          .image.testIdentityDigest = $testIdentityDigest
+        else
           .image.digest = $digest
           | .image.allowMutableTag = false
           | .image.pullPolicy = "IfNotPresent"
@@ -1853,8 +1857,18 @@ render_release_values() {
     ' >"$values_destination"
 }
 
+# A release that keeps its mutable tag names the manager by the local Docker
+# image ID: managerImage still renders repository:tag for every container,
+# and controllerImage uses this to state which image that tag resolved to.
+# A digest-pinned release must not carry the field, and the chart refuses
+# both mistakes by name.
+PREDECESSOR_IMAGE_ID=$(docker --context "$DOCKER_CONTEXT" image inspect \
+	--format '{{.Id}}' "$PREDECESSOR_OPERATOR_IMAGE")
+printf '%s\n' "$PREDECESSOR_IMAGE_ID" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
+	fail "predecessor operator image has no exact sha256 Docker image ID"
 render_release_values \
-	"$PREDECESSOR_VALUES_FILE" "$PREDECESSOR_IMAGE_REPOSITORY" "$IMAGE_TAG" ""
+	"$PREDECESSOR_VALUES_FILE" "$PREDECESSOR_IMAGE_REPOSITORY" "$IMAGE_TAG" "" "" \
+	"$PREDECESSOR_IMAGE_ID"
 render_release_values \
 	"$CANDIDATE_VALUES_FILE" "$CANDIDATE_OPERATOR_REPOSITORY" "$IMAGE_TAG" \
 	"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET"

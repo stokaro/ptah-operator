@@ -498,7 +498,8 @@ export E2E_RUNNER_IMAGE=e2e.invalid/runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 export E2E_PTAH_VERSION=predecessor-values-proof
 export RUNTIME_FULLNAME=rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
 eval "$release_values_section"
-render_release_values "$PREDECESSOR_VALUES_FIXTURE" predecessor.invalid/operator old ""
+render_release_values "$PREDECESSOR_VALUES_FIXTURE" predecessor.invalid/operator old "" "" \
+	sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 render_release_values "$CANDIDATE_VALUES_FIXTURE" candidate.invalid/operator new \
 	sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
 	candidate-registry-pull
@@ -506,9 +507,11 @@ jq -e '
   .fullnameOverride == "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr" and
   .image.repository == "predecessor.invalid/operator" and
   .image.tag == "old" and
-  (.image | has("testIdentityDigest") | not)
+  .image.allowMutableTag == true and
+  (.image.testIdentityDigest | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
+  (.image | has("digest") | not)
 ' "$PREDECESSOR_VALUES_FIXTURE" >/dev/null || {
-	printf '%s\n' 'e2e static: predecessor values include a candidate-only image identity field' >&2
+	printf '%s\n' 'e2e static: mutable-tag predecessor values lost the exact image identity the chart requires' >&2
 	exit 1
 }
 jq -e '
