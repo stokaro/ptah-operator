@@ -93,6 +93,99 @@ func TestRuntimePodIdentityPolicyPinsServiceAccountExecutableAndSubresources(t *
 	}
 }
 
+// This is intentionally a white-box test because probe default normalization
+// is part of the generated admission contract rather than an exported Go API.
+func TestRuntimeHTTPProbeExpressionNormalizesOmittedInitialDelay(t *testing.T) {
+	t.Parallel()
+
+	expression := runtimeHTTPProbeExpression("object.spec.containers[0].readinessProbe", "/readyz", 0, 5, 1, 1)
+	tests := []struct {
+		name         string
+		includeDelay bool
+		delay        int64
+		want         bool
+	}{
+		{name: "absent", want: true},
+		{name: "explicit zero", includeDelay: true, want: true},
+		{name: "nonzero", includeDelay: true, delay: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			probe := map[string]any{
+				"httpGet": map[string]any{
+					"path":   "/readyz",
+					"port":   "health",
+					"scheme": "HTTP",
+				},
+				"periodSeconds":    int64(5),
+				"timeoutSeconds":   int64(1),
+				"successThreshold": int64(1),
+				"failureThreshold": int64(1),
+			}
+			if test.includeDelay {
+				probe["initialDelaySeconds"] = test.delay
+			}
+			object := map[string]any{
+				"spec": map[string]any{
+					"containers": []any{map[string]any{"readinessProbe": probe}},
+				},
+			}
+			result := evaluateRolloutCEL(t, expression, map[string]any{"object": object}, nil)
+			got, ok := result.(bool)
+			if !ok {
+				t.Fatalf("probe CEL result = %T(%v), want bool", result, result)
+			}
+			if got != test.want {
+				t.Fatalf("probe CEL decision = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+// This is intentionally a white-box test because node assignment immutability
+// is encoded in an internal admission expression rather than an exported API.
+func TestRuntimePodNodeNameExpressionPreservesPresenceAndValue(t *testing.T) {
+	t.Parallel()
+
+	nodeName := func(value string) *string { return &value }
+	tests := []struct {
+		name        string
+		oldNodeName *string
+		newNodeName *string
+		want        bool
+	}{
+		{name: "both absent", want: true},
+		{name: "added", newNodeName: nodeName("worker-b")},
+		{name: "removed", oldNodeName: nodeName("worker-a")},
+		{name: "changed", oldNodeName: nodeName("worker-a"), newNodeName: nodeName("worker-b")},
+		{name: "unchanged", oldNodeName: nodeName("worker-a"), newNodeName: nodeName("worker-a"), want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			oldSpec := map[string]any{}
+			newSpec := map[string]any{}
+			if test.oldNodeName != nil {
+				oldSpec["nodeName"] = *test.oldNodeName
+			}
+			if test.newNodeName != nil {
+				newSpec["nodeName"] = *test.newNodeName
+			}
+			result := evaluateRolloutCEL(t, runtimePodNodeNameExpression(), map[string]any{
+				"object":    map[string]any{"spec": newSpec},
+				"oldObject": map[string]any{"spec": oldSpec},
+				"request":   map[string]any{"operation": "UPDATE"},
+			}, nil)
+			got, ok := result.(bool)
+			if !ok {
+				t.Fatalf("node-name CEL result = %T(%v), want bool", result, result)
+			}
+			if got != test.want {
+				t.Fatalf("node-name CEL decision = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestRuntimePodIdentityBindingUsesActivationParameter(t *testing.T) {
 	guard := runtimePodGuardFixture()
 	binding, err := guard.runtimePodIdentityBinding()
@@ -638,6 +731,11 @@ func testRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T, environmen
 	guard.RuntimeDeploymentConfigExpressions = decodeRenderedRuntimeExpressions(t, controller.Spec.Template.Spec.InitContainers[0].Args, "--runtime-deployment-config-expressions-b64=")
 	guard.RuntimePodConfigExpressions = decodeRenderedRuntimeExpressions(t, controller.Spec.Template.Spec.InitContainers[0].Args, "--runtime-pod-config-expressions-b64=")
 	guard.RuntimeAdmissionContractB64 = decodedManagerStringArgument(t, controller.Spec.Template.Spec.InitContainers[0].Args, "--runtime-admission-contract-b64=")
+	assertRuntimeDeploymentMinReadySecondsNormalization(t, guard.RuntimeDeploymentConfigExpressions, controller.Name)
+	if environmentVariable == "PTAH_RUNTIME_POD_GUARD_RENDER" {
+		assertRuntimeTolerationNormalization(t, guard.RuntimeDeploymentConfigExpressions, "object.spec.template.spec.tolerations", false)
+		assertRuntimeTolerationNormalization(t, guard.RuntimePodConfigExpressions, "object.spec.tolerations", true)
+	}
 	name := RuntimePodGuardPolicyName(guard.ReleaseSequence)
 	wantPolicy, err := guard.runtimePodIdentityPolicy()
 	if err != nil {
@@ -652,6 +750,165 @@ func testRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T, environmen
 	}
 	if err := guard.verifyRuntimePodIdentityBinding(bindings[name]); err != nil {
 		t.Fatalf("rendered runtime Pod binding: %v", err)
+	}
+}
+
+func assertRuntimeDeploymentMinReadySecondsNormalization(t *testing.T, expressions []string, controllerName string) {
+	t.Helper()
+	var expression string
+	for _, candidate := range expressions {
+		if !strings.Contains(candidate, "object.spec.minReadySeconds") {
+			continue
+		}
+		if expression != "" {
+			t.Fatal("runtime Deployment config contains multiple minimum-ready-seconds expressions")
+		}
+		expression = candidate
+	}
+	if expression == "" {
+		t.Fatal("runtime Deployment config lacks a minimum-ready-seconds expression")
+	}
+
+	tests := []struct {
+		name         string
+		includeValue bool
+		value        int64
+		want         bool
+	}{
+		{name: "absent", want: true},
+		{name: "explicit zero", includeValue: true, want: true},
+		{name: "nonzero", includeValue: true, value: 1},
+	}
+	for _, test := range tests {
+		t.Run("minimum ready seconds "+test.name, func(t *testing.T) {
+			spec := map[string]any{
+				"strategy":                map[string]any{"type": "Recreate"},
+				"revisionHistoryLimit":    int64(10),
+				"progressDeadlineSeconds": int64(600),
+			}
+			if test.includeValue {
+				spec["minReadySeconds"] = test.value
+			}
+			result := evaluateRolloutCEL(t, expression, map[string]any{
+				"object":  map[string]any{"spec": spec},
+				"request": map[string]any{"name": controllerName},
+			}, nil)
+			got, ok := result.(bool)
+			if !ok {
+				t.Fatalf("runtime Deployment CEL result = %T(%v), want bool", result, result)
+			}
+			if got != test.want {
+				t.Fatalf("runtime Deployment CEL decision = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func assertRuntimeTolerationNormalization(t *testing.T, expressions []string, path string, includeDefaults bool) {
+	t.Helper()
+	var expression string
+	for _, candidate := range expressions {
+		if !strings.Contains(candidate, path) {
+			continue
+		}
+		if expression != "" {
+			t.Fatalf("runtime config contains multiple toleration expressions for %s", path)
+		}
+		expression = candidate
+	}
+	if expression == "" {
+		t.Fatalf("runtime config lacks a toleration expression for %s", path)
+	}
+
+	base := func(user map[string]any, explicitDefaultValues bool) []any {
+		items := []any{user}
+		if !includeDefaults {
+			return items
+		}
+		for _, key := range []string{"node.kubernetes.io/not-ready", "node.kubernetes.io/unreachable"} {
+			item := map[string]any{
+				"key":               key,
+				"operator":          "Exists",
+				"effect":            "NoExecute",
+				"tolerationSeconds": int64(300),
+			}
+			if explicitDefaultValues {
+				item["value"] = ""
+			}
+			items = append(items, item)
+		}
+		return items
+	}
+	type testCase struct {
+		name  string
+		items func() []any
+		want  bool
+	}
+	tests := []testCase{
+		{
+			name:  "omitted legal strings",
+			items: func() []any { return base(map[string]any{"key": "dedicated"}, false) },
+			want:  true,
+		},
+		{
+			name: "explicit empty strings",
+			items: func() []any {
+				return base(map[string]any{"key": "dedicated", "operator": "", "value": "", "effect": ""}, true)
+			},
+			want: true,
+		},
+		{
+			name: "explicit operator default",
+			items: func() []any {
+				return base(map[string]any{"key": "dedicated", "operator": "Equal", "value": "", "effect": ""}, true)
+			},
+			want: true,
+		},
+		{
+			name:  "non-equivalent user operator",
+			items: func() []any { return base(map[string]any{"key": "dedicated", "operator": "Exists"}, false) },
+		},
+	}
+	if includeDefaults {
+		tests = append(tests,
+			testCase{
+				name: "non-equivalent injected value",
+				items: func() []any {
+					items := base(map[string]any{"key": "dedicated"}, false)
+					items[1].(map[string]any)["value"] = "foreign"
+					return items
+				},
+			},
+			testCase{
+				name: "injected order changed",
+				items: func() []any {
+					items := base(map[string]any{"key": "dedicated"}, false)
+					items[1], items[2] = items[2], items[1]
+					return items
+				},
+			},
+		)
+	}
+	for _, test := range tests {
+		t.Run(path+" "+test.name, func(t *testing.T) {
+			items := test.items()
+			object := map[string]any{
+				"spec": map[string]any{
+					"tolerations": items,
+					"template": map[string]any{
+						"spec": map[string]any{"tolerations": items},
+					},
+				},
+			}
+			result := evaluateRolloutCEL(t, expression, map[string]any{"object": object}, nil)
+			got, ok := result.(bool)
+			if !ok {
+				t.Fatalf("toleration CEL result = %T(%v), want bool", result, result)
+			}
+			if got != test.want {
+				t.Fatalf("toleration CEL decision = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 

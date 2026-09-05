@@ -909,6 +909,104 @@ func TestRolloutAndRuntimeDeploymentActivationTruthTable(t *testing.T) {
 	}
 }
 
+// This is intentionally a white-box test because the stop transition is an
+// internal admission-policy exception whose exact field-preservation contract
+// is not observable through an exported Go API.
+func TestDeploymentStopTransitionPreservesOptionalSpecFields(t *testing.T) {
+	t.Parallel()
+
+	guard := runtimePodGuardFixture()
+	guard.ReleaseSequence = 2
+	guard.ControllerStateVersion = 2
+	guard.AdmissionContractVersion = 2
+	guard.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("2", 64)
+	guard.HookServiceAccountName = "ptah-crd-v2-" + hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)[:12]
+	rolloutPolicy := guard.policy(guard.ControllerStateVersion, guard.AdmissionContractVersion)
+	runtimePolicy := guard.runtimePolicy(guard.ControllerStateVersion, guard.ReleaseSequence, guard.ManagerImage)
+	predecessorImage := "registry.example/ptah@sha256:" + strings.Repeat("1", 64)
+	params := rolloutActivationCELObject(guard, 1, 1, 1, 1, predecessorImage)
+	request := rolloutRequestCELObject(guard, "UPDATE", "", rolloutHookUsername(guard))
+
+	tests := []struct {
+		name   string
+		mutate func(oldSpec, newSpec map[string]any)
+		want   bool
+	}{
+		{
+			name: "both optional fields absent",
+			mutate: func(oldSpec, newSpec map[string]any) {
+				delete(oldSpec, "strategy")
+				delete(newSpec, "strategy")
+				delete(oldSpec, "minReadySeconds")
+				delete(newSpec, "minReadySeconds")
+			},
+			want: true,
+		},
+		{
+			name: "strategy added",
+			mutate: func(oldSpec, newSpec map[string]any) {
+				delete(oldSpec, "strategy")
+				delete(oldSpec, "minReadySeconds")
+				delete(newSpec, "minReadySeconds")
+			},
+		},
+		{
+			name: "strategy removed",
+			mutate: func(oldSpec, newSpec map[string]any) {
+				delete(newSpec, "strategy")
+				delete(oldSpec, "minReadySeconds")
+				delete(newSpec, "minReadySeconds")
+			},
+		},
+		{
+			name: "strategy changed",
+			mutate: func(_, newSpec map[string]any) {
+				newSpec["strategy"] = map[string]any{"type": "RollingUpdate"}
+			},
+		},
+		{
+			name: "minimum ready seconds added",
+			mutate: func(oldSpec, newSpec map[string]any) {
+				delete(oldSpec, "strategy")
+				delete(newSpec, "strategy")
+				delete(oldSpec, "minReadySeconds")
+			},
+		},
+		{
+			name: "minimum ready seconds removed",
+			mutate: func(oldSpec, newSpec map[string]any) {
+				delete(oldSpec, "strategy")
+				delete(newSpec, "strategy")
+				delete(newSpec, "minReadySeconds")
+			},
+		},
+		{
+			name: "minimum ready seconds changed",
+			mutate: func(_, newSpec map[string]any) {
+				newSpec["minReadySeconds"] = int64(1)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			oldObject := rolloutDeploymentCELObject(guard, 1, 1, predecessorImage)
+			object := rolloutDeploymentCELObject(guard, 2, 2, predecessorImage)
+			oldSpec := oldObject["spec"].(map[string]any)
+			newSpec := object["spec"].(map[string]any)
+			newSpec["replicas"] = int64(0)
+			newSpec["template"] = rolloutCELClone(t, oldSpec["template"])
+			test.mutate(oldSpec, newSpec)
+
+			if got := evaluatePolicyValidationPrefix(t, rolloutPolicy, 7, object, oldObject, request, params); got != test.want {
+				t.Fatalf("rollout optional-field decision = %t, want %t", got, test.want)
+			}
+			if got := evaluatePolicyValidationPrefix(t, runtimePolicy, 3, object, oldObject, request, params); got != test.want {
+				t.Fatalf("runtime optional-field decision = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 // This is intentionally a white-box test because an admission configuration
 // must remain on the active identity until the retained activation parameter
 // commits the candidate sequence.

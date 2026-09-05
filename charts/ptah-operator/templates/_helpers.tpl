@@ -450,7 +450,7 @@ app.kubernetes.io/component: controller
 {{- $operator := default "Equal" (index $value "operator") -}}
 {{- $tolerationValue := default "" (index $value "value") -}}
 {{- $effect := default "" (index $value "effect") -}}
-{{- $entry := printf `%[1]s[%[2]d].key == %[3]q && (%[1]s[%[2]d].operator == "" ? "Equal" : %[1]s[%[2]d].operator) == %[4]q && %[1]s[%[2]d].value == %[5]q && %[1]s[%[2]d].effect == %[6]q` $path $index $key $operator $tolerationValue $effect -}}
+{{- $entry := printf `(has(%[1]s[%[2]d].key) ? %[1]s[%[2]d].key : "") == %[3]q && (has(%[1]s[%[2]d].operator) ? (%[1]s[%[2]d].operator == "" ? "Equal" : %[1]s[%[2]d].operator) : "Equal") == %[4]q && (has(%[1]s[%[2]d].value) ? %[1]s[%[2]d].value : "") == %[5]q && (has(%[1]s[%[2]d].effect) ? %[1]s[%[2]d].effect : "") == %[6]q` $path $index $key $operator $tolerationValue $effect -}}
 {{- if hasKey $value "tolerationSeconds" -}}
 {{- $entry = printf `%s && has(%s[%d].tolerationSeconds) && %s[%d].tolerationSeconds == %d` $entry $path $index $path $index (int64 (index $value "tolerationSeconds")) -}}
 {{- else -}}
@@ -467,12 +467,12 @@ app.kubernetes.io/component: controller
 {{- $expected := len $values -}}
 {{- if .includeDefaults -}}
 {{- if and .defaultTolerationsEnabled (not $suppressNotReady) -}}
-{{- $entry := printf `%[1]s[%[2]d].key == "node.kubernetes.io/not-ready" && %[1]s[%[2]d].operator == "Exists" && %[1]s[%[2]d].value == "" && %[1]s[%[2]d].effect == "NoExecute" && has(%[1]s[%[2]d].tolerationSeconds) && %[1]s[%[2]d].tolerationSeconds == %[3]d` $path $expected (int64 .defaultNotReadyTolerationSeconds) -}}
+{{- $entry := printf `(has(%[1]s[%[2]d].key) ? %[1]s[%[2]d].key : "") == "node.kubernetes.io/not-ready" && (has(%[1]s[%[2]d].operator) ? (%[1]s[%[2]d].operator == "" ? "Equal" : %[1]s[%[2]d].operator) : "Equal") == "Exists" && (has(%[1]s[%[2]d].value) ? %[1]s[%[2]d].value : "") == "" && (has(%[1]s[%[2]d].effect) ? %[1]s[%[2]d].effect : "") == "NoExecute" && has(%[1]s[%[2]d].tolerationSeconds) && %[1]s[%[2]d].tolerationSeconds == %[3]d` $path $expected (int64 .defaultNotReadyTolerationSeconds) -}}
 {{- $parts = append $parts (printf `(%s)` $entry) -}}
 {{- $expected = add1 $expected -}}
 {{- end -}}
 {{- if and .defaultTolerationsEnabled (not $suppressUnreachable) -}}
-{{- $entry := printf `%[1]s[%[2]d].key == "node.kubernetes.io/unreachable" && %[1]s[%[2]d].operator == "Exists" && %[1]s[%[2]d].value == "" && %[1]s[%[2]d].effect == "NoExecute" && has(%[1]s[%[2]d].tolerationSeconds) && %[1]s[%[2]d].tolerationSeconds == %[3]d` $path $expected (int64 .defaultUnreachableTolerationSeconds) -}}
+{{- $entry := printf `(has(%[1]s[%[2]d].key) ? %[1]s[%[2]d].key : "") == "node.kubernetes.io/unreachable" && (has(%[1]s[%[2]d].operator) ? (%[1]s[%[2]d].operator == "" ? "Equal" : %[1]s[%[2]d].operator) : "Equal") == "Exists" && (has(%[1]s[%[2]d].value) ? %[1]s[%[2]d].value : "") == "" && (has(%[1]s[%[2]d].effect) ? %[1]s[%[2]d].effect : "") == "NoExecute" && has(%[1]s[%[2]d].tolerationSeconds) && %[1]s[%[2]d].tolerationSeconds == %[3]d` $path $expected (int64 .defaultUnreachableTolerationSeconds) -}}
 {{- $parts = append $parts (printf `(%s)` $entry) -}}
 {{- $expected = add1 $expected -}}
 {{- end -}}
@@ -523,7 +523,7 @@ app.kubernetes.io/component: controller
 {{- end -}}
 {{- $expressions := list
       (printf `object.spec.replicas == (%s ? %d : 1)` $isController (int $root.Values.replicaCount))
-      (printf `object.spec.strategy.type == "Recreate" && !has(object.spec.strategy.rollingUpdate) && object.spec.minReadySeconds == 0 && (!has(object.spec.paused) || !object.spec.paused) && has(object.spec.revisionHistoryLimit) && object.spec.revisionHistoryLimit == (%s ? 10 : 2) && has(object.spec.progressDeadlineSeconds) && object.spec.progressDeadlineSeconds == 600` $isController)
+      (printf `object.spec.strategy.type == "Recreate" && !has(object.spec.strategy.rollingUpdate) && (!has(object.spec.minReadySeconds) || object.spec.minReadySeconds == 0) && (!has(object.spec.paused) || !object.spec.paused) && has(object.spec.revisionHistoryLimit) && object.spec.revisionHistoryLimit == (%s ? 10 : 2) && has(object.spec.progressDeadlineSeconds) && object.spec.progressDeadlineSeconds == 600` $isController)
       (printf `has(object.spec.selector) && (%s) && (!has(object.spec.selector.matchExpressions) || object.spec.selector.matchExpressions.size() == 0)` $selectorExpression)
       (printf `%s ? (%s) : (%s)` $isController (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.labels" $template) "values" $controllerLabels)) (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.labels" $template) "values" $certificateLabels)))
       (printf `%s ? (%s) : (%s)` $isController (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.annotations" $template) "values" $controllerAnnotations)) (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.annotations" $template) "values" $certificateAnnotations)))

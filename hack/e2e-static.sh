@@ -4709,6 +4709,7 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/runtime-pod-guard.yaml \
 	--show-only templates/deployment.yaml \
 	--show-only templates/certificate-rotation.yaml \
+	--set-string 'tolerations[0].key=dedicated' \
 	$crd_render_args >"$ROLLOUT_GUARD_RENDER"
 # Exercise API-server generated-name truncation with a maximal runtime name.
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
