@@ -73,7 +73,7 @@ const (
 	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "fb27f9d93cb0bee270e8724386b3141dd4b374664860fa7b63992f25448dcef8"
+	releaseWorkflowSHA256 = "cf5719730e0ecb888f46daab04cd0e2cc9b41319328687d0dfe0d43d029d6958"
 )
 
 func main() {
@@ -1670,8 +1670,8 @@ type workflowDocument struct {
 }
 
 type workflowConcurrency struct {
-	Group            string `yaml:"group"`
-	CancelInProgress bool   `yaml:"cancel-in-progress"`
+	Group            string    `yaml:"group"`
+	CancelInProgress yaml.Node `yaml:"cancel-in-progress"`
 }
 
 type workflowJob struct {
@@ -1746,8 +1746,11 @@ func verifyWorkflowSemantics(document []byte) error {
 	if err := push.Decode(&pushConfig); err != nil || len(pushConfig.Tags) != 1 || pushConfig.Tags[0] != "v*" {
 		return errors.New("release workflow push trigger must contain only v* tags")
 	}
-	if workflow.Concurrency.Group != "release-${{ github.ref }}" || workflow.Concurrency.CancelInProgress {
-		return errors.New("release workflow must serialize each tag without canceling an active transaction")
+	cancelInProgress := workflow.Concurrency.CancelInProgress
+	if workflow.Concurrency.Group != "release-${{ github.ref }}" ||
+		cancelInProgress.Kind != yaml.ScalarNode || cancelInProgress.Tag != "!!str" ||
+		cancelInProgress.Value != "${{ github.event_name == 'pull_request' }}" {
+		return errors.New("release workflow must cancel only superseded pull request validation and serialize each tag without canceling an active transaction")
 	}
 	if !equalStringMap(workflow.Permissions, map[string]string{"contents": "read"}) {
 		return errors.New("release workflow top-level permissions must be contents: read only")

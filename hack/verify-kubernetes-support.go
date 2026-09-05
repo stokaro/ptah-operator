@@ -70,9 +70,9 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "a30ca2c550af04a0b4a6abf8a6cec7ea226121a4af6417da10403cb1a973a9c3"
+	ciWorkflowSHA256                = "4d057d44e23d61a2326eafce7cfa4f72a6ebcb63c5cd4c09435ad8341b7ac11d"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
-	releaseWorkflowSHA256           = "fb27f9d93cb0bee270e8724386b3141dd4b374664860fa7b63992f25448dcef8"
+	releaseWorkflowSHA256           = "cf5719730e0ecb888f46daab04cd0e2cc9b41319328687d0dfe0d43d029d6958"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
 	releaseChartExportRunSHA256     = "a34800805204a2caa071d03939f9337f3472028ecb8b9c11ed26723294eb8082"
@@ -566,6 +566,11 @@ func verifyWorkflow(path string) error {
 }
 
 func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents []byte) error {
+	cancelInProgress := workflow.Concurrency.CancelInProgress
+	if workflow.Concurrency.Group != "ci-${{ github.workflow }}-${{ github.ref }}" ||
+		cancelInProgress.Kind != yaml.ScalarNode || cancelInProgress.Tag != "!!bool" || cancelInProgress.Value != "true" {
+		return fmt.Errorf("%s: CI must cancel superseded runs of the same workflow and ref", path)
+	}
 	required := []string{
 		"go run ./hack/verify-kubernetes-support.go -output=matrix",
 		"fromJSON(needs.support-matrix.outputs.matrix)",
@@ -847,8 +852,8 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	if gate.Name != "Kubernetes support gate" {
 		return fmt.Errorf("%s: stable support gate name must be %q", path, "Kubernetes support gate")
 	}
-	if gate.If != "${{ always() }}" {
-		return fmt.Errorf("%s: Kubernetes support gate must run with if: always()", path)
+	if gate.If != "${{ !cancelled() }}" {
+		return fmt.Errorf("%s: Kubernetes support gate must run after unsuccessful dependencies and stop on cancellation with if: !cancelled()", path)
 	}
 	if gate.TimeoutMinutes != ciKubernetesSupportTimeoutMinutes {
 		return fmt.Errorf("%s: Kubernetes support gate timeout must be %d minutes", path, ciKubernetesSupportTimeoutMinutes)
@@ -985,7 +990,9 @@ func verifyUpdateWorkflowSemantics(path string, workflow workflowDocument, conte
 	if !equalStringMap(workflow.Permissions, map[string]string{"contents": "read"}) {
 		return fmt.Errorf("%s: support updater top-level permissions must be contents: read only", path)
 	}
-	if workflow.Concurrency.Group != "update-kubernetes-support" || workflow.Concurrency.CancelInProgress {
+	cancelInProgress := workflow.Concurrency.CancelInProgress
+	if workflow.Concurrency.Group != "update-kubernetes-support" ||
+		cancelInProgress.Kind != yaml.ScalarNode || cancelInProgress.Tag != "!!bool" || cancelInProgress.Value != "false" {
 		return fmt.Errorf("%s: support updater must serialize deliveries without canceling an active run", path)
 	}
 	if len(workflow.Jobs) != 3 {
@@ -1153,6 +1160,12 @@ func verifyReleaseWorkflow(path string) error {
 	if err != nil {
 		return err
 	}
+	cancelInProgress := workflow.Concurrency.CancelInProgress
+	if workflow.Concurrency.Group != "release-${{ github.ref }}" ||
+		cancelInProgress.Kind != yaml.ScalarNode || cancelInProgress.Tag != "!!str" ||
+		cancelInProgress.Value != "${{ github.event_name == 'pull_request' }}" {
+		return fmt.Errorf("%s: release concurrency must cancel only superseded pull request validation and serialize each tag", path)
+	}
 	if _, ok := workflow.On["workflow_dispatch"]; !ok {
 		return fmt.Errorf("%s: release smoke must support manual dispatch", path)
 	}
@@ -1313,8 +1326,8 @@ type workflowDocument struct {
 }
 
 type workflowConcurrency struct {
-	Group            string `yaml:"group"`
-	CancelInProgress bool   `yaml:"cancel-in-progress"`
+	Group            string    `yaml:"group"`
+	CancelInProgress yaml.Node `yaml:"cancel-in-progress"`
 }
 
 type workflowJob struct {

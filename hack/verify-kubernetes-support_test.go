@@ -15,8 +15,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -327,6 +329,10 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 		old string
 		new string
 	}{
+		"superseded CI not canceled": {
+			old: "  cancel-in-progress: true\n",
+			new: "  cancel-in-progress: false\n",
+		},
 		"workflow default shell": {
 			old: "env:\n  GOFLAGS: -mod=readonly\n\njobs:\n",
 			new: "env:\n  GOFLAGS: -mod=readonly\n\ndefaults:\n  run:\n    shell: 'true {0}'\n\njobs:\n",
@@ -468,8 +474,16 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "    name: Kubernetes support window 1.35-1.37\n",
 		},
 		"conditional gate": {
-			old: "    if: ${{ always() }}\n",
+			old: "    if: ${{ !cancelled() }}\n",
 			new: "    if: ${{ success() }}\n",
+		},
+		"uncancelable gate": {
+			old: "    if: ${{ !cancelled() }}\n",
+			new: "    if: ${{ always() }}\n",
+		},
+		"implicit success gate": {
+			old: "    if: ${{ !cancelled() }}\n",
+			new: "",
 		},
 		"missing lifecycle dependency": {
 			old: "    needs: [support-matrix, verify, race, kubernetes-e2e]\n",
@@ -504,6 +518,61 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 				t.Fatal("verifyCIWorkflowSemantics() accepted a critical mutation")
 			}
 		})
+	}
+}
+
+func TestSupportGateRequiresEverySuccessfulDependency(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join("..", workflowPath)
+	workflow, _, err := readWorkflow(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, err := requireWorkflowStep(path, "kubernetes-support-gate", workflow.Jobs["kubernetes-support-gate"], "require-results")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dependencies := []string{"SUPPORT_MATRIX_RESULT", "VERIFY_RESULT", "RACE_RESULT", "KUBERNETES_E2E_RESULT"}
+	run := func(t *testing.T, changedDependency, result string, wantSuccess bool) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "bash", "--noprofile", "--norc", "-c", step.Run)
+		for _, dependency := range dependencies {
+			value := "success"
+			if dependency == changedDependency {
+				value = result
+			}
+			cmd.Env = append(cmd.Env, dependency+"="+value)
+		}
+		output, err := cmd.CombinedOutput()
+		if ctx.Err() != nil {
+			t.Fatalf("support gate did not finish: %v", ctx.Err())
+		}
+		if wantSuccess {
+			if err != nil {
+				t.Fatalf("support gate rejected successful dependencies: %v\n%s", err, output)
+			}
+			return
+		}
+		if err == nil || cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 1 {
+			t.Fatalf("support gate error = %v, want exit 1\n%s", err, output)
+		}
+		if !strings.Contains(string(output), "required Kubernetes support job concluded: "+result) {
+			t.Fatalf("support gate did not report the unsuccessful dependency: %s", output)
+		}
+	}
+	t.Run("all successful", func(t *testing.T) {
+		run(t, "", "", true)
+	})
+	for _, dependency := range dependencies {
+		for _, result := range []string{"failure", "skipped", "cancelled"} {
+			t.Run(dependency+"/"+result, func(t *testing.T) {
+				t.Parallel()
+				run(t, dependency, result, false)
+			})
+		}
 	}
 }
 

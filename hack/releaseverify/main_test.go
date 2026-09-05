@@ -672,6 +672,11 @@ func TestVerifyWorkflowRejectsCriticalMutations(t *testing.T) {
 		new string
 		all bool
 	}{
+		"cancel active publication": {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: true`, false},
+		"retain superseded PR":      {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: false`, false},
+		"cancel tag validation":     {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}`, false},
+		"cancel manual validation":  {`  cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, `  cancel-in-progress: ${{ github.event_name != 'push' }}`, false},
+		"shared release group":      {`  group: release-${{ github.ref }}`, `  group: release`, false},
 		"manual smoke trigger":      {`  workflow_dispatch:`, `  # workflow_dispatch removed`, false},
 		"manual smoke guard":        {`github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'`, `github.event_name == 'pull_request'`, false},
 		"tag trigger":               {`      - "v*"`, `      - main`, false},

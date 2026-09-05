@@ -256,7 +256,7 @@ jobs:
 
   kubernetes-support-gate:
     name: Kubernetes support gate
-    if: ${{ always() }}
+    if: ${{ !cancelled() }}
     needs: [support-matrix, verify, race, kubernetes-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
