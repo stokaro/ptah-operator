@@ -4282,6 +4282,9 @@ assert_candidate_crds_adopted() {
 }
 
 run_predecessor_upgrade_proof() {
+	# This is legacy-adoption coverage: the unmodified predecessor predates
+	# release identity annotations and produces the old Apply/Job contracts.
+	# Managed sequence-to-sequence upgrades have a separate proof below.
 	E2E_CANDIDATE_VALUES_FILE=${E2E_CANDIDATE_VALUES_FILE:?E2E_CANDIDATE_VALUES_FILE is required for predecessor upgrade proof}
 	E2E_PREDECESSOR_IDENTITY_FILE=${E2E_PREDECESSOR_IDENTITY_FILE:?E2E_PREDECESSOR_IDENTITY_FILE is required for predecessor upgrade proof}
 	E2E_PREDECESSOR_SOURCE_DIR=${E2E_PREDECESSOR_SOURCE_DIR:?E2E_PREDECESSOR_SOURCE_DIR is required for predecessor upgrade proof}
@@ -4295,7 +4298,7 @@ run_predecessor_upgrade_proof() {
 	prepare_expected_hook_names
 	materialize_identity_hook_credential_patterns
 
-	printf '%s\n' 'e2e crd: proving exact predecessor-to-candidate upgrade'
+	printf '%s\n' 'e2e crd: proving exact legacy-adoption predecessor-to-candidate upgrade'
 	runtime_deployment_names
 	old_deployment_image=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$CONTROLLER_DEPLOYMENT" \
 		-o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')
@@ -4706,6 +4709,8 @@ run_upgrade_proof() {
 }
 
 run_next_release_upgrade_proof() {
+	# Managed lifecycle coverage must advance an already active release; it
+	# must not reuse or synthesize the annotation-free legacy-adoption fixture.
 	validate_release_sequence_transition
 	current_release_sequence=$E2E_CURRENT_RELEASE_SEQUENCE
 	next_release_sequence=$E2E_NEXT_RELEASE_SEQUENCE

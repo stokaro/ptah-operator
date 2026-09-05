@@ -38,6 +38,33 @@ func TestVerifyE2EWiring(t *testing.T) {
 	}
 }
 
+func TestPredecessorFixtureRequiresLegacyAdoptionMode(t *testing.T) {
+	t.Parallel()
+	source := readE2ESource(t, repositoryE2EWiringFiles().harness)
+	guard := regexp.MustCompile(`(?m)^jq -e '([^'\n]+)' "\$PREDECESSOR_IDENTITY_FILE" >/dev/null \|\|$`).FindStringSubmatch(source)
+	if len(guard) != 2 {
+		t.Fatal("predecessor contract guard is missing")
+	}
+	for _, test := range []struct {
+		name, input string
+		accept      bool
+	}{
+		{"legacy", `{"mode":"legacy-adoption"}`, true},
+		{"managed", `{"mode":"managed-upgrade"}`, false},
+		{"missing", `{}`, false},
+		{"null", `{"mode":null}`, false},
+		{"wrong type", `{"mode":["legacy-adoption"]}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			command := exec.Command("jq", "-e", guard[1])
+			command.Stdin = strings.NewReader(test.input)
+			if output, err := command.CombinedOutput(); (err == nil) != test.accept {
+				t.Fatalf("predecessor contract accepted=%t, want %t: %s", err == nil, test.accept, output)
+			}
+		})
+	}
+}
+
 func TestKubernetesSupportImageResolverFollowsShiftedManifest(t *testing.T) {
 	t.Parallel()
 

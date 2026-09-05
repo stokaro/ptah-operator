@@ -2130,6 +2130,10 @@ func verifyE2ESourceSnapshot(path string, contents []byte) error {
 			`fail "operator source revision resolved to $resolved_controller, expected $CONTROLLER_REVISION"`,
 		}),
 		exactSourceLine("snapshot content verification", `verify_snapshot_source`),
+		exactSourceLineSequence("legacy predecessor fixture contract", []string{
+			`jq -e '.mode == "legacy-adoption"' "$PREDECESSOR_IDENTITY_FILE" >/dev/null ||`,
+			`fail "predecessor fixture must declare the legacy-adoption contract"`,
+		}),
 	}
 	if err := verifyOrderedSourceContract(path, contents, snapshotContract); err != nil {
 		return err

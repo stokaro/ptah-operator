@@ -187,6 +187,8 @@ verify_snapshot_source
 
 [ -f "$PREDECESSOR_IDENTITY_FILE" ] ||
 	fail "predecessor identity fixture is missing: $PREDECESSOR_IDENTITY_FILE"
+jq -e '.mode == "legacy-adoption"' "$PREDECESSOR_IDENTITY_FILE" >/dev/null ||
+	fail "predecessor fixture must declare the legacy-adoption contract"
 PREDECESSOR_REVISION=$(jq -er '.revision' "$PREDECESSOR_IDENTITY_FILE")
 PREDECESSOR_DOCKERFILE=$(jq -er '.dockerfile' "$PREDECESSOR_IDENTITY_FILE")
 PREDECESSOR_CHART=$(jq -er '.chart' "$PREDECESSOR_IDENTITY_FILE")

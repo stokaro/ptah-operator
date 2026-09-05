@@ -46,6 +46,11 @@ CRD_GUARD_TERMINATED_FIXTURE=$WORK_DIR/crd-guard-terminated.json
 CRD_GUARD_STATE=$WORK_DIR/crd-guard-state.json
 PREDECESSOR_IDENTITY=$ROOT_DIR/internal/crdupgrade/assets/predecessor.json
 PREDECESSOR_CRD_FILE=$WORK_DIR/predecessor-crd.yaml
+PREDECESSOR_SOURCE_DIR=$WORK_DIR/predecessor-source
+PREDECESSOR_DECODE_CHART=$WORK_DIR/predecessor-decode
+PREDECESSOR_CONTRACT=$WORK_DIR/predecessor-contract.json
+PREDECESSOR_CONTRACT_FILTER=$WORK_DIR/predecessor-contract.jq
+PREDECESSOR_CONTRACT_NEGATIVE=$WORK_DIR/predecessor-contract-negative.json
 PREDECESSOR_VALUES_FIXTURE=$WORK_DIR/predecessor-values.json
 CANDIDATE_VALUES_FIXTURE=$WORK_DIR/candidate-values.json
 CONTROLLER_JOB_FIXTURE=$WORK_DIR/controller-jobs.json
@@ -255,11 +260,12 @@ shellcheck "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
 
 predecessor_revision=$(jq -er '.revision' "$PREDECESSOR_IDENTITY")
-[ "$predecessor_revision" = 3405d26c1003329fe44f019e1eb030a982fc25e5 ] || {
+[ "$predecessor_revision" = 210c9673e6ad8e339278d99cc4735557332df7bd ] || {
 	printf '%s\n' 'e2e static: predecessor revision identity changed unexpectedly' >&2
 	exit 1
 }
 jq -e '
+  .mode == "legacy-adoption" and
   .dockerfile == "Dockerfile" and
   .chart == "charts/ptah-operator" and
   (.crds | length) == 3 and
@@ -293,6 +299,107 @@ while [ "$predecessor_crd_index" -lt "$predecessor_crd_count" ]; do
 	}
 	predecessor_crd_index=$((predecessor_crd_index + 1))
 done
+
+# Decode the actual historical CRDs and rendered webhook objects, not current
+# constructors or source-text markers. A managed-release repin must fail even
+# when someone updates its revision and normalized-spec digests together.
+mkdir -p "$PREDECESSOR_SOURCE_DIR" "$PREDECESSOR_DECODE_CHART/templates" \
+	"$PREDECESSOR_DECODE_CHART/crd-inputs"
+git -C "$ROOT_DIR" archive --format=tar "$predecessor_revision" charts/ptah-operator |
+	tar -xf - -C "$PREDECESSOR_SOURCE_DIR"
+cp "$PREDECESSOR_SOURCE_DIR"/charts/ptah-operator/crds/*.yaml \
+	"$PREDECESSOR_DECODE_CHART/crd-inputs/"
+helm template ptah-legacy "$PREDECESSOR_SOURCE_DIR/charts/ptah-operator" \
+	--namespace ptah-legacy-fixture \
+	--show-only templates/webhook.yaml \
+	--set-string fullnameOverride=ptah-legacy \
+	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
+	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
+	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
+	--set-string webhook.existingSecret=legacy-webhook-cert \
+	--set-string webhook.caBundle=legacy-ca \
+	>"$PREDECESSOR_DECODE_CHART/webhooks.yaml"
+cat >"$PREDECESSOR_DECODE_CHART/Chart.yaml" <<'EOF'
+apiVersion: v2
+name: predecessor-contract-decoder
+version: 0.0.0
+EOF
+cat >"$PREDECESSOR_DECODE_CHART/templates/objects.yaml" <<'EOF'
+{{- $objects := list -}}
+{{- range $path, $_ := .Files.Glob "crd-inputs/*.yaml" -}}
+{{- $objects = append $objects ($.Files.Get $path | fromYaml) -}}
+{{- end -}}
+{{- range splitList "\n---" (.Files.Get "webhooks.yaml") -}}
+{{- $object := fromYaml . -}}
+{{- if $object -}}{{- $objects = append $objects $object -}}{{- end -}}
+{{- end -}}
+{{ dict "apiVersion" "v1" "kind" "List" "items" $objects | toJson }}
+EOF
+helm template predecessor-contract "$PREDECESSOR_DECODE_CHART" |
+	sed '/^---$/d; /^# Source:/d; /^[[:space:]]*$/d' >"$PREDECESSOR_CONTRACT"
+cat >"$PREDECESSOR_CONTRACT_FILTER" <<'EOF'
+def legacyMetadata:
+  ((.metadata.annotations // {}) | keys | all(startswith("operator.ptah.dev/") | not));
+def rules($group; $version; $operations; $resources):
+  [{apiGroups: [$group], apiVersions: [$version], operations: $operations,
+    resources: $resources, scope: "Namespaced"}];
+def webhook($name; $path; $rules):
+  {name: $name, admissionReviewVersions: ["v1"], sideEffects: "None",
+   failurePolicy: "Fail", matchPolicy: "Equivalent", timeoutSeconds: 5,
+   clientConfig: {caBundle: ("legacy-ca" | @base64), service: {
+     namespace: "ptah-legacy-fixture", name: "ptah-legacy-webhook", path: $path, port: 443}},
+   rules: $rules};
+def normalizeConditions:
+  if has("matchConditions") then
+    .matchConditions |= map(.expression |= gsub("[[:space:]]+"; " "))
+  else . end;
+def mutatingApproval:
+  webhook("mapproval.operator.ptah.dev"; "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval";
+    rules("operator.ptah.dev"; "v1alpha1"; ["CREATE"]; ["ptahschemaapprovals"])) +
+  {reinvocationPolicy: "Never"};
+def validatingApproval:
+  webhook("vapproval.operator.ptah.dev"; "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval";
+    rules("operator.ptah.dev"; "v1alpha1"; ["CREATE", "UPDATE"]; ["ptahschemaapprovals"]));
+def validatingPod:
+  webhook("vpodintent.operator.ptah.dev"; "/validate-v1-pod-ptah-operation-intent";
+    rules(""; "v1"; ["CREATE", "UPDATE"]; ["pods", "pods/ephemeralcontainers", "pods/resize"])) +
+  {objectSelector: {matchLabels: {
+    "app.kubernetes.io/managed-by": "ptah-operator",
+    "app.kubernetes.io/component": "schema-operation"}},
+   matchConditions: [{name: "job-owned-pod", expression:
+     "object.metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true) || (request.operation == 'UPDATE' && oldObject != null && oldObject.metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true))"}]};
+.apiVersion == "v1" and .kind == "List" and (.items | length == 5) and
+([.items[] | select(.kind == "CustomResourceDefinition")] | length == 3 and
+  (map(.metadata.name) | sort) == [
+    "ptahschemaapprovals.operator.ptah.dev", "ptahschemaplans.operator.ptah.dev", "ptahschemas.operator.ptah.dev"] and
+  all(.apiVersion == "apiextensions.k8s.io/v1" and legacyMetadata)) and
+([.items[] | select(.kind == "MutatingWebhookConfiguration")] | length == 1 and
+  all(.apiVersion == "admissionregistration.k8s.io/v1" and
+      .metadata.name == "ptah-operator-admission" and legacyMetadata and
+      .webhooks == [mutatingApproval])) and
+([.items[] | select(.kind == "ValidatingWebhookConfiguration")] | length == 1 and
+  all(.apiVersion == "admissionregistration.k8s.io/v1" and
+      .metadata.name == "ptah-operator-admission" and legacyMetadata and
+      (.webhooks | map(normalizeConditions) | sort_by(.name)) ==
+        ([validatingApproval, validatingPod] | sort_by(.name))))
+EOF
+jq -e -f "$PREDECESSOR_CONTRACT_FILTER" "$PREDECESSOR_CONTRACT" >/dev/null || {
+	printf '%s\n' 'e2e static: archived predecessor is not the exact annotation-free legacy-adoption contract' >&2
+	exit 1
+}
+for predecessor_contract_mutation in \
+	'(.items[] | select(.kind == "CustomResourceDefinition")).metadata.annotations["operator.ptah.dev/crd-schema-version"] = "1"' \
+	'(.items[] | select(.kind == "MutatingWebhookConfiguration")).metadata.annotations["operator.ptah.dev/release-sequence"] = "1"' \
+	'(.items[] | select(.kind == "ValidatingWebhookConfiguration")).webhooks += [{name: "unexpected.operator.ptah.dev"}]' \
+	'(.items[] | select(.kind == "ValidatingWebhookConfiguration")).webhooks[1].objectSelector = {}'; do
+	jq "$predecessor_contract_mutation" "$PREDECESSOR_CONTRACT" >"$PREDECESSOR_CONTRACT_NEGATIVE"
+	if jq -e -f "$PREDECESSOR_CONTRACT_FILTER" "$PREDECESSOR_CONTRACT_NEGATIVE" >/dev/null 2>&1; then
+		printf '%s\n' 'e2e static: legacy-adoption contract check accepted a managed identity or webhook drift' >&2
+		exit 1
+	fi
+done
+printf '%s\n' 'e2e static: archived legacy-adoption CRD and webhook contracts verified'
 # shellcheck disable=SC2016 # These checks intentionally match literal script variables.
 grep -F 'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 	printf '%s\n' 'e2e static: predecessor source is not materialized with git archive' >&2
