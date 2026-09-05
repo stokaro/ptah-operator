@@ -1083,27 +1083,40 @@ debug_logs_start_following() {
 	(
 		while :; do
 			for debug_namespace in "$OPERATOR_NAMESPACE" "$CRD_PROOF_NAMESPACE" "$TEST_NAMESPACE"; do
-				# shellcheck disable=SC2046 # One pod name per word is the intent.
+				# shellcheck disable=SC2046 # One name per word is the intent.
 				for debug_pod in $(kubectl --kubeconfig "$KUBECONFIG_FILE" \
 					-n "$debug_namespace" --request-timeout=15s \
 					get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
 					2>/dev/null); do
-					debug_log_file=$DEBUG_LOG_DIR/$debug_namespace.$debug_pod.log
-					# Probe before following. "logs --follow" against a container
-					# still in ContainerCreating returns at once with a message
-					# saying so, and claiming the pod on that answer is how the
-					# output of a Job that failed a moment later goes missing.
-					if [ ! -e "$debug_log_file" ] &&
-						kubectl --kubeconfig "$KUBECONFIG_FILE" \
-							-n "$debug_namespace" --request-timeout=15s \
-							logs "$debug_pod" --all-containers --tail=1 \
-							>/dev/null 2>&1; then
-						: >"$debug_log_file"
-						kubectl --kubeconfig "$KUBECONFIG_FILE" \
-							-n "$debug_namespace" \
-							logs "$debug_pod" --all-containers --follow --tail=-1 \
-							>>"$debug_log_file" 2>&1 &
-					fi
+					# One container at a time, init containers included.
+					# "--all-containers" fails as a whole while any container has
+					# not started, so a pod stuck in Init:CrashLoopBackOff never
+					# hands over the init container's output, which is the only
+					# place the reason is written.
+					# shellcheck disable=SC2046 # One name per word is the intent.
+					for debug_container in $(kubectl --kubeconfig "$KUBECONFIG_FILE" \
+						-n "$debug_namespace" --request-timeout=15s \
+						get pod "$debug_pod" -o jsonpath='{range .spec.initContainers[*]}{.name}{"\n"}{end}{range .spec.containers[*]}{.name}{"\n"}{end}' \
+						2>/dev/null); do
+						debug_log_file=$DEBUG_LOG_DIR/$debug_namespace.$debug_pod.$debug_container.log
+						# Probe before following. "logs --follow" against a
+						# container still in ContainerCreating returns at once
+						# with a message saying so, and claiming it on that
+						# answer is how the output of something that failed a
+						# moment later goes missing.
+						if [ ! -e "$debug_log_file" ] &&
+							kubectl --kubeconfig "$KUBECONFIG_FILE" \
+								-n "$debug_namespace" --request-timeout=15s \
+								logs "$debug_pod" -c "$debug_container" --tail=1 \
+								>/dev/null 2>&1; then
+							: >"$debug_log_file"
+							kubectl --kubeconfig "$KUBECONFIG_FILE" \
+								-n "$debug_namespace" \
+								logs "$debug_pod" -c "$debug_container" \
+								--follow --tail=-1 \
+								>>"$debug_log_file" 2>&1 &
+						fi
+					done
 				done
 			done
 			sleep 1
