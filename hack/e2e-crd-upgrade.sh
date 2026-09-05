@@ -2599,11 +2599,19 @@ EOF
 
 	kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_APPLY_SCHEMA" -o json \
 		>"$WORK_DIR/predecessor-apply-schema.json"
+	predecessor_apply_database_url=$(kube -n "$PROOF_NAMESPACE" get secret \
+		"$PREDECESSOR_APPLY_DATABASE" -o jsonpath='{.data.url}' | base64 -d)
+	printf '%s\n' "$predecessor_apply_database_url" | grep -Eq '^postgres://' ||
+		fail "predecessor Apply database secret does not carry a postgres URL"
+	# The exact URL the Apply Job resolves. The runner derives the target
+	# identity from it and refuses a plan recorded against a different one, so
+	# the fixture binds this value rather than a placeholder.
 	go -C "$ROOT_DIR" run ./hack/predecessorapplyfixture \
 		-schema "$WORK_DIR/predecessor-apply-schema.json" \
 		-plan "$WORK_DIR/predecessor-apply-plan.json" \
 		-policy-uid "$predecessor_policy_uid" \
 		-policy "$predecessor_policy_file" \
+		-database-url "$predecessor_apply_database_url" \
 		>"$WORK_DIR/predecessor-apply-bundle.json"
 	jq -e '
       .plan.spec.contractVersion == 2 and

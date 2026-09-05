@@ -11,7 +11,12 @@ import (
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/runner"
 )
+
+// testDatabaseURL is the exact URL the Apply Job resolves; the target identity
+// binds to it rather than to a placeholder.
+const testDatabaseURL = "postgres://user:pass@db.example.svc.cluster.local:5432/appdb?sslmode=disable"
 
 func TestBuildFixtureProducesExactContractV2Binding(t *testing.T) {
 	t.Parallel()
@@ -44,7 +49,21 @@ func TestBuildFixtureProducesExactContractV2Binding(t *testing.T) {
 	}
 	planData := []byte(`{"format_version":1,"name":"upgrade-proof","dialect":"postgres","from_fingerprint":"` + digest('c') + `","to_fingerprint":"` + digest('d') + `","destructive":false,"statements":[{"sql":"SELECT pg_sleep(90)","severity":"safe","reason":"upgrade quiescence proof"}]}` + "\n")
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
-	bundle, err := buildFixture(schema, planData, "policy-uid", []byte("version: 1\n"), now)
+	bundle, err := buildFixture(schema, planData, "policy-uid", []byte("version: 1\n"), testDatabaseURL, now)
+	if err == nil {
+		// The runner derives the target identity from the same URL and refuses
+		// a plan recorded against a different one. A placeholder stood here, so
+		// every predecessor Apply exited with "database target identity changed
+		// after planning" before opening a connection, and the barrier it was
+		// meant to block on saw no contention at all.
+		wantIdentity, identityErr := runner.TargetIdentityDigest(testDatabaseURL)
+		if identityErr != nil {
+			t.Fatalf("TargetIdentityDigest() error = %v", identityErr)
+		}
+		if got := bundle.SchemaStatus.Target.IdentityDigest; got != wantIdentity {
+			t.Fatalf("target identity digest = %q, want the runner's %q", got, wantIdentity)
+		}
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +123,7 @@ func TestBuildFixtureRejectsCurrentControllerIdentity(t *testing.T) {
 			ControllerImage: "registry.invalid/controller@" + digest('a'),
 		}},
 	}
-	_, err := buildFixture(schema, []byte(`{}`), "policy", []byte("policy"), time.Now())
+	_, err := buildFixture(schema, []byte(`{}`), "policy", []byte("policy"), testDatabaseURL, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "supported predecessor shape") {
 		t.Fatalf("buildFixture() error = %v", err)
 	}

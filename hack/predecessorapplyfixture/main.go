@@ -20,6 +20,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/planstore"
+	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
 const (
@@ -28,10 +29,11 @@ const (
 )
 
 type options struct {
-	schemaPath string
-	planPath   string
-	policyUID  string
-	policyPath string
+	schemaPath  string
+	planPath    string
+	policyUID   string
+	policyPath  string
+	databaseURL string
 }
 
 type fixtureBundle struct {
@@ -45,6 +47,8 @@ func main() {
 	flag.StringVar(&opts.planPath, "plan", "", "path to the exact native plan JSON")
 	flag.StringVar(&opts.policyUID, "policy-uid", "", "UID of the immutable verification policy ConfigMap")
 	flag.StringVar(&opts.policyPath, "policy", "", "path to the projected verification policy bytes")
+	flag.StringVar(&opts.databaseURL, "database-url", "",
+		"exact database URL the Apply Job resolves, used to bind the target identity")
 	flag.Parse()
 	if err := run(opts); err != nil {
 		fmt.Fprintln(os.Stderr, "predecessorapplyfixture:", err)
@@ -55,6 +59,9 @@ func main() {
 func run(opts options) error {
 	if opts.schemaPath == "" || opts.planPath == "" || opts.policyUID == "" || opts.policyPath == "" {
 		return errors.New("--schema, --plan, --policy-uid, and --policy are required")
+	}
+	if opts.databaseURL == "" {
+		return errors.New("--database-url is required")
 	}
 	schemaData, err := os.ReadFile(opts.schemaPath)
 	if err != nil {
@@ -72,7 +79,8 @@ func run(opts options) error {
 	if err := json.Unmarshal(schemaData, &schema); err != nil {
 		return fmt.Errorf("decode schema: %w", err)
 	}
-	bundle, err := buildFixture(&schema, planData, opts.policyUID, policyData, time.Now().UTC())
+	bundle, err := buildFixture(
+		&schema, planData, opts.policyUID, policyData, opts.databaseURL, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -89,6 +97,7 @@ func buildFixture(
 	planData []byte,
 	policyUID string,
 	policyData []byte,
+	databaseURL string,
 	now time.Time,
 ) (fixtureBundle, error) {
 	if schema == nil || schema.Name == "" || schema.Namespace == "" || schema.UID == "" {
@@ -128,7 +137,21 @@ func buildFixture(
 		return fixtureBundle{}, errors.New("schema desired reference must be digest-pinned")
 	}
 	artifactDigest := desiredReference.Selector
-	targetIdentityDigest := fingerprint.DigestBytes([]byte("predecessor Apply upgrade target"))
+	// The runner recomputes this from the database URL it resolves and refuses
+	// the operation when it differs from what planning recorded, which is the
+	// guard that stops a plan being applied to a target it was not planned
+	// against. A placeholder string stood here, so the two could never agree:
+	// every predecessor Apply exited with "database target identity changed
+	// after planning" before opening a single connection, and the barrier it
+	// was supposed to block on saw no contention at all.
+	//
+	// It is computed with runner.TargetIdentityDigest, the same function the
+	// runner uses, rather than restated -- a second spelling of this identity
+	// is exactly what failed here.
+	targetIdentityDigest, err := runner.TargetIdentityDigest(databaseURL)
+	if err != nil {
+		return fixtureBundle{}, fmt.Errorf("derive predecessor Apply target identity: %w", err)
+	}
 	verificationPolicyDigest := fingerprint.DigestBytes(policyData)
 	planFingerprint, err := (fingerprint.PlanBinding{
 		ContractVersion:          legacyPlanContractVersion,
