@@ -454,8 +454,8 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "    name: Verify source and generated files\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n",
 		},
 		"race timeout drift": {
-			old: "    name: Race detector\n    runs-on: ubuntu-latest\n    timeout-minutes: 40\n",
-			new: "    name: Race detector\n    runs-on: ubuntu-latest\n    timeout-minutes: 45\n",
+			old: "    name: Race detector\n    runs-on: ubuntu-latest\n    timeout-minutes: 60\n",
+			new: "    name: Race detector\n    runs-on: ubuntu-latest\n    timeout-minutes: 65\n",
 		},
 		"matrix timeout drift": {
 			old: "    timeout-minutes: 10\n",
@@ -777,12 +777,12 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			new: "      actions: write\n",
 		},
 		"short preflight job": {
-			old: "    timeout-minutes: 150\n",
-			new: "    timeout-minutes: 140\n",
+			old: "    timeout-minutes: 170\n",
+			new: "    timeout-minutes: 160\n",
 		},
 		"short support poll": {
-			old: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"140\"\n",
-			new: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"120\"\n",
+			old: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"160\"\n",
+			new: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"140\"\n",
 		},
 		"default branch binding": {
 			old: "          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}\n",

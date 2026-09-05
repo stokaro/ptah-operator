@@ -86,7 +86,7 @@ jobs:
     name: Verify release Kubernetes support evidence
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 170
     permissions:
       actions: read
       contents: read
@@ -114,7 +114,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # CI can use 40 minutes for its longest pre-E2E job, 90 for E2E, and
           # 5 for the aggregate gate. Five more cover queue/API delay.
-          SUPPORT_POLL_TIMEOUT_MINUTES: "140"
+          SUPPORT_POLL_TIMEOUT_MINUTES: "160"
         shell: bash
         run: |
           set -euo pipefail

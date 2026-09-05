@@ -73,7 +73,7 @@ const (
 	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "cf5719730e0ecb888f46daab04cd0e2cc9b41319328687d0dfe0d43d029d6958"
+	releaseWorkflowSHA256 = "5df85b5d22836bffb771ab581d3a7705ec60bb3ec8615ebc4673a4987359aa55"
 )
 
 func main() {
@@ -1799,8 +1799,8 @@ func verifyWorkflowSemantics(document []byte) error {
 	if preflight.Environment != "" || len(preflight.Needs) != 0 {
 		return errors.New("support-preflight job must run before and outside the protected release environment")
 	}
-	if preflight.TimeoutMinutes != 150 {
-		return errors.New("support-preflight timeout must bound the exact-SHA CI wait to 150 minutes")
+	if preflight.TimeoutMinutes != 170 {
+		return errors.New("support-preflight timeout must bound the exact-SHA CI wait to 170 minutes")
 	}
 	if !equalStringMap(preflight.Permissions, map[string]string{"actions": "read", "contents": "read"}) {
 		return errors.New("support-preflight permissions must be actions: read and contents: read")
@@ -1847,9 +1847,9 @@ func verifyWorkflowSemantics(document []byte) error {
 	if !equalStringMap(supportEvidence.Env, map[string]string{
 		"DEFAULT_BRANCH":               "${{ github.event.repository.default_branch }}",
 		"GH_TOKEN":                     "${{ secrets.GITHUB_TOKEN }}",
-		"SUPPORT_POLL_TIMEOUT_MINUTES": "140",
+		"SUPPORT_POLL_TIMEOUT_MINUTES": "160",
 	}) {
-		return errors.New("support-preflight evidence must bind the default branch, Actions token, and 140-minute poll")
+		return errors.New("support-preflight evidence must bind the default branch, Actions token, and 160-minute poll")
 	}
 	if err := requireRunBindings(preflightSteps, "support-evidence",
 		"go run ./hack/verify-kubernetes-support.go -now \"$today\"",
