@@ -775,12 +775,12 @@ app.kubernetes.io/component: controller
 {{- range $field := list "name" "generateName" "namespace" "selfLink" "uid" "resourceVersion" "creationTimestamp" "deletionTimestamp" "deletionGracePeriodSeconds" "labels" "annotations" "ownerReferences" "finalizers" -}}
 {{- $parts = append $parts (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "object.metadata.%s" $field) "oldPath" (printf "oldObject.metadata.%s" $field))) -}}
 {{- end -}}
-{{- $parts = append $parts `((object.webhooks == oldObject.webhooks && object.metadata.generation == oldObject.metadata.generation) || (object.webhooks != oldObject.webhooks && object.metadata.generation == oldObject.metadata.generation + 1))` -}}
+{{- $parts = append $parts `((dyn(object).webhooks == dyn(oldObject).webhooks && object.metadata.generation == oldObject.metadata.generation) || (dyn(object).webhooks != dyn(oldObject).webhooks && object.metadata.generation == oldObject.metadata.generation + 1))` -}}
 {{- join " && " $parts -}}
 {{- end -}}
 
 {{- define "ptah-operator.certificateWebhookNamesValidation" -}}
-{{- printf `object.webhooks.size() > 0 && object.webhooks.size() <= 64 && object.webhooks.map(webhook, webhook.name) == oldObject.webhooks.map(webhook, webhook.name)` -}}
+{{- printf `dyn(object).webhooks.size() > 0 && dyn(object).webhooks.size() <= 64 && dyn(object).webhooks.map(webhook, webhook.name) == dyn(oldObject).webhooks.map(webhook, webhook.name)` -}}
 {{- end -}}
 
 {{- define "ptah-operator.certificateWebhookEntriesValidation" -}}
@@ -802,7 +802,7 @@ app.kubernetes.io/component: controller
 {{- if .includeReinvocation -}}
 {{- $parts = append $parts (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.reinvocationPolicy" $newWebhook) "oldPath" (printf "%s.reinvocationPolicy" $oldWebhook))) -}}
 {{- end -}}
-{{- printf `object.webhooks.all(webhook, oldObject.webhooks.exists(previous, %s))` (join " && " $parts) -}}
+{{- printf `dyn(object).webhooks.all(webhook, dyn(oldObject).webhooks.exists(previous, %s))` (join " && " $parts) -}}
 {{- end -}}
 
 {{- define "ptah-operator.celExactOpaqueExpression" -}}

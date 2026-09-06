@@ -6025,9 +6025,9 @@ for certificate_write_marker in \
 	'resources: ["validatingwebhookconfigurations"]' \
 	'request.userInfo.username == \"system:serviceaccount:ptah-e2e:ptah-e2e-ptah-operator-cert-rotator\"' \
 	'object.metadata.selfLink' \
-	'object.webhooks != oldObject.webhooks && object.metadata.generation == oldObject.metadata.generation + 1' \
-	'object.webhooks.map(webhook, webhook.name) == oldObject.webhooks.map(webhook, webhook.name)' \
-	'object.webhooks.all(webhook, oldObject.webhooks.exists(previous' \
+	'dyn(object).webhooks != dyn(oldObject).webhooks && object.metadata.generation == oldObject.metadata.generation + 1' \
+	'dyn(object).webhooks.map(webhook, webhook.name) == dyn(oldObject).webhooks.map(webhook, webhook.name)' \
+	'dyn(object).webhooks.all(webhook, dyn(oldObject).webhooks.exists(previous' \
 	'clientConfig.caBundle.size() > 0' \
 	'clientConfig.caBundle.size() <= 262144' \
 	'Ptah certificate mutating write guard rejected an unsafe mutation' \
