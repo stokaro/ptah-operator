@@ -3132,7 +3132,13 @@ spec:
 EOF
 	wait_for_suspended
 
-	stop_runtime_deployments
+	# Only the controller reconciles PtahSchemas, and only its rollout is what
+	# the drifted-CRD proof watches, so only the controller is stopped. The
+	# certificate rotator's Deployment stays: the release is active, and the
+	# reconcile hook's admission enforcement probe needs one runtime Deployment
+	# as the baseline it proves the guards accept. With both gone the hook
+	# refuses the upgrade outright (stokaro/ptah-operator#10).
+	stop_controller_deployment
 
 	kube delete mutatingwebhookconfiguration ptah-operator-admission >/dev/null
 	kube delete validatingwebhookconfiguration ptah-operator-admission >/dev/null
