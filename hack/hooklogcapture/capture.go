@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -127,6 +128,33 @@ var managerArgumentPrefixes = []string{
 	"--runtime-deployment-config-expressions-b64=",
 	"--runtime-pod-config-expressions-b64=",
 	"--runtime-admission-contract-b64=",
+}
+
+// previousControllerArguments are the manager arguments the chart fills from
+// its lookup of the previous controller principal. A client-side helm
+// template has no lookup, so a candidate render leaves the name, uid and
+// release sequence empty and says managed=false, while the live Job carries
+// what the cluster established. The render fixes their position and shape,
+// never their value, and comparisons mask them to their prefixes.
+var previousControllerArguments = map[int]*regexp.Regexp{
+	15: regexp.MustCompile(`^(|[a-z0-9]([-a-z0-9.]*[a-z0-9])?)$`),
+	16: regexp.MustCompile(`^[A-Za-z0-9-]*$`),
+	17: regexp.MustCompile(`^(true|false)$`),
+	18: regexp.MustCompile(`^[0-9]*$`),
+}
+
+// maskPreviousControllerArguments reduces the previous-controller arguments
+// of a manager container to their prefixes so a live Job compares equal to
+// the candidate render that could not know their values.
+func maskPreviousControllerArguments(spec *corev1.PodSpec) {
+	if len(spec.Containers) != 1 || len(spec.Containers[0].Args) != len(managerArgumentPrefixes) {
+		return
+	}
+	for index := range previousControllerArguments {
+		if strings.HasPrefix(spec.Containers[0].Args[index], managerArgumentPrefixes[index]) {
+			spec.Containers[0].Args[index] = managerArgumentPrefixes[index]
+		}
+	}
 }
 
 var (
@@ -1041,7 +1069,16 @@ func validateManagerArguments(arguments []string, config captureConfig, image st
 			}
 			continue
 		}
-		if !strings.HasPrefix(arguments[index], prefix) || len(arguments[index]) == len(prefix) {
+		if !strings.HasPrefix(arguments[index], prefix) {
+			return fmt.Errorf("container manager argument %d does not match %s", index, prefix)
+		}
+		if shape, lookupDerived := previousControllerArguments[index]; lookupDerived {
+			if !shape.MatchString(arguments[index][len(prefix):]) {
+				return fmt.Errorf("container manager argument %d has a malformed %s value", index, prefix)
+			}
+			continue
+		}
+		if len(arguments[index]) == len(prefix) {
 			return fmt.Errorf("container manager argument %d does not match %s", index, prefix)
 		}
 	}
@@ -1269,6 +1306,7 @@ func podSpecMatchesTemplate(observed, template corev1.PodSpec, config captureCon
 
 func normalizePodSpecDefaults(spec corev1.PodSpec) corev1.PodSpec {
 	normalized := spec.DeepCopy()
+	maskPreviousControllerArguments(normalized)
 	if normalized.DNSPolicy == "" {
 		normalized.DNSPolicy = corev1.DNSClusterFirst
 	}
