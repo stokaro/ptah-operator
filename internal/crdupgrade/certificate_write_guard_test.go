@@ -132,7 +132,7 @@ func TestCertificateWriteGuardCELContracts(t *testing.T) {
 			if validations[0].Expression != certificateMetadataValidation() {
 				t.Fatalf("%s metadata is not immutable: %q", entry.resource, validations[0].Expression)
 			}
-			for _, marker := range []string{"metadata.selfLink", "metadata.labels", "metadata.annotations", "metadata.ownerReferences", "metadata.finalizers", "object.webhooks != oldObject.webhooks", "generation + 1"} {
+			for _, marker := range []string{"metadata.selfLink", "metadata.labels", "metadata.annotations", "metadata.ownerReferences", "metadata.finalizers", "dyn(object).webhooks != dyn(oldObject).webhooks", "generation + 1"} {
 				if !strings.Contains(validations[0].Expression, marker) {
 					t.Fatalf("%s metadata contract lacks %q", entry.resource, marker)
 				}
@@ -155,8 +155,8 @@ func TestCertificateWriteGuardCELContracts(t *testing.T) {
 			}
 			validation := validations[2]
 			for _, marker := range []string{
-				"object.webhooks.all",
-				"oldObject.webhooks.exists",
+				"dyn(object).webhooks.all",
+				"dyn(oldObject).webhooks.exists",
 				"clientConfig.service",
 				`clientConfig.service.namespace == "ptah-system"`,
 				`clientConfig.service.name == "ptah-webhook"`,

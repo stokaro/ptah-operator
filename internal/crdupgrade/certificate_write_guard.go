@@ -359,7 +359,7 @@ func (g *CertificateWriteGuard) candidateServiceName() string {
 }
 
 func certificateWebhookNamesValidation() string {
-	return `object.webhooks.size() > 0 && object.webhooks.size() <= 64 && object.webhooks.map(webhook, webhook.name) == oldObject.webhooks.map(webhook, webhook.name)`
+	return `dyn(object).webhooks.size() > 0 && dyn(object).webhooks.size() <= 64 && dyn(object).webhooks.map(webhook, webhook.name) == dyn(oldObject).webhooks.map(webhook, webhook.name)`
 }
 
 func certificateMetadataValidation() string {
@@ -385,7 +385,7 @@ func certificateMetadataValidation() string {
 	// before validating admission, and may turn a caller-requested reset into the
 	// same representation. Generation is likewise server-maintained, so bind its
 	// only permitted transition to an actual webhook-list change.
-	parts = append(parts, `((object.webhooks == oldObject.webhooks && object.metadata.generation == oldObject.metadata.generation) || (object.webhooks != oldObject.webhooks && object.metadata.generation == oldObject.metadata.generation + 1))`)
+	parts = append(parts, `((dyn(object).webhooks == dyn(oldObject).webhooks && object.metadata.generation == oldObject.metadata.generation) || (dyn(object).webhooks != dyn(oldObject).webhooks && object.metadata.generation == oldObject.metadata.generation + 1))`)
 	return strings.Join(parts, " && ")
 }
 
@@ -444,7 +444,7 @@ func certificateWebhookEntriesValidation(
 		parts = append(parts, certificatePresenceEqual(newWebhook+".reinvocationPolicy", oldWebhook+".reinvocationPolicy"))
 	}
 	return fmt.Sprintf(
-		`object.webhooks.all(webhook, oldObject.webhooks.exists(previous, %s))`,
+		`dyn(object).webhooks.all(webhook, dyn(oldObject).webhooks.exists(previous, %s))`,
 		strings.Join(parts, " && "),
 	)
 }

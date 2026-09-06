@@ -82,7 +82,7 @@ func (g *StagingSecretGuard) ExpectedPolicy() (*admissionregistrationv1.Validati
 	createShape := contract.secretShape("object", false) + ` && (!has(object.metadata.uid) || object.metadata.uid == "") && (!has(object.metadata.resourceVersion) || object.metadata.resourceVersion == "") && !has(object.metadata.creationTimestamp)`
 	rotator := exactServiceAccountPrincipalExpression(g.rollout.ReleaseNamespace, contract.rotatorServiceAccount)
 	cleanup := contract.cleanupPrincipalExpression()
-	dataPreserved := `has(object.data) == has(oldObject.data) && (!has(object.data) || object.data == oldObject.data)`
+	dataPreserved := `has(dyn(object).data) == has(dyn(oldObject).data) && (!has(dyn(object).data) || dyn(object).data == dyn(oldObject).data)`
 	updateIdentity := `object.metadata.uid == oldObject.metadata.uid && object.metadata.resourceVersion == oldObject.metadata.resourceVersion && has(object.metadata.creationTimestamp) == has(oldObject.metadata.creationTimestamp) && (!has(object.metadata.creationTimestamp) || object.metadata.creationTimestamp == oldObject.metadata.creationTimestamp)`
 
 	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
@@ -114,10 +114,10 @@ func (g *StagingSecretGuard) ExpectedPolicy() (*admissionregistrationv1.Validati
 				{Expression: `variables.isCreate || variables.isUpdate || variables.isDelete`, Message: message},
 				{Expression: `variables.isCreate || (` + oldShape + `)`, Message: message},
 				{Expression: `variables.isDelete || (variables.isCreate && (` + createShape + `)) || (variables.isUpdate && (` + newShape + `))`, Message: message},
-				{Expression: `!variables.isCreate || (!has(object.data) || object.data.size() == 0)`, Message: message},
+				{Expression: `!variables.isCreate || (!has(dyn(object).data) || dyn(object).data.size() == 0)`, Message: message},
 				{Expression: `!variables.isUpdate || (` + updateIdentity + `)`, Message: message},
-				{Expression: fmt.Sprintf(`!variables.isUpdate || (variables.isRotator || (variables.isCleanup && (!has(object.data) || object.data.size() == 0)) || ((!variables.isRotator && !variables.isCleanup) && (%s)))`, dataPreserved), Message: message},
-				{Expression: `!variables.isDelete || (variables.isCleanup && (!has(oldObject.data) || oldObject.data.size() == 0))`, Message: message},
+				{Expression: fmt.Sprintf(`!variables.isUpdate || (variables.isRotator || (variables.isCleanup && (!has(dyn(object).data) || dyn(object).data.size() == 0)) || ((!variables.isRotator && !variables.isCleanup) && (%s)))`, dataPreserved), Message: message},
+				{Expression: `!variables.isDelete || (variables.isCleanup && (!has(dyn(oldObject).data) || dyn(oldObject).data.size() == 0))`, Message: message},
 			},
 		},
 	}
