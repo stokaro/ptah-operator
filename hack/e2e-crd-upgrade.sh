@@ -1426,6 +1426,11 @@ deployment_evidence() {
         }] | sort_by(.name)'
 }
 
+# A refusal with no revision N+1 is Helm refusing before it wrote one: a
+# template fail or a values-schema rejection, not a hook. The only evidence
+# of which template refused and why is the upgrade's own stderr, which this
+# helper otherwise discards. It can name live objects and values, so it is
+# printed under E2E_DEBUG_LOGS only.
 expect_upgrade_failure_without_deployment_change() {
 	description=$1
 	shift
@@ -1449,6 +1454,10 @@ expect_upgrade_failure_without_deployment_change() {
 	finish_identity_hook_log_capture
 	if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \
 		--revision "$failed_revision" -o json >"$status_file"; then
+		if [ "${E2E_DEBUG_LOGS:-0}" -eq 1 ]; then
+			printf 'e2e crd: E2E_DEBUG_LOGS=1: stderr of the refused upgrade follows\n' >&2
+			cat "$WORK_DIR/failed-upgrade.err" >&2 || true
+		fi
 		fail "$description did not retain structured Helm evidence for failed revision $failed_revision"
 	fi
 	if ! jq -e \

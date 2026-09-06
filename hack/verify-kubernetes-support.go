@@ -3879,6 +3879,10 @@ func verifyFailedUpgradeEvidenceSource(path string) error {
 			`finish_identity_hook_log_capture`,
 			`if ! helm_e2e status "$E2E_HELM_RELEASE" --namespace "$E2E_OPERATOR_NAMESPACE" \`,
 			`--revision "$failed_revision" -o json >"$status_file"; then`,
+			`if [ "${E2E_DEBUG_LOGS:-0}" -eq 1 ]; then`,
+			`printf 'e2e crd: E2E_DEBUG_LOGS=1: stderr of the refused upgrade follows\n' >&2`,
+			`cat "$WORK_DIR/failed-upgrade.err" >&2 || true`,
+			`fi`,
 			`fail "$description did not retain structured Helm evidence for failed revision $failed_revision"`,
 			`fi`,
 		}),
@@ -3905,8 +3909,14 @@ func verifyFailedUpgradeEvidenceSource(path string) error {
 		return fmt.Errorf("%s: failed-upgrade evidence function boundaries are invalid", path)
 	}
 	functionBody := contents[start[0]:end[0]]
-	if bytes.Count(functionBody, []byte("failed-upgrade.err")) != 1 {
-		return fmt.Errorf("%s: failed-upgrade stderr may only be captured once and must not be parsed as hook evidence", path)
+	// The stderr is captured once and read back exactly once, verbatim to the
+	// operator under E2E_DEBUG_LOGS. Any other mention is the file being parsed
+	// as evidence, which only the structured Helm status may supply.
+	capture := []byte(`2>"$WORK_DIR/failed-upgrade.err"; then`)
+	debugPrint := []byte(`cat "$WORK_DIR/failed-upgrade.err" >&2 || true`)
+	if bytes.Count(functionBody, []byte("failed-upgrade.err")) != 2 ||
+		bytes.Count(functionBody, capture) != 1 || bytes.Count(functionBody, debugPrint) != 1 {
+		return fmt.Errorf("%s: failed-upgrade stderr may only be captured once, printed once under E2E_DEBUG_LOGS, and never parsed as hook evidence", path)
 	}
 	if bytes.Count(functionBody, []byte("failed-upgrade-status.json")) != 1 || bytes.Count(functionBody, []byte("$status_file")) != 3 {
 		return fmt.Errorf("%s: failed-upgrade evidence must flow only from the explicitly retrieved structured revision status", path)

@@ -74,7 +74,11 @@ the mirror image of `E2E_DIRECT_HOST_ACCESS`, which is refused anywhere else. It
 also has to start collecting before anything fails: a hook Job carries
 `helm.sh/hook-delete-policy: hook-failed`, so Helm removes a failed hook and its
 pod before any end-of-run diagnostic could read it, and following each pod from
-the moment the cluster exists is what holds that output.
+the moment the cluster exists is what holds that output. The same switch
+prints the stderr of an upgrade Helm refused before it wrote a revision: a
+template `fail` or a values-schema rejection leaves no hook, no pod and no
+revision to inspect, so that stderr is the only record of which template
+refused and why.
 
 Set `E2E_RUN_ID` to a CI run identifier for deterministic, collision-resistant
 resource names. Local runs include the Git revision and process ID by default.
