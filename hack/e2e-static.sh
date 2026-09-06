@@ -1515,7 +1515,6 @@ static_require_order "$next_release_harness_source" \
 # shellcheck disable=SC2016 # Exact lifecycle markers intentionally retain runtime variables literally.
 for next_release_crd_marker in \
 	'production_controller_image_from_values() {' \
-	'((.testIdentityDigest // "") == "")' \
 	'.repository + "@" + .digest' \
 	'validate_release_sequence_transition() {' \
 	'[ "$E2E_NEXT_RELEASE_SEQUENCE" -eq $((E2E_CURRENT_RELEASE_SEQUENCE + 1)) ]' \
@@ -4765,8 +4764,8 @@ for manager_image_validation in schema template; do
 	test_identity_error=testIdentityDigest
 	if [ "$manager_image_validation" = template ]; then
 		set -- --skip-schema-validation
-		mutable_tag_error='image.allowMutableTag is no longer supported; use image.digest with a registry manifest digest'
-		test_identity_error='image.testIdentityDigest is no longer supported; use image.digest with a registry manifest digest'
+		mutable_tag_error='image.allowMutableTag is not a chart value; use image.digest with a registry manifest digest'
+		test_identity_error='image.testIdentityDigest is not a chart value; use image.digest with a registry manifest digest'
 	fi
 	assert_rejected_manager_image_values "$mutable_tag_error" "$@" \
 		--set image.allowMutableTag=true \
@@ -4790,8 +4789,6 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--show-only templates/certificate-rotation.yaml \
 	--set-string image.repository=registry.local:5000/ptah-operator \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
-	--set image.allowMutableTag=false \
-	--set-string image.testIdentityDigest= \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \

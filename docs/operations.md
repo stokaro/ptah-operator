@@ -17,11 +17,11 @@ to configure node access. If authentication is required, create the release
 namespace and image pull Secret before running Helm, then select the Secret
 through `imagePullSecrets` so installation hooks can pull their image too.
 
-The former local-tag mode is unsupported. `image.allowMutableTag` and
-`image.testIdentityDigest` remain only for compatibility with existing values
-files and must be `false` and empty, respectively. Replace the former test
-settings with `image.digest`; the chart rejects them even when a digest is
-also supplied.
+There is no local-tag mode. `image.allowMutableTag` and
+`image.testIdentityDigest` are not chart values: a values file that still
+names either fails schema validation, and a render that skips schema
+validation refuses them by name, even when `image.digest` is also supplied.
+Replace them with `image.digest`.
 
 An initial installation has an explicit bootstrap trust boundary. The same
 boundary applies to the first upgrade from a release that did not install the
