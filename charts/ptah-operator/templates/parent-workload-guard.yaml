@@ -558,11 +558,12 @@
 
 {{- /* The origin guard is release-stable: the probe is recognized by the marker
       pattern the guard already matches, never by the sequence-bearing marker
-      name. Probe field managers share a prefix and differ in digest length
-      between guard families, and this guard evaluates every marker write, so
-      the prefix is what it recognizes; the dry-run validation keeps the escape
-      from admitting a real write. ParentWorkloadGuard compiles the same text. */ -}}
-{{- $hookOriginProbeRequest := printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && variables.isConvergenceMarker && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.startsWith(%q)` .Release.Namespace "ptah-admission-convergence-v1-" -}}
+      name. Two probe families write the marker: dependency probes under
+      ptah-admission-convergence-v1- and the stable guards' probes under
+      ptah-admission-stable-v1-. This guard evaluates every marker write, so it
+      recognizes both prefixes; the dry-run validation keeps the escape from
+      admitting a real write. ParentWorkloadGuard compiles the same text. */ -}}
+{{- $hookOriginProbeRequest := printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && variables.isConvergenceMarker && has(request.options) && has(request.options.fieldManager) && (request.options.fieldManager.startsWith(%q) || request.options.fieldManager.startsWith(%q))` .Release.Namespace "ptah-admission-convergence-v1-" "ptah-admission-stable-v1-" -}}
 {{- $hookOriginVariables := list
       (dict "name" "isProtectedJob" "expression" `request.resource.group == "batch" && request.resource.version == "v1" && request.resource.resource == "jobs"`)
       (dict "name" "isMainWrite" "expression" `request.operation in ["CREATE", "UPDATE"] && (!has(request.subResource) || request.subResource == "")`)

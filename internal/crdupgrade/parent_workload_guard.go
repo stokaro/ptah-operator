@@ -732,13 +732,14 @@ func (g *ParentWorkloadGuard) legacyHookPodOriginPolicy() *admissionregistration
 // convergence probe aimed at any guard: a dry-run UPDATE of the convergence
 // marker under a probe field manager. It names no release sequence, because
 // the hook parent-origin guard is release-stable; the marker is recognized by
-// the pattern variable the guard already carries. Probe field managers share
-// a prefix and differ in digest length between guard families, and this guard
-// evaluates every marker write, so the prefix is what it recognizes; the
-// dry-run validation keeps the escape from admitting a real write.
+// the pattern variable the guard already carries. Two probe families write the
+// marker: dependency probes under admissionConvergenceProbeFieldManagerPrefix
+// and the stable guards' probes under stableAdmissionConvergenceProbePrefix.
+// This guard evaluates every marker write, so it recognizes both prefixes;
+// the dry-run validation keeps the escape from admitting a real write.
 func parentHookOriginConvergenceProbeExpression(releaseNamespace string) string {
-	return fmt.Sprintf(`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && variables.isConvergenceMarker && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.startsWith(%q)`,
-		releaseNamespace, admissionConvergenceProbeFieldManagerPrefix)
+	return fmt.Sprintf(`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && variables.isConvergenceMarker && has(request.options) && has(request.options.fieldManager) && (request.options.fieldManager.startsWith(%q) || request.options.fieldManager.startsWith(%q))`,
+		releaseNamespace, admissionConvergenceProbeFieldManagerPrefix, stableAdmissionConvergenceProbePrefix)
 }
 
 func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {
