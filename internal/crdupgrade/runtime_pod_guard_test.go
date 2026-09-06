@@ -70,7 +70,7 @@ func TestRuntimePodIdentityPolicyPinsServiceAccountExecutableAndSubresources(t *
 		`!has(dyn(object).spec.ephemeralContainers)`,
 		`!has(dyn(object).spec.hostnameOverride)`,
 		`dyn(object).spec.topologySpreadConstraints.size() == 0`,
-		`!has(dyn(object.spec).resources)`,
+		`!has(dyn(dyn(object).spec).resources)`,
 		`dyn(object).spec.securityContext.fsGroupChangePolicy`,
 		`dyn(object).spec.securityContext.supplementalGroupsPolicy`,
 		`object.metadata.ownerReferences[0].kind == \"ReplicaSet\"`,

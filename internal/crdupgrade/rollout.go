@@ -1601,7 +1601,7 @@ func containerSecurityExpression(container string) string {
 }
 
 func resourceKeysExpression(container string) string {
-	return fmt.Sprintf(`(!has(dyn(%[1]s.resources).limits) || dyn(%[1]s.resources).limits.all(key, key in ["cpu", "memory", "ephemeral-storage"])) && (!has(dyn(%[1]s.resources).requests) || dyn(%[1]s.resources).requests.all(key, key in ["cpu", "memory", "ephemeral-storage"])) && (!has(dyn(%[1]s.resources).claims) || dyn(%[1]s.resources).claims.size() == 0)`, container)
+	return fmt.Sprintf(`(!has(dyn(dyn(%[1]s).resources).limits) || dyn(dyn(%[1]s).resources).limits.all(key, key in ["cpu", "memory", "ephemeral-storage"])) && (!has(dyn(dyn(%[1]s).resources).requests) || dyn(dyn(%[1]s).resources).requests.all(key, key in ["cpu", "memory", "ephemeral-storage"])) && (!has(dyn(dyn(%[1]s).resources).claims) || dyn(dyn(%[1]s).resources).claims.size() == 0)`, container)
 }
 
 func apiAccessMountExpression(container string, count int) string {

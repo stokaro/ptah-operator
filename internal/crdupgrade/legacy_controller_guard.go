@@ -370,8 +370,8 @@ func legacyControllerJobAnnotationContractExpression() string {
 
 func legacyControllerPlanContractExpression() string {
 	common := `object.spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.contentDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.actualStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.desiredStateFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && object.spec.verificationPolicyUID != "" && object.spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && object.spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && object.spec.ptahVersion != "" && object.spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && object.spec.runnerProtocolVersion >= 1 && object.spec.dialect != "" && object.spec.statementCount >= 1 && object.spec.size >= 1 && object.spec.size <= 8388608`
-	legacy := `variables.isBootstrap && object.spec.contractVersion == 2 && !has(dyn(object.spec).controllerImage) && !has(dyn(object.spec).controllerRevision) && !has(dyn(object.spec).controllerStateVersion)`
-	current := `variables.activeRelease > 0 && object.spec.contractVersion == 3 && has(dyn(object.spec).controllerImage) && dyn(object.spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object.spec).controllerImage == variables.activeControllerImage && has(dyn(object.spec).controllerRevision) && dyn(object.spec).controllerRevision != "" && has(dyn(object.spec).controllerStateVersion) && dyn(object.spec).controllerStateVersion >= 1 && dyn(object.spec).controllerStateVersion == variables.activeControllerState`
+	legacy := `variables.isBootstrap && object.spec.contractVersion == 2 && !has(dyn(dyn(object).spec).controllerImage) && !has(dyn(dyn(object).spec).controllerRevision) && !has(dyn(dyn(object).spec).controllerStateVersion)`
+	current := `variables.activeRelease > 0 && object.spec.contractVersion == 3 && has(dyn(dyn(object).spec).controllerImage) && dyn(dyn(object).spec).controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(dyn(object).spec).controllerImage == variables.activeControllerImage && has(dyn(dyn(object).spec).controllerRevision) && dyn(dyn(object).spec).controllerRevision != "" && has(dyn(dyn(object).spec).controllerStateVersion) && dyn(dyn(object).spec).controllerStateVersion >= 1 && dyn(dyn(object).spec).controllerStateVersion == variables.activeControllerState`
 	return fmt.Sprintf(`(%s) && ((%s) || (%s))`, common, legacy, current)
 }
 
@@ -451,6 +451,12 @@ func restoreLegacyTypedFieldAccess(policy *admissionregistrationv1.ValidatingAdm
 	restore := func(expression string) string {
 		for _, subject := range []string{"object", "oldObject"} {
 			for _, field := range []string{"spec", "status"} {
+				// One rule restores both predecessor forms, because the
+				// wrapping is nested rather than replaced. A bare read became
+				// dyn(object).spec and comes back bare; a read the predecessor
+				// had already wrapped at the parent became
+				// dyn(dyn(object).spec), whose inner text is the same
+				// substring, so rewriting it yields dyn(object.spec) again.
 				from := "dyn(" + subject + ")." + field
 				to := subject + "." + field
 				replacements += strings.Count(expression, from)

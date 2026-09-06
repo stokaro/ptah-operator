@@ -43,7 +43,7 @@ func TestControllerJobGuardAcceptsExactPredecessorCreateDuringBootstrap(t *testi
 	if !ok || len(status) != 0 {
 		t.Fatalf("typed Job admission status = %#v, want a present empty object", object["status"])
 	}
-	statusValidation := controllerObjectValidationIndex(t, validations, `dyn(object.status).size() == 0`)
+	statusValidation := controllerObjectValidationIndex(t, validations, `dyn(dyn(object).status).size() == 0`)
 	withoutStatus := controllerJobCELClone(t, object)
 	delete(withoutStatus, "status")
 	if !evaluate(statusValidation, withoutStatus) {
