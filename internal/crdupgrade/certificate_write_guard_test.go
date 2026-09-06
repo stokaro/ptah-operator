@@ -97,7 +97,7 @@ func TestCertificateWriteGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			}
 			assertExactCertificateWriteMatch(t, policy.Spec.MatchConstraints, entry.resource)
 			assertExactCertificateWriteMatch(t, binding.Spec.MatchResources, entry.resource)
-			wantUsername := `request.userInfo.username == "system:serviceaccount:ptah-system:ptah-cert-rotator"`
+			wantUsername := `request.userInfo.username == "system:serviceaccount:ptah-system:ptah-cert-rotator" && request.resource.group == "admissionregistration.k8s.io"`
 			if !reflect.DeepEqual(policy.Spec.MatchConditions, []admissionregistrationv1.MatchCondition{{
 				Name: "exact-certificate-service-account", Expression: wantUsername,
 			}}) {
