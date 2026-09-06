@@ -251,7 +251,7 @@ func (g *ControllerObjectGuard) binding(entry controllerObjectGuardEntry) *admis
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
-	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources)
+	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources, "")
 	return binding
 }
 

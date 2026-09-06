@@ -799,7 +799,7 @@ func assertServiceAccountObjectMatchResources(t *testing.T, match *admissionregi
 		!reflect.DeepEqual(rule.Resources, []string{"serviceaccounts"}) || rule.Scope == nil || *rule.Scope != admissionregistrationv1.NamespacedScope {
 		t.Fatalf("service account object resource rule is not exact: %#v", rule)
 	}
-	if got, want := match.ResourceRules[1], admissionConvergenceProbeResourceRule(); !reflect.DeepEqual(got, want) {
+	if got, want := match.ResourceRules[1], admissionConvergenceProbeResourceRule(""); !reflect.DeepEqual(got, want) {
 		t.Fatalf("service account object convergence resource rule = %#v, want %#v", got, want)
 	}
 }

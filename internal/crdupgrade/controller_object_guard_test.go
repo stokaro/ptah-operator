@@ -881,8 +881,8 @@ func assertControllerObjectMatchWithConvergenceProbe(
 	if match == nil || len(match.ResourceRules) != 2 {
 		t.Fatalf("controller object binding rules = %#v, want native rule plus convergence marker rule", match)
 	}
-	if !reflect.DeepEqual(match.ResourceRules[1], admissionConvergenceProbeResourceRule()) {
-		t.Fatalf("controller object binding convergence rule = %#v, want %#v", match.ResourceRules[1], admissionConvergenceProbeResourceRule())
+	if !reflect.DeepEqual(match.ResourceRules[1], admissionConvergenceProbeResourceRule("")) {
+		t.Fatalf("controller object binding convergence rule = %#v, want %#v", match.ResourceRules[1], admissionConvergenceProbeResourceRule(""))
 	}
 	native := match.DeepCopy()
 	native.ResourceRules = native.ResourceRules[:1]

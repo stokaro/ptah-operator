@@ -165,6 +165,7 @@ spec:
         apiVersions: ["v1"]
         operations: ["UPDATE"]
         resources: ["configmaps"]
+        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
         scope: Namespaced
   matchConditions:
     - name: fixed-hook-identity
@@ -219,6 +220,7 @@ spec:
         apiVersions: ["v1"]
         operations: ["UPDATE"]
         resources: ["configmaps"]
+        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
         scope: Namespaced
   matchConditions:
     - name: fixed-hook-identity-probe

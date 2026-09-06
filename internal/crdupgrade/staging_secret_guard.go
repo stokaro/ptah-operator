@@ -151,7 +151,7 @@ func (g *StagingSecretGuard) ExpectedBinding() (*admissionregistrationv1.Validat
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
-	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources)
+	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources, "")
 	return binding, nil
 }
 

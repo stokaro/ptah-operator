@@ -784,6 +784,7 @@ spec:
         apiVersions: ["v1"]
         operations: ["UPDATE"]
         resources: ["configmaps"]
+        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
         scope: Namespaced
   matchConditions:
     - name: protected-runtime-service-account
@@ -1063,6 +1064,7 @@ spec:
         apiVersions: ["v1"]
         operations: ["UPDATE"]
         resources: ["configmaps"]
+        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
         scope: Namespaced
   matchConditions:
     - name: candidate-hook-service-account

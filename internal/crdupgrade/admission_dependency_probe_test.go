@@ -35,17 +35,12 @@ func stripAdmissionConvergenceDependencyProbe(
 		t.Fatalf("dependency probe does not pin an exact content-versioned field manager: %q", probeExpression)
 	}
 	markerRule := policy.Spec.MatchConstraints.ResourceRules[len(policy.Spec.MatchConstraints.ResourceRules)-1]
-	wantMarkerRule := admissionregistrationv1.NamedRuleWithOperations{
-		RuleWithOperations: admissionregistrationv1.RuleWithOperations{
-			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
-			Rule: admissionregistrationv1.Rule{
-				APIGroups:   []string{""},
-				APIVersions: []string{"v1"},
-				Resources:   []string{"configmaps"},
-				Scope:       scopePtr(admissionregistrationv1.NamespacedScope),
-			},
-		},
-	}
+	// The rule must name exactly the marker the probe's own predicate pins.
+	// A rule without the name admits every ConfigMap update in the namespace,
+	// and a guard carrying it then denies other guards' markers with its own
+	// message; a rule with a different name would never see its own probe.
+	markerName := admissionConvergenceProbeMarkerNameFromExact(t, probeExpression)
+	wantMarkerRule := admissionConvergenceProbeResourceRule(markerName)
 	if !reflect.DeepEqual(markerRule, wantMarkerRule) {
 		t.Fatalf("dependency marker rule = %#v, want %#v", markerRule, wantMarkerRule)
 	}
@@ -188,4 +183,21 @@ func TestRemoveAdmissionConvergenceDependencyProbeRequiresExactWrapper(t *testin
 			}
 		})
 	}
+}
+
+// admissionConvergenceProbeMarkerNameFromExact reads the marker name the exact
+// probe selector pins, so an assertion can tie the match rule to it.
+func admissionConvergenceProbeMarkerNameFromExact(t *testing.T, exactExpression string) string {
+	t.Helper()
+	const marker = ` && request.name == "`
+	start := strings.Index(exactExpression, marker)
+	if start < 0 {
+		t.Fatalf("dependency probe selector does not pin request.name: %q", exactExpression)
+	}
+	rest := exactExpression[start+len(marker):]
+	end := strings.Index(rest, `"`)
+	if end <= 0 {
+		t.Fatalf("dependency probe selector marker name is unterminated: %q", exactExpression)
+	}
+	return rest[:end]
 }

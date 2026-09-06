@@ -183,6 +183,7 @@ spec:
         apiVersions: ["v1"]
         operations: ["UPDATE"]
         resources: ["configmaps"]
+        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
         scope: Namespaced
   matchConditions:
     - name: runtime-service-account-or-pod

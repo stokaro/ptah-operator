@@ -147,6 +147,7 @@ spec:
         apiVersions: ["v1"]
         operations: ["UPDATE"]
         resources: ["configmaps"]
+        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
         scope: Namespaced
   matchConditions:
     - name: fixed-operator-resource
@@ -305,6 +306,7 @@ spec:
         apiVersions: ["v1"]
         operations: ["UPDATE"]
         resources: ["configmaps"]
+        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
         scope: Namespaced
   matchConditions:
     - name: fixed-runtime-deployment

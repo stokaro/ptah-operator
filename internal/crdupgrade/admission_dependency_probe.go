@@ -79,8 +79,25 @@ func admissionConvergenceAnyProbeRequestExpression(releaseNamespace, markerName 
 	)
 }
 
-func admissionConvergenceProbeResourceRule() admissionregistrationv1.NamedRuleWithOperations {
+// admissionConvergenceProbeResourceRule scopes the probe to the one ConfigMap
+// it probes. Without the name the rule admits every namespaced ConfigMap
+// update, so each guard carrying the probe matches writes to markers belonging
+// to other guards and denies them with its own message -- measured: the hook
+// identity enforcement probe was refused by the hook parent contract guard.
+// The probe's own predicates already require request.name to equal this
+// marker, so the rule was strictly broader than the logic reading it.
+//
+// An empty name keeps the unscoped rule. A binding needs that, because the
+// effective match is the intersection of the policy's constraints and the
+// binding's and the policy side is already scoped; so does a probe that selects
+// its marker by pattern, which ResourceNames cannot express.
+func admissionConvergenceProbeResourceRule(markerName string) admissionregistrationv1.NamedRuleWithOperations {
+	var names []string
+	if markerName != "" {
+		names = []string{markerName}
+	}
 	return admissionregistrationv1.NamedRuleWithOperations{
+		ResourceNames: names,
 		RuleWithOperations: admissionregistrationv1.RuleWithOperations{
 			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
 			Rule: admissionregistrationv1.Rule{
@@ -93,11 +110,11 @@ func admissionConvergenceProbeResourceRule() admissionregistrationv1.NamedRuleWi
 	}
 }
 
-func addAdmissionConvergenceProbeMatchResource(match *admissionregistrationv1.MatchResources) {
+func addAdmissionConvergenceProbeMatchResource(match *admissionregistrationv1.MatchResources, markerName string) {
 	if match == nil {
 		return
 	}
-	match.ResourceRules = append(match.ResourceRules, admissionConvergenceProbeResourceRule())
+	match.ResourceRules = append(match.ResourceRules, admissionConvergenceProbeResourceRule(markerName))
 }
 
 // addAdmissionConvergenceDependencyProbe makes one immutable workload policy
@@ -114,7 +131,7 @@ func addAdmissionConvergenceDependencyProbe(
 	probe := newAdmissionConvergenceDependencyProbe(policy.Name, attempt)
 	expression := admissionConvergenceProbeRequestExpression(releaseNamespace, markerName, probe.FieldManager)
 	anyProbeExpression := admissionConvergenceAnyProbeRequestExpression(releaseNamespace, markerName)
-	addAdmissionConvergenceProbeMatchResource(policy.Spec.MatchConstraints)
+	addAdmissionConvergenceProbeMatchResource(policy.Spec.MatchConstraints, markerName)
 	for index := range policy.Spec.MatchConditions {
 		policy.Spec.MatchConditions[index].Expression = "(" + anyProbeExpression + ") || (" + policy.Spec.MatchConditions[index].Expression + ")"
 	}
@@ -210,19 +227,23 @@ func removeAdmissionConvergenceDependencyProbe(policy *admissionregistrationv1.V
 		return fmt.Errorf("admission convergence dependency union selector differs from the exact selector")
 	}
 
-	wantRule := admissionregistrationv1.NamedRuleWithOperations{
-		RuleWithOperations: admissionregistrationv1.RuleWithOperations{
-			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
-			Rule: admissionregistrationv1.Rule{
-				APIGroups:   []string{""},
-				APIVersions: []string{"v1"},
-				Resources:   []string{"configmaps"},
-				Scope:       scopePtr(admissionregistrationv1.NamespacedScope),
-			},
-		},
-	}
 	resourceRules := policy.Spec.MatchConstraints.ResourceRules
-	if len(resourceRules) == 0 || !reflect.DeepEqual(resourceRules[len(resourceRules)-1], wantRule) {
+	if len(resourceRules) == 0 {
+		return fmt.Errorf("admission convergence dependency marker rule is missing")
+	}
+	// The rule names the one marker it probes. Read the name off the rule rather
+	// than taking it as a parameter, so this removal accepts exactly the rule
+	// the builder wrote and nothing wider: two names, or a name on a rule that
+	// otherwise differs, is still a mismatch.
+	last := resourceRules[len(resourceRules)-1]
+	if len(last.ResourceNames) > 1 {
+		return fmt.Errorf("admission convergence dependency marker rule names %d resources, want at most one", len(last.ResourceNames))
+	}
+	markerName := ""
+	if len(last.ResourceNames) == 1 {
+		markerName = last.ResourceNames[0]
+	}
+	if !reflect.DeepEqual(last, admissionConvergenceProbeResourceRule(markerName)) {
 		return fmt.Errorf("admission convergence dependency marker rule differs from the exact wrapper")
 	}
 	if len(policy.Spec.Validations) < 2 {

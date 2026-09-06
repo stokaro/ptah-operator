@@ -69,6 +69,7 @@ spec:
         apiVersions: ["v1"]
         operations: ["UPDATE"]
         resources: ["configmaps"]
+        resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" $ | quote }}]
         scope: Namespaced
   matchConditions:
     - name: candidate-or-predecessor-controller-service-account

@@ -194,7 +194,7 @@ func removeAdmissionConvergenceBindingProbe(binding *admissionregistrationv1.Val
 		return fmt.Errorf("admission convergence dependency binding or match resources are nil")
 	}
 	rules := binding.Spec.MatchResources.ResourceRules
-	want := admissionConvergenceProbeResourceRule()
+	want := admissionConvergenceProbeResourceRule("")
 	if len(rules) == 0 || !reflect.DeepEqual(rules[len(rules)-1], want) {
 		return fmt.Errorf("admission convergence dependency binding marker rule differs from the exact wrapper")
 	}

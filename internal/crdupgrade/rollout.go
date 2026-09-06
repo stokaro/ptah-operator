@@ -1754,7 +1754,7 @@ func (g *RolloutGuard) binding(name string) *admissionregistrationv1.ValidatingA
 			Namespace:               g.ReleaseNamespace,
 			ParameterNotFoundAction: &action,
 		}
-		addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources)
+		addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources, "")
 	}
 	return binding
 }

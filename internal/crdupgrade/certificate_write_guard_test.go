@@ -756,7 +756,7 @@ func stripStableAdmissionConvergenceDependencyProbeForTest(
 		t.Fatalf("stable dependency variables differ from the policy-specific selector: %#v", policy.Spec.Variables)
 	}
 	resourceRules := policy.Spec.MatchConstraints.ResourceRules
-	if len(resourceRules) < 2 || !reflect.DeepEqual(resourceRules[len(resourceRules)-1], admissionConvergenceProbeResourceRule()) {
+	if len(resourceRules) < 2 || !reflect.DeepEqual(resourceRules[len(resourceRules)-1], admissionConvergenceProbeResourceRule("")) {
 		t.Fatalf("stable dependency marker rule differs from the exact wrapper: %#v", resourceRules)
 	}
 	if len(policy.Spec.Validations) < 2 {
@@ -802,7 +802,7 @@ func stripAdmissionConvergenceProbeBindingForTest(
 		t.Fatal("dependency binding or match resources are nil")
 	}
 	rules := binding.Spec.MatchResources.ResourceRules
-	if len(rules) < 2 || !reflect.DeepEqual(rules[len(rules)-1], admissionConvergenceProbeResourceRule()) {
+	if len(rules) < 2 || !reflect.DeepEqual(rules[len(rules)-1], admissionConvergenceProbeResourceRule("")) {
 		t.Fatalf("dependency binding marker rule differs from the exact wrapper: %#v", rules)
 	}
 	native := binding.DeepCopy()

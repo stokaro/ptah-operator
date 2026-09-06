@@ -366,7 +366,7 @@ func (g *ServiceAccountObjectGuard) ExpectedBinding() (*admissionregistrationv1.
 			ValidationActions: []admissionregistrationv1.ValidationAction{admissionregistrationv1.Deny},
 		},
 	}
-	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources)
+	addAdmissionConvergenceProbeMatchResource(binding.Spec.MatchResources, "")
 	return binding, nil
 }
 
@@ -501,7 +501,9 @@ func addServiceAccountObjectConvergenceProbe(
 		return
 	}
 	expression := serviceAccountObjectGuardProbeRequestExpression(releaseNamespace, releaseName)
-	addAdmissionConvergenceProbeMatchResource(policy.Spec.MatchConstraints)
+	// This probe selects its marker by pattern rather than exact name, so
+	// there is nothing for ResourceNames to hold and the rule stays unscoped.
+	addAdmissionConvergenceProbeMatchResource(policy.Spec.MatchConstraints, "")
 	for index := range policy.Spec.MatchConditions {
 		policy.Spec.MatchConditions[index].Expression = "(" + expression + ") || (" + policy.Spec.MatchConditions[index].Expression + ")"
 	}
