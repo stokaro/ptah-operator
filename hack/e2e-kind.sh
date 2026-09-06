@@ -1143,6 +1143,19 @@ collect_diagnostics() {
 	if [ "$E2E_DEBUG_LOGS" -eq 1 ]; then
 		debug_logs_stop_following
 		printf '%s\n' 'e2e: E2E_DEBUG_LOGS=1: raw pod logs follow and may contain credentials' >&2
+		# The guards are the other half of a refusal. A hook that fails because a
+		# policy denied it names the policy and nothing else, and which policy
+		# matched a given object is decided by the constraints the operator
+		# installed, not by the source: two policies can match the same write and
+		# the API server does not order them.
+		# shellcheck disable=SC2046 # One policy name per word is the intent.
+		for debug_policy in $(kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+			get validatingadmissionpolicies \
+			-o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+			printf '=== policy %s ===\n' "$debug_policy" >&2
+			kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+				get validatingadmissionpolicy "$debug_policy" -o jsonpath='resources={range .spec.matchConstraints.resourceRules[*]}{.resources}{end} conditions={range .spec.matchConditions[*]}{.name}{","}{end}{"\n"}' >&2 || true
+		done
 		for debug_log_file in "$DEBUG_LOG_DIR"/*.log; do
 			[ -e "$debug_log_file" ] || continue
 			printf '=== %s ===\n' "$(basename "$debug_log_file" .log)" >&2
