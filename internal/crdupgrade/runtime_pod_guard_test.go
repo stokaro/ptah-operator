@@ -293,7 +293,7 @@ func TestRuntimePodActivationTruthTable(t *testing.T) {
 		wantMatch   bool
 		wantAllow   bool
 	}{
-		{name: "bootstrap annotation-free create is unaffected", operation: "CREATE", actor: "unrelated"},
+		{name: "bootstrap unannotated create is unaffected", operation: "CREATE", actor: "unrelated"},
 		{name: "bootstrap candidate create is denied", marker: 2, markerState: 2, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
 		{name: "active predecessor create is unaffected", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "CREATE", actor: "unrelated"},
 		{name: "active predecessor update is unaffected", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "UPDATE", actor: "system:node:test"},
