@@ -388,6 +388,17 @@ CRDs immediately before allowing the process to start. A losing release or a
 Pod launched while Helm is repairing a drifted singleton can neither reconcile
 schemas nor patch the winning release's CA bundle.
 
+Running `helm upgrade` again with the release that is already active, the
+shape a GitOps re-sync or a values-only change produces, leaves the runtime
+running. The preflight and reconcile hooks verify the retained guards and the
+durable activation parameter as on any upgrade, find both runtime Deployments
+carrying the active release's identity with their replicas up, and report that
+there is no stop transition to perform; the retained runtime guard admits a
+stop only toward a newer release. Helm then applies the unchanged manifests. A
+retry of an interrupted transition is different: its Deployments are still
+stopped or still stamped with the older release, and the hooks resume that
+transition.
+
 ### Offline singleton migration
 
 Do not change singleton annotations merely to make an online upgrade pass. An

@@ -665,6 +665,104 @@ func TestRolloutGuardQuiescesLegacyDeploymentsAfterCompleteDryRun(t *testing.T) 
 	}
 }
 
+func candidateDeployment(guard *RolloutGuard, name, component string) *appsv1.Deployment {
+	deployment := legacyDeployment(guard, name, component)
+	deployment.Annotations[ControllerStateVersionAnnotation] = "1"
+	deployment.Annotations[ReleaseSequenceAnnotation] = "1"
+	deployment.Spec.Template.Spec.Containers = []corev1.Container{{Name: "manager", Image: guard.ManagerImage}}
+	return deployment
+}
+
+func TestRolloutGuardCandidateRuntimeConverged(t *testing.T) {
+	tests := []struct {
+		name   string
+		active int
+		phase  ControllerCredentialPhase
+		mutate func(guard *RolloutGuard, deployments *rolloutDeploymentClient)
+		want   bool
+	}{
+		{
+			name: "active candidate with both Deployments running it", active: 1, phase: ControllerCredentialsActive,
+			mutate: func(_ *RolloutGuard, _ *rolloutDeploymentClient) {}, want: true,
+		},
+		{
+			name: "active candidate without a certificate Deployment", active: 1, phase: ControllerCredentialsActive,
+			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
+				delete(deployments.objects, guard.CertificateDeploymentName)
+			},
+			want: true,
+		},
+		{
+			name: "fresh bootstrap", active: 0, phase: ControllerCredentialsActive,
+			mutate: func(_ *RolloutGuard, _ *rolloutDeploymentClient) {}, want: false,
+		},
+		{
+			name: "candidate activated but credentials draining", active: 1, phase: ControllerCredentialsDraining,
+			mutate: func(_ *RolloutGuard, _ *rolloutDeploymentClient) {}, want: false,
+		},
+		{
+			name: "candidate activated with a stopped controller", active: 1, phase: ControllerCredentialsActive,
+			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
+				deployments.objects[guard.ControllerDeploymentName].Spec.Replicas = int32Ptr(0)
+			},
+			want: false,
+		},
+		{
+			name: "candidate activated with an older certificate identity", active: 1, phase: ControllerCredentialsActive,
+			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
+				delete(deployments.objects[guard.CertificateDeploymentName].Annotations, ReleaseSequenceAnnotation)
+			},
+			want: false,
+		},
+		{
+			name: "candidate activated with a foreign controller image", active: 1, phase: ControllerCredentialsActive,
+			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
+				deployments.objects[guard.ControllerDeploymentName].Spec.Template.Spec.Containers[0].Image = "registry.example/other@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+			},
+			want: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			guard, _, _, deployments := readyRolloutGuard()
+			deployments.objects[guard.CertificateDeploymentName] = candidateDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
+			deployments.objects[guard.ControllerDeploymentName] = candidateDeployment(guard, guard.ControllerDeploymentName, "controller")
+			activation := activationObject(guard.releaseActivationGuard(), test.active)
+			activation.Data[controllerCredentialsDataKey] = string(test.phase)
+			if test.phase == ControllerCredentialsDraining {
+				activation.Data[controllerCredentialsTargetDataKey] = "1"
+				activation.Data[controllerCredentialsAttemptDataKey] = hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+			}
+			guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activation
+			test.mutate(guard, deployments)
+
+			got, err := guard.CandidateRuntimeConverged(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("CandidateRuntimeConverged() = %v, want %v", got, test.want)
+			}
+			if deployments.dryUpdates != 0 || deployments.realUpdates != 0 {
+				t.Fatal("convergence inspection mutated a Deployment")
+			}
+		})
+	}
+}
+
+func TestRolloutGuardCandidateRuntimeConvergedRefusesForeignOwnership(t *testing.T) {
+	guard, _, _, deployments := readyRolloutGuard()
+	deployments.objects[guard.CertificateDeploymentName] = candidateDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
+	deployments.objects[guard.ControllerDeploymentName] = candidateDeployment(guard, guard.ControllerDeploymentName, "controller")
+	deployments.objects[guard.ControllerDeploymentName].Annotations[helmReleaseNameAnnotation] = "foreign"
+	guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activationObject(guard.releaseActivationGuard(), 1)
+
+	got, err := guard.CandidateRuntimeConverged(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "foreign or incomplete Helm ownership") {
+		t.Fatalf("CandidateRuntimeConverged() = %v, %v, want ownership refusal", got, err)
+	}
+}
+
 func TestRolloutGuardPreflightQuiesceDoesNotPersistStampOrScale(t *testing.T) {
 	guard, _, _, deployments := readyRolloutGuard()
 	for name, component := range map[string]string{

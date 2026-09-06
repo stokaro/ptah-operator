@@ -284,6 +284,18 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		if err = manager.PreflightWithState(ctx, stateClients, int64(controllerstate.CurrentVersion)); err != nil {
 			break
 		}
+		converged, convergedErr := rollout.CandidateRuntimeConverged(ctx)
+		if convergedErr != nil {
+			err = fmt.Errorf("inspect candidate runtime convergence: %w", convergedErr)
+			break
+		}
+		if converged {
+			// The candidate is already the active release and its runtime is
+			// up, so there is no stop transition to dry-run: the retained
+			// runtime guard admits a stop only toward a newer release.
+			_, err = fmt.Fprintf(output, "candidate release %d is already active with a converged runtime; no stop transition to preflight\n", expected.ReleaseSequence)
+			break
+		}
 		err = rollout.PreflightQuiesce(ctx)
 	case "reconcile":
 		expected, expectedErr := runtimeInvariants(
@@ -368,6 +380,21 @@ func run(parent context.Context, args []string, output io.Writer) error {
 				}
 				if preflightErr := controllerRBACTransition.Preflight(prepareCtx); preflightErr != nil {
 					return fmt.Errorf("preflight exact controller RBAC transition: %w", preflightErr)
+				}
+				// A repeated upgrade with the same chart finds the candidate
+				// already active with its runtime up. Nothing below applies to
+				// it: the credential drain, the stop, the cutover and the
+				// activation all move an older release toward this one, and
+				// the retained runtime guard refuses to stop the active
+				// release. Leave the runtime running and let Helm apply the
+				// unchanged manifests.
+				converged, convergedErr := rollout.CandidateRuntimeConverged(prepareCtx)
+				if convergedErr != nil {
+					return fmt.Errorf("inspect candidate runtime convergence: %w", convergedErr)
+				}
+				if converged {
+					_, printErr := fmt.Fprintf(output, "candidate release %d is already active with a converged runtime; leaving it running\n", expected.ReleaseSequence)
+					return printErr
 				}
 				protectedPodsRemain, podInventoryErr := inventory.ProtectedRuntimePodsRemain(prepareCtx)
 				if podInventoryErr != nil {
