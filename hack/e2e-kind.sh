@@ -1158,11 +1158,21 @@ collect_diagnostics() {
 			# A parent-origin guard the chart refuses as "differs from the exact
 			# contract" can only be diffed against the render from its whole spec.
 			case $debug_policy in
-			*origin-guard-v2-*)
+			*origin-guard-v2-*|*hook-parent-contract-*)
 				kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 					get validatingadmissionpolicy "$debug_policy" -o json 2>/dev/null | jq -c .spec >&2 || true
 				;;
 			esac
+		done
+		# A hook Job Helm could not replace is refused by a retained contract on
+		# DELETE; the object it judged is the one still in the cluster.
+		# shellcheck disable=SC2046 # One namespace/name per word is the intent.
+		for debug_job in $(kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get jobs -A \
+			-o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+			printf '=== job %s ===\n' "$debug_job" >&2
+			kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get job \
+				-n "${debug_job%%/*}" "${debug_job#*/}" -o json 2>/dev/null |
+				jq -c '{metadata: (.metadata | {name, namespace, generateName, labels, annotations, finalizers, ownerReferences}), spec}' >&2 || true
 		done
 		for debug_log_file in "$DEBUG_LOG_DIR"/*.log; do
 			[ -e "$debug_log_file" ] || continue

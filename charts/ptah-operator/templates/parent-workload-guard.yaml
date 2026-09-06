@@ -617,25 +617,30 @@
 {{- $stableDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
 {{- $legacyHookOriginName := printf "ptah-operator-hook-parent-origin-guard-v1-%s" $stableDigest -}}
 {{- $legacyHookPodOriginName := printf "ptah-operator-hook-pod-origin-guard-v1-%s" $stableDigest -}}
+{{- /* The v1 hook-origin guards below are the objects the last managed
+      release created, frozen: they must read as that chart emitted them, not
+      as today's helpers would. They deliberately keep typed field access
+      (object.spec, not dyn(object).spec), and the render fixture pins them
+      against the exact managed revision. */ -}}
 {{- $legacyHookOriginSpec := dict
       "failurePolicy" "Fail"
       "matchConstraints" (dict "matchPolicy" "Exact" "namespaceSelector" (dict) "objectSelector" (dict) "resourceRules" (list
         (dict "apiGroups" (list "batch") "apiVersions" (list "v1") "operations" (list "CREATE" "UPDATE") "resources" (list "jobs") "scope" "Namespaced")))
-      "matchConditions" (list (dict "name" "release-hook-service-account-pattern" "expression" (printf `request.namespace == %q && ((has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.template.spec.serviceAccountName) && (dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q) || dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q))))` .Release.Namespace $hookPattern $teardownPattern $hookPattern $teardownPattern)))
+      "matchConditions" (list (dict "name" "release-hook-service-account-pattern" "expression" (printf `request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))` .Release.Namespace $hookPattern $teardownPattern $hookPattern $teardownPattern)))
       "validations" (list
         (dict "expression" `!has(request.subResource) || request.subResource == ""` "message" $hookOriginMessage)
-        (dict "expression" (printf `has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern) "message" $hookOriginMessage)
+        (dict "expression" (printf `has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern) "message" $hookOriginMessage)
         (dict "expression" $hookAuthority "message" $hookOriginMessage)) -}}
 {{- $legacyHookPodOriginSpec := dict
       "failurePolicy" "Fail"
       "matchConstraints" (dict "matchPolicy" "Exact" "namespaceSelector" (dict) "objectSelector" (dict) "resourceRules" (list
         (dict "apiGroups" (list "") "apiVersions" (list "v1") "operations" (list "CREATE") "resources" (list "pods") "scope" "Namespaced")))
-      "matchConditions" (list (dict "name" "release-hook-service-account-pattern" "expression" (printf `request.namespace == %q && has(dyn(object).spec.serviceAccountName) && (dyn(object).spec.serviceAccountName.matches(%q) || dyn(object).spec.serviceAccountName.matches(%q))` .Release.Namespace $hookPattern $teardownPattern)))
+      "matchConditions" (list (dict "name" "release-hook-service-account-pattern" "expression" (printf `request.namespace == %q && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` .Release.Namespace $hookPattern $teardownPattern)))
       "variables" (list (dict "name" "owner" "expression" `object.metadata.ownerReferences[0]`))
       "validations" (list
         (dict "expression" `!has(request.subResource) || request.subResource == ""` "message" $hookPodOriginMessage)
         (dict "expression" `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]` "message" $hookPodOriginMessage)
-        (dict "expression" (printf `object.metadata.namespace == request.namespace && has(dyn(object).spec.serviceAccountName) && (dyn(object).spec.serviceAccountName.matches(%q) || dyn(object).spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern) "message" $hookPodOriginMessage)
+        (dict "expression" (printf `object.metadata.namespace == request.namespace && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern) "message" $hookPodOriginMessage)
         (dict "expression" `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1` "message" $hookPodOriginMessage)
         (dict "expression" `variables.owner.apiVersion == "batch/v1" && variables.owner.kind == "Job" && has(variables.owner.name) && variables.owner.name != "" && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion` "message" $hookPodOriginMessage)
         (dict "expression" `has(object.metadata.labels) && ["batch.kubernetes.io/job-name", "batch.kubernetes.io/controller-uid"].all(key, key in object.metadata.labels) && object.metadata.labels["batch.kubernetes.io/job-name"] == variables.owner.name && object.metadata.labels["batch.kubernetes.io/controller-uid"] == variables.owner.uid` "message" $hookPodOriginMessage)
