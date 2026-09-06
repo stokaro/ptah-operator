@@ -9,10 +9,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -222,64 +220,11 @@ func renderedRolloutGuard(t *testing.T, args []string, priorityClassName string)
 	}
 }
 
-// renderedSpecDifference names the first place a rendered policy spec and its
-// compiled contract disagree, so a refusal says where rather than that.
+// renderedSpecDifference reports the compiled contract's first disagreement
+// with a rendered policy through the same helper the reconcile hook uses.
 func renderedSpecDifference(rendered, compiled *admissionregistrationv1.ValidatingAdmissionPolicy) string {
 	if rendered == nil {
 		return "the chart renders no such policy"
 	}
-	got, want := rendered.Spec, compiled.Spec
-	var report strings.Builder
-	if !reflect.DeepEqual(got.FailurePolicy, want.FailurePolicy) {
-		fmt.Fprintf(&report, "failurePolicy: rendered %v, compiled %v\n", got.FailurePolicy, want.FailurePolicy)
-	}
-	if !reflect.DeepEqual(got.MatchConstraints, want.MatchConstraints) {
-		fmt.Fprintf(&report, "matchConstraints: rendered %s\n                  compiled %s\n", mustJSON(got.MatchConstraints), mustJSON(want.MatchConstraints))
-	}
-	if !reflect.DeepEqual(got.ParamKind, want.ParamKind) {
-		fmt.Fprintf(&report, "paramKind: rendered %s, compiled %s\n", mustJSON(got.ParamKind), mustJSON(want.ParamKind))
-	}
-	reportList(&report, "matchConditions", len(got.MatchConditions), len(want.MatchConditions), func(i int) (string, string) {
-		return got.MatchConditions[i].Name + ": " + got.MatchConditions[i].Expression, want.MatchConditions[i].Name + ": " + want.MatchConditions[i].Expression
-	})
-	reportList(&report, "variables", len(got.Variables), len(want.Variables), func(i int) (string, string) {
-		return got.Variables[i].Name + ": " + got.Variables[i].Expression, want.Variables[i].Name + ": " + want.Variables[i].Expression
-	})
-	reportList(&report, "validations", len(got.Validations), len(want.Validations), func(i int) (string, string) {
-		return mustJSON(got.Validations[i]), mustJSON(want.Validations[i])
-	})
-	reportList(&report, "auditAnnotations", len(got.AuditAnnotations), len(want.AuditAnnotations), func(i int) (string, string) {
-		return mustJSON(got.AuditAnnotations[i]), mustJSON(want.AuditAnnotations[i])
-	})
-	if report.Len() == 0 {
-		return "specs are equal field by field; the difference is in a field this report does not cover"
-	}
-	return report.String()
-}
-
-func reportList(report *strings.Builder, field string, rendered, compiled int, item func(int) (string, string)) {
-	if rendered != compiled {
-		fmt.Fprintf(report, "%s: rendered %d entries, compiled %d\n", field, rendered, compiled)
-	}
-	for i := 0; i < rendered && i < compiled; i++ {
-		got, want := item(i)
-		if got == want {
-			continue
-		}
-		at := 0
-		for at < len(got) && at < len(want) && got[at] == want[at] {
-			at++
-		}
-		start := max(0, at-80)
-		fmt.Fprintf(report, "%s[%d] differs at byte %d:\n  rendered ...%s\n  compiled ...%s\n", field, i, at, got[start:min(len(got), at+120)], want[start:min(len(want), at+120)])
-		return
-	}
-}
-
-func mustJSON(value any) string {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return err.Error()
-	}
-	return string(encoded)
+	return policySpecDifference(rendered.Spec, compiled.Spec)
 }

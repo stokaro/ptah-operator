@@ -717,7 +717,7 @@ func (g *RolloutGuard) verifyPolicy(policy *admissionregistrationv1.ValidatingAd
 	}
 	expectedAtStoredFloor := g.policy(int32(state), int32(admission))
 	if !reflect.DeepEqual(policy.Spec, expectedAtStoredFloor.Spec) {
-		return 0, 0, fmt.Errorf("rollout guard policy spec differs from its declared contract")
+		return 0, 0, fmt.Errorf("rollout guard policy spec differs from its declared contract: %s", policySpecDifference(policy.Spec, expectedAtStoredFloor.Spec))
 	}
 	return int32(state), int32(admission), nil
 }
@@ -744,7 +744,7 @@ func (g *RolloutGuard) verifyRuntimePolicy(policy *admissionregistrationv1.Valid
 	}
 	expectedAtStoredIdentity := g.runtimePolicy(int32(state), int32(sequence), managerImage)
 	if !reflect.DeepEqual(policy.Spec, expectedAtStoredIdentity.Spec) {
-		return 0, 0, "", fmt.Errorf("runtime guard policy spec differs from its declared contract")
+		return 0, 0, "", fmt.Errorf("runtime guard policy spec differs from its declared contract: %s", policySpecDifference(policy.Spec, expectedAtStoredIdentity.Spec))
 	}
 	return int32(state), int32(sequence), managerImage, nil
 }
@@ -761,7 +761,7 @@ func (g *RolloutGuard) verifyHookIdentityPolicy(policy *admissionregistrationv1.
 		return fmt.Errorf("hook identity guard policy manager image differs from candidate")
 	}
 	if !reflect.DeepEqual(policy.Spec, g.hookIdentityPolicy().Spec) {
-		return fmt.Errorf("hook identity guard policy spec differs from its declared contract")
+		return fmt.Errorf("hook identity guard policy spec differs from its declared contract: %s", policySpecDifference(policy.Spec, g.hookIdentityPolicy().Spec))
 	}
 	return nil
 }
@@ -778,7 +778,7 @@ func (g *RolloutGuard) verifyHookIdentityProbePolicy(policy *admissionregistrati
 		return fmt.Errorf("hook identity probe guard policy manager image differs from candidate")
 	}
 	if !reflect.DeepEqual(policy.Spec, g.hookIdentityProbePolicy().Spec) {
-		return fmt.Errorf("hook identity probe guard policy spec differs from its declared contract")
+		return fmt.Errorf("hook identity probe guard policy spec differs from its declared contract: %s", policySpecDifference(policy.Spec, g.hookIdentityProbePolicy().Spec))
 	}
 	return nil
 }
