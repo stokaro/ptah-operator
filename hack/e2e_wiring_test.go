@@ -4487,8 +4487,8 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD current-release read-only Job staging skips the controller stop",
 			child:       "crd-upgrade",
-			old:         "\tdispatch_read_only_job_fixture\n\tstop_runtime_deployments\n\tstage_read_only_job_completion\n\tstart_runtime_deployments\n",
-			replacement: "\tdispatch_read_only_job_fixture\n\tstage_read_only_job_completion\n\tstart_runtime_deployments\n",
+			old:         "\tdispatch_read_only_job_fixture\n\tstop_runtime_deployments\n\tset_pod_webhook_failure_policy Fail Ignore\n\tstage_read_only_job_completion\n\tset_pod_webhook_failure_policy Ignore Fail\n\tstart_runtime_deployments\n",
+			replacement: "\tdispatch_read_only_job_fixture\n\tset_pod_webhook_failure_policy Fail Ignore\n\tstage_read_only_job_completion\n\tset_pod_webhook_failure_policy Ignore Fail\n\tstart_runtime_deployments\n",
 			wantError:   "current-release read-only Job cleanup staging",
 		},
 		{

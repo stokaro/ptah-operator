@@ -3372,7 +3372,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLineSequence("current-release read-only Job cleanup staging", []string{
 					`dispatch_read_only_job_fixture`,
 					`stop_runtime_deployments`,
+					`set_pod_webhook_failure_policy Fail Ignore`,
 					`stage_read_only_job_completion`,
+					`set_pod_webhook_failure_policy Ignore Fail`,
 					`start_runtime_deployments`,
 					`wait_runtime_ready`,
 					`wait_for_read_only_job_cleanup`,
@@ -3386,7 +3388,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`prove_late_activation_failure_recovery \`,
 					`"$current_release_sequence" "$next_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"`,
 					`stop_runtime_deployments`,
+					`set_pod_webhook_failure_policy Fail Ignore`,
 					`stage_read_only_job_completion`,
+					`set_pod_webhook_failure_policy Ignore Fail`,
 					`stage_read_only_job_uid_gap`,
 				}),
 				exactSourceLineSequence("successor read-only Job cleanup after activation", []string{
