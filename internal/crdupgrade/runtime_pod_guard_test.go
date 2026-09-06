@@ -219,7 +219,7 @@ func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 		)
 	}
 	wantMatch := fmt.Sprintf(
-		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
+		`request.namespace == %q && request.resource.group == "" && request.resource.resource == "pods" && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
 		guard.ReleaseNamespace,
 		guard.ControllerServiceAccountName,
 		guard.CertificateDeploymentName,
@@ -364,6 +364,7 @@ func runtimePodActivationCELObject(g *RolloutGuard, marker, state int64) map[str
 func runtimePodActivationCELRequest(g *RolloutGuard, operation, subresource, actor string) map[string]any {
 	request := map[string]any{
 		"operation": operation,
+		"resource":  map[string]any{"group": "", "version": "v1", "resource": "pods"},
 		"namespace": g.ReleaseNamespace,
 		"name":      g.ControllerDeploymentName + "-abc12-xy789",
 		"userInfo":  map[string]any{"username": actor},

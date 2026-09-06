@@ -120,6 +120,13 @@ type ParentWorkloadGuard struct {
 
 // NewParentWorkloadGuard derives every name and executable argument from the
 // already validated rollout identity.
+// replicaSetMatchResourceScope confines the ReplicaSet guard's workload match
+// condition to ReplicaSets. The guard also matches the convergence marker for
+// its own probe, and a match condition that dereferences the Pod template of a
+// ConfigMap errors instead of declining; under a fail-closed policy that error
+// denies a probe another guard owns.
+const replicaSetMatchResourceScope = `request.resource.group == "apps" && request.resource.resource == "replicasets" && `
+
 func NewParentWorkloadGuard(rollout *RolloutGuard) *ParentWorkloadGuard {
 	guard := &ParentWorkloadGuard{rollout: rollout}
 	if rollout != nil {
@@ -313,7 +320,7 @@ func (g *ParentWorkloadGuard) replicaSetPolicy() *admissionregistrationv1.Valida
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "protected-runtime-service-account",
 				Expression: fmt.Sprintf(
-					`request.namespace == %q && ((has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))`,
+					`request.namespace == %q && `+replicaSetMatchResourceScope+`((has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))`,
 					g.rollout.ReleaseNamespace, controllerSA, certificateSA, controllerSA, certificateSA,
 				),
 			}},
@@ -1065,7 +1072,7 @@ func (g *ParentWorkloadGuard) hookJobContractPolicy() *admissionregistrationv1.V
 			},
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name:       "candidate-hook-service-account",
-				Expression: fmt.Sprintf(`request.namespace == %q && (request.name in [%q, %q, %q, %q, %q, %q] || (oldObject != null && oldObject.metadata.name in [%q, %q, %q, %q, %q, %q]) || (object != null && has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (oldObject != null && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))`, g.rollout.ReleaseNamespace, imageCheckJob, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, imageCheckJob, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, g.rollout.HookServiceAccountName, teardownServiceAccount, g.rollout.HookServiceAccountName, teardownServiceAccount),
+				Expression: fmt.Sprintf(`request.namespace == %q && request.resource.group == "batch" && request.resource.resource == "jobs" && (request.name in [%q, %q, %q, %q, %q, %q] || (oldObject != null && oldObject.metadata.name in [%q, %q, %q, %q, %q, %q]) || (object != null && has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (oldObject != null && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))`, g.rollout.ReleaseNamespace, imageCheckJob, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, imageCheckJob, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, g.rollout.HookServiceAccountName, teardownServiceAccount, g.rollout.HookServiceAccountName, teardownServiceAccount),
 			}},
 			Variables: []admissionregistrationv1.Variable{
 				{Name: "isMainWrite", Expression: `request.operation in ["CREATE", "UPDATE"] && (!has(request.subResource) || request.subResource == "")`},

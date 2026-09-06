@@ -183,6 +183,13 @@ func legacyControllerGuardObjects(guard *RolloutGuard, names []string) ([]legacy
 	if parentRestored == 0 {
 		return nil, errors.New("legacy runtime parent expressions carry no dyn() field access to restore")
 	}
+	if len(parentPolicy.Spec.MatchConditions) != 1 || !strings.Contains(parentPolicy.Spec.MatchConditions[0].Expression, replicaSetMatchResourceScope) {
+		return nil, errors.New("legacy runtime parent match condition carries no ReplicaSet resource scope to remove")
+	}
+	// The predecessor's match condition dereferences the Pod template without
+	// first confining itself to ReplicaSets; the retained object is compared
+	// against what that release published, not against the current spelling.
+	parentPolicy.Spec.MatchConditions[0].Expression = strings.Replace(parentPolicy.Spec.MatchConditions[0].Expression, replicaSetMatchResourceScope, "", 1)
 	parentBinding := parent.binding(parentPolicy.Name, false)
 	renameLegacyControllerGuard(parentPolicy, parentBinding, names[5])
 	objects = append(objects, legacyControllerGuardObjectsPair{policy: parentPolicy, binding: parentBinding})
