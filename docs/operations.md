@@ -9,6 +9,14 @@ tag is supplied. Manager Pods, hooks, and controller identity all use the same
 [installation example](../README.md#install-from-this-checkout) for the required
 values.
 
+Upgrades are supported from the first published release onward. Every release
+since then stamps the CRDs with the schema version, schema digest, and
+controller-state version, and the admission singletons and parent-origin
+policies with their release identity. An installation that carries none of
+that is not an upgrade source: the chart refuses the upgrade before any
+change, and the [offline migration](#offline-singleton-migration) below is
+the way forward.
+
 For local development, push the built image to a registry reachable from every
 cluster node and use the registry's manifest digest in `image.digest`; set
 `image.repository` to that registry's repository. A Docker image ID is not a
@@ -99,17 +107,15 @@ files or a complete baseline carrying neither owned annotation, and only when
 the candidate is the complete generated set at shared schema version 1. A
 partial baseline remains a set-integrity failure rather than a bootstrap.
 
-A missing version or digest is accepted only when the live normalized CRD
-`spec` already matches the candidate exactly; the hook then performs an
-annotation-only legacy identity adoption. A malformed annotation, an incomplete
-identity plus any schema difference, or a same-version digest collision fails
-before all CRD mutations. For such an installation, keep the managers offline
-and restore or select the historical operator release whose generated schema
-exactly matches the live CRD. Let that release adopt the complete identity,
-then upgrade through versioned schemas. If no matching release can be
-identified, back up every CRD and custom resource and perform a separately
-reviewed offline schema migration. The operator intentionally provides no
-value that labels an unknown schema as trusted.
+A CRD that lacks the schema version or the schema digest is refused before
+any CRD mutation, even when its live normalized `spec` matches the candidate
+exactly. A malformed annotation, an incomplete identity plus any schema
+difference, and a same-version digest collision are refused the same way.
+For such an installation, keep the managers offline and restore the identity
+the release that created the CRD stamped on it, or reinstall from the first
+published release after backing up every CRD and custom resource. The
+operator intentionally provides no value that labels an unknown schema as
+trusted.
 
 Before starting a manager, the init verifier scans every `PtahSchema`,
 `PtahSchemaPlan`, and `PtahSchemaApproval` across the cluster. It checks
@@ -384,16 +390,15 @@ schemas nor patch the winning release's CA bundle.
 
 ### Offline singleton migration
 
-Do not change singleton annotations merely to make an online upgrade pass. To
-adopt a legacy installation that predates the annotations, first establish that
-the fixed configurations are owned by the one intended release. Suspend every
-`PtahSchema`, wait for every operation Job to finish, place the databases in a
-maintenance window, and scale the manager and certificate-rotation Deployments
-to zero. Annotate both `ptah-operator-admission` configurations with the actual
-release name, release namespace, effective coordination namespace,
-leader-election setting, and the fixed ID
-`ptah-operator.operator.ptah.dev`. Upgrade that same release, verify its CRDs
-and Pods, then restore replicas and resume reconciliation.
+Do not change singleton annotations merely to make an online upgrade pass. An
+installation whose `ptah-operator-admission` configurations carry no release
+identity predates the first published release, and the chart does not adopt
+it. Suspend every `PtahSchema`, wait for every operation Job to finish, place
+the databases in a maintenance window, and scale the manager and
+certificate-rotation Deployments to zero. Back up all Ptah custom resources,
+uninstall the release, verify that the three CRDs and their objects remain,
+then install one release of the first published version or newer, verify its
+CRDs and Pods, and resume the schemas.
 
 Changing an established coordination namespace or leader-election mode is a
 full offline migration, not an upgrade. After the same suspension, job drain,

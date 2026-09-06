@@ -1006,7 +1006,7 @@ func TestRolloutAndRuntimeDeploymentActivationTruthTable(t *testing.T) {
 		wantRuntime   bool
 		malformed     bool
 	}{
-		{name: "bootstrap annotation-free create", operation: "CREATE", actor: "helm", activeImage: guard.ManagerImage, wantRollout: true, wantRuntime: true},
+		{name: "bootstrap unannotated create", operation: "CREATE", actor: "helm", activeImage: guard.ManagerImage, wantRollout: true, wantRuntime: true},
 		{name: "bootstrap candidate create denied", operation: "CREATE", actor: rolloutHookUsername(guard), newMarker: 2, activeImage: guard.ManagerImage},
 		{name: "bootstrap candidate stop", operation: "UPDATE", actor: rolloutHookUsername(guard), newMarker: 2, activeImage: guard.ManagerImage, wantRollout: true, wantRuntime: true},
 		{name: "active predecessor create", active: 1, activeState: 1, activeImage: predecessorImage, operation: "CREATE", actor: "helm", newMarker: 1, wantRollout: true, wantRuntime: true},
@@ -1180,7 +1180,7 @@ func TestRolloutAdmissionActivationTruthTable(t *testing.T) {
 		image       string
 		want        bool
 	}{
-		{name: "bootstrap annotation-free recovery", image: guard.ManagerImage, want: true},
+		{name: "bootstrap unannotated recovery", image: guard.ManagerImage, want: true},
 		{name: "bootstrap candidate mutation denied", marker: 2, markerState: 2, admission: 2, image: guard.ManagerImage},
 		{name: "active predecessor recovery", active: 1, activeState: 1, marker: 1, markerState: 1, admission: 1, image: predecessorImage, want: true},
 		{name: "candidate mutation before activation denied", active: 1, activeState: 1, marker: 2, markerState: 2, admission: 2, image: predecessorImage},
