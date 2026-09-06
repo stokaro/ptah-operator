@@ -557,14 +557,28 @@ verify_hook_progress_hold_transition() {
 	fail "hook progress hold policy did not converge to the exact monotonic transition"
 }
 
+# expect_hook_progress_authorization asks the adversary's own view of RBAC.
+# A subresource is passed through --subresource: kubectl 1.36 answers "no" to
+# the slash spelling "jobs/status" while a SubjectAccessReview for the same
+# attributes is allowed, so the spelling decided the answer. kubectl also exits
+# 1 for an honest "no", which is an answer rather than a failed query; only a
+# status above 1 means the query itself failed.
 expect_hook_progress_authorization() {
 	expected=$1
 	verb=$2
-	resource=$3
+	resource=${3%%/*}
+	subresource=
+	case "$3" in
+	*/*) subresource=${3#*/} ;;
+	esac
 	allowed=$(hook_progress_adversary_kube auth can-i "$verb" "$resource" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --request-timeout=15s)
+		--subresource="$subresource" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --request-timeout=15s \
+		2>"$WORK_DIR/hook-progress-can-i.err") && can_i_status=0 || can_i_status=$?
+	[ "$can_i_status" -le 1 ] ||
+		fail "hook progress adversary authorization query for $verb $3 failed with status $can_i_status: $(cat "$WORK_DIR/hook-progress-can-i.err")"
 	[ "$allowed" = "$expected" ] ||
-		fail "hook progress adversary authorization for $verb $resource is $allowed, expected $expected"
+		fail "hook progress adversary authorization for $verb $3 is $allowed, expected $expected"
 }
 
 create_hook_progress_adversary_and_hold() {
