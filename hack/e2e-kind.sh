@@ -2079,6 +2079,16 @@ else
 	fail "infrastructure readiness loss: current-release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $current_install_status)"
 fi
 
+# The Pod-intent webhook fails closed and its match condition runs against
+# every Pod in the cluster. A Pod nobody controls has no ownerReferences key,
+# and an expression that reads the key without has() errors there, which the
+# API server treats as a refusal. Prove the install leaves such a Pod admitted.
+printf 'e2e: proving a Pod without Ptah labels or a Ptah Job owner is admitted outside the release namespace\n'
+kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s -n default \
+	run ptah-e2e-foreign-pod-admission --image=registry.k8s.io/pause:3.10 \
+	--restart=Never --dry-run=server -o name >/dev/null ||
+	fail "a Pod without Ptah labels or a Ptah Job owner was refused after the current-release install"
+
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \

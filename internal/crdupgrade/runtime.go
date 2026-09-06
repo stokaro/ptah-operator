@@ -65,18 +65,18 @@ const (
   object.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&
   'app.kubernetes.io/component' in object.metadata.labels &&
   object.metadata.labels['app.kubernetes.io/component'] == 'schema-operation') ||
-object.metadata.ownerReferences.exists(ref,
+(has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(ref,
   ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&
-  ref.name.matches('^ptah-(resolve|verify|observe|plan|apply)-')) ||
+  ref.name.matches('^ptah-(resolve|verify|observe|plan|apply)-'))) ||
 (request.operation == 'UPDATE' && oldObject != null && (
   (has(oldObject.metadata.labels) &&
     'app.kubernetes.io/managed-by' in oldObject.metadata.labels &&
     oldObject.metadata.labels['app.kubernetes.io/managed-by'] == 'ptah-operator' &&
     'app.kubernetes.io/component' in oldObject.metadata.labels &&
     oldObject.metadata.labels['app.kubernetes.io/component'] == 'schema-operation') ||
-  oldObject.metadata.ownerReferences.exists(ref,
+  (has(oldObject.metadata.ownerReferences) && oldObject.metadata.ownerReferences.exists(ref,
     ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&
-    ref.name.matches('^ptah-(resolve|verify|observe|plan|apply)-'))))`
+    ref.name.matches('^ptah-(resolve|verify|observe|plan|apply)-')))))`
 	supportedPredecessorPodIntentMatchExpression = `object.metadata.ownerReferences.exists(ref,
   ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true) ||
 (request.operation == 'UPDATE' && oldObject != null &&
