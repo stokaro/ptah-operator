@@ -148,7 +148,7 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 				{
 					Name: "runtime-service-account-or-pod",
 					Expression: fmt.Sprintf(
-						`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
+						`request.namespace == %q && request.resource.group == "" && request.resource.resource == "pods" && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
 						g.ReleaseNamespace,
 						g.ControllerServiceAccountName,
 						g.CertificateDeploymentName,

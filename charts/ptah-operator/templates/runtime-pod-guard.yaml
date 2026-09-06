@@ -187,7 +187,7 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: runtime-service-account-or-pod
-      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest (printf `request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))` .Release.Namespace $controllerServiceAccount $certificateDeployment $controllerServiceAccount $certificateDeployment $controllerPodRequestName $certificatePodRequestName) | quote }}
+      expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest (printf `request.namespace == %q && request.resource.group == "" && request.resource.resource == "pods" && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))` .Release.Namespace $controllerServiceAccount $certificateDeployment $controllerServiceAccount $certificateDeployment $controllerPodRequestName $certificatePodRequestName) | quote }}
     - name: activation-gated-runtime-pod
       expression: {{ printf `(%s) || (%s)` $anyConvergenceRequest $activationMatch | quote }}
   variables:

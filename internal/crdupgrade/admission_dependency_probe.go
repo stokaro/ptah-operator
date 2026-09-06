@@ -81,10 +81,13 @@ func admissionConvergenceAnyProbeRequestExpression(releaseNamespace, markerName 
 
 // admissionConvergenceAnyProbeFieldManagerPattern matches the field manager of
 // every probe that writes the convergence marker: the dependency probes under
-// admissionConvergenceProbeFieldManagerPrefix and the stable guards' probes
-// under stableAdmissionConvergenceProbePrefix. A guard that matches the marker
-// meets both families, and recognizing one lets it refuse the other with its
-// own message, or with an evaluation error, in place of the target's answer.
+// admissionConvergenceProbeFieldManagerPrefix, the stable guards' probes under
+// stableAdmissionConvergenceProbePrefix, and the service account object
+// guard's probe under serviceAccountObjectProbeFieldManagerPrefix. A guard
+// that matches the marker meets every family, and recognizing only its own
+// lets it refuse another with its own message, or with an evaluation error
+// from a match condition written for a workload, in place of the target's
+// answer. The chart helper of the same name renders the same pattern.
 // v1AdmissionConvergenceAnyProbeFieldManagerPattern is the pattern the v1
 // managed release published, before the stable guards' probes existed. It is
 // frozen: live guards of that era carry it, and their restoration compares
@@ -94,7 +97,9 @@ func v1AdmissionConvergenceAnyProbeFieldManagerPattern() string {
 }
 
 func admissionConvergenceAnyProbeFieldManagerPattern() string {
-	return "^(" + admissionConvergenceProbeFieldManagerPrefix + "[0-9a-f]{64}|" + stableAdmissionConvergenceProbePrefix + "[0-9a-f]{32}-[0-9a-f]{64})$"
+	return "^(" + admissionConvergenceProbeFieldManagerPrefix + "[0-9a-f]{64}|" +
+		stableAdmissionConvergenceProbePrefix + "[0-9a-f]{32}-[0-9a-f]{64}|" +
+		serviceAccountObjectProbeFieldManagerPrefix + "[0-9a-f]{64})$"
 }
 
 // admissionConvergenceProbeResourceRule scopes the probe to the one ConfigMap

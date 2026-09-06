@@ -618,12 +618,14 @@ dyn(null).spec, the validation errors, and the policy denies.
 {{- end -}}
 
 {{/*
-Every probe that writes the convergence marker: the dependency probes and the
-stable guards' probes. A guard that matches the marker meets both families;
-recognizing one lets it refuse the other in place of the target's answer.
+Every probe that writes the convergence marker: the dependency probes, the
+stable guards' probes, and the service account object guard's probe. A guard
+that matches the marker meets every family; recognizing only its own lets it
+refuse another in place of the target's answer, and a match condition that
+dereferences a workload field errors on the ConfigMap instead of declining.
 crdupgrade compiles the same pattern.
 */}}
-{{- define "ptah-operator.admissionConvergenceAnyProbeFieldManagerPattern" -}}^(ptah-admission-convergence-v1-[0-9a-f]{64}|ptah-admission-stable-v1-[0-9a-f]{32}-[0-9a-f]{64})${{- end -}}
+{{- define "ptah-operator.admissionConvergenceAnyProbeFieldManagerPattern" -}}^(ptah-admission-convergence-v1-[0-9a-f]{64}|ptah-admission-stable-v1-[0-9a-f]{32}-[0-9a-f]{64}|ptah-service-account-object-probe-v1-[0-9a-f]{64})${{- end -}}
 
 {{- define "ptah-operator.admissionConvergenceAnyProbeRequest" -}}
 {{- printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)` .Release.Namespace (include "ptah-operator.admissionConvergenceMarkerName" .) (include "ptah-operator.admissionConvergenceAnyProbeFieldManagerPattern" .) -}}
