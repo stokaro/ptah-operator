@@ -106,6 +106,13 @@ CANDIDATE_CRD_SCHEMA_VERSION=$(awk '
 cleanup() {
 	status=$?
 	trap - EXIT HUP INT TERM
+	# E2E_KEEP_ON_FAILURE=1 keeps a failed phase's work directory and every
+	# cluster object it created, so the refusal that ended it can be read from
+	# the objects that produced it. Background processes are still stopped.
+	retain=0
+	if [ "$status" -ne 0 ] && [ "${E2E_KEEP_ON_FAILURE:-0}" = 1 ]; then
+		retain=1
+	fi
 	if [ "$HOOK_PROGRESS_HELM_ACTIVE" -eq 1 ] && [ -n "$HOOK_PROGRESS_HELM_PID" ]; then
 		[ "$status" -ne 0 ] || status=1
 		kill "$HOOK_PROGRESS_HELM_PID" >/dev/null 2>&1 || true
@@ -113,7 +120,7 @@ cleanup() {
 		HOOK_PROGRESS_HELM_PID=
 		HOOK_PROGRESS_HELM_ACTIVE=0
 	fi
-	if [ "$HOOK_PROGRESS_RESOURCES_ACTIVE" -eq 1 ]; then
+	if [ "$retain" -eq 0 ] && [ "$HOOK_PROGRESS_RESOURCES_ACTIVE" -eq 1 ]; then
 		[ "$status" -ne 0 ] || status=1
 		for hook_progress_resource in \
 			"validatingadmissionpolicybinding/$HOOK_PROGRESS_HOLD_POLICY" \
@@ -152,31 +159,42 @@ cleanup() {
 		wait "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" >/dev/null 2>&1 || true
 		LATE_ACTIVATION_RECONCILE_CAPTURE_PID=
 	fi
-	if [ -n "$FOREIGN_TEARDOWN_BINDING" ]; then
+	if [ "$retain" -eq 0 ] && [ -n "$FOREIGN_TEARDOWN_BINDING" ]; then
 		if ! kube delete clusterrolebinding "$FOREIGN_TEARDOWN_BINDING" \
 			--ignore-not-found=true >/dev/null 2>&1; then
 			status=1
 		fi
 	fi
 	if [ -n "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ]; then
-		if ! kube delete validatingwebhookconfiguration "$LATE_ACTIVATION_BLOCKER_WEBHOOK" \
+		if [ "$retain" -eq 0 ] && ! kube delete validatingwebhookconfiguration "$LATE_ACTIVATION_BLOCKER_WEBHOOK" \
 			--ignore-not-found=true >/dev/null 2>&1; then
 			status=1
 		fi
 	fi
-	if [ -n "$CONTROLLER_GUARD_OWNER" ]; then
+	if [ "$retain" -eq 0 ] && [ -n "$CONTROLLER_GUARD_OWNER" ]; then
 		if ! kube -n "$PROOF_NAMESPACE" delete configmap "$CONTROLLER_GUARD_OWNER" \
 			--ignore-not-found=true >/dev/null 2>&1; then
 			status=1
 		fi
 	fi
-	case "$WORK_DIR" in
-		"${TMPDIR:-/tmp}"/ptah-operator-e2e-crd.*) rm -rf -- "$WORK_DIR" ;;
-		*)
-			printf 'e2e crd: refusing to remove unexpected work directory %s\n' "$WORK_DIR" >&2
-			status=1
-		;;
-	esac
+	if [ "$retain" -eq 1 ]; then
+		printf 'e2e crd: E2E_KEEP_ON_FAILURE=1: retaining work directory %s and the proof objects in namespaces %s and %s\n' \
+			"$WORK_DIR" "$E2E_OPERATOR_NAMESPACE" "$PROOF_NAMESPACE" >&2
+		[ "$HOOK_PROGRESS_RESOURCES_ACTIVE" -eq 0 ] ||
+			printf 'e2e crd: retaining cluster-scoped hold policy and binding %s\n' "$HOOK_PROGRESS_HOLD_POLICY" >&2
+		[ -z "$FOREIGN_TEARDOWN_BINDING" ] ||
+			printf 'e2e crd: retaining cluster role binding %s\n' "$FOREIGN_TEARDOWN_BINDING" >&2
+		[ -z "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ] ||
+			printf 'e2e crd: retaining validating webhook configuration %s\n' "$LATE_ACTIVATION_BLOCKER_WEBHOOK" >&2
+	else
+		case "$WORK_DIR" in
+			"${TMPDIR:-/tmp}"/ptah-operator-e2e-crd.*) rm -rf -- "$WORK_DIR" ;;
+			*)
+				printf 'e2e crd: refusing to remove unexpected work directory %s\n' "$WORK_DIR" >&2
+				status=1
+			;;
+		esac
+	fi
 	exit "$status"
 }
 trap cleanup EXIT
@@ -622,15 +640,18 @@ metadata:
   name: $HOOK_PROGRESS_ADVERSARY
   namespace: $E2E_OPERATOR_NAMESPACE
 rules:
+  # kubectl reads an object, or its subresource, before it patches it, so
+  # every patch grant carries the matching get; the write verbs stay as
+  # narrow as the Job controller's own.
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    verbs: ["delete"]
+    verbs: ["delete", "get"]
   - apiGroups: ["batch"]
     resources: ["jobs/status"]
-    verbs: ["patch"]
+    verbs: ["get", "patch"]
   - apiGroups: [""]
     resources: ["pods", "pods/status"]
-    verbs: ["patch"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -654,6 +675,8 @@ EOF
 	expect_hook_progress_authorization yes patch jobs/status
 	expect_hook_progress_authorization yes patch pods
 	expect_hook_progress_authorization yes patch pods/status
+	expect_hook_progress_authorization yes get jobs/status
+	expect_hook_progress_authorization yes get pods/status
 	expect_hook_progress_authorization no create \
 		validatingadmissionpolicies.admissionregistration.k8s.io
 	expect_hook_progress_authorization no create \
@@ -734,7 +757,7 @@ EOF
 		--type=merge --dry-run=server -p='{"status":{"active":1}}' \
 		--request-timeout=15s -o json >"$WORK_DIR/hook-progress-hold-exemption.json" \
 		2>"$WORK_DIR/hook-progress-hold-exemption.err"; then
-		fail "hook progress hold did not exempt only the RBAC-proven adversary"
+		fail "hook progress hold did not exempt only the RBAC-proven adversary; the API server's answer is in $WORK_DIR/hook-progress-hold-exemption.err"
 	fi
 	jq -e '.status.active == 1' "$WORK_DIR/hook-progress-hold-exemption.json" >/dev/null ||
 		fail "hook progress adversary exemption did not reach status admission"

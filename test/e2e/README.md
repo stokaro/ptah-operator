@@ -80,6 +80,15 @@ template `fail` or a values-schema rejection leaves no hook, no pod and no
 revision to inspect, so that stderr is the only record of which template
 refused and why.
 
+`E2E_KEEP_ON_FAILURE=1` keeps what a failed run would otherwise remove: the kind
+cluster with its kubeconfig, the registry and database containers, the work
+directory, and, when the failure is inside the CRD upgrade phase, that phase's
+work directory and every proof object it created. A refusal is then read from
+the objects that produced it instead of reconstructed from a log, and a single
+phase can be replayed against the retained cluster in minutes rather than
+through a fresh run. Nothing in CI sets it; the run names what it kept, and the
+caller removes those resources by name afterwards.
+
 Set `E2E_RUN_ID` to a CI run identifier for deterministic, collision-resistant
 resource names. Local runs include the Git revision and process ID by default.
 Set `K8S_VERSION` once per matrix job: the complete suite runs against that one
