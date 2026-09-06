@@ -481,10 +481,8 @@ func renderPredecessorProvenance(t *testing.T, fixture map[string]any) (*unstruc
 			"existingSecret": "",
 		},
 		"image": map[string]any{
-			"repository":         "ghcr.io/stokaro/ptah-operator",
-			"digest":             "sha256:" + managerDigest,
-			"allowMutableTag":    false,
-			"testIdentityDigest": "",
+			"repository": "ghcr.io/stokaro/ptah-operator",
+			"digest":     "sha256:" + managerDigest,
 		},
 		"fixture": fixture,
 	})

@@ -284,8 +284,8 @@ production_controller_image_from_values() {
         type == "object" and
         (.repository | type == "string" and test("^[^[:space:]@]+$")) and
         (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
-        .allowMutableTag == false and
-        ((.testIdentityDigest // "") == "")
+        (has("allowMutableTag") | not) and
+        (has("testIdentityDigest") | not)
       ) |
       .repository + "@" + .digest
     ' "$values_file") || fail "release values do not contain one exact production controller image identity"

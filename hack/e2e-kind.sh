@@ -1984,7 +1984,6 @@ render_release_values() {
           repository: $repository,
           tag: $tag,
           digest: $digest,
-          allowMutableTag: false,
           pullPolicy: "IfNotPresent"
         },
         imagePullSecrets: [{name: $pullSecret}],

@@ -1722,7 +1722,7 @@ func TestProductionControllerImageUsesOnlyProductionDigest(t *testing.T) {
 	if strings.Contains(source, `.repository + "@" + .testIdentityDigest`) {
 		t.Fatal("production controller identity uses the mutually exclusive test-only digest")
 	}
-	if !strings.Contains(source, `((.testIdentityDigest // "") == "")`) {
+	if !strings.Contains(source, `(has("testIdentityDigest") | not)`) {
 		t.Fatal("production controller identity does not reject a test-only digest")
 	}
 	script := "set -eu\n" +
@@ -1755,64 +1755,58 @@ func TestProductionControllerImageUsesOnlyProductionDigest(t *testing.T) {
 				{
 					name: "production digest",
 					image: map[string]any{
-						"repository":      "registry.example/ptah/operator",
-						"digest":          lowerDigest,
-						"allowMutableTag": false,
+						"repository": "registry.example/ptah/operator",
+						"digest":     lowerDigest,
 					},
 					want: "registry.example/ptah/operator@" + lowerDigest + "\n",
 				},
 				{
-					name: "explicitly empty test-only digest",
+					name: "retired empty test-only digest key",
 					image: map[string]any{
 						"repository":         "registry.example/ptah/operator",
 						"digest":             lowerDigest,
 						"testIdentityDigest": "",
-						"allowMutableTag":    false,
 					},
-					want: "registry.example/ptah/operator@" + lowerDigest + "\n",
+					wantError: true,
 				},
 				{
-					name: "mutually exclusive test-only digest",
+					name: "retired test-only digest",
 					image: map[string]any{
 						"repository":         "registry.example/ptah/operator",
 						"digest":             lowerDigest,
 						"testIdentityDigest": testDigest,
-						"allowMutableTag":    false,
 					},
 					wantError: true,
 				},
 				{
 					name: "uppercase digest",
 					image: map[string]any{
-						"repository":      "registry.example/ptah/operator",
-						"digest":          upperDigest,
-						"allowMutableTag": false,
+						"repository": "registry.example/ptah/operator",
+						"digest":     upperDigest,
 					},
 					wantError: true,
 				},
 				{
 					name: "missing digest",
 					image: map[string]any{
-						"repository":      "registry.example/ptah/operator",
-						"allowMutableTag": false,
+						"repository": "registry.example/ptah/operator",
 					},
 					wantError: true,
 				},
 				{
-					name: "mutable tag enabled",
+					name: "retired mutable tag key",
 					image: map[string]any{
 						"repository":      "registry.example/ptah/operator",
 						"digest":          lowerDigest,
-						"allowMutableTag": true,
+						"allowMutableTag": false,
 					},
 					wantError: true,
 				},
 				{
 					name: "repository already has a digest",
 					image: map[string]any{
-						"repository":      "registry.example/ptah/operator@" + testDigest,
-						"digest":          lowerDigest,
-						"allowMutableTag": false,
+						"repository": "registry.example/ptah/operator@" + testDigest,
+						"digest":     lowerDigest,
 					},
 					wantError: true,
 				},

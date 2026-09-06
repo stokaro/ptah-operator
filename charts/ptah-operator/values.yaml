@@ -6,10 +6,6 @@ image:
   # Required registry manifest digest, including for local development.
   # A Docker image ID is not a registry manifest digest.
   digest: ""
-  # Deprecated compatibility keys. Mutable tags and separate test identities
-  # are unsupported; these values must remain false and empty.
-  allowMutableTag: false
-  testIdentityDigest: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
