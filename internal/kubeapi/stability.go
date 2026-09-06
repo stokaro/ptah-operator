@@ -58,10 +58,13 @@ func (b *StabilityBarrier) wait(
 		stableSince = time.Time{}
 		stableKey = stabilityKey{}
 	}
+	// The deadline is the answer; the observation it interrupted is the
+	// diagnosis, so every sweep that retries says why.
+	lastReason := "no sweep completed"
 	retry := func() error {
 		if err := wait(ctx, b.PollEvery); err != nil {
 			if contextErr := ctx.Err(); contextErr != nil {
-				return contextErr
+				return fmt.Errorf("%w (last observation: %s)", contextErr, lastReason)
 			}
 			return fmt.Errorf("wait for next API-server stability sweep: %w", err)
 		}
@@ -79,6 +82,7 @@ func (b *StabilityBarrier) wait(
 			return err
 		}
 		if retryStored || !storedProven {
+			lastReason = fmt.Sprintf("stored contract not proven (retry=%t, identity %q)", retryStored, storedIdentity)
 			reset()
 			if err := retry(); err != nil {
 				return err
@@ -91,6 +95,7 @@ func (b *StabilityBarrier) wait(
 			return err
 		}
 		if retryProvider {
+			lastReason = "API server discovery retrying"
 			reset()
 			if err := retry(); err != nil {
 				return err
@@ -115,6 +120,7 @@ func (b *StabilityBarrier) wait(
 			}
 			if retryProbe || !proven {
 				allProven = false
+				lastReason = fmt.Sprintf("endpoint %s did not prove the contract (retry=%t)", endpoint.Address, retryProbe)
 			}
 		}
 		closedAt := now()
@@ -127,6 +133,7 @@ func (b *StabilityBarrier) wait(
 		}
 
 		if stableSince.IsZero() || !key.equal(stableKey) || closedAt.Before(stableSince) {
+			lastReason = "stability window restarted after a complete proof"
 			// A complete first sweep establishes the start of the window at its
 			// closing instant. Its provider, storage, and endpoint request time
 			// can therefore never satisfy any part of StabilityDuration.
@@ -138,6 +145,7 @@ func (b *StabilityBarrier) wait(
 			continue
 		}
 		if !eligible {
+			lastReason = fmt.Sprintf("stability window of %s not yet elapsed", b.StabilityDuration)
 			if err := retry(); err != nil {
 				return err
 			}
@@ -149,6 +157,7 @@ func (b *StabilityBarrier) wait(
 			return err
 		}
 		if retryStored || !closingStoredProven || closingStoredIdentity != storedIdentity {
+			lastReason = "closing stored contract observation not proven"
 			reset()
 			if err := retry(); err != nil {
 				return err
@@ -161,6 +170,7 @@ func (b *StabilityBarrier) wait(
 			return err
 		}
 		if retryProvider {
+			lastReason = "closing API server discovery retrying"
 			reset()
 			if err := retry(); err != nil {
 				return err
@@ -172,6 +182,7 @@ func (b *StabilityBarrier) wait(
 			return err
 		}
 		if !closingKey.equal(key) {
+			lastReason = "API server set changed during the stability window"
 			reset()
 			if err := retry(); err != nil {
 				return err

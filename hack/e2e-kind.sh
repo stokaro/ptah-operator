@@ -1117,6 +1117,23 @@ collect_diagnostics() {
 	if [ "$E2E_DEBUG_LOGS" -eq 1 ]; then
 		debug_logs_stop_following
 		printf '%s\n' 'e2e: E2E_DEBUG_LOGS=1: raw pod logs follow and may contain credentials' >&2
+		# A Pod that never becomes Ready and a convergence barrier that never
+		# closes leave no error behind. The objects they wait on do.
+		printf '%s\n' '=== events ===' >&2
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get events -A \
+			--sort-by=.lastTimestamp 2>/dev/null | tail -n 80 >&2 || true
+		printf '%s\n' '=== operator pods ===' >&2
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get pods -n "$OPERATOR_NAMESPACE" -o json 2>/dev/null |
+			jq -c '.items[] | {name: .metadata.name, phase: .status.phase, conditions: [.status.conditions[]? | {type, status, reason}], containers: [.status.containerStatuses[]? | {name, ready, restartCount, state}]}' >&2 || true
+		printf '%s\n' '=== operator ConfigMaps ===' >&2
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get configmaps -n "$OPERATOR_NAMESPACE" -o json 2>/dev/null |
+			jq -c '.items[] | select(.metadata.name != "kube-root-ca.crt") | {name: .metadata.name, uid: .metadata.uid, immutable, annotations: .metadata.annotations, data}' >&2 || true
+		printf '%s\n' '=== webhook configurations ===' >&2
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get mutatingwebhookconfigurations,validatingwebhookconfigurations -o json 2>/dev/null |
+			jq -c '.items[] | {kind, name: .metadata.name, webhooks: [.webhooks[] | {name, service: .clientConfig.service, caBundleBytes: ((.clientConfig.caBundle // "") | length), failurePolicy, matchConditions: [.matchConditions[]? | .name]}]}' >&2 || true
+		printf '%s\n' '=== operator EndpointSlices ===' >&2
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get endpointslices -n "$OPERATOR_NAMESPACE" -o json 2>/dev/null |
+			jq -c '.items[] | {name: .metadata.name, ports, endpoints: [.endpoints[]? | {addresses, ready: .conditions.ready, serving: .conditions.serving}]}' >&2 || true
 		# The guards are the other half of a refusal. A hook that fails because a
 		# policy denied it names the policy and nothing else, and which policy
 		# matched a given object is decided by the constraints the operator
