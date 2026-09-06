@@ -149,6 +149,22 @@ func TestCandidateAdmissionHandlerFailsClosedWithoutDenialFingerprint(t *testing
 			body: func(t *testing.T) []byte { return mustCandidateJSON(t, validReview(t)) }, wantStatus: http.StatusUnsupportedMediaType,
 		},
 		{
+			name: "timeout query with a second parameter", path: candidateMutatingCanaryPath + "?timeout=5s&other=1", method: http.MethodPost, contentType: "application/json",
+			body: func(t *testing.T) []byte { return mustCandidateJSON(t, validReview(t)) }, wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "foreign query parameter", path: candidateMutatingCanaryPath + "?other=1", method: http.MethodPost, contentType: "application/json",
+			body: func(t *testing.T) []byte { return mustCandidateJSON(t, validReview(t)) }, wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "zero timeout query", path: candidateMutatingCanaryPath + "?timeout=0s", method: http.MethodPost, contentType: "application/json",
+			body: func(t *testing.T) []byte { return mustCandidateJSON(t, validReview(t)) }, wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "repeated timeout query", path: candidateMutatingCanaryPath + "?timeout=5s&timeout=6s", method: http.MethodPost, contentType: "application/json",
+			body: func(t *testing.T) []byte { return mustCandidateJSON(t, validReview(t)) }, wantStatus: http.StatusNotFound,
+		},
+		{
 			name: "malformed JSON", path: candidateMutatingCanaryPath, method: http.MethodPost, contentType: "application/json",
 			body: func(*testing.T) []byte { return []byte(`{"apiVersion":`) }, wantStatus: http.StatusBadRequest,
 		},
@@ -454,5 +470,30 @@ func assertCandidateSecurityHeaders(t *testing.T, header http.Header, contentTyp
 	if header.Get("Content-Type") != contentType || header.Get("Cache-Control") != "no-store" ||
 		header.Get("Connection") != "close" || header.Get("X-Content-Type-Options") != "nosniff" {
 		t.Fatalf("response headers = %#v", header)
+	}
+}
+
+// The API server's webhook client appends its request timeout as the one
+// query parameter of every call; a listener that refuses it never answers a
+// real canary probe, and the certificate rotator's first reconciliation
+// waits for a convergence that cannot come.
+func TestCandidateAdmissionHandlerAcceptsTheAPIServerTimeoutQuery(t *testing.T) {
+	t.Parallel()
+
+	config := testCandidateAdmissionConfig()
+	handler, err := newCandidateAdmissionHandler(config)
+	if err != nil {
+		t.Fatalf("newCandidateAdmissionHandler() error = %v", err)
+	}
+	for _, path := range []string{candidateMutatingCanaryPath, candidateValidatingCanaryPath} {
+		fieldManager := config.MutatingFieldManager
+		if path == candidateValidatingCanaryPath {
+			fieldManager = config.ValidatingFieldManager
+		}
+		body := mustCandidateJSON(t, testCandidateAdmissionReview(t, config, fieldManager))
+		response := serveCandidateAdmission(t, handler, path+"?timeout=5s", http.MethodPost, "application/json", body)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s?timeout=5s status = %d, want %d; body = %q", path, response.Code, http.StatusOK, response.Body.String())
+		}
 	}
 }
