@@ -6,8 +6,10 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
+	"time"
 
 	admissionv1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
@@ -144,7 +146,7 @@ type candidateDenialStatusBuilder func(string, types.UID) *metav1.Status
 func (h *candidateAdmissionHandler) contractForPath(
 	request *http.Request,
 ) (candidateDenialStatusBuilder, string, bool) {
-	if request.URL == nil || request.URL.RawQuery != "" || request.URL.RawPath != "" {
+	if request.URL == nil || request.URL.RawPath != "" || !exactCandidateQuery(request.URL.RawQuery) {
 		return nil, "", false
 	}
 	switch request.URL.Path {
@@ -155,6 +157,25 @@ func (h *candidateAdmissionHandler) contractForPath(
 	default:
 		return nil, "", false
 	}
+}
+
+// exactCandidateQuery admits the one query parameter the API server's
+// webhook client appends, its request timeout, and nothing else. A request
+// with any other parameter is not the API server calling the canary.
+func exactCandidateQuery(rawQuery string) bool {
+	if rawQuery == "" {
+		return true
+	}
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil || len(values) != 1 {
+		return false
+	}
+	timeouts, ok := values["timeout"]
+	if !ok || len(timeouts) != 1 {
+		return false
+	}
+	timeout, err := time.ParseDuration(timeouts[0])
+	return err == nil && timeout > 0
 }
 
 func (h *candidateAdmissionHandler) validReview(
