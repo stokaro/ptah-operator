@@ -60,9 +60,9 @@ func TestControllerRBACCutoverHookRenderHasExactBoundedAuthority(t *testing.T) {
 	assertTransitionRenderRule(t, role, "rbac.authorization.k8s.io", "clusterrolebindings", nil, []string{"list"})
 	assertTransitionRenderRule(t, role, "rbac.authorization.k8s.io", "clusterrolebindings", []string{controllerName}, []string{"get", "patch"})
 	assertTransitionRenderRule(t, role, "rbac.authorization.k8s.io", "rolebindings", nil, []string{"list"})
-	assertTransitionRenderRule(t, role, "rbac.authorization.k8s.io", "rolebindings", []string{controllerName, controllerName + "-runtime-admission"}, []string{"get", "patch"})
+	assertTransitionRenderRule(t, role, "rbac.authorization.k8s.io", "rolebindings", []string{controllerName, controllerName + "-runtime-admission", controllerName + "-runtime-discovery"}, []string{"get", "patch"})
 	assertTransitionRenderRule(t, role, "rbac.authorization.k8s.io", "clusterroles", []string{controllerName}, []string{"get"})
-	assertTransitionRenderRule(t, role, "rbac.authorization.k8s.io", "roles", []string{controllerName, controllerName + "-runtime-admission"}, []string{"get"})
+	assertTransitionRenderRule(t, role, "rbac.authorization.k8s.io", "roles", []string{controllerName, controllerName + "-runtime-admission", controllerName + "-runtime-discovery"}, []string{"get"})
 	assertTransitionRenderRule(t, role, "authorization.k8s.io", "subjectaccessreviews", nil, []string{"create"})
 	assertTransitionRenderNoResourceVerb(t, role, "discovery.k8s.io", "endpointslices", "list")
 	assertTransitionRenderNoBindingCreate(t, role)
@@ -117,6 +117,20 @@ func TestControllerRBACCutoverHookRenderHasExactBoundedAuthority(t *testing.T) {
 		"kind": "ServiceAccount", "name": rollout.ControllerServiceAccountName, "namespace": rollout.ReleaseNamespace,
 	}
 	assertTransitionRenderedBinding(t, objects, "ClusterRoleBinding", "", controllerName, "ClusterRole", controllerName, candidateSubject)
+	assertTransitionRenderedRoleRules(t, objects, "default", controllerName+"-runtime-discovery", currentControllerDiscoveryRoleRules())
+	assertTransitionRenderedBinding(
+		t,
+		objects,
+		"RoleBinding",
+		"default",
+		controllerName+"-runtime-discovery",
+		"Role",
+		controllerName+"-runtime-discovery",
+		candidateSubject,
+		map[string]any{
+			"kind": "ServiceAccount", "name": runtimeContract.CertificateServiceAccountName, "namespace": rollout.ReleaseNamespace,
+		},
+	)
 	assertTransitionRenderedBinding(t, objects, "RoleBinding", rollout.ReleaseNamespace, controllerName, "Role", controllerName, candidateSubject)
 	assertTransitionRenderedBinding(
 		t,

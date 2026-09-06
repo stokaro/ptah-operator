@@ -134,6 +134,14 @@ rules:
     resources: ["configmaps"]
     resourceNames: ["ptah-operator-release-activation"]
     verbs: ["get"]
+{{- if eq .Release.Namespace "default" }}
+  # The runtime verifier discovers every API server through the default
+  # Kubernetes Service's EndpointSlices; a release in that namespace reads
+  # them through this Role, any other through the discovery Role below.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -153,6 +161,43 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "ptah-operator.certRotatorServiceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+{{ if ne .Release.Namespace "default" }}
+---
+# The runtime verifier in both Deployments discovers every API server
+# through the default Kubernetes Service's EndpointSlices. Keep that
+# authority in the one namespace it reads; the controller RBAC transition
+# moves this binding with the controller ServiceAccount.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "ptah-operator.fullname" . }}-runtime-discovery
+  namespace: default
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "ptah-operator.fullname" . }}-runtime-discovery
+  namespace: default
+  labels:
+    {{- include "ptah-operator.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "ptah-operator.fullname" . }}-runtime-discovery
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "ptah-operator.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+  - kind: ServiceAccount
+    name: {{ include "ptah-operator.certRotatorServiceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{ end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

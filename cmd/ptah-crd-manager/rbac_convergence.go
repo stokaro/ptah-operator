@@ -695,6 +695,9 @@ func buildTeardownAuthorizationChecks(
 	appendResource(teardownCheckHook, "patch stable controller ClusterRoleBinding", "rbac.authorization.k8s.io", "v1", "clusterrolebindings", "", "", "patch", rollout.ControllerDeploymentName)
 	appendResource(teardownCheckHook, "patch stable controller RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", rollout.CoordinationNamespace, "patch", rollout.ControllerDeploymentName)
 	appendResource(teardownCheckHook, "patch runtime admission RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", rollout.ReleaseNamespace, "patch", rollout.ControllerDeploymentName+"-runtime-admission")
+	// The hook's ClusterRole names the discovery binding whatever namespace the
+	// release lives in, so the revoked grant is probed unconditionally.
+	appendResource(teardownCheckHook, "patch runtime discovery RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", metav1.NamespaceDefault, "patch", crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
 	appendResource(teardownCheckHook, "create SubjectAccessReview", "authorization.k8s.io", "v1", "subjectaccessreviews", "", "", "create", arbitraryObjectName)
 
 	// Controller mutations. Every resource/subresource and mutating verb from
@@ -798,6 +801,7 @@ func buildTeardownAuthorizationChecks(
 			if contract.CertificateRuntimeEnabled {
 				coordinationNames = append(coordinationNames, certificateDiscoveryName)
 			}
+			coordinationNames = append(coordinationNames, crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
 		}
 		coordinationNames = append(coordinationNames, cleanupPrivilegeName)
 		rbacTargets = append(rbacTargets, struct {
@@ -818,6 +822,7 @@ func buildTeardownAuthorizationChecks(
 		if contract.CertificateRuntimeEnabled {
 			defaultNames = append(defaultNames, certificateDiscoveryName)
 		}
+		defaultNames = append(defaultNames, crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
 		defaultNames = append(defaultNames, cleanupPrivilegeName)
 		rbacTargets = append(rbacTargets, struct {
 			kind      string

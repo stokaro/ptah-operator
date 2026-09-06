@@ -778,6 +778,27 @@ func controllerRBACContract(
 		name: bindingName, namespace: rollout.CoordinationNamespace,
 		roleRef: controllerRBACRoleRef("Role", bindingName),
 	})
+	// The discovery binding in the default namespace moves with the controller
+	// ServiceAccount like the coordination binding. A sequence-zero predecessor
+	// did not have it, so the first managed transition leaves it to ordinary
+	// apply, the way the runtime-admission binding was introduced.
+	includeDiscovery := rollout.ReleaseNamespace != corev1.NamespaceDefault &&
+		(rollout.PreviousControllerServiceAccountName == "" || rollout.PreviousControllerReleaseSequence >= 1)
+	discoveryRole := controllerRBACRoleContract{
+		name:             controllerDiscoveryBindingName(bindingName),
+		namespace:        corev1.NamespaceDefault,
+		predecessorRules: currentControllerDiscoveryRoleRules(),
+		candidateRules:   currentControllerDiscoveryRoleRules(),
+	}
+	if includeDiscovery {
+		bindings = append(bindings, controllerRBACBindingContract{
+			name: discoveryRole.name, namespace: corev1.NamespaceDefault,
+			roleRef: controllerRBACRoleRef("Role", discoveryRole.name),
+			fixedSubjects: []rbacv1.Subject{
+				controllerRBACServiceAccountSubject(rollout.ReleaseNamespace, runtimeContract.CertificateServiceAccountName),
+			},
+		})
+	}
 	runtimeRole := controllerRBACRoleContract{
 		name:           runtimeBinding.name,
 		namespace:      rollout.ReleaseNamespace,
@@ -785,14 +806,18 @@ func controllerRBACContract(
 	}
 
 	if rollout.PreviousControllerServiceAccountName == "" {
+		roles := []controllerRBACRoleContract{
+			{name: bindingName, cluster: true, candidateRules: currentControllerClusterRoleRules(rollout)},
+			{name: bindingName, namespace: rollout.CoordinationNamespace, candidateRules: currentControllerCoordinationRoleRules()},
+		}
+		if includeDiscovery {
+			roles = append(roles, controllerRBACRoleContract{name: discoveryRole.name, namespace: discoveryRole.namespace, candidateRules: discoveryRole.candidateRules})
+		}
 		return controllerRBACTransitionContract{
 			bindings:         bindings,
 			postApplyBinding: &runtimeBinding,
-			roles: []controllerRBACRoleContract{
-				{name: bindingName, cluster: true, candidateRules: currentControllerClusterRoleRules(rollout)},
-				{name: bindingName, namespace: rollout.CoordinationNamespace, candidateRules: currentControllerCoordinationRoleRules()},
-			},
-			postApplyRole: &runtimeRole,
+			roles:            roles,
+			postApplyRole:    &runtimeRole,
 		}, nil
 	}
 	if rollout.ReleaseSequence != 1 || rollout.PreviousControllerReleaseSequence != 0 {
@@ -824,6 +849,9 @@ func controllerRBACContract(
 	if rollout.PreviousControllerReleaseSequence >= 1 {
 		contract.postApplyBinding = nil
 		contract.postApplyRole = nil
+	}
+	if includeDiscovery {
+		contract.roles = append(contract.roles, discoveryRole)
 	}
 	return contract, nil
 }
@@ -893,7 +921,7 @@ func currentControllerClusterRoleRules(rollout *RolloutGuard) []rbacv1.PolicyRul
 }
 
 func currentControllerRuntimeRoleRules(rollout *RolloutGuard, contract RuntimeAdmissionContract) []rbacv1.PolicyRule {
-	return []rbacv1.PolicyRule{
+	rules := []rbacv1.PolicyRule{
 		privilegePolicyRule(
 			[]string{""},
 			[]string{"serviceaccounts"},
@@ -912,6 +940,34 @@ func currentControllerRuntimeRoleRules(rollout *RolloutGuard, contract RuntimeAd
 		// grant on that ConfigMap.
 		privilegePolicyRule([]string{""}, []string{"configmaps"}, []string{ReleaseActivationName}, []string{"get"}),
 	}
+	if contract.Namespace == corev1.NamespaceDefault {
+		// A release in the default namespace reads the API server
+		// EndpointSlices through this Role; any other through the discovery
+		// Role in that namespace.
+		rules = append(rules, currentControllerDiscoveryRoleRules()...)
+	}
+	return rules
+}
+
+// currentControllerDiscoveryRoleRules is the authority the runtime verifier
+// in both Deployments needs to discover every API server: the default
+// Kubernetes Service's EndpointSlices, and nothing else in that namespace.
+func currentControllerDiscoveryRoleRules() []rbacv1.PolicyRule {
+	return []rbacv1.PolicyRule{
+		privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
+	}
+}
+
+// ControllerDiscoveryBindingName names the Role and RoleBinding in the default
+// namespace that carry the runtime verifier's EndpointSlice authority for a
+// release installed elsewhere. The controller RBAC transition moves the
+// binding with the controller ServiceAccount.
+func ControllerDiscoveryBindingName(controllerDeploymentName string) string {
+	return controllerDeploymentName + "-runtime-discovery"
+}
+
+func controllerDiscoveryBindingName(controllerDeploymentName string) string {
+	return ControllerDiscoveryBindingName(controllerDeploymentName)
 }
 
 func currentControllerCoordinationRoleRules() []rbacv1.PolicyRule {
