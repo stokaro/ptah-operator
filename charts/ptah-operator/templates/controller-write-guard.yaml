@@ -95,9 +95,9 @@ spec:
       message: "Ptah controller write guard rejected a desired-state mutation"
     - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $controllerAuthority | quote }}
       message: "Ptah controller principal guard rejected an inactive release identity"
-    - expression: 'variables.isAnyAdmissionConvergenceProbe || (object.spec == oldObject.spec)'
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (dyn(object).spec == dyn(oldObject).spec)'
       message: "Ptah controller write guard rejected a desired-state mutation"
-    - expression: 'variables.isAnyAdmissionConvergenceProbe || (has(object.status) == has(oldObject.status) && (!has(object.status) || object.status == oldObject.status))'
+    - expression: 'variables.isAnyAdmissionConvergenceProbe || (has(dyn(object).status) == has(dyn(oldObject).status) && (!has(dyn(object).status) || dyn(object).status == dyn(oldObject).status))'
       message: "Ptah controller write guard rejected a desired-state mutation"
     - expression: 'variables.isAnyAdmissionConvergenceProbe || (has(object.metadata.labels) == has(oldObject.metadata.labels) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && has(object.metadata.annotations) == has(oldObject.metadata.annotations) && (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences))'
       message: "Ptah controller write guard rejected a desired-state mutation"

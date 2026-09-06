@@ -157,8 +157,8 @@ func (g *ControllerWriteGuard) policy() *admissionregistrationv1.ValidatingAdmis
 					),
 					Message: controllerPrincipalGuardDenialMessage(),
 				},
-				{Expression: `object.spec == oldObject.spec`, Message: message},
-				{Expression: `has(object.status) == has(oldObject.status) && (!has(object.status) || object.status == oldObject.status)`, Message: message},
+				{Expression: `dyn(object).spec == dyn(oldObject).spec`, Message: message},
+				{Expression: `has(dyn(object).status) == has(dyn(oldObject).status) && (!has(dyn(object).status) || dyn(object).status == dyn(oldObject).status)`, Message: message},
 				{
 					Expression: `has(object.metadata.labels) == has(oldObject.metadata.labels) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels) && has(object.metadata.annotations) == has(oldObject.metadata.annotations) && (!has(object.metadata.annotations) || object.metadata.annotations == oldObject.metadata.annotations) && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)`,
 					Message:    message,

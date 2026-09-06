@@ -103,8 +103,8 @@ func TestControllerWriteGuardCELContract(t *testing.T) {
 		policy.Spec.Validations[1].Message != controllerPrincipalGuardDenialMessage() {
 		t.Fatal("activation shape and controller authority are not validated first")
 	}
-	if policy.Spec.Validations[2].Expression != `object.spec == oldObject.spec` ||
-		!strings.Contains(policy.Spec.Validations[3].Expression, "object.status == oldObject.status") {
+	if policy.Spec.Validations[2].Expression != `dyn(object).spec == dyn(oldObject).spec` ||
+		!strings.Contains(policy.Spec.Validations[3].Expression, "dyn(object).status == dyn(oldObject).status") {
 		t.Fatal("spec or status immutability is not enforced")
 	}
 	metadataExpression := policy.Spec.Validations[4].Expression

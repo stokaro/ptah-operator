@@ -7,6 +7,7 @@ package crdupgrade
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -87,6 +88,9 @@ func legacyControllerGuardObjects(guard *RolloutGuard, names []string) ([]legacy
 	}
 	if err := removeAdmissionConvergenceBindingProbe(writeBinding); err != nil {
 		return nil, fmt.Errorf("restore legacy controller write binding: %w", err)
+	}
+	if err := restoreLegacyControllerWriteFieldAccess(writePolicy); err != nil {
+		return nil, fmt.Errorf("restore legacy controller write field access: %w", err)
 	}
 	if err := requireLegacyVariableNames("controller write", writePolicy.Spec.Variables, []string{
 		"activeRelease", "oldFinalizers", "newFinalizers", "activeFinalizer", "oldActiveCount", "newActiveCount",
@@ -400,6 +404,44 @@ func verifyLegacyControllerMetadata(kind, name string, annotations, labels map[s
 		if labels[key] != value {
 			return fmt.Errorf("fixed legacy controller guard %s/%s has foreign or incomplete ownership", kind, name)
 		}
+	}
+	return nil
+}
+
+// restoreLegacyControllerWriteFieldAccess converts the v2 controller write
+// expressions back to the bytes the predecessor wrote.
+//
+// The v2 policy carries the convergence probe, which adds a ConfigMap rule to
+// its match constraints, and CEL type checking runs against every kind the
+// constraints admit. A ConfigMap has no spec and no status, so the v2
+// expressions wrap those reads in dyn() or the policy never becomes ready. The
+// v1 policy the predecessor created has no probe and no ConfigMap rule, so it
+// was written without dyn(), and this reconstruction has to reproduce it
+// exactly: the adopted object is compared against these bytes.
+//
+// It fails closed. If the v2 expressions stop using dyn() the conversion finds
+// nothing to undo, and that has to be an error rather than a silent pass,
+// because a reconstruction that quietly stops converting still produces a
+// digest and the difference only surfaces as a refused adoption in a cluster.
+func restoreLegacyControllerWriteFieldAccess(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
+	if policy == nil {
+		return errors.New("legacy controller write policy is nil")
+	}
+	replacements := 0
+	for index := range policy.Spec.Validations {
+		expression := policy.Spec.Validations[index].Expression
+		for _, subject := range []string{"object", "oldObject"} {
+			for _, field := range []string{"spec", "status"} {
+				from := "dyn(" + subject + ")." + field
+				to := subject + "." + field
+				replacements += strings.Count(expression, from)
+				expression = strings.ReplaceAll(expression, from, to)
+			}
+		}
+		policy.Spec.Validations[index].Expression = expression
+	}
+	if replacements == 0 {
+		return errors.New("controller write expressions carry no dyn() field access to restore")
 	}
 	return nil
 }
