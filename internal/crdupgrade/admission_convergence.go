@@ -337,7 +337,7 @@ func (g *AdmissionConvergenceGuard) verifyDependencies(ctx context.Context) erro
 		if verifyErr := blueprint.verifyPolicy(policy); verifyErr != nil {
 			return fmt.Errorf("verify admission convergence dependency policy %s: %w", blueprint.name, verifyErr)
 		}
-		if metadataErr := verifyAdmissionConvergenceDependencyMetadata(policy.TypeMeta, policy.ObjectMeta, blueprint.policy); metadataErr != nil {
+		if metadataErr := verifyAdmissionConvergenceDependencyMetadata(policy.ObjectMeta, blueprint.policy); metadataErr != nil {
 			return metadataErr
 		}
 		binding, getErr := g.Bindings.Get(ctx, blueprint.name, metav1.GetOptions{})
@@ -347,7 +347,7 @@ func (g *AdmissionConvergenceGuard) verifyDependencies(ctx context.Context) erro
 		if verifyErr := blueprint.verifyBinding(binding); verifyErr != nil {
 			return fmt.Errorf("verify admission convergence dependency binding %s: %w", blueprint.name, verifyErr)
 		}
-		if metadataErr := verifyAdmissionConvergenceDependencyMetadata(binding.TypeMeta, binding.ObjectMeta, blueprint.binding); metadataErr != nil {
+		if metadataErr := verifyAdmissionConvergenceDependencyMetadata(binding.ObjectMeta, blueprint.binding); metadataErr != nil {
 			return metadataErr
 		}
 	}
@@ -389,8 +389,10 @@ type admissionConvergenceDependencyObject interface {
 	runtime.Object
 }
 
+// verifyAdmissionConvergenceDependencyMetadata holds a live dependency to the
+// blueprint's ownership. The Go type is the identity: a typed client-go read
+// clears TypeMeta, so the kind is not read back from the object.
 func verifyAdmissionConvergenceDependencyMetadata(
-	typeMeta metav1.TypeMeta,
 	metadata metav1.ObjectMeta,
 	expected admissionConvergenceDependencyObject,
 ) error {
@@ -398,13 +400,24 @@ func verifyAdmissionConvergenceDependencyMetadata(
 		return errors.New("admission convergence expected dependency is nil")
 	}
 	expectedGVK := expected.GetObjectKind().GroupVersionKind()
-	if typeMeta.APIVersion != expectedGVK.GroupVersion().String() || typeMeta.Kind != expectedGVK.Kind ||
-		metadata.Name != expected.GetName() || metadata.Namespace != "" || metadata.GenerateName != "" ||
+	// The chart renders every dependency as a Helm hook, so a live one carries
+	// Helm's hook annotations beside the ownership the blueprint writes. Those
+	// are Helm's bookkeeping, not ownership; everything else has to be exact.
+	ownership := make(map[string]string, len(metadata.Annotations))
+	for key, value := range metadata.Annotations {
+		if !strings.HasPrefix(key, "helm.sh/") {
+			ownership[key] = value
+		}
+	}
+	if len(ownership) == 0 {
+		ownership = nil
+	}
+	if metadata.Name != expected.GetName() || metadata.Namespace != "" || metadata.GenerateName != "" ||
 		len(metadata.OwnerReferences) != 0 || len(metadata.Finalizers) != 0 ||
 		metadata.DeletionTimestamp != nil || metadata.DeletionGracePeriodSeconds != nil ||
-		!reflect.DeepEqual(metadata.Annotations, expected.GetAnnotations()) ||
+		!reflect.DeepEqual(ownership, expected.GetAnnotations()) ||
 		!reflect.DeepEqual(metadata.Labels, expected.GetLabels()) {
-		return fmt.Errorf("admission convergence dependency %s/%s has foreign or incomplete ownership", typeMeta.Kind, metadata.Name)
+		return fmt.Errorf("admission convergence dependency %s/%s has foreign or incomplete ownership", expectedGVK.Kind, metadata.Name)
 	}
 	// UID and resourceVersion are deliberately not pinned. A byte-identical
 	// replacement has the same enforcement semantics; a publication gap or a

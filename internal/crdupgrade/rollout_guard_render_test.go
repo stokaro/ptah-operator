@@ -14,12 +14,14 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+	fakekube "k8s.io/client-go/kubernetes/fake"
 
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
 )
@@ -110,6 +112,15 @@ func verifyRenderedRolloutGuardFamily(t *testing.T, path string) {
 		t.Fatal("rendered chart has no preflight hook Job")
 	}
 	guard := renderedRolloutGuard(t, preflight.Spec.Template.Spec.Containers[0].Args, preflight.Spec.Template.Spec.PriorityClassName)
+	// The blueprint builders validate the guard the way the manager wires it,
+	// readers included; nothing is read through them here.
+	clientset := fakekube.NewClientset()
+	guard.Policies = clientset.AdmissionregistrationV1().ValidatingAdmissionPolicies()
+	guard.Bindings = clientset.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings()
+	guard.Deployments = clientset.AppsV1().Deployments(guard.ReleaseNamespace)
+	guard.Pods = clientset.CoreV1().Pods(guard.ReleaseNamespace)
+	guard.ConfigMaps = clientset.CoreV1().ConfigMaps(guard.ReleaseNamespace)
+	guard.ConfigMapDeleter = clientset.CoreV1().ConfigMaps(guard.ReleaseNamespace)
 
 	rolloutName := RolloutGuardPolicyName(guard.ReleaseSequence)
 	runtimeName := RuntimeGuardPolicyName(guard.ReleaseSequence)
@@ -140,6 +151,48 @@ func verifyRenderedRolloutGuardFamily(t *testing.T, path string) {
 			t.Fatalf("%v\n%s", err, renderedSpecDifference(policy, guard.hookIdentityProbePolicy()))
 		}
 	})
+	// The pre-cutover admission convergence sentinel reads each dependency
+	// blueprint back through the typed client and holds it to the blueprint's
+	// ownership and spec; the rendered objects are what it will read.
+	blueprints, err := predecessorRetirementPairBlueprints(guard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, blueprint := range blueprints {
+		t.Run("sentinel dependency "+blueprint.name, func(t *testing.T) {
+			policy, binding := policies[blueprint.name], bindings[blueprint.name]
+			if policy == nil || binding == nil {
+				t.Fatalf("rendered chart is missing dependency %s", blueprint.name)
+			}
+			if err := blueprint.verifyPolicy(policy); err != nil {
+				t.Fatal(err)
+			}
+			if err := verifyAdmissionConvergenceDependencyMetadata(policy.ObjectMeta, blueprint.policy); err != nil {
+				t.Fatalf("%v\n  rendered annotations %v labels %v\n  blueprint annotations %v labels %v", err, policy.Annotations, policy.Labels, blueprint.policy.GetAnnotations(), blueprint.policy.GetLabels())
+			}
+			if err := blueprint.verifyBinding(binding); err != nil {
+				t.Fatal(err)
+			}
+			// Predecessor retirement reads the same pair back for its inventory and
+			// requires the identity the API server assigns; give the render one.
+			stored, storedBinding := policy.DeepCopy(), binding.DeepCopy()
+			for _, object := range []metav1.Object{stored, storedBinding} {
+				object.SetUID(types.UID("fixture-" + object.GetName()))
+				object.SetResourceVersion("1")
+				object.SetGeneration(1)
+				object.SetCreationTimestamp(metav1.Now())
+			}
+			if err := verifyCurrentRetirementPolicy(stored, blueprint); err != nil {
+				t.Fatalf("retirement inventory would refuse the rendered policy: %v", err)
+			}
+			if err := verifyCurrentRetirementBinding(storedBinding, blueprint); err != nil {
+				t.Fatalf("retirement inventory would refuse the rendered binding: %v", err)
+			}
+			if err := verifyAdmissionConvergenceDependencyMetadata(binding.ObjectMeta, blueprint.binding); err != nil {
+				t.Fatalf("%v\n  rendered annotations %v labels %v\n  blueprint annotations %v labels %v", err, binding.Annotations, binding.Labels, blueprint.binding.GetAnnotations(), blueprint.binding.GetLabels())
+			}
+		})
+	}
 	for _, name := range []string{rolloutName, runtimeName, identityName, probeName} {
 		t.Run("binding "+name, func(t *testing.T) {
 			if err := guard.verifyBinding(bindings[name], name); err != nil {
@@ -231,6 +284,7 @@ func renderedRolloutGuard(t *testing.T, args []string, priorityClassName string)
 		RuntimePodConfigExpressions:             list("runtime-pod-config-expressions-b64"),
 		RuntimeAdmissionContractB64:             values["runtime-admission-contract-b64"],
 		PriorityClassName:                       priorityClassName,
+		PollEvery:                               500 * time.Millisecond,
 	}
 }
 
