@@ -81,7 +81,15 @@ HOOK_PROGRESS_ADVERSARY_UID=
 HOOK_PROGRESS_HOLD_POLICY=ptah-e2e-hook-progress-hold
 HOOK_PROGRESS_HOLD_PROBE=ptah-e2e-hook-progress-hold-probe
 HOOK_PROGRESS_HOLD_MESSAGE='Ptah E2E hook progress hold rejected controller status advancement'
-HOOK_PROGRESS_JOB_DENIAL='Ptah hook parent origin guard rejected an unauthorized Job'
+# A Job attack is refused by two retained guards, the parent contract and the
+# parent origin guard, and the API server reports only the first denying
+# policy in name order (measured on Kubernetes 1.37.0 with two policies that
+# deny one request: the second is never mentioned). The contract guard sorts
+# first, so its message is the one a same-release attack sees; the origin
+# guard's stays accepted for the day the contract guard stops matching. The
+# value is one pattern per line for grep -F.
+HOOK_PROGRESS_JOB_DENIAL='Ptah hook parent contract v1 rejected an unsafe Job
+Ptah hook parent origin guard rejected an unauthorized Job'
 HOOK_PROGRESS_POD_DENIAL='Ptah hook Pod origin guard rejected an unauthorized Pod'
 HOOK_PROGRESS_RESOURCES_ACTIVE=0
 HOOK_PROGRESS_HELM_PID=
@@ -911,6 +919,13 @@ expect_hook_progress_guard_denial() {
 	fi
 }
 
+# exercise_hook_progress_attacks sends the five mutations an adversary with
+# the Job controller's verbs could attempt against the running hook Job and
+# its Pod. The forged terminal statuses carry what the Job API's own
+# validation demands of a finished Job (a SuccessCriteriaMet or FailureTarget
+# condition beside the terminal one, startTime, completionTime for Complete,
+# no active Pods), because a shape that validation refuses never reaches
+# admission and proves nothing about the guards.
 exercise_hook_progress_attacks() {
 	component=$1
 	expect_hook_progress_guard_denial \
@@ -921,13 +936,13 @@ exercise_hook_progress_attacks() {
 		"forge Complete on the $component Job" "$HOOK_PROGRESS_JOB_DENIAL" \
 		hook_progress_adversary_kube -n "$E2E_OPERATOR_NAMESPACE" \
 		patch job "$HOOK_PROGRESS_JOB_NAME" --subresource=status --type=merge \
-		-p='{"status":{"succeeded":1,"conditions":[{"type":"Complete","status":"True","reason":"E2EForge","message":"forged completion","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' \
+		-p='{"status":{"active":0,"startTime":"2026-01-01T00:00:00Z","completionTime":"2026-01-01T00:00:01Z","succeeded":1,"conditions":[{"type":"SuccessCriteriaMet","status":"True","reason":"E2EForge","message":"forged completion","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"},{"type":"Complete","status":"True","reason":"E2EForge","message":"forged completion","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' \
 		--request-timeout=15s
 	expect_hook_progress_guard_denial \
 		"forge Failed on the $component Job" "$HOOK_PROGRESS_JOB_DENIAL" \
 		hook_progress_adversary_kube -n "$E2E_OPERATOR_NAMESPACE" \
 		patch job "$HOOK_PROGRESS_JOB_NAME" --subresource=status --type=merge \
-		-p='{"status":{"failed":1,"conditions":[{"type":"Failed","status":"True","reason":"E2EForge","message":"forged failure","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' \
+		-p='{"status":{"active":0,"startTime":"2026-01-01T00:00:00Z","failed":1,"conditions":[{"type":"FailureTarget","status":"True","reason":"E2EForge","message":"forged failure","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"},{"type":"Failed","status":"True","reason":"E2EForge","message":"forged failure","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' \
 		--request-timeout=15s
 	expect_hook_progress_guard_denial \
 		"change the $component Pod component identity" "$HOOK_PROGRESS_POD_DENIAL" \
