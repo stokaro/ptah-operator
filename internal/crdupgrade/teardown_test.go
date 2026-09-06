@@ -1,0 +1,1234 @@
+package crdupgrade
+
+// These tests intentionally use the package internals: safe deletion depends
+// on proving the same immutable contracts used by each private guard builder.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+)
+
+func immediateAdmissionConvergence(context.Context) error { return nil }
+
+func TestReleaseTeardownDeletesExactInventoryInSafeOrder(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t)
+	wantOrder := expectedReleaseTeardownOrder(fixture.guard)
+	if len(wantOrder) != 45 {
+		t.Fatalf("known teardown inventory has %d objects, want 45", len(wantOrder))
+	}
+	if err := fixture.teardown.Preflight(context.Background()); err != nil {
+		t.Fatalf("read-only preflight: %v", err)
+	}
+	if len(fixture.recorder.deletes) != 0 {
+		t.Fatalf("read-only preflight issued deletes: %v", fixture.recorder.deletes)
+	}
+
+	if err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fixture.recorder.deletes, wantOrder) {
+		t.Fatalf("delete order:\n got: %v\nwant: %v", fixture.recorder.deletes, wantOrder)
+	}
+	for _, key := range wantOrder {
+		options, found := fixture.recorder.options[key]
+		if !found {
+			t.Fatalf("%s delete options were not recorded", key)
+		}
+		if options.Preconditions == nil || options.Preconditions.UID == nil || options.Preconditions.ResourceVersion == nil {
+			t.Fatalf("%s delete lacks UID/resourceVersion preconditions: %#v", key, options)
+		}
+		wantIdentity := fixture.identities[key]
+		if *options.Preconditions.UID != wantIdentity.uid || *options.Preconditions.ResourceVersion != wantIdentity.resourceVersion {
+			t.Fatalf("%s delete preconditions = %s/%s, want %s/%s", key,
+				*options.Preconditions.UID, *options.Preconditions.ResourceVersion,
+				wantIdentity.uid, wantIdentity.resourceVersion,
+			)
+		}
+	}
+	activationName := ReleaseActivationGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)
+	admissionConvergenceName := AdmissionConvergencePolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)
+	tail := fixture.recorder.deletes[len(fixture.recorder.deletes)-6:]
+	wantTail := []string{
+		teardownKey("ValidatingAdmissionPolicyBinding", activationName),
+		teardownKey("ValidatingAdmissionPolicy", activationName),
+		teardownKey("ValidatingAdmissionPolicyBinding", admissionConvergenceName),
+		teardownKey("ValidatingAdmissionPolicy", admissionConvergenceName),
+		teardownKey("ConfigMap", AdmissionConvergenceMarkerName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, fixture.guard.ReleaseSequence)),
+		teardownKey("ConfigMap", ReleaseActivationName),
+	}
+	if !reflect.DeepEqual(tail, wantTail) {
+		t.Fatalf("teardown tail = %v, want %v", tail, wantTail)
+	}
+}
+
+func TestReleaseTeardownFencesAdmissionCachesAfterFinalBindingAndBeforeSentinelPolicy(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t)
+	name := AdmissionConvergencePolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)
+	markerName := AdmissionConvergenceMarkerName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, fixture.guard.ReleaseSequence)
+	waitCalls := 0
+	waiter := func(context.Context) error {
+		waitCalls++
+		if len(fixture.recorder.deletes) == 0 || fixture.recorder.deletes[len(fixture.recorder.deletes)-1] != teardownKey("ValidatingAdmissionPolicyBinding", name) {
+			t.Fatalf("convergence wait started before final sentinel binding deletion: %v", fixture.recorder.deletes)
+		}
+		if fixture.bindings.objects[name] != nil {
+			t.Fatal("final sentinel binding remains present during convergence wait")
+		}
+		if fixture.policies.objects[name] == nil || fixture.configMaps.objects[markerName] == nil || fixture.configMaps.objects[ReleaseActivationName] == nil {
+			t.Fatal("sentinel policy, marker, and activation parameter must remain exact through convergence wait")
+		}
+		return nil
+	}
+	if err := fixture.teardown.Teardown(context.Background(), waiter); err != nil {
+		t.Fatal(err)
+	}
+	if waitCalls != 1 {
+		t.Fatalf("admission convergence waits = %d, want 1", waitCalls)
+	}
+}
+
+func TestReleaseTeardownResumesAtAdmissionCacheFence(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t)
+	injected := errors.New("one stale API server")
+	err := fixture.teardown.Teardown(context.Background(), func(context.Context) error { return injected })
+	if !errors.Is(err, injected) {
+		t.Fatalf("Teardown error = %v, want convergence failure", err)
+	}
+	name := AdmissionConvergencePolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)
+	if fixture.policies.objects[name] == nil {
+		t.Fatal("sentinel policy was deleted before all-endpoint convergence")
+	}
+	waits := 0
+	if err := fixture.teardown.Teardown(context.Background(), func(context.Context) error {
+		waits++
+		return nil
+	}); err != nil {
+		t.Fatalf("resumed teardown: %v", err)
+	}
+	if waits != 1 {
+		t.Fatalf("resumed admission convergence waits = %d, want 1", waits)
+	}
+}
+
+func TestReleaseTeardownKeepsActivationSelfGuardUntilConsumersAreRemoved(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t)
+	targets, err := fixture.teardown.targets()
+	if err != nil {
+		t.Fatalf("targets() error = %v", err)
+	}
+	activationName := ReleaseActivationGuardPolicyName(
+		fixture.guard.ReleaseNamespace,
+		fixture.guard.ReleaseName,
+	)
+	index := func(kind, name string) int {
+		t.Helper()
+		for targetIndex, target := range targets {
+			if target.kind == kind && target.name == name {
+				return targetIndex
+			}
+		}
+		t.Fatalf("teardown target %s/%s is missing", kind, name)
+		return -1
+	}
+	activationBindingIndex := index("ValidatingAdmissionPolicyBinding", activationName)
+	activationPolicyIndex := index("ValidatingAdmissionPolicy", activationName)
+	activationConfigMapIndex := index("ConfigMap", ReleaseActivationName)
+	if activationBindingIndex >= activationPolicyIndex || activationPolicyIndex >= activationConfigMapIndex {
+		t.Fatalf(
+			"activation self-guard order = binding %d, policy %d, ConfigMap %d",
+			activationBindingIndex,
+			activationPolicyIndex,
+			activationConfigMapIndex,
+		)
+	}
+	for _, name := range []string{
+		RolloutGuardPolicyName(fixture.guard.ReleaseSequence),
+		RuntimeGuardPolicyName(fixture.guard.ReleaseSequence),
+		RuntimePodGuardPolicyName(fixture.guard.ReleaseSequence),
+		ControllerJobWriteGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, fixture.guard.ReleaseSequence, fixture.guard.ManagerImage),
+		ControllerChunkWriteGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, fixture.guard.ReleaseSequence, fixture.guard.ManagerImage),
+		ControllerPlanWriteGuardPolicyName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, fixture.guard.ReleaseSequence, fixture.guard.ManagerImage),
+	} {
+		if bindingIndex := index("ValidatingAdmissionPolicyBinding", name); bindingIndex >= activationBindingIndex {
+			t.Fatalf("activation self-guard binding precedes consumer binding %s", name)
+		}
+		if policyIndex := index("ValidatingAdmissionPolicy", name); policyIndex >= activationBindingIndex {
+			t.Fatalf("activation self-guard binding precedes consumer policy %s", name)
+		}
+	}
+}
+
+func TestReleaseTeardownRetriesOnlyActivationSelfGuardCacheDenial(t *testing.T) {
+	t.Parallel()
+
+	t.Run("stale self-guard denial", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixture(t)
+		order := expectedReleaseTeardownOrder(fixture.guard)
+		activationKey := teardownKey("ConfigMap", ReleaseActivationName)
+		activationIndex := slicesIndex(order, activationKey)
+		attempts := 0
+		fixture.recorder.beforeDelete[activationKey] = func() {
+			attempts++
+			if attempts == 1 {
+				fixture.recorder.errors[activationKey] = apierrors.NewForbidden(
+					teardownGroupResource("ConfigMap"),
+					ReleaseActivationName,
+					errors.New(releaseActivationGuardDenialMessage()),
+				)
+				return
+			}
+			delete(fixture.recorder.errors, activationKey)
+		}
+
+		if err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence); err != nil {
+			t.Fatal(err)
+		}
+		if attempts != 2 {
+			t.Fatalf("activation delete attempts = %d, want 2", attempts)
+		}
+		want := append([]string{}, order[:activationIndex]...)
+		want = append(want, activationKey, activationKey)
+		want = append(want, order[activationIndex+1:]...)
+		if !reflect.DeepEqual(fixture.recorder.deletes, want) {
+			t.Fatalf("delete calls = %v, want one exact activation retry in %v", fixture.recorder.deletes, want)
+		}
+	})
+
+	t.Run("foreign forbidden error", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixture(t)
+		activationKey := teardownKey("ConfigMap", ReleaseActivationName)
+		fixture.recorder.errors[activationKey] = apierrors.NewForbidden(
+			teardownGroupResource("ConfigMap"),
+			ReleaseActivationName,
+			errors.New("foreign admission denial"),
+		)
+
+		err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence)
+		if err == nil || !strings.Contains(err.Error(), "foreign admission denial") {
+			t.Fatalf("Teardown error = %v, want foreign denial", err)
+		}
+		attempts := 0
+		for _, key := range fixture.recorder.deletes {
+			if key == activationKey {
+				attempts++
+			}
+		}
+		if attempts != 1 {
+			t.Fatalf("foreign activation denial attempts = %d, want 1", attempts)
+		}
+	})
+}
+
+func TestReleaseTeardownRejectsSequenceWithoutPredecessorIdentityInventory(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t)
+	fixture.guard.ReleaseSequence = 2
+	base := strings.Split(fixture.guard.HookServiceAccountName, "-crd-v")[0]
+	fixture.guard.HookServiceAccountName = fmt.Sprintf("%s-crd-v2-%s", base, hookIdentityDigest(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, 2, fixture.guard.ManagerImage)[:12])
+	err := fixture.teardown.Preflight(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "no explicit predecessor identity inventory") {
+		t.Fatalf("Preflight error = %v, want missing predecessor inventory refusal", err)
+	}
+	if len(fixture.recorder.deletes) != 0 {
+		t.Fatalf("predecessor inventory refusal mutated resources: %v", fixture.recorder.deletes)
+	}
+}
+
+func TestReleaseTeardownPreflightsCompleteInventoryBeforeMutation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*releaseTeardownFixture)
+		want   string
+	}{
+		{
+			name: "foreign mutating webhook owner",
+			mutate: func(f *releaseTeardownFixture) {
+				f.mutating.object.Annotations[helmReleaseNameAnnotation] = "foreign"
+			},
+			want: "is not owned by Helm release",
+		},
+		{
+			name: "parameterized binding drift",
+			mutate: func(f *releaseTeardownFixture) {
+				name := RuntimeGuardPolicyName(f.guard.ReleaseSequence)
+				f.bindings.objects[name].Spec.ParamRef = nil
+			},
+			want: "binding spec differs",
+		},
+		{
+			name: "remaining binding foreign owner",
+			mutate: func(f *releaseTeardownFixture) {
+				name := HookIdentityGuardPolicyName(f.guard.ReleaseNamespace, f.guard.ReleaseName, f.guard.ReleaseSequence, f.guard.ManagerImage)
+				f.bindings.objects[name].Labels[instanceLabel] = "foreign"
+			},
+			want: "foreign or incomplete ownership",
+		},
+		{
+			name: "policy contract drift",
+			mutate: func(f *releaseTeardownFixture) {
+				name := ParentReplicaSetGuardPolicyName(f.guard.ReleaseNamespace, f.guard.ReleaseName, f.guard.ReleaseSequence, f.guard.ManagerImage)
+				f.policies.objects[name].Spec.Validations[0].Expression = "true"
+			},
+			want: "differs from the immutable contract",
+		},
+		{
+			name: "namespace boundary drift",
+			mutate: func(f *releaseTeardownFixture) {
+				name := NamespaceDeletionGuardPolicyName(f.guard.ReleaseNamespace, f.guard.ReleaseName)
+				f.bindings.objects[name].Spec.ValidationActions = nil
+			},
+			want: "namespace deletion guard binding spec differs",
+		},
+		{
+			name: "activation owner drift",
+			mutate: func(f *releaseTeardownFixture) {
+				f.configMaps.objects[ReleaseActivationName].Labels[instanceLabel] = "foreign"
+			},
+			want: "foreign or incomplete ownership",
+		},
+		{
+			name: "probe marker shape drift",
+			mutate: func(f *releaseTeardownFixture) {
+				name := HookIdentityProbeObjectName(f.guard.ReleaseNamespace, f.guard.ReleaseName, f.guard.ReleaseSequence, f.guard.ManagerImage)
+				f.configMaps.objects[name].Data["probe"] = "changed"
+			},
+			want: "shape is not exact",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newReleaseTeardownFixture(t)
+			test.mutate(fixture)
+			err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Teardown error = %v, want %q", err, test.want)
+			}
+			if len(fixture.recorder.deletes) != 0 {
+				t.Fatalf("preflight failure mutated resources: %v", fixture.recorder.deletes)
+			}
+		})
+	}
+}
+
+func TestReleaseTeardownRejectsObjectsThatMayRemainAfterDelete(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*releaseTeardownFixture)
+		want   string
+	}{
+		{
+			name: "finalizer",
+			mutate: func(f *releaseTeardownFixture) {
+				f.mutating.object.Finalizers = []string{"operator.example/hold"}
+			},
+			want: "has finalizers",
+		},
+		{
+			name: "deletion in progress",
+			mutate: func(f *releaseTeardownFixture) {
+				now := metav1.Now()
+				f.policies.objects[RolloutGuardPolicyName(f.guard.ReleaseSequence)].DeletionTimestamp = &now
+			},
+			want: "deletion is already in progress",
+		},
+		{
+			name: "nonzero deletion grace period",
+			mutate: func(f *releaseTeardownFixture) {
+				grace := int64(30)
+				f.bindings.objects[RuntimeGuardPolicyName(f.guard.ReleaseSequence)].DeletionGracePeriodSeconds = &grace
+			},
+			want: "nonzero deletion grace period",
+		},
+		{
+			name: "owner reference",
+			mutate: func(f *releaseTeardownFixture) {
+				f.validating.object.OwnerReferences = []metav1.OwnerReference{{
+					APIVersion: "v1", Kind: "Namespace", Name: f.guard.ReleaseNamespace, UID: "owner-uid",
+				}}
+			},
+			want: "unexpected owner references",
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newReleaseTeardownFixture(t)
+			test.mutate(fixture)
+
+			err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Teardown error = %v, want %q", err, test.want)
+			}
+			if len(fixture.recorder.deletes) != 0 {
+				t.Fatalf("unsafe object state caused deletes: %v", fixture.recorder.deletes)
+			}
+		})
+	}
+}
+
+func TestReleaseTeardownStopsAtFirstDeleteFailureAndResumes(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t)
+	wantOrder := expectedReleaseTeardownOrder(fixture.guard)
+	failureIndex := 8
+	failureKey := wantOrder[failureIndex]
+	fixture.recorder.errors[failureKey] = errors.New("injected delete failure")
+
+	err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence)
+	if err == nil || !strings.Contains(err.Error(), "injected delete failure") {
+		t.Fatalf("Teardown error = %v, want injected failure", err)
+	}
+	if want := wantOrder[:failureIndex+1]; !reflect.DeepEqual(fixture.recorder.deletes, want) {
+		t.Fatalf("delete calls before failure = %v, want %v", fixture.recorder.deletes, want)
+	}
+
+	delete(fixture.recorder.errors, failureKey)
+	fixture.recorder.deletes = nil
+	if err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence); err != nil {
+		t.Fatalf("resume teardown: %v", err)
+	}
+	if want := wantOrder[failureIndex:]; !reflect.DeepEqual(fixture.recorder.deletes, want) {
+		t.Fatalf("resumed delete calls = %v, want %v", fixture.recorder.deletes, want)
+	}
+}
+
+func TestReleaseTeardownAllowsOnlyContiguousDeletedPrefix(t *testing.T) {
+	t.Parallel()
+
+	t.Run("contiguous prefix and completed retry", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixture(t)
+		order := expectedReleaseTeardownOrder(fixture.guard)
+		const removed = 6
+		for _, key := range order[:removed] {
+			fixture.remove(key)
+		}
+
+		if err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence); err != nil {
+			t.Fatal(err)
+		}
+		if want := order[removed:]; !reflect.DeepEqual(fixture.recorder.deletes, want) {
+			t.Fatalf("delete calls = %v, want %v", fixture.recorder.deletes, want)
+		}
+
+		fixture.recorder.deletes = nil
+		if err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence); err != nil {
+			t.Fatalf("completed teardown retry: %v", err)
+		}
+		if len(fixture.recorder.deletes) != 0 {
+			t.Fatalf("completed retry issued deletes: %v", fixture.recorder.deletes)
+		}
+	})
+
+	t.Run("noncontiguous hole", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixture(t)
+		order := expectedReleaseTeardownOrder(fixture.guard)
+		fixture.remove(order[5])
+
+		err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence)
+		if err == nil || !strings.Contains(err.Error(), "inventory is incomplete") {
+			t.Fatalf("Teardown error = %v, want incomplete inventory", err)
+		}
+		if len(fixture.recorder.deletes) != 0 {
+			t.Fatalf("incomplete inventory mutated resources: %v", fixture.recorder.deletes)
+		}
+	})
+
+	t.Run("missing activation anchor", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixture(t)
+		fixture.remove(teardownKey("ConfigMap", ReleaseActivationName))
+
+		err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence)
+		if err == nil || !strings.Contains(err.Error(), "inventory is incomplete") {
+			t.Fatalf("Teardown error = %v, want missing activation anchor", err)
+		}
+		if len(fixture.recorder.deletes) != 0 {
+			t.Fatalf("missing anchor mutated resources: %v", fixture.recorder.deletes)
+		}
+	})
+}
+
+func TestReleaseTeardownHandlesOptionalLegacyControllerGuardInventory(t *testing.T) {
+	t.Parallel()
+
+	t.Run("all exact objects are removed with preconditions", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixtureWithLegacyControllerGuards(t)
+		order := expectedReleaseTeardownOrder(fixture.guard)
+		if len(order) != 57 {
+			t.Fatalf("known teardown inventory has %d objects, want 57", len(order))
+		}
+		if err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(fixture.recorder.deletes, order) {
+			t.Fatalf("delete order:\n got: %v\nwant: %v", fixture.recorder.deletes, order)
+		}
+		for _, key := range legacyControllerTeardownOrder(fixture.guard) {
+			options := fixture.recorder.options[key]
+			want := fixture.identities[key]
+			if options.Preconditions == nil || options.Preconditions.UID == nil || options.Preconditions.ResourceVersion == nil {
+				t.Fatalf("%s delete lacks UID/resourceVersion preconditions: %#v", key, options)
+			}
+			if *options.Preconditions.UID != want.uid || *options.Preconditions.ResourceVersion != want.resourceVersion {
+				t.Fatalf("%s delete preconditions = %s/%s, want %s/%s", key,
+					*options.Preconditions.UID, *options.Preconditions.ResourceVersion,
+					want.uid, want.resourceVersion,
+				)
+			}
+		}
+	})
+
+	for removed := 0; removed <= 12; removed++ {
+		removed := removed
+		t.Run(fmt.Sprintf("retry after %d optional deletes", removed), func(t *testing.T) {
+			t.Parallel()
+			fixture := newReleaseTeardownFixtureWithLegacyControllerGuards(t)
+			optional := legacyControllerTeardownOrder(fixture.guard)
+			for _, key := range optional[:removed] {
+				fixture.remove(key)
+			}
+
+			if err := fixture.teardown.Preflight(context.Background()); err != nil {
+				t.Fatalf("Preflight after optional prefix %d: %v", removed, err)
+			}
+			if len(fixture.recorder.deletes) != 0 {
+				t.Fatalf("read-only retry preflight issued deletes: %v", fixture.recorder.deletes)
+			}
+		})
+	}
+
+	t.Run("hole after a retained optional object", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixtureWithLegacyControllerGuards(t)
+		optional := legacyControllerTeardownOrder(fixture.guard)
+		fixture.remove(optional[4])
+
+		err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence)
+		if err == nil || !strings.Contains(err.Error(), "optional inventory") {
+			t.Fatalf("Teardown error = %v, want optional inventory refusal", err)
+		}
+		if len(fixture.recorder.deletes) != 0 {
+			t.Fatalf("optional inventory hole mutated resources: %v", fixture.recorder.deletes)
+		}
+	})
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*releaseTeardownFixture)
+	}{
+		{
+			name: "policy drift",
+			mutate: func(fixture *releaseTeardownFixture) {
+				name := legacyControllerGuardNames(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)[1]
+				fixture.policies.objects[name].Spec.Validations[0].Expression = "true"
+			},
+		},
+		{
+			name: "binding drift",
+			mutate: func(fixture *releaseTeardownFixture) {
+				name := legacyControllerGuardNames(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)[2]
+				fixture.bindings.objects[name].Spec.ValidationActions = nil
+			},
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newReleaseTeardownFixtureWithLegacyControllerGuards(t)
+			test.mutate(fixture)
+
+			err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence)
+			if err == nil || !strings.Contains(err.Error(), "immutable contract") {
+				t.Fatalf("Teardown error = %v, want immutable legacy contract refusal", err)
+			}
+			if len(fixture.recorder.deletes) != 0 {
+				t.Fatalf("legacy contract drift mutated resources: %v", fixture.recorder.deletes)
+			}
+		})
+	}
+
+	t.Run("present object requires exact predecessor identity", func(t *testing.T) {
+		t.Parallel()
+		fixture := newReleaseTeardownFixture(t)
+		source := newReleaseTeardownFixtureWithLegacyControllerGuards(t)
+		name := legacyControllerGuardNames(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)[0]
+		installTeardownGuardPair(fixture, source.policies.objects[name].DeepCopy(), source.bindings.objects[name].DeepCopy())
+
+		err := fixture.teardown.Preflight(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "without an exact predecessor") {
+			t.Fatalf("Preflight error = %v, want missing predecessor identity refusal", err)
+		}
+		if len(fixture.recorder.deletes) != 0 {
+			t.Fatalf("missing predecessor identity mutated resources: %v", fixture.recorder.deletes)
+		}
+	})
+}
+
+func legacyControllerTeardownOrder(guard *RolloutGuard) []string {
+	names := legacyControllerGuardNames(guard.ReleaseNamespace, guard.ReleaseName)
+	order := make([]string, 0, 12)
+	for _, name := range names[1:4] {
+		order = append(order, teardownKey("ValidatingAdmissionPolicyBinding", name))
+	}
+	for _, name := range []string{names[0], names[4], names[5]} {
+		order = append(order, teardownKey("ValidatingAdmissionPolicyBinding", name))
+	}
+	for _, name := range names {
+		order = append(order, teardownKey("ValidatingAdmissionPolicy", name))
+	}
+	return order
+}
+
+func TestReleaseTeardownAcceptsDeleteNotFoundOnlyAfterVerification(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t)
+	order := expectedReleaseTeardownOrder(fixture.guard)
+	notFoundKey := order[4]
+	fixture.recorder.notFound[notFoundKey] = true
+
+	if err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fixture.recorder.deletes, order) {
+		t.Fatalf("delete calls = %v, want %v", fixture.recorder.deletes, order)
+	}
+}
+
+func TestReleaseTeardownDeletionPreconditionsRejectConcurrentReplacement(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t)
+	order := expectedReleaseTeardownOrder(fixture.guard)
+	target := teardownKey("ValidatingAdmissionPolicyBinding", RuntimeGuardPolicyName(fixture.guard.ReleaseSequence))
+	targetIndex := slicesIndex(order, target)
+	fixture.recorder.beforeDelete[target] = func() {
+		name := RuntimeGuardPolicyName(fixture.guard.ReleaseSequence)
+		fixture.bindings.objects[name].UID = "replacement-uid"
+		fixture.bindings.objects[name].ResourceVersion = "replacement-version"
+	}
+
+	err := fixture.teardown.Teardown(context.Background(), immediateAdmissionConvergence)
+	if err == nil || !apierrors.IsConflict(err) {
+		t.Fatalf("Teardown error = %v, want precondition conflict", err)
+	}
+	if want := order[:targetIndex+1]; !reflect.DeepEqual(fixture.recorder.deletes, want) {
+		t.Fatalf("delete calls = %v, want %v", fixture.recorder.deletes, want)
+	}
+	if fixture.bindings.objects[RuntimeGuardPolicyName(fixture.guard.ReleaseSequence)] == nil {
+		t.Fatal("concurrently replaced object was deleted")
+	}
+}
+
+func TestReleaseTeardownValidatesDependencies(t *testing.T) {
+	t.Parallel()
+
+	fixture := newReleaseTeardownFixture(t)
+	tests := []struct {
+		name     string
+		teardown *ReleaseTeardown
+	}{
+		{name: "nil receiver"},
+		{name: "nil rollout", teardown: NewReleaseTeardown(nil, fixture.mutating, fixture.validating, fixture.policies, fixture.bindings, fixture.configMaps)},
+		{name: "nil mutating", teardown: NewReleaseTeardown(fixture.guard, nil, fixture.validating, fixture.policies, fixture.bindings, fixture.configMaps)},
+		{name: "nil validating", teardown: NewReleaseTeardown(fixture.guard, fixture.mutating, nil, fixture.policies, fixture.bindings, fixture.configMaps)},
+		{name: "nil policies", teardown: NewReleaseTeardown(fixture.guard, fixture.mutating, fixture.validating, nil, fixture.bindings, fixture.configMaps)},
+		{name: "nil bindings", teardown: NewReleaseTeardown(fixture.guard, fixture.mutating, fixture.validating, fixture.policies, nil, fixture.configMaps)},
+		{name: "nil ConfigMaps", teardown: NewReleaseTeardown(fixture.guard, fixture.mutating, fixture.validating, fixture.policies, fixture.bindings, nil)},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			err := test.teardown.Teardown(context.Background(), immediateAdmissionConvergence)
+			if err == nil || !strings.Contains(err.Error(), "clients and rollout identity are required") {
+				t.Fatalf("Teardown error = %v, want dependency validation", err)
+			}
+		})
+	}
+}
+
+type releaseTeardownFixture struct {
+	guard      *RolloutGuard
+	teardown   *ReleaseTeardown
+	recorder   *teardownRecorder
+	mutating   *teardownMutatingClient
+	validating *teardownValidatingClient
+	policies   *teardownPolicyClient
+	bindings   *teardownBindingClient
+	configMaps *teardownConfigMapClient
+	identities map[string]teardownIdentity
+}
+
+func newReleaseTeardownFixture(t *testing.T) *releaseTeardownFixture {
+	t.Helper()
+	guard, policySource, bindingSource, _ := readyRolloutGuard()
+	rolloutName := RolloutGuardPolicyName(guard.ReleaseSequence)
+	runtimeName := RuntimeGuardPolicyName(guard.ReleaseSequence)
+	policySource.objects[rolloutName] = readyPolicy(guard.policy(guard.ControllerStateVersion, guard.AdmissionContractVersion))
+	policySource.objects[runtimeName] = readyPolicy(guard.runtimePolicy(guard.ControllerStateVersion, guard.ReleaseSequence, guard.ManagerImage))
+	bindingSource.objects[rolloutName] = guard.binding(rolloutName)
+	bindingSource.objects[runtimeName] = guard.binding(runtimeName)
+	namespace := NewNamespaceDeletionGuard(guard)
+	namespaceName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	policySource.objects[namespaceName] = readyPolicy(namespace.policy())
+	bindingSource.objects[namespaceName] = namespace.binding()
+	admissionConvergence := NewAdmissionConvergenceGuard(guard)
+	admissionConvergenceName := AdmissionConvergencePolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	policySource.objects[admissionConvergenceName] = readyPolicy(admissionConvergence.policy())
+	bindingSource.objects[admissionConvergenceName] = admissionConvergence.binding()
+	serviceAccountObject := NewServiceAccountObjectGuard(guard)
+	serviceAccountObjectPolicy, serviceAccountObjectBinding, err := serviceAccountObject.ExpectedObjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policySource.objects[serviceAccountObjectPolicy.Name] = readyPolicy(serviceAccountObjectPolicy)
+	bindingSource.objects[serviceAccountObjectBinding.Name] = serviceAccountObjectBinding
+
+	recorder := &teardownRecorder{
+		options:      map[string]metav1.DeleteOptions{},
+		errors:       map[string]error{},
+		notFound:     map[string]bool{},
+		beforeDelete: map[string]func(){},
+	}
+	policies := &teardownPolicyClient{objects: policySource.objects, recorder: recorder}
+	bindings := &teardownBindingClient{objects: bindingSource.objects, recorder: recorder}
+	for name, object := range policies.objects {
+		setTeardownObjectIdentity(object, "policy-"+name)
+	}
+	for name, object := range bindings.objects {
+		setTeardownObjectIdentity(object, "binding-"+name)
+	}
+
+	expected := teardownRuntimeInvariants(guard)
+	webhookAnnotations := copyStrings(expected.annotations())
+	webhookAnnotations[helmReleaseNameAnnotation] = guard.ReleaseName
+	webhookAnnotations[helmReleaseNamespaceAnnotation] = guard.ReleaseNamespace
+	webhookLabels := map[string]string{
+		managedByLabel: "Helm",
+		instanceLabel:  guard.ReleaseName,
+	}
+	mutatingObject := &admissionregistrationv1.MutatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: AdmissionConfigurationName, Annotations: copyStrings(webhookAnnotations),
+			Labels: copyStrings(webhookLabels),
+		},
+		Webhooks: []admissionregistrationv1.MutatingWebhook{readyMutatingApprovalWebhook(expected)},
+	}
+	setTeardownObjectIdentity(mutatingObject, "mutating-webhook")
+	validatingObject := &admissionregistrationv1.ValidatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: AdmissionConfigurationName, Annotations: copyStrings(webhookAnnotations),
+			Labels: copyStrings(webhookLabels),
+		},
+		Webhooks: []admissionregistrationv1.ValidatingWebhook{
+			readyValidatingApprovalWebhook(expected),
+			readyPodIntentWebhook(expected),
+			readyControllerWriteWebhook(expected),
+		},
+	}
+	setTeardownObjectIdentity(validatingObject, "validating-webhook")
+	mutating := &teardownMutatingClient{object: mutatingObject, recorder: recorder}
+	validating := &teardownValidatingClient{object: validatingObject, recorder: recorder}
+
+	probeName := HookIdentityProbeObjectName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	probePolicyName := HookIdentityProbeGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	probe := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: probeName, Namespace: guard.ReleaseNamespace,
+			Annotations: map[string]string{
+				"helm.sh/hook":                           "pre-install,pre-upgrade",
+				"helm.sh/hook-weight":                    hookIdentityProbeMarkerWeight,
+				"helm.sh/resource-policy":                "keep",
+				"operator.ptah.dev/hook-identity-policy": probePolicyName,
+			},
+			Labels: map[string]string{
+				managedByLabel:                rolloutGuardManagedBy,
+				instanceLabel:                 guard.ReleaseName,
+				"app.kubernetes.io/component": "hook-identity-probe",
+			},
+		},
+		Data: map[string]string{"probe": "ready-for-denial-proof"},
+	}
+	setTeardownObjectIdentity(probe, "probe-marker")
+	activation := guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName].DeepCopy()
+	setTeardownObjectIdentity(activation, "activation")
+	admissionConvergenceMarker := admissionConvergence.marker()
+	setTeardownObjectIdentity(admissionConvergenceMarker, "admission-convergence-marker")
+	configMaps := &teardownConfigMapClient{objects: map[string]*corev1.ConfigMap{
+		probeName:             probe,
+		ReleaseActivationName: activation,
+		AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence): admissionConvergenceMarker,
+	}, recorder: recorder}
+	guard.Policies = policies
+	guard.Bindings = bindings
+
+	fixture := &releaseTeardownFixture{
+		guard: guard, recorder: recorder,
+		mutating: mutating, validating: validating,
+		policies: policies, bindings: bindings, configMaps: configMaps,
+		identities: map[string]teardownIdentity{},
+	}
+	fixture.teardown = NewReleaseTeardown(guard, mutating, validating, policies, bindings, configMaps)
+	for _, key := range expectedReleaseTeardownOrder(guard) {
+		fixture.identities[key] = fixture.identity(key)
+	}
+	return fixture
+}
+
+func newReleaseTeardownFixtureWithLegacyControllerGuards(t *testing.T) *releaseTeardownFixture {
+	t.Helper()
+	fixture := newReleaseTeardownFixture(t)
+	fixture.guard.PreviousControllerServiceAccountName = "legacy-controller"
+	fixture.guard.PreviousControllerReleaseSequence = 0
+
+	rolloutName := RolloutGuardPolicyName(fixture.guard.ReleaseSequence)
+	installTeardownGuardPair(
+		fixture,
+		readyPolicy(fixture.guard.policy(fixture.guard.ControllerStateVersion, fixture.guard.AdmissionContractVersion)),
+		fixture.guard.binding(rolloutName),
+	)
+	runtimeName := RuntimeGuardPolicyName(fixture.guard.ReleaseSequence)
+	installTeardownGuardPair(
+		fixture,
+		readyPolicy(fixture.guard.runtimePolicy(fixture.guard.ControllerStateVersion, fixture.guard.ReleaseSequence, fixture.guard.ManagerImage)),
+		fixture.guard.binding(runtimeName),
+	)
+	runtimePodPolicy, err := fixture.guard.runtimePodIdentityPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimePodBinding, err := fixture.guard.runtimePodIdentityBinding()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installTeardownGuardPair(fixture, readyPolicy(runtimePodPolicy), runtimePodBinding)
+
+	hookName := HookIdentityGuardPolicyName(
+		fixture.guard.ReleaseNamespace,
+		fixture.guard.ReleaseName,
+		fixture.guard.ReleaseSequence,
+		fixture.guard.ManagerImage,
+	)
+	installTeardownGuardPair(fixture, readyPolicy(fixture.guard.hookIdentityPolicy()), fixture.guard.binding(hookName))
+	hookProbeName := HookIdentityProbeGuardPolicyName(
+		fixture.guard.ReleaseNamespace,
+		fixture.guard.ReleaseName,
+		fixture.guard.ReleaseSequence,
+		fixture.guard.ManagerImage,
+	)
+	installTeardownGuardPair(fixture, readyPolicy(fixture.guard.hookIdentityProbePolicy()), fixture.guard.binding(hookProbeName))
+	activation := fixture.guard.releaseActivationGuard()
+	installTeardownGuardPair(fixture, readyPolicy(activation.policy()), activation.binding())
+
+	origin := NewServiceAccountOriginGuard(fixture.guard)
+	originPolicy, err := origin.policy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installTeardownGuardPair(fixture, readyPolicy(originPolicy), origin.binding())
+
+	controllerWrite := NewControllerWriteGuard(fixture.guard)
+	installTeardownGuardPair(fixture, readyPolicy(controllerWrite.policy()), controllerWrite.binding())
+	controllerObjects := NewControllerObjectGuard(fixture.guard)
+	for _, entry := range controllerObjects.entries() {
+		installTeardownGuardPair(
+			fixture,
+			readyPolicy(controllerObjects.policy(entry)),
+			controllerObjects.binding(entry),
+		)
+	}
+	certificateWrite := NewCertificateWriteGuard(fixture.guard)
+	for _, entry := range certificateWrite.entries() {
+		installTeardownGuardPair(fixture, readyPolicy(certificateWrite.policy(entry)), certificateWrite.binding(entry))
+	}
+	parent := NewParentWorkloadGuard(fixture.guard)
+	for _, entry := range parent.entries() {
+		installTeardownGuardPair(fixture, readyPolicy(entry.policy), entry.binding)
+	}
+	namespace := NewNamespaceDeletionGuard(fixture.guard)
+	installTeardownGuardPair(fixture, readyPolicy(namespace.policy()), namespace.binding())
+	admissionConvergence := NewAdmissionConvergenceGuard(fixture.guard)
+	installTeardownGuardPair(fixture, readyPolicy(admissionConvergence.policy()), admissionConvergence.binding())
+
+	names := legacyControllerGuardNames(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName)
+	legacy, err := legacyControllerGuardObjects(fixture.guard, names)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range legacy {
+		installTeardownGuardPair(fixture, readyPolicy(pair.policy), pair.binding)
+	}
+
+	fixture.identities = make(map[string]teardownIdentity, len(expectedReleaseTeardownOrder(fixture.guard)))
+	for _, key := range expectedReleaseTeardownOrder(fixture.guard) {
+		fixture.identities[key] = fixture.identity(key)
+	}
+	return fixture
+}
+
+func installTeardownGuardPair(
+	fixture *releaseTeardownFixture,
+	policy *admissionregistrationv1.ValidatingAdmissionPolicy,
+	binding *admissionregistrationv1.ValidatingAdmissionPolicyBinding,
+) {
+	setTeardownObjectIdentity(policy, "policy-"+policy.Name)
+	setTeardownObjectIdentity(binding, "binding-"+binding.Name)
+	fixture.policies.objects[policy.Name] = policy
+	fixture.bindings.objects[binding.Name] = binding
+}
+
+func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
+	activationName := ReleaseActivationGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	rolloutName := RolloutGuardPolicyName(guard.ReleaseSequence)
+	runtimeName := RuntimeGuardPolicyName(guard.ReleaseSequence)
+	runtimePodName := RuntimePodGuardPolicyName(guard.ReleaseSequence)
+	hookName := HookIdentityGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	hookProbeName := HookIdentityProbeGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	parentReplicaSetName := ParentReplicaSetGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	parentHookOriginName := ParentHookJobOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	parentHookPodOriginName := ParentHookPodOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	parentHookContractName := ParentHookJobContractPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	serviceAccountName := ServiceAccountOriginGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	serviceAccountObjectName := ServiceAccountObjectGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	controllerWriteName := ControllerWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	controllerJobWriteName := ControllerJobWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	controllerChunkWriteName := ControllerChunkWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	controllerPlanWriteName := ControllerPlanWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	certificateMutatingWriteName := CertificateMutatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	certificateValidatingWriteName := CertificateValidatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	namespaceName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+	admissionConvergenceName := AdmissionConvergencePolicyName(guard.ReleaseNamespace, guard.ReleaseName)
+
+	parameterized := []string{
+		rolloutName, runtimeName, runtimePodName,
+		serviceAccountName, controllerWriteName,
+		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
+	}
+	legacyNames := legacyControllerGuardNames(guard.ReleaseNamespace, guard.ReleaseName)
+	if guard.PreviousControllerServiceAccountName != "" {
+		parameterized = append(parameterized, legacyNames[1:4]...)
+	}
+	remaining := []string{
+		hookName, hookProbeName,
+		parentReplicaSetName, parentHookOriginName, parentHookPodOriginName, parentHookContractName,
+		serviceAccountObjectName,
+		certificateMutatingWriteName, certificateValidatingWriteName,
+	}
+	if guard.PreviousControllerServiceAccountName != "" {
+		remaining = append(remaining[:len(remaining)-2], append([]string{legacyNames[0], legacyNames[4], legacyNames[5]}, remaining[len(remaining)-2:]...)...)
+	}
+	remaining = append(remaining, namespaceName)
+	policies := []string{
+		rolloutName, runtimeName, runtimePodName,
+		hookName, hookProbeName,
+		parentReplicaSetName, parentHookOriginName, parentHookPodOriginName, parentHookContractName,
+		serviceAccountObjectName,
+		serviceAccountName, controllerWriteName,
+		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
+		certificateMutatingWriteName, certificateValidatingWriteName,
+	}
+	if guard.PreviousControllerServiceAccountName != "" {
+		policies = append(policies[:len(policies)-2], append(append([]string(nil), legacyNames...), policies[len(policies)-2:]...)...)
+	}
+	policies = append(policies, namespaceName)
+
+	order := []string{
+		teardownKey("MutatingWebhookConfiguration", AdmissionConfigurationName),
+		teardownKey("ValidatingWebhookConfiguration", AdmissionConfigurationName),
+	}
+	for _, name := range parameterized {
+		order = append(order, teardownKey("ValidatingAdmissionPolicyBinding", name))
+	}
+	for _, name := range remaining {
+		order = append(order, teardownKey("ValidatingAdmissionPolicyBinding", name))
+	}
+	for _, name := range policies {
+		order = append(order, teardownKey("ValidatingAdmissionPolicy", name))
+	}
+	order = append(order,
+		teardownKey("ConfigMap", HookIdentityProbeObjectName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)),
+		teardownKey("ValidatingAdmissionPolicyBinding", activationName),
+		teardownKey("ValidatingAdmissionPolicy", activationName),
+		teardownKey("ValidatingAdmissionPolicyBinding", admissionConvergenceName),
+		teardownKey("ValidatingAdmissionPolicy", admissionConvergenceName),
+		teardownKey("ConfigMap", AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence)),
+		teardownKey("ConfigMap", ReleaseActivationName),
+	)
+	return order
+}
+
+func (f *releaseTeardownFixture) identity(key string) teardownIdentity {
+	kind, name := splitTeardownKey(key)
+	switch kind {
+	case "MutatingWebhookConfiguration":
+		return objectTeardownIdentity(f.mutating.object)
+	case "ValidatingWebhookConfiguration":
+		return objectTeardownIdentity(f.validating.object)
+	case "ValidatingAdmissionPolicyBinding":
+		return objectTeardownIdentity(f.bindings.objects[name])
+	case "ValidatingAdmissionPolicy":
+		return objectTeardownIdentity(f.policies.objects[name])
+	case "ConfigMap":
+		return objectTeardownIdentity(f.configMaps.objects[name])
+	default:
+		panic("unknown teardown kind " + kind)
+	}
+}
+
+func (f *releaseTeardownFixture) remove(key string) {
+	kind, name := splitTeardownKey(key)
+	switch kind {
+	case "MutatingWebhookConfiguration":
+		f.mutating.object = nil
+	case "ValidatingWebhookConfiguration":
+		f.validating.object = nil
+	case "ValidatingAdmissionPolicyBinding":
+		delete(f.bindings.objects, name)
+	case "ValidatingAdmissionPolicy":
+		delete(f.policies.objects, name)
+	case "ConfigMap":
+		delete(f.configMaps.objects, name)
+	default:
+		panic("unknown teardown kind " + kind)
+	}
+}
+
+func setTeardownObjectIdentity(object metav1.Object, value string) {
+	object.SetUID(types.UID("uid-" + value))
+	object.SetResourceVersion("rv-" + value)
+}
+
+func objectTeardownIdentity(object metav1.Object) teardownIdentity {
+	return teardownIdentity{uid: object.GetUID(), resourceVersion: object.GetResourceVersion()}
+}
+
+func teardownKey(kind, name string) string {
+	return kind + "/" + name
+}
+
+func splitTeardownKey(key string) (string, string) {
+	kind, name, found := strings.Cut(key, "/")
+	if !found {
+		panic("invalid teardown key " + key)
+	}
+	return kind, name
+}
+
+func slicesIndex(values []string, target string) int {
+	for index, value := range values {
+		if value == target {
+			return index
+		}
+	}
+	panic("missing teardown key " + target)
+}
+
+type teardownRecorder struct {
+	deletes      []string
+	options      map[string]metav1.DeleteOptions
+	errors       map[string]error
+	notFound     map[string]bool
+	beforeDelete map[string]func()
+}
+
+func (r *teardownRecorder) record(kind, name string, options metav1.DeleteOptions, object metav1.Object) error {
+	key := teardownKey(kind, name)
+	r.deletes = append(r.deletes, key)
+	r.options[key] = options
+	if before := r.beforeDelete[key]; before != nil {
+		before()
+	}
+	if err := r.errors[key]; err != nil {
+		return err
+	}
+	if r.notFound[key] {
+		return apierrors.NewNotFound(teardownGroupResource(kind), name)
+	}
+	if options.Preconditions == nil || options.Preconditions.UID == nil || options.Preconditions.ResourceVersion == nil ||
+		object == nil || *options.Preconditions.UID != object.GetUID() || *options.Preconditions.ResourceVersion != object.GetResourceVersion() {
+		return apierrors.NewConflict(teardownGroupResource(kind), name, errors.New("deletion precondition failed"))
+	}
+	return nil
+}
+
+func teardownGroupResource(kind string) schema.GroupResource {
+	switch kind {
+	case "MutatingWebhookConfiguration":
+		return schema.GroupResource{Group: admissionregistrationv1.GroupName, Resource: "mutatingwebhookconfigurations"}
+	case "ValidatingWebhookConfiguration":
+		return schema.GroupResource{Group: admissionregistrationv1.GroupName, Resource: "validatingwebhookconfigurations"}
+	case "ValidatingAdmissionPolicyBinding":
+		return schema.GroupResource{Group: admissionregistrationv1.GroupName, Resource: "validatingadmissionpolicybindings"}
+	case "ValidatingAdmissionPolicy":
+		return schema.GroupResource{Group: admissionregistrationv1.GroupName, Resource: "validatingadmissionpolicies"}
+	case "ConfigMap":
+		return schema.GroupResource{Resource: "configmaps"}
+	default:
+		panic(fmt.Sprintf("unknown teardown kind %q", kind))
+	}
+}
+
+type teardownMutatingClient struct {
+	object   *admissionregistrationv1.MutatingWebhookConfiguration
+	recorder *teardownRecorder
+}
+
+func (c *teardownMutatingClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*admissionregistrationv1.MutatingWebhookConfiguration, error) {
+	if c.object == nil {
+		return nil, apierrors.NewNotFound(teardownGroupResource("MutatingWebhookConfiguration"), name)
+	}
+	return c.object.DeepCopy(), nil
+}
+
+func (c *teardownMutatingClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
+	if err := c.recorder.record("MutatingWebhookConfiguration", name, options, c.object); err != nil {
+		if apierrors.IsNotFound(err) {
+			c.object = nil
+		}
+		return err
+	}
+	c.object = nil
+	return nil
+}
+
+type teardownValidatingClient struct {
+	object   *admissionregistrationv1.ValidatingWebhookConfiguration
+	recorder *teardownRecorder
+}
+
+func (c *teardownValidatingClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*admissionregistrationv1.ValidatingWebhookConfiguration, error) {
+	if c.object == nil {
+		return nil, apierrors.NewNotFound(teardownGroupResource("ValidatingWebhookConfiguration"), name)
+	}
+	return c.object.DeepCopy(), nil
+}
+
+func (c *teardownValidatingClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
+	if err := c.recorder.record("ValidatingWebhookConfiguration", name, options, c.object); err != nil {
+		if apierrors.IsNotFound(err) {
+			c.object = nil
+		}
+		return err
+	}
+	c.object = nil
+	return nil
+}
+
+type teardownPolicyClient struct {
+	objects  map[string]*admissionregistrationv1.ValidatingAdmissionPolicy
+	recorder *teardownRecorder
+}
+
+func (c *teardownPolicyClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*admissionregistrationv1.ValidatingAdmissionPolicy, error) {
+	object := c.objects[name]
+	if object == nil {
+		return nil, apierrors.NewNotFound(teardownGroupResource("ValidatingAdmissionPolicy"), name)
+	}
+	return object.DeepCopy(), nil
+}
+
+func (c *teardownPolicyClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
+	object := c.objects[name]
+	if err := c.recorder.record("ValidatingAdmissionPolicy", name, options, object); err != nil {
+		if apierrors.IsNotFound(err) {
+			delete(c.objects, name)
+		}
+		return err
+	}
+	delete(c.objects, name)
+	return nil
+}
+
+type teardownBindingClient struct {
+	objects  map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding
+	recorder *teardownRecorder
+}
+
+func (c *teardownBindingClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*admissionregistrationv1.ValidatingAdmissionPolicyBinding, error) {
+	object := c.objects[name]
+	if object == nil {
+		return nil, apierrors.NewNotFound(teardownGroupResource("ValidatingAdmissionPolicyBinding"), name)
+	}
+	return object.DeepCopy(), nil
+}
+
+func (c *teardownBindingClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
+	object := c.objects[name]
+	if err := c.recorder.record("ValidatingAdmissionPolicyBinding", name, options, object); err != nil {
+		if apierrors.IsNotFound(err) {
+			delete(c.objects, name)
+		}
+		return err
+	}
+	delete(c.objects, name)
+	return nil
+}
+
+type teardownConfigMapClient struct {
+	objects  map[string]*corev1.ConfigMap
+	recorder *teardownRecorder
+}
+
+func (c *teardownConfigMapClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*corev1.ConfigMap, error) {
+	object := c.objects[name]
+	if object == nil {
+		return nil, apierrors.NewNotFound(teardownGroupResource("ConfigMap"), name)
+	}
+	return object.DeepCopy(), nil
+}
+
+func (c *teardownConfigMapClient) Delete(_ context.Context, name string, options metav1.DeleteOptions) error {
+	object := c.objects[name]
+	if err := c.recorder.record("ConfigMap", name, options, object); err != nil {
+		if apierrors.IsNotFound(err) {
+			delete(c.objects, name)
+		}
+		return err
+	}
+	delete(c.objects, name)
+	return nil
+}
+
+var (
+	_ MutatingWebhookTeardownClient                  = (*teardownMutatingClient)(nil)
+	_ ValidatingWebhookTeardownClient                = (*teardownValidatingClient)(nil)
+	_ ValidatingAdmissionPolicyTeardownClient        = (*teardownPolicyClient)(nil)
+	_ ValidatingAdmissionPolicyBindingTeardownClient = (*teardownBindingClient)(nil)
+	_ ConfigMapTeardownClient                        = (*teardownConfigMapClient)(nil)
+)

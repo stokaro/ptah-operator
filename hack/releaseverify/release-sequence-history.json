@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "releases": [
+    {
+      "version": "0.1.0",
+      "appVersion": "0.1.0",
+      "managerImageRepository": "ghcr.io/stokaro/ptah-operator",
+      "managerImageTag": "0.1.0",
+      "releaseSequence": 1
+    }
+  ]
+}

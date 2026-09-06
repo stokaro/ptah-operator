@@ -1,0 +1,205 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    operator.ptah.dev/controller-state-version: "1"
+    operator.ptah.dev/crd-schema-version: "1"
+    operator.ptah.dev/crd-schema-digest: "sha256:3c2034e1292b0d074341262c06ed511af7a45835d4da98d9ff2a8003475e296a"
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: ptahschemaapprovals.operator.ptah.dev
+spec:
+  group: operator.ptah.dev
+  names:
+    kind: PtahSchemaApproval
+    listKind: PtahSchemaApprovalList
+    plural: ptahschemaapprovals
+    shortNames:
+    - ptahapprove
+    singular: ptahschemaapproval
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.schemaRef.name
+      name: Schema
+      type: string
+    - jsonPath: .spec.planRef.name
+      name: Plan
+      type: string
+    - jsonPath: .spec.approver.username
+      name: Approver
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Accepted')].status
+      name: Accepted
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Stale')].status
+      name: Stale
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          apiVersion:
+            type: string
+          kind:
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              actualStateFingerprint:
+                type: string
+              approvedAt:
+                format: date-time
+                type: string
+              approver:
+                properties:
+                  groups:
+                    items:
+                      type: string
+                    maxItems: 64
+                    type: array
+                  uid:
+                    type: string
+                  username:
+                    type: string
+                required:
+                - username
+                type: object
+              artifactDigest:
+                type: string
+              controllerImage:
+                pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
+                type: string
+              controllerRevision:
+                maxLength: 128
+                minLength: 1
+                pattern: ^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$
+                type: string
+              controllerStateVersion:
+                format: int32
+                minimum: 1
+                type: integer
+              coordinationDigest:
+                type: string
+              desiredStateFingerprint:
+                type: string
+              executionBindingID:
+                pattern: ^v1-[0-9a-f]{32}$
+                type: string
+              executorImage:
+                type: string
+              mutationRequestUID:
+                type: string
+              planFingerprint:
+                type: string
+              planRef:
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              policyFingerprint:
+                type: string
+              ptahVersion:
+                type: string
+              runnerImage:
+                type: string
+              runnerProtocolVersion:
+                format: int32
+                type: integer
+              schemaRef:
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              targetIdentityDigest:
+                type: string
+              verificationPolicyDigest:
+                type: string
+              verificationPolicyUID:
+                type: string
+            required:
+            - actualStateFingerprint
+            - approvedAt
+            - approver
+            - artifactDigest
+            - coordinationDigest
+            - desiredStateFingerprint
+            - executorImage
+            - mutationRequestUID
+            - planFingerprint
+            - planRef
+            - policyFingerprint
+            - ptahVersion
+            - runnerImage
+            - runnerProtocolVersion
+            - schemaRef
+            - targetIdentityDigest
+            - verificationPolicyDigest
+            - verificationPolicyUID
+            type: object
+            x-kubernetes-validations:
+            - message: an approval is immutable; create a new approval instead
+              rule: self == oldSelf
+          status:
+            properties:
+              conditions:
+                items:
+                  properties:
+                    lastTransitionTime:
+                      format: date-time
+                      type: string
+                    message:
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                format: int64
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

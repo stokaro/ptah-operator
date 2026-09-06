@@ -1,0 +1,37 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ptah-diagnostic-reader
+  namespace: application
+rules:
+  - apiGroups: ["operator.ptah.dev"]
+    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ptah-diagnostic-readers
+  namespace: application
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ptah-diagnostic-reader
+subjects:
+  # Replace this placeholder with the on-call group. This role intentionally
+  # cannot read Secrets or plan-chunk ConfigMaps and cannot mutate approvals.
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: <diagnostic-reader-group>

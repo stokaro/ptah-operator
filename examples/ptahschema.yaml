@@ -1,0 +1,29 @@
+apiVersion: operator.ptah.dev/v1alpha1
+kind: PtahSchema
+metadata:
+  name: application
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    # Every resource that can mutate this physical database, including through
+    # another DNS alias, proxy, or credential, must use this exact non-secret key.
+    coordinationKey: production/application-primary
+    urlFrom:
+      name: application-database
+      key: url
+  desired:
+    ociRef: oci://ghcr.io/example/application-schema@sha256:<digest>
+    verificationPolicyFrom:
+      name: ptah-verification-policy
+      key: policy.yaml
+  policy:
+    apply: OnApproval
+    allowDestructive: false
+    driftSeverity: all
+  interval: 10m
+  execution:
+    activeDeadlineSeconds: 900
+    failureRetryInterval: 30s
+    connectTimeout: 10s
+  suspend: false
