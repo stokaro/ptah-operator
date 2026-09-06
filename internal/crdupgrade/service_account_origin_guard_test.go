@@ -150,9 +150,9 @@ func TestServiceAccountOriginGuardCoversCallerAndTokenRequestBypasses(t *testing
 		`[0-9a-f]{12}$`,
 		`request.userInfo.username.matches(\"^system:node:.+$\")`,
 		`group == \"system:nodes\"`,
-		`object.spec.boundObjectRef.apiVersion == \"v1\"`,
-		`object.spec.boundObjectRef.kind == \"Pod\"`,
-		`object.spec.boundObjectRef.uid != \"\"`,
+		`dyn(object).spec.boundObjectRef.apiVersion == \"v1\"`,
+		`dyn(object).spec.boundObjectRef.kind == \"Pod\"`,
+		`dyn(object).spec.boundObjectRef.uid != \"\"`,
 		`ptah-hook-identity-v[1-9][0-9]*-[0-9a-f]{12}-`,
 		`ptah-quiesce-v[1-9][0-9]*-[0-9a-f]{12}-`,
 		`matches(\"^[a-z0-9]{1,10}-[a-z0-9]{5}$\")`,
@@ -163,7 +163,7 @@ func TestServiceAccountOriginGuardCoversCallerAndTokenRequestBypasses(t *testing
 	}
 	quiescePodPattern := `^ptah-quiesce-v[1-9][0-9]*-[0-9a-f]{12}-`
 	callerNeedle := `variables.callerPodName.matches("` + quiescePodPattern + `")`
-	tokenNeedle := `object.spec.boundObjectRef.name.matches("` + quiescePodPattern + `")`
+	tokenNeedle := `dyn(object).spec.boundObjectRef.name.matches("` + quiescePodPattern + `")`
 	if len(native.Spec.Validations) != 5 ||
 		!strings.Contains(native.Spec.Validations[3].Expression, callerNeedle) ||
 		!strings.Contains(native.Spec.Validations[4].Expression, tokenNeedle) {

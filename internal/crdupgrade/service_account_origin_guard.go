@@ -256,11 +256,11 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 				},
 				{
 					Expression: fmt.Sprintf(
-						`!variables.isProtectedTokenRequest || (request.userInfo.username.matches("^system:node:.+$") && request.userInfo.groups.filter(group, group == "system:nodes").size() == 1 && has(object.spec.boundObjectRef) && has(object.spec.boundObjectRef.apiVersion) && object.spec.boundObjectRef.apiVersion == "v1" && has(object.spec.boundObjectRef.kind) && object.spec.boundObjectRef.kind == "Pod" && has(object.spec.boundObjectRef.name) && object.spec.boundObjectRef.name != "" && has(object.spec.boundObjectRef.uid) && object.spec.boundObjectRef.uid != "" && (((%s) && %s) || (request.name == %q && %s) || (request.name.matches(%q) && (object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q) || object.spec.boundObjectRef.name.matches(%q))) || (request.name.matches(%q) && object.spec.boundObjectRef.name.matches(%q))))`,
+						`!variables.isProtectedTokenRequest || (request.userInfo.username.matches("^system:node:.+$") && request.userInfo.groups.filter(group, group == "system:nodes").size() == 1 && has(dyn(object).spec.boundObjectRef) && has(dyn(object).spec.boundObjectRef.apiVersion) && dyn(object).spec.boundObjectRef.apiVersion == "v1" && has(dyn(object).spec.boundObjectRef.kind) && dyn(object).spec.boundObjectRef.kind == "Pod" && has(dyn(object).spec.boundObjectRef.name) && dyn(object).spec.boundObjectRef.name != "" && has(dyn(object).spec.boundObjectRef.uid) && dyn(object).spec.boundObjectRef.uid != "" && (((%s) && %s) || (request.name == %q && %s) || (request.name.matches(%q) && (dyn(object).spec.boundObjectRef.name.matches(%q) || dyn(object).spec.boundObjectRef.name.matches(%q) || dyn(object).spec.boundObjectRef.name.matches(%q))) || (request.name.matches(%q) && dyn(object).spec.boundObjectRef.name.matches(%q))))`,
 						controllerNameMatch,
-						runtimePodRequestNameExpression("object.spec.boundObjectRef.name", g.ControllerDeploymentName),
+						runtimePodRequestNameExpression("dyn(object).spec.boundObjectRef.name", g.ControllerDeploymentName),
 						g.CertificateServiceAccountName,
-						runtimePodRequestNameExpression("object.spec.boundObjectRef.name", g.CertificateDeploymentName),
+						runtimePodRequestNameExpression("dyn(object).spec.boundObjectRef.name", g.CertificateDeploymentName),
 						hookServiceAccountPattern,
 						hookPodPattern,
 						hookIdentityPodPattern,
