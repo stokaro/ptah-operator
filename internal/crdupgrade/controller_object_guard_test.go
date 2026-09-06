@@ -263,9 +263,9 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 	for _, marker := range []string{
 		`object.metadata.labels.size() == 2`,
 		`object.metadata.ownerReferences[0].kind == "PtahSchemaPlan"`,
-		`object.immutable`,
-		`object.binaryData.size() == 1`,
-		`object.binaryData["chunk"].size() <= 524288`,
+		`dyn(object).immutable`,
+		`dyn(object).binaryData.size() == 1`,
+		`dyn(object).binaryData["chunk"].size() <= 524288`,
 	} {
 		if !strings.Contains(chunk, marker) {
 			t.Fatalf("chunk structural contract lacks %q", marker)

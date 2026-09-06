@@ -608,8 +608,8 @@ func (g *ParentWorkloadGuard) stableConvergenceMarkerUpdateExpression() string {
 	oldSealed := g.stableConvergenceMarkerStateShapeExpression("oldObject", true, true)
 	newSealed := g.stableConvergenceMarkerStateShapeExpression("object", true, true)
 	identity := `object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && object.metadata.uid == oldObject.metadata.uid && object.metadata.resourceVersion == oldObject.metadata.resourceVersion && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels`
-	baseData := fmt.Sprintf(`object.data[%q] == oldObject.data[%q] && object.data[%q] == oldObject.data[%q]`, admissionConvergenceExpectedDataKey, admissionConvergenceExpectedDataKey, admissionConvergenceAttemptDataKey, admissionConvergenceAttemptDataKey)
-	return fmt.Sprintf(`(%s) && (%s) && ((%s) || ((%s) && object.data == oldObject.data))`, identity, newSealed, oldUnsealed+" && "+baseData, oldSealed)
+	baseData := fmt.Sprintf(`dyn(object).data[%q] == dyn(oldObject).data[%q] && dyn(object).data[%q] == dyn(oldObject).data[%q]`, admissionConvergenceExpectedDataKey, admissionConvergenceExpectedDataKey, admissionConvergenceAttemptDataKey, admissionConvergenceAttemptDataKey)
+	return fmt.Sprintf(`(%s) && (%s) && ((%s) || ((%s) && dyn(object).data == dyn(oldObject).data))`, identity, newSealed, oldUnsealed+" && "+baseData, oldSealed)
 }
 
 func (g *ParentWorkloadGuard) protectedHookPodExpression(object, hookPattern, teardownPattern, imageCheckPattern string) string {

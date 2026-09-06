@@ -420,9 +420,9 @@
 {{- $stableMarkerOldSealedShape := include "ptah-operator.stableConvergenceMarkerShapeExpression" (merge (dict "object" "oldObject" "persisted" true "sealed" true) $stableMarkerShapeContext) -}}
 {{- $stableMarkerOldShape := printf `((%s) || (%s))` $stableMarkerOldUnsealedShape $stableMarkerOldSealedShape -}}
 {{- $stableMarkerIdentity := `object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && object.metadata.uid == oldObject.metadata.uid && object.metadata.resourceVersion == oldObject.metadata.resourceVersion && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels` -}}
-{{- $stableMarkerBaseData := `object.data["expected-active-release-sequence"] == oldObject.data["expected-active-release-sequence"] && object.data["release-attempt"] == oldObject.data["release-attempt"]` -}}
+{{- $stableMarkerBaseData := `dyn(object).data["expected-active-release-sequence"] == dyn(oldObject).data["expected-active-release-sequence"] && dyn(object).data["release-attempt"] == dyn(oldObject).data["release-attempt"]` -}}
 {{- $stableMarkerOldUnsealedTransition := printf `%s && %s` $stableMarkerOldUnsealedShape $stableMarkerBaseData -}}
-{{- $stableMarkerUpdateShape := printf `(%s) && (%s) && ((%s) || ((%s) && object.data == oldObject.data))` $stableMarkerIdentity $stableMarkerNewSealedShape $stableMarkerOldUnsealedTransition $stableMarkerOldSealedShape -}}
+{{- $stableMarkerUpdateShape := printf `(%s) && (%s) && ((%s) || ((%s) && dyn(object).data == dyn(oldObject).data))` $stableMarkerIdentity $stableMarkerNewSealedShape $stableMarkerOldUnsealedTransition $stableMarkerOldSealedShape -}}
 
 {{- $replicaSetMessage := "Ptah runtime parent guard rejected an unsafe ReplicaSet" -}}
 {{- $replicaSetMatch := printf `request.namespace == %q && ((has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))` .Release.Namespace $controllerServiceAccount $certificateServiceAccount $controllerServiceAccount $certificateServiceAccount -}}

@@ -450,7 +450,7 @@ func restoreLegacyTypedFieldAccess(policy *admissionregistrationv1.ValidatingAdm
 	replacements := 0
 	restore := func(expression string) string {
 		for _, subject := range []string{"object", "oldObject"} {
-			for _, field := range []string{"spec", "status"} {
+			for _, field := range []string{"spec", "status", "data", "binaryData", "immutable"} {
 				// One rule restores both predecessor forms, because the
 				// wrapping is nested rather than replaced. A bare read became
 				// dyn(object).spec and comes back bare; a read the predecessor
