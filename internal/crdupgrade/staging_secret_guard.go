@@ -79,7 +79,11 @@ func (g *StagingSecretGuard) ExpectedPolicy() (*admissionregistrationv1.Validati
 	message := stagingSecretGuardDenialMessage()
 	oldShape := contract.secretShape("oldObject", true)
 	newShape := contract.secretShape("object", true)
-	createShape := contract.secretShape("object", false) + ` && (!has(object.metadata.uid) || object.metadata.uid == "") && (!has(object.metadata.resourceVersion) || object.metadata.resourceVersion == "") && !has(object.metadata.creationTimestamp)`
+	// The API server fills uid and creationTimestamp before validating
+	// admission sees a CREATE, so the create shape asserts nothing about the
+	// live identity: absence would refuse every real create, presence is
+	// not the client's doing either way.
+	createShape := contract.secretShape("object", false)
 	rotator := exactServiceAccountPrincipalExpression(g.rollout.ReleaseNamespace, contract.rotatorServiceAccount)
 	cleanup := contract.cleanupPrincipalExpression()
 	dataPreserved := `has(dyn(object).data) == has(dyn(oldObject).data) && (!has(dyn(object).data) || dyn(object).data == dyn(oldObject).data)`
