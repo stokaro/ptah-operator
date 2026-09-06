@@ -75,8 +75,26 @@ func admissionConvergenceAnyProbeRequestExpression(releaseNamespace, markerName 
 		`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)`,
 		releaseNamespace,
 		markerName,
-		"^"+admissionConvergenceProbeFieldManagerPrefix+`[0-9a-f]{64}$`,
+		admissionConvergenceAnyProbeFieldManagerPattern(),
 	)
+}
+
+// admissionConvergenceAnyProbeFieldManagerPattern matches the field manager of
+// every probe that writes the convergence marker: the dependency probes under
+// admissionConvergenceProbeFieldManagerPrefix and the stable guards' probes
+// under stableAdmissionConvergenceProbePrefix. A guard that matches the marker
+// meets both families, and recognizing one lets it refuse the other with its
+// own message, or with an evaluation error, in place of the target's answer.
+// v1AdmissionConvergenceAnyProbeFieldManagerPattern is the pattern the v1
+// managed release published, before the stable guards' probes existed. It is
+// frozen: live guards of that era carry it, and their restoration compares
+// against it.
+func v1AdmissionConvergenceAnyProbeFieldManagerPattern() string {
+	return "^" + admissionConvergenceProbeFieldManagerPrefix + "[0-9a-f]{64}$"
+}
+
+func admissionConvergenceAnyProbeFieldManagerPattern() string {
+	return "^(" + admissionConvergenceProbeFieldManagerPrefix + "[0-9a-f]{64}|" + stableAdmissionConvergenceProbePrefix + "[0-9a-f]{32}-[0-9a-f]{64})$"
 }
 
 // admissionConvergenceProbeResourceRule scopes the probe to the one ConfigMap
@@ -221,9 +239,15 @@ func removeAdmissionConvergenceDependencyProbe(policy *admissionregistrationv1.V
 	if markerIndex < 0 || !strings.HasSuffix(exactExpression, `"`) {
 		return fmt.Errorf("admission convergence dependency exact selector is malformed")
 	}
+	// The union selector was published under two field manager patterns: the
+	// one the v1 managed release carried, which recognized the dependency probe
+	// family alone, and the current one, which recognizes both families. A live
+	// guard from either era is restored; any other wrapper is refused.
 	wantAnyExpression := exactExpression[:markerIndex] +
-		` && request.options.fieldManager.matches("^` + admissionConvergenceProbeFieldManagerPrefix + `[0-9a-f]{64}$")`
-	if anyExpression != wantAnyExpression {
+		` && request.options.fieldManager.matches("` + admissionConvergenceAnyProbeFieldManagerPattern() + `")`
+	wantV1AnyExpression := exactExpression[:markerIndex] +
+		` && request.options.fieldManager.matches("` + v1AdmissionConvergenceAnyProbeFieldManagerPattern() + `")`
+	if anyExpression != wantAnyExpression && anyExpression != wantV1AnyExpression {
 		return fmt.Errorf("admission convergence dependency union selector differs from the exact selector")
 	}
 
