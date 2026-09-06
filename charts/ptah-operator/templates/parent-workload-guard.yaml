@@ -568,7 +568,7 @@
       (dict "name" "isServiceAccountObjectConvergenceProbe" "expression" $serviceAccountObjectProbeRequest) -}}
 {{- $hookOriginNativeValidations := list
       `(variables.isProtectedJob || variables.isMarker) && (variables.isMainWrite || variables.isStatusUpdate || variables.isDelete)`
-      (printf `!variables.isProtectedJob || !variables.isMainWrite || ((has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))) || (request.name.matches(%q) && (!has(dyn(object).spec.template.spec.serviceAccountName) || dyn(object).spec.template.spec.serviceAccountName in ["", "default"]) && (!has(dyn(object).spec.template.spec.serviceAccount) || dyn(object).spec.template.spec.serviceAccount in ["", "default"]))` $hookPattern $teardownPattern $imageCheckPattern)
+      (printf `!variables.isProtectedJob || !variables.isMainWrite || ((has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))) || (request.name.matches(%q) && (!has(dyn(object).spec.template.spec.serviceAccountName) || dyn(object).spec.template.spec.serviceAccountName in ["", "default"]) && (!has(dyn(object).spec.template.spec.serviceAccount) || dyn(object).spec.template.spec.serviceAccount in ["", "default"])))` $hookPattern $teardownPattern $imageCheckPattern)
       (printf `!variables.isProtectedJob || !variables.isMainWrite || (%s)` $hookAuthority)
       (printf `!variables.isProtectedJob || !(variables.isStatusUpdate || variables.isDelete) || (oldObject != null && ((has(dyn(oldObject).spec.template.spec.serviceAccountName) && (dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q) || dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q))) || (oldObject.metadata.name.matches(%q) && (!has(dyn(oldObject).spec.template.spec.serviceAccountName) || dyn(oldObject).spec.template.spec.serviceAccountName in ["", "default"]) && (!has(dyn(oldObject).spec.template.spec.serviceAccount) || dyn(oldObject).spec.template.spec.serviceAccount in ["", "default"]))))` $hookPattern $teardownPattern $imageCheckPattern)
       (printf `!variables.isProtectedJob || !variables.isStatusUpdate || (%s)` $jobControllerPrincipal)
@@ -908,36 +908,10 @@ spec:
     - name: isServiceAccountObjectConvergenceProbe
       expression: {{ $serviceAccountObjectProbeRequest | quote }}
   validations:
-    - expression: '(variables.isProtectedJob || variables.isMarker) && (variables.isMainWrite || variables.isStatusUpdate || variables.isDelete)'
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isProtectedJob || !variables.isMainWrite || ((has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))) || (request.name.matches(%q) && (!has(dyn(object).spec.template.spec.serviceAccountName) || dyn(object).spec.template.spec.serviceAccountName in ["", "default"]) && (!has(dyn(object).spec.template.spec.serviceAccount) || dyn(object).spec.template.spec.serviceAccount in ["", "default"])))` $hookPattern $teardownPattern $imageCheckPattern | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isProtectedJob || !variables.isMainWrite || (%s)` $hookAuthority | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isProtectedJob || !(variables.isStatusUpdate || variables.isDelete) || (oldObject != null && ((has(dyn(oldObject).spec.template.spec.serviceAccountName) && (dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q) || dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q))) || (oldObject.metadata.name.matches(%q) && (!has(dyn(oldObject).spec.template.spec.serviceAccountName) || dyn(oldObject).spec.template.spec.serviceAccountName in ["", "default"]) && (!has(dyn(oldObject).spec.template.spec.serviceAccount) || dyn(oldObject).spec.template.spec.serviceAccount in ["", "default"]))))` $hookPattern $teardownPattern $imageCheckPattern | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isProtectedJob || !variables.isStatusUpdate || (%s)` $jobControllerPrincipal | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isProtectedJob || !variables.isStatusUpdate || (%s)` $statusPreservesIdentity | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isProtectedJob || !variables.isDelete || (%s)` $terminalJob | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isProtectedJob || !variables.isDelete || (%s)` $hookAuthority | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (%s)` $hookAuthority | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: '!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true'
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isReadinessMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (%s) : (%s))` $parentOriginReadyCreateShape $parentOriginReadyStoredShape | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isReadinessMarker || !(request.operation in ["UPDATE", "DELETE"]) || (%s)` $parentOriginReadyOldShape | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isConvergenceMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (%s) : (%s))` $stableMarkerCreateShape $stableMarkerUpdateShape | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: {{ printf `!variables.isConvergenceMarker || !(request.operation in ["UPDATE", "DELETE"]) || (%s)` $stableMarkerOldShape | quote }}
-      message: {{ $hookOriginMessage | quote }}
-    - expression: '!variables.isMarker || request.operation != "UPDATE" || (object.metadata.uid == oldObject.metadata.uid && object.metadata.resourceVersion == oldObject.metadata.resourceVersion)'
-      message: {{ $hookOriginMessage | quote }}
+    {{- range $validation := $hookOriginExactValidations }}
+    - expression: {{ $validation.expression | quote }}
+      message: {{ $validation.message | quote }}
+    {{- end }}
 ---
 {{- end }}
 {{- if not $hookOriginBinding }}
