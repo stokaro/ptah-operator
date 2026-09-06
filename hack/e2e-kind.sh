@@ -1158,7 +1158,7 @@ collect_diagnostics() {
 			# A parent-origin guard the chart refuses as "differs from the exact
 			# contract" can only be diffed against the render from its whole spec.
 			case $debug_policy in
-			*origin-guard-v2-*|*hook-parent-contract-*)
+			*origin-guard-v2-*|*hook-parent-contract-*|*-runtime-guard-*|*-rollout-guard-*|*-hook-identity-*|*-hook-probe-guard-*)
 				kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 					get validatingadmissionpolicy "$debug_policy" -o json 2>/dev/null | jq -c .spec >&2 || true
 				;;
