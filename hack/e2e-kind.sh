@@ -1178,6 +1178,16 @@ collect_diagnostics() {
 
 cleanup() {
 	status=$?
+	# A failed run leaves nothing to inspect once its cluster is gone. With
+	# E2E_KEEP_ON_FAILURE=1 the task-created cluster, registry, database
+	# container and work directory stay for a local diagnosis; nothing in CI
+	# sets it, and the caller removes them by name afterwards.
+	if [ "$status" -ne 0 ] && [ "${E2E_KEEP_ON_FAILURE:-0}" = 1 ]; then
+		trap - EXIT
+		printf 'e2e: E2E_KEEP_ON_FAILURE=1: retaining cluster %s (kubeconfig %s), registry %s, database %s and %s\n' \
+			"$CLUSTER_NAME" "$KUBECONFIG_FILE" "$REGISTRY_CONTAINER" "$EXTERNAL_PG_CONTAINER" "$WORK_DIR" >&2
+		exit "$status"
+	fi
 	cleanup_failed=0
 	trap - EXIT HUP INT TERM
 	set +e
