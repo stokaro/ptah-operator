@@ -56,6 +56,12 @@ type RuntimeResourceQuotaPreflight struct {
 	ReleaseNamespace          string
 	ControllerDeploymentName  string
 	CertificateDeploymentName string
+	// PreviousControllerServiceAccountName is the ServiceAccount the previous
+	// release's controller runs under. That controller keeps running until the
+	// reconcile hook quiesces it, and this read-only preflight runs before that,
+	// so its Pods are old protected runtime Pods rather than strangers. Empty
+	// when there is no previous controller.
+	PreviousControllerServiceAccountName string
 }
 
 // NewRuntimeResourceQuotaPreflight constructs a read-only post-Recreate
@@ -605,13 +611,28 @@ type runtimeQuotaProtectedIdentity struct {
 	deploymentName string
 	serviceAccount string
 	component      string
+	// previousServiceAccount is accepted beside serviceAccount for the
+	// controller identity while the previous release's controller still runs.
+	previousServiceAccount string
+}
+
+func (i runtimeQuotaProtectedIdentity) acceptsServiceAccount(name string) bool {
+	return name == i.serviceAccount || (i.previousServiceAccount != "" && name == i.previousServiceAccount)
+}
+
+func (i runtimeQuotaProtectedIdentity) acceptedServiceAccounts() string {
+	if i.previousServiceAccount == "" {
+		return fmt.Sprintf("%q", i.serviceAccount)
+	}
+	return fmt.Sprintf("%q or %q", i.serviceAccount, i.previousServiceAccount)
 }
 
 func (p *RuntimeResourceQuotaPreflight) protectedPodIdentity(pod *corev1.Pod) (runtimeQuotaProtectedIdentity, bool, error) {
 	controller := runtimeQuotaProtectedIdentity{
-		deploymentName: p.ControllerDeploymentName,
-		serviceAccount: p.Contract.ControllerServiceAccountName,
-		component:      "controller",
+		deploymentName:         p.ControllerDeploymentName,
+		serviceAccount:         p.Contract.ControllerServiceAccountName,
+		previousServiceAccount: p.PreviousControllerServiceAccountName,
+		component:              "controller",
 	}
 	certificate := runtimeQuotaProtectedIdentity{
 		deploymentName: p.CertificateDeploymentName,
@@ -621,7 +642,7 @@ func (p *RuntimeResourceQuotaPreflight) protectedPodIdentity(pod *corev1.Pod) (r
 
 	var matches []runtimeQuotaProtectedIdentity
 	for _, identity := range []runtimeQuotaProtectedIdentity{controller, certificate} {
-		serviceAccountMatch := pod.Spec.ServiceAccountName == identity.serviceAccount
+		serviceAccountMatch := identity.acceptsServiceAccount(pod.Spec.ServiceAccountName)
 		labelMatch := pod.Labels[instanceLabel] == p.ReleaseName && pod.Labels["app.kubernetes.io/component"] == identity.component
 		ownerMatch := false
 		for _, owner := range pod.OwnerReferences {
@@ -649,8 +670,8 @@ func (p *RuntimeResourceQuotaPreflight) verifyProtectedPod(pod *corev1.Pod, iden
 	if pod.Namespace != p.ReleaseNamespace || pod.Name == "" || pod.UID == "" {
 		return fmt.Errorf("protected runtime Pod %q has foreign or incomplete identity", object)
 	}
-	if pod.Spec.ServiceAccountName != identity.serviceAccount {
-		return fmt.Errorf("protected runtime Pod %s uses ServiceAccount %q instead of %q", object, pod.Spec.ServiceAccountName, identity.serviceAccount)
+	if !identity.acceptsServiceAccount(pod.Spec.ServiceAccountName) {
+		return fmt.Errorf("protected runtime Pod %s uses ServiceAccount %q instead of %s", object, pod.Spec.ServiceAccountName, identity.acceptedServiceAccounts())
 	}
 	for key, expected := range map[string]string{
 		instanceLabel:                 p.ReleaseName,

@@ -1322,7 +1322,7 @@ func newRuntimeResourceQuotaPreflight(
 	contract crdupgrade.RuntimeAdmissionContract,
 	controllerReplicas int32,
 ) *crdupgrade.RuntimeResourceQuotaPreflight {
-	return crdupgrade.NewRuntimeResourceQuotaPreflight(
+	preflight := crdupgrade.NewRuntimeResourceQuotaPreflight(
 		contract,
 		controllerReplicas,
 		expected.ReleaseName,
@@ -1332,6 +1332,8 @@ func newRuntimeResourceQuotaPreflight(
 		clientset.CoreV1().ResourceQuotas(expected.ReleaseNamespace),
 		clientset.CoreV1().Pods(expected.ReleaseNamespace),
 	)
+	preflight.PreviousControllerServiceAccountName = expected.PreviousControllerServiceAccountName
+	return preflight
 }
 
 func newRuntimeAdmissionPreflight(

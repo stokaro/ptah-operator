@@ -1613,3 +1613,35 @@ func assertRuntimeQuotaListCalls(t *testing.T, resourceName string, calls []meta
 		}
 	}
 }
+
+// The previous release's controller keeps running under its own
+// ServiceAccount until the reconcile hook quiesces it, and the read-only
+// preflight runs before that. Its Pods are old protected runtime Pods, not
+// strangers.
+func TestRuntimeResourceQuotaPreflightAcceptsThePreviousControllerServiceAccount(t *testing.T) {
+	t.Parallel()
+
+	preflight, _, pods := runtimeQuotaFixture()
+	preflight.PreviousControllerServiceAccountName = "ptah-previous-controller"
+	previous := runtimeQuotaProtectedPod(preflight, true, 0)
+	previous.Spec.ServiceAccountName = "ptah-previous-controller"
+	pods.list.Items = []corev1.Pod{previous, runtimeQuotaProtectedPod(preflight, false, 0)}
+	if err := preflight.Check(context.Background()); err != nil {
+		t.Fatalf("Check() refused the previous controller's Pod: %v", err)
+	}
+
+	stranger := runtimeQuotaProtectedPod(preflight, true, 1)
+	stranger.Spec.ServiceAccountName = "stranger"
+	pods.list.Items = []corev1.Pod{stranger}
+	err := preflight.Check(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `uses ServiceAccount "stranger"`) {
+		t.Fatalf("Check() accepted a controller Pod under a foreign ServiceAccount: %v", err)
+	}
+
+	preflight.PreviousControllerServiceAccountName = ""
+	pods.list.Items = []corev1.Pod{previous}
+	err = preflight.Check(context.Background())
+	if err == nil || !strings.Contains(err.Error(), `uses ServiceAccount "ptah-previous-controller"`) {
+		t.Fatalf("Check() accepted a previous-controller Pod when no previous controller was declared: %v", err)
+	}
+}
