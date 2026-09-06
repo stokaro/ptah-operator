@@ -568,6 +568,17 @@ app.kubernetes.io/component: controller
 {{- /* Increase for every published operator release. Guard resources are
       append-only, so reusing a sequence would make a different runtime target
       an already-retained object name. */ -}}
+{{/*
+Rewrite a create-time contract so it evaluates the retained object of an
+UPDATE or DELETE. Both spellings of the incoming object have to move: the
+typed field access object.spec and the dyn(object) wrapper that relaxes it.
+A DELETE carries no object, so a reference either rewrite misses evaluates
+dyn(null).spec, the validation errors, and the policy denies.
+*/}}
+{{- define "ptah-operator.oldObjectExpression" -}}
+{{- . | replace "dyn(object)" "dyn(oldObject)" | replace "object." "oldObject." -}}
+{{- end -}}
+
 {{- define "ptah-operator.releaseSequence" -}}1{{- end -}}
 
 {{- define "ptah-operator.hookIdentityDigest" -}}

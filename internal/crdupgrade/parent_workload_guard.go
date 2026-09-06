@@ -1066,7 +1066,7 @@ func parentHookOldContractChunks(expressions []string) []string {
 	chunks := make([]string, 0, 4)
 	current := ""
 	for _, expression := range expressions {
-		part := "(" + strings.ReplaceAll(expression, "object.", "oldObject.") + ")"
+		part := "(" + oldObjectExpression(expression) + ")"
 		separator := ""
 		if current != "" {
 			separator = " && "

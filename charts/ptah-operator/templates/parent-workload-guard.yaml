@@ -540,7 +540,7 @@
 {{- $oldHookContractChunks := list -}}
 {{- $oldHookContractCurrent := "" -}}
 {{- range $expression := rest $hookContractValidations -}}
-{{- $part := printf "(%s)" (replace "object." "oldObject." $expression) -}}
+{{- $part := printf "(%s)" (include "ptah-operator.oldObjectExpression" $expression) -}}
 {{- $separator := "" -}}
 {{- if ne $oldHookContractCurrent "" -}}
 {{- $separator = " && " -}}

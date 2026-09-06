@@ -1048,7 +1048,7 @@ func (g *TeardownRetirementGuard) teardownJobStatusValidationExpressions(forward
 		teardownRetirementStatusPreservesIdentityExpression(),
 	)
 	for _, expression := range contract[1:] {
-		expressions = append(expressions, strings.ReplaceAll(expression, "object.", "oldObject."))
+		expressions = append(expressions, oldObjectExpression(expression))
 	}
 	return expressions
 }
@@ -1061,7 +1061,7 @@ func (g *TeardownRetirementGuard) teardownJobDeletionValidationExpressions(forwa
 		fmt.Sprintf(`oldObject.metadata.name in %s && oldObject.metadata.namespace == %q && (!has(oldObject.metadata.generateName) || oldObject.metadata.generateName == "")`, jobNames, g.rollout.ReleaseNamespace),
 	}
 	for _, expression := range contract[2:] {
-		expressions = append(expressions, strings.ReplaceAll(expression, "object.", "oldObject."))
+		expressions = append(expressions, oldObjectExpression(expression))
 	}
 	expressions = append(expressions, `has(oldObject.status.conditions) && oldObject.status.conditions.exists(condition, condition.status == "True" && condition.type in ["Complete", "Failed"])`)
 	return expressions
@@ -1175,7 +1175,7 @@ func (g *TeardownRetirementGuard) teardownPodStatusValidationExpressions(forward
 		teardownRetirementStatusPreservesIdentityExpression(),
 	)
 	for _, expression := range contract[1:] {
-		expressions = append(expressions, strings.ReplaceAll(expression, "object.", "oldObject."))
+		expressions = append(expressions, oldObjectExpression(expression))
 	}
 	return expressions
 }

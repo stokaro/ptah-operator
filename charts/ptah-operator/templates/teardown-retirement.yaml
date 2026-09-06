@@ -320,14 +320,14 @@ spec:
 {{- $statusIdentity := `oldObject != null && object.spec == oldObject.spec && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && ((!has(object.metadata.generateName) && !has(oldObject.metadata.generateName)) || (has(object.metadata.generateName) && has(oldObject.metadata.generateName) && object.metadata.generateName == oldObject.metadata.generateName)) && has(object.metadata.uid) && has(oldObject.metadata.uid) && object.metadata.uid != "" && object.metadata.uid == oldObject.metadata.uid && has(object.metadata.resourceVersion) && has(oldObject.metadata.resourceVersion) && object.metadata.resourceVersion != "" && object.metadata.resourceVersion == oldObject.metadata.resourceVersion && object.metadata.generation == oldObject.metadata.generation && has(object.metadata.labels) && has(oldObject.metadata.labels) && object.metadata.labels == oldObject.metadata.labels && ((!has(object.metadata.annotations) && !has(oldObject.metadata.annotations)) || (has(object.metadata.annotations) && has(oldObject.metadata.annotations) && object.metadata.annotations == oldObject.metadata.annotations)) && ((!has(object.metadata.ownerReferences) && !has(oldObject.metadata.ownerReferences)) || (has(object.metadata.ownerReferences) && has(oldObject.metadata.ownerReferences) && object.metadata.ownerReferences == oldObject.metadata.ownerReferences)) && ((!has(object.metadata.finalizers) && !has(oldObject.metadata.finalizers)) || (has(object.metadata.finalizers) && has(oldObject.metadata.finalizers) && object.metadata.finalizers == oldObject.metadata.finalizers))` -}}
 {{- $jobStatusValidations := list $jobControllerPrincipal $statusIdentity -}}
 {{- range $expression := rest $jobValidations -}}
-{{- $jobStatusValidations = append $jobStatusValidations (replace "object." "oldObject." $expression) -}}
+{{- $jobStatusValidations = append $jobStatusValidations (include "ptah-operator.oldObjectExpression" $expression) -}}
 {{- end -}}
 {{- $jobDeletionValidations := list
       `oldObject != null && (!has(request.subResource) || request.subResource == "") && request.operation == "DELETE"`
       (printf `oldObject.metadata.name in %s && oldObject.metadata.namespace == %q && (!has(oldObject.metadata.generateName) || oldObject.metadata.generateName == "")` $allJobNames $root.Release.Namespace) -}}
 {{- range $index, $expression := $jobValidations -}}
 {{- if ge $index 2 -}}
-{{- $jobDeletionValidations = append $jobDeletionValidations (replace "object." "oldObject." $expression) -}}
+{{- $jobDeletionValidations = append $jobDeletionValidations (include "ptah-operator.oldObjectExpression" $expression) -}}
 {{- end -}}
 {{- end -}}
 {{- $jobDeletionValidations = append $jobDeletionValidations `has(oldObject.status.conditions) && oldObject.status.conditions.exists(condition, condition.status == "True" && condition.type in ["Complete", "Failed"])` -}}
@@ -382,7 +382,7 @@ spec:
 {{- $schedulerStatusDelta := join " && " $schedulerStatusParts -}}
 {{- $podStatusValidations := list (printf `(%s) || ((%s) && (%s))` $nodePrincipal $schedulerPrincipal $schedulerStatusDelta) $statusIdentity -}}
 {{- range $expression := rest $podValidations -}}
-{{- $podStatusValidations = append $podStatusValidations (replace "object." "oldObject." $expression) -}}
+{{- $podStatusValidations = append $podStatusValidations (include "ptah-operator.oldObjectExpression" $expression) -}}
 {{- end -}}
 {{- $oldPodJobLabel := `oldObject.metadata.labels["batch.kubernetes.io/job-name"]` -}}
 {{- $oldPodOwner := "oldObject.metadata.ownerReferences[0]" -}}
