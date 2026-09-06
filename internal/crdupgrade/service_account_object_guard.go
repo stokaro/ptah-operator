@@ -638,9 +638,11 @@ func (g *ServiceAccountObjectGuard) verifyPolicy(actual, expected *admissionregi
 	if actual == nil {
 		return errors.New("service account object guard policy is missing")
 	}
-	if actual.APIVersion != expected.APIVersion || actual.Kind != expected.Kind {
-		return errors.New("service account object guard policy has an unexpected API identity")
-	}
+	// The Go type is the identity. A typed client-go read clears TypeMeta,
+	// so comparing it against a compiled expectation that sets it can only
+	// ever fail against a real API server, and comparing it against one
+	// that does not set it can never fail at all. The value arrived from
+	// the endpoint this reader addresses; nothing else can be behind it.
 	if err := verifyServiceAccountObjectGuardMetadata("policy", actual.ObjectMeta, expected.ObjectMeta); err != nil {
 		return err
 	}
@@ -692,9 +694,11 @@ func (g *ServiceAccountObjectGuard) verifyBinding(actual, expected *admissionreg
 	if actual == nil {
 		return errors.New("service account object guard binding is missing")
 	}
-	if actual.APIVersion != expected.APIVersion || actual.Kind != expected.Kind {
-		return errors.New("service account object guard binding has an unexpected API identity")
-	}
+	// The Go type is the identity. A typed client-go read clears TypeMeta,
+	// so comparing it against a compiled expectation that sets it can only
+	// ever fail against a real API server, and comparing it against one
+	// that does not set it can never fail at all. The value arrived from
+	// the endpoint this reader addresses; nothing else can be behind it.
 	if err := verifyServiceAccountObjectGuardMetadata("binding", actual.ObjectMeta, expected.ObjectMeta); err != nil {
 		return err
 	}

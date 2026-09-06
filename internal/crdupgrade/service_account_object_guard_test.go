@@ -858,6 +858,35 @@ func safeBootstrapServiceAccountObject(guard *ServiceAccountObjectGuard, name st
 	}
 }
 
+// TestServiceAccountObjectGuardVerifyAcceptsATypedRead covers the shape the
+// binary actually reads. Verify calls Policies.Get, which production wires to
+// clientset.AdmissionregistrationV1(), and a typed client-go read returns an
+// empty TypeMeta: the decoder clears it because the Go type already carries the
+// identity. The other tests here plant objects that also stand in for cluster
+// state a Helm lookup reads, where apiVersion and kind are present, so none of
+// them exercises this difference -- which is why a comparison that could not
+// pass against an API server passed every test in this package.
+func TestServiceAccountObjectGuardVerifyAcceptsATypedRead(t *testing.T) {
+	guard := testServiceAccountObjectGuard()
+	policy, binding, err := guard.ExpectedObjects()
+	if err != nil {
+		t.Fatal(err)
+	}
+	livePolicy := persistedServiceAccountObjectPolicy(readyPolicy(policy))
+	livePolicy.TypeMeta = metav1.TypeMeta{}
+	liveBinding := persistedServiceAccountObjectBinding(binding)
+	liveBinding.TypeMeta = metav1.TypeMeta{}
+	guard.rollout.Policies = &rolloutPolicyClient{
+		objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicy{policy.Name: livePolicy},
+	}
+	guard.rollout.Bindings = &rolloutBindingClient{
+		objects: map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding{binding.Name: liveBinding},
+	}
+	if err := guard.Verify(context.Background()); err != nil {
+		t.Fatalf("Verify() against a typed read error = %v", err)
+	}
+}
+
 func persistedServiceAccountObjectPolicy(policy *admissionregistrationv1.ValidatingAdmissionPolicy) *admissionregistrationv1.ValidatingAdmissionPolicy {
 	result := policy.DeepCopy()
 	result.UID = "service-account-object-policy-uid"
