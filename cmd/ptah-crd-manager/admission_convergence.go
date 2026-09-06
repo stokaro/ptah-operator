@@ -658,8 +658,12 @@ func (b *admissionConvergenceBarrier) verifyStoredContract(ctx context.Context) 
 	if contextErr := ctx.Err(); contextErr != nil {
 		return false, contextErr
 	}
-	if err == nil && verifyContextErr != nil {
-		err = verifyContextErr
+	// An attempt that ran out of its own request budget proved nothing about
+	// the stored contract, whatever error the read it was inside returned: a
+	// client rate limiter reports that deadline in its own words, not as
+	// context.DeadlineExceeded. The outer context bounds the retries.
+	if verifyContextErr != nil {
+		return false, nil
 	}
 	if err == nil {
 		return true, nil

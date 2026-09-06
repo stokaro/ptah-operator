@@ -168,6 +168,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("load in-cluster configuration: %w", err)
 	}
+	config = boundedSweepRESTConfig(config)
 	extensionsClient, err := apiextensionsclient.NewForConfig(config)
 	if err != nil {
 		return fmt.Errorf("create apiextensions client: %w", err)
