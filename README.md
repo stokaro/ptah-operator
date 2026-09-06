@@ -40,6 +40,9 @@ Key safety properties:
 
 ## Install from this checkout
 
+Helm 4 or newer is required. Helm 3 is not supported and is not tested: it
+reaches end of life before this operator's first release.
+
 The manager, runner, and Ptah executor images must be selected explicitly. All
 three are required to use immutable SHA-256 references. The executor version
 is explicit too: it must identify the verified build in the selected executor

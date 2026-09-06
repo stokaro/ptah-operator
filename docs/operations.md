@@ -2,6 +2,11 @@
 
 ## Installation and upgrades
 
+Helm 4 or newer is required, and every lifecycle contour is verified against
+it. Helm 3 is not supported: it reaches end of life before this operator's
+first release, and it applies client-side, so the release's objects carry no
+server-side apply ownership for a later upgrade to take back.
+
 Install CRDs and the controller through the Helm chart. Supply digest-pinned
 manager, executor, and runner images. The chart refuses all three when only a
 tag is supplied. Manager Pods, hooks, and controller identity all use the same

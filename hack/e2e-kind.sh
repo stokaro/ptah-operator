@@ -168,6 +168,16 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 	fail "sha256sum or shasum is required"
 fi
 
+# The suite runs against Helm 4, which applies server-side. Helm 3 patches
+# client-side and leaves the release's objects with no server-side apply
+# owner, so a proof that stops and restores a runtime Deployment cannot give
+# it back the ownership it had. Refuse here rather than mid-run.
+helm_version=$(helm version --template '{{.Version}}' 2>/dev/null || printf '')
+case "$helm_version" in
+v[4-9]* | v[1-9][0-9]*) ;;
+*) fail "Helm 4 or newer is required; found ${helm_version:-no version output}" ;;
+esac
+
 case "$SOURCE_REPOSITORY_ROOT" in
 	/*) ;;
 	*) fail "E2E_SOURCE_REPOSITORY_ROOT must be an absolute path" ;;
