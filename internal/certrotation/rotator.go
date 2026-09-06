@@ -197,6 +197,16 @@ func (r *Rotator) Run(ctx context.Context) (runErr error) {
 	return nil
 }
 
+// loggableProbeError keeps a transport or verification failure verbatim and
+// reduces a Kubernetes API error to its reason.
+func loggableProbeError(err error) string {
+	var status apierrors.APIStatus
+	if errors.As(err, &status) {
+		return string(status.Status().Reason)
+	}
+	return err.Error()
+}
+
 // logStep records one reconciliation step through the configured logger.
 func (r *Rotator) logStep(msg string, args ...any) {
 	if r.config.Logger != nil {
@@ -870,6 +880,12 @@ func (r *Rotator) probeCertificate(
 			} else {
 				return nil
 			}
+		}
+		if err != nil && (lastErr == nil || err.Error() != lastErr.Error()) {
+			// A TLS or verification failure names certificates, never keys;
+			// an API error is reduced to its reason so no object body is
+			// logged.
+			r.logStep("webhook endpoint certificate probe failed", "identityOnly", identityOnly, "error", loggableProbeError(err))
 		}
 		lastErr = err
 		select {
