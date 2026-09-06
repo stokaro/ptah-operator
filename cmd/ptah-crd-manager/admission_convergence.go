@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/stokaro/ptah-operator/internal/crdupgrade"
+	"github.com/stokaro/ptah-operator/internal/kubeapi"
 )
 
 const (
@@ -720,7 +721,7 @@ func retryableStoredAdmissionConvergenceError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.DeadlineExceeded) || apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) ||
+	if errors.Is(err, context.DeadlineExceeded) || kubeapi.IsClientRateLimitBudgetError(err) || apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) ||
 		apierrors.IsTooManyRequests(err) || apierrors.IsServiceUnavailable(err) {
 		return true
 	}

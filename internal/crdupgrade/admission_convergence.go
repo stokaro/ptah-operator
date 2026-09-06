@@ -17,6 +17,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+
+	"github.com/stokaro/ptah-operator/internal/kubeapi"
 )
 
 const (
@@ -648,7 +650,7 @@ func retryableAdmissionConvergenceError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) || apierrors.IsServiceUnavailable(err) {
+	if kubeapi.IsClientRateLimitBudgetError(err) || apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err) || apierrors.IsTooManyRequests(err) || apierrors.IsServiceUnavailable(err) {
 		return true
 	}
 	var status apierrors.APIStatus

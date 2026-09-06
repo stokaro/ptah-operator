@@ -1068,6 +1068,20 @@ func TestAdmissionConvergenceProbeRequiresExactTupleDenial(t *testing.T) {
 		{name: "stale exact tuple resets", updates: []error{exactPolicyDenialError(fixture.name, fixture.name, admissionConvergenceDenialMessage(staleState))}, wantUpdates: 1},
 		{name: "server timeout retries", updates: []error{apierrors.NewServerTimeout(schema.GroupResource{Resource: "configmaps"}, "update", 1)}, wantUpdates: 1},
 		{
+			name: "early local rate-limit refusal is inconclusive",
+			updates: []error{fmt.Errorf("client rate limiter Wait returned an error: %w",
+				errors.New("rate: Wait(n=1) would exceed context deadline"))},
+			wantUpdates: 1,
+		},
+		{
+			name: "API refusal quoting a rate-limit diagnostic fails closed",
+			updates: []error{apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, fixture.markerName,
+				fmt.Errorf("client rate limiter Wait returned an error: %w",
+					errors.New("rate: Wait(n=1) would exceed context deadline")))},
+			wantErr:     "unexpected response",
+			wantUpdates: 1,
+		},
+		{
 			name:        "known missing parameter cache retries",
 			updates:     []error{admissionPolicyCausesError(knownParamNotFound)},
 			wantUpdates: 1,
