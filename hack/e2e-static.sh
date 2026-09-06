@@ -6005,7 +6005,6 @@ for crd_live_marker in \
 	'proving a newer CRD schema version blocks rollback' \
 	'upgrade with a newer CRD schema version' \
 	'proving an incomplete schema identity and a digest collision are refused' \
-	'missing schema digest was refused without the incomplete-identity reason' \
 	'upgrade with a missing schema digest' \
 	'upgrade with a same-version schema digest collision' \
 	'outdated e2e schema' \
@@ -6034,7 +6033,10 @@ for crd_live_marker in \
 	'exact exported current-release chart passed fresh install and zero-residue uninstall' \
 	'uninstall retained CRDs and live objects'; do
 	grep -F -- "$crd_live_marker" "$ROOT_DIR/hack/e2e-kind.sh" \
-		"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
+		"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
+		printf 'e2e static: live CRD proof marker is missing: %s\n' "$crd_live_marker" >&2
+		exit 1
+	}
 done
 
 hook_progress_source=$ROOT_DIR/hack/e2e-crd-upgrade.sh

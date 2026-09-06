@@ -3305,9 +3305,14 @@ run_upgrade_proof() {
 		ptahschemaapprovals.operator.ptah.dev; do
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-missing-digest.json"
 	done
+	# The refusal happens inside the preflight hook's container, so Helm
+	# reports only that the hook Job failed; the reason never reaches its
+	# stderr, and the hook's Pod is deleted with the failed hook. What this
+	# proof pins is the refusal itself, and the shared helper pins that the
+	# preflight hook of the expected revision is what refused while every CRD
+	# and Deployment stayed unchanged. The wording of the reason is measured
+	# where it is observable, in the Manager unit tests.
 	expect_upgrade_failure_without_deployment_change "upgrade with a missing schema digest"
-	grep -F 'incomplete owned schema identity' "$WORK_DIR/failed-upgrade.err" >/dev/null ||
-		fail "missing schema digest was refused without the incomplete-identity reason"
 	for crd_name in \
 		ptahschemas.operator.ptah.dev \
 		ptahschemaplans.operator.ptah.dev \
