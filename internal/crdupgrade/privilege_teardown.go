@@ -648,6 +648,28 @@ func (t *PrivilegeTeardown) bindingContracts() []privilegeBindingContract {
 			controllerOrder: coordinationOrder,
 		},
 	)
+	if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+		discovery := privilegeBindingContract{
+			name: controllerDiscoveryBindingName(controller), namespace: corev1.NamespaceDefault,
+			roleRef: roleRef("Role", controllerDiscoveryBindingName(controller)),
+			subject: serviceAccountSubject(t.contract.ControllerServiceAccountName),
+			fixedSubjects: []rbacv1.Subject{
+				serviceAccountSubject(t.contract.CertificateServiceAccountName),
+			},
+		}
+		if predecessorSubject != nil {
+			// Ordered after the coordination binding on every transition. A
+			// sequence-zero predecessor did not have it, so its presence, like
+			// the runtime-admission binding's, proves ordinary apply reached
+			// the candidate-only post-cutover RBAC.
+			discovery.controllerBinding = true
+			discovery.controllerOrder = 3
+			if t.rollout.PreviousControllerReleaseSequence >= 1 {
+				discovery.predecessorSubject = predecessorSubject
+			}
+		}
+		contracts = append(contracts, discovery)
+	}
 	if t.contract.CertificateRuntimeEnabled {
 		certificate := t.contract.CertificateServiceAccountName
 		contracts = append(contracts, privilegeBindingContract{
@@ -776,9 +798,9 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, nil, []string{"list"}),
 				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, []string{controller}, []string{"get", "patch"}),
 				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, nil, []string{"list"}),
-				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, []string{controller, controller + "-runtime-admission"}, []string{"get", "patch"}),
+				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get", "patch"}),
 				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterroles"}, []string{controller}, []string{"get"}),
-				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"roles"}, []string{controller, controller + "-runtime-admission"}, []string{"get"}),
+				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"roles"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get"}),
 				privilegePolicyRule([]string{"authorization.k8s.io"}, []string{"subjectaccessreviews"}, nil, []string{"create"}),
 			},
 		},
@@ -844,6 +866,16 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 		},
 	}
 	if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+		contracts = append(contracts, privilegeAuthorizationContract{
+			name: controllerDiscoveryBindingName(controller), namespace: corev1.NamespaceDefault, retired: true, probeSubject: "controller",
+			probeSubjects: func() []string {
+				if t.contract.CertificateRuntimeEnabled {
+					return []string{"certificate"}
+				}
+				return nil
+			}(),
+			rules: currentControllerDiscoveryRoleRules(),
+		})
 		contracts = append(contracts, privilegeAuthorizationContract{
 			name: hook, namespace: corev1.NamespaceDefault, component: "crd-manager", retired: true, probeSubject: "hook-quiesce",
 			rules: []rbacv1.PolicyRule{
@@ -1064,6 +1096,9 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 		t.rollout.ControllerDeploymentName + "-runtime-admission",
 		t.rollout.ControllerDeploymentName,
 	}
+	if t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+		roleNames = append(roleNames, controllerDiscoveryBindingName(t.rollout.ControllerDeploymentName))
+	}
 	if t.contract.CertificateRuntimeEnabled {
 		clusterRoleNames = append(clusterRoleNames, t.contract.CertificateServiceAccountName)
 		roleNames = append(roleNames, t.contract.CertificateServiceAccountName)
@@ -1186,6 +1221,7 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 			if t.contract.CertificateRuntimeEnabled {
 				coordinationDeletionNames = append(coordinationDeletionNames, certificateDiscovery)
 			}
+			coordinationDeletionNames = append(coordinationDeletionNames, controllerDiscoveryBindingName(t.rollout.ControllerDeploymentName))
 		}
 		coordinationDeletionNames = append(coordinationDeletionNames, t.cleanupPrivilege)
 		contracts = append(contracts, privilegeAuthorizationContract{
@@ -1202,6 +1238,7 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 		if t.contract.CertificateRuntimeEnabled {
 			defaultDeletionNames = append(defaultDeletionNames, certificateDiscovery)
 		}
+		defaultDeletionNames = append(defaultDeletionNames, controllerDiscoveryBindingName(t.rollout.ControllerDeploymentName))
 		defaultDeletionNames = append(defaultDeletionNames, t.cleanupPrivilege)
 		contracts = append(contracts, privilegeAuthorizationContract{
 			name: t.cleanupPrivilege, namespace: corev1.NamespaceDefault, component: "crd-manager-teardown", probeSubject: "cleanup",

@@ -4894,12 +4894,12 @@ helm template ptah-e2e-ha "$ROOT_DIR/charts/ptah-operator" \
 	--set-string webhook.caBundle=e2e-ca >"$SHARED_RBAC_RENDER"
 
 for rbac_render in "$DEFAULT_RBAC_RENDER" "$SHARED_RBAC_RENDER"; do
-	[ "$(grep -c '^kind: Role$' "$rbac_render")" -eq 2 ] || {
-		printf 'e2e static: %s does not render exactly two scoped manager Roles\n' "$rbac_render" >&2
+	[ "$(grep -c '^kind: Role$' "$rbac_render")" -eq 3 ] || {
+		printf 'e2e static: %s does not render exactly three scoped manager Roles\n' "$rbac_render" >&2
 		exit 1
 	}
-	[ "$(grep -c '^kind: RoleBinding$' "$rbac_render")" -eq 2 ] || {
-		printf 'e2e static: %s does not render exactly two scoped manager RoleBindings\n' "$rbac_render" >&2
+	[ "$(grep -c '^kind: RoleBinding$' "$rbac_render")" -eq 3 ] || {
+		printf 'e2e static: %s does not render exactly three scoped manager RoleBindings\n' "$rbac_render" >&2
 		exit 1
 	}
 	if awk '

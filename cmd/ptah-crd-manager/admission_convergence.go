@@ -478,8 +478,10 @@ func (b *admissionConvergenceBarrier) wait(
 				// rejected by the constructor, while stored-contract drift remains
 				// immediately fatal below.
 				resetStability()
-				if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
-					return fmt.Errorf("admission endpoint discovery did not recover: %w", err)
+				if sleepErr := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); sleepErr != nil {
+					// The deadline is the answer; the discovery error it hid is
+					// the diagnosis.
+					return fmt.Errorf("admission endpoint discovery did not recover: %w (last discovery error: %v)", sleepErr, err)
 				}
 				continue
 			}

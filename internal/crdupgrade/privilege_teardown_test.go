@@ -517,6 +517,7 @@ func TestPrivilegeTeardownDeletesExactPrivilegesBeforeServiceAccounts(t *testing
 	want := []string{
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + fixture.guard.ControllerDeploymentName + "-runtime-admission",
 		"RoleBinding/" + fixture.guard.CoordinationNamespace + "/" + fixture.guard.ControllerDeploymentName,
+		"RoleBinding/" + corev1.NamespaceDefault + "/" + ControllerDiscoveryBindingName(fixture.guard.ControllerDeploymentName),
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + fixture.contract.CertificateServiceAccountName,
 		"RoleBinding/" + corev1.NamespaceDefault + "/" + mustCertificateDiscoveryRoleName(t, fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName),
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + hook,
@@ -912,6 +913,7 @@ func TestPrivilegeTeardownSharesReleaseScopedPrivilegeWhenCoordinationMatches(t 
 			fixture.guard.HookServiceAccountName,
 			quiesce,
 			discoveryName,
+			ControllerDiscoveryBindingName(fixture.guard.ControllerDeploymentName),
 			fixture.cleanupPrivilege,
 		}) {
 		t.Fatalf("default cleanup Role does not match exact certificate discovery revocation contract: %#v", defaultRole)
@@ -1939,6 +1941,10 @@ func TestPrivilegeTeardownEndpointSliceDiscoveryNeverCompilesClusterWide(t *test
 			"crd-manager-teardown":         1,
 			"crd-manager-teardown-quiesce": 1,
 		}
+		// The controller's discovery authority carries no component label,
+		// like the rest of its RBAC: the runtime-admission Role holds it for
+		// a release in the default namespace, the discovery Role otherwise.
+		want[""] = 1
 		if !reflect.DeepEqual(counts, want) {
 			t.Fatalf("EndpointSlice discovery contracts = %#v, want %#v", counts, want)
 		}

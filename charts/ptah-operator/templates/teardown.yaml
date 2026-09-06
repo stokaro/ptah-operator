@@ -9,6 +9,7 @@
 {{- $previousControllerServiceAccount := include "ptah-operator.previousControllerServiceAccountName" . -}}
 {{- $coordinationNamespace := include "ptah-operator.coordinationNamespace" . -}}
 {{- $controllerRuntimeRoleName := printf "%s-runtime-admission" $controllerName -}}
+{{- $controllerDiscoveryRoleName := printf "%s-runtime-discovery" $controllerName -}}
 {{- $certificateName := include "ptah-operator.certRotatorServiceAccountName" . -}}
 {{- $certificateDiscoveryRoleName := include "ptah-operator.certificateDiscoveryRoleName" . -}}
 {{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
@@ -169,6 +170,9 @@ rules:
     resourceNames:
       - {{ $controllerRuntimeRoleName }}
       - {{ $controllerName }}
+      {{- if ne .Release.Namespace "default" }}
+      - {{ $controllerDiscoveryRoleName }}
+      {{- end }}
       {{- if $certificateRuntimeEnabled }}
       - {{ $certificateName }}
       {{- if ne .Release.Namespace "default" }}
@@ -434,6 +438,7 @@ rules:
       {{- if $certificateRuntimeEnabled }}
       - {{ $certificateDiscoveryRoleName | quote }}
       {{- end }}
+      - {{ $controllerDiscoveryRoleName | quote }}
       {{- end }}
       - {{ $cleanupPrivilegeName | quote }}
     verbs: ["delete"]
@@ -463,6 +468,7 @@ rules:
       {{- if $certificateRuntimeEnabled }}
       - {{ $certificateDiscoveryRoleName | quote }}
       {{- end }}
+      - {{ $controllerDiscoveryRoleName | quote }}
       - {{ $cleanupPrivilegeName | quote }}
     verbs: ["delete"]
 {{ end }}
@@ -608,6 +614,9 @@ rules:
     resourceNames:
       - {{ $controllerRuntimeRoleName }}
       - {{ $controllerName }}
+      {{- if ne .Release.Namespace "default" }}
+      - {{ $controllerDiscoveryRoleName }}
+      {{- end }}
       {{- if $certificateRuntimeEnabled }}
       - {{ $certificateName }}
       {{- if ne .Release.Namespace "default" }}
