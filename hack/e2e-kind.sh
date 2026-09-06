@@ -1155,6 +1155,14 @@ collect_diagnostics() {
 			printf '=== policy %s ===\n' "$debug_policy" >&2
 			kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 				get validatingadmissionpolicy "$debug_policy" -o jsonpath='resources={range .spec.matchConstraints.resourceRules[*]}{.resources}{end} conditions={range .spec.matchConditions[*]}{.name}{","}{end}{"\n"}' >&2 || true
+			# A parent-origin guard the chart refuses as "differs from the exact
+			# contract" can only be diffed against the render from its whole spec.
+			case $debug_policy in
+			*origin-guard-v2-*)
+				kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+					get validatingadmissionpolicy "$debug_policy" -o json 2>/dev/null | jq -c .spec >&2 || true
+				;;
+			esac
 		done
 		for debug_log_file in "$DEBUG_LOG_DIR"/*.log; do
 			[ -e "$debug_log_file" ] || continue

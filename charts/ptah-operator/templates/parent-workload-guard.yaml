@@ -237,7 +237,16 @@
       (gt (len (default (list) .metadata.ownerReferences)) 0)
       (gt (len (default (list) .metadata.finalizers)) 0)
       (not (deepEqual (default (dict) .spec) $entry.spec)) -}}
-{{- fail (printf "retained %s %s differs from the exact parent-origin contract" $entry.kind $entry.name) -}}
+{{- /* Name the spec keys that differ: a refusal saying only "differs" sends the
+      reader to diff a live object against a render by hand. */ -}}
+{{- $retainedSpec := default (dict) .spec -}}
+{{- $differing := list -}}
+{{- range $key := (concat (keys $retainedSpec) (keys $entry.spec) | uniq | sortAlpha) -}}
+{{- if not (deepEqual (index $retainedSpec $key) (index $entry.spec $key)) -}}
+{{- $differing = append $differing $key -}}
+{{- end -}}
+{{- end -}}
+{{- fail (printf "retained %s %s differs from the exact parent-origin contract (metadata, or spec keys: %s)" $entry.kind $entry.name (default "none" (join ", " $differing))) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
