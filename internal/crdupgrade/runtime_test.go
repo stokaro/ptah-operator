@@ -1234,8 +1234,6 @@ func (c *validatingAdmissionClient) Get(_ context.Context, name string, _ metav1
 
 var _ MutatingWebhookClient = (*mutatingAdmissionClient)(nil)
 var _ ValidatingWebhookClient = (*validatingAdmissionClient)(nil)
-var _ MutatingWebhookUpdater = (*mutatingAdmissionClient)(nil)
-var _ ValidatingWebhookUpdater = (*validatingAdmissionClient)(nil)
 
 type schemaListClient struct {
 	pages                        []*unstructured.UnstructuredList

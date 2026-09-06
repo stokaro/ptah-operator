@@ -249,11 +249,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		if clientErr != nil {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
 		}
-		adopter := &crdupgrade.AdmissionAdopter{
-			Mutating:   clientset.AdmissionregistrationV1().MutatingWebhookConfigurations(),
-			Validating: clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations(),
-			Expected:   expected,
-		}
 		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
 		serviceAccountObjectGuard := crdupgrade.NewServiceAccountObjectGuard(rollout)
 		inventory := newWorkloadInventory(clientset, rollout)
@@ -289,10 +284,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		if err = manager.PreflightWithState(ctx, stateClients, int64(controllerstate.CurrentVersion)); err != nil {
 			break
 		}
-		if err = adopter.Preflight(ctx); err != nil {
-			err = fmt.Errorf("preflight admission singleton adoption: %w", err)
-			break
-		}
 		err = rollout.PreflightQuiesce(ctx)
 	case "reconcile":
 		expected, expectedErr := runtimeInvariants(
@@ -320,11 +311,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 		clientset, clientErr := kubernetes.NewForConfig(config)
 		if clientErr != nil {
 			return fmt.Errorf("create Kubernetes client: %w", clientErr)
-		}
-		adopter := &crdupgrade.AdmissionAdopter{
-			Mutating:   clientset.AdmissionregistrationV1().MutatingWebhookConfigurations(),
-			Validating: clientset.AdmissionregistrationV1().ValidatingWebhookConfigurations(),
-			Expected:   expected,
 		}
 		rollout := newRolloutGuard(clientset, expected, *managerImage, *webhookSecretName, int32(*webhookPort), int32(*certificateHealthPort), int32(*controllerReplicas), controllerRuntimeArgs, certificateRuntimeArgs, runtimeDeploymentConfigExpressions, runtimePodConfigExpressions, runtimeAdmissionContract, *runtimeAdmissionContractB64)
 		serviceAccountObjectGuard := crdupgrade.NewServiceAccountObjectGuard(rollout)
@@ -523,9 +509,6 @@ func run(parent context.Context, args []string, output io.Writer) error {
 					),
 				); retireErr != nil {
 					return fmt.Errorf("retire predecessor admission inventory: %w", retireErr)
-				}
-				if adoptErr := adopter.Adopt(prepareCtx); adoptErr != nil {
-					return fmt.Errorf("adopt admission singleton: %w", adoptErr)
 				}
 				return nil
 			},
