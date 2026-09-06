@@ -728,6 +728,16 @@ func (g *ParentWorkloadGuard) legacyHookPodOriginPolicy() *admissionregistration
 	}
 }
 
+// parentHookOriginConvergenceProbeExpression recognizes an admission
+// convergence probe aimed at any guard: a dry-run UPDATE of the convergence
+// marker under a probe field manager. It names no release sequence, because
+// the hook parent-origin guard is release-stable; the marker is recognized by
+// the pattern variable the guard already carries.
+func parentHookOriginConvergenceProbeExpression(releaseNamespace string) string {
+	return fmt.Sprintf(`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && variables.isConvergenceMarker && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)`,
+		releaseNamespace, "^"+admissionConvergenceProbeFieldManagerPrefix+`[0-9a-f]{64}$`)
+}
+
 func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {
 	fail := admissionregistrationv1.Fail
 	exact := admissionregistrationv1.Exact
@@ -811,6 +821,24 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 			},
 		},
 	}
+	// This guard matches the convergence marker, so every dry-run probe another
+	// guard is the target of passes through it too. The probe carries an
+	// unsealed marker unchanged, which the marker contract refuses; the probe
+	// is let through by its field manager and held to dry-run, as the runtime
+	// parent guard does. The chart renders the same escape. The guard is
+	// release-stable, so the probe is recognized by the marker pattern this
+	// guard already matches rather than by the sequence-bearing marker name.
+	policy.Spec.Variables = append(policy.Spec.Variables, admissionregistrationv1.Variable{
+		Name:       "isAnyAdmissionConvergenceProbe",
+		Expression: parentHookOriginConvergenceProbeExpression(g.rollout.ReleaseNamespace),
+	})
+	for index := range policy.Spec.Validations {
+		policy.Spec.Validations[index].Expression = "variables.isAnyAdmissionConvergenceProbe || (" + policy.Spec.Validations[index].Expression + ")"
+	}
+	policy.Spec.Validations = append(policy.Spec.Validations, admissionregistrationv1.Validation{
+		Expression: `!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true`,
+		Message:    message,
+	})
 	return policy
 }
 

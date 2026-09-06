@@ -556,6 +556,10 @@
 {{- $oldHookContractChunks = append $oldHookContractChunks $oldHookContractCurrent -}}
 {{- end -}}
 
+{{- /* The origin guard is release-stable: the probe is recognized by the marker
+      pattern the guard already matches, never by the sequence-bearing marker
+      name. ParentWorkloadGuard compiles the same text. */ -}}
+{{- $hookOriginProbeRequest := printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && variables.isConvergenceMarker && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)` .Release.Namespace "^ptah-admission-convergence-v1-[0-9a-f]{64}$" -}}
 {{- $hookOriginVariables := list
       (dict "name" "isProtectedJob" "expression" `request.resource.group == "batch" && request.resource.version == "v1" && request.resource.resource == "jobs"`)
       (dict "name" "isMainWrite" "expression" `request.operation in ["CREATE", "UPDATE"] && (!has(request.subResource) || request.subResource == "")`)
@@ -565,7 +569,8 @@
       (dict "name" "isReadinessMarker" "expression" (printf `request.resource.group == "" && request.resource.resource == "configmaps" && variables.effectiveName == %q` $parentOriginReadyName))
       (dict "name" "isConvergenceMarker" "expression" (printf `request.resource.group == "" && request.resource.resource == "configmaps" && variables.effectiveName.matches(%q)` $stableMarkerPattern))
       (dict "name" "isMarker" "expression" `variables.isReadinessMarker || variables.isConvergenceMarker`)
-      (dict "name" "isServiceAccountObjectConvergenceProbe" "expression" $serviceAccountObjectProbeRequest) -}}
+      (dict "name" "isServiceAccountObjectConvergenceProbe" "expression" $serviceAccountObjectProbeRequest)
+      (dict "name" "isAnyAdmissionConvergenceProbe" "expression" $hookOriginProbeRequest) -}}
 {{- $hookOriginNativeValidations := list
       `(variables.isProtectedJob || variables.isMarker) && (variables.isMainWrite || variables.isStatusUpdate || variables.isDelete)`
       (printf `!variables.isProtectedJob || !variables.isMainWrite || ((has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))) || (request.name.matches(%q) && (!has(dyn(object).spec.template.spec.serviceAccountName) || dyn(object).spec.template.spec.serviceAccountName in ["", "default"]) && (!has(dyn(object).spec.template.spec.serviceAccount) || dyn(object).spec.template.spec.serviceAccount in ["", "default"])))` $hookPattern $teardownPattern $imageCheckPattern)
@@ -582,10 +587,16 @@
       (printf `!variables.isConvergenceMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (%s) : (%s))` $stableMarkerCreateShape $stableMarkerUpdateShape)
       (printf `!variables.isConvergenceMarker || !(request.operation in ["UPDATE", "DELETE"]) || (%s)` $stableMarkerOldShape)
       `!variables.isMarker || request.operation != "UPDATE" || (object.metadata.uid == oldObject.metadata.uid && object.metadata.resourceVersion == oldObject.metadata.resourceVersion)` -}}
+{{- /* This guard matches the convergence marker, so every dry-run probe another
+      guard is the target of passes through it too. The probe carries an unsealed
+      marker unchanged, which the marker contract below refuses; the probe is
+      let through by its field manager and held to dry-run, as the runtime
+      parent guard does. */ -}}
 {{- $hookOriginExactValidations := list -}}
 {{- range $expression := $hookOriginNativeValidations -}}
-{{- $hookOriginExactValidations = append $hookOriginExactValidations (dict "expression" $expression "message" $hookOriginMessage) -}}
+{{- $hookOriginExactValidations = append $hookOriginExactValidations (dict "expression" (printf `variables.isAnyAdmissionConvergenceProbe || (%s)` $expression) "message" $hookOriginMessage) -}}
 {{- end -}}
+{{- $hookOriginExactValidations = append $hookOriginExactValidations (dict "expression" `!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true` "message" $hookOriginMessage) -}}
 {{- $hookOriginSpec := dict
       "failurePolicy" "Fail"
       "matchConstraints" (dict "matchPolicy" "Exact" "namespaceSelector" (dict) "objectSelector" (dict) "resourceRules" (list
@@ -894,24 +905,10 @@ spec:
     - name: release-hook-service-account-pattern
       expression: {{ printf `(%s) || (%s) || (%s)` $hookOriginMatch $parentOriginReadyMatch $stableMarkerObjectMatch | quote }}
   variables:
-    - name: isProtectedJob
-      expression: 'request.resource.group == "batch" && request.resource.version == "v1" && request.resource.resource == "jobs"'
-    - name: isMainWrite
-      expression: 'request.operation in ["CREATE", "UPDATE"] && (!has(request.subResource) || request.subResource == "")'
-    - name: isStatusUpdate
-      expression: 'request.operation == "UPDATE" && has(request.subResource) && request.subResource == "status"'
-    - name: isDelete
-      expression: 'request.operation == "DELETE" && (!has(request.subResource) || request.subResource == "")'
-    - name: effectiveName
-      expression: 'request.operation == "DELETE" && oldObject != null ? oldObject.metadata.name : request.name'
-    - name: isReadinessMarker
-      expression: {{ printf `request.resource.group == "" && request.resource.resource == "configmaps" && variables.effectiveName == %q` $parentOriginReadyName | quote }}
-    - name: isConvergenceMarker
-      expression: {{ printf `request.resource.group == "" && request.resource.resource == "configmaps" && variables.effectiveName.matches(%q)` $stableMarkerPattern | quote }}
-    - name: isMarker
-      expression: 'variables.isReadinessMarker || variables.isConvergenceMarker'
-    - name: isServiceAccountObjectConvergenceProbe
-      expression: {{ $serviceAccountObjectProbeRequest | quote }}
+    {{- range $variable := $hookOriginVariables }}
+    - name: {{ $variable.name }}
+      expression: {{ $variable.expression | quote }}
+    {{- end }}
   validations:
     {{- range $validation := $hookOriginExactValidations }}
     - expression: {{ $validation.expression | quote }}
