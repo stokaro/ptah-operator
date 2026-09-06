@@ -1056,10 +1056,12 @@ dyn(null).spec, the validation errors, and the policy denies.
       (printf "--runtime-deployment-config-expressions-b64=%s" (include "ptah-operator.runtimeDeploymentConfigExpressionsJSON" $root | b64enc))
       (printf "--runtime-pod-config-expressions-b64=%s" (include "ptah-operator.runtimePodConfigExpressionsJSON" $root | b64enc))
       (printf "--runtime-admission-contract-b64=%s" (include "ptah-operator.runtimeAdmissionContractJSON" $root | b64enc)) -}}
+{{- /* ptah-crd-manager refuses --verify-controller-state together with
+      --verify-certificate-recovery, and RolloutGuard compiles the runtime-verify
+      contract with the same exclusion. */ -}}
 {{- if .verifyControllerState -}}
 {{- $args = append $args "--verify-controller-state=true" -}}
-{{- end -}}
-{{- if and (eq .mode "runtime-verify") $root.Values.certificateRotation.recreateMissingSecret -}}
+{{- else if and (eq .mode "runtime-verify") $root.Values.certificateRotation.recreateMissingSecret -}}
 {{- $args = append $args "--verify-certificate-recovery=true" -}}
 {{- end -}}
 {{- $args | toJson -}}
