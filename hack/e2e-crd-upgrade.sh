@@ -2632,11 +2632,25 @@ assert_release_runtime_removed() {
 	CERTIFICATE_STAGING_SECRET_NAME=
 }
 
+# snapshot_runtime_deployment records a runtime Deployment and the field
+# manager that owns it. Helm 4 applies server-side, so restoring the snapshot
+# with kubectl's own manager would leave the object owned by "kubectl-create"
+# and the next helm upgrade would fail with a field-manager conflict over the
+# fields Helm expects to own, instead of upgrading. The restore therefore
+# applies as the manager the live object had, and a Deployment with no
+# server-side apply manager, or more than one, is refused rather than guessed.
 snapshot_runtime_deployment() {
 	deployment_name=$1
 	destination=$2
-	kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$deployment_name" -o json |
-		jq 'del(
+	kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$deployment_name" \
+		--show-managed-fields -o json >"$destination.live"
+	deployment_managers=$(jq -r '
+          [.metadata.managedFields[]? | select(.operation == "Apply") | .manager] | unique
+        ' "$destination.live")
+	[ "$(printf '%s\n' "$deployment_managers" | jq -r 'length')" -eq 1 ] ||
+		fail "runtime Deployment $deployment_name has no single server-side apply field manager to restore: $(printf '%s\n' "$deployment_managers" | jq -c .)"
+	printf '%s\n' "$deployment_managers" | jq -r '.[0]' >"$destination.manager"
+	jq 'del(
           .metadata.creationTimestamp,
           .metadata.generation,
           .metadata.managedFields,
@@ -2644,7 +2658,19 @@ snapshot_runtime_deployment() {
           .metadata.uid,
           .metadata.annotations."deployment.kubernetes.io/revision",
           .status
-        )' >"$destination"
+        )' "$destination.live" >"$destination"
+	rm -f "$destination.live"
+}
+
+# restore_runtime_deployment recreates a snapshot as its recorded owner.
+restore_runtime_deployment() {
+	deployment_snapshot=$1
+	[ -s "$deployment_snapshot" ] || fail "runtime Deployment snapshot $deployment_snapshot is missing"
+	[ -s "$deployment_snapshot.manager" ] ||
+		fail "runtime Deployment snapshot $deployment_snapshot has no recorded field manager"
+	kube apply --server-side \
+		--field-manager="$(cat "$deployment_snapshot.manager")" \
+		-f "$deployment_snapshot" >/dev/null
 }
 
 stop_runtime_deployments() {
@@ -2675,15 +2701,12 @@ stop_controller_deployment() {
 }
 
 start_runtime_deployments() {
-	[ -s "$CONTROLLER_DEPLOYMENT_SNAPSHOT" ] || fail "controller Deployment snapshot is missing"
-	[ -s "$ROTATOR_DEPLOYMENT_SNAPSHOT" ] || fail "certificate Deployment snapshot is missing"
-	kube create -f "$CONTROLLER_DEPLOYMENT_SNAPSHOT" >/dev/null
-	kube create -f "$ROTATOR_DEPLOYMENT_SNAPSHOT" >/dev/null
+	restore_runtime_deployment "$CONTROLLER_DEPLOYMENT_SNAPSHOT"
+	restore_runtime_deployment "$ROTATOR_DEPLOYMENT_SNAPSHOT"
 }
 
 start_controller_deployment() {
-	[ -s "$CONTROLLER_DEPLOYMENT_SNAPSHOT" ] || fail "controller Deployment snapshot is missing"
-	kube create -f "$CONTROLLER_DEPLOYMENT_SNAPSHOT" >/dev/null
+	restore_runtime_deployment "$CONTROLLER_DEPLOYMENT_SNAPSHOT"
 }
 
 assert_explicit_runtime_guard() {
