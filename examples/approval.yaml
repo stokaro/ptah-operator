@@ -1,0 +1,13 @@
+apiVersion: operator.ptah.dev/v1alpha1
+kind: PtahSchemaApproval
+metadata:
+  name: approve-application-plan
+  namespace: application
+spec:
+  schemaRef:
+    name: application
+    uid: <schema-uid>
+  planRef:
+    name: <plan-name>
+    uid: <plan-uid>
+  planFingerprint: sha256:<plan-fingerprint>

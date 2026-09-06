@@ -1,0 +1,25 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ptah-desired-state-author
+  namespace: application
+rules:
+  - apiGroups: ["operator.ptah.dev"]
+    resources: ["ptahschemas"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ptah-desired-state-authors
+  namespace: application
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ptah-desired-state-author
+subjects:
+  # Replace this placeholder with the group that owns desired state. Keep
+  # approval and diagnostic identities in separate bindings.
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: <desired-state-author-group>

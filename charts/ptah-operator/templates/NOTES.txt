@@ -1,0 +1,8 @@
+The operator is installed with credential-isolated execution Jobs.
+
+Create database and registry Secrets only in the namespace of each PtahSchema.
+The controller ClusterRole intentionally has no permission to read Secrets.
+
+The optional ClusterRole {{ include "ptah-operator.fullname" . }}-approver is not
+bound automatically. Bind it only to authenticated identities allowed to create
+exact-plan approvals.

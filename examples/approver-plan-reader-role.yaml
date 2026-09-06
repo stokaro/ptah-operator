@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: review-application-plan
+  namespace: application
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames:
+      # Copy every current .spec.chunks[*].name from the reviewed
+      # PtahSchemaPlan. Replace this Role when a new plan is published.
+      - <plan-chunk-name-000>
+    verbs: ["get"]
