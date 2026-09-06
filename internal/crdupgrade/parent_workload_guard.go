@@ -752,6 +752,12 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 	exact := admissionregistrationv1.Exact
 	name := ParentHookJobOriginGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
 	hookPattern, teardownPattern := g.hookServiceAccountPatterns()
+	// The crd-manager hook seals the convergence marker itself, and its role
+	// names the policies it may touch rather than granting create on the
+	// kind, so the admission-authority test below cannot admit that write.
+	// The seal is the one marker update the hook principal makes; its exact
+	// shape is held by the marker transition validations.
+	hookUsernamePattern := "^system:serviceaccount:" + regexp.QuoteMeta(g.rollout.ReleaseNamespace) + ":" + strings.TrimPrefix(hookPattern, "^")
 	message := parentHookOriginDenialMessage()
 	namespaceGuard := NamespaceDeletionGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
 	authority := parentHookAdmissionAuthorityExpression(namespaceGuard)
@@ -820,7 +826,7 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 				{Expression: `!variables.isProtectedJob || !variables.isStatusUpdate || (` + parentHookStatusPreservesIdentityExpression() + `)`, Message: message},
 				{Expression: `!variables.isProtectedJob || !variables.isDelete || (` + parentHookTerminalJobExpression("oldObject") + `)`, Message: message},
 				{Expression: `!variables.isProtectedJob || !variables.isDelete || (` + authority + `)`, Message: message},
-				{Expression: `!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (` + authority + `)`, Message: message},
+				{Expression: fmt.Sprintf(`!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation == "UPDATE" && request.userInfo.username.matches(%q)) || (%s)`, hookUsernamePattern, authority), Message: message},
 				{Expression: `!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true`, Message: message},
 				{Expression: `!variables.isReadinessMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (` + g.readinessMarkerShapeExpression("object", false) + `) : (` + g.readinessMarkerShapeExpression("object", true) + `))`, Message: message},
 				{Expression: `!variables.isReadinessMarker || !(request.operation in ["UPDATE", "DELETE"]) || (` + g.readinessMarkerShapeExpression("oldObject", true) + `)`, Message: message},

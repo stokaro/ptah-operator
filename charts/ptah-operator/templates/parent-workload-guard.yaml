@@ -266,6 +266,7 @@
 {{- fail "parent workload guard hook ServiceAccount has no stable name prefix" -}}
 {{- end -}}
 {{- $hookPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-crd-v" $hookBase)) -}}
+{{- $hookServiceAccountUsernamePattern := printf "^system:serviceaccount:%s:%s" (regexQuoteMeta .Release.Namespace) (trimPrefix "^" $hookPattern) -}}
 {{- $teardownPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-cleanup-v" $hookBase)) -}}
 {{- $controllerServiceAccountBase := include "ptah-operator.serviceAccountBaseName" . -}}
 {{- if .Values.serviceAccount.create -}}
@@ -473,7 +474,7 @@
       (printf `!variables.isProtectedJob || !variables.isStatusUpdate || (%s)` $statusPreservesIdentity)
       (printf `!variables.isProtectedJob || !variables.isDelete || (%s)` $terminalJob)
       (printf `!variables.isProtectedJob || !variables.isDelete || (%s)` $hookAuthority)
-      (printf `!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (%s)` $hookAuthority)
+      (printf `!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation == "UPDATE" && request.userInfo.username.matches(%q)) || (%s)` $hookServiceAccountUsernamePattern $hookAuthority)
       `!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true`
       (printf `!variables.isReadinessMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (%s) : (%s))` $parentOriginReadyCreateShape $parentOriginReadyStoredShape)
       (printf `!variables.isReadinessMarker || !(request.operation in ["UPDATE", "DELETE"]) || (%s)` $parentOriginReadyOldShape)
