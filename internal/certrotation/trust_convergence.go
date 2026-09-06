@@ -17,6 +17,7 @@ func (r *Rotator) prepareCurrentTrust(
 	ctx context.Context,
 	current certificateMaterial,
 ) (canaryServingMaterial, error) {
+	r.logStep("expanding current CA trust through the admission canary")
 	listener, err := generateServingMaterialForService(
 		r.random,
 		r.now(),
@@ -55,6 +56,7 @@ func (r *Rotator) contractAndParkCurrentTrust(
 	current certificateMaterial,
 	parkedListener canaryServingMaterial,
 ) error {
+	r.logStep("contracting and parking current CA trust through the admission canary")
 	proofConfig := r.config
 	proofConfig.ServiceName = r.config.CandidateServiceName
 	proofConfig.ServiceNamespace = r.config.Namespace
@@ -93,11 +95,18 @@ func (r *Rotator) contractAndParkCurrentTrust(
 }
 
 func (r *Rotator) convergeAdmissionCanary(ctx context.Context, desired AdmissionCanaryDesiredState) error {
+	r.logStep("publishing admission canary mutating entry")
 	if err := r.canary.PublishMutating(ctx, desired); err != nil {
 		return err
 	}
+	r.logStep("publishing admission canary validating entry")
 	if err := r.canary.PublishValidating(ctx, desired); err != nil {
 		return err
 	}
-	return r.canary.Wait(ctx, desired)
+	r.logStep("waiting for admission canary convergence on every API server")
+	if err := r.canary.Wait(ctx, desired); err != nil {
+		return err
+	}
+	r.logStep("admission canary converged on every API server")
+	return nil
 }

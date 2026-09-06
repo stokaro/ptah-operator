@@ -180,6 +180,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 		return fmt.Errorf("validate candidate admission canary: %w", err)
 	}
 	candidateCertificates := &candidateCertificateStore{}
+	config.Logger = logger
 	rotator, err := certrotation.New(client, config, candidateCertificates, canary)
 	if err != nil {
 		return fmt.Errorf("validate certificate rotation configuration: %w", err)
