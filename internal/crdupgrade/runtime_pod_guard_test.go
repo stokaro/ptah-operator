@@ -51,35 +51,35 @@ func TestRuntimePodIdentityPolicyPinsServiceAccountExecutableAndSubresources(t *
 		`"pods/proxy"`,
 		`!has(request.subResource) || request.subResource == \"\"`,
 		`request.userInfo.username in [\"system:kube-controller-manager\", \"system:serviceaccount:kube-system:replicaset-controller\"]`,
-		`object.spec.serviceAccountName == \"ptah-controller-v1\"`,
-		`object.spec.serviceAccountName == \"ptah-cert-rotator\"`,
+		`dyn(object).spec.serviceAccountName == \"ptah-controller-v1\"`,
+		`dyn(object).spec.serviceAccountName == \"ptah-cert-rotator\"`,
 		`variables.activationValid`,
 		`variables.newRelease == variables.activeRelease`,
 		`variables.newState == variables.activeState`,
-		`object.spec.automountServiceAccountToken`,
-		`!object.spec.automountServiceAccountToken`,
+		`dyn(object).spec.automountServiceAccountToken`,
+		`!dyn(object).spec.automountServiceAccountToken`,
 		`v.name == \"api-access\"`,
 		`expirationSeconds == 3600`,
-		`object.spec.containers.size() == 1`,
-		`object.spec.initContainers.size() == 1`,
-		`object.spec.containers[0].command == [\"/manager\"]`,
-		`object.spec.containers[0].command == [\"/ptah-cert-rotator\"]`,
-		`object.spec.initContainers[0].command == [\"/ptah-crd-manager\"]`,
-		`object.spec.containers[0].securityContext.capabilities.drop == [\"ALL\"]`,
-		`!has(object.spec.containers[0].lifecycle)`,
-		`!has(object.spec.ephemeralContainers)`,
-		`!has(object.spec.hostnameOverride)`,
-		`object.spec.topologySpreadConstraints.size() == 0`,
+		`dyn(object).spec.containers.size() == 1`,
+		`dyn(object).spec.initContainers.size() == 1`,
+		`dyn(object).spec.containers[0].command == [\"/manager\"]`,
+		`dyn(object).spec.containers[0].command == [\"/ptah-cert-rotator\"]`,
+		`dyn(object).spec.initContainers[0].command == [\"/ptah-crd-manager\"]`,
+		`dyn(object).spec.containers[0].securityContext.capabilities.drop == [\"ALL\"]`,
+		`!has(dyn(object).spec.containers[0].lifecycle)`,
+		`!has(dyn(object).spec.ephemeralContainers)`,
+		`!has(dyn(object).spec.hostnameOverride)`,
+		`dyn(object).spec.topologySpreadConstraints.size() == 0`,
 		`!has(dyn(object.spec).resources)`,
-		`object.spec.securityContext.fsGroupChangePolicy`,
-		`object.spec.securityContext.supplementalGroupsPolicy`,
+		`dyn(object).spec.securityContext.fsGroupChangePolicy`,
+		`dyn(object).spec.securityContext.supplementalGroupsPolicy`,
 		`object.metadata.ownerReferences[0].kind == \"ReplicaSet\"`,
 		`--controller-runtime-args-b64=`,
 		`--certificate-runtime-args-b64=`,
 		`--runtime-deployment-config-expressions-b64=`,
 		`--runtime-pod-config-expressions-b64=`,
 		`--verify-controller-state=true`,
-		`variables.isController ? has(object.spec.nodeSelector) : true`,
+		`variables.isController ? has(dyn(object).spec.nodeSelector) : true`,
 	} {
 		if !strings.Contains(contract, required) {
 			t.Fatalf("runtime Pod contract does not contain %q", required)
@@ -98,7 +98,7 @@ func TestRuntimePodIdentityPolicyPinsServiceAccountExecutableAndSubresources(t *
 func TestRuntimeHTTPProbeExpressionNormalizesOmittedInitialDelay(t *testing.T) {
 	t.Parallel()
 
-	expression := runtimeHTTPProbeExpression("object.spec.containers[0].readinessProbe", "/readyz", 0, 5, 1, 1)
+	expression := runtimeHTTPProbeExpression("dyn(object).spec.containers[0].readinessProbe", "/readyz", 0, 5, 1, 1)
 	tests := []struct {
 		name         string
 		includeDelay bool
@@ -219,7 +219,7 @@ func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 		)
 	}
 	wantMatch := fmt.Sprintf(
-		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
+		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
 		guard.ReleaseNamespace,
 		guard.ControllerServiceAccountName,
 		guard.CertificateDeploymentName,
@@ -238,8 +238,8 @@ func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 		t.Fatalf("optional ServiceAccount match condition\n got: %#v\nwant: %q", native.Spec.MatchConditions, wantMatch)
 	}
 	wantVariables := map[string]string{
-		"isController":    fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.ControllerServiceAccountName),
-		"isCertificate":   fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, guard.CertificateDeploymentName),
+		"isController":    fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName == %q`, guard.ControllerServiceAccountName),
+		"isCertificate":   fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName == %q`, guard.CertificateDeploymentName),
 		"activationValid": guard.releaseActivationParameterShapeExpression(),
 	}
 	for _, variable := range native.Spec.Variables {
@@ -697,7 +697,7 @@ func TestRuntimePodIdentityVerificationRejectsSpecOrDigestMutation(t *testing.T)
 		t.Fatalf("tampered digest error = %v", err)
 	}
 	changedConfig := *guard
-	changedConfig.RuntimePodConfigExpressions = []string{"variables.isController ? !has(object.spec.nodeSelector) : true"}
+	changedConfig.RuntimePodConfigExpressions = []string{"variables.isController ? !has(dyn(object).spec.nodeSelector) : true"}
 	if err := changedConfig.verifyRuntimePodIdentityPolicy(policy); err == nil || !strings.Contains(err.Error(), "candidate executable contract") {
 		t.Fatalf("changed config digest error = %v", err)
 	}
@@ -812,8 +812,8 @@ func testRenderedRuntimePodGuardMatchesCompiledContract(t *testing.T, environmen
 	guard.RuntimeAdmissionContractB64 = decodedManagerStringArgument(t, controller.Spec.Template.Spec.InitContainers[0].Args, "--runtime-admission-contract-b64=")
 	assertRuntimeDeploymentMinReadySecondsNormalization(t, guard.RuntimeDeploymentConfigExpressions, controller.Name)
 	if environmentVariable == "PTAH_RUNTIME_POD_GUARD_RENDER" {
-		assertRuntimeTolerationNormalization(t, guard.RuntimeDeploymentConfigExpressions, "object.spec.template.spec.tolerations", false)
-		assertRuntimeTolerationNormalization(t, guard.RuntimePodConfigExpressions, "object.spec.tolerations", true)
+		assertRuntimeTolerationNormalization(t, guard.RuntimeDeploymentConfigExpressions, "dyn(object).spec.template.spec.tolerations", false)
+		assertRuntimeTolerationNormalization(t, guard.RuntimePodConfigExpressions, "dyn(object).spec.tolerations", true)
 	}
 	name := RuntimePodGuardPolicyName(guard.ReleaseSequence)
 	wantPolicy, err := guard.runtimePodIdentityPolicy()
@@ -836,7 +836,7 @@ func assertRuntimeDeploymentMinReadySecondsNormalization(t *testing.T, expressio
 	t.Helper()
 	var expression string
 	for _, candidate := range expressions {
-		if !strings.Contains(candidate, "object.spec.minReadySeconds") {
+		if !strings.Contains(candidate, "dyn(object).spec.minReadySeconds") {
 			continue
 		}
 		if expression != "" {
@@ -1022,10 +1022,10 @@ func runtimePodGuardFixture() *RolloutGuard {
 		ReleaseSequence:              1,
 		ManagerImage:                 managerImage,
 		RuntimeDeploymentConfigExpressions: []string{
-			`variables.isController ? has(object.spec.replicas) : true`,
+			`variables.isController ? has(dyn(object).spec.replicas) : true`,
 		},
 		RuntimePodConfigExpressions: []string{
-			`variables.isController ? has(object.spec.nodeSelector) : true`,
+			`variables.isController ? has(dyn(object).spec.nodeSelector) : true`,
 		},
 		RuntimeAdmissionContractB64: testRuntimeAdmissionContractB64,
 		PollEvery:                   time.Millisecond,

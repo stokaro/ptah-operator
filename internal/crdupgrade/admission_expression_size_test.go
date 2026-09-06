@@ -42,12 +42,12 @@ func TestHookExecutableArgumentsUseBoundedCELExpressions(t *testing.T) {
 			policy:           parentGuard.hookJobContractPolicy(),
 			validationPrefix: "!variables.isMainWrite ||",
 			argumentValidationExprs: []string{
-				fmt.Sprintf(`!variables.isMainWrite || (!variables.isImageCheck || object.spec.template.spec.containers[0].args == ["image-check", %q, %q])`, "--release-sequence="+fmt.Sprint(rollout.ReleaseSequence), "--manager-image="+rollout.ManagerImage),
-				fmt.Sprintf(`!variables.isMainWrite || (!variables.isIdentity || %s)`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "identity-probe")),
-				fmt.Sprintf(`!variables.isMainWrite || (!variables.isPreflight || %s)`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "preflight")),
-				fmt.Sprintf(`!variables.isMainWrite || (variables.effectiveName != %q || %s)`, reconcileJob, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "reconcile")),
-				fmt.Sprintf(`!variables.isMainWrite || (!variables.isQuiesce || %s)`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "teardown-quiesce")),
-				fmt.Sprintf(`!variables.isMainWrite || (!variables.isTeardown || %s)`, rollout.hookArgsValidationExpression("object.spec.template.spec.containers[0]", "teardown")),
+				fmt.Sprintf(`!variables.isMainWrite || (!variables.isImageCheck || dyn(object).spec.template.spec.containers[0].args == ["image-check", %q, %q])`, "--release-sequence="+fmt.Sprint(rollout.ReleaseSequence), "--manager-image="+rollout.ManagerImage),
+				fmt.Sprintf(`!variables.isMainWrite || (!variables.isIdentity || %s)`, rollout.hookArgsValidationExpression("dyn(object).spec.template.spec.containers[0]", "identity-probe")),
+				fmt.Sprintf(`!variables.isMainWrite || (!variables.isPreflight || %s)`, rollout.hookArgsValidationExpression("dyn(object).spec.template.spec.containers[0]", "preflight")),
+				fmt.Sprintf(`!variables.isMainWrite || (variables.effectiveName != %q || %s)`, reconcileJob, rollout.hookArgsValidationExpression("dyn(object).spec.template.spec.containers[0]", "reconcile")),
+				fmt.Sprintf(`!variables.isMainWrite || (!variables.isQuiesce || %s)`, rollout.hookArgsValidationExpression("dyn(object).spec.template.spec.containers[0]", "teardown-quiesce")),
+				fmt.Sprintf(`!variables.isMainWrite || (!variables.isTeardown || %s)`, rollout.hookArgsValidationExpression("dyn(object).spec.template.spec.containers[0]", "teardown")),
 			},
 		},
 		{
@@ -88,7 +88,7 @@ func TestHookExecutableArgumentsUseBoundedCELExpressions(t *testing.T) {
 
 func hookPodArgumentValidationExpression(rollout *RolloutGuard, jobName, mode string) string {
 	const jobLabel = `object.metadata.labels["batch.kubernetes.io/job-name"]`
-	return fmt.Sprintf(`%s != %q || %s`, jobLabel, jobName, rollout.hookArgsValidationExpression("object.spec.containers[0]", mode))
+	return fmt.Sprintf(`%s != %q || %s`, jobLabel, jobName, rollout.hookArgsValidationExpression("dyn(object).spec.containers[0]", mode))
 }
 
 func assertAdmissionPolicyCELHeadroom(t *testing.T, description string, policy *admissionregistrationv1.ValidatingAdmissionPolicy) {

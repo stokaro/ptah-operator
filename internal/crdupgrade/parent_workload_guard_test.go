@@ -474,7 +474,7 @@ func TestLegacyParentOriginContractsRemainFrozenAndCoexistWithImageCheck(t *test
 		t.Fatalf("legacy Job origin contract drifted: %#v", legacyJob.Spec)
 	}
 	wantJobMatch := fmt.Sprintf(
-		`request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))`,
+		`request.namespace == %q && ((has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.template.spec.serviceAccountName) && (dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q) || dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q))))`,
 		guard.rollout.ReleaseNamespace, hookPattern, teardownPattern, hookPattern, teardownPattern,
 	)
 	if len(legacyJob.Spec.MatchConditions) != 1 || legacyJob.Spec.MatchConditions[0].Expression != wantJobMatch ||
@@ -488,7 +488,7 @@ func TestLegacyParentOriginContractsRemainFrozenAndCoexistWithImageCheck(t *test
 		len(legacyPod.Spec.Variables) != 1 || legacyPod.Spec.Variables[0].Name != "owner" || len(legacyPod.Spec.Validations) != 7 {
 		t.Fatalf("legacy Pod origin contract drifted: %#v", legacyPod.Spec)
 	}
-	wantPodMatch := fmt.Sprintf(`request.namespace == %q && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))`, guard.rollout.ReleaseNamespace, hookPattern, teardownPattern)
+	wantPodMatch := fmt.Sprintf(`request.namespace == %q && has(dyn(object).spec.serviceAccountName) && (dyn(object).spec.serviceAccountName.matches(%q) || dyn(object).spec.serviceAccountName.matches(%q))`, guard.rollout.ReleaseNamespace, hookPattern, teardownPattern)
 	if len(legacyPod.Spec.MatchConditions) != 1 || legacyPod.Spec.MatchConditions[0].Expression != wantPodMatch ||
 		legacyPod.Spec.Validations[1].Expression != `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]` ||
 		legacyPod.Spec.Validations[6].Expression != generatedPodNameValidationExpression("variables.owner.name") {
@@ -645,12 +645,12 @@ func TestParentReplicaSetGuardPinsControllerOriginAndHashChain(t *testing.T) {
 		`variables.owner.blockOwnerDeletion`,
 		`pod-template-hash`,
 		`matches(\"^[a-z0-9]{1,10}$\")`,
-		`object.spec.selector.matchLabels.size() == 4`,
+		`dyn(object).spec.selector.matchLabels.size() == 4`,
 		`object.metadata.name == variables.expectedDeployment + \"-\" + variables.hash`,
 		`system:serviceaccount:kube-system:generic-garbage-collector`,
 		`variables.isGarbageCollectorCleanup`,
-		`object.spec == oldObject.spec`,
-		`object.status == oldObject.status`,
+		`dyn(object).spec == dyn(oldObject).spec`,
+		`dyn(object).status == dyn(oldObject).status`,
 		`oldObject.metadata.finalizers.filter(finalizer, finalizer == \"foregroundDeletion\").size() == 1`,
 		`object.metadata.finalizers == oldObject.metadata.finalizers.filter(finalizer, finalizer != \"foregroundDeletion\")`,
 	} {
@@ -864,10 +864,10 @@ func TestParentHookJobGuardsCloseFutureGapAndPinExecutable(t *testing.T) {
 		guard.rollout.hookJobName("preflight"),
 		guard.rollout.hookJobName("reconcile"),
 		`object.metadata.annotations.size() == 3`,
-		`object.spec.backoffLimit == 0`,
-		`object.spec.template.spec.containers.size() == 1`,
+		`dyn(object).spec.backoffLimit == 0`,
+		`dyn(object).spec.template.spec.containers.size() == 1`,
 		`quantity(\"5m\")`,
-		`object.spec.template.spec.volumes.size() == 1`,
+		`dyn(object).spec.template.spec.volumes.size() == 1`,
 	} {
 		if !strings.Contains(contract, required) {
 			t.Fatalf("candidate hook parent contract does not contain %q", required)
@@ -885,7 +885,7 @@ func TestParentHookIdentityProbeDeadlineLeavesTerminationMargin(t *testing.T) {
 	policy := stripParentAdmissionConvergenceDependencyProbe(t, NewParentWorkloadGuard(rollout).hookJobContractPolicy())
 	deadlineExpression := ""
 	for _, validation := range policy.Spec.Validations {
-		if strings.Contains(validation.Expression, "object.spec.activeDeadlineSeconds") && !strings.Contains(validation.Expression, "oldObject.spec.activeDeadlineSeconds") {
+		if strings.Contains(validation.Expression, "dyn(object).spec.activeDeadlineSeconds") && !strings.Contains(validation.Expression, "dyn(oldObject).spec.activeDeadlineSeconds") {
 			deadlineExpression = validation.Expression
 			break
 		}
@@ -1144,12 +1144,12 @@ func TestHookAdmissionContractsCloseContainerStatusAndRestartSideChannels(t *tes
 		{
 			name:      "hook Job template",
 			policy:    NewParentWorkloadGuard(rollout).hookJobContractPolicy(),
-			container: "object.spec.template.spec.containers[0]",
+			container: "dyn(object).spec.template.spec.containers[0]",
 		},
 		{
 			name:      "hook Pod",
 			policy:    rollout.hookIdentityPolicy(),
-			container: "object.spec.containers[0]",
+			container: "dyn(object).spec.containers[0]",
 		},
 	}
 
@@ -1192,19 +1192,19 @@ func TestParentWorkloadGuardsScopeOptionalServiceAccounts(t *testing.T) {
 	}{
 		{
 			name: "ReplicaSet", policy: guard.replicaSetPolicy(),
-			required: []string{rollout.ControllerServiceAccountName, rollout.CertificateDeploymentName, "oldObject.spec.template.spec.serviceAccountName"},
+			required: []string{rollout.ControllerServiceAccountName, rollout.CertificateDeploymentName, "dyn(oldObject).spec.template.spec.serviceAccountName"},
 		},
 		{
 			name: "stable hook Job", policy: guard.hookJobOriginPolicy(),
-			required: []string{"object.spec.template.spec.serviceAccountName.matches", "oldObject.spec.template.spec.serviceAccountName.matches", guard.hookImageCheckJobPattern()},
+			required: []string{"dyn(object).spec.template.spec.serviceAccountName.matches", "dyn(oldObject).spec.template.spec.serviceAccountName.matches", guard.hookImageCheckJobPattern()},
 		},
 		{
 			name: "stable hook Pod", policy: guard.hookPodOriginPolicy(),
-			required: []string{"object.spec.serviceAccountName.matches", "oldObject.spec.serviceAccountName.matches", "variables.isMainUpdate", "crd-manager-image-check"},
+			required: []string{"dyn(object).spec.serviceAccountName.matches", "dyn(oldObject).spec.serviceAccountName.matches", "variables.isMainUpdate", "crd-manager-image-check"},
 		},
 		{
 			name: "candidate hook Job", policy: guard.hookJobContractPolicy(), candidate: true,
-			required: []string{rollout.HookServiceAccountName, teardownServiceAccount, guard.hookImageCheckJobName(), "oldObject.spec.template.spec.serviceAccountName"},
+			required: []string{rollout.HookServiceAccountName, teardownServiceAccount, guard.hookImageCheckJobName(), "dyn(oldObject).spec.template.spec.serviceAccountName"},
 		},
 	}
 	for _, test := range tests {

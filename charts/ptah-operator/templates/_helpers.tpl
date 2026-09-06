@@ -906,7 +906,7 @@ app.kubernetes.io/component: controller
 {{- $root := . -}}
 {{- $controllerDeployment := include "ptah-operator.fullname" $root -}}
 {{- $isController := printf `request.name == %q` $controllerDeployment -}}
-{{- $template := "object.spec.template" -}}
+{{- $template := "dyn(object).spec.template" -}}
 {{- $pod := printf "%s.spec" $template -}}
 {{- $init := printf "%s.initContainers[0]" $pod -}}
 {{- $app := printf "%s.containers[0]" $pod -}}
@@ -933,16 +933,16 @@ app.kubernetes.io/component: controller
 {{- $certificateSelector := deepCopy $selectorLabels -}}
 {{- $_ = set $certificateSelector "app.kubernetes.io/component" "certificate-rotation" -}}
 {{- $selectorExpression := printf `%s ? (%s) : (%s)` $isController
-      (include "ptah-operator.celExactStringMapExpression" (dict "path" "object.spec.selector.matchLabels" "values" $controllerSelector))
-      (include "ptah-operator.celExactStringMapExpression" (dict "path" "object.spec.selector.matchLabels" "values" $certificateSelector)) -}}
+      (include "ptah-operator.celExactStringMapExpression" (dict "path" "dyn(object).spec.selector.matchLabels" "values" $controllerSelector))
+      (include "ptah-operator.celExactStringMapExpression" (dict "path" "dyn(object).spec.selector.matchLabels" "values" $certificateSelector)) -}}
 {{- $priorityExpression := printf `(!has(%[1]s.priorityClassName) || %[1]s.priorityClassName == "")` $pod -}}
 {{- if ne $root.Values.priorityClassName "" -}}
 {{- $priorityExpression = printf `has(%[1]s.priorityClassName) && %[1]s.priorityClassName == %[2]q` $pod $root.Values.priorityClassName -}}
 {{- end -}}
 {{- $expressions := list
-      (printf `object.spec.replicas == (%s ? %d : 1)` $isController (int $root.Values.replicaCount))
-      (printf `object.spec.strategy.type == "Recreate" && !has(object.spec.strategy.rollingUpdate) && (!has(object.spec.minReadySeconds) || object.spec.minReadySeconds == 0) && (!has(object.spec.paused) || !object.spec.paused) && has(object.spec.revisionHistoryLimit) && object.spec.revisionHistoryLimit == (%s ? 10 : 2) && has(object.spec.progressDeadlineSeconds) && object.spec.progressDeadlineSeconds == 600` $isController)
-      (printf `has(object.spec.selector) && (%s) && (!has(object.spec.selector.matchExpressions) || object.spec.selector.matchExpressions.size() == 0)` $selectorExpression)
+      (printf `dyn(object).spec.replicas == (%s ? %d : 1)` $isController (int $root.Values.replicaCount))
+      (printf `dyn(object).spec.strategy.type == "Recreate" && !has(dyn(object).spec.strategy.rollingUpdate) && (!has(dyn(object).spec.minReadySeconds) || dyn(object).spec.minReadySeconds == 0) && (!has(dyn(object).spec.paused) || !dyn(object).spec.paused) && has(dyn(object).spec.revisionHistoryLimit) && dyn(object).spec.revisionHistoryLimit == (%s ? 10 : 2) && has(dyn(object).spec.progressDeadlineSeconds) && dyn(object).spec.progressDeadlineSeconds == 600` $isController)
+      (printf `has(dyn(object).spec.selector) && (%s) && (!has(dyn(object).spec.selector.matchExpressions) || dyn(object).spec.selector.matchExpressions.size() == 0)` $selectorExpression)
       (printf `%s ? (%s) : (%s)` $isController (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.labels" $template) "values" $controllerLabels)) (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.labels" $template) "values" $certificateLabels)))
       (printf `%s ? (%s) : (%s)` $isController (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.annotations" $template) "values" $controllerAnnotations)) (include "ptah-operator.celExactStringMapExpression" (dict "path" (printf "%s.metadata.annotations" $template) "values" $certificateAnnotations)))
       (printf `%[1]s.restartPolicy == "Always" && %[1]s.dnsPolicy == "ClusterFirst" && %[1]s.schedulerName == "default-scheduler" && has(%[1]s.terminationGracePeriodSeconds) && %[1]s.terminationGracePeriodSeconds == 30 && (!has(%[1]s.nodeName) || %[1]s.nodeName == "") && !has(%[1]s.hostname) && !has(%[1]s.subdomain) && !has(%[1]s.dnsConfig) && (!has(%[1]s.hostAliases) || %[1]s.hostAliases.size() == 0) && (!has(%[1]s.readinessGates) || %[1]s.readinessGates.size() == 0) && (!has(%[1]s.schedulingGates) || %[1]s.schedulingGates.size() == 0) && !has(%[1]s.runtimeClassName) && !has(dyn(%[1]s).overhead) && !has(%[1]s.os) && (!has(%[1]s.setHostnameAsFQDN) || !%[1]s.setHostnameAsFQDN)` $pod)
@@ -959,9 +959,9 @@ app.kubernetes.io/component: controller
 
 {{- define "ptah-operator.runtimePodConfigExpressionsJSON" -}}
 {{- $root := . -}}
-{{- $pod := "object.spec" -}}
-{{- $init := "object.spec.initContainers[0]" -}}
-{{- $app := "object.spec.containers[0]" -}}
+{{- $pod := "dyn(object).spec" -}}
+{{- $init := "dyn(object).spec.initContainers[0]" -}}
+{{- $app := "dyn(object).spec.containers[0]" -}}
 {{- $initResources := dict "requests" (dict "cpu" "5m" "memory" "16Mi") "limits" (dict "memory" "32Mi") -}}
 {{- $podPullPolicy := $root.Values.image.pullPolicy -}}
 {{- if $root.Values.admission.alwaysPullImagesEnabled -}}

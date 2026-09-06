@@ -148,7 +148,7 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 				{
 					Name: "runtime-service-account-or-pod",
 					Expression: fmt.Sprintf(
-						`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
+						`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
 						g.ReleaseNamespace,
 						g.ControllerServiceAccountName,
 						g.CertificateDeploymentName,
@@ -162,14 +162,14 @@ func (g *RolloutGuard) runtimePodIdentityPolicy() (*admissionregistrationv1.Vali
 			},
 			Variables: []admissionregistrationv1.Variable{
 				{Name: "isPod", Expression: `!has(request.subResource) || request.subResource == ""`},
-				{Name: "isController", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, g.ControllerServiceAccountName)},
-				{Name: "isCertificate", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.spec.serviceAccountName) && object.spec.serviceAccountName == %q`, g.CertificateDeploymentName)},
+				{Name: "isController", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName == %q`, g.ControllerServiceAccountName)},
+				{Name: "isCertificate", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName == %q`, g.CertificateDeploymentName)},
 				{Name: "newState", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "newRelease", Expression: fmt.Sprintf(`(!has(request.subResource) || request.subResource == "") && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
 				{Name: "activationValid", Expression: g.releaseActivationParameterShapeExpression()},
 				{Name: "activeRelease", Expression: fmt.Sprintf(`params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1`, activeReleaseDataKey, activeReleaseDataKey, activeReleaseDataKey)},
 				{Name: "activeState", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
-				{Name: "apiVolumes", Expression: `(!has(request.subResource) || request.subResource == "") && has(object.spec.volumes) ? object.spec.volumes.filter(v, v.name == "api-access") : []`},
+				{Name: "apiVolumes", Expression: `(!has(request.subResource) || request.subResource == "") && has(dyn(object).spec.volumes) ? dyn(object).spec.volumes.filter(v, v.name == "api-access") : []`},
 			},
 			Validations: validations,
 		},
@@ -453,7 +453,7 @@ func (g *RolloutGuard) controllerPodContractExpressions(contract runtimePodContr
 		g.runtimePodSpecExpression(true),
 		g.runtimeInitContainerExpression(true),
 		g.runtimeApplicationContainerExpression("manager", "/manager", contract.controllerArgsJSON),
-		`(!has(object.spec.containers[0].env) || object.spec.containers[0].env.size() == 0)`,
+		`(!has(dyn(object).spec.containers[0].env) || dyn(object).spec.containers[0].env.size() == 0)`,
 		g.controllerPortsAndProbesExpression(contract.controllerPort),
 		g.controllerVolumesExpression(contract.webhookSecretName),
 	}
@@ -540,23 +540,23 @@ func runtimePodRequestNameExpression(nameExpression, deploymentName string) stri
 }
 
 func (g *RolloutGuard) runtimePodSpecExpression(controller bool) string {
-	fsGroup := `!has(object.spec.securityContext.fsGroup) && !has(object.spec.securityContext.fsGroupChangePolicy)`
+	fsGroup := `!has(dyn(object).spec.securityContext.fsGroup) && !has(dyn(object).spec.securityContext.fsGroupChangePolicy)`
 	if controller {
-		fsGroup = `has(object.spec.securityContext.fsGroup) && object.spec.securityContext.fsGroup == 65532 && (!has(object.spec.securityContext.fsGroupChangePolicy) || object.spec.securityContext.fsGroupChangePolicy == "Always")`
+		fsGroup = `has(dyn(object).spec.securityContext.fsGroup) && dyn(object).spec.securityContext.fsGroup == 65532 && (!has(dyn(object).spec.securityContext.fsGroupChangePolicy) || dyn(object).spec.securityContext.fsGroupChangePolicy == "Always")`
 	}
 	return fmt.Sprintf(
-		`has(object.spec.automountServiceAccountToken) && !object.spec.automountServiceAccountToken && has(object.spec.enableServiceLinks) && !object.spec.enableServiceLinks && object.spec.restartPolicy == "Always" && object.spec.dnsPolicy == "ClusterFirst" && object.spec.schedulerName == "default-scheduler" && has(object.spec.terminationGracePeriodSeconds) && object.spec.terminationGracePeriodSeconds == 30 && %s && (!has(object.spec.hostNetwork) || !object.spec.hostNetwork) && (!has(object.spec.hostPID) || !object.spec.hostPID) && (!has(object.spec.hostIPC) || !object.spec.hostIPC) && (!has(object.spec.hostUsers) || object.spec.hostUsers) && (!has(object.spec.shareProcessNamespace) || !object.spec.shareProcessNamespace) && !has(object.spec.runtimeClassName) && !has(object.spec.activeDeadlineSeconds) && (!has(object.spec.hostAliases) || object.spec.hostAliases.size() == 0) && !has(object.spec.dnsConfig) && !has(object.spec.hostname) && !has(object.spec.hostnameOverride) && !has(object.spec.subdomain) && (!has(object.spec.setHostnameAsFQDN) || !object.spec.setHostnameAsFQDN) && (!has(object.spec.readinessGates) || object.spec.readinessGates.size() == 0) && (!has(object.spec.schedulingGates) || object.spec.schedulingGates.size() == 0) && (!has(object.spec.topologySpreadConstraints) || object.spec.topologySpreadConstraints.size() == 0) && !has(dyn(object.spec).overhead) && !has(object.spec.os) && !has(dyn(object.spec).resources) && (!has(object.spec.resourceClaims) || object.spec.resourceClaims.size() == 0) && has(object.spec.securityContext) && has(object.spec.securityContext.runAsNonRoot) && object.spec.securityContext.runAsNonRoot && has(object.spec.securityContext.runAsUser) && object.spec.securityContext.runAsUser == 65532 && has(object.spec.securityContext.runAsGroup) && object.spec.securityContext.runAsGroup == 65532 && has(object.spec.securityContext.seccompProfile) && object.spec.securityContext.seccompProfile.type == "RuntimeDefault" && !has(object.spec.securityContext.seccompProfile.localhostProfile) && %s && (!has(object.spec.securityContext.supplementalGroups) || object.spec.securityContext.supplementalGroups.size() == 0) && (!has(object.spec.securityContext.supplementalGroupsPolicy) || object.spec.securityContext.supplementalGroupsPolicy == "Merge") && (!has(object.spec.securityContext.sysctls) || object.spec.securityContext.sysctls.size() == 0) && !has(object.spec.securityContext.seLinuxOptions) && !has(object.spec.securityContext.seLinuxChangePolicy) && !has(object.spec.securityContext.windowsOptions) && !has(object.spec.securityContext.appArmorProfile) && has(object.spec.containers) && object.spec.containers.size() == 1 && has(object.spec.initContainers) && object.spec.initContainers.size() == 1 && (!has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.size() == 0) && has(object.spec.volumes) && variables.apiVolumes.size() == 1 && %s`,
+		`has(dyn(object).spec.automountServiceAccountToken) && !dyn(object).spec.automountServiceAccountToken && has(dyn(object).spec.enableServiceLinks) && !dyn(object).spec.enableServiceLinks && dyn(object).spec.restartPolicy == "Always" && dyn(object).spec.dnsPolicy == "ClusterFirst" && dyn(object).spec.schedulerName == "default-scheduler" && has(dyn(object).spec.terminationGracePeriodSeconds) && dyn(object).spec.terminationGracePeriodSeconds == 30 && %s && (!has(dyn(object).spec.hostNetwork) || !dyn(object).spec.hostNetwork) && (!has(dyn(object).spec.hostPID) || !dyn(object).spec.hostPID) && (!has(dyn(object).spec.hostIPC) || !dyn(object).spec.hostIPC) && (!has(dyn(object).spec.hostUsers) || dyn(object).spec.hostUsers) && (!has(dyn(object).spec.shareProcessNamespace) || !dyn(object).spec.shareProcessNamespace) && !has(dyn(object).spec.runtimeClassName) && !has(dyn(object).spec.activeDeadlineSeconds) && (!has(dyn(object).spec.hostAliases) || dyn(object).spec.hostAliases.size() == 0) && !has(dyn(object).spec.dnsConfig) && !has(dyn(object).spec.hostname) && !has(dyn(object).spec.hostnameOverride) && !has(dyn(object).spec.subdomain) && (!has(dyn(object).spec.setHostnameAsFQDN) || !dyn(object).spec.setHostnameAsFQDN) && (!has(dyn(object).spec.readinessGates) || dyn(object).spec.readinessGates.size() == 0) && (!has(dyn(object).spec.schedulingGates) || dyn(object).spec.schedulingGates.size() == 0) && (!has(dyn(object).spec.topologySpreadConstraints) || dyn(object).spec.topologySpreadConstraints.size() == 0) && !has(dyn(object.spec).overhead) && !has(dyn(object).spec.os) && !has(dyn(object.spec).resources) && (!has(dyn(object).spec.resourceClaims) || dyn(object).spec.resourceClaims.size() == 0) && has(dyn(object).spec.securityContext) && has(dyn(object).spec.securityContext.runAsNonRoot) && dyn(object).spec.securityContext.runAsNonRoot && has(dyn(object).spec.securityContext.runAsUser) && dyn(object).spec.securityContext.runAsUser == 65532 && has(dyn(object).spec.securityContext.runAsGroup) && dyn(object).spec.securityContext.runAsGroup == 65532 && has(dyn(object).spec.securityContext.seccompProfile) && dyn(object).spec.securityContext.seccompProfile.type == "RuntimeDefault" && !has(dyn(object).spec.securityContext.seccompProfile.localhostProfile) && %s && (!has(dyn(object).spec.securityContext.supplementalGroups) || dyn(object).spec.securityContext.supplementalGroups.size() == 0) && (!has(dyn(object).spec.securityContext.supplementalGroupsPolicy) || dyn(object).spec.securityContext.supplementalGroupsPolicy == "Merge") && (!has(dyn(object).spec.securityContext.sysctls) || dyn(object).spec.securityContext.sysctls.size() == 0) && !has(dyn(object).spec.securityContext.seLinuxOptions) && !has(dyn(object).spec.securityContext.seLinuxChangePolicy) && !has(dyn(object).spec.securityContext.windowsOptions) && !has(dyn(object).spec.securityContext.appArmorProfile) && has(dyn(object).spec.containers) && dyn(object).spec.containers.size() == 1 && has(dyn(object).spec.initContainers) && dyn(object).spec.initContainers.size() == 1 && (!has(dyn(object).spec.ephemeralContainers) || dyn(object).spec.ephemeralContainers.size() == 0) && has(dyn(object).spec.volumes) && variables.apiVolumes.size() == 1 && %s`,
 		runtimePodNodeNameExpression(), fsGroup, runtimeAPIVolumeExpression("variables.apiVolumes[0]"),
 	)
 }
 
 func runtimePodNodeNameExpression() string {
-	return `(request.operation != "CREATE" || !has(object.spec.nodeName) || object.spec.nodeName == "") && (request.operation != "UPDATE" || ((has(object.spec.nodeName) == has(oldObject.spec.nodeName)) && (!has(object.spec.nodeName) || object.spec.nodeName == oldObject.spec.nodeName)))`
+	return `(request.operation != "CREATE" || !has(dyn(object).spec.nodeName) || dyn(object).spec.nodeName == "") && (request.operation != "UPDATE" || ((has(dyn(object).spec.nodeName) == has(dyn(oldObject).spec.nodeName)) && (!has(dyn(object).spec.nodeName) || dyn(object).spec.nodeName == dyn(oldObject).spec.nodeName)))`
 }
 
 func (g *RolloutGuard) runtimeInitContainerExpression(controller bool) string {
 	args, _ := runtimeArgsJSON(g.verifierArgs(controller), "runtime verifier")
-	container := "object.spec.initContainers[0]"
+	container := "dyn(object).spec.initContainers[0]"
 	return strings.Join([]string{
 		fmt.Sprintf(`%s.name == "verify-candidate-runtime"`, container),
 		fmt.Sprintf(`%s.image == %q`, container, g.ManagerImage),
@@ -570,7 +570,7 @@ func (g *RolloutGuard) runtimeInitContainerExpression(controller bool) string {
 }
 
 func (g *RolloutGuard) runtimeApplicationContainerExpression(name, command, argsJSON string) string {
-	container := "object.spec.containers[0]"
+	container := "dyn(object).spec.containers[0]"
 	return strings.Join([]string{
 		fmt.Sprintf(`%s.name == %q`, container, name),
 		fmt.Sprintf(`%s.image == %q`, container, g.ManagerImage),
@@ -618,24 +618,24 @@ func runtimeAPIMountExpression(mount string) string {
 }
 
 func (g *RolloutGuard) controllerVolumesExpression(secretName string) string {
-	container := "object.spec.containers[0]"
+	container := "dyn(object).spec.containers[0]"
 	return fmt.Sprintf(
-		`object.spec.volumes.size() == 3 && object.spec.volumes.all(v, v.name in ["webhook-cert", "tmp"] || v.name == variables.apiVolumes[0].name) && object.spec.volumes.exists(v, v.name == "webhook-cert" && has(v.secret) && v.secret.secretName == %q && has(v.secret.defaultMode) && v.secret.defaultMode == 420 && (!has(v.secret.optional) || !v.secret.optional) && has(v.secret.items) && v.secret.items.size() == 2 && v.secret.items.exists(i, i.key == "tls.crt" && i.path == "tls.crt" && !has(i.mode)) && v.secret.items.exists(i, i.key == "tls.key" && i.path == "tls.key" && !has(i.mode)) && v.secret.items.all(i, i.key in ["tls.crt", "tls.key"])) && object.spec.volumes.exists(v, v.name == "tmp" && has(v.emptyDir) && (!has(v.emptyDir.medium) || v.emptyDir.medium == "") && has(dyn(v.emptyDir).sizeLimit)) && has(%s.volumeMounts) && %s.volumeMounts.size() == 3 && %s.volumeMounts.exists(m, m.name == "webhook-cert" && m.mountPath == "/certs" && has(m.readOnly) && m.readOnly && !has(m.mountPropagation) && !has(m.subPath) && !has(m.subPathExpr)) && %s.volumeMounts.exists(m, m.name == "tmp" && m.mountPath == "/tmp" && (!has(m.readOnly) || !m.readOnly) && !has(m.mountPropagation) && !has(m.subPath) && !has(m.subPathExpr)) && %s.volumeMounts.exists(m, %s) && %s.volumeMounts.all(m, m.name in ["webhook-cert", "tmp"] || m.name == variables.apiVolumes[0].name)`,
+		`dyn(object).spec.volumes.size() == 3 && dyn(object).spec.volumes.all(v, v.name in ["webhook-cert", "tmp"] || v.name == variables.apiVolumes[0].name) && dyn(object).spec.volumes.exists(v, v.name == "webhook-cert" && has(v.secret) && v.secret.secretName == %q && has(v.secret.defaultMode) && v.secret.defaultMode == 420 && (!has(v.secret.optional) || !v.secret.optional) && has(v.secret.items) && v.secret.items.size() == 2 && v.secret.items.exists(i, i.key == "tls.crt" && i.path == "tls.crt" && !has(i.mode)) && v.secret.items.exists(i, i.key == "tls.key" && i.path == "tls.key" && !has(i.mode)) && v.secret.items.all(i, i.key in ["tls.crt", "tls.key"])) && dyn(object).spec.volumes.exists(v, v.name == "tmp" && has(v.emptyDir) && (!has(v.emptyDir.medium) || v.emptyDir.medium == "") && has(dyn(v.emptyDir).sizeLimit)) && has(%s.volumeMounts) && %s.volumeMounts.size() == 3 && %s.volumeMounts.exists(m, m.name == "webhook-cert" && m.mountPath == "/certs" && has(m.readOnly) && m.readOnly && !has(m.mountPropagation) && !has(m.subPath) && !has(m.subPathExpr)) && %s.volumeMounts.exists(m, m.name == "tmp" && m.mountPath == "/tmp" && (!has(m.readOnly) || !m.readOnly) && !has(m.mountPropagation) && !has(m.subPath) && !has(m.subPathExpr)) && %s.volumeMounts.exists(m, %s) && %s.volumeMounts.all(m, m.name in ["webhook-cert", "tmp"] || m.name == variables.apiVolumes[0].name)`,
 		secretName, container, container, container, container, container,
 		runtimeAPIMountExpression("m"), container,
 	)
 }
 
 func runtimeCertificateVolumesExpression() string {
-	container := "object.spec.containers[0]"
+	container := "dyn(object).spec.containers[0]"
 	return fmt.Sprintf(
-		`object.spec.volumes.size() == 1 && object.spec.volumes[0].name == variables.apiVolumes[0].name && has(%s.volumeMounts) && %s.volumeMounts.size() == 1 && %s`,
+		`dyn(object).spec.volumes.size() == 1 && dyn(object).spec.volumes[0].name == variables.apiVolumes[0].name && has(%s.volumeMounts) && %s.volumeMounts.size() == 1 && %s`,
 		container, container, runtimeAPIMountExpression(container+".volumeMounts[0]"),
 	)
 }
 
 func (g *RolloutGuard) controllerPortsAndProbesExpression(webhookPort int64) string {
-	container := "object.spec.containers[0]"
+	container := "dyn(object).spec.containers[0]"
 	return fmt.Sprintf(
 		`has(%s.ports) && %s.ports.size() == 3 && %s.ports.all(p, p.protocol == "TCP" && (!has(p.hostIP) || p.hostIP == "") && (!has(p.hostPort) || p.hostPort == 0)) && %s.ports.exists(p, p.name == "metrics" && p.containerPort == 8080) && %s.ports.exists(p, p.name == "health" && p.containerPort == 8081) && %s.ports.exists(p, p.name == "webhook" && p.containerPort == %d) && %s && %s && !has(%s.startupProbe)`,
 		container, container, container, container, container, container, webhookPort,
@@ -646,7 +646,7 @@ func (g *RolloutGuard) controllerPortsAndProbesExpression(webhookPort int64) str
 }
 
 func (g *RolloutGuard) certificatePortsAndProbesExpression(healthPort, candidatePort int64) string {
-	container := "object.spec.containers[0]"
+	container := "dyn(object).spec.containers[0]"
 	if g.AdmissionContractVersion >= 2 {
 		return fmt.Sprintf(
 			`has(%[1]s.ports) && %[1]s.ports.size() == 2 && %[1]s.ports.all(p, p.protocol == "TCP" && (!has(p.hostIP) || p.hostIP == "") && (!has(p.hostPort) || p.hostPort == 0)) && %[1]s.ports.exists(p, p.name == "health" && p.containerPort == %[2]d) && %[1]s.ports.exists(p, p.name == "candidate" && p.containerPort == %[3]d) && %[4]s && %[5]s && !has(%[1]s.startupProbe)`,
@@ -689,7 +689,7 @@ func runtimeHTTPProbeExpression(probe, path string, initialDelay, period, timeou
 }
 
 func runtimeCertificateEnvironmentExpression() string {
-	container := "object.spec.containers[0]"
+	container := "dyn(object).spec.containers[0]"
 	return fmt.Sprintf(
 		`has(%s.env) && %s.env.size() == 2 && %s.env.all(e, e.name in ["POD_NAME", "POD_UID"] && (!has(e.value) || e.value == "") && has(e.valueFrom) && has(e.valueFrom.fieldRef) && (!has(e.valueFrom.fieldRef.apiVersion) || e.valueFrom.fieldRef.apiVersion == "v1") && !has(e.valueFrom.resourceFieldRef) && !has(e.valueFrom.configMapKeyRef) && !has(e.valueFrom.secretKeyRef)) && %s.env.exists(e, e.name == "POD_NAME" && e.valueFrom.fieldRef.fieldPath == "metadata.name") && %s.env.exists(e, e.name == "POD_UID" && e.valueFrom.fieldRef.fieldPath == "metadata.uid")`,
 		container, container, container, container, container,

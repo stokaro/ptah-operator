@@ -5865,8 +5865,8 @@ controller_write_guard_name=$(awk '
 for controller_write_marker in \
 	'helm.sh/hook-weight: "-158"' \
 	'helm.sh/hook-weight: "-157"' \
-	'object.spec == oldObject.spec' \
-	'object.status == oldObject.status' \
+	'dyn(object).spec == dyn(oldObject).spec' \
+	'dyn(object).status == dyn(oldObject).status' \
 	'operator.ptah.dev/active-operation' \
 	'Ptah controller write guard rejected a desired-state mutation'; do
 	grep -F -- "$controller_write_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
@@ -5976,10 +5976,10 @@ for controller_object_marker in \
 	'resources: ["jobs"]' \
 	'resources: ["configmaps"]' \
 	'resources: ["ptahschemaplans"]' \
-	'object.spec.ttlSecondsAfterFinished == 300' \
+	'dyn(object).spec.ttlSecondsAfterFinished == 300' \
 	'object.binaryData[\"chunk\"].size() <= 524288' \
-	'object.spec.contractVersion == 2' \
-	'object.spec.contractVersion == 3' \
+	'dyn(object).spec.contractVersion == 2' \
+	'dyn(object).spec.contractVersion == 3' \
 	'Ptah controller Job write guard rejected an unsafe workload shape' \
 	'Ptah controller chunk write guard rejected an unsafe ConfigMap shape' \
 	'Ptah controller plan write guard rejected an unsafe manifest shape'; do

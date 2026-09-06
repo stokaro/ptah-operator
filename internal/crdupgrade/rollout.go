@@ -1171,7 +1171,7 @@ func deploymentStopTransitionExpression() string {
 	stateAnnotation := strconv.Quote(ControllerStateVersionAnnotation)
 	releaseAnnotation := strconv.Quote(ReleaseSequenceAnnotation)
 	return fmt.Sprintf(
-		`variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation == "UPDATE" && oldObject != null && variables.activationValid && variables.newRelease > variables.activeRelease && variables.newState > 0 && variables.isReleaseHook && has(object.spec.replicas) && object.spec.replicas == 0 && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) == has(oldObject.metadata.uid) && (!has(object.metadata.uid) || object.metadata.uid == oldObject.metadata.uid) && object.metadata.labels == oldObject.metadata.labels && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.metadata.annotations) && %[1]s in object.metadata.annotations && object.metadata.annotations[%[1]s] == string(variables.newState) && %[2]s in object.metadata.annotations && object.metadata.annotations[%[2]s] == string(variables.newRelease) && object.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (has(oldObject.metadata.annotations) && key in oldObject.metadata.annotations && object.metadata.annotations[key] == oldObject.metadata.annotations[key])) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (key in object.metadata.annotations && oldObject.metadata.annotations[key] == object.metadata.annotations[key]))) && object.spec.template == oldObject.spec.template && object.spec.selector == oldObject.spec.selector && (has(object.spec.strategy) == has(oldObject.spec.strategy)) && (!has(object.spec.strategy) || object.spec.strategy == oldObject.spec.strategy) && (has(object.spec.minReadySeconds) == has(oldObject.spec.minReadySeconds)) && (!has(object.spec.minReadySeconds) || object.spec.minReadySeconds == oldObject.spec.minReadySeconds) && (has(object.spec.revisionHistoryLimit) == has(oldObject.spec.revisionHistoryLimit)) && (!has(object.spec.revisionHistoryLimit) || object.spec.revisionHistoryLimit == oldObject.spec.revisionHistoryLimit) && (has(object.spec.paused) == has(oldObject.spec.paused)) && (!has(object.spec.paused) || object.spec.paused == oldObject.spec.paused) && (has(object.spec.progressDeadlineSeconds) == has(oldObject.spec.progressDeadlineSeconds)) && (!has(object.spec.progressDeadlineSeconds) || object.spec.progressDeadlineSeconds == oldObject.spec.progressDeadlineSeconds)`,
+		`variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation == "UPDATE" && oldObject != null && variables.activationValid && variables.newRelease > variables.activeRelease && variables.newState > 0 && variables.isReleaseHook && has(dyn(object).spec.replicas) && dyn(object).spec.replicas == 0 && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) == has(oldObject.metadata.uid) && (!has(object.metadata.uid) || object.metadata.uid == oldObject.metadata.uid) && object.metadata.labels == oldObject.metadata.labels && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.metadata.annotations) && %[1]s in object.metadata.annotations && object.metadata.annotations[%[1]s] == string(variables.newState) && %[2]s in object.metadata.annotations && object.metadata.annotations[%[2]s] == string(variables.newRelease) && object.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (has(oldObject.metadata.annotations) && key in oldObject.metadata.annotations && object.metadata.annotations[key] == oldObject.metadata.annotations[key])) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (key in object.metadata.annotations && oldObject.metadata.annotations[key] == object.metadata.annotations[key]))) && dyn(object).spec.template == dyn(oldObject).spec.template && dyn(object).spec.selector == dyn(oldObject).spec.selector && (has(dyn(object).spec.strategy) == has(dyn(oldObject).spec.strategy)) && (!has(dyn(object).spec.strategy) || dyn(object).spec.strategy == dyn(oldObject).spec.strategy) && (has(dyn(object).spec.minReadySeconds) == has(dyn(oldObject).spec.minReadySeconds)) && (!has(dyn(object).spec.minReadySeconds) || dyn(object).spec.minReadySeconds == dyn(oldObject).spec.minReadySeconds) && (has(dyn(object).spec.revisionHistoryLimit) == has(dyn(oldObject).spec.revisionHistoryLimit)) && (!has(dyn(object).spec.revisionHistoryLimit) || dyn(object).spec.revisionHistoryLimit == dyn(oldObject).spec.revisionHistoryLimit) && (has(dyn(object).spec.paused) == has(dyn(oldObject).spec.paused)) && (!has(dyn(object).spec.paused) || dyn(object).spec.paused == dyn(oldObject).spec.paused) && (has(dyn(object).spec.progressDeadlineSeconds) == has(dyn(oldObject).spec.progressDeadlineSeconds)) && (!has(dyn(object).spec.progressDeadlineSeconds) || dyn(object).spec.progressDeadlineSeconds == dyn(oldObject).spec.progressDeadlineSeconds)`,
 		stateAnnotation,
 		releaseAnnotation,
 	)
@@ -1326,7 +1326,7 @@ func (g *RolloutGuard) hookIdentityPolicy() *admissionregistrationv1.ValidatingA
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "fixed-hook-identity",
 				Expression: fmt.Sprintf(
-					`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
+					`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
 					g.ReleaseNamespace, g.HookServiceAccountName, teardownServiceAccount, g.HookServiceAccountName, teardownServiceAccount,
 					generatedPodRequestNameExpression(identityJob), generatedPodRequestNameExpression(preflightJob), generatedPodRequestNameExpression(reconcileJob), generatedPodRequestNameExpression(quiesceJob), generatedPodRequestNameExpression(teardownJob),
 				),
@@ -1436,7 +1436,7 @@ func generatedPodNameValidationExpression(ownerName string) string {
 }
 
 func (g *RolloutGuard) hookPodValidationExpressions(identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, teardownServiceAccount string) []string {
-	pod := "object.spec"
+	pod := "dyn(object).spec"
 	container := pod + ".containers[0]"
 	volume := pod + ".volumes[0]"
 	sources := volume + ".projected.sources"
@@ -1451,7 +1451,7 @@ func (g *RolloutGuard) hookPodValidationExpressions(identityJob, preflightJob, r
 		fmt.Sprintf(`has(%[1]s.uid) && %[1]s.uid != "" && has(%[1]s.blockOwnerDeletion) && %[1]s.blockOwnerDeletion && %[2]s`, owner, generatedPodNameValidationExpression(owner+".name")),
 		fmt.Sprintf(`%s.restartPolicy == "Never"`, pod),
 		fmt.Sprintf(`request.operation != "CREATE" || !has(%[1]s.nodeName) || %[1]s.nodeName == ""`, pod),
-		fmt.Sprintf(`request.operation != "UPDATE" || ((!has(%[1]s.nodeName) && !has(oldObject.spec.nodeName)) || (has(%[1]s.nodeName) && has(oldObject.spec.nodeName) && %[1]s.nodeName == oldObject.spec.nodeName))`, pod),
+		fmt.Sprintf(`request.operation != "UPDATE" || ((!has(%[1]s.nodeName) && !has(dyn(oldObject).spec.nodeName)) || (has(%[1]s.nodeName) && has(dyn(oldObject).spec.nodeName) && %[1]s.nodeName == dyn(oldObject).spec.nodeName))`, pod),
 		fmt.Sprintf(`has(%s.automountServiceAccountToken) && !%s.automountServiceAccountToken`, pod, pod),
 		fmt.Sprintf(`!has(%s.hostNetwork) || !%s.hostNetwork`, pod, pod),
 		fmt.Sprintf(`!has(%s.hostPID) || !%s.hostPID`, pod, pod),
@@ -1561,13 +1561,13 @@ func (g *RolloutGuard) releaseHookUsernameExpression() string {
 }
 
 func (g *RolloutGuard) runtimeDeploymentValidationExpressions(managerImage string) []string {
-	pod := "object.spec.template.spec"
+	pod := "dyn(object).spec.template.spec"
 	initContainer := pod + ".initContainers[0]"
 	container := pod + ".containers[0]"
 	isController := fmt.Sprintf(`request.name == %q`, g.ControllerDeploymentName)
 	candidatePort, _ := g.certificateCandidateRuntimePort()
 	return []string{
-		`object.spec.strategy.type == "Recreate" && variables.templateState == string(variables.newState) && variables.templateRelease == string(variables.newRelease)`,
+		`dyn(object).spec.strategy.type == "Recreate" && variables.templateState == string(variables.newState) && variables.templateRelease == string(variables.newRelease)`,
 		fmt.Sprintf(`%[1]s.serviceAccountName == variables.runtimeServiceAccount && has(%[1]s.automountServiceAccountToken) && !%[1]s.automountServiceAccountToken && has(%[1]s.enableServiceLinks) && !%[1]s.enableServiceLinks`, pod),
 		fmt.Sprintf(`(!has(%[1]s.hostNetwork) || !%[1]s.hostNetwork) && (!has(%[1]s.hostPID) || !%[1]s.hostPID) && (!has(%[1]s.hostIPC) || !%[1]s.hostIPC) && (!has(%[1]s.shareProcessNamespace) || !%[1]s.shareProcessNamespace) && !has(%[1]s.runtimeClassName) && !has(%[1]s.activeDeadlineSeconds)`, pod),
 		fmt.Sprintf(`has(%[1]s.securityContext) && has(%[1]s.securityContext.runAsNonRoot) && %[1]s.securityContext.runAsNonRoot && has(%[1]s.securityContext.runAsUser) && %[1]s.securityContext.runAsUser == 65532 && has(%[1]s.securityContext.runAsGroup) && %[1]s.securityContext.runAsGroup == 65532 && has(%[1]s.securityContext.seccompProfile) && %[1]s.securityContext.seccompProfile.type == "RuntimeDefault" && !has(%[1]s.securityContext.seLinuxOptions) && !has(%[1]s.securityContext.windowsOptions) && (!has(%[1]s.securityContext.sysctls) || %[1]s.securityContext.sysctls.size() == 0) && (%[2]s ? (has(%[1]s.securityContext.fsGroup) && %[1]s.securityContext.fsGroup == 65532) : !has(%[1]s.securityContext.fsGroup))`, pod, isController),
@@ -1639,10 +1639,10 @@ func runtimeActiveDeploymentIdentityExpression() string {
 		`variables.activeRelease == 0`,
 		annotationAbsentExpression("object", ControllerStateVersionAnnotation),
 		annotationAbsentExpression("object", ReleaseSequenceAnnotation),
-		annotationAbsentExpression("object.spec.template", ControllerStateVersionAnnotation),
-		annotationAbsentExpression("object.spec.template", ReleaseSequenceAnnotation),
+		annotationAbsentExpression("dyn(object).spec.template", ControllerStateVersionAnnotation),
+		annotationAbsentExpression("dyn(object).spec.template", ReleaseSequenceAnnotation),
 	}, " && ")
-	active := `variables.activeRelease > 0 && variables.newState == variables.activeState && variables.newRelease == variables.activeRelease && variables.templateState == string(variables.activeState) && variables.templateRelease == string(variables.activeRelease) && object.spec.template.spec.containers.size() == 1 && object.spec.template.spec.containers[0].image == variables.activeImage && has(object.spec.template.spec.initContainers) && object.spec.template.spec.initContainers.size() == 1 && object.spec.template.spec.initContainers[0].image == variables.activeImage`
+	active := `variables.activeRelease > 0 && variables.newState == variables.activeState && variables.newRelease == variables.activeRelease && variables.templateState == string(variables.activeState) && variables.templateRelease == string(variables.activeRelease) && dyn(object).spec.template.spec.containers.size() == 1 && dyn(object).spec.template.spec.containers[0].image == variables.activeImage && has(dyn(object).spec.template.spec.initContainers) && dyn(object).spec.template.spec.initContainers.size() == 1 && dyn(object).spec.template.spec.initContainers[0].image == variables.activeImage`
 	return fmt.Sprintf(`variables.activationValid && ((%s) || (%s))`, bootstrap, active)
 }
 
@@ -1720,8 +1720,8 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 				{Name: "runtimeContainerName", Expression: fmt.Sprintf(`request.name == %q ? "manager" : "certificate-rotator"`, g.ControllerDeploymentName)},
 				{Name: "runtimeCommand", Expression: fmt.Sprintf(`request.name == %q ? "/manager" : "/ptah-cert-rotator"`, g.ControllerDeploymentName)},
 				{Name: "runtimeServiceAccount", Expression: fmt.Sprintf(`request.name == %q ? %q : %q`, g.ControllerDeploymentName, g.ControllerServiceAccountName, g.CertificateDeploymentName)},
-				{Name: "templateState", Expression: fmt.Sprintf(`has(object.spec.template.metadata.annotations) && %q in object.spec.template.metadata.annotations ? object.spec.template.metadata.annotations[%q] : ""`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
-				{Name: "templateRelease", Expression: fmt.Sprintf(`has(object.spec.template.metadata.annotations) && %q in object.spec.template.metadata.annotations ? object.spec.template.metadata.annotations[%q] : ""`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
+				{Name: "templateState", Expression: fmt.Sprintf(`has(dyn(object).spec.template.metadata.annotations) && %q in dyn(object).spec.template.metadata.annotations ? dyn(object).spec.template.metadata.annotations[%q] : ""`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
+				{Name: "templateRelease", Expression: fmt.Sprintf(`has(dyn(object).spec.template.metadata.annotations) && %q in dyn(object).spec.template.metadata.annotations ? dyn(object).spec.template.metadata.annotations[%q] : ""`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
 				{Name: "isActiveIdentity", Expression: runtimeActiveDeploymentIdentityExpression()},
 				{Name: "stopTransition", Expression: deploymentStopTransitionExpression()},
 			},
@@ -1835,7 +1835,7 @@ func scopePtr(scope admissionregistrationv1.ScopeType) *admissionregistrationv1.
 
 func (g *RolloutGuard) verifierArgsValidationExpression() string {
 	return fmt.Sprintf(
-		`object.spec.template.spec.initContainers[0].args == (request.name == %q ? %s : %s)`,
+		`dyn(object).spec.template.spec.initContainers[0].args == (request.name == %q ? %s : %s)`,
 		g.ControllerDeploymentName,
 		celStringList(g.verifierArgs(true)),
 		celStringList(g.verifierArgs(false)),

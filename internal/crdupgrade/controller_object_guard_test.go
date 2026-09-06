@@ -158,10 +158,10 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`object.metadata.labels.size() == 5`,
 		`["resolve", "verify", "observe", "plan", "apply"]`,
 		`object.metadata.ownerReferences.size() == 1`,
-		`object.spec.template.spec.automountServiceAccountToken`,
+		`dyn(object).spec.template.spec.automountServiceAccountToken`,
 		`container.securityContext.allowPrivilegeEscalation`,
 		`container.image.matches`,
-		`object.spec.template.spec.volumes.size() <= 7`,
+		`dyn(object).spec.template.spec.volumes.size() <= 7`,
 		`volume.name == "registry-docker-config" && has(volume.secret)`,
 		`container.securityContext.capabilities.add.size() == 0`,
 		`["install-runner", "validate-source-authority", "fetch-schema"]`,
@@ -171,10 +171,10 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`object.metadata.labels["operator.ptah.dev/operation"] == "apply"`,
 		`object.metadata.annotations.size() == 7`,
 		`"operator.ptah.dev/plan-content-digest"`,
-		`oldObject.status.conditions.exists`,
-		`object.spec.ttlSecondsAfterFinished == 300`,
-		`object.spec.template == oldObject.spec.template`,
-		`has(object.spec.managedBy) == has(oldObject.spec.managedBy)`,
+		`dyn(oldObject).status.conditions.exists`,
+		`dyn(object).spec.ttlSecondsAfterFinished == 300`,
+		`dyn(object).spec.template == dyn(oldObject).spec.template`,
+		`has(dyn(object).spec.managedBy) == has(dyn(oldObject).spec.managedBy)`,
 	} {
 		if !strings.Contains(job, marker) {
 			t.Fatalf("Job structural contract lacks %q", marker)
@@ -274,10 +274,10 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 	plan := strings.Join(validationExpressions(entries[2].validations), "\n")
 	for _, marker := range []string{
 		`object.metadata.labels.size() == 1`,
-		`object.spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
-		`object.spec.contractVersion == 3`,
-		`variables.activeRelease == variables.previousRelease && object.spec.contractVersion == 2`,
-		`object.spec.executionBindingID.matches`,
+		`dyn(object).spec.schemaRef.uid == object.metadata.ownerReferences[0].uid`,
+		`dyn(object).spec.contractVersion == 3`,
+		`variables.activeRelease == variables.previousRelease && dyn(object).spec.contractVersion == 2`,
+		`dyn(object).spec.executionBindingID.matches`,
 		`has(dyn(object.spec).controllerImage)`,
 		`dyn(object.spec).controllerImage.matches`,
 		`has(dyn(object.spec).controllerRevision)`,
@@ -286,19 +286,19 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`dyn(object.spec).controllerStateVersion >= 1`,
 		`dyn(object.spec).controllerImage == variables.activeControllerImage`,
 		`dyn(object.spec).controllerStateVersion == variables.activeControllerState`,
-		`object.spec.statementCount >= 1`,
-		`object.spec.chunks.size() <= 16`,
+		`dyn(object).spec.statementCount >= 1`,
+		`dyn(object).spec.chunks.size() <= 16`,
 		`chunk.key == "chunk"`,
-		`!has(object.status)`,
+		`!has(dyn(object).status)`,
 	} {
 		if !strings.Contains(plan, marker) {
 			t.Fatalf("plan structural contract lacks %q", marker)
 		}
 	}
 	for _, staticReference := range []string{
-		`object.spec.controllerImage`,
-		`object.spec.controllerRevision`,
-		`object.spec.controllerStateVersion`,
+		`dyn(object).spec.controllerImage`,
+		`dyn(object).spec.controllerRevision`,
+		`dyn(object).spec.controllerStateVersion`,
 	} {
 		if strings.Contains(plan, staticReference) {
 			t.Fatalf("plan structural contract statically references candidate-only field %q and cannot type-check against the predecessor CRD", staticReference)

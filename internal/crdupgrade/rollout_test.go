@@ -176,7 +176,7 @@ func TestCertificatePortsAndProbesExpressionEnforcesVersionedPortShape(t *testin
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			expression := certificatePortsAndProbesExpression(
-				"object.spec.template.spec.containers[0]",
+				"dyn(object).spec.template.spec.containers[0]",
 				8081,
 				test.candidatePort,
 			)
@@ -246,14 +246,14 @@ func assertRenderedCertificatePortContract(
 ) {
 	t.Helper()
 	portExpression := certificatePortsAndProbesExpression(
-		"object.spec.template.spec.containers[0]",
+		"dyn(object).spec.template.spec.containers[0]",
 		8081,
 		candidatePort,
 	)
 	portExpression = fmt.Sprintf(
 		`request.name == %q ? (%s) : (%s)`,
 		"ptah-e2e-ptah-operator",
-		controllerPortsAndProbesExpression("object.spec.template.spec.containers[0]", 9443),
+		controllerPortsAndProbesExpression("dyn(object).spec.template.spec.containers[0]", 9443),
 		portExpression,
 	)
 	want := fmt.Sprintf(
@@ -336,7 +336,7 @@ func TestHookIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 	teardownJob := guard.hookJobName("teardown")
 	policy := stripAdmissionConvergenceDependencyProbe(t, guard.hookIdentityPolicy())
 	wantMatch := fmt.Sprintf(
-		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(object.spec.serviceAccountName) && object.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(oldObject.spec.serviceAccountName) && oldObject.spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
+		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
 		guard.ReleaseNamespace, guard.HookServiceAccountName, teardownServiceAccount, guard.HookServiceAccountName, teardownServiceAccount,
 		generatedPodRequestNameExpression(identityJob), generatedPodRequestNameExpression(preflightJob), generatedPodRequestNameExpression(reconcileJob), generatedPodRequestNameExpression(quiesceJob), generatedPodRequestNameExpression(teardownJob),
 	)
@@ -347,7 +347,7 @@ func TestHookIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 		t.Fatalf("optional ServiceAccount match condition\n got: %#v\nwant: %q", policy.Spec.MatchConditions, wantMatch)
 	}
 	wantValidation := fmt.Sprintf(
-		`has(object.spec.serviceAccountName) && object.spec.serviceAccountName == (object.metadata.labels["batch.kubernetes.io/job-name"] == %q ? %q : %q)`,
+		`has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName == (object.metadata.labels["batch.kubernetes.io/job-name"] == %q ? %q : %q)`,
 		teardownJob, teardownServiceAccount, guard.HookServiceAccountName,
 	)
 	if len(policy.Spec.Validations) < 3 || policy.Spec.Validations[2].Expression != wantValidation {
@@ -962,10 +962,10 @@ func TestRuntimePolicyBindsSingleTrustedContainerAndExactVerifierShape(t *testin
 		`--verify-controller-state=true`,
 		"volumeMounts.size() == 3",
 		`terminationMessagePath == \"/dev/termination-log\"`,
-		`(!has(object.spec.template.spec.initContainers[0].restartPolicyRules) || object.spec.template.spec.initContainers[0].restartPolicyRules.size() == 0)`,
-		`(!has(object.spec.template.spec.containers[0].restartPolicyRules) || object.spec.template.spec.containers[0].restartPolicyRules.size() == 0)`,
-		`!has(object.spec.template.spec.containers[0].securityContext.seccompProfile)`,
-		"!has(object.spec.template.spec.containers[0].lifecycle)",
+		`(!has(dyn(object).spec.template.spec.initContainers[0].restartPolicyRules) || dyn(object).spec.template.spec.initContainers[0].restartPolicyRules.size() == 0)`,
+		`(!has(dyn(object).spec.template.spec.containers[0].restartPolicyRules) || dyn(object).spec.template.spec.containers[0].restartPolicyRules.size() == 0)`,
+		`!has(dyn(object).spec.template.spec.containers[0].securityContext.seccompProfile)`,
+		"!has(dyn(object).spec.template.spec.containers[0].lifecycle)",
 	} {
 		if !strings.Contains(serialized, required) {
 			t.Fatalf("runtime policy does not contain %q", required)
@@ -1566,8 +1566,8 @@ func readyRolloutGuard() (*RolloutGuard, *rolloutPolicyClient, *rolloutBindingCl
 			"--candidate-service-name=ptah-cert-transition",
 			"--health-bind-address=:8081",
 		},
-		RuntimeDeploymentConfigExpressions: []string{`object.spec.replicas == 2`},
-		RuntimePodConfigExpressions:        []string{`object.spec.restartPolicy == "Always"`},
+		RuntimeDeploymentConfigExpressions: []string{`dyn(object).spec.replicas == 2`},
+		RuntimePodConfigExpressions:        []string{`dyn(object).spec.restartPolicy == "Always"`},
 		RuntimeAdmissionContractB64:        testRuntimeAdmissionContractB64,
 		PollEvery:                          time.Millisecond,
 	}

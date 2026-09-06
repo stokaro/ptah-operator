@@ -146,7 +146,7 @@ func TestControllerPlanGuardAcceptsExactContractV2PredecessorCreateDuringBootstr
 		}
 	}
 
-	statusValidation := controllerObjectValidationIndex(t, validations, `!has(object.status)`)
+	statusValidation := controllerObjectValidationIndex(t, validations, `!has(dyn(object).status)`)
 	if evaluate(statusValidation, fixtureObject) {
 		t.Fatal("PtahSchemaPlan status validation accepted the pre-reset fixture object")
 	}

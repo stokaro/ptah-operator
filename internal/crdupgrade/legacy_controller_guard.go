@@ -89,8 +89,12 @@ func legacyControllerGuardObjects(guard *RolloutGuard, names []string) ([]legacy
 	if err := removeAdmissionConvergenceBindingProbe(writeBinding); err != nil {
 		return nil, fmt.Errorf("restore legacy controller write binding: %w", err)
 	}
-	if err := restoreLegacyControllerWriteFieldAccess(writePolicy); err != nil {
+	writeRestored, err := restoreLegacyTypedFieldAccess(writePolicy)
+	if err != nil {
 		return nil, fmt.Errorf("restore legacy controller write field access: %w", err)
+	}
+	if writeRestored == 0 {
+		return nil, errors.New("legacy controller write expressions carry no dyn() field access to restore")
 	}
 	if err := requireLegacyVariableNames("controller write", writePolicy.Spec.Variables, []string{
 		"activeRelease", "oldFinalizers", "newFinalizers", "activeFinalizer", "oldActiveCount", "newActiveCount",
@@ -108,6 +112,7 @@ func legacyControllerGuardObjects(guard *RolloutGuard, names []string) ([]legacy
 	writeBinding.Spec.ParamRef = nil
 	objects = append(objects, legacyControllerGuardObjectsPair{policy: writePolicy, binding: writeBinding})
 
+	objectRestored := 0
 	objectGuard := NewControllerObjectGuard(&previous)
 	objectEntries := objectGuard.entries()
 	if len(objectEntries) != 3 {
@@ -134,6 +139,11 @@ func legacyControllerGuardObjects(guard *RolloutGuard, names []string) ([]legacy
 		if err := removeAdmissionConvergenceDependencyProbe(policy); err != nil {
 			return nil, fmt.Errorf("restore legacy controller object policy %s: %w", entry.name, err)
 		}
+		restored, restoreErr := restoreLegacyTypedFieldAccess(policy)
+		if restoreErr != nil {
+			return nil, fmt.Errorf("restore legacy controller object field access %s: %w", entry.name, restoreErr)
+		}
+		objectRestored += restored
 		if err := removeAdmissionConvergenceBindingProbe(binding); err != nil {
 			return nil, fmt.Errorf("restore legacy controller object binding %s: %w", entry.name, err)
 		}
@@ -152,6 +162,9 @@ func legacyControllerGuardObjects(guard *RolloutGuard, names []string) ([]legacy
 		objects = append(objects, legacyControllerGuardObjectsPair{policy: policy, binding: binding})
 	}
 
+	if objectRestored == 0 {
+		return nil, errors.New("legacy controller object expressions carry no dyn() field access to restore")
+	}
 	originPolicy, originBinding, err := legacyServiceAccountOriginObjects(&previous, names[4])
 	if err != nil {
 		return nil, err
@@ -162,6 +175,13 @@ func legacyControllerGuardObjects(guard *RolloutGuard, names []string) ([]legacy
 	parentPolicy := parent.replicaSetPolicy()
 	if err := removeAdmissionConvergenceDependencyProbe(parentPolicy); err != nil {
 		return nil, fmt.Errorf("restore legacy runtime parent policy: %w", err)
+	}
+	parentRestored, err := restoreLegacyTypedFieldAccess(parentPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("restore legacy runtime parent field access: %w", err)
+	}
+	if parentRestored == 0 {
+		return nil, errors.New("legacy runtime parent expressions carry no dyn() field access to restore")
 	}
 	parentBinding := parent.binding(parentPolicy.Name, false)
 	renameLegacyControllerGuard(parentPolicy, parentBinding, names[5])
@@ -408,7 +428,7 @@ func verifyLegacyControllerMetadata(kind, name string, annotations, labels map[s
 	return nil
 }
 
-// restoreLegacyControllerWriteFieldAccess converts the v2 controller write
+// restoreLegacyTypedFieldAccess converts the v2 controller write
 // expressions back to the bytes the predecessor wrote.
 //
 // The v2 policy carries the convergence probe, which adds a ConfigMap rule to
@@ -423,13 +443,12 @@ func verifyLegacyControllerMetadata(kind, name string, annotations, labels map[s
 // nothing to undo, and that has to be an error rather than a silent pass,
 // because a reconstruction that quietly stops converting still produces a
 // digest and the difference only surfaces as a refused adoption in a cluster.
-func restoreLegacyControllerWriteFieldAccess(policy *admissionregistrationv1.ValidatingAdmissionPolicy) error {
+func restoreLegacyTypedFieldAccess(policy *admissionregistrationv1.ValidatingAdmissionPolicy) (int, error) {
 	if policy == nil {
-		return errors.New("legacy controller write policy is nil")
+		return 0, errors.New("legacy guard policy is nil")
 	}
 	replacements := 0
-	for index := range policy.Spec.Validations {
-		expression := policy.Spec.Validations[index].Expression
+	restore := func(expression string) string {
 		for _, subject := range []string{"object", "oldObject"} {
 			for _, field := range []string{"spec", "status"} {
 				from := "dyn(" + subject + ")." + field
@@ -438,10 +457,23 @@ func restoreLegacyControllerWriteFieldAccess(policy *admissionregistrationv1.Val
 				expression = strings.ReplaceAll(expression, from, to)
 			}
 		}
-		policy.Spec.Validations[index].Expression = expression
+		return expression
 	}
-	if replacements == 0 {
-		return errors.New("controller write expressions carry no dyn() field access to restore")
+	// Every place a policy can carry CEL, not just the validations: a guard
+	// that computes a variable or matches a condition on spec carries the
+	// wrap there too, and restoring one of the three leaves a contract that
+	// is neither version.
+	for index := range policy.Spec.Validations {
+		policy.Spec.Validations[index].Expression = restore(policy.Spec.Validations[index].Expression)
 	}
-	return nil
+	for index := range policy.Spec.Variables {
+		policy.Spec.Variables[index].Expression = restore(policy.Spec.Variables[index].Expression)
+	}
+	for index := range policy.Spec.MatchConditions {
+		policy.Spec.MatchConditions[index].Expression = restore(policy.Spec.MatchConditions[index].Expression)
+	}
+	for index := range policy.Spec.AuditAnnotations {
+		policy.Spec.AuditAnnotations[index].ValueExpression = restore(policy.Spec.AuditAnnotations[index].ValueExpression)
+	}
+	return replacements, nil
 }
