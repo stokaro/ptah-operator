@@ -21,7 +21,6 @@ import (
 )
 
 const (
-	parentOriginLegacyRevision  = "210c9673e6ad8e339278d99cc4735557332df7bd"
 	parentOriginManagedRevision = "3405d26c1003329fe44f019e1eb030a982fc25e5"
 	parentOriginRelease         = "origin-upgrade"
 	parentOriginNamespace       = "ptah-system"
@@ -30,7 +29,7 @@ const (
 // The chart's live lookup path is exercised through its exact template helpers.
 // A client-only Helm render cannot supply retained objects; real historical
 // chart renders provide those objects instead of recreating their contracts in Go.
-func TestParentOriginLifecycleRecognizesLegacyBootstrapAndExactRetries(t *testing.T) {
+func TestParentOriginLifecycleRecognizesIdentityBearingPredecessorsAndExactRetries(t *testing.T) {
 	t.Parallel()
 	helm, err := exec.LookPath("helm")
 	if err != nil {
@@ -42,109 +41,26 @@ func TestParentOriginLifecycleRecognizesLegacyBootstrapAndExactRetries(t *testin
 		change    func(map[string]any)
 		wantError string
 	}{
-		{name: "actual annotation-free predecessor"},
 		{
-			name: "bootstrap activation before boundary publication",
-			change: func(state map[string]any) {
-				fixture.activate(state, "0", false, false)
-			},
+			name:      "upgrade without any parent-origin identity",
+			wantError: "upgrade requires a predecessor release that carries Ptah identity metadata",
 		},
 		{
-			name: "exact zero-sequence retry",
+			name: "v2-aware upgrade with readiness marker and complete boundary",
 			change: func(state map[string]any) {
 				fixture.retainCurrent(state)
-				fixture.activate(state, "0", false, false)
+				fixture.publishMarker(state)
 			},
 		},
 		{
-			name: "exact credential-drain retry",
-			change: func(state map[string]any) {
-				fixture.retainCurrent(state)
-				fixture.activate(state, "0", true, false)
-			},
-		},
-		{
-			name: "partial CRD and singleton adoption after activation",
-			change: func(state map[string]any) {
-				fixture.retainCurrent(state)
-				fixture.activate(state, "1", false, true)
-				preV1 := state["preV1"].(map[string]any)
-				preV1["crds"].([]any)[0].(map[string]any)["object"] = parentOriginCopy(fixture.candidateCRD)
-				preV1["singletons"].([]any)[0].(map[string]any)["object"] = parentOriginCopy(fixture.candidateSingleton)
-			},
-		},
-		{
-			name: "credential drain after candidate activation",
-			change: func(state map[string]any) {
-				fixture.retainCurrent(state)
-				fixture.activate(state, "1", true, true)
-			},
-		},
-		{
-			name: "missing CRD",
-			change: func(state map[string]any) {
-				state["preV1"].(map[string]any)["crds"].([]any)[0].(map[string]any)["object"] = map[string]any{}
-			},
-			wantError: "requires annotation-free live CRD",
-		},
-		{
-			name: "managed CRD without boundary",
-			change: func(state map[string]any) {
-				object := state["preV1"].(map[string]any)["crds"].([]any)[0].(map[string]any)["object"].(map[string]any)
-				object["metadata"].(map[string]any)["annotations"].(map[string]any)[crdupgrade.ControllerStateVersionAnnotation] = "1"
-			},
-			wantError: "requires annotation-free live CRD",
-		},
-		{
-			name: "missing admission singleton",
-			change: func(state map[string]any) {
-				state["preV1"].(map[string]any)["singletons"].([]any)[0].(map[string]any)["object"] = map[string]any{}
-			},
-			wantError: "requires both legacy admission singletons",
-		},
-		{
-			name: "foreign admission singleton",
-			change: func(state map[string]any) {
-				object := state["preV1"].(map[string]any)["singletons"].([]any)[0].(map[string]any)["object"].(map[string]any)
-				object["metadata"].(map[string]any)["annotations"].(map[string]any)["meta.helm.sh/release-name"] = "foreign"
-			},
-			wantError: "is not owned by Helm release",
-		},
-		{
-			name: "managed singleton without boundary",
-			change: func(state map[string]any) {
-				object := state["preV1"].(map[string]any)["singletons"].([]any)[0].(map[string]any)["object"].(map[string]any)
-				object["metadata"].(map[string]any)["annotations"].(map[string]any)["operator.ptah.dev/release-sequence"] = "1"
-			},
-			wantError: "cannot adopt a managed admission singleton without its boundary",
-		},
-		{
-			name: "missing predecessor ServiceAccount",
-			change: func(state map[string]any) {
-				state["provenance"].(map[string]any)["serviceAccount"] = map[string]any{}
-			},
-			wantError: "legacy controller ServiceAccount",
-		},
-		{
-			name: "incomplete predecessor bindings",
-			change: func(state map[string]any) {
-				state["provenance"].(map[string]any)["coordinationRoleBinding"] = map[string]any{}
-			},
-			wantError: "legacy controller provenance is incomplete",
-		},
-		{
-			name: "foreign predecessor Deployment",
-			change: func(state map[string]any) {
-				object := state["provenance"].(map[string]any)["deployment"].(map[string]any)
-				object["metadata"].(map[string]any)["annotations"].(map[string]any)["meta.helm.sh/release-name"] = "foreign"
-			},
-			wantError: "is not owned by Helm release",
+			name:      "readiness marker without complete boundary",
+			change:    fixture.publishMarker,
+			wantError: "v2-aware upgrade is missing its complete exact parent-origin boundary",
 		},
 		{
 			name: "sparse v2 boundary",
 			change: func(state map[string]any) {
 				fixture.retainCurrent(state)
-				fixture.activate(state, "0", false, false)
 				state["current"].([]any)[0].(map[string]any)["object"] = map[string]any{}
 			},
 			wantError: "retained v2 parent-origin boundary is sparse",
@@ -153,45 +69,35 @@ func TestParentOriginLifecycleRecognizesLegacyBootstrapAndExactRetries(t *testin
 			name: "corrupt complete v2 boundary",
 			change: func(state map[string]any) {
 				fixture.retainCurrent(state)
-				fixture.activate(state, "0", false, false)
 				object := state["current"].([]any)[0].(map[string]any)["object"].(map[string]any)
 				object["spec"].(map[string]any)["failurePolicy"] = "Ignore"
 			},
 			wantError: "differs from the exact parent-origin contract",
 		},
 		{
-			name:      "retained boundary without activation",
+			name:      "retained v2 boundary without readiness marker or v1 predecessor",
 			change:    fixture.retainCurrent,
-			wantError: "retry requires exact activation and convergence evidence",
-		},
-		{
-			name: "active candidate without sealed convergence",
-			change: func(state map[string]any) {
-				fixture.retainCurrent(state)
-				fixture.activate(state, "1", false, false)
-			},
-			wantError: "has foreign, malformed, or different attempt identity",
-		},
-		{
-			name: "wrong activation image",
-			change: func(state map[string]any) {
-				fixture.retainCurrent(state)
-				fixture.activate(state, "0", false, false)
-				object := state["preV1"].(map[string]any)["activation"].(map[string]any)
-				object["metadata"].(map[string]any)["annotations"].(map[string]any)["operator.ptah.dev/manager-image"] = "foreign"
-			},
-			wantError: "different or malformed activation ratchet",
-		},
-		{
-			name: "sealed activation without boundary",
-			change: func(state map[string]any) {
-				fixture.activate(state, "1", false, true)
-			},
-			wantError: "cannot recreate a missing managed boundary",
+			wantError: "upgrade requires a predecessor release that carries Ptah identity metadata",
 		},
 		{
 			name:   "complete actual v1 predecessor",
 			change: fixture.retainLegacy,
+		},
+		{
+			name: "v1 predecessor with complete v2 boundary retry",
+			change: func(state map[string]any) {
+				fixture.retainLegacy(state)
+				fixture.retainCurrent(state)
+			},
+		},
+		{
+			name: "v1 predecessor with sparse v2 repair",
+			change: func(state map[string]any) {
+				fixture.retainLegacy(state)
+				fixture.retainCurrent(state)
+				state["current"].([]any)[0].(map[string]any)["object"] = map[string]any{}
+			},
+			wantError: "retained v2 parent-origin boundary is sparse",
 		},
 		{
 			name: "sparse v1 predecessor",
@@ -224,11 +130,10 @@ func TestParentOriginLifecycleRecognizesLegacyBootstrapAndExactRetries(t *testin
 }
 
 type parentOriginRenderFixture struct {
-	helm, helpers, values            string
-	state                            map[string]any
-	current, legacy                  []map[string]any
-	activation, marker               map[string]any
-	candidateCRD, candidateSingleton map[string]any
+	helm, helpers, values string
+	state                 map[string]any
+	current, legacy       []map[string]any
+	ready                 map[string]any
 }
 
 func newParentOriginRenderFixture(t *testing.T, helm string) parentOriginRenderFixture {
@@ -239,7 +144,6 @@ func newParentOriginRenderFixture(t *testing.T, helm string) parentOriginRenderF
 	}
 	chart := filepath.Join(repository, "charts", "ptah-operator")
 	candidate := parentOriginRenderObjects(t, helm, chart)
-	legacy := parentOriginRenderObjects(t, helm, parentOriginHistoricalChart(t, repository, parentOriginLegacyRevision))
 	managed := parentOriginRenderObjects(t, helm, parentOriginHistoricalChart(t, repository, parentOriginManagedRevision))
 	read := func(path string) string {
 		t.Helper()
@@ -264,7 +168,6 @@ func newParentOriginRenderFixture(t *testing.T, helm string) parentOriginRenderF
 			prefix(read("templates/admission-convergence.yaml"), `{{- $policyName :=`),
 		values: read("values.yaml"),
 	}
-	fullName := parentOriginRelease + "-ptah-operator"
 	object := func(objects map[string]map[string]any, kind, namespace, name string) map[string]any {
 		t.Helper()
 		key := kind + "/" + namespace + "/" + name
@@ -272,11 +175,6 @@ func newParentOriginRenderFixture(t *testing.T, helm string) parentOriginRenderF
 			t.Fatalf("rendered fixture is missing %s", key)
 		}
 		return parentOriginClone(t, objects[key])
-	}
-	deployment := object(legacy, "Deployment", parentOriginNamespace, fullName)
-	serviceAccountName, _, err := unstructured.NestedString(deployment, "spec", "template", "spec", "serviceAccountName")
-	if err != nil {
-		t.Fatal(err)
 	}
 	currentNames := []string{
 		crdupgrade.ParentHookJobOriginGuardPolicyName(parentOriginNamespace, parentOriginRelease),
@@ -298,29 +196,11 @@ func newParentOriginRenderFixture(t *testing.T, helm string) parentOriginRenderF
 			})
 		}
 	}
-	crds := []any{}
-	for _, name := range crdupgrade.Names() {
-		crds = append(crds, map[string]any{"name": name, "object": object(legacy, "CustomResourceDefinition", "", name)})
-	}
-	singletons := []any{}
-	for _, kind := range []string{"MutatingWebhookConfiguration", "ValidatingWebhookConfiguration"} {
-		singletons = append(singletons, map[string]any{"kind": kind, "object": object(legacy, kind, "", "ptah-operator-admission")})
-	}
 	ready := object(candidate, "ConfigMap", parentOriginNamespace, crdupgrade.ParentOriginReadyMarkerName(parentOriginNamespace, parentOriginRelease))
-	fixture.activation = object(candidate, "ConfigMap", parentOriginNamespace, "ptah-operator-release-activation")
-	fixture.marker = object(candidate, "ConfigMap", parentOriginNamespace, crdupgrade.AdmissionConvergenceMarkerName(parentOriginNamespace, parentOriginRelease, 1))
-	fixture.candidateCRD = object(candidate, "CustomResourceDefinition", "", crdupgrade.Names()[0])
-	fixture.candidateSingleton = object(candidate, "MutatingWebhookConfiguration", "", "ptah-operator-admission")
+	fixture.ready = ready
 	fixture.state = map[string]any{
 		"live": true, "activationBootstrap": false, "current": current, "legacy": old,
 		"marker": map[string]any{}, "markerName": ready["metadata"].(map[string]any)["name"], "markerData": ready["data"],
-		"provenance": map[string]any{
-			"deployment":              deployment,
-			"serviceAccount":          object(legacy, "ServiceAccount", parentOriginNamespace, serviceAccountName),
-			"clusterRoleBinding":      object(legacy, "ClusterRoleBinding", "", fullName),
-			"coordinationRoleBinding": object(legacy, "RoleBinding", parentOriginNamespace, fullName),
-		},
-		"preV1": map[string]any{"crds": crds, "singletons": singletons, "activation": map[string]any{}, "convergenceMarker": map[string]any{}},
 	}
 	return fixture
 }
@@ -337,23 +217,8 @@ func (f parentOriginRenderFixture) retainLegacy(state map[string]any) {
 	}
 }
 
-func (f parentOriginRenderFixture) activate(state map[string]any, sequence string, draining, sealed bool) {
-	preV1 := state["preV1"].(map[string]any)
-	activation := parentOriginCopy(f.activation)
-	marker := parentOriginCopy(f.marker)
-	data := activation["data"].(map[string]any)
-	data["active-release-sequence"] = sequence
-	if draining {
-		data["controller-credentials"] = "draining"
-		data["controller-credentials-target-release-sequence"] = "1"
-		data["controller-credentials-attempt"] = marker["data"].(map[string]any)["release-attempt"]
-	}
-	if sealed {
-		marker["immutable"] = true
-		marker["data"].(map[string]any)["predecessor-retirement-inventory"] = `{"version":"1","entries":[{"name":"fixture"}]}`
-	}
-	preV1["activation"] = activation
-	preV1["convergenceMarker"] = marker
+func (f parentOriginRenderFixture) publishMarker(state map[string]any) {
+	state["marker"] = parentOriginCopy(f.ready)
 }
 
 func (f parentOriginRenderFixture) render(t *testing.T, state map[string]any) ([]byte, error) {
@@ -368,8 +233,6 @@ func (f parentOriginRenderFixture) render(t *testing.T, state map[string]any) ([
 	}
 	probe := fmt.Sprintf(`{{- $state := %q | fromJson -}}
 {{- $_ := set $state "root" $ -}}
-{{- $principal := include "ptah-operator.previousControllerPrincipalFromObjectsJSON" (merge (dict "root" $) $state.provenance) | fromJson -}}
-{{- $_ := set $state.preV1 "previousPrincipal" $principal -}}
 {{- include "ptah-operator.validateParentOriginLifecycle" $state -}}
 apiVersion: v1
 kind: ConfigMap
