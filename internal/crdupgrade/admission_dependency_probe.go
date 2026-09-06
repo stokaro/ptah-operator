@@ -61,6 +61,21 @@ func stableAdmissionConvergenceProbeRequestExpression(policyName, releaseNamespa
 	)
 }
 
+// stableAdmissionConvergenceAnyProbeRequestExpression recognizes a probe of
+// any family aimed at whichever marker the pattern names. A release-stable
+// guard matches the marker for its own probe and, through its principal
+// match, sees the probes a runtime verifier under that principal aims at
+// every other policy; recognizing only its own would judge those by its
+// native validations and answer in place of their target.
+func stableAdmissionConvergenceAnyProbeRequestExpression(releaseNamespace, markerNamePattern string) string {
+	return fmt.Sprintf(
+		`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name.matches(%q) && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)`,
+		releaseNamespace,
+		markerNamePattern,
+		admissionConvergenceAnyProbeFieldManagerPattern(),
+	)
+}
+
 func admissionConvergenceProbeRequestExpression(releaseNamespace, markerName, fieldManager string) string {
 	return fmt.Sprintf(
 		`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager == %q`,
@@ -189,6 +204,7 @@ func addStableAdmissionConvergenceDependencyProbe(
 	markerNamePattern string,
 ) {
 	expression := stableAdmissionConvergenceProbeRequestExpression(policy.Name, releaseNamespace, markerNamePattern)
+	anyExpression := stableAdmissionConvergenceAnyProbeRequestExpression(releaseNamespace, markerNamePattern)
 	policy.Spec.MatchConstraints.ResourceRules = append(
 		policy.Spec.MatchConstraints.ResourceRules,
 		admissionregistrationv1.NamedRuleWithOperations{
@@ -204,10 +220,10 @@ func addStableAdmissionConvergenceDependencyProbe(
 		},
 	)
 	for index := range policy.Spec.MatchConditions {
-		policy.Spec.MatchConditions[index].Expression = "(" + expression + ") || (" + policy.Spec.MatchConditions[index].Expression + ")"
+		policy.Spec.MatchConditions[index].Expression = "(" + anyExpression + ") || (" + policy.Spec.MatchConditions[index].Expression + ")"
 	}
 	policy.Spec.Variables = append([]admissionregistrationv1.Variable{
-		{Name: "isAnyAdmissionConvergenceProbe", Expression: expression},
+		{Name: "isAnyAdmissionConvergenceProbe", Expression: anyExpression},
 		{Name: "isAdmissionConvergenceProbe", Expression: expression},
 	}, policy.Spec.Variables...)
 	for index := range policy.Spec.Validations {
