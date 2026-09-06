@@ -129,14 +129,14 @@
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/managed-by" "ptah-operator")
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/instance" .releaseName)
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/component" "admission-convergence")
-      (printf `has(%s.data) && %s.data.size() == %d` $object $object $dataSize)
-      (printf `%s.data[%q] == %q` $object "expected-active-release-sequence" .sequence)
-      (printf `%s.data[%q] == %q` $object "release-attempt" .attempt)
-      (printf `(!has(%s.binaryData) || %s.binaryData.size() == 0)` $object $object)) -}}
+      (printf `has(dyn(%s).data) && dyn(%s).data.size() == %d` $object $object $dataSize)
+      (printf `dyn(%s).data[%q] == %q` $object "expected-active-release-sequence" .sequence)
+      (printf `dyn(%s).data[%q] == %q` $object "release-attempt" .attempt)
+      (printf `(!has(dyn(%s).binaryData) || dyn(%s).binaryData.size() == 0)` $object $object)) -}}
 {{- if .sealed -}}
-{{- $parts = append $parts (printf `has(%s.immutable) && %s.immutable == true` $object $object) -}}
+{{- $parts = append $parts (printf `has(dyn(%s).immutable) && dyn(%s).immutable == true` $object $object) -}}
 {{- else -}}
-{{- $parts = append $parts (printf `(!has(%s.immutable) || %s.immutable == false)` $object $object) -}}
+{{- $parts = append $parts (printf `(!has(dyn(%s).immutable) || dyn(%s).immutable == false)` $object $object) -}}
 {{- end -}}
 {{- $parts = concat $parts (list
       (printf `(!has(%s.metadata.ownerReferences) || %s.metadata.ownerReferences.size() == 0)` $object $object)
@@ -144,7 +144,7 @@
       (printf `!has(%s.metadata.deletionTimestamp)` $object)
       (printf `!has(%s.metadata.deletionGracePeriodSeconds)` $object)) -}}
 {{- if .sealed -}}
-{{- $parts = append $parts (printf `%q in %s.data && %s.data[%q].matches(%q)` "predecessor-retirement-inventory" $object $object "predecessor-retirement-inventory" `^\{"version":"1","entries":\[.+\]\}$`) -}}
+{{- $parts = append $parts (printf `%q in dyn(%s).data && dyn(%s).data[%q].matches(%q)` "predecessor-retirement-inventory" $object $object "predecessor-retirement-inventory" `^\{"version":"1","entries":\[.+\]\}$`) -}}
 {{- end -}}
 {{- join " && " $parts -}}
 {{- end -}}

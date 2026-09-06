@@ -531,9 +531,9 @@ func (g *ParentWorkloadGuard) readinessMarkerShapeExpression(object string, pers
 		fmt.Sprintf(`%s.metadata.labels[%q] == %q`, object, managedByLabel, parentOriginReadyManagedBy),
 		fmt.Sprintf(`%s.metadata.labels[%q] == %q`, object, instanceLabel, g.rollout.ReleaseName),
 		fmt.Sprintf(`%s.metadata.labels[%q] == %q`, object, "app.kubernetes.io/component", parentOriginReadyComponent),
-		fmt.Sprintf(`has(%s.data) && %s.data.size() == %d`, object, object, len(expected.Data)),
-		fmt.Sprintf(`(!has(%s.binaryData) || %s.binaryData.size() == 0)`, object, object),
-		fmt.Sprintf(`has(%s.immutable) && %s.immutable`, object, object),
+		fmt.Sprintf(`has(dyn(%s).data) && dyn(%s).data.size() == %d`, object, object, len(expected.Data)),
+		fmt.Sprintf(`(!has(dyn(%s).binaryData) || dyn(%s).binaryData.size() == 0)`, object, object),
+		fmt.Sprintf(`has(dyn(%s).immutable) && dyn(%s).immutable`, object, object),
 		fmt.Sprintf(`(!has(%s.metadata.ownerReferences) || %s.metadata.ownerReferences.size() == 0)`, object, object),
 		fmt.Sprintf(`(!has(%s.metadata.finalizers) || %s.metadata.finalizers.size() == 0)`, object, object),
 		fmt.Sprintf(`!has(%s.metadata.deletionTimestamp)`, object),
@@ -545,7 +545,7 @@ func (g *ParentWorkloadGuard) readinessMarkerShapeExpression(object string, pers
 	}
 	slices.Sort(dataKeys)
 	for _, key := range dataKeys {
-		parts = append(parts, fmt.Sprintf(`%s.data[%q] == %q`, object, key, expected.Data[key]))
+		parts = append(parts, fmt.Sprintf(`dyn(%s).data[%q] == %q`, object, key, expected.Data[key]))
 	}
 	if persisted {
 		parts = append(parts,
@@ -584,10 +584,10 @@ func (g *ParentWorkloadGuard) stableConvergenceMarkerStateShapeExpression(object
 		fmt.Sprintf(`%s.metadata.labels[%q] == %q`, object, managedByLabel, rolloutGuardManagedBy),
 		fmt.Sprintf(`%s.metadata.labels[%q] == %q`, object, instanceLabel, g.rollout.ReleaseName),
 		fmt.Sprintf(`%s.metadata.labels[%q] == %q`, object, "app.kubernetes.io/component", admissionConvergenceComponent),
-		fmt.Sprintf(`has(%s.data) && %s.data.size() == %d`, object, object, 2+boolToInt(sealed)),
-		fmt.Sprintf(`%s.data[%q] == %s.metadata.annotations[%q]`, object, admissionConvergenceExpectedDataKey, object, ReleaseSequenceAnnotation),
-		fmt.Sprintf(`%s.data[%q].matches(%q)`, object, admissionConvergenceAttemptDataKey, `^[0-9a-f]{64}$`),
-		fmt.Sprintf(`(!has(%s.binaryData) || %s.binaryData.size() == 0)`, object, object),
+		fmt.Sprintf(`has(dyn(%s).data) && dyn(%s).data.size() == %d`, object, object, 2+boolToInt(sealed)),
+		fmt.Sprintf(`dyn(%s).data[%q] == %s.metadata.annotations[%q]`, object, admissionConvergenceExpectedDataKey, object, ReleaseSequenceAnnotation),
+		fmt.Sprintf(`dyn(%s).data[%q].matches(%q)`, object, admissionConvergenceAttemptDataKey, `^[0-9a-f]{64}$`),
+		fmt.Sprintf(`(!has(dyn(%s).binaryData) || dyn(%s).binaryData.size() == 0)`, object, object),
 		admissionConvergenceMarkerImmutableExpression(object, sealed),
 		fmt.Sprintf(`(!has(%s.metadata.ownerReferences) || %s.metadata.ownerReferences.size() == 0)`, object, object),
 		fmt.Sprintf(`(!has(%s.metadata.finalizers) || %s.metadata.finalizers.size() == 0)`, object, object),

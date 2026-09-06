@@ -1028,10 +1028,10 @@ func (g *AdmissionConvergenceGuard) markerStateShapeExpression(object string, se
 		fmt.Sprintf(`%s.metadata.labels[%q] == %q`, object, managedByLabel, rolloutGuardManagedBy),
 		fmt.Sprintf(`%s.metadata.labels[%q] == %q`, object, instanceLabel, g.ReleaseName),
 		fmt.Sprintf(`%s.metadata.labels[%q] == %q`, object, "app.kubernetes.io/component", admissionConvergenceComponent),
-		fmt.Sprintf(`has(%s.data) && %s.data.size() == %d`, object, object, 2+boolToInt(sealed)),
-		fmt.Sprintf(`%s.data[%q] == %q`, object, admissionConvergenceExpectedDataKey, expected.Data[admissionConvergenceExpectedDataKey]),
-		fmt.Sprintf(`%s.data[%q] == %q`, object, admissionConvergenceAttemptDataKey, expected.Data[admissionConvergenceAttemptDataKey]),
-		fmt.Sprintf(`(!has(%s.binaryData) || %s.binaryData.size() == 0)`, object, object),
+		fmt.Sprintf(`has(dyn(%s).data) && dyn(%s).data.size() == %d`, object, object, 2+boolToInt(sealed)),
+		fmt.Sprintf(`dyn(%s).data[%q] == %q`, object, admissionConvergenceExpectedDataKey, expected.Data[admissionConvergenceExpectedDataKey]),
+		fmt.Sprintf(`dyn(%s).data[%q] == %q`, object, admissionConvergenceAttemptDataKey, expected.Data[admissionConvergenceAttemptDataKey]),
+		fmt.Sprintf(`(!has(dyn(%s).binaryData) || dyn(%s).binaryData.size() == 0)`, object, object),
 		admissionConvergenceMarkerImmutableExpression(object, sealed),
 		fmt.Sprintf(`(!has(%s.metadata.ownerReferences) || %s.metadata.ownerReferences.size() == 0)`, object, object),
 		fmt.Sprintf(`(!has(%s.metadata.finalizers) || %s.metadata.finalizers.size() == 0)`, object, object),
@@ -1049,16 +1049,16 @@ func boolToInt(value bool) int {
 
 func admissionConvergenceMarkerImmutableExpression(object string, sealed bool) string {
 	if sealed {
-		return fmt.Sprintf(`has(%s.immutable) && %s.immutable == true`, object, object)
+		return fmt.Sprintf(`has(dyn(%s).immutable) && dyn(%s).immutable == true`, object, object)
 	}
-	return fmt.Sprintf(`(!has(%s.immutable) || %s.immutable == false)`, object, object)
+	return fmt.Sprintf(`(!has(dyn(%s).immutable) || dyn(%s).immutable == false)`, object, object)
 }
 
 func admissionConvergenceMarkerInventoryExpression(object string, sealed bool) string {
 	if !sealed {
 		return ""
 	}
-	return fmt.Sprintf(` && %q in %s.data && %s.data[%q].matches(%q)`, PredecessorRetirementInventoryDataKey, object, object, PredecessorRetirementInventoryDataKey, `^\{"version":"1","entries":\[.+\]\}$`)
+	return fmt.Sprintf(` && %q in dyn(%s).data && dyn(%s).data[%q].matches(%q)`, PredecessorRetirementInventoryDataKey, object, object, PredecessorRetirementInventoryDataKey, `^\{"version":"1","entries":\[.+\]\}$`)
 }
 
 func (g *AdmissionConvergenceGuard) activationShapeExpression(object string) string {

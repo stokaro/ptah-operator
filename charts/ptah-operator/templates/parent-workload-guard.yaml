@@ -14,15 +14,15 @@
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/managed-by" "Helm")
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/instance" .root.Release.Name)
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/component" "parent-workload-guard-readiness")
-      (printf `has(%s.data) && %s.data.size() == %d` $object $object (len .markerData))
-      (printf `(!has(%s.binaryData) || %s.binaryData.size() == 0)` $object $object)
-      (printf `has(%s.immutable) && %s.immutable` $object $object)
+      (printf `has(dyn(%s).data) && dyn(%s).data.size() == %d` $object $object (len .markerData))
+      (printf `(!has(dyn(%s).binaryData) || dyn(%s).binaryData.size() == 0)` $object $object)
+      (printf `has(dyn(%s).immutable) && dyn(%s).immutable` $object $object)
       (printf `(!has(%s.metadata.ownerReferences) || %s.metadata.ownerReferences.size() == 0)` $object $object)
       (printf `(!has(%s.metadata.finalizers) || %s.metadata.finalizers.size() == 0)` $object $object)
       (printf `!has(%s.metadata.deletionTimestamp)` $object)
       (printf `!has(%s.metadata.deletionGracePeriodSeconds)` $object) -}}
 {{- range $key, $value := .markerData -}}
-{{- $parts = append $parts (printf `%s.data[%q] == %q` $object $key $value) -}}
+{{- $parts = append $parts (printf `dyn(%s).data[%q] == %q` $object $key $value) -}}
 {{- end -}}
 {{- if .persisted -}}
 {{- $parts = append $parts (printf `has(%s.metadata.uid) && %s.metadata.uid != ""` $object $object) -}}
@@ -58,14 +58,14 @@
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/managed-by" "ptah-operator")
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/instance" .root.Release.Name)
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/component" "admission-convergence")
-      (printf `has(%s.data) && %s.data.size() == %d` $object $object $dataSize)
-      (printf `%s.data[%q] == %s.metadata.annotations[%q]` $object "expected-active-release-sequence" $object "operator.ptah.dev/release-sequence")
-      (printf `%s.data[%q].matches(%q)` $object "release-attempt" "^[0-9a-f]{64}$")
-      (printf `(!has(%s.binaryData) || %s.binaryData.size() == 0)` $object $object) -}}
+      (printf `has(dyn(%s).data) && dyn(%s).data.size() == %d` $object $object $dataSize)
+      (printf `dyn(%s).data[%q] == %s.metadata.annotations[%q]` $object "expected-active-release-sequence" $object "operator.ptah.dev/release-sequence")
+      (printf `dyn(%s).data[%q].matches(%q)` $object "release-attempt" "^[0-9a-f]{64}$")
+      (printf `(!has(dyn(%s).binaryData) || dyn(%s).binaryData.size() == 0)` $object $object) -}}
 {{- if .sealed -}}
-{{- $parts = append $parts (printf `has(%s.immutable) && %s.immutable == true` $object $object) -}}
+{{- $parts = append $parts (printf `has(dyn(%s).immutable) && dyn(%s).immutable == true` $object $object) -}}
 {{- else -}}
-{{- $parts = append $parts (printf `(!has(%s.immutable) || %s.immutable == false)` $object $object) -}}
+{{- $parts = append $parts (printf `(!has(dyn(%s).immutable) || dyn(%s).immutable == false)` $object $object) -}}
 {{- end -}}
 {{- $parts = concat $parts (list
       (printf `(!has(%s.metadata.ownerReferences) || %s.metadata.ownerReferences.size() == 0)` $object $object)
@@ -77,7 +77,7 @@
 {{- $parts = append $parts (printf `has(%s.metadata.resourceVersion) && %s.metadata.resourceVersion != ""` $object $object) -}}
 {{- end -}}
 {{- if .sealed -}}
-{{- $parts = append $parts (printf `%q in %s.data && %s.data[%q].matches(%q)` "predecessor-retirement-inventory" $object $object "predecessor-retirement-inventory" `^\{"version":"1","entries":\[.+\]\}$`) -}}
+{{- $parts = append $parts (printf `%q in dyn(%s).data && dyn(%s).data[%q].matches(%q)` "predecessor-retirement-inventory" $object $object "predecessor-retirement-inventory" `^\{"version":"1","entries":\[.+\]\}$`) -}}
 {{- end -}}
 {{- join " && " $parts -}}
 {{- end -}}
