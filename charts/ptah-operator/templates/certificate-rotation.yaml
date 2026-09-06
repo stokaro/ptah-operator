@@ -48,9 +48,9 @@ spec:
            'meta.helm.sh/release-namespace': '{{ .Release.Namespace }}'} &&
         (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) &&
         (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) &&
-        object.type == 'kubernetes.io/tls' &&
+        dyn(object).type == 'kubernetes.io/tls' &&
         !has(object.immutable) &&
-        (!has(object.stringData) || object.stringData.size() == 0) &&
+        (!has(dyn(object).stringData) || dyn(object).stringData.size() == 0) &&
         object.data.size() == 4 &&
         'ca.crt' in object.data && object.data['ca.crt'].size() > 0 &&
         'ca.key' in object.data && object.data['ca.key'].size() > 0 &&
