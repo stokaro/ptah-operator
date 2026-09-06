@@ -77,7 +77,7 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: exact-certificate-service-account
-      expression: {{ printf `(%s) || (request.userInfo.username == %q)` $anyProbeExpression $certificateUsername | quote }}
+      expression: {{ printf `(%s) || (request.userInfo.username == %q && request.resource.group == "admissionregistration.k8s.io")` $anyProbeExpression $certificateUsername | quote }}
   variables:
     - name: isAnyAdmissionConvergenceProbe
       expression: {{ $anyProbeExpression | quote }}
@@ -169,7 +169,7 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: exact-certificate-service-account
-      expression: {{ printf `(%s) || (request.userInfo.username == %q)` $anyProbeExpression $certificateUsername | quote }}
+      expression: {{ printf `(%s) || (request.userInfo.username == %q && request.resource.group == "admissionregistration.k8s.io")` $anyProbeExpression $certificateUsername | quote }}
   variables:
     - name: isAnyAdmissionConvergenceProbe
       expression: {{ $anyProbeExpression | quote }}

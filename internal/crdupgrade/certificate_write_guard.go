@@ -220,9 +220,13 @@ func (g *CertificateWriteGuard) policy(entry certificateWriteGuardEntry) *admiss
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(entry.resource),
+			// The certificate principal's own ConfigMap writes, the canary
+			// marker among them, are judged by the admission canary webhooks
+			// and its Role; these validations are written for the webhook
+			// configurations and error on any other kind.
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name:       "exact-certificate-service-account",
-				Expression: fmt.Sprintf(`request.userInfo.username == %q`, username),
+				Expression: fmt.Sprintf(`request.userInfo.username == %q && request.resource.group == "admissionregistration.k8s.io"`, username),
 			}},
 			Validations: validations,
 		},

@@ -905,3 +905,34 @@ func TestCertificateWriteGuardsAdmitForeignConvergenceProbesUnderTheCertificateP
 		}
 	}
 }
+
+// The admission canary proves convergence with dry-run updates of its own
+// marker ConfigMap under the certificate principal, judged by the canary
+// webhooks. The certificate write guards must leave that request to them: a
+// ConfigMap under the certificate principal is matched only as a probe.
+func TestCertificateWriteGuardsLeaveTheCanaryMarkerToTheCanaryWebhooks(t *testing.T) {
+	t.Parallel()
+
+	guard := testCertificateWriteGuard()
+	marker := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": "ptah-webhook-certificate-canary", "namespace": guard.ReleaseNamespace},
+	}
+	for _, fieldManager := range []string{"ptah-certificate-rotation-canary-mutate-v1", "ptah-certificate-rotation-canary-validate-v1"} {
+		request := map[string]any{
+			"operation": "UPDATE",
+			"namespace": guard.ReleaseNamespace,
+			"name":      "ptah-webhook-certificate-canary",
+			"dryRun":    true,
+			"resource":  map[string]any{"group": "", "version": "v1", "resource": "configmaps"},
+			"options":   map[string]any{"fieldManager": fieldManager},
+			"userInfo":  map[string]any{"username": "system:serviceaccount:" + guard.ReleaseNamespace + ":" + guard.CertificateServiceAccountName},
+		}
+		for _, entry := range guard.entries() {
+			if evaluatePolicyMatchConditions(t, guard.policy(entry), marker, marker, request, nil) {
+				t.Fatalf("%s matched the canary marker update under %s", entry.name, fieldManager)
+			}
+		}
+	}
+}
