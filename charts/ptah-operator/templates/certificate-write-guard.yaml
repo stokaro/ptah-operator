@@ -12,6 +12,12 @@
 {{- $validatingProbePolicyDigest := printf "1\n%s" $validatingName | sha256sum | trunc 32 -}}
 {{- $validatingProbeFieldManagerPattern := printf "^ptah-admission-stable-v1-%s-[0-9a-f]{64}$" $validatingProbePolicyDigest -}}
 {{- $validatingProbeExpression := printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name.matches(%q) && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)` .Release.Namespace $markerPattern $validatingProbeFieldManagerPattern -}}
+{{- /* Every probe family aimed at the marker: the runtime verifier under the
+      certificate principal probes every policy, and this guard matches that
+      principal, so recognizing only its own probe would judge the others by
+      the certificate validations. The union stays release-stable through the
+      marker pattern. crdupgrade compiles the same selector. */ -}}
+{{- $anyProbeExpression := printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name.matches(%q) && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)` .Release.Namespace $markerPattern (include "ptah-operator.admissionConvergenceAnyProbeFieldManagerPattern" .) -}}
 {{- $mutatingPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $mutatingName -}}
 {{- $mutatingBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $mutatingName -}}
 {{- $validatingPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $validatingName -}}
@@ -71,10 +77,10 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: exact-certificate-service-account
-      expression: {{ printf `(%s) || (request.userInfo.username == %q)` $mutatingProbeExpression $certificateUsername | quote }}
+      expression: {{ printf `(%s) || (request.userInfo.username == %q)` $anyProbeExpression $certificateUsername | quote }}
   variables:
     - name: isAnyAdmissionConvergenceProbe
-      expression: {{ $mutatingProbeExpression | quote }}
+      expression: {{ $anyProbeExpression | quote }}
     - name: isAdmissionConvergenceProbe
       expression: {{ $mutatingProbeExpression | quote }}
   validations:
@@ -163,10 +169,10 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: exact-certificate-service-account
-      expression: {{ printf `(%s) || (request.userInfo.username == %q)` $validatingProbeExpression $certificateUsername | quote }}
+      expression: {{ printf `(%s) || (request.userInfo.username == %q)` $anyProbeExpression $certificateUsername | quote }}
   variables:
     - name: isAnyAdmissionConvergenceProbe
-      expression: {{ $validatingProbeExpression | quote }}
+      expression: {{ $anyProbeExpression | quote }}
     - name: isAdmissionConvergenceProbe
       expression: {{ $validatingProbeExpression | quote }}
   validations:

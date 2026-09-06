@@ -236,11 +236,19 @@ func TestCertificateWriteGuardConvergenceProbesHaveOnePolicyCause(t *testing.T) 
 			if !evaluatePolicyMatchConditions(t, policy, object, object, request, nil) {
 				continue
 			}
-			matched++
-			if name != entry.name {
-				t.Fatalf("probe for %s also selected certificate policy %s", entry.name, name)
-			}
 			results := evaluatePolicyValidations(t, policy, object, object, request, nil)
+			if name != entry.name {
+				// The union selector lets every stable guard see the probe; a
+				// foreign guard escapes its native validations and must not
+				// answer in place of the target.
+				for index, allowed := range results {
+					if !allowed {
+						t.Fatalf("probe for %s was denied by certificate policy %s validation %d", entry.name, name, index)
+					}
+				}
+				continue
+			}
+			matched++
 			denied := 0
 			for index, allowed := range results {
 				if allowed {
@@ -750,8 +758,12 @@ func stripStableAdmissionConvergenceDependencyProbeForTest(
 		releaseNamespace,
 		serviceAccountObjectGuardMarkerPattern(releaseNamespace, releaseName),
 	)
+	wantAnyExpression := stableAdmissionConvergenceAnyProbeRequestExpression(
+		releaseNamespace,
+		serviceAccountObjectGuardMarkerPattern(releaseNamespace, releaseName),
+	)
 	if len(policy.Spec.Variables) < 2 ||
-		policy.Spec.Variables[0] != (admissionregistrationv1.Variable{Name: "isAnyAdmissionConvergenceProbe", Expression: wantExpression}) ||
+		policy.Spec.Variables[0] != (admissionregistrationv1.Variable{Name: "isAnyAdmissionConvergenceProbe", Expression: wantAnyExpression}) ||
 		policy.Spec.Variables[1] != (admissionregistrationv1.Variable{Name: "isAdmissionConvergenceProbe", Expression: wantExpression}) {
 		t.Fatalf("stable dependency variables differ from the policy-specific selector: %#v", policy.Spec.Variables)
 	}
@@ -774,7 +786,7 @@ func stripStableAdmissionConvergenceDependencyProbeForTest(
 	native.Spec.MatchConstraints.ResourceRules = native.Spec.MatchConstraints.ResourceRules[:len(native.Spec.MatchConstraints.ResourceRules)-1]
 	native.Spec.Variables = native.Spec.Variables[2:]
 	native.Spec.Validations = native.Spec.Validations[:len(native.Spec.Validations)-2]
-	matchPrefix := "(" + wantExpression + ") || ("
+	matchPrefix := "(" + wantAnyExpression + ") || ("
 	for index := range native.Spec.MatchConditions {
 		expression := native.Spec.MatchConditions[index].Expression
 		if !strings.HasPrefix(expression, matchPrefix) || !strings.HasSuffix(expression, ")") {
@@ -837,4 +849,59 @@ func jsonFieldNames(typeOf reflect.Type) []string {
 		}
 	}
 	return fields
+}
+
+// The runtime verifier in the certificate rotator probes every dependency
+// policy under the certificate principal, which these guards match by name.
+// A probe of a foreign family must pass through each of them untouched: the
+// target policy alone answers it.
+func TestCertificateWriteGuardsAdmitForeignConvergenceProbesUnderTheCertificatePrincipal(t *testing.T) {
+	t.Parallel()
+
+	guard := testCertificateWriteGuard()
+	markerName := AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, 1)
+	marker := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name": markerName, "namespace": guard.ReleaseNamespace,
+			"managedFields": []any{map[string]any{"manager": "helm"}},
+		},
+	}
+	probed := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name": markerName, "namespace": guard.ReleaseNamespace,
+			"managedFields": []any{map[string]any{"manager": "helm"}, map[string]any{"manager": "probe"}},
+		},
+	}
+	username := "system:serviceaccount:" + guard.ReleaseNamespace + ":" + guard.CertificateServiceAccountName
+	fieldManagers := map[string]string{
+		"dependency probe":              admissionConvergenceProbeFieldManagerPrefix + strings.Repeat("b", 64),
+		"stable probe of another guard": stableAdmissionConvergenceProbeFieldManagerPrefix("another-policy") + strings.Repeat("c", 64),
+		"service account object probe":  serviceAccountObjectProbeFieldManagerPrefix + strings.Repeat("d", 64),
+	}
+	for _, entry := range guard.entries() {
+		policy := guard.policy(entry)
+		for family, fieldManager := range fieldManagers {
+			request := map[string]any{
+				"operation": "UPDATE",
+				"namespace": guard.ReleaseNamespace,
+				"name":      markerName,
+				"dryRun":    true,
+				"resource":  map[string]any{"group": "", "version": "v1", "resource": "configmaps"},
+				"options":   map[string]any{"fieldManager": fieldManager},
+				"userInfo":  map[string]any{"username": username},
+			}
+			if !evaluatePolicyMatchConditions(t, policy, probed, marker, request, nil) {
+				t.Fatalf("%s under the certificate principal escaped %s entirely", family, entry.name)
+			}
+			for index, allowed := range evaluatePolicyValidations(t, policy, probed, marker, request, nil) {
+				if !allowed {
+					t.Fatalf("%s under the certificate principal was denied by %s validation %d", family, entry.name, index)
+				}
+			}
+		}
+	}
 }
