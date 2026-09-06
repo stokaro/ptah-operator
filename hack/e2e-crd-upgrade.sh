@@ -2010,6 +2010,45 @@ quiesce_read_only_job_schema() {
         ' >/dev/null || fail "read-only Job schema $READ_ONLY_JOB_SCHEMA did not quiesce exactly"
 }
 
+# The operator's Pod webhook fails closed, and the controller that serves it
+# is stopped while a terminal Job is staged. The Job controller cannot retire
+# the pending Pod through a webhook nobody answers, so the outage is bridged
+# by an exact, verified failurePolicy transition and restored right after.
+set_pod_webhook_failure_policy() {
+	expected_policy=$1
+	desired_policy=$2
+	case "$expected_policy:$desired_policy" in
+	Fail:Ignore | Ignore:Fail) ;;
+	*) fail "unsupported Pod webhook failurePolicy transition $expected_policy -> $desired_policy" ;;
+	esac
+	pod_webhook_index=$(kube get validatingwebhookconfiguration ptah-operator-admission -o json |
+		jq -er '
+		  [.webhooks | to_entries[] | select(.value.name == "vpodintent.operator.ptah.dev")] |
+		  select(length == 1) | .[0].key
+		')
+	pod_webhook_policy=$(kube get validatingwebhookconfiguration ptah-operator-admission -o json |
+		jq -er --argjson index "$pod_webhook_index" '.webhooks[$index].failurePolicy')
+	[ "$pod_webhook_policy" = "$expected_policy" ] ||
+		fail "Pod webhook failurePolicy is $pod_webhook_policy, expected $expected_policy"
+	pod_webhook_patch=$(jq -nc \
+		--argjson index "$pod_webhook_index" \
+		--arg expected "$expected_policy" \
+		--arg desired "$desired_policy" '[
+		  {op: "test", path: ("/webhooks/" + ($index | tostring) + "/name"), value: "vpodintent.operator.ptah.dev"},
+		  {op: "test", path: ("/webhooks/" + ($index | tostring) + "/failurePolicy"), value: $expected},
+		  {op: "replace", path: ("/webhooks/" + ($index | tostring) + "/failurePolicy"), value: $desired}
+		]')
+	kube patch validatingwebhookconfiguration ptah-operator-admission \
+		--type=json -p "$pod_webhook_patch" >/dev/null
+	kube get validatingwebhookconfiguration ptah-operator-admission -o json |
+		jq -e \
+			--argjson index "$pod_webhook_index" \
+			--arg desired "$desired_policy" '
+			.webhooks[$index].name == "vpodintent.operator.ptah.dev" and
+			.webhooks[$index].failurePolicy == $desired
+			' >/dev/null || fail "Pod webhook failurePolicy transition was not persisted"
+}
+
 stage_read_only_job_completion() {
 	[ -n "$READ_ONLY_JOB_NAME" ] || fail "read-only Job name is missing"
 	[ -n "$READ_ONLY_JOB_UID" ] || fail "read-only Job UID is missing"
@@ -3111,7 +3150,9 @@ run_upgrade_proof() {
 	READ_ONLY_JOB_SCHEMA=$CURRENT_READ_ONLY_JOB_SCHEMA
 	dispatch_read_only_job_fixture
 	stop_runtime_deployments
+	set_pod_webhook_failure_policy Fail Ignore
 	stage_read_only_job_completion
+	set_pod_webhook_failure_policy Ignore Fail
 	start_runtime_deployments
 	wait_runtime_ready
 	wait_for_read_only_job_cleanup
@@ -3353,7 +3394,9 @@ run_next_release_upgrade_proof() {
 	prove_late_activation_failure_recovery \
 		"$current_release_sequence" "$next_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"
 	stop_runtime_deployments
+	set_pod_webhook_failure_policy Fail Ignore
 	stage_read_only_job_completion
+	set_pod_webhook_failure_policy Ignore Fail
 	stage_read_only_job_uid_gap
 
 	before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
