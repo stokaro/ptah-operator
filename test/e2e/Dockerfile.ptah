@@ -6,9 +6,14 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# The build stamps ptah's buildinfo through -X, which names the package by its
+# module path. Go ignores -X for a symbol that does not exist, so a path
+# written down here would go quietly stale the day the pinned revision is on
+# the other side of a module rename; the checkout says what its module is.
 RUN CGO_ENABLED=0 \
+    MODULE="$(go list -m)" && \
     go build -trimpath \
-      -ldflags="-s -w -X go.5x5.cz/ptah/internal/buildinfo.Version=${PTAH_BUILD_VERSION} -X go.5x5.cz/ptah/internal/buildinfo.Commit=${PTAH_BUILD_COMMIT} -X go.5x5.cz/ptah/internal/buildinfo.Date=${PTAH_BUILD_DATE}" \
+      -ldflags="-s -w -X ${MODULE}/internal/buildinfo.Version=${PTAH_BUILD_VERSION} -X ${MODULE}/internal/buildinfo.Commit=${PTAH_BUILD_COMMIT} -X ${MODULE}/internal/buildinfo.Date=${PTAH_BUILD_DATE}" \
       -o /out/ptah ./cmd/ptah
 
 FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
