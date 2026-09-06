@@ -29,6 +29,7 @@ SHARED_RBAC_RENDER=$WORK_DIR/shared-rbac.yaml
 CRD_INSTALL_RENDER=$WORK_DIR/crd-install.yaml
 CRD_UPGRADE_RENDER=$WORK_DIR/crd-upgrade.yaml
 CRD_FULL_RENDER=$WORK_DIR/crd-full.yaml
+CRD_FULL_RECOVERY_RENDER=$WORK_DIR/crd-full-recovery.yaml
 ROLLOUT_GUARD_RENDER=$WORK_DIR/rollout-guard.yaml
 ROLLOUT_GUARD_V1_RENDER=$WORK_DIR/rollout-guard-v1.yaml
 RUNTIME_POD_GUARD_LONG_RENDER=$WORK_DIR/runtime-pod-guard-long.yaml
@@ -5590,6 +5591,12 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e --i
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	$crd_render_args >"$CRD_FULL_RENDER"
+# The e2e values enable certificate recovery, which changes the runtime-verify
+# arguments the rollout guard family compiles; the gate has to render that too.
+# shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
+helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
+	--set certificateRotation.recreateMissingSecret=true \
+	$crd_render_args >"$CRD_FULL_RECOVERY_RENDER"
 # shellcheck disable=SC2086 # Static argument lines intentionally become separate Helm arguments.
 helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" --namespace ptah-e2e \
 	--show-only templates/hook-identity-guard.yaml \
@@ -6121,6 +6128,7 @@ done
 	PTAH_ADMISSION_RENDER="$ADMISSION_RENDER" \
 	PTAH_TEARDOWN_RENDER="$TEARDOWN_RENDER" \
 	PTAH_PRIVILEGE_RENDER="$CRD_FULL_RENDER" \
+	PTAH_PRIVILEGE_RECOVERY_RENDER="$CRD_FULL_RECOVERY_RENDER" \
 	GOCACHE="${GOCACHE:-$WORK_DIR/gocache}" \
 	go test ./internal/crdupgrade \
 		-run '^(TestRenderedAdmissionSingletonMatchesRuntimeContract|TestRenderedAdmissionConvergenceSentinelMatchesCompiledContract|TestRenderedReleaseActivationGuardMatchesCompiledContract|TestRenderedRolloutGuardMatchesCompiledContract|TestRenderedRolloutGuardKeepsV1CertificatePortContract|TestRenderedRuntimePodGuardMatchesCompiledContract|TestRenderedLongNameRuntimePodGuardMatchesCompiledContract|TestRenderedServiceAccountOriginGuardMatchesCompiledContract|TestRenderedLongNameServiceAccountOriginGuardMatchesCompiledContract|TestRenderedParentWorkloadGuardsMatchCompiledContracts|TestRenderedNamespaceDeletionGuardMatchesCompiledContract|TestRenderedControllerWriteGuardMatchesCompiledContract|TestRenderedControllerObjectGuardsMatchCompiledContracts|TestRenderedCertificateWriteGuardsMatchCompiledContracts|TestRenderedPrivilegeTeardownRulesMatchCompiledContract|TestRenderedRetiredPrivilegeRulesMatchCompiledContract)$' -count=1)

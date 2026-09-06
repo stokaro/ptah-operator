@@ -32,10 +32,24 @@ import (
 // created from the manifest, so a render the compiled contract refuses is a
 // release cutover that refuses itself.
 func TestRenderedRolloutGuardFamilyMatchesCompiledContracts(t *testing.T) {
-	path := os.Getenv("PTAH_PRIVILEGE_RENDER")
-	if path == "" {
+	if os.Getenv("PTAH_PRIVILEGE_RENDER") == "" {
 		t.Skip("PTAH_PRIVILEGE_RENDER is set by the chart contract gate")
 	}
+	// The recovery render carries certificateRotation.recreateMissingSecret,
+	// which the e2e values set and which changes the runtime-verify contract.
+	for _, variable := range []string{"PTAH_PRIVILEGE_RENDER", "PTAH_PRIVILEGE_RECOVERY_RENDER"} {
+		path := os.Getenv(variable)
+		if path == "" {
+			t.Fatalf("%s is set by the chart contract gate", variable)
+		}
+		t.Run(variable, func(t *testing.T) {
+			verifyRenderedRolloutGuardFamily(t, path)
+		})
+	}
+}
+
+func verifyRenderedRolloutGuardFamily(t *testing.T, path string) {
+	t.Helper()
 	rendered, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
