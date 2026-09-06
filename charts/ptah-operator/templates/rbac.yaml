@@ -128,6 +128,12 @@ rules:
     resources: ["configmaps"]
     resourceNames: [{{ include "ptah-operator.admissionConvergenceMarkerName" . | quote }}]
     verbs: ["get", "update"]
+  # The runtime verifier in both Deployments proves the stored admission
+  # contract against the release activation parameter before its Pod serves.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["ptah-operator-release-activation"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

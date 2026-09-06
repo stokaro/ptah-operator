@@ -907,6 +907,10 @@ func currentControllerRuntimeRoleRules(rollout *RolloutGuard, contract RuntimeAd
 			[]string{AdmissionConvergenceMarkerName(contract.Namespace, rollout.ReleaseName, rollout.ReleaseSequence)},
 			[]string{"get", "update"},
 		),
+		// The runtime verifier reads the release activation parameter to prove
+		// the stored admission contract; the certificate rotator holds no other
+		// grant on that ConfigMap.
+		privilegePolicyRule([]string{""}, []string{"configmaps"}, []string{ReleaseActivationName}, []string{"get"}),
 	}
 }
 
