@@ -5987,7 +5987,7 @@ done
 for singleton_guard_marker in \
 	'lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration"' \
 	'lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration"' \
-	'fixed admission singleton' \
+	'is not owned by Helm release' \
 	'pre-upgrade hook'; do
 	grep -F -- "$singleton_guard_marker" "$ROOT_DIR/charts/ptah-operator/templates/_helpers.tpl" >/dev/null
 done

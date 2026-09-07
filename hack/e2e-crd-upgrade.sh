@@ -3408,8 +3408,15 @@ run_upgrade_proof() {
 		--wait --timeout 2m >"$WORK_DIR/second-release.out" 2>"$WORK_DIR/second-release.err"; then
 		fail "a second operator release was installed"
 	fi
-	grep -F 'fixed admission singleton' "$WORK_DIR/second-release.err" >/dev/null ||
-		fail "second release failed without the singleton ownership guard"
+	# The chart refuses a second release in a namespace another release owns,
+	# and the controller Deployment's provenance is the first thing it reads,
+	# so that refusal is what a second install sees. It names the release that
+	# owns the object, which is what makes the refusal a coordination proof
+	# rather than any rendering error.
+	if ! grep -F 'is not owned by Helm release' "$WORK_DIR/second-release.err" >/dev/null ||
+		! grep -F "$E2E_HELM_RELEASE" "$WORK_DIR/second-release.err" >/dev/null; then
+		fail "second release failed without the ownership refusal naming the installed release"
+	fi
 	if helm_e2e status "$second_release" -n "$E2E_OPERATOR_NAMESPACE" >/dev/null 2>&1; then
 		fail "failed second release was recorded"
 	fi
