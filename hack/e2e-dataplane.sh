@@ -2312,11 +2312,11 @@ assert_registry_container_contract() {
 		--format '{{.State.Running}}' "$REGISTRY_CONTAINER_ID")" = "$registry_expected_running" ] ||
 		fail "registry container running state is not $registry_expected_running"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-owner\"}}' \
+		--format '{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
 		"$REGISTRY_CONTAINER_ID")" = "$EXTERNAL_PG_OWNER" ] ||
 		fail "registry container lost its task owner label"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-component\"}}' \
+		--format '{{index .Config.Labels "operator.ptah.dev/e2e-component"}}' \
 		"$REGISTRY_CONTAINER_ID")" = registry ] ||
 		fail "registry container lost its component label"
 	if [ "$registry_expected_running" = true ]; then
@@ -2359,11 +2359,11 @@ assert_external_pg_container_contract() {
 		--format '{{.Config.Image}}' "$EXTERNAL_PG_CONTAINER_ID")" = "$EXTERNAL_PG_IMAGE" ] ||
 		fail "external PostgreSQL container lost its digest-pinned image"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-owner\"}}' \
+		--format '{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
 		"$EXTERNAL_PG_CONTAINER_ID")" = "$EXTERNAL_PG_OWNER" ] ||
 		fail "external PostgreSQL container lost its task owner label"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-component\"}}' \
+		--format '{{index .Config.Labels "operator.ptah.dev/e2e-component"}}' \
 		"$EXTERNAL_PG_CONTAINER_ID")" = external-postgresql ] ||
 		fail "external PostgreSQL container lost its component label"
 	docker --context "$DOCKER_CONTEXT" container inspect \
