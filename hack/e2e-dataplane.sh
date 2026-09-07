@@ -5304,33 +5304,13 @@ assert_registry_outage_and_recovery() {
 	printf '%s\n' 'e2e data plane: PASS registry outage freshness and exact recovery'
 }
 
-wait_for_manager_removed() {
-	manager_removal_deadline=$(deadline_from_now)
-	while [ "$(date +%s)" -lt "$manager_removal_deadline" ]; do
-		if ! k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" \
-			>/dev/null 2>&1 &&
-			! k -n "$OPERATOR_NAMESPACE" get pods \
-				-l 'app.kubernetes.io/component=controller' -o name | grep -q .; then
-			return 0
-		fi
-		sleep 1
-	done
-	fail "manager Deployment was not removed for execution-binding fault injection"
-}
-
-upgrade_execution_binding_before_apply() {
+refuse_execution_binding_change_in_sequence() {
 	upgrade_schema=$1
-	upgrade_reference=$2
-	upgrade_digest=$3
-	upgrade_dialect=$4
-	upgrade_coordination_key=$5
-	upgrade_coordination_digest=$6
 	upgrade_old_plan=$CURRENT_PLAN
 	upgrade_old_plan_uid=$CURRENT_PLAN_UID
 	upgrade_old_fingerprint=$CURRENT_PLAN_FINGERPRINT
 	upgrade_original_ptah_version=$PTAH_VERSION
-	upgrade_old_approval="${upgrade_schema}-old-binding"
-	upgrade_before="$WORK_DIR/${upgrade_schema}-binding-upgrade-before.json"
+	upgrade_before="$WORK_DIR/${upgrade_schema}-binding-change-before.json"
 	checkpoint_schema_jobs "$upgrade_schema" "$upgrade_before"
 	k -n "$TEST_NAMESPACE" get ptahschema "$upgrade_schema" -o json |
 		jq -e --arg planUID "$upgrade_old_plan_uid" --arg version "$PTAH_VERSION" '
@@ -5339,153 +5319,76 @@ upgrade_execution_binding_before_apply() {
           .status.plan.ptahVersion == $version and
           .status.nextReconciliationTime != null and
           ((.status.nextReconciliationTime | fromdateiso8601) - now) >= 180
-        ' >/dev/null || fail "$upgrade_schema lacks a quiescent old-binding approval window"
+        ' >/dev/null || fail "$upgrade_schema lacks a quiescent approval window"
 
 	pause_controller_status_writes
-	create_exact_approval "$upgrade_schema" "$upgrade_old_plan" "$upgrade_old_approval" \
-		"$upgrade_coordination_key" "$upgrade_coordination_digest"
-	k -n "$TEST_NAMESPACE" get ptahschemaapproval "$upgrade_old_approval" -o json |
-		jq -e \
-			--arg version "$upgrade_original_ptah_version" \
-			--arg executor "$EXECUTOR_IMAGE" \
-			--arg runner "$RUNNER_IMAGE" \
-			--arg controllerImage "$CONTROLLER_IMAGE" \
-			--arg controllerRevision "$CONTROLLER_REVISION" \
-			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
-          .spec.ptahVersion == $version and
-          .spec.executorImage == $executor and .spec.runnerImage == $runner and
-          .spec.runnerProtocolVersion == 5 and
-          (.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-          .spec.controllerImage == $controllerImage and
-          .spec.controllerRevision == $controllerRevision and
-          .spec.controllerStateVersion == $controllerStateVersion
-        ' >/dev/null || fail "old approval was not bound to the pre-upgrade execution identity"
-	sleep 2
-	audit_completed_jobs
-	assert_no_new_jobs "$upgrade_schema" apply "$upgrade_before"
-	upgrade_approval_object=$(k -n "$TEST_NAMESPACE" get ptahschemaapproval \
-		"$upgrade_old_approval" -o json)
-	upgrade_recorded_approval=$(printf '%s\n' "$upgrade_approval_object" | jq -c '
-      {
-        name: .metadata.name,
-        uid: .metadata.uid,
-        approver: .spec.approver,
-        approvedAt: .spec.approvedAt
-      }
-    ')
-	printf '%s\n' "$upgrade_recorded_approval" | jq -e '
-      .name != "" and .uid != "" and .approver.username != "" and .approvedAt != null
-    ' >/dev/null || fail "old-binding approval lacks an injectable exact identity"
-
-	k -n "$OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_NAME" \
-		--cascade=foreground --wait=true >/dev/null
-	wait_for_manager_removed
-	upgrade_status_patch=$(jq -nc --argjson approval "$upgrade_recorded_approval" \
-		'{status: {plan: {approval: $approval}}}')
-	k -n "$TEST_NAMESPACE" patch ptahschema "$upgrade_schema" --subresource=status \
-		--type=merge -p "$upgrade_status_patch" >/dev/null
-	k -n "$TEST_NAMESPACE" get ptahschema "$upgrade_schema" -o json |
-		jq -e \
-			--arg planUID "$upgrade_old_plan_uid" \
-			--argjson approval "$upgrade_recorded_approval" '
-          .status.plan.uid == $planUID and .status.plan.approval == $approval and
-          .status.activeOperation == null
-        ' >/dev/null || fail "old-binding approval was not durably recorded before upgrade"
-
-	UPGRADED_PTAH_VERSION="e2e-binding-$(printf '%s' "$PTAH_VERSION" | sha256 | cut -c1-16)"
-	[ "$UPGRADED_PTAH_VERSION" != "$PTAH_VERSION" ] ||
-		fail "execution-binding upgrade did not select a distinct Ptah version"
-	printf 'e2e data plane: upgrading manager execution binding from %s to %s\n' \
-		"$PTAH_VERSION" "$UPGRADED_PTAH_VERSION"
-	helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
+	# The retained rollout guards pin this release's executable contract for the
+	# life of its release sequence: the runtime Pod guard carries the digest of
+	# the manager's own arguments, and the hook parent contract pins the Job that
+	# carries them. A values-only change to the execution binding is therefore
+	# refused before anything is applied. stokaro/ptah-operator#14 records that
+	# the release documentation reads as if the same change were an upgrade.
+	upgrade_new_version="e2e-binding-$(printf '%s' "$PTAH_VERSION" | sha256 | cut -c1-16)"
+	[ "$upgrade_new_version" != "$PTAH_VERSION" ] ||
+		fail "execution-binding proof did not select a distinct Ptah version"
+	upgrade_manager_before=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json)
+	upgrade_revision_before=$(helm --kubeconfig "$KUBECONFIG_FILE" list \
+		--namespace "$OPERATOR_NAMESPACE" --filter "^${HELM_RELEASE}$" -o json |
+		jq -er '.[0].revision')
+	upgrade_refusal="$WORK_DIR/${upgrade_schema}-binding-change.err"
+	printf 'e2e data plane: refusing an execution-binding change inside the release sequence\n'
+	if helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
 		--namespace "$OPERATOR_NAMESPACE" --reuse-values --wait --timeout 5m \
-		--set-string execution.ptahVersion="$UPGRADED_PTAH_VERSION" >/dev/null
-	k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" \
-		--timeout="${TIMEOUT_SECONDS}s" >/dev/null
+		--set-string execution.ptahVersion="$upgrade_new_version" \
+		>"$upgrade_refusal.stdout" 2>"$upgrade_refusal"; then
+		fail "$HELM_RELEASE accepted an execution-binding change inside its release sequence"
+	fi
+	grep -Fq 'pins the executable contract of release sequence' "$upgrade_refusal" ||
+		fail "the execution-binding change was refused for an unexpected reason"
+
+	upgrade_revision_after=$(helm --kubeconfig "$KUBECONFIG_FILE" list \
+		--namespace "$OPERATOR_NAMESPACE" --filter "^${HELM_RELEASE}$" -o json |
+		jq -er '.[0].revision')
+	[ "$upgrade_revision_after" = "$upgrade_revision_before" ] ||
+		fail "the refused execution-binding change still wrote release revision $upgrade_revision_after"
 	k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
 		jq -e \
-			--arg version "--ptah-version=${UPGRADED_PTAH_VERSION}" \
-			--arg oldVersion "--ptah-version=${PTAH_VERSION}" \
-			--arg executor "--executor-image=${EXECUTOR_IMAGE}" \
-			--arg runner "--runner-image=${RUNNER_IMAGE}" \
-			--arg controllerImage "--controller-image=${CONTROLLER_IMAGE}" '
+			--argjson before "$upgrade_manager_before" \
+			--arg version "--ptah-version=${PTAH_VERSION}" \
+			--arg refusedVersion "--ptah-version=${upgrade_new_version}" '
           [.spec.template.spec.containers[] | select(.name == "manager")] as $manager |
           ($manager | length) == 1 and
           ($manager[0].args | index($version)) != null and
-          ($manager[0].args | index($oldVersion)) == null and
-          ($manager[0].args | index($executor)) != null and
-          ($manager[0].args | index($runner)) != null and
-          ($manager[0].args | index($controllerImage)) != null
-        ' >/dev/null || fail "manager rollout did not change only the Ptah version binding"
-	wait_for_controller_status_authorization yes ||
-		fail "Helm upgrade did not restore exact controller status authorization"
-	RBAC_PAUSED=0
-	PTAH_VERSION=$UPGRADED_PTAH_VERSION
-
-	# shellcheck disable=SC2016 # jq variable is supplied by wait_for_approval.
-	wait_for_approval "$upgrade_old_approval" '
-      .spec.planRef.uid == $expectedPlanUID and
-      .spec.ptahVersion != "" and
-      (.status.conditions | any(
-        .type == "Accepted" and .status == "False" and
-        .reason == "ExecutionBindingChanged")) and
-      (.status.conditions | any(
-        .type == "Stale" and .status == "True" and
-        .reason == "ExecutionBindingChanged")) and
-      (.status.conditions | all(.type != "Consumed" or .status != "True"))
-    ' "the old execution-binding approval to become stale before Apply" \
-		"$upgrade_old_plan_uid"
-	upgrade_after="$WORK_DIR/${upgrade_schema}-binding-upgrade-after.json"
-	assert_plan "$upgrade_schema" "$upgrade_reference" "$upgrade_digest" "$upgrade_dialect" false \
-		"$upgrade_before" "$upgrade_before" "$upgrade_after"
-	for upgrade_operation in resolve verify observe plan; do
-		assert_one_job_between_checkpoints "$upgrade_schema" "$upgrade_operation" \
+          ($manager[0].args | index($refusedVersion)) == null and
+          .metadata.uid == $before.metadata.uid and
+          .metadata.generation == $before.metadata.generation and
+          .spec.template == $before.spec.template
+        ' >/dev/null ||
+		fail "the refused execution-binding change disturbed the running manager"
+	upgrade_after="$WORK_DIR/${upgrade_schema}-binding-change-after.json"
+	checkpoint_schema_jobs "$upgrade_schema" "$upgrade_after"
+	for upgrade_operation in resolve verify observe plan apply; do
+		assert_no_job_between_checkpoints "$upgrade_schema" "$upgrade_operation" \
 			"$upgrade_before" "$upgrade_after"
 	done
-	assert_no_job_between_checkpoints "$upgrade_schema" apply \
-		"$upgrade_before" "$upgrade_after"
-	assert_read_only_chain_between_checkpoints "$upgrade_schema" \
-		"$upgrade_before" "$upgrade_after"
-	[ "$CURRENT_PLAN" != "$upgrade_old_plan" ] ||
-		fail "$upgrade_schema reused the old plan name after execution-binding upgrade"
-	[ "$CURRENT_PLAN_UID" != "$upgrade_old_plan_uid" ] ||
-		fail "$upgrade_schema reused the old plan UID after execution-binding upgrade"
-	[ "$CURRENT_PLAN_FINGERPRINT" != "$upgrade_old_fingerprint" ] ||
-		fail "$upgrade_schema reused the old fingerprint after execution-binding upgrade"
-	k -n "$TEST_NAMESPACE" get ptahschemaplans "$upgrade_old_plan" "$CURRENT_PLAN" -o json |
-		jq -e \
-			--arg oldName "$upgrade_old_plan" \
-			--arg newName "$CURRENT_PLAN" \
-			--arg oldVersion "$upgrade_original_ptah_version" \
-			--arg newVersion "$PTAH_VERSION" \
-			--arg executor "$EXECUTOR_IMAGE" \
-			--arg runner "$RUNNER_IMAGE" \
-			--arg controllerImage "$CONTROLLER_IMAGE" \
-			--arg controllerRevision "$CONTROLLER_REVISION" \
-			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
-          def named($name):
-            [.items[] | select(.metadata.name == $name)] |
-            if length == 1 then .[0] else error("plan identity is not exact") end;
-	          named($oldName) as $old | named($newName) as $new |
-	          $old.spec.ptahVersion == $oldVersion and
-	          $old.spec.ptahVersion != $newVersion and
-          $new.spec.ptahVersion == $newVersion and
-          $old.spec.executorImage == $executor and $new.spec.executorImage == $executor and
-          $old.spec.runnerImage == $runner and $new.spec.runnerImage == $runner and
-          $old.spec.runnerProtocolVersion == 5 and $new.spec.runnerProtocolVersion == 5 and
-          ($old.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-          ($new.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-          $old.spec.executionBindingID != $new.spec.executionBindingID and
-          $old.spec.controllerImage == $controllerImage and
-          $new.spec.controllerImage == $controllerImage and
-          $old.spec.controllerRevision == $controllerRevision and
-          $new.spec.controllerRevision == $controllerRevision and
-          $old.spec.controllerStateVersion == $controllerStateVersion and
-          $new.spec.controllerStateVersion == $controllerStateVersion
-        ' >/dev/null || fail "$upgrade_schema plans did not preserve exact old/new execution bindings"
+	capture_current_plan "$upgrade_schema"
+	[ "$CURRENT_PLAN" = "$upgrade_old_plan" ] ||
+		fail "$upgrade_schema replaced its plan after a refused execution-binding change"
+	[ "$CURRENT_PLAN_UID" = "$upgrade_old_plan_uid" ] ||
+		fail "$upgrade_schema replaced its plan UID after a refused execution-binding change"
+	[ "$CURRENT_PLAN_FINGERPRINT" = "$upgrade_old_fingerprint" ] ||
+		fail "$upgrade_schema changed its plan fingerprint after a refused execution-binding change"
+	k -n "$TEST_NAMESPACE" get ptahschema "$upgrade_schema" -o json |
+		jq -e --arg planUID "$upgrade_old_plan_uid" --arg version "$upgrade_original_ptah_version" '
+          .status.phase == "AwaitingApproval" and
+          .status.plan.uid == $planUID and .status.plan.approval == null and
+          .status.plan.ptahVersion == $version and
+          .status.activeOperation == null
+        ' >/dev/null ||
+		fail "$upgrade_schema lost its pending approval window across the refused change"
 	[ "$RBAC_PAUSED" -eq 1 ] ||
-		fail "fresh binding plan lacks a status barrier before its new approval"
-	printf '%s\n' 'e2e data plane: PASS pre-Apply execution-binding upgrade invalidation'
+		fail "the refused execution-binding change released the status barrier"
+	printf '%s\n' 'e2e data plane: PASS refused execution-binding change inside a release sequence'
 }
 
 assert_external_postgresql_catalog() {
@@ -6039,9 +5942,7 @@ run_engine_lifecycle() {
 	assert_job_isolation "$lifecycle_schema" "$lifecycle_secret" false
 	assert_no_new_jobs "$lifecycle_schema" apply "$v1_apply_checkpoint"
 	if [ "$lifecycle_slug" = postgresql ]; then
-		upgrade_execution_binding_before_apply "$lifecycle_schema" "$lifecycle_reference" \
-			"$digest_v1" "$lifecycle_dialect" "$lifecycle_coordination_key" \
-			"$lifecycle_coordination_digest"
+		refuse_execution_binding_change_in_sequence "$lifecycle_schema"
 		plan_v1=$CURRENT_PLAN
 		plan_v1_uid=$CURRENT_PLAN_UID
 		plan_v1_fingerprint=$CURRENT_PLAN_FINGERPRINT

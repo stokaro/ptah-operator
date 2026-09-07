@@ -1830,7 +1830,7 @@ registry_outage_snapshot_section=$(sed -n '/^snapshot_registry_outage_evidence()
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 registry_ready_section=$(sed -n '/^wait_for_registry_http_ready() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
-binding_upgrade_section=$(sed -n '/^upgrade_execution_binding_before_apply() {$/,/^}$/p' \
+binding_refusal_section=$(sed -n '/^refuse_execution_binding_change_in_sequence() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 digest_pin_section=$(sed -n '/^assert_requested_digest_pin_refusal() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
@@ -1854,7 +1854,7 @@ for required_static_section in \
 	"$automatic_external_pg_lifecycle_section" \
 	"$external_pg_lifecycle_section" "$external_pg_main_section" \
 	"$registry_outage_section" "$registry_outage_snapshot_section" \
-	"$registry_ready_section" "$binding_upgrade_section" \
+	"$registry_ready_section" "$binding_refusal_section" \
 	"$digest_pin_section" "$source_isolation_section" \
 	"$source_isolation_filter"; do
 	[ -n "$required_static_section" ] || {
@@ -2109,31 +2109,25 @@ static_require_count "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 	'E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT' 1 'registry readiness port handoff'
 
 # shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
-static_require_order "$binding_upgrade_section" 'pre-Apply execution-binding upgrade proof' \
+static_require_order "$binding_refusal_section" 'in-sequence execution-binding refusal proof' \
 	'upgrade_original_ptah_version=$PTAH_VERSION' \
 	'pause_controller_status_writes' \
-	'create_exact_approval "$upgrade_schema" "$upgrade_old_plan" "$upgrade_old_approval"' \
-	'old approval was not bound to the pre-upgrade execution identity' \
-	'assert_no_new_jobs "$upgrade_schema" apply "$upgrade_before"' \
-	'delete deployment "$CONTROLLER_NAME"' \
-	'--cascade=foreground --wait=true' \
-	'wait_for_manager_removed' \
-	'--subresource=status' \
-	'.status.plan.approval == $approval' \
 	'helm --kubeconfig "$KUBECONFIG_FILE" upgrade' \
-	'--set-string execution.ptahVersion="$UPGRADED_PTAH_VERSION"' \
-	'.reason == "ExecutionBindingChanged"' \
-	'assert_plan "$upgrade_schema"' \
-	'assert_no_job_between_checkpoints "$upgrade_schema" apply' \
-	'assert_read_only_chain_between_checkpoints "$upgrade_schema"' \
-	'$old.spec.ptahVersion == $oldVersion' \
-	'$new.spec.ptahVersion == $newVersion'
+	'--set-string execution.ptahVersion="$upgrade_new_version"' \
+	'accepted an execution-binding change inside its release sequence' \
+	'pins the executable contract of release sequence' \
+	'still wrote release revision $upgrade_revision_after' \
+	'.spec.template == $before.spec.template' \
+	'assert_no_job_between_checkpoints "$upgrade_schema" "$upgrade_operation"' \
+	'capture_current_plan "$upgrade_schema"' \
+	'.status.plan.uid == $planUID and .status.plan.approval == null' \
+	'[ "$RBAC_PAUSED" -eq 1 ]'
 
 # shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
 static_require_order "$engine_lifecycle_section" 'binding upgrade and registry outage placement' \
 	'create_schema_resource "$lifecycle_schema"' \
 	'assert_plan "$lifecycle_schema"' \
-	'upgrade_execution_binding_before_apply "$lifecycle_schema"' \
+	'refuse_execution_binding_change_in_sequence "$lifecycle_schema"' \
 	'create_exact_approval "$lifecycle_schema" "$plan_v1"' \
 	'wait_for_one_new_job "$lifecycle_schema" apply "$v1_apply_checkpoint"' \
 	'assert_periodic_noop "$lifecycle_schema" "$PERIODIC_NOOP_CHECKPOINT"' \

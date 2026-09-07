@@ -256,6 +256,15 @@ without both a digest-pinned manager image identity and that revision, and
 records them together with the controller-state contract version in every new
 execution binding.
 
+The retained rollout guards pin that contract for the life of a release
+sequence. The runtime Pod guard carries a digest of the manager's own arguments,
+and the hook parent contract pins the Job that carries them, so a `helm upgrade`
+that changes `execution.ptahVersion`, `execution.executorImage`,
+`execution.runnerImage`, or the manager image on an installed release is refused
+while the sequence is unchanged: the guard reports that it pins the executable
+contract of that sequence. Ship such a change as a chart version, which advances
+the sequence and creates guards for the new contract.
+
 Changing `execution.ptahVersion`, `execution.executorImage`, or
 `execution.runnerImage`, or rolling out a different manager image, manager
 revision, or controller-state contract, intentionally invalidates a plan and

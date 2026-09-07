@@ -125,12 +125,23 @@
       (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
       (ne (default "" (index $annotations "operator.ptah.dev/release-sequence")) $sequence)
       (ne (default "" (index $annotations "operator.ptah.dev/controller-state-version")) $stateVersion)
-      (ne (default "" (index $annotations "operator.ptah.dev/manager-image")) $managerImage)
-      (ne (default "" (index $annotations "operator.ptah.dev/runtime-pod-contract-digest")) $contractDigest)
       (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
       (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
       (ne (default "" (index $labels "app.kubernetes.io/component")) "rollout-guard") -}}
 {{- fail (printf "retained %s %s has foreign or incomplete runtime Pod guard ownership" $entry.kind $name) -}}
+{{- end -}}
+{{/*
+The manager image and the contract digest are this release's own declaration,
+not evidence of ownership. A retained guard that carries different values is
+ours and pins an executable contract nobody is asking for any more, which is a
+different refusal from a foreign object and deserves to say so: the guard is
+created once per release sequence and never rewritten, so changing the manager
+image or the execution binding needs a new sequence.
+*/}}
+{{- if or
+      (ne (default "" (index $annotations "operator.ptah.dev/manager-image")) $managerImage)
+      (ne (default "" (index $annotations "operator.ptah.dev/runtime-pod-contract-digest")) $contractDigest) -}}
+{{- fail (printf "retained %s %s pins the executable contract of release sequence %s; changing the manager image or the execution binding needs a new release sequence" $entry.kind $name $sequence) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
