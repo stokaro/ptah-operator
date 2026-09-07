@@ -2355,8 +2355,54 @@ capture_uncertain_read_proof_pair() {
       .status.pendingLockRelease == null and
       all(.status.conditions[];
         if (.type == "InSync" or .type == "Ready") then .status != "True" else true end)
-    ' >/dev/null ||
+    ' >/dev/null || {
+		# The status is frozen by the status-write barrier at this point, so the
+		# mismatch is a fact about what the controller last wrote. Name it: the
+		# assertion above compares fifteen fields and said only that one of them
+		# differs.
+		printf '%s\n' "$uncertain_held_observe" | jq -c '{
+          held: {
+            phase: .status.phase,
+            activeType: .status.activeOperation.type,
+            activeID: .status.activeOperation.id,
+            activeJobUID: .status.activeOperation.jobUID,
+            activeLeaseEpoch: .status.activeOperation.leaseEpoch,
+            outcome: .status.pendingObservation.outcome,
+            applyOperationID: .status.pendingObservation.applyOperationID,
+            applyJobName: .status.pendingObservation.applyJobName,
+            applyJobUID: .status.pendingObservation.applyJobUID,
+            applyPodUIDs: (.status.pendingObservation.applyPodUIDs // []),
+            applyPodCount: (.status.pendingObservation.applyPodCount // 0),
+            pendingLeaseEpoch: .status.pendingObservation.leaseEpoch,
+            planRequired: (.status.pendingObservation.planRequired // false),
+            bindingEpoch: .status.executionBinding.epoch,
+            planBindingID: .status.pendingObservation.plan.executionBindingID,
+            appliedType: (.status.applied | type),
+            pendingLockReleaseType: (.status.pendingLockRelease | type),
+            trueConditions: [.status.conditions[] | select(.status == "True") | .type]
+          }
+        }' >&2
+		jq -nc \
+			--arg observeUID "$UNCERTAIN_OBSERVE_JOB_UID" \
+			--arg observeOperation "$UNCERTAIN_OBSERVE_OPERATION_ID" \
+			--arg applyOperation "$uncertain_apply_operation" \
+			--arg applyJobName "$uncertain_apply_job_name" \
+			--arg applyJobUID "$uncertain_apply_job_uid" \
+			--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
+			--argjson applyPodCount "$uncertain_apply_pod_count" \
+			--arg leaseEpoch "$uncertain_lease_epoch" '
+          {expected: {
+            activeType: "Observe", activeID: $observeOperation,
+            activeJobUID: $observeUID, activeLeaseEpoch: $leaseEpoch,
+            outcome: "OutcomeUnknown", applyOperationID: $applyOperation,
+            applyJobName: $applyJobName, applyJobUID: $applyJobUID,
+            applyPodUIDs: $applyPodUIDs, applyPodCount: $applyPodCount,
+            pendingLeaseEpoch: $leaseEpoch, planRequired: false,
+            phase: "VerifyingConvergence", appliedType: "null"
+          }}
+        ' >&2
 		fail "$uncertain_schema did not retain its exact uncertain Apply snapshot through Observe"
+	}
 	assert_lease_held_without_release "$uncertain_lease_name" "$uncertain_lease_uid" \
 		"$uncertain_lease_holder" "$uncertain_lease_epoch"
 
