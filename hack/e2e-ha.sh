@@ -11,6 +11,7 @@ HA_TEST_NAMESPACE=${E2E_HA_TEST_NAMESPACE:-}
 FOREIGN_NAMESPACE=${E2E_FOREIGN_NAMESPACE:-}
 PROOF_NAMESPACE=${E2E_PROOF_NAMESPACE:-}
 HELM_RELEASE=${E2E_HELM_RELEASE:-}
+REGISTRY_CREDENTIALS_FILE=${E2E_REGISTRY_CREDENTIALS_FILE:-}
 
 fail() {
 	printf 'e2e HA: %s\n' "$*" >&2
@@ -19,7 +20,7 @@ fail() {
 
 for value_name in \
 	KUBECONFIG_FILE OPERATOR_NAMESPACE HA_TEST_NAMESPACE FOREIGN_NAMESPACE PROOF_NAMESPACE \
-	HELM_RELEASE; do
+	HELM_RELEASE REGISTRY_CREDENTIALS_FILE; do
 	eval "value=\${$value_name}"
 	[ -n "$value" ] || fail "$value_name is required"
 done
@@ -41,6 +42,12 @@ k() {
 # naming rules, and gives the controller a ServiceAccount that carries the
 # controller-state version, so neither can be spelled from the release name.
 # Both are read from the installed controller Deployment.
+REGISTRY_PULL_SECRET=e2e-ha-registry-pull
+REGISTRY_USERNAME=$(jq -er '.username' "$REGISTRY_CREDENTIALS_FILE") ||
+	fail "E2E_REGISTRY_CREDENTIALS_FILE has no username"
+REGISTRY_PASSWORD=$(jq -er '.password' "$REGISTRY_CREDENTIALS_FILE") ||
+	fail "E2E_REGISTRY_CREDENTIALS_FILE has no password"
+
 MANAGER=$(k -n "$OPERATOR_NAMESPACE" get deployment \
 	-l app.kubernetes.io/component=controller \
 	-o jsonpath='{.items[0].metadata.name}')
@@ -49,6 +56,15 @@ MANAGER_SERVICE_ACCOUNT=$(k -n "$OPERATOR_NAMESPACE" get deployment "$MANAGER" \
 	-o jsonpath='{.spec.template.spec.serviceAccountName}')
 [ -n "$MANAGER_SERVICE_ACCOUNT" ] ||
 	fail "installed controller Deployment $MANAGER has no ServiceAccount"
+# The operation images live in the run's own registry, which serves them only
+# to an authenticated puller, so the operation namespace needs the same
+# credentials the release was installed with. The registry is read from the
+# manager image rather than assumed: every image this run uses comes from it.
+MANAGER_IMAGE=$(k -n "$OPERATOR_NAMESPACE" get deployment "$MANAGER" \
+	-o jsonpath='{.spec.template.spec.containers[0].image}')
+REGISTRY_HOST=${MANAGER_IMAGE%%/*}
+[ "$REGISTRY_HOST" != "$MANAGER_IMAGE" ] ||
+	fail "manager image $MANAGER_IMAGE names no registry to authenticate against"
 LEADER_LEASE=ptah-operator.operator.ptah.dev
 LEADER_TIMEOUT_SECONDS=120
 WORKLOAD_TIMEOUT_SECONDS=120
@@ -464,7 +480,26 @@ k -n "$HA_TEST_NAMESPACE" create configmap e2e-ha-verification-policy \
 	--from-file="policy.yaml=${ROOT_DIR}/testdata/e2e/verification-policy.yaml" >/dev/null
 k -n "$HA_TEST_NAMESPACE" create secret generic e2e-ha-database-url \
 	--from-literal=url='postgres://e2e:unused@database.invalid/e2e' >/dev/null
-jq -n --arg namespace "$HA_TEST_NAMESPACE" --arg name "$HA_SCHEMA" '
+jq -n --arg namespace "$HA_TEST_NAMESPACE" --arg name "$REGISTRY_PULL_SECRET" \
+	--arg registry "$REGISTRY_HOST" --arg username "$REGISTRY_USERNAME" \
+	--arg password "$REGISTRY_PASSWORD" '
+  {
+    apiVersion: "v1", kind: "Secret",
+    metadata: {namespace: $namespace, name: $name},
+    type: "kubernetes.io/dockerconfigjson",
+    stringData: {
+      ".dockerconfigjson": ({auths: {
+        ($registry): {
+          username: $username,
+          password: $password,
+          auth: (($username + ":" + $password) | @base64)
+        }
+      }} | tojson)
+    }
+  }
+' | k create -f - >/dev/null
+jq -n --arg namespace "$HA_TEST_NAMESPACE" --arg name "$HA_SCHEMA" \
+	--arg pullSecret "$REGISTRY_PULL_SECRET" '
   {
     apiVersion: "operator.ptah.dev/v1alpha1",
     kind: "PtahSchema",
@@ -484,7 +519,7 @@ jq -n --arg namespace "$HA_TEST_NAMESPACE" --arg name "$HA_SCHEMA" '
       # The Job write guard requires an execution ServiceAccount, and the
       # API leaves the field optional, so the schema has to name one for
       # the operation to reach a Pod (stokaro/ptah-operator#11).
-      execution: {activeDeadlineSeconds: 120, failureRetryInterval: "1h", serviceAccountName: "default"}
+      execution: {activeDeadlineSeconds: 120, failureRetryInterval: "1h", serviceAccountName: "default", imagePullSecrets: [{name: $pullSecret}]}
     }
   }
 ' | k create -f - >/dev/null
@@ -498,12 +533,20 @@ assert_custom_operator_metrics "$second_holder" "$resolve_failure_counter_before
 assert_lease_identity "$lease_uid"
 
 k -n "$HA_TEST_NAMESPACE" delete ptahschema "$HA_SCHEMA" --wait=false >/dev/null
+# The operator removes a finished operation Job on its own, so the Job may
+# already be gone by now; what this proves either way is that no operation Pod
+# outlives it. A bounded poll replaces `wait --for=delete`, which errors when
+# nothing matches instead of reporting that nothing remains.
 k -n "$HA_TEST_NAMESPACE" delete job "$operation_job" \
-	--cascade=background --wait=true --timeout=30s >/dev/null
-k -n "$HA_TEST_NAMESPACE" wait --for=delete pod \
-	-l "batch.kubernetes.io/job-name=${operation_job}" --timeout=60s
-remaining_operation_pods=$(k -n "$HA_TEST_NAMESPACE" get pods \
-	-l "batch.kubernetes.io/job-name=${operation_job}" -o name)
+	--cascade=background --wait=true --timeout=30s --ignore-not-found=true >/dev/null
+operation_pod_deadline=$(($(date +%s) + 60))
+while :; do
+	remaining_operation_pods=$(k -n "$HA_TEST_NAMESPACE" get pods \
+		-l "batch.kubernetes.io/job-name=${operation_job}" -o name)
+	[ -n "$remaining_operation_pods" ] || break
+	[ "$(date +%s)" -lt "$operation_pod_deadline" ] || break
+	sleep 1
+done
 [ -z "$remaining_operation_pods" ] ||
 	fail "background Job deletion left orphan operation Pods: $remaining_operation_pods"
 k -n "$HA_TEST_NAMESPACE" wait --for=delete ptahschema/"$HA_SCHEMA" --timeout=60s
