@@ -55,6 +55,7 @@ WATCH_BARRIER_SEQUENCE=0
 PG_BARRIER_TOKENS=
 MYSQL_BARRIER_PID=
 MYSQL_BARRIER_READY_LOCK=
+MYSQL_BARRIER_DATABASE=
 STATUS_RBAC_PAUSED=0
 STATUS_RBAC_RULE_INDEX=
 STATUS_RBAC_ORIGINAL_VERBS=
@@ -3918,6 +3919,7 @@ start_mysql_barrier() {
 	barrier_guard="${barrier_token}_guard"
 	barrier_ready="${barrier_token}_ready"
 	MYSQL_BARRIER_READY_LOCK=$barrier_ready
+	MYSQL_BARRIER_DATABASE=$barrier_database
 	barrier_sql="SELECT GET_LOCK('${barrier_guard}', 0); LOCK TABLES e2e_widgets READ; SELECT GET_LOCK('${barrier_ready}', 0); DO SLEEP(${FAULT_BARRIER_SECONDS}); UNLOCK TABLES; SELECT RELEASE_LOCK('${barrier_ready}'); SELECT RELEASE_LOCK('${barrier_guard}')"
 	# shellcheck disable=SC2016 # Variables expand inside the database container.
 	k -n "$TEST_NAMESPACE" exec deployment/"$MYSQL_SERVICE" -- \
@@ -3932,6 +3934,18 @@ start_mysql_barrier() {
 stop_mysql_barrier() {
 	barrier_ready=$MYSQL_BARRIER_READY_LOCK
 	[ -n "$barrier_ready" ] || return 0
+	# MySQL runs a queued DDL after the client that sent it is gone: a killed
+	# Apply Pod leaves its ALTER waiting on this barrier's table lock, and
+	# releasing the lock applies it minutes after the Job died, which is not
+	# what a killed Job means to the proofs that follow. Measured: an ALTER
+	# whose client was killed at 4 seconds landed when the lock was released
+	# 20 seconds later. Kill what the dead Apply left behind first, so the
+	# barrier releases into an idle database.
+	barrier_abandoned=$(mysql_root_query mysql "SELECT ID FROM information_schema.processlist WHERE USER = '${MYSQL_APP_USER}' AND DB = '${MYSQL_BARRIER_DATABASE}' AND COMMAND <> 'Sleep'")
+	for barrier_thread in $barrier_abandoned; do
+		printf '%s\n' "$barrier_thread" | grep -Eq '^[1-9][0-9]*$' || continue
+		mysql_root_query mysql "KILL ${barrier_thread}" >/dev/null 2>&1 || true
+	done
 	barrier_id=$(mysql_root_query mysql "SELECT IS_USED_LOCK('${barrier_ready}')" | tr -d '[:space:]')
 	printf '%s\n' "$barrier_id" | grep -Eq '^[1-9][0-9]*$' ||
 		fail "could not identify the MySQL metadata barrier connection"
@@ -3939,6 +3953,7 @@ stop_mysql_barrier() {
 	stop_pid "$MYSQL_BARRIER_PID"
 	MYSQL_BARRIER_PID=
 	MYSQL_BARRIER_READY_LOCK=
+	MYSQL_BARRIER_DATABASE=
 }
 
 assert_pg_apply_lock_wait() {
