@@ -228,7 +228,8 @@ verify_legacy_secret_lookup_state() {
 	# The proof requires the exact state returned by our successful removal.
 	# Recovery can tolerate a lost response, but cannot establish this evidence.
 	kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-		get secret "$SECRET_NAME" -o json >"$LEGACY_SECRET_LIVE" 2>"$LEGACY_SECRET_ERROR" &&
+		get secret "$SECRET_NAME" --show-managed-fields -o json \
+			>"$LEGACY_SECRET_LIVE" 2>"$LEGACY_SECRET_ERROR" &&
 		legacy_secret_matches "$LEGACY_SECRET_AFTER_REMOVE" removed &&
 		legacy_secret_matches "$LEGACY_SECRET_LIVE" removed &&
 		jq -e -s '
@@ -243,7 +244,8 @@ restore_legacy_secret() {
 	[ "$LEGACY_SECRET_RESTORE_REQUIRED" -eq 1 ] || return 0
 
 	if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-		get secret "$SECRET_NAME" -o json >"$LEGACY_SECRET_LIVE" 2>"$LEGACY_SECRET_ERROR"; then
+		get secret "$SECRET_NAME" --show-managed-fields -o json \
+		>"$LEGACY_SECRET_LIVE" 2>"$LEGACY_SECRET_ERROR"; then
 		printf '%s\n' 'e2e certificate rotation: could not inspect the legacy Secret during restoration' >&2
 		return 1
 	fi
@@ -284,7 +286,8 @@ restore_legacy_secret() {
 		:
 	fi
 	if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-		get secret "$SECRET_NAME" -o json >"$LEGACY_SECRET_VERIFIED" 2>"$LEGACY_SECRET_ERROR"; then
+		get secret "$SECRET_NAME" --show-managed-fields -o json \
+		>"$LEGACY_SECRET_VERIFIED" 2>"$LEGACY_SECRET_ERROR"; then
 		printf '%s\n' 'e2e certificate rotation: could not verify the restored legacy Secret' >&2
 		return 1
 	fi
@@ -473,8 +476,12 @@ while [ "$(date +%s)" -lt "$endpoint_deadline" ]; do
 done
 [ "$ready_endpoints" -eq 2 ] || fail "webhook Service did not converge to two ready endpoint addresses"
 
+# The removal patch below tests the whole metadata against what the server
+# stores, and kubectl hides managedFields unless asked, so a snapshot without
+# them can never match and the patch is refused before it is applied.
 if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-	get secret "$SECRET_NAME" -o json >"$LEGACY_SECRET_BEFORE" 2>"$LEGACY_SECRET_ERROR"; then
+	get secret "$SECRET_NAME" --show-managed-fields -o json \
+	>"$LEGACY_SECRET_BEFORE" 2>"$LEGACY_SECRET_ERROR"; then
 	fail "could not capture the generated webhook Secret before the legacy lookup proof"
 fi
 chmod 600 "$LEGACY_SECRET_BEFORE"
@@ -592,8 +599,11 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" get validatingwebhookconfiguration "$VAL
 OLD_ROTATOR_POD=$(resource_name pod certificate-rotation)
 OLD_ROTATOR_UID=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get pod "$OLD_ROTATOR_POD" -o jsonpath='{.metadata.uid}')
-kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout restart \
-	deployment "$ROTATOR_DEPLOYMENT" >/dev/null
+# The retained runtime guard pins the release's Deployments, so a rollout
+# restart, which writes a Pod-template annotation, is refused. Replacing the
+# Pod is what this proof needs and what the guard leaves to the ReplicaSet.
+kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+	delete pod "$OLD_ROTATOR_POD" --wait=false >/dev/null
 if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
 	deployment "$ROTATOR_DEPLOYMENT" --timeout=5m >/dev/null; then
 	kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" describe \
@@ -655,8 +665,8 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 ROTATOR_POD_BEFORE_RECREATE=$(resource_name pod certificate-rotation)
 ROTATOR_UID_BEFORE_RECREATE=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get pod "$ROTATOR_POD_BEFORE_RECREATE" -o jsonpath='{.metadata.uid}')
-kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout restart \
-	deployment "$ROTATOR_DEPLOYMENT" >/dev/null
+kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+	delete pod "$ROTATOR_POD_BEFORE_RECREATE" --wait=false >/dev/null
 if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
 	deployment "$ROTATOR_DEPLOYMENT" --timeout=5m >/dev/null; then
 	kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" describe \
