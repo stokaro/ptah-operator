@@ -40,7 +40,7 @@ TAG_MOVE_INTERVAL=${E2E_TAG_MOVE_INTERVAL:-2m}
 APPROVAL_INTERVAL=${E2E_APPROVAL_INTERVAL:-5m}
 STALE_APPROVAL_INTERVAL=${E2E_STALE_APPROVAL_INTERVAL:-4m}
 QUIESCENT_INTERVAL=${E2E_QUIESCENT_INTERVAL:-30m}
-BLOCKED_REFRESH_SECONDS=${E2E_BLOCKED_REFRESH_SECONDS:-30}
+BLOCKED_REFRESH_SECONDS=${E2E_BLOCKED_REFRESH_SECONDS:-90}
 BLOCKED_REFRESH_INTERVAL=${BLOCKED_REFRESH_SECONDS}s
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
 TLS_PROXY_ENDPOINT_WAIT_ATTEMPTS=60
@@ -4763,6 +4763,12 @@ assert_destructive_gate() {
 	gate_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$gate_deadline" ]; do
 		audit_completed_jobs
+		# The audit above reads the ledger before it walks every terminal Job,
+		# and walking them takes longer than the refresh cadence. Refresh the
+		# ledger here so the counts below and the validation that follows read
+		# one snapshot: reading two made the loop decide on three chains and
+		# then validate four.
+		record_observed_jobs
 		assert_no_new_jobs "$gate_schema" apply "$gate_apply_checkpoint"
 		gate_resolve_count=$(new_job_count_since "$gate_schema" resolve "$gate_refresh_checkpoint")
 		gate_verify_count=$(new_job_count_since "$gate_schema" verify "$gate_refresh_checkpoint")
@@ -4779,7 +4785,6 @@ assert_destructive_gate() {
 			all_new_jobs_complete "$gate_schema" verify "$gate_refresh_checkpoint" 3 && \
 			all_new_jobs_complete "$gate_schema" observe "$gate_refresh_checkpoint" 3 && \
 			all_new_jobs_complete "$gate_schema" plan "$gate_refresh_checkpoint" 3; then
-			record_observed_jobs
 			if jq -e -s \
 				--slurpfile before "$gate_refresh_checkpoint" \
 				--arg schema "$gate_schema" \
