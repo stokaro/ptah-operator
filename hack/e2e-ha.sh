@@ -37,7 +37,18 @@ k() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" "$@"
 }
 
-MANAGER="${HELM_RELEASE}-ptah-operator"
+# The chart derives the controller's object names from the release and its own
+# naming rules, and gives the controller a ServiceAccount that carries the
+# controller-state version, so neither can be spelled from the release name.
+# Both are read from the installed controller Deployment.
+MANAGER=$(k -n "$OPERATOR_NAMESPACE" get deployment \
+	-l app.kubernetes.io/component=controller \
+	-o jsonpath='{.items[0].metadata.name}')
+[ -n "$MANAGER" ] || fail "installed controller Deployment is missing"
+MANAGER_SERVICE_ACCOUNT=$(k -n "$OPERATOR_NAMESPACE" get deployment "$MANAGER" \
+	-o jsonpath='{.spec.template.spec.serviceAccountName}')
+[ -n "$MANAGER_SERVICE_ACCOUNT" ] ||
+	fail "installed controller Deployment $MANAGER has no ServiceAccount"
 LEADER_LEASE=ptah-operator.operator.ptah.dev
 LEADER_TIMEOUT_SECONDS=120
 WORKLOAD_TIMEOUT_SECONDS=120
@@ -57,7 +68,7 @@ assert_can_i() {
 	can_i_verb=$3
 	if can_i_result=$(k auth can-i "$can_i_verb" leases.coordination.k8s.io \
 		--namespace "$can_i_namespace" \
-		--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${MANAGER}"); then
+		--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${MANAGER_SERVICE_ACCOUNT}"); then
 		can_i_status=0
 	else
 		can_i_status=$?
@@ -69,7 +80,7 @@ assert_can_i() {
 		fail "kubectl reported no with a successful exit status"
 	fi
 	[ "$can_i_result" = "$can_i_expected" ] ||
-		fail "$OPERATOR_NAMESPACE/$MANAGER can-i $can_i_verb Lease in $can_i_namespace = $can_i_result, want $can_i_expected"
+		fail "$OPERATOR_NAMESPACE/$MANAGER_SERVICE_ACCOUNT can-i $can_i_verb Lease in $can_i_namespace = $can_i_result, want $can_i_expected"
 }
 
 leader_holder() {
