@@ -217,6 +217,32 @@ func TestBuildSourceOperationEnvironmentContract(t *testing.T) {
 	}
 }
 
+func TestBuilderNamesTheDefaultServiceAccountWhenTheSchemaOmitsOne(t *testing.T) {
+	// spec.execution.serviceAccountName is optional and the Job write guard
+	// requires the Pod template to name an account, so a schema without one
+	// must still produce a Job admission accepts.
+	builder := builderFixture()
+	schema := schemaFixture()
+	schema.Spec.Execution.ServiceAccountName = ""
+	job, err := builder.Build(schema, operationFixture(operatorv1alpha1.OperationResolve), nil)
+	if err != nil {
+		t.Fatalf("Build error = %v", err)
+	}
+	if got := job.Spec.Template.Spec.ServiceAccountName; got != "default" {
+		t.Fatalf("ServiceAccountName = %q, want \"default\"", got)
+	}
+
+	named := schemaFixture()
+	named.Spec.Execution.ServiceAccountName = "schema-jobs"
+	namedJob, err := builder.Build(named, operationFixture(operatorv1alpha1.OperationResolve), nil)
+	if err != nil {
+		t.Fatalf("Build error = %v", err)
+	}
+	if got := namedJob.Spec.Template.Spec.ServiceAccountName; got != "schema-jobs" {
+		t.Fatalf("ServiceAccountName = %q, want the account the schema names", got)
+	}
+}
+
 func TestSourceIsolationFilterAcceptsJSONRoundTrippedBuilderJobs(t *testing.T) {
 	for _, mode := range []operatorv1alpha1.RegistryAuthMode{
 		operatorv1alpha1.RegistryAuthEnvironment,
@@ -261,7 +287,9 @@ func TestSourceIsolationFilterAcceptsJSONRoundTrippedBuilderJobs(t *testing.T) {
 				"--arg", "executorImage", builder.ExecutorImage,
 				"--arg", "runnerImage", builder.RunnerImage,
 				"--arg", "verificationPolicy", schema.Spec.Desired.VerificationPolicyFrom.Name,
-				"--arg", "serviceAccountName", "",
+				// The fixture leaves spec.execution.serviceAccountName empty, and the
+				// builder writes the namespace default in its place.
+				"--arg", "serviceAccountName", "default",
 				"--argjson", "imagePullSecrets", "[]",
 				"--arg", "requestedReference", schema.Spec.Desired.OCIRef,
 				"--arg", "resolvedReference", schema.Status.Source.ResolvedReference,
