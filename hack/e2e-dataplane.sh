@@ -236,7 +236,18 @@ k() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" "$@"
 }
 
-CONTROLLER_NAME="${HELM_RELEASE}-ptah-operator"
+# The chart derives the controller's object names from the release through its
+# own naming rules, and the ServiceAccount it runs as carries the
+# controller-state version, so neither can be spelled from the release name.
+# The ClusterRole this phase patches shares the Deployment's name.
+CONTROLLER_NAME=$(k -n "$OPERATOR_NAMESPACE" get deployment \
+	-l app.kubernetes.io/component=controller \
+	-o jsonpath='{.items[0].metadata.name}')
+[ -n "$CONTROLLER_NAME" ] || fail "installed controller Deployment is missing"
+CONTROLLER_SERVICE_ACCOUNT=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" \
+	-o jsonpath='{.spec.template.spec.serviceAccountName}')
+[ -n "$CONTROLLER_SERVICE_ACCOUNT" ] ||
+	fail "installed controller Deployment $CONTROLLER_NAME has no ServiceAccount"
 deployed_controller_image=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
 	jq -er '
       [.spec.template.spec.containers[] | select(.name == "manager").args[]? |
@@ -2176,7 +2187,7 @@ wait_for_controller_status_authorization() {
 	while [ "$(date +%s)" -lt "$authorization_deadline" ]; do
 		rbac_answer=$(k auth can-i patch ptahschemas.operator.ptah.dev \
 			--subresource=status \
-			--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${CONTROLLER_NAME}" 2>/dev/null || true)
+			--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${CONTROLLER_SERVICE_ACCOUNT}" 2>/dev/null || true)
 		[ "$rbac_answer" = "$expected_answer" ] && return 0
 		sleep 1
 	done
