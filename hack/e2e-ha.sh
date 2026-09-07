@@ -481,7 +481,10 @@ jq -n --arg namespace "$HA_TEST_NAMESPACE" --arg name "$HA_SCHEMA" '
         transport: {plainHTTP: true}
       },
       interval: "24h",
-      execution: {activeDeadlineSeconds: 120, failureRetryInterval: "1h"}
+      # The Job write guard requires an execution ServiceAccount, and the
+      # API leaves the field optional, so the schema has to name one for
+      # the operation to reach a Pod (stokaro/ptah-operator#11).
+      execution: {activeDeadlineSeconds: 120, failureRetryInterval: "1h", serviceAccountName: "default"}
     }
   }
 ' | k create -f - >/dev/null

@@ -113,6 +113,7 @@ func legacyControllerGuardObjects(guard *RolloutGuard, names []string) ([]legacy
 	objects = append(objects, legacyControllerGuardObjectsPair{policy: writePolicy, binding: writeBinding})
 
 	objectRestored := 0
+	serviceAccountRestored := 0
 	objectGuard := NewControllerObjectGuard(&previous)
 	objectEntries := objectGuard.entries()
 	if len(objectEntries) != 3 {
@@ -144,6 +145,7 @@ func legacyControllerGuardObjects(guard *RolloutGuard, names []string) ([]legacy
 			return nil, fmt.Errorf("restore legacy controller object field access %s: %w", entry.name, restoreErr)
 		}
 		objectRestored += restored
+		serviceAccountRestored += restoreLegacyUnguardedServiceAccountRead(policy)
 		if err := removeAdmissionConvergenceBindingProbe(binding); err != nil {
 			return nil, fmt.Errorf("restore legacy controller object binding %s: %w", entry.name, err)
 		}
@@ -164,6 +166,9 @@ func legacyControllerGuardObjects(guard *RolloutGuard, names []string) ([]legacy
 
 	if objectRestored == 0 {
 		return nil, errors.New("legacy controller object expressions carry no dyn() field access to restore")
+	}
+	if serviceAccountRestored == 0 {
+		return nil, errors.New("legacy controller object expressions carry no guarded ServiceAccount read to restore")
 	}
 	originPolicy, originBinding, err := legacyServiceAccountOriginObjects(&previous, names[4])
 	if err != nil {
@@ -450,6 +455,26 @@ func verifyLegacyControllerMetadata(kind, name string, annotations, labels map[s
 // nothing to undo, and that has to be an error rather than a silent pass,
 // because a reconstruction that quietly stops converting still produces a
 // digest and the difference only surfaces as a refused adoption in a cluster.
+// restoreLegacyUnguardedServiceAccountRead puts back the predecessor's reading
+// of the execution ServiceAccount. That release read the field without has(),
+// so a Job template that omits it errored the guard instead of being refused;
+// the current spelling guards the read, and the retained object is compared
+// against what the predecessor published rather than against the fix.
+func restoreLegacyUnguardedServiceAccountRead(policy *admissionregistrationv1.ValidatingAdmissionPolicy) int {
+	if policy == nil {
+		return 0
+	}
+	const guarded = `has(object.spec.template.spec.serviceAccountName) && object.spec.template.spec.serviceAccountName != ""`
+	const published = `object.spec.template.spec.serviceAccountName != ""`
+	replacements := 0
+	for index := range policy.Spec.Validations {
+		expression := policy.Spec.Validations[index].Expression
+		replacements += strings.Count(expression, guarded)
+		policy.Spec.Validations[index].Expression = strings.ReplaceAll(expression, guarded, published)
+	}
+	return replacements
+}
+
 func restoreLegacyTypedFieldAccess(policy *admissionregistrationv1.ValidatingAdmissionPolicy) (int, error) {
 	if policy == nil {
 		return 0, errors.New("legacy guard policy is nil")

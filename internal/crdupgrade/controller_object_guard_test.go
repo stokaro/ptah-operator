@@ -309,6 +309,103 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 // This white-box test evaluates the unexported CEL fragments directly because
 // their bootstrap-to-active transition is not observable through a public Go
 // API until the policy is installed in an API server.
+func TestControllerJobPodTemplateContractRefusesAMissingServiceAccount(t *testing.T) {
+	t.Parallel()
+
+	// A PtahSchema may omit spec.execution.serviceAccountName, and the Job the
+	// controller builds from it then carries no serviceAccountName at all. The
+	// contract requires one, and it has to reach that refusal rather than error
+	// on the absent key: an evaluation error is applied as the policy's failure
+	// policy, which reads as a broken guard rather than a refused workload.
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("request", celgo.DynType),
+		celgo.Variable("variables", celgo.DynType),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expression := ""
+	for _, validation := range controllerJobWriteValidations("refused") {
+		if strings.Contains(validation.Expression, "serviceAccountName") {
+			expression = validation.Expression
+			break
+		}
+	}
+	if expression == "" {
+		t.Fatal("no controller Job validation reads the execution ServiceAccount")
+	}
+	ast, issues := environment.Compile(expression)
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile Pod template contract: %v", issues.Err())
+	}
+	program, programErr := environment.Program(ast)
+	if programErr != nil {
+		t.Fatalf("build Pod template contract: %v", programErr)
+	}
+	securityContext := map[string]any{
+		"allowPrivilegeEscalation": false,
+		"readOnlyRootFilesystem":   true,
+		"runAsNonRoot":             true,
+		"capabilities":             map[string]any{"drop": []any{"ALL"}},
+	}
+	labels := map[string]any{
+		"app.kubernetes.io/managed-by":   "ptah-operator",
+		"app.kubernetes.io/component":    "schema-operation",
+		"operator.ptah.dev/schema":       "orders",
+		"operator.ptah.dev/operation":    "resolve",
+		"operator.ptah.dev/operation-id": "0123456789abcdef",
+	}
+	annotations := map[string]any{"operator.ptah.dev/operation-id": "0123456789abcdef"}
+	job := func(serviceAccount any) map[string]any {
+		podSpec := map[string]any{
+			"activeDeadlineSeconds":        int64(120),
+			"automountServiceAccountToken": false,
+			"enableServiceLinks":           false,
+			"restartPolicy":                "Never",
+			"containers":                   []any{map[string]any{"name": "ptah", "securityContext": securityContext}},
+			"initContainers":               []any{map[string]any{"name": "fetch", "securityContext": securityContext}},
+		}
+		if serviceAccount != nil {
+			podSpec["serviceAccountName"] = serviceAccount
+		}
+		return map[string]any{
+			"metadata": map[string]any{"labels": labels, "annotations": annotations},
+			"spec": map[string]any{
+				"activeDeadlineSeconds": int64(120),
+				"template": map[string]any{
+					"metadata": map[string]any{"labels": labels, "annotations": annotations},
+					"spec":     podSpec,
+				},
+			},
+		}
+	}
+	evaluate := func(object map[string]any) bool {
+		t.Helper()
+		result, _, evalErr := program.Eval(map[string]any{
+			"object":    object,
+			"request":   map[string]any{"operation": "CREATE"},
+			"variables": map[string]any{"isAnyAdmissionConvergenceProbe": false},
+		})
+		if evalErr != nil {
+			t.Fatalf("evaluate Pod template contract: %v", evalErr)
+		}
+		admitted, ok := result.Value().(bool)
+		if !ok {
+			t.Fatalf("Pod template contract result = %T(%v), want bool", result.Value(), result.Value())
+		}
+		return admitted
+	}
+	// The control: the same Job with an execution ServiceAccount is admitted,
+	// so the refusal below is the missing field and not an incomplete fixture.
+	if !evaluate(job("ptah-execution")) {
+		t.Fatal("Pod template contract refused a complete Job")
+	}
+	if evaluate(job(nil)) {
+		t.Fatal("Pod template contract admitted a Job with no execution ServiceAccount")
+	}
+}
+
 func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 	t.Parallel()
 
