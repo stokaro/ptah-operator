@@ -71,7 +71,6 @@ ROOT_DIR=$BOOTSTRAP_ROOT_DIR
 SOURCE_REPOSITORY_ROOT=${E2E_SOURCE_REPOSITORY_ROOT:?E2E_SOURCE_REPOSITORY_ROOT is required inside the source snapshot}
 CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:?E2E_CONTROLLER_REVISION is required inside the source snapshot}
 E2E_PTAH_SIBLING_SOURCE_DIR=${E2E_PTAH_SIBLING_SOURCE_DIR:-}
-PREDECESSOR_IDENTITY_FILE=$ROOT_DIR/internal/crdupgrade/assets/predecessor.json
 
 DOCKER_CONTEXT=${DOCKER_CONTEXT:-remote-dev-container}
 K8S_VERSION=${K8S_VERSION:-}
@@ -169,6 +168,16 @@ if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1
 	fail "sha256sum or shasum is required"
 fi
 
+# The suite runs against Helm 4, which applies server-side. Helm 3 patches
+# client-side and leaves the release's objects with no server-side apply
+# owner, so a proof that stops and restores a runtime Deployment cannot give
+# it back the ownership it had. Refuse here rather than mid-run.
+helm_version=$(helm version --template '{{.Version}}' 2>/dev/null || printf '')
+case "$helm_version" in
+v[4-9]* | v[1-9][0-9]*) ;;
+*) fail "Helm 4 or newer is required; found ${helm_version:-no version output}" ;;
+esac
+
 case "$SOURCE_REPOSITORY_ROOT" in
 	/*) ;;
 	*) fail "E2E_SOURCE_REPOSITORY_ROOT must be an absolute path" ;;
@@ -184,26 +193,6 @@ resolved_controller=$(git -C "$SOURCE_REPOSITORY_ROOT" rev-parse --verify "${CON
 [ "$resolved_controller" = "$CONTROLLER_REVISION" ] ||
 	fail "operator source revision resolved to $resolved_controller, expected $CONTROLLER_REVISION"
 verify_snapshot_source
-
-[ -f "$PREDECESSOR_IDENTITY_FILE" ] ||
-	fail "predecessor identity fixture is missing: $PREDECESSOR_IDENTITY_FILE"
-jq -e '.mode == "legacy-adoption"' "$PREDECESSOR_IDENTITY_FILE" >/dev/null ||
-	fail "predecessor fixture must declare the legacy-adoption contract"
-PREDECESSOR_REVISION=$(jq -er '.revision' "$PREDECESSOR_IDENTITY_FILE")
-PREDECESSOR_DOCKERFILE=$(jq -er '.dockerfile' "$PREDECESSOR_IDENTITY_FILE")
-PREDECESSOR_CHART=$(jq -er '.chart' "$PREDECESSOR_IDENTITY_FILE")
-printf '%s\n' "$PREDECESSOR_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||
-	fail "predecessor revision must be an exact 40-character lowercase Git commit"
-case "$PREDECESSOR_DOCKERFILE" in
-	/* | ../* | */../* | */..) fail "predecessor Dockerfile path must stay inside its archive" ;;
-esac
-case "$PREDECESSOR_CHART" in
-	/* | ../* | */../* | */..) fail "predecessor chart path must stay inside its archive" ;;
-esac
-resolved_predecessor=$(git -C "$SOURCE_REPOSITORY_ROOT" rev-parse --verify "${PREDECESSOR_REVISION}^{commit}" 2>/dev/null) ||
-	fail "exact predecessor commit $PREDECESSOR_REVISION is unavailable; fetch repository history"
-[ "$resolved_predecessor" = "$PREDECESSOR_REVISION" ] ||
-	fail "predecessor revision resolved to $resolved_predecessor, expected $PREDECESSOR_REVISION"
 
 [ -n "$K8S_VERSION" ] || fail "K8S_VERSION is required (for example, 1.37.0)"
 printf '%s\n' "$K8S_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
@@ -344,8 +333,6 @@ IMAGE_TAG=$(printf '%s' "$identity" | sha256 | cut -c1-16)
 OPERATOR_IMAGE="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 NEXT_IMAGE_REPOSITORY=ptah-operator-e2e.local/ptah-operator-next
 NEXT_OPERATOR_IMAGE="${NEXT_IMAGE_REPOSITORY}:${IMAGE_TAG}"
-PREDECESSOR_IMAGE_REPOSITORY=ptah-operator-e2e.local/ptah-operator-predecessor
-PREDECESSOR_OPERATOR_IMAGE="${PREDECESSOR_IMAGE_REPOSITORY}:${IMAGE_TAG}"
 FIXTURE_BUILD_IMAGE="ptah-operator-e2e.local/e2e-fixture:${IMAGE_TAG}"
 PTAH_IMAGE="ptah-executor-e2e.local/ptah:${IMAGE_TAG}"
 REGISTRY_CONTAINER=$(dns_name ptah-registry "$identity" 63)
@@ -428,11 +415,8 @@ TLS_PROXY_CERT_EXT_FILE=$TLS_PROXY_DIR/server.ext
 IMAGE_AUDIT_ARCHIVE=$WORK_DIR/image-audit.tar
 CHART_PACKAGE_DIR=$WORK_DIR/chart-package
 NEXT_CHART_PACKAGE_DIR=$WORK_DIR/next-chart-package
-PREDECESSOR_SOURCE_ARCHIVE=$WORK_DIR/predecessor-source.tar
-PREDECESSOR_BUILD_CONTEXT=$WORK_DIR/predecessor-source
 NEXT_SOURCE_ARCHIVE=$WORK_DIR/next-source.tar
 NEXT_BUILD_CONTEXT=$WORK_DIR/next-source
-PREDECESSOR_VALUES_FILE=$WORK_DIR/predecessor-values.json
 CANDIDATE_VALUES_FILE=$WORK_DIR/candidate-values.json
 NEXT_VALUES_FILE=$WORK_DIR/next-values.json
 CLUSTER_CREATED=0
@@ -1143,6 +1127,23 @@ collect_diagnostics() {
 	if [ "$E2E_DEBUG_LOGS" -eq 1 ]; then
 		debug_logs_stop_following
 		printf '%s\n' 'e2e: E2E_DEBUG_LOGS=1: raw pod logs follow and may contain credentials' >&2
+		# A Pod that never becomes Ready and a convergence barrier that never
+		# closes leave no error behind. The objects they wait on do.
+		printf '%s\n' '=== events ===' >&2
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get events -A \
+			--sort-by=.lastTimestamp 2>/dev/null | tail -n 80 >&2 || true
+		printf '%s\n' '=== operator pods ===' >&2
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get pods -n "$OPERATOR_NAMESPACE" -o json 2>/dev/null |
+			jq -c '.items[] | {name: .metadata.name, phase: .status.phase, conditions: [.status.conditions[]? | {type, status, reason}], containers: [.status.containerStatuses[]? | {name, ready, restartCount, state}]}' >&2 || true
+		printf '%s\n' '=== operator ConfigMaps ===' >&2
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get configmaps -n "$OPERATOR_NAMESPACE" -o json 2>/dev/null |
+			jq -c '.items[] | select(.metadata.name != "kube-root-ca.crt") | {name: .metadata.name, uid: .metadata.uid, immutable, annotations: .metadata.annotations, data}' >&2 || true
+		printf '%s\n' '=== webhook configurations ===' >&2
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get mutatingwebhookconfigurations,validatingwebhookconfigurations -o json 2>/dev/null |
+			jq -c '.items[] | {kind, name: .metadata.name, webhooks: [.webhooks[] | {name, service: .clientConfig.service, caBundleBytes: ((.clientConfig.caBundle // "") | length), failurePolicy, matchConditions: [.matchConditions[]? | .name]}]}' >&2 || true
+		printf '%s\n' '=== operator EndpointSlices ===' >&2
+		kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s get endpointslices -n "$OPERATOR_NAMESPACE" -o json 2>/dev/null |
+			jq -c '.items[] | {name: .metadata.name, ports, endpoints: [.endpoints[]? | {addresses, ready: .conditions.ready, serving: .conditions.serving}]}' >&2 || true
 		# The guards are the other half of a refusal. A hook that fails because a
 		# policy denied it names the policy and nothing else, and which policy
 		# matched a given object is decided by the constraints the operator
@@ -1187,6 +1188,16 @@ collect_diagnostics() {
 
 cleanup() {
 	status=$?
+	# A failed run leaves nothing to inspect once its cluster is gone. With
+	# E2E_KEEP_ON_FAILURE=1 the task-created cluster, registry, database
+	# container and work directory stay for a local diagnosis; nothing in CI
+	# sets it, and the caller removes them by name afterwards.
+	if [ "$status" -ne 0 ] && [ "${E2E_KEEP_ON_FAILURE:-0}" = 1 ]; then
+		trap - EXIT
+		printf 'e2e: E2E_KEEP_ON_FAILURE=1: retaining cluster %s (kubeconfig %s), registry %s, database %s and %s\n' \
+			"$CLUSTER_NAME" "$KUBECONFIG_FILE" "$REGISTRY_CONTAINER" "$EXTERNAL_PG_CONTAINER" "$WORK_DIR" >&2
+		exit "$status"
+	fi
 	cleanup_failed=0
 	trap - EXIT HUP INT TERM
 	set +e
@@ -1406,9 +1417,6 @@ fi
 if docker --context "$DOCKER_CONTEXT" image inspect "$NEXT_OPERATOR_IMAGE" >/dev/null 2>&1; then
 	fail "refusing to overwrite pre-existing image $NEXT_OPERATOR_IMAGE; choose another E2E_RUN_ID"
 fi
-if docker --context "$DOCKER_CONTEXT" image inspect "$PREDECESSOR_OPERATOR_IMAGE" >/dev/null 2>&1; then
-	fail "refusing to overwrite pre-existing image $PREDECESSOR_OPERATOR_IMAGE; choose another E2E_RUN_ID"
-fi
 if docker --context "$DOCKER_CONTEXT" image inspect "$FIXTURE_BUILD_IMAGE" >/dev/null 2>&1; then
 	fail "refusing to overwrite pre-existing image $FIXTURE_BUILD_IMAGE; choose another E2E_RUN_ID"
 fi
@@ -1490,33 +1498,6 @@ if ! go -C "$ROOT_DIR" run ./test/e2e/handcraftoci verify-certificate \
 	>/dev/null 2>&1; then
 	fail "task-scoped TLS proxy certificate does not bind its exact Service DNS name"
 fi
-
-mkdir -p "$PREDECESSOR_BUILD_CONTEXT"
-git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \
-	--output="$PREDECESSOR_SOURCE_ARCHIVE" "$PREDECESSOR_REVISION"
-tar -xf "$PREDECESSOR_SOURCE_ARCHIVE" -C "$PREDECESSOR_BUILD_CONTEXT"
-[ -f "$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_DOCKERFILE" ] ||
-	fail "predecessor archive is missing $PREDECESSOR_DOCKERFILE"
-[ -f "$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_CHART/Chart.yaml" ] ||
-	fail "predecessor archive is missing $PREDECESSOR_CHART/Chart.yaml"
-predecessor_crd_count=$(jq -er '.crds | length' "$PREDECESSOR_IDENTITY_FILE")
-[ "$predecessor_crd_count" -eq 3 ] ||
-	fail "predecessor identity must contain exactly three CRDs"
-predecessor_crd_index=0
-while [ "$predecessor_crd_index" -lt "$predecessor_crd_count" ]; do
-	predecessor_crd_path=$(jq -er ".crds[$predecessor_crd_index].path" "$PREDECESSOR_IDENTITY_FILE")
-	predecessor_crd_digest=$(jq -er ".crds[$predecessor_crd_index].normalizedSpecDigest" "$PREDECESSOR_IDENTITY_FILE")
-	case "$predecessor_crd_path" in
-		/* | ../* | */../* | */..) fail "predecessor CRD path must stay inside its archive" ;;
-	esac
-	[ -f "$PREDECESSOR_BUILD_CONTEXT/$predecessor_crd_path" ] ||
-		fail "predecessor archive is missing $predecessor_crd_path"
-	actual_predecessor_digest=$(go -C "$ROOT_DIR" run ./hack/crdschemadigest \
-		"$PREDECESSOR_BUILD_CONTEXT/$predecessor_crd_path")
-	[ "$actual_predecessor_digest" = "$predecessor_crd_digest" ] ||
-		fail "predecessor CRD $predecessor_crd_path digest is $actual_predecessor_digest, expected $predecessor_crd_digest"
-	predecessor_crd_index=$((predecessor_crd_index + 1))
-done
 
 mkdir -p "$NEXT_BUILD_CONTEXT"
 git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \
@@ -1786,20 +1767,6 @@ docker --context "$DOCKER_CONTEXT" buildx build \
 	--build-arg "REVISION=$CONTROLLER_REVISION" \
 	--target operator \
 	--tag "$NEXT_OPERATOR_IMAGE" "$NEXT_BUILD_CONTEXT"
-printf 'e2e: building predecessor image %s from exact commit %s\n' \
-	"$PREDECESSOR_OPERATOR_IMAGE" "$PREDECESSOR_REVISION"
-add_created_image "$PREDECESSOR_OPERATOR_IMAGE"
-docker --context "$DOCKER_CONTEXT" buildx build \
-	--builder "$DOCKER_CONTEXT" \
-	--load \
-	--file "$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_DOCKERFILE" \
-	--build-arg "REVISION=$PREDECESSOR_REVISION" \
-	--tag "$PREDECESSOR_OPERATOR_IMAGE" "$PREDECESSOR_BUILD_CONTEXT"
-predecessor_image_revision=$(docker --context "$DOCKER_CONTEXT" image inspect \
-	--format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
-	"$PREDECESSOR_OPERATOR_IMAGE")
-[ "$predecessor_image_revision" = "$PREDECESSOR_REVISION" ] ||
-	fail "predecessor image revision is $predecessor_image_revision, expected $PREDECESSOR_REVISION"
 add_created_image "$FIXTURE_BUILD_IMAGE"
 docker --context "$DOCKER_CONTEXT" buildx build \
 	--builder "$DOCKER_CONTEXT" \
@@ -1961,14 +1928,6 @@ NEXT_CONTROLLER_DIGEST=${NEXT_CONTROLLER_IMAGE#*@}
 	fail "synthetic next-release operator image is not repository-and-digest pinned"
 printf '%s\n' "$NEXT_CONTROLLER_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
 	fail "synthetic next-release operator image digest is invalid"
-push_task_image "$PREDECESSOR_OPERATOR_IMAGE" ptah-operator-predecessor
-PREDECESSOR_CONTROLLER_IMAGE=$PUSHED_IMAGE_REF
-PREDECESSOR_CONTROLLER_REPOSITORY=${PREDECESSOR_CONTROLLER_IMAGE%@*}
-PREDECESSOR_CONTROLLER_DIGEST=${PREDECESSOR_CONTROLLER_IMAGE#*@}
-[ "$PREDECESSOR_CONTROLLER_REPOSITORY" != "$PREDECESSOR_CONTROLLER_IMAGE" ] ||
-	fail "predecessor operator image is not repository-and-digest pinned"
-printf '%s\n' "$PREDECESSOR_CONTROLLER_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
-	fail "predecessor operator image digest is invalid"
 mirror_task_image "$FIXTURE_BUILD_IMAGE" e2e-fixture
 E2E_FIXTURE_IMAGE=$PUSHED_IMAGE_REF
 mirror_task_image "$EXECUTOR_SOURCE_IMAGE" ptah-executor
@@ -2062,7 +2021,6 @@ render_release_values() {
           repository: $repository,
           tag: $tag,
           digest: $digest,
-          allowMutableTag: false,
           pullPolicy: "IfNotPresent"
         },
         imagePullSecrets: [{name: $pullSecret}],
@@ -2081,9 +2039,6 @@ render_release_values() {
     ' >"$values_destination"
 }
 
-render_release_values \
-	"$PREDECESSOR_VALUES_FILE" "$PREDECESSOR_CONTROLLER_REPOSITORY" "$IMAGE_TAG" \
-	"$PREDECESSOR_CONTROLLER_DIGEST" "$MANAGER_PULL_SECRET"
 render_release_values \
 	"$CANDIDATE_VALUES_FILE" "$CANDIDATE_OPERATOR_REPOSITORY" "$IMAGE_TAG" \
 	"$CANDIDATE_OPERATOR_DIGEST" "$MANAGER_PULL_SECRET"
@@ -2115,24 +2070,34 @@ jq -n \
   }
 ' | kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null
 
-printf 'e2e: installing exact predecessor release %s/%s from %s\n' \
-	"$OPERATOR_NAMESPACE" "$HELM_RELEASE" "$PREDECESSOR_REVISION"
-require_ready_nodes "immediately before predecessor Helm install"
+printf 'e2e: installing current release %s/%s from chart %s (%s)\n' \
+	"$OPERATOR_NAMESPACE" "$HELM_RELEASE" "$chart_asset" "$CHART_PACKAGE_DIGEST"
+require_ready_nodes "immediately before current-release Helm install"
 if command helm --kubeconfig "$KUBECONFIG_FILE" install "$HELM_RELEASE" \
-	"$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_CHART" \
+	"$CHART_PACKAGE" \
 	--namespace "$OPERATOR_NAMESPACE" \
 	--wait \
 	--timeout 5m \
-	--values "$PREDECESSOR_VALUES_FILE"; then
+	--values "$CANDIDATE_VALUES_FILE"; then
 	:
 else
-	predecessor_install_status=$?
+	current_install_status=$?
 	if nodes_ready_now; then
-		fail "predecessor release installation failed while Kubernetes nodes were Ready at the immediate post-failure check (Helm exit $predecessor_install_status)"
+		fail "current-release installation failed while Kubernetes nodes were Ready at the immediate post-failure check (Helm exit $current_install_status)"
 	fi
-	collect_node_readiness_diagnostics "immediately after predecessor Helm install failed"
-	fail "infrastructure readiness loss: predecessor release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $predecessor_install_status)"
+	collect_node_readiness_diagnostics "immediately after current-release Helm install failed"
+	fail "infrastructure readiness loss: current-release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $current_install_status)"
 fi
+
+# The Pod-intent webhook fails closed and its match condition runs against
+# every Pod in the cluster. A Pod nobody controls has no ownerReferences key,
+# and an expression that reads the key without has() errors there, which the
+# API server treats as a refusal. Prove the install leaves such a Pod admitted.
+printf 'e2e: proving a Pod without Ptah labels or a Ptah Job owner is admitted outside the release namespace\n'
+kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s -n default \
+	run ptah-e2e-foreign-pod-admission --image=registry.k8s.io/pause:3.10 \
+	--restart=Never --dry-run=server -o name >/dev/null ||
+	fail "a Pod without Ptah labels or a Ptah Job owner was refused after the current-release install"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \
@@ -2141,9 +2106,6 @@ E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
 E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \
-E2E_PREDECESSOR_IDENTITY_FILE=$PREDECESSOR_IDENTITY_FILE \
-E2E_PREDECESSOR_SOURCE_DIR=$PREDECESSOR_BUILD_CONTEXT \
-E2E_PREDECESSOR_IMAGE=$PREDECESSOR_CONTROLLER_IMAGE \
 E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_KUBERNETES_VERSION=$K8S_VERSION \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
@@ -2160,6 +2122,7 @@ E2E_HA_TEST_NAMESPACE=$HA_TEST_NAMESPACE \
 E2E_FOREIGN_NAMESPACE=$FOREIGN_NAMESPACE \
 E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
 	"$ROOT_DIR/hack/e2e-ha.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \

@@ -128,10 +128,6 @@ func (m *Manager) reconcile(ctx context.Context, beforeUpdate func() error) erro
 		}
 		existingByName[candidate.Name] = existing
 	}
-	allowPredecessor, err := recognizedPredecessorTransition(existingByName, candidates)
-	if err != nil {
-		return fmt.Errorf("recognize legacy CRD set: %w", err)
-	}
 
 	updates := make([]*apiextensionsv1.CustomResourceDefinition, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -140,7 +136,7 @@ func (m *Manager) reconcile(ctx context.Context, beforeUpdate func() error) erro
 		if matchErr != nil {
 			return fmt.Errorf("compare CRD %s: %w", candidate.Name, matchErr)
 		}
-		if compatibilityErr := compatible(existing, candidate, matches, allowPredecessor); compatibilityErr != nil {
+		if compatibilityErr := compatible(existing, candidate, matches); compatibilityErr != nil {
 			return fmt.Errorf("CRD %s is not upgrade-compatible: %w", candidate.Name, compatibilityErr)
 		}
 		identityMatches, identityErr := sameSchemaIdentity(existing, candidate)
@@ -172,7 +168,7 @@ func (m *Manager) reconcile(ctx context.Context, beforeUpdate func() error) erro
 		if matchErr != nil {
 			return fmt.Errorf("compare CRD %s after dry-run: %w", candidate.Name, matchErr)
 		}
-		if compatibilityErr := compatible(current, candidate, matches, allowPredecessor); compatibilityErr != nil {
+		if compatibilityErr := compatible(current, candidate, matches); compatibilityErr != nil {
 			return fmt.Errorf("CRD %s changed incompatibly after dry-run: %w", candidate.Name, compatibilityErr)
 		}
 	}
@@ -193,7 +189,7 @@ func (m *Manager) reconcile(ctx context.Context, beforeUpdate func() error) erro
 			if matchErr != nil {
 				return fmt.Errorf("compare CRD %s during update: %w", name, matchErr)
 			}
-			if compatibilityErr := compatible(current, candidate, currentMatches, allowPredecessor); compatibilityErr != nil {
+			if compatibilityErr := compatible(current, candidate, currentMatches); compatibilityErr != nil {
 				return fmt.Errorf("CRD %s changed incompatibly during upgrade: %w", name, compatibilityErr)
 			}
 			identityMatches, identityErr := sameSchemaIdentity(current, candidate)
@@ -311,7 +307,7 @@ func (m *Manager) waitReady(ctx context.Context, candidates []*apiextensionsv1.C
 	})
 }
 
-func compatible(existing, candidate *apiextensionsv1.CustomResourceDefinition, specsMatch, allowPredecessor bool) error {
+func compatible(existing, candidate *apiextensionsv1.CustomResourceDefinition, specsMatch bool) error {
 	if existing.DeletionTimestamp != nil {
 		return fmt.Errorf("deletion is already in progress")
 	}
@@ -371,15 +367,11 @@ func compatible(existing, candidate *apiextensionsv1.CustomResourceDefinition, s
 	}
 	_, existingHasVersion := existing.Annotations[SchemaVersionAnnotation]
 	_, existingHasDigest := existing.Annotations[SchemaDigestAnnotation]
+	// A CRD without the identity tuple was created by something other than a
+	// release that carries Ptah identity metadata. The operator upgrades only
+	// from those, so it is refused however its schema compares.
 	if !existingHasVersion || !existingHasDigest {
-		knownPredecessor, predecessorErr := isKnownPredecessorCRD(existing)
-		if predecessorErr != nil {
-			return predecessorErr
-		}
-		if !specsMatch && !(allowPredecessor && knownPredecessor) {
-			return incompleteSchemaIdentityError(candidate.Name)
-		}
-		return nil
+		return incompleteSchemaIdentityError(candidate.Name)
 	}
 	if existingSchemaVersion == candidateSchemaVersion && existingDigest != candidateDigest {
 		return fmt.Errorf(
@@ -526,77 +518,6 @@ func copySchemaIdentity(target, candidate *apiextensionsv1.CustomResourceDefinit
 	target.Annotations[SchemaVersionAnnotation] = candidate.Annotations[SchemaVersionAnnotation]
 	target.Annotations[SchemaDigestAnnotation] = candidate.Annotations[SchemaDigestAnnotation]
 	target.Annotations[ControllerStateVersionAnnotation] = candidate.Annotations[ControllerStateVersionAnnotation]
-}
-
-func recognizedPredecessorTransition(
-	existingByName map[string]*apiextensionsv1.CustomResourceDefinition,
-	candidates []*apiextensionsv1.CustomResourceDefinition,
-) (bool, error) {
-	if len(existingByName) != len(predecessorSchemaDigests) || len(candidates) != len(predecessorSchemaDigests) {
-		return false, nil
-	}
-	predecessorCount := 0
-	for _, candidate := range candidates {
-		candidateSchemaVersion, err := schemaVersion(candidate, false)
-		if err != nil {
-			return false, err
-		}
-		candidateStateVersion, err := controllerStateVersion(candidate, false)
-		if err != nil {
-			return false, err
-		}
-		if candidateSchemaVersion != CurrentCRDSchemaVersion || candidateStateVersion != 1 {
-			return false, nil
-		}
-		existing := existingByName[candidate.Name]
-		if existing == nil {
-			return false, nil
-		}
-		known, err := isKnownPredecessorCRD(existing)
-		if err != nil {
-			return false, err
-		}
-		if known {
-			predecessorCount++
-			continue
-		}
-		specsMatch, err := sameSpec(existing, candidate)
-		if err != nil {
-			return false, err
-		}
-		identityMatches, err := sameSchemaIdentity(existing, candidate)
-		if err != nil {
-			return false, err
-		}
-		if !specsMatch || !identityMatches {
-			return false, nil
-		}
-	}
-	return predecessorCount > 0, nil
-}
-
-func isKnownPredecessorCRD(crd *apiextensionsv1.CustomResourceDefinition) (bool, error) {
-	if crd == nil {
-		return false, fmt.Errorf("CRD is required")
-	}
-	if _, found := crd.Annotations[SchemaVersionAnnotation]; found {
-		return false, nil
-	}
-	if _, found := crd.Annotations[SchemaDigestAnnotation]; found {
-		return false, nil
-	}
-	if _, found := crd.Annotations[ControllerStateVersionAnnotation]; found {
-		return false, nil
-	}
-	want, found := predecessorSchemaDigests[crd.Name]
-	if !found {
-		return false, nil
-	}
-	got, err := ComputeSchemaDigest(crd)
-	if err != nil {
-		return false, err
-	}
-	return got == want, nil
 }
 
 func sameSpec(existing, candidate *apiextensionsv1.CustomResourceDefinition) (bool, error) {

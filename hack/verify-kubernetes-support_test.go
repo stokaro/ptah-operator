@@ -389,9 +389,17 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			old: "        run: make test-race\n",
 			new: "        run: go test ./...\n",
 		},
+		"pull-request race target bypassed": {
+			old: "        run: make test-race-base\n",
+			new: "        run: go test ./...\n",
+		},
+		"pull-request race step made unconditional": {
+			old: "        if: github.event_name == 'pull_request'\n",
+			new: "",
+		},
 		"E2E dependencies": {
-			old: "    needs: [support-matrix, verify, race]\n",
-			new: "    needs: [support-matrix, verify]\n",
+			old: "    needs: [support-matrix, verify]\n",
+			new: "    needs: [support-matrix]\n",
 		},
 		"static E2E matrix": {
 			old: "        include: ${{ fromJSON(needs.support-matrix.outputs.matrix) }}\n",

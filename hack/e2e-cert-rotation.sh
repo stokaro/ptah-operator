@@ -13,6 +13,36 @@ fail() {
 	exit 1
 }
 
+# A Pod deletion leaves the replaced Pod terminating while its replacement is
+# already available, so a rollout that returns still has two Pods carrying the
+# component label for a moment. Ask for the live one and wait for the other to
+# go, rather than reading a count that is briefly two.
+live_pod_name() {
+	live_component=$1
+	live_deadline=$(($(date +%s) + 180))
+	while :; do
+		live_name=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+			get pods \
+			-l "app.kubernetes.io/instance=${HELM_RELEASE},app.kubernetes.io/component=${live_component}" \
+			-o json |
+			jq -r '
+              [.items[] |
+                select(.metadata.deletionTimestamp == null) |
+                select(.status.conditions // [] |
+                  any(.type == "Ready" and .status == "True")) |
+                .metadata.name] |
+              if length == 1 then .[0] else "" end
+            ')
+		if [ -n "$live_name" ]; then
+			printf '%s\n' "$live_name"
+			return 0
+		fi
+		[ "$(date +%s)" -lt "$live_deadline" ] ||
+			fail "expected exactly one live ready pod for component ${live_component}"
+		sleep 2
+	done
+}
+
 resource_name() {
 	kind=$1
 	component=$2
@@ -228,7 +258,8 @@ verify_legacy_secret_lookup_state() {
 	# The proof requires the exact state returned by our successful removal.
 	# Recovery can tolerate a lost response, but cannot establish this evidence.
 	kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-		get secret "$SECRET_NAME" -o json >"$LEGACY_SECRET_LIVE" 2>"$LEGACY_SECRET_ERROR" &&
+		get secret "$SECRET_NAME" --show-managed-fields -o json \
+			>"$LEGACY_SECRET_LIVE" 2>"$LEGACY_SECRET_ERROR" &&
 		legacy_secret_matches "$LEGACY_SECRET_AFTER_REMOVE" removed &&
 		legacy_secret_matches "$LEGACY_SECRET_LIVE" removed &&
 		jq -e -s '
@@ -243,7 +274,8 @@ restore_legacy_secret() {
 	[ "$LEGACY_SECRET_RESTORE_REQUIRED" -eq 1 ] || return 0
 
 	if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-		get secret "$SECRET_NAME" -o json >"$LEGACY_SECRET_LIVE" 2>"$LEGACY_SECRET_ERROR"; then
+		get secret "$SECRET_NAME" --show-managed-fields -o json \
+		>"$LEGACY_SECRET_LIVE" 2>"$LEGACY_SECRET_ERROR"; then
 		printf '%s\n' 'e2e certificate rotation: could not inspect the legacy Secret during restoration' >&2
 		return 1
 	fi
@@ -284,7 +316,8 @@ restore_legacy_secret() {
 		:
 	fi
 	if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-		get secret "$SECRET_NAME" -o json >"$LEGACY_SECRET_VERIFIED" 2>"$LEGACY_SECRET_ERROR"; then
+		get secret "$SECRET_NAME" --show-managed-fields -o json \
+		>"$LEGACY_SECRET_VERIFIED" 2>"$LEGACY_SECRET_ERROR"; then
 		printf '%s\n' 'e2e certificate rotation: could not verify the restored legacy Secret' >&2
 		return 1
 	fi
@@ -330,7 +363,7 @@ STAGING_SECRET_NAME=$(printf '%s' "$ROTATOR_DEPLOYMENT_JSON" |
 		if length == 1 then .[0] else empty end')
 [ -n "$STAGING_SECRET_NAME" ] || fail "could not resolve the exact certificate staging Secret"
 ROTATOR_SERVICE_ACCOUNT=$(printf '%s' "$ROTATOR_DEPLOYMENT_JSON" | jq -r '.spec.template.spec.serviceAccountName')
-ROTATOR_POD=$(resource_name pod certificate-rotation)
+ROTATOR_POD=$(live_pod_name certificate-rotation)
 ROTATOR_POD_JSON=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get pod "$ROTATOR_POD" -o json)
 ROTATOR_SERVICE_ACCOUNT_UID=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
@@ -441,8 +474,12 @@ prove_certificate_write_guards() {
 prove_certificate_write_guards
 
 GUARD_ERROR=$UPGRADE_WORK_DIR/secret-guard.err
-if kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-	--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${ROTATOR_SERVICE_ACCOUNT}" \
+# The rotator's own identity is bound to its Pod, and the service account
+# origin guard refuses a request that carries the name without that binding.
+# This proof is about the recovery contract, so it asks with the identity the
+# rotator actually has; otherwise the origin guard answers first and the
+# recovery guard is never reached.
+if rotator_kube -n "$OPERATOR_NAMESPACE" \
 	create secret generic ptah-rotator-unauthorized \
 	--from-literal=uncontrolled=value --dry-run=server -o name \
 	>/dev/null 2>"$GUARD_ERROR"; then
@@ -469,8 +506,12 @@ while [ "$(date +%s)" -lt "$endpoint_deadline" ]; do
 done
 [ "$ready_endpoints" -eq 2 ] || fail "webhook Service did not converge to two ready endpoint addresses"
 
+# The removal patch below tests the whole metadata against what the server
+# stores, and kubectl hides managedFields unless asked, so a snapshot without
+# them can never match and the patch is refused before it is applied.
 if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
-	get secret "$SECRET_NAME" -o json >"$LEGACY_SECRET_BEFORE" 2>"$LEGACY_SECRET_ERROR"; then
+	get secret "$SECRET_NAME" --show-managed-fields -o json \
+	>"$LEGACY_SECRET_BEFORE" 2>"$LEGACY_SECRET_ERROR"; then
 	fail "could not capture the generated webhook Secret before the legacy lookup proof"
 fi
 chmod 600 "$LEGACY_SECRET_BEFORE"
@@ -585,18 +626,21 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" get validatingwebhookconfiguration "$VAL
     ' |
 	kubectl --kubeconfig "$KUBECONFIG_FILE" replace -f - >/dev/null
 
-OLD_ROTATOR_POD=$(resource_name pod certificate-rotation)
+OLD_ROTATOR_POD=$(live_pod_name certificate-rotation)
 OLD_ROTATOR_UID=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get pod "$OLD_ROTATOR_POD" -o jsonpath='{.metadata.uid}')
-kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout restart \
-	deployment "$ROTATOR_DEPLOYMENT" >/dev/null
+# The retained runtime guard pins the release's Deployments, so a rollout
+# restart, which writes a Pod-template annotation, is refused. Replacing the
+# Pod is what this proof needs and what the guard leaves to the ReplicaSet.
+kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+	delete pod "$OLD_ROTATOR_POD" --wait=false >/dev/null
 if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
 	deployment "$ROTATOR_DEPLOYMENT" --timeout=5m >/dev/null; then
 	kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" describe \
 		deployment "$ROTATOR_DEPLOYMENT" >&2 || true
 	fail "certificate rotator Deployment could not restart with corrupted CA state"
 fi
-NEW_ROTATOR_POD=$(resource_name pod certificate-rotation)
+NEW_ROTATOR_POD=$(live_pod_name certificate-rotation)
 NEW_ROTATOR_UID=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get pod "$NEW_ROTATOR_POD" -o jsonpath='{.metadata.uid}')
 [ "$NEW_ROTATOR_UID" != "$OLD_ROTATOR_UID" ] || fail "certificate rotator Pod was not replaced"
@@ -648,18 +692,18 @@ RECOVERED_SECRET_UID=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAM
 	get secret "$SECRET_NAME" -o jsonpath='{.metadata.uid}')
 kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	delete secret "$SECRET_NAME" --wait=true --timeout=60s >/dev/null
-ROTATOR_POD_BEFORE_RECREATE=$(resource_name pod certificate-rotation)
+ROTATOR_POD_BEFORE_RECREATE=$(live_pod_name certificate-rotation)
 ROTATOR_UID_BEFORE_RECREATE=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get pod "$ROTATOR_POD_BEFORE_RECREATE" -o jsonpath='{.metadata.uid}')
-kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout restart \
-	deployment "$ROTATOR_DEPLOYMENT" >/dev/null
+kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
+	delete pod "$ROTATOR_POD_BEFORE_RECREATE" --wait=false >/dev/null
 if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" rollout status \
 	deployment "$ROTATOR_DEPLOYMENT" --timeout=5m >/dev/null; then
 	kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" describe \
 		deployment "$ROTATOR_DEPLOYMENT" >&2 || true
 	fail "certificate rotator Deployment could not restart with a missing TLS Secret"
 fi
-ROTATOR_POD_AFTER_RECREATE=$(resource_name pod certificate-rotation)
+ROTATOR_POD_AFTER_RECREATE=$(live_pod_name certificate-rotation)
 ROTATOR_UID_AFTER_RECREATE=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" \
 	get pod "$ROTATOR_POD_AFTER_RECREATE" -o jsonpath='{.metadata.uid}')
 [ "$ROTATOR_UID_AFTER_RECREATE" != "$ROTATOR_UID_BEFORE_RECREATE" ] ||

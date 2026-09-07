@@ -617,8 +617,18 @@ dyn(null).spec, the validation errors, and the policy denies.
 {{- printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager == %q` .root.Release.Namespace (include "ptah-operator.admissionConvergenceMarkerName" .root) .fieldManager -}}
 {{- end -}}
 
+{{/*
+Every probe that writes the convergence marker: the dependency probes, the
+stable guards' probes, and the service account object guard's probe. A guard
+that matches the marker meets every family; recognizing only its own lets it
+refuse another in place of the target's answer, and a match condition that
+dereferences a workload field errors on the ConfigMap instead of declining.
+crdupgrade compiles the same pattern.
+*/}}
+{{- define "ptah-operator.admissionConvergenceAnyProbeFieldManagerPattern" -}}^(ptah-admission-convergence-v1-[0-9a-f]{64}|ptah-admission-stable-v1-[0-9a-f]{32}-[0-9a-f]{64}|ptah-service-account-object-probe-v1-[0-9a-f]{64})${{- end -}}
+
 {{- define "ptah-operator.admissionConvergenceAnyProbeRequest" -}}
-{{- printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches("^ptah-admission-convergence-v1-[0-9a-f]{64}$")` .Release.Namespace (include "ptah-operator.admissionConvergenceMarkerName" .) -}}
+{{- printf `request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)` .Release.Namespace (include "ptah-operator.admissionConvergenceMarkerName" .) (include "ptah-operator.admissionConvergenceAnyProbeFieldManagerPattern" .) -}}
 {{- end -}}
 
 {{- define "ptah-operator.admissionConvergenceProbeMessage" -}}
@@ -801,7 +811,7 @@ dyn(null).spec, the validation errors, and the policy denies.
 {{- $exactCanaryTarget := printf `%[1]s.name == %[2]q && has(%[1]s.clientConfig.service) && %[1]s.clientConfig.service.namespace == %[3]q && %[1]s.clientConfig.service.name == %[4]q && (!has(%[1]s.clientConfig.service.port) || %[1]s.clientConfig.service.port == 443)` $newWebhook .canaryName .serviceNamespace .candidateServiceName -}}
 {{- $mutableTarget := printf `((%s) || (%s))` $exactServiceTarget $exactCanaryTarget -}}
 {{- $caBundleEquality := include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.caBundle" $newWebhook) "oldPath" (printf "%s.clientConfig.caBundle" $oldWebhook)) -}}
-{{- $mutableCABundle := printf `((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= 262144) || (!(%[1]s) && %[3]s)` $mutableTarget $newWebhook $caBundleEquality -}}
+{{- $mutableCABundle := printf `(((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= 262144) || (!(%[1]s) && %[3]s))` $mutableTarget $newWebhook $caBundleEquality -}}
 {{- $parts := list
       (printf `%s.name == %s.name` $oldWebhook $newWebhook)
       (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.service" $newWebhook) "oldPath" (printf "%s.clientConfig.service" $oldWebhook)))
@@ -1175,11 +1185,14 @@ dyn(null).spec, the validation errors, and the policy denies.
 {{- end -}}
 
 {{- define "ptah-operator.managerImage" -}}
+{{- /* Neither key is a chart value: the schema refuses both, and a render
+      that skips schema validation still refuses them by name rather than
+      letting a stale values file select a mode the guards cannot admit. */ -}}
 {{- if .Values.image.allowMutableTag -}}
-{{- fail "image.allowMutableTag is no longer supported; use image.digest with a registry manifest digest, including for local registries" -}}
+{{- fail "image.allowMutableTag is not a chart value; use image.digest with a registry manifest digest, including for local registries" -}}
 {{- end -}}
 {{- if .Values.image.testIdentityDigest -}}
-{{- fail "image.testIdentityDigest is no longer supported; use image.digest with a registry manifest digest, not a Docker image ID" -}}
+{{- fail "image.testIdentityDigest is not a chart value; use image.digest with a registry manifest digest, not a Docker image ID" -}}
 {{- end -}}
 {{- if not (regexMatch `^sha256:[0-9a-f]{64}$` (default "" .Values.image.digest)) -}}
 {{- fail "image.digest must pin the manager with sha256:<64 lowercase hex>; use a registry manifest digest, including for local registries" -}}

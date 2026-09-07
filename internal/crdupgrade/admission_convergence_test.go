@@ -734,8 +734,12 @@ func TestAdmissionConvergenceProbeBundleSelectsExactlyOnePolicyCause(t *testing.
 				guard.ReleaseNamespace,
 				serviceAccountObjectGuardMarkerPattern(guard.ReleaseNamespace, guard.ReleaseName),
 			)
-			if got := policy.Spec.Variables[0].Expression; got != wantSelector || policy.Spec.Variables[1].Expression != wantSelector {
-				t.Fatalf("stable policy %s selectors differ from the policy-specific contract", probe.PolicyName)
+			wantAnySelector := stableAdmissionConvergenceAnyProbeRequestExpression(
+				guard.ReleaseNamespace,
+				serviceAccountObjectGuardMarkerPattern(guard.ReleaseNamespace, guard.ReleaseName),
+			)
+			if got := policy.Spec.Variables[0].Expression; got != wantAnySelector || policy.Spec.Variables[1].Expression != wantSelector {
+				t.Fatalf("stable policy %s selectors differ from the union and policy-specific contracts", probe.PolicyName)
 			}
 			if !strings.HasPrefix(probe.FieldManager, stableAdmissionConvergenceProbeFieldManagerPrefix(probe.PolicyName)) {
 				t.Fatalf("stable policy %s probe field manager is outside its policy-specific namespace", probe.PolicyName)

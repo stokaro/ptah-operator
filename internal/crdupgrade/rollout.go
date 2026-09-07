@@ -507,6 +507,84 @@ func (g *RolloutGuard) BeginControllerCredentialDrain(ctx context.Context) (Rele
 	return g.releaseActivationGuard().BeginDraining(ctx)
 }
 
+// CandidateRuntimeConverged reports whether the candidate release is already
+// the active release and every existing runtime Deployment already runs it:
+// the durable activation parameter fences the candidate sequence with active
+// controller credentials, and each Deployment carries the candidate
+// controller-state and release-sequence annotations, the candidate manager
+// image and a non-zero replica count. Such a release has no transition left.
+// A repeated upgrade with the same chart, the shape a GitOps re-sync or a
+// values-only change produces, has to leave that runtime running: the retained
+// runtime guard admits a stop only toward a newer release, so a hook that
+// tried to quiesce here would be refused rather than protected. A stopped
+// Deployment, or one still carrying an older identity, is a transition in
+// progress and reports false; a missing Deployment has nothing to keep
+// running and does not count against convergence. Ownership faults and
+// malformed annotations are errors, never a false answer.
+func (g *RolloutGuard) CandidateRuntimeConverged(ctx context.Context) (bool, error) {
+	if err := g.validate(); err != nil {
+		return false, err
+	}
+	state, err := g.releaseActivationGuard().CurrentState(ctx)
+	if err != nil {
+		return false, err
+	}
+	active := ReleaseActivationState{
+		ActiveReleaseSequence: g.ReleaseSequence, ControllerCredentialPhase: ControllerCredentialsActive,
+	}
+	if state != active {
+		return false, nil
+	}
+	targets := []deploymentTarget{
+		{name: g.CertificateDeploymentName, component: "certificate-rotation"},
+		{name: g.ControllerDeploymentName, component: "controller"},
+	}
+	for _, target := range targets {
+		deployment, err := g.Deployments.Get(ctx, target.name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("get %s Deployment %s/%s: %w", target.component, g.ReleaseNamespace, target.name, err)
+		}
+		if err := g.verifyDeployment(target, deployment); err != nil {
+			return false, err
+		}
+		running, err := g.deploymentRunsCandidate(target, deployment)
+		if err != nil {
+			return false, err
+		}
+		if !running {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// deploymentRunsCandidate reports whether a verified runtime Deployment
+// carries the candidate identity and is scaled up.
+func (g *RolloutGuard) deploymentRunsCandidate(target deploymentTarget, deployment *appsv1.Deployment) (bool, error) {
+	state, found, err := positiveAnnotation(deployment.Annotations, ControllerStateVersionAnnotation)
+	if err != nil {
+		return false, fmt.Errorf("%s Deployment controller-state annotation: %w", target.component, err)
+	}
+	if !found || state != uint64(g.ControllerStateVersion) {
+		return false, nil
+	}
+	sequence, found, err := positiveAnnotation(deployment.Annotations, ReleaseSequenceAnnotation)
+	if err != nil {
+		return false, fmt.Errorf("%s Deployment release-sequence annotation: %w", target.component, err)
+	}
+	if !found || sequence != uint64(g.ReleaseSequence) {
+		return false, nil
+	}
+	if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas == 0 {
+		return false, nil
+	}
+	containers := deployment.Spec.Template.Spec.Containers
+	return len(containers) == 1 && containers[0].Image == g.ManagerImage, nil
+}
+
 func (g *RolloutGuard) quiesce(ctx context.Context, apply bool) error {
 	if err := g.validate(); err != nil {
 		return err
@@ -1326,7 +1404,7 @@ func (g *RolloutGuard) hookIdentityPolicy() *admissionregistrationv1.ValidatingA
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "fixed-hook-identity",
 				Expression: fmt.Sprintf(
-					`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
+					`request.namespace == %q && request.resource.group == "" && request.resource.resource == "pods" && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
 					g.ReleaseNamespace, g.HookServiceAccountName, teardownServiceAccount, g.HookServiceAccountName, teardownServiceAccount,
 					generatedPodRequestNameExpression(identityJob), generatedPodRequestNameExpression(preflightJob), generatedPodRequestNameExpression(reconcileJob), generatedPodRequestNameExpression(quiesceJob), generatedPodRequestNameExpression(teardownJob),
 				),

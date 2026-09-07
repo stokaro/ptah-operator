@@ -40,7 +40,7 @@ TAG_MOVE_INTERVAL=${E2E_TAG_MOVE_INTERVAL:-2m}
 APPROVAL_INTERVAL=${E2E_APPROVAL_INTERVAL:-5m}
 STALE_APPROVAL_INTERVAL=${E2E_STALE_APPROVAL_INTERVAL:-4m}
 QUIESCENT_INTERVAL=${E2E_QUIESCENT_INTERVAL:-30m}
-BLOCKED_REFRESH_SECONDS=${E2E_BLOCKED_REFRESH_SECONDS:-30}
+BLOCKED_REFRESH_SECONDS=${E2E_BLOCKED_REFRESH_SECONDS:-90}
 BLOCKED_REFRESH_INTERVAL=${BLOCKED_REFRESH_SECONDS}s
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
 TLS_PROXY_ENDPOINT_WAIT_ATTEMPTS=60
@@ -204,6 +204,9 @@ jq -e \
     .database + "?sslmode=disable")
 ' "$EXTERNAL_PG_CREDENTIALS_FILE" >/dev/null ||
 	fail "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE has an invalid or misbound shape"
+EXTERNAL_PG_FIXTURE_USERNAME=$(jq -er '.username' "$EXTERNAL_PG_CREDENTIALS_FILE")
+EXTERNAL_PG_FIXTURE_PASSWORD=$(jq -er '.password' "$EXTERNAL_PG_CREDENTIALS_FILE")
+EXTERNAL_PG_FIXTURE_DATABASE=$(jq -er '.database' "$EXTERNAL_PG_CREDENTIALS_FILE")
 for image in "$EXECUTOR_IMAGE" "$RUNNER_IMAGE" "$FIXTURE_IMAGE" "$POSTGRES_IMAGE" "$MYSQL_IMAGE"; do
 	is_pinned_image "$image" || fail "data-plane images must be pinned by a lowercase SHA-256 digest: $image"
 done
@@ -236,7 +239,18 @@ k() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" "$@"
 }
 
-CONTROLLER_NAME="${HELM_RELEASE}-ptah-operator"
+# The chart derives the controller's object names from the release through its
+# own naming rules, and the ServiceAccount it runs as carries the
+# controller-state version, so neither can be spelled from the release name.
+# The ClusterRole this phase patches shares the Deployment's name.
+CONTROLLER_NAME=$(k -n "$OPERATOR_NAMESPACE" get deployment \
+	-l app.kubernetes.io/component=controller \
+	-o jsonpath='{.items[0].metadata.name}')
+[ -n "$CONTROLLER_NAME" ] || fail "installed controller Deployment is missing"
+CONTROLLER_SERVICE_ACCOUNT=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" \
+	-o jsonpath='{.spec.template.spec.serviceAccountName}')
+[ -n "$CONTROLLER_SERVICE_ACCOUNT" ] ||
+	fail "installed controller Deployment $CONTROLLER_NAME has no ServiceAccount"
 deployed_controller_image=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
 	jq -er '
       [.spec.template.spec.containers[] | select(.name == "manager").args[]? |
@@ -2176,7 +2190,7 @@ wait_for_controller_status_authorization() {
 	while [ "$(date +%s)" -lt "$authorization_deadline" ]; do
 		rbac_answer=$(k auth can-i patch ptahschemas.operator.ptah.dev \
 			--subresource=status \
-			--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${CONTROLLER_NAME}" 2>/dev/null || true)
+			--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${CONTROLLER_SERVICE_ACCOUNT}" 2>/dev/null || true)
 		[ "$rbac_answer" = "$expected_answer" ] && return 0
 		sleep 1
 	done
@@ -2301,11 +2315,11 @@ assert_registry_container_contract() {
 		--format '{{.State.Running}}' "$REGISTRY_CONTAINER_ID")" = "$registry_expected_running" ] ||
 		fail "registry container running state is not $registry_expected_running"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-owner\"}}' \
+		--format '{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
 		"$REGISTRY_CONTAINER_ID")" = "$EXTERNAL_PG_OWNER" ] ||
 		fail "registry container lost its task owner label"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-component\"}}' \
+		--format '{{index .Config.Labels "operator.ptah.dev/e2e-component"}}' \
 		"$REGISTRY_CONTAINER_ID")" = registry ] ||
 		fail "registry container lost its component label"
 	if [ "$registry_expected_running" = true ]; then
@@ -2348,11 +2362,11 @@ assert_external_pg_container_contract() {
 		--format '{{.Config.Image}}' "$EXTERNAL_PG_CONTAINER_ID")" = "$EXTERNAL_PG_IMAGE" ] ||
 		fail "external PostgreSQL container lost its digest-pinned image"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-owner\"}}' \
+		--format '{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
 		"$EXTERNAL_PG_CONTAINER_ID")" = "$EXTERNAL_PG_OWNER" ] ||
 		fail "external PostgreSQL container lost its task owner label"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels \"operator.ptah.dev/e2e-component\"}}' \
+		--format '{{index .Config.Labels "operator.ptah.dev/e2e-component"}}' \
 		"$EXTERNAL_PG_CONTAINER_ID")" = external-postgresql ] ||
 		fail "external PostgreSQL container lost its component label"
 	docker --context "$DOCKER_CONTEXT" container inspect \
@@ -2367,11 +2381,14 @@ assert_external_pg_container_contract() {
 		--format '{{json .HostConfig.Tmpfs}}' "$EXTERNAL_PG_CONTAINER_ID" |
 		jq -e 'keys == ["/var/lib/postgresql/data"]' >/dev/null ||
 		fail "external PostgreSQL data directory is not an exact tmpfs"
+	# The tmpfs itself is pinned by HostConfig.Tmpfs above. Docker 29 stopped
+	# listing tmpfs in .Mounts, so what this asserts is the absence of anything
+	# persistent: no bind, no volume, and no tmpfs anywhere but the data
+	# directory, on daemons that list it and on daemons that do not.
 	docker --context "$DOCKER_CONTEXT" container inspect \
 		--format '{{json .Mounts}}' "$EXTERNAL_PG_CONTAINER_ID" |
 		jq -e '
-      length == 1 and .[0].Type == "tmpfs" and
-      .[0].Destination == "/var/lib/postgresql/data"
+      all(.[]; .Type == "tmpfs" and .Destination == "/var/lib/postgresql/data")
     ' >/dev/null || fail "external PostgreSQL container has a persistent or unexpected mount"
 	docker --context "$DOCKER_CONTEXT" container inspect \
 		--format '{{json .NetworkSettings.Networks}}' "$EXTERNAL_PG_CONTAINER_ID" |
@@ -2380,12 +2397,18 @@ assert_external_pg_container_contract() {
     ' >/dev/null || fail "external PostgreSQL container left its exact kind-network address"
 }
 
+# The queries below describe the database Ptah connects to, so they are asked
+# with the same login Ptah is given: the container's own POSTGRES_USER is the
+# superuser that created that login, and asking as it would contradict the
+# least-privilege checks this phase makes about the fixture.
 external_pg_query() {
 	external_query=$1
 	assert_external_pg_container_contract
-	docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
-		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc "$1"' \
-		sh "$external_query"
+	docker --context "$DOCKER_CONTEXT" exec \
+		--env "PGPASSWORD=$EXTERNAL_PG_FIXTURE_PASSWORD" \
+		"$EXTERNAL_PG_CONTAINER_ID" \
+		psql -h 127.0.0.1 -U "$EXTERNAL_PG_FIXTURE_USERNAME" \
+		-d "$EXTERNAL_PG_FIXTURE_DATABASE" -v ON_ERROR_STOP=1 -Atqc "$external_query"
 }
 
 assert_external_pg_server_version() {
@@ -4012,7 +4035,10 @@ assert_plan_storage_immutable() {
 	immutable_plan_spec_digest="sha256:$(printf '%s\n' "$immutable_plan_object" |
 		jq -cS '.spec' | sha256)"
 	immutable_plan_destructive=$(printf '%s\n' "$immutable_plan_object" |
-		jq -er '.spec.destructive')
+		jq -r '
+      if (.spec.destructive | type) == "boolean" then (.spec.destructive | tostring)
+      else error("plan spec.destructive must be a boolean") end
+    ')
 	if [ "$immutable_plan_destructive" = true ]; then
 		immutable_plan_replacement=false
 	else
@@ -4389,7 +4415,7 @@ assert_source_job_isolation() {
 			--arg executorImage "$EXECUTOR_IMAGE" \
 			--arg runnerImage "$RUNNER_IMAGE" \
 			--arg verificationPolicy "$isolation_verification_policy" \
-			--arg serviceAccountName "" \
+			--arg serviceAccountName "default" \
 			--argjson imagePullSecrets "[]" \
 			--arg requestedReference "$isolation_requested_reference" \
 			--arg resolvedReference "$isolation_resolved_reference" \
@@ -4737,6 +4763,12 @@ assert_destructive_gate() {
 	gate_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$gate_deadline" ]; do
 		audit_completed_jobs
+		# The audit above reads the ledger before it walks every terminal Job,
+		# and walking them takes longer than the refresh cadence. Refresh the
+		# ledger here so the counts below and the validation that follows read
+		# one snapshot: reading two made the loop decide on three chains and
+		# then validate four.
+		record_observed_jobs
 		assert_no_new_jobs "$gate_schema" apply "$gate_apply_checkpoint"
 		gate_resolve_count=$(new_job_count_since "$gate_schema" resolve "$gate_refresh_checkpoint")
 		gate_verify_count=$(new_job_count_since "$gate_schema" verify "$gate_refresh_checkpoint")
@@ -4753,7 +4785,6 @@ assert_destructive_gate() {
 			all_new_jobs_complete "$gate_schema" verify "$gate_refresh_checkpoint" 3 && \
 			all_new_jobs_complete "$gate_schema" observe "$gate_refresh_checkpoint" 3 && \
 			all_new_jobs_complete "$gate_schema" plan "$gate_refresh_checkpoint" 3; then
-			record_observed_jobs
 			if jq -e -s \
 				--slurpfile before "$gate_refresh_checkpoint" \
 				--arg schema "$gate_schema" \
@@ -4790,6 +4821,12 @@ assert_destructive_gate() {
 				report_blocked_refresh_diagnostics "$gate_schema" "$gate_refresh_checkpoint"
 				fail "$gate_schema did not preserve ordered interval-spaced blocked refresh cycles"
 			fi
+			# A blocked schema refreshes for as long as it stays blocked, so the
+			# boundary that counts the three chains has to close here, where they
+			# were just measured. Closing it after the assertions below counts
+			# whatever the next scheduled cycle started while they ran.
+			gate_after_checkpoint="$WORK_DIR/${gate_schema}-blocked-refresh-after.json"
+			checkpoint_schema_jobs "$gate_schema" "$gate_after_checkpoint"
 			wait_for_schema "$gate_schema" '
           .status.phase == "Blocked" and .status.activeOperation == null and
           .status.pendingObservation == null and .status.pendingLockRelease == null and
@@ -4818,8 +4855,6 @@ assert_destructive_gate() {
               .spec.artifactDigest == $digest and .spec.destructive == true
             ' >/dev/null || fail "$gate_schema immutable destructive plan changed during refresh"
 			assert_no_new_jobs "$gate_schema" apply "$gate_apply_checkpoint"
-			gate_after_checkpoint="$WORK_DIR/${gate_schema}-blocked-refresh-after.json"
-			checkpoint_schema_jobs "$gate_schema" "$gate_after_checkpoint"
 			for gate_operation in resolve verify observe plan; do
 				gate_final_count=$(job_count_between_checkpoints "$gate_schema" \
 					"$gate_operation" "$gate_refresh_checkpoint" "$gate_after_checkpoint")
@@ -5278,33 +5313,13 @@ assert_registry_outage_and_recovery() {
 	printf '%s\n' 'e2e data plane: PASS registry outage freshness and exact recovery'
 }
 
-wait_for_manager_removed() {
-	manager_removal_deadline=$(deadline_from_now)
-	while [ "$(date +%s)" -lt "$manager_removal_deadline" ]; do
-		if ! k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" \
-			>/dev/null 2>&1 &&
-			! k -n "$OPERATOR_NAMESPACE" get pods \
-				-l 'app.kubernetes.io/component=controller' -o name | grep -q .; then
-			return 0
-		fi
-		sleep 1
-	done
-	fail "manager Deployment was not removed for execution-binding fault injection"
-}
-
-upgrade_execution_binding_before_apply() {
+refuse_execution_binding_change_in_sequence() {
 	upgrade_schema=$1
-	upgrade_reference=$2
-	upgrade_digest=$3
-	upgrade_dialect=$4
-	upgrade_coordination_key=$5
-	upgrade_coordination_digest=$6
 	upgrade_old_plan=$CURRENT_PLAN
 	upgrade_old_plan_uid=$CURRENT_PLAN_UID
 	upgrade_old_fingerprint=$CURRENT_PLAN_FINGERPRINT
 	upgrade_original_ptah_version=$PTAH_VERSION
-	upgrade_old_approval="${upgrade_schema}-old-binding"
-	upgrade_before="$WORK_DIR/${upgrade_schema}-binding-upgrade-before.json"
+	upgrade_before="$WORK_DIR/${upgrade_schema}-binding-change-before.json"
 	checkpoint_schema_jobs "$upgrade_schema" "$upgrade_before"
 	k -n "$TEST_NAMESPACE" get ptahschema "$upgrade_schema" -o json |
 		jq -e --arg planUID "$upgrade_old_plan_uid" --arg version "$PTAH_VERSION" '
@@ -5313,153 +5328,76 @@ upgrade_execution_binding_before_apply() {
           .status.plan.ptahVersion == $version and
           .status.nextReconciliationTime != null and
           ((.status.nextReconciliationTime | fromdateiso8601) - now) >= 180
-        ' >/dev/null || fail "$upgrade_schema lacks a quiescent old-binding approval window"
+        ' >/dev/null || fail "$upgrade_schema lacks a quiescent approval window"
 
 	pause_controller_status_writes
-	create_exact_approval "$upgrade_schema" "$upgrade_old_plan" "$upgrade_old_approval" \
-		"$upgrade_coordination_key" "$upgrade_coordination_digest"
-	k -n "$TEST_NAMESPACE" get ptahschemaapproval "$upgrade_old_approval" -o json |
-		jq -e \
-			--arg version "$upgrade_original_ptah_version" \
-			--arg executor "$EXECUTOR_IMAGE" \
-			--arg runner "$RUNNER_IMAGE" \
-			--arg controllerImage "$CONTROLLER_IMAGE" \
-			--arg controllerRevision "$CONTROLLER_REVISION" \
-			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
-          .spec.ptahVersion == $version and
-          .spec.executorImage == $executor and .spec.runnerImage == $runner and
-          .spec.runnerProtocolVersion == 5 and
-          (.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-          .spec.controllerImage == $controllerImage and
-          .spec.controllerRevision == $controllerRevision and
-          .spec.controllerStateVersion == $controllerStateVersion
-        ' >/dev/null || fail "old approval was not bound to the pre-upgrade execution identity"
-	sleep 2
-	audit_completed_jobs
-	assert_no_new_jobs "$upgrade_schema" apply "$upgrade_before"
-	upgrade_approval_object=$(k -n "$TEST_NAMESPACE" get ptahschemaapproval \
-		"$upgrade_old_approval" -o json)
-	upgrade_recorded_approval=$(printf '%s\n' "$upgrade_approval_object" | jq -c '
-      {
-        name: .metadata.name,
-        uid: .metadata.uid,
-        approver: .spec.approver,
-        approvedAt: .spec.approvedAt
-      }
-    ')
-	printf '%s\n' "$upgrade_recorded_approval" | jq -e '
-      .name != "" and .uid != "" and .approver.username != "" and .approvedAt != null
-    ' >/dev/null || fail "old-binding approval lacks an injectable exact identity"
-
-	k -n "$OPERATOR_NAMESPACE" delete deployment "$CONTROLLER_NAME" \
-		--cascade=foreground --wait=true >/dev/null
-	wait_for_manager_removed
-	upgrade_status_patch=$(jq -nc --argjson approval "$upgrade_recorded_approval" \
-		'{status: {plan: {approval: $approval}}}')
-	k -n "$TEST_NAMESPACE" patch ptahschema "$upgrade_schema" --subresource=status \
-		--type=merge -p "$upgrade_status_patch" >/dev/null
-	k -n "$TEST_NAMESPACE" get ptahschema "$upgrade_schema" -o json |
-		jq -e \
-			--arg planUID "$upgrade_old_plan_uid" \
-			--argjson approval "$upgrade_recorded_approval" '
-          .status.plan.uid == $planUID and .status.plan.approval == $approval and
-          .status.activeOperation == null
-        ' >/dev/null || fail "old-binding approval was not durably recorded before upgrade"
-
-	UPGRADED_PTAH_VERSION="e2e-binding-$(printf '%s' "$PTAH_VERSION" | sha256 | cut -c1-16)"
-	[ "$UPGRADED_PTAH_VERSION" != "$PTAH_VERSION" ] ||
-		fail "execution-binding upgrade did not select a distinct Ptah version"
-	printf 'e2e data plane: upgrading manager execution binding from %s to %s\n' \
-		"$PTAH_VERSION" "$UPGRADED_PTAH_VERSION"
-	helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
+	# The retained rollout guards pin this release's executable contract for the
+	# life of its release sequence: the runtime Pod guard carries the digest of
+	# the manager's own arguments, and the hook parent contract pins the Job that
+	# carries them. A values-only change to the execution binding is therefore
+	# refused before anything is applied. stokaro/ptah-operator#14 records that
+	# the release documentation reads as if the same change were an upgrade.
+	upgrade_new_version="e2e-binding-$(printf '%s' "$PTAH_VERSION" | sha256 | cut -c1-16)"
+	[ "$upgrade_new_version" != "$PTAH_VERSION" ] ||
+		fail "execution-binding proof did not select a distinct Ptah version"
+	upgrade_manager_before=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json)
+	upgrade_revision_before=$(helm --kubeconfig "$KUBECONFIG_FILE" list \
+		--namespace "$OPERATOR_NAMESPACE" --filter "^${HELM_RELEASE}$" -o json |
+		jq -er '.[0].revision')
+	upgrade_refusal="$WORK_DIR/${upgrade_schema}-binding-change.err"
+	printf 'e2e data plane: refusing an execution-binding change inside the release sequence\n'
+	if helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
 		--namespace "$OPERATOR_NAMESPACE" --reuse-values --wait --timeout 5m \
-		--set-string execution.ptahVersion="$UPGRADED_PTAH_VERSION" >/dev/null
-	k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" \
-		--timeout="${TIMEOUT_SECONDS}s" >/dev/null
+		--set-string execution.ptahVersion="$upgrade_new_version" \
+		>"$upgrade_refusal.stdout" 2>"$upgrade_refusal"; then
+		fail "$HELM_RELEASE accepted an execution-binding change inside its release sequence"
+	fi
+	grep -Fq 'pins the executable contract of release sequence' "$upgrade_refusal" ||
+		fail "the execution-binding change was refused for an unexpected reason"
+
+	upgrade_revision_after=$(helm --kubeconfig "$KUBECONFIG_FILE" list \
+		--namespace "$OPERATOR_NAMESPACE" --filter "^${HELM_RELEASE}$" -o json |
+		jq -er '.[0].revision')
+	[ "$upgrade_revision_after" = "$upgrade_revision_before" ] ||
+		fail "the refused execution-binding change still wrote release revision $upgrade_revision_after"
 	k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
 		jq -e \
-			--arg version "--ptah-version=${UPGRADED_PTAH_VERSION}" \
-			--arg oldVersion "--ptah-version=${PTAH_VERSION}" \
-			--arg executor "--executor-image=${EXECUTOR_IMAGE}" \
-			--arg runner "--runner-image=${RUNNER_IMAGE}" \
-			--arg controllerImage "--controller-image=${CONTROLLER_IMAGE}" '
+			--argjson before "$upgrade_manager_before" \
+			--arg version "--ptah-version=${PTAH_VERSION}" \
+			--arg refusedVersion "--ptah-version=${upgrade_new_version}" '
           [.spec.template.spec.containers[] | select(.name == "manager")] as $manager |
           ($manager | length) == 1 and
           ($manager[0].args | index($version)) != null and
-          ($manager[0].args | index($oldVersion)) == null and
-          ($manager[0].args | index($executor)) != null and
-          ($manager[0].args | index($runner)) != null and
-          ($manager[0].args | index($controllerImage)) != null
-        ' >/dev/null || fail "manager rollout did not change only the Ptah version binding"
-	wait_for_controller_status_authorization yes ||
-		fail "Helm upgrade did not restore exact controller status authorization"
-	RBAC_PAUSED=0
-	PTAH_VERSION=$UPGRADED_PTAH_VERSION
-
-	# shellcheck disable=SC2016 # jq variable is supplied by wait_for_approval.
-	wait_for_approval "$upgrade_old_approval" '
-      .spec.planRef.uid == $expectedPlanUID and
-      .spec.ptahVersion != "" and
-      (.status.conditions | any(
-        .type == "Accepted" and .status == "False" and
-        .reason == "ExecutionBindingChanged")) and
-      (.status.conditions | any(
-        .type == "Stale" and .status == "True" and
-        .reason == "ExecutionBindingChanged")) and
-      (.status.conditions | all(.type != "Consumed" or .status != "True"))
-    ' "the old execution-binding approval to become stale before Apply" \
-		"$upgrade_old_plan_uid"
-	upgrade_after="$WORK_DIR/${upgrade_schema}-binding-upgrade-after.json"
-	assert_plan "$upgrade_schema" "$upgrade_reference" "$upgrade_digest" "$upgrade_dialect" false \
-		"$upgrade_before" "$upgrade_before" "$upgrade_after"
-	for upgrade_operation in resolve verify observe plan; do
-		assert_one_job_between_checkpoints "$upgrade_schema" "$upgrade_operation" \
+          ($manager[0].args | index($refusedVersion)) == null and
+          .metadata.uid == $before.metadata.uid and
+          .metadata.generation == $before.metadata.generation and
+          .spec.template == $before.spec.template
+        ' >/dev/null ||
+		fail "the refused execution-binding change disturbed the running manager"
+	upgrade_after="$WORK_DIR/${upgrade_schema}-binding-change-after.json"
+	checkpoint_schema_jobs "$upgrade_schema" "$upgrade_after"
+	for upgrade_operation in resolve verify observe plan apply; do
+		assert_no_job_between_checkpoints "$upgrade_schema" "$upgrade_operation" \
 			"$upgrade_before" "$upgrade_after"
 	done
-	assert_no_job_between_checkpoints "$upgrade_schema" apply \
-		"$upgrade_before" "$upgrade_after"
-	assert_read_only_chain_between_checkpoints "$upgrade_schema" \
-		"$upgrade_before" "$upgrade_after"
-	[ "$CURRENT_PLAN" != "$upgrade_old_plan" ] ||
-		fail "$upgrade_schema reused the old plan name after execution-binding upgrade"
-	[ "$CURRENT_PLAN_UID" != "$upgrade_old_plan_uid" ] ||
-		fail "$upgrade_schema reused the old plan UID after execution-binding upgrade"
-	[ "$CURRENT_PLAN_FINGERPRINT" != "$upgrade_old_fingerprint" ] ||
-		fail "$upgrade_schema reused the old fingerprint after execution-binding upgrade"
-	k -n "$TEST_NAMESPACE" get ptahschemaplans "$upgrade_old_plan" "$CURRENT_PLAN" -o json |
-		jq -e \
-			--arg oldName "$upgrade_old_plan" \
-			--arg newName "$CURRENT_PLAN" \
-			--arg oldVersion "$upgrade_original_ptah_version" \
-			--arg newVersion "$PTAH_VERSION" \
-			--arg executor "$EXECUTOR_IMAGE" \
-			--arg runner "$RUNNER_IMAGE" \
-			--arg controllerImage "$CONTROLLER_IMAGE" \
-			--arg controllerRevision "$CONTROLLER_REVISION" \
-			--argjson controllerStateVersion "$CONTROLLER_STATE_VERSION" '
-          def named($name):
-            [.items[] | select(.metadata.name == $name)] |
-            if length == 1 then .[0] else error("plan identity is not exact") end;
-	          named($oldName) as $old | named($newName) as $new |
-	          $old.spec.ptahVersion == $oldVersion and
-	          $old.spec.ptahVersion != $newVersion and
-          $new.spec.ptahVersion == $newVersion and
-          $old.spec.executorImage == $executor and $new.spec.executorImage == $executor and
-          $old.spec.runnerImage == $runner and $new.spec.runnerImage == $runner and
-          $old.spec.runnerProtocolVersion == 5 and $new.spec.runnerProtocolVersion == 5 and
-          ($old.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-          ($new.spec.executionBindingID | test("^v1-[0-9a-f]{32}$")) and
-          $old.spec.executionBindingID != $new.spec.executionBindingID and
-          $old.spec.controllerImage == $controllerImage and
-          $new.spec.controllerImage == $controllerImage and
-          $old.spec.controllerRevision == $controllerRevision and
-          $new.spec.controllerRevision == $controllerRevision and
-          $old.spec.controllerStateVersion == $controllerStateVersion and
-          $new.spec.controllerStateVersion == $controllerStateVersion
-        ' >/dev/null || fail "$upgrade_schema plans did not preserve exact old/new execution bindings"
+	capture_current_plan "$upgrade_schema"
+	[ "$CURRENT_PLAN" = "$upgrade_old_plan" ] ||
+		fail "$upgrade_schema replaced its plan after a refused execution-binding change"
+	[ "$CURRENT_PLAN_UID" = "$upgrade_old_plan_uid" ] ||
+		fail "$upgrade_schema replaced its plan UID after a refused execution-binding change"
+	[ "$CURRENT_PLAN_FINGERPRINT" = "$upgrade_old_fingerprint" ] ||
+		fail "$upgrade_schema changed its plan fingerprint after a refused execution-binding change"
+	k -n "$TEST_NAMESPACE" get ptahschema "$upgrade_schema" -o json |
+		jq -e --arg planUID "$upgrade_old_plan_uid" --arg version "$upgrade_original_ptah_version" '
+          .status.phase == "AwaitingApproval" and
+          .status.plan.uid == $planUID and .status.plan.approval == null and
+          .status.plan.ptahVersion == $version and
+          .status.activeOperation == null
+        ' >/dev/null ||
+		fail "$upgrade_schema lost its pending approval window across the refused change"
 	[ "$RBAC_PAUSED" -eq 1 ] ||
-		fail "fresh binding plan lacks a status barrier before its new approval"
-	printf '%s\n' 'e2e data plane: PASS pre-Apply execution-binding upgrade invalidation'
+		fail "the refused execution-binding change released the status barrier"
+	printf '%s\n' 'e2e data plane: PASS refused execution-binding change inside a release sequence'
 }
 
 assert_external_postgresql_catalog() {
@@ -5601,10 +5539,10 @@ assert_automatic_external_postgresql_lifecycle() {
         ($observe | length) == 2 and ($plan | length) == 2 and
         ($apply | length) == 1 and
         all($jobs[];
-          .metadata.ownerReferences | any(
+          (.metadata.ownerReferences | any(
             .apiVersion == "operator.ptah.dev/v1alpha1" and
             .kind == "PtahSchema" and .name == $schema and .uid == $schemaUID and
-            .controller == true) and
+            .controller == true)) and
           .spec.backoffLimit == 0 and .spec.podReplacementPolicy == "Failed" and
           .status.startTime != null and .status.completionTime != null and
           (.status.conditions | any(.type == "Complete" and .status == "True")) and
@@ -6013,9 +5951,7 @@ run_engine_lifecycle() {
 	assert_job_isolation "$lifecycle_schema" "$lifecycle_secret" false
 	assert_no_new_jobs "$lifecycle_schema" apply "$v1_apply_checkpoint"
 	if [ "$lifecycle_slug" = postgresql ]; then
-		upgrade_execution_binding_before_apply "$lifecycle_schema" "$lifecycle_reference" \
-			"$digest_v1" "$lifecycle_dialect" "$lifecycle_coordination_key" \
-			"$lifecycle_coordination_digest"
+		refuse_execution_binding_change_in_sequence "$lifecycle_schema"
 		plan_v1=$CURRENT_PLAN
 		plan_v1_uid=$CURRENT_PLAN_UID
 		plan_v1_fingerprint=$CURRENT_PLAN_FINGERPRINT

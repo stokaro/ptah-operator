@@ -406,6 +406,7 @@ rules:
     resourceNames:
       - {{ include "ptah-operator.fullname" . | quote }}
       - {{ printf "%s-runtime-admission" (include "ptah-operator.fullname" .) | quote }}
+      - {{ printf "%s-runtime-discovery" (include "ptah-operator.fullname" .) | quote }}
     verbs: ["get", "patch"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterroles"]
@@ -416,6 +417,7 @@ rules:
     resourceNames:
       - {{ include "ptah-operator.fullname" . | quote }}
       - {{ printf "%s-runtime-admission" (include "ptah-operator.fullname" .) | quote }}
+      - {{ printf "%s-runtime-discovery" (include "ptah-operator.fullname" .) | quote }}
     verbs: ["get"]
   - apiGroups: ["authorization.k8s.io"]
     resources: ["subjectaccessreviews"]

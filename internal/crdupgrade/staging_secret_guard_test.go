@@ -375,10 +375,13 @@ func stagingSecretCELObject(guard *StagingSecretGuard, data map[string]any) map[
 	return object
 }
 
+// stagingSecretCreateCELObject is the object validating admission sees on a
+// CREATE: the API server has filled uid and creationTimestamp by then, and
+// storage assigns the resourceVersion only afterwards.
 func stagingSecretCreateCELObject(guard *StagingSecretGuard, data map[string]any) map[string]any {
 	object := stagingSecretCELObject(guard, data)
 	metadata := object["metadata"].(map[string]any)
-	delete(metadata, "uid")
+	metadata["creationTimestamp"] = "2026-09-06T17:36:02Z"
 	delete(metadata, "resourceVersion")
 	return object
 }

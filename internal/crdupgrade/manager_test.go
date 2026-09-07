@@ -371,7 +371,7 @@ func TestCompatibleAllowsOlderVersionWithValidDigest(t *testing.T) {
 	candidate := existing.DeepCopy()
 	candidate.Annotations[SchemaVersionAnnotation] = strconv.FormatUint(CurrentCRDSchemaVersion+1, 10)
 	existing.Spec.Versions[0].Schema.OpenAPIV3Schema.Description = "older or drifted schema"
-	if err := compatible(existing, candidate, false, false); err != nil {
+	if err := compatible(existing, candidate, false); err != nil {
 		t.Fatalf("older schema identity was not upgrade-compatible: %v", err)
 	}
 }
@@ -404,50 +404,38 @@ func TestReconcileRejectsMalformedSchemaVersions(t *testing.T) {
 	}
 }
 
-func TestReconcileAdoptsIncompleteIdentityOnlyForExactCandidateSchema(t *testing.T) {
+// A CRD missing its schema version and digest is refused even when its schema
+// is exactly the candidate's: identity is not inferred from a matching schema.
+func TestReconcileRefusesIncompleteIdentityEvenForExactCandidateSchema(t *testing.T) {
 	candidates := mustCandidates(t)
 	objects := readyObjects(candidates)
 	target := objects[PtahSchemaApprovalCRDName]
 	delete(target.Annotations, SchemaVersionAnnotation)
 	delete(target.Annotations, SchemaDigestAnnotation)
-	target.Annotations["owner.example.test/preserved"] = "true"
 	client := &memoryClient{objects: objects}
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
-	if err := manager.reconcile(context.Background(), nil); err != nil {
-		t.Fatal(err)
+	err := manager.reconcile(context.Background(), nil)
+	if err == nil || !contains(err.Error(), "incomplete owned schema identity") {
+		t.Fatalf("reconcile error = %v, want an incomplete-identity refusal", err)
 	}
-	updated := client.objects[PtahSchemaApprovalCRDName]
-	wantVersion := strconv.FormatUint(CurrentCRDSchemaVersion, 10)
-	if updated.Annotations[SchemaVersionAnnotation] != wantVersion {
-		t.Fatalf("adopted schema version = %q, want %s", updated.Annotations[SchemaVersionAnnotation], wantVersion)
-	}
-	if updated.Annotations[SchemaDigestAnnotation] != candidateByName(candidates, PtahSchemaApprovalCRDName).Annotations[SchemaDigestAnnotation] {
-		t.Fatalf("adopted schema digest = %q", updated.Annotations[SchemaDigestAnnotation])
-	}
-	if updated.Annotations["owner.example.test/preserved"] != "true" {
-		t.Fatalf("legacy adoption changed foreign annotations: %v", updated.Annotations)
-	}
-	if client.dryRunUpdates != 1 || client.realUpdates != 1 {
-		t.Fatalf("legacy adoption updates dry-run=%d real=%d, want 1 and 1", client.dryRunUpdates, client.realUpdates)
+	if client.dryRunUpdates != 0 || client.realUpdates != 0 {
+		t.Fatalf("updates dry-run=%d real=%d before refusing the incomplete identity", client.dryRunUpdates, client.realUpdates)
 	}
 }
 
-func TestReconcileAdoptsMissingDigestOnlyForExactCandidateSchema(t *testing.T) {
+// A CRD missing only its schema digest is refused for the same reason.
+func TestReconcileRefusesMissingDigestEvenForExactCandidateSchema(t *testing.T) {
 	candidates := mustCandidates(t)
 	objects := readyObjects(candidates)
-	target := objects[PtahSchemaPlanCRDName]
-	delete(target.Annotations, SchemaDigestAnnotation)
+	delete(objects[PtahSchemaPlanCRDName].Annotations, SchemaDigestAnnotation)
 	client := &memoryClient{objects: objects}
 	manager := &Manager{Client: client, PollInterval: time.Millisecond}
-	if err := manager.reconcile(context.Background(), nil); err != nil {
-		t.Fatal(err)
+	err := manager.reconcile(context.Background(), nil)
+	if err == nil || !contains(err.Error(), "incomplete owned schema identity") {
+		t.Fatalf("reconcile error = %v, want an incomplete-identity refusal", err)
 	}
-	updated := client.objects[PtahSchemaPlanCRDName]
-	if updated.Annotations[SchemaDigestAnnotation] != candidateByName(candidates, PtahSchemaPlanCRDName).Annotations[SchemaDigestAnnotation] {
-		t.Fatalf("adopted schema digest = %q", updated.Annotations[SchemaDigestAnnotation])
-	}
-	if client.dryRunUpdates != 1 || client.realUpdates != 1 {
-		t.Fatalf("digest adoption updates dry-run=%d real=%d, want 1 and 1", client.dryRunUpdates, client.realUpdates)
+	if client.dryRunUpdates != 0 || client.realUpdates != 0 {
+		t.Fatalf("updates dry-run=%d real=%d before refusing the missing digest", client.dryRunUpdates, client.realUpdates)
 	}
 }
 
@@ -571,97 +559,6 @@ func TestReconcileRechecksEveryIdentityAfterDryRunsBeforeAnyRealUpdate(t *testin
 	}
 }
 
-func TestReconcileAdoptsOnlyTheCompleteKnownPredecessorSet(t *testing.T) {
-	candidates := mustCandidates(t)
-	objects, digests := fakePredecessorObjects(t, candidates)
-	replacePredecessorDigests(t, digests)
-	client := &memoryClient{objects: objects}
-	manager := &Manager{Client: client, PollInterval: time.Millisecond}
-	if err := manager.reconcile(context.Background(), nil); err != nil {
-		t.Fatal(err)
-	}
-	if client.dryRunUpdates != len(candidates) || client.realUpdates != len(candidates) {
-		t.Fatalf("predecessor updates dry-run=%d real=%d, want %d each", client.dryRunUpdates, client.realUpdates, len(candidates))
-	}
-	for _, candidate := range candidates {
-		updated := client.objects[candidate.Name]
-		matches, err := sameSpec(updated, candidate)
-		if err != nil || !matches {
-			t.Fatalf("adopted CRD %s spec match=%t error=%v", candidate.Name, matches, err)
-		}
-		identityMatches, err := sameSchemaIdentity(updated, candidate)
-		if err != nil || !identityMatches {
-			t.Fatalf("adopted CRD %s identity match=%t error=%v", candidate.Name, identityMatches, err)
-		}
-	}
-}
-
-func TestPreflightWithStateRunsEveryDryRunWithoutPersistingCRDs(t *testing.T) {
-	candidates := mustCandidates(t)
-	objects, digests := fakePredecessorObjects(t, candidates)
-	replacePredecessorDigests(t, digests)
-	before := make(map[string]*apiextensionsv1.CustomResourceDefinition, len(objects))
-	for name, object := range objects {
-		before[name] = object.DeepCopy()
-	}
-	client := &memoryClient{objects: objects}
-	manager := &Manager{Client: client, PollInterval: time.Millisecond}
-	if err := manager.PreflightWithState(context.Background(), emptyStoredStateClients(), 1); err != nil {
-		t.Fatal(err)
-	}
-	if client.dryRunUpdates != len(candidates) || client.realUpdates != 0 {
-		t.Fatalf("preflight updates dry-run=%d real=%d, want %d and 0", client.dryRunUpdates, client.realUpdates, len(candidates))
-	}
-	for name, want := range before {
-		if got := client.objects[name]; !reflect.DeepEqual(got, want) {
-			t.Fatalf("preflight changed CRD %s", name)
-		}
-	}
-}
-
-func TestReconcileResumesPartialKnownPredecessorTransition(t *testing.T) {
-	candidates := mustCandidates(t)
-	objects, digests := fakePredecessorObjects(t, candidates)
-	replacePredecessorDigests(t, digests)
-	alreadyAdopted := candidates[0].DeepCopy()
-	alreadyAdopted.Status = *objects[alreadyAdopted.Name].Status.DeepCopy()
-	objects[alreadyAdopted.Name] = alreadyAdopted
-	client := &memoryClient{objects: objects}
-	manager := &Manager{Client: client, PollInterval: time.Millisecond}
-	if err := manager.reconcile(context.Background(), nil); err != nil {
-		t.Fatal(err)
-	}
-	if client.dryRunUpdates != len(candidates)-1 || client.realUpdates != len(candidates)-1 {
-		t.Fatalf("resumed updates dry-run=%d real=%d, want %d each", client.dryRunUpdates, client.realUpdates, len(candidates)-1)
-	}
-}
-
-func TestReconcileRejectsUnknownOrMixedLegacySetBeforeAnyUpdate(t *testing.T) {
-	candidates := mustCandidates(t)
-	objects, digests := fakePredecessorObjects(t, candidates)
-	replacePredecessorDigests(t, digests)
-	unknown := objects[PtahSchemaPlanCRDName]
-	unknown.Spec.Versions[0].Schema.OpenAPIV3Schema.Description = "unknown legacy schema"
-	before := make(map[string]*apiextensionsv1.CustomResourceDefinition, len(objects))
-	for name, object := range objects {
-		before[name] = object.DeepCopy()
-	}
-	client := &memoryClient{objects: objects}
-	manager := &Manager{Client: client, PollInterval: time.Millisecond}
-	err := manager.reconcile(context.Background(), nil)
-	if err == nil || !contains(err.Error(), "unknown legacy schema mutation") {
-		t.Fatalf("reconcile error = %v, want unknown legacy refusal", err)
-	}
-	if client.dryRunUpdates != 0 || client.realUpdates != 0 {
-		t.Fatalf("unknown legacy set updates dry-run=%d real=%d", client.dryRunUpdates, client.realUpdates)
-	}
-	for name, want := range before {
-		if !reflect.DeepEqual(client.objects[name], want) {
-			t.Fatalf("unknown legacy refusal changed CRD %s", name)
-		}
-	}
-}
-
 func TestReconcileRefusesNewerControllerStateMarkerBeforeAnyUpdate(t *testing.T) {
 	candidates := mustCandidates(t)
 	objects := readyObjects(candidates)
@@ -751,34 +648,6 @@ func readyObjects(candidates []*apiextensionsv1.CustomResourceDefinition) map[st
 	return objects
 }
 
-func fakePredecessorObjects(
-	t *testing.T,
-	candidates []*apiextensionsv1.CustomResourceDefinition,
-) (map[string]*apiextensionsv1.CustomResourceDefinition, map[string]string) {
-	t.Helper()
-	objects := readyObjects(candidates)
-	digests := make(map[string]string, len(objects))
-	for name, object := range objects {
-		delete(object.Annotations, SchemaVersionAnnotation)
-		delete(object.Annotations, SchemaDigestAnnotation)
-		delete(object.Annotations, ControllerStateVersionAnnotation)
-		object.Spec.Versions[0].Schema.OpenAPIV3Schema.Description = "known predecessor " + name
-		digest, err := ComputeSchemaDigest(object)
-		if err != nil {
-			t.Fatalf("compute fake predecessor digest for %s: %v", name, err)
-		}
-		digests[name] = digest
-	}
-	return objects, digests
-}
-
-func replacePredecessorDigests(t *testing.T, replacement map[string]string) {
-	t.Helper()
-	original := predecessorSchemaDigests
-	predecessorSchemaDigests = replacement
-	t.Cleanup(func() { predecessorSchemaDigests = original })
-}
-
 func candidateByName(candidates []*apiextensionsv1.CustomResourceDefinition, name string) *apiextensionsv1.CustomResourceDefinition {
 	for _, candidate := range candidates {
 		if candidate.Name == name {
@@ -837,4 +706,26 @@ func (c *memoryClient) Update(_ context.Context, object *apiextensionsv1.CustomR
 	updated.ResourceVersion = fmt.Sprintf("%d", c.realUpdates+1)
 	c.objects[object.Name] = updated
 	return updated.DeepCopy(), nil
+}
+
+// A CRD without the identity tuple was created by something other than a
+// release carrying Ptah identity metadata. The operator upgrades only from
+// those, so the set is refused before any update, dry-run or real.
+func TestReconcileRefusesCRDsWithoutIdentityBeforeAnyUpdate(t *testing.T) {
+	candidates := mustCandidates(t)
+	objects := readyObjects(candidates)
+	for _, object := range objects {
+		delete(object.Annotations, SchemaVersionAnnotation)
+		delete(object.Annotations, SchemaDigestAnnotation)
+		delete(object.Annotations, ControllerStateVersionAnnotation)
+	}
+	client := &memoryClient{objects: objects}
+	manager := &Manager{Client: client, PollInterval: time.Millisecond}
+	err := manager.PreflightWithState(context.Background(), emptyStoredStateClients(), 1)
+	if err == nil || !contains(err.Error(), "incomplete owned schema identity") {
+		t.Fatalf("PreflightWithState() = %v, want a refusal for the missing identity tuple", err)
+	}
+	if client.dryRunUpdates != 0 || client.realUpdates != 0 {
+		t.Fatalf("updates dry-run=%d real=%d before refusing the identity-less set", client.dryRunUpdates, client.realUpdates)
+	}
 }

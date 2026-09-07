@@ -103,7 +103,33 @@ expect_invalid_schema_reference() {
 	expect_denied "$description" "$pattern" "$invalid_schema_file" "$error_file"
 }
 
-CONTROLLER_NAME="${HELM_RELEASE}-ptah-operator"
+# The chart derives the controller's object names from the release through its
+# own naming rules, so the fullname cannot be spelled from the release name.
+# Every other name here is relative to it, which is why only this one is read.
+CONTROLLER_NAME=$(k -n "$OPERATOR_NAMESPACE" get deployment \
+	-l app.kubernetes.io/component=controller \
+	-o jsonpath='{.items[0].metadata.name}')
+[ -n "$CONTROLLER_NAME" ] || fail "installed controller Deployment is missing"
+# The chart truncates each suffixed name to what Kubernetes accepts, so a name
+# is not the controller's name plus a suffix. The admission singleton names the
+# webhook Service it calls, and the certificate rotator's own arguments name
+# the Secret, the transition Service, the canary marker and the identity that
+# writes them; both are what the release actually installed.
+WEBHOOK_SERVICE=$(k get validatingwebhookconfiguration ptah-operator-admission \
+	-o jsonpath='{.webhooks[0].clientConfig.service.name}')
+[ -n "$WEBHOOK_SERVICE" ] || fail "admission singleton names no webhook Service"
+ROTATOR_ARGUMENTS=$(k -n "$OPERATOR_NAMESPACE" get deployment \
+	-l app.kubernetes.io/component=certificate-rotation \
+	-o jsonpath='{.items[0].spec.template.spec.containers[0].args[*]}' | tr ' ' '\n')
+rotator_argument() {
+	rotator_value=$(printf '%s\n' "$ROTATOR_ARGUMENTS" | sed -n "s/^--$1=//p" | head -1)
+	[ -n "$rotator_value" ] || fail "certificate rotator carries no --$1"
+	printf '%s\n' "$rotator_value"
+}
+WEBHOOK_CERT_SECRET=$(rotator_argument secret-name)
+CERT_TRANSITION_SERVICE=$(rotator_argument candidate-service-name)
+CERT_CANARY_MARKER=$(rotator_argument candidate-probe-config-map-name)
+CERT_ROTATOR_USERNAME=$(rotator_argument candidate-probe-username)
 
 printf '%s\n' 'e2e assertions: checking manager readiness and chart state'
 h -n "$OPERATOR_NAMESPACE" status "$HELM_RELEASE" >/dev/null
@@ -116,7 +142,7 @@ admission_service_account=$(k get mutatingwebhookconfiguration/ptah-operator-adm
 	fail "controller Deployment and admission singleton disagree on the active ServiceAccount"
 SERVICE_ACCOUNT="system:serviceaccount:${OPERATOR_NAMESPACE}:${controller_service_account}"
 k -n "$OPERATOR_NAMESPACE" get endpointslice \
-	-l "kubernetes.io/service-name=${CONTROLLER_NAME}-webhook" -o json |
+	-l "kubernetes.io/service-name=${WEBHOOK_SERVICE}" -o json |
 	jq -e '.items | any(.[]?.endpoints[]?; .conditions.ready == true)' >/dev/null ||
 	fail "webhook Service has no ready endpoint"
 
@@ -146,7 +172,7 @@ done
 
 printf '%s\n' 'e2e assertions: checking webhook failure policy and scope'
 k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
-	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "${CONTROLLER_NAME}-webhook" '
+	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" '
       .webhooks |
       (map(.name) | sort) == [
         "certificate-rotation-canary-mutate.operator.ptah.dev",
@@ -172,7 +198,7 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
         }]))
     ' >/dev/null || fail "approval mutating webhook is not exact and fail-closed"
 k get validatingwebhookconfiguration/ptah-operator-admission -o json |
-	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "${CONTROLLER_NAME}-webhook" \
+	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" \
 		--arg controller "$SERVICE_ACCOUNT" --arg quote "'" '
       def operation_labels($object):
         "(has(" + $object + ".metadata.labels) && " +
@@ -181,9 +207,10 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
         $quote + "app.kubernetes.io/component" + $quote + " in " + $object + ".metadata.labels && " +
         $object + ".metadata.labels[" + $quote + "app.kubernetes.io/component" + $quote + "] == " + $quote + "schema-operation" + $quote + ")";
       def operation_owner($object):
+        "(has(" + $object + ".metadata.ownerReferences) && " +
         $object + ".metadata.ownerReferences.exists(ref, ref.apiVersion == " + $quote + "batch/v1" + $quote +
         " && ref.kind == " + $quote + "Job" + $quote + " && ref.controller == true && ref.name.matches(" +
-        $quote + "^ptah-(resolve|verify|observe|plan|apply)-" + $quote + "))";
+        $quote + "^ptah-(resolve|verify|observe|plan|apply)-" + $quote + ")))";
       def operation_pod_condition:
         operation_labels("object") + " || " + operation_owner("object") +
         " || (request.operation == " + $quote + "UPDATE" + $quote + " && oldObject != null && ( " +
@@ -250,9 +277,9 @@ assert_certificate_canary() {
 	canary_condition=$3
 	k get "$canary_resource/ptah-operator-admission" -o json |
 		jq -e --arg namespace "$OPERATOR_NAMESPACE" \
-			--arg service "${CONTROLLER_NAME}-cert-transition" \
-			--arg marker "${CONTROLLER_NAME}-cert-canary" \
-			--arg username "system:serviceaccount:${OPERATOR_NAMESPACE}:${CONTROLLER_NAME}-cert-rotator" \
+			--arg service "$CERT_TRANSITION_SERVICE" \
+			--arg marker "$CERT_CANARY_MARKER" \
+			--arg username "$CERT_ROTATOR_USERNAME" \
 			--arg suffix "$canary_suffix" --arg condition "$canary_condition" '
           [.webhooks[] | select(.name == ("certificate-rotation-canary-" + $suffix + ".operator.ptah.dev"))] |
           length == 1 and all(.[];
@@ -333,7 +360,7 @@ for namespace in "$OPERATOR_NAMESPACE" "$TEST_NAMESPACE" "$FOREIGN_NAMESPACE"; d
 	done
 done
 for namespaced_secret in \
-	"${OPERATOR_NAMESPACE}/${CONTROLLER_NAME}-webhook-cert" \
+	"${OPERATOR_NAMESPACE}/${WEBHOOK_CERT_SECRET}" \
 	"${TEST_NAMESPACE}/local-database" \
 	"${FOREIGN_NAMESPACE}/foreign-database"; do
 	secret_namespace=${namespaced_secret%%/*}
@@ -404,7 +431,7 @@ delete_webhook_scope_fixtures() {
 
 webhook_service_ready() {
 	k -n "$OPERATOR_NAMESPACE" get endpointslice \
-		-l "kubernetes.io/service-name=${CONTROLLER_NAME}-webhook" -o json |
+		-l "kubernetes.io/service-name=${WEBHOOK_SERVICE}" -o json |
 		jq -e '.items | any(.[]?.endpoints[]?; .conditions.ready == true)' >/dev/null
 }
 

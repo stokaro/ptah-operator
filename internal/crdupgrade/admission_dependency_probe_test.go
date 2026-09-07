@@ -85,7 +85,7 @@ func admissionConvergenceAnyProbeRequestExpressionFromExact(t *testing.T, exact 
 	if index < 0 || !strings.HasSuffix(exact, `"`) {
 		t.Fatalf("exact dependency probe expression has no field-manager suffix: %q", exact)
 	}
-	return exact[:index] + ` && request.options.fieldManager.matches("^` + admissionConvergenceProbeFieldManagerPrefix + `[0-9a-f]{64}$")`
+	return exact[:index] + ` && request.options.fieldManager.matches("` + admissionConvergenceAnyProbeFieldManagerPattern() + `")`
 }
 
 func TestAdmissionConvergenceDependencyProbeUsesFullAttemptIdentity(t *testing.T) {
@@ -200,4 +200,31 @@ func admissionConvergenceProbeMarkerNameFromExact(t *testing.T, exactExpression 
 		t.Fatalf("dependency probe selector marker name is unterminated: %q", exactExpression)
 	}
 	return rest[:end]
+}
+
+// A guard the v1 managed release created carries the union selector of its
+// era; restoring it must not require today's pattern, and a selector of no
+// known era is still refused.
+func TestRemoveAdmissionConvergenceDependencyProbeAcceptsTheV1Selector(t *testing.T) {
+	t.Parallel()
+	wrapped := runtimePodGuardFixture().hookIdentityPolicy()
+	want := stripAdmissionConvergenceDependencyProbe(t, wrapped)
+	v1 := wrapped.DeepCopy()
+	for _, expression := range []*string{&v1.Spec.Variables[0].Expression, &v1.Spec.MatchConditions[0].Expression} {
+		*expression = strings.Replace(*expression, admissionConvergenceAnyProbeFieldManagerPattern(), v1AdmissionConvergenceAnyProbeFieldManagerPattern(), 1)
+	}
+	if v1.Spec.Variables[0].Expression == wrapped.Spec.Variables[0].Expression {
+		t.Fatal("the fixture does not carry today's union selector")
+	}
+	if err := removeAdmissionConvergenceDependencyProbe(v1); err != nil {
+		t.Fatalf("a v1-era union selector was refused: %v", err)
+	}
+	if !reflect.DeepEqual(v1.Spec, want.Spec) {
+		t.Fatal("restoring a v1-era guard did not yield the native policy")
+	}
+	foreign := wrapped.DeepCopy()
+	foreign.Spec.Variables[0].Expression = strings.Replace(foreign.Spec.Variables[0].Expression, "[0-9a-f]{64}", "[0-9a-f]{8}", 1)
+	if err := removeAdmissionConvergenceDependencyProbe(foreign); err == nil {
+		t.Fatal("a union selector of no known era was accepted")
+	}
 }

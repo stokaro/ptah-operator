@@ -57,6 +57,11 @@ func TestPrivilegeTeardownAcceptsEveryLegacyCutoverStateAndPartialDeletion(t *te
 					fixture.guard.ReleaseNamespace,
 					fixture.guard.ControllerDeploymentName+"-runtime-admission",
 				))
+				// The discovery binding is created by the same ordinary apply.
+				delete(fixture.roleBindings.objects, privilegeBindingKey(
+					corev1.NamespaceDefault,
+					ControllerDiscoveryBindingName(fixture.guard.ControllerDeploymentName),
+				))
 			}
 			if test.deletePrevious {
 				delete(fixture.serviceAccounts.objects, fixture.guard.PreviousControllerServiceAccountName)

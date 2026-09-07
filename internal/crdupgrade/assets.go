@@ -31,21 +31,6 @@ const (
 	CurrentCRDSchemaVersion uint64 = 1
 )
 
-// predecessorRevision identifies the annotation-free legacy-adoption fixture,
-// not an arbitrary earlier managed release. The E2E gate verifies its archived
-// CRDs and webhook contract before running the legacy Apply continuity proof.
-const predecessorRevision = "210c9673e6ad8e339278d99cc4735557332df7bd"
-
-// predecessorSchemaDigests is the one annotation-free CRD set that may be
-// adopted automatically. The values are normalized-spec digests from the
-// exact predecessor revision above. Recognition is all-or-nothing so an
-// unknown or mixed legacy schema cannot acquire trusted identity metadata.
-var predecessorSchemaDigests = map[string]string{
-	PtahSchemaApprovalCRDName: "sha256:ac6edef2a9b4ecf8a876bcbd8c7797882bf9d7646f0df4afd553e907978922d6",
-	PtahSchemaPlanCRDName:     "sha256:0f711f12bf36e78f8de583b80b2bbbbcb0f6b7b3b05cedcb0da1227b42eeab41",
-	PtahSchemaCRDName:         "sha256:a9a088e6d376d0bfa629e6ee514e4c357a66d7e1297eba6341503e18e05ba936",
-}
-
 var expectedNames = []string{
 	PtahSchemaApprovalCRDName,
 	PtahSchemaPlanCRDName,

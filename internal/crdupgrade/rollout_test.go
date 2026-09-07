@@ -336,7 +336,7 @@ func TestHookIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 	teardownJob := guard.hookJobName("teardown")
 	policy := stripAdmissionConvergenceDependencyProbe(t, guard.hookIdentityPolicy())
 	wantMatch := fmt.Sprintf(
-		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
+		`request.namespace == %q && request.resource.group == "" && request.resource.resource == "pods" && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s || %s || %s || %s)))`,
 		guard.ReleaseNamespace, guard.HookServiceAccountName, teardownServiceAccount, guard.HookServiceAccountName, teardownServiceAccount,
 		generatedPodRequestNameExpression(identityJob), generatedPodRequestNameExpression(preflightJob), generatedPodRequestNameExpression(reconcileJob), generatedPodRequestNameExpression(quiesceJob), generatedPodRequestNameExpression(teardownJob),
 	)
@@ -662,6 +662,104 @@ func TestRolloutGuardQuiescesLegacyDeploymentsAfterCompleteDryRun(t *testing.T) 
 	wantOrder := []string{guard.CertificateDeploymentName, guard.ControllerDeploymentName}
 	if !reflect.DeepEqual(deployments.realScaleOrder, wantOrder) {
 		t.Fatalf("scale order = %v, want %v", deployments.realScaleOrder, wantOrder)
+	}
+}
+
+func candidateDeployment(guard *RolloutGuard, name, component string) *appsv1.Deployment {
+	deployment := legacyDeployment(guard, name, component)
+	deployment.Annotations[ControllerStateVersionAnnotation] = "1"
+	deployment.Annotations[ReleaseSequenceAnnotation] = "1"
+	deployment.Spec.Template.Spec.Containers = []corev1.Container{{Name: "manager", Image: guard.ManagerImage}}
+	return deployment
+}
+
+func TestRolloutGuardCandidateRuntimeConverged(t *testing.T) {
+	tests := []struct {
+		name   string
+		active int
+		phase  ControllerCredentialPhase
+		mutate func(guard *RolloutGuard, deployments *rolloutDeploymentClient)
+		want   bool
+	}{
+		{
+			name: "active candidate with both Deployments running it", active: 1, phase: ControllerCredentialsActive,
+			mutate: func(_ *RolloutGuard, _ *rolloutDeploymentClient) {}, want: true,
+		},
+		{
+			name: "active candidate without a certificate Deployment", active: 1, phase: ControllerCredentialsActive,
+			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
+				delete(deployments.objects, guard.CertificateDeploymentName)
+			},
+			want: true,
+		},
+		{
+			name: "fresh bootstrap", active: 0, phase: ControllerCredentialsActive,
+			mutate: func(_ *RolloutGuard, _ *rolloutDeploymentClient) {}, want: false,
+		},
+		{
+			name: "candidate activated but credentials draining", active: 1, phase: ControllerCredentialsDraining,
+			mutate: func(_ *RolloutGuard, _ *rolloutDeploymentClient) {}, want: false,
+		},
+		{
+			name: "candidate activated with a stopped controller", active: 1, phase: ControllerCredentialsActive,
+			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
+				deployments.objects[guard.ControllerDeploymentName].Spec.Replicas = int32Ptr(0)
+			},
+			want: false,
+		},
+		{
+			name: "candidate activated with an older certificate identity", active: 1, phase: ControllerCredentialsActive,
+			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
+				delete(deployments.objects[guard.CertificateDeploymentName].Annotations, ReleaseSequenceAnnotation)
+			},
+			want: false,
+		},
+		{
+			name: "candidate activated with a foreign controller image", active: 1, phase: ControllerCredentialsActive,
+			mutate: func(guard *RolloutGuard, deployments *rolloutDeploymentClient) {
+				deployments.objects[guard.ControllerDeploymentName].Spec.Template.Spec.Containers[0].Image = "registry.example/other@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+			},
+			want: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			guard, _, _, deployments := readyRolloutGuard()
+			deployments.objects[guard.CertificateDeploymentName] = candidateDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
+			deployments.objects[guard.ControllerDeploymentName] = candidateDeployment(guard, guard.ControllerDeploymentName, "controller")
+			activation := activationObject(guard.releaseActivationGuard(), test.active)
+			activation.Data[controllerCredentialsDataKey] = string(test.phase)
+			if test.phase == ControllerCredentialsDraining {
+				activation.Data[controllerCredentialsTargetDataKey] = "1"
+				activation.Data[controllerCredentialsAttemptDataKey] = hookIdentityDigest(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+			}
+			guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activation
+			test.mutate(guard, deployments)
+
+			got, err := guard.CandidateRuntimeConverged(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("CandidateRuntimeConverged() = %v, want %v", got, test.want)
+			}
+			if deployments.dryUpdates != 0 || deployments.realUpdates != 0 {
+				t.Fatal("convergence inspection mutated a Deployment")
+			}
+		})
+	}
+}
+
+func TestRolloutGuardCandidateRuntimeConvergedRefusesForeignOwnership(t *testing.T) {
+	guard, _, _, deployments := readyRolloutGuard()
+	deployments.objects[guard.CertificateDeploymentName] = candidateDeployment(guard, guard.CertificateDeploymentName, "certificate-rotation")
+	deployments.objects[guard.ControllerDeploymentName] = candidateDeployment(guard, guard.ControllerDeploymentName, "controller")
+	deployments.objects[guard.ControllerDeploymentName].Annotations[helmReleaseNameAnnotation] = "foreign"
+	guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activationObject(guard.releaseActivationGuard(), 1)
+
+	got, err := guard.CandidateRuntimeConverged(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "foreign or incomplete Helm ownership") {
+		t.Fatalf("CandidateRuntimeConverged() = %v, %v, want ownership refusal", got, err)
 	}
 }
 
@@ -1006,7 +1104,7 @@ func TestRolloutAndRuntimeDeploymentActivationTruthTable(t *testing.T) {
 		wantRuntime   bool
 		malformed     bool
 	}{
-		{name: "bootstrap annotation-free create", operation: "CREATE", actor: "helm", activeImage: guard.ManagerImage, wantRollout: true, wantRuntime: true},
+		{name: "bootstrap unannotated create", operation: "CREATE", actor: "helm", activeImage: guard.ManagerImage, wantRollout: true, wantRuntime: true},
 		{name: "bootstrap candidate create denied", operation: "CREATE", actor: rolloutHookUsername(guard), newMarker: 2, activeImage: guard.ManagerImage},
 		{name: "bootstrap candidate stop", operation: "UPDATE", actor: rolloutHookUsername(guard), newMarker: 2, activeImage: guard.ManagerImage, wantRollout: true, wantRuntime: true},
 		{name: "active predecessor create", active: 1, activeState: 1, activeImage: predecessorImage, operation: "CREATE", actor: "helm", newMarker: 1, wantRollout: true, wantRuntime: true},
@@ -1180,7 +1278,7 @@ func TestRolloutAdmissionActivationTruthTable(t *testing.T) {
 		image       string
 		want        bool
 	}{
-		{name: "bootstrap annotation-free recovery", image: guard.ManagerImage, want: true},
+		{name: "bootstrap unannotated recovery", image: guard.ManagerImage, want: true},
 		{name: "bootstrap candidate mutation denied", marker: 2, markerState: 2, admission: 2, image: guard.ManagerImage},
 		{name: "active predecessor recovery", active: 1, activeState: 1, marker: 1, markerState: 1, admission: 1, image: predecessorImage, want: true},
 		{name: "candidate mutation before activation denied", active: 1, activeState: 1, marker: 2, markerState: 2, admission: 2, image: predecessorImage},

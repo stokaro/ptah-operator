@@ -220,9 +220,13 @@ func (g *CertificateWriteGuard) policy(entry certificateWriteGuardEntry) *admiss
 		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
 			FailurePolicy:    &fail,
 			MatchConstraints: g.matchResources(entry.resource),
+			// The certificate principal's own ConfigMap writes, the canary
+			// marker among them, are judged by the admission canary webhooks
+			// and its Role; these validations are written for the webhook
+			// configurations and error on any other kind.
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name:       "exact-certificate-service-account",
-				Expression: fmt.Sprintf(`request.userInfo.username == %q`, username),
+				Expression: fmt.Sprintf(`request.userInfo.username == %q && request.resource.group == "admissionregistration.k8s.io"`, username),
 			}},
 			Validations: validations,
 		},
@@ -414,8 +418,13 @@ func certificateWebhookEntriesValidation(
 		certificateWebhookServicePort,
 	)
 	mutableTarget := fmt.Sprintf(`((%s) || (%s))`, exactServiceTarget, exactCanaryTarget)
+	// The alternative is parenthesized as a whole. CEL binds && tighter than
+	// ||, so an unparenthesized alternative in a conjunction splits the whole
+	// chain: every field comparison after it would sit in the right branch and
+	// be skipped whenever the left one holds, which let a bounded CA-bundle
+	// write carry any other webhook change with it.
 	mutableCABundle := fmt.Sprintf(
-		`((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= %[4]d) || (!(%[1]s) && %[3]s)`,
+		`(((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= %[4]d) || (!(%[1]s) && %[3]s))`,
 		mutableTarget,
 		newWebhook,
 		certificatePresenceEqual(newWebhook+".clientConfig.caBundle", oldWebhook+".clientConfig.caBundle"),

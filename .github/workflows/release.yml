@@ -39,7 +39,7 @@ jobs:
         id: setup-helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
-          version: v3.21.4
+          version: v4.2.4
       - name: Verify release metadata
         id: verify-release
         run: go run ./hack/releaseverify

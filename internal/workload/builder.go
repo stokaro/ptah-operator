@@ -317,7 +317,7 @@ func (b Builder) Build(
 					ActiveDeadlineSeconds:         &deadline,
 					AutomountServiceAccountToken:  &falseValue,
 					EnableServiceLinks:            &falseValue,
-					ServiceAccountName:            schema.Spec.Execution.ServiceAccountName,
+					ServiceAccountName:            executionServiceAccountName(schema),
 					ImagePullSecrets:              append([]corev1.LocalObjectReference(nil), schema.Spec.Execution.ImagePullSecrets...),
 					RestartPolicy:                 corev1.RestartPolicyNever,
 					TerminationGracePeriodSeconds: &terminationGrace,
@@ -367,6 +367,19 @@ func (b Builder) Build(
 // bindStableAPIDefaults makes the immutable Job intent independent of
 // kube-apiserver defaulting. These values are stable across the supported
 // Kubernetes window and are security-relevant inputs to intent comparison.
+// executionServiceAccountName returns the identity an operation Job runs as.
+// spec.execution.serviceAccountName is optional, and the Job write guard
+// requires the Pod template to name an account, so a schema that omits it gets
+// the namespace's default account written out rather than a Job that admission
+// refuses. Kubernetes would bind that same account to a Pod that names none;
+// writing it down is what makes the identity reviewable.
+func executionServiceAccountName(schema *operatorv1alpha1.PtahSchema) string {
+	if schema.Spec.Execution.ServiceAccountName != "" {
+		return schema.Spec.Execution.ServiceAccountName
+	}
+	return "default"
+}
+
 func bindStableAPIDefaults(job *batchv1.Job) {
 	one := int32(1)
 	falseValue := false

@@ -30,8 +30,6 @@ PROOF_APPROVAL=crd-upgrade-proof
 PROOF_CONTROLLER_IMAGE=
 CURRENT_RELEASE_CONTROLLER_IMAGE=
 UPGRADE_VALUES_FILE=
-EXPECTED_SINGLETON_ANNOTATIONS_FILE=$WORK_DIR/expected-singleton-annotations.json
-EXPECTED_SINGLETON_RENDER_FILE=$WORK_DIR/expected-singleton-render.yaml
 EXPECTED_CRD_UPGRADE_RENDER_FILE=$WORK_DIR/expected-crd-upgrade-render.yaml
 EXPECTED_IMAGE_CHECK_HOOK_NAME=
 EXPECTED_IDENTITY_HOOK_NAME=
@@ -60,26 +58,11 @@ LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE=$WORK_DIR/late-activation-reconcile
 LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE=$WORK_DIR/late-activation-reconcile-capture-ready
 LATE_ACTIVATION_PREFLIGHT_CAPTURE_EXIT_STATUS=
 LATE_ACTIVATION_RECONCILE_CAPTURE_EXIT_STATUS=
-PREDECESSOR_SCHEMA=predecessor-live
-PREDECESSOR_PLAN=predecessor-live
-PREDECESSOR_APPROVAL=predecessor-live
-PREDECESSOR_DELETING_SCHEMA=predecessor-deleting
-PREDECESSOR_JOB_SCHEMA=predecessor-read-only-job
-PREDECESSOR_JOB_NAME=
-PREDECESSOR_JOB_UID=
-PREDECESSOR_APPLY_SCHEMA=predecessor-running-apply
-PREDECESSOR_APPLY_POLICY=predecessor-apply-policy
-PREDECESSOR_APPLY_DATABASE=predecessor-apply-database
-PREDECESSOR_APPLY_PULL_SECRET=predecessor-apply-pull
-PREDECESSOR_APPLY_PLAN_NAME=
-PREDECESSOR_APPLY_PLAN_UID=
-PREDECESSOR_PLAN_GUARD_PROBE_FILE=
-PREDECESSOR_APPLY_JOB_NAME=
-PREDECESSOR_APPLY_JOB_UID=
-PREDECESSOR_APPLY_POD_NAME=
-PREDECESSOR_APPLY_POD_UID=
-PREDECESSOR_APPLY_BARRIER_PID=
-PREDECESSOR_APPLY_BARRIER_ACTIVE=0
+CURRENT_READ_ONLY_JOB_SCHEMA=read-only-job-current
+SUCCESSOR_READ_ONLY_JOB_SCHEMA=read-only-job-successor
+READ_ONLY_JOB_SCHEMA=
+READ_ONLY_JOB_NAME=
+READ_ONLY_JOB_UID=
 BLOCKED_STABILITY_SECONDS=10
 BLOCKED_FAILURE_TIMEOUT_SECONDS=150
 FOREIGN_TEARDOWN_BINDING=
@@ -98,7 +81,15 @@ HOOK_PROGRESS_ADVERSARY_UID=
 HOOK_PROGRESS_HOLD_POLICY=ptah-e2e-hook-progress-hold
 HOOK_PROGRESS_HOLD_PROBE=ptah-e2e-hook-progress-hold-probe
 HOOK_PROGRESS_HOLD_MESSAGE='Ptah E2E hook progress hold rejected controller status advancement'
-HOOK_PROGRESS_JOB_DENIAL='Ptah hook parent origin guard rejected an unauthorized Job'
+# A Job attack is refused by two retained guards, the parent contract and the
+# parent origin guard, and the API server reports only the first denying
+# policy in name order (measured on Kubernetes 1.37.0 with two policies that
+# deny one request: the second is never mentioned). The contract guard sorts
+# first, so its message is the one a same-release attack sees; the origin
+# guard's stays accepted for the day the contract guard stops matching. The
+# value is one pattern per line for grep -F.
+HOOK_PROGRESS_JOB_DENIAL='Ptah hook parent contract v1 rejected an unsafe Job
+Ptah hook parent origin guard rejected an unauthorized Job'
 HOOK_PROGRESS_POD_DENIAL='Ptah hook Pod origin guard rejected an unauthorized Pod'
 HOOK_PROGRESS_RESOURCES_ACTIVE=0
 HOOK_PROGRESS_HELM_PID=
@@ -123,6 +114,13 @@ CANDIDATE_CRD_SCHEMA_VERSION=$(awk '
 cleanup() {
 	status=$?
 	trap - EXIT HUP INT TERM
+	# E2E_KEEP_ON_FAILURE=1 keeps a failed phase's work directory and every
+	# cluster object it created, so the refusal that ended it can be read from
+	# the objects that produced it. Background processes are still stopped.
+	retain=0
+	if [ "$status" -ne 0 ] && [ "${E2E_KEEP_ON_FAILURE:-0}" = 1 ]; then
+		retain=1
+	fi
 	if [ "$HOOK_PROGRESS_HELM_ACTIVE" -eq 1 ] && [ -n "$HOOK_PROGRESS_HELM_PID" ]; then
 		[ "$status" -ne 0 ] || status=1
 		kill "$HOOK_PROGRESS_HELM_PID" >/dev/null 2>&1 || true
@@ -130,7 +128,7 @@ cleanup() {
 		HOOK_PROGRESS_HELM_PID=
 		HOOK_PROGRESS_HELM_ACTIVE=0
 	fi
-	if [ "$HOOK_PROGRESS_RESOURCES_ACTIVE" -eq 1 ]; then
+	if [ "$retain" -eq 0 ] && [ "$HOOK_PROGRESS_RESOURCES_ACTIVE" -eq 1 ]; then
 		[ "$status" -ne 0 ] || status=1
 		for hook_progress_resource in \
 			"validatingadmissionpolicybinding/$HOOK_PROGRESS_HOLD_POLICY" \
@@ -169,44 +167,42 @@ cleanup() {
 		wait "$LATE_ACTIVATION_RECONCILE_CAPTURE_PID" >/dev/null 2>&1 || true
 		LATE_ACTIVATION_RECONCILE_CAPTURE_PID=
 	fi
-	if [ "$PREDECESSOR_APPLY_BARRIER_ACTIVE" -eq 1 ]; then
-		if ! docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
-			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = '\''ptah-operator-predecessor-apply-barrier'\'' AND pid <> pg_backend_pid()"' \
-			>/dev/null 2>&1; then
-			status=1
-		fi
-		PREDECESSOR_APPLY_BARRIER_ACTIVE=0
-	fi
-	if [ -n "$PREDECESSOR_APPLY_BARRIER_PID" ]; then
-		kill "$PREDECESSOR_APPLY_BARRIER_PID" >/dev/null 2>&1 || true
-		wait "$PREDECESSOR_APPLY_BARRIER_PID" >/dev/null 2>&1 || true
-		PREDECESSOR_APPLY_BARRIER_PID=
-	fi
-	if [ -n "$FOREIGN_TEARDOWN_BINDING" ]; then
+	if [ "$retain" -eq 0 ] && [ -n "$FOREIGN_TEARDOWN_BINDING" ]; then
 		if ! kube delete clusterrolebinding "$FOREIGN_TEARDOWN_BINDING" \
 			--ignore-not-found=true >/dev/null 2>&1; then
 			status=1
 		fi
 	fi
 	if [ -n "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ]; then
-		if ! kube delete validatingwebhookconfiguration "$LATE_ACTIVATION_BLOCKER_WEBHOOK" \
+		if [ "$retain" -eq 0 ] && ! kube delete validatingwebhookconfiguration "$LATE_ACTIVATION_BLOCKER_WEBHOOK" \
 			--ignore-not-found=true >/dev/null 2>&1; then
 			status=1
 		fi
 	fi
-	if [ -n "$CONTROLLER_GUARD_OWNER" ]; then
+	if [ "$retain" -eq 0 ] && [ -n "$CONTROLLER_GUARD_OWNER" ]; then
 		if ! kube -n "$PROOF_NAMESPACE" delete configmap "$CONTROLLER_GUARD_OWNER" \
 			--ignore-not-found=true >/dev/null 2>&1; then
 			status=1
 		fi
 	fi
-	case "$WORK_DIR" in
-		"${TMPDIR:-/tmp}"/ptah-operator-e2e-crd.*) rm -rf -- "$WORK_DIR" ;;
-		*)
-			printf 'e2e crd: refusing to remove unexpected work directory %s\n' "$WORK_DIR" >&2
-			status=1
-		;;
-	esac
+	if [ "$retain" -eq 1 ]; then
+		printf 'e2e crd: E2E_KEEP_ON_FAILURE=1: retaining work directory %s and the proof objects in namespaces %s and %s\n' \
+			"$WORK_DIR" "$E2E_OPERATOR_NAMESPACE" "$PROOF_NAMESPACE" >&2
+		[ "$HOOK_PROGRESS_RESOURCES_ACTIVE" -eq 0 ] ||
+			printf 'e2e crd: retaining cluster-scoped hold policy and binding %s\n' "$HOOK_PROGRESS_HOLD_POLICY" >&2
+		[ -z "$FOREIGN_TEARDOWN_BINDING" ] ||
+			printf 'e2e crd: retaining cluster role binding %s\n' "$FOREIGN_TEARDOWN_BINDING" >&2
+		[ -z "$LATE_ACTIVATION_BLOCKER_WEBHOOK" ] ||
+			printf 'e2e crd: retaining validating webhook configuration %s\n' "$LATE_ACTIVATION_BLOCKER_WEBHOOK" >&2
+	else
+		case "$WORK_DIR" in
+			"${TMPDIR:-/tmp}"/ptah-operator-e2e-crd.*) rm -rf -- "$WORK_DIR" ;;
+			*)
+				printf 'e2e crd: refusing to remove unexpected work directory %s\n' "$WORK_DIR" >&2
+				status=1
+			;;
+		esac
+	fi
 	exit "$status"
 }
 trap cleanup EXIT
@@ -314,8 +310,8 @@ production_controller_image_from_values() {
         type == "object" and
         (.repository | type == "string" and test("^[^[:space:]@]+$")) and
         (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")) and
-        .allowMutableTag == false and
-        ((.testIdentityDigest // "") == "")
+        (has("allowMutableTag") | not) and
+        (has("testIdentityDigest") | not)
       ) |
       .repository + "@" + .digest
     ' "$values_file") || fail "release values do not contain one exact production controller image identity"
@@ -357,13 +353,6 @@ assert_object_unchanged() {
 	cmp "$before" "$after" || fail "$resource/$name UID, spec, or status changed during CRD management"
 }
 
-schema_identity_evidence() {
-	name=$1
-	destination=$2
-	kube -n "$PROOF_NAMESPACE" get ptahschema "$name" -o json |
-		jq -S '{uid: .metadata.uid, spec: .spec}' >"$destination"
-}
-
 crd_evidence() {
 	name=$1
 	destination=$2
@@ -378,83 +367,6 @@ assert_crd_unchanged() {
 	crd_evidence "$name" "$after"
 	cmp "$before" "$after" ||
 		fail "$name identity, annotations, spec, or resourceVersion changed despite failed CRD preflight"
-}
-
-crd_normalized_digest() {
-	name=$1
-	destination=$WORK_DIR/${name}-digest-input.json
-	kube get crd "$name" -o json >"$destination"
-	go -C "$ROOT_DIR" run ./hack/crdschemadigest "$destination"
-}
-
-restore_predecessor_crd() {
-	name=$1
-	path=$(jq -er --arg name "$name" '.crds[] | select(.name == $name) | .path' \
-		"$E2E_PREDECESSOR_IDENTITY_FILE")
-	desired=$WORK_DIR/${name}-predecessor.json
-	live=$WORK_DIR/${name}-live.json
-	kube create --dry-run=client -f "$E2E_PREDECESSOR_SOURCE_DIR/$path" -o json >"$desired"
-	kube get crd "$name" -o json >"$live"
-	jq --slurpfile desired "$desired" '.spec = $desired[0].spec | del(.status, .metadata.managedFields)' \
-		"$live" | kube replace -f - >/dev/null
-	want=$(jq -er --arg name "$name" '.crds[] | select(.name == $name) | .normalizedSpecDigest' \
-		"$E2E_PREDECESSOR_IDENTITY_FILE")
-	got=$(crd_normalized_digest "$name")
-	[ "$got" = "$want" ] ||
-		fail "restored predecessor CRD $name digest is $got, expected $want"
-}
-
-singleton_contract_evidence() {
-	resource=$1
-	destination=$2
-	kube get "$resource" ptah-operator-admission -o json |
-		jq -S '{uid: .metadata.uid, labels: (.metadata.labels // {}), annotations: (.metadata.annotations // {}), webhooks: .webhooks}' \
-		>"$destination"
-}
-
-owned_singleton_annotation_count() {
-	resource=$1
-	[ -s "$EXPECTED_SINGLETON_ANNOTATIONS_FILE" ] ||
-		fail "expected admission singleton annotations are missing"
-	kube get "$resource" ptah-operator-admission -o json | jq \
-		--slurpfile expected "$EXPECTED_SINGLETON_ANNOTATIONS_FILE" '[
-      .metadata.annotations // {} | keys[] as $key |
-      select($expected[0] | has($key))
-    ] | length'
-}
-
-prepare_expected_singleton_annotations() {
-	helm_e2e template "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
-		--show-only templates/webhook.yaml >"$EXPECTED_SINGLETON_RENDER_FILE"
-	awk '
-      $1 == "kind:" && $2 == "MutatingWebhookConfiguration" { mutating = 1; next }
-      mutating && $1 == "annotations:" { annotations = 1; next }
-      annotations && $1 == "labels:" { exit }
-      annotations { sub(/^    /, ""); print }
-    ' "$EXPECTED_SINGLETON_RENDER_FILE" | jq -Rn '
-	  [inputs | capture("^(?<key>[^:]+): \"(?<value>[^\"]*)\"$")] |
-      from_entries
-    ' >"$EXPECTED_SINGLETON_ANNOTATIONS_FILE"
-	jq -e '
-      length == 13 and
-      (keys == [
-        "operator.ptah.dev/admission-contract-version",
-        "operator.ptah.dev/certificate-deployment-name",
-        "operator.ptah.dev/controller-deployment-name",
-        "operator.ptah.dev/controller-service-account-name",
-        "operator.ptah.dev/controller-state-version",
-        "operator.ptah.dev/coordination-namespace",
-        "operator.ptah.dev/hook-service-account-name",
-        "operator.ptah.dev/leader-election",
-        "operator.ptah.dev/leader-election-id",
-        "operator.ptah.dev/release-name",
-        "operator.ptah.dev/release-namespace",
-        "operator.ptah.dev/release-sequence",
-        "operator.ptah.dev/webhook-service-name"
-      ])
-    ' "$EXPECTED_SINGLETON_ANNOTATIONS_FILE" >/dev/null ||
-		fail "candidate render does not contain the complete 13-field admission singleton tuple"
 }
 
 rendered_hook_job_name() {
@@ -501,8 +413,10 @@ rendered_hook_job_name() {
 }
 
 prepare_expected_hook_names() {
-	helm_e2e template "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
+	expected_hook_chart=$1
+	expected_hook_values=$2
+	helm_e2e template "$E2E_HELM_RELEASE" "$expected_hook_chart" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$expected_hook_values" \
 		--show-only templates/crd-upgrade.yaml >"$EXPECTED_CRD_UPGRADE_RENDER_FILE"
 	image_check_matches=$(rendered_hook_job_name crd-manager-image-check -130)
 	identity_matches=$(rendered_hook_job_name hook-identity-probe -105)
@@ -669,14 +583,28 @@ verify_hook_progress_hold_transition() {
 	fail "hook progress hold policy did not converge to the exact monotonic transition"
 }
 
+# expect_hook_progress_authorization asks the adversary's own view of RBAC.
+# A subresource is passed through --subresource: kubectl 1.36 answers "no" to
+# the slash spelling "jobs/status" while a SubjectAccessReview for the same
+# attributes is allowed, so the spelling decided the answer. kubectl also exits
+# 1 for an honest "no", which is an answer rather than a failed query; only a
+# status above 1 means the query itself failed.
 expect_hook_progress_authorization() {
 	expected=$1
 	verb=$2
-	resource=$3
+	resource=${3%%/*}
+	subresource=
+	case "$3" in
+	*/*) subresource=${3#*/} ;;
+	esac
 	allowed=$(hook_progress_adversary_kube auth can-i "$verb" "$resource" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --request-timeout=15s)
+		--subresource="$subresource" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --request-timeout=15s \
+		2>"$WORK_DIR/hook-progress-can-i.err") && can_i_status=0 || can_i_status=$?
+	[ "$can_i_status" -le 1 ] ||
+		fail "hook progress adversary authorization query for $verb $3 failed with status $can_i_status: $(cat "$WORK_DIR/hook-progress-can-i.err")"
 	[ "$allowed" = "$expected" ] ||
-		fail "hook progress adversary authorization for $verb $resource is $allowed, expected $expected"
+		fail "hook progress adversary authorization for $verb $3 is $allowed, expected $expected"
 }
 
 create_hook_progress_adversary_and_hold() {
@@ -720,15 +648,18 @@ metadata:
   name: $HOOK_PROGRESS_ADVERSARY
   namespace: $E2E_OPERATOR_NAMESPACE
 rules:
+  # kubectl reads an object, or its subresource, before it patches it, so
+  # every patch grant carries the matching get; the write verbs stay as
+  # narrow as the Job controller's own.
   - apiGroups: ["batch"]
     resources: ["jobs"]
-    verbs: ["delete"]
+    verbs: ["delete", "get"]
   - apiGroups: ["batch"]
     resources: ["jobs/status"]
-    verbs: ["patch"]
+    verbs: ["get", "patch"]
   - apiGroups: [""]
     resources: ["pods", "pods/status"]
-    verbs: ["patch"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -752,6 +683,8 @@ EOF
 	expect_hook_progress_authorization yes patch jobs/status
 	expect_hook_progress_authorization yes patch pods
 	expect_hook_progress_authorization yes patch pods/status
+	expect_hook_progress_authorization yes get jobs/status
+	expect_hook_progress_authorization yes get pods/status
 	expect_hook_progress_authorization no create \
 		validatingadmissionpolicies.admissionregistration.k8s.io
 	expect_hook_progress_authorization no create \
@@ -832,7 +765,7 @@ EOF
 		--type=merge --dry-run=server -p='{"status":{"active":1}}' \
 		--request-timeout=15s -o json >"$WORK_DIR/hook-progress-hold-exemption.json" \
 		2>"$WORK_DIR/hook-progress-hold-exemption.err"; then
-		fail "hook progress hold did not exempt only the RBAC-proven adversary"
+		fail "hook progress hold did not exempt only the RBAC-proven adversary; the API server's answer is in $WORK_DIR/hook-progress-hold-exemption.err"
 	fi
 	jq -e '.status.active == 1' "$WORK_DIR/hook-progress-hold-exemption.json" >/dev/null ||
 		fail "hook progress adversary exemption did not reach status admission"
@@ -986,6 +919,13 @@ expect_hook_progress_guard_denial() {
 	fi
 }
 
+# exercise_hook_progress_attacks sends the five mutations an adversary with
+# the Job controller's verbs could attempt against the running hook Job and
+# its Pod. The forged terminal statuses carry what the Job API's own
+# validation demands of a finished Job (a SuccessCriteriaMet or FailureTarget
+# condition beside the terminal one, startTime, completionTime for Complete,
+# no active Pods), because a shape that validation refuses never reaches
+# admission and proves nothing about the guards.
 exercise_hook_progress_attacks() {
 	component=$1
 	expect_hook_progress_guard_denial \
@@ -996,13 +936,13 @@ exercise_hook_progress_attacks() {
 		"forge Complete on the $component Job" "$HOOK_PROGRESS_JOB_DENIAL" \
 		hook_progress_adversary_kube -n "$E2E_OPERATOR_NAMESPACE" \
 		patch job "$HOOK_PROGRESS_JOB_NAME" --subresource=status --type=merge \
-		-p='{"status":{"succeeded":1,"conditions":[{"type":"Complete","status":"True","reason":"E2EForge","message":"forged completion","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' \
+		-p='{"status":{"active":0,"startTime":"2026-01-01T00:00:00Z","completionTime":"2026-01-01T00:00:01Z","succeeded":1,"conditions":[{"type":"SuccessCriteriaMet","status":"True","reason":"E2EForge","message":"forged completion","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"},{"type":"Complete","status":"True","reason":"E2EForge","message":"forged completion","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' \
 		--request-timeout=15s
 	expect_hook_progress_guard_denial \
 		"forge Failed on the $component Job" "$HOOK_PROGRESS_JOB_DENIAL" \
 		hook_progress_adversary_kube -n "$E2E_OPERATOR_NAMESPACE" \
 		patch job "$HOOK_PROGRESS_JOB_NAME" --subresource=status --type=merge \
-		-p='{"status":{"failed":1,"conditions":[{"type":"Failed","status":"True","reason":"E2EForge","message":"forged failure","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' \
+		-p='{"status":{"active":0,"startTime":"2026-01-01T00:00:00Z","failed":1,"conditions":[{"type":"FailureTarget","status":"True","reason":"E2EForge","message":"forged failure","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"},{"type":"Failed","status":"True","reason":"E2EForge","message":"forged failure","lastProbeTime":"2026-01-01T00:00:00Z","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' \
 		--request-timeout=15s
 	expect_hook_progress_guard_denial \
 		"change the $component Pod component identity" "$HOOK_PROGRESS_POD_DENIAL" \
@@ -1120,9 +1060,9 @@ materialize_identity_hook_credential_patterns() {
 		printf '%s:%s' "$registry_username" "$registry_password" | base64 | tr -d '\n'
 		printf '\n'
 		printf '%s\n' "$database_password"
-		printf 'postgres://%s:%s@%s.%s.svc.cluster.local:5432/%s?sslmode=disable\n' \
-			"$database_username" "$database_password" "$PREDECESSOR_APPLY_DATABASE" \
-			"$PROOF_NAMESPACE" "$database_name"
+		printf 'postgres://%s:%s@%s:5432/%s?sslmode=disable\n' \
+			"$database_username" "$database_password" "$E2E_EXTERNAL_POSTGRES_IP" \
+			"$database_name"
 		jq -r '(.url? // empty) | select(type == "string" and length > 0)' \
 			"$E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE"
 	} >>"$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE"
@@ -1392,25 +1332,6 @@ emit_identity_hook_diagnostic() {
 		--arg captureStatus "$capture_status" \
 		--arg rawSha256 "sha256:$raw_sha256" \
 		'{component: "identity-hook", category: $category, failureClass: $failureClass, formatStatus: $formatStatus, captureStatus: $captureStatus, rawSha256: $rawSha256}'
-}
-
-assert_singleton_annotation_free() {
-	for singleton_resource in mutatingwebhookconfiguration validatingwebhookconfiguration; do
-		count=$(owned_singleton_annotation_count "$singleton_resource")
-		[ "$count" -eq 0 ] ||
-			fail "$singleton_resource/ptah-operator-admission has $count candidate ownership annotations before adoption"
-	done
-}
-
-assert_adopted_singleton_annotations() {
-	for singleton_resource in mutatingwebhookconfiguration validatingwebhookconfiguration; do
-		kube get "$singleton_resource" ptah-operator-admission -o json | jq -e \
-			--slurpfile expected "$EXPECTED_SINGLETON_ANNOTATIONS_FILE" '
-          .metadata.annotations as $actual |
-          ($expected[0] | to_entries | all(. as $entry; $actual[$entry.key] == $entry.value))
-        ' >/dev/null ||
-			fail "$singleton_resource/ptah-operator-admission did not acquire the complete exact candidate annotation tuple"
-	done
 }
 
 deployment_evidence() {
@@ -1947,11 +1868,14 @@ restore_runtime_deployment_snapshot() {
       del(.status)
     ' "$live" >"$restored"
 	kube replace -f "$restored" >/dev/null ||
-		fail "candidate rollout guards blocked exact predecessor Deployment recovery for $deployment_name"
+		fail "successor rollout guards blocked exact current-release Deployment recovery for $deployment_name"
 }
 
 prove_late_activation_failure_recovery() {
-	printf '%s\n' 'e2e crd: proving predecessor recovery after a late pre-activation failure'
+	late_current_sequence=$1
+	late_next_sequence=$2
+	late_current_image=$3
+	printf '%s\n' 'e2e crd: proving current-release recovery after a late pre-activation failure'
 	runtime_deployment_names
 	controller_snapshot=$WORK_DIR/controller-before-late-activation-failure.json
 	rotator_snapshot=$WORK_DIR/rotator-before-late-activation-failure.json
@@ -1965,8 +1889,8 @@ prove_late_activation_failure_recovery() {
 	create_late_activation_blocker
 	arm_late_activation_hook_log_captures
 	late_upgrade_succeeded=false
-	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
+	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
 		--wait --timeout 2m >"$WORK_DIR/late-activation-failure.out" \
 		2>"$WORK_DIR/late-activation-failure.err"; then
 		late_upgrade_succeeded=true
@@ -2042,14 +1966,18 @@ prove_late_activation_failure_recovery() {
 	emit_late_activation_reconcile_diagnostic
 
 	kube -n "$E2E_OPERATOR_NAMESPACE" get configmap ptah-operator-release-activation -o json |
-		jq -e '.data["active-release-sequence"] == "0"' >/dev/null ||
-		fail "late failure advanced the release activation marker"
+		jq -e --arg current "$late_current_sequence" \
+			'.data["active-release-sequence"] == $current' >/dev/null ||
+		fail "late failure advanced the release activation marker past sequence $late_current_sequence"
+	controller_state_version=$(jq -er \
+		'.metadata.annotations["operator.ptah.dev/controller-state-version"]' "$controller_snapshot")
 	for deployment_name in "$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT"; do
 		kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$deployment_name" -o json |
-			jq -e --arg image "$E2E_PREDECESSOR_IMAGE" '
+			jq -e --arg image "$late_current_image" --arg next "$late_next_sequence" \
+				--arg state "$controller_state_version" '
               .spec.replicas == 0 and
-              .metadata.annotations["operator.ptah.dev/release-sequence"] == "1" and
-              .metadata.annotations["operator.ptah.dev/controller-state-version"] == "1" and
+              .metadata.annotations["operator.ptah.dev/release-sequence"] == $next and
+              .metadata.annotations["operator.ptah.dev/controller-state-version"] == $state and
               any(.spec.template.spec.containers[]; .image == $image)
             ' >/dev/null || fail "late failure did not leave $deployment_name at the exact staged boundary"
 	done
@@ -2065,103 +1993,97 @@ prove_late_activation_failure_recovery() {
 		fail "controller Deployment was not restored exactly after the late activation failure"
 	cmp "$rotator_snapshot" "$WORK_DIR/rotator-after-late-activation-recovery.json" ||
 		fail "certificate Deployment was not restored exactly after the late activation failure"
-	printf '%s\n' 'e2e crd: predecessor late-failure recovery passed'
+	printf '%s\n' 'e2e crd: current-release late-failure recovery passed'
 }
 
-wait_for_suspended() {
-	schema_name=${1:-$PROOF_SCHEMA}
-	deadline=$(($(date +%s) + 90))
-	while [ "$(date +%s)" -lt "$deadline" ]; do
-		phase=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$schema_name" \
-			-o jsonpath='{.status.phase}' 2>/dev/null || true)
-		[ "$phase" = Suspended ] && return
-		sleep 1
-	done
-	fail "PtahSchema $schema_name did not become Suspended"
-}
-
-quiesce_predecessor_metric_sources() {
-	for schema_name in "$PREDECESSOR_JOB_SCHEMA" "$PREDECESSOR_APPLY_SCHEMA"; do
-		kube -n "$PROOF_NAMESPACE" patch ptahschema "$schema_name" \
-			--type=merge -p '{"spec":{"suspend":true}}' >/dev/null
-		wait_for_suspended "$schema_name"
-		kube -n "$PROOF_NAMESPACE" get ptahschema "$schema_name" -o json |
-			jq -e '
-              .spec.suspend == true and
-              .status.phase == "Suspended" and
-              .status.activeOperation == null
-            ' >/dev/null || fail "predecessor metric source $schema_name did not quiesce exactly"
-	done
-}
-
-wait_for_schema_deleted() {
-	schema_name=$1
+# The controller dispatches a read-only Job for an unsuspended schema whose
+# execution nodeSelector nothing satisfies, so the Job stays pending with a
+# committed UID and never reads the database URL or the desired reference.
+# Its manifest is the base every controller-object probe mutates, and its
+# staged terminal state is what the cleanup proofs hand across a release.
+dispatch_read_only_job_fixture() {
+	[ -n "$READ_ONLY_JOB_SCHEMA" ] || fail "read-only Job fixture schema name is unset"
+	kube -n "$PROOF_NAMESPACE" apply -f - >/dev/null <<EOF
+apiVersion: operator.ptah.dev/v1alpha1
+kind: PtahSchema
+metadata:
+  name: $READ_ONLY_JOB_SCHEMA
+spec:
+  target:
+    engine: PostgreSQL
+    coordinationKey: $READ_ONLY_JOB_SCHEMA
+    urlFrom:
+      name: unused-database-url
+      key: url
+  desired:
+    ociRef: oci://example.invalid/schema:v1
+    verificationPolicyFrom:
+      name: unused-verification-policy
+      key: policy.yaml
+  execution:
+    serviceAccountName: default
+    nodeSelector:
+      operator.ptah.dev/read-only-job-proof: blocked
+EOF
 	deadline=$(($(date +%s) + 120))
 	while [ "$(date +%s)" -lt "$deadline" ]; do
-		if kube -n "$PROOF_NAMESPACE" get ptahschema "$schema_name" \
-			>"$WORK_DIR/deleting-schema.out" 2>"$WORK_DIR/deleting-schema.err"; then
-			sleep 1
-			continue
-		fi
-		if grep -F '(NotFound)' "$WORK_DIR/deleting-schema.err" >/dev/null; then
-			return
-		fi
-		fail "could not verify deletion of PtahSchema $schema_name"
-	done
-	fail "PtahSchema $schema_name was not deleted"
-}
-
-wait_for_predecessor_read_only_job() {
-	deadline=$(($(date +%s) + 120))
-	while [ "$(date +%s)" -lt "$deadline" ]; do
-		PREDECESSOR_JOB_NAME=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_JOB_SCHEMA" \
+		READ_ONLY_JOB_NAME=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$READ_ONLY_JOB_SCHEMA" \
 			-o jsonpath='{.status.activeOperation.jobName}' 2>/dev/null || true)
-		PREDECESSOR_JOB_UID=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_JOB_SCHEMA" \
+		READ_ONLY_JOB_UID=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$READ_ONLY_JOB_SCHEMA" \
 			-o jsonpath='{.status.activeOperation.jobUID}' 2>/dev/null || true)
-		if [ -n "$PREDECESSOR_JOB_NAME" ] && [ -n "$PREDECESSOR_JOB_UID" ] &&
-			kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json \
-				>"$WORK_DIR/predecessor-read-only-job.json" 2>/dev/null; then
+		if [ -n "$READ_ONLY_JOB_NAME" ] && [ -n "$READ_ONLY_JOB_UID" ] &&
+			kube -n "$PROOF_NAMESPACE" get job "$READ_ONLY_JOB_NAME" -o json \
+				>"$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job.json" 2>/dev/null; then
 			jq -e \
-				--arg schema "$PREDECESSOR_JOB_SCHEMA" \
-				--arg uid "$PREDECESSOR_JOB_UID" '
+				--arg schema "$READ_ONLY_JOB_SCHEMA" \
+				--arg uid "$READ_ONLY_JOB_UID" '
               .metadata.uid == $uid and
               .metadata.labels["operator.ptah.dev/schema"] == $schema and
               .metadata.labels["operator.ptah.dev/operation"] == "resolve" and
-              (.metadata.annotations | keys | sort) == [
-                "operator.ptah.dev/admission-snapshot-digest",
-                "operator.ptah.dev/execution-binding-id",
-                "operator.ptah.dev/input-fingerprint",
-                "operator.ptah.dev/operation-id",
-                "operator.ptah.dev/ptah-version"
-              ] and
               (.spec | has("ttlSecondsAfterFinished") | not)
-            ' "$WORK_DIR/predecessor-read-only-job.json" >/dev/null ||
-				fail "predecessor read-only Job does not match its exact five-annotation contract"
+            ' "$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job.json" >/dev/null ||
+				fail "read-only Job does not match the dispatched operation identity"
 			return
 		fi
 		sleep 1
 	done
-	fail "predecessor controller did not dispatch a read-only Job with a committed UID"
+	fail "controller did not dispatch a read-only Job with a committed UID for $READ_ONLY_JOB_SCHEMA"
 }
 
-set_predecessor_pod_webhook_failure_policy() {
+quiesce_read_only_job_schema() {
+	kube -n "$PROOF_NAMESPACE" patch ptahschema "$READ_ONLY_JOB_SCHEMA" \
+		--type=merge -p '{"spec":{"suspend":true}}' >/dev/null
+	wait_for_suspended "$READ_ONLY_JOB_SCHEMA"
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$READ_ONLY_JOB_SCHEMA" -o json |
+		jq -e '
+          .spec.suspend == true and
+          .status.phase == "Suspended" and
+          .status.activeOperation == null
+        ' >/dev/null || fail "read-only Job schema $READ_ONLY_JOB_SCHEMA did not quiesce exactly"
+}
+
+# The operator's Pod webhook fails closed, and the controller that serves it
+# is stopped while a terminal Job is staged. The Job controller cannot retire
+# the pending Pod through a webhook nobody answers, so the outage is bridged
+# by an exact, verified failurePolicy transition and restored right after.
+set_pod_webhook_failure_policy() {
 	expected_policy=$1
 	desired_policy=$2
 	case "$expected_policy:$desired_policy" in
 	Fail:Ignore | Ignore:Fail) ;;
-	*) fail "unsupported predecessor Pod webhook failurePolicy transition $expected_policy -> $desired_policy" ;;
+	*) fail "unsupported Pod webhook failurePolicy transition $expected_policy -> $desired_policy" ;;
 	esac
-	predecessor_pod_webhook_index=$(kube get validatingwebhookconfiguration ptah-operator-admission -o json |
+	pod_webhook_index=$(kube get validatingwebhookconfiguration ptah-operator-admission -o json |
 		jq -er '
 		  [.webhooks | to_entries[] | select(.value.name == "vpodintent.operator.ptah.dev")] |
 		  select(length == 1) | .[0].key
 		')
-	predecessor_pod_webhook_policy=$(kube get validatingwebhookconfiguration ptah-operator-admission -o json |
-		jq -er --argjson index "$predecessor_pod_webhook_index" '.webhooks[$index].failurePolicy')
-	[ "$predecessor_pod_webhook_policy" = "$expected_policy" ] ||
-		fail "predecessor Pod webhook failurePolicy is $predecessor_pod_webhook_policy, expected $expected_policy"
-	predecessor_pod_webhook_patch=$(jq -nc \
-		--argjson index "$predecessor_pod_webhook_index" \
+	pod_webhook_policy=$(kube get validatingwebhookconfiguration ptah-operator-admission -o json |
+		jq -er --argjson index "$pod_webhook_index" '.webhooks[$index].failurePolicy')
+	[ "$pod_webhook_policy" = "$expected_policy" ] ||
+		fail "Pod webhook failurePolicy is $pod_webhook_policy, expected $expected_policy"
+	pod_webhook_patch=$(jq -nc \
+		--argjson index "$pod_webhook_index" \
 		--arg expected "$expected_policy" \
 		--arg desired "$desired_policy" '[
 		  {op: "test", path: ("/webhooks/" + ($index | tostring) + "/name"), value: "vpodintent.operator.ptah.dev"},
@@ -2169,27 +2091,27 @@ set_predecessor_pod_webhook_failure_policy() {
 		  {op: "replace", path: ("/webhooks/" + ($index | tostring) + "/failurePolicy"), value: $desired}
 		]')
 	kube patch validatingwebhookconfiguration ptah-operator-admission \
-		--type=json -p "$predecessor_pod_webhook_patch" >/dev/null
+		--type=json -p "$pod_webhook_patch" >/dev/null
 	kube get validatingwebhookconfiguration ptah-operator-admission -o json |
 		jq -e \
-			--argjson index "$predecessor_pod_webhook_index" \
+			--argjson index "$pod_webhook_index" \
 			--arg desired "$desired_policy" '
 			.webhooks[$index].name == "vpodintent.operator.ptah.dev" and
 			.webhooks[$index].failurePolicy == $desired
-			' >/dev/null || fail "predecessor Pod webhook failurePolicy transition was not persisted"
+			' >/dev/null || fail "Pod webhook failurePolicy transition was not persisted"
 }
 
-stage_predecessor_read_only_job_completion() {
-	[ -n "$PREDECESSOR_JOB_NAME" ] || fail "predecessor read-only Job name is missing"
-	[ -n "$PREDECESSOR_JOB_UID" ] || fail "predecessor read-only Job UID is missing"
-	terminal_reason=PredecessorUpgradeProof
+stage_read_only_job_completion() {
+	[ -n "$READ_ONLY_JOB_NAME" ] || fail "read-only Job name is missing"
+	[ -n "$READ_ONLY_JOB_UID" ] || fail "read-only Job UID is missing"
+	terminal_reason=ReadOnlyJobProof
 	terminal_message='terminal read-only Job retained across quiescence'
-	kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json |
-		jq -e --arg uid "$PREDECESSOR_JOB_UID" '
+	kube -n "$PROOF_NAMESPACE" get job "$READ_ONLY_JOB_NAME" -o json |
+		jq -e --arg uid "$READ_ONLY_JOB_UID" '
 		  .metadata.uid == $uid and
 		  ((.status.conditions // []) | all(.status != "True" or (.type != "Complete" and .type != "Failed" and .type != "FailureTarget"))) and
 		  (.status | has("completionTime") | not)
-		' >/dev/null || fail "predecessor read-only Job was already terminal before FailureTarget staging"
+		' >/dev/null || fail "read-only Job was already terminal before FailureTarget staging"
 	failure_target_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 	failure_target_patch=$(jq -nc \
 		--arg failure_target_at "$failure_target_at" \
@@ -2204,16 +2126,16 @@ stage_predecessor_read_only_job_completion() {
 	    }]
 	  }
 	}')
-	kube -n "$PROOF_NAMESPACE" patch job "$PREDECESSOR_JOB_NAME" --subresource=status \
+	kube -n "$PROOF_NAMESPACE" patch job "$READ_ONLY_JOB_NAME" --subresource=status \
 		--type=merge -p "$failure_target_patch" >/dev/null
 
-	predecessor_job_terminal=0
+	read_only_job_terminal=0
 	deadline=$(($(date +%s) + 120))
 	while [ "$(date +%s)" -lt "$deadline" ]; do
-		if kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json \
-			>"$WORK_DIR/predecessor-read-only-job-terminal.json" 2>/dev/null &&
+		if kube -n "$PROOF_NAMESPACE" get job "$READ_ONLY_JOB_NAME" -o json \
+			>"$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-terminal.json" 2>/dev/null &&
 			jq -e \
-				--arg uid "$PREDECESSOR_JOB_UID" \
+				--arg uid "$READ_ONLY_JOB_UID" \
 				--arg reason "$terminal_reason" \
 				--arg message "$terminal_message" '
 				  .metadata.uid == $uid and
@@ -2233,25 +2155,25 @@ stage_predecessor_read_only_job_completion() {
 				    .reason == $reason and .message == $message
 				  )) and
 				  (.spec | has("ttlSecondsAfterFinished") | not)
-				' "$WORK_DIR/predecessor-read-only-job-terminal.json" >/dev/null; then
-			predecessor_job_terminal=1
+				' "$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-terminal.json" >/dev/null; then
+			read_only_job_terminal=1
 			break
 		fi
 		sleep 1
 	done
-	if [ "$predecessor_job_terminal" -ne 1 ]; then
-		kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json \
-			>"$WORK_DIR/predecessor-read-only-job-terminal.json" 2>/dev/null || true
+	if [ "$read_only_job_terminal" -ne 1 ]; then
+		kube -n "$PROOF_NAMESPACE" get job "$READ_ONLY_JOB_NAME" -o json \
+			>"$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-terminal.json" 2>/dev/null || true
 		kube -n "$PROOF_NAMESPACE" get pods \
-			-l "batch.kubernetes.io/job-name=$PREDECESSOR_JOB_NAME" -o json \
-			>"$WORK_DIR/predecessor-read-only-job-pods.json" 2>/dev/null || true
+			-l "batch.kubernetes.io/job-name=$READ_ONLY_JOB_NAME" -o json \
+			>"$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-pods.json" 2>/dev/null || true
 		jq -c '{name: .metadata.name, uid: .metadata.uid, status: .status}' \
-			"$WORK_DIR/predecessor-read-only-job-terminal.json" >&2 || true
+			"$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-terminal.json" >&2 || true
 		jq -c '[.items[]? | {name: .metadata.name, uid: .metadata.uid, phase: .status.phase, deletionTimestamp: .metadata.deletionTimestamp}]' \
-			"$WORK_DIR/predecessor-read-only-job-pods.json" >&2 || true
-		fail "Job controller did not retire the predecessor read-only Job after FailureTarget staging"
+			"$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-pods.json" >&2 || true
+		fail "Job controller did not retire the read-only Job after FailureTarget staging"
 	fi
-	kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json |
+	kube -n "$PROOF_NAMESPACE" get job "$READ_ONLY_JOB_NAME" -o json |
 		jq -S '{
           uid: .metadata.uid,
           name: .metadata.name,
@@ -2261,35 +2183,35 @@ stage_predecessor_read_only_job_completion() {
           ownerReferences: .metadata.ownerReferences,
           finalizers: (.metadata.finalizers // []),
           spec: (.spec | del(.ttlSecondsAfterFinished))
-		}' >"$WORK_DIR/predecessor-read-only-job-before-cleanup.json"
+		}' >"$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-before-cleanup.json"
 }
 
-stage_predecessor_read_only_job_uid_gap() {
-	[ -n "$PREDECESSOR_JOB_NAME" ] || fail "predecessor read-only Job name is missing"
-	[ -n "$PREDECESSOR_JOB_UID" ] || fail "predecessor read-only Job UID is missing"
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PREDECESSOR_JOB_SCHEMA" --subresource=status \
+stage_read_only_job_uid_gap() {
+	[ -n "$READ_ONLY_JOB_NAME" ] || fail "read-only Job name is missing"
+	[ -n "$READ_ONLY_JOB_UID" ] || fail "read-only Job UID is missing"
+	kube -n "$PROOF_NAMESPACE" patch ptahschema "$READ_ONLY_JOB_SCHEMA" --subresource=status \
 		--type=json -p='[{"op":"remove","path":"/status/activeOperation/jobUID"}]' >/dev/null
-	kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_JOB_SCHEMA" -o json |
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$READ_ONLY_JOB_SCHEMA" -o json |
 		jq -e \
-			--arg job_name "$PREDECESSOR_JOB_NAME" '
+			--arg job_name "$READ_ONLY_JOB_NAME" '
           .status.activeOperation.jobName == $job_name and
           .status.activeOperation.type == "Resolve" and
           (.status.activeOperation | has("jobUID") | not)
-        ' >/dev/null || fail "predecessor read-only fixture did not retain the exact Job name with an empty committed UID"
-	kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json |
-		jq -e --arg uid "$PREDECESSOR_JOB_UID" '
+        ' >/dev/null || fail "read-only fixture did not retain the exact Job name with an empty committed UID"
+	kube -n "$PROOF_NAMESPACE" get job "$READ_ONLY_JOB_NAME" -o json |
+		jq -e --arg uid "$READ_ONLY_JOB_UID" '
           .metadata.uid == $uid and
           (.status.conditions | any(.type == "Failed" and .status == "True")) and
           (.spec | has("ttlSecondsAfterFinished") | not)
-        ' >/dev/null || fail "late-created predecessor read-only Job identity changed while staging the UID gap"
+        ' >/dev/null || fail "late-created read-only Job identity changed while staging the UID gap"
 }
 
-wait_for_predecessor_read_only_job_cleanup() {
+wait_for_read_only_job_cleanup() {
 	deadline=$(($(date +%s) + 120))
 	while [ "$(date +%s)" -lt "$deadline" ]; do
-		if kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_JOB_NAME" -o json \
-			>"$WORK_DIR/predecessor-read-only-job-after.json" 2>/dev/null &&
-			[ "$(jq -r '.spec.ttlSecondsAfterFinished // 0' "$WORK_DIR/predecessor-read-only-job-after.json")" -eq 300 ]; then
+		if kube -n "$PROOF_NAMESPACE" get job "$READ_ONLY_JOB_NAME" -o json \
+			>"$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-after.json" 2>/dev/null &&
+			[ "$(jq -r '.spec.ttlSecondsAfterFinished // 0' "$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-after.json")" -eq 300 ]; then
 			jq -S '{
               uid: .metadata.uid,
               name: .metadata.name,
@@ -2299,791 +2221,28 @@ wait_for_predecessor_read_only_job_cleanup() {
               ownerReferences: .metadata.ownerReferences,
               finalizers: (.metadata.finalizers // []),
               spec: (.spec | del(.ttlSecondsAfterFinished))
-            }' "$WORK_DIR/predecessor-read-only-job-after.json" \
-				>"$WORK_DIR/predecessor-read-only-job-after-cleanup.json"
-			cmp "$WORK_DIR/predecessor-read-only-job-before-cleanup.json" \
-				"$WORK_DIR/predecessor-read-only-job-after-cleanup.json" ||
-				fail "candidate cleanup changed the predecessor Job outside ttlSecondsAfterFinished"
+            }' "$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-after.json" \
+				>"$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-after-cleanup.json"
+			cmp "$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-before-cleanup.json" \
+				"$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job-after-cleanup.json" ||
+				fail "successor cleanup changed the read-only Job outside ttlSecondsAfterFinished"
 			return
 		fi
 		sleep 1
 	done
-	fail "candidate manager did not schedule cleanup for the quiesced predecessor read-only Job"
+	fail "candidate manager did not schedule cleanup for the quiesced read-only Job"
 }
 
-wait_for_successful_fixture_job() {
-	job_name=$1
-	deadline=$(($(date +%s) + 180))
-	while [ "$(date +%s)" -lt "$deadline" ]; do
-		if kube -n "$PROOF_NAMESPACE" get job "$job_name" -o json \
-			>"$WORK_DIR/fixture-job.json" 2>/dev/null; then
-			if jq -e '(.status.conditions // []) | any(.type == "Complete" and .status == "True")' \
-				"$WORK_DIR/fixture-job.json" >/dev/null; then
-				return
-			fi
-			if jq -e '(.status.conditions // []) | any(.type == "Failed" and .status == "True")' \
-				"$WORK_DIR/fixture-job.json" >/dev/null; then
-				fail "fixture Job $job_name failed"
-			fi
-		fi
-		sleep 1
-	done
-	fail "fixture Job $job_name did not complete"
-}
-
-external_predecessor_postgres_query() {
-	query=$1
-	docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
-		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
-		sh "$query"
-}
-
-start_predecessor_apply_barrier() {
-	[ "$PREDECESSOR_APPLY_BARRIER_ACTIVE" -eq 0 ] ||
-		fail "predecessor Apply database barrier is already active"
-	docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
-		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; PGAPPNAME=ptah-operator-predecessor-apply-barrier; export PGAPPNAME; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc "SELECT pg_advisory_lock(742019370001); SELECT pg_sleep(900)"' \
-		>"$WORK_DIR/predecessor-apply-barrier.out" \
-		2>"$WORK_DIR/predecessor-apply-barrier.err" &
-	PREDECESSOR_APPLY_BARRIER_PID=$!
-	PREDECESSOR_APPLY_BARRIER_ACTIVE=1
-
-	deadline=$(($(date +%s) + 30))
-	while [ "$(date +%s)" -lt "$deadline" ]; do
-		held=$(external_predecessor_postgres_query \
-			"SELECT count(*) FROM pg_locks AS lock JOIN pg_stat_activity AS activity USING (pid) WHERE lock.locktype = 'advisory' AND lock.granted AND activity.application_name = 'ptah-operator-predecessor-apply-barrier'") ||
-			fail "could not inspect the predecessor Apply database barrier"
-		if [ "$held" -eq 1 ]; then
-			return
-		fi
-		if ! kill -0 "$PREDECESSOR_APPLY_BARRIER_PID" 2>/dev/null; then
-			cat "$WORK_DIR/predecessor-apply-barrier.err" >&2
-			fail "predecessor Apply database barrier exited before acquiring its lock"
-		fi
-		sleep 1
-	done
-	fail "predecessor Apply database barrier did not acquire its lock"
-}
-
-wait_for_predecessor_apply_barrier_contention() {
-	deadline=$(($(date +%s) + 60))
-	while [ "$(date +%s)" -lt "$deadline" ]; do
-		waiting=$(external_predecessor_postgres_query \
-			"SELECT count(*) FROM pg_locks AS waiting JOIN pg_locks AS held USING (locktype, database, classid, objid, objsubid) JOIN pg_stat_activity AS holder ON holder.pid = held.pid WHERE held.locktype = 'advisory' AND held.granted AND NOT waiting.granted AND waiting.pid <> held.pid AND holder.application_name = 'ptah-operator-predecessor-apply-barrier'") ||
-			fail "could not inspect predecessor Apply barrier contention"
-		if [ "$waiting" -eq 1 ]; then
-			return
-		fi
-		sleep 1
-	done
-	fail "predecessor Apply did not block on the controlled database barrier"
-}
-
-assert_predecessor_apply_barrier_contended() {
-	waiting=$(external_predecessor_postgres_query \
-		"SELECT count(*) FROM pg_locks AS waiting JOIN pg_locks AS held USING (locktype, database, classid, objid, objsubid) JOIN pg_stat_activity AS holder ON holder.pid = held.pid WHERE held.locktype = 'advisory' AND held.granted AND NOT waiting.granted AND waiting.pid <> held.pid AND holder.application_name = 'ptah-operator-predecessor-apply-barrier'") ||
-		fail "could not recheck predecessor Apply barrier contention"
-	[ "$waiting" -eq 1 ] || fail "predecessor Apply left the controlled database barrier before release"
-}
-
-release_predecessor_apply_barrier() {
-	[ "$PREDECESSOR_APPLY_BARRIER_ACTIVE" -eq 1 ] ||
-		fail "predecessor Apply database barrier is not active"
-	released=$(external_predecessor_postgres_query \
-		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = 'ptah-operator-predecessor-apply-barrier' AND pid <> pg_backend_pid()") ||
-		fail "could not release predecessor Apply database barrier"
-	[ "$released" = t ] || fail "predecessor Apply database barrier release did not terminate exactly one holder"
-	PREDECESSOR_APPLY_BARRIER_ACTIVE=0
-	if wait "$PREDECESSOR_APPLY_BARRIER_PID"; then
-		fail "predecessor Apply database barrier exited successfully instead of being explicitly released"
-	fi
-	PREDECESSOR_APPLY_BARRIER_PID=
-}
-
-prepare_predecessor_apply_fixture() {
-	E2E_REGISTRY_CREDENTIALS_FILE=${E2E_REGISTRY_CREDENTIALS_FILE:?E2E_REGISTRY_CREDENTIALS_FILE is required for predecessor Apply proof}
-	E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=${E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE:?E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE is required for predecessor Apply proof}
-	E2E_EXTERNAL_POSTGRES_IP=${E2E_EXTERNAL_POSTGRES_IP:?E2E_EXTERNAL_POSTGRES_IP is required for predecessor Apply proof}
-	E2E_DOCKER_CONTEXT=${E2E_DOCKER_CONTEXT:?E2E_DOCKER_CONTEXT is required for predecessor Apply proof}
-	E2E_EXTERNAL_POSTGRES_CONTAINER_ID=${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:?E2E_EXTERNAL_POSTGRES_CONTAINER_ID is required for predecessor Apply proof}
-	require_mode_0600_regular_file "$E2E_REGISTRY_CREDENTIALS_FILE" E2E_REGISTRY_CREDENTIALS_FILE
-	require_mode_0600_regular_file "$E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE" \
-		E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE
-	printf '%s\n' "$E2E_EXTERNAL_POSTGRES_IP" | grep -Eq '^[0-9]+(\.[0-9]+){3}$' ||
-		fail "E2E_EXTERNAL_POSTGRES_IP must be an IPv4 address"
-	case "$E2E_DOCKER_CONTEXT" in
-	'' | default | orbstack) fail "E2E_DOCKER_CONTEXT must name an explicit allowed remote context" ;;
-	esac
-	printf '%s\n' "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" | grep -Eq '^[0-9a-f]{64}$' ||
-		fail "E2E_EXTERNAL_POSTGRES_CONTAINER_ID must be an exact Docker container ID"
-	actual_external_postgres_id=$(docker --context "$E2E_DOCKER_CONTEXT" container inspect \
-		--format '{{.Id}}' "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID") ||
-		fail "could not inspect the external PostgreSQL barrier container"
-	[ "$actual_external_postgres_id" = "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" ] ||
-		fail "external PostgreSQL barrier container identity changed"
-
-	predecessor_executor_image=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_SCHEMA" \
-		-o jsonpath='{.status.executionBinding.executorImage}')
-	printf '%s\n' "$predecessor_executor_image" |
-		grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$' ||
-		fail "predecessor execution binding does not contain a digest-pinned executor image"
-	predecessor_registry=${predecessor_executor_image%%/*}
-	jq -n \
-		--arg namespace "$PROOF_NAMESPACE" \
-		--arg name "$PREDECESSOR_APPLY_PULL_SECRET" \
-		--arg registry "$predecessor_registry" \
-		--slurpfile credentials "$E2E_REGISTRY_CREDENTIALS_FILE" '
-      {
-        apiVersion: "v1", kind: "Secret", immutable: true,
-        metadata: {namespace: $namespace, name: $name},
-        type: "kubernetes.io/dockerconfigjson",
-        data: {
-          ".dockerconfigjson": ({auths: {($registry): {
-            username: $credentials[0].username,
-            password: $credentials[0].password,
-            auth: (($credentials[0].username + ":" + $credentials[0].password) | @base64)
-          }}} | tojson | @base64)
-        }
-      }
-    ' | kube create -f - >/dev/null
-
-	jq -n \
-		--arg namespace "$PROOF_NAMESPACE" \
-		--arg name "$PREDECESSOR_APPLY_DATABASE" \
-		--arg authority "${PREDECESSOR_APPLY_DATABASE}.${PROOF_NAMESPACE}.svc.cluster.local:5432" \
-		--slurpfile credentials "$E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE" '
-      {
-        apiVersion: "v1", kind: "Secret", immutable: true,
-        metadata: {namespace: $namespace, name: $name}, type: "Opaque",
-        stringData: {
-          url: ("postgres://" + $credentials[0].username + ":" + $credentials[0].password +
-            "@" + $authority + "/" + $credentials[0].database + "?sslmode=disable")
-        }
-      }
-    ' | kube create -f - >/dev/null
-	jq -n \
-		--arg namespace "$PROOF_NAMESPACE" \
-		--arg name "$PREDECESSOR_APPLY_DATABASE" '
-      {
-        apiVersion: "v1", kind: "Service",
-        metadata: {namespace: $namespace, name: $name},
-        spec: {ports: [{name: "postgresql", port: 5432, protocol: "TCP", targetPort: 5432}]}
-      }
-    ' | kube create -f - >/dev/null
-	predecessor_database_service_uid=$(kube -n "$PROOF_NAMESPACE" get service \
-		"$PREDECESSOR_APPLY_DATABASE" -o jsonpath='{.metadata.uid}')
-	jq -n \
-		--arg namespace "$PROOF_NAMESPACE" \
-		--arg name "${PREDECESSOR_APPLY_DATABASE}-docker" \
-		--arg service "$PREDECESSOR_APPLY_DATABASE" \
-		--arg serviceUID "$predecessor_database_service_uid" \
-		--arg address "$E2E_EXTERNAL_POSTGRES_IP" '
-      {
-        apiVersion: "discovery.k8s.io/v1", kind: "EndpointSlice",
-        metadata: {
-          namespace: $namespace, name: $name,
-          labels: {
-            "kubernetes.io/service-name": $service,
-            "endpointslice.kubernetes.io/managed-by": "ptah-operator-e2e"
-          },
-          ownerReferences: [{
-            apiVersion: "v1", kind: "Service", name: $service, uid: $serviceUID,
-            controller: true, blockOwnerDeletion: false
-          }]
-        },
-        addressType: "IPv4",
-        endpoints: [{addresses: [$address], conditions: {ready: true}}],
-        ports: [{name: "postgresql", port: 5432, protocol: "TCP"}]
-      }
-    ' | kube create -f - >/dev/null
-
-	predecessor_policy_file=$WORK_DIR/predecessor-apply-policy.yaml
-	printf '%s\n' 'version: 1' >"$predecessor_policy_file"
-	kube -n "$PROOF_NAMESPACE" create configmap "$PREDECESSOR_APPLY_POLICY" \
-		--from-file="policy.yaml=$predecessor_policy_file" >/dev/null
-	kube -n "$PROOF_NAMESPACE" patch configmap "$PREDECESSOR_APPLY_POLICY" --type=merge \
-		-p='{"immutable":true}' >/dev/null
-	predecessor_policy_uid=$(kube -n "$PROOF_NAMESPACE" get configmap "$PREDECESSOR_APPLY_POLICY" \
-		-o jsonpath='{.metadata.uid}')
-
-	predecessor_artifact_digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-	kube -n "$PROOF_NAMESPACE" apply -f - >/dev/null <<EOF
-apiVersion: operator.ptah.dev/v1alpha1
-kind: PtahSchema
-metadata:
-  name: $PREDECESSOR_APPLY_SCHEMA
-spec:
-  suspend: true
-  interval: 24h
-  target:
-    engine: PostgreSQL
-    coordinationKey: $PREDECESSOR_APPLY_SCHEMA
-    urlFrom: {name: $PREDECESSOR_APPLY_DATABASE, key: url}
-  desired:
-    ociRef: oci://example.invalid/schema@$predecessor_artifact_digest
-    verificationPolicyFrom: {name: $PREDECESSOR_APPLY_POLICY, key: policy.yaml}
-  policy:
-    apply: Always
-    allowDestructive: false
-    driftSeverity: all
-    lockTimeout: 30s
-    transactionMode: file
-  execution:
-    activeDeadlineSeconds: 600
-    failureRetryInterval: 30s
-    connectTimeout: 10s
-    serviceAccountName: default
-    imagePullSecrets: [{name: $PREDECESSOR_APPLY_PULL_SECRET}]
-EOF
-	wait_for_suspended "$PREDECESSOR_APPLY_SCHEMA"
-
-	predecessor_plan_source=$WORK_DIR/predecessor-apply-schema.sql
-	cp "$ROOT_DIR/testdata/e2e/postgresql-v1.sql" "$predecessor_plan_source"
-	kube -n "$PROOF_NAMESPACE" create configmap predecessor-apply-plan-source \
-		--from-file="schema.sql=$predecessor_plan_source" >/dev/null
-	jq -n \
-		--arg namespace "$PROOF_NAMESPACE" \
-		--arg image "$predecessor_executor_image" \
-		--arg pullSecret "$PREDECESSOR_APPLY_PULL_SECRET" \
-		--arg databaseSecret "$PREDECESSOR_APPLY_DATABASE" '
-      {
-        apiVersion: "batch/v1", kind: "Job",
-        metadata: {namespace: $namespace, name: "predecessor-apply-plan-source"},
-        spec: {
-          backoffLimit: 0, activeDeadlineSeconds: 180, ttlSecondsAfterFinished: 300,
-          template: {
-            metadata: {labels: {"app.kubernetes.io/component": "predecessor-apply-plan-source"}},
-            spec: {
-              restartPolicy: "Never", automountServiceAccountToken: false,
-              imagePullSecrets: [{name: $pullSecret}],
-              securityContext: {
-                runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532,
-                seccompProfile: {type: "RuntimeDefault"}
-              },
-              containers: [{
-                name: "planner", image: $image, imagePullPolicy: "IfNotPresent",
-                command: ["/usr/local/bin/ptah"], args: ["schema", "plan", "--dry-run"],
-                env: [
-                  {name: "HOME", value: "/work"}, {name: "TMPDIR", value: "/work"},
-                  {name: "PTAH_SCHEMA_FILE", value: "/schema/schema.sql"},
-                  {name: "PTAH_CONNECT_TIMEOUT", value: "10s"},
-                  {name: "PTAH_LOCK_TIMEOUT", value: "30s"},
-                  {name: "PTAH_DB_URL", valueFrom: {secretKeyRef: {name: $databaseSecret, key: "url"}}}
-                ],
-                securityContext: {
-                  allowPrivilegeEscalation: false, readOnlyRootFilesystem: true,
-                  capabilities: {drop: ["ALL"]}
-                },
-                volumeMounts: [
-                  {name: "schema", mountPath: "/schema", readOnly: true},
-                  {name: "work", mountPath: "/work"}
-                ]
-              }],
-              volumes: [
-                {name: "schema", configMap: {name: "predecessor-apply-plan-source"}},
-                {name: "work", emptyDir: {sizeLimit: "64Mi"}}
-              ]
-            }
-          }
-        }
-      }
-    ' | kube create -f - >/dev/null
-	wait_for_successful_fixture_job predecessor-apply-plan-source
-	kube -n "$PROOF_NAMESPACE" logs job/predecessor-apply-plan-source \
-		>"$WORK_DIR/predecessor-native-plan.json"
-	jq -ce --arg plan_name "$PREDECESSOR_APPLY_SCHEMA" '
-      if .format_version == 1 and
-        (.from_fingerprint | test("^sha256:[0-9a-f]{64}$")) and
-        (.to_fingerprint | test("^sha256:[0-9a-f]{64}$"))
-      then
-        .name = $plan_name |
-        .destructive = false |
-        .statements = [{
-          sql: "SELECT pg_advisory_lock(742019370001)", severity: "safe",
-          reason: "upgrade quiescence proof"
-        }]
-      else error("native plan lacks exact state fingerprints")
-      end
-    ' "$WORK_DIR/predecessor-native-plan.json" >"$WORK_DIR/predecessor-apply-plan.json" ||
-		fail "could not derive an exact long-running predecessor Apply plan"
-
-	kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_APPLY_SCHEMA" -o json \
-		>"$WORK_DIR/predecessor-apply-schema.json"
-	predecessor_apply_database_url=$(kube -n "$PROOF_NAMESPACE" get secret \
-		"$PREDECESSOR_APPLY_DATABASE" -o jsonpath='{.data.url}' | base64 -d)
-	printf '%s\n' "$predecessor_apply_database_url" | grep -Eq '^postgres://' ||
-		fail "predecessor Apply database secret does not carry a postgres URL"
-	# The exact URL the Apply Job resolves. The runner derives the target
-	# identity from it and refuses a plan recorded against a different one, so
-	# the fixture binds this value rather than a placeholder.
-	go -C "$ROOT_DIR" run ./hack/predecessorapplyfixture \
-		-schema "$WORK_DIR/predecessor-apply-schema.json" \
-		-plan "$WORK_DIR/predecessor-apply-plan.json" \
-		-policy-uid "$predecessor_policy_uid" \
-		-policy "$predecessor_policy_file" \
-		-database-url "$predecessor_apply_database_url" \
-		>"$WORK_DIR/predecessor-apply-bundle.json"
-	jq -e '
-      .plan.spec.contractVersion == 2 and
-      (.plan.spec | has("controllerImage") | not) and
-      (.plan.spec | has("controllerRevision") | not) and
-      (.plan.spec | has("controllerStateVersion") | not) and
-      (.plan.spec.chunks | length) == 1
-    ' "$WORK_DIR/predecessor-apply-bundle.json" >/dev/null ||
-		fail "generated predecessor Apply plan does not have the exact contract-v2 shape"
-	PREDECESSOR_PLAN_GUARD_PROBE_FILE=$WORK_DIR/predecessor-plan-guard-probe.json
-	jq '
-      .plan |
-      .metadata.name = "ptah-plan-eeeeeeeeeeeeeeeeeeeeeeee" |
-      .spec.chunks = [
-        .spec.chunks[0] |
-        .name = "ptah-plan-eeeeeeeeeeeeeeeeeeeeeeee-000"
-      ]
-    ' "$WORK_DIR/predecessor-apply-bundle.json" >"$PREDECESSOR_PLAN_GUARD_PROBE_FILE"
-	jq '.plan' "$WORK_DIR/predecessor-apply-bundle.json" | kube create -f - >/dev/null
-	PREDECESSOR_APPLY_PLAN_NAME=$(jq -er '.plan.metadata.name' "$WORK_DIR/predecessor-apply-bundle.json")
-	PREDECESSOR_APPLY_PLAN_UID=$(kube -n "$PROOF_NAMESPACE" get ptahschemaplan \
-		"$PREDECESSOR_APPLY_PLAN_NAME" -o jsonpath='{.metadata.uid}')
-	predecessor_plan_generation=$(kube -n "$PROOF_NAMESPACE" get ptahschemaplan \
-		"$PREDECESSOR_APPLY_PLAN_NAME" -o jsonpath='{.metadata.generation}')
-	predecessor_chunk_name=$(jq -er '.plan.spec.chunks[0].name' "$WORK_DIR/predecessor-apply-bundle.json")
-	jq -n \
-		--arg namespace "$PROOF_NAMESPACE" \
-		--arg name "$predecessor_chunk_name" \
-		--arg plan "$PREDECESSOR_APPLY_PLAN_NAME" \
-		--arg planUID "$PREDECESSOR_APPLY_PLAN_UID" \
-		--arg schema "$PREDECESSOR_APPLY_SCHEMA" \
-		--rawfile content "$WORK_DIR/predecessor-apply-plan.json" '
-      {
-        apiVersion: "v1", kind: "ConfigMap", immutable: true,
-        metadata: {
-          namespace: $namespace, name: $name,
-          labels: {"operator.ptah.dev/plan": $plan, "operator.ptah.dev/schema": $schema},
-          ownerReferences: [{
-            apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchemaPlan",
-            name: $plan, uid: $planUID, controller: true, blockOwnerDeletion: true
-          }]
-        },
-        binaryData: {chunk: ($content | @base64)}
-      }
-    ' | kube create -f - >/dev/null
-	predecessor_chunk_uid=$(kube -n "$PROOF_NAMESPACE" get configmap "$predecessor_chunk_name" \
-		-o jsonpath='{.metadata.uid}')
-	plan_ready_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-	kube -n "$PROOF_NAMESPACE" patch ptahschemaplan "$PREDECESSOR_APPLY_PLAN_NAME" \
-		--subresource=status --type=merge -p "{\"status\":{\"observedGeneration\":$predecessor_plan_generation,\"publishedChunks\":[{\"name\":\"$predecessor_chunk_name\",\"uid\":\"$predecessor_chunk_uid\",\"index\":0}],\"conditions\":[{\"type\":\"Ready\",\"status\":\"True\",\"reason\":\"Published\",\"message\":\"Verified 1 immutable plan chunks\",\"observedGeneration\":$predecessor_plan_generation,\"lastTransitionTime\":\"$plan_ready_at\"}]}}" >/dev/null
-}
-
-emit_predecessor_apply_diagnostic() {
-	diagnostic_file=$WORK_DIR/predecessor-apply-diagnostic.jsonl
-	(umask 077 && : >"$diagnostic_file")
-
-	kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_APPLY_SCHEMA" -o json |
-		jq -c '{
-		  component: "schema",
-		  name: .metadata.name,
-		  uid: .metadata.uid,
-		  generation: .metadata.generation,
-		  finalizers: (.metadata.finalizers // []),
-		  suspend: .spec.suspend,
-		  observedGeneration: (.status.observedGeneration // 0),
-		  phase: (.status.phase // ""),
-		  plan: (if .status.plan == null then null else {
-		    name: .status.plan.name, uid: (.status.plan.uid // ""),
-		    executionBindingID: (.status.plan.executionBindingID // "")
-		  } end),
-		  activeOperation: (if .status.activeOperation == null then null else {
-		    type: .status.activeOperation.type,
-		    id: .status.activeOperation.id,
-		    attempt: .status.activeOperation.attempt,
-		    jobName: (.status.activeOperation.jobName // ""),
-		    jobUID: (.status.activeOperation.jobUID // ""),
-		    startedAt: (.status.activeOperation.startedAt // ""),
-		    dispatchNotAfter: (.status.activeOperation.dispatchNotAfter // ""),
-		    executionNotAfter: (.status.activeOperation.executionNotAfter // ""),
-		    terminationGracePeriodSeconds: (.status.activeOperation.terminationGracePeriodSeconds // 0),
-		    dispatchStarted: (.status.activeOperation.dispatchStarted // false),
-		    admissionSnapshotPresent: (.status.activeOperation.admissionSnapshot != null)
-		  } end),
-		  pendingObservation: (if .status.pendingObservation == null then null else {
-		    outcome: .status.pendingObservation.outcome,
-		    applyOperationID: .status.pendingObservation.applyOperationID,
-		    applyJobName: (.status.pendingObservation.applyJobName // ""),
-		    applyJobUID: (.status.pendingObservation.applyJobUID // ""),
-		    applyPodCount: (.status.pendingObservation.applyPodCount // 0),
-		    applyPodUIDs: (.status.pendingObservation.applyPodUIDs // []),
-		    applyGeneration: (.status.pendingObservation.applyGeneration // 0),
-		    observeAfter: (.status.pendingObservation.observeAfter // ""),
-		    planRequired: (.status.pendingObservation.planRequired // false),
-		    leaseEpoch: (.status.pendingObservation.leaseEpoch // "")
-		  } end),
-		  conditions: [(.status.conditions // [])[] | {
-		    type, status, reason, message, observedGeneration, lastTransitionTime
-		  }]
-		}' >>"$diagnostic_file" 2>/dev/null || true
-
-	if [ -n "$PREDECESSOR_APPLY_PLAN_NAME" ]; then
-		kube -n "$PROOF_NAMESPACE" get ptahschemaplan "$PREDECESSOR_APPLY_PLAN_NAME" -o json |
-			jq -c '{
-			  component: "plan",
-			  name: .metadata.name,
-			  uid: .metadata.uid,
-			  generation: .metadata.generation,
-			  contractVersion: .spec.contractVersion,
-			  observedGeneration: (.status.observedGeneration // 0),
-			  publishedChunks: [(.status.publishedChunks // [])[] | {name, uid, index}],
-			  conditions: [(.status.conditions // [])[] | {
-			    type, status, reason, message, observedGeneration, lastTransitionTime
-			  }]
-			}' >>"$diagnostic_file" 2>/dev/null || true
-	fi
-
-	kube -n "$PROOF_NAMESPACE" get jobs -o json |
-		jq -c '{component: "jobs", objects: [.items[] | {
-		  name: .metadata.name,
-		  uid: .metadata.uid,
-		  schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
-		  operation: (.metadata.labels["operator.ptah.dev/operation"] // ""),
-		  active: (.status.active // 0),
-		  ready: (.status.ready // 0),
-		  succeeded: (.status.succeeded // 0),
-		  failed: (.status.failed // 0),
-		  conditions: [(.status.conditions // [])[] | {type, status, reason, message}]
-		}]}' >>"$diagnostic_file" 2>/dev/null || true
-
-	kube -n "$PROOF_NAMESPACE" get pods -o json |
-		jq -c '{component: "pods", objects: [.items[] | {
-		  name: .metadata.name,
-		  uid: .metadata.uid,
-		  phase: (.status.phase // ""),
-		  serviceAccountName: (.spec.serviceAccountName // ""),
-		  owners: [(.metadata.ownerReferences // [])[] | {apiVersion, kind, name, uid, controller}],
-		  conditions: [(.status.conditions // [])[] | {type, status, reason}]
-		}]}' >>"$diagnostic_file" 2>/dev/null || true
-
-	kube -n "$E2E_OPERATOR_NAMESPACE" get configmap ptah-operator-release-activation -o json |
-		jq -c '{
-		  component: "release-activation",
-		  activeReleaseSequence: (.data["active-release-sequence"] // ""),
-		  declaredReleaseSequence: (.metadata.annotations["operator.ptah.dev/release-sequence"] // ""),
-		  controllerStateVersion: (.metadata.annotations["operator.ptah.dev/controller-state-version"] // ""),
-		  admissionContractVersion: (.metadata.annotations["operator.ptah.dev/admission-contract-version"] // "")
-		}' >>"$diagnostic_file" 2>/dev/null || true
-
-	for admission_resource in validatingadmissionpolicy validatingadmissionpolicybinding; do
-		kube get "$admission_resource" -l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" -o json |
-			jq -c \
-				--arg resource "$admission_resource" \
-				--arg release "$E2E_HELM_RELEASE" \
-				--arg namespace "$E2E_OPERATOR_NAMESPACE" '{
-			  component: $resource,
-			  objects: [.items[] | select(
-			    .metadata.annotations["operator.ptah.dev/release-name"] == $release and
-			    .metadata.annotations["operator.ptah.dev/release-namespace"] == $namespace
-			  ) | {
-			    name: .metadata.name,
-			    uid: .metadata.uid,
-			    creationTimestamp: (.metadata.creationTimestamp // ""),
-			    hookWeight: (.metadata.annotations["helm.sh/hook-weight"] // ""),
-			    guardComponent: (.metadata.labels["app.kubernetes.io/component"] // ""),
-			    policyName: (.spec.policyName // ""),
-			    parameterized: (.spec.paramKind != null or .spec.paramRef != null),
-			    parameterNotFoundAction: (.spec.paramRef.parameterNotFoundAction // "")
-			  }]
-			}' >>"$diagnostic_file" 2>/dev/null || true
-	done
-
-	kube -n "$PROOF_NAMESPACE" get events -o json |
-		jq -c '{component: "events", objects: [.items[] | {
-		  type: (.type // ""),
-		  reason: (.reason // ""),
-		  message: (.message // ""),
-		  involvedKind: (.involvedObject.kind // ""),
-		  involvedName: (.involvedObject.name // ""),
-		  count: (.count // 1),
-		  time: (.eventTime // .lastTimestamp // .metadata.creationTimestamp // "")
-		}]}' >>"$diagnostic_file" 2>/dev/null || true
-
-	require_mode_0600_regular_file "$diagnostic_file" predecessor-apply-diagnostic
-	require_mode_0600_regular_file "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" identity-hook-credential-patterns
-	[ -s "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" ] ||
-		fail "predecessor Apply diagnostic credential scanner has no protected patterns"
-	if grep -F -f "$IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE" "$diagnostic_file" >/dev/null; then
-		fail "predecessor Apply diagnostic contained a protected task credential"
-	else
-		diagnostic_scan_status=$?
-		[ "$diagnostic_scan_status" -eq 1 ] || fail "predecessor Apply credential scan failed closed"
-	fi
-	if grep -Eq '(^|[^[:alnum:]_-])eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+($|[^[:alnum:]_-])|[Aa]uthorization:[[:space:]]*|[Bb]earer[[:space:]]+|://[^[:space:]@/:]+:[^[:space:]@/]+@' \
-		"$diagnostic_file"; then
-		fail "predecessor Apply diagnostic contained a credential-shaped value"
-	fi
-	cat "$diagnostic_file" >&2
-}
-
-start_predecessor_apply_fixture() {
-	[ -n "$PREDECESSOR_APPLY_PLAN_NAME" ] || fail "predecessor Apply plan name is missing"
-	[ -n "$PREDECESSOR_APPLY_PLAN_UID" ] || fail "predecessor Apply plan UID is missing"
-	stop_controller_deployment
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PREDECESSOR_APPLY_SCHEMA" --type=merge \
-		-p='{"spec":{"suspend":false}}' >/dev/null
-	kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_APPLY_SCHEMA" -o json \
-		>"$WORK_DIR/predecessor-apply-schema-enabled.json"
-	predecessor_apply_generation=$(jq -er '.metadata.generation' \
-		"$WORK_DIR/predecessor-apply-schema-enabled.json")
-	jq \
-		--slurpfile bundle "$WORK_DIR/predecessor-apply-bundle.json" \
-		--arg planUID "$PREDECESSOR_APPLY_PLAN_UID" \
-		--argjson generation "$predecessor_apply_generation" '
-      .status = $bundle[0].schemaStatus |
-      .status.observedGeneration = $generation |
-      .status.plan.uid = $planUID |
-      (.status.conditions[].observedGeneration) = $generation
-    ' "$WORK_DIR/predecessor-apply-schema-enabled.json" \
-		>"$WORK_DIR/predecessor-apply-schema-ready.json"
-	kube replace --subresource=status -f "$WORK_DIR/predecessor-apply-schema-ready.json" >/dev/null
-	start_controller_deployment
-	kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$CONTROLLER_DEPLOYMENT" \
-		--timeout=3m >/dev/null
-
-	deadline=$(($(date +%s) + 180))
-	while [ "$(date +%s)" -lt "$deadline" ]; do
-		kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_APPLY_SCHEMA" -o json \
-			>"$WORK_DIR/predecessor-apply-running-schema.json"
-		if jq -e '
-		  .status.pendingObservation.outcome == "OutcomeUnknown" or
-		  ((.status.conditions // []) | any(
-		    .type == "ReconciliationFailed" and .status == "True"
-		  ))
-		' "$WORK_DIR/predecessor-apply-running-schema.json" >/dev/null; then
-			emit_predecessor_apply_diagnostic
-			fail "predecessor Apply entered a terminal failure before its running Pod was observed"
-		fi
-		PREDECESSOR_APPLY_JOB_NAME=$(jq -r \
-			'.status.activeOperation | select(.type == "Apply" and .dispatchStarted == true) | .jobName // empty' \
-			"$WORK_DIR/predecessor-apply-running-schema.json")
-		committed_job_uid=$(jq -r '.status.activeOperation.jobUID // empty' \
-			"$WORK_DIR/predecessor-apply-running-schema.json")
-		if [ -n "$PREDECESSOR_APPLY_JOB_NAME" ] && [ -n "$committed_job_uid" ] &&
-			kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_APPLY_JOB_NAME" -o json \
-				>"$WORK_DIR/predecessor-apply-running-job.json" 2>/dev/null; then
-			PREDECESSOR_APPLY_JOB_UID=$(jq -r '.metadata.uid' \
-				"$WORK_DIR/predecessor-apply-running-job.json")
-			if [ "$committed_job_uid" = "$PREDECESSOR_APPLY_JOB_UID" ]; then
-				kube -n "$PROOF_NAMESPACE" get pods -o json |
-					jq -e --arg uid "$PREDECESSOR_APPLY_JOB_UID" '
-                  [.items[] | select(
-                    .status.phase == "Running" and
-                    any(.metadata.ownerReferences[]?;
-                      .apiVersion == "batch/v1" and .kind == "Job" and .uid == $uid and
-                      .controller == true
-                    )
-                  )] | if length == 1 then .[0] else empty end
-                ' >"$WORK_DIR/predecessor-apply-running-pod.json" 2>/dev/null || true
-				if [ -s "$WORK_DIR/predecessor-apply-running-pod.json" ]; then
-					PREDECESSOR_APPLY_POD_NAME=$(jq -er '.metadata.name' \
-						"$WORK_DIR/predecessor-apply-running-pod.json")
-					PREDECESSOR_APPLY_POD_UID=$(jq -er '.metadata.uid' \
-						"$WORK_DIR/predecessor-apply-running-pod.json")
-					break
-				fi
-			fi
-		fi
-		sleep 1
-		done
-	if [ -z "$PREDECESSOR_APPLY_POD_UID" ]; then
-		emit_predecessor_apply_diagnostic
-		fail "predecessor Apply Job did not reach a running Pod"
-	fi
-	jq -e --arg schema "$PREDECESSOR_APPLY_SCHEMA" '
-      .metadata.labels as $labels |
-      $labels == {
-        "app.kubernetes.io/component": "schema-operation",
-        "app.kubernetes.io/managed-by": "ptah-operator",
-        "operator.ptah.dev/operation": "apply",
-        "operator.ptah.dev/operation-id": $labels["operator.ptah.dev/operation-id"],
-        "operator.ptah.dev/schema": $schema
-      } and
-      (.metadata.annotations | keys | sort) == [
-        "operator.ptah.dev/admission-snapshot-digest",
-        "operator.ptah.dev/execution-binding-id",
-        "operator.ptah.dev/input-fingerprint",
-        "operator.ptah.dev/operation-id",
-        "operator.ptah.dev/plan-content-digest",
-        "operator.ptah.dev/plan-fingerprint",
-        "operator.ptah.dev/ptah-version"
-      ] and
-      .spec.template.metadata.annotations == .metadata.annotations and
-      (.spec | has("ttlSecondsAfterFinished") | not)
-    ' "$WORK_DIR/predecessor-apply-running-job.json" >/dev/null ||
-		fail "running predecessor Apply Job does not match its exact seven-annotation contract"
-}
-
-stage_predecessor_apply_job_uid_gap_while_running() {
-	[ -n "$PREDECESSOR_APPLY_JOB_NAME" ] || fail "predecessor Apply Job name is missing"
-	[ -n "$PREDECESSOR_APPLY_JOB_UID" ] || fail "predecessor Apply Job UID is missing"
-	[ -n "$PREDECESSOR_APPLY_POD_UID" ] || fail "predecessor Apply Pod UID is missing"
-	kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_APPLY_JOB_NAME" -o json \
-		>"$WORK_DIR/predecessor-apply-running-before-upgrade.json"
-	jq -e --arg uid "$PREDECESSOR_APPLY_JOB_UID" '
-      .metadata.uid == $uid and
-      ((.status.conditions // []) |
-        any((.type == "Complete" or .type == "Failed") and .status == "True") | not) and
-      (.spec | has("ttlSecondsAfterFinished") | not)
-    ' "$WORK_DIR/predecessor-apply-running-before-upgrade.json" >/dev/null ||
-		fail "predecessor Apply Job is not running at the candidate upgrade boundary"
-	kube -n "$PROOF_NAMESPACE" get pod "$PREDECESSOR_APPLY_POD_NAME" -o json |
-		jq -e --arg uid "$PREDECESSOR_APPLY_POD_UID" '
-		  .metadata.uid == $uid and .status.phase == "Running"
-		' >/dev/null || fail "predecessor Apply Pod is not running at the candidate upgrade boundary"
-	jq -S '{
-      uid: .metadata.uid,
-      name: .metadata.name,
-      namespace: .metadata.namespace,
-      labels: .metadata.labels,
-      annotations: .metadata.annotations,
-      ownerReferences: .metadata.ownerReferences,
-      finalizers: (.metadata.finalizers // []),
-      spec: (.spec | del(.ttlSecondsAfterFinished))
-    }' "$WORK_DIR/predecessor-apply-running-before-upgrade.json" \
-		>"$WORK_DIR/predecessor-apply-job-before-cleanup.json"
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PREDECESSOR_APPLY_SCHEMA" --subresource=status \
-		--type=json -p='[{"op":"remove","path":"/status/activeOperation/jobUID"}]' >/dev/null
-	kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_APPLY_SCHEMA" -o json |
-		jq -e --arg name "$PREDECESSOR_APPLY_JOB_NAME" '
-          .status.activeOperation.type == "Apply" and
-          .status.activeOperation.dispatchStarted == true and
-          .status.activeOperation.jobName == $name and
-          (.status.activeOperation | has("jobUID") | not) and
-          (.status | has("pendingObservation") | not)
-		' >/dev/null || fail "predecessor Apply fixture did not retain the running late-create UID gap"
-}
-
-assert_predecessor_apply_remains_exclusive_while_running() {
+wait_for_suspended() {
+	schema_name=${1:-$PROOF_SCHEMA}
 	deadline=$(($(date +%s) + 90))
 	while [ "$(date +%s)" -lt "$deadline" ]; do
-		if kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_APPLY_SCHEMA" -o json \
-			>"$WORK_DIR/predecessor-apply-fenced-schema.json" 2>/dev/null &&
-			jq -e \
-				--arg job "$PREDECESSOR_APPLY_JOB_NAME" \
-				--arg uid "$PREDECESSOR_APPLY_JOB_UID" \
-				--arg pod_uid "$PREDECESSOR_APPLY_POD_UID" '
-              .status.phase == "Pending" and
-              (.status | has("activeOperation") | not) and
-              .status.pendingObservation.outcome == "OutcomeUnknown" and
-              .status.pendingObservation.applyJobName == $job and
-              .status.pendingObservation.applyJobUID == $uid and
-              (.status.pendingObservation.applyPodUIDs | index($pod_uid) != null) and
-              .status.pendingObservation.applyPodCount == 1 and
-              .status.pendingObservation.planRequired != true and
-              .status.pendingObservation.plan.executionBindingID != .status.executionBinding.epoch
-			' "$WORK_DIR/predecessor-apply-fenced-schema.json" >/dev/null; then
-			break
-		fi
+		phase=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$schema_name" \
+			-o jsonpath='{.status.phase}' 2>/dev/null || true)
+		[ "$phase" = Suspended ] && return
 		sleep 1
 	done
-	jq -e \
-		--arg job "$PREDECESSOR_APPLY_JOB_NAME" \
-		--arg uid "$PREDECESSOR_APPLY_JOB_UID" \
-		--arg pod_uid "$PREDECESSOR_APPLY_POD_UID" '
-      .status.phase == "Pending" and
-      (.status | has("activeOperation") | not) and
-      .status.pendingObservation.outcome == "OutcomeUnknown" and
-      .status.pendingObservation.applyJobName == $job and
-      .status.pendingObservation.applyJobUID == $uid and
-      (.status.pendingObservation.applyPodUIDs | index($pod_uid) != null) and
-      .status.pendingObservation.applyPodCount == 1 and
-      .status.pendingObservation.planRequired != true and
-      .status.pendingObservation.plan.executionBindingID != .status.executionBinding.epoch
-	' "$WORK_DIR/predecessor-apply-fenced-schema.json" >/dev/null ||
-		fail "candidate manager did not durably fence and adopt the running predecessor Apply"
-
-	kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_APPLY_JOB_NAME" -o json \
-		>"$WORK_DIR/predecessor-apply-running-after-upgrade.json"
-	jq -e --arg uid "$PREDECESSOR_APPLY_JOB_UID" '
-      .metadata.uid == $uid and
-      ((.status.conditions // []) |
-        any((.type == "Complete" or .type == "Failed") and .status == "True") | not) and
-      (.spec | has("ttlSecondsAfterFinished") | not)
-	' "$WORK_DIR/predecessor-apply-running-after-upgrade.json" >/dev/null ||
-		fail "candidate manager replaced, completed, or cleaned the running predecessor Apply Job"
-	kube -n "$PROOF_NAMESPACE" get pod "$PREDECESSOR_APPLY_POD_NAME" -o json |
-		jq -e --arg uid "$PREDECESSOR_APPLY_POD_UID" '
-          .metadata.uid == $uid and .status.phase == "Running"
-		' >/dev/null || fail "candidate upgrade did not retain the running predecessor Apply Pod UID"
-	kube -n "$PROOF_NAMESPACE" get jobs \
-		-l "operator.ptah.dev/schema=$PREDECESSOR_APPLY_SCHEMA" -o json |
-		jq -e --arg name "$PREDECESSOR_APPLY_JOB_NAME" --arg uid "$PREDECESSOR_APPLY_JOB_UID" '
-          .items | length == 1 and .[0].metadata.name == $name and .[0].metadata.uid == $uid
-		' >/dev/null || fail "candidate manager launched new work over the running predecessor Apply"
-}
-
-wait_for_predecessor_apply_job_terminal() {
-	deadline=$(($(date +%s) + 300))
-	while [ "$(date +%s)" -lt "$deadline" ]; do
-		if kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_APPLY_JOB_NAME" -o json \
-			>"$WORK_DIR/predecessor-apply-terminal-job.json" 2>/dev/null &&
-			jq -e '.status.conditions | any((.type == "Complete" or .type == "Failed") and .status == "True")' \
-				"$WORK_DIR/predecessor-apply-terminal-job.json" >/dev/null; then
-			break
-		fi
-		sleep 1
-	done
-	jq -e --arg uid "$PREDECESSOR_APPLY_JOB_UID" '
-      .metadata.uid == $uid and
-      (.status.conditions | any((.type == "Complete" or .type == "Failed") and .status == "True"))
-	' "$WORK_DIR/predecessor-apply-terminal-job.json" >/dev/null ||
-		fail "predecessor Apply Job did not finish after the candidate fenced it"
-	kube -n "$PROOF_NAMESPACE" get pod "$PREDECESSOR_APPLY_POD_NAME" -o json |
-		jq -e --arg uid "$PREDECESSOR_APPLY_POD_UID" '
-          .metadata.uid == $uid and (.status.phase == "Succeeded" or .status.phase == "Failed")
-		' >/dev/null || fail "predecessor Apply Pod is not terminal after the candidate fence"
-}
-
-wait_for_predecessor_apply_job_cleanup() {
-	deadline=$(($(date +%s) + 180))
-	while [ "$(date +%s)" -lt "$deadline" ]; do
-		if kube -n "$PROOF_NAMESPACE" get job "$PREDECESSOR_APPLY_JOB_NAME" -o json \
-			>"$WORK_DIR/predecessor-apply-job-after.json" 2>/dev/null &&
-			[ "$(jq -r '.spec.ttlSecondsAfterFinished // 0' "$WORK_DIR/predecessor-apply-job-after.json")" -eq 300 ] &&
-			kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_APPLY_SCHEMA" -o json \
-				>"$WORK_DIR/predecessor-apply-schema-after.json"; then
-			if jq -e \
-				--arg job "$PREDECESSOR_APPLY_JOB_NAME" \
-				--arg uid "$PREDECESSOR_APPLY_JOB_UID" '
-              .status.phase == "Pending" and
-              (.status | has("activeOperation") | not) and
-              (.status | has("applied") | not) and
-              .status.pendingObservation.outcome == "OutcomeUnknown" and
-              .status.pendingObservation.applyJobName == $job and
-              .status.pendingObservation.applyJobUID == $uid and
-              .status.pendingObservation.planRequired != true and
-              .status.pendingObservation.plan.executionBindingID != .status.executionBinding.epoch and
-              any(.status.conditions[];
-                .type == "PlanReady" and .status == "False" and .reason == "ExecutionBindingChanged") and
-              any(.status.conditions[];
-                .type == "ApprovalRequired" and .status == "False" and .reason == "ExecutionBindingChanged")
-            ' "$WORK_DIR/predecessor-apply-schema-after.json" >/dev/null; then
-				jq -S '{
-                  uid: .metadata.uid,
-                  name: .metadata.name,
-                  namespace: .metadata.namespace,
-                  labels: .metadata.labels,
-                  annotations: .metadata.annotations,
-                  ownerReferences: .metadata.ownerReferences,
-                  finalizers: (.metadata.finalizers // []),
-                  spec: (.spec | del(.ttlSecondsAfterFinished))
-                }' "$WORK_DIR/predecessor-apply-job-after.json" \
-					>"$WORK_DIR/predecessor-apply-job-after-cleanup.json"
-				cmp "$WORK_DIR/predecessor-apply-job-before-cleanup.json" \
-					"$WORK_DIR/predecessor-apply-job-after-cleanup.json" ||
-					fail "candidate cleanup changed the predecessor Apply Job outside ttlSecondsAfterFinished"
-				return
-			fi
-		fi
-		sleep 1
-	done
-	fail "candidate manager did not adopt and clean the quiesced predecessor Apply Job"
+	fail "PtahSchema $schema_name did not become Suspended"
 }
 
 runtime_deployment_names() {
@@ -3165,60 +2324,6 @@ runtime_deployment_evidence() {
           generation: .metadata.generation,
           spec: .spec
         }] | sort_by(.name)'
-}
-
-assert_predecessor_certificate_update_allowed() {
-	command -v openssl >/dev/null 2>&1 || fail "OpenSSL is required for predecessor certificate proof"
-	runtime_deployment_names
-	rotator_service_account=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$ROTATOR_DEPLOYMENT" \
-		-o jsonpath='{.spec.template.spec.serviceAccountName}')
-	[ -n "$rotator_service_account" ] || fail "predecessor certificate ServiceAccount is missing"
-	kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$ROTATOR_DEPLOYMENT" \
-		--timeout=60s >/dev/null || fail "predecessor certificate rotator is not ready after failed preflight"
-	rotator_pod=$(kube -n "$E2E_OPERATOR_NAMESPACE" get pod \
-		-l "app.kubernetes.io/instance=${E2E_HELM_RELEASE},app.kubernetes.io/component=certificate-rotation" \
-		-o jsonpath='{.items[0].metadata.name}')
-	rotator_pod_uid=$(kube -n "$E2E_OPERATOR_NAMESPACE" get pod "$rotator_pod" -o jsonpath='{.metadata.uid}')
-	rotator_service_account_uid=$(kube -n "$E2E_OPERATOR_NAMESPACE" get serviceaccount \
-		"$rotator_service_account" -o jsonpath='{.metadata.uid}')
-	if [ -z "$rotator_pod" ] || [ -z "$rotator_pod_uid" ] || [ -z "$rotator_service_account_uid" ]; then
-		fail "predecessor certificate workload-bound identity is incomplete"
-	fi
-
-	kube get validatingwebhookconfiguration ptah-operator-admission -o json \
-		>"$WORK_DIR/predecessor-certificate-source.json"
-	current_bundle=$(jq -er '.webhooks[0].clientConfig.caBundle | select(length > 0)' \
-		"$WORK_DIR/predecessor-certificate-source.json")
-	if ! printf '%s' "$current_bundle" | openssl base64 -d -A \
-		>"$WORK_DIR/predecessor-certificate.pem"; then
-		fail "predecessor validating webhook CA is not valid base64"
-	fi
-	overlap_bundle=$(awk '1' "$WORK_DIR/predecessor-certificate.pem" \
-		"$WORK_DIR/predecessor-certificate.pem" | openssl base64 -A)
-	[ -n "$overlap_bundle" ] || fail "could not build predecessor CA-only update fixture"
-
-	for singleton_resource in mutatingwebhookconfiguration validatingwebhookconfiguration; do
-		candidate=$WORK_DIR/${singleton_resource}-certificate-update.json
-		result=$WORK_DIR/${singleton_resource}-certificate-update-result.json
-		kube get "$singleton_resource" ptah-operator-admission -o json |
-			jq --arg bundle "$overlap_bundle" \
-				'(.webhooks[].clientConfig.caBundle) = $bundle' >"$candidate"
-		if ! kube \
-			--as "system:serviceaccount:${E2E_OPERATOR_NAMESPACE}:${rotator_service_account}" \
-			--as-uid "$rotator_service_account_uid" \
-			--as-group system:serviceaccounts \
-			--as-group "system:serviceaccounts:${E2E_OPERATOR_NAMESPACE}" \
-			--as-group system:authenticated \
-			--as-user-extra "authentication.kubernetes.io/pod-name=$rotator_pod" \
-			--as-user-extra "authentication.kubernetes.io/pod-uid=$rotator_pod_uid" \
-			replace --field-manager='' --dry-run=server -f "$candidate" -o json >"$result"; then
-			fail "retained certificate guard blocked a CA-only predecessor $singleton_resource update"
-		fi
-		old_generation=$(jq -er '.metadata.generation | select(type == "number")' "$candidate")
-		new_generation=$(jq -er '.metadata.generation | select(type == "number")' "$result")
-		[ "$new_generation" -eq $((old_generation + 1)) ] ||
-			fail "CA-only predecessor $singleton_resource update did not exercise the server generation transition"
-	done
 }
 
 stdin_sha256() {
@@ -3527,11 +2632,25 @@ assert_release_runtime_removed() {
 	CERTIFICATE_STAGING_SECRET_NAME=
 }
 
+# snapshot_runtime_deployment records a runtime Deployment and the field
+# manager that owns it. Helm 4 applies server-side, so restoring the snapshot
+# with kubectl's own manager would leave the object owned by "kubectl-create"
+# and the next helm upgrade would fail with a field-manager conflict over the
+# fields Helm expects to own, instead of upgrading. The restore therefore
+# applies as the manager the live object had, and a Deployment with no
+# server-side apply manager, or more than one, is refused rather than guessed.
 snapshot_runtime_deployment() {
 	deployment_name=$1
 	destination=$2
-	kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$deployment_name" -o json |
-		jq 'del(
+	kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$deployment_name" \
+		--show-managed-fields -o json >"$destination.live"
+	deployment_managers=$(jq -r '
+          [.metadata.managedFields[]? | select(.operation == "Apply") | .manager] | unique
+        ' "$destination.live")
+	[ "$(printf '%s\n' "$deployment_managers" | jq -r 'length')" -eq 1 ] ||
+		fail "runtime Deployment $deployment_name has no single server-side apply field manager to restore: $(printf '%s\n' "$deployment_managers" | jq -c .)"
+	printf '%s\n' "$deployment_managers" | jq -r '.[0]' >"$destination.manager"
+	jq 'del(
           .metadata.creationTimestamp,
           .metadata.generation,
           .metadata.managedFields,
@@ -3539,7 +2658,19 @@ snapshot_runtime_deployment() {
           .metadata.uid,
           .metadata.annotations."deployment.kubernetes.io/revision",
           .status
-        )' >"$destination"
+        )' "$destination.live" >"$destination"
+	rm -f "$destination.live"
+}
+
+# restore_runtime_deployment recreates a snapshot as its recorded owner.
+restore_runtime_deployment() {
+	deployment_snapshot=$1
+	[ -s "$deployment_snapshot" ] || fail "runtime Deployment snapshot $deployment_snapshot is missing"
+	[ -s "$deployment_snapshot.manager" ] ||
+		fail "runtime Deployment snapshot $deployment_snapshot has no recorded field manager"
+	kube apply --server-side \
+		--field-manager="$(cat "$deployment_snapshot.manager")" \
+		-f "$deployment_snapshot" >/dev/null
 }
 
 stop_runtime_deployments() {
@@ -3570,15 +2701,12 @@ stop_controller_deployment() {
 }
 
 start_runtime_deployments() {
-	[ -s "$CONTROLLER_DEPLOYMENT_SNAPSHOT" ] || fail "controller Deployment snapshot is missing"
-	[ -s "$ROTATOR_DEPLOYMENT_SNAPSHOT" ] || fail "certificate Deployment snapshot is missing"
-	kube create -f "$CONTROLLER_DEPLOYMENT_SNAPSHOT" >/dev/null
-	kube create -f "$ROTATOR_DEPLOYMENT_SNAPSHOT" >/dev/null
+	restore_runtime_deployment "$CONTROLLER_DEPLOYMENT_SNAPSHOT"
+	restore_runtime_deployment "$ROTATOR_DEPLOYMENT_SNAPSHOT"
 }
 
 start_controller_deployment() {
-	[ -s "$CONTROLLER_DEPLOYMENT_SNAPSHOT" ] || fail "controller Deployment snapshot is missing"
-	kube create -f "$CONTROLLER_DEPLOYMENT_SNAPSHOT" >/dev/null
+	restore_runtime_deployment "$CONTROLLER_DEPLOYMENT_SNAPSHOT"
 }
 
 assert_explicit_runtime_guard() {
@@ -3688,136 +2816,13 @@ expect_controller_job_vap_denial() {
 	fi
 }
 
-prove_legacy_job_activation_boundary() {
-	expected_state=$1
-	legacy_job_source=$WORK_DIR/predecessor-read-only-job-terminal.json
-	[ -s "$legacy_job_source" ] ||
-		fail "legacy Job activation-boundary source is missing"
-	legacy_job_probe=$WORK_DIR/predecessor-job-guard-probe.json
-	jq '
-      del(
-        .metadata.creationTimestamp,
-        .metadata.deletionGracePeriodSeconds,
-        .metadata.deletionTimestamp,
-        .metadata.generateName,
-        .metadata.generation,
-        .metadata.managedFields,
-        .metadata.resourceVersion,
-        .metadata.selfLink,
-        .metadata.uid,
-        .spec.selector,
-        .spec.ttlSecondsAfterFinished,
-        .status,
-        .spec.template.metadata.creationTimestamp,
-        .spec.template.metadata.deletionGracePeriodSeconds,
-        .spec.template.metadata.deletionTimestamp,
-        .spec.template.metadata.generateName,
-        .spec.template.metadata.generation,
-        .spec.template.metadata.managedFields,
-        .spec.template.metadata.namespace,
-        .spec.template.metadata.resourceVersion,
-        .spec.template.metadata.selfLink,
-        .spec.template.metadata.uid,
-        .spec.template.metadata.labels["batch.kubernetes.io/controller-uid"],
-        .spec.template.metadata.labels["batch.kubernetes.io/job-name"],
-        .spec.template.metadata.labels["controller-uid"],
-        .spec.template.metadata.labels["job-name"]
-      ) |
-      .metadata.name = "ptah-resolve-vap-probe-0123456789abcdef" |
-      .spec.template.metadata.annotations = .metadata.annotations
-    ' "$legacy_job_source" >"$legacy_job_probe"
-	jq -e '
-      (.metadata.annotations | keys | sort) == [
-        "operator.ptah.dev/admission-snapshot-digest",
-        "operator.ptah.dev/execution-binding-id",
-        "operator.ptah.dev/input-fingerprint",
-        "operator.ptah.dev/operation-id",
-        "operator.ptah.dev/ptah-version"
-      ] and
-      (.metadata.annotations | has("operator.ptah.dev/controller-image") | not) and
-      (.metadata.annotations | has("operator.ptah.dev/controller-revision") | not) and
-      (.metadata.annotations | has("operator.ptah.dev/controller-state-version") | not) and
-      (.spec | has("selector") | not) and
-      (.spec | has("ttlSecondsAfterFinished") | not) and
-      (has("status") | not)
-    ' "$legacy_job_probe" >/dev/null ||
-		fail "legacy Job activation-boundary probe is not the exact predecessor contract"
-
-	CONTROLLER_OBJECT_GUARD_PROBE_INDEX=$((CONTROLLER_OBJECT_GUARD_PROBE_INDEX + 1))
-	stdout=$WORK_DIR/controller-job-activation-${expected_state}-${CONTROLLER_OBJECT_GUARD_PROBE_INDEX}.out
-	stderr=$WORK_DIR/controller-job-activation-${expected_state}-${CONTROLLER_OBJECT_GUARD_PROBE_INDEX}.err
-	case "$expected_state" in
-	bootstrap)
-		# The predecessor admits this CREATE. The structural guard installed by
-		# the candidate is what changes that result after activation.
-		if ! controller_kube create --dry-run=server -o json -f "$legacy_job_probe" \
-			>"$stdout" 2>"$stderr"; then
-			cat "$stderr" >&2
-			fail "legacy Job bootstrap probe was refused before candidate activation"
-		fi
-		if grep -F 'Ptah controller Job write guard rejected an unsafe workload shape' \
-			"$stdout" "$stderr" >/dev/null; then
-			fail "legacy Job CREATE was blocked before candidate activation"
-		fi
-		;;
-	active)
-		if controller_kube create --dry-run=server -o json -f "$legacy_job_probe" \
-			>"$stdout" 2>"$stderr"; then
-			fail "legacy Job CREATE remained available after candidate activation"
-		fi
-		grep -F 'Ptah controller Job write guard rejected an unsafe workload shape' \
-			"$stdout" "$stderr" >/dev/null || {
-			cat "$stderr" >&2
-			fail "legacy Job post-activation probe lacked the exact structural guard denial"
-		}
-		;;
-	*) fail "unsupported legacy Job activation-boundary state $expected_state" ;;
-	esac
-}
-
-prove_legacy_plan_activation_boundary() {
-	expected_state=$1
-	[ -s "$PREDECESSOR_PLAN_GUARD_PROBE_FILE" ] ||
-		fail "legacy plan activation-boundary probe is missing"
-	CONTROLLER_OBJECT_GUARD_PROBE_INDEX=$((CONTROLLER_OBJECT_GUARD_PROBE_INDEX + 1))
-	stdout=$WORK_DIR/controller-plan-activation-${expected_state}-${CONTROLLER_OBJECT_GUARD_PROBE_INDEX}.out
-	stderr=$WORK_DIR/controller-plan-activation-${expected_state}-${CONTROLLER_OBJECT_GUARD_PROBE_INDEX}.err
-	case "$expected_state" in
-	bootstrap)
-		# The pinned predecessor has no semantic controller-write webhook.
-		# Before candidate activation this write is admitted; the active branch
-		# below proves that activation adds the structural guard.
-		if ! controller_kube create --dry-run=server -o json \
-			-f "$PREDECESSOR_PLAN_GUARD_PROBE_FILE" >"$stdout" 2>"$stderr"; then
-			cat "$stderr" >&2
-			fail "legacy plan bootstrap probe was refused before candidate activation"
-		fi
-		if grep -F 'Ptah controller plan write guard rejected an unsafe manifest shape' \
-			"$stdout" "$stderr" >/dev/null; then
-			fail "legacy plan CREATE was blocked before candidate activation"
-		fi
-		;;
-	active)
-		if controller_kube create --dry-run=server -o json \
-			-f "$PREDECESSOR_PLAN_GUARD_PROBE_FILE" >"$stdout" 2>"$stderr"; then
-			fail "legacy plan CREATE remained available after candidate activation"
-		fi
-		grep -F 'Ptah controller plan write guard rejected an unsafe manifest shape' \
-			"$stdout" "$stderr" >/dev/null || {
-			cat "$stderr" >&2
-			fail "legacy plan post-activation probe lacked the exact structural guard denial"
-		}
-		;;
-	*) fail "unsupported legacy plan activation-boundary state $expected_state" ;;
-	esac
-}
-
 prove_controller_object_supported_window_guard() {
 	printf 'e2e crd: proving controller Job guarded fields on Kubernetes %s\n' \
 		"$KUBERNETES_MAJOR_MINOR"
 	base_manifest=$WORK_DIR/controller-object-base-job.json
-	[ -s "$WORK_DIR/predecessor-apply-job-after.json" ] ||
-		fail "predecessor Apply cleanup evidence is unavailable for the controller-object proof"
+	base_job_source=$WORK_DIR/$CURRENT_READ_ONLY_JOB_SCHEMA-read-only-job.json
+	[ -s "$base_job_source" ] ||
+		fail "current-release read-only Job evidence is unavailable for the controller-object proof"
 	printf '%s\n' "$PROOF_CONTROLLER_IMAGE" |
 		grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$' ||
 		fail "controller-object proof lacks an exact candidate controller image"
@@ -3838,7 +2843,10 @@ prove_controller_object_supported_window_guard() {
         .spec.template.metadata.resourceVersion,
         .spec.template.metadata.uid
       ) |
-      .metadata.name = "ptah-apply-vap-probe-0123456789abcdef" |
+      # The Job write guard requires the name to start with the operation
+      # its own label names, so the probe is named after the operation the
+      # captured Job carries rather than after a fixed one.
+      .metadata.name = "ptah-" + .metadata.labels["operator.ptah.dev/operation"] + "-vap-probe-0123456789abcdef" |
       .metadata.annotations["operator.ptah.dev/controller-image"] = $controller_image |
       .metadata.annotations["operator.ptah.dev/controller-revision"] = "e2e-controller-object-guard" |
       .metadata.annotations["operator.ptah.dev/controller-state-version"] = "1" |
@@ -3849,7 +2857,7 @@ prove_controller_object_supported_window_guard() {
         .spec.template.metadata.labels["job-name"]
       ) |
       .spec.template.metadata.annotations = .metadata.annotations
-    ' "$WORK_DIR/predecessor-apply-job-after.json" >"$base_manifest"
+    ' "$base_job_source" >"$base_manifest"
 
 	baseline_stdout=$WORK_DIR/controller-object-baseline.out
 	baseline_stderr=$WORK_DIR/controller-object-baseline.err
@@ -3951,12 +2959,14 @@ prove_controller_write_guard() {
 	controller_write_evidence "$WORK_DIR/controller-write-before.json"
 	prove_controller_direct_write_webhook
 	prove_controller_object_supported_window_guard
-	prove_legacy_job_activation_boundary active
-	prove_legacy_plan_activation_boundary active
 	stop_controller_deployment
 
 	current_suspend=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
-		jq -er '.spec.suspend // false')
+		jq -r '
+      (.spec.suspend // false) as $suspend |
+      if ($suspend | type) == "boolean" then ($suspend | tostring)
+      else error("schema spec.suspend must be a boolean") end
+    ')
 	suspend_patch=$(jq -cn --argjson current "$current_suspend" '{spec: {suspend: ($current | not)}}')
 	expect_controller_write_denial spec merge "$suspend_patch"
 	expect_controller_write_denial labels merge \
@@ -4046,17 +3056,24 @@ prove_runtime_singleton_guard() {
 		-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" --wait=false >/dev/null
 	wait_runtime_ready
 
-	printf '%s\n' 'e2e crd: proving runtime rejection of mismatched ownership'
-	stop_runtime_deployments
-	kube annotate mutatingwebhookconfiguration ptah-operator-admission \
-		operator.ptah.dev/release-name=foreign-release --overwrite >/dev/null
-	start_runtime_deployments
-	assert_runtime_blocked "mismatched admission singleton"
-	kube annotate mutatingwebhookconfiguration ptah-operator-admission \
-		"operator.ptah.dev/release-name=$E2E_HELM_RELEASE" --overwrite >/dev/null
-	kube -n "$E2E_OPERATOR_NAMESPACE" delete pod \
-		-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" --wait=false >/dev/null
-	wait_runtime_ready
+	# The runtime refuses to serve an admission singleton owned by another
+	# release, and the retained rollout guard refuses to let anyone hand it to
+	# one: the ownership annotation cannot be drifted while the release is
+	# active, so this state is unreachable rather than merely detected. The
+	# runtime's own refusal stays measured by the incomplete-singleton and
+	# drifted-behavior proofs around this one.
+	printf '%s\n' 'e2e crd: proving the admission singleton refuses a foreign owner'
+	if kube annotate mutatingwebhookconfiguration ptah-operator-admission \
+		operator.ptah.dev/release-name=foreign-release --overwrite \
+		>"$WORK_DIR/foreign-owner.out" 2>"$WORK_DIR/foreign-owner.err"; then
+		fail "the admission singleton accepted a foreign release owner"
+	fi
+	grep -F 'rejected an unsafe release transition' \
+		"$WORK_DIR/foreign-owner.out" "$WORK_DIR/foreign-owner.err" >/dev/null ||
+		fail "the foreign owner was refused without the rollout guard denial"
+	[ "$(kube get mutatingwebhookconfiguration ptah-operator-admission \
+		-o jsonpath='{.metadata.annotations.operator\.ptah\.dev/release-name}')" = "$E2E_HELM_RELEASE" ] ||
+		fail "the admission singleton no longer names the installed release"
 
 	printf '%s\n' 'e2e crd: proving runtime rejection of drifted admission behavior'
 	webhook_service=$(kube get validatingwebhookconfiguration ptah-operator-admission \
@@ -4106,326 +3123,6 @@ prove_controller_downgrade_guard() {
 	wait_runtime_ready
 }
 
-create_predecessor_live_objects() {
-	kube create namespace "$PROOF_NAMESPACE" >/dev/null
-	for schema_name in "$PREDECESSOR_SCHEMA" "$PREDECESSOR_DELETING_SCHEMA"; do
-		kube -n "$PROOF_NAMESPACE" apply -f - >/dev/null <<EOF
-apiVersion: operator.ptah.dev/v1alpha1
-kind: PtahSchema
-metadata:
-  name: $schema_name
-spec:
-  suspend: true
-  target:
-    engine: PostgreSQL
-    coordinationKey: $schema_name
-    urlFrom:
-      name: unused-database-url
-      key: url
-  desired:
-    ociRef: oci://example.invalid/schema:v1
-    verificationPolicyFrom:
-      name: unused-verification-policy
-      key: policy.yaml
-EOF
-		wait_for_suspended "$schema_name"
-	done
-
-	kube -n "$PROOF_NAMESPACE" apply -f - >/dev/null <<EOF
-apiVersion: operator.ptah.dev/v1alpha1
-kind: PtahSchema
-metadata:
-  name: $PREDECESSOR_JOB_SCHEMA
-spec:
-  target:
-    engine: PostgreSQL
-    coordinationKey: $PREDECESSOR_JOB_SCHEMA
-    urlFrom:
-      name: unused-database-url
-      key: url
-  desired:
-    ociRef: oci://example.invalid/schema:v1
-    verificationPolicyFrom:
-      name: unused-verification-policy
-      key: policy.yaml
-  execution:
-    serviceAccountName: default
-    nodeSelector:
-      operator.ptah.dev/predecessor-job-proof: blocked
-EOF
-	wait_for_predecessor_read_only_job
-
-	predecessor_schema_uid=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_SCHEMA" \
-		-o jsonpath='{.metadata.uid}')
-	kube -n "$PROOF_NAMESPACE" create -f - >/dev/null <<EOF
-apiVersion: operator.ptah.dev/v1alpha1
-kind: PtahSchemaPlan
-metadata:
-  name: $PREDECESSOR_PLAN
-spec:
-  contractVersion: 2
-  schemaRef: {name: $PREDECESSOR_SCHEMA, uid: $predecessor_schema_uid}
-  fingerprint: predecessor-plan-fingerprint
-  contentDigest: sha256:2222222222222222222222222222222222222222222222222222222222222222
-  size: 1
-  artifactDigest: sha256:3333333333333333333333333333333333333333333333333333333333333333
-  coordinationDigest: sha256:4444444444444444444444444444444444444444444444444444444444444444
-  targetIdentityDigest: sha256:5555555555555555555555555555555555555555555555555555555555555555
-  actualStateFingerprint: predecessor-actual
-  desiredStateFingerprint: predecessor-desired
-  policyFingerprint: predecessor-policy
-  verificationPolicyUID: predecessor-policy-uid
-  verificationPolicyDigest: sha256:6666666666666666666666666666666666666666666666666666666666666666
-  executionBindingID: v1-11111111111111111111111111111111
-  ptahVersion: predecessor-e2e
-  executorImage: e2e.invalid/executor@sha256:7777777777777777777777777777777777777777777777777777777777777777
-  runnerImage: e2e.invalid/runner@sha256:8888888888888888888888888888888888888888888888888888888888888888
-  runnerProtocolVersion: 4
-  dialect: postgresql
-  destructive: false
-  statementCount: 1
-  chunks:
-    - name: predecessor-plan-chunk
-      key: plan.sql
-      index: 0
-      digest: sha256:9999999999999999999999999999999999999999999999999999999999999999
-      size: 1
-EOF
-	kube -n "$PROOF_NAMESPACE" patch ptahschemaplan "$PREDECESSOR_PLAN" --subresource=status \
-		--type=merge -p '{"status":{"observedGeneration":1,"conditions":[{"type":"Ready","status":"True","reason":"PredecessorProof","message":"predecessor evidence","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' >/dev/null
-	prepare_predecessor_apply_fixture
-}
-
-create_predecessor_approval_while_webhooks_stopped() {
-	predecessor_schema_uid=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_SCHEMA" \
-		-o jsonpath='{.metadata.uid}')
-	predecessor_plan_uid=$(kube -n "$PROOF_NAMESPACE" get ptahschemaplan "$PREDECESSOR_PLAN" \
-		-o jsonpath='{.metadata.uid}')
-	kube -n "$PROOF_NAMESPACE" create -f - >/dev/null <<EOF
-apiVersion: operator.ptah.dev/v1alpha1
-kind: PtahSchemaApproval
-metadata:
-  name: $PREDECESSOR_APPROVAL
-spec:
-  schemaRef: {name: $PREDECESSOR_SCHEMA, uid: $predecessor_schema_uid}
-  planRef: {name: $PREDECESSOR_PLAN, uid: $predecessor_plan_uid}
-  planFingerprint: predecessor-plan-fingerprint
-  artifactDigest: sha256:3333333333333333333333333333333333333333333333333333333333333333
-  coordinationDigest: sha256:4444444444444444444444444444444444444444444444444444444444444444
-  targetIdentityDigest: sha256:5555555555555555555555555555555555555555555555555555555555555555
-  actualStateFingerprint: predecessor-actual
-  desiredStateFingerprint: predecessor-desired
-  policyFingerprint: predecessor-policy
-  verificationPolicyUID: predecessor-policy-uid
-  verificationPolicyDigest: sha256:6666666666666666666666666666666666666666666666666666666666666666
-  executionBindingID: v1-11111111111111111111111111111111
-  ptahVersion: predecessor-e2e
-  executorImage: e2e.invalid/executor@sha256:7777777777777777777777777777777777777777777777777777777777777777
-  runnerImage: e2e.invalid/runner@sha256:8888888888888888888888888888888888888888888888888888888888888888
-  runnerProtocolVersion: 4
-  approver: {username: predecessor-proof}
-  approvedAt: "2026-01-01T00:00:00Z"
-  mutationRequestUID: predecessor-proof
-EOF
-	kube -n "$PROOF_NAMESPACE" patch ptahschemaapproval "$PREDECESSOR_APPROVAL" --subresource=status \
-		--type=merge -p '{"status":{"observedGeneration":1,"conditions":[{"type":"Accepted","status":"True","reason":"PredecessorProof","message":"predecessor evidence","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' >/dev/null
-}
-
-stage_predecessor_deletion() {
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PREDECESSOR_DELETING_SCHEMA" --type=merge \
-		-p '{"metadata":{"finalizers":["operator.ptah.dev/active-operation"]}}' >/dev/null
-	kube -n "$PROOF_NAMESPACE" patch ptahschema "$PREDECESSOR_DELETING_SCHEMA" --subresource=status \
-		--type=merge -p '{"status":{"pendingLockRelease":{"coordinationDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","operationID":"predecessor-lock-release","leaseDurationSeconds":30,"leaseEpoch":"v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}' >/dev/null
-	kube -n "$PROOF_NAMESPACE" delete ptahschema "$PREDECESSOR_DELETING_SCHEMA" --wait=false >/dev/null
-	kube -n "$PROOF_NAMESPACE" get ptahschema "$PREDECESSOR_DELETING_SCHEMA" -o json | jq -e '
-      (.metadata.deletionTimestamp != null) and
-      (.metadata.finalizers | index("operator.ptah.dev/active-operation") != null) and
-      (.status.pendingLockRelease.operationID == "predecessor-lock-release")
-    ' >/dev/null || fail "predecessor deleting PtahSchema did not retain its durable lock-release work"
-}
-
-assert_predecessor_crds() {
-	predecessor_crd_count=$(jq -er '.crds | length' "$E2E_PREDECESSOR_IDENTITY_FILE")
-	[ "$predecessor_crd_count" -eq 3 ] || fail "predecessor identity must contain exactly three CRDs"
-	predecessor_crd_index=0
-	while [ "$predecessor_crd_index" -lt "$predecessor_crd_count" ]; do
-		crd_name=$(jq -er ".crds[$predecessor_crd_index].name" "$E2E_PREDECESSOR_IDENTITY_FILE")
-		want_digest=$(jq -er ".crds[$predecessor_crd_index].normalizedSpecDigest" \
-			"$E2E_PREDECESSOR_IDENTITY_FILE")
-		kube get crd "$crd_name" -o json | jq -e '
-          ((.metadata.annotations // {}) | has("operator.ptah.dev/crd-schema-version") | not) and
-          ((.metadata.annotations // {}) | has("operator.ptah.dev/crd-schema-digest") | not) and
-          ((.metadata.annotations // {}) | has("operator.ptah.dev/controller-state-version") | not)
-        ' >/dev/null || fail "predecessor CRD $crd_name is not annotation-free"
-		got_digest=$(crd_normalized_digest "$crd_name")
-		[ "$got_digest" = "$want_digest" ] ||
-			fail "predecessor CRD $crd_name digest is $got_digest, expected $want_digest"
-		kube get crd "$crd_name" -o jsonpath='{.metadata.uid}' \
-			>"$WORK_DIR/${crd_name}-predecessor-uid"
-		predecessor_crd_index=$((predecessor_crd_index + 1))
-	done
-}
-
-assert_candidate_crds_adopted() {
-	predecessor_crd_count=$(jq -er '.crds | length' "$E2E_PREDECESSOR_IDENTITY_FILE")
-	predecessor_crd_index=0
-	while [ "$predecessor_crd_index" -lt "$predecessor_crd_count" ]; do
-		crd_name=$(jq -er ".crds[$predecessor_crd_index].name" "$E2E_PREDECESSOR_IDENTITY_FILE")
-		crd_path=$(jq -er ".crds[$predecessor_crd_index].path" "$E2E_PREDECESSOR_IDENTITY_FILE")
-		before_uid=$(cat "$WORK_DIR/${crd_name}-predecessor-uid")
-		after_uid=$(kube get crd "$crd_name" -o jsonpath='{.metadata.uid}')
-		[ "$after_uid" = "$before_uid" ] || fail "candidate upgrade recreated CRD $crd_name"
-		candidate_digest=$(go -C "$ROOT_DIR" run ./hack/crdschemadigest "$ROOT_DIR/$crd_path")
-		live_digest=$(crd_normalized_digest "$crd_name")
-		[ "$live_digest" = "$candidate_digest" ] ||
-			fail "adopted CRD $crd_name digest is $live_digest, expected candidate $candidate_digest"
-		kube get crd "$crd_name" -o json | jq -e \
-			--arg digest "$candidate_digest" \
-			--arg schema_version "$CANDIDATE_CRD_SCHEMA_VERSION" '
-		  .metadata.annotations["operator.ptah.dev/crd-schema-version"] == $schema_version and
-          .metadata.annotations["operator.ptah.dev/crd-schema-digest"] == $digest and
-          .metadata.annotations["operator.ptah.dev/controller-state-version"] == "1"
-        ' >/dev/null || fail "candidate CRD $crd_name did not acquire the exact schema and controller-state identity"
-		predecessor_crd_index=$((predecessor_crd_index + 1))
-	done
-}
-
-run_predecessor_upgrade_proof() {
-	# This is legacy-adoption coverage: the unmodified predecessor predates
-	# release identity annotations and produces the old Apply/Job contracts.
-	# Managed sequence-to-sequence upgrades have a separate proof below.
-	E2E_CANDIDATE_VALUES_FILE=${E2E_CANDIDATE_VALUES_FILE:?E2E_CANDIDATE_VALUES_FILE is required for predecessor upgrade proof}
-	E2E_PREDECESSOR_IDENTITY_FILE=${E2E_PREDECESSOR_IDENTITY_FILE:?E2E_PREDECESSOR_IDENTITY_FILE is required for predecessor upgrade proof}
-	E2E_PREDECESSOR_SOURCE_DIR=${E2E_PREDECESSOR_SOURCE_DIR:?E2E_PREDECESSOR_SOURCE_DIR is required for predecessor upgrade proof}
-	E2E_PREDECESSOR_IMAGE=${E2E_PREDECESSOR_IMAGE:?E2E_PREDECESSOR_IMAGE is required for predecessor upgrade proof}
-	E2E_CANDIDATE_IMAGE=${E2E_CANDIDATE_IMAGE:?E2E_CANDIDATE_IMAGE is required for predecessor upgrade proof}
-	[ -f "$E2E_CANDIDATE_VALUES_FILE" ] || fail "candidate values file is missing"
-	[ -f "$E2E_PREDECESSOR_IDENTITY_FILE" ] || fail "predecessor identity file is missing"
-	[ -d "$E2E_PREDECESSOR_SOURCE_DIR" ] || fail "predecessor source archive is missing"
-	UPGRADE_VALUES_FILE=$E2E_CANDIDATE_VALUES_FILE
-	prepare_expected_singleton_annotations
-	prepare_expected_hook_names
-	materialize_identity_hook_credential_patterns
-
-	printf '%s\n' 'e2e crd: proving exact legacy-adoption predecessor-to-candidate upgrade'
-	runtime_deployment_names
-	old_deployment_image=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$CONTROLLER_DEPLOYMENT" \
-		-o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')
-	[ "$old_deployment_image" = "$E2E_PREDECESSOR_IMAGE" ] ||
-		fail "installed predecessor manager image is $old_deployment_image, expected $E2E_PREDECESSOR_IMAGE"
-	assert_predecessor_crds
-	assert_singleton_annotation_free
-	create_predecessor_live_objects
-	singleton_contract_evidence mutatingwebhookconfiguration "$WORK_DIR/predecessor-mutating.json"
-	singleton_contract_evidence validatingwebhookconfiguration "$WORK_DIR/predecessor-validating.json"
-
-	printf '%s\n' 'e2e crd: proving unknown annotation-free admission behavior is not adopted'
-	kube patch validatingwebhookconfiguration ptah-operator-admission --type=json \
-		-p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"}]' >/dev/null
-	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
-		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-unknown-singleton.json"
-	done
-	expect_upgrade_failure_without_deployment_change \
-		"upgrade with unknown annotation-free admission behavior"
-	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
-		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-unknown-singleton.json"
-	done
-	assert_singleton_annotation_free
-	assert_predecessor_certificate_update_allowed
-
-	stop_runtime_deployments
-	set_predecessor_pod_webhook_failure_policy Fail Ignore
-	stage_predecessor_read_only_job_completion
-	set_predecessor_pod_webhook_failure_policy Ignore Fail
-	stage_predecessor_read_only_job_uid_gap
-	stage_predecessor_deletion
-
-	kube patch mutatingwebhookconfiguration ptah-operator-admission --type=json \
-		-p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"}]' >/dev/null
-	create_predecessor_approval_while_webhooks_stopped
-	kube patch mutatingwebhookconfiguration ptah-operator-admission --type=json \
-		-p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Fail"}]' >/dev/null
-	kube patch validatingwebhookconfiguration ptah-operator-admission --type=json \
-		-p='[{"op":"replace","path":"/webhooks/0/failurePolicy","value":"Fail"}]' >/dev/null
-	singleton_contract_evidence mutatingwebhookconfiguration "$WORK_DIR/restored-mutating.json"
-	singleton_contract_evidence validatingwebhookconfiguration "$WORK_DIR/restored-validating.json"
-	cmp "$WORK_DIR/predecessor-mutating.json" "$WORK_DIR/restored-mutating.json" ||
-		fail "predecessor MutatingWebhookConfiguration was not restored exactly"
-	cmp "$WORK_DIR/predecessor-validating.json" "$WORK_DIR/restored-validating.json" ||
-		fail "predecessor ValidatingWebhookConfiguration was not restored exactly"
-
-	schema_identity_evidence "$PREDECESSOR_SCHEMA" "$WORK_DIR/predecessor-schema-before.json"
-	object_evidence ptahschemaplan "$PREDECESSOR_PLAN" "$WORK_DIR/predecessor-plan-before.json"
-	object_evidence ptahschemaapproval "$PREDECESSOR_APPROVAL" "$WORK_DIR/predecessor-approval-before.json"
-
-	printf '%s\n' 'e2e crd: proving unknown annotation-free CRD drift is refused before controller rollout'
-	drift_crd=ptahschemaplans.operator.ptah.dev
-	kube patch crd "$drift_crd" --type=json \
-		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"unknown predecessor drift"}]' >/dev/null
-	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
-		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-unknown-predecessor.json"
-	done
-	expect_upgrade_failure_without_deployment_change \
-		"upgrade with unknown annotation-free CRD drift"
-	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
-		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-unknown-predecessor.json"
-	done
-	assert_singleton_annotation_free
-	restore_predecessor_crd "$drift_crd"
-	start_runtime_deployments
-	wait_runtime_ready
-	prove_late_activation_failure_recovery
-	capture_controller_impersonation_identity
-	prove_legacy_job_activation_boundary bootstrap
-	prove_legacy_plan_activation_boundary bootstrap
-	clear_controller_impersonation_identity
-
-	printf '%s\n' 'e2e crd: starting a predecessor Apply across the candidate upgrade'
-	start_predecessor_apply_barrier
-	start_predecessor_apply_fixture
-	wait_for_predecessor_apply_barrier_contention
-	stop_runtime_deployments
-	stage_predecessor_apply_job_uid_gap_while_running
-
-	printf '%s\n' 'e2e crd: upgrading while the exact predecessor Apply is still running'
-	helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
-		--wait --timeout 5m >/dev/null
-	wait_runtime_ready
-	assert_predecessor_apply_remains_exclusive_while_running
-	assert_predecessor_apply_barrier_contended
-	release_predecessor_apply_barrier
-	wait_for_predecessor_apply_job_terminal
-	wait_for_predecessor_read_only_job_cleanup
-	wait_for_predecessor_apply_job_cleanup
-	new_deployment_image=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$CONTROLLER_DEPLOYMENT" \
-		-o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')
-	[ "$new_deployment_image" = "$E2E_CANDIDATE_IMAGE" ] ||
-		fail "upgraded manager image is $new_deployment_image, expected $E2E_CANDIDATE_IMAGE"
-	assert_candidate_crds_adopted
-	assert_adopted_singleton_annotations
-	schema_identity_evidence "$PREDECESSOR_SCHEMA" "$WORK_DIR/predecessor-schema-after.json"
-	cmp "$WORK_DIR/predecessor-schema-before.json" "$WORK_DIR/predecessor-schema-after.json" ||
-		fail "predecessor PtahSchema UID or spec changed during candidate upgrade"
-	assert_object_unchanged ptahschemaplan "$PREDECESSOR_PLAN" "$WORK_DIR/predecessor-plan-before.json"
-	assert_object_unchanged ptahschemaapproval "$PREDECESSOR_APPROVAL" "$WORK_DIR/predecessor-approval-before.json"
-	wait_for_schema_deleted "$PREDECESSOR_DELETING_SCHEMA"
-	quiesce_predecessor_metric_sources
-	printf '%s\n' 'e2e crd: exact predecessor upgrade proof passed'
-}
-
 create_proof_objects() {
 	kube get namespace "$PROOF_NAMESPACE" >/dev/null
 	kube -n "$PROOF_NAMESPACE" apply -f - >/dev/null <<EOF
@@ -4449,7 +3146,13 @@ spec:
 EOF
 	wait_for_suspended
 
-	stop_runtime_deployments
+	# Only the controller reconciles PtahSchemas, and only its rollout is what
+	# the drifted-CRD proof watches, so only the controller is stopped. The
+	# certificate rotator's Deployment stays: the release is active, and the
+	# reconcile hook's admission enforcement probe needs one runtime Deployment
+	# as the baseline it proves the guards accept. With both gone the hook
+	# refuses the upgrade outright (stokaro/ptah-operator#10).
+	stop_controller_deployment
 
 	kube delete mutatingwebhookconfiguration ptah-operator-admission >/dev/null
 	kube delete validatingwebhookconfiguration ptah-operator-admission >/dev/null
@@ -4526,7 +3229,30 @@ EOF
 }
 
 run_upgrade_proof() {
-	run_predecessor_upgrade_proof
+	E2E_CANDIDATE_VALUES_FILE=${E2E_CANDIDATE_VALUES_FILE:?E2E_CANDIDATE_VALUES_FILE is required for the upgrade proof}
+	E2E_CANDIDATE_IMAGE=${E2E_CANDIDATE_IMAGE:?E2E_CANDIDATE_IMAGE is required for the upgrade proof}
+	[ -f "$E2E_CANDIDATE_VALUES_FILE" ] || fail "candidate values file is missing"
+	prepare_expected_hook_names "$E2E_CHART_PACKAGE" "$E2E_CANDIDATE_VALUES_FILE"
+	materialize_identity_hook_credential_patterns
+	runtime_deployment_names
+	installed_deployment_image=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$CONTROLLER_DEPLOYMENT" \
+		-o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].image}')
+	[ "$installed_deployment_image" = "$E2E_CANDIDATE_IMAGE" ] ||
+		fail "installed current-release manager image is $installed_deployment_image, expected $E2E_CANDIDATE_IMAGE"
+
+	printf '%s\n' 'e2e crd: proving read-only Job cleanup within the current release'
+	kube create namespace "$PROOF_NAMESPACE" >/dev/null
+	READ_ONLY_JOB_SCHEMA=$CURRENT_READ_ONLY_JOB_SCHEMA
+	dispatch_read_only_job_fixture
+	stop_runtime_deployments
+	set_pod_webhook_failure_policy Fail Ignore
+	stage_read_only_job_completion
+	set_pod_webhook_failure_policy Ignore Fail
+	start_runtime_deployments
+	wait_runtime_ready
+	wait_for_read_only_job_cleanup
+	quiesce_read_only_job_schema
+
 	helm_e2e get values "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" -o yaml >"$WORK_DIR/release-values.yaml"
 	UPGRADE_VALUES_FILE=$WORK_DIR/release-values.yaml
 	helm_e2e get values "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
@@ -4583,31 +3309,30 @@ run_upgrade_proof() {
 	kube annotate crd ptahschemaplans.operator.ptah.dev \
 		operator.ptah.dev/controller-state-version=1 --overwrite >/dev/null
 
-	printf '%s\n' 'e2e crd: proving schema digest adoption and collision rejection'
+	printf '%s\n' 'e2e crd: proving an incomplete schema identity and a digest collision are refused'
 	digest_crd=ptahschemaplans.operator.ptah.dev
 	candidate_schema_digest=$(kube get crd "$digest_crd" \
 		-o jsonpath='{.metadata.annotations.operator\.ptah\.dev/crd-schema-digest}')
 	printf '%s\n' "$candidate_schema_digest" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
 		fail "$digest_crd does not carry a valid candidate schema digest"
+	# The live spec still matches the candidate exactly; only the digest is
+	# missing. The operator upgrades only from a release that carries the
+	# whole identity tuple, so an exact schema without it is refused too.
 	kube annotate crd "$digest_crd" operator.ptah.dev/crd-schema-digest- >/dev/null
-	helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$WORK_DIR/release-values.yaml" \
-		--wait --timeout 5m >/dev/null
-	adopted_schema_digest=$(kube get crd "$digest_crd" \
-		-o jsonpath='{.metadata.annotations.operator\.ptah\.dev/crd-schema-digest}')
-	[ "$adopted_schema_digest" = "$candidate_schema_digest" ] ||
-		fail "exact legacy schema did not adopt the candidate digest"
-
-	kube annotate crd "$digest_crd" operator.ptah.dev/crd-schema-digest- >/dev/null
-	kube patch crd "$digest_crd" --type=json \
-		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"unidentified digestless schema"}]' >/dev/null
 	for crd_name in \
 		ptahschemas.operator.ptah.dev \
 		ptahschemaplans.operator.ptah.dev \
 		ptahschemaapprovals.operator.ptah.dev; do
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-missing-digest.json"
 	done
-	expect_upgrade_failure_without_deployment_change "upgrade with digestless schema drift"
+	# The refusal happens inside the preflight hook's container, so Helm
+	# reports only that the hook Job failed; the reason never reaches its
+	# stderr, and the hook's Pod is deleted with the failed hook. What this
+	# proof pins is the refusal itself, and the shared helper pins that the
+	# preflight hook of the expected revision is what refused while every CRD
+	# and Deployment stayed unchanged. The wording of the reason is measured
+	# where it is observable, in the Manager unit tests.
+	expect_upgrade_failure_without_deployment_change "upgrade with a missing schema digest"
 	for crd_name in \
 		ptahschemas.operator.ptah.dev \
 		ptahschemaplans.operator.ptah.dev \
@@ -4694,8 +3419,15 @@ run_upgrade_proof() {
 		--wait --timeout 2m >"$WORK_DIR/second-release.out" 2>"$WORK_DIR/second-release.err"; then
 		fail "a second operator release was installed"
 	fi
-	grep -F 'fixed admission singleton' "$WORK_DIR/second-release.err" >/dev/null ||
-		fail "second release failed without the singleton ownership guard"
+	# The chart refuses a second release in a namespace another release owns,
+	# and the controller Deployment's provenance is the first thing it reads,
+	# so that refusal is what a second install sees. It names the release that
+	# owns the object, which is what makes the refusal a coordination proof
+	# rather than any rendering error.
+	if ! grep -F 'is not owned by Helm release' "$WORK_DIR/second-release.err" >/dev/null ||
+		! grep -F "$E2E_HELM_RELEASE" "$WORK_DIR/second-release.err" >/dev/null; then
+		fail "second release failed without the ownership refusal naming the installed release"
+	fi
 	if helm_e2e status "$second_release" -n "$E2E_OPERATOR_NAMESPACE" >/dev/null 2>&1; then
 		fail "failed second release was recorded"
 	fi
@@ -4718,8 +3450,9 @@ run_upgrade_proof() {
 }
 
 run_next_release_upgrade_proof() {
-	# Managed lifecycle coverage must advance an already active release; it
-	# must not reuse or synthesize the annotation-free legacy-adoption fixture.
+	# Managed lifecycle coverage advances an already active release: the
+	# current release is the predecessor, and the synthetic next release is
+	# what retires it.
 	validate_release_sequence_transition
 	current_release_sequence=$E2E_CURRENT_RELEASE_SEQUENCE
 	next_release_sequence=$E2E_NEXT_RELEASE_SEQUENCE
@@ -4760,6 +3493,19 @@ run_next_release_upgrade_proof() {
 	current_sequence_marker_name=$(jq -er '.metadata.name' "$current_sequence_marker")
 	current_sequence_service_account=$(jq -er '.serviceAccountName' "$current_sequence_identity")
 
+	prepare_expected_hook_names "$E2E_NEXT_CHART_PACKAGE" "$E2E_NEXT_VALUES_FILE"
+	materialize_identity_hook_credential_patterns
+	printf '%s\n' 'e2e crd: dispatching a read-only Job the successor must retire'
+	READ_ONLY_JOB_SCHEMA=$SUCCESSOR_READ_ONLY_JOB_SCHEMA
+	dispatch_read_only_job_fixture
+	prove_late_activation_failure_recovery \
+		"$current_release_sequence" "$next_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"
+	stop_runtime_deployments
+	set_pod_webhook_failure_policy Fail Ignore
+	stage_read_only_job_completion
+	set_pod_webhook_failure_policy Ignore Fail
+	stage_read_only_job_uid_gap
+
 	before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
 		jq -er '.version | select(type == "number" and . >= 1)')
@@ -4769,6 +3515,8 @@ run_next_release_upgrade_proof() {
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
 		--wait --timeout 5m >/dev/null
 	wait_runtime_ready
+	wait_for_read_only_job_cleanup
+	quiesce_read_only_job_schema
 	after_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
 		jq -er '.version | select(type == "number" and . >= 1)')

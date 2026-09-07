@@ -120,6 +120,13 @@ type ParentWorkloadGuard struct {
 
 // NewParentWorkloadGuard derives every name and executable argument from the
 // already validated rollout identity.
+// replicaSetMatchResourceScope confines the ReplicaSet guard's workload match
+// condition to ReplicaSets. The guard also matches the convergence marker for
+// its own probe, and a match condition that dereferences the Pod template of a
+// ConfigMap errors instead of declining; under a fail-closed policy that error
+// denies a probe another guard owns.
+const replicaSetMatchResourceScope = `request.resource.group == "apps" && request.resource.resource == "replicasets" && `
+
 func NewParentWorkloadGuard(rollout *RolloutGuard) *ParentWorkloadGuard {
 	guard := &ParentWorkloadGuard{rollout: rollout}
 	if rollout != nil {
@@ -313,7 +320,7 @@ func (g *ParentWorkloadGuard) replicaSetPolicy() *admissionregistrationv1.Valida
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name: "protected-runtime-service-account",
 				Expression: fmt.Sprintf(
-					`request.namespace == %q && ((has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))`,
+					`request.namespace == %q && `+replicaSetMatchResourceScope+`((has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))`,
 					g.rollout.ReleaseNamespace, controllerSA, certificateSA, controllerSA, certificateSA,
 				),
 			}},
@@ -732,14 +739,12 @@ func (g *ParentWorkloadGuard) legacyHookPodOriginPolicy() *admissionregistration
 // convergence probe aimed at any guard: a dry-run UPDATE of the convergence
 // marker under a probe field manager. It names no release sequence, because
 // the hook parent-origin guard is release-stable; the marker is recognized by
-// the pattern variable the guard already carries. Two probe families write the
-// marker: dependency probes under admissionConvergenceProbeFieldManagerPrefix
-// and the stable guards' probes under stableAdmissionConvergenceProbePrefix.
-// This guard evaluates every marker write, so it recognizes both prefixes;
-// the dry-run validation keeps the escape from admitting a real write.
+// the pattern variable the guard already carries. The field manager pattern is
+// the one every marker-matching guard shares; the dry-run validation keeps
+// the escape from admitting a real write.
 func parentHookOriginConvergenceProbeExpression(releaseNamespace string) string {
-	return fmt.Sprintf(`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && variables.isConvergenceMarker && has(request.options) && has(request.options.fieldManager) && (request.options.fieldManager.startsWith(%q) || request.options.fieldManager.startsWith(%q))`,
-		releaseNamespace, admissionConvergenceProbeFieldManagerPrefix, stableAdmissionConvergenceProbePrefix)
+	return fmt.Sprintf(`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && variables.isConvergenceMarker && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)`,
+		releaseNamespace, admissionConvergenceAnyProbeFieldManagerPattern())
 }
 
 func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {
@@ -747,6 +752,12 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 	exact := admissionregistrationv1.Exact
 	name := ParentHookJobOriginGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
 	hookPattern, teardownPattern := g.hookServiceAccountPatterns()
+	// The crd-manager hook seals the convergence marker itself, and its role
+	// names the policies it may touch rather than granting create on the
+	// kind, so the admission-authority test below cannot admit that write.
+	// The seal is the one marker update the hook principal makes; its exact
+	// shape is held by the marker transition validations.
+	hookUsernamePattern := "^system:serviceaccount:" + regexp.QuoteMeta(g.rollout.ReleaseNamespace) + ":" + strings.TrimPrefix(hookPattern, "^")
 	message := parentHookOriginDenialMessage()
 	namespaceGuard := NamespaceDeletionGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
 	authority := parentHookAdmissionAuthorityExpression(namespaceGuard)
@@ -815,7 +826,7 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 				{Expression: `!variables.isProtectedJob || !variables.isStatusUpdate || (` + parentHookStatusPreservesIdentityExpression() + `)`, Message: message},
 				{Expression: `!variables.isProtectedJob || !variables.isDelete || (` + parentHookTerminalJobExpression("oldObject") + `)`, Message: message},
 				{Expression: `!variables.isProtectedJob || !variables.isDelete || (` + authority + `)`, Message: message},
-				{Expression: `!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (` + authority + `)`, Message: message},
+				{Expression: fmt.Sprintf(`!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation == "UPDATE" && request.userInfo.username.matches(%q)) || (%s)`, hookUsernamePattern, authority), Message: message},
 				{Expression: `!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true`, Message: message},
 				{Expression: `!variables.isReadinessMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (` + g.readinessMarkerShapeExpression("object", false) + `) : (` + g.readinessMarkerShapeExpression("object", true) + `))`, Message: message},
 				{Expression: `!variables.isReadinessMarker || !(request.operation in ["UPDATE", "DELETE"]) || (` + g.readinessMarkerShapeExpression("oldObject", true) + `)`, Message: message},
@@ -1067,7 +1078,7 @@ func (g *ParentWorkloadGuard) hookJobContractPolicy() *admissionregistrationv1.V
 			},
 			MatchConditions: []admissionregistrationv1.MatchCondition{{
 				Name:       "candidate-hook-service-account",
-				Expression: fmt.Sprintf(`request.namespace == %q && (request.name in [%q, %q, %q, %q, %q, %q] || (oldObject != null && oldObject.metadata.name in [%q, %q, %q, %q, %q, %q]) || (object != null && has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (oldObject != null && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))`, g.rollout.ReleaseNamespace, imageCheckJob, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, imageCheckJob, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, g.rollout.HookServiceAccountName, teardownServiceAccount, g.rollout.HookServiceAccountName, teardownServiceAccount),
+				Expression: fmt.Sprintf(`request.namespace == %q && request.resource.group == "batch" && request.resource.resource == "jobs" && (request.name in [%q, %q, %q, %q, %q, %q] || (oldObject != null && oldObject.metadata.name in [%q, %q, %q, %q, %q, %q]) || (object != null && has(dyn(object).spec.template.spec.serviceAccountName) && dyn(object).spec.template.spec.serviceAccountName in [%q, %q]) || (oldObject != null && has(dyn(oldObject).spec.template.spec.serviceAccountName) && dyn(oldObject).spec.template.spec.serviceAccountName in [%q, %q]))`, g.rollout.ReleaseNamespace, imageCheckJob, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, imageCheckJob, identityJob, preflightJob, reconcileJob, quiesceJob, teardownJob, g.rollout.HookServiceAccountName, teardownServiceAccount, g.rollout.HookServiceAccountName, teardownServiceAccount),
 			}},
 			Variables: []admissionregistrationv1.Variable{
 				{Name: "isMainWrite", Expression: `request.operation in ["CREATE", "UPDATE"] && (!has(request.subResource) || request.subResource == "")`},

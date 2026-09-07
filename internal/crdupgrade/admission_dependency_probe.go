@@ -61,6 +61,21 @@ func stableAdmissionConvergenceProbeRequestExpression(policyName, releaseNamespa
 	)
 }
 
+// stableAdmissionConvergenceAnyProbeRequestExpression recognizes a probe of
+// any family aimed at whichever marker the pattern names. A release-stable
+// guard matches the marker for its own probe and, through its principal
+// match, sees the probes a runtime verifier under that principal aims at
+// every other policy; recognizing only its own would judge those by its
+// native validations and answer in place of their target.
+func stableAdmissionConvergenceAnyProbeRequestExpression(releaseNamespace, markerNamePattern string) string {
+	return fmt.Sprintf(
+		`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name.matches(%q) && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)`,
+		releaseNamespace,
+		markerNamePattern,
+		admissionConvergenceAnyProbeFieldManagerPattern(),
+	)
+}
+
 func admissionConvergenceProbeRequestExpression(releaseNamespace, markerName, fieldManager string) string {
 	return fmt.Sprintf(
 		`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager == %q`,
@@ -75,8 +90,31 @@ func admissionConvergenceAnyProbeRequestExpression(releaseNamespace, markerName 
 		`request.operation == "UPDATE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && request.name == %q && has(request.options) && has(request.options.fieldManager) && request.options.fieldManager.matches(%q)`,
 		releaseNamespace,
 		markerName,
-		"^"+admissionConvergenceProbeFieldManagerPrefix+`[0-9a-f]{64}$`,
+		admissionConvergenceAnyProbeFieldManagerPattern(),
 	)
+}
+
+// admissionConvergenceAnyProbeFieldManagerPattern matches the field manager of
+// every probe that writes the convergence marker: the dependency probes under
+// admissionConvergenceProbeFieldManagerPrefix, the stable guards' probes under
+// stableAdmissionConvergenceProbePrefix, and the service account object
+// guard's probe under serviceAccountObjectProbeFieldManagerPrefix. A guard
+// that matches the marker meets every family, and recognizing only its own
+// lets it refuse another with its own message, or with an evaluation error
+// from a match condition written for a workload, in place of the target's
+// answer. The chart helper of the same name renders the same pattern.
+// v1AdmissionConvergenceAnyProbeFieldManagerPattern is the pattern the v1
+// managed release published, before the stable guards' probes existed. It is
+// frozen: live guards of that era carry it, and their restoration compares
+// against it.
+func v1AdmissionConvergenceAnyProbeFieldManagerPattern() string {
+	return "^" + admissionConvergenceProbeFieldManagerPrefix + "[0-9a-f]{64}$"
+}
+
+func admissionConvergenceAnyProbeFieldManagerPattern() string {
+	return "^(" + admissionConvergenceProbeFieldManagerPrefix + "[0-9a-f]{64}|" +
+		stableAdmissionConvergenceProbePrefix + "[0-9a-f]{32}-[0-9a-f]{64}|" +
+		serviceAccountObjectProbeFieldManagerPrefix + "[0-9a-f]{64})$"
 }
 
 // admissionConvergenceProbeResourceRule scopes the probe to the one ConfigMap
@@ -166,6 +204,7 @@ func addStableAdmissionConvergenceDependencyProbe(
 	markerNamePattern string,
 ) {
 	expression := stableAdmissionConvergenceProbeRequestExpression(policy.Name, releaseNamespace, markerNamePattern)
+	anyExpression := stableAdmissionConvergenceAnyProbeRequestExpression(releaseNamespace, markerNamePattern)
 	policy.Spec.MatchConstraints.ResourceRules = append(
 		policy.Spec.MatchConstraints.ResourceRules,
 		admissionregistrationv1.NamedRuleWithOperations{
@@ -181,10 +220,10 @@ func addStableAdmissionConvergenceDependencyProbe(
 		},
 	)
 	for index := range policy.Spec.MatchConditions {
-		policy.Spec.MatchConditions[index].Expression = "(" + expression + ") || (" + policy.Spec.MatchConditions[index].Expression + ")"
+		policy.Spec.MatchConditions[index].Expression = "(" + anyExpression + ") || (" + policy.Spec.MatchConditions[index].Expression + ")"
 	}
 	policy.Spec.Variables = append([]admissionregistrationv1.Variable{
-		{Name: "isAnyAdmissionConvergenceProbe", Expression: expression},
+		{Name: "isAnyAdmissionConvergenceProbe", Expression: anyExpression},
 		{Name: "isAdmissionConvergenceProbe", Expression: expression},
 	}, policy.Spec.Variables...)
 	for index := range policy.Spec.Validations {
@@ -221,9 +260,15 @@ func removeAdmissionConvergenceDependencyProbe(policy *admissionregistrationv1.V
 	if markerIndex < 0 || !strings.HasSuffix(exactExpression, `"`) {
 		return fmt.Errorf("admission convergence dependency exact selector is malformed")
 	}
+	// The union selector was published under two field manager patterns: the
+	// one the v1 managed release carried, which recognized the dependency probe
+	// family alone, and the current one, which recognizes both families. A live
+	// guard from either era is restored; any other wrapper is refused.
 	wantAnyExpression := exactExpression[:markerIndex] +
-		` && request.options.fieldManager.matches("^` + admissionConvergenceProbeFieldManagerPrefix + `[0-9a-f]{64}$")`
-	if anyExpression != wantAnyExpression {
+		` && request.options.fieldManager.matches("` + admissionConvergenceAnyProbeFieldManagerPattern() + `")`
+	wantV1AnyExpression := exactExpression[:markerIndex] +
+		` && request.options.fieldManager.matches("` + v1AdmissionConvergenceAnyProbeFieldManagerPattern() + `")`
+	if anyExpression != wantAnyExpression && anyExpression != wantV1AnyExpression {
 		return fmt.Errorf("admission convergence dependency union selector differs from the exact selector")
 	}
 

@@ -45,14 +45,6 @@ CRD_GUARD_FAILED_FIXTURE=$WORK_DIR/crd-guard-failed.json
 CRD_GUARD_RUNNING_FIXTURE=$WORK_DIR/crd-guard-running.json
 CRD_GUARD_TERMINATED_FIXTURE=$WORK_DIR/crd-guard-terminated.json
 CRD_GUARD_STATE=$WORK_DIR/crd-guard-state.json
-PREDECESSOR_IDENTITY=$ROOT_DIR/internal/crdupgrade/assets/predecessor.json
-PREDECESSOR_CRD_FILE=$WORK_DIR/predecessor-crd.yaml
-PREDECESSOR_SOURCE_DIR=$WORK_DIR/predecessor-source
-PREDECESSOR_DECODE_CHART=$WORK_DIR/predecessor-decode
-PREDECESSOR_CONTRACT=$WORK_DIR/predecessor-contract.json
-PREDECESSOR_CONTRACT_FILTER=$WORK_DIR/predecessor-contract.jq
-PREDECESSOR_CONTRACT_NEGATIVE=$WORK_DIR/predecessor-contract-negative.json
-PREDECESSOR_VALUES_FIXTURE=$WORK_DIR/predecessor-values.json
 CANDIDATE_VALUES_FIXTURE=$WORK_DIR/candidate-values.json
 CONTROLLER_JOB_FIXTURE=$WORK_DIR/controller-jobs.json
 CUSTOM_CA_POD_FIXTURE=$WORK_DIR/custom-ca-pods.json
@@ -260,150 +252,9 @@ shellcheck "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh
 
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
 
-predecessor_revision=$(jq -er '.revision' "$PREDECESSOR_IDENTITY")
-[ "$predecessor_revision" = 210c9673e6ad8e339278d99cc4735557332df7bd ] || {
-	printf '%s\n' 'e2e static: predecessor revision identity changed unexpectedly' >&2
-	exit 1
-}
-jq -e '
-  .mode == "legacy-adoption" and
-  .dockerfile == "Dockerfile" and
-  .chart == "charts/ptah-operator" and
-  (.crds | length) == 3 and
-  ([.crds[].name] | sort) == [
-    "ptahschemaapprovals.operator.ptah.dev",
-    "ptahschemaplans.operator.ptah.dev",
-    "ptahschemas.operator.ptah.dev"
-  ] and
-  ([.crds[].normalizedSpecDigest] | all(test("^sha256:[0-9a-f]{64}$"))) and
-  ([.crds[].path] | all(startswith("charts/ptah-operator/crds/operator.ptah.dev_ptahschema")))
-' "$PREDECESSOR_IDENTITY" >/dev/null || {
-	printf '%s\n' 'e2e static: predecessor identity fixture is incomplete' >&2
-	exit 1
-}
-predecessor_crd_count=$(jq -er '.crds | length' "$PREDECESSOR_IDENTITY")
-predecessor_crd_index=0
-while [ "$predecessor_crd_index" -lt "$predecessor_crd_count" ]; do
-	predecessor_crd_path=$(jq -er ".crds[$predecessor_crd_index].path" "$PREDECESSOR_IDENTITY")
-	predecessor_crd_digest=$(jq -er ".crds[$predecessor_crd_index].normalizedSpecDigest" "$PREDECESSOR_IDENTITY")
-	git -C "$ROOT_DIR" show "${predecessor_revision}:${predecessor_crd_path}" >"$PREDECESSOR_CRD_FILE"
-	computed_predecessor_digest=$(go -C "$ROOT_DIR" run ./hack/crdschemadigest "$PREDECESSOR_CRD_FILE")
-	[ "$computed_predecessor_digest" = "$predecessor_crd_digest" ] || {
-		printf 'e2e static: predecessor CRD %s digest is %s, expected %s\n' \
-			"$predecessor_crd_path" "$computed_predecessor_digest" "$predecessor_crd_digest" >&2
-		exit 1
-	}
-	grep -F "\"$predecessor_crd_digest\"" "$ROOT_DIR/internal/crdupgrade/assets.go" >/dev/null || {
-		printf 'e2e static: predecessor CRD digest %s is not bound by the runtime adoption code\n' \
-			"$predecessor_crd_digest" >&2
-		exit 1
-	}
-	predecessor_crd_index=$((predecessor_crd_index + 1))
-done
-
-# Decode the actual historical CRDs and rendered webhook objects, not current
-# constructors or source-text markers. A managed-release repin must fail even
-# when someone updates its revision and normalized-spec digests together.
-mkdir -p "$PREDECESSOR_SOURCE_DIR" "$PREDECESSOR_DECODE_CHART/templates" \
-	"$PREDECESSOR_DECODE_CHART/crd-inputs"
-git -C "$ROOT_DIR" archive --format=tar "$predecessor_revision" charts/ptah-operator |
-	tar -xf - -C "$PREDECESSOR_SOURCE_DIR"
-cp "$PREDECESSOR_SOURCE_DIR"/charts/ptah-operator/crds/*.yaml \
-	"$PREDECESSOR_DECODE_CHART/crd-inputs/"
-helm template ptah-legacy "$PREDECESSOR_SOURCE_DIR/charts/ptah-operator" \
-	--namespace ptah-legacy-fixture \
-	--show-only templates/webhook.yaml \
-	--set-string fullnameOverride=ptah-legacy \
-	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
-	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
-	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
-	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
-	--set-string webhook.existingSecret=legacy-webhook-cert \
-	--set-string webhook.caBundle=legacy-ca \
-	>"$PREDECESSOR_DECODE_CHART/webhooks.yaml"
-cat >"$PREDECESSOR_DECODE_CHART/Chart.yaml" <<'EOF'
-apiVersion: v2
-name: predecessor-contract-decoder
-version: 0.0.0
-EOF
-cat >"$PREDECESSOR_DECODE_CHART/templates/objects.yaml" <<'EOF'
-{{- $objects := list -}}
-{{- range $path, $_ := .Files.Glob "crd-inputs/*.yaml" -}}
-{{- $objects = append $objects ($.Files.Get $path | fromYaml) -}}
-{{- end -}}
-{{- range splitList "\n---" (.Files.Get "webhooks.yaml") -}}
-{{- $object := fromYaml . -}}
-{{- if $object -}}{{- $objects = append $objects $object -}}{{- end -}}
-{{- end -}}
-{{ dict "apiVersion" "v1" "kind" "List" "items" $objects | toJson }}
-EOF
-helm template predecessor-contract "$PREDECESSOR_DECODE_CHART" |
-	sed '/^---$/d; /^# Source:/d; /^[[:space:]]*$/d' >"$PREDECESSOR_CONTRACT"
-cat >"$PREDECESSOR_CONTRACT_FILTER" <<'EOF'
-def legacyMetadata:
-  ((.metadata.annotations // {}) | keys | all(startswith("operator.ptah.dev/") | not));
-def rules($group; $version; $operations; $resources):
-  [{apiGroups: [$group], apiVersions: [$version], operations: $operations,
-    resources: $resources, scope: "Namespaced"}];
-def webhook($name; $path; $rules):
-  {name: $name, admissionReviewVersions: ["v1"], sideEffects: "None",
-   failurePolicy: "Fail", matchPolicy: "Equivalent", timeoutSeconds: 5,
-   clientConfig: {caBundle: ("legacy-ca" | @base64), service: {
-     namespace: "ptah-legacy-fixture", name: "ptah-legacy-webhook", path: $path, port: 443}},
-   rules: $rules};
-def normalizeConditions:
-  if has("matchConditions") then
-    .matchConditions |= map(.expression |= gsub("[[:space:]]+"; " "))
-  else . end;
-def mutatingApproval:
-  webhook("mapproval.operator.ptah.dev"; "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval";
-    rules("operator.ptah.dev"; "v1alpha1"; ["CREATE"]; ["ptahschemaapprovals"])) +
-  {reinvocationPolicy: "Never"};
-def validatingApproval:
-  webhook("vapproval.operator.ptah.dev"; "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval";
-    rules("operator.ptah.dev"; "v1alpha1"; ["CREATE", "UPDATE"]; ["ptahschemaapprovals"]));
-def validatingPod:
-  webhook("vpodintent.operator.ptah.dev"; "/validate-v1-pod-ptah-operation-intent";
-    rules(""; "v1"; ["CREATE", "UPDATE"]; ["pods", "pods/ephemeralcontainers", "pods/resize"])) +
-  {objectSelector: {matchLabels: {
-    "app.kubernetes.io/managed-by": "ptah-operator",
-    "app.kubernetes.io/component": "schema-operation"}},
-   matchConditions: [{name: "job-owned-pod", expression:
-     "object.metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true) || (request.operation == 'UPDATE' && oldObject != null && oldObject.metadata.ownerReferences.exists(ref, ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true))"}]};
-.apiVersion == "v1" and .kind == "List" and (.items | length == 5) and
-([.items[] | select(.kind == "CustomResourceDefinition")] | length == 3 and
-  (map(.metadata.name) | sort) == [
-    "ptahschemaapprovals.operator.ptah.dev", "ptahschemaplans.operator.ptah.dev", "ptahschemas.operator.ptah.dev"] and
-  all(.apiVersion == "apiextensions.k8s.io/v1" and legacyMetadata)) and
-([.items[] | select(.kind == "MutatingWebhookConfiguration")] | length == 1 and
-  all(.apiVersion == "admissionregistration.k8s.io/v1" and
-      .metadata.name == "ptah-operator-admission" and legacyMetadata and
-      .webhooks == [mutatingApproval])) and
-([.items[] | select(.kind == "ValidatingWebhookConfiguration")] | length == 1 and
-  all(.apiVersion == "admissionregistration.k8s.io/v1" and
-      .metadata.name == "ptah-operator-admission" and legacyMetadata and
-      (.webhooks | map(normalizeConditions) | sort_by(.name)) ==
-        ([validatingApproval, validatingPod] | sort_by(.name))))
-EOF
-jq -e -f "$PREDECESSOR_CONTRACT_FILTER" "$PREDECESSOR_CONTRACT" >/dev/null || {
-	printf '%s\n' 'e2e static: archived predecessor is not the exact annotation-free legacy-adoption contract' >&2
-	exit 1
-}
-for predecessor_contract_mutation in \
-	'(.items[] | select(.kind == "CustomResourceDefinition")).metadata.annotations["operator.ptah.dev/crd-schema-version"] = "1"' \
-	'(.items[] | select(.kind == "MutatingWebhookConfiguration")).metadata.annotations["operator.ptah.dev/release-sequence"] = "1"' \
-	'(.items[] | select(.kind == "ValidatingWebhookConfiguration")).webhooks += [{name: "unexpected.operator.ptah.dev"}]' \
-	'(.items[] | select(.kind == "ValidatingWebhookConfiguration")).webhooks[1].objectSelector = {}'; do
-	jq "$predecessor_contract_mutation" "$PREDECESSOR_CONTRACT" >"$PREDECESSOR_CONTRACT_NEGATIVE"
-	if jq -e -f "$PREDECESSOR_CONTRACT_FILTER" "$PREDECESSOR_CONTRACT_NEGATIVE" >/dev/null 2>&1; then
-		printf '%s\n' 'e2e static: legacy-adoption contract check accepted a managed identity or webhook drift' >&2
-		exit 1
-	fi
-done
-printf '%s\n' 'e2e static: archived legacy-adoption CRD and webhook contracts verified'
 # shellcheck disable=SC2016 # These checks intentionally match literal script variables.
 grep -F 'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
-	printf '%s\n' 'e2e static: predecessor source is not materialized with git archive' >&2
+	printf '%s\n' 'e2e static: source snapshots are not materialized with git archive' >&2
 	exit 1
 }
 # shellcheck disable=SC2016 # Match the exact context-bound Buildx invocation.
@@ -425,64 +276,32 @@ grep -F 'ln -s "$BUILDX_PLUGIN_PATH" "$DOCKER_CLI_CONFIG/cli-plugins/docker-buil
 }
 # shellcheck disable=SC2016 # Match the exact context-bound Buildx invocation.
 [ "$(grep -Fc 'docker --context "$DOCKER_CONTEXT" buildx build' \
-	"$ROOT_DIR/hack/e2e-kind.sh")" -eq 5 ] || {
+	"$ROOT_DIR/hack/e2e-kind.sh")" -eq 4 ] || {
 	printf '%s\n' 'e2e static: every task image must use explicit Buildx' >&2
 	exit 1
 }
 # shellcheck disable=SC2016 # Match the exact remote builder binding.
-[ "$(grep -Fc -- '--builder "$DOCKER_CONTEXT"' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 5 ] || {
+[ "$(grep -Fc -- '--builder "$DOCKER_CONTEXT"' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 4 ] || {
 	printf '%s\n' 'e2e static: every task image must bind the selected remote builder' >&2
 	exit 1
 }
-[ "$(grep -Fc -- '--load' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 5 ] || {
+[ "$(grep -Fc -- '--load' "$ROOT_DIR/hack/e2e-kind.sh")" -eq 4 ] || {
 	printf '%s\n' 'e2e static: every task image must load its Buildx result into the selected daemon' >&2
 	exit 1
 }
-# shellcheck disable=SC2016 # This check intentionally matches literal script variables.
-grep -F '"$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_DOCKERFILE"' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
-	printf '%s\n' 'e2e static: predecessor image does not use its archived Dockerfile' >&2
-	exit 1
-}
-# shellcheck disable=SC2016 # This check intentionally matches literal script variables.
-grep -F '"$PREDECESSOR_BUILD_CONTEXT/$PREDECESSOR_CHART"' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
-	printf '%s\n' 'e2e static: predecessor install does not use its archived chart' >&2
-	exit 1
-}
-grep -F 'run_predecessor_upgrade_proof' "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
-	printf '%s\n' 'e2e static: predecessor upgrade proof is not wired into the CRD lifecycle' >&2
-	exit 1
-}
-for predecessor_job_marker in \
-	'wait_for_predecessor_read_only_job() {' \
-	'stage_predecessor_read_only_job_completion' \
-	'stage_predecessor_read_only_job_uid_gap' \
-	'wait_for_predecessor_read_only_job_cleanup'; do
-	grep -F "$predecessor_job_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
-		printf '%s\n' 'e2e static: predecessor read-only Job cleanup proof is incomplete' >&2
+for read_only_job_marker in \
+	'dispatch_read_only_job_fixture() {' \
+	'stage_read_only_job_completion' \
+	'stage_read_only_job_uid_gap' \
+	'wait_for_read_only_job_cleanup' \
+	'quiesce_read_only_job_schema'; do
+	grep -F "$read_only_job_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
+		printf '%s\n' 'e2e static: read-only Job cleanup proof is incomplete' >&2
 		exit 1
 	}
 done
-# shellcheck disable=SC2016 # These checks intentionally match literal harness variables.
-for predecessor_apply_marker in \
-	'prepare_predecessor_apply_fixture() {' \
-	'start_predecessor_apply_barrier' \
-	'start_predecessor_apply_fixture' \
-	'wait_for_predecessor_apply_barrier_contention' \
-	'stage_predecessor_apply_job_uid_gap_while_running' \
-	'assert_predecessor_apply_remains_exclusive_while_running' \
-	'assert_predecessor_apply_barrier_contended' \
-	'release_predecessor_apply_barrier' \
-	'wait_for_predecessor_apply_job_terminal' \
-	'wait_for_predecessor_apply_job_cleanup' \
-	'go -C "$ROOT_DIR" run ./hack/predecessorapplyfixture'; do
-	grep -F "$predecessor_apply_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
-		printf '%s\n' 'e2e static: predecessor running Apply cleanup proof is incomplete' >&2
-		exit 1
-	}
-done
-[ "$(grep -Fc 'assert_predecessor_apply_remains_exclusive_while_running' \
-	"$ROOT_DIR/hack/e2e-crd-upgrade.sh")" -eq 2 ] || {
-	printf '%s\n' 'e2e static: predecessor running Apply cleanup proof is not called exactly once' >&2
+[ "$(grep -Fc 'dispatch_read_only_job_fixture' "$ROOT_DIR/hack/e2e-crd-upgrade.sh")" -eq 3 ] || {
+	printf '%s\n' 'e2e static: read-only Job fixture must be dispatched once per release under proof' >&2
 	exit 1
 }
 # shellcheck disable=SC2016 # These checks intentionally match literal harness variables.
@@ -599,39 +418,23 @@ for controller_schema_marker in \
 done
 release_values_section=$(sed -n '/^render_release_values()/,/^}/p' "$ROOT_DIR/hack/e2e-kind.sh")
 [ -n "$release_values_section" ] || {
-	printf '%s\n' 'e2e static: separate predecessor and candidate values helper is missing' >&2
+	printf '%s\n' 'e2e static: release values helper is missing' >&2
 	exit 1
 }
 export E2E_EXECUTOR_IMAGE=e2e.invalid/executor@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export E2E_RUNNER_IMAGE=e2e.invalid/runner@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-export E2E_PTAH_VERSION=predecessor-values-proof
+export E2E_PTAH_VERSION=release-values-proof
 export RUNTIME_FULLNAME=rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
 eval "$release_values_section"
-render_release_values "$PREDECESSOR_VALUES_FIXTURE" predecessor.invalid/operator old \
-	sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd \
-	predecessor-registry-pull
 render_release_values "$CANDIDATE_VALUES_FIXTURE" candidate.invalid/operator new \
 	sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
 	candidate-registry-pull
 jq -e '
   .fullnameOverride == "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr" and
-  .image.repository == "predecessor.invalid/operator" and
-  .image.tag == "old" and
-  .image.digest == "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" and
-  .image.allowMutableTag == false and
-  .image.pullPolicy == "IfNotPresent" and
-  .imagePullSecrets == [{name: "predecessor-registry-pull"}] and
-  (.image | has("testIdentityDigest") | not)
-' "$PREDECESSOR_VALUES_FIXTURE" >/dev/null || {
-	printf '%s\n' 'e2e static: predecessor values lost the production digest-pinned image contract' >&2
-	exit 1
-}
-jq -e '
-  .fullnameOverride == "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr" and
   .image.repository == "candidate.invalid/operator" and
   .image.tag == "new" and
   .image.digest == "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" and
-  .image.allowMutableTag == false and
+  (.image | has("allowMutableTag") | not) and
   .image.pullPolicy == "IfNotPresent" and
   .imagePullSecrets == [{name: "candidate-registry-pull"}] and
   (.image | has("testIdentityDigest") | not)
@@ -1339,10 +1142,13 @@ for ha_marker in \
 	"wait_for_failed_resolve_lifecycle \"\$ha_schema_uid\"" \
 	"assert_custom_operator_metrics \"\$second_holder\"" \
 	'--cascade=background' \
-	'wait --for=delete pod' \
+	'operation_pod_deadline' \
 	'background Job deletion left orphan operation Pods' \
 	'e2e HA: PASS one Lease, exact RBAC, Pod failover, admitted operation, and custom metrics'; do
-	grep -F -- "$ha_marker" "$ROOT_DIR/hack/e2e-ha.sh" >/dev/null
+	grep -F -- "$ha_marker" "$ROOT_DIR/hack/e2e-ha.sh" >/dev/null || {
+		printf 'e2e static: live HA proof marker is missing: %s\n' "$ha_marker" >&2
+		exit 1
+	}
 done
 for approval_plan_marker in \
 	"policy_uid=\$(k -n \"\$TEST_NAMESPACE\" get configmap" \
@@ -1490,7 +1296,7 @@ for reconciliation_cadence_marker in \
 	"APPROVAL_INTERVAL=\${E2E_APPROVAL_INTERVAL:-5m}" \
 	"STALE_APPROVAL_INTERVAL=\${E2E_STALE_APPROVAL_INTERVAL:-4m}" \
 	"QUIESCENT_INTERVAL=\${E2E_QUIESCENT_INTERVAL:-30m}" \
-	"BLOCKED_REFRESH_SECONDS=\${E2E_BLOCKED_REFRESH_SECONDS:-30}" \
+	"BLOCKED_REFRESH_SECONDS=\${E2E_BLOCKED_REFRESH_SECONDS:-90}" \
 	"minimum_gate_timeout=\$((BLOCKED_REFRESH_SECONDS * 3 + 120))" \
 	"resource_interval=\${10:-\$APPROVAL_INTERVAL}" \
 	"--arg interval \"\$resource_interval\"" \
@@ -1604,7 +1410,7 @@ for next_release_harness_marker in \
 		'synthetic next-release harness'
 done
 # The same exact current-release values and image identity must reach both the
-# predecessor upgrade proof and the final fresh-install proof.
+# upgrade proof and the final fresh-install proof.
 # shellcheck disable=SC2016 # Exact handoff markers retain shell variables literally.
 static_require_count "$next_release_harness_source" \
 	'E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE' 2 \
@@ -1615,8 +1421,8 @@ static_require_count "$next_release_harness_source" \
 	'candidate image handoff to upgrade and fresh-install proofs'
 # shellcheck disable=SC2016 # Count the literal immutable source repository reads.
 static_require_count "$next_release_harness_source" \
-	'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' 3 \
-	'exact snapshot verification, predecessor, and next-release source archives'
+	'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' 2 \
+	'exact snapshot verification and next-release source archives'
 # shellcheck disable=SC2016 # Exact sequence-derivation markers retain runtime variables literally.
 for release_sequence_derivation_marker in \
 	'go_release_sequence_from_source() {' \
@@ -1712,7 +1518,6 @@ static_require_order "$next_release_harness_source" \
 # shellcheck disable=SC2016 # Exact lifecycle markers intentionally retain runtime variables literally.
 for next_release_crd_marker in \
 	'production_controller_image_from_values() {' \
-	'((.testIdentityDigest // "") == "")' \
 	'.repository + "@" + .digest' \
 	'validate_release_sequence_transition() {' \
 	'[ "$E2E_NEXT_RELEASE_SEQUENCE" -eq $((E2E_CURRENT_RELEASE_SEQUENCE + 1)) ]' \
@@ -1721,7 +1526,6 @@ for next_release_crd_marker in \
 	'assert_inventory_resources_absent() {' \
 	'assert_release_sequence_candidate_residue_absent() {' \
 	'run_next_release_upgrade_proof() {' \
-	'helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
 	'assert_release_sequence_candidate_residue_absent "$current_release_sequence"' \
 	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
 	'helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE"' \
@@ -1729,6 +1533,12 @@ for next_release_crd_marker in \
 	static_require_count "$next_release_crd_source" "$next_release_crd_marker" 1 \
 		'synthetic next-release CRD lifecycle'
 done
+# The synthetic next release is applied twice: once behind the late-activation
+# blocker, where it must fail at the reconcile hook, and once for real.
+# shellcheck disable=SC2016 # Exact upgrade marker retains runtime variables literally.
+static_require_count "$next_release_crd_source" \
+	'helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' 2 \
+	'late-activation failure attempt and real next-release upgrade'
 # One retirement transition and all three successful uninstalls must consume
 # the exact sealed kind/name/UID inventories they captured.
 # shellcheck disable=SC2016 # Exact helper call retains runtime variables literally.
@@ -1788,7 +1598,7 @@ static_require_order "$next_release_crd_source" \
 
 # shellcheck disable=SC2016 # Exact handoff markers intentionally retain shell variables literally.
 static_require_order "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
-	'predecessor Apply database barrier handoff' \
+	'external PostgreSQL credential handoff' \
 	'E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT' \
 	'E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID' \
 	'E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP' \
@@ -2020,7 +1830,7 @@ registry_outage_snapshot_section=$(sed -n '/^snapshot_registry_outage_evidence()
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 registry_ready_section=$(sed -n '/^wait_for_registry_http_ready() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
-binding_upgrade_section=$(sed -n '/^upgrade_execution_binding_before_apply() {$/,/^}$/p' \
+binding_refusal_section=$(sed -n '/^refuse_execution_binding_change_in_sequence() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
 digest_pin_section=$(sed -n '/^assert_requested_digest_pin_refusal() {$/,/^}$/p' \
 	"$ROOT_DIR/hack/e2e-dataplane.sh")
@@ -2044,7 +1854,7 @@ for required_static_section in \
 	"$automatic_external_pg_lifecycle_section" \
 	"$external_pg_lifecycle_section" "$external_pg_main_section" \
 	"$registry_outage_section" "$registry_outage_snapshot_section" \
-	"$registry_ready_section" "$binding_upgrade_section" \
+	"$registry_ready_section" "$binding_refusal_section" \
 	"$digest_pin_section" "$source_isolation_section" \
 	"$source_isolation_filter"; do
 	[ -n "$required_static_section" ] || {
@@ -2194,7 +2004,7 @@ for external_contract_marker in \
 	'.HostConfig.PortBindings' \
 	'.NetworkSettings.Ports' \
 	'.HostConfig.Tmpfs' \
-	'length == 1 and .[0].Type == "tmpfs"' \
+	'all(.[]; .Type == "tmpfs" and .Destination == "/var/lib/postgresql/data")' \
 	'keys == ["kind"] and .kind.IPAddress == $address'; do
 	printf '%s\n' "$external_pg_contract_section" | grep -F -- "$external_contract_marker" >/dev/null
 done
@@ -2299,31 +2109,25 @@ static_require_count "$(cat "$ROOT_DIR/hack/e2e-kind.sh")" \
 	'E2E_REGISTRY_PORT=$E2E_REGISTRY_PORT' 1 'registry readiness port handoff'
 
 # shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
-static_require_order "$binding_upgrade_section" 'pre-Apply execution-binding upgrade proof' \
+static_require_order "$binding_refusal_section" 'in-sequence execution-binding refusal proof' \
 	'upgrade_original_ptah_version=$PTAH_VERSION' \
 	'pause_controller_status_writes' \
-	'create_exact_approval "$upgrade_schema" "$upgrade_old_plan" "$upgrade_old_approval"' \
-	'old approval was not bound to the pre-upgrade execution identity' \
-	'assert_no_new_jobs "$upgrade_schema" apply "$upgrade_before"' \
-	'delete deployment "$CONTROLLER_NAME"' \
-	'--cascade=foreground --wait=true' \
-	'wait_for_manager_removed' \
-	'--subresource=status' \
-	'.status.plan.approval == $approval' \
 	'helm --kubeconfig "$KUBECONFIG_FILE" upgrade' \
-	'--set-string execution.ptahVersion="$UPGRADED_PTAH_VERSION"' \
-	'.reason == "ExecutionBindingChanged"' \
-	'assert_plan "$upgrade_schema"' \
-	'assert_no_job_between_checkpoints "$upgrade_schema" apply' \
-	'assert_read_only_chain_between_checkpoints "$upgrade_schema"' \
-	'$old.spec.ptahVersion == $oldVersion' \
-	'$new.spec.ptahVersion == $newVersion'
+	'--set-string execution.ptahVersion="$upgrade_new_version"' \
+	'accepted an execution-binding change inside its release sequence' \
+	'pins the executable contract of release sequence' \
+	'still wrote release revision $upgrade_revision_after' \
+	'.spec.template == $before.spec.template' \
+	'assert_no_job_between_checkpoints "$upgrade_schema" "$upgrade_operation"' \
+	'capture_current_plan "$upgrade_schema"' \
+	'.status.plan.uid == $planUID and .status.plan.approval == null' \
+	'[ "$RBAC_PAUSED" -eq 1 ]'
 
 # shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
 static_require_order "$engine_lifecycle_section" 'binding upgrade and registry outage placement' \
 	'create_schema_resource "$lifecycle_schema"' \
 	'assert_plan "$lifecycle_schema"' \
-	'upgrade_execution_binding_before_apply "$lifecycle_schema"' \
+	'refuse_execution_binding_change_in_sequence "$lifecycle_schema"' \
 	'create_exact_approval "$lifecycle_schema" "$plan_v1"' \
 	'wait_for_one_new_job "$lifecycle_schema" apply "$v1_apply_checkpoint"' \
 	'assert_periodic_noop "$lifecycle_schema" "$PERIODIC_NOOP_CHECKPOINT"' \
@@ -2581,7 +2385,7 @@ source_isolation_live_wiring_count() {
     stage == 7 && $0 ~ /^[[:space:]]*--arg verificationPolicy "\$isolation_verification_policy" \\$/ {
       stage = 8; next
     }
-    stage == 8 && $0 ~ /^[[:space:]]*--arg serviceAccountName "" \\$/ {
+    stage == 8 && $0 ~ /^[[:space:]]*--arg serviceAccountName "default" \\$/ {
       stage = 9; next
     }
     stage == 9 && $0 ~ /^[[:space:]]*--argjson imagePullSecrets "\[\]" \\$/ {
@@ -2990,6 +2794,7 @@ source_job_fixture() {
           podReplacementPolicy: "Failed",
           template: {spec: {
             restartPolicy: "Never",
+            serviceAccountName: "default",
             automountServiceAccountToken: false,
             enableServiceLinks: false,
             dnsPolicy: "ClusterFirst",
@@ -3076,7 +2881,7 @@ source_isolation_matches() {
 			--arg runnerImage \
 			"example.invalid/operator@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" \
 			--arg verificationPolicy verification-policy \
-			--arg serviceAccountName "" \
+			--arg serviceAccountName "default" \
 			--argjson imagePullSecrets "[]" \
 			--arg requestedReference \
 			"oci://registry.example:5000/acme/schema:latest" \
@@ -3146,6 +2951,9 @@ assert_source_isolation_mutation_rejected 'enabled service links' \
 assert_source_isolation_mutation_rejected 'unexpected source service account' \
 	"$source_environment_fixture" Environment \
 	'.items[0].spec.template.spec.serviceAccountName = "credential-bearing"'
+assert_source_isolation_mutation_rejected 'source Job without a service account' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec |= del(.serviceAccountName)'
 assert_source_isolation_mutation_rejected 'database image-pull Secret' \
 	"$source_environment_fixture" Environment \
 	'.items[0].spec.template.spec.imagePullSecrets = [{name: "database-url"}]'
@@ -4142,7 +3950,8 @@ for ledger_selftest_marker in \
 	'existing_archive_identity_collision schema-owner-uid' \
 	'existing_archive_identity_collision schema-owner-missing' \
 	'selected_job_schema_owner_uid_mismatch' \
-	'archive_publication_uses_uid_bounded_log_during_name_reuse'; do
+	'archive_publication_uses_uid_bounded_log_during_name_reuse' \
+	'plan_storage_immutability_successful_path'; do
 	printf '%s\n' "$ledger_selftest_script" | grep -F -- "$ledger_selftest_marker" >/dev/null || {
 		printf 'e2e static: durable Job archive self-test coverage is missing: %s\n' \
 			"$ledger_selftest_marker" >&2
@@ -4957,8 +4766,8 @@ for manager_image_validation in schema template; do
 	test_identity_error=testIdentityDigest
 	if [ "$manager_image_validation" = template ]; then
 		set -- --skip-schema-validation
-		mutable_tag_error='image.allowMutableTag is no longer supported; use image.digest with a registry manifest digest'
-		test_identity_error='image.testIdentityDigest is no longer supported; use image.digest with a registry manifest digest'
+		mutable_tag_error='image.allowMutableTag is not a chart value; use image.digest with a registry manifest digest'
+		test_identity_error='image.testIdentityDigest is not a chart value; use image.digest with a registry manifest digest'
 	fi
 	assert_rejected_manager_image_values "$mutable_tag_error" "$@" \
 		--set image.allowMutableTag=true \
@@ -4982,8 +4791,6 @@ helm template ptah-e2e "$ROOT_DIR/charts/ptah-operator" \
 	--show-only templates/certificate-rotation.yaml \
 	--set-string image.repository=registry.local:5000/ptah-operator \
 	--set-string image.digest=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
-	--set image.allowMutableTag=false \
-	--set-string image.testIdentityDigest= \
 	--set-string execution.executorImage=e2e.invalid/executor@sha256:0000000000000000000000000000000000000000000000000000000000000000 \
 	--set-string execution.runnerImage=e2e.invalid/runner@sha256:1111111111111111111111111111111111111111111111111111111111111111 \
 	--set-string execution.ptahVersion="$STATIC_PTAH_VERSION" \
@@ -5089,12 +4896,12 @@ helm template ptah-e2e-ha "$ROOT_DIR/charts/ptah-operator" \
 	--set-string webhook.caBundle=e2e-ca >"$SHARED_RBAC_RENDER"
 
 for rbac_render in "$DEFAULT_RBAC_RENDER" "$SHARED_RBAC_RENDER"; do
-	[ "$(grep -c '^kind: Role$' "$rbac_render")" -eq 2 ] || {
-		printf 'e2e static: %s does not render exactly two scoped manager Roles\n' "$rbac_render" >&2
+	[ "$(grep -c '^kind: Role$' "$rbac_render")" -eq 3 ] || {
+		printf 'e2e static: %s does not render exactly three scoped manager Roles\n' "$rbac_render" >&2
 		exit 1
 	}
-	[ "$(grep -c '^kind: RoleBinding$' "$rbac_render")" -eq 2 ] || {
-		printf 'e2e static: %s does not render exactly two scoped manager RoleBindings\n' "$rbac_render" >&2
+	[ "$(grep -c '^kind: RoleBinding$' "$rbac_render")" -eq 3 ] || {
+		printf 'e2e static: %s does not render exactly three scoped manager RoleBindings\n' "$rbac_render" >&2
 		exit 1
 	}
 	if awk '
@@ -6182,7 +5989,7 @@ done
 for singleton_guard_marker in \
 	'lookup "admissionregistration.k8s.io/v1" "MutatingWebhookConfiguration"' \
 	'lookup "admissionregistration.k8s.io/v1" "ValidatingWebhookConfiguration"' \
-	'fixed admission singleton' \
+	'is not owned by Helm release' \
 	'pre-upgrade hook'; do
 	grep -F -- "$singleton_guard_marker" "$ROOT_DIR/charts/ptah-operator/templates/_helpers.tpl" >/dev/null
 done
@@ -6199,9 +6006,8 @@ for crd_live_marker in \
 	'CRD hook recreated a missing CRD' \
 	'proving a newer CRD schema version blocks rollback' \
 	'upgrade with a newer CRD schema version' \
-	'proving schema digest adoption and collision rejection' \
-	'exact legacy schema did not adopt the candidate digest' \
-	'upgrade with digestless schema drift' \
+	'proving an incomplete schema identity and a digest collision are refused' \
+	'upgrade with a missing schema digest' \
 	'upgrade with a same-version schema digest collision' \
 	'outdated e2e schema' \
 	'UID, spec, or status changed during CRD management' \
@@ -6213,8 +6019,8 @@ for crd_live_marker in \
 	'leader-election mutation' \
 	'runtime rejection of an incomplete singleton' \
 	'incomplete admission singleton' \
-	'runtime rejection of mismatched ownership' \
-	'mismatched admission singleton' \
+	'proving the admission singleton refuses a foreign owner' \
+	'rejected an unsafe release transition' \
 	'runtime rejection of drifted admission behavior' \
 	'drifted admission behavior' \
 	'failurePolicy","value":"Ignore' \
@@ -6229,7 +6035,10 @@ for crd_live_marker in \
 	'exact exported current-release chart passed fresh install and zero-residue uninstall' \
 	'uninstall retained CRDs and live objects'; do
 	grep -F -- "$crd_live_marker" "$ROOT_DIR/hack/e2e-kind.sh" \
-		"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
+		"$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null || {
+		printf 'e2e static: live CRD proof marker is missing: %s\n' "$crd_live_marker" >&2
+		exit 1
+	}
 done
 
 hook_progress_source=$ROOT_DIR/hack/e2e-crd-upgrade.sh
@@ -6276,10 +6085,10 @@ done
 	exit 1
 }
 printf '%s\n' "$hook_progress_upgrade_section" | awk '
-  /run_predecessor_upgrade_proof/ { predecessor = NR }
+  /proving read-only Job cleanup within the current release/ { fixture = NR }
   /prove_upgrade_hook_progress_guards/ { progress = NR }
   /proving a missing CRD aborts Helm upgrade without recreation/ { missing = NR }
-  END { exit !(predecessor > 0 && predecessor < progress && progress < missing) }
+  END { exit !(fixture > 0 && fixture < progress && progress < missing) }
 ' || {
 	printf '%s\n' 'e2e static: hook progress proof is not ordered after candidate convergence and before later upgrades' >&2
 	exit 1

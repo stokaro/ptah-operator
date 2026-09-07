@@ -219,7 +219,7 @@ func TestRuntimePodIdentityPolicyScopesOptionalServiceAccount(t *testing.T) {
 		)
 	}
 	wantMatch := fmt.Sprintf(
-		`request.namespace == %q && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
+		`request.namespace == %q && request.resource.group == "" && request.resource.resource == "pods" && (((!has(request.subResource) || request.subResource == "") && ((has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName in [%q, %q]) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.serviceAccountName) && dyn(oldObject).spec.serviceAccountName in [%q, %q]))) || (has(request.subResource) && request.subResource != "" && (%s || %s)))`,
 		guard.ReleaseNamespace,
 		guard.ControllerServiceAccountName,
 		guard.CertificateDeploymentName,
@@ -293,7 +293,7 @@ func TestRuntimePodActivationTruthTable(t *testing.T) {
 		wantMatch   bool
 		wantAllow   bool
 	}{
-		{name: "bootstrap annotation-free create is unaffected", operation: "CREATE", actor: "unrelated"},
+		{name: "bootstrap unannotated create is unaffected", operation: "CREATE", actor: "unrelated"},
 		{name: "bootstrap candidate create is denied", marker: 2, markerState: 2, operation: "CREATE", actor: "system:serviceaccount:kube-system:replicaset-controller", wantMatch: true},
 		{name: "active predecessor create is unaffected", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "CREATE", actor: "unrelated"},
 		{name: "active predecessor update is unaffected", active: 1, activeState: 1, marker: 1, markerState: 1, operation: "UPDATE", actor: "system:node:test"},
@@ -364,6 +364,7 @@ func runtimePodActivationCELObject(g *RolloutGuard, marker, state int64) map[str
 func runtimePodActivationCELRequest(g *RolloutGuard, operation, subresource, actor string) map[string]any {
 	request := map[string]any{
 		"operation": operation,
+		"resource":  map[string]any{"group": "", "version": "v1", "resource": "pods"},
 		"namespace": g.ReleaseNamespace,
 		"name":      g.ControllerDeploymentName + "-abc12-xy789",
 		"userInfo":  map[string]any{"username": actor},

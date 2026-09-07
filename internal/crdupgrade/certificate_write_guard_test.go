@@ -97,7 +97,7 @@ func TestCertificateWriteGuardsAreTypedExactAndFailClosed(t *testing.T) {
 			}
 			assertExactCertificateWriteMatch(t, policy.Spec.MatchConstraints, entry.resource)
 			assertExactCertificateWriteMatch(t, binding.Spec.MatchResources, entry.resource)
-			wantUsername := `request.userInfo.username == "system:serviceaccount:ptah-system:ptah-cert-rotator"`
+			wantUsername := `request.userInfo.username == "system:serviceaccount:ptah-system:ptah-cert-rotator" && request.resource.group == "admissionregistration.k8s.io"`
 			if !reflect.DeepEqual(policy.Spec.MatchConditions, []admissionregistrationv1.MatchCondition{{
 				Name: "exact-certificate-service-account", Expression: wantUsername,
 			}}) {
@@ -236,11 +236,19 @@ func TestCertificateWriteGuardConvergenceProbesHaveOnePolicyCause(t *testing.T) 
 			if !evaluatePolicyMatchConditions(t, policy, object, object, request, nil) {
 				continue
 			}
-			matched++
-			if name != entry.name {
-				t.Fatalf("probe for %s also selected certificate policy %s", entry.name, name)
-			}
 			results := evaluatePolicyValidations(t, policy, object, object, request, nil)
+			if name != entry.name {
+				// The union selector lets every stable guard see the probe; a
+				// foreign guard escapes its native validations and must not
+				// answer in place of the target.
+				for index, allowed := range results {
+					if !allowed {
+						t.Fatalf("probe for %s was denied by certificate policy %s validation %d", entry.name, name, index)
+					}
+				}
+				continue
+			}
+			matched++
 			denied := 0
 			for index, allowed := range results {
 				if allowed {
@@ -440,6 +448,67 @@ func certificateWebhookCELValues(entries []certificateWebhookCELEntry) []any {
 		})
 	}
 	return values
+}
+
+func TestCertificateWebhookEntriesValidationRefusesAFieldChangeBesideTheCABundle(t *testing.T) {
+	t.Parallel()
+
+	// The rotator may replace the CA bundle of a webhook that points at the
+	// release's own Service. CEL binds && tighter than ||, so an alternative
+	// written without parentheses inside the conjunction would put every field
+	// comparison in its right branch and skip them whenever the bundle write
+	// qualifies, letting one write carry any other change with it.
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("oldObject", celgo.DynType),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expression := certificateWebhookEntriesValidation(
+		"ptah-system", "ptah-webhook", "ptah-cert-transition", "canary.example", true,
+	)
+	ast, issues := environment.Compile(expression)
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile certificate write CEL: %v", issues.Err())
+	}
+	program, programErr := environment.Program(ast)
+	if programErr != nil {
+		t.Fatalf("build certificate write CEL program: %v", programErr)
+	}
+	webhook := func(bundle, reinvocation string) map[string]any {
+		return map[string]any{
+			"name": "managed.example",
+			"clientConfig": map[string]any{
+				"service":  map[string]any{"namespace": "ptah-system", "name": "ptah-webhook"},
+				"caBundle": bundle,
+			},
+			"reinvocationPolicy": reinvocation,
+		}
+	}
+	evaluate := func(newWebhook map[string]any) bool {
+		t.Helper()
+		result, _, evalErr := program.Eval(map[string]any{
+			"object":    map[string]any{"webhooks": []any{newWebhook}},
+			"oldObject": map[string]any{"webhooks": []any{webhook("old-ca", "Never")}},
+		})
+		if evalErr != nil {
+			t.Fatalf("evaluate certificate write CEL: %v", evalErr)
+		}
+		admitted, ok := result.Value().(bool)
+		if !ok {
+			t.Fatalf("certificate write CEL result = %T(%v), want bool", result.Value(), result.Value())
+		}
+		return admitted
+	}
+	// The control: replacing only the CA bundle of the release's own webhook is
+	// what the rotator exists to do, so the refusal below is the second change.
+	if !evaluate(webhook("new-ca", "Never")) {
+		t.Fatal("certificate write CEL refused a bounded CA-bundle rotation")
+	}
+	if evaluate(webhook("new-ca", "IfNeeded")) {
+		t.Fatal("certificate write CEL admitted a reinvocationPolicy change beside the CA bundle")
+	}
 }
 
 func TestCertificateWriteGuardFieldCoverageMatchesKubernetesTypes(t *testing.T) {
@@ -750,8 +819,12 @@ func stripStableAdmissionConvergenceDependencyProbeForTest(
 		releaseNamespace,
 		serviceAccountObjectGuardMarkerPattern(releaseNamespace, releaseName),
 	)
+	wantAnyExpression := stableAdmissionConvergenceAnyProbeRequestExpression(
+		releaseNamespace,
+		serviceAccountObjectGuardMarkerPattern(releaseNamespace, releaseName),
+	)
 	if len(policy.Spec.Variables) < 2 ||
-		policy.Spec.Variables[0] != (admissionregistrationv1.Variable{Name: "isAnyAdmissionConvergenceProbe", Expression: wantExpression}) ||
+		policy.Spec.Variables[0] != (admissionregistrationv1.Variable{Name: "isAnyAdmissionConvergenceProbe", Expression: wantAnyExpression}) ||
 		policy.Spec.Variables[1] != (admissionregistrationv1.Variable{Name: "isAdmissionConvergenceProbe", Expression: wantExpression}) {
 		t.Fatalf("stable dependency variables differ from the policy-specific selector: %#v", policy.Spec.Variables)
 	}
@@ -774,7 +847,7 @@ func stripStableAdmissionConvergenceDependencyProbeForTest(
 	native.Spec.MatchConstraints.ResourceRules = native.Spec.MatchConstraints.ResourceRules[:len(native.Spec.MatchConstraints.ResourceRules)-1]
 	native.Spec.Variables = native.Spec.Variables[2:]
 	native.Spec.Validations = native.Spec.Validations[:len(native.Spec.Validations)-2]
-	matchPrefix := "(" + wantExpression + ") || ("
+	matchPrefix := "(" + wantAnyExpression + ") || ("
 	for index := range native.Spec.MatchConditions {
 		expression := native.Spec.MatchConditions[index].Expression
 		if !strings.HasPrefix(expression, matchPrefix) || !strings.HasSuffix(expression, ")") {
@@ -837,4 +910,90 @@ func jsonFieldNames(typeOf reflect.Type) []string {
 		}
 	}
 	return fields
+}
+
+// The runtime verifier in the certificate rotator probes every dependency
+// policy under the certificate principal, which these guards match by name.
+// A probe of a foreign family must pass through each of them untouched: the
+// target policy alone answers it.
+func TestCertificateWriteGuardsAdmitForeignConvergenceProbesUnderTheCertificatePrincipal(t *testing.T) {
+	t.Parallel()
+
+	guard := testCertificateWriteGuard()
+	markerName := AdmissionConvergenceMarkerName(guard.ReleaseNamespace, guard.ReleaseName, 1)
+	marker := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name": markerName, "namespace": guard.ReleaseNamespace,
+			"managedFields": []any{map[string]any{"manager": "helm"}},
+		},
+	}
+	probed := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name": markerName, "namespace": guard.ReleaseNamespace,
+			"managedFields": []any{map[string]any{"manager": "helm"}, map[string]any{"manager": "probe"}},
+		},
+	}
+	username := "system:serviceaccount:" + guard.ReleaseNamespace + ":" + guard.CertificateServiceAccountName
+	fieldManagers := map[string]string{
+		"dependency probe":              admissionConvergenceProbeFieldManagerPrefix + strings.Repeat("b", 64),
+		"stable probe of another guard": stableAdmissionConvergenceProbeFieldManagerPrefix("another-policy") + strings.Repeat("c", 64),
+		"service account object probe":  serviceAccountObjectProbeFieldManagerPrefix + strings.Repeat("d", 64),
+	}
+	for _, entry := range guard.entries() {
+		policy := guard.policy(entry)
+		for family, fieldManager := range fieldManagers {
+			request := map[string]any{
+				"operation": "UPDATE",
+				"namespace": guard.ReleaseNamespace,
+				"name":      markerName,
+				"dryRun":    true,
+				"resource":  map[string]any{"group": "", "version": "v1", "resource": "configmaps"},
+				"options":   map[string]any{"fieldManager": fieldManager},
+				"userInfo":  map[string]any{"username": username},
+			}
+			if !evaluatePolicyMatchConditions(t, policy, probed, marker, request, nil) {
+				t.Fatalf("%s under the certificate principal escaped %s entirely", family, entry.name)
+			}
+			for index, allowed := range evaluatePolicyValidations(t, policy, probed, marker, request, nil) {
+				if !allowed {
+					t.Fatalf("%s under the certificate principal was denied by %s validation %d", family, entry.name, index)
+				}
+			}
+		}
+	}
+}
+
+// The admission canary proves convergence with dry-run updates of its own
+// marker ConfigMap under the certificate principal, judged by the canary
+// webhooks. The certificate write guards must leave that request to them: a
+// ConfigMap under the certificate principal is matched only as a probe.
+func TestCertificateWriteGuardsLeaveTheCanaryMarkerToTheCanaryWebhooks(t *testing.T) {
+	t.Parallel()
+
+	guard := testCertificateWriteGuard()
+	marker := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": "ptah-webhook-certificate-canary", "namespace": guard.ReleaseNamespace},
+	}
+	for _, fieldManager := range []string{"ptah-certificate-rotation-canary-mutate-v1", "ptah-certificate-rotation-canary-validate-v1"} {
+		request := map[string]any{
+			"operation": "UPDATE",
+			"namespace": guard.ReleaseNamespace,
+			"name":      "ptah-webhook-certificate-canary",
+			"dryRun":    true,
+			"resource":  map[string]any{"group": "", "version": "v1", "resource": "configmaps"},
+			"options":   map[string]any{"fieldManager": fieldManager},
+			"userInfo":  map[string]any{"username": "system:serviceaccount:" + guard.ReleaseNamespace + ":" + guard.CertificateServiceAccountName},
+		}
+		for _, entry := range guard.entries() {
+			if evaluatePolicyMatchConditions(t, guard.policy(entry), marker, marker, request, nil) {
+				t.Fatalf("%s matched the canary marker update under %s", entry.name, fieldManager)
+			}
+		}
+	}
 }

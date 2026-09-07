@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net"
 	"slices"
@@ -65,6 +66,10 @@ type Config struct {
 	SecretCreatePolicyBindingName  string
 	SecretCreateServiceAccountName string
 	RecreateMissingSecret          bool
+	// Logger, when set, receives one line per reconciliation step so a
+	// reconciliation that blocks inside a wait says where. It never receives
+	// key or certificate material.
+	Logger *slog.Logger
 
 	RenewalThreshold           time.Duration
 	ServingCertificateValidity time.Duration
@@ -174,6 +179,7 @@ func (r *Rotator) Run(ctx context.Context) (runErr error) {
 	if err != nil {
 		return fmt.Errorf("acquire certificate rotation lease: %w", err)
 	}
+	r.logStep("acquired certificate rotation lease")
 	defer func() {
 		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
@@ -191,11 +197,29 @@ func (r *Rotator) Run(ctx context.Context) (runErr error) {
 	return nil
 }
 
+// loggableProbeError keeps a transport or verification failure verbatim and
+// reduces a Kubernetes API error to its reason.
+func loggableProbeError(err error) string {
+	var status apierrors.APIStatus
+	if errors.As(err, &status) {
+		return string(status.Status().Reason)
+	}
+	return err.Error()
+}
+
+// logStep records one reconciliation step through the configured logger.
+func (r *Rotator) logStep(msg string, args ...any) {
+	if r.config.Logger != nil {
+		r.config.Logger.Info(msg, args...)
+	}
+}
+
 func (r *Rotator) reconcile(ctx context.Context) error {
 	staging, pending, err := r.readStagingSecret(ctx)
 	if err != nil {
 		return err
 	}
+	r.logStep("read certificate rotation staging Secret", "pending", pending != nil)
 	secret, err := r.client.CoreV1().Secrets(r.config.Namespace).Get(ctx, r.config.SecretName, metav1.GetOptions{})
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
@@ -253,6 +277,7 @@ func (r *Rotator) reconcile(ctx context.Context) error {
 	}
 
 	if secret == nil {
+		r.logStep("generated TLS Secret is missing", "recreate", r.config.RecreateMissingSecret)
 		if !r.config.RecreateMissingSecret {
 			return fmt.Errorf("generated TLS Secret %q is missing and recreation is disabled", r.config.SecretName)
 		}
@@ -272,6 +297,7 @@ func (r *Rotator) reconcile(ctx context.Context) error {
 		return err
 	}
 
+	r.logStep("inspected generated TLS Secret", "rotateCA", state.rotateCA, "rotateServing", state.rotateServing, "normalizeSecret", state.normalizeSecret)
 	switch {
 	case state.rotateCA:
 		return r.rotateCA(ctx, staging, secret, state, mutatingBundles, validatingBundles)
@@ -854,6 +880,12 @@ func (r *Rotator) probeCertificate(
 			} else {
 				return nil
 			}
+		}
+		if err != nil && (lastErr == nil || err.Error() != lastErr.Error()) {
+			// A TLS or verification failure names certificates, never keys;
+			// an API error is reduced to its reason so no object body is
+			// logged.
+			r.logStep("webhook endpoint certificate probe failed", "identityOnly", identityOnly, "error", loggableProbeError(err))
 		}
 		lastErr = err
 		select {

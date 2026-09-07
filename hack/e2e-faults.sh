@@ -29,7 +29,6 @@ SHARED_OBSERVED_JOBS_FILE=${E2E_OBSERVED_JOBS_FILE:-}
 # subprocesses.
 unset protected_value base_url new_url url_value aliased_url PRINCIPAL_PASSWORD
 
-CONTROLLER_NAME="${HELM_RELEASE}-ptah-operator"
 LEADER_LEASE=ptah-operator.operator.ptah.dev
 PG_SERVICE=e2e-postgresql
 PG_BASE_SECRET=e2e-postgresql-db
@@ -148,6 +147,19 @@ minimum_timeout_seconds=$((FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS + 60))
 k() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" "$@"
 }
+
+# The chart derives the controller's object names from the release through its
+# own naming rules, and the ServiceAccount it runs as carries the
+# controller-state version, so neither can be spelled from the release name.
+# The ClusterRole this phase patches shares the Deployment's name.
+CONTROLLER_NAME=$(k -n "$OPERATOR_NAMESPACE" get deployment \
+	-l app.kubernetes.io/component=controller \
+	-o jsonpath='{.items[0].metadata.name}')
+[ -n "$CONTROLLER_NAME" ] || fail "installed controller Deployment is missing"
+CONTROLLER_SERVICE_ACCOUNT=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" \
+	-o jsonpath='{.spec.template.spec.serviceAccountName}')
+[ -n "$CONTROLLER_SERVICE_ACCOUNT" ] ||
+	fail "installed controller Deployment $CONTROLLER_NAME has no ServiceAccount"
 
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-fault-e2e.XXXXXX")
 chmod 700 "$WORK_DIR"
@@ -300,7 +312,7 @@ wait_for_controller_status_authorization() {
 		maybe_audit_fault_runtime
 		rbac_answer=$(k auth can-i patch ptahschemas.operator.ptah.dev \
 			--subresource=status \
-			--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${CONTROLLER_NAME}" 2>/dev/null || true)
+			--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${CONTROLLER_SERVICE_ACCOUNT}" 2>/dev/null || true)
 		[ "$rbac_answer" = "$expected_answer" ] && return 0
 		sleep 1
 	done
@@ -4278,7 +4290,12 @@ load_ready_manager_leader
 OLD_MANAGER_POD_NAME=$MANAGER_POD_NAME
 OLD_MANAGER_POD_UID=$MANAGER_POD_UID
 start_follow_logs "$OPERATOR_NAMESPACE" "$OLD_MANAGER_POD_NAME" manager-restart "$OLD_MANAGER_POD_UID"
-k -n "$OPERATOR_NAMESPACE" rollout restart deployment/"$CONTROLLER_NAME" >/dev/null
+# The retained runtime guard pins the release's Deployments, so a rollout
+# restart, which writes a Pod-template annotation, is refused. Replacing the
+# Pods is what this proof needs and what the guard leaves to the ReplicaSet.
+k -n "$OPERATOR_NAMESPACE" delete pod \
+	-l "app.kubernetes.io/name=ptah-operator,app.kubernetes.io/instance=${HELM_RELEASE},app.kubernetes.io/component=controller" \
+	--wait=false >/dev/null
 k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" --timeout="${TIMEOUT_SECONDS}s" >/dev/null
 finish_follow_logs "old manager logs through the restart"
 load_ready_manager_pod_uids

@@ -2,12 +2,25 @@
 
 ## Installation and upgrades
 
+Helm 4 or newer is required, and every lifecycle contour is verified against
+it. Helm 3 is not supported: it reaches end of life before this operator's
+first release, and it applies client-side, so the release's objects carry no
+server-side apply ownership for a later upgrade to take back.
+
 Install CRDs and the controller through the Helm chart. Supply digest-pinned
 manager, executor, and runner images. The chart refuses all three when only a
 tag is supplied. Manager Pods, hooks, and controller identity all use the same
 `image.repository@image.digest` reference. See the
 [installation example](../README.md#install-from-this-checkout) for the required
 values.
+
+Upgrades are supported from the first published release onward. Every release
+since then stamps the CRDs with the schema version, schema digest, and
+controller-state version, and the admission singletons and parent-origin
+policies with their release identity. An installation that carries none of
+that is not an upgrade source: the chart refuses the upgrade before any
+change, and the [offline migration](#offline-singleton-migration) below is
+the way forward.
 
 For local development, push the built image to a registry reachable from every
 cluster node and use the registry's manifest digest in `image.digest`; set
@@ -17,11 +30,11 @@ to configure node access. If authentication is required, create the release
 namespace and image pull Secret before running Helm, then select the Secret
 through `imagePullSecrets` so installation hooks can pull their image too.
 
-The former local-tag mode is unsupported. `image.allowMutableTag` and
-`image.testIdentityDigest` remain only for compatibility with existing values
-files and must be `false` and empty, respectively. Replace the former test
-settings with `image.digest`; the chart rejects them even when a digest is
-also supplied.
+There is no local-tag mode. `image.allowMutableTag` and
+`image.testIdentityDigest` are not chart values: a values file that still
+names either fails schema validation, and a render that skips schema
+validation refuses them by name, even when `image.digest` is also supplied.
+Replace them with `image.digest`.
 
 An initial installation has an explicit bootstrap trust boundary. The same
 boundary applies to the first upgrade from a release that did not install the
@@ -99,17 +112,15 @@ files or a complete baseline carrying neither owned annotation, and only when
 the candidate is the complete generated set at shared schema version 1. A
 partial baseline remains a set-integrity failure rather than a bootstrap.
 
-A missing version or digest is accepted only when the live normalized CRD
-`spec` already matches the candidate exactly; the hook then performs an
-annotation-only legacy identity adoption. A malformed annotation, an incomplete
-identity plus any schema difference, or a same-version digest collision fails
-before all CRD mutations. For such an installation, keep the managers offline
-and restore or select the historical operator release whose generated schema
-exactly matches the live CRD. Let that release adopt the complete identity,
-then upgrade through versioned schemas. If no matching release can be
-identified, back up every CRD and custom resource and perform a separately
-reviewed offline schema migration. The operator intentionally provides no
-value that labels an unknown schema as trusted.
+A CRD that lacks the schema version or the schema digest is refused before
+any CRD mutation, even when its live normalized `spec` matches the candidate
+exactly. A malformed annotation, an incomplete identity plus any schema
+difference, and a same-version digest collision are refused the same way.
+For such an installation, keep the managers offline and restore the identity
+the release that created the CRD stamped on it, or reinstall from the first
+published release after backing up every CRD and custom resource. The
+operator intentionally provides no value that labels an unknown schema as
+trusted.
 
 Before starting a manager, the init verifier scans every `PtahSchema`,
 `PtahSchemaPlan`, and `PtahSchemaApproval` across the cluster. It checks
@@ -382,18 +393,28 @@ CRDs immediately before allowing the process to start. A losing release or a
 Pod launched while Helm is repairing a drifted singleton can neither reconcile
 schemas nor patch the winning release's CA bundle.
 
+Running `helm upgrade` again with the release that is already active, the
+shape a GitOps re-sync or a values-only change produces, leaves the runtime
+running. The preflight and reconcile hooks verify the retained guards and the
+durable activation parameter as on any upgrade, find both runtime Deployments
+carrying the active release's identity with their replicas up, and report that
+there is no stop transition to perform; the retained runtime guard admits a
+stop only toward a newer release. Helm then applies the unchanged manifests. A
+retry of an interrupted transition is different: its Deployments are still
+stopped or still stamped with the older release, and the hooks resume that
+transition.
+
 ### Offline singleton migration
 
-Do not change singleton annotations merely to make an online upgrade pass. To
-adopt a legacy installation that predates the annotations, first establish that
-the fixed configurations are owned by the one intended release. Suspend every
-`PtahSchema`, wait for every operation Job to finish, place the databases in a
-maintenance window, and scale the manager and certificate-rotation Deployments
-to zero. Annotate both `ptah-operator-admission` configurations with the actual
-release name, release namespace, effective coordination namespace,
-leader-election setting, and the fixed ID
-`ptah-operator.operator.ptah.dev`. Upgrade that same release, verify its CRDs
-and Pods, then restore replicas and resume reconciliation.
+Do not change singleton annotations merely to make an online upgrade pass. An
+installation whose `ptah-operator-admission` configurations carry no release
+identity predates the first published release, and the chart does not adopt
+it. Suspend every `PtahSchema`, wait for every operation Job to finish, place
+the databases in a maintenance window, and scale the manager and
+certificate-rotation Deployments to zero. Back up all Ptah custom resources,
+uninstall the release, verify that the three CRDs and their objects remain,
+then install one release of the first published version or newer, verify its
+CRDs and Pods, and resume the schemas.
 
 Changing an established coordination namespace or leader-election mode is a
 full offline migration, not an upgrade. After the same suspension, job drain,

@@ -20,6 +20,9 @@ removed with a broad cleanup operation.
 
 The local client needs Docker, kind, kubectl, Helm, Go, Git, OpenSSL, jq, SSH,
 curl, and htpasswd.
+Helm must be version 4 or newer, and the driver refuses an older one: the suite
+reads the field ownership Helm's server-side apply leaves behind, which Helm 3
+does not produce.
 The Kind version must exactly match `support/kubernetes.json`; kubectl must be
 within one minor of the selected API server. The selected remote host only
 needs the Docker daemon represented by the chosen context.
@@ -79,6 +82,15 @@ prints the stderr of an upgrade Helm refused before it wrote a revision: a
 template `fail` or a values-schema rejection leaves no hook, no pod and no
 revision to inspect, so that stderr is the only record of which template
 refused and why.
+
+`E2E_KEEP_ON_FAILURE=1` keeps what a failed run would otherwise remove: the kind
+cluster with its kubeconfig, the registry and database containers, the work
+directory, and, when the failure is inside the CRD upgrade phase, that phase's
+work directory and every proof object it created. A refusal is then read from
+the objects that produced it instead of reconstructed from a log, and a single
+phase can be replayed against the retained cluster in minutes rather than
+through a fresh run. Nothing in CI sets it; the run names what it kept, and the
+caller removes those resources by name afterwards.
 
 Set `E2E_RUN_ID` to a CI run identifier for deterministic, collision-resistant
 resource names. Local runs include the Git revision and process ID by default.

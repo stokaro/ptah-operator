@@ -497,6 +497,18 @@ func TestPodIntentMatchExpressionScopesManagedAndCanonicalJobPods(t *testing.T) 
 			object: pod(nil, "database-backup"), want: false,
 		},
 		{
+			// A Pod nobody controls carries no ownerReferences key; the
+			// expression must answer false there rather than error, because a
+			// match-condition error fails closed and refuses the Pod.
+			name: "new owner-less foreign Pod", operation: "CREATE",
+			object: map[string]any{"metadata": map[string]any{}}, want: false,
+		},
+		{
+			name: "owner-less foreign Pod update", operation: "UPDATE",
+			object:    map[string]any{"metadata": map[string]any{"labels": partialLabels}},
+			oldObject: map[string]any{"metadata": map[string]any{}}, want: false,
+		},
+		{
 			name: "new partially labeled unrelated Pod", operation: "CREATE",
 			object: pod(partialLabels, ""), want: false,
 		},
@@ -1234,8 +1246,6 @@ func (c *validatingAdmissionClient) Get(_ context.Context, name string, _ metav1
 
 var _ MutatingWebhookClient = (*mutatingAdmissionClient)(nil)
 var _ ValidatingWebhookClient = (*validatingAdmissionClient)(nil)
-var _ MutatingWebhookUpdater = (*mutatingAdmissionClient)(nil)
-var _ ValidatingWebhookUpdater = (*validatingAdmissionClient)(nil)
 
 type schemaListClient struct {
 	pages                        []*unstructured.UnstructuredList
