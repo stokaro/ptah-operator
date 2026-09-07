@@ -4415,7 +4415,7 @@ assert_source_job_isolation() {
 			--arg executorImage "$EXECUTOR_IMAGE" \
 			--arg runnerImage "$RUNNER_IMAGE" \
 			--arg verificationPolicy "$isolation_verification_policy" \
-			--arg serviceAccountName "" \
+			--arg serviceAccountName "default" \
 			--argjson imagePullSecrets "[]" \
 			--arg requestedReference "$isolation_requested_reference" \
 			--arg resolvedReference "$isolation_resolved_reference" \

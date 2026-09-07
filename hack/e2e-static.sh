@@ -2391,7 +2391,7 @@ source_isolation_live_wiring_count() {
     stage == 7 && $0 ~ /^[[:space:]]*--arg verificationPolicy "\$isolation_verification_policy" \\$/ {
       stage = 8; next
     }
-    stage == 8 && $0 ~ /^[[:space:]]*--arg serviceAccountName "" \\$/ {
+    stage == 8 && $0 ~ /^[[:space:]]*--arg serviceAccountName "default" \\$/ {
       stage = 9; next
     }
     stage == 9 && $0 ~ /^[[:space:]]*--argjson imagePullSecrets "\[\]" \\$/ {
@@ -2800,6 +2800,7 @@ source_job_fixture() {
           podReplacementPolicy: "Failed",
           template: {spec: {
             restartPolicy: "Never",
+            serviceAccountName: "default",
             automountServiceAccountToken: false,
             enableServiceLinks: false,
             dnsPolicy: "ClusterFirst",
@@ -2886,7 +2887,7 @@ source_isolation_matches() {
 			--arg runnerImage \
 			"example.invalid/operator@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" \
 			--arg verificationPolicy verification-policy \
-			--arg serviceAccountName "" \
+			--arg serviceAccountName "default" \
 			--argjson imagePullSecrets "[]" \
 			--arg requestedReference \
 			"oci://registry.example:5000/acme/schema:latest" \
@@ -2956,6 +2957,9 @@ assert_source_isolation_mutation_rejected 'enabled service links' \
 assert_source_isolation_mutation_rejected 'unexpected source service account' \
 	"$source_environment_fixture" Environment \
 	'.items[0].spec.template.spec.serviceAccountName = "credential-bearing"'
+assert_source_isolation_mutation_rejected 'source Job without a service account' \
+	"$source_environment_fixture" Environment \
+	'.items[0].spec.template.spec |= del(.serviceAccountName)'
 assert_source_isolation_mutation_rejected 'database image-pull Secret' \
 	"$source_environment_fixture" Environment \
 	'.items[0].spec.template.spec.imagePullSecrets = [{name: "database-url"}]'
