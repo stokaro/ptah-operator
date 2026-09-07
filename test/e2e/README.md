@@ -20,6 +20,9 @@ removed with a broad cleanup operation.
 
 The local client needs Docker, kind, kubectl, Helm, Go, Git, OpenSSL, jq, SSH,
 curl, and htpasswd.
+Helm must be version 4 or newer, and the driver refuses an older one: the suite
+reads the field ownership Helm's server-side apply leaves behind, which Helm 3
+does not produce.
 The Kind version must exactly match `support/kubernetes.json`; kubectl must be
 within one minor of the selected API server. The selected remote host only
 needs the Docker daemon represented by the chosen context.
