@@ -2962,7 +2962,11 @@ prove_controller_write_guard() {
 	stop_controller_deployment
 
 	current_suspend=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
-		jq -er '.spec.suspend // false')
+		jq -r '
+      (.spec.suspend // false) as $suspend |
+      if ($suspend | type) == "boolean" then ($suspend | tostring)
+      else error("schema spec.suspend must be a boolean") end
+    ')
 	suspend_patch=$(jq -cn --argjson current "$current_suspend" '{spec: {suspend: ($current | not)}}')
 	expect_controller_write_denial spec merge "$suspend_patch"
 	expect_controller_write_denial labels merge \

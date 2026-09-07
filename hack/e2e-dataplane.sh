@@ -4035,7 +4035,10 @@ assert_plan_storage_immutable() {
 	immutable_plan_spec_digest="sha256:$(printf '%s\n' "$immutable_plan_object" |
 		jq -cS '.spec' | sha256)"
 	immutable_plan_destructive=$(printf '%s\n' "$immutable_plan_object" |
-		jq -er '.spec.destructive')
+		jq -r '
+      if (.spec.destructive | type) == "boolean" then (.spec.destructive | tostring)
+      else error("plan spec.destructive must be a boolean") end
+    ')
 	if [ "$immutable_plan_destructive" = true ]; then
 		immutable_plan_replacement=false
 	else
