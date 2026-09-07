@@ -738,11 +738,18 @@ audit_fault_runtime() {
         ')
 		[ "$(printf '%s\n' "$audit_job_pods" | jq '.items | length')" -gt 0 ] || continue
 		materialize_fault_job_pod_uids "$audit_job_pods"
-		if ! while IFS= read -r audit_job_pod_uid; do
-				grep -Fx "$audit_job_pod_uid" "$FULLY_AUDITED_FAULT_PODS_FILE" >/dev/null || exit 1
-			done <"$FAULT_JOB_POD_UIDS_FILE"; then
-			continue
-		fi
+		# A loop that is an if condition runs in this shell, so exiting it exits
+		# the phase. Carry the answer in a variable instead: a Job whose Pods are
+		# not all fully audited yet is skipped, not fatal.
+		audit_job_pods_audited=1
+		while IFS= read -r audit_job_pod_uid; do
+			[ -n "$audit_job_pod_uid" ] || continue
+			if ! grep -Fx "$audit_job_pod_uid" "$FULLY_AUDITED_FAULT_PODS_FILE" >/dev/null; then
+				audit_job_pods_audited=0
+				break
+			fi
+		done <"$FAULT_JOB_POD_UIDS_FILE"
+		[ "$audit_job_pods_audited" -eq 1 ] || continue
 		printf '%s\n' "$audit_job_object" >"$RESOURCE_FILE"
 		printf '%s\n' "$audit_job_pods" >>"$RESOURCE_FILE"
 		scan_fault_file "$RESOURCE_FILE" \

@@ -3936,6 +3936,18 @@ static_require_order "$live_job_evidence_section" 'durable Job evidence fail-clo
 	'[ -n "$live_evidence_pod" ]' \
 	'.metadata.name == $podName and .metadata.uid == $podUID' \
 	'.uid == $jobUID and .name == $jobName and .controller == true'
+# A loop that is an if condition runs in this shell, so an exit inside it ends
+# the phase rather than the loop, and the phase dies with no message at all.
+# The shape reads as "run the loop and take its answer", which is why it was
+# written; refuse it, and carry the answer in a variable instead.
+for phase_script in "$ROOT_DIR"/hack/e2e-*.sh; do
+	if grep -nE '^[[:space:]]*if[[:space:]]+(!)?[[:space:]]*while[[:space:]]' \
+		"$phase_script" >/dev/null; then
+		printf 'e2e static: %s uses a loop as an if condition; an exit inside it ends the phase\n' \
+			"${phase_script##*/}" >&2
+		exit 1
+	fi
+done
 ledger_selftest_script=$(sed -n '1,$p' \
 	"$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh")
 for ledger_selftest_marker in \
