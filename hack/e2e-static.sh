@@ -1142,10 +1142,13 @@ for ha_marker in \
 	"wait_for_failed_resolve_lifecycle \"\$ha_schema_uid\"" \
 	"assert_custom_operator_metrics \"\$second_holder\"" \
 	'--cascade=background' \
-	'wait --for=delete pod' \
+	'operation_pod_deadline' \
 	'background Job deletion left orphan operation Pods' \
 	'e2e HA: PASS one Lease, exact RBAC, Pod failover, admitted operation, and custom metrics'; do
-	grep -F -- "$ha_marker" "$ROOT_DIR/hack/e2e-ha.sh" >/dev/null
+	grep -F -- "$ha_marker" "$ROOT_DIR/hack/e2e-ha.sh" >/dev/null || {
+		printf 'e2e static: live HA proof marker is missing: %s\n' "$ha_marker" >&2
+		exit 1
+	}
 done
 for approval_plan_marker in \
 	"policy_uid=\$(k -n \"\$TEST_NAMESPACE\" get configmap" \

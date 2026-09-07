@@ -103,7 +103,13 @@ expect_invalid_schema_reference() {
 	expect_denied "$description" "$pattern" "$invalid_schema_file" "$error_file"
 }
 
-CONTROLLER_NAME="${HELM_RELEASE}-ptah-operator"
+# The chart derives the controller's object names from the release through its
+# own naming rules, so the fullname cannot be spelled from the release name.
+# Every other name here is relative to it, which is why only this one is read.
+CONTROLLER_NAME=$(k -n "$OPERATOR_NAMESPACE" get deployment \
+	-l app.kubernetes.io/component=controller \
+	-o jsonpath='{.items[0].metadata.name}')
+[ -n "$CONTROLLER_NAME" ] || fail "installed controller Deployment is missing"
 
 printf '%s\n' 'e2e assertions: checking manager readiness and chart state'
 h -n "$OPERATOR_NAMESPACE" status "$HELM_RELEASE" >/dev/null
