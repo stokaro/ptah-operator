@@ -53,7 +53,7 @@ for function_name in \
 	assert_schema_job_boundary_unchanged \
 	materialize_archived_schema_jobs \
 	materialize_terminal_job_records materialize_owned_pod_records materialize_manager_pod_names \
-	all_new_jobs_complete capture_selected_job_result; do
+	all_new_jobs_complete capture_selected_job_result assert_plan_storage_immutable; do
 	function_section=$(sed -n "/^${function_name}()/,/^}/p" "$SOURCE_FILE")
 	[ -n "$function_section" ] || test_fail "could not extract $function_name"
 	printf '%s\n' "$function_section" >>"$FUNCTIONS_FILE" ||
@@ -1125,6 +1125,64 @@ fault_successful_paths() (
 		test_fail "fault helpers did not produce one valid parent record per Job UID"
 )
 
+emit_nondestructive_plan() {
+	printf '%s\n' '{
+      "metadata": {"name": "plan-1", "uid": "plan-uid-1", "resourceVersion": "101"},
+      "spec": {
+        "destructive": false,
+        "chunks": [{"name": "plan-1-000", "key": "chunk-0"}]
+      }
+    }'
+}
+
+emit_immutable_plan_chunk() {
+	printf '%s\n' '{
+      "metadata": {
+        "name": "plan-1-000", "uid": "chunk-uid-1", "resourceVersion": "102",
+        "ownerReferences": [{
+          "apiVersion": "operator.ptah.dev/v1alpha1", "kind": "PtahSchemaPlan",
+          "name": "plan-1", "uid": "plan-uid-1", "controller": true
+        }]
+      },
+      "immutable": true,
+      "binaryData": {"chunk-0": "eA=="}
+    }'
+}
+
+# A committed plan is non-destructive far more often than not, and jq -e exits 1
+# on a false value, so reading the flag with -e ended the phase under set -e with
+# no message at all. This case drives the proof against exactly that plan.
+# shellcheck disable=SC2317 # Extracted helpers invoke these test-local kubectl stubs dynamically.
+plan_storage_immutability_successful_path() (
+	reset_fixture
+	kubectl() {
+		plan_stub_verb=
+		plan_stub_kind=
+		for plan_stub_argument in "$@"; do
+			case "$plan_stub_argument" in
+			get | patch)
+				[ -n "$plan_stub_verb" ] || plan_stub_verb=$plan_stub_argument
+				;;
+			ptahschemaplan | configmap)
+				[ -n "$plan_stub_kind" ] || plan_stub_kind=$plan_stub_argument
+				;;
+			esac
+		done
+		case "$plan_stub_verb:$plan_stub_kind" in
+		get:ptahschemaplan) emit_nondestructive_plan ;;
+		get:configmap) emit_immutable_plan_chunk ;;
+		patch:*)
+			printf '%s\n' 'The PtahSchemaPlan "plan-1" is invalid: spec: Invalid value: field is immutable' >&2
+			return 1
+			;;
+		*) return 45 ;;
+		esac
+	}
+	assert_plan_storage_immutable schema-1 plan-1 plan-uid-1 >"$OUTPUT_FILE"
+	grep -F 'immutable plan storage enforced for schema-1 (1 chunks)' "$OUTPUT_FILE" >/dev/null ||
+		test_fail "the plan storage proof did not report the chunk it protected"
+)
+
 # shellcheck disable=SC2317 # Extracted helpers invoke these test-local kubectl stubs dynamically.
 assert_successful_paths() (
 	reset_fixture
@@ -1298,6 +1356,7 @@ archived_lifecycle_gc_successful_path
 existing_archive_exact_identity_successful_path
 archive_publication_uses_uid_bounded_log_during_name_reuse
 schema_boundary_successful_path
+plan_storage_immutability_successful_path
 fault_successful_paths
 
 printf '%s\n' 'e2e ledger self-test: PASS'

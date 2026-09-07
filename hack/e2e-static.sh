@@ -3952,7 +3952,8 @@ for ledger_selftest_marker in \
 	'existing_archive_identity_collision schema-owner-uid' \
 	'existing_archive_identity_collision schema-owner-missing' \
 	'selected_job_schema_owner_uid_mismatch' \
-	'archive_publication_uses_uid_bounded_log_during_name_reuse'; do
+	'archive_publication_uses_uid_bounded_log_during_name_reuse' \
+	'plan_storage_immutability_successful_path'; do
 	printf '%s\n' "$ledger_selftest_script" | grep -F -- "$ledger_selftest_marker" >/dev/null || {
 		printf 'e2e static: durable Job archive self-test coverage is missing: %s\n' \
 			"$ledger_selftest_marker" >&2
