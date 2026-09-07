@@ -254,12 +254,13 @@ read_resolve_operation_failure_counter() {
 }
 
 assert_prior_resolve_metric_sources_quiesced() {
-	k -n "$PROOF_NAMESPACE" get ptahschema predecessor-read-only-job -o json |
-		jq -e '
-          .spec.suspend == true and
-          .status.phase == "Suspended" and
-          .status.activeOperation == null
-        ' >/dev/null || fail "the carried predecessor Resolve metric source is not quiesced"
+	# The upgrade phase leaves the schemas it drove behind, and they are what
+	# produced the Resolve metrics this phase measures a delta against. The
+	# quiescence check below says nothing when there are none, so require the
+	# sources to exist before requiring them to be quiet.
+	k -n "$PROOF_NAMESPACE" get ptahschemas.operator.ptah.dev -o json |
+		jq -e '(.items | length) >= 1' >/dev/null ||
+		fail "the upgrade phase left no Resolve metric source to quiesce"
 	k get ptahschemas.operator.ptah.dev -A -o json |
 		jq -e '
           all(.items[];
