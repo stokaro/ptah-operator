@@ -204,6 +204,9 @@ jq -e \
     .database + "?sslmode=disable")
 ' "$EXTERNAL_PG_CREDENTIALS_FILE" >/dev/null ||
 	fail "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE has an invalid or misbound shape"
+EXTERNAL_PG_FIXTURE_USERNAME=$(jq -er '.username' "$EXTERNAL_PG_CREDENTIALS_FILE")
+EXTERNAL_PG_FIXTURE_PASSWORD=$(jq -er '.password' "$EXTERNAL_PG_CREDENTIALS_FILE")
+EXTERNAL_PG_FIXTURE_DATABASE=$(jq -er '.database' "$EXTERNAL_PG_CREDENTIALS_FILE")
 for image in "$EXECUTOR_IMAGE" "$RUNNER_IMAGE" "$FIXTURE_IMAGE" "$POSTGRES_IMAGE" "$MYSQL_IMAGE"; do
 	is_pinned_image "$image" || fail "data-plane images must be pinned by a lowercase SHA-256 digest: $image"
 done
@@ -2394,12 +2397,18 @@ assert_external_pg_container_contract() {
     ' >/dev/null || fail "external PostgreSQL container left its exact kind-network address"
 }
 
+# The queries below describe the database Ptah connects to, so they are asked
+# with the same login Ptah is given: the container's own POSTGRES_USER is the
+# superuser that created that login, and asking as it would contradict the
+# least-privilege checks this phase makes about the fixture.
 external_pg_query() {
 	external_query=$1
 	assert_external_pg_container_contract
-	docker --context "$DOCKER_CONTEXT" exec "$EXTERNAL_PG_CONTAINER_ID" \
-		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc "$1"' \
-		sh "$external_query"
+	docker --context "$DOCKER_CONTEXT" exec \
+		--env "PGPASSWORD=$EXTERNAL_PG_FIXTURE_PASSWORD" \
+		"$EXTERNAL_PG_CONTAINER_ID" \
+		psql -h 127.0.0.1 -U "$EXTERNAL_PG_FIXTURE_USERNAME" \
+		-d "$EXTERNAL_PG_FIXTURE_DATABASE" -v ON_ERROR_STOP=1 -Atqc "$external_query"
 }
 
 assert_external_pg_server_version() {
