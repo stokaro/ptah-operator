@@ -450,6 +450,67 @@ func certificateWebhookCELValues(entries []certificateWebhookCELEntry) []any {
 	return values
 }
 
+func TestCertificateWebhookEntriesValidationRefusesAFieldChangeBesideTheCABundle(t *testing.T) {
+	t.Parallel()
+
+	// The rotator may replace the CA bundle of a webhook that points at the
+	// release's own Service. CEL binds && tighter than ||, so an alternative
+	// written without parentheses inside the conjunction would put every field
+	// comparison in its right branch and skip them whenever the bundle write
+	// qualifies, letting one write carry any other change with it.
+	environment, err := celgo.NewEnv(
+		celgo.Variable("object", celgo.DynType),
+		celgo.Variable("oldObject", celgo.DynType),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expression := certificateWebhookEntriesValidation(
+		"ptah-system", "ptah-webhook", "ptah-cert-transition", "canary.example", true,
+	)
+	ast, issues := environment.Compile(expression)
+	if issues != nil && issues.Err() != nil {
+		t.Fatalf("compile certificate write CEL: %v", issues.Err())
+	}
+	program, programErr := environment.Program(ast)
+	if programErr != nil {
+		t.Fatalf("build certificate write CEL program: %v", programErr)
+	}
+	webhook := func(bundle, reinvocation string) map[string]any {
+		return map[string]any{
+			"name": "managed.example",
+			"clientConfig": map[string]any{
+				"service":  map[string]any{"namespace": "ptah-system", "name": "ptah-webhook"},
+				"caBundle": bundle,
+			},
+			"reinvocationPolicy": reinvocation,
+		}
+	}
+	evaluate := func(newWebhook map[string]any) bool {
+		t.Helper()
+		result, _, evalErr := program.Eval(map[string]any{
+			"object":    map[string]any{"webhooks": []any{newWebhook}},
+			"oldObject": map[string]any{"webhooks": []any{webhook("old-ca", "Never")}},
+		})
+		if evalErr != nil {
+			t.Fatalf("evaluate certificate write CEL: %v", evalErr)
+		}
+		admitted, ok := result.Value().(bool)
+		if !ok {
+			t.Fatalf("certificate write CEL result = %T(%v), want bool", result.Value(), result.Value())
+		}
+		return admitted
+	}
+	// The control: replacing only the CA bundle of the release's own webhook is
+	// what the rotator exists to do, so the refusal below is the second change.
+	if !evaluate(webhook("new-ca", "Never")) {
+		t.Fatal("certificate write CEL refused a bounded CA-bundle rotation")
+	}
+	if evaluate(webhook("new-ca", "IfNeeded")) {
+		t.Fatal("certificate write CEL admitted a reinvocationPolicy change beside the CA bundle")
+	}
+}
+
 func TestCertificateWriteGuardFieldCoverageMatchesKubernetesTypes(t *testing.T) {
 	t.Parallel()
 

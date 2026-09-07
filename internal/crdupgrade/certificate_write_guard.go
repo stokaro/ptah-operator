@@ -418,8 +418,13 @@ func certificateWebhookEntriesValidation(
 		certificateWebhookServicePort,
 	)
 	mutableTarget := fmt.Sprintf(`((%s) || (%s))`, exactServiceTarget, exactCanaryTarget)
+	// The alternative is parenthesized as a whole. CEL binds && tighter than
+	// ||, so an unparenthesized alternative in a conjunction splits the whole
+	// chain: every field comparison after it would sit in the right branch and
+	// be skipped whenever the left one holds, which let a bounded CA-bundle
+	// write carry any other webhook change with it.
 	mutableCABundle := fmt.Sprintf(
-		`((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= %[4]d) || (!(%[1]s) && %[3]s)`,
+		`(((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= %[4]d) || (!(%[1]s) && %[3]s))`,
 		mutableTarget,
 		newWebhook,
 		certificatePresenceEqual(newWebhook+".clientConfig.caBundle", oldWebhook+".clientConfig.caBundle"),

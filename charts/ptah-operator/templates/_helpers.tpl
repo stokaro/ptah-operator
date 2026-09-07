@@ -811,7 +811,7 @@ crdupgrade compiles the same pattern.
 {{- $exactCanaryTarget := printf `%[1]s.name == %[2]q && has(%[1]s.clientConfig.service) && %[1]s.clientConfig.service.namespace == %[3]q && %[1]s.clientConfig.service.name == %[4]q && (!has(%[1]s.clientConfig.service.port) || %[1]s.clientConfig.service.port == 443)` $newWebhook .canaryName .serviceNamespace .candidateServiceName -}}
 {{- $mutableTarget := printf `((%s) || (%s))` $exactServiceTarget $exactCanaryTarget -}}
 {{- $caBundleEquality := include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.caBundle" $newWebhook) "oldPath" (printf "%s.clientConfig.caBundle" $oldWebhook)) -}}
-{{- $mutableCABundle := printf `((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= 262144) || (!(%[1]s) && %[3]s)` $mutableTarget $newWebhook $caBundleEquality -}}
+{{- $mutableCABundle := printf `(((%[1]s) && has(%[2]s.clientConfig.caBundle) && %[2]s.clientConfig.caBundle.size() > 0 && %[2]s.clientConfig.caBundle.size() <= 262144) || (!(%[1]s) && %[3]s))` $mutableTarget $newWebhook $caBundleEquality -}}
 {{- $parts := list
       (printf `%s.name == %s.name` $oldWebhook $newWebhook)
       (include "ptah-operator.certificatePresenceEqual" (dict "newPath" (printf "%s.clientConfig.service" $newWebhook) "oldPath" (printf "%s.clientConfig.service" $oldWebhook)))
