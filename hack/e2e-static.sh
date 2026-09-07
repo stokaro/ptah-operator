@@ -4142,7 +4142,7 @@ static_require_order "$running_deadline_scenario_section" 'running Apply deadlin
 	'"$MYSQL_TIMEOUT_OPERATION_ID" "$DEADLINE_PTAH_STARTED_AT"' \
 	'stop_mysql_barrier' \
 	'capture_uncertain_read_proof_pair "$MYSQL_TIMEOUT_SCHEMA"' \
-	'"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" 1' \
+	'"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" 0' \
 	'assert_approval_consumed "$MYSQL_TIMEOUT_APPROVAL" "$MYSQL_TIMEOUT_ORIGINAL_PLAN_UID"' \
 	'Kubernetes-timeout recovery did not retain exactly one fresh Observe Job' \
 	'Kubernetes-timeout recovery did not retain exactly one fresh Plan Job' \
