@@ -6017,8 +6017,8 @@ for crd_live_marker in \
 	'leader-election mutation' \
 	'runtime rejection of an incomplete singleton' \
 	'incomplete admission singleton' \
-	'runtime rejection of mismatched ownership' \
-	'mismatched admission singleton' \
+	'proving the admission singleton refuses a foreign owner' \
+	'rejected an unsafe release transition' \
 	'runtime rejection of drifted admission behavior' \
 	'drifted admission behavior' \
 	'failurePolicy","value":"Ignore' \

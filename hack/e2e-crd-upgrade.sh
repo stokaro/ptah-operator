@@ -3052,17 +3052,24 @@ prove_runtime_singleton_guard() {
 		-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" --wait=false >/dev/null
 	wait_runtime_ready
 
-	printf '%s\n' 'e2e crd: proving runtime rejection of mismatched ownership'
-	stop_runtime_deployments
-	kube annotate mutatingwebhookconfiguration ptah-operator-admission \
-		operator.ptah.dev/release-name=foreign-release --overwrite >/dev/null
-	start_runtime_deployments
-	assert_runtime_blocked "mismatched admission singleton"
-	kube annotate mutatingwebhookconfiguration ptah-operator-admission \
-		"operator.ptah.dev/release-name=$E2E_HELM_RELEASE" --overwrite >/dev/null
-	kube -n "$E2E_OPERATOR_NAMESPACE" delete pod \
-		-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" --wait=false >/dev/null
-	wait_runtime_ready
+	# The runtime refuses to serve an admission singleton owned by another
+	# release, and the retained rollout guard refuses to let anyone hand it to
+	# one: the ownership annotation cannot be drifted while the release is
+	# active, so this state is unreachable rather than merely detected. The
+	# runtime's own refusal stays measured by the incomplete-singleton and
+	# drifted-behavior proofs around this one.
+	printf '%s\n' 'e2e crd: proving the admission singleton refuses a foreign owner'
+	if kube annotate mutatingwebhookconfiguration ptah-operator-admission \
+		operator.ptah.dev/release-name=foreign-release --overwrite \
+		>"$WORK_DIR/foreign-owner.out" 2>"$WORK_DIR/foreign-owner.err"; then
+		fail "the admission singleton accepted a foreign release owner"
+	fi
+	grep -F 'rejected an unsafe release transition' \
+		"$WORK_DIR/foreign-owner.out" "$WORK_DIR/foreign-owner.err" >/dev/null ||
+		fail "the foreign owner was refused without the rollout guard denial"
+	[ "$(kube get mutatingwebhookconfiguration ptah-operator-admission \
+		-o jsonpath='{.metadata.annotations.operator\.ptah\.dev/release-name}')" = "$E2E_HELM_RELEASE" ] ||
+		fail "the admission singleton no longer names the installed release"
 
 	printf '%s\n' 'e2e crd: proving runtime rejection of drifted admission behavior'
 	webhook_service=$(kube get validatingwebhookconfiguration ptah-operator-admission \
