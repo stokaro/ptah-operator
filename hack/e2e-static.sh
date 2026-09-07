@@ -1236,6 +1236,19 @@ for engine in postgresql mysql; do
 		exit 1
 	}
 	grep -F 'fault_token ' "$ROOT_DIR/testdata/e2e/${engine}-fault-v1.sql" >/dev/null
+	# The fault databases are seeded from the v3 fixture, so the fault schema has
+	# to be that fixture plus the fault_token column. Anything else plans a drop,
+	# the schema blocks on a destructive plan, and the fault phase waits for an
+	# approval boundary it can never reach. Trailing commas move with the column,
+	# so compare the fixtures without them.
+	fault_seed_lines=$(sed 's/,$//' "$ROOT_DIR/testdata/e2e/${engine}-v3.sql")
+	fault_desired_lines=$(grep -v 'fault_token ' \
+		"$ROOT_DIR/testdata/e2e/${engine}-fault-v1.sql" | sed 's/,$//')
+	[ "$fault_desired_lines" = "$fault_seed_lines" ] || {
+		printf 'e2e static: %s-fault-v1.sql must be %s-v3.sql plus the fault_token column\n' \
+			"$engine" "$engine" >&2
+		exit 1
+	}
 done
 for lifecycle_marker in \
 	'wait_for_in_sync' \
