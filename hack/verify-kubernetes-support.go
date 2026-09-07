@@ -70,7 +70,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "a2eb09adf539b8e0744c8c08cafd762cb73925c1a64e2d813a4072dd132c6e13"
+	ciWorkflowSHA256                = "394e62c80a2c7cfc7d5486380329c3aa79bfedc73f962c7557285d0996d837d6"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseWorkflowSHA256           = "0ff38eee68f8a0a6065830a2154ef46f9e89f9fa099bfdb67f53232165c02a6f"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
@@ -579,6 +579,7 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		"CRD_SCHEMA_BASELINE_REF: ${{ steps.crd-baseline.outputs.baseline }}",
 		"CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE: \"true\"",
 		"run: make verify-source",
+		"run: make test-race-base",
 		"run: make test-race",
 		"DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}",
 		"E2E_RELEASE_CHART_OUTPUT: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
@@ -746,7 +747,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: race must be an unconditional isolated ubuntu-latest job with a %d-minute timeout", path, ciRaceTimeoutMinutes)
 	}
 	raceSteps, err := requireWorkflowStepOrder(path, "race", race, []string{
-		"race-checkout", "race-setup-go", "project-race",
+		"race-checkout", "race-setup-go", "project-race-base", "project-race",
 	})
 	if err != nil {
 		return err
@@ -775,18 +776,29 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	); err != nil {
 		return err
 	}
-	if raceSteps[2].Name != "Run complete race coverage" || raceSteps[2].If != "" ||
-		raceSteps[2].Uses != "" || raceSteps[2].Run != "make test-race" ||
+	// A pull request runs the package race suite; every other event runs it
+	// with the shell mutation shards. The two steps are mutually exclusive, so
+	// exactly one of them runs and neither can be skipped by accident.
+	if raceSteps[2].Name != "Run race coverage without the shell mutation suites" ||
+		raceSteps[2].If != "github.event_name == 'pull_request'" ||
+		raceSteps[2].Uses != "" || raceSteps[2].Run != "make test-race-base" ||
 		raceSteps[2].Shell != "bash" || raceSteps[2].WorkingDirectory != "" ||
 		len(raceSteps[2].With) != 0 || len(raceSteps[2].Env) != 0 {
-		return fmt.Errorf("%s: race coverage must be the unconditional audited make test-race invocation", path)
+		return fmt.Errorf("%s: pull-request race coverage must be the audited make test-race-base invocation", path)
+	}
+	if raceSteps[3].Name != "Run complete race coverage" ||
+		raceSteps[3].If != "github.event_name != 'pull_request'" ||
+		raceSteps[3].Uses != "" || raceSteps[3].Run != "make test-race" ||
+		raceSteps[3].Shell != "bash" || raceSteps[3].WorkingDirectory != "" ||
+		len(raceSteps[3].With) != 0 || len(raceSteps[3].Env) != 0 {
+		return fmt.Errorf("%s: complete race coverage must be the audited make test-race invocation", path)
 	}
 
 	e2e := workflow.Jobs["kubernetes-e2e"]
 	if e2e.If != "" || e2e.TimeoutMinutes != ciKubernetesE2ETimeoutMinutes {
 		return fmt.Errorf("%s: kubernetes-e2e must run unconditionally with a %d-minute timeout", path, ciKubernetesE2ETimeoutMinutes)
 	}
-	if !equalStringSet(e2e.Needs, []string{"support-matrix", "verify", "race"}) {
+	if !equalStringSet(e2e.Needs, []string{"support-matrix", "verify"}) {
 		return fmt.Errorf("%s: kubernetes-e2e dependencies are %v", path, e2e.Needs)
 	}
 	if e2e.Strategy.FailFast == nil || *e2e.Strategy.FailFast ||
