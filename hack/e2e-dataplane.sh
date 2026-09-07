@@ -5530,10 +5530,10 @@ assert_automatic_external_postgresql_lifecycle() {
         ($observe | length) == 2 and ($plan | length) == 2 and
         ($apply | length) == 1 and
         all($jobs[];
-          .metadata.ownerReferences | any(
+          (.metadata.ownerReferences | any(
             .apiVersion == "operator.ptah.dev/v1alpha1" and
             .kind == "PtahSchema" and .name == $schema and .uid == $schemaUID and
-            .controller == true) and
+            .controller == true)) and
           .spec.backoffLimit == 0 and .spec.podReplacementPolicy == "Failed" and
           .status.startTime != null and .status.completionTime != null and
           (.status.conditions | any(.type == "Complete" and .status == "True")) and
