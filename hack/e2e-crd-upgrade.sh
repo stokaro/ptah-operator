@@ -2843,7 +2843,10 @@ prove_controller_object_supported_window_guard() {
         .spec.template.metadata.resourceVersion,
         .spec.template.metadata.uid
       ) |
-      .metadata.name = "ptah-apply-vap-probe-0123456789abcdef" |
+      # The Job write guard requires the name to start with the operation
+      # its own label names, so the probe is named after the operation the
+      # captured Job carries rather than after a fixed one.
+      .metadata.name = "ptah-" + .metadata.labels["operator.ptah.dev/operation"] + "-vap-probe-0123456789abcdef" |
       .metadata.annotations["operator.ptah.dev/controller-image"] = $controller_image |
       .metadata.annotations["operator.ptah.dev/controller-revision"] = "e2e-controller-object-guard" |
       .metadata.annotations["operator.ptah.dev/controller-state-version"] = "1" |
