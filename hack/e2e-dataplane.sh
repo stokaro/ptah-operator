@@ -4816,6 +4816,12 @@ assert_destructive_gate() {
 				report_blocked_refresh_diagnostics "$gate_schema" "$gate_refresh_checkpoint"
 				fail "$gate_schema did not preserve ordered interval-spaced blocked refresh cycles"
 			fi
+			# A blocked schema refreshes for as long as it stays blocked, so the
+			# boundary that counts the three chains has to close here, where they
+			# were just measured. Closing it after the assertions below counts
+			# whatever the next scheduled cycle started while they ran.
+			gate_after_checkpoint="$WORK_DIR/${gate_schema}-blocked-refresh-after.json"
+			checkpoint_schema_jobs "$gate_schema" "$gate_after_checkpoint"
 			wait_for_schema "$gate_schema" '
           .status.phase == "Blocked" and .status.activeOperation == null and
           .status.pendingObservation == null and .status.pendingLockRelease == null and
@@ -4844,8 +4850,6 @@ assert_destructive_gate() {
               .spec.artifactDigest == $digest and .spec.destructive == true
             ' >/dev/null || fail "$gate_schema immutable destructive plan changed during refresh"
 			assert_no_new_jobs "$gate_schema" apply "$gate_apply_checkpoint"
-			gate_after_checkpoint="$WORK_DIR/${gate_schema}-blocked-refresh-after.json"
-			checkpoint_schema_jobs "$gate_schema" "$gate_after_checkpoint"
 			for gate_operation in resolve verify observe plan; do
 				gate_final_count=$(job_count_between_checkpoints "$gate_schema" \
 					"$gate_operation" "$gate_refresh_checkpoint" "$gate_after_checkpoint")
