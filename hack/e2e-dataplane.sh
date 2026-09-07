@@ -2378,11 +2378,14 @@ assert_external_pg_container_contract() {
 		--format '{{json .HostConfig.Tmpfs}}' "$EXTERNAL_PG_CONTAINER_ID" |
 		jq -e 'keys == ["/var/lib/postgresql/data"]' >/dev/null ||
 		fail "external PostgreSQL data directory is not an exact tmpfs"
+	# The tmpfs itself is pinned by HostConfig.Tmpfs above. Docker 29 stopped
+	# listing tmpfs in .Mounts, so what this asserts is the absence of anything
+	# persistent: no bind, no volume, and no tmpfs anywhere but the data
+	# directory, on daemons that list it and on daemons that do not.
 	docker --context "$DOCKER_CONTEXT" container inspect \
 		--format '{{json .Mounts}}' "$EXTERNAL_PG_CONTAINER_ID" |
 		jq -e '
-      length == 1 and .[0].Type == "tmpfs" and
-      .[0].Destination == "/var/lib/postgresql/data"
+      all(.[]; .Type == "tmpfs" and .Destination == "/var/lib/postgresql/data")
     ' >/dev/null || fail "external PostgreSQL container has a persistent or unexpected mount"
 	docker --context "$DOCKER_CONTEXT" container inspect \
 		--format '{{json .NetworkSettings.Networks}}' "$EXTERNAL_PG_CONTAINER_ID" |

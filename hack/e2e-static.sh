@@ -2004,7 +2004,7 @@ for external_contract_marker in \
 	'.HostConfig.PortBindings' \
 	'.NetworkSettings.Ports' \
 	'.HostConfig.Tmpfs' \
-	'length == 1 and .[0].Type == "tmpfs"' \
+	'all(.[]; .Type == "tmpfs" and .Destination == "/var/lib/postgresql/data")' \
 	'keys == ["kind"] and .kind.IPAddress == $address'; do
 	printf '%s\n' "$external_pg_contract_section" | grep -F -- "$external_contract_marker" >/dev/null
 done
