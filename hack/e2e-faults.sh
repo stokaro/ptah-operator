@@ -3823,8 +3823,8 @@ assert_uncertain_apply_proof_history() {
 	      $apply.value.status.activeOperation.terminationGracePeriodSeconds == 30 and
 	      $origin.applyJobName == $apply.value.status.activeOperation.jobName and
 	      $origin.applyJobUID == $applyJobUID and
-	      $origin.applyPodUIDs == $applyPodUIDs and
-	      $origin.applyPodCount == $applyPodCount and
+	      ($origin.applyPodUIDs // []) == $applyPodUIDs and
+	      ($origin.applyPodCount // 0) == $applyPodCount and
 	      $unknown.value.status.phase == "VerifyingConvergence" and
 	      $unknown.value.status.applied == null and
 	      $unknown.value.status.pendingLockRelease == null and
