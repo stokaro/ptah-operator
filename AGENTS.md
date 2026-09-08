@@ -22,6 +22,11 @@ Go `1.26` with toolchain `1.27`.
 and what was rejected. Three are vendored from upstream at a pinned commit; one
 is written here.
 
+`.claude/skills` is a relative symlink to that directory, so an agent that
+discovers skills under `.claude/` finds the same four without a second copy.
+There is one set of files; the link is the only thing that knows about both
+paths.
+
 | Working on | Read |
 | --- | --- |
 | Go API types, `+kubebuilder` markers, generation | `.agents/skills/kubebuilder-api-design/SKILL.md` |
