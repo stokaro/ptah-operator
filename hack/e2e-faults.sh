@@ -188,8 +188,14 @@ stop_pid() {
 	wait "$stop_target" >/dev/null 2>&1 || true
 }
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	set +e
 	stop_pid "$FOLLOW_LOG_PID"
@@ -5546,4 +5552,5 @@ assert_no_overlapping_operation_jobs
 assert_fault_audit_complete
 record_fault_jobs_for_parent
 
+PHASE_COMPLETED=1
 printf '%s\n' 'e2e faults: PASS watches, Kubernetes deadline recovery, stale-plan preflight, native lock barriers, restart identity, uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms'

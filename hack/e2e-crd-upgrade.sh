@@ -111,8 +111,14 @@ CANDIDATE_CRD_SCHEMA_VERSION=$(awk '
   }
 ' "$ROOT_DIR/config/crd/bases/operator.ptah.dev_ptahschemas.yaml")
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	# E2E_KEEP_ON_FAILURE=1 keeps a failed phase's work directory and every
 	# cluster object it created, so the refusal that ended it can be read from
@@ -3712,4 +3718,5 @@ case "$E2E_PHASE" in
 	*) fail "unsupported E2E_PHASE $E2E_PHASE" ;;
 esac
 
+PHASE_COMPLETED=1
 printf 'e2e crd: PASS phase=%s\n' "$E2E_PHASE"

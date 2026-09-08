@@ -454,8 +454,14 @@ restore_webhook_deployment() {
 	return 1
 }
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup_files() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT
 	set +e
 	delete_webhook_scope_fixtures
@@ -1263,4 +1269,5 @@ if k -n "$TEST_NAMESPACE" get ptahschemaapproval e2e-cross-namespace-approval \
 	fail "cross-namespace approval refusal created an approval"
 fi
 
+PHASE_COMPLETED=1
 printf '%s\n' 'e2e assertions: PASS control-plane contract'

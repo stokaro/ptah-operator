@@ -73,10 +73,18 @@ FEATURE_GATE_135_EXPECTED=$WORK_DIR/feature-gate-1.35.expected.yaml
 FEATURE_GATE_136_ACTUAL=$WORK_DIR/feature-gate-1.36.yaml
 FEATURE_GATE_137_ACTUAL=$WORK_DIR/feature-gate-1.37.yaml
 FEATURE_GATE_137_EXPECTED=$WORK_DIR/feature-gate-1.37.expected.yaml
+EXIT_LATCH_PROBE_SCRIPT=$WORK_DIR/exit-latch-probe.sh
+EXIT_LATCH_FUNCTIONS=$WORK_DIR/exit-latch-functions
 STATIC_PTAH_VERSION=e2e-explicit-version
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	case "$WORK_DIR" in
 		"${TMPDIR:-/tmp}"/ptah-operator-e2e-static.*) rm -rf -- "$WORK_DIR" ;;
@@ -6303,6 +6311,67 @@ done
 # shellcheck disable=SC2016 # Match the literal runtime ROOT_DIR expression in the harness.
 crd_script_invocation='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"'
 [ "$(grep -Fc "$crd_script_invocation" "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ]
+
+# A shell that ends on a refused ${VAR:?...} or an unset name under set -u never
+# sets $?, so an EXIT trap that reports $? reports the previous command's
+# success. Every trap in the harness therefore latches its own completion.
+assert_exit_traps_latched() {
+	latch_script=$1
+	sed -n 's/^[[:space:]]*trap \([a-z_][a-z_]*\) EXIT$/\1/p' \
+		"$latch_script" >"$EXIT_LATCH_FUNCTIONS"
+	while IFS= read -r latch_function; do
+		awk -v fn="$latch_function" '
+			{
+				if (found && checked < 2) {
+					checked++
+					if (index($0, "[ \"$status\" -ne 0 ] || [ \"$") > 0 &&
+						index($0, "_COMPLETED\" -eq 1 ] || status=1") > 0) {
+						latched = 1
+					}
+				}
+				line = $0
+				sub(/^[ \t]+/, "", line)
+				if (line == fn "() {") { found = 1; checked = 0 }
+			}
+			END { exit latched ? 0 : 1 }
+		' "$latch_script" || {
+			printf 'e2e static: EXIT trap %s in %s reports $? without a completion latch\n' \
+				"$latch_function" "$latch_script" >&2
+			exit 1
+		}
+	done <"$EXIT_LATCH_FUNCTIONS"
+}
+for latch_candidate in $(git -C "$ROOT_DIR" ls-files 'hack/*.sh'); do
+	assert_exit_traps_latched "$ROOT_DIR/$latch_candidate"
+done
+
+# The latch is load-bearing only if the guarded shape really refuses. Run it.
+cat >"$EXIT_LATCH_PROBE_SCRIPT" <<'PROBE'
+#!/bin/sh
+
+set -eu
+
+PHASE_COMPLETED=0
+cleanup() {
+	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
+	trap - EXIT HUP INT TERM
+	exit "$status"
+}
+trap cleanup EXIT
+true
+EXIT_LATCH_PROBE=${EXIT_LATCH_PROBE:?probe value is required}
+PHASE_COMPLETED=1
+printf '%s\n' "$EXIT_LATCH_PROBE"
+PROBE
+if sh "$EXIT_LATCH_PROBE_SCRIPT" >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: the completion latch reported a refused expansion as a pass' >&2
+	exit 1
+fi
+EXIT_LATCH_PROBE=probe-value sh "$EXIT_LATCH_PROBE_SCRIPT" >/dev/null || {
+	printf '%s\n' 'e2e static: the completion latch refused a script that reached its end' >&2
+	exit 1
+}
 # shellcheck disable=SC2016 # Match literal runtime provenance expressions in the harness.
 controller_revision_assignment='CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:?E2E_CONTROLLER_REVISION is required inside the source snapshot}'
 grep -F -- "$controller_revision_assignment" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
@@ -6364,4 +6433,5 @@ printf '%s\n' "$docker_build_dry_run" |
 	exit 1
 }
 
+PHASE_COMPLETED=1
 printf '%s\n' 'e2e static: PASS'

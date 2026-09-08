@@ -26,9 +26,11 @@ if [ "${1:-}" != --source-snapshot ]; then
 	SOURCE_SNAPSHOT_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-source.XXXXXX")
 	SOURCE_SNAPSHOT_ARCHIVE=$SOURCE_SNAPSHOT_WORK_DIR/source.tar
 	SOURCE_SNAPSHOT_ROOT=$SOURCE_SNAPSHOT_WORK_DIR/source
+	SNAPSHOT_BOOTSTRAP_COMPLETED=0
 	# shellcheck disable=SC2317,SC2329 # Invoked by the EXIT trap installed below.
 	snapshot_cleanup() {
 		status=$?
+		[ "$status" -ne 0 ] || [ "$SNAPSHOT_BOOTSTRAP_COMPLETED" -eq 1 ] || status=1
 		trap - EXIT HUP INT TERM
 		cleanup_failed=0
 		case "$SOURCE_SNAPSHOT_WORK_DIR" in
@@ -62,6 +64,7 @@ if [ "${1:-}" != --source-snapshot ]; then
 	fi
 	export E2E_SOURCE_REPOSITORY_ROOT
 	export E2E_CONTROLLER_REVISION E2E_PTAH_SIBLING_SOURCE_DIR
+	SNAPSHOT_BOOTSTRAP_COMPLETED=1
 	"$SOURCE_SNAPSHOT_ROOT/hack/e2e-kind.sh" --source-snapshot "$@"
 	exit $?
 fi
@@ -112,9 +115,11 @@ verify_snapshot_source() (
 	# A separate extraction also validates direct private re-entry: ignored files,
 	# changed executable modes, and symlinks must not change the tested inputs.
 	verification_dir=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-source-verification.XXXXXX")
+	SNAPSHOT_VERIFICATION_COMPLETED=0
 	# shellcheck disable=SC2317,SC2329 # Invoked by the EXIT trap installed below.
 	snapshot_verification_cleanup() {
 		status=$?
+		[ "$status" -ne 0 ] || [ "$SNAPSHOT_VERIFICATION_COMPLETED" -eq 1 ] || status=1
 		trap - EXIT HUP INT TERM
 		case "$verification_dir" in
 			"${TMPDIR:-/tmp}"/ptah-operator-e2e-source-verification.*)
@@ -133,6 +138,7 @@ verify_snapshot_source() (
 	git -c core.filemode=true diff --no-index --quiet --no-ext-diff --no-textconv -- \
 		"$verification_dir/source" "$ROOT_DIR" ||
 		fail "E2E source snapshot differs from the exact operator commit"
+	SNAPSHOT_VERIFICATION_COMPLETED=1
 )
 
 sha256() {
@@ -1186,8 +1192,14 @@ collect_diagnostics() {
 	helm --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" status "$HELM_RELEASE" >&2 || true
 }
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	# A failed run leaves nothing to inspect once its cluster is gone. With
 	# E2E_KEEP_ON_FAILURE=1 the task-created cluster, registry, database
 	# container and work directory stay for a local diagnosis; nothing in CI
@@ -2194,4 +2206,5 @@ E2E_PHASE=uninstall \
 	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 
 export_release_chart
+PHASE_COMPLETED=1
 printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"
