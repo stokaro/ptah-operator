@@ -73,6 +73,8 @@ FEATURE_GATE_135_EXPECTED=$WORK_DIR/feature-gate-1.35.expected.yaml
 FEATURE_GATE_136_ACTUAL=$WORK_DIR/feature-gate-1.36.yaml
 FEATURE_GATE_137_ACTUAL=$WORK_DIR/feature-gate-1.37.yaml
 FEATURE_GATE_137_EXPECTED=$WORK_DIR/feature-gate-1.37.expected.yaml
+CRD_UPGRADE_INVOCATION_ENV=$WORK_DIR/crd-upgrade-invocation-env
+CRD_UNINSTALL_INVOCATION_ENV=$WORK_DIR/crd-uninstall-invocation-env
 EXIT_LATCH_PROBE_SCRIPT=$WORK_DIR/exit-latch-probe.sh
 EXIT_LATCH_FUNCTIONS=$WORK_DIR/exit-latch-functions
 STATIC_PTAH_VERSION=e2e-explicit-version
@@ -6311,6 +6313,42 @@ done
 # shellcheck disable=SC2016 # Match the literal runtime ROOT_DIR expression in the harness.
 crd_script_invocation='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"'
 [ "$(grep -Fc "$crd_script_invocation" "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ]
+
+# The uninstall phase re-runs the upgrade proof inside itself, so it needs every
+# variable the upgrade invocation passes. A name the uninstall invocation drops
+# does not announce itself: the phase script refuses it through ${VAR:?...},
+# which ends that shell without setting $?.
+crd_invocation_environment() {
+	awk -v phase="E2E_PHASE=$1 \\" -v target='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"' '
+		index($0, "E2E_") == 1 {
+			block = block $0 "\n"
+			if ($0 == phase) { matched = 1 }
+			next
+		}
+		index($0, target) > 0 {
+			if (matched) { printf "%s", block }
+			block = ""
+			matched = 0
+			next
+		}
+		{ block = ""; matched = 0 }
+	' "$ROOT_DIR/hack/e2e-kind.sh" | sed 's/=.*//' | sort -u
+}
+crd_invocation_environment upgrade >"$CRD_UPGRADE_INVOCATION_ENV"
+crd_invocation_environment uninstall >"$CRD_UNINSTALL_INVOCATION_ENV"
+for crd_invocation_env_file in "$CRD_UPGRADE_INVOCATION_ENV" "$CRD_UNINSTALL_INVOCATION_ENV"; do
+	[ -s "$crd_invocation_env_file" ] || {
+		printf 'e2e static: could not read a CRD phase invocation environment from hack/e2e-kind.sh\n' >&2
+		exit 1
+	}
+done
+crd_invocation_env_missing=$(grep -Fxv -f "$CRD_UNINSTALL_INVOCATION_ENV" \
+	"$CRD_UPGRADE_INVOCATION_ENV" || true)
+[ -z "$crd_invocation_env_missing" ] || {
+	printf 'e2e static: the uninstall CRD phase does not receive %s\n' \
+		"$(printf '%s' "$crd_invocation_env_missing" | tr '\n' ' ')" >&2
+	exit 1
+}
 
 # A shell that ends on a refused ${VAR:?...} or an unset name under set -u never
 # sets $?, so an EXIT trap that reports $? reports the previous command's
