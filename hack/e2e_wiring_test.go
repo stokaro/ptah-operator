@@ -3044,15 +3044,17 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "installed chart export omitted",
-			old:         "\nexport_release_chart\nprintf 'e2e: PASS Kubernetes=%s cluster=%s\\n'",
-			replacement: "\n: # installed chart export omitted\nprintf 'e2e: PASS Kubernetes=%s cluster=%s\\n'",
+			old:         "\nexport_release_chart\nPHASE_COMPLETED=1\nprintf 'e2e: PASS Kubernetes=%s cluster=%s\\n'",
+			replacement: "\n: # installed chart export omitted\nPHASE_COMPLETED=1\nprintf 'e2e: PASS Kubernetes=%s cluster=%s\\n'",
 			wantError:   "post-lifecycle installed chart export",
 		},
 		{
 			name: "installed chart export moved after terminal evidence",
 			old: "export_release_chart\n" +
+				"PHASE_COMPLETED=1\n" +
 				"printf 'e2e: PASS Kubernetes=%s cluster=%s\\n' \"$server_version\" \"$CLUSTER_NAME\"",
-			replacement: "printf 'e2e: PASS Kubernetes=%s cluster=%s\\n' \"$server_version\" \"$CLUSTER_NAME\"\n" +
+			replacement: "PHASE_COMPLETED=1\n" +
+				"printf 'e2e: PASS Kubernetes=%s cluster=%s\\n' \"$server_version\" \"$CLUSTER_NAME\"\n" +
 				"export_release_chart",
 			wantError: "terminal Kubernetes lifecycle evidence",
 		},
