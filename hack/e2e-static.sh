@@ -6383,25 +6383,28 @@ for latch_candidate in $(git -C "$ROOT_DIR" ls-files 'hack/*.sh'); do
 	assert_exit_traps_latched "$ROOT_DIR/$latch_candidate"
 done
 
-# The latch is load-bearing only if the guarded shape really refuses. Run it.
-cat >"$EXIT_LATCH_PROBE_SCRIPT" <<'PROBE'
-#!/bin/sh
-
-set -eu
-
-PHASE_COMPLETED=0
-cleanup() {
-	status=$?
-	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
-	trap - EXIT HUP INT TERM
-	exit "$status"
-}
-trap cleanup EXIT
-true
-EXIT_LATCH_PROBE=${EXIT_LATCH_PROBE:?probe value is required}
-PHASE_COMPLETED=1
-printf '%s\n' "$EXIT_LATCH_PROBE"
-PROBE
+# The latch is load-bearing only if the guarded shape really refuses, so run it.
+# The shape is printed rather than written as a heredoc body: a heredoc would add
+# a second literal fail-fast mode line to this file's own source contract.
+# shellcheck disable=SC2016 # The probe expands when it runs, not while written.
+printf '%s\n' \
+	'#!/bin/sh' \
+	'' \
+	'set -eu' \
+	'' \
+	'PHASE_COMPLETED=0' \
+	'cleanup() {' \
+	'	status=$?' \
+	'	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1' \
+	'	trap - EXIT HUP INT TERM' \
+	'	exit "$status"' \
+	'}' \
+	'trap cleanup EXIT' \
+	'true' \
+	'EXIT_LATCH_PROBE=${EXIT_LATCH_PROBE:?probe value is required}' \
+	'PHASE_COMPLETED=1' \
+	'printf "%s\\n" "$EXIT_LATCH_PROBE"' \
+	>"$EXIT_LATCH_PROBE_SCRIPT"
 if sh "$EXIT_LATCH_PROBE_SCRIPT" >/dev/null 2>&1; then
 	printf '%s\n' 'e2e static: the completion latch reported a refused expansion as a pass' >&2
 	exit 1
