@@ -3995,11 +3995,17 @@ assert_active_identity() {
 
 wait_for_in_sync() {
 	sync_schema=$1
-	wait_for_schema "$sync_schema" '
-      .status.phase == "InSync" and .status.pendingObservation == null and
+	# An Apply whose outcome was unknown converges under its own reason: the
+	# managed scope matches, but no Apply attribution is recorded. Ask for the
+	# reason the scenario earned, so a scenario that never lost attribution
+	# cannot pass on the weaker one.
+	sync_reason=${2:-ScopedConverged}
+	wait_for_schema "$sync_schema" "
+      .status.phase == \"InSync\" and .status.pendingObservation == null and
       .status.activeOperation == null and .status.pendingLockRelease == null and
-	  (.status.conditions | any(.type == "InSync" and .status == "True" and .reason == "ScopedConverged"))
-    ' "post-apply observation to prove convergence"
+      (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and
+        .reason == \"${sync_reason}\"))
+    " "post-apply observation to prove convergence as ${sync_reason}"
 }
 
 run_credential_principal_refusal() {
@@ -4787,7 +4793,7 @@ ALIAS_B_RECOVERY_OBSERVE_UID=$UNCERTAIN_OBSERVE_JOB_UID
 ALIAS_B_RECOVERY_PLAN_UID=$UNCERTAIN_PLAN_JOB_UID
 ALIAS_B_RECOVERY_OBSERVE_RESULT=$UNCERTAIN_OBSERVE_RESULT
 ALIAS_B_RECOVERY_PLAN_RESULT=$UNCERTAIN_PLAN_RESULT
-wait_for_in_sync "$PG_ALIAS_SCHEMA_B"
+wait_for_in_sync "$PG_ALIAS_SCHEMA_B" ConvergedAfterUnknownOutcome
 assert_approval_consumed "$ALIAS_B_APPROVAL" "$ALIAS_B_PLAN_UID"
 ALIAS_B_FINAL_SCHEMA=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_ALIAS_SCHEMA_B" -o json)
 printf '%s\n' "$ALIAS_B_FINAL_SCHEMA" | jq -e \
