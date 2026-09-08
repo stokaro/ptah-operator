@@ -1,0 +1,121 @@
+# Example: reference contracts that are ambiguous, redundant, or unsafe.
+#
+# See ../references/object-references.md for the recommended shapes. A scalar
+# taskName is not inherently wrong for a fixed same-namespace Task; the errors
+# below are making a single relationship ambiguous or splitting it apart.
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: pipelines.badexample.com
+spec:
+  group: badexample.com
+  scope: Namespaced
+  names:
+    kind: Pipeline
+    plural: pipelines
+    singular: pipeline
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          metadata:
+            type: object
+          spec:
+            type: object
+            properties:
+              # Bad: Task is the only supported type, so group and kind carry
+              # no user choice. Defaults and single-value enums add an API
+              # compatibility surface without making the relationship clearer.
+              taskRef:
+                type: object
+                required:
+                - name
+                properties:
+                  group:
+                    type: string
+                    default: badexample.com
+                  kind:
+                    type: string
+                    enum:
+                    - Task
+                    default: Task
+                  name:
+                    type: string
+
+              # Bad: callers can select GitRepository or OCIRepository, but
+              # only a name is stored. The controller has to guess the kind.
+              sourceRef:
+                type: object
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+
+              # Bad: unrelated fields encode one cross-namespace identity.
+              # A single reference object allows schema and CEL to validate the
+              # relationship. Cross-namespace access also needs an explicit
+              # authorization policy, which is absent here.
+              credentialName:
+                type: string
+              credentialNamespace:
+                type: string
+
+              # Bad: this accepts generic Kubernetes identity data although
+              # the controller only resolves a fixed Task. Extra fields imply
+              # support the implementation does not provide.
+              targetRef:
+                type: object
+                properties:
+                  apiVersion:
+                    type: string
+                  kind:
+                    type: string
+                  namespace:
+                    type: string
+                  name:
+                    type: string
+                  uid:
+                    type: string
+                  resourceVersion:
+                    type: string
+                  fieldPath:
+                    type: string
+
+              # Bad: two parallel arrays model pairs; list items can no longer
+              # be validated or updated as one relationship.
+              dependencyNames:
+                type: array
+                items:
+                  type: string
+              dependencyNamespaces:
+                type: array
+                items:
+                  type: string
+
+---
+apiVersion: badexample.com/v1
+kind: Pipeline
+metadata:
+  name: my-pipeline
+  namespace: default
+spec:
+  taskRef:
+    name: my-task
+  # Is this a GitRepository or an OCIRepository? The API cannot tell.
+  sourceRef:
+    name: platform-config
+  credentialName: deploy-key
+  credentialNamespace: platform-secrets
+  dependencyNames:
+  - setup
+  - publish
+  dependencyNamespaces:
+  - default
+  # Missing a namespace for "publish": the relationship is ambiguous.

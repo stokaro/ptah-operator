@@ -1,0 +1,148 @@
+# Example: reference contracts that carry only user-selected information.
+#
+# See ../references/object-references.md for the decision model. A tool can
+# learn the fixed taskRef -> example.com/Task relationship from a published
+# relationship map; the manifest does not need no-op group and kind fields.
+# See ../references/relationship-metadata.md for the proposed map shape.
+
+---
+# A Pipeline has a fixed-kind task reference and a bounded multi-kind source
+# reference. Both refer to objects in the Pipeline's namespace.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: pipelines.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Pipeline
+    plural: pipelines
+    singular: pipeline
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    subresources:
+      status: {}
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - taskRef
+            - sourceRef
+            properties:
+              taskRef:
+                type: object
+                description: >-
+                  Reference to an example.com/Task in the same namespace that
+                  this Pipeline executes.
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+                    minLength: 1
+                    description: Name of the Task.
+              sourceRef:
+                type: object
+                description: >-
+                  Reference to a source.example.com/GitRepository or
+                  source.example.com/OCIRepository in the same namespace.
+                required:
+                - kind
+                - name
+                properties:
+                  kind:
+                    type: string
+                    enum:
+                    - GitRepository
+                    - OCIRepository
+                    description: Type of source to use.
+                  name:
+                    type: string
+                    minLength: 1
+                    description: Name of the selected source.
+          status:
+            type: object
+            properties:
+              conditions:
+                type: array
+                x-kubernetes-list-type: map
+                x-kubernetes-list-map-keys:
+                - type
+                items:
+                  type: object
+                  required:
+                  - type
+                  - status
+                  - lastTransitionTime
+                  - reason
+                  properties:
+                    type:
+                      type: string
+                    status:
+                      type: string
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                    lastTransitionTime:
+                      type: string
+                      format: date-time
+                    reason:
+                      type: string
+                    message:
+                      type: string
+
+---
+# The fixed target kind. No group or kind is repeated in a Pipeline.taskRef.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: tasks.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Task
+    plural: tasks
+    singular: task
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          metadata:
+            type: object
+          spec:
+            type: object
+            required:
+            - image
+            properties:
+              image:
+                type: string
+                description: Container image to execute.
+
+---
+apiVersion: example.com/v1
+kind: Pipeline
+metadata:
+  name: my-pipeline
+  namespace: default
+spec:
+  # Fixed kind: example.com/Task, declared by the API field contract.
+  taskRef:
+    name: my-task
+  # Bounded choice: the user must select one of the supported source types.
+  sourceRef:
+    kind: GitRepository
+    name: platform-config
