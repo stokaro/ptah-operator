@@ -1216,22 +1216,33 @@ watch_heartbeat_loop() {
 	heartbeat_error_file=$4
 	heartbeat_sequence=0
 	heartbeat_status=0
+	# Each round writes through the release's own admission webhooks, so one
+	# round can fail on a webhook call that outran its five-second timeout while
+	# the manager was under load. That is not evidence that a watch stopped,
+	# which is what this heartbeat exists to prove, so a round is retried and
+	# only a run of failures ends it. The attempt's stderr stays out of the
+	# evidence file until the run is decided, because an empty evidence file is
+	# what the assertions read.
+	heartbeat_failures=0
+	heartbeat_attempt_error=${heartbeat_error_file}.attempt
+	: >"$heartbeat_attempt_error"
 	while [ ! -f "$heartbeat_stop_file" ]; do
+		: >"$heartbeat_attempt_error"
 		heartbeat_marker="fault-watch-$$-${heartbeat_sequence}-$(date +%s)"
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate job e2e-fault-push-postgresql \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_error_file" &
+			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_job_pid=$!
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate pod "$heartbeat_pod" \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_error_file" &
+			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_pod_pid=$!
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate ptahschema e2e-suspended-schema \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_error_file" &
+			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_schema_pid=$!
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate ptahschemaapproval e2e-approval \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_error_file" &
+			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_approval_pid=$!
 		k --request-timeout=8s -n "$OPERATOR_NAMESPACE" annotate lease e2e-fault-watch-heartbeat \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_error_file" &
+			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_lease_pid=$!
 		heartbeat_update_status=0
 		for heartbeat_update_pid in \
@@ -1240,9 +1251,16 @@ watch_heartbeat_loop() {
 			wait "$heartbeat_update_pid" || heartbeat_update_status=1
 		done
 		if [ "$heartbeat_update_status" -ne 0 ]; then
-			heartbeat_status=1
-			break
+			heartbeat_failures=$((heartbeat_failures + 1))
+			if [ "$heartbeat_failures" -ge 3 ]; then
+				sed -n 'p' "$heartbeat_attempt_error" >>"$heartbeat_error_file"
+				heartbeat_status=1
+				break
+			fi
+			sleep 2
+			continue
 		fi
+		heartbeat_failures=0
 		heartbeat_sequence=$((heartbeat_sequence + 1))
 		heartbeat_sleep=0
 		while [ "$heartbeat_sleep" -lt 5 ] && [ ! -f "$heartbeat_stop_file" ]; do
