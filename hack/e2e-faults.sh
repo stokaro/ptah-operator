@@ -246,13 +246,22 @@ cleanup() {
 		fi
 		READ_WORKLOAD_BARRIER_ACTIVE=0
 	fi
-	case "$WORK_DIR" in
-	"${TMPDIR:-/tmp}"/ptah-operator-fault-e2e.*) rm -rf -- "$WORK_DIR" ;;
-	*)
-		printf 'e2e faults: refusing to remove unexpected work directory %s\n' "$WORK_DIR" >&2
-		status=1
-		;;
-	esac
+	# The watch frames, the captured results and the schema snapshots this phase
+	# asserts on live here, and they are the only way to read a failure without
+	# running the whole lifecycle again. Keep them when the caller asked to keep
+	# a failed run.
+	if [ "$status" -ne 0 ] && [ "${E2E_KEEP_ON_FAILURE:-0}" = 1 ]; then
+		printf 'e2e faults: E2E_KEEP_ON_FAILURE=1: retaining work directory %s\n' \
+			"$WORK_DIR" >&2
+	else
+		case "$WORK_DIR" in
+		"${TMPDIR:-/tmp}"/ptah-operator-fault-e2e.*) rm -rf -- "$WORK_DIR" ;;
+		*)
+			printf 'e2e faults: refusing to remove unexpected work directory %s\n' "$WORK_DIR" >&2
+			status=1
+			;;
+		esac
+	fi
 	exit "$status"
 }
 trap cleanup EXIT
@@ -3920,8 +3929,8 @@ assert_uncertain_apply_proof_history() {
               schemaRefUID: .spec.schemaRef.uid
             }),
             watches: {
-              jobEvents: ($jobs[0] | length),
-              leaseEvents: ($leases[0] | length)
+              jobEvents: ($jobs | length),
+              leaseEvents: ($leases | length)
             }
           }
         ' >&2
