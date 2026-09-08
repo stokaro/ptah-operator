@@ -2474,7 +2474,11 @@ capture_controller_service_account_identity() {
       [.items[] | select(
         .metadata.labels["app.kubernetes.io/instance"] == $release and
         .metadata.labels["app.kubernetes.io/component"] == "controller" and
-        .metadata.labels["operator.ptah.dev/release-sequence"] == $sequence
+        # The chart carries the release sequence as an annotation on the
+        # Deployment and on its Pod template, which is where the retained
+        # guards read it. It is not a label, so selecting on one matched
+        # nothing.
+        .metadata.annotations["operator.ptah.dev/release-sequence"] == $sequence
       )] |
       if length != 1 then error("controller Deployment cardinality differs") else .[0] end |
       select(
