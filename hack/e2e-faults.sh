@@ -3856,7 +3856,8 @@ assert_uncertain_apply_proof_history() {
           $final.status.pendingObservation == null and $final.status.pendingLockRelease == null and
           $final.status.applied == null and $final.status.plan == null and
           ($final.status.conditions | any(
-            .type == "InSync" and .status == "True" and .reason == "ScopedConverged"))
+            .type == "InSync" and .status == "True" and
+            .reason == "ConvergedAfterUnknownOutcome"))
         elif $planMode == "same-plan" then
           final_awaits_fresh($final; $fresh; $freshPlanUID) and
           $fresh.spec.fingerprint == $origin.plan.fingerprint and
