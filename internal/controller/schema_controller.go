@@ -1812,7 +1812,7 @@ func (r *SchemaReconciler) consumeResult(
 				if err != nil {
 					return ctrl.Result{}, err
 				}
-				schema.Status.Plan = currentPlanStatus(published, now)
+				schema.Status.Plan = currentPlanStatus(published)
 				setPlanPolicyStatus(schema, published)
 				next := metav1.NewTime(now.Add(interval(schema)))
 				schema.Status.NextReconciliationTime = &next
@@ -4359,7 +4359,7 @@ func artifactAccessBinding(schema *operatorv1alpha1.PtahSchema) *operatorv1alpha
 	return binding
 }
 
-func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan, now metav1.Time) *operatorv1alpha1.CurrentPlanStatus {
+func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.CurrentPlanStatus {
 	return &operatorv1alpha1.CurrentPlanStatus{
 		Name: plan.Name, UID: plan.UID, Fingerprint: plan.Spec.Fingerprint, ContentDigest: plan.Spec.ContentDigest,
 		ArtifactDigest: plan.Spec.ArtifactDigest, CoordinationDigest: plan.Spec.CoordinationDigest,
@@ -4373,7 +4373,7 @@ func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan, now metav1.Time) *
 		ControllerStateVersion:   plan.Spec.ControllerStateVersion,
 		PtahVersion:              plan.Spec.PtahVersion, ExecutorImage: plan.Spec.ExecutorImage, RunnerImage: plan.Spec.RunnerImage,
 		RunnerProtocolVersion: plan.Spec.RunnerProtocolVersion, Destructive: plan.Spec.Destructive,
-		StatementCount: plan.Spec.StatementCount, CreatedAt: now,
+		StatementCount: plan.Spec.StatementCount, CreatedAt: plan.CreationTimestamp,
 	}
 }
 
@@ -4431,7 +4431,7 @@ func approvalMatches(approval *operatorv1alpha1.PtahSchemaApproval, schema *oper
 	if plan == nil || plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion {
 		return false
 	}
-	return approvalMatchesPlanStatus(approval, schema, currentPlanStatus(plan, metav1.Time{}))
+	return approvalMatchesPlanStatus(approval, schema, currentPlanStatus(plan))
 }
 
 func approvalMatchesPlanStatus(

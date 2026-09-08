@@ -4279,7 +4279,7 @@ func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operato
 			Dialect:                  "postgresql",
 		},
 	}
-	schema.Status.Plan = currentPlanStatus(plan, metav1.NewTime(time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC)))
+	schema.Status.Plan = currentPlanStatus(plan)
 	approvedAt := metav1.NewTime(time.Date(2026, 8, 30, 11, 30, 0, 0, time.UTC))
 	approval := &operatorv1alpha1.PtahSchemaApproval{
 		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: "approval", UID: "approval-uid"},
