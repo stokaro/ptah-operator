@@ -4010,9 +4010,9 @@ uncertain_read_proof_section=$(sed -n '/^capture_uncertain_read_proof_pair()/,/^
 uncertain_zero_evidence_defaults_present() {
 	zero_evidence_section=$1
 	[ "$(printf '%s\n' "$zero_evidence_section" |
-		grep -Fc '(.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs')" -eq 2 ] &&
+		grep -Fc '(.status.pendingObservation.applyPodUIDs // []) as $recordedPodUIDs')" -eq 2 ] &&
 		[ "$(printf '%s\n' "$zero_evidence_section" |
-			grep -Fc '(.status.pendingObservation.applyPodCount // 0) == $applyPodCount')" -eq 2 ]
+			grep -Fc '(.status.pendingObservation.applyPodCount // 0) == ($recordedPodUIDs | length)')" -eq 2 ]
 }
 uncertain_zero_evidence_defaults_present "$uncertain_read_proof_section" || {
 	printf '%s\n' 'e2e static: uncertain Apply proof does not normalize both omitted Pod evidence fields' >&2
@@ -4020,7 +4020,7 @@ uncertain_zero_evidence_defaults_present "$uncertain_read_proof_section" || {
 }
 # shellcheck disable=SC2016 # The mutant intentionally replaces a literal jq variable.
 uncertain_zero_evidence_mutant=$(printf '%s\n' "$uncertain_read_proof_section" |
-	sed 's#(.status.pendingObservation.applyPodCount // 0) == \$applyPodCount#.status.pendingObservation.applyPodCount == $applyPodCount#')
+	sed 's#(.status.pendingObservation.applyPodCount // 0) == (\$recordedPodUIDs | length)#.status.pendingObservation.applyPodCount == ($recordedPodUIDs | length)#')
 if uncertain_zero_evidence_defaults_present "$uncertain_zero_evidence_mutant"; then
 	printf '%s\n' 'e2e static: uncertain Apply zero-evidence wiring mutant was not rejected' >&2
 	exit 1
@@ -4142,7 +4142,7 @@ static_require_order "$running_deadline_scenario_section" 'running Apply deadlin
 	'"$MYSQL_TIMEOUT_OPERATION_ID" "$DEADLINE_PTAH_STARTED_AT"' \
 	'stop_mysql_barrier' \
 	'capture_uncertain_read_proof_pair "$MYSQL_TIMEOUT_SCHEMA"' \
-	'"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" 0' \
+	'"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" deadline' \
 	'assert_approval_consumed "$MYSQL_TIMEOUT_APPROVAL" "$MYSQL_TIMEOUT_ORIGINAL_PLAN_UID"' \
 	'Kubernetes-timeout recovery did not retain exactly one fresh Observe Job' \
 	'Kubernetes-timeout recovery did not retain exactly one fresh Plan Job' \

@@ -2309,9 +2309,20 @@ capture_uncertain_read_proof_pair() {
 	uncertain_observe_checkpoint=${10}
 	uncertain_plan_checkpoint=${11}
 	uncertain_apply_pod_count=${12:-1}
+	uncertain_apply_pod_optional=false
+	# Kubernetes deletes the Pods of a Job that exceeds its active deadline, and
+	# the operator records the terminal Pod evidence it can still see at the
+	# mutation boundary. Whether the deletion lands before that read is a race
+	# this proof does not control, so "deadline" accepts the exact Pod or none,
+	# and requires the recorded count to match the recorded list either way.
 	case "$uncertain_apply_pod_count" in
 	0) uncertain_apply_pod_uids='[]' ;;
 	1) uncertain_apply_pod_uids=$(jq -cn --arg uid "$uncertain_apply_pod_uid" '[$uid]') ;;
+	deadline)
+		uncertain_apply_pod_uids=$(jq -cn --arg uid "$uncertain_apply_pod_uid" '[$uid]')
+		uncertain_apply_pod_optional=true
+		uncertain_apply_pod_count=1
+		;;
 	*) fail "$uncertain_schema recovery proof has an unsupported Apply Pod evidence count" ;;
 	esac
 	[ "$READ_WORKLOAD_BARRIER_ACTIVE" -eq 1 ] ||
@@ -2347,6 +2358,7 @@ capture_uncertain_read_proof_pair() {
 		--arg applyJobUID "$uncertain_apply_job_uid" \
 		--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
 		--argjson applyPodCount "$uncertain_apply_pod_count" \
+		--argjson applyPodOptional "$uncertain_apply_pod_optional" \
 		--arg leaseEpoch "$uncertain_lease_epoch" \
 		--arg controllerImage "$CONTROLLER_IMAGE" \
 		--arg controllerRevision "$CONTROLLER_REVISION" \
@@ -2359,8 +2371,11 @@ capture_uncertain_read_proof_pair() {
       .status.pendingObservation.applyOperationID == $applyOperation and
       .status.pendingObservation.applyJobName == $applyJobName and
       .status.pendingObservation.applyJobUID == $applyJobUID and
-      (.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs and
-      (.status.pendingObservation.applyPodCount // 0) == $applyPodCount and
+      ((.status.pendingObservation.applyPodUIDs // []) as $recordedPodUIDs |
+        (if $applyPodOptional
+         then ($recordedPodUIDs == [] or $recordedPodUIDs == $applyPodUIDs)
+         else $recordedPodUIDs == $applyPodUIDs end) and
+        (.status.pendingObservation.applyPodCount // 0) == ($recordedPodUIDs | length)) and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
       .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch and
       .status.pendingObservation.plan.controllerImage == $controllerImage and
@@ -2406,6 +2421,7 @@ capture_uncertain_read_proof_pair() {
 			--arg applyJobUID "$uncertain_apply_job_uid" \
 			--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
 			--argjson applyPodCount "$uncertain_apply_pod_count" \
+			--argjson applyPodOptional "$uncertain_apply_pod_optional" \
 			--arg leaseEpoch "$uncertain_lease_epoch" '
           {expected: {
             activeType: "Observe", activeID: $observeOperation,
@@ -2453,6 +2469,7 @@ capture_uncertain_read_proof_pair() {
 		--arg applyJobUID "$uncertain_apply_job_uid" \
 		--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
 		--argjson applyPodCount "$uncertain_apply_pod_count" \
+		--argjson applyPodOptional "$uncertain_apply_pod_optional" \
 		--arg leaseEpoch "$uncertain_lease_epoch" \
 		--arg controllerImage "$CONTROLLER_IMAGE" \
 		--arg controllerRevision "$CONTROLLER_REVISION" \
@@ -2465,8 +2482,11 @@ capture_uncertain_read_proof_pair() {
       .status.pendingObservation.applyOperationID == $applyOperation and
       .status.pendingObservation.applyJobName == $applyJobName and
       .status.pendingObservation.applyJobUID == $applyJobUID and
-      (.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs and
-      (.status.pendingObservation.applyPodCount // 0) == $applyPodCount and
+      ((.status.pendingObservation.applyPodUIDs // []) as $recordedPodUIDs |
+        (if $applyPodOptional
+         then ($recordedPodUIDs == [] or $recordedPodUIDs == $applyPodUIDs)
+         else $recordedPodUIDs == $applyPodUIDs end) and
+        (.status.pendingObservation.applyPodCount // 0) == ($recordedPodUIDs | length)) and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
       .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch and
       .status.pendingObservation.plan.controllerImage == $controllerImage and
@@ -3633,9 +3653,20 @@ assert_uncertain_apply_proof_history() {
 	unknown_plan_mode=${11:-same-plan}
 	unknown_old_actual_fingerprint=${12:-}
 	unknown_apply_pod_count=${13:-1}
+	unknown_apply_pod_optional=false
+	# Kubernetes deletes the Pods of a Job that exceeds its active deadline, and
+	# the operator records the terminal Pod evidence it can still see at the
+	# mutation boundary. Whether the deletion lands before that read is a race
+	# this proof does not control, so "deadline" accepts the exact Pod or none,
+	# and requires the recorded count to match the recorded list either way.
 	case "$unknown_apply_pod_count" in
 	0) unknown_apply_pod_uids='[]' ;;
 	1) unknown_apply_pod_uids=$(jq -cn --arg uid "$unknown_apply_pod_uid" '[$uid]') ;;
+	deadline)
+		unknown_apply_pod_uids=$(jq -cn --arg uid "$unknown_apply_pod_uid" '[$uid]')
+		unknown_apply_pod_optional=true
+		unknown_apply_pod_count=1
+		;;
 	*) fail "$unknown_schema proof history has an unsupported Apply Pod evidence count" ;;
 	esac
 	unknown_final_schema=$WORK_DIR/${unknown_schema}-final-schema.json
@@ -3667,6 +3698,7 @@ assert_uncertain_apply_proof_history() {
 		--arg freshPlanUID "$unknown_fresh_plan_uid" \
 		--argjson applyPodUIDs "$unknown_apply_pod_uids" \
 		--argjson applyPodCount "$unknown_apply_pod_count" \
+		--argjson applyPodOptional "$unknown_apply_pod_optional" \
 		--arg planMode "$unknown_plan_mode" \
 		--arg oldActual "$unknown_old_actual_fingerprint" \
 		--arg controllerImage "$CONTROLLER_IMAGE" \
@@ -3829,8 +3861,11 @@ assert_uncertain_apply_proof_history() {
 	      $apply.value.status.activeOperation.terminationGracePeriodSeconds == 30 and
 	      $origin.applyJobName == $apply.value.status.activeOperation.jobName and
 	      $origin.applyJobUID == $applyJobUID and
-	      ($origin.applyPodUIDs // []) == $applyPodUIDs and
-	      ($origin.applyPodCount // 0) == $applyPodCount and
+	      (($origin.applyPodUIDs // []) as $recordedPodUIDs |
+	        (if $applyPodOptional
+	         then ($recordedPodUIDs == [] or $recordedPodUIDs == $applyPodUIDs)
+	         else $recordedPodUIDs == $applyPodUIDs end) and
+	        ($origin.applyPodCount // 0) == ($recordedPodUIDs | length)) and
 	      $unknown.value.status.phase == "VerifyingConvergence" and
 	      $unknown.value.status.applied == null and
 	      $unknown.value.status.pendingLockRelease == null and
@@ -4337,7 +4372,7 @@ capture_uncertain_read_proof_pair "$MYSQL_TIMEOUT_SCHEMA" \
 	"$MYSQL_TIMEOUT_OPERATION_ID" "$MYSQL_TIMEOUT_JOB_NAME" "$MYSQL_TIMEOUT_JOB_UID" \
 	"$MYSQL_TIMEOUT_POD_UID" "$MYSQL_TIMEOUT_LEASE_NAME" "$MYSQL_TIMEOUT_LEASE_UID" \
 	"$MYSQL_TIMEOUT_LEASE_HOLDER" "$MYSQL_TIMEOUT_LEASE_EPOCH" \
-	"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" 0
+	"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" deadline
 MYSQL_TIMEOUT_RECOVERY_OBSERVE_UID=$UNCERTAIN_OBSERVE_JOB_UID
 MYSQL_TIMEOUT_RECOVERY_PLAN_UID=$UNCERTAIN_PLAN_JOB_UID
 wait_for_schema "$MYSQL_TIMEOUT_SCHEMA" '
@@ -5480,7 +5515,7 @@ assert_uncertain_apply_proof_history "$MYSQL_TIMEOUT_SCHEMA" \
 	"$MYSQL_TIMEOUT_OPERATION_ID" "$MYSQL_TIMEOUT_JOB_UID" "$MYSQL_TIMEOUT_LEASE_UID" \
 	"$MYSQL_TIMEOUT_LEASE_HOLDER" "$MYSQL_TIMEOUT_LEASE_EPOCH" \
 	"$MYSQL_TIMEOUT_RECOVERY_OBSERVE_UID" "$MYSQL_TIMEOUT_RECOVERY_PLAN_UID" \
-	"$MYSQL_TIMEOUT_FRESH_PLAN_UID" "$MYSQL_TIMEOUT_POD_UID" same-plan "" 0
+	"$MYSQL_TIMEOUT_FRESH_PLAN_UID" "$MYSQL_TIMEOUT_POD_UID" same-plan "" deadline
 assert_post_apply_proof_history "$PG_RESTART_SCHEMA" "$PG_OPERATION_ID" "$PG_JOB_UID" \
 	"$PG_LEASE_UID" "$PG_LEASE_HOLDER" "$PG_LEASE_EPOCH" \
 	"$PG_RESTART_PROOF_OBSERVE_JOB_UID" "$PG_RESTART_PROOF_PLAN_JOB_UID"
