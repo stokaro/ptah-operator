@@ -1414,10 +1414,8 @@ establish_watch_barrier() {
 }
 
 start_watch() {
-	watch_resource=$1
-	watch_list_namespace=$2
-	watch_path=$3
-	watch_stem=$4
+	watch_path=$1
+	watch_stem=$2
 	watch_file="$WORK_DIR/watch-${watch_stem}.jsonl"
 	watch_error_file="$WORK_DIR/watch-${watch_stem}.err"
 	watch_frame_directory=$WORK_DIR/watch-${watch_stem}.frames
@@ -1427,12 +1425,20 @@ start_watch() {
 	mkdir -m 700 "$watch_frame_directory"
 	: >"$watch_file"
 	: >"$watch_error_file"
-	if [ -n "$watch_list_namespace" ]; then
-		k -n "$watch_list_namespace" get "$watch_resource" -o json >"$watch_initial_list"
-	else
-		k get "$watch_resource" -o json >"$watch_initial_list"
-	fi
-	watch_rv=$(jq -er '.metadata.resourceVersion' "$watch_initial_list")
+	# kubectl aggregates a collection into its own List and clears the
+	# resourceVersion, because a paginated aggregate has no single consistent
+	# one. Starting a watch from that empty string does not mean "from the list":
+	# the API server replays the current state as ADDED events, so every
+	# long-lived fixture object enters the stream as if this phase had created
+	# it. Read the collection straight from the API, which answers with the
+	# typed list and the resourceVersion the watch has to continue from.
+	k get --raw "$watch_path" >"$watch_initial_list"
+	watch_rv=$(jq -er '
+      if (.metadata.resourceVersion | type) == "string" and
+        (.metadata.resourceVersion | length) > 0
+      then .metadata.resourceVersion
+      else error("collection list carries no resourceVersion to watch from") end
+    ' "$watch_initial_list")
 	if [ "$watch_stem" = jobs ]; then
 		# The list resourceVersion and the following watch form one gap-free
 		# boundary. Persist the list side so a short-lived Job created between
@@ -1452,11 +1458,11 @@ start_watch() {
 }
 
 start_watches() {
-	start_watch jobs.batch "$TEST_NAMESPACE" "/apis/batch/v1/namespaces/${TEST_NAMESPACE}/jobs" jobs
-	start_watch pods "$TEST_NAMESPACE" "/api/v1/namespaces/${TEST_NAMESPACE}/pods" pods
-	start_watch ptahschemas.operator.ptah.dev "$TEST_NAMESPACE" "/apis/operator.ptah.dev/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemas" schemas
-	start_watch ptahschemaapprovals.operator.ptah.dev "$TEST_NAMESPACE" "/apis/operator.ptah.dev/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemaapprovals" approvals
-	start_watch leases.coordination.k8s.io "$OPERATOR_NAMESPACE" "/apis/coordination.k8s.io/v1/namespaces/${OPERATOR_NAMESPACE}/leases" leases
+	start_watch "/apis/batch/v1/namespaces/${TEST_NAMESPACE}/jobs" jobs
+	start_watch "/api/v1/namespaces/${TEST_NAMESPACE}/pods" pods
+	start_watch "/apis/operator.ptah.dev/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemas" schemas
+	start_watch "/apis/operator.ptah.dev/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemaapprovals" approvals
+	start_watch "/apis/coordination.k8s.io/v1/namespaces/${OPERATOR_NAMESPACE}/leases" leases
 }
 
 assert_watches_alive() {
