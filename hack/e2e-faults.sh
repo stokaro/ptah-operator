@@ -3873,8 +3873,60 @@ assert_uncertain_apply_proof_history() {
           immutable_plan_inputs_match($fresh; $origin.plan)
         else false end) and
       all($schemas[]; .status.applied == null)
-    ' "$unknown_schema_watch" >/dev/null ||
+    ' "$unknown_schema_watch" >/dev/null || {
+		# This compares a hundred facts across four watches and says only that
+		# one of them differs. Print the inputs the branch reads, so the next
+		# reader does not spend a lifecycle run finding out which.
+		jq -nc \
+			--arg planMode "$unknown_plan_mode" \
+			--arg oldActual "$unknown_old_actual_fingerprint" \
+			--arg freshPlanUID "$unknown_fresh_plan_uid" \
+			--arg observeJobUID "$unknown_observe_job_uid" \
+			--arg planJobUID "$unknown_plan_job_uid" \
+			--arg leaseUID "$unknown_lease_uid" \
+			--arg leaseEpoch "$unknown_lease_epoch" \
+			--slurpfile finalSchema "$unknown_final_schema" \
+			--slurpfile freshPlan "$unknown_fresh_plan" \
+			--slurpfile jobs "$unknown_job_watch" \
+			--slurpfile leases "$unknown_lease_watch" '
+          {
+            asked: {
+              planMode: $planMode, oldActual: $oldActual,
+              freshPlanUID: $freshPlanUID, observeJobUID: $observeJobUID,
+              planJobUID: $planJobUID, leaseUID: $leaseUID, leaseEpoch: $leaseEpoch
+            },
+            final: ($finalSchema[0] | {
+              phase: .status.phase,
+              planUID: .status.plan.uid, planName: .status.plan.name,
+              planFingerprint: .status.plan.fingerprint,
+              planActual: .status.plan.actualStateFingerprint,
+              approvalType: (.status.plan.approval | type),
+              appliedType: (.status.applied | type),
+              activeType: (.status.activeOperation | type),
+              pendingObservationType: (.status.pendingObservation | type),
+              pendingLockReleaseType: (.status.pendingLockRelease | type),
+              bindingEpoch: .status.executionBinding.epoch,
+              inSyncReasons: [.status.conditions[] |
+                select(.type == "InSync") | {status, reason}]
+            }),
+            fresh: ($freshPlan[0] | {
+              uid: .metadata.uid, name: .metadata.name,
+              fingerprint: .spec.fingerprint,
+              actual: .spec.actualStateFingerprint,
+              contentDigest: .spec.contentDigest,
+              destructive: .spec.destructive,
+              statementCount: .spec.statementCount,
+              bindingID: .spec.executionBindingID,
+              schemaRefUID: .spec.schemaRef.uid
+            }),
+            watches: {
+              jobEvents: ($jobs[0] | length),
+              leaseEvents: ($leases[0] | length)
+            }
+          }
+        ' >&2
 		fail "$unknown_schema did not retain one uncertain Apply Lease and immutable proof snapshot through Observe and Plan"
+	}
 }
 
 start_pg_barrier() {
