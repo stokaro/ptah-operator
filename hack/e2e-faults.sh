@@ -3940,8 +3940,11 @@ stop_mysql_barrier() {
 	# what a killed Job means to the proofs that follow. Measured: an ALTER
 	# whose client was killed at 4 seconds landed when the lock was released
 	# 20 seconds later. Kill what the dead Apply left behind first, so the
-	# barrier releases into an idle database.
-	barrier_abandoned=$(mysql_root_query mysql "SELECT ID FROM information_schema.processlist WHERE USER = '${MYSQL_APP_USER}' AND DB = '${MYSQL_BARRIER_DATABASE}' AND COMMAND <> 'Sleep'")
+	# barrier releases into an idle database. Only what waits for this barrier's
+	# table lock is abandoned work: the recovery Observe reads through a READ
+	# lock without waiting, and killing it costs the proof the result it came
+	# for.
+	barrier_abandoned=$(mysql_root_query mysql "SELECT ID FROM information_schema.processlist WHERE USER = '${MYSQL_APP_USER}' AND DB = '${MYSQL_BARRIER_DATABASE}' AND STATE LIKE 'Waiting for table%'")
 	for barrier_thread in $barrier_abandoned; do
 		printf '%s\n' "$barrier_thread" | grep -Eq '^[1-9][0-9]*$' || continue
 		mysql_root_query mysql "KILL ${barrier_thread}" >/dev/null 2>&1 || true
