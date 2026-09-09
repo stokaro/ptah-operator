@@ -939,9 +939,10 @@ func (g *RolloutGuard) waitPolicyReady(ctx context.Context, name string) error {
 	})
 }
 
-// waitEnforced first proves that an unchanged Deployment is accepted, then
-// adds only the target policy's reserved token. This makes the resulting
-// single-cause denial attributable to one policy even while retained guards
+// waitEnforced first proves that a Deployment baseline is accepted, then
+// adds only the target policy's reserved token. A stopped predecessor may
+// need a dry-run-only active-identity baseline; no probe is persisted.
+// The resulting single-cause denial is attributable to one policy while guards
 // overlap during an upgrade.
 func (g *RolloutGuard) waitEnforced(ctx context.Context, policyName, denialMessage string) error {
 	return wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
@@ -1011,7 +1012,8 @@ func (g *RolloutGuard) enforcementProbeDeployment(ctx context.Context) (*appsv1.
 		deployment, err := g.Deployments.Get(ctx, name, metav1.GetOptions{})
 		switch {
 		case err == nil:
-			return deployment, false, nil
+			baseline, err := g.drainingEnforcementProbeBaseline(ctx, deployment)
+			return baseline, false, err
 		case apierrors.IsNotFound(err):
 			lastNotFound = err
 		default:
@@ -1027,6 +1029,125 @@ func (g *RolloutGuard) enforcementProbeDeployment(ctx context.Context) (*appsv1.
 		return nil, false, fmt.Errorf("cannot safely create a bootstrap enforcement probe while release sequence %d is active and both runtime Deployments are missing: %w", identity.active, lastNotFound)
 	}
 	return g.bootstrapProbeDeployment(g.ControllerDeploymentName), true, nil
+}
+
+// drainingEnforcementProbeBaseline handles only the interrupted pre-activation
+// cutover: quiescence stamped the candidate's top-level identity but preserved
+// the active predecessor's template. The normal stop transition permits no
+// extra annotation, so adding the probe token would trigger unrelated denials.
+// Restore the active identity and desired replicas in a private dry-run copy;
+// the full retained policies must accept it before the sentinel is attempted.
+func (g *RolloutGuard) drainingEnforcementProbeBaseline(ctx context.Context, deployment *appsv1.Deployment) (*appsv1.Deployment, error) {
+	if !g.isCandidateStampedStoppedDeployment(deployment) {
+		return deployment, nil
+	}
+	identity, err := g.releaseActivationIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.releaseActivationGuard().verifyCandidateCompatibility(identity); err != nil {
+		return nil, fmt.Errorf("verify candidate identity for stopped Deployment probe: %w", err)
+	}
+	if identity.active >= uint64(g.ReleaseSequence) {
+		// Post-activation recovery is not a predecessor drain. Never invent an
+		// older active identity or replace the template to make a probe pass.
+		return deployment, nil
+	}
+	if identity.phase != ControllerCredentialsDraining {
+		return nil, fmt.Errorf("candidate-stamped stopped Deployment probe requires the exact candidate credential drain")
+	}
+	if identity.active > 0 && deployment.Name == g.ControllerDeploymentName {
+		// Every supported certificate contract has exactly one desired replica.
+		// Prefer it over recovering a controller replica count from verifier args.
+		certificate, getErr := g.Deployments.Get(ctx, g.CertificateDeploymentName, metav1.GetOptions{})
+		switch {
+		case getErr == nil:
+			deployment = certificate
+		case apierrors.IsNotFound(getErr):
+			// Certificate-disabled releases can use their preserved controller.
+		default:
+			return nil, fmt.Errorf("get stopped certificate Deployment for enforcement probe: %w", getErr)
+		}
+	}
+	if deployment.Name != g.ControllerDeploymentName && deployment.Name != g.CertificateDeploymentName {
+		return nil, fmt.Errorf("stopped enforcement probe Deployment has an unexpected name")
+	}
+	component := "controller"
+	if deployment.Name == g.CertificateDeploymentName {
+		component = "certificate-rotation"
+	}
+	if err := g.verifyDeployment(deploymentTarget{name: deployment.Name, component: component}, deployment); err != nil {
+		return nil, err
+	}
+	if !g.isCandidateStampedStoppedDeployment(deployment) || deployment.UID == "" || deployment.ResourceVersion == "" ||
+		deployment.DeletionTimestamp != nil || deployment.Status.Replicas != 0 || deployment.Status.ReadyReplicas != 0 ||
+		deployment.Status.AvailableReplicas != 0 || deployment.Status.UpdatedReplicas != 0 {
+		return nil, fmt.Errorf("Deployment %s is not an identified, fully stopped candidate-stamped probe baseline", deployment.Name)
+	}
+	if _, found := deployment.Annotations[guardEnforcementProbeAnnotation]; found {
+		return nil, fmt.Errorf("Deployment %s already contains the reserved enforcement probe annotation", deployment.Name)
+	}
+	baseline := deployment.DeepCopy()
+	if identity.active == 0 {
+		for _, annotation := range []string{ControllerStateVersionAnnotation, ReleaseSequenceAnnotation} {
+			if _, found := baseline.Spec.Template.Annotations[annotation]; found {
+				return nil, fmt.Errorf("bootstrap stopped Deployment %s has a versioned runtime template", deployment.Name)
+			}
+			delete(baseline.Annotations, annotation)
+		}
+		return baseline, nil
+	}
+	state := strconv.FormatUint(identity.state, 10)
+	sequence := strconv.FormatUint(identity.active, 10)
+	pod := &deployment.Spec.Template.Spec
+	if deployment.Spec.Template.Annotations[ControllerStateVersionAnnotation] != state ||
+		deployment.Spec.Template.Annotations[ReleaseSequenceAnnotation] != sequence ||
+		len(pod.Containers) != 1 || pod.Containers[0].Image != identity.image ||
+		len(pod.InitContainers) != 1 || pod.InitContainers[0].Image != identity.image ||
+		pod.InitContainers[0].Name != "verify-candidate-runtime" ||
+		!slices.Equal(pod.InitContainers[0].Command, []string{"/ptah-crd-manager"}) ||
+		len(pod.InitContainers[0].Args) == 0 || pod.InitContainers[0].Args[0] != "runtime-verify" {
+		return nil, fmt.Errorf("stopped Deployment %s does not preserve the active predecessor runtime identity", deployment.Name)
+	}
+	replicas := int32(1)
+	if component == "controller" {
+		replicas, err = predecessorProbeControllerReplicas(pod.InitContainers[0].Args)
+		if err != nil {
+			return nil, fmt.Errorf("recover stopped controller probe replicas: %w", err)
+		}
+	}
+	baseline.Annotations[ControllerStateVersionAnnotation] = state
+	baseline.Annotations[ReleaseSequenceAnnotation] = sequence
+	baseline.Spec.Replicas = int32Ptr(replicas)
+	return baseline, nil
+}
+
+func (g *RolloutGuard) isCandidateStampedStoppedDeployment(deployment *appsv1.Deployment) bool {
+	return deployment != nil && deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 &&
+		deployment.Annotations[ControllerStateVersionAnnotation] == strconv.FormatInt(int64(g.ControllerStateVersion), 10) &&
+		deployment.Annotations[ReleaseSequenceAnnotation] == strconv.FormatInt(int64(g.ReleaseSequence), 10)
+}
+
+func predecessorProbeControllerReplicas(args []string) (int32, error) {
+	var replicas int32
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "--controller-replicas") {
+			continue
+		}
+		value, found := strings.CutPrefix(arg, "--controller-replicas=")
+		if !found || replicas != 0 || !positiveExactDecimalPattern.MatchString(value) {
+			return 0, fmt.Errorf("predecessor verifier must contain one canonical --controller-replicas value")
+		}
+		parsed, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return 0, fmt.Errorf("predecessor verifier controller replicas exceed the positive int32 range")
+		}
+		replicas = int32(parsed)
+	}
+	if replicas == 0 {
+		return 0, fmt.Errorf("predecessor verifier lacks --controller-replicas")
+	}
+	return replicas, nil
 }
 
 func (g *RolloutGuard) rolloutCreateBoundaryProbe(ctx context.Context) (*appsv1.Deployment, error) {

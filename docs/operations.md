@@ -228,6 +228,22 @@ CRDs to imitate the candidate and do not use server-side apply conflict forcing.
 A rollback to an image whose embedded schemas differ also remains blocked by its
 init verifier; select a manager version compatible with the schemas already stored.
 
+During a retry before candidate activation, an enforcement probe may need a
+dry-run copy of a stopped, candidate-stamped Deployment with the predecessor's
+top-level identity and desired replica count. The original Pod template, UID,
+and resource version remain unchanged. The replica count comes from the
+preserved predecessor verifier arguments, or the certificate contract's fixed
+single replica, never from the new candidate's controller settings. The full
+retained admission rules must accept that baseline before the probe adds its
+reserved annotation and requires an isolated denial. These requests are all
+dry-run: they do not restart the predecessor or change its persisted identity.
+
+A separate [post-activation recovery gap](https://github.com/stokaro/ptah-operator/issues/22)
+remains when activation has advanced but Helm has not replaced the stopped
+predecessor Pod template. The pre-activation probe correction does not cover
+that later boundary. Do not reset activation state or controller bindings to
+work around it.
+
 Helm retains CRDs and their custom resources on uninstall. Back them up before
 schema work anyway; uninstalling the release removes the controller and
 admission resources, not the database changes previously executed by Ptah.
