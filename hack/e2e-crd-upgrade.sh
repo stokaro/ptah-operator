@@ -1518,6 +1518,10 @@ arm_late_activation_hook_log_captures() {
 		--failure-class-file "$LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE" \
 		--timeout 3m >/dev/null 2>&1 &
 	LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=$!
+	# The reconcile hook waits on the controller credential fence before it
+	# reports, and the blocker holds that fence for as long as the proof needs.
+	# Silence there is the scenario, not an unavailable stream, so this capture
+	# waits for the hook rather than for its first byte.
 	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
 		--kubeconfig "$E2E_KUBECONFIG" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" \
@@ -1529,7 +1533,8 @@ arm_late_activation_hook_log_captures() {
 		--ready-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE" \
 		--error-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE" \
 		--failure-class-file "$LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE" \
-		--timeout 3m >/dev/null 2>&1 &
+		--log-start-timeout 8m \
+		--timeout 9m >/dev/null 2>&1 &
 	LATE_ACTIVATION_RECONCILE_CAPTURE_PID=$!
 	wait_for_late_activation_hook_log_capture_ready \
 		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" \
@@ -1895,9 +1900,16 @@ prove_late_activation_failure_recovery() {
 	create_late_activation_blocker
 	arm_late_activation_hook_log_captures
 	late_upgrade_succeeded=false
+	# The window has to outlast the hook, not the other way round. The reconcile
+	# hook carries --timeout 360s under a Job deadline of 390s, and a sequence
+	# bump spends that budget on the predecessor retirement preflight and the
+	# continuous credential fence before it reaches the activation write the
+	# blocker refuses. At two minutes Helm gave up first and deleted the hook's
+	# own Role and ClusterRole, so the Pod reported losing them instead of the
+	# refusal the proof came for.
 	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
-		--wait --timeout 2m >"$WORK_DIR/late-activation-failure.out" \
+		--wait --timeout 7m >"$WORK_DIR/late-activation-failure.out" \
 		2>"$WORK_DIR/late-activation-failure.err"; then
 		late_upgrade_succeeded=true
 	fi

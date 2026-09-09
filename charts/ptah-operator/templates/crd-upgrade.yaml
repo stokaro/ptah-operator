@@ -13,6 +13,7 @@
 {{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest -}}
 {{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
 {{- $previousAdmissionConvergenceMarkerName := printf "ptah-admission-convergence-v1-%s-%s" $previousSequence $releaseDigest -}}
+{{- $previousHookIdentityDigest := printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $previousSequence (include "ptah-operator.previousControllerManagerImage" .) | sha256sum | trunc 12 -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -385,6 +386,17 @@ rules:
       - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
       {{- end }}
     verbs: ["get"]
+{{- $predecessorPolicyNames := include "ptah-operator.predecessorRetiredPolicyNames" . }}
+{{- if $predecessorPolicyNames }}
+  # Retiring a predecessor sequence means reading and then deleting exactly the
+  # objects it sealed. They are named here and nowhere wider, and the block is
+  # absent on a release with no predecessor.
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    resourceNames:
+      {{- $predecessorPolicyNames | trim | nindent 6 }}
+    verbs: ["get", "delete"]
+{{- end }}
   - apiGroups: ["scheduling.k8s.io"]
     resources: ["priorityclasses"]
     verbs: ["get", "list"]
@@ -497,7 +509,9 @@ rules:
   # preconditions, so a replacement can never be removed by a stale retry.
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: [{{ $previousAdmissionConvergenceMarkerName | quote }}]
+    resourceNames:
+      - {{ $previousAdmissionConvergenceMarkerName }}
+      - {{ printf "ptah-hook-probe-v%s-%s" $previousSequence $previousHookIdentityDigest }}
     verbs: ["get", "delete"]
   {{- end }}
   {{- if eq .Release.Namespace "default" }}

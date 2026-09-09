@@ -120,7 +120,7 @@ func TestRuntimeInvariantsRejectSameCandidateAndPredecessorServiceAccount(t *tes
 		"release", "ptah-system", "ptah-system", "true",
 		"leader", "webhook", 10,
 		"hook", "controller", true, "controller", "previous-uid", false, "controller",
-		"certificate", crdupgrade.CurrentReleaseSequence, 0,
+		"certificate", crdupgrade.CurrentReleaseSequence, 0, "",
 	)
 	if err == nil || !strings.Contains(err.Error(), "must differ") {
 		t.Fatalf("runtimeInvariants error = %v, want distinct-principal refusal", err)

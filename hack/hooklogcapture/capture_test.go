@@ -1649,6 +1649,7 @@ func TestManagerArgumentPrefixesMatchRenderedHookContract(t *testing.T) {
 		"--runtime-deployment-config-expressions-b64=",
 		"--runtime-pod-config-expressions-b64=",
 		"--runtime-admission-contract-b64=",
+		"--previous-controller-manager-image=",
 	}
 	if len(managerArgumentPrefixes) != len(expected) {
 		t.Fatalf("manager argument prefix count = %d, want %d", len(managerArgumentPrefixes), len(expected))
@@ -2494,6 +2495,7 @@ func validManagerArgumentsForMode(mode hookMode) []string {
 		"--runtime-deployment-config-expressions-b64=W10=",
 		"--runtime-pod-config-expressions-b64=W10=",
 		managerArgumentPrefixes[28] + encodedTestRuntimeAdmissionContract("", 0, corev1.PreemptLowerPriority, nil),
+		"--previous-controller-manager-image=" + testImage,
 	}
 }
 

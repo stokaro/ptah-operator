@@ -120,7 +120,7 @@ spec:
 {{- $mode := printf `%s == %q ? "teardown-retirement-probe-a" : "teardown-retirement-gate"` .selector .probeJob -}}
 {{- $timeout := printf `%s == %q ? "--timeout=60s" : "--timeout=90s"` .selector .probeJob -}}
 {{- $parts := list
-      (printf `has(%[1]s.args) && %[2]s.size() == 29` .container $args)
+      (printf `has(%[1]s.args) && %[2]s.size() == 30` .container $args)
       (printf `%s[0] == (%s)` $args $mode)
       (printf `%s[1] == (%s)` $args $timeout)
       (printf `%s[2] == %q` $args (printf "--release-name=%s" .releaseName))
@@ -149,7 +149,8 @@ spec:
       (printf `%s[25].matches("^--certificate-runtime-args-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
       (printf `%s[26].matches("^--runtime-deployment-config-expressions-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
       (printf `%s[27].matches("^--runtime-pod-config-expressions-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
-      (printf `%s[28].matches("^--runtime-admission-contract-b64=[A-Za-z0-9+/]+={0,2}$")` $args) -}}
+      (printf `%s[28].matches("^--runtime-admission-contract-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
+      (printf `%s[29].startsWith("--previous-controller-manager-image=")` $args) -}}
 {{- join " && " $parts -}}
 {{- end -}}
 

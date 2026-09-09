@@ -54,6 +54,7 @@ type ServiceAccountOriginGuard struct {
 	PreviousControllerServiceAccountUID     types.UID
 	PreviousControllerServiceAccountManaged bool
 	PreviousControllerReleaseSequence       int32
+	PreviousControllerManagerImage          string
 	CertificateServiceAccountName           string
 	ControllerDeploymentName                string
 	CertificateDeploymentName               string
@@ -84,6 +85,7 @@ func NewServiceAccountOriginGuard(rollout *RolloutGuard) *ServiceAccountOriginGu
 		PreviousControllerServiceAccountUID:     rollout.PreviousControllerServiceAccountUID,
 		PreviousControllerServiceAccountManaged: rollout.PreviousControllerServiceAccountManaged,
 		PreviousControllerReleaseSequence:       rollout.PreviousControllerReleaseSequence,
+		PreviousControllerManagerImage:          rollout.PreviousControllerManagerImage,
 		CertificateServiceAccountName:           rollout.CertificateDeploymentName,
 		ControllerDeploymentName:                rollout.ControllerDeploymentName,
 		CertificateDeploymentName:               rollout.CertificateDeploymentName,
@@ -323,6 +325,7 @@ func (g *ServiceAccountOriginGuard) metadata(name string) metav1.ObjectMeta {
 			PreviousControllerServiceAccountUIDAnnotation:     string(g.PreviousControllerServiceAccountUID),
 			PreviousControllerServiceAccountManagedAnnotation: strconv.FormatBool(g.PreviousControllerServiceAccountManaged),
 			PreviousControllerReleaseSequenceAnnotation:       strconv.FormatInt(int64(g.PreviousControllerReleaseSequence), 10),
+			PreviousControllerManagerImageAnnotation:          g.PreviousControllerManagerImage,
 		},
 		Labels: map[string]string{
 			managedByLabel:                rolloutGuardManagedBy,

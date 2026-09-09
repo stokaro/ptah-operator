@@ -1080,7 +1080,7 @@ func (g *TeardownRetirementGuard) forwardBootstrapArgsValidationExpression(conta
 	mode := fmt.Sprintf(`%s == %q ? "teardown-retirement-probe-a" : "teardown-retirement-gate"`, jobSelector, g.probeAJobName())
 	timeout := fmt.Sprintf(`%s == %q ? "--timeout=60s" : "--timeout=90s"`, jobSelector, g.probeAJobName())
 	parts := []string{
-		fmt.Sprintf(`has(%[1]s.args) && %[2]s.size() == 29`, container, args),
+		fmt.Sprintf(`has(%[1]s.args) && %[2]s.size() == 30`, container, args),
 		fmt.Sprintf(`%s[0] == (%s)`, args, mode),
 		fmt.Sprintf(`%s[1] == (%s)`, args, timeout),
 		fmt.Sprintf(`%s[2] == %q`, args, "--release-name="+g.rollout.ReleaseName),
@@ -1110,6 +1110,7 @@ func (g *TeardownRetirementGuard) forwardBootstrapArgsValidationExpression(conta
 		fmt.Sprintf(`%s[26].matches("^--runtime-deployment-config-expressions-b64=[A-Za-z0-9+/]+={0,2}$")`, args),
 		fmt.Sprintf(`%s[27].matches("^--runtime-pod-config-expressions-b64=[A-Za-z0-9+/]+={0,2}$")`, args),
 		fmt.Sprintf(`%s[28].matches("^--runtime-admission-contract-b64=[A-Za-z0-9+/]+={0,2}$")`, args),
+		fmt.Sprintf(`%s[29].startsWith("--previous-controller-manager-image=")`, args),
 	}
 	return strings.Join(parts, " && ")
 }

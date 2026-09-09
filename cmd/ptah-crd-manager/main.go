@@ -69,6 +69,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	previousControllerServiceAccountUID := flags.String("previous-controller-service-account-uid", "", "immutable UID of the controller ServiceAccount active before candidate cutover")
 	previousControllerServiceAccountManagedFlag := flags.String("previous-controller-service-account-managed", "", "whether Helm safely owns the previous controller ServiceAccount, exactly true or false")
 	previousControllerReleaseSequence := flags.Int64("previous-controller-release-sequence", 0, "release sequence active before candidate cutover")
+	previousControllerManagerImage := flags.String("previous-controller-manager-image", "", "manager image of the release sequence active before candidate cutover")
 	controllerDeploymentName := flags.String("controller-deployment-name", "", "exact controller Deployment name")
 	controllerReplicas := flags.Int64("controller-replicas", 0, "exact candidate controller replica count")
 	certificateDeploymentName := flags.String("certificate-deployment-name", "", "exact certificate-rotator Deployment name")
@@ -197,6 +198,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*certificateDeploymentName,
 			int32(*releaseSequence),
 			int32(*previousControllerReleaseSequence),
+			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -241,6 +243,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*certificateDeploymentName,
 			int32(*releaseSequence),
 			int32(*previousControllerReleaseSequence),
+			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -316,6 +319,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*certificateDeploymentName,
 			int32(*releaseSequence),
 			int32(*previousControllerReleaseSequence),
+			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -559,6 +563,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*certificateDeploymentName,
 			int32(*releaseSequence),
 			int32(*previousControllerReleaseSequence),
+			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -590,6 +595,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*certificateDeploymentName,
 			int32(*releaseSequence),
 			int32(*previousControllerReleaseSequence),
+			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -724,6 +730,7 @@ func runtimeInvariants(
 	previousControllerServiceAccountName string, previousControllerServiceAccountUID types.UID,
 	previousControllerServiceAccountManaged bool, controllerDeploymentName,
 	certificateDeploymentName string, releaseSequence, previousControllerReleaseSequence int32,
+	previousControllerManagerImage string,
 ) (crdupgrade.RuntimeInvariants, error) {
 	if leaderElection != "true" && leaderElection != "false" {
 		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("leader-election must be exactly true or false")
@@ -745,6 +752,13 @@ func runtimeInvariants(
 	} else if previousControllerServiceAccountUID == "" {
 		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller ServiceAccount UID is required")
 	}
+	if previousControllerReleaseSequence == 0 {
+		if previousControllerManagerImage != "" {
+			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller manager image requires a previous release sequence")
+		}
+	} else if previousControllerManagerImage == "" {
+		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller manager image is required with a previous release sequence")
+	}
 	return crdupgrade.RuntimeInvariants{
 		ReleaseName:                             releaseName,
 		ReleaseNamespace:                        releaseNamespace,
@@ -760,6 +774,7 @@ func runtimeInvariants(
 		PreviousControllerServiceAccountUID:     previousControllerServiceAccountUID,
 		PreviousControllerServiceAccountManaged: previousControllerServiceAccountManaged,
 		PreviousControllerReleaseSequence:       previousControllerReleaseSequence,
+		PreviousControllerManagerImage:          previousControllerManagerImage,
 		ControllerDeploymentName:                controllerDeploymentName,
 		CertificateDeploymentName:               certificateDeploymentName,
 		ControllerStateVersion:                  controllerstate.CurrentVersion,
@@ -802,6 +817,7 @@ func newRolloutGuard(
 		PreviousControllerServiceAccountUID:     expected.PreviousControllerServiceAccountUID,
 		PreviousControllerServiceAccountManaged: expected.PreviousControllerServiceAccountManaged,
 		PreviousControllerReleaseSequence:       expected.PreviousControllerReleaseSequence,
+		PreviousControllerManagerImage:          expected.PreviousControllerManagerImage,
 		ControllerDeploymentName:                expected.ControllerDeploymentName,
 		ControllerReplicas:                      controllerReplicas,
 		CertificateDeploymentName:               expected.CertificateDeploymentName,
@@ -1297,6 +1313,7 @@ func validateModeFlags(mode string, flags *flag.FlagSet) error {
 			"previous-controller-service-account-uid",
 			"previous-controller-service-account-managed",
 			"previous-controller-release-sequence",
+			"previous-controller-manager-image",
 			"controller-deployment-name",
 			"controller-replicas",
 			"certificate-deployment-name",
