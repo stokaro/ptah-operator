@@ -32,6 +32,7 @@ const (
 	PreviousControllerServiceAccountUIDAnnotation           = "operator.ptah.dev/previous-controller-service-account-uid"
 	PreviousControllerServiceAccountManagedAnnotation       = "operator.ptah.dev/previous-controller-service-account-managed"
 	PreviousControllerReleaseSequenceAnnotation             = "operator.ptah.dev/previous-controller-release-sequence"
+	PreviousControllerManagerImageAnnotation                = "operator.ptah.dev/previous-controller-manager-image"
 	ControllerDeploymentAnnotation                          = "operator.ptah.dev/controller-deployment-name"
 	CertificateDeploymentAnnotation                         = "operator.ptah.dev/certificate-deployment-name"
 	AdmissionContractVersionAnnotation                      = "operator.ptah.dev/admission-contract-version"
