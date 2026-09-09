@@ -560,9 +560,24 @@ func (b *admissionConvergenceBarrier) wait(
 		}
 		observerIdentity := ""
 		if observer != nil {
-			identity, proven, err := observer.Observe(ctx, setKey)
+			// Every step of a sweep is bounded. The observer lists and watches
+			// Pods, and an unbounded call there spends the whole barrier deadline
+			// on one request: no sweep completes, so no sweep reaches the point
+			// that records why.
+			observeCtx, cancelObserve := context.WithTimeout(ctx, b.requestTimeout)
+			identity, proven, err := observer.Observe(observeCtx, setKey)
+			observeTimedOut := observeCtx.Err() != nil
+			cancelObserve()
 			if contextErr := ctx.Err(); contextErr != nil {
 				return deadline(contextErr)
+			}
+			if err != nil && observeTimedOut {
+				unmet = "the protected runtime Pod observation did not answer within the request timeout"
+				resetStability()
+				if sleepErr := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); sleepErr != nil {
+					return deadline(sleepErr)
+				}
+				continue
 			}
 			if err != nil {
 				resetStability()
@@ -633,9 +648,20 @@ func (b *admissionConvergenceBarrier) wait(
 			}
 		}
 		if observer != nil {
-			closingIdentity, proven, observeErr := observer.Observe(ctx, setKey)
+			closingObserveCtx, cancelClosingObserve := context.WithTimeout(ctx, b.requestTimeout)
+			closingIdentity, proven, observeErr := observer.Observe(closingObserveCtx, setKey)
+			closingObserveTimedOut := closingObserveCtx.Err() != nil
+			cancelClosingObserve()
 			if contextErr := ctx.Err(); contextErr != nil {
 				return deadline(contextErr)
+			}
+			if observeErr != nil && closingObserveTimedOut {
+				unmet = "the closing protected runtime Pod observation did not answer within the request timeout"
+				resetStability()
+				if sleepErr := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); sleepErr != nil {
+					return deadline(sleepErr)
+				}
+				continue
 			}
 			if observeErr != nil {
 				resetStability()
