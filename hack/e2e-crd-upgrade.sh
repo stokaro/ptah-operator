@@ -1885,11 +1885,16 @@ assert_late_activation_drain() {
 }
 
 assert_late_activation_candidate_unchanged() {
-	[ "$(file_sha256 "$E2E_NEXT_CHART_PACKAGE")" = "$late_candidate_chart_sha256" ] &&
-		[ "$(file_sha256 "$E2E_NEXT_VALUES_FILE")" = "$late_candidate_values_sha256" ] &&
-		[ "$E2E_NEXT_CONTROLLER_IMAGE" = "$late_candidate_image" ] &&
-		[ "$E2E_NEXT_RELEASE_SEQUENCE" = "$late_next_sequence" ] ||
+	late_retry_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE") ||
+		fail "could not checksum the late activation candidate chart"
+	late_retry_values_sha256=$(file_sha256 "$E2E_NEXT_VALUES_FILE") ||
+		fail "could not checksum the late activation candidate values"
+	if [ "$late_retry_chart_sha256" != "$late_candidate_chart_sha256" ] ||
+		[ "$late_retry_values_sha256" != "$late_candidate_values_sha256" ] ||
+		[ "$E2E_NEXT_CONTROLLER_IMAGE" != "$late_candidate_image" ] ||
+		[ "$E2E_NEXT_RELEASE_SEQUENCE" != "$late_next_sequence" ]; then
 		fail "late activation recovery changed the candidate chart, values, image, or sequence"
+	fi
 }
 
 assert_late_activation_cutover() {

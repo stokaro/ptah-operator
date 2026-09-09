@@ -832,9 +832,10 @@ func TestLateActivationRetryRejectsChangedCandidate(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
-	functions := extractE2EShellFunction(t, source, "file_sha256") + "\n" +
+	functions := strings.Replace(extractE2EShellFunction(t, source, "file_sha256"), "file_sha256() {", "real_file_sha256() {", 1) + "\n" +
+		"file_sha256() { real_file_sha256 \"$1\"; if [ \"$checksum_failure_path\" = \"$1\" ]; then return 73; fi; }\n" +
 		extractE2EShellFunction(t, source, "assert_late_activation_candidate_unchanged")
-	for _, mutation := range []string{"none", "chart", "values", "image", "sequence"} {
+	for _, mutation := range []string{"none", "chart", "values", "image", "sequence", "chart checksum failure", "values checksum failure"} {
 		t.Run(mutation, func(t *testing.T) {
 			t.Parallel()
 			directory := t.TempDir()
@@ -843,6 +844,7 @@ func TestLateActivationRetryRejectsChangedCandidate(t *testing.T) {
 			chart, values := []byte("immutable chart fixture"), []byte(`{"image":"candidate"}`)
 			chartDigest, valuesDigest := sha256.Sum256(chart), sha256.Sum256(values)
 			image, sequence := "candidate-image", "2"
+			checksumFailurePath := ""
 			switch mutation {
 			case "chart":
 				chart = []byte("replacement chart")
@@ -852,6 +854,10 @@ func TestLateActivationRetryRejectsChangedCandidate(t *testing.T) {
 				image = "replacement-image"
 			case "sequence":
 				sequence = "3"
+			case "chart checksum failure":
+				checksumFailurePath = chartPath
+			case "values checksum failure":
+				checksumFailurePath = valuesPath
 			}
 			for path, contents := range map[string][]byte{chartPath: chart, valuesPath: values} {
 				if err := os.WriteFile(path, contents, 0o600); err != nil {
@@ -862,7 +868,7 @@ func TestLateActivationRetryRejectsChangedCandidate(t *testing.T) {
 			command.Env = append(os.Environ(), "E2E_NEXT_CHART_PACKAGE="+chartPath, "E2E_NEXT_VALUES_FILE="+valuesPath,
 				"E2E_NEXT_CONTROLLER_IMAGE="+image, "E2E_NEXT_RELEASE_SEQUENCE="+sequence,
 				fmt.Sprintf("late_candidate_chart_sha256=%x", chartDigest), fmt.Sprintf("late_candidate_values_sha256=%x", valuesDigest),
-				"late_candidate_image=candidate-image", "late_next_sequence=2")
+				"late_candidate_image=candidate-image", "late_next_sequence=2", "checksum_failure_path="+checksumFailurePath)
 			output, err := command.CombinedOutput()
 			if got, want := err == nil, mutation == "none"; got != want {
 				t.Fatalf("candidate retry accepted = %t, want %t: %s", got, want, output)
@@ -4696,15 +4702,29 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD recovery permits changed candidate image",
 			child:       "crd-upgrade",
-			old:         `[ "$E2E_NEXT_CONTROLLER_IMAGE" = "$late_candidate_image" ] &&`,
-			replacement: `[ -n "$E2E_NEXT_CONTROLLER_IMAGE" ] &&`,
+			old:         `[ "$E2E_NEXT_CONTROLLER_IMAGE" != "$late_candidate_image" ] ||`,
+			replacement: `[ -z "$E2E_NEXT_CONTROLLER_IMAGE" ] ||`,
 			wantError:   "late activation immutable candidate retry inputs",
 		},
 		{
 			name:        "CRD recovery permits changed candidate package",
 			child:       "crd-upgrade",
-			old:         `[ "$(file_sha256 "$E2E_NEXT_CHART_PACKAGE")" = "$late_candidate_chart_sha256" ] &&`,
-			replacement: `[ -f "$E2E_NEXT_CHART_PACKAGE" ] &&`,
+			old:         `if [ "$late_retry_chart_sha256" != "$late_candidate_chart_sha256" ] ||`,
+			replacement: `if [ ! -f "$E2E_NEXT_CHART_PACKAGE" ] ||`,
+			wantError:   "late activation immutable candidate retry inputs",
+		},
+		{
+			name:        "CRD recovery ignores candidate chart checksum failure",
+			child:       "crd-upgrade",
+			old:         `fail "could not checksum the late activation candidate chart"`,
+			replacement: `: # checksum failure ignored`,
+			wantError:   "late activation immutable candidate retry inputs",
+		},
+		{
+			name:        "CRD recovery ignores candidate values checksum failure",
+			child:       "crd-upgrade",
+			old:         `fail "could not checksum the late activation candidate values"`,
+			replacement: `: # checksum failure ignored`,
 			wantError:   "late activation immutable candidate retry inputs",
 		},
 		{
