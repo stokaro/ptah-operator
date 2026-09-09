@@ -783,26 +783,42 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 		},
 		{
 			name: hook, component: "crd-manager", cluster: true, retired: true, probeSubject: "hook-quiesce",
-			rules: []rbacv1.PolicyRule{
-				privilegePolicyRule([]string{"apiextensions.k8s.io"}, []string{"customresourcedefinitions"}, crdNames, []string{"get", "update"}),
-				privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas", "ptahschemaplans", "ptahschemaapprovals"}, nil, []string{"list"}),
-				privilegePolicyRule(
-					[]string{"admissionregistration.k8s.io"},
-					[]string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"},
-					[]string{AdmissionConfigurationName},
-					[]string{"get", "update"},
-				),
-				privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicies"}, currentCRDManagerAdmissionGuardNames(t.rollout), []string{"get"}),
-				privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicybindings"}, currentCRDManagerAdmissionGuardNames(t.rollout), []string{"get"}),
-				privilegePolicyRule([]string{"scheduling.k8s.io"}, []string{"priorityclasses"}, nil, []string{"get", "list"}),
-				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, nil, []string{"list"}),
-				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, []string{controller}, []string{"get", "patch"}),
-				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, nil, []string{"list"}),
-				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get", "patch"}),
-				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterroles"}, []string{controller}, []string{"get"}),
-				privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"roles"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get"}),
-				privilegePolicyRule([]string{"authorization.k8s.io"}, []string{"subjectaccessreviews"}, nil, []string{"create"}),
-			},
+			rules: func() []rbacv1.PolicyRule {
+				rules := []rbacv1.PolicyRule{
+					privilegePolicyRule([]string{"apiextensions.k8s.io"}, []string{"customresourcedefinitions"}, crdNames, []string{"get", "update"}),
+					privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas", "ptahschemaplans", "ptahschemaapprovals"}, nil, []string{"list"}),
+					privilegePolicyRule(
+						[]string{"admissionregistration.k8s.io"},
+						[]string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"},
+						[]string{AdmissionConfigurationName},
+						[]string{"get", "update"},
+					),
+					privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicies"}, currentCRDManagerAdmissionGuardNames(t.rollout), []string{"get"}),
+					privilegePolicyRule([]string{"admissionregistration.k8s.io"}, []string{"validatingadmissionpolicybindings"}, currentCRDManagerAdmissionGuardNames(t.rollout), []string{"get"}),
+				}
+				// Retiring a predecessor means reading and then deleting exactly
+				// the objects it sealed, so the grant appears only where there is
+				// one and names nothing wider.
+				if names := PredecessorRetiredAdmissionGuardNames(t.rollout); len(names) != 0 {
+					rules = append(rules, privilegePolicyRule(
+						[]string{"admissionregistration.k8s.io"},
+						[]string{"validatingadmissionpolicies", "validatingadmissionpolicybindings"},
+						names,
+						[]string{"get", "delete"},
+					))
+				}
+				rules = append(rules,
+					privilegePolicyRule([]string{"scheduling.k8s.io"}, []string{"priorityclasses"}, nil, []string{"get", "list"}),
+					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, nil, []string{"list"}),
+					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, []string{controller}, []string{"get", "patch"}),
+					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, nil, []string{"list"}),
+					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get", "patch"}),
+					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterroles"}, []string{controller}, []string{"get"}),
+					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"roles"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get"}),
+					privilegePolicyRule([]string{"authorization.k8s.io"}, []string{"subjectaccessreviews"}, nil, []string{"create"}),
+				)
+				return rules
+			}(),
 		},
 		{
 			name: hook, namespace: t.rollout.ReleaseNamespace, component: "crd-manager", retired: true, probeSubject: "hook-quiesce",
@@ -831,7 +847,10 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 				if t.rollout.PreviousControllerReleaseSequence > 0 {
 					rules = append(rules, privilegePolicyRule(
 						[]string{""}, []string{"configmaps"},
-						[]string{AdmissionConvergenceMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.PreviousControllerReleaseSequence)},
+						[]string{
+							AdmissionConvergenceMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.PreviousControllerReleaseSequence),
+							HookIdentityProbeObjectName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.PreviousControllerReleaseSequence, t.rollout.PreviousControllerManagerImage),
+						},
 						[]string{"get", "delete"},
 					))
 				}

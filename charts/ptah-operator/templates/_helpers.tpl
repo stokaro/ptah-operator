@@ -456,6 +456,48 @@ that release wrote, found by the identity the live Deployment discloses.
 {{- $principal.name -}}
 {{- end -}}
 
+{{/*
+The retained objects a predecessor sequence sealed, derived from the sequence
+and manager image its live controller disclosed. Retiring a predecessor means
+reading and deleting exactly these, so the hook that retires it is granted them
+by name and nothing wider. The list mirrors the sealed inventory the predecessor
+wrote; crdupgrade builds the same names from the same identity.
+*/}}
+{{- define "ptah-operator.predecessorRetiredPolicyNames" -}}
+{{- $sequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
+{{- if ne $sequence "0" -}}
+{{- $digest := printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $sequence (include "ptah-operator.previousControllerManagerImage" .) | sha256sum | trunc 12 -}}
+{{- range $name := list
+      (printf "ptah-operator-rollout-guard-v%s" $sequence)
+      (printf "ptah-operator-runtime-guard-v%s" $sequence)
+      (printf "ptah-operator-runtime-pod-identity-v%s" $sequence)
+      (printf "ptah-operator-hook-identity-v%s-%s" $sequence $digest)
+      (printf "ptah-operator-hook-probe-guard-v%s-%s" $sequence $digest)
+      (printf "ptah-operator-runtime-parent-guard-v2-%s" $digest)
+      (printf "ptah-operator-hook-parent-contract-v%s-%s" $sequence $digest)
+      (printf "ptah-operator-service-account-origin-guard-v2-%s" $digest)
+      (printf "ptah-operator-controller-write-guard-v2-%s" $digest)
+      (printf "ptah-operator-job-write-guard-v2-%s" $digest)
+      (printf "ptah-operator-chunk-write-guard-v2-%s" $digest)
+      (printf "ptah-operator-plan-write-guard-v2-%s" $digest) }}
+- {{ $name }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "ptah-operator.predecessorRetiredConfigMapNames" -}}
+{{- $sequence := include "ptah-operator.previousControllerReleaseSequence" . -}}
+{{- if ne $sequence "0" -}}
+{{- $digest := printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $sequence (include "ptah-operator.previousControllerManagerImage" .) | sha256sum | trunc 12 -}}
+{{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- range $name := list
+      (printf "ptah-hook-probe-v%s-%s" $sequence $digest)
+      (printf "ptah-admission-convergence-v1-%s-%s" $sequence $releaseDigest) }}
+- {{ $name }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "ptah-operator.previousControllerManagerImage" -}}
 {{- $principal := include "ptah-operator.previousControllerPrincipalJSON" . | fromJson -}}
 {{- default "" $principal.managerImage -}}

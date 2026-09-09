@@ -691,6 +691,19 @@ func buildTeardownAuthorizationChecks(
 			rollout.PreviousControllerReleaseSequence,
 		)
 		appendResource(teardownCheckHook, "delete predecessor admission convergence marker ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "delete", previousMarkerName)
+		previousProbeName := crdupgrade.HookIdentityProbeObjectName(
+			rollout.ReleaseNamespace,
+			rollout.ReleaseName,
+			rollout.PreviousControllerReleaseSequence,
+			rollout.PreviousControllerManagerImage,
+		)
+		appendResource(teardownCheckHook, "delete predecessor hook identity probe ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "delete", previousProbeName)
+		// The retiring hook is granted get and delete on exactly the objects the
+		// predecessor sealed, so every one of them is probed as revoked.
+		for _, name := range crdupgrade.PredecessorRetiredAdmissionGuardNames(rollout) {
+			appendResource(teardownCheckHook, "delete predecessor retained admission policy", "admissionregistration.k8s.io", "v1", "validatingadmissionpolicies", "", "", "delete", name)
+			appendResource(teardownCheckHook, "delete predecessor retained admission binding", "admissionregistration.k8s.io", "v1", "validatingadmissionpolicybindings", "", "", "delete", name)
+		}
 	}
 	appendResource(teardownCheckHook, "patch stable controller ClusterRoleBinding", "rbac.authorization.k8s.io", "v1", "clusterrolebindings", "", "", "patch", rollout.ControllerDeploymentName)
 	appendResource(teardownCheckHook, "patch stable controller RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", rollout.CoordinationNamespace, "patch", rollout.ControllerDeploymentName)

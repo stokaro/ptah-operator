@@ -1416,3 +1416,27 @@ func listControllerClusterRoleBindings(ctx context.Context, client ControllerRBA
 	})
 	return items, err
 }
+
+// PredecessorRetiredAdmissionGuardNames are the retained policies and bindings a
+// predecessor sequence sealed. The chart grants the retiring hook exactly these
+// by name, and this list is what that grant is compared against.
+func PredecessorRetiredAdmissionGuardNames(rollout *RolloutGuard) []string {
+	if rollout == nil || rollout.PreviousControllerReleaseSequence == 0 {
+		return nil
+	}
+	identity := predecessorControllerRoleIdentity(rollout)
+	return []string{
+		RolloutGuardPolicyName(identity.releaseSequence),
+		RuntimeGuardPolicyName(identity.releaseSequence),
+		RuntimePodGuardPolicyName(identity.releaseSequence),
+		HookIdentityGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		HookIdentityProbeGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ParentReplicaSetGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ParentHookJobContractPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ServiceAccountOriginGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerJobWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerChunkWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerPlanWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+	}
+}
