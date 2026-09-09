@@ -495,10 +495,25 @@ func (b *admissionConvergenceBarrier) wait(
 
 		setKey := ""
 		if b.endpointProvider != nil {
-			endpoints, err := b.endpointProvider(ctx)
+			// The last unbounded step of a sweep. Discovery lists EndpointSlices
+			// and builds a client per endpoint, and one call that never answers
+			// spends the barrier's whole deadline here: no sweep completes, so
+			// nothing reaches the point that records why.
+			discoverCtx, cancelDiscover := context.WithTimeout(ctx, b.requestTimeout)
+			endpoints, err := b.endpointProvider(discoverCtx)
+			discoverTimedOut := discoverCtx.Err() != nil
+			cancelDiscover()
 			if err != nil {
 				if contextErr := ctx.Err(); contextErr != nil {
 					return deadline(contextErr)
+				}
+				if discoverTimedOut {
+					unmet = "admission endpoint discovery did not answer within the request timeout"
+					resetStability()
+					if sleepErr := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); sleepErr != nil {
+						return deadline(sleepErr)
+					}
+					continue
 				}
 				// EndpointSlice inventory and direct-client construction are dynamic
 				// observations. Any failure is fail-closed and recoverable until the
@@ -623,9 +638,20 @@ func (b *admissionConvergenceBarrier) wait(
 			continue
 		}
 		if b.endpointProvider != nil {
-			closingEndpoints, discoverErr := b.endpointProvider(ctx)
+			closingDiscoverCtx, cancelClosingDiscover := context.WithTimeout(ctx, b.requestTimeout)
+			closingEndpoints, discoverErr := b.endpointProvider(closingDiscoverCtx)
+			closingDiscoverTimedOut := closingDiscoverCtx.Err() != nil
+			cancelClosingDiscover()
 			if contextErr := ctx.Err(); contextErr != nil {
 				return deadline(contextErr)
+			}
+			if discoverErr != nil && closingDiscoverTimedOut {
+				unmet = "closing admission endpoint discovery did not answer within the request timeout"
+				resetStability()
+				if sleepErr := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); sleepErr != nil {
+					return deadline(sleepErr)
+				}
+				continue
 			}
 			if discoverErr != nil {
 				resetStability()
