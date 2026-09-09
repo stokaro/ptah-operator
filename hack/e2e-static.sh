@@ -6319,10 +6319,12 @@ crd_script_invocation='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"'
 # does not announce itself: the phase script refuses it through ${VAR:?...},
 # which ends that shell without setting $?.
 crd_invocation_environment() {
-	awk -v phase="E2E_PHASE=$1 \\" -v target='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"' '
+	# GNU awk drops an unescaped terminal backslash in a -v assignment. Build
+	# the continuation inside the program so the exact line match is portable.
+	awk -v phase="E2E_PHASE=$1" -v target='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"' '
 		index($0, "E2E_") == 1 {
 			block = block $0 "\n"
-			if ($0 == phase) { matched = 1 }
+			if ($0 == phase " \\") { matched = 1 }
 			next
 		}
 		index($0, target) > 0 {
@@ -6332,8 +6334,36 @@ crd_invocation_environment() {
 			next
 		}
 		{ block = ""; matched = 0 }
-	' "$ROOT_DIR/hack/e2e-kind.sh" | sed 's/=.*//' | sort -u
+	' "${2:-$ROOT_DIR/hack/e2e-kind.sh}" | sed 's/=.*//' | sort -u
 }
+
+# shellcheck disable=SC2016 # These are literal harness lines, not commands to execute.
+crd_invocation_parser_probe=$(printf '%s\n' \
+	"E2E_WRONG_PHASE=value \\" \
+	"E2E_PHASE=uninstall \\" \
+	'  "$ROOT_DIR/hack/e2e-crd-upgrade.sh"' \
+	"E2E_WRONG_TARGET=value \\" \
+	"E2E_PHASE=upgrade \\" \
+	'  "$ROOT_DIR/hack/another-phase.sh"' \
+	"E2E_REQUIRED=value \\" \
+	"E2E_PHASE=upgrade \\" \
+	'  "$ROOT_DIR/hack/e2e-crd-upgrade.sh"' |
+	crd_invocation_environment upgrade -)
+[ "$crd_invocation_parser_probe" = "$(printf '%s\n' E2E_PHASE E2E_REQUIRED)" ] || {
+	printf '%s\n' 'e2e static: CRD environment parser mixed invocation blocks or lost an assignment' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # A phase without a continuation is not part of the command environment.
+crd_invocation_parser_probe=$(printf '%s\n' \
+	"E2E_REQUIRED=value \\" \
+	'E2E_PHASE=upgrade' \
+	'  "$ROOT_DIR/hack/e2e-crd-upgrade.sh"' |
+	crd_invocation_environment upgrade -)
+[ -z "$crd_invocation_parser_probe" ] || {
+	printf '%s\n' 'e2e static: CRD environment parser accepted a phase without a command continuation' >&2
+	exit 1
+}
+
 crd_invocation_environment upgrade >"$CRD_UPGRADE_INVOCATION_ENV"
 crd_invocation_environment uninstall >"$CRD_UNINSTALL_INVOCATION_ENV"
 for crd_invocation_env_file in "$CRD_UPGRADE_INVOCATION_ENV" "$CRD_UNINSTALL_INVOCATION_ENV"; do
