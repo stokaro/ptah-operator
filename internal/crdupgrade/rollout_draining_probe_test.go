@@ -56,9 +56,7 @@ func TestRolloutGuardDrainingEnforcementProbe(t *testing.T) {
 					for name, deployment := range fixture.client.objects {
 						originals[name] = deployment.DeepCopy()
 					}
-					ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-					t.Cleanup(cancel)
-					if err := fixture.guard.waitEnforced(ctx, target.name, target.message); err != nil {
+					if err := fixture.guard.waitEnforced(t.Context(), target.name, target.message); err != nil {
 						t.Fatal(err)
 					}
 					if len(fixture.client.updates) != 2 {
@@ -378,14 +376,13 @@ func TestRolloutGuardDrainingProbePreservesOtherStates(t *testing.T) {
 func TestRolloutGuardDrainingProbeRereadsAfterConflict(t *testing.T) {
 	t.Parallel()
 	fixture := newDrainingProbeFixture(t, renderControllerRBACCutoverChart(t), 1, true, false)
+	fixture.client.maxUpdateRequests = 4
 	fixture.client.beforeUpdate = func(call int) {
 		if call == 2 {
 			fixture.client.objects[fixture.guard.CertificateDeploymentName].ResourceVersion = "102"
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	t.Cleanup(cancel)
-	if err := fixture.guard.waitEnforced(ctx, RolloutGuardPolicyName(2), rolloutGuardProbeDenialMessage(2)); err != nil {
+	if err := fixture.guard.waitEnforced(t.Context(), RolloutGuardPolicyName(2), rolloutGuardProbeDenialMessage(2)); err != nil {
 		t.Fatal(err)
 	}
 	if len(fixture.client.updates) != 4 {
@@ -399,6 +396,29 @@ func TestRolloutGuardDrainingProbeRereadsAfterConflict(t *testing.T) {
 		if deployment.ResourceVersion != want {
 			t.Fatalf("request %d RV = %q, want %q", index, deployment.ResourceVersion, want)
 		}
+	}
+}
+
+func TestRolloutGuardDrainingProbeRequestBudget(t *testing.T) {
+	t.Parallel()
+	objects := renderControllerRBACCutoverChart(t)
+	for _, maximum := range []int{2, 4} {
+		t.Run(strconv.Itoa(maximum), func(t *testing.T) {
+			fixture := newDrainingProbeFixture(t, objects, 1, true, false)
+			fixture.client.maxUpdateRequests = maximum
+			// An unenforced sentinel must not leave a t.Context()-bound test
+			// polling indefinitely. This negative never claims enforcement.
+			fixture.client.policies = nil
+			callbacks := 0
+			fixture.client.beforeUpdate = func(int) { callbacks++ }
+			err := fixture.guard.waitEnforced(t.Context(), RolloutGuardPolicyName(2), rolloutGuardProbeDenialMessage(2))
+			if err == nil || !strings.Contains(err.Error(), "enforcement probe exceeded deterministic request budget") {
+				t.Fatalf("unenforced probe did not fail at the request budget: %v", err)
+			}
+			if len(fixture.client.updates) != maximum+1 || callbacks != maximum {
+				t.Fatalf("requests/callbacks = %d/%d, want %d/%d", len(fixture.client.updates), callbacks, maximum+1, maximum)
+			}
+		})
 	}
 }
 
@@ -442,6 +462,7 @@ func newDrainingProbeFixture(t *testing.T, objects []*unstructured.Unstructured,
 	client := &drainingProbeDeploymentClient{
 		rolloutDeploymentClient: &rolloutDeploymentClient{objects: map[string]*appsv1.Deployment{}},
 		t:                       t, guard: guard, params: params,
+		maxUpdateRequests: 2,
 		policies: []*admissionregistrationv1.ValidatingAdmissionPolicy{
 			guard.policy(guard.ControllerStateVersion, guard.AdmissionContractVersion),
 			guard.runtimePolicy(guard.ControllerStateVersion, guard.ReleaseSequence, guard.ManagerImage),
@@ -491,12 +512,13 @@ func newDrainingProbeFixture(t *testing.T, objects []*unstructured.Unstructured,
 // object. It is a native-CEL unit test, not an API-server simulator.
 type drainingProbeDeploymentClient struct {
 	*rolloutDeploymentClient
-	t            *testing.T
-	guard        *RolloutGuard
-	params       map[string]any
-	policies     []*admissionregistrationv1.ValidatingAdmissionPolicy
-	updates      []*appsv1.Deployment
-	beforeUpdate func(int)
+	t                 *testing.T
+	guard             *RolloutGuard
+	params            map[string]any
+	policies          []*admissionregistrationv1.ValidatingAdmissionPolicy
+	updates           []*appsv1.Deployment
+	beforeUpdate      func(int)
+	maxUpdateRequests int
 }
 
 func (c *drainingProbeDeploymentClient) Update(_ context.Context, deployment *appsv1.Deployment, options metav1.UpdateOptions) (*appsv1.Deployment, error) {
@@ -504,6 +526,12 @@ func (c *drainingProbeDeploymentClient) Update(_ context.Context, deployment *ap
 		c.t.Fatal("enforcement probe attempted a persistent Deployment update")
 	}
 	c.updates = append(c.updates, deployment.DeepCopy())
+	// CEL compilation/evaluation can be slow under package-wide race load.
+	// Bound protocol attempts, not wall-clock CPU time; an excess request is
+	// fatal before callbacks, conflict injection, or further CEL evaluation.
+	if len(c.updates) > c.maxUpdateRequests {
+		return nil, fmt.Errorf("enforcement probe exceeded deterministic request budget %d", c.maxUpdateRequests)
+	}
 	if c.beforeUpdate != nil {
 		c.beforeUpdate(len(c.updates))
 	}
