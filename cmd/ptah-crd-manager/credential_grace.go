@@ -92,6 +92,20 @@ func (o *protectedRuntimePodStabilityObserver) Observe(ctx context.Context, _ st
 		if err := o.restart(ctx); err != nil {
 			return "", false, err
 		}
+		return o.identity, o.proven, nil
+	}
+	// The verdict is refreshed by restart, and restart runs on an event. A Pod
+	// that disappears after the last event this watch delivers would leave the
+	// observer holding "Pods remain" with nothing left to correct it, and the
+	// barrier would wait for a condition that is already true. While the
+	// observation is unproven the snapshot is therefore re-read every sweep;
+	// once proven, the watch alone carries it and the identity stays stable,
+	// which is what the stability window measures.
+	if !o.proven {
+		if err := o.restart(ctx); err != nil {
+			return "", false, fmt.Errorf("re-read protected runtime Pods for an unproven observation: %w", err)
+		}
+		return o.identity, o.proven, nil
 	}
 
 	for range protectedRuntimePodWatchDrainLimit {

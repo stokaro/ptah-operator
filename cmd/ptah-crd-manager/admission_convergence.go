@@ -589,6 +589,8 @@ func (b *admissionConvergenceBarrier) wait(
 			continue
 		}
 
+		unmet = "every condition was proven and the stability window had not elapsed"
+
 		// Close the sweep by re-reading every non-endpoint invariant around a
 		// second discovery snapshot. A successful opening observation cannot be
 		// carried across a stored-object replacement, topology change, or watch
@@ -598,6 +600,7 @@ func (b *admissionConvergenceBarrier) wait(
 			return err
 		}
 		if !storedProven {
+			unmet = "the stored admission contract stopped being sealed during the sweep"
 			resetStability()
 			if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
 				return deadline(err)
@@ -621,6 +624,7 @@ func (b *admissionConvergenceBarrier) wait(
 			}
 			b.endpoints = closingEndpoints
 			if admissionConvergenceEndpointSetKey(closingEndpoints) != setKey {
+				unmet = "the API endpoint set changed during the sweep"
 				resetStability()
 				if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
 					return deadline(err)
