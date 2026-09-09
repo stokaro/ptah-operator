@@ -272,15 +272,94 @@ func TestControllerRBACTransitionSnapshotsConstructorIdentity(t *testing.T) {
 	}
 }
 
-func TestControllerRBACTransitionRejectsUnfrozenFuturePredecessor(t *testing.T) {
+func TestControllerRBACTransitionAcceptsFrozenPredecessor(t *testing.T) {
+	t.Parallel()
+	fixture := newControllerRBACTransitionFixture(t, 0)
+	fixture.guard.ReleaseSequence = 2
+	fixture.guard.PreviousControllerReleaseSequence = 1
+	fixture.guard.PreviousControllerManagerImage = predecessorManagerImage
+	fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v2-0123456789ab"
+	if _, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client); err != nil {
+		t.Fatalf("NewControllerRBACTransition() out of the frozen sequence error = %v", err)
+	}
+}
+
+// The predecessor's guard names carry its manager image, so its frozen rules
+// cannot be built without one.
+func TestControllerRBACTransitionRejectsPredecessorWithoutManagerImage(t *testing.T) {
 	t.Parallel()
 	fixture := newControllerRBACTransitionFixture(t, 0)
 	fixture.guard.ReleaseSequence = 2
 	fixture.guard.PreviousControllerReleaseSequence = 1
 	fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v2-0123456789ab"
 	_, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
-	if err == nil || !strings.Contains(err.Error(), "requires an explicit frozen predecessor role contract") {
-		t.Fatalf("NewControllerRBACTransition() error = %v, want unfrozen predecessor refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "requires the predecessor manager image") {
+		t.Fatalf("NewControllerRBACTransition() error = %v, want a missing predecessor image refusal", err)
+	}
+}
+
+func TestControllerRBACTransitionRejectsUnfrozenFuturePredecessor(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name             string
+		sequence         int32
+		previousSequence int32
+	}{
+		{name: "unrecorded predecessor", sequence: 3, previousSequence: 2},
+		{name: "skipped sequence", sequence: 3, previousSequence: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newControllerRBACTransitionFixture(t, 0)
+			fixture.guard.ReleaseSequence = test.sequence
+			fixture.guard.PreviousControllerReleaseSequence = test.previousSequence
+			fixture.guard.PreviousControllerManagerImage = predecessorManagerImage
+			fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v3-0123456789ab"
+			_, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
+			if err == nil || !strings.Contains(err.Error(), "requires an explicit frozen predecessor role contract") {
+				t.Fatalf("NewControllerRBACTransition() error = %v, want unfrozen predecessor refusal", err)
+			}
+		})
+	}
+}
+
+// The frozen contract records what a shipped sequence published. A predecessor
+// running a different manager image publishes different retained guard names,
+// and the transition has to expect those, not the candidate's.
+func TestFrozenPredecessorRulesFollowThePredecessorIdentity(t *testing.T) {
+	t.Parallel()
+	fixture := newControllerRBACTransitionFixture(t, 0)
+	fixture.guard.ReleaseSequence = 2
+	fixture.guard.PreviousControllerReleaseSequence = 1
+	fixture.guard.PreviousControllerManagerImage = predecessorManagerImage
+	predecessorRules, _, err := frozenPredecessorControllerRoleRules(fixture.guard)
+	if err != nil {
+		t.Fatalf("frozenPredecessorControllerRoleRules() error = %v", err)
+	}
+	candidateNames := currentRetainedAdmissionGuardNames(fixture.guard)
+	var guardRule *rbacv1.PolicyRule
+	for index, rule := range predecessorRules {
+		if len(rule.Resources) == 2 && rule.Resources[0] == "validatingadmissionpolicies" {
+			guardRule = &predecessorRules[index]
+			break
+		}
+	}
+	if guardRule == nil {
+		t.Fatal("frozen predecessor rules do not name the retained admission guards")
+	}
+	if len(guardRule.ResourceNames) != len(candidateNames) {
+		t.Fatalf("predecessor guard names = %d, want %d", len(guardRule.ResourceNames), len(candidateNames))
+	}
+	shared := 0
+	for _, name := range guardRule.ResourceNames {
+		for _, candidate := range candidateNames {
+			if name == candidate {
+				shared++
+			}
+		}
+	}
+	if shared == len(candidateNames) {
+		t.Fatal("frozen predecessor guard names equal the candidate's; they must follow the predecessor identity")
 	}
 }
 
@@ -883,6 +962,10 @@ type controllerRBACTransitionFixture struct {
 	client          *fakeControllerRBACClient
 	transition      *ControllerRBACTransition
 }
+
+// A predecessor sequence runs its own manager image, which its retained guard
+// names carry.
+const predecessorManagerImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 func newControllerRBACTransitionFixture(t *testing.T, cursor int) *controllerRBACTransitionFixture {
 	t.Helper()

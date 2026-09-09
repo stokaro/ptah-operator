@@ -160,6 +160,15 @@ app.kubernetes.io/component: controller
 {{- if ge (atoi $retainedPreviousSequence) (atoi (include "ptah-operator.releaseSequence" .root)) -}}
 {{- fail (printf "retained %s %s records a previous release sequence this release does not succeed" .kind .name) -}}
 {{- end -}}
+{{- if not (hasKey $annotations "operator.ptah.dev/previous-controller-manager-image") -}}
+{{- fail (printf "retained %s %s does not record the manager image it succeeded" .kind .name) -}}
+{{- end -}}
+{{- $retainedPreviousImage := index $annotations "operator.ptah.dev/previous-controller-manager-image" -}}
+{{- if or
+      (and (eq $retainedPreviousSequence "0") (ne $retainedPreviousImage ""))
+      (and (ne $retainedPreviousSequence "0") (eq $retainedPreviousImage "")) -}}
+{{- fail (printf "retained %s %s records a previous manager image inconsistent with its previous release sequence" .kind .name) -}}
+{{- end -}}
 {{- include "ptah-operator.validatePreviousControllerServiceAccountName" (dict
       "name" (index $annotations "operator.ptah.dev/previous-controller-service-account-name")
       "reserved" (list
@@ -383,17 +392,19 @@ that release wrote, found by the identity the live Deployment discloses.
 {{- $previousUID := index $annotations "operator.ptah.dev/previous-controller-service-account-uid" -}}
 {{- $previousManaged := index $annotations "operator.ptah.dev/previous-controller-service-account-managed" -}}
 {{- $previousSequence := index $annotations "operator.ptah.dev/previous-controller-release-sequence" -}}
+{{- $previousManagerImage := index $annotations "operator.ptah.dev/previous-controller-manager-image" -}}
 {{- if and $guardPolicy $guardBinding -}}
 {{- $bindingAnnotations := default (dict) $guardBinding.metadata.annotations -}}
 {{- if or
       (ne $previousName (index $bindingAnnotations "operator.ptah.dev/previous-controller-service-account-name"))
       (ne $previousUID (index $bindingAnnotations "operator.ptah.dev/previous-controller-service-account-uid"))
       (ne $previousManaged (index $bindingAnnotations "operator.ptah.dev/previous-controller-service-account-managed"))
-      (ne $previousSequence (index $bindingAnnotations "operator.ptah.dev/previous-controller-release-sequence")) -}}
+      (ne $previousSequence (index $bindingAnnotations "operator.ptah.dev/previous-controller-release-sequence"))
+      (ne $previousManagerImage (index $bindingAnnotations "operator.ptah.dev/previous-controller-manager-image")) -}}
 {{- fail "retained service-account-origin policy and binding disagree on the previous controller identity" -}}
 {{- end -}}
 {{- end -}}
-{{- dict "name" $previousName "uid" $previousUID "managed" $previousManaged "releaseSequence" $previousSequence | toJson -}}
+{{- dict "name" $previousName "uid" $previousUID "managed" $previousManaged "releaseSequence" $previousSequence "managerImage" $previousManagerImage | toJson -}}
 {{- else -}}
 {{- $principal := include "ptah-operator.legacyControllerPrincipalCoreJSON" . | fromJson -}}
 {{- if $principal.name -}}
@@ -407,9 +418,9 @@ that release wrote, found by the identity the live Deployment discloses.
       "managerImage" $principal.managerImage
       "serviceAccountName" $principal.name) -}}
 {{- end -}}
-{{- $principal = dict "name" $principal.name "uid" $serviceAccount.uid "managed" $managed "releaseSequence" $principal.releaseSequence -}}
+{{- $principal = dict "name" $principal.name "uid" $serviceAccount.uid "managed" $managed "releaseSequence" $principal.releaseSequence "managerImage" $principal.managerImage -}}
 {{- else -}}
-{{- $principal = dict "name" "" "uid" "" "managed" "false" "releaseSequence" "0" -}}
+{{- $principal = dict "name" "" "uid" "" "managed" "false" "releaseSequence" "0" "managerImage" "" -}}
 {{- end -}}
 {{- $principal | toJson -}}
 {{- end -}}
@@ -443,6 +454,11 @@ that release wrote, found by the identity the live Deployment discloses.
 {{- define "ptah-operator.previousControllerServiceAccountName" -}}
 {{- $principal := include "ptah-operator.previousControllerPrincipalJSON" . | fromJson -}}
 {{- $principal.name -}}
+{{- end -}}
+
+{{- define "ptah-operator.previousControllerManagerImage" -}}
+{{- $principal := include "ptah-operator.previousControllerPrincipalJSON" . | fromJson -}}
+{{- default "" $principal.managerImage -}}
 {{- end -}}
 
 {{- define "ptah-operator.previousControllerReleaseSequence" -}}
@@ -1173,7 +1189,8 @@ crdupgrade compiles the same pattern.
       (printf "--certificate-runtime-args-b64=%s" (include "ptah-operator.certificateRuntimeArgsJSON" $root | b64enc))
       (printf "--runtime-deployment-config-expressions-b64=%s" (include "ptah-operator.runtimeDeploymentConfigExpressionsJSON" $root | b64enc))
       (printf "--runtime-pod-config-expressions-b64=%s" (include "ptah-operator.runtimePodConfigExpressionsJSON" $root | b64enc))
-      (printf "--runtime-admission-contract-b64=%s" (include "ptah-operator.runtimeAdmissionContractJSON" $root | b64enc)) -}}
+      (printf "--runtime-admission-contract-b64=%s" (include "ptah-operator.runtimeAdmissionContractJSON" $root | b64enc))
+      (printf "--previous-controller-manager-image=%s" (include "ptah-operator.previousControllerManagerImage" $root)) -}}
 {{- /* ptah-crd-manager refuses --verify-controller-state together with
       --verify-certificate-recovery, and RolloutGuard compiles the runtime-verify
       contract with the same exclusion. */ -}}

@@ -201,6 +201,7 @@ type RolloutGuard struct {
 	PreviousControllerServiceAccountUID     types.UID
 	PreviousControllerServiceAccountManaged bool
 	PreviousControllerReleaseSequence       int32
+	PreviousControllerManagerImage          string
 	ControllerDeploymentName                string
 	ControllerReplicas                      int32
 	CertificateDeploymentName               string
@@ -1132,6 +1133,10 @@ func (g *RolloutGuard) verifierArgs(verifyControllerState bool) []string {
 		"--runtime-deployment-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimeDeploymentConfigExpressions),
 		"--runtime-pod-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimePodConfigExpressions),
 		"--runtime-admission-contract-b64=" + g.RuntimeAdmissionContractB64,
+		// Appended rather than grouped with the other predecessor flags: every
+		// earlier position is pinned by index in the CEL the chart and this
+		// package both render, and an insertion would move all of them.
+		"--previous-controller-manager-image=" + g.PreviousControllerManagerImage,
 	}
 	if verifyControllerState {
 		args = append(args, "--verify-controller-state=true")
@@ -1601,6 +1606,10 @@ func (g *RolloutGuard) hookArgs(mode string) []string {
 		"--runtime-deployment-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimeDeploymentConfigExpressions),
 		"--runtime-pod-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimePodConfigExpressions),
 		"--runtime-admission-contract-b64=" + g.RuntimeAdmissionContractB64,
+		// Appended rather than grouped with the other predecessor flags: every
+		// earlier position is pinned by index in the CEL the chart and this
+		// package both render, and an insertion would move all of them.
+		"--previous-controller-manager-image=" + g.PreviousControllerManagerImage,
 	}
 }
 

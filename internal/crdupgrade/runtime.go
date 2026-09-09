@@ -143,6 +143,7 @@ type RuntimeInvariants struct {
 	PreviousControllerServiceAccountUID     types.UID
 	PreviousControllerServiceAccountManaged bool
 	PreviousControllerReleaseSequence       int32
+	PreviousControllerManagerImage          string
 	ControllerDeploymentName                string
 	CertificateDeploymentName               string
 	ControllerStateVersion                  int32
