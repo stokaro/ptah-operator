@@ -1864,29 +1864,112 @@ emit_late_activation_failure_summary() {
 	printf 'e2e crd: late activation evidence summary: %s\n' "$activation_summary" >&2
 }
 
-restore_runtime_deployment_snapshot() {
-	deployment_name=$1
-	snapshot=$2
-	live=$WORK_DIR/${deployment_name}-late-failure-live.json
-	restored=$WORK_DIR/${deployment_name}-late-failure-restored.json
-	kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$deployment_name" -o json >"$live"
-	jq --slurpfile desired "$snapshot" '
-      .metadata.labels = $desired[0].metadata.labels |
-      .metadata.annotations = $desired[0].metadata.annotations |
-      .metadata.ownerReferences = ($desired[0].metadata.ownerReferences // []) |
-      .metadata.finalizers = ($desired[0].metadata.finalizers // []) |
-      .spec = $desired[0].spec |
-      del(.status)
-    ' "$live" >"$restored"
-	kube replace -f "$restored" >/dev/null ||
-		fail "successor rollout guards blocked exact current-release Deployment recovery for $deployment_name"
+assert_late_activation_drain() {
+	kube -n "$E2E_OPERATOR_NAMESPACE" get configmap ptah-operator-release-activation -o json |
+		jq -e --arg current "$late_current_sequence" --arg next "$late_next_sequence" \
+			--arg attempt "$late_candidate_attempt" --arg image "$late_current_image" \
+			--arg namespace "$E2E_OPERATOR_NAMESPACE" --arg release "$E2E_HELM_RELEASE" '
+          .metadata.namespace == $namespace and
+          .metadata.annotations["operator.ptah.dev/release-name"] == $release and
+          .metadata.annotations["operator.ptah.dev/release-namespace"] == $namespace and
+          .metadata.annotations["operator.ptah.dev/release-sequence"] == $current and
+          .metadata.annotations["operator.ptah.dev/manager-image"] == $image and
+          (.data | keys | sort) == ["active-release-sequence", "controller-credentials", "controller-credentials-attempt", "controller-credentials-target-release-sequence"] and
+          .data["active-release-sequence"] == $current and
+          .data["controller-credentials"] == "draining" and
+          .data["controller-credentials-target-release-sequence"] == $next and
+          ($attempt | test("^[0-9a-f]{64}$")) and
+          .data["controller-credentials-attempt"] == $attempt
+        ' >/dev/null ||
+		fail "late failure did not preserve the exact predecessor sequence and candidate drain tuple"
+}
+
+assert_late_activation_candidate_unchanged() {
+	[ "$(file_sha256 "$E2E_NEXT_CHART_PACKAGE")" = "$late_candidate_chart_sha256" ] &&
+		[ "$(file_sha256 "$E2E_NEXT_VALUES_FILE")" = "$late_candidate_values_sha256" ] &&
+		[ "$E2E_NEXT_CONTROLLER_IMAGE" = "$late_candidate_image" ] &&
+		[ "$E2E_NEXT_RELEASE_SEQUENCE" = "$late_next_sequence" ] ||
+		fail "late activation recovery changed the candidate chart, values, image, or sequence"
+}
+
+assert_late_activation_cutover() {
+	late_origin_name=ptah-operator-service-account-origin-guard-v2-$(printf '%s' "$late_candidate_attempt" | cut -c1-12)
+	kube get validatingadmissionpolicy "$late_origin_name" -o json >"$WORK_DIR/late-activation-origin.json"
+	late_candidate_service_account=$(jq -er \
+		--arg next "$late_next_sequence" --arg image "$late_candidate_image" \
+		--arg previous "$current_sequence_service_account" \
+		--arg previous_uid "$(jq -er '.serviceAccountUID' "$current_sequence_identity")" '
+          select(
+            .metadata.annotations["operator.ptah.dev/release-sequence"] == $next and
+            .metadata.annotations["operator.ptah.dev/manager-image"] == $image and
+            .metadata.annotations["operator.ptah.dev/previous-controller-service-account-name"] == $previous and
+            .metadata.annotations["operator.ptah.dev/previous-controller-service-account-uid"] == $previous_uid
+          ) |
+          .metadata.annotations["operator.ptah.dev/controller-service-account-name"] |
+          select(type == "string" and length > 0 and . != $previous)
+        ' "$WORK_DIR/late-activation-origin.json") ||
+		fail "late failure lost the exact retained predecessor and candidate identity"
+	late_coordination_namespace=$(jq -er --arg namespace "$E2E_OPERATOR_NAMESPACE" \
+		'.coordination.namespace // "" | if . == "" then $namespace else . end' \
+		"$WORK_DIR/current-release-values.json")
+	kube get clusterrolebindings,rolebindings --all-namespaces -o json >"$WORK_DIR/late-activation-bindings.json"
+	jq -e --arg namespace "$E2E_OPERATOR_NAMESPACE" --arg coordination "$late_coordination_namespace" \
+		--arg controller "$CONTROLLER_DEPLOYMENT" --arg certificate "$ROTATOR_DEPLOYMENT" \
+		--arg candidate "$late_candidate_service_account" --arg previous "$current_sequence_service_account" '
+      def subject($name): {kind: "ServiceAccount", name: $name, namespace: $namespace};
+      .items as $bindings |
+      [
+        {kind: "ClusterRoleBinding", namespace: "", name: $controller, roleKind: "ClusterRole", subjects: [subject($candidate)]},
+        {kind: "RoleBinding", namespace: $namespace, name: ($controller + "-runtime-admission"), roleKind: "Role", subjects: [subject($candidate), subject($certificate)]},
+        {kind: "RoleBinding", namespace: $coordination, name: $controller, roleKind: "Role", subjects: [subject($candidate)]}
+      ] + (if $namespace == "default" then [] else [
+        {kind: "RoleBinding", namespace: "default", name: ($controller + "-runtime-discovery"), roleKind: "Role", subjects: [subject($candidate), subject($certificate)]}
+      ] end) | all(.[]; . as $target |
+        [$bindings[] | select(.kind == $target.kind and (.metadata.namespace // "") == $target.namespace and .metadata.name == $target.name)] as $matches |
+        ($matches | length) == 1 and
+        ($matches[0] |
+          .roleRef == {apiGroup: "rbac.authorization.k8s.io", kind: $target.roleKind, name: $target.name} and
+          [.subjects[] | if .apiGroup == "" then del(.apiGroup) else . end] == $target.subjects)
+      ) and
+      ($namespace != "default" or all($bindings[];
+        .kind != "RoleBinding" or .metadata.namespace != "default" or .metadata.name != ($controller + "-runtime-discovery"))) and
+      all($bindings[]; all(.subjects[]?; .kind != "ServiceAccount" or .namespace != $namespace or .name != $previous))
+    ' "$WORK_DIR/late-activation-bindings.json" >/dev/null ||
+		fail "late failure did not leave the exact namespace-scoped candidate bindings with the predecessor removed"
+
+	# These real authorization responses complement the hook's captured late
+	# boundary: reaching Activate already required the continuous Pod fence and
+	# predecessor authorization denial on every advertised API server.
+	for late_probe in schema runtime coordination discovery; do
+		case "$late_probe" in
+		schema) late_attributes=$(jq -nc '{group: "operator.ptah.dev", resource: "ptahschemas", subresource: "status", verb: "update"}') ;;
+		runtime) late_attributes=$(jq -nc --arg ns "$E2E_OPERATOR_NAMESPACE" --arg name "$current_sequence_marker_name" '{namespace: $ns, resource: "configmaps", name: $name, verb: "update"}') ;;
+		coordination) late_attributes=$(jq -nc --arg ns "$late_coordination_namespace" '{namespace: $ns, group: "coordination.k8s.io", resource: "leases", verb: "update"}') ;;
+		discovery) late_attributes=$(jq -nc '{namespace: "default", group: "discovery.k8s.io", resource: "endpointslices", verb: "list"}') ;;
+		esac
+		jq -nc --arg namespace "$E2E_OPERATOR_NAMESPACE" --arg previous "$current_sequence_service_account" \
+			--argjson attributes "$late_attributes" '{
+          apiVersion: "authorization.k8s.io/v1", kind: "SubjectAccessReview",
+          spec: {user: ("system:serviceaccount:" + $namespace + ":" + $previous),
+            groups: ["system:serviceaccounts", ("system:serviceaccounts:" + $namespace), "system:authenticated"],
+            resourceAttributes: $attributes}
+        }' | kube create -f - -o json >"$WORK_DIR/late-activation-${late_probe}-authorization.json"
+		jq -e '.status.allowed == false and (.status.evaluationError // "") == ""' \
+			"$WORK_DIR/late-activation-${late_probe}-authorization.json" >/dev/null ||
+			fail "late failure retained predecessor $late_probe authorization"
+	done
 }
 
 prove_late_activation_failure_recovery() {
 	late_current_sequence=$1
 	late_next_sequence=$2
 	late_current_image=$3
-	printf '%s\n' 'e2e crd: proving current-release recovery after a late pre-activation failure'
+	printf '%s\n' 'e2e crd: proving the durable boundary for same-candidate late-failure recovery'
+	late_candidate_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE")
+	late_candidate_values_sha256=$(file_sha256 "$E2E_NEXT_VALUES_FILE")
+	late_candidate_image=$E2E_NEXT_CONTROLLER_IMAGE
+	late_candidate_attempt=$(printf '%s\n%s\n%s\n%s' "$E2E_OPERATOR_NAMESPACE" \
+		"$E2E_HELM_RELEASE" "$late_next_sequence" "$late_candidate_image" | stdin_sha256)
 	runtime_deployment_names
 	controller_snapshot=$WORK_DIR/controller-before-late-activation-failure.json
 	rotator_snapshot=$WORK_DIR/rotator-before-late-activation-failure.json
@@ -1974,7 +2057,6 @@ prove_late_activation_failure_recovery() {
 		emit_late_activation_failure_summary "$late_status_file"
 		fail "late activation failure did not stop at the exact reconcile-hook boundary"
 	fi
-	delete_late_activation_blocker
 	if [ "$late_activation_captures_succeeded" != true ]; then
 		emit_late_activation_preflight_diagnostic_if_available
 		emit_late_activation_failure_summary "$late_status_file"
@@ -1982,11 +2064,7 @@ prove_late_activation_failure_recovery() {
 	fi
 	verify_late_activation_preflight_capture
 	emit_late_activation_reconcile_diagnostic
-
-	kube -n "$E2E_OPERATOR_NAMESPACE" get configmap ptah-operator-release-activation -o json |
-		jq -e --arg current "$late_current_sequence" \
-			'.data["active-release-sequence"] == $current' >/dev/null ||
-		fail "late failure advanced the release activation marker past sequence $late_current_sequence"
+	assert_late_activation_drain
 	controller_state_version=$(jq -er \
 		'.metadata.annotations["operator.ptah.dev/controller-state-version"]' "$controller_snapshot")
 	for deployment_name in "$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT"; do
@@ -2000,18 +2078,14 @@ prove_late_activation_failure_recovery() {
             ' >/dev/null || fail "late failure did not leave $deployment_name at the exact staged boundary"
 	done
 
-	restore_runtime_deployment_snapshot "$CONTROLLER_DEPLOYMENT" "$controller_snapshot"
-	restore_runtime_deployment_snapshot "$ROTATOR_DEPLOYMENT" "$rotator_snapshot"
-	wait_runtime_ready
-	snapshot_runtime_deployment "$CONTROLLER_DEPLOYMENT" \
-		"$WORK_DIR/controller-after-late-activation-recovery.json"
-	snapshot_runtime_deployment "$ROTATOR_DEPLOYMENT" \
-		"$WORK_DIR/rotator-after-late-activation-recovery.json"
-	cmp "$controller_snapshot" "$WORK_DIR/controller-after-late-activation-recovery.json" ||
-		fail "controller Deployment was not restored exactly after the late activation failure"
-	cmp "$rotator_snapshot" "$WORK_DIR/rotator-after-late-activation-recovery.json" ||
-		fail "certificate Deployment was not restored exactly after the late activation failure"
-	printf '%s\n' 'e2e crd: current-release late-failure recovery passed'
+	assert_late_activation_cutover
+	kube -n "$E2E_OPERATOR_NAMESPACE" get pods -o json |
+		jq -e --arg previous "$current_sequence_service_account" --arg candidate "$late_candidate_service_account" \
+			--arg certificate "$ROTATOR_DEPLOYMENT" '
+          all(.items[]; .spec.serviceAccountName != $previous and
+            .spec.serviceAccountName != $candidate and .spec.serviceAccountName != $certificate)
+        ' >/dev/null || fail "late failure left a protected runtime Pod after credential cutover"
+	printf '%s\n' 'e2e crd: exact late-failure drain, quiescence, and RBAC boundary proved'
 }
 
 # The controller dispatches a read-only Job for an unsuspended schema whose
@@ -2771,8 +2845,18 @@ assert_runtime_blocked() {
 
 wait_runtime_ready() {
 	runtime_deployment_names
-	kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$CONTROLLER_DEPLOYMENT" --timeout=3m >/dev/null
-	kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$ROTATOR_DEPLOYMENT" --timeout=3m >/dev/null
+	for ready_deployment in "$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT"; do
+		if ! kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$ready_deployment" --timeout=3m >/dev/null; then
+			kube -n "$E2E_OPERATOR_NAMESPACE" get pods \
+				-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" -o json 2>/dev/null |
+				jq -c '.items[:10][] | {pod: .metadata.name, init: [
+                  .status.initContainerStatuses[:8][]? |
+                  {name: .name, waitingReason: .state.waiting.reason,
+                    terminatedReason: .state.terminated.reason, exitCode: .state.terminated.exitCode}
+                ]}' >&2 || true
+			fail "runtime Deployment $E2E_OPERATOR_NAMESPACE/$ready_deployment did not become ready within 3m"
+		fi
+	done
 }
 
 controller_write_evidence() {
@@ -3517,33 +3601,41 @@ run_next_release_upgrade_proof() {
 
 	prepare_expected_hook_names "$E2E_NEXT_CHART_PACKAGE" "$E2E_NEXT_VALUES_FILE"
 	materialize_identity_hook_credential_patterns
+	# After the genuine hook stops the predecessor and revokes its grants,
+	# stage the handoff while no runtime can consume or clean up the Job.
+	# Do not delete or resurrect Deployments across that recovery boundary.
 	printf '%s\n' 'e2e crd: dispatching a read-only Job the successor must retire'
 	READ_ONLY_JOB_SCHEMA=$SUCCESSOR_READ_ONLY_JOB_SCHEMA
 	dispatch_read_only_job_fixture
 	prove_late_activation_failure_recovery \
 		"$current_release_sequence" "$next_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"
-	stop_runtime_deployments
 	set_pod_webhook_failure_policy Fail Ignore
 	stage_read_only_job_completion
 	set_pod_webhook_failure_policy Ignore Fail
 	stage_read_only_job_uid_gap
-
-	before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
+	assert_late_activation_drain
+	assert_late_activation_candidate_unchanged
+	delete_late_activation_blocker
+	before_retry_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
 		jq -er '.version | select(type == "number" and . >= 1)')
-	printf 'e2e crd: upgrading current release sequence %s to synthetic sequence %s\n' \
+	[ "$before_retry_revision" -eq "$late_revision" ] ||
+		fail "late activation recovery did not resume the exact failed Helm revision"
+	printf 'e2e crd: retrying current release sequence %s to the same synthetic sequence %s\n' \
 		"$current_release_sequence" "$next_release_sequence"
+	# Keep the outer Helm wait beyond the unchanged 360s/390s hook budgets,
+	# just as for the failed attempt; every credential fence runs again.
 	helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
-		--wait --timeout 5m >/dev/null
+		--wait --timeout 7m >/dev/null
 	wait_runtime_ready
 	wait_for_read_only_job_cleanup
 	quiesce_read_only_job_schema
 	after_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
-		jq -er '.version | select(type == "number" and . >= 1)')
-	[ "$after_revision" -eq $((before_revision + 1)) ] ||
-		fail "synthetic next-release upgrade did not create exactly one Helm revision"
+		jq -er 'select(.info.status == "deployed") | .version | select(type == "number" and . >= 1)')
+	[ "$after_revision" -eq $((late_revision + 1)) ] ||
+		fail "same-candidate recovery did not create exactly one retry Helm revision"
 
 	capture_controller_service_account_identity \
 		"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE" \
@@ -3576,6 +3668,7 @@ run_next_release_upgrade_proof() {
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" \
 			"$WORK_DIR/${resource}-before.json"
 	done
+	printf '%s\n' 'e2e crd: same-candidate late-failure recovery passed'
 	printf 'e2e crd: synthetic sequence-%s upgrade retired the exact sequence-%s admission and controller identity\n' \
 		"$next_release_sequence" "$current_release_sequence"
 }

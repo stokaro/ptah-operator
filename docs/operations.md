@@ -216,11 +216,17 @@ Secret `create` permission.
 CRD updates are necessarily separate Kubernetes API transactions. The complete
 dry-run prevents predictable partial upgrades, but an API failure or concurrent
 administrator change can still interrupt the real update sequence. In that
-case, leave the old running manager in place, resolve the API or policy failure,
-and rerun the same candidate upgrade. Do not edit the remaining CRDs to imitate
-the candidate and do not use server-side apply conflict forcing. A rollback to
-an image whose embedded schemas differ also remains blocked by its init
-verifier; select a manager version compatible with the schemas already stored.
+case, resolve the API or policy failure and rerun the identical candidate chart,
+image, and values. Before credential draining begins, the predecessor can remain
+running. Once the retained activation parameter records `phase=draining`, its
+controller identity is fenced and its grants may already belong to the candidate,
+even while `active-release-sequence` still names the predecessor. Restoring old
+Deployment snapshots cannot reverse that state or make the predecessor ready.
+Do not manually reset the activation parameter or controller bindings; let the
+same candidate retry complete the forward transition. Do not edit the remaining
+CRDs to imitate the candidate and do not use server-side apply conflict forcing.
+A rollback to an image whose embedded schemas differ also remains blocked by its
+init verifier; select a manager version compatible with the schemas already stored.
 
 Helm retains CRDs and their custom resources on uninstall. Back them up before
 schema work anyway; uninstalling the release removes the controller and
@@ -575,9 +581,10 @@ the still-running predecessor rotator out of its existing CA-only updates. The
 rotator treats its configured production webhook names as required identity
 anchors, then rotates every additional entry targeting the exact production
 Service plus the exact canary entry. URL and foreign-Service entries remain
-untouched. This does not make a quiesced predecessor restartable after
-candidate activation. The release and image ratchets intentionally block that
-rollback, and recovery after quiescence is to retry the same candidate. Helm
+untouched. This does not make a predecessor restartable once credential draining
+begins, including after a failure before candidate activation. The credential,
+release, and image ratchets intentionally block backward recovery; retry the
+same candidate to finish the interrupted transition. Helm
 installs and binds these policies before granting certificate update access.
 Every hook and runtime init verifier requires their observed generations to
 have no CEL warnings and proves their exact denials through every directly
