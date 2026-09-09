@@ -427,6 +427,26 @@ func (b *admissionConvergenceBarrier) WaitWithStabilityObserver(
 	return b.wait(ctx, stabilityDuration, observer)
 }
 
+// describeUnmetAdmissionConvergence names what a sweep was still waiting for,
+// so a barrier that runs out of time says which condition held it rather than
+// only that it did.
+func describeUnmetAdmissionConvergence(storedProven bool, unprovenEndpoints []string, observerProven bool) string {
+	reasons := make([]string, 0, 3)
+	if !storedProven {
+		reasons = append(reasons, "the stored admission contract is not sealed")
+	}
+	if len(unprovenEndpoints) != 0 {
+		reasons = append(reasons, "these API endpoints have not proven admission: "+strings.Join(unprovenEndpoints, ", "))
+	}
+	if !observerProven {
+		reasons = append(reasons, "protected runtime Pods have not reached a stable observation")
+	}
+	if len(reasons) == 0 {
+		return "every condition was proven and the stability window had not elapsed"
+	}
+	return strings.Join(reasons, "; ")
+}
+
 func (b *admissionConvergenceBarrier) wait(
 	ctx context.Context,
 	stabilityDuration time.Duration,
@@ -461,6 +481,14 @@ func (b *admissionConvergenceBarrier) wait(
 		stableSetKey = ""
 		stableObserverIdentity = ""
 	}
+	// The deadline is the answer; what the last sweep was still waiting for is
+	// the diagnosis. Without it a barrier that never closes reports only that
+	// time ran out, and the reason has to be reconstructed from a cluster the
+	// run has already torn down.
+	unmet := "no sweep completed"
+	deadline := func(err error) error {
+		return fmt.Errorf("%w (last unmet admission convergence condition: %s)", err, unmet)
+	}
 	for {
 		sweepStartedAt := now()
 		eligible := !stableSince.IsZero() && !sweepStartedAt.Before(stableSince) && sweepStartedAt.Sub(stableSince) >= stabilityDuration
@@ -470,7 +498,7 @@ func (b *admissionConvergenceBarrier) wait(
 			endpoints, err := b.endpointProvider(ctx)
 			if err != nil {
 				if contextErr := ctx.Err(); contextErr != nil {
-					return contextErr
+					return deadline(contextErr)
 				}
 				// EndpointSlice inventory and direct-client construction are dynamic
 				// observations. Any failure is fail-closed and recoverable until the
@@ -486,7 +514,7 @@ func (b *admissionConvergenceBarrier) wait(
 				continue
 			}
 			if contextErr := ctx.Err(); contextErr != nil {
-				return contextErr
+				return deadline(contextErr)
 			}
 			if err := validateAdmissionConvergenceEndpoints(endpoints); err != nil {
 				return err
@@ -496,6 +524,8 @@ func (b *admissionConvergenceBarrier) wait(
 		setKey = admissionConvergenceEndpointSetKey(b.endpoints)
 
 		allProven := true
+		unprovenEndpoints := make([]string, 0, len(b.endpoints))
+		observerProven := true
 		storedProven, err := b.verifyStoredContract(ctx)
 		if err != nil {
 			return err
@@ -509,7 +539,7 @@ func (b *admissionConvergenceBarrier) wait(
 			probeContextErr := probeCtx.Err()
 			cancel()
 			if contextErr := ctx.Err(); contextErr != nil {
-				return contextErr
+				return deadline(contextErr)
 			}
 			if err == nil && probeContextErr != nil {
 				err = probeContextErr
@@ -518,19 +548,21 @@ func (b *admissionConvergenceBarrier) wait(
 			if err != nil {
 				if errors.Is(err, context.DeadlineExceeded) {
 					allProven = false
+					unprovenEndpoints = append(unprovenEndpoints, endpoint.name+" (probe timed out)")
 					continue
 				}
 				return fmt.Errorf("probe admission convergence on API endpoint %q: %w", endpoint.name, err)
 			}
 			if !proven {
 				allProven = false
+				unprovenEndpoints = append(unprovenEndpoints, endpoint.name)
 			}
 		}
 		observerIdentity := ""
 		if observer != nil {
 			identity, proven, err := observer.Observe(ctx, setKey)
 			if contextErr := ctx.Err(); contextErr != nil {
-				return contextErr
+				return deadline(contextErr)
 			}
 			if err != nil {
 				resetStability()
@@ -545,12 +577,14 @@ func (b *admissionConvergenceBarrier) wait(
 			observerIdentity = identity
 			if !proven {
 				allProven = false
+				observerProven = false
 			}
 		}
 		if !allProven {
+			unmet = describeUnmetAdmissionConvergence(storedProven, unprovenEndpoints, observerProven)
 			resetStability()
 			if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
-				return err
+				return deadline(err)
 			}
 			continue
 		}
@@ -566,14 +600,14 @@ func (b *admissionConvergenceBarrier) wait(
 		if !storedProven {
 			resetStability()
 			if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
-				return err
+				return deadline(err)
 			}
 			continue
 		}
 		if b.endpointProvider != nil {
 			closingEndpoints, discoverErr := b.endpointProvider(ctx)
 			if contextErr := ctx.Err(); contextErr != nil {
-				return contextErr
+				return deadline(contextErr)
 			}
 			if discoverErr != nil {
 				resetStability()
@@ -589,7 +623,7 @@ func (b *admissionConvergenceBarrier) wait(
 			if admissionConvergenceEndpointSetKey(closingEndpoints) != setKey {
 				resetStability()
 				if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
-					return err
+					return deadline(err)
 				}
 				continue
 			}
@@ -597,7 +631,7 @@ func (b *admissionConvergenceBarrier) wait(
 		if observer != nil {
 			closingIdentity, proven, observeErr := observer.Observe(ctx, setKey)
 			if contextErr := ctx.Err(); contextErr != nil {
-				return contextErr
+				return deadline(contextErr)
 			}
 			if observeErr != nil {
 				resetStability()
@@ -612,7 +646,7 @@ func (b *admissionConvergenceBarrier) wait(
 			if !proven || closingIdentity != observerIdentity {
 				resetStability()
 				if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
-					return err
+					return deadline(err)
 				}
 				continue
 			}
@@ -633,7 +667,7 @@ func (b *admissionConvergenceBarrier) wait(
 			return nil
 		}
 		if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
-			return err
+			return deadline(err)
 		}
 	}
 }
