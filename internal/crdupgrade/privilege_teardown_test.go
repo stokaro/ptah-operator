@@ -522,6 +522,7 @@ func TestPrivilegeTeardownDeletesExactPrivilegesBeforeServiceAccounts(t *testing
 		"RoleBinding/" + corev1.NamespaceDefault + "/" + mustCertificateDiscoveryRoleName(t, fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName),
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + hook,
 		"RoleBinding/" + corev1.NamespaceDefault + "/" + hook,
+		"RoleBinding/" + fixture.guard.CoordinationNamespace + "/" + hook,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + bootstrap,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + probe,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + quiesce,
@@ -923,6 +924,46 @@ func TestPrivilegeTeardownSharesReleaseScopedPrivilegeWhenCoordinationMatches(t 
 		t.Fatalf("Teardown() error = %v", err)
 	}
 	fixture.assertOnlyCleanupAccessRemains(t)
+}
+
+func TestPrivilegeTeardownRetiresSeparateCoordinationHookBinding(t *testing.T) {
+	fixture := newPrivilegeTeardownFixtureWithCoordination(t, true, true, "ptah-coordination")
+	key := privilegeBindingKey(fixture.guard.CoordinationNamespace, fixture.guard.HookServiceAccountName)
+	binding := fixture.roleBindings.objects[key]
+	if binding == nil {
+		t.Fatal("separate coordination hook RoleBinding is absent from the retirement inventory")
+	}
+	role := fixture.roles.objects[key]
+	if role == nil || !reflect.DeepEqual(role.Rules, fixture.teardown.hookBindingTransitionRules(fixture.guard.CoordinationNamespace)) {
+		t.Fatal("separate coordination hook Role differs from the exact transition contract")
+	}
+	cleanup := fixture.roles.objects[privilegeBindingKey(fixture.guard.CoordinationNamespace, fixture.cleanupPrivilege)]
+	if cleanup == nil || len(cleanup.Rules) != 1 || !containsString(cleanup.Rules[0].ResourceNames, binding.Name) {
+		t.Fatal("coordination cleanup Role cannot delete the exact hook binding")
+	}
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.roleBindings.objects[key] != nil {
+		t.Fatal("coordination hook RoleBinding survived privilege retirement")
+	}
+	fixture.assertOnlyCleanupAccessRemains(t)
+}
+
+func TestPrivilegeTeardownRejectsDriftedCoordinationHookRoleBeforeMutation(t *testing.T) {
+	fixture := newPrivilegeTeardownFixtureWithCoordination(t, true, true, "ptah-coordination")
+	key := privilegeBindingKey(fixture.guard.CoordinationNamespace, fixture.guard.HookServiceAccountName)
+	role := fixture.roles.objects[key]
+	if role == nil {
+		t.Fatal("separate coordination hook Role is absent")
+	}
+	role.Rules[0].Verbs = append(role.Rules[0].Verbs, "bind")
+	if err := fixture.teardown.Teardown(context.Background()); err == nil || !strings.Contains(err.Error(), "policy rules differ") {
+		t.Fatalf("drifted hook Role teardown error = %v", err)
+	}
+	if len(fixture.events) != 0 {
+		t.Fatalf("privileges changed before drift rejection: %v", fixture.events)
+	}
 }
 
 func TestPrivilegeTeardownPropagatesUIDAndResourceVersionPreconditions(t *testing.T) {

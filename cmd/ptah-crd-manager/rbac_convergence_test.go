@@ -1100,6 +1100,88 @@ func TestTeardownAuthorizationProbesCoverPreviousAdmissionMarkerDeletion(t *test
 	}
 }
 
+func TestTeardownAuthorizationProbesCoverOnlyInheritedRoleBindGrants(t *testing.T) {
+	t.Parallel()
+	for _, namespaces := range [][2]string{
+		{"ptah-system", "ptah-system"}, {"ptah-system", "ptah-coordination"},
+		{"ptah-system", "default"}, {"default", "default"}, {"default", "ptah-coordination"},
+	} {
+		for _, previousSequence := range []int32{-1, 0, 1} {
+			t.Run(fmt.Sprintf("%s/%s/previous=%d", namespaces[0], namespaces[1], previousSequence), func(t *testing.T) {
+				rollout := validRBACRolloutGuard()
+				rollout.ReleaseNamespace, rollout.CoordinationNamespace = namespaces[0], namespaces[1]
+				if previousSequence >= 0 {
+					rollout.PreviousControllerServiceAccountName = "previous-controller"
+					rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
+					rollout.PreviousControllerReleaseSequence = previousSequence
+					rollout.ReleaseSequence = previousSequence + 1
+				}
+				attempt := sha256.Sum256([]byte(strings.Join([]string{
+					rollout.ReleaseNamespace, rollout.ReleaseName, fmt.Sprint(rollout.ReleaseSequence), rollout.ManagerImage,
+				}, "\n")))
+				rollout.HookServiceAccountName = fmt.Sprintf("ptah-operator-crd-v%d-%x", rollout.ReleaseSequence, attempt[:6])
+				contract := validRBACAdmissionContract()
+				contract.Namespace = rollout.ReleaseNamespace
+				probes, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := map[string]bool{}
+				controller := rollout.ControllerDeploymentName
+				if previousSequence >= 0 {
+					want["clusterroles//"+controller] = true
+					want["roles/"+rollout.CoordinationNamespace+"/"+controller] = true
+				}
+				if previousSequence > 0 {
+					want["roles/"+rollout.ReleaseNamespace+"/"+controller+"-runtime-admission"] = true
+					if rollout.ReleaseNamespace != metav1.NamespaceDefault {
+						want["roles/default/"+controller+"-runtime-discovery"] = true
+					}
+				}
+				got := map[string]bool{}
+				for _, probe := range probes {
+					for _, check := range probe.Checks {
+						attr := check.ResourceAttributes
+						if attr == nil || attr.Verb != "bind" {
+							continue
+						}
+						if probe.Subject.Name != "hook-quiesce" || attr.Group != "rbac.authorization.k8s.io" || attr.Name == "" {
+							t.Fatalf("unexpected bind denial probe for %q: %#v", probe.Subject.Name, attr)
+						}
+						key := attr.Resource + "/" + attr.Namespace + "/" + attr.Name
+						if got[key] {
+							t.Fatalf("duplicate bind denial probe %q", key)
+						}
+						got[key] = true
+					}
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("bind denial probes = %v, want %v", got, want)
+				}
+				grants, err := crdupgrade.RevokedPrivilegeMutationGrants(rollout, contract)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := validateTeardownAuthorizationProbeCompleteness(probes, selfChecks, grants); err != nil {
+					t.Fatal(err)
+				}
+				for index, probe := range probes {
+					for checkIndex, check := range probe.Checks {
+						if check.ResourceAttributes == nil || check.ResourceAttributes.Verb != "bind" {
+							continue
+						}
+						missing := append([]crdupgrade.AuthorizationProbe(nil), probes...)
+						missing[index].Checks = append(append([]crdupgrade.AuthorizationCheck(nil), probe.Checks[:checkIndex]...), probe.Checks[checkIndex+1:]...)
+						if err := validateTeardownAuthorizationProbeCompleteness(missing, selfChecks, grants); err == nil {
+							t.Fatalf("missing bind probe %q was accepted", check.Name)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestTeardownAuthorizationChecksUseSeparateCoordinationNamespace(t *testing.T) {
 	rollout := validRBACRolloutGuard()
 	rollout.CoordinationNamespace = "ptah-coordination"
@@ -1122,15 +1204,15 @@ func TestTeardownAuthorizationChecksUseSeparateCoordinationNamespace(t *testing.
 			t.Errorf("check %q namespace = %q, want %q", name, attributes.Namespace, rollout.CoordinationNamespace)
 		}
 	}
-	if len(checks) != 62 {
-		t.Fatalf("split-namespace authorization check count = %d, want 62", len(checks))
+	if len(checks) != 63 {
+		t.Fatalf("split-namespace authorization check count = %d, want 63", len(checks))
 	}
 	_, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
 	if err != nil {
 		t.Fatalf("teardownAuthorizationProbes() error = %v", err)
 	}
-	if len(selfChecks) != 24 {
-		t.Fatalf("split-namespace current cleanup credential check count = %d, want 24", len(selfChecks))
+	if len(selfChecks) != 25 {
+		t.Fatalf("split-namespace current cleanup credential check count = %d, want 25", len(selfChecks))
 	}
 	privilegeName := mustTeardownPrivilegeRoleName(t, rollout.HookServiceAccountName)
 	selfNames := authorizationCheckNames(selfChecks)
@@ -1156,14 +1238,14 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      metav1.NamespaceDefault,
 			coordinationNamespace: metav1.NamespaceDefault,
 			wantSelfChecks:        18,
-			wantAllChecks:         56,
+			wantAllChecks:         55,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault},
 		},
 		{
 			name:                  "release and discovery coincide",
 			releaseNamespace:      metav1.NamespaceDefault,
 			coordinationNamespace: "ptah-coordination",
-			wantSelfChecks:        19,
+			wantSelfChecks:        20,
 			wantAllChecks:         57,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-coordination"},
 		},
@@ -1179,8 +1261,8 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			name:                  "all split",
 			releaseNamespace:      "ptah-system",
 			coordinationNamespace: "ptah-coordination",
-			wantSelfChecks:        24,
-			wantAllChecks:         62,
+			wantSelfChecks:        25,
+			wantAllChecks:         63,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-coordination", "ptah-system"},
 		},
 	} {
@@ -1260,7 +1342,9 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 
 					wantSelfChecks := 16
 					if splitCoordinationNamespace {
-						wantSelfChecks++
+						// A separate coordination namespace has both a cleanup
+						// self-revocation binding and an exact hook binding.
+						wantSelfChecks += 2
 					}
 					if controllerServiceAccountCreated {
 						wantSelfChecks++

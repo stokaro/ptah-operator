@@ -5595,7 +5595,9 @@ printf '%s\n' "$crd_role_section" | grep -F 'verbs: ["get", "update"]' >/dev/nul
 printf '%s\n' "$crd_role_section" |
 	grep -F 'resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]' >/dev/null
 [ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["list"]')" -eq 3 ]
-[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["get", "patch"]')" -eq 2 ]
+# Only the stable ClusterRoleBinding is mutable through cluster-wide RBAC.
+# Namespaced transition rules are checked against the compiled Role inventory.
+[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["get", "patch"]')" -eq 1 ]
 [ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["create"]')" -eq 1 ]
 for crd_manager_rbac_marker in \
 	'resources: ["clusterrolebindings"]' \
@@ -5605,8 +5607,8 @@ for crd_manager_rbac_marker in \
 		grep -F -- "$crd_manager_rbac_marker" >/dev/null
 done
 if printf '%s\n' "$crd_role_section" |
-	grep -Eq 'verbs:.*(delete|watch)|resources:.*(\*|endpointslices)'; then
-	printf '%s\n' 'e2e static: CRD manager hook ClusterRole contains an unsafe verb, wildcard, or cluster-wide EndpointSlice access' >&2
+	grep -Eq 'verbs:.*(bind|escalate|delete|watch)|resources:.*(\*|endpointslices|"roles")'; then
+	printf '%s\n' 'e2e static: fresh-install CRD manager ClusterRole contains an unsafe verb, wildcard, or cluster-wide namespaced access' >&2
 	exit 1
 fi
 for crd_runtime_marker in \

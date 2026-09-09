@@ -432,8 +432,8 @@ rules:
     resources: ["rolebindings"]
     resourceNames:
       - {{ $controllerName | quote }}
-      {{- if eq $coordinationNamespace "default" }}
       - {{ $hookServiceAccountName | quote }}
+      {{- if eq $coordinationNamespace "default" }}
       - {{ $quiesceName | quote }}
       {{- if $certificateRuntimeEnabled }}
       - {{ $certificateDiscoveryRoleName | quote }}
@@ -694,7 +694,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["list"]
+    verbs: ["list", "watch"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     resourceNames:

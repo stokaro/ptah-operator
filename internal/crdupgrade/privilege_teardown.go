@@ -689,6 +689,12 @@ func (t *PrivilegeTeardown) bindingContracts() []privilegeBindingContract {
 			name: hook, namespace: corev1.NamespaceDefault, roleRef: roleRef("Role", hook), subject: serviceAccountSubject(hook), component: "crd-manager",
 		})
 	}
+	if t.rollout.CoordinationNamespace != t.rollout.ReleaseNamespace &&
+		t.rollout.CoordinationNamespace != corev1.NamespaceDefault {
+		contracts = append(contracts, privilegeBindingContract{
+			name: hook, namespace: t.rollout.CoordinationNamespace, roleRef: roleRef("Role", hook), subject: serviceAccountSubject(hook), component: "crd-manager",
+		})
+	}
 	contracts = append(contracts,
 		privilegeBindingContract{name: bootstrap, namespace: t.rollout.ReleaseNamespace, roleRef: roleRef("Role", bootstrap), subject: serviceAccountSubject(hook), component: "hook-identity-bootstrap"},
 		privilegeBindingContract{name: probe, namespace: t.rollout.ReleaseNamespace, roleRef: roleRef("Role", probe), subject: serviceAccountSubject(hook), component: "crd-manager"},
@@ -812,9 +818,7 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, nil, []string{"list"}),
 					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, []string{controller}, []string{"get", "patch"}),
 					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, nil, []string{"list"}),
-					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get", "patch"}),
-					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterroles"}, []string{controller}, []string{"get"}),
-					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"roles"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get"}),
+					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterroles"}, []string{controller}, hookRoleTransitionVerbs(t.rollout.PreviousControllerServiceAccountName != "")),
 					privilegePolicyRule([]string{"authorization.k8s.io"}, []string{"subjectaccessreviews"}, nil, []string{"create"}),
 				)
 				return rules
@@ -823,14 +827,14 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 		{
 			name: hook, namespace: t.rollout.ReleaseNamespace, component: "crd-manager", retired: true, probeSubject: "hook-quiesce",
 			rules: func() []rbacv1.PolicyRule {
-				rules := []rbacv1.PolicyRule{
+				rules := append(t.hookBindingTransitionRules(t.rollout.ReleaseNamespace),
 					privilegePolicyRule(
 						[]string{"apps"}, []string{"deployments"},
 						[]string{t.rollout.ControllerDeploymentName, t.rollout.CertificateDeploymentName},
 						[]string{"get", "update"},
 					),
 					privilegePolicyRule([]string{"apps"}, []string{"replicasets"}, nil, []string{"list"}),
-					privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"list"}),
+					privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"list", "watch"}),
 					privilegePolicyRule(
 						[]string{""}, []string{"serviceaccounts"},
 						hookServiceAccounts,
@@ -843,7 +847,7 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 						[]string{ReleaseActivationName, AdmissionConvergenceMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence)},
 						[]string{"get", "update"},
 					),
-				}
+				)
 				if t.rollout.PreviousControllerReleaseSequence > 0 {
 					rules = append(rules, privilegePolicyRule(
 						[]string{""}, []string{"configmaps"},
@@ -897,9 +901,16 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 		})
 		contracts = append(contracts, privilegeAuthorizationContract{
 			name: hook, namespace: corev1.NamespaceDefault, component: "crd-manager", retired: true, probeSubject: "hook-quiesce",
-			rules: []rbacv1.PolicyRule{
+			rules: append(t.hookBindingTransitionRules(corev1.NamespaceDefault),
 				privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}),
-			},
+			),
+		})
+	}
+	if t.rollout.CoordinationNamespace != t.rollout.ReleaseNamespace &&
+		t.rollout.CoordinationNamespace != corev1.NamespaceDefault {
+		contracts = append(contracts, privilegeAuthorizationContract{
+			name: hook, namespace: t.rollout.CoordinationNamespace, component: "crd-manager", retired: true, probeSubject: "hook-quiesce",
+			rules: t.hookBindingTransitionRules(t.rollout.CoordinationNamespace),
 		})
 	}
 
@@ -964,6 +975,37 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 		}
 	}
 	return contracts
+}
+
+// hookBindingTransitionRules keeps binding mutations in each exact namespace.
+// Bind is needed only for bindings inherited from a predecessor; the admission
+// contract separately limits the subject transition without granting its rules.
+func (t *PrivilegeTeardown) hookBindingTransitionRules(namespace string) []rbacv1.PolicyRule {
+	var rules []rbacv1.PolicyRule
+	appendBinding := func(name string, bind bool) {
+		rules = append(rules,
+			privilegePolicyRule([]string{rbacv1.GroupName}, []string{"roles"}, []string{name}, hookRoleTransitionVerbs(bind)),
+			privilegePolicyRule([]string{rbacv1.GroupName}, []string{"rolebindings"}, []string{name}, []string{"get", "patch"}),
+		)
+	}
+	if namespace == t.rollout.ReleaseNamespace {
+		appendBinding(t.rollout.ControllerDeploymentName+"-runtime-admission", t.rollout.PreviousControllerReleaseSequence > 0)
+	}
+	if namespace == t.rollout.CoordinationNamespace {
+		appendBinding(t.rollout.ControllerDeploymentName, t.rollout.PreviousControllerServiceAccountName != "")
+	}
+	if namespace == corev1.NamespaceDefault && t.rollout.ReleaseNamespace != corev1.NamespaceDefault {
+		appendBinding(controllerDiscoveryBindingName(t.rollout.ControllerDeploymentName),
+			t.rollout.PreviousControllerServiceAccountName != "" && t.rollout.PreviousControllerReleaseSequence > 0)
+	}
+	return rules
+}
+
+func hookRoleTransitionVerbs(bind bool) []string {
+	if bind {
+		return []string{"get", "bind"}
+	}
+	return []string{"get"}
 }
 
 func (t *PrivilegeTeardown) authorizationContracts() []privilegeAuthorizationContract {
@@ -1234,9 +1276,9 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 		})
 	}
 	if t.rollout.CoordinationNamespace != t.rollout.ReleaseNamespace {
-		coordinationDeletionNames := []string{t.rollout.ControllerDeploymentName}
+		coordinationDeletionNames := []string{t.rollout.ControllerDeploymentName, hook}
 		if t.rollout.CoordinationNamespace == corev1.NamespaceDefault {
-			coordinationDeletionNames = append(coordinationDeletionNames, hook, quiesce)
+			coordinationDeletionNames = append(coordinationDeletionNames, quiesce)
 			if t.contract.CertificateRuntimeEnabled {
 				coordinationDeletionNames = append(coordinationDeletionNames, certificateDiscovery)
 			}
@@ -1299,7 +1341,7 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 		privilegeAuthorizationContract{
 			name: t.residualRelease, namespace: t.rollout.ReleaseNamespace, component: "crd-manager-teardown",
 			rules: []rbacv1.PolicyRule{
-				privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"list"}),
+				privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"list", "watch"}),
 				privilegePolicyRule([]string{""}, []string{"serviceaccounts"}, t.privilegeServiceAccountNames(), []string{"get"}),
 				privilegePolicyRule([]string{""}, []string{"serviceaccounts"}, []string{t.cleanupAccountName}, []string{"delete"}),
 				privilegePolicyRule(

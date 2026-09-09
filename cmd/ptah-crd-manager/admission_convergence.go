@@ -530,12 +530,15 @@ func (b *admissionConvergenceBarrier) wait(
 		if observer != nil {
 			identity, proven, err := observer.Observe(ctx, setKey)
 			if contextErr := ctx.Err(); contextErr != nil {
+				if err != nil {
+					return fmt.Errorf("admission convergence stability observer interrupted: %w (observer error: %w)", contextErr, err)
+				}
 				return contextErr
 			}
 			if err != nil {
 				resetStability()
-				if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
-					return fmt.Errorf("admission convergence stability observer did not recover: %w", err)
+				if sleepErr := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); sleepErr != nil {
+					return fmt.Errorf("admission convergence stability observer did not recover: %w (last observer error: %w)", sleepErr, err)
 				}
 				continue
 			}
@@ -597,12 +600,15 @@ func (b *admissionConvergenceBarrier) wait(
 		if observer != nil {
 			closingIdentity, proven, observeErr := observer.Observe(ctx, setKey)
 			if contextErr := ctx.Err(); contextErr != nil {
+				if observeErr != nil {
+					return fmt.Errorf("closing admission convergence stability observer interrupted: %w (observer error: %w)", contextErr, observeErr)
+				}
 				return contextErr
 			}
 			if observeErr != nil {
 				resetStability()
 				if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
-					return fmt.Errorf("closing admission convergence stability observer did not recover: %w", err)
+					return fmt.Errorf("closing admission convergence stability observer did not recover: %w (last observer error: %w)", err, observeErr)
 				}
 				continue
 			}

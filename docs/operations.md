@@ -162,6 +162,16 @@ can skip the drain only when the activation state and complete preflight prove
 that no predecessor, candidate ServiceAccount, candidate grant, protected Pod,
 or prior drain exists.
 
+For a predecessor cutover, the hook receives `bind` only on the stable
+controller ClusterRole and the exact existing controller Roles in their
+coordination, release, and discovery namespaces. A fresh install receives no
+`bind` grant. The ServiceAccount-origin guard permits only the current reconcile
+Pod to replace the predecessor subject with the candidate subject during that
+attempt's exact draining state. Role references, binding identity and metadata,
+and certificate subjects must remain unchanged. Other binding writes, including
+granting a role to the hook itself, are denied. Uninstall includes every issued
+`bind` grant in the direct authorization-revocation proof.
+
 Each release attempt also owns an immutable, sequence-keyed admission marker.
 The chart inventories at most the active predecessor marker and current
 candidate marker, rejects gaps, future or malformed markers, and refuses a

@@ -707,6 +707,50 @@ func TestAdmissionConvergenceBarrierRejectsInvalidTopologyAndProbeErrors(t *test
 	}
 }
 
+func TestAdmissionConvergenceBarrierPreservesObserverFailureOnTermination(t *testing.T) {
+	t.Parallel()
+	for _, observationCall := range []int{1, 2} {
+		for _, cancelInObserver := range []bool{false, true} {
+			t.Run(fmt.Sprintf("observation-%d/cancel-in-observer-%t", observationCall, cancelInObserver), func(t *testing.T) {
+				t.Parallel()
+				clock := newAdmissionBarrierClock()
+				ctx, cancel := context.WithCancel(t.Context())
+				t.Cleanup(cancel)
+				watchFailure := errors.New("watch pods is forbidden")
+				observeErr := fmt.Errorf("watch protected runtime Pods: %w", watchFailure)
+				observer := &scriptedAdmissionStabilityObserver{
+					identities: []string{"protected-pods:1:10"}, proven: []bool{true},
+					atCall: map[int]admissionStabilityObservation{observationCall: {err: observeErr}},
+				}
+				barrier := testAdmissionBarrier(clock, []namedAdmissionConvergenceProbe{{
+					name: "https://10.0.0.1:6443", topologyIdentity: "topology", probe: alwaysAdmissionProbe(true),
+				}}, nil)
+				sleepCalls := 0
+				barrier.sleep = func(context.Context, time.Duration) error {
+					sleepCalls++
+					return context.DeadlineExceeded
+				}
+				termination := context.DeadlineExceeded
+				wantSleepCalls := 1
+				if cancelInObserver {
+					observer.cancelAt, observer.cancel = observationCall, cancel
+					termination, wantSleepCalls = context.Canceled, 0
+				}
+				err := barrier.WaitWithStabilityObserver(ctx, 65*time.Second, observer)
+				if !errors.Is(err, termination) || !errors.Is(err, watchFailure) || !errors.Is(err, observeErr) {
+					t.Fatalf("WaitWithStabilityObserver() = %v, want terminating context and original observer causes", err)
+				}
+				if !strings.Contains(err.Error(), "stability observer") || !strings.Contains(err.Error(), watchFailure.Error()) {
+					t.Fatalf("observer termination diagnostic omits the failed boundary or cause: %v", err)
+				}
+				if observer.calls != observationCall || observer.closeCalls != 1 || sleepCalls != wantSleepCalls || clock.now() != clock.start {
+					t.Fatalf("calls/close/sleep/elapsed = %d/%d/%d/%s, want %d/1/%d/0s", observer.calls, observer.closeCalls, sleepCalls, clock.now().Sub(clock.start), observationCall, wantSleepCalls)
+				}
+			})
+		}
+	}
+}
+
 func TestMarkerAdmissionEndpointProviderUsesCanonicalIPv6AndTopologyIdentity(t *testing.T) {
 	t.Parallel()
 

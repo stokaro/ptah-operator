@@ -707,6 +707,10 @@ wrote; crdupgrade builds the same names from the same identity.
 {{- $identities = append $identities (dict "kind" "Role" "namespace" $coordinationNamespace "name" $cleanupPrivilegeName "source" "teardown privilege coordination Role") -}}
 {{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" $coordinationNamespace "name" $cleanupPrivilegeName "source" "teardown privilege coordination RoleBinding") -}}
 {{- end -}}
+{{- if and (ne $coordinationNamespace $releaseNamespace) (ne $coordinationNamespace "default") -}}
+{{- $identities = append $identities (dict "kind" "Role" "namespace" $coordinationNamespace "name" $hookName "source" "CRD manager coordination Role") -}}
+{{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" $coordinationNamespace "name" $hookName "source" "CRD manager coordination RoleBinding") -}}
+{{- end -}}
 {{- if and (ne $releaseNamespace "default") (ne $coordinationNamespace "default") -}}
 {{- $identities = append $identities (dict "kind" "Role" "namespace" "default" "name" $cleanupPrivilegeName "source" "teardown privilege API discovery Role") -}}
 {{- $identities = append $identities (dict "kind" "RoleBinding" "namespace" "default" "name" $cleanupPrivilegeName "source" "teardown privilege API discovery RoleBinding") -}}

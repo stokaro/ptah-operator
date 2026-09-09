@@ -708,9 +708,19 @@ func buildTeardownAuthorizationChecks(
 	appendResource(teardownCheckHook, "patch stable controller ClusterRoleBinding", "rbac.authorization.k8s.io", "v1", "clusterrolebindings", "", "", "patch", rollout.ControllerDeploymentName)
 	appendResource(teardownCheckHook, "patch stable controller RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", rollout.CoordinationNamespace, "patch", rollout.ControllerDeploymentName)
 	appendResource(teardownCheckHook, "patch runtime admission RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", rollout.ReleaseNamespace, "patch", rollout.ControllerDeploymentName+"-runtime-admission")
-	// The hook's ClusterRole names the discovery binding whatever namespace the
-	// release lives in, so the revoked grant is probed unconditionally.
-	appendResource(teardownCheckHook, "patch runtime discovery RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", metav1.NamespaceDefault, "patch", crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
+	if rollout.ReleaseNamespace != metav1.NamespaceDefault {
+		appendResource(teardownCheckHook, "patch runtime discovery RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", metav1.NamespaceDefault, "patch", crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
+	}
+	if rollout.PreviousControllerServiceAccountName != "" {
+		appendResource(teardownCheckHook, "bind stable controller ClusterRole", "rbac.authorization.k8s.io", "v1", "clusterroles", "", "", "bind", rollout.ControllerDeploymentName)
+		appendResource(teardownCheckHook, "bind stable controller Role", "rbac.authorization.k8s.io", "v1", "roles", "", rollout.CoordinationNamespace, "bind", rollout.ControllerDeploymentName)
+		if rollout.PreviousControllerReleaseSequence > 0 && rollout.ReleaseNamespace != metav1.NamespaceDefault {
+			appendResource(teardownCheckHook, "bind runtime discovery Role", "rbac.authorization.k8s.io", "v1", "roles", "", metav1.NamespaceDefault, "bind", crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
+		}
+	}
+	if rollout.PreviousControllerReleaseSequence > 0 {
+		appendResource(teardownCheckHook, "bind runtime admission Role", "rbac.authorization.k8s.io", "v1", "roles", "", rollout.ReleaseNamespace, "bind", rollout.ControllerDeploymentName+"-runtime-admission")
+	}
 	appendResource(teardownCheckHook, "create SubjectAccessReview", "authorization.k8s.io", "v1", "subjectaccessreviews", "", "", "create", arbitraryObjectName)
 
 	// Controller mutations. Every resource/subresource and mutating verb from
@@ -808,9 +818,9 @@ func buildTeardownAuthorizationChecks(
 		{kind: "RoleBinding", resource: "rolebindings", namespace: rollout.ReleaseNamespace, names: namespacedRBACNames},
 	}
 	if rollout.CoordinationNamespace != rollout.ReleaseNamespace {
-		coordinationNames := []string{rollout.ControllerDeploymentName}
+		coordinationNames := []string{rollout.ControllerDeploymentName, rollout.HookServiceAccountName}
 		if rollout.CoordinationNamespace == metav1.NamespaceDefault {
-			coordinationNames = append(coordinationNames, rollout.HookServiceAccountName, quiesceName)
+			coordinationNames = append(coordinationNames, quiesceName)
 			if contract.CertificateRuntimeEnabled {
 				coordinationNames = append(coordinationNames, certificateDiscoveryName)
 			}
