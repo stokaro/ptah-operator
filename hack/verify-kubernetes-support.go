@@ -3245,7 +3245,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLineSequence("late activation Helm failure execution", []string{
 					`if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \`,
 					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \`,
-					`--wait --timeout 2m >"$WORK_DIR/late-activation-failure.out" \`,
+					`--wait --timeout 7m >"$WORK_DIR/late-activation-failure.out" \`,
 					`2>"$WORK_DIR/late-activation-failure.err"; then`,
 				}),
 				exactSourceLineSequence("late activation dual capture completion", []string{
@@ -3893,8 +3893,8 @@ const lateActivationHookCaptureArmContract = `arm_late_activation_hook_log_captu
 		--ready-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE" \
 		--error-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE" \
 		--failure-class-file "$LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE" \
-		--log-start-timeout 4m \
-		--timeout 5m >/dev/null 2>&1 &
+		--log-start-timeout 8m \
+		--timeout 9m >/dev/null 2>&1 &
 	LATE_ACTIVATION_RECONCILE_CAPTURE_PID=$!
 	wait_for_late_activation_hook_log_capture_ready \
 		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" \
