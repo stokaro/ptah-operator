@@ -1588,13 +1588,24 @@ static_require_order "$next_release_crd_source" \
 	'capture_controller_service_account_identity' \
 	'"$current_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
 	'"$current_sequence_marker" "$current_sequence_inventory"' \
-	'helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
+	'retry_same_candidate_with_diagnostics' \
 	'"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE"' \
 	'"$next_sequence_marker" "$next_sequence_inventory"' \
 	'assert_inventory_resources_absent' \
 	'"$current_sequence_inventory" "$current_sequence_marker_name"' \
 	'assert_release_sequence_candidate_residue_absent "$current_release_sequence"' \
 	'e2e crd: synthetic sequence-%s upgrade retired the exact sequence-%s admission and controller identity'
+# shellcheck disable=SC2016 # Exact helper ordering retains runtime variables literally.
+static_require_order "$next_release_crd_source" \
+	'same-candidate retry capture and authoritative Helm failure' \
+	'retry_same_candidate_with_diagnostics() {' \
+	'LATE_ACTIVATION_PREFLIGHT_LOG_FILE=$WORK_DIR/retry-preflight.log' \
+	'LATE_ACTIVATION_RECONCILE_LOG_FILE=$WORK_DIR/retry-reconcile.log' \
+	'arm_late_activation_hook_log_captures' \
+	'if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
+	'finish_late_activation_hook_log_captures || retry_capture_status=$?' \
+	'return "$retry_helm_status"' \
+	'verify_late_activation_preflight_capture'
 # shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
 static_require_order "$next_release_crd_source" \
 	'next chart reinstall and final zero-residue proof' \
@@ -6095,13 +6106,18 @@ for hook_progress_marker in \
 	'expected_name=$(expected_hook_progress_name "$component")' \
 	'.metadata.name == $expected_name and' \
 	'--as-uid "$HOOK_PROGRESS_ADVERSARY_UID"' \
-	'expect_hook_progress_authorization yes delete jobs' \
-	'expect_hook_progress_authorization yes patch jobs/status' \
-	'expect_hook_progress_authorization yes patch pods' \
-	'expect_hook_progress_authorization yes patch pods/status' \
-	'expect_hook_progress_authorization no create jobs' \
-	'expect_hook_progress_authorization no update jobs' \
-	'expect_hook_progress_authorization no update pods' \
+	'HOOK_PROGRESS_AUTHORIZATION_SECONDS=90' \
+	'wait_for_hook_progress_authorization' \
+	'--server "https://${HOOK_PROGRESS_AUTHORIZATION_ENDPOINT}:6443"' \
+	'create --raw /apis/authorization.k8s.io/v1/selfsubjectaccessreviews -f -' \
+	"'delete jobs' 'get jobs' 'get jobs/status' 'patch jobs/status'" \
+	"'get pods' 'patch pods' 'get pods/status' 'patch pods/status'" \
+	"'create validatingadmissionpolicies.admissionregistration.k8s.io'" \
+	"'create validatingadmissionpolicybindings.admissionregistration.k8s.io'" \
+	"'create jobs' 'update jobs' 'update pods'" \
+	'expect_hook_progress_authorization yes "${hook_auth_capability%% *}" "${hook_auth_capability#* }"' \
+	'expect_hook_progress_authorization no "${hook_auth_capability%% *}" "${hook_auth_capability#* }"' \
+	'[ "$hook_auth_endpoint_count" -eq 3 ]' \
 	'Ptah E2E hook progress hold rejected controller status advancement' \
 	'Ptah hook parent origin guard rejected an unauthorized Job' \
 	'Ptah hook Pod origin guard rejected an unauthorized Pod' \

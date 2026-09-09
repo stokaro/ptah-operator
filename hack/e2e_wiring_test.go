@@ -4382,8 +4382,8 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD late activation dual captures are not armed",
 			child:       "crd-upgrade",
-			old:         "\tarm_late_activation_hook_log_captures\n",
-			replacement: "\t: # late activation hook captures omitted\n",
+			old:         "\tcreate_late_activation_blocker\n\tarm_late_activation_hook_log_captures\n",
+			replacement: "\tcreate_late_activation_blocker\n\t: # late activation hook captures omitted\n",
 			wantError:   "late activation dual capture arming",
 		},
 		{
@@ -4571,7 +4571,7 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			child:       "crd-upgrade",
 			old:         "emit_late_activation_reconcile_diagnostic() {\n",
 			replacement: "emit_late_activation_reconcile_diagnostic() {\n\tcat \"$LATE_ACTIVATION_RECONCILE_LOG_FILE\" >&2\n",
-			wantError:   "late activation reconcile safe diagnostic emission",
+			wantError:   "exact reconcile blocker diagnostic emission contract",
 		},
 		{
 			name:        "CRD late activation preflight is not name-bound",
@@ -4793,8 +4793,8 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD recovery retries a different chart",
 			child:       "crd-upgrade",
-			old:         "\thelm_e2e upgrade \"$E2E_HELM_RELEASE\" \"$E2E_NEXT_CHART_PACKAGE\" \\\n",
-			replacement: "\thelm_e2e upgrade \"$E2E_HELM_RELEASE\" \"$E2E_CHART_PACKAGE\" \\\n",
+			old:         "\tretry_helm_status=0\n\tif helm_e2e upgrade \"$E2E_HELM_RELEASE\" \"$E2E_NEXT_CHART_PACKAGE\" \\\n",
+			replacement: "\tretry_helm_status=0\n\tif helm_e2e upgrade \"$E2E_HELM_RELEASE\" \"$E2E_CHART_PACKAGE\" \\\n",
 			wantError:   "same-candidate recovery exact Helm retry",
 		},
 		{
@@ -5173,8 +5173,8 @@ func TestUpgradeHookProgressProofRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "adversary UID omitted",
-			old:         "\t\t--as-uid \"$HOOK_PROGRESS_ADVERSARY_UID\" \\\n",
-			replacement: "",
+			old:         "\tkubectl --kubeconfig \"$E2E_KUBECONFIG\" \\\n\t\t--as \"system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$HOOK_PROGRESS_ADVERSARY\" \\\n\t\t--as-uid \"$HOOK_PROGRESS_ADVERSARY_UID\" \\\n",
+			replacement: "\tkubectl --kubeconfig \"$E2E_KUBECONFIG\" \\\n\t\t--as \"system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$HOOK_PROGRESS_ADVERSARY\" \\\n",
 			wantError:   "UID-bound adversary impersonation",
 		},
 		{
@@ -5191,8 +5191,8 @@ func TestUpgradeHookProgressProofRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "Pod main patch authorization removed",
-			old:         "\texpect_hook_progress_authorization yes patch pods\n",
-			replacement: "\texpect_hook_progress_authorization no patch pods\n",
+			old:         "\t\t\t\t'get pods' 'patch pods' 'get pods/status' 'patch pods/status'; do\n",
+			replacement: "\t\t\t\t'get pods' 'get pods/status' 'patch pods/status'; do\n",
 			wantError:   "least-privilege adversary authorization",
 		},
 		{
@@ -5279,6 +5279,7 @@ func verifyUpgradeHookProgressProofSource(path string) error {
 	}
 	criticalFunctions := []string{
 		"hook_progress_adversary_kube",
+		"wait_for_hook_progress_authorization",
 		"wait_for_hook_progress_hold_ready",
 		"probe_hook_progress_hold_state",
 		"expect_hook_progress_hold_denial",
@@ -5338,18 +5339,16 @@ func verifyUpgradeHookProgressProofSource(path string) error {
 		`resources: ["jobs"]`,
 		`resources: ["jobs/status"]`,
 		`resources: ["pods", "pods/status"]`,
-		`expect_hook_progress_authorization yes delete jobs`,
-		`expect_hook_progress_authorization yes patch jobs/status`,
-		`expect_hook_progress_authorization yes patch pods`,
-		`expect_hook_progress_authorization yes patch pods/status`,
-		`expect_hook_progress_authorization no create jobs`,
-		`expect_hook_progress_authorization no update jobs`,
-		`expect_hook_progress_authorization no update pods`,
+		`wait_for_hook_progress_authorization`,
 	}); err != nil {
 		return err
 	}
-	if !regexp.MustCompile(`(?m)^[ \t]*expect_hook_progress_authorization yes patch pods[ \t]*$`).Match(create) {
-		return fmt.Errorf("%s: least-privilege adversary authorization lacks Pod main-resource patch", path)
+	if err := requireHookProgressMarkers(path, "least-privilege adversary authorization", functions["wait_for_hook_progress_authorization"], []string{
+		`'delete jobs' 'get jobs' 'get jobs/status' 'patch jobs/status'`,
+		`'get pods' 'patch pods' 'get pods/status' 'patch pods/status'`,
+		`'create jobs' 'update jobs' 'update pods'`,
+	}); err != nil {
+		return err
 	}
 	if err := requireHookProgressMarkers(path, "stable hold publication", create, []string{
 		`resources: ["jobs/status"]`,

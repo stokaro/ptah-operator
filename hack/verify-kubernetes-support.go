@@ -2542,6 +2542,12 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \`,
 		}),
 		exactSourceLineSequence("candidate upgrade lifecycle", []string{
+			`E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \`,
+			`E2E_API_SERVER_NODE_INVENTORY_FILE=$NODE_READINESS_FILE \`,
+			`E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=$API_SERVER_ENDPOINT_INVENTORY_FILE \`,
+			`E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \`,
+		}),
+		exactSourceLineSequence("candidate upgrade lifecycle phase", []string{
 			`E2E_PHASE=upgrade \`,
 			`"$ROOT_DIR/hack/e2e-crd-upgrade.sh"`,
 		}),
@@ -2566,6 +2572,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \`,
 			`E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \`,
 			`E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \`,
+			`E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \`,
+			`E2E_API_SERVER_NODE_INVENTORY_FILE=$NODE_READINESS_FILE \`,
+			`E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=$API_SERVER_ENDPOINT_INVENTORY_FILE \`,
 			`E2E_PHASE=uninstall \`,
 			`"$ROOT_DIR/hack/e2e-crd-upgrade.sh"`,
 		}),
@@ -3203,7 +3212,10 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("late activation preflight diagnostic implementation", `emit_late_activation_preflight_diagnostic_if_available() {`),
 				exactSourceLine("late activation preflight success contract", `grep -Fx 'candidate release preflight verified without persistent mutation' \`),
 				exactSourceLine("late activation reconcile diagnostic implementation", `emit_late_activation_reconcile_diagnostic() {`),
-				exactSourceLine("late activation reconcile safe diagnostic emission", `cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2`),
+				exactSourceLineSequence("late activation reconcile safe diagnostic emission", []string{
+					`cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2`,
+					`missing_blocker_evidence=`,
+				}),
 				exactSourceLineSequence("late activation reconcile exact blocker evidence", []string{
 					`grep -F 'wait for release activation guard before persistence' \`,
 					`"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||`,
@@ -3277,7 +3289,11 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`late_candidate_attempt=$(printf '%s\n%s\n%s\n%s' "$E2E_OPERATOR_NAMESPACE" \`,
 					`"$E2E_HELM_RELEASE" "$late_next_sequence" "$late_candidate_image" | stdin_sha256)`,
 				}),
-				exactSourceLine("late activation dual capture arming", `arm_late_activation_hook_log_captures`),
+				exactSourceLineSequence("late activation dual capture arming", []string{
+					`create_late_activation_blocker`,
+					`arm_late_activation_hook_log_captures`,
+					`late_upgrade_succeeded=false`,
+				}),
 				exactSourceLineSequence("late activation Helm failure execution", []string{
 					`if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \`,
 					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \`,
@@ -3451,11 +3467,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`[ "$before_retry_revision" -eq "$late_revision" ] ||`,
 					`fail "late activation recovery did not resume the exact failed Helm revision"`,
 				}),
-				exactSourceLineSequence("same-candidate recovery exact Helm retry", []string{
-					`helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \`,
-					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \`,
-					`--wait --timeout 7m >/dev/null`,
-				}),
+				exactSourceLine("same-candidate recovery exact Helm retry", `retry_same_candidate_with_diagnostics`),
 				exactSourceLineSequence("successor read-only Job cleanup after activation", []string{
 					`wait_runtime_ready`,
 					`wait_for_read_only_job_cleanup`,
@@ -3637,6 +3649,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", files.crdUpgrade, err)
 	}
+	if err := verifyHookProgressAuthorizationSource(files.crdUpgrade, crdUpgradeContents); err != nil {
+		return err
+	}
 	for _, functionName := range []string{
 		"wait_for_late_activation_hook_log_capture_ready",
 		"arm_late_activation_hook_log_captures",
@@ -3730,6 +3745,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	); err != nil {
 		return err
 	}
+	if err := verifySameCandidateRetryDiagnostics(files.crdUpgrade, crdUpgradeContents); err != nil {
+		return err
+	}
 	lateActivationFailurePattern := regexp.MustCompile(`(?ms)^prove_late_activation_failure_recovery\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`)
 	lateActivationFailureMatches := lateActivationFailurePattern.FindAll(crdUpgradeContents, -1)
 	if len(lateActivationFailureMatches) != 1 {
@@ -3774,6 +3792,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	for _, privateEvidence := range []string{
 		"late-activation-failure.out",
 		"late-activation-failure.err",
+		"same-candidate-retry.out",
+		"same-candidate-retry.err",
 	} {
 		if bytes.Count(crdUpgradeContents, []byte(privateEvidence)) != 1 {
 			return fmt.Errorf("%s: late activation raw Helm evidence must remain write-only", files.crdUpgrade)
@@ -3786,7 +3806,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		if bytes.Contains(lateActivationFailureBody, []byte(helperErrorFile)) {
 			return fmt.Errorf("%s: late activation helper errors must not be emitted as evidence", files.crdUpgrade)
 		}
-		if bytes.Count(crdUpgradeContents, []byte(helperErrorFile)) != 3 {
+		// Initial and retry-only assignments, helper argument, and mode check.
+		// The retry assignment itself is pinned by its complete function digest.
+		if bytes.Count(crdUpgradeContents, []byte(helperErrorFile)) != 4 {
 			return fmt.Errorf("%s: late activation helper error files must remain private non-emitted capture outputs", files.crdUpgrade)
 		}
 	}
@@ -3794,7 +3816,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE",
 		"LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE",
 	} {
-		if bytes.Count(crdUpgradeContents, []byte(failureClassFile)) != 4 {
+		if bytes.Count(crdUpgradeContents, []byte(failureClassFile)) != 5 {
 			return fmt.Errorf("%s: late activation failure classes must flow only through private helper output and bounded synthesis", files.crdUpgrade)
 		}
 	}
@@ -4961,6 +4983,18 @@ func verifyExactShellFunctionContract(path string, contents []byte, name, expect
 	return nil
 }
 
+func verifySameCandidateRetryDiagnostics(path string, contents []byte) error {
+	for _, contract := range []struct{ name, digest, description string }{
+		{"retry_same_candidate_with_diagnostics", "bef6c4db484813445e9fdf7ff46496ad0fb24ab5857f31d0dc4bde99f67d4f13", "same-candidate recovery exact Helm retry"},
+		{"emit_same_candidate_retry_reconcile_diagnostic_if_available", "b1a26e153aa1119e51065f8d26490ee8e0c8afe4e0f4278b7e037117885b071f", "same-candidate recovery credential-safe diagnostic"},
+	} {
+		if err := verifyAuditedShellFunctionDigest(path, contents, contract.name, contract.digest, contract.description); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func verifyAuditedShellFunctionDigest(path string, contents []byte, name, expected, description string) error {
 	functionPattern := regexp.MustCompile(
 		`(?ms)^` + regexp.QuoteMeta(name) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`,
@@ -5019,6 +5053,136 @@ func exactSourceLineSequence(name string, lines []string) sourceContractStep {
 	}
 	pattern.WriteString(`\r?$`)
 	return sourceContractStep{name: name, pattern: regexp.MustCompile(pattern.String())}
+}
+
+func verifyHookProgressAuthorizationSource(path string, contents []byte) error {
+	if !sourceLinePattern(`HOOK_PROGRESS_AUTHORIZATION_SECONDS=90`).Match(contents) {
+		return fmt.Errorf("%s: hook progress authorization aggregate deadline must remain 90 seconds", path)
+	}
+	contracts := []struct {
+		function, completion string
+		lines                []string
+	}{
+		{
+			function:   "prepare_hook_progress_authorization_endpoints",
+			completion: `}`,
+			lines: []string{
+				`[ -n "$E2E_DOCKER_CONTEXT" ] || fail "hook progress authorization requires an explicit Docker context"`,
+				`printf '%s\n' "$E2E_KIND_CLUSTER_NAME" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||`,
+				`[ "${#E2E_KIND_CLUSTER_NAME}" -le 63 ] || fail "hook progress kind cluster name exceeds 63 bytes"`,
+				`require_mode_0600_regular_file "$E2E_API_SERVER_NODE_INVENTORY_FILE" hook-progress-node-inventory`,
+				`require_mode_0600_regular_file "$E2E_API_SERVER_ENDPOINT_INVENTORY_FILE" hook-progress-endpoint-inventory`,
+				`cp "$E2E_API_SERVER_NODE_INVENTORY_FILE" "$WORK_DIR/hook-progress-authorization-nodes.json"`,
+				`cp "$E2E_API_SERVER_ENDPOINT_INVENTORY_FILE" "$WORK_DIR/hook-progress-authorization-slices.json"`,
+				`jq -e --arg cluster "$E2E_KIND_CLUSTER_NAME" \`,
+				`--slurpfile nodes "$WORK_DIR/hook-progress-authorization-nodes.json" \`,
+				`-f "$ROOT_DIR/hack/api-server-endpoint-inventory.jq" \`,
+				`"$WORK_DIR/hook-progress-authorization-slices.json" >/dev/null ||`,
+				`fail "hook progress authorization inventory is not the exact three control-plane endpoints"`,
+				`.endpoints[].addresses[]] | sort[]' "$WORK_DIR/hook-progress-authorization-slices.json" \`,
+				`>"$HOOK_PROGRESS_AUTHORIZATION_ENDPOINTS" || fail "could not materialize hook progress endpoints"`,
+				`hook_auth_primary_address=$(jq -er --arg name "${E2E_KIND_CLUSTER_NAME}-control-plane" '`,
+				`select(.type == "InternalIP") | .address`,
+				`hook_auth_container=$(docker --context "$E2E_DOCKER_CONTEXT" container inspect \`,
+				`--format '{"id":{{json .Id}},"name":{{json .Name}},"address":{{json .NetworkSettings.Networks.kind.IPAddress}}}' \`,
+				`"${E2E_KIND_CLUSTER_NAME}-control-plane") || fail "could not inspect the hook progress control-plane container"`,
+				`HOOK_PROGRESS_AUTHORIZATION_CONTAINER_ID=$(printf '%s\n' "$hook_auth_container" |`,
+				`jq -er --arg name "/${E2E_KIND_CLUSTER_NAME}-control-plane" --arg address "$hook_auth_primary_address" '`,
+				`select(.name == $name and .address == $address and (.id | test("^[a-f0-9]{64}$"))) | .id`,
+			},
+		},
+		{
+			function: "expect_hook_progress_authorization", completion: `case "$hook_auth_expected:$hook_auth_allowed" in`,
+			lines: []string{
+				`hook_auth_expected=$1`, `hook_auth_verb=$2`, `hook_auth_resource=${3%%/*}`,
+				`hook_auth_namespace=$E2E_OPERATOR_NAMESPACE`,
+				`*/*) hook_auth_subresource=${3#*/} ;;`,
+				`jobs) hook_auth_group='batch' ;;`, `pods) hook_auth_group= ;;`,
+				`hook_auth_group=admissionregistration.k8s.io`, `hook_auth_resource=${hook_auth_resource%%.*}`,
+				`hook_auth_namespace=`,
+				`[ -n "$HOOK_PROGRESS_ADVERSARY_UID" ] || fail "hook progress adversary UID is missing"`,
+				`hook_auth_remaining=$((HOOK_PROGRESS_AUTHORIZATION_DEADLINE - $(date +%s)))`,
+				`[ "$hook_auth_remaining" -gt 0 ] ||`,
+				`[ "$hook_auth_remaining" -le 15 ] || hook_auth_remaining=15`,
+				`jq -n --arg namespace "$hook_auth_namespace" --arg verb "$hook_auth_verb" \`,
+				`--arg group "$hook_auth_group" --arg resource "$hook_auth_resource" --arg subresource "$hook_auth_subresource" '`,
+				`spec:{resourceAttributes:{namespace:$namespace,verb:$verb,group:$group,resource:$resource,subresource:$subresource}}}`,
+				`if docker --context "$E2E_DOCKER_CONTEXT" exec -i "$HOOK_PROGRESS_AUTHORIZATION_CONTAINER_ID" \`,
+				`kubectl --kubeconfig /etc/kubernetes/admin.conf \`,
+				`--server "https://${HOOK_PROGRESS_AUTHORIZATION_ENDPOINT}:6443" --tls-server-name kubernetes \`,
+				`--as "system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$HOOK_PROGRESS_ADVERSARY" \`,
+				`--as-uid "$HOOK_PROGRESS_ADVERSARY_UID" \`,
+				`--as-group system:serviceaccounts \`,
+				`--as-group "system:serviceaccounts:$E2E_OPERATOR_NAMESPACE" \`,
+				`--as-group system:authenticated --request-timeout="${hook_auth_remaining}s" \`,
+				`create --raw /apis/authorization.k8s.io/v1/selfsubjectaccessreviews -f - \`,
+				`hook_auth_status=$?`,
+				`fail "hook progress authorization query failed at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT for $hook_auth_verb $3 (exit $hook_auth_status)"`,
+				`hook_auth_allowed=$(jq -ser '`,
+				`select(length == 1) | .[0] |`,
+				`select(.apiVersion == "authorization.k8s.io/v1" and .kind == "SelfSubjectAccessReview") |`,
+				`.status | select((.allowed | type) == "boolean" and`,
+				`((has("denied") | not) or (.denied | type) == "boolean") and`,
+				`((has("evaluationError") | not) or .evaluationError == "") and`,
+				`(.allowed != true or .denied != true)) | .allowed | tostring`,
+				`[ "$(date +%s)" -lt "$HOOK_PROGRESS_AUTHORIZATION_DEADLINE" ] ||`,
+				`case "$hook_auth_expected:$hook_auth_allowed" in`,
+				`yes:true | no:false) return 0 ;;`, `yes:false) return 1 ;;`,
+				`*) fail "hook progress adversary has an unexpected $hook_auth_verb $3 grant at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT" ;;`,
+			},
+		},
+		{
+			function: "wait_for_hook_progress_authorization", completion: `if [ "$hook_auth_ready" -eq 1 ]; then`,
+			lines: []string{
+				`prepare_hook_progress_authorization_endpoints`,
+				`HOOK_PROGRESS_AUTHORIZATION_DEADLINE=$(($(date +%s) + HOOK_PROGRESS_AUTHORIZATION_SECONDS))`,
+				`while [ "$(date +%s)" -lt "$HOOK_PROGRESS_AUTHORIZATION_DEADLINE" ]; do`,
+				`hook_auth_ready=1`, `hook_auth_endpoint_count=0`,
+				`while IFS= read -r HOOK_PROGRESS_AUTHORIZATION_ENDPOINT; do`,
+				`hook_auth_endpoint_count=$((hook_auth_endpoint_count + 1))`,
+				`for hook_auth_capability in 'delete jobs' 'get jobs' 'get jobs/status' 'patch jobs/status' \`,
+				`'get pods' 'patch pods' 'get pods/status' 'patch pods/status'; do`,
+				`if expect_hook_progress_authorization yes "${hook_auth_capability%% *}" "${hook_auth_capability#* }"; then`,
+				`hook_auth_ready=0`,
+				`'create validatingadmissionpolicies.admissionregistration.k8s.io' \`,
+				`'create validatingadmissionpolicybindings.admissionregistration.k8s.io' \`,
+				`'create jobs' 'update jobs' 'update pods'; do`,
+				`expect_hook_progress_authorization no "${hook_auth_capability%% *}" "${hook_auth_capability#* }"`,
+				`done <"$HOOK_PROGRESS_AUTHORIZATION_ENDPOINTS"`,
+				`[ "$hook_auth_endpoint_count" -eq 3 ] || fail "hook progress authorization did not query all three API servers"`,
+				`if [ "$hook_auth_ready" -eq 1 ]; then`, `return 0`, `sleep 1`,
+				`fail "hook progress adversary authorization did not converge on all three API servers"`,
+			},
+		},
+		{
+			function: "create_hook_progress_adversary_and_hold", completion: `wait_for_hook_progress_authorization`,
+			lines: []string{
+				`HOOK_PROGRESS_ADVERSARY_UID=$(kube -n "$E2E_OPERATOR_NAMESPACE" \`,
+				`get serviceaccount "$HOOK_PROGRESS_ADVERSARY" -o jsonpath='{.metadata.uid}' \`,
+				`[ -n "$HOOK_PROGRESS_ADVERSARY_UID" ] || fail "hook progress adversary has no UID"`,
+				`wait_for_hook_progress_authorization`,
+				`held_components='["crd-manager-image-check","hook-identity-probe","crd-manager-preflight","crd-manager"]'`,
+			},
+		},
+	}
+	for _, contract := range contracts {
+		pattern := regexp.MustCompile(`(?ms)^` + regexp.QuoteMeta(contract.function) + `\(\)[ \t]*\{\r?\n.*?^\}[ \t]*\r?$`)
+		matches := pattern.FindAll(contents, -1)
+		if len(matches) != 1 {
+			return fmt.Errorf("%s: hook progress authorization must have one auditable %s body", path, contract.function)
+		}
+		steps := make([]sourceContractStep, 0, len(contract.lines))
+		for _, line := range contract.lines {
+			steps = append(steps, exactSourceLine("hook progress authorization "+contract.function, line))
+		}
+		if err := verifyOrderedSourceContract(path, matches[0], steps); err != nil {
+			return err
+		}
+		if err := rejectEarlySuccessfulReturn(path, matches[0], sourceLinePattern(contract.function+"() {"), sourceLinePattern(contract.completion)); err != nil {
+			return fmt.Errorf("hook progress authorization %s: %w", contract.function, err)
+		}
+	}
+	return nil
 }
 
 func verifyOrderedSourceContract(path string, contents []byte, steps []sourceContractStep) error {

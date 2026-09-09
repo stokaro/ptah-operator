@@ -17,6 +17,9 @@ E2E_NEXT_CONTROLLER_IMAGE=${E2E_NEXT_CONTROLLER_IMAGE:-}
 E2E_CURRENT_RELEASE_SEQUENCE=${E2E_CURRENT_RELEASE_SEQUENCE:-}
 E2E_NEXT_RELEASE_SEQUENCE=${E2E_NEXT_RELEASE_SEQUENCE:-}
 E2E_DOCKER_CONTEXT=${E2E_DOCKER_CONTEXT:-}
+E2E_KIND_CLUSTER_NAME=${E2E_KIND_CLUSTER_NAME:-}
+E2E_API_SERVER_NODE_INVENTORY_FILE=${E2E_API_SERVER_NODE_INVENTORY_FILE:-}
+E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=${E2E_API_SERVER_ENDPOINT_INVENTORY_FILE:-}
 E2E_EXTERNAL_POSTGRES_CONTAINER_ID=${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:-}
 
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
@@ -102,6 +105,11 @@ HOOK_PROGRESS_POD_UID=
 HOOK_PROGRESS_BLOCKED_STABILITY_SECONDS=3
 HOOK_PROGRESS_HOLD_STABILITY_ATTEMPTS=5
 HOOK_PROGRESS_WAIT_SECONDS=90
+HOOK_PROGRESS_AUTHORIZATION_SECONDS=90
+HOOK_PROGRESS_AUTHORIZATION_CONTAINER_ID=
+HOOK_PROGRESS_AUTHORIZATION_ENDPOINTS=$WORK_DIR/hook-progress-authorization-endpoints
+HOOK_PROGRESS_AUTHORIZATION_DEADLINE=
+HOOK_PROGRESS_AUTHORIZATION_ENDPOINT=
 KUBERNETES_MAJOR_MINOR=
 CANDIDATE_CRD_SCHEMA_VERSION=$(awk '
   $1 == "operator.ptah.dev/crd-schema-version:" {
@@ -589,28 +597,139 @@ verify_hook_progress_hold_transition() {
 	fail "hook progress hold policy did not converge to the exact monotonic transition"
 }
 
-# expect_hook_progress_authorization asks the adversary's own view of RBAC.
-# A subresource is passed through --subresource: kubectl 1.36 answers "no" to
-# the slash spelling "jobs/status" while a SubjectAccessReview for the same
-# attributes is allowed, so the spelling decided the answer. kubectl also exits
-# 1 for an honest "no", which is an answer rather than a failed query; only a
-# status above 1 means the query itself failed.
+# Use the parent's exact three-endpoint inventory, not repeated samples through
+# the load balancer. Pin the exec container by ID after checking its name and
+# kind-network address against the same Node inventory; there is no caller-
+# supplied Docker exec target or fallback endpoint.
+prepare_hook_progress_authorization_endpoints() {
+	[ -n "$E2E_DOCKER_CONTEXT" ] || fail "hook progress authorization requires an explicit Docker context"
+	printf '%s\n' "$E2E_KIND_CLUSTER_NAME" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
+		fail "hook progress authorization requires a DNS-label kind cluster name"
+	[ "${#E2E_KIND_CLUSTER_NAME}" -le 63 ] || fail "hook progress kind cluster name exceeds 63 bytes"
+	require_mode_0600_regular_file "$E2E_API_SERVER_NODE_INVENTORY_FILE" hook-progress-node-inventory
+	require_mode_0600_regular_file "$E2E_API_SERVER_ENDPOINT_INVENTORY_FILE" hook-progress-endpoint-inventory
+	cp "$E2E_API_SERVER_NODE_INVENTORY_FILE" "$WORK_DIR/hook-progress-authorization-nodes.json"
+	cp "$E2E_API_SERVER_ENDPOINT_INVENTORY_FILE" "$WORK_DIR/hook-progress-authorization-slices.json"
+	jq -e --arg cluster "$E2E_KIND_CLUSTER_NAME" \
+		--slurpfile nodes "$WORK_DIR/hook-progress-authorization-nodes.json" \
+		-f "$ROOT_DIR/hack/api-server-endpoint-inventory.jq" \
+		"$WORK_DIR/hook-progress-authorization-slices.json" >/dev/null ||
+		fail "hook progress authorization inventory is not the exact three control-plane endpoints"
+	jq -er '[.items[] | select(.metadata.labels["kubernetes.io/service-name"] == "kubernetes") |
+		.endpoints[].addresses[]] | sort[]' "$WORK_DIR/hook-progress-authorization-slices.json" \
+		>"$HOOK_PROGRESS_AUTHORIZATION_ENDPOINTS" || fail "could not materialize hook progress endpoints"
+	hook_auth_primary_address=$(jq -er --arg name "${E2E_KIND_CLUSTER_NAME}-control-plane" '
+		.items[] | select(.metadata.name == $name) | .status.addresses[] |
+		select(.type == "InternalIP") | .address
+	' "$WORK_DIR/hook-progress-authorization-nodes.json") || fail "hook progress primary Node address is missing"
+	hook_auth_container=$(docker --context "$E2E_DOCKER_CONTEXT" container inspect \
+		--format '{"id":{{json .Id}},"name":{{json .Name}},"address":{{json .NetworkSettings.Networks.kind.IPAddress}}}' \
+		"${E2E_KIND_CLUSTER_NAME}-control-plane") || fail "could not inspect the hook progress control-plane container"
+	HOOK_PROGRESS_AUTHORIZATION_CONTAINER_ID=$(printf '%s\n' "$hook_auth_container" |
+		jq -er --arg name "/${E2E_KIND_CLUSTER_NAME}-control-plane" --arg address "$hook_auth_primary_address" '
+			select(.name == $name and .address == $address and (.id | test("^[a-f0-9]{64}$"))) | .id
+		') || fail "hook progress Docker container does not match the exact primary Node"
+}
+
+# One raw SelfSubjectAccessReview avoids discovery and pins all authorization
+# attributes. Only an honest missing positive grant is retryable. Errors,
+# malformed answers, and unexpected extra grants fail immediately.
 expect_hook_progress_authorization() {
-	expected=$1
-	verb=$2
-	resource=${3%%/*}
-	subresource=
+	hook_auth_expected=$1
+	hook_auth_verb=$2
+	hook_auth_resource=${3%%/*}
+	hook_auth_subresource=
+	hook_auth_namespace=$E2E_OPERATOR_NAMESPACE
 	case "$3" in
-	*/*) subresource=${3#*/} ;;
+	*/*) hook_auth_subresource=${3#*/} ;;
 	esac
-	allowed=$(hook_progress_adversary_kube auth can-i "$verb" "$resource" \
-		--subresource="$subresource" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --request-timeout=15s \
-		2>"$WORK_DIR/hook-progress-can-i.err") && can_i_status=0 || can_i_status=$?
-	[ "$can_i_status" -le 1 ] ||
-		fail "hook progress adversary authorization query for $verb $3 failed with status $can_i_status: $(cat "$WORK_DIR/hook-progress-can-i.err")"
-	[ "$allowed" = "$expected" ] ||
-		fail "hook progress adversary authorization for $verb $3 is $allowed, expected $expected"
+	case "$hook_auth_resource" in
+	jobs) hook_auth_group='batch' ;;
+	pods) hook_auth_group= ;;
+	*.admissionregistration.k8s.io)
+		hook_auth_group=admissionregistration.k8s.io
+		hook_auth_resource=${hook_auth_resource%%.*}
+		hook_auth_namespace=
+		;;
+	*) fail "unsupported hook progress authorization resource $3" ;;
+	esac
+	[ -n "$HOOK_PROGRESS_ADVERSARY_UID" ] || fail "hook progress adversary UID is missing"
+	hook_auth_remaining=$((HOOK_PROGRESS_AUTHORIZATION_DEADLINE - $(date +%s)))
+	[ "$hook_auth_remaining" -gt 0 ] ||
+		fail "hook progress authorization timed out at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT for $hook_auth_verb $3"
+	[ "$hook_auth_remaining" -le 15 ] || hook_auth_remaining=15
+	jq -n --arg namespace "$hook_auth_namespace" --arg verb "$hook_auth_verb" \
+		--arg group "$hook_auth_group" --arg resource "$hook_auth_resource" --arg subresource "$hook_auth_subresource" '
+		{apiVersion:"authorization.k8s.io/v1",kind:"SelfSubjectAccessReview",
+		 spec:{resourceAttributes:{namespace:$namespace,verb:$verb,group:$group,resource:$resource,subresource:$subresource}}}
+	' >"$WORK_DIR/hook-progress-authorization-request.json" || fail "could not encode hook progress authorization request"
+	if docker --context "$E2E_DOCKER_CONTEXT" exec -i "$HOOK_PROGRESS_AUTHORIZATION_CONTAINER_ID" \
+		kubectl --kubeconfig /etc/kubernetes/admin.conf \
+		--server "https://${HOOK_PROGRESS_AUTHORIZATION_ENDPOINT}:6443" --tls-server-name kubernetes \
+		--as "system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$HOOK_PROGRESS_ADVERSARY" \
+		--as-uid "$HOOK_PROGRESS_ADVERSARY_UID" \
+		--as-group system:serviceaccounts \
+		--as-group "system:serviceaccounts:$E2E_OPERATOR_NAMESPACE" \
+		--as-group system:authenticated --request-timeout="${hook_auth_remaining}s" \
+		create --raw /apis/authorization.k8s.io/v1/selfsubjectaccessreviews -f - \
+		<"$WORK_DIR/hook-progress-authorization-request.json" \
+		>"$WORK_DIR/hook-progress-authorization-response.json" \
+		2>"$WORK_DIR/hook-progress-authorization.err"; then
+		:
+	else
+		hook_auth_status=$?
+		fail "hook progress authorization query failed at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT for $hook_auth_verb $3 (exit $hook_auth_status)"
+	fi
+	hook_auth_allowed=$(jq -ser '
+		select(length == 1) | .[0] |
+		select(.apiVersion == "authorization.k8s.io/v1" and .kind == "SelfSubjectAccessReview") |
+		.status | select((.allowed | type) == "boolean" and
+			((has("denied") | not) or (.denied | type) == "boolean") and
+			((has("evaluationError") | not) or .evaluationError == "") and
+			(.allowed != true or .denied != true)) | .allowed | tostring
+	' "$WORK_DIR/hook-progress-authorization-response.json") ||
+		fail "hook progress authorization response is malformed or incomplete at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT for $hook_auth_verb $3"
+	[ "$(date +%s)" -lt "$HOOK_PROGRESS_AUTHORIZATION_DEADLINE" ] ||
+		fail "hook progress authorization exceeded its aggregate deadline at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT for $hook_auth_verb $3"
+	case "$hook_auth_expected:$hook_auth_allowed" in
+	yes:true | no:false) return 0 ;;
+	yes:false) return 1 ;;
+	*) fail "hook progress adversary has an unexpected $hook_auth_verb $3 grant at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT" ;;
+	esac
+}
+
+wait_for_hook_progress_authorization() {
+	prepare_hook_progress_authorization_endpoints
+	# This budget covers authorization-query convergence, not Docker connection
+	# setup or inventory preparation. Each inner API request also has its own cap.
+	HOOK_PROGRESS_AUTHORIZATION_DEADLINE=$(($(date +%s) + HOOK_PROGRESS_AUTHORIZATION_SECONDS))
+	while [ "$(date +%s)" -lt "$HOOK_PROGRESS_AUTHORIZATION_DEADLINE" ]; do
+		hook_auth_ready=1
+		hook_auth_endpoint_count=0
+		while IFS= read -r HOOK_PROGRESS_AUTHORIZATION_ENDPOINT; do
+			hook_auth_endpoint_count=$((hook_auth_endpoint_count + 1))
+			for hook_auth_capability in 'delete jobs' 'get jobs' 'get jobs/status' 'patch jobs/status' \
+				'get pods' 'patch pods' 'get pods/status' 'patch pods/status'; do
+				if expect_hook_progress_authorization yes "${hook_auth_capability%% *}" "${hook_auth_capability#* }"; then
+					:
+				else
+					hook_auth_ready=0
+				fi
+			done
+			for hook_auth_capability in \
+				'create validatingadmissionpolicies.admissionregistration.k8s.io' \
+				'create validatingadmissionpolicybindings.admissionregistration.k8s.io' \
+				'create jobs' 'update jobs' 'update pods'; do
+				expect_hook_progress_authorization no "${hook_auth_capability%% *}" "${hook_auth_capability#* }"
+			done
+		done <"$HOOK_PROGRESS_AUTHORIZATION_ENDPOINTS"
+		[ "$hook_auth_endpoint_count" -eq 3 ] || fail "hook progress authorization did not query all three API servers"
+		if [ "$hook_auth_ready" -eq 1 ]; then
+			return 0
+		fi
+		sleep 1
+	done
+	fail "hook progress adversary authorization did not converge on all three API servers"
 }
 
 create_hook_progress_adversary_and_hold() {
@@ -685,19 +804,7 @@ EOF
 		get serviceaccount "$HOOK_PROGRESS_ADVERSARY" -o jsonpath='{.metadata.uid}' \
 		--request-timeout=15s)
 	[ -n "$HOOK_PROGRESS_ADVERSARY_UID" ] || fail "hook progress adversary has no UID"
-	expect_hook_progress_authorization yes delete jobs
-	expect_hook_progress_authorization yes patch jobs/status
-	expect_hook_progress_authorization yes patch pods
-	expect_hook_progress_authorization yes patch pods/status
-	expect_hook_progress_authorization yes get jobs/status
-	expect_hook_progress_authorization yes get pods/status
-	expect_hook_progress_authorization no create \
-		validatingadmissionpolicies.admissionregistration.k8s.io
-	expect_hook_progress_authorization no create \
-		validatingadmissionpolicybindings.admissionregistration.k8s.io
-	expect_hook_progress_authorization no create jobs
-	expect_hook_progress_authorization no update jobs
-	expect_hook_progress_authorization no update pods
+	wait_for_hook_progress_authorization
 
 	held_components='["crd-manager-image-check","hook-identity-probe","crd-manager-preflight","crd-manager"]'
 	hold_expression=$(hook_progress_hold_expression "$held_components")
@@ -1751,6 +1858,58 @@ emit_late_activation_preflight_diagnostic_if_available() {
 	else
 		printf '%s\n' 'e2e crd: preflight diagnostic withheld by credential and format scanner' >&2
 	fi
+}
+
+emit_same_candidate_retry_reconcile_diagnostic_if_available() {
+	[ "$(late_activation_capture_status_summary "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE")" = captured ] || return 0
+	[ -s "$LATE_ACTIVATION_RECONCILE_LOG_FILE" ] || return 0
+	if hook_diagnostic_is_safe "$LATE_ACTIVATION_RECONCILE_LOG_FILE"; then
+		cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2
+	else
+		printf '%s\n' 'e2e crd: retry reconcile diagnostic withheld by credential and format scanner' >&2
+	fi
+}
+
+# A failed hook can disappear before Helm returns. Arm the same UID/owner/render-
+# bound capture before the retry, with fresh destinations that cannot overwrite
+# the intentional failure's evidence. Neither capture nor diagnostics can turn
+# a failed Helm operation into success.
+retry_same_candidate_with_diagnostics() {
+	LATE_ACTIVATION_PREFLIGHT_LOG_FILE=$WORK_DIR/retry-preflight.log
+	LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE=$WORK_DIR/retry-preflight-capture-status
+	LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE=$WORK_DIR/retry-preflight-capture-errors
+	LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE=$WORK_DIR/retry-preflight-failure-class
+	LATE_ACTIVATION_PREFLIGHT_CAPTURE_READY_FILE=$WORK_DIR/retry-preflight-capture-ready
+	LATE_ACTIVATION_RECONCILE_LOG_FILE=$WORK_DIR/retry-reconcile.log
+	LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE=$WORK_DIR/retry-reconcile-capture-status
+	LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE=$WORK_DIR/retry-reconcile-capture-errors
+	LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE=$WORK_DIR/retry-reconcile-failure-class
+	LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE=$WORK_DIR/retry-reconcile-capture-ready
+	arm_late_activation_hook_log_captures
+	retry_helm_status=0
+	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
+		--wait --timeout 7m >"$WORK_DIR/same-candidate-retry.out" \
+		2>"$WORK_DIR/same-candidate-retry.err"; then
+		:
+	else
+		retry_helm_status=$?
+	fi
+	retry_capture_status=0
+	finish_late_activation_hook_log_captures || retry_capture_status=$?
+	if [ "$retry_helm_status" -ne 0 ]; then
+		# Run optional diagnostic emitters in subshells so even a scanner's
+		# refusal cannot replace the original Helm failure status.
+		(emit_late_activation_preflight_diagnostic_if_available) || true
+		(emit_same_candidate_retry_reconcile_diagnostic_if_available) || true
+		printf 'e2e crd: same-candidate retry failed (Helm exit %s; capture exit %s; preflight %s; reconcile %s)\n' \
+			"$retry_helm_status" "$retry_capture_status" \
+			"$(late_activation_capture_status_summary "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE")" \
+			"$(late_activation_capture_status_summary "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE")" >&2
+		return "$retry_helm_status"
+	fi
+	[ "$retry_capture_status" -eq 0 ] || fail "same-candidate retry hook captures did not both complete successfully"
+	verify_late_activation_preflight_capture
 }
 
 verify_late_activation_preflight_capture() {
@@ -3630,9 +3789,7 @@ run_next_release_upgrade_proof() {
 		"$current_release_sequence" "$next_release_sequence"
 	# Keep the outer Helm wait beyond the unchanged 360s/390s hook budgets,
 	# just as for the failed attempt; every credential fence runs again.
-	helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
-		--wait --timeout 7m >/dev/null
+	retry_same_candidate_with_diagnostics
 	wait_runtime_ready
 	wait_for_read_only_job_cleanup
 	quiesce_read_only_job_schema
