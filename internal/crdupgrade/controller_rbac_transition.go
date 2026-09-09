@@ -33,9 +33,8 @@ type ControllerRBACClient interface {
 
 // ControllerRBACTransition moves stable bindings from one immutable
 // controller ServiceAccount to the next. It never creates a binding or role.
-// The current binary contains an exact contract only for the supported
-// release-sequence-zero predecessor; the state-machine representation already
-// supports the additional runtime-admission binding introduced in sequence 1.
+// Only explicitly frozen predecessor contracts are supported. A sequence-1
+// predecessor also contributes its runtime-admission and discovery bindings.
 type ControllerRBACTransition struct {
 	rollout   *RolloutGuard
 	client    ControllerRBACClient
@@ -820,7 +819,7 @@ func controllerRBACContract(
 			postApplyRole:    &runtimeRole,
 		}, nil
 	}
-	predecessorClusterRules, predecessorCoordinationRules, err := frozenPredecessorControllerRoleRules(rollout)
+	predecessorRules, err := frozenPredecessorControllerRoleRules(rollout, runtimeContract)
 	if err != nil {
 		return controllerRBACTransitionContract{}, err
 	}
@@ -831,19 +830,24 @@ func controllerRBACContract(
 			{
 				name:             bindingName,
 				cluster:          true,
-				predecessorRules: predecessorClusterRules,
+				predecessorRules: predecessorRules.cluster,
 				candidateRules:   currentControllerClusterRoleRules(rollout),
 			},
 			{
 				name:             bindingName,
 				namespace:        rollout.CoordinationNamespace,
-				predecessorRules: predecessorCoordinationRules,
+				predecessorRules: predecessorRules.coordination,
 				candidateRules:   currentControllerCoordinationRoleRules(),
 			},
 		},
 		postApplyRole: &runtimeRole,
 	}
 	if rollout.PreviousControllerReleaseSequence >= 1 {
+		// This Role already grants the predecessor access to its runtime
+		// identity and admission marker. Keep it in every exact inventory and
+		// revocation probe, not in the candidate-only post-apply contour.
+		runtimeRole.predecessorRules = predecessorRules.runtime
+		contract.roles = append(contract.roles, runtimeRole)
 		contract.postApplyBinding = nil
 		contract.postApplyRole = nil
 	}
@@ -862,16 +866,27 @@ func controllerRBACContract(
 type frozenControllerRoleContract struct {
 	cluster      func(controllerRoleIdentity) []rbacv1.PolicyRule
 	coordination func() []rbacv1.PolicyRule
+	runtime      func(controllerRoleIdentity, RuntimeAdmissionContract) []rbacv1.PolicyRule
+}
+
+type frozenControllerRoleRules struct {
+	cluster      []rbacv1.PolicyRule
+	coordination []rbacv1.PolicyRule
+	runtime      []rbacv1.PolicyRule
 }
 
 // Append-only. Bumping CurrentReleaseSequence means recording the contract the
 // outgoing sequence published here, as a literal, before the new sequence can
 // succeed it.
 var frozenControllerRoleContracts = map[int32]frozenControllerRoleContract{
-	1: {cluster: sequence1ControllerClusterRoleRules, coordination: sequence1ControllerCoordinationRoleRules},
+	1: {
+		cluster:      sequence1ControllerClusterRoleRules,
+		coordination: sequence1ControllerCoordinationRoleRules,
+		runtime:      sequence1ControllerRuntimeRoleRules,
+	},
 }
 
-func frozenPredecessorControllerRoleRules(rollout *RolloutGuard) ([]rbacv1.PolicyRule, []rbacv1.PolicyRule, error) {
+func frozenPredecessorControllerRoleRules(rollout *RolloutGuard, runtimeContract RuntimeAdmissionContract) (frozenControllerRoleRules, error) {
 	unsupported := fmt.Errorf(
 		"controller RBAC transition from release sequence %d to %d requires an explicit frozen predecessor role contract",
 		rollout.PreviousControllerReleaseSequence,
@@ -879,25 +894,58 @@ func frozenPredecessorControllerRoleRules(rollout *RolloutGuard) ([]rbacv1.Polic
 	)
 	if rollout.PreviousControllerReleaseSequence == 0 {
 		if rollout.ReleaseSequence != 1 {
-			return nil, nil, unsupported
+			return frozenControllerRoleRules{}, unsupported
 		}
-		return legacyControllerClusterRoleRules(), legacyControllerCoordinationRoleRules(), nil
+		return frozenControllerRoleRules{
+			cluster:      legacyControllerClusterRoleRules(),
+			coordination: legacyControllerCoordinationRoleRules(),
+		}, nil
 	}
 	if rollout.ReleaseSequence != rollout.PreviousControllerReleaseSequence+1 {
-		return nil, nil, unsupported
+		return frozenControllerRoleRules{}, unsupported
 	}
 	frozen, recorded := frozenControllerRoleContracts[rollout.PreviousControllerReleaseSequence]
-	if !recorded {
-		return nil, nil, unsupported
+	if !recorded || frozen.cluster == nil || frozen.coordination == nil || frozen.runtime == nil {
+		return frozenControllerRoleRules{}, unsupported
 	}
 	predecessor := predecessorControllerRoleIdentity(rollout)
 	if predecessor.managerImage == "" {
-		return nil, nil, fmt.Errorf(
+		return frozenControllerRoleRules{}, fmt.Errorf(
 			"controller RBAC transition out of release sequence %d requires the predecessor manager image",
 			rollout.PreviousControllerReleaseSequence,
 		)
 	}
-	return frozen.cluster(predecessor), frozen.coordination(), nil
+	previousRuntime := runtimeContract
+	previousRuntime.ControllerServiceAccountName = rollout.PreviousControllerServiceAccountName
+	return frozenControllerRoleRules{
+		cluster:      frozen.cluster(predecessor),
+		coordination: frozen.coordination(),
+		runtime:      frozen.runtime(predecessor, previousRuntime),
+	}, nil
+}
+
+// The runtime-admission Role sequence 1 published. Its controller identity and
+// mutable admission marker belong to the predecessor, not the candidate. Keep
+// the rules literal rather than inheriting future current-role changes.
+func sequence1ControllerRuntimeRoleRules(identity controllerRoleIdentity, contract RuntimeAdmissionContract) []rbacv1.PolicyRule {
+	rules := []rbacv1.PolicyRule{
+		privilegePolicyRule(
+			[]string{""}, []string{"serviceaccounts"},
+			[]string{contract.ControllerServiceAccountName, contract.CertificateServiceAccountName},
+			[]string{"get"},
+		),
+		privilegePolicyRule([]string{""}, []string{"limitranges"}, nil, []string{"list"}),
+		privilegePolicyRule(
+			[]string{""}, []string{"configmaps"},
+			[]string{AdmissionConvergenceMarkerName(contract.Namespace, identity.releaseName, identity.releaseSequence)},
+			[]string{"get", "update"},
+		),
+		privilegePolicyRule([]string{""}, []string{"configmaps"}, []string{ReleaseActivationName}, []string{"get"}),
+	}
+	if contract.Namespace == corev1.NamespaceDefault {
+		rules = append(rules, privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}))
+	}
+	return rules
 }
 
 // The controller ClusterRole release sequence 1 published. Frozen: it is a
