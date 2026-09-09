@@ -1933,9 +1933,14 @@ wait_for_operation_job_terminal() {
 	fail "timed out waiting for the terminal $terminal_operation Job for $terminal_schema"
 }
 
+# A Job is removed once it is terminal, by its own TTL or by the controller
+# that owns it. Reading it again after the wait is a race the harness loses at
+# random, so the snapshot that proved terminality is what every caller reads:
+# TERMINAL_JOB_OBJECT holds it, and nothing re-fetches the object afterwards.
 wait_for_exact_job_terminal() {
 	exact_job_name=$1
 	exact_job_uid=$2
+	TERMINAL_JOB_OBJECT=
 	exact_job_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$exact_job_deadline" ]; do
 		maybe_audit_fault_runtime
@@ -1948,6 +1953,7 @@ wait_for_exact_job_terminal() {
           .status.conditions // [] |
           any((.type == "Complete" or .type == "Failed") and .status == "True")
         ' >/dev/null; then
+				TERMINAL_JOB_OBJECT=$exact_job_object
 				return 0
 			fi
 		fi
@@ -1962,7 +1968,7 @@ capture_exact_job_result() {
 	result_operation=$3
 	result_output=$4
 	wait_for_exact_job_terminal "$result_job_name" "$result_job_uid"
-	result_job_object=$(k -n "$TEST_NAMESPACE" get job "$result_job_name" -o json)
+	result_job_object=$TERMINAL_JOB_OBJECT
 	printf '%s\n' "$result_job_object" | jq -e \
 		--arg uid "$result_job_uid" \
 		--arg operation "$result_operation" \
@@ -4564,7 +4570,7 @@ MYSQL_RECOVERY_OBSERVE_JOB=$(k -n "$TEST_NAMESPACE" get jobs \
     if length == 1 then .[0].metadata.name else error("recovery Observe Job UID is not live exactly once") end
   ')
 wait_for_exact_job_terminal "$MYSQL_RECOVERY_OBSERVE_JOB" "$MYSQL_RECOVERY_OBSERVE_UID"
-k -n "$TEST_NAMESPACE" get job "$MYSQL_RECOVERY_OBSERVE_JOB" -o json |
+printf '%s\n' "$TERMINAL_JOB_OBJECT" |
 	jq -e --arg uid "$MYSQL_RECOVERY_OBSERVE_UID" '
       .metadata.uid == $uid and
       (.status.conditions // [] | any(.type == "Complete" and .status == "True")) and
@@ -4616,7 +4622,7 @@ MYSQL_RECOVERY_PLAN_JOB=$(k -n "$TEST_NAMESPACE" get jobs \
     if length == 1 then .[0].metadata.name else error("recovery Plan Job UID is not live exactly once") end
   ')
 wait_for_exact_job_terminal "$MYSQL_RECOVERY_PLAN_JOB" "$MYSQL_RECOVERY_PLAN_JOB_UID"
-k -n "$TEST_NAMESPACE" get job "$MYSQL_RECOVERY_PLAN_JOB" -o json |
+printf '%s\n' "$TERMINAL_JOB_OBJECT" |
 	jq -e --arg uid "$MYSQL_RECOVERY_PLAN_JOB_UID" '
       .metadata.uid == $uid and
       (.status.conditions // [] | any(.type == "Complete" and .status == "True")) and

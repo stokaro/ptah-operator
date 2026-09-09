@@ -756,7 +756,7 @@ func (o *teardownRetirementCredentialObserver) Wait(ctx context.Context) error {
 					return ctxErr
 				}
 				if waitErr := waitCtx.Err(); waitErr != nil {
-					return o.waitFailure(waitErr)
+					return o.waitFailure(waitErr, everUnauthorized)
 				}
 				return fmt.Errorf("observe cleanup credential retirement at API endpoint %q: %w", endpoint.name, err)
 			}
@@ -788,7 +788,7 @@ func (o *teardownRetirementCredentialObserver) Wait(ctx context.Context) error {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
-			return o.waitFailure(err)
+			return o.waitFailure(err, everUnauthorized)
 		}
 	}
 }
@@ -826,12 +826,26 @@ func (o *teardownRetirementCredentialObserver) observeEndpoint(
 	return false, nil
 }
 
-func (o *teardownRetirementCredentialObserver) waitFailure(err error) error {
+// The endpoints that never answered Unauthorized are the diagnosis. Without
+// them the deadline says only that the credential stayed usable somewhere,
+// and the somewhere has to be reconstructed from a cluster the run tears down.
+func (o *teardownRetirementCredentialObserver) waitFailure(err error, everUnauthorized map[string]bool) error {
 	if errors.Is(err, context.DeadlineExceeded) {
+		stillAuthorized := make([]string, 0, len(o.endpoints))
+		for _, endpoint := range o.endpoints {
+			if !everUnauthorized[endpoint.name] {
+				stillAuthorized = append(stillAuthorized, endpoint.name)
+			}
+		}
+		where := "every frozen API endpoint answered Unauthorized at some point, but never all of them at once"
+		if len(stillAuthorized) != 0 {
+			where = "these frozen API endpoints never answered Unauthorized: " + strings.Join(stillAuthorized, ", ")
+		}
 		return fmt.Errorf(
-			"cleanup credential was not continuously Unauthorized on every frozen API endpoint for %s within %s: %w",
+			"cleanup credential was not continuously Unauthorized on every frozen API endpoint for %s within %s (%s): %w",
 			o.stabilityDuration,
 			o.retirementTimeout,
+			where,
 			context.DeadlineExceeded,
 		)
 	}
