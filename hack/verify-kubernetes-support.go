@@ -70,9 +70,9 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "394e62c80a2c7cfc7d5486380329c3aa79bfedc73f962c7557285d0996d837d6"
+	ciWorkflowSHA256                = "6f12ddb5d62be7e6157fef740616b7056b505338ef79285679c5f1da851d9fb9"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
-	releaseWorkflowSHA256           = "0ff38eee68f8a0a6065830a2154ef46f9e89f9fa099bfdb67f53232165c02a6f"
+	releaseWorkflowSHA256           = "cb548f744819a0f8196e2056d7d581a284e754bd4319de17c6c0af9fd1eb4f78"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
 	releaseChartExportRunSHA256     = "a34800805204a2caa071d03939f9337f3472028ecb8b9c11ed26723294eb8082"
@@ -85,7 +85,7 @@ const (
 	ciSupportMatrixTimeoutMinutes     = 10
 	ciVerifyTimeoutMinutes            = 20
 	ciRaceTimeoutMinutes              = 60
-	ciKubernetesE2ETimeoutMinutes     = 90
+	ciKubernetesE2ETimeoutMinutes     = 180
 	ciKubernetesSupportTimeoutMinutes = 5
 	releaseQueueAPIMarginMinutes      = 5
 	releaseSupportPollTimeoutMinutes  = max(ciSupportMatrixTimeoutMinutes, ciVerifyTimeoutMinutes, ciRaceTimeoutMinutes) + ciKubernetesE2ETimeoutMinutes + ciKubernetesSupportTimeoutMinutes + releaseQueueAPIMarginMinutes
