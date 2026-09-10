@@ -367,6 +367,13 @@ func (t *PrivilegeTeardown) inspect(ctx context.Context) (privilegeTeardownState
 		if account.required && !found {
 			return privilegeTeardownState{}, fmt.Errorf("required ServiceAccount/%s is missing", account.name)
 		}
+		if found && account.external && !t.predecessorPrivilegeRecorded().controllerServiceAccount {
+			return privilegeTeardownState{}, fmt.Errorf(
+				"ServiceAccount/%s still carries a predecessor controller identity that the release sequence %d inventory does not record",
+				account.name,
+				t.rollout.ReleaseSequence,
+			)
+		}
 		if found && account.remove {
 			state.serviceAccounts = append(state.serviceAccounts, privilegeBindingTarget{name: account.name, identity: identity})
 		}
@@ -1793,6 +1800,33 @@ func (t *PrivilegeTeardown) verifyMetadata(kind string, metadata metav1.ObjectMe
 	return nil
 }
 
+// predecessorPrivilegeRecord says what a predecessor sequence can still own
+// when the sequence that recorded it is uninstalled.
+type predecessorPrivilegeRecord struct {
+	// controllerServiceAccount reports whether the predecessor's controller
+	// ServiceAccount can still exist. An installation that predates release
+	// sequences leaves one for sequence 1 to adopt. A cutover between sequences
+	// retires it before it activates, so a later sequence must not find one.
+	controllerServiceAccount bool
+}
+
+// predecessorPrivilegeInventory records, for each release sequence, what its
+// predecessor can still own at uninstall. An entry is written when its sequence
+// is prepared and never edited afterwards, so the map reads as the history it
+// is. A sequence nobody recorded is refused: a teardown that cannot name what a
+// predecessor left cannot prove it removed it. An entry that records nothing is
+// a claim this teardown checks rather than assumes, in inspect below.
+var predecessorPrivilegeInventory = map[int32]predecessorPrivilegeRecord{
+	1: {controllerServiceAccount: true},
+	2: {},
+}
+
+// predecessorPrivilegeRecorded returns what this release sequence recorded
+// about its predecessor.
+func (t *PrivilegeTeardown) predecessorPrivilegeRecorded() predecessorPrivilegeRecord {
+	return predecessorPrivilegeInventory[t.rollout.ReleaseSequence]
+}
+
 func (t *PrivilegeTeardown) validate() error {
 	if t == nil || t.rollout == nil || t.roleBindings == nil || t.clusterBindings == nil || t.roles == nil || t.clusterRoles == nil || t.serviceAccounts == nil {
 		return errors.New("privilege teardown clients and rollout identity are required")
@@ -1808,7 +1842,7 @@ func (t *PrivilegeTeardown) validate() error {
 			return errors.New("previous controller ServiceAccount UID is required for privilege teardown")
 		}
 	}
-	if t.rollout.ReleaseSequence > 1 {
+	if _, recorded := predecessorPrivilegeInventory[t.rollout.ReleaseSequence]; !recorded {
 		return fmt.Errorf("privilege teardown for release sequence %d requires an explicit predecessor privilege inventory", t.rollout.ReleaseSequence)
 	}
 	cleanup, err := TeardownServiceAccountName(t.rollout.HookServiceAccountName, t.rollout.ReleaseSequence)
