@@ -7,6 +7,20 @@ it. Helm 3 is not supported: it reaches end of life before this operator's
 first release, and it applies client-side, so the release's objects carry no
 server-side apply ownership for a later upgrade to take back.
 
+An upgrade that moves the release to a new sequence needs `--force-conflicts`:
+
+```sh
+helm upgrade <release> <chart> --values <values> --force-conflicts
+```
+
+Such an upgrade stops the runtime in its pre-upgrade hook, which leaves
+`.spec.replicas` at zero under the hook's own field manager, and the apply that
+follows has to raise it again. Server-side apply reports that as a conflict.
+Every other field the hook writes it writes to the value the chart applies, and
+an equal value is never a conflict, so the force is confined to the replica
+count the cutover moved. An upgrade that keeps the release sequence does not
+stop the runtime and does not need the flag.
+
 Install CRDs and the controller through the Helm chart. Supply digest-pinned
 manager, executor, and runner images. The chart refuses all three when only a
 tag is supplied. Manager Pods, hooks, and controller identity all use the same

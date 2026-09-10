@@ -3315,6 +3315,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLineSequence("late activation Helm failure execution", []string{
 					`if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \`,
 					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \`,
+					`--force-conflicts \`,
 					`--wait --timeout 7m >"$WORK_DIR/late-activation-failure.out" \`,
 					`2>"$WORK_DIR/late-activation-failure.err"; then`,
 				}),
@@ -5003,7 +5004,7 @@ func verifyExactShellFunctionContract(path string, contents []byte, name, expect
 
 func verifySameCandidateRetryDiagnostics(path string, contents []byte) error {
 	for _, contract := range []struct{ name, digest, description string }{
-		{"retry_same_candidate_with_diagnostics", "bef6c4db484813445e9fdf7ff46496ad0fb24ab5857f31d0dc4bde99f67d4f13", "same-candidate recovery exact Helm retry"},
+		{"retry_same_candidate_with_diagnostics", "c3ef6b8ef3b0baca8e1668ba2089396a8d8dbef2459425fa8731fbde62880764", "same-candidate recovery exact Helm retry"},
 		{"emit_same_candidate_retry_reconcile_diagnostic_if_available", "b1a26e153aa1119e51065f8d26490ee8e0c8afe4e0f4278b7e037117885b071f", "same-candidate recovery credential-safe diagnostic"},
 	} {
 		if err := verifyAuditedShellFunctionDigest(path, contents, contract.name, contract.digest, contract.description); err != nil {

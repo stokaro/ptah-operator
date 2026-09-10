@@ -94,7 +94,7 @@ verify_late_activation_preflight_capture() { printf 'verify\n' >>"$WORK_DIR/orde
 			if got := readRetryTestFile(t, directory, "order"); got != wantOrder {
 				t.Fatalf("order = %q, want %q", got, wantOrder)
 			}
-			if got, want := readRetryTestFile(t, directory, "arguments"), "upgrade\nexact-release\nexact-chart.tgz\n--namespace\nexact-namespace\n--values\nexact-values.yaml\n--wait\n--timeout\n7m\n"; got != want {
+			if got, want := readRetryTestFile(t, directory, "arguments"), "upgrade\nexact-release\nexact-chart.tgz\n--namespace\nexact-namespace\n--values\nexact-values.yaml\n--force-conflicts\n--wait\n--timeout\n7m\n"; got != want {
 				t.Fatalf("Helm arguments = %q, want %q", got, want)
 			}
 			destinations := strings.Fields(readRetryTestFile(t, directory, "destinations"))

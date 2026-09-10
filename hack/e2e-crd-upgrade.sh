@@ -1875,6 +1875,12 @@ emit_same_candidate_retry_reconcile_diagnostic_if_available() {
 # the intentional failure's evidence. Neither capture nor diagnostics can turn
 # a failed Helm operation into success.
 retry_same_candidate_with_diagnostics() {
+	# Helm 4 applies server-side, and a conflict is raised for a field whose
+	# value this apply changes while another manager owns it. A release-sequence
+	# upgrade stops the runtime in its pre-upgrade hook, so the hook owns
+	# .spec.replicas with the value 0 that this apply has to raise again. Every
+	# other field the hook writes it writes to the value this chart applies, so
+	# the force is confined to what the release owns and the cutover moved.
 	LATE_ACTIVATION_PREFLIGHT_LOG_FILE=$WORK_DIR/retry-preflight.log
 	LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE=$WORK_DIR/retry-preflight-capture-status
 	LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE=$WORK_DIR/retry-preflight-capture-errors
@@ -1889,6 +1895,7 @@ retry_same_candidate_with_diagnostics() {
 	retry_helm_status=0
 	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
+		--force-conflicts \
 		--wait --timeout 7m >"$WORK_DIR/same-candidate-retry.out" \
 		2>"$WORK_DIR/same-candidate-retry.err"; then
 		:
@@ -2154,8 +2161,15 @@ prove_late_activation_failure_recovery() {
 	# blocker refuses. At two minutes Helm gave up first and deleted the hook's
 	# own Role and ClusterRole, so the Pod reported losing them instead of the
 	# refusal the proof came for.
+	# Helm 4 applies server-side, and a conflict is raised for a field whose
+	# value this apply changes while another manager owns it. A release-sequence
+	# upgrade stops the runtime in its pre-upgrade hook, so the hook owns
+	# .spec.replicas with the value 0 that this apply has to raise again. Every
+	# other field the hook writes it writes to the value this chart applies, so
+	# the force is confined to what the release owns and the cutover moved.
 	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
+		--force-conflicts \
 		--wait --timeout 7m >"$WORK_DIR/late-activation-failure.out" \
 		2>"$WORK_DIR/late-activation-failure.err"; then
 		late_upgrade_succeeded=true
