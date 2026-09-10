@@ -595,9 +595,15 @@ func (b *admissionConvergenceBarrier) wait(
 				continue
 			}
 			if err != nil {
+				// Keep the observation's own error: the deadline is the answer,
+				// and what the observer kept refusing is the diagnosis. An inner
+				// err shadowed it here and reported only that time ran out.
+				unmet = "the protected runtime Pod observation kept failing: " + err.Error()
 				resetStability()
-				if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
-					return fmt.Errorf("admission convergence stability observer did not recover: %w", err)
+				if sleepErr := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); sleepErr != nil {
+					return deadline(fmt.Errorf(
+						"admission convergence stability observer did not recover: %w (last observation error: %v)",
+						sleepErr, err))
 				}
 				continue
 			}
@@ -690,9 +696,12 @@ func (b *admissionConvergenceBarrier) wait(
 				continue
 			}
 			if observeErr != nil {
+				unmet = "the closing protected runtime Pod observation kept failing: " + observeErr.Error()
 				resetStability()
-				if err := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); err != nil {
-					return fmt.Errorf("closing admission convergence stability observer did not recover: %w", err)
+				if sleepErr := sleepForNextAdmissionConvergenceSweep(ctx, sleep, b.pollEvery); sleepErr != nil {
+					return deadline(fmt.Errorf(
+						"closing admission convergence stability observer did not recover: %w (last observation error: %v)",
+						sleepErr, observeErr))
 				}
 				continue
 			}

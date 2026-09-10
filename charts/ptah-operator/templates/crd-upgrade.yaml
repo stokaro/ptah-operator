@@ -481,9 +481,13 @@ rules:
   - apiGroups: ["apps"]
     resources: ["replicasets"]
     verbs: ["list"]
+  # The credential-grace fence observes the protected runtime Pods through a
+  # gap-free list-watch: it lists once for a resourceVersion and watches from
+  # it. Without watch the observation fails on every sweep and the fence waits
+  # out its whole deadline.
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["list"]
+    verbs: ["list", "watch"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     resourceNames:
