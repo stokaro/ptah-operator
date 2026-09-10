@@ -361,20 +361,6 @@ rules:
       {{- if $certificateRuntimeEnabled }}
       - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
       {{- end }}
-      {{- /*
-      The teardown retirement inventory still names the guards a release
-      installed by an older chart left behind. Quiescence reads every target in
-      that inventory before it stops anything, and a name it may not read is
-      refused before it can be found absent.
-      */}}
-      - {{ printf "ptah-operator-hook-parent-origin-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-hook-pod-origin-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-controller-write-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-job-write-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-chunk-write-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-plan-write-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-service-account-origin-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-runtime-parent-guard-v1-%s" $releaseDigest }}
     verbs: ["get"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["validatingadmissionpolicybindings"]
@@ -402,20 +388,6 @@ rules:
       {{- if $certificateRuntimeEnabled }}
       - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
       {{- end }}
-      {{- /*
-      The teardown retirement inventory still names the guards a release
-      installed by an older chart left behind. Quiescence reads every target in
-      that inventory before it stops anything, and a name it may not read is
-      refused before it can be found absent.
-      */}}
-      - {{ printf "ptah-operator-hook-parent-origin-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-hook-pod-origin-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-controller-write-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-job-write-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-chunk-write-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-plan-write-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-service-account-origin-guard-v1-%s" $releaseDigest }}
-      - {{ printf "ptah-operator-runtime-parent-guard-v1-%s" $releaseDigest }}
     verbs: ["get"]
 {{- $predecessorPolicyNames := include "ptah-operator.predecessorRetiredPolicyNames" . }}
 {{- if $predecessorPolicyNames }}

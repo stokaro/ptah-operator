@@ -1189,18 +1189,8 @@ func currentRetainedAdmissionGuardNames(rollout *RolloutGuard) []string {
 	return retainedAdmissionGuardNames(candidateControllerRoleIdentity(rollout))
 }
 
-// currentCRDManagerAdmissionGuardNames is what the hook may read by name. It
-// covers the retained guards of this release and, beyond them, the guards a
-// release installed by an older chart left behind: quiescence reads every
-// target in the teardown retirement inventory before it stops anything, and a
-// name it may not read is refused before it can be found absent.
 func currentCRDManagerAdmissionGuardNames(rollout *RolloutGuard) []string {
-	names := currentRetainedAdmissionGuardNames(rollout)
-	names = append(names,
-		legacyParentHookJobOriginGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
-		legacyParentHookPodOriginGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
-	)
-	return append(names, legacyControllerGuardNames(rollout.ReleaseNamespace, rollout.ReleaseName)...)
+	return currentRetainedAdmissionGuardNames(rollout)
 }
 
 func controllerRBACAuthorizationChecks(rollout *RolloutGuard, roles []controllerRBACRoleContract) ([]AuthorizationCheck, error) {
