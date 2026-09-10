@@ -367,6 +367,49 @@ assert_object_unchanged() {
 	cmp "$before" "$after" || fail "$resource/$name UID, spec, or status changed during CRD management"
 }
 
+# A release-sequence upgrade replaces the data plane that produced a schema's
+# retained evidence, so the operator records the candidate manager under a new
+# execution-binding epoch and marks every retained condition for refresh. That
+# is the whole delta a user's object is allowed to show: the identity, the
+# spec, the plan and every other status field stay exactly as they were, and a
+# condition that did not move keeps its own reason and message.
+assert_object_execution_binding_refreshed() {
+	resource=$1
+	name=$2
+	before=$3
+	expected_controller_image=$4
+	after=$WORK_DIR/${resource}-after.json
+	object_evidence "$resource" "$name" "$after"
+	jq -e --arg image "$expected_controller_image" '
+      .status.executionBinding.controllerImage == $image and
+      (.status.executionBinding.epoch | test("^v1-[0-9a-f]{32}$"))
+    ' "$after" >/dev/null ||
+		fail "$resource/$name did not record the candidate execution binding"
+	[ "$(jq -r '.status.executionBinding.epoch' "$before")" != \
+		"$(jq -r '.status.executionBinding.epoch' "$after")" ] ||
+		fail "$resource/$name kept the predecessor execution-binding epoch"
+	for evidence_side in "$before" "$after"; do
+		jq -S 'del(
+          .status.executionBinding.controllerImage,
+          .status.executionBinding.epoch,
+          .status.conditions
+        )' "$evidence_side" >"$evidence_side.binding-invariant"
+	done
+	cmp "$before.binding-invariant" "$after.binding-invariant" ||
+		fail "$resource/$name changed outside the execution-binding refresh"
+	jq -S '[.status.conditions[] | {type, status, reason, message}]' "$before" >"$before.conditions"
+	jq -S --slurpfile before_conditions "$before.conditions" '
+      [.status.conditions[] | {type, status, reason, message}] as $after_conditions |
+      $before_conditions[0] as $kept_conditions |
+      ([$after_conditions[] | select(.reason == "ExecutionBindingChanged")] | length) > 0 and
+      (([$kept_conditions[].type] - [$after_conditions[].type]) | length) == 0 and
+      ([$after_conditions[] | select(.reason != "ExecutionBindingChanged")] |
+        all(. as $kept | $kept_conditions | any(. == $kept)))
+    ' "$after" >"$after.conditions-verdict"
+	[ "$(cat "$after.conditions-verdict")" = true ] ||
+		fail "$resource/$name conditions moved for a reason other than the execution-binding refresh"
+}
+
 crd_evidence() {
 	name=$1
 	destination=$2
@@ -3840,9 +3883,16 @@ run_next_release_upgrade_proof() {
 	assert_inventory_resources_absent \
 		"$current_sequence_inventory" "$current_sequence_marker_name"
 	assert_release_sequence_candidate_residue_absent "$current_release_sequence"
-	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
+	assert_object_execution_binding_refreshed ptahschema "$PROOF_SCHEMA" \
+		"$WORK_DIR/ptahschema-before.json" "$E2E_NEXT_CONTROLLER_IMAGE"
+	for resource in ptahschemaplan ptahschemaapproval; do
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" \
 			"$WORK_DIR/${resource}-before.json"
+	done
+	# The refresh above is the only change this upgrade may make. Everything
+	# after it, including the uninstall, is held to the state it leaves behind.
+	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
+		object_evidence "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
 	printf '%s\n' 'e2e crd: same-candidate late-failure recovery passed'
 	printf 'e2e crd: synthetic sequence-%s upgrade retired the exact sequence-%s admission and controller identity\n' \
