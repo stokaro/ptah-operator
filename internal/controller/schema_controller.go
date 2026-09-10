@@ -1010,7 +1010,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("dispatched Apply Job is missing and will not be recreated"))
 		}
 		if schema.Spec.Suspend {
-			return r.suspendUndispatchedOperation(ctx, schema)
+			return r.suspendActiveOperation(ctx, schema)
 		}
 		current, currentErr := r.operationInputFingerprint(schema, operation.Type)
 		if currentErr != nil || current != operation.InputFingerprint {
@@ -1208,6 +1208,16 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	}
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("read active Job: %w", err)
+	}
+	// Suspension is the stop button, and a read-only operation has produced
+	// nothing durable. Waiting for its dispatched Job to reach its own active
+	// deadline holds a suspended schema for that entire budget, a quarter of an
+	// hour by default. Discard it exactly as a changed input discards a
+	// dispatched read-only operation: the Job keeps its own deadline, and its
+	// Pods can no longer claim an operation this schema no longer has. Post-apply
+	// proof is excluded because that work outranks suspension by design.
+	if schema.Spec.Suspend && schema.Status.PendingObservation == nil && isReadOnlyOperation(operation) {
+		return r.suspendActiveOperation(ctx, schema)
 	}
 	if operation.JobUID != "" && operation.JobUID != job.UID {
 		if operation.Type == operatorv1alpha1.OperationApply {
@@ -1556,7 +1566,7 @@ func (r *SchemaReconciler) blockVerification(
 	return ctrl.Result{RequeueAfter: interval(schema)}, nil
 }
 
-func (r *SchemaReconciler) suspendUndispatchedOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
+func (r *SchemaReconciler) suspendActiveOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	before := schema.DeepCopy()
 	if operation != nil && (operation.Type == operatorv1alpha1.OperationApply ||
