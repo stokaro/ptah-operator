@@ -724,6 +724,14 @@ rules:
     resources: ["configmaps"]
     resourceNames: [{{ $markerName | quote }}]
     verbs: ["get", "update"]
+  # The probe derives the teardown retirement phase from the durable release
+  # activation parameter, and it runs before any wider identity exists. Reading
+  # that one object is all it needs: the parameter is retired later, by the
+  # identity that owns it.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["ptah-operator-release-activation"]
+    verbs: ["get"]
   {{- if eq .Release.Namespace "default" }}
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
