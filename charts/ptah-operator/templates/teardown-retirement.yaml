@@ -191,8 +191,22 @@ spec:
 {{- $controllerUsernames = append $controllerUsernames $previousUsername -}}
 {{- $controllerNames = append $controllerNames $previousControllerServiceAccount -}}
 {{- end -}}
-{{- $controllerCallerMatch := printf `request.userInfo.username in %s` ($controllerUsernames | toJson) -}}
-{{- $controllerNameMatch := printf `request.name in %s` ($controllerNames | toJson) -}}
+{{/*
+The compiled contract writes these two CEL lists with ", " between elements,
+as every other guard in this chart does. toJson writes no separator, which is
+the same text for one element and a different one for two, so the difference
+appeared only once a predecessor existed and only against a live cluster.
+*/}}
+{{- $quotedControllerUsernames := list -}}
+{{- range $quotedUsername := $controllerUsernames -}}
+{{- $quotedControllerUsernames = append $quotedControllerUsernames (printf "%q" $quotedUsername) -}}
+{{- end -}}
+{{- $quotedControllerNames := list -}}
+{{- range $quotedName := $controllerNames -}}
+{{- $quotedControllerNames = append $quotedControllerNames (printf "%q" $quotedName) -}}
+{{- end -}}
+{{- $controllerCallerMatch := printf `request.userInfo.username in [%s]` (join ", " $quotedControllerUsernames) -}}
+{{- $controllerNameMatch := printf `request.name in [%s]` (join ", " $quotedControllerNames) -}}
 {{- $markerContext := dict "name" .markerName "namespace" $root.Release.Namespace "releaseName" $root.Release.Name "sequence" $sequence "managerImage" $managerImage "attempt" $attempt -}}
 {{- $objectMarkerShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "object") $markerContext) -}}
 {{- $oldMarkerShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "oldObject") $markerContext) -}}
