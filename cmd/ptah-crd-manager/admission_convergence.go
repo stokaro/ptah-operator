@@ -575,14 +575,13 @@ func (b *admissionConvergenceBarrier) wait(
 		}
 		observerIdentity := ""
 		if observer != nil {
-			// Every step of a sweep is bounded. The observer lists and watches
-			// Pods, and an unbounded call there spends the whole barrier deadline
-			// on one request: no sweep completes, so no sweep reaches the point
-			// that records why.
-			observeCtx, cancelObserve := context.WithTimeout(ctx, b.requestTimeout)
-			identity, proven, err := observer.Observe(observeCtx, setKey)
-			observeTimedOut := observeCtx.Err() != nil
-			cancelObserve()
+			// The observation bounds its own calls. It must not be handed a
+			// per-sweep context: the watch it keeps is created from the context
+			// it is given, so a context that ends with the sweep tears the watch
+			// down, the next sweep re-lists, the observed identity changes, and
+			// the stability window can never elapse.
+			identity, proven, err := observer.Observe(ctx, setKey)
+			observeTimedOut := errors.Is(err, context.DeadlineExceeded)
 			if contextErr := ctx.Err(); contextErr != nil {
 				return deadline(contextErr)
 			}
@@ -680,10 +679,8 @@ func (b *admissionConvergenceBarrier) wait(
 			}
 		}
 		if observer != nil {
-			closingObserveCtx, cancelClosingObserve := context.WithTimeout(ctx, b.requestTimeout)
-			closingIdentity, proven, observeErr := observer.Observe(closingObserveCtx, setKey)
-			closingObserveTimedOut := closingObserveCtx.Err() != nil
-			cancelClosingObserve()
+			closingIdentity, proven, observeErr := observer.Observe(ctx, setKey)
+			closingObserveTimedOut := errors.Is(observeErr, context.DeadlineExceeded)
 			if contextErr := ctx.Err(); contextErr != nil {
 				return deadline(contextErr)
 			}
