@@ -56,6 +56,14 @@
 {{- $legacyControllerPlanWriteGuardName := printf "ptah-operator-plan-write-guard-v1-%s" $legacyControllerGuardDigest -}}
 {{- $legacyServiceAccountOriginGuardName := printf "ptah-operator-service-account-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
 {{- $legacyRuntimeParentGuardName := printf "ptah-operator-runtime-parent-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{/*
+The teardown retirement inventory still names the parent-origin guards a
+release installed by an older chart left behind. Quiescence reads every
+target in that inventory before it stops anything, and a name it may not
+read is refused before it can be found absent.
+*/}}
+{{- $legacyParentHookPodOriginGuardName := printf "ptah-operator-hook-pod-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyParentHookJobOriginGuardName := printf "ptah-operator-hook-parent-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -140,6 +148,8 @@ rules:
       - {{ $legacyControllerPlanWriteGuardName }}
       - {{ $legacyServiceAccountOriginGuardName }}
       - {{ $legacyRuntimeParentGuardName }}
+      - {{ $legacyParentHookPodOriginGuardName }}
+      - {{ $legacyParentHookJobOriginGuardName }}
       - {{ $retirementFenceAName }}
       - {{ $retirementFenceBName }}
       {{- if $certificateRecoveryEnabled }}
@@ -667,6 +677,8 @@ rules:
       - {{ $legacyControllerPlanWriteGuardName }}
       - {{ $legacyServiceAccountOriginGuardName }}
       - {{ $legacyRuntimeParentGuardName }}
+      - {{ $legacyParentHookPodOriginGuardName }}
+      - {{ $legacyParentHookJobOriginGuardName }}
       - {{ $retirementFenceAName }}
       - {{ $retirementFenceBName }}
       {{- if $certificateRecoveryEnabled }}

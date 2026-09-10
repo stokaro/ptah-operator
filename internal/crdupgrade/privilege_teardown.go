@@ -1400,6 +1400,13 @@ func (t *PrivilegeTeardown) cleanupPrivilegeContract() privilegeAuthorizationCon
 func (t *PrivilegeTeardown) privilegeAdmissionGuardNames() []string {
 	names := currentRetainedAdmissionGuardNames(t.rollout)
 	names = append(names, legacyControllerGuardNames(t.rollout.ReleaseNamespace, t.rollout.ReleaseName)...)
+	// The retirement inventory still names the parent-origin guards an older
+	// chart left behind, and quiescence reads every target in it before it stops
+	// anything.
+	names = append(names,
+		legacyParentHookPodOriginGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName),
+		legacyParentHookJobOriginGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName),
+	)
 	for _, fence := range []TeardownFence{TeardownFenceA, TeardownFenceB} {
 		name, _ := TeardownRetirementFenceName(
 			fence,
