@@ -181,7 +181,7 @@ func TestVerifyE2ESourceSnapshotRejectsLivePathMutations(t *testing.T) {
 		},
 		{
 			name:        "child evidence script read from live checkout",
-			old:         `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
+			old:         `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
 			replacement: `"$SOURCE_REPOSITORY_ROOT/hack/e2e-cert-rotation.sh"`,
 			wantError:   "live checkout path escapes",
 		},
@@ -3139,64 +3139,64 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		{
 			name: "upgrade child call removed",
 			old: "E2E_PHASE=upgrade \\\n" +
-				"\t\"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
+				"\trun_recorded_phase upgrade \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
 			replacement: `true # upgrade child call removed`,
 			wantError:   "candidate upgrade lifecycle",
 		},
 		{
 			name: "upgrade child call hidden in false branch",
 			old: "E2E_PHASE=upgrade \\\n" +
-				"\t\"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
+				"\trun_recorded_phase upgrade \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
 			replacement: "if false; then\n\tE2E_PHASE=upgrade \\\n" +
-				"\t\t\"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"\nfi",
+				"\t\trun_recorded_phase upgrade \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"\nfi",
 			wantError: "always-false wrapper",
 		},
 		{
 			name:        "high availability lifecycle omitted",
-			old:         `"$ROOT_DIR/hack/e2e-ha.sh"`,
+			old:         `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`,
 			replacement: `true # high availability lifecycle omitted`,
 			wantError:   "high-availability lifecycle",
 		},
 		{
 			name:        "high availability lifecycle hidden in false branch",
-			old:         `"$ROOT_DIR/hack/e2e-ha.sh"`,
-			replacement: "if false; then\n\t\"$ROOT_DIR/hack/e2e-ha.sh\"\nfi",
+			old:         `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`,
+			replacement: "if false; then\n\trun_recorded_phase ha \"$ROOT_DIR/hack/e2e-ha.sh\"\nfi",
 			wantError:   "always-false wrapper",
 		},
 		{
 			name:        "control plane lifecycle omitted",
-			old:         `"$ROOT_DIR/hack/e2e-assert.sh"`,
+			old:         `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`,
 			replacement: `true # control plane lifecycle omitted`,
 			wantError:   "control-plane lifecycle",
 		},
 		{
 			name:        "control plane lifecycle hidden in false branch",
-			old:         `"$ROOT_DIR/hack/e2e-assert.sh"`,
-			replacement: "if false; then\n\t\"$ROOT_DIR/hack/e2e-assert.sh\"\nfi",
+			old:         `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`,
+			replacement: "if false; then\n\trun_recorded_phase assert \"$ROOT_DIR/hack/e2e-assert.sh\"\nfi",
 			wantError:   "always-false wrapper",
 		},
 		{
 			name:        "certificate lifecycle omitted",
-			old:         `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
+			old:         `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
 			replacement: `true # certificate lifecycle omitted`,
 			wantError:   "certificate lifecycle",
 		},
 		{
 			name:        "certificate lifecycle hidden in false branch",
-			old:         `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
-			replacement: "if false; then\n\t\"$ROOT_DIR/hack/e2e-cert-rotation.sh\"\nfi",
+			old:         `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
+			replacement: "if false; then\n\trun_recorded_phase cert-rotation \"$ROOT_DIR/hack/e2e-cert-rotation.sh\"\nfi",
 			wantError:   "always-false wrapper",
 		},
 		{
 			name:        "data plane lifecycle omitted",
-			old:         `"$ROOT_DIR/hack/e2e-dataplane.sh"`,
+			old:         `run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"`,
 			replacement: `true # data plane lifecycle omitted`,
 			wantError:   "data-plane and OCI lifecycle",
 		},
 		{
 			name:        "data plane lifecycle hidden in false branch",
-			old:         `"$ROOT_DIR/hack/e2e-dataplane.sh"`,
-			replacement: "if false; then\n\t\"$ROOT_DIR/hack/e2e-dataplane.sh\"\nfi",
+			old:         `run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"`,
+			replacement: "if false; then\n\trun_recorded_phase dataplane \"$ROOT_DIR/hack/e2e-dataplane.sh\"\nfi",
 			wantError:   "always-false wrapper",
 		},
 		{

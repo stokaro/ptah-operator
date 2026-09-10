@@ -92,6 +92,31 @@ phase can be replayed against the retained cluster in minutes rather than
 through a fresh run. Nothing in CI sets it; the run names what it kept, and the
 caller removes those resources by name afterwards.
 
+Replaying one phase is what `hack/e2e-rerun-phase.sh <work-dir> <phase>` does.
+Each phase is a separate script driven entirely by the environment the harness
+hands it, and the harness records that environment beside the work directory,
+so the tool puts the phase back on the retained cluster from the working tree:
+
+```bash
+hack/e2e-rerun-phase.sh /tmp/ptah-operator-e2e.XXXXXX uninstall
+```
+
+That turns an edit to a phase script or to the chart into a loop of minutes
+instead of the hour and three quarters a run spends rebuilding the state the
+last phase needs. It does not rebuild the manager image, which the cluster
+pulled from the commit the run snapshotted, so a change under `cmd/` or
+`internal/` still needs a full run. The tool says so when it starts.
+
+Two things are worth knowing before reaching for a container snapshot instead.
+A rendering refusal reproduces in seconds with `helm upgrade --dry-run=server`
+against the retained cluster; a plain `--dry-run` does not, because it disables
+`lookup` and the chart then sees none of the live objects its refusals are
+about. And a failed hook Job is gone before its log can be read, because the
+hook carries `hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed`;
+stripping `hook-failed` to keep it does not work either, since the parent
+contract policy pins the hook's exact annotations and denies the Job. Capture
+the Pod logs while the Job runs, which is what `hack/hooklogcapture` is for.
+
 Set `E2E_RUN_ID` to a CI run identifier for deterministic, collision-resistant
 resource names. Local runs include the Git revision and process ID by default.
 Set `K8S_VERSION` once per matrix job: the complete suite runs against that one

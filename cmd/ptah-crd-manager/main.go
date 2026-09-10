@@ -32,7 +32,10 @@ import (
 const (
 	defaultTimeout                   = 2 * time.Minute
 	retiredCredentialRevocationDelay = 65 * time.Second
-	supportedModes                   = "image-check, identity-probe, preflight, reconcile, teardown-retirement-probe-a, teardown-retirement-gate, teardown-quiesce, teardown, teardown-retirement-final, verify, or runtime-verify"
+	// Compensating a drain runs after the failure it compensates, often the
+	// expiry of the deadline that carried the cutover.
+	abandonDrainTimeout = 30 * time.Second
+	supportedModes      = "image-check, identity-probe, preflight, reconcile, teardown-retirement-probe-a, teardown-retirement-gate, teardown-quiesce, teardown, teardown-retirement-final, verify, or runtime-verify"
 )
 
 func main() {
@@ -358,7 +361,28 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			ctx,
 			stateClients,
 			int64(controllerstate.CurrentVersion),
-			func(prepareCtx context.Context) error {
+			func(prepareCtx context.Context) (prepareErr error) {
+				// A drain fences the active release out of its own runtime. If
+				// this candidate begins one and then fails, it gives the fence
+				// back on the way out; otherwise an upgrade that changed nothing
+				// leaves the release unable to start until a later Helm
+				// operation succeeds. The compensation runs on its own deadline
+				// because the failure being compensated is often the expiry of
+				// this one.
+				drainBegun := false
+				defer func() {
+					if prepareErr == nil || !drainBegun {
+						return
+					}
+					abandonCtx, cancelAbandon := context.WithTimeout(
+						context.WithoutCancel(prepareCtx), abandonDrainTimeout)
+					defer cancelAbandon()
+					if abandonErr := rollout.AbandonControllerCredentialDrain(abandonCtx); abandonErr != nil {
+						prepareErr = fmt.Errorf(
+							"%w (the controller credential drain could not be abandoned: %v)",
+							prepareErr, abandonErr)
+					}
+				}()
 				if readyErr := serviceAccountObjectGuard.WaitReady(prepareCtx); readyErr != nil {
 					return fmt.Errorf("wait for stable ServiceAccount object guard: %w", readyErr)
 				}
@@ -413,6 +437,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 					if graceErr != nil {
 						return fmt.Errorf("begin controller credential drain: %w", graceErr)
 					}
+					drainBegun = true
 				}
 
 				// The final sentinel is ordered after every retained release guard.

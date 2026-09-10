@@ -1196,6 +1196,20 @@ collect_diagnostics() {
 # ends the shell without setting $?, so an EXIT trap that reports $? reads the
 # previous command's success and a script that never finished reports a pass.
 # The latch is set where the script reaches its own end; the trap trusts it.
+# Every phase is a separate script driven entirely by the environment this
+# harness hands it. Recording that environment beside the retained work
+# directory is what lets hack/e2e-rerun-phase.sh put a phase back on the
+# cluster a failed run left behind, instead of spending an hour rebuilding the
+# state the phase needs before it can fail again. The record comes from env
+# itself, which reports exactly what the command received, so it cannot drift
+# from the call.
+run_recorded_phase() {
+	recorded_phase=$1
+	shift
+	env | grep '^E2E_' | LC_ALL=C sort >"$WORK_DIR/phase-$recorded_phase.env"
+	"$@"
+}
+
 PHASE_COMPLETED=0
 cleanup() {
 	status=$?
@@ -2129,7 +2143,7 @@ E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
 E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
 E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
 E2E_PHASE=upgrade \
-	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"
+	run_recorded_phase upgrade "$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -2138,7 +2152,7 @@ E2E_FOREIGN_NAMESPACE=$FOREIGN_NAMESPACE \
 E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
-	"$ROOT_DIR/hack/e2e-ha.sh"
+	run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -2151,14 +2165,14 @@ E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
 E2E_CONTROLLER_STATE_VERSION=1 \
-	"$ROOT_DIR/hack/e2e-assert.sh"
+	run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
-	"$ROOT_DIR/hack/e2e-cert-rotation.sh"
+	run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -2190,7 +2204,7 @@ E2E_TLS_PROXY_SERVICE=$TLS_PROXY_SERVICE \
 E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE \
 E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \
 E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
-	"$ROOT_DIR/hack/e2e-dataplane.sh"
+	run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \
@@ -2215,7 +2229,7 @@ E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
 E2E_API_SERVER_NODE_INVENTORY_FILE=$NODE_READINESS_FILE \
 E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=$API_SERVER_ENDPOINT_INVENTORY_FILE \
 E2E_PHASE=uninstall \
-	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"
+	run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 
 export_release_chart
 PHASE_COMPLETED=1

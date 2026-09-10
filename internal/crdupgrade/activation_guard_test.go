@@ -363,6 +363,74 @@ func TestReleaseActivationBeginDrainingPersistsFullAttemptAndResumesLostResponse
 	}
 }
 
+// A drain fences the active release out of its own runtime, so a candidate that
+// fails before activating has to give the fence back. It gives back only its
+// own: a drain another candidate owns, and a parameter that already activated,
+// must survive a late or duplicated abandonment untouched.
+func TestReleaseActivationAbandonDrainingReleasesOnlyItsOwnFence(t *testing.T) {
+	t.Parallel()
+
+	t.Run("its own drain", func(t *testing.T) {
+		t.Parallel()
+		guard := testReleaseActivationGuard()
+		client := &activationConfigMapClient{object: activationObject(guard, 0)}
+		guard.ConfigMaps = client
+		if _, err := guard.BeginDraining(context.Background()); err != nil {
+			t.Fatalf("BeginDraining() error = %v", err)
+		}
+		if err := guard.AbandonDraining(context.Background()); err != nil {
+			t.Fatalf("AbandonDraining() error = %v", err)
+		}
+		if got := client.object.Data[controllerCredentialsDataKey]; got != string(ControllerCredentialsActive) {
+			t.Fatalf("credential phase after abandonment = %q, want %q", got, ControllerCredentialsActive)
+		}
+		if len(client.object.Data) != 2 {
+			t.Fatalf("abandoned parameter keys = %d, want the active pair", len(client.object.Data))
+		}
+		// Abandoning again is a no-op, which is what makes it safe to call from
+		// a deferred compensation that may run more than once.
+		if err := guard.AbandonDraining(context.Background()); err != nil {
+			t.Fatalf("repeated AbandonDraining() error = %v", err)
+		}
+	})
+
+	t.Run("a drain another candidate owns", func(t *testing.T) {
+		t.Parallel()
+		guard := testReleaseActivationGuard()
+		client := &activationConfigMapClient{object: activationObject(guard, 0)}
+		guard.ConfigMaps = client
+		if _, err := guard.BeginDraining(context.Background()); err != nil {
+			t.Fatalf("BeginDraining() error = %v", err)
+		}
+		foreign := "0000000000000000000000000000000000000000000000000000000000000000"
+		client.object.Data[controllerCredentialsAttemptDataKey] = foreign
+		before := client.realUpdates
+		if err := guard.AbandonDraining(context.Background()); err != nil {
+			t.Fatalf("AbandonDraining() over a foreign drain error = %v", err)
+		}
+		if client.realUpdates != before {
+			t.Fatal("a drain another candidate owns was rewritten")
+		}
+		if client.object.Data[controllerCredentialsDataKey] != string(ControllerCredentialsDraining) {
+			t.Fatal("a drain another candidate owns lost its fence")
+		}
+	})
+
+	t.Run("an activated parameter", func(t *testing.T) {
+		t.Parallel()
+		guard := testReleaseActivationGuard()
+		client := &activationConfigMapClient{object: activationObject(guard, 0)}
+		guard.ConfigMaps = client
+		before := client.realUpdates
+		if err := guard.AbandonDraining(context.Background()); err != nil {
+			t.Fatalf("AbandonDraining() over an active parameter error = %v", err)
+		}
+		if client.realUpdates != before {
+			t.Fatal("an active parameter was rewritten")
+		}
+	})
+}
+
 func TestReleaseActivationRejectsSamePrefixDifferentFullDrainAttempt(t *testing.T) {
 	t.Parallel()
 	guard := testReleaseActivationGuard()

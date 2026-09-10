@@ -834,6 +834,9 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 						[]string{"get", "update"},
 					),
 					privilegePolicyRule([]string{"apps"}, []string{"replicasets"}, nil, []string{"list"}),
+					// The credential-grace fence watches the protected runtime Pods
+					// from a listed resourceVersion, so list alone leaves it failing
+					// every sweep until its deadline.
 					privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"list", "watch"}),
 					privilegePolicyRule(
 						[]string{""}, []string{"serviceaccounts"},
