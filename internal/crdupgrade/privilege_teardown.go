@@ -852,14 +852,22 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 					),
 				)
 				if t.rollout.PreviousControllerReleaseSequence > 0 {
-					rules = append(rules, privilegePolicyRule(
-						[]string{""}, []string{"configmaps"},
-						[]string{
-							AdmissionConvergenceMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.PreviousControllerReleaseSequence),
-							HookIdentityProbeObjectName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.PreviousControllerReleaseSequence, t.rollout.PreviousControllerManagerImage),
-						},
-						[]string{"get", "delete"},
-					))
+					rules = append(rules,
+						privilegePolicyRule(
+							[]string{""}, []string{"configmaps"},
+							[]string{
+								AdmissionConvergenceMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.PreviousControllerReleaseSequence),
+							},
+							[]string{"get", "update", "delete"},
+						),
+						privilegePolicyRule(
+							[]string{""}, []string{"configmaps"},
+							[]string{
+								HookIdentityProbeObjectName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.PreviousControllerReleaseSequence, t.rollout.PreviousControllerManagerImage),
+							},
+							[]string{"get", "delete"},
+						),
+					)
 				}
 				if t.rollout.ReleaseNamespace == corev1.NamespaceDefault {
 					rules = append(rules, privilegePolicyRule(

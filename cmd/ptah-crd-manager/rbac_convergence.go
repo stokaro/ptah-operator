@@ -690,6 +690,7 @@ func buildTeardownAuthorizationChecks(
 			rollout.ReleaseName,
 			rollout.PreviousControllerReleaseSequence,
 		)
+		appendResource(teardownCheckHook, "update predecessor admission convergence marker ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", previousMarkerName)
 		appendResource(teardownCheckHook, "delete predecessor admission convergence marker ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "delete", previousMarkerName)
 		previousProbeName := crdupgrade.HookIdentityProbeObjectName(
 			rollout.ReleaseNamespace,

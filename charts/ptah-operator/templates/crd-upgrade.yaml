@@ -524,12 +524,19 @@ rules:
     verbs: ["get", "update"]
   {{- if ne $previousSequence "0" }}
   # The predecessor attempt marker is retired only after candidate activation.
+  # UPDATE is the dry-run denial probe that proves every predecessor policy is
+  # gone from every API server. The marker is sealed immutable before it becomes
+  # a predecessor, so no probe can rewrite the inventory the retirement reads.
   # DELETE remains exact-name scoped and the manager supplies UID/resourceVersion
   # preconditions, so a replacement can never be removed by a stale retry.
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames:
       - {{ $previousAdmissionConvergenceMarkerName }}
+    verbs: ["get", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames:
       - {{ printf "ptah-hook-probe-v%s-%s" $previousSequence $previousHookIdentityDigest }}
     verbs: ["get", "delete"]
   {{- end }}
