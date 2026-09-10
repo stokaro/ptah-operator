@@ -96,6 +96,14 @@ E2E_DIRECT_HOST_ACCESS=${E2E_DIRECT_HOST_ACCESS:-0}
 E2E_DEBUG_LOGS=${E2E_DEBUG_LOGS:-0}
 DEBUG_LOG_FOLLOWER_PID=
 E2E_RELEASE_CHART_OUTPUT=${E2E_RELEASE_CHART_OUTPUT:-}
+# A diagnosis run may leave out the phases between the install and the one
+# under investigation. Rebuilding an hour and three quarters of state to reach
+# a failure that lives in the last phase is the wrong loop, and the phases in
+# between are the bulk of that hour. Naming a phase here removes it from the
+# run. A run that removed anything never prints the pass line: it prints its
+# own, so neither a reader nor a grep can take it for a lifecycle result.
+E2E_DIAGNOSIS_SKIP_PHASES=${E2E_DIAGNOSIS_SKIP_PHASES:-}
+SKIPPED_PHASES=
 
 # An imported variable retains its export attribute after reassignment in POSIX
 # shells. Clear secret-bearing names before generating task credentials so no
@@ -106,6 +114,13 @@ fail() {
 	printf 'e2e: %s\n' "$*" >&2
 	exit 1
 }
+
+for requested_phase in $E2E_DIAGNOSIS_SKIP_PHASES; do
+	case $requested_phase in
+		upgrade | ha | assert | cert-rotation | dataplane | uninstall) ;;
+		*) fail "E2E_DIAGNOSIS_SKIP_PHASES names $requested_phase, which is not a lifecycle phase" ;;
+	esac
+done
 
 require_command() {
 	command -v "$1" >/dev/null 2>&1 || fail "required command is not installed: $1"
@@ -1207,6 +1222,14 @@ run_recorded_phase() {
 	recorded_phase=$1
 	shift
 	env | grep '^E2E_' | LC_ALL=C sort >"$WORK_DIR/phase-$recorded_phase.env"
+	case " $E2E_DIAGNOSIS_SKIP_PHASES " in
+		*" $recorded_phase "*)
+			SKIPPED_PHASES="$SKIPPED_PHASES $recorded_phase"
+			printf 'e2e: DIAGNOSIS: phase %s left out by E2E_DIAGNOSIS_SKIP_PHASES\n' \
+				"$recorded_phase" >&2
+			return 0
+			;;
+	esac
 	"$@"
 }
 
@@ -2233,4 +2256,9 @@ E2E_PHASE=uninstall \
 
 export_release_chart
 PHASE_COMPLETED=1
-printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"
+if [ -n "$SKIPPED_PHASES" ]; then
+	printf 'e2e: DIAGNOSIS ONLY Kubernetes=%s cluster=%s: phases left out:%s; this is not a lifecycle result\n' \
+		"$server_version" "$CLUSTER_NAME" "$SKIPPED_PHASES"
+else
+	printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"
+fi

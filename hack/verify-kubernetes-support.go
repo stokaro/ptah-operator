@@ -2579,10 +2579,28 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`,
 		}),
 		exactSourceLine("post-lifecycle installed chart export", `export_release_chart`),
+		// The pass line below is reachable only for a run that left no phase out.
+		// A diagnosis run says so in its own words and stops before it.
+		exactSourceLineSequence("diagnosis-only terminal evidence", []string{
+			`if [ -n "$SKIPPED_PHASES" ]; then`,
+			`printf 'e2e: DIAGNOSIS ONLY Kubernetes=%s cluster=%s: phases left out:%s; this is not a lifecycle result\n' \`,
+			`"$server_version" "$CLUSTER_NAME" "$SKIPPED_PHASES"`,
+			`else`,
+		}),
 		exactSourceLine("terminal Kubernetes lifecycle evidence", `printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"`),
 	}
 	if err := verifyOrderedSourceContract(harness, harnessContents, harnessContract); err != nil {
 		return err
+	}
+	// Leaving a phase out is allowed for a diagnosis run and is what makes the
+	// pass line unreachable. The two must stay tied together: a branch that skips
+	// a phase without recording it would let a run print a pass it did not earn.
+	if !exactSourceLineSequence("diagnosis phase record", []string{
+		`case " $E2E_DIAGNOSIS_SKIP_PHASES " in`,
+		`*" $recorded_phase "*)`,
+		`SKIPPED_PHASES="$SKIPPED_PHASES $recorded_phase"`,
+	}).pattern.Match(harnessContents) {
+		return fmt.Errorf("%s: the diagnosis phase record must name every phase the run leaves out", harness)
 	}
 	if err := verifyE2ESourceSnapshot(harness, harnessContents); err != nil {
 		return err

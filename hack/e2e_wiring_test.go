@@ -3243,18 +3243,19 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "installed chart export omitted",
-			old:         "\nexport_release_chart\nPHASE_COMPLETED=1\nprintf 'e2e: PASS Kubernetes=%s cluster=%s\\n'",
-			replacement: "\n: # installed chart export omitted\nPHASE_COMPLETED=1\nprintf 'e2e: PASS Kubernetes=%s cluster=%s\\n'",
+			old:         "\nexport_release_chart\nPHASE_COMPLETED=1\nif [ -n \"$SKIPPED_PHASES\" ]; then",
+			replacement: "\n: # installed chart export omitted\nPHASE_COMPLETED=1\nif [ -n \"$SKIPPED_PHASES\" ]; then",
 			wantError:   "post-lifecycle installed chart export",
 		},
 		{
 			name: "installed chart export moved after terminal evidence",
 			old: "export_release_chart\n" +
 				"PHASE_COMPLETED=1\n" +
-				"printf 'e2e: PASS Kubernetes=%s cluster=%s\\n' \"$server_version\" \"$CLUSTER_NAME\"",
+				"if [ -n \"$SKIPPED_PHASES\" ]; then",
 			replacement: "PHASE_COMPLETED=1\n" +
 				"printf 'e2e: PASS Kubernetes=%s cluster=%s\\n' \"$server_version\" \"$CLUSTER_NAME\"\n" +
-				"export_release_chart",
+				"export_release_chart\n" +
+				"if [ -n \"$SKIPPED_PHASES\" ]; then",
 			wantError: "terminal Kubernetes lifecycle evidence",
 		},
 		{
@@ -3274,6 +3275,18 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			old:         `printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"`,
 			replacement: `printf '%s\n' 'e2e lifecycle finished without evidence'`,
 			wantError:   "terminal Kubernetes lifecycle evidence",
+		},
+		{
+			name:        "diagnosis run reaches the pass line",
+			old:         `if [ -n "$SKIPPED_PHASES" ]; then`,
+			replacement: `if false; then`,
+			wantError:   "diagnosis-only terminal evidence",
+		},
+		{
+			name:        "phase left out without a record",
+			old:         "\t\t\tSKIPPED_PHASES=\"$SKIPPED_PHASES $recorded_phase\"\n",
+			replacement: "",
+			wantError:   "diagnosis phase record",
 		},
 		{
 			name:        "early successful exit",
