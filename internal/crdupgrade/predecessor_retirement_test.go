@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -582,5 +583,35 @@ func predecessorRetirementGroupResource(kind string) schema.GroupResource {
 		return schema.GroupResource{Group: admissionregistrationv1.GroupName, Resource: "validatingadmissionpolicybindings"}
 	default:
 		return schema.GroupResource{Resource: "configmaps"}
+	}
+}
+
+// The grant a retiring hook is given by name and the inventory a predecessor
+// sealed are written in two places. A guard pair added to one and not the other
+// is refused here, rather than by an API server in the middle of a cutover.
+func TestPredecessorRetiredAdmissionGuardNamesCoverTheSealedInventory(t *testing.T) {
+	t.Parallel()
+
+	predecessor, _, _, _ := readyRolloutGuard()
+	blueprints, err := predecessorRetirementPairBlueprints(predecessor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := make([]string, 0, len(blueprints))
+	for _, blueprint := range blueprints {
+		sealed = append(sealed, blueprint.name)
+	}
+
+	candidate, _, _, _ := readyRolloutGuard()
+	candidate.ReleaseSequence = predecessor.ReleaseSequence + 1
+	candidate.ManagerImage = "registry.example/ptah@sha256:" + strings.Repeat("e", 64)
+	candidate.PreviousControllerReleaseSequence = predecessor.ReleaseSequence
+	candidate.PreviousControllerManagerImage = predecessor.ManagerImage
+	granted := PredecessorRetiredAdmissionGuardNames(candidate)
+
+	slices.Sort(sealed)
+	slices.Sort(granted)
+	if !slices.Equal(sealed, granted) {
+		t.Fatalf("granted predecessor names\n  %v\ndo not match the sealed inventory\n  %v", granted, sealed)
 	}
 }
