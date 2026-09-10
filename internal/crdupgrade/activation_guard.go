@@ -245,6 +245,51 @@ func (g *ReleaseActivationGuard) BeginDraining(ctx context.Context) (ReleaseActi
 	return releaseActivationState(observedIdentity)
 }
 
+// AbandonDraining releases a drain this candidate began and did not complete.
+// A drain fences the active release out of its own runtime, so a candidate that
+// fails before it activates has to give the fence back: otherwise the release
+// it was upgrading cannot start again until some later Helm operation succeeds,
+// which is an outage caused by an upgrade that changed nothing.
+//
+// It touches only a drain that carries this candidate's own target and attempt.
+// A drain another candidate owns, an already active parameter, and a parameter
+// that has moved on are all left exactly as they are, so a late or duplicated
+// call cannot undo an activation that happened.
+func (g *ReleaseActivationGuard) AbandonDraining(ctx context.Context) error {
+	if err := g.validate(); err != nil {
+		return err
+	}
+	current, err := g.ConfigMaps.Get(ctx, ReleaseActivationName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("read release activation parameter before abandoning the drain: %w", err)
+	}
+	identity, err := g.verifyActivationObject(current)
+	if err != nil {
+		return err
+	}
+	if identity.phase != ControllerCredentialsDraining {
+		return nil
+	}
+	if identity.target != uint64(g.ReleaseSequence) || identity.attempt != g.candidateAttempt() {
+		return nil
+	}
+	restored := current.DeepCopy()
+	restored.Data = map[string]string{
+		activeReleaseDataKey:         strconv.FormatUint(identity.active, 10),
+		controllerCredentialsDataKey: string(ControllerCredentialsActive),
+	}
+	if _, err := g.verifyActivationObject(restored); err != nil {
+		return fmt.Errorf("build abandoned controller credential state: %w", err)
+	}
+	if err := g.waitUpdateAllowed(ctx, restored, "wait for release activation guard before abandoning the drain"); err != nil {
+		return err
+	}
+	if _, err := g.ConfigMaps.Update(ctx, restored, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("abandon controller credential drain: %w", err)
+	}
+	return nil
+}
+
 // Activate advances the release parameter after quiescence. It first waits
 // until a valid transition is accepted against the current parameter cache,
 // persists it once, then retries a valid no-op dry-run until the admission

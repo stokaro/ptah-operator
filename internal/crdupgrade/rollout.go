@@ -508,6 +508,13 @@ func (g *RolloutGuard) BeginControllerCredentialDrain(ctx context.Context) (Rele
 	return g.releaseActivationGuard().BeginDraining(ctx)
 }
 
+// AbandonControllerCredentialDrain gives back a drain this candidate began and
+// did not complete, so a failed upgrade does not fence the active release out
+// of its own runtime.
+func (g *RolloutGuard) AbandonControllerCredentialDrain(ctx context.Context) error {
+	return g.releaseActivationGuard().AbandonDraining(ctx)
+}
+
 // CandidateRuntimeConverged reports whether the candidate release is already
 // the active release and every existing runtime Deployment already runs it:
 // the durable activation parameter fences the candidate sequence with active
