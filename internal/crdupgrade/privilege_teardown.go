@@ -813,8 +813,12 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterrolebindings"}, []string{controller}, []string{"get", "patch"}),
 					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, nil, []string{"list"}),
 					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"rolebindings"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get", "patch"}),
-					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterroles"}, []string{controller}, []string{"get"}),
-					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"roles"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get"}),
+					// Moving a binding to the candidate identity rewrites which
+					// subject holds the role, which Kubernetes refuses unless the
+					// actor holds everything the role grants or may bind it by
+					// name. bind is the narrow half.
+					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"clusterroles"}, []string{controller}, []string{"get", "bind"}),
+					privilegePolicyRule([]string{"rbac.authorization.k8s.io"}, []string{"roles"}, []string{controller, controller + "-runtime-admission", controllerDiscoveryBindingName(controller)}, []string{"get", "bind"}),
 					privilegePolicyRule([]string{"authorization.k8s.io"}, []string{"subjectaccessreviews"}, nil, []string{"create"}),
 				)
 				return rules

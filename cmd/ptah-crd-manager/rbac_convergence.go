@@ -711,6 +711,20 @@ func buildTeardownAuthorizationChecks(
 	// The hook's ClusterRole names the discovery binding whatever namespace the
 	// release lives in, so the revoked grant is probed unconditionally.
 	appendResource(teardownCheckHook, "patch runtime discovery RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", metav1.NamespaceDefault, "patch", crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
+	// bind is what lets the hook move a binding to the candidate identity
+	// without holding everything the role grants, so it is revoked with the
+	// rest and probed by name like every other revoked grant.
+	appendResource(teardownCheckHook, "bind the controller ClusterRole", "rbac.authorization.k8s.io", "v1", "clusterroles", "", "", "bind", rollout.ControllerDeploymentName)
+	for _, boundRole := range []struct {
+		name string
+		role string
+	}{
+		{name: "bind the stable controller Role", role: rollout.ControllerDeploymentName},
+		{name: "bind the runtime admission Role", role: rollout.ControllerDeploymentName + "-runtime-admission"},
+		{name: "bind the runtime discovery Role", role: crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName)},
+	} {
+		appendResource(teardownCheckHook, boundRole.name, "rbac.authorization.k8s.io", "v1", "roles", "", "", "bind", boundRole.role)
+	}
 	appendResource(teardownCheckHook, "create SubjectAccessReview", "authorization.k8s.io", "v1", "subjectaccessreviews", "", "", "create", arbitraryObjectName)
 
 	// Controller mutations. Every resource/subresource and mutating verb from

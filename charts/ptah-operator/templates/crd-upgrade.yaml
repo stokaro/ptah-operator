@@ -420,17 +420,21 @@ rules:
       - {{ printf "%s-runtime-admission" (include "ptah-operator.fullname" .) | quote }}
       - {{ printf "%s-runtime-discovery" (include "ptah-operator.fullname" .) | quote }}
     verbs: ["get", "patch"]
+  # Moving a binding to the candidate identity rewrites which subject holds the
+  # role, and Kubernetes refuses that unless the actor either holds everything
+  # the role grants or may bind it by name. bind is the narrow half: it names
+  # these roles and grants nothing they contain.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterroles"]
     resourceNames: [{{ include "ptah-operator.fullname" . | quote }}]
-    verbs: ["get"]
+    verbs: ["get", "bind"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["roles"]
     resourceNames:
       - {{ include "ptah-operator.fullname" . | quote }}
       - {{ printf "%s-runtime-admission" (include "ptah-operator.fullname" .) | quote }}
       - {{ printf "%s-runtime-discovery" (include "ptah-operator.fullname" .) | quote }}
-    verbs: ["get"]
+    verbs: ["get", "bind"]
   - apiGroups: ["authorization.k8s.io"]
     resources: ["subjectaccessreviews"]
     verbs: ["create"]
