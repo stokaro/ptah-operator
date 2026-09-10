@@ -928,8 +928,16 @@ func generatedPodRequestNameExpressionFor(nameExpression, jobName string) string
 	return fmt.Sprintf(`(%[1]s.startsWith(%[2]q) && %[1]s.size() == %[3]d && %[1]s.substring(%[4]d).matches("^[a-z0-9]{%[5]d}$"))`, nameExpression, prefix, len(prefix)+kubernetesGeneratedSuffixLen, len(prefix), kubernetesGeneratedSuffixLen)
 }
 
+// teardownRetirementHelmAuthorizerExpression asks the caller for the verb it
+// is using, on the guards themselves. An actor that may delete the guards can
+// dismantle the fence outright, so requiring exactly that verb is the same
+// boundary the create and update branches draw. Asking a delete for all three
+// verbs cost six authorizer calls in one expression, which is past the CEL
+// runtime budget: the expression errored, and a fence that fails closed turned
+// every protected Job deletion into a denial, including the release's own hook
+// cleanup.
 func teardownRetirementHelmAuthorizerExpression() string {
-	return `(request.operation == "CREATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed()) || (request.operation == "UPDATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed()) || (request.operation == "DELETE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("delete").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("delete").allowed())`
+	return `(request.operation == "CREATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed()) || (request.operation == "UPDATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed()) || (request.operation == "DELETE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("delete").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("delete").allowed())`
 }
 
 func teardownRetirementExactPrincipalExpression(username string, groups ...string) string {
