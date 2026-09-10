@@ -2708,10 +2708,21 @@ func (r *SchemaReconciler) cleanupRetiredExecutionBindingOperation(
 	return ctrl.Result{Requeue: true}, nil
 }
 
-func retiredReadOnlyJobMatches(
+// readOnlyJobEnvelopeMatches holds a retired read-only Job to the exact
+// envelope the workload builder writes. Its two callers differ in one thing:
+// what they know about the committed Job UID. After an ordinary dispatch the
+// operation carries it and the live object must repeat it; after a cutover
+// that lost it, the operation carries none and the caller is about to
+// reconstruct it from this object. Everything else, including the two
+// supported annotation envelopes, stays one implementation. A predicate that
+// accepted only the five-key envelope would reject every Job a current
+// manager built, and a Job it rejects is never harvested: its cleanup is
+// never scheduled and it outlives the release that created it.
+func readOnlyJobEnvelopeMatches(
 	schema *operatorv1alpha1.PtahSchema,
 	operation *operatorv1alpha1.ActiveOperationStatus,
 	job *batchv1.Job,
+	committedUID bool,
 ) bool {
 	if schema == nil || schema.Status.ExecutionBinding == nil || !isReadOnlyOperation(operation) || job == nil ||
 		operation.ID == "" || job.UID == "" || operation.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch ||
@@ -2725,9 +2736,16 @@ func retiredReadOnlyJobMatches(
 		) {
 		return false
 	}
+	if committedUID {
+		if operation.JobUID == "" || operation.JobUID != job.UID {
+			return false
+		}
+	} else if operation.JobUID != "" {
+		return false
+	}
 	expectedName, err := workload.NameFor(schema, *operation.DeepCopy())
 	if err != nil || operation.JobName != expectedName || job.Name != expectedName ||
-		operation.JobUID == "" || operation.JobUID != job.UID || operation.AdmissionSnapshot == nil ||
+		operation.AdmissionSnapshot == nil ||
 		podintent.ValidateSnapshot(operation.AdmissionSnapshot) != nil {
 		return false
 	}
@@ -2785,65 +2803,20 @@ func retiredReadOnlyJobMatches(
 	return err == nil && templateDigest == operation.AdmissionSnapshot.TemplateDigest
 }
 
+func retiredReadOnlyJobMatches(
+	schema *operatorv1alpha1.PtahSchema,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+	job *batchv1.Job,
+) bool {
+	return readOnlyJobEnvelopeMatches(schema, operation, job, true)
+}
+
 func retiredPredecessorReadOnlyJobMatches(
 	schema *operatorv1alpha1.PtahSchema,
 	operation *operatorv1alpha1.ActiveOperationStatus,
 	job *batchv1.Job,
 ) bool {
-	if schema == nil || schema.Status.ExecutionBinding == nil || !isReadOnlyOperation(operation) || job == nil ||
-		operation.ID == "" || operation.JobUID != "" || job.UID == "" ||
-		!validExecutionBindingID(operation.ExecutionBindingID) ||
-		operation.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch ||
-		!exactControllerOwner(
-			job.OwnerReferences,
-			operatorv1alpha1.GroupVersion.String(),
-			"PtahSchema",
-			schema.Name,
-			schema.UID,
-		) {
-		return false
-	}
-	expectedName, err := workload.NameFor(schema, *operation.DeepCopy())
-	if err != nil || operation.JobName != expectedName || job.Name != expectedName || operation.AdmissionSnapshot == nil {
-		return false
-	}
-	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
-		return false
-	}
-	wantLabels := map[string]string{
-		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   "schema-operation",
-		workload.LabelSchema:      schema.Name,
-		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
-		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
-	}
-	if !reflect.DeepEqual(job.Labels, wantLabels) {
-		return false
-	}
-	ptahVersion := job.Annotations[workload.AnnotationPtahVersion]
-	if ptahVersion == "" || strings.TrimSpace(ptahVersion) != ptahVersion {
-		return false
-	}
-	wantAnnotations := map[string]string{
-		workload.AnnotationOperationID:             operation.ID,
-		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
-		workload.AnnotationPtahVersion:             ptahVersion,
-		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
-		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
-	}
-	if !reflect.DeepEqual(job.Annotations, wantAnnotations) ||
-		!reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
-		return false
-	}
-	normalized := job.DeepCopy()
-	if err := normalizeGeneratedJobSelector(normalized); err != nil ||
-		!reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
-		return false
-	}
-	template := normalized.Spec.Template.DeepCopy()
-	delete(template.Annotations, workload.AnnotationAdmissionSnapshotDigest)
-	templateDigest, err := podintent.DigestTemplate(template)
-	return err == nil && templateDigest == operation.AdmissionSnapshot.TemplateDigest
+	return readOnlyJobEnvelopeMatches(schema, operation, job, false)
 }
 
 func executionBindingChangeFenced(schema *operatorv1alpha1.PtahSchema) bool {
