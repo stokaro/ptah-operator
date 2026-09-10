@@ -465,6 +465,12 @@
       (dict "name" "isMarker" "expression" `variables.isReadinessMarker || variables.isConvergenceMarker`)
       (dict "name" "isServiceAccountObjectConvergenceProbe" "expression" $serviceAccountObjectProbeRequest)
       (dict "name" "isAnyAdmissionConvergenceProbe" "expression" $hookOriginProbeRequest) -}}
+{{- /* A release hook writes and retires the convergence markers: it seals the
+      current one and deletes the sealed predecessor marker as the last step of
+      predecessor retirement. Both are UPDATE and DELETE by the same principal,
+      and which marker a given hook may touch is named in its Role, so this
+      guard asks only that the caller is a hook of this release. Every other
+      caller still needs the release authority below. */ -}}
 {{- $hookOriginNativeValidations := list
       `(variables.isProtectedJob || variables.isMarker) && (variables.isMainWrite || variables.isStatusUpdate || variables.isDelete)`
       (printf `!variables.isProtectedJob || !variables.isMainWrite || ((has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))) || (request.name.matches(%q) && (!has(dyn(object).spec.template.spec.serviceAccountName) || dyn(object).spec.template.spec.serviceAccountName in ["", "default"]) && (!has(dyn(object).spec.template.spec.serviceAccount) || dyn(object).spec.template.spec.serviceAccount in ["", "default"])))` $hookPattern $teardownPattern $imageCheckPattern)
@@ -474,7 +480,7 @@
       (printf `!variables.isProtectedJob || !variables.isStatusUpdate || (%s)` $statusPreservesIdentity)
       (printf `!variables.isProtectedJob || !variables.isDelete || (%s)` $terminalJob)
       (printf `!variables.isProtectedJob || !variables.isDelete || (%s)` $hookAuthority)
-      (printf `!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation == "UPDATE" && request.userInfo.username.matches(%q)) || (%s)` $hookServiceAccountUsernamePattern $hookAuthority)
+      (printf `!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation in ["UPDATE", "DELETE"] && request.userInfo.username.matches(%q)) || (%s)` $hookServiceAccountUsernamePattern $hookAuthority)
       `!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true`
       (printf `!variables.isReadinessMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (%s) : (%s))` $parentOriginReadyCreateShape $parentOriginReadyStoredShape)
       (printf `!variables.isReadinessMarker || !(request.operation in ["UPDATE", "DELETE"]) || (%s)` $parentOriginReadyOldShape)

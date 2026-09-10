@@ -826,7 +826,11 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 				{Expression: `!variables.isProtectedJob || !variables.isStatusUpdate || (` + parentHookStatusPreservesIdentityExpression() + `)`, Message: message},
 				{Expression: `!variables.isProtectedJob || !variables.isDelete || (` + parentHookTerminalJobExpression("oldObject") + `)`, Message: message},
 				{Expression: `!variables.isProtectedJob || !variables.isDelete || (` + authority + `)`, Message: message},
-				{Expression: fmt.Sprintf(`!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation == "UPDATE" && request.userInfo.username.matches(%q)) || (%s)`, hookUsernamePattern, authority), Message: message},
+				// A release hook seals the current convergence marker and deletes the
+				// sealed predecessor marker when it retires it. Which marker a hook may
+				// touch is named in its Role; this guard asks only that the caller is a
+				// hook of this release. Every other caller still needs release authority.
+				{Expression: fmt.Sprintf(`!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation in ["UPDATE", "DELETE"] && request.userInfo.username.matches(%q)) || (%s)`, hookUsernamePattern, authority), Message: message},
 				{Expression: `!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true`, Message: message},
 				{Expression: `!variables.isReadinessMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (` + g.readinessMarkerShapeExpression("object", false) + `) : (` + g.readinessMarkerShapeExpression("object", true) + `))`, Message: message},
 				{Expression: `!variables.isReadinessMarker || !(request.operation in ["UPDATE", "DELETE"]) || (` + g.readinessMarkerShapeExpression("oldObject", true) + `)`, Message: message},
