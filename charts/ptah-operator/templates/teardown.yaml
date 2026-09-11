@@ -774,7 +774,7 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames: [{{ $activationName | quote }}]
-    verbs: ["get", "delete"]
+    verbs: ["get", "update", "delete"]
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames: [{{ $admissionConvergenceMarkerName | quote }}]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -871,6 +872,7 @@ func (o *teardownRetirementCredentialObserver) Close() {
 
 type teardownRetirementConfigMapClient interface {
 	Get(context.Context, string, metav1.GetOptions) (*corev1.ConfigMap, error)
+	Update(context.Context, *corev1.ConfigMap, metav1.UpdateOptions) (*corev1.ConfigMap, error)
 	Delete(context.Context, string, metav1.DeleteOptions) error
 }
 
@@ -960,6 +962,21 @@ func (f *teardownRetirementFinalizer) Finalize(ctx context.Context) error {
 	}
 	if err != nil {
 		return fmt.Errorf("re-read release activation for final deletion: %w", err)
+	}
+	// Return the parameter to the state a fresh install starts from before it
+	// is deleted. Kubernetes keeps serving a deleted policy parameter to the
+	// bindings that read it, measured on a live 1.37.0 cluster across a delete,
+	// a recreate and an update of that object, so what it keeps serving has to
+	// be the bootstrap state or a reinstall in this namespace meets guards
+	// reading the sequence this release last activated.
+	bootstrap := activation.DeepCopy()
+	bootstrap.Data = crdupgrade.ReleaseActivationBootstrapData()
+	if !reflect.DeepEqual(activation.Data, bootstrap.Data) {
+		updated, err := f.configMaps.Update(ctx, bootstrap, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("return release activation to its bootstrap state: %w", err)
+		}
+		activation = updated
 	}
 	if err := f.configMaps.Delete(ctx, f.activationName, teardownRetirementDeleteOptions(activation)); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete release activation as final API mutation: %w", err)

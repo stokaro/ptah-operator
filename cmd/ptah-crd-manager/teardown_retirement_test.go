@@ -1127,9 +1127,25 @@ func (c *teardownRetirementTestClock) Sleep(ctx context.Context, duration time.D
 type teardownRetirementFinalizerClient struct {
 	objects         map[string]*corev1.ConfigMap
 	gets            []string
+	updates         []*corev1.ConfigMap
 	deletes         []string
 	deleteOptions   map[string]metav1.DeleteOptions
 	failAfterDelete int
+}
+
+func (c *teardownRetirementFinalizerClient) Update(_ context.Context, object *corev1.ConfigMap, _ metav1.UpdateOptions) (*corev1.ConfigMap, error) {
+	if object == nil {
+		return nil, apierrors.NewBadRequest("nil ConfigMap")
+	}
+	stored := c.objects[object.Name]
+	if stored == nil {
+		return nil, apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, object.Name)
+	}
+	updated := object.DeepCopy()
+	updated.ResourceVersion = stored.ResourceVersion + "-updated"
+	c.objects[object.Name] = updated
+	c.updates = append(c.updates, updated.DeepCopy())
+	return updated.DeepCopy(), nil
 }
 
 func (c *teardownRetirementFinalizerClient) Get(_ context.Context, name string, _ metav1.GetOptions) (*corev1.ConfigMap, error) {

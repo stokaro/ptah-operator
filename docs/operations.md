@@ -21,6 +21,13 @@ an equal value is never a conflict, so the force is confined to the replica
 count the cutover moved. An upgrade that keeps the release sequence does not
 stop the runtime and does not need the flag.
 
+An uninstall returns the release activation ConfigMap to the state a fresh
+install starts from and only then deletes it. Kubernetes keeps serving a
+deleted policy parameter to the bindings that read it, so what it keeps serving
+has to be the bootstrap state; otherwise a reinstall in the same namespace
+meets guards reading the sequence the removed release last activated, and its
+first hook cannot get a Deployment past them.
+
 An install over CRDs an earlier release left behind needs the same flag when
 anything else has edited them. The chart's CRDs are applied server-side, so a
 field a `kubectl patch` or another controller owns is a conflict until the

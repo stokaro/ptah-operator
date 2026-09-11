@@ -1379,7 +1379,7 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 				privilegePolicyRule(
 					[]string{""}, []string{"configmaps"},
 					[]string{ReleaseActivationName},
-					[]string{"get", "delete"},
+					[]string{"get", "update", "delete"},
 				),
 				privilegePolicyRule(
 					[]string{""}, []string{"configmaps"},

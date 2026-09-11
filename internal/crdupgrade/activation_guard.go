@@ -559,6 +559,33 @@ func (g *ReleaseActivationGuard) hookUsernamePattern() (string, error) {
 	return "^" + regexp.QuoteMeta(prefix), nil
 }
 
+// teardownUsernamePattern matches the identity an uninstall runs its last hooks
+// under. It exists only while the release is being removed, which is what
+// bounds the reset transition below.
+// ReleaseActivationBootstrapData returns the parameter contents a release that
+// has never activated carries, which is also what an uninstall leaves behind
+// for the moment before it deletes the object.
+func ReleaseActivationBootstrapData() map[string]string {
+	return map[string]string{
+		activeReleaseDataKey:         "0",
+		controllerCredentialsDataKey: string(ControllerCredentialsActive),
+	}
+}
+
+func (g *ReleaseActivationGuard) teardownUsernamePattern() (string, error) {
+	suffix := fmt.Sprintf("-crd-v%d-", g.ReleaseSequence)
+	identitySuffix := suffix + hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)[:12]
+	if !strings.HasSuffix(g.HookServiceAccountName, identitySuffix) {
+		return "", fmt.Errorf("hook service account does not match the candidate release identity")
+	}
+	base := strings.TrimSuffix(g.HookServiceAccountName, identitySuffix)
+	if base == "" {
+		return "", fmt.Errorf("hook service account has no stable name prefix")
+	}
+	prefix := "system:serviceaccount:" + g.ReleaseNamespace + ":" + base + "-cleanup-v"
+	return "^" + regexp.QuoteMeta(prefix), nil
+}
+
 func activationServiceAccountGroupsExpression(namespace string) string {
 	return fmt.Sprintf(`request.userInfo.groups.size() == 3 && "system:serviceaccounts" in request.userInfo.groups && %q in request.userInfo.groups && "system:authenticated" in request.userInfo.groups`, "system:serviceaccounts:"+namespace)
 }
@@ -573,6 +600,7 @@ func (g *ReleaseActivationGuard) policy() *admissionregistrationv1.ValidatingAdm
 	name := ReleaseActivationGuardPolicyName(g.ReleaseNamespace, g.ReleaseName)
 	denial := releaseActivationGuardDenialMessage()
 	hookPattern, _ := g.hookUsernamePattern()
+	teardownPattern, _ := g.teardownUsernamePattern()
 	metadata := g.metadata(name, releaseActivationPolicyWeight)
 	return &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
@@ -621,6 +649,7 @@ func (g *ReleaseActivationGuard) policy() *admissionregistrationv1.ValidatingAdm
 				{Name: "isDrainHook", Expression: fmt.Sprintf(`request.operation == "UPDATE" && variables.newDrainTarget > 0 && variables.newDrainAttempt.matches("^[0-9a-f]{64}$") && request.userInfo.username.matches(%q + string(variables.newDrainTarget) + "-" + variables.newDrainAttempt.substring(0, 12) + "$") && (%s)`, hookPattern, activationServiceAccountGroupsExpression(g.ReleaseNamespace))},
 				{Name: "isDrainedActivationHook", Expression: fmt.Sprintf(`request.operation == "UPDATE" && variables.oldDrainTarget > 0 && variables.oldDrainAttempt.matches("^[0-9a-f]{64}$") && request.userInfo.username.matches(%q + string(variables.oldDrainTarget) + "-" + variables.oldDrainAttempt.substring(0, 12) + "$") && (%s)`, hookPattern, activationServiceAccountGroupsExpression(g.ReleaseNamespace))},
 				{Name: "isReleaseHookCaller", Expression: fmt.Sprintf(`request.userInfo.username.matches(%q + "[1-9][0-9]*-[0-9a-f]{12}$") && (%s)`, hookPattern, activationServiceAccountGroupsExpression(g.ReleaseNamespace))},
+				{Name: "isTeardownCaller", Expression: fmt.Sprintf(`request.userInfo.username.matches(%q + "[1-9][0-9]*-[0-9a-f]{12}$") && (%s)`, teardownPattern, activationServiceAccountGroupsExpression(g.ReleaseNamespace))},
 				{Name: "isNamespaceController", Expression: activationNamespaceControllerExpression()},
 			},
 			Validations: []admissionregistrationv1.Validation{
@@ -633,7 +662,14 @@ func (g *ReleaseActivationGuard) policy() *admissionregistrationv1.ValidatingAdm
 						`(object.data == oldObject.data && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels && variables.isReleaseHookCaller) || ` +
 						`(variables.oldCredentialPhase == "active" && variables.newCredentialPhase == "draining" && variables.newActive == variables.oldActive && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels && variables.newDrainTarget >= variables.oldRelease && variables.newDrainTarget <= variables.oldRelease + 1 && ((variables.oldActive == 0 && variables.newDrainTarget == variables.oldRelease) || (variables.oldActive > 0 && variables.newDrainTarget <= variables.oldActive + 1)) && variables.isDrainHook) || ` +
 						`(variables.oldCredentialPhase == "draining" && variables.newCredentialPhase == "active" && variables.newActive == variables.oldDrainTarget && variables.newRelease == variables.newActive && variables.newRelease >= variables.oldRelease && variables.newState >= variables.oldState && variables.newAdmission >= variables.oldAdmission && variables.isDrainedActivationHook) || ` +
-						`(variables.oldCredentialPhase == "active" && variables.oldActive == 0 && variables.newCredentialPhase == "active" && variables.newActive == variables.oldRelease && variables.newRelease == variables.newActive && variables.newState >= variables.oldState && variables.newAdmission >= variables.oldAdmission && variables.isReleaseHook)`,
+						`(variables.oldCredentialPhase == "active" && variables.oldActive == 0 && variables.newCredentialPhase == "active" && variables.newActive == variables.oldRelease && variables.newRelease == variables.newActive && variables.newState >= variables.oldState && variables.newAdmission >= variables.oldAdmission && variables.isReleaseHook) || ` +
+						// An uninstall returns this parameter to the value a fresh
+						// install starts from, and only then deletes it. Kubernetes
+						// keeps serving a deleted parameter to policy bindings, so
+						// what it keeps serving has to be the bootstrap state; a
+						// reinstall otherwise meets guards reading the sequence the
+						// removed release last activated.
+						`(variables.newActive == 0 && variables.newCredentialPhase == "active" && object.data.size() == 2 && object.metadata.annotations == oldObject.metadata.annotations && object.metadata.labels == oldObject.metadata.labels && variables.isTeardownCaller)`,
 					Message: denial,
 				},
 			},
