@@ -1417,6 +1417,66 @@ func TestTeardownAuthorizationProbeCompletenessRejectsMissingAndForeignChecks(t 
 	}
 }
 
+func TestTeardownAuthorizationBarrierValidatesWithAVersionedPredecessor(t *testing.T) {
+	rollout := validRBACRolloutGuard()
+	rollout.PreviousControllerServiceAccountName = "ptah-controller-v1-0123456789ab"
+	rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
+	rollout.PreviousControllerReleaseSequence = 1
+	rollout.PreviousControllerManagerImage = "registry.example.test/ptah-operator@sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	rollout.ReleaseSequence = 2
+	rollout.HookServiceAccountName = "ptah-operator-crd-v2-0123456789ab"
+	contract := validRBACAdmissionContract()
+
+	probes, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
+	if err != nil {
+		t.Fatalf("teardownAuthorizationProbes() error = %v", err)
+	}
+
+	// A predecessor leaves a whole list of retained guards behind, and the
+	// barrier refuses two checks that share a name. One check name per guard
+	// is what keeps a probe reportable and the barrier constructible.
+	retired := crdupgrade.PredecessorRetiredAdmissionGuardNames(rollout)
+	if len(retired) < 2 {
+		t.Fatalf("a versioned predecessor retains %d guards, want more than one", len(retired))
+	}
+	hookChecks := map[string]struct{}{}
+	for _, probe := range probes {
+		seen := map[string]struct{}{}
+		for _, check := range probe.Checks {
+			if _, duplicate := seen[check.Name]; duplicate {
+				t.Fatalf("subject %q uses the authorization check name %q twice", probe.Subject.Name, check.Name)
+			}
+			seen[check.Name] = struct{}{}
+		}
+		if probe.Subject.Name == "hook-quiesce" {
+			hookChecks = seen
+		}
+	}
+	for _, name := range retired {
+		for _, kind := range []string{"policy", "binding"} {
+			want := "delete predecessor retained admission " + kind + " " + name
+			if _, found := hookChecks[want]; !found {
+				t.Fatalf("missing authorization check %q", want)
+			}
+		}
+	}
+
+	barrier := crdupgrade.NewRBACConvergenceBarrier(
+		[]crdupgrade.NamedAuthorizationReviewClient{{
+			Name:             "kubernetes-0",
+			TopologyIdentity: "10.0.0.2:6443",
+			Client:           &deniedSubjectAccessReviewClient{},
+		}},
+		probes,
+		selfChecks,
+		500*time.Millisecond,
+		10*time.Second,
+	)
+	if err := barrier.Validate(); err != nil {
+		t.Fatalf("barrier validation with a versioned predecessor failed: %v", err)
+	}
+}
+
 func TestTeardownAuthorizationProbesFollowTheCertificateCanaryContractVersion(t *testing.T) {
 	const canaryName = "ptah-operator-cert-canary"
 	contract := validRBACAdmissionContract()

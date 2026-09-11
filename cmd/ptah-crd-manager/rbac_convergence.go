@@ -712,8 +712,8 @@ func buildTeardownAuthorizationChecks(
 		// The retiring hook is granted get and delete on exactly the objects the
 		// predecessor sealed, so every one of them is probed as revoked.
 		for _, name := range crdupgrade.PredecessorRetiredAdmissionGuardNames(rollout) {
-			appendResource(teardownCheckHook, "delete predecessor retained admission policy", "admissionregistration.k8s.io", "v1", "validatingadmissionpolicies", "", "", "delete", name)
-			appendResource(teardownCheckHook, "delete predecessor retained admission binding", "admissionregistration.k8s.io", "v1", "validatingadmissionpolicybindings", "", "", "delete", name)
+			appendResource(teardownCheckHook, "delete predecessor retained admission policy "+name, "admissionregistration.k8s.io", "v1", "validatingadmissionpolicies", "", "", "delete", name)
+			appendResource(teardownCheckHook, "delete predecessor retained admission binding "+name, "admissionregistration.k8s.io", "v1", "validatingadmissionpolicybindings", "", "", "delete", name)
 		}
 	}
 	appendResource(teardownCheckHook, "patch stable controller ClusterRoleBinding", "rbac.authorization.k8s.io", "v1", "clusterrolebindings", "", "", "patch", rollout.ControllerDeploymentName)
