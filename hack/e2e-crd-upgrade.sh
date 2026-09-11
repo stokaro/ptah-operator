@@ -4073,8 +4073,12 @@ run_uninstall_proof() {
 	printf '%s\n' 'e2e crd: fresh-installing the exact exported current-release chart bytes'
 	kube patch crd ptahschemas.operator.ptah.dev --type=json \
 		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"exact released-chart install drift"}]' >/dev/null
+	# The drift above is written by kubectl, which owns the field it added, and
+	# Helm 4 refuses to change a field another manager owns. This install carries
+	# the force for the same reason the one before it does.
 	helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
+		--force-conflicts \
 		--wait --timeout 5m >/dev/null
 	wait_runtime_ready
 	description=$(kube get crd ptahschemas.operator.ptah.dev \

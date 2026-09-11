@@ -3539,6 +3539,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLineSequence("exact released chart fresh install", []string{
 					`helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \`,
 					`--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \`,
+					`--force-conflicts \`,
 					`--wait --timeout 5m >/dev/null`,
 				}),
 				exactSourceLineSequence("exact released chart controller identity", []string{
