@@ -952,18 +952,7 @@ func (g *RolloutGuard) waitPolicyReady(ctx context.Context, name string) error {
 // The resulting single-cause denial is attributable to one policy while guards
 // overlap during an upgrade.
 func (g *RolloutGuard) waitEnforced(ctx context.Context, policyName, denialMessage string) error {
-	// A guard this release has just created does not answer for its parameter
-	// straight away: measured on a live 1.37.0 cluster, the synthetic bootstrap
-	// baseline that every retained guard accepts a second later is refused while
-	// the guards are still being installed, and the refusal names a validation
-	// whose own subexpression evaluates true in an identical policy beside it.
-	// Only that baseline waits: it is invented for this probe and cannot carry
-	// predecessor drift, while a live Deployment's refusal is how the guard
-	// reports exactly that and must still be immediate. If the whole wait
-	// expires the last refusal is reported, so a real contract failure still
-	// says what it was.
-	var lastBaselineDenial error
-	err := wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
+	return wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
 		deployment, create, err := g.enforcementProbeDeployment(pollCtx)
 		if err != nil {
 			if retryableDeploymentProbeRace(err) {
@@ -975,14 +964,8 @@ func (g *RolloutGuard) waitEnforced(ctx context.Context, policyName, denialMessa
 			if retryableDeploymentProbeRace(err) {
 				return false, nil
 			}
-			wrapped := fmt.Errorf("prove baseline Deployment is accepted before probing %s: %w", policyName, err)
-			if !create || !isValidatingAdmissionPolicyDenial(err) {
-				return false, wrapped
-			}
-			lastBaselineDenial = wrapped
-			return false, nil
+			return false, fmt.Errorf("prove baseline Deployment is accepted before probing %s: %w", policyName, err)
 		}
-		lastBaselineDenial = nil
 
 		probe := deployment.DeepCopy()
 		if probe.Annotations == nil {
@@ -1001,10 +984,6 @@ func (g *RolloutGuard) waitEnforced(ctx context.Context, policyName, denialMessa
 		}
 		return false, fmt.Errorf("probe %s enforcement: %w", policyName, err)
 	})
-	if err != nil && lastBaselineDenial != nil {
-		return fmt.Errorf("wait for %s enforcement after %v: %w", policyName, lastBaselineDenial, err)
-	}
-	return err
 }
 
 // waitRolloutCreateBoundaryEnforced proves that the candidate hook's
