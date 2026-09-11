@@ -494,8 +494,19 @@ func admissionPolicySpecDifference(actual, expected admissionregistrationv1.Vali
 	if !reflect.DeepEqual(actual.MatchConstraints, expected.MatchConstraints) {
 		return "match constraints"
 	}
-	if !reflect.DeepEqual(actual.MatchConditions, expected.MatchConditions) {
-		return "match conditions"
+	if len(actual.MatchConditions) != len(expected.MatchConditions) {
+		return fmt.Sprintf("match condition count %d, want %d", len(actual.MatchConditions), len(expected.MatchConditions))
+	}
+	for index := range expected.MatchConditions {
+		if reflect.DeepEqual(actual.MatchConditions[index], expected.MatchConditions[index]) {
+			continue
+		}
+		return fmt.Sprintf("match condition %d %q is %s, want %s",
+			index,
+			expected.MatchConditions[index].Name,
+			boundedExpression(actual.MatchConditions[index].Expression),
+			boundedExpression(expected.MatchConditions[index].Expression),
+		)
 	}
 	if !reflect.DeepEqual(actual.ParamKind, expected.ParamKind) {
 		return "param kind"
