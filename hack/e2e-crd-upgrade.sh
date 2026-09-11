@@ -3899,6 +3899,18 @@ run_next_release_upgrade_proof() {
 		"$next_release_sequence" "$current_release_sequence"
 }
 
+# quiesce_termination_message prints what the failed quiescence hook left in its
+# termination message. A pre-delete hook that fails is retained, so its Pod is
+# still there to read; an absent Pod prints nothing and lets the caller decide.
+quiesce_termination_message() {
+	quiesce_pod=$(kube -n "$E2E_OPERATOR_NAMESPACE" get pods \
+		-l app.kubernetes.io/component=crd-manager-teardown-quiesce \
+		-o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null || true)
+	[ -n "$quiesce_pod" ] || return 0
+	kube -n "$E2E_OPERATOR_NAMESPACE" get pod "$quiesce_pod" \
+		-o jsonpath='{.status.containerStatuses[0].state.terminated.message}' 2>/dev/null || true
+}
+
 run_uninstall_proof() {
 	if [ ! -f "$E2E_CHART_PACKAGE" ] || [ -L "$E2E_CHART_PACKAGE" ]; then
 		fail "E2E_CHART_PACKAGE must name the regular non-symlink current-release chart package"
@@ -3932,10 +3944,19 @@ run_uninstall_proof() {
 		--wait --timeout 2m >"$WORK_DIR/blocked-uninstall.out" 2>"$WORK_DIR/blocked-uninstall.err"; then
 		fail "uninstall with a foreign controller binding unexpectedly succeeded"
 	fi
+	# Helm reports a failed hook as "Job Failed" and carries nothing of the
+	# hook's own words, so the refusal reaches an administrator where Kubernetes
+	# keeps it: the failed hook Pod's termination message, which is what kubectl
+	# shows for that Job. Accept Helm's output too, in case a later Helm surfaces
+	# the message itself.
+	blocked_reason=$WORK_DIR/blocked-uninstall.reason
+	quiesce_termination_message >"$blocked_reason"
 	if ! grep -F "foreign ClusterRoleBinding/$FOREIGN_TEARDOWN_BINDING" \
 		"$WORK_DIR/blocked-uninstall.err" >/dev/null &&
 		! grep -F "foreign ClusterRoleBinding/$FOREIGN_TEARDOWN_BINDING" \
-			"$WORK_DIR/blocked-uninstall.out" >/dev/null; then
+			"$WORK_DIR/blocked-uninstall.out" >/dev/null &&
+		! grep -F "foreign ClusterRoleBinding/$FOREIGN_TEARDOWN_BINDING" \
+			"$blocked_reason" >/dev/null; then
 		fail "blocked uninstall did not report the foreign controller binding"
 	fi
 	runtime_deployment_evidence >"$WORK_DIR/runtime-after-blocked-uninstall.json"
