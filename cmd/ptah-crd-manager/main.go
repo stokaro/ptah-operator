@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"reflect"
 	"strconv"
 	"syscall"
 	"time"
@@ -1182,6 +1183,9 @@ func runTeardownMode(
 		if err != nil {
 			return fmt.Errorf("configure teardown retirement finalizer: %w", err)
 		}
+		if err := resetActivationParameterToBootstrap(ctx, configMaps); err != nil {
+			return fmt.Errorf("return the release activation parameter to its bootstrap state: %w", err)
+		}
 		if err := retireActivationParameterBindings(
 			ctx,
 			clientset.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings(),
@@ -1207,6 +1211,39 @@ func runTeardownMode(
 	default:
 		return fmt.Errorf("unsupported teardown mode %q", mode)
 	}
+}
+
+// resetActivationParameterToBootstrap returns the release activation parameter
+// to the state a fresh install starts from, while the bindings that read it are
+// still bound and the API server still tracks it.
+//
+// Kubernetes keeps serving the last value it saw for that object: measured on a
+// live 1.37.0 cluster, a policy printing its own variables reported the removed
+// release's sequence while the live ConfigMap read the bootstrap one, and no
+// write could correct it afterwards, because the parameter's own guard compares
+// the parameter against the object being written. So the correction has to
+// happen before anything else in this hook touches the bindings or the object.
+func resetActivationParameterToBootstrap(ctx context.Context, configMaps teardownRetirementConfigMapClient) error {
+	if configMaps == nil {
+		return errors.New("release activation parameter client is required")
+	}
+	activation, err := configMaps.Get(ctx, crdupgrade.ReleaseActivationName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read release activation: %w", err)
+	}
+	bootstrap := crdupgrade.ReleaseActivationBootstrapData()
+	if reflect.DeepEqual(activation.Data, bootstrap) {
+		return nil
+	}
+	updated := activation.DeepCopy()
+	updated.Data = bootstrap
+	if _, err := configMaps.Update(ctx, updated, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("write the bootstrap release activation state: %w", err)
+	}
+	return nil
 }
 
 // retireActivationParameterBindings deletes the release's admission bindings
