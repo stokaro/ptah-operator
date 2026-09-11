@@ -4113,6 +4113,12 @@ run_uninstall_proof() {
 	for resource in ptahschemaplan ptahschemaapproval; do
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
+	# The refresh above is the only change this install may make, as it is for
+	# the sequence upgrade. Everything after it, including this release's own
+	# uninstall, is held to the state it leaves behind.
+	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
+		object_evidence "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
+	done
 	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
 		--wait --timeout 5m >/dev/null
