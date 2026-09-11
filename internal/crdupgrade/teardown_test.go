@@ -244,9 +244,12 @@ func TestReleaseTeardownRejectsSequenceWithoutPredecessorIdentityInventory(t *te
 	t.Parallel()
 
 	fixture := newReleaseTeardownFixture(t)
-	fixture.guard.ReleaseSequence = 2
+	// The inventory records the sequences this release knows how to clean up
+	// after, so the refusal is pinned to one it does not name.
+	fixture.guard.ReleaseSequence = 3
 	base := strings.Split(fixture.guard.HookServiceAccountName, "-crd-v")[0]
-	fixture.guard.HookServiceAccountName = fmt.Sprintf("%s-crd-v2-%s", base, hookIdentityDigest(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, 2, fixture.guard.ManagerImage)[:12])
+	fixture.guard.HookServiceAccountName = fmt.Sprintf("%s-crd-v3-%s", base, hookIdentityDigest(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, 3, fixture.guard.ManagerImage)[:12])
+	fixture.guard.ControllerServiceAccountName = "ptah-controller-v3"
 	err := fixture.teardown.Preflight(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "no explicit predecessor identity inventory") {
 		t.Fatalf("Preflight error = %v, want missing predecessor inventory refusal", err)

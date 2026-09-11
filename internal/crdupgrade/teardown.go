@@ -355,10 +355,24 @@ func (t *ReleaseTeardown) validatedGuard() (*RolloutGuard, error) {
 	if err := guard.validateIdentity(); err != nil {
 		return nil, fmt.Errorf("validate release teardown identity: %w", err)
 	}
-	if guard.ReleaseSequence != 1 {
+	if _, recorded := releaseTeardownPredecessorInventory[guard.ReleaseSequence]; !recorded {
 		return nil, fmt.Errorf("release teardown sequence %d has no explicit predecessor identity inventory; refusing incomplete cleanup", guard.ReleaseSequence)
 	}
 	return &guard, nil
+}
+
+// releaseTeardownPredecessorInventory records what a predecessor may still have
+// left for this teardown to remove, one entry per release sequence, written
+// when that sequence is prepared and never edited afterwards.
+//
+// Nothing precedes the first sequence. The second records nothing either: a
+// release-sequence cutover retires the predecessor's admission pairs and
+// controller identity before it activates, and the lifecycle proves exactly
+// that in the upgrade before it reaches an uninstall. A sequence nobody
+// recorded is still refused.
+var releaseTeardownPredecessorInventory = map[int32][]string{
+	1: {},
+	2: {},
 }
 
 func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error) {
