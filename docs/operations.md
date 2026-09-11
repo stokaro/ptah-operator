@@ -21,6 +21,15 @@ an equal value is never a conflict, so the force is confined to the replica
 count the cutover moved. An upgrade that keeps the release sequence does not
 stop the runtime and does not need the flag.
 
+An install over CRDs an earlier release left behind needs the same flag when
+anything else has edited them. The chart's CRDs are applied server-side, so a
+field a `kubectl patch` or another controller owns is a conflict until the
+install is told to take it back:
+
+```sh
+helm install <release> <chart> --values <values> --force-conflicts
+```
+
 Install CRDs and the controller through the Helm chart. Supply digest-pinned
 manager, executor, and runner images. The chart refuses all three when only a
 tag is supplied. Manager Pods, hooks, and controller identity all use the same

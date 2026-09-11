@@ -3985,8 +3985,13 @@ run_uninstall_proof() {
 	printf '%s\n' 'e2e crd: reinstalling over retained and drifted CRDs'
 	kube patch crd ptahschemas.operator.ptah.dev --type=json \
 		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"retained reinstall drift"}]' >/dev/null
+	# The drift above is written by kubectl, which owns the field it added.
+	# Helm 4 applies the chart's CRDs server-side and refuses to change a field
+	# another manager owns, so a reinstall over a retained CRD somebody edited
+	# needs the force. It is confined to the CRDs this chart ships.
 	helm_e2e install "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
+		--force-conflicts \
 		--wait --timeout 5m >/dev/null
 	description=$(kube get crd ptahschemas.operator.ptah.dev \
 		-o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.description}')
