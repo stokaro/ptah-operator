@@ -486,6 +486,52 @@ func (g *TeardownRetirementGuard) exactBindingForHook(name, hook, weight, target
 	}
 }
 
+// admissionPolicySpecDifference names the first part of a policy spec that two
+// contracts disagree on, and for a validation the index and both expressions,
+// bounded. The comparison itself stays exact; only the refusal is readable,
+// because it is read from a hook Pod's termination message.
+func admissionPolicySpecDifference(actual, expected admissionregistrationv1.ValidatingAdmissionPolicySpec) string {
+	if !reflect.DeepEqual(actual.MatchConstraints, expected.MatchConstraints) {
+		return "match constraints"
+	}
+	if !reflect.DeepEqual(actual.MatchConditions, expected.MatchConditions) {
+		return "match conditions"
+	}
+	if !reflect.DeepEqual(actual.ParamKind, expected.ParamKind) {
+		return "param kind"
+	}
+	if len(actual.Variables) != len(expected.Variables) {
+		return fmt.Sprintf("variable count %d, want %d", len(actual.Variables), len(expected.Variables))
+	}
+	for index := range expected.Variables {
+		if !reflect.DeepEqual(actual.Variables[index], expected.Variables[index]) {
+			return fmt.Sprintf("variable %d %q", index, expected.Variables[index].Name)
+		}
+	}
+	if len(actual.Validations) != len(expected.Validations) {
+		return fmt.Sprintf("validation count %d, want %d", len(actual.Validations), len(expected.Validations))
+	}
+	for index := range expected.Validations {
+		if reflect.DeepEqual(actual.Validations[index], expected.Validations[index]) {
+			continue
+		}
+		return fmt.Sprintf("validation %d is %s, want %s",
+			index,
+			boundedExpression(actual.Validations[index].Expression),
+			boundedExpression(expected.Validations[index].Expression),
+		)
+	}
+	return "spec"
+}
+
+func boundedExpression(expression string) string {
+	const limit = 320
+	if len(expression) <= limit {
+		return strconv.Quote(expression)
+	}
+	return strconv.Quote(expression[:limit]) + "..."
+}
+
 func exactTeardownRetirementMetadata(actual, expected metav1.ObjectMeta) bool {
 	return actual.Name == expected.Name && actual.GenerateName == "" && actual.Namespace == "" &&
 		actual.DeletionTimestamp == nil && actual.DeletionGracePeriodSeconds == nil &&
@@ -1300,15 +1346,21 @@ func (g *TeardownRetirementGuard) VerifyOriginalFences(
 		if err != nil {
 			return fmt.Errorf("get teardown retirement fence policy %s: %w", expectedPolicy.Name, err)
 		}
-		if !exactTeardownRetirementMetadata(actualPolicy.ObjectMeta, expectedPolicy.ObjectMeta) || !reflect.DeepEqual(actualPolicy.Spec, expectedPolicy.Spec) {
-			return fmt.Errorf("teardown retirement fence policy %s differs from the exact original contract", expectedPolicy.Name)
+		if !exactTeardownRetirementMetadata(actualPolicy.ObjectMeta, expectedPolicy.ObjectMeta) {
+			return fmt.Errorf("teardown retirement fence policy %s differs from the exact original contract: metadata", expectedPolicy.Name)
+		}
+		if !reflect.DeepEqual(actualPolicy.Spec, expectedPolicy.Spec) {
+			return fmt.Errorf("teardown retirement fence policy %s differs from the exact original contract: %s", expectedPolicy.Name, admissionPolicySpecDifference(actualPolicy.Spec, expectedPolicy.Spec))
 		}
 		actualBinding, err := bindings.Get(ctx, expectedBinding.Name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("get teardown retirement fence binding %s: %w", expectedBinding.Name, err)
 		}
-		if !exactTeardownRetirementMetadata(actualBinding.ObjectMeta, expectedBinding.ObjectMeta) || !reflect.DeepEqual(actualBinding.Spec, expectedBinding.Spec) {
-			return fmt.Errorf("teardown retirement fence binding %s differs from the exact original contract", expectedBinding.Name)
+		if !exactTeardownRetirementMetadata(actualBinding.ObjectMeta, expectedBinding.ObjectMeta) {
+			return fmt.Errorf("teardown retirement fence binding %s differs from the exact original contract: metadata", expectedBinding.Name)
+		}
+		if !reflect.DeepEqual(actualBinding.Spec, expectedBinding.Spec) {
+			return fmt.Errorf("teardown retirement fence binding %s differs from the exact original contract: spec", expectedBinding.Name)
 		}
 	}
 	return nil
