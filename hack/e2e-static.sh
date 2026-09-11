@@ -5720,7 +5720,7 @@ controller_write_guard_name=$(awk '
 	printf '%s\n' 'e2e static: controller write binding does not target its exact policy' >&2
 	exit 1
 }
-[ "$(grep -Fxc -- "      - $controller_write_guard_name" "$CRD_FULL_RENDER")" -eq 9 ] || {
+[ "$(grep -Fxc -- "      - $controller_write_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
 	printf '%s\n' 'e2e static: runtime, rotator, upgrade, and teardown RBAC do not share the exact controller write guard' >&2
 	exit 1
 }
@@ -5759,7 +5759,7 @@ for controller_object_guard_name in $controller_object_guard_names; do
 			"$controller_object_guard_name" >&2
 		exit 1
 	}
-	[ "$(grep -Fxc -- "      - $controller_object_guard_name" "$CRD_FULL_RENDER")" -eq 9 ] || {
+	[ "$(grep -Fxc -- "      - $controller_object_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
 		printf 'e2e static: lifecycle RBAC does not share controller object guard %s\n' \
 			"$controller_object_guard_name" >&2
 		exit 1
@@ -5872,7 +5872,7 @@ for certificate_write_guard_name in $certificate_write_guard_names; do
 			"$certificate_write_guard_name" >&2
 		exit 1
 	}
-	[ "$(grep -Fxc -- "      - $certificate_write_guard_name" "$CRD_FULL_RENDER")" -eq 9 ] || {
+	[ "$(grep -Fxc -- "      - $certificate_write_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
 		printf 'e2e static: runtime, rotator, upgrade, and teardown RBAC do not share certificate guard %s\n' \
 			"$certificate_write_guard_name" >&2
 		exit 1
@@ -5920,7 +5920,7 @@ for parent_guard_name in $parent_guard_names; do
 			"$parent_guard_name" >&2
 		exit 1
 	}
-	[ "$(grep -Fxc -- "      - $parent_guard_name" "$CRD_FULL_RENDER")" -eq 9 ] || {
+	[ "$(grep -Fxc -- "      - $parent_guard_name" "$CRD_FULL_RENDER")" -eq 8 ] || {
 		printf 'e2e static: manager, rotator, and hook RBAC do not reference parent guard %s exactly\n' \
 			"$parent_guard_name" >&2
 		exit 1

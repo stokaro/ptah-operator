@@ -686,46 +686,6 @@ rules:
       - {{ $certificateName }}
       {{- end }}
     verbs: ["get"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["validatingadmissionpolicybindings"]
-    resourceNames:
-      - {{ $rolloutGuardName }}
-      - {{ $runtimeGuardName }}
-      - {{ $runtimePodGuardName }}
-      - {{ $hookIdentityGuardName }}
-      - {{ $hookProbeGuardName }}
-      - {{ $activationGuardName }}
-      - {{ $admissionConvergenceGuardName }}
-      - {{ $serviceAccountObjectGuardName }}
-      - {{ $serviceAccountOriginGuardName }}
-      - {{ $controllerWriteGuardName }}
-      - {{ $controllerJobWriteGuardName }}
-      - {{ $controllerChunkWriteGuardName }}
-      - {{ $controllerPlanWriteGuardName }}
-      - {{ $certificateMutatingWriteGuardName }}
-      - {{ $certificateValidatingWriteGuardName }}
-      - {{ $namespaceGuardName }}
-      - {{ $parentReplicaSetGuardName }}
-      - {{ $parentHookPodOriginGuardName }}
-      - {{ $parentHookJobOriginGuardName }}
-      - {{ $parentHookJobContractGuardName }}
-      {{- if $certificateRuntimeEnabled }}
-      - {{ $stagingSecretGuardName }}
-      {{- end }}
-      - {{ $legacyControllerWriteGuardName }}
-      - {{ $legacyControllerJobWriteGuardName }}
-      - {{ $legacyControllerChunkWriteGuardName }}
-      - {{ $legacyControllerPlanWriteGuardName }}
-      - {{ $legacyServiceAccountOriginGuardName }}
-      - {{ $legacyRuntimeParentGuardName }}
-      - {{ $legacyParentHookPodOriginGuardName }}
-      - {{ $legacyParentHookJobOriginGuardName }}
-      - {{ $retirementFenceAName }}
-      - {{ $retirementFenceBName }}
-      {{- if $certificateRecoveryEnabled }}
-      - {{ $certificateName }}
-      {{- end }}
-    verbs: ["delete"]
   - apiGroups: ["authorization.k8s.io"]
     resources: ["subjectaccessreviews", "selfsubjectaccessreviews"]
     verbs: ["create"]

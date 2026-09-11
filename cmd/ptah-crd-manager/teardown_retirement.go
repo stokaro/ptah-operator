@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -961,6 +962,22 @@ func (f *teardownRetirementFinalizer) Finalize(ctx context.Context) error {
 	}
 	if err != nil {
 		return fmt.Errorf("re-read release activation for final deletion: %w", err)
+	}
+	// Return the parameter to the state a fresh install starts from, then delete
+	// it. Kubernetes keeps serving the last value it saw for that object while
+	// something was reading it, so the bindings are deliberately still bound
+	// here: what the API server goes on serving after the delete is the state a
+	// reinstall in this namespace needs, not the sequence this release last
+	// activated. The state above has already been verified, so the reset is the
+	// last thing that changes it.
+	bootstrap := activation.DeepCopy()
+	bootstrap.Data = crdupgrade.ReleaseActivationBootstrapData()
+	if !reflect.DeepEqual(activation.Data, bootstrap.Data) {
+		updated, updateErr := f.configMaps.Update(ctx, bootstrap, metav1.UpdateOptions{})
+		if updateErr != nil {
+			return fmt.Errorf("return release activation to its bootstrap state: %w", updateErr)
+		}
+		activation = updated
 	}
 	if err := f.configMaps.Delete(ctx, f.activationName, teardownRetirementDeleteOptions(activation)); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete release activation as final API mutation: %w", err)

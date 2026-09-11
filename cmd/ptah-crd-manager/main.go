@@ -11,21 +11,18 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"reflect"
 	"strconv"
 	"syscall"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
-	admissionregistrationv1client "k8s.io/client-go/kubernetes/typed/admissionregistration/v1"
 	"k8s.io/client-go/rest"
 
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
@@ -1183,17 +1180,6 @@ func runTeardownMode(
 		if err != nil {
 			return fmt.Errorf("configure teardown retirement finalizer: %w", err)
 		}
-		if err := resetActivationParameterToBootstrap(ctx, configMaps); err != nil {
-			return fmt.Errorf("return the release activation parameter to its bootstrap state: %w", err)
-		}
-		if err := retireActivationParameterBindings(
-			ctx,
-			clientset.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings(),
-			privilegeTeardown.AdmissionGuardNames(),
-			rollout.ReleaseNamespace,
-		); err != nil {
-			return fmt.Errorf("retire the bindings that read the release activation parameter: %w", err)
-		}
 		if err := finalizer.Finalize(ctx); err != nil {
 			return fmt.Errorf("finalize teardown retirement: %w", err)
 		}
@@ -1211,79 +1197,6 @@ func runTeardownMode(
 	default:
 		return fmt.Errorf("unsupported teardown mode %q", mode)
 	}
-}
-
-// resetActivationParameterToBootstrap returns the release activation parameter
-// to the state a fresh install starts from, while the bindings that read it are
-// still bound and the API server still tracks it.
-//
-// Kubernetes keeps serving the last value it saw for that object: measured on a
-// live 1.37.0 cluster, a policy printing its own variables reported the removed
-// release's sequence while the live ConfigMap read the bootstrap one, and no
-// write could correct it afterwards, because the parameter's own guard compares
-// the parameter against the object being written. So the correction has to
-// happen before anything else in this hook touches the bindings or the object.
-func resetActivationParameterToBootstrap(ctx context.Context, configMaps teardownRetirementConfigMapClient) error {
-	if configMaps == nil {
-		return errors.New("release activation parameter client is required")
-	}
-	activation, err := configMaps.Get(ctx, crdupgrade.ReleaseActivationName, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read release activation: %w", err)
-	}
-	bootstrap := crdupgrade.ReleaseActivationBootstrapData()
-	if reflect.DeepEqual(activation.Data, bootstrap) {
-		return nil
-	}
-	updated := activation.DeepCopy()
-	updated.Data = bootstrap
-	if _, err := configMaps.Update(ctx, updated, metav1.UpdateOptions{}); err != nil {
-		return fmt.Errorf("write the bootstrap release activation state: %w", err)
-	}
-	return nil
-}
-
-// retireActivationParameterBindings deletes the release's admission bindings
-// that name the release activation ConfigMap before anything deletes it. Each
-// of them refuses every request it matches once that parameter is gone, and
-// the release's own deletion phase is minutes away, so the namespace would
-// stay frozen in between. The bindings are read by name from the exact set
-// this identity is allowed to touch, and only the ones that actually name the
-// parameter are removed; which contract wrote them does not matter, because
-// an uninstall replaces them with its own retirement pairs first.
-func retireActivationParameterBindings(
-	ctx context.Context,
-	bindings admissionregistrationv1client.ValidatingAdmissionPolicyBindingInterface,
-	names []string,
-	releaseNamespace string,
-) error {
-	if bindings == nil || releaseNamespace == "" {
-		return errors.New("activation parameter binding retirement dependencies are required")
-	}
-	for _, name := range names {
-		binding, err := bindings.Get(ctx, name, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("get binding %s: %w", name, err)
-		}
-		reference := binding.Spec.ParamRef
-		if reference == nil || reference.Name != crdupgrade.ReleaseActivationName || reference.Namespace != releaseNamespace {
-			continue
-		}
-		options := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{
-			UID:             &binding.UID,
-			ResourceVersion: &binding.ResourceVersion,
-		}}
-		if err := bindings.Delete(ctx, name, options); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("delete binding %s: %w", name, err)
-		}
-	}
-	return nil
 }
 
 func bindTeardownRetirementPhase(
