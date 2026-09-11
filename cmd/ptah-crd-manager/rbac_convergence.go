@@ -782,6 +782,18 @@ func buildTeardownAuthorizationChecks(
 			appendResource(teardownCheckCertificate, "create webhook Secret", "", "v1", "secrets", "", rollout.ReleaseNamespace, "create", rollout.WebhookSecretName)
 		}
 		appendResource(teardownCheckCertificate, "update certificate rotation Lease", "coordination.k8s.io", "v1", "leases", "", rollout.ReleaseNamespace, "update", certificateLeaseName)
+		// The canary ConfigMap is the rotator's own admission probe target, and
+		// only the second admission contract grants it. The retired certificate
+		// Role carries the same rule under the same condition, so a probe that
+		// ignored the contract version would either miss a revoked grant or
+		// claim one the release never held.
+		if rollout.AdmissionContractVersion >= 2 {
+			canaryConfigMapName, canaryErr := exactRuntimeArgument(rollout.CertificateArgs, "--candidate-probe-config-map-name=")
+			if canaryErr != nil {
+				return teardownAuthorizationCheckSets{}, fmt.Errorf("certificate rotation canary ConfigMap identity: %w", canaryErr)
+			}
+			appendResource(teardownCheckCertificate, "update certificate rotation canary ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", canaryConfigMapName)
+		}
 	}
 
 	// Temporary cleanup mutation is name-bounded. Probe every non-residual
