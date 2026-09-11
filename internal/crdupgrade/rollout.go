@@ -1463,16 +1463,22 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 				// persisted first: the credentials are draining toward the sequence
 				// that is active, which is the sequence being stopped. Every other
 				// part of a stop transition still holds, the caller included.
+				{Name: "isReleaseHook", Expression: g.releaseHookUsernameExpression()},
+				{Name: "isCandidateHook", Expression: fmt.Sprintf(`request.userInfo.username == %q`, g.candidateHookUsername())},
+				{Name: "newAdmission", Expression: fmt.Sprintf(`variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
+				{Name: "isActiveIdentity", Expression: rolloutActiveIdentityExpression()},
+				// A release is stopped toward a newer one during a cutover, and in
+				// place during an uninstall. The second has no newer release to move
+				// to, so it is recognised by the durable drain its own quiesce hook
+				// persisted first: the credentials are draining toward the sequence
+				// that is active, which is the sequence being stopped. Every other
+				// part of a stop transition still holds, the caller included.
 				{Name: "teardownStop", Expression: fmt.Sprintf(
 					`variables.newRelease == variables.activeRelease && params != null && has(params.data) && %[1]q in params.data && params.data[%[1]q] == %[2]q && %[3]q in params.data && params.data[%[3]q] == string(variables.activeRelease)`,
 					controllerCredentialsDataKey,
 					string(ControllerCredentialsDraining),
 					controllerCredentialsTargetDataKey,
 				)},
-				{Name: "isReleaseHook", Expression: g.releaseHookUsernameExpression()},
-				{Name: "isCandidateHook", Expression: fmt.Sprintf(`request.userInfo.username == %q`, g.candidateHookUsername())},
-				{Name: "newAdmission", Expression: fmt.Sprintf(`variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
-				{Name: "isActiveIdentity", Expression: rolloutActiveIdentityExpression()},
 				{Name: "stopTransition", Expression: deploymentStopTransitionExpression()},
 			},
 			Validations: []admissionregistrationv1.Validation{
@@ -1950,6 +1956,18 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 				{Name: "templateState", Expression: fmt.Sprintf(`has(dyn(object).spec.template.metadata.annotations) && %q in dyn(object).spec.template.metadata.annotations ? dyn(object).spec.template.metadata.annotations[%q] : ""`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "templateRelease", Expression: fmt.Sprintf(`has(dyn(object).spec.template.metadata.annotations) && %q in dyn(object).spec.template.metadata.annotations ? dyn(object).spec.template.metadata.annotations[%q] : ""`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
 				{Name: "isActiveIdentity", Expression: runtimeActiveDeploymentIdentityExpression()},
+				// A release is stopped toward a newer one during a cutover, and in
+				// place during an uninstall. The second has no newer release to move
+				// to, so it is recognised by the durable drain its own quiesce hook
+				// persisted first: the credentials are draining toward the sequence
+				// that is active, which is the sequence being stopped. Every other
+				// part of a stop transition still holds, the caller included.
+				{Name: "teardownStop", Expression: fmt.Sprintf(
+					`variables.newRelease == variables.activeRelease && params != null && has(params.data) && %[1]q in params.data && params.data[%[1]q] == %[2]q && %[3]q in params.data && params.data[%[3]q] == string(variables.activeRelease)`,
+					controllerCredentialsDataKey,
+					string(ControllerCredentialsDraining),
+					controllerCredentialsTargetDataKey,
+				)},
 				{Name: "stopTransition", Expression: deploymentStopTransitionExpression()},
 			},
 			Validations: validations,

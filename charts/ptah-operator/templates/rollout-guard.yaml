@@ -173,6 +173,14 @@ spec:
       expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
     - name: activeAdmission
       expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
+    - name: isReleaseHook
+      expression: {{ printf `request.userInfo.username.matches(%q + string(variables.newRelease) + "-[0-9a-f]{12}$")` $hookUsernamePatternPrefix | quote }}
+    - name: isCandidateHook
+      expression: {{ printf `request.userInfo.username == %q` $hookUsername | quote }}
+    - name: newAdmission
+      expression: {{ printf `variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
+    - name: isActiveIdentity
+      expression: {{ $rolloutActiveIdentity | quote }}
     {{- /*
     A release is stopped toward a newer one during a cutover, and in place
     during an uninstall. The second has no newer release to move to, so it is
@@ -183,14 +191,6 @@ spec:
     */}}
     - name: teardownStop
       expression: {{ `variables.newRelease == variables.activeRelease && params != null && has(params.data) && "controller-credentials" in params.data && params.data["controller-credentials"] == "draining" && "controller-credentials-target-release-sequence" in params.data && params.data["controller-credentials-target-release-sequence"] == string(variables.activeRelease)` | quote }}
-    - name: isReleaseHook
-      expression: {{ printf `request.userInfo.username.matches(%q + string(variables.newRelease) + "-[0-9a-f]{12}$")` $hookUsernamePatternPrefix | quote }}
-    - name: isCandidateHook
-      expression: {{ printf `request.userInfo.username == %q` $hookUsername | quote }}
-    - name: newAdmission
-      expression: {{ printf `variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0` "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" "operator.ptah.dev/admission-contract-version" | quote }}
-    - name: isActiveIdentity
-      expression: {{ $rolloutActiveIdentity | quote }}
     - name: stopTransition
       expression: {{ $stopTransition | quote }}
   validations:
@@ -356,6 +356,8 @@ spec:
       expression: {{ printf `has(dyn(object).spec.template.metadata.annotations) && %q in dyn(object).spec.template.metadata.annotations ? dyn(object).spec.template.metadata.annotations[%q] : ""` "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" | quote }}
     - name: isActiveIdentity
       expression: {{ $runtimeActiveIdentity | quote }}
+    - name: teardownStop
+      expression: {{ `variables.newRelease == variables.activeRelease && params != null && has(params.data) && "controller-credentials" in params.data && params.data["controller-credentials"] == "draining" && "controller-credentials-target-release-sequence" in params.data && params.data["controller-credentials-target-release-sequence"] == string(variables.activeRelease)` | quote }}
     - name: stopTransition
       expression: {{ $stopTransition | quote }}
   validations:
