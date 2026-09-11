@@ -4031,9 +4031,15 @@ run_uninstall_proof() {
 	kube patch crd ptahschemas.operator.ptah.dev --type=json \
 		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"retained reinstall drift"}]' >/dev/null
 	# The drift above is written by kubectl, which owns the field it added.
-	# Helm 4 applies the chart's CRDs server-side and refuses to change a field
-	# another manager owns, so a reinstall over a retained CRD somebody edited
-	# needs the force. It is confined to the CRDs this chart ships.
+	# Helm 4 applies the chart's CRDs server-side on install and refuses to
+	# change a field another manager owns, so an install over a retained CRD
+	# somebody edited needs the force. It is confined to the CRDs this chart
+	# ships.
+	#
+	# That apply also happens before any hook runs, so what this step proves is
+	# that the install converges a retained CRD, not that the hook does. The
+	# hook's own CRD convergence is proved on the upgrade above, where Helm
+	# leaves the CRDs alone and the same drift needs no force.
 	helm_e2e install "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
 		--force-conflicts \
@@ -4041,7 +4047,7 @@ run_uninstall_proof() {
 	description=$(kube get crd ptahschemas.operator.ptah.dev \
 		-o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.description}')
 	[ "$description" != "retained reinstall drift" ] ||
-		fail "pre-install hook did not reconcile a retained CRD"
+		fail "the reinstall did not reconcile a retained CRD another manager drifted"
 	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
@@ -4075,7 +4081,8 @@ run_uninstall_proof() {
 		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"exact released-chart install drift"}]' >/dev/null
 	# The drift above is written by kubectl, which owns the field it added, and
 	# Helm 4 refuses to change a field another manager owns. This install carries
-	# the force for the same reason the one before it does.
+	# the force for the same reason the one before it does, and proves the same
+	# thing: that the install converges a retained CRD.
 	helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
 		--force-conflicts \
@@ -4084,7 +4091,7 @@ run_uninstall_proof() {
 	description=$(kube get crd ptahschemas.operator.ptah.dev \
 		-o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.description}')
 	[ "$description" != "exact released-chart install drift" ] ||
-		fail "exact current-release chart pre-install hook did not reconcile a retained CRD"
+		fail "the exact released-chart install did not reconcile a retained CRD another manager drifted"
 	capture_controller_service_account_identity \
 		"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \
 		"$WORK_DIR/fresh-current-sequence-${E2E_CURRENT_RELEASE_SEQUENCE}-controller-identity.json"

@@ -6077,9 +6077,9 @@ for crd_live_marker in \
 	'controller-only downgrade preflight prevented the certificate rotator from remaining ready' \
 	'blocked candidate manager rewrote future PtahSchema state' \
 	'reinstalling over retained and drifted CRDs' \
-	'pre-install hook did not reconcile a retained CRD' \
+	'the reinstall did not reconcile a retained CRD another manager drifted' \
 	'fresh-installing the exact exported current-release chart bytes' \
-	'exact current-release chart pre-install hook did not reconcile a retained CRD' \
+	'the exact released-chart install did not reconcile a retained CRD another manager drifted' \
 	'exact exported current-release chart passed fresh install and zero-residue uninstall' \
 	'uninstall retained CRDs and live objects'; do
 	grep -F -- "$crd_live_marker" "$ROOT_DIR/hack/e2e-kind.sh" \

@@ -29,13 +29,17 @@ meets guards reading the sequence the removed release last activated, and its
 first hook cannot get a Deployment past them.
 
 An install over CRDs an earlier release left behind needs the same flag when
-anything else has edited them. The chart's CRDs are applied server-side, so a
-field a `kubectl patch` or another controller owns is a conflict until the
-install is told to take it back:
+anything else has edited them. Helm applies the chart's CRDs server-side on
+install, so a field a `kubectl patch` or another controller owns is a conflict
+until the install is told to take it back:
 
 ```sh
 helm install <release> <chart> --values <values> --force-conflicts
 ```
+
+The flag makes the chart's CRDs win over whoever edited them, so use it when
+that is what you mean. An upgrade does not need it for this: Helm leaves
+existing CRDs alone, and the release's own hook converges them.
 
 Install CRDs and the controller through the Helm chart. Supply digest-pinned
 manager, executor, and runner images. The chart refuses all three when only a
