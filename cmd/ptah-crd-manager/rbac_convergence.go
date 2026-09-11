@@ -633,6 +633,15 @@ func buildTeardownAuthorizationChecks(
 		rollout.ReleaseName,
 		rollout.ReleaseSequence,
 	)
+	retirementMarkerName, err := crdupgrade.TeardownRetirementProbeName(
+		rollout.ReleaseNamespace,
+		rollout.ReleaseName,
+		rollout.ReleaseSequence,
+		rollout.ManagerImage,
+	)
+	if err != nil {
+		return teardownAuthorizationCheckSets{}, fmt.Errorf("derive teardown retirement marker identity: %w", err)
+	}
 	const arbitraryObjectName = "ptah-authorization-revocation-probe"
 
 	sets := teardownAuthorizationCheckSets{all: make([]crdupgrade.AuthorizationCheck, 0, 64)}
@@ -679,6 +688,7 @@ func buildTeardownAuthorizationChecks(
 	appendResource(teardownCheckHook|teardownCheckCertificate, "update validating admission singleton", "admissionregistration.k8s.io", "v1", "validatingwebhookconfigurations", "", "", "update", crdupgrade.AdmissionConfigurationName)
 	appendResource(teardownCheckHook, "update release activation ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", crdupgrade.ReleaseActivationName)
 	appendResource(teardownCheckHook, "update hook identity probe ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", probeObjectName)
+	appendResource(teardownCheckHook, "update teardown retirement marker ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", retirementMarkerName)
 	markerTargets := teardownCheckHook | teardownCheckController
 	if contract.CertificateRuntimeEnabled {
 		markerTargets |= teardownCheckCertificate

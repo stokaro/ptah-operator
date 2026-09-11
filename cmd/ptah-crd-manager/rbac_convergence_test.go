@@ -139,8 +139,8 @@ func TestNewTeardownRBACConvergenceBarrierDiscoversEveryDirectEndpoint(t *testin
 	if len(configs) != 2 {
 		t.Fatalf("client factory calls = %d, want 2", len(configs))
 	}
-	if got := authorizationSweepSize(barrier); got != 66 {
-		t.Fatalf("authorization sweep size = %d, want 66 exact retired-subject plus current-credential probes", got)
+	if got := authorizationSweepSize(barrier); got != 67 {
+		t.Fatalf("authorization sweep size = %d, want 67 exact retired-subject plus current-credential probes", got)
 	}
 	for index, config := range configs {
 		if config == base {
@@ -834,7 +834,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		probeCounts[probe.Subject.Name] = len(probe.Checks)
 		probeChecks[probe.Subject.Name] = authorizationCheckNames(probe.Checks)
 	}
-	if want := map[string]int{"controller": 19, "certificate": 8, "hook-quiesce": 16}; !reflect.DeepEqual(probeCounts, want) {
+	if want := map[string]int{"controller": 19, "certificate": 8, "hook-quiesce": 17}; !reflect.DeepEqual(probeCounts, want) {
 		t.Fatalf("retired subject probe counts = %#v, want %#v", probeCounts, want)
 	}
 	for _, test := range []struct {
@@ -974,8 +974,8 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 			t.Errorf("check %q includes intentional residual RBAC deletion for %q", check.Name, attributes.Name)
 		}
 	}
-	if len(checks) != 62 || len(byName) != 62 {
-		t.Fatalf("authorization checks = %d total/%d unique, want 62/62", len(checks), len(byName))
+	if len(checks) != 63 || len(byName) != 63 {
+		t.Fatalf("authorization checks = %d total/%d unique, want 63/63", len(checks), len(byName))
 	}
 	for _, name := range wantChecks {
 		if byName[name] == nil {
@@ -1204,8 +1204,8 @@ func TestTeardownAuthorizationChecksUseSeparateCoordinationNamespace(t *testing.
 			t.Errorf("check %q namespace = %q, want %q", name, attributes.Namespace, rollout.CoordinationNamespace)
 		}
 	}
-	if len(checks) != 64 {
-		t.Fatalf("split-namespace authorization check count = %d, want 64", len(checks))
+	if len(checks) != 65 {
+		t.Fatalf("split-namespace authorization check count = %d, want 65", len(checks))
 	}
 	_, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
 	if err != nil {
@@ -1238,7 +1238,7 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      metav1.NamespaceDefault,
 			coordinationNamespace: metav1.NamespaceDefault,
 			wantSelfChecks:        18,
-			wantAllChecks:         56,
+			wantAllChecks:         57,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault},
 		},
 		{
@@ -1246,7 +1246,7 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      metav1.NamespaceDefault,
 			coordinationNamespace: "ptah-coordination",
 			wantSelfChecks:        20,
-			wantAllChecks:         58,
+			wantAllChecks:         59,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-coordination"},
 		},
 		{
@@ -1254,7 +1254,7 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      "ptah-system",
 			coordinationNamespace: metav1.NamespaceDefault,
 			wantSelfChecks:        23,
-			wantAllChecks:         62,
+			wantAllChecks:         63,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-system"},
 		},
 		{
@@ -1262,7 +1262,7 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      "ptah-system",
 			coordinationNamespace: "ptah-coordination",
 			wantSelfChecks:        25,
-			wantAllChecks:         64,
+			wantAllChecks:         65,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-coordination", "ptah-system"},
 		},
 	} {
@@ -1332,7 +1332,7 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					for _, probe := range probes {
 						counts[probe.Subject.Name] = len(probe.Checks)
 					}
-					wantCounts := map[string]int{"controller": 19, "hook-quiesce": 16}
+					wantCounts := map[string]int{"controller": 19, "hook-quiesce": 17}
 					if certificateEnabled {
 						wantCounts["certificate"] = 8
 					}
@@ -1359,7 +1359,7 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					if err != nil {
 						t.Fatalf("teardownAuthorizationChecks() error = %v", err)
 					}
-					wantUnion := 34 + wantSelfChecks
+					wantUnion := 35 + wantSelfChecks
 					if certificateEnabled {
 						wantUnion += 5
 					}
@@ -1707,7 +1707,7 @@ func validRBACRolloutGuard() *crdupgrade.RolloutGuard {
 		ControllerDeploymentName:     "ptah-operator",
 		CertificateDeploymentName:    "ptah-certificate",
 		ReleaseSequence:              1,
-		ManagerImage:                 "registry.example.test/ptah-operator@sha256:1234",
+		ManagerImage:                 "registry.example.test/ptah-operator@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
 		AdmissionContractVersion:     2,
 		CertificateArgs: []string{
 			"--lease-name=ptah-cert-rotation",
