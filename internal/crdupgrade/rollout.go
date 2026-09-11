@@ -883,15 +883,27 @@ func (g *RolloutGuard) verifyBinding(binding *admissionregistrationv1.Validating
 }
 
 func (g *RolloutGuard) verifyGuardMetadata(kind string, metadata metav1.ObjectMeta, name string) error {
-	if metadata.Name != name ||
-		metadata.Annotations[rolloutGuardVersionAnnotation] != rolloutGuardVersion ||
-		metadata.Annotations[ReleaseNameAnnotation] != g.ReleaseName ||
-		metadata.Annotations[ReleaseNamespaceAnnotation] != g.ReleaseNamespace ||
-		metadata.Annotations[ReleaseSequenceAnnotation] != strconv.FormatInt(int64(g.ReleaseSequence), 10) ||
-		metadata.Labels[managedByLabel] != rolloutGuardManagedBy ||
-		metadata.Labels[instanceLabel] != g.ReleaseName ||
-		metadata.Labels["app.kubernetes.io/component"] != rolloutGuardComponent {
-		return fmt.Errorf("fixed guard %s/%s has foreign or incomplete ownership", kind, metadata.Name)
+	// The field that disagrees is named. A guard carries eight of them and the
+	// refusal is read from a hook Pod's termination message, where "foreign or
+	// incomplete" alone costs a whole lifecycle run to narrow down.
+	for _, field := range []struct {
+		what string
+		got  string
+		want string
+	}{
+		{"name", metadata.Name, name},
+		{"annotation " + rolloutGuardVersionAnnotation, metadata.Annotations[rolloutGuardVersionAnnotation], rolloutGuardVersion},
+		{"annotation " + ReleaseNameAnnotation, metadata.Annotations[ReleaseNameAnnotation], g.ReleaseName},
+		{"annotation " + ReleaseNamespaceAnnotation, metadata.Annotations[ReleaseNamespaceAnnotation], g.ReleaseNamespace},
+		{"annotation " + ReleaseSequenceAnnotation, metadata.Annotations[ReleaseSequenceAnnotation], strconv.FormatInt(int64(g.ReleaseSequence), 10)},
+		{"label " + managedByLabel, metadata.Labels[managedByLabel], rolloutGuardManagedBy},
+		{"label " + instanceLabel, metadata.Labels[instanceLabel], g.ReleaseName},
+		{"label app.kubernetes.io/component", metadata.Labels["app.kubernetes.io/component"], rolloutGuardComponent},
+	} {
+		if field.got != field.want {
+			return fmt.Errorf("fixed guard %s/%s has foreign or incomplete ownership: %s is %q, want %q",
+				kind, metadata.Name, field.what, field.got, field.want)
+		}
 	}
 	return nil
 }
