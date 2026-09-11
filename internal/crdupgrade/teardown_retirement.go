@@ -501,11 +501,10 @@ func admissionPolicySpecDifference(actual, expected admissionregistrationv1.Vali
 		if reflect.DeepEqual(actual.MatchConditions[index], expected.MatchConditions[index]) {
 			continue
 		}
-		return fmt.Sprintf("match condition %d %q is %s, want %s",
+		return fmt.Sprintf("match condition %d %q %s",
 			index,
 			expected.MatchConditions[index].Name,
-			boundedExpression(actual.MatchConditions[index].Expression),
-			boundedExpression(expected.MatchConditions[index].Expression),
+			expressionDifference(actual.MatchConditions[index].Expression, expected.MatchConditions[index].Expression),
 		)
 	}
 	if !reflect.DeepEqual(actual.ParamKind, expected.ParamKind) {
@@ -526,21 +525,43 @@ func admissionPolicySpecDifference(actual, expected admissionregistrationv1.Vali
 		if reflect.DeepEqual(actual.Validations[index], expected.Validations[index]) {
 			continue
 		}
-		return fmt.Sprintf("validation %d is %s, want %s",
+		return fmt.Sprintf("validation %d %s",
 			index,
-			boundedExpression(actual.Validations[index].Expression),
-			boundedExpression(expected.Validations[index].Expression),
+			expressionDifference(actual.Validations[index].Expression, expected.Validations[index].Expression),
 		)
 	}
 	return "spec"
 }
 
-func boundedExpression(expression string) string {
-	const limit = 320
-	if len(expression) <= limit {
-		return strconv.Quote(expression)
+// expressionDifference reports where two expressions first disagree and shows
+// the same window of each. These expressions run to thousands of characters and
+// are read from a termination message, so a prefix of both says nothing.
+func expressionDifference(actual, expected string) string {
+	offset := 0
+	for offset < len(actual) && offset < len(expected) && actual[offset] == expected[offset] {
+		offset++
 	}
-	return strconv.Quote(expression[:limit]) + "..."
+	const window = 200
+	start := offset - 40
+	if start < 0 {
+		start = 0
+	}
+	return fmt.Sprintf("first differs at %d of %d/%d: is %s, want %s",
+		offset, len(actual), len(expected),
+		boundedWindow(actual, start, window),
+		boundedWindow(expected, start, window),
+	)
+}
+
+func boundedWindow(expression string, start, length int) string {
+	if start >= len(expression) {
+		return strconv.Quote("")
+	}
+	end := start + length
+	if end > len(expression) {
+		end = len(expression)
+	}
+	return strconv.Quote(expression[start:end])
 }
 
 func exactTeardownRetirementMetadata(actual, expected metav1.ObjectMeta) bool {
