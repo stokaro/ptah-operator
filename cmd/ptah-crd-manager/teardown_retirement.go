@@ -963,24 +963,23 @@ func (f *teardownRetirementFinalizer) Finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("re-read release activation for final deletion: %w", err)
 	}
-	// Return the parameter to the state a fresh install starts from, then delete
-	// it. Kubernetes keeps serving the last value it saw for that object while
-	// something was reading it, so the bindings are deliberately still bound
-	// here: what the API server goes on serving after the delete is the state a
-	// reinstall in this namespace needs, not the sequence this release last
-	// activated. The state above has already been verified, so the reset is the
-	// last thing that changes it.
+	// Return the parameter to the state a fresh install starts from, and leave
+	// the object where it is. Deleting it is what a release cannot survive:
+	// Kubernetes keeps serving a deleted policy parameter to the bindings that
+	// read it, so the next release in this namespace meets guards evaluating
+	// the sequence this one last activated, and a parameter created for a
+	// namespace that never held a release is not visible to those bindings
+	// straight away either. An emptied parameter has neither problem: it names
+	// no active release, holds no credentials, and is the exact state an
+	// install starts from. The state above has already been verified, so this
+	// reset is the last mutation the release makes.
 	bootstrap := activation.DeepCopy()
 	bootstrap.Data = crdupgrade.ReleaseActivationBootstrapData()
-	if !reflect.DeepEqual(activation.Data, bootstrap.Data) {
-		updated, updateErr := f.configMaps.Update(ctx, bootstrap, metav1.UpdateOptions{})
-		if updateErr != nil {
-			return fmt.Errorf("return release activation to its bootstrap state: %w", updateErr)
-		}
-		activation = updated
+	if reflect.DeepEqual(activation.Data, bootstrap.Data) {
+		return nil
 	}
-	if err := f.configMaps.Delete(ctx, f.activationName, teardownRetirementDeleteOptions(activation)); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("delete release activation as final API mutation: %w", err)
+	if _, err := f.configMaps.Update(ctx, bootstrap, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("return release activation to its bootstrap state as the final API mutation: %w", err)
 	}
 	return nil
 }
@@ -998,6 +997,12 @@ func (f *teardownRetirementFinalizer) preflight(ctx context.Context) ([]bool, er
 		if err != nil {
 			return nil, fmt.Errorf("get teardown retirement ConfigMap/%s: %w", target.Name, err)
 		}
+		// A release ends by emptying its activation parameter rather than
+		// deleting it, so the finished state is the bootstrap one, and it
+		// reads exactly like an absent parameter to everything below.
+		if target.Name == f.activationName && reflect.DeepEqual(object.Data, crdupgrade.ReleaseActivationBootstrapData()) {
+			continue
+		}
 		if err := verifyTeardownRetirementConfigMapIdentity(target.Name, object, target.Verify); err != nil {
 			return nil, err
 		}
@@ -1007,7 +1012,7 @@ func (f *teardownRetirementFinalizer) preflight(ctx context.Context) ([]bool, er
 	if !activationPresent {
 		for index := range f.markers {
 			if present[index] {
-				return nil, fmt.Errorf("teardown retirement terminal state retains ConfigMap/%s after release activation is absent", f.markers[index].Name)
+				return nil, fmt.Errorf("teardown retirement terminal state retains ConfigMap/%s after release activation was emptied", f.markers[index].Name)
 			}
 		}
 		return present, nil

@@ -21,12 +21,17 @@ an equal value is never a conflict, so the force is confined to the replica
 count the cutover moved. An upgrade that keeps the release sequence does not
 stop the runtime and does not need the flag.
 
-An uninstall returns the release activation ConfigMap to the state a fresh
-install starts from and only then deletes it. Kubernetes keeps serving a
-deleted policy parameter to the bindings that read it, so what it keeps serving
-has to be the bootstrap state; otherwise a reinstall in the same namespace
-meets guards reading the sequence the removed release last activated, and its
-first hook cannot get a Deployment past them.
+An uninstall leaves one object behind: the release activation ConfigMap,
+emptied to the state a fresh install starts from. It names no active release
+and holds no credentials, and the next install adopts it.
+
+It is deliberate. Kubernetes keeps serving a deleted policy parameter to the
+bindings that read it, so a release that deleted this one would leave the
+namespace unable to host the next: its guards would evaluate the sequence the
+removed release last activated. Measured on a live 1.37.0 cluster by asking
+each API server directly, and the same delete and recreate of a parameter
+through server-side apply reproduces it in a namespace with nothing else in it.
+Removing the namespace removes the ConfigMap with it.
 
 An install over CRDs an earlier release left behind needs the same flag when
 anything else has edited them. Helm applies the chart's CRDs server-side on
