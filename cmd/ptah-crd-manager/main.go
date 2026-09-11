@@ -17,12 +17,14 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	admissionregistrationv1client "k8s.io/client-go/kubernetes/typed/admissionregistration/v1"
 	"k8s.io/client-go/rest"
 
 	"github.com/stokaro/ptah-operator/internal/controllerstate"
@@ -1180,11 +1182,12 @@ func runTeardownMode(
 		if err != nil {
 			return fmt.Errorf("configure teardown retirement finalizer: %w", err)
 		}
-		releaseTeardown, _, err := newTeardownPhases(clientset, rollout, contract)
-		if err != nil {
-			return err
-		}
-		if err := releaseTeardown.RetireParameterizedBindings(ctx); err != nil {
+		if err := retireActivationParameterBindings(
+			ctx,
+			clientset.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings(),
+			privilegeTeardown.AdmissionGuardNames(),
+			rollout.ReleaseNamespace,
+		); err != nil {
 			return fmt.Errorf("retire the bindings that read the release activation parameter: %w", err)
 		}
 		if err := finalizer.Finalize(ctx); err != nil {
@@ -1204,6 +1207,46 @@ func runTeardownMode(
 	default:
 		return fmt.Errorf("unsupported teardown mode %q", mode)
 	}
+}
+
+// retireActivationParameterBindings deletes the release's admission bindings
+// that name the release activation ConfigMap before anything deletes it. Each
+// of them refuses every request it matches once that parameter is gone, and
+// the release's own deletion phase is minutes away, so the namespace would
+// stay frozen in between. The bindings are read by name from the exact set
+// this identity is allowed to touch, and only the ones that actually name the
+// parameter are removed; which contract wrote them does not matter, because
+// an uninstall replaces them with its own retirement pairs first.
+func retireActivationParameterBindings(
+	ctx context.Context,
+	bindings admissionregistrationv1client.ValidatingAdmissionPolicyBindingInterface,
+	names []string,
+	releaseNamespace string,
+) error {
+	if bindings == nil || releaseNamespace == "" {
+		return errors.New("activation parameter binding retirement dependencies are required")
+	}
+	for _, name := range names {
+		binding, err := bindings.Get(ctx, name, metav1.GetOptions{})
+		if apierrors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("get binding %s: %w", name, err)
+		}
+		reference := binding.Spec.ParamRef
+		if reference == nil || reference.Name != crdupgrade.ReleaseActivationName || reference.Namespace != releaseNamespace {
+			continue
+		}
+		options := metav1.DeleteOptions{Preconditions: &metav1.Preconditions{
+			UID:             &binding.UID,
+			ResourceVersion: &binding.ResourceVersion,
+		}}
+		if err := bindings.Delete(ctx, name, options); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete binding %s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 func bindTeardownRetirementPhase(

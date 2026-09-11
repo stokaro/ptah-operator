@@ -140,36 +140,6 @@ func (t *ReleaseTeardown) Teardown(ctx context.Context, waitForAdmissionConverge
 	return nil
 }
 
-// RetireParameterizedBindings deletes the release's admission bindings before
-// anything deletes the parameter they read. Eleven of them name the release
-// activation ConfigMap with parameterNotFoundAction Deny, so a release that
-// removes that ConfigMap while they are still bound denies every write those
-// guards match until Helm's own deletion phase catches up, the namespace
-// included. Policies are left to that phase: a policy nothing binds enforces
-// nothing.
-func (t *ReleaseTeardown) RetireParameterizedBindings(ctx context.Context) error {
-	targets, err := t.targets()
-	if err != nil {
-		return err
-	}
-	for _, target := range targets {
-		if target.kind != "ValidatingAdmissionPolicyBinding" {
-			continue
-		}
-		identity, found, inspectErr := target.inspect(ctx)
-		if inspectErr != nil {
-			return fmt.Errorf("re-verify parameterized binding %s: %w", target.name, inspectErr)
-		}
-		if !found {
-			continue
-		}
-		if deleteErr := target.delete(ctx, identity.deleteOptions()); deleteErr != nil && !apierrors.IsNotFound(deleteErr) {
-			return fmt.Errorf("delete parameterized binding %s: %w", target.name, deleteErr)
-		}
-	}
-	return nil
-}
-
 func (t *ReleaseTeardown) preflight(ctx context.Context) ([]teardownTarget, []bool, error) {
 	targets, err := t.targets()
 	if err != nil {

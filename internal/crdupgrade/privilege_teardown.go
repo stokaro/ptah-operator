@@ -1418,6 +1418,13 @@ func (t *PrivilegeTeardown) cleanupPrivilegeContract() privilegeAuthorizationCon
 	}
 }
 
+// AdmissionGuardNames returns the admission pairs this teardown is allowed to
+// read, which is also every pair the release may have to retire before it
+// deletes the parameter they read.
+func (t *PrivilegeTeardown) AdmissionGuardNames() []string {
+	return t.privilegeAdmissionGuardNames()
+}
+
 func (t *PrivilegeTeardown) privilegeAdmissionGuardNames() []string {
 	names := currentRetainedAdmissionGuardNames(t.rollout)
 	names = append(names, legacyControllerGuardNames(t.rollout.ReleaseNamespace, t.rollout.ReleaseName)...)
