@@ -3,6 +3,7 @@ package crdupgrade
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,6 +34,29 @@ func hasExactValidatingAdmissionPolicyDenial(err error, policyName, bindingName,
 	want := validatingAdmissionPolicyDenialCauseMessage(policyName, bindingName, denialMessage)
 	cause := status.Details.Causes[0]
 	return cause.Type == "" && cause.Field == "" && cause.Message == want
+}
+
+// isValidatingAdmissionPolicyDenial reports whether the API server refused the
+// request through a ValidatingAdmissionPolicy, without naming which one. It is
+// deliberately narrower than IsInvalid: only the envelope an admission policy
+// produces qualifies, so a transport failure or a client-side budget never
+// looks like a denial a caller may wait out.
+func isValidatingAdmissionPolicyDenial(err error) bool {
+	var statusError apierrors.APIStatus
+	if !errors.As(err, &statusError) {
+		return false
+	}
+	status := statusError.Status()
+	if status.Status != metav1.StatusFailure || status.Reason != metav1.StatusReasonInvalid || status.Code != 422 ||
+		status.Details == nil || len(status.Details.Causes) == 0 {
+		return false
+	}
+	for _, cause := range status.Details.Causes {
+		if strings.Contains(cause.Message, "ValidatingAdmissionPolicy") && strings.Contains(cause.Message, "denied request") {
+			return true
+		}
+	}
+	return false
 }
 
 // HasExactValidatingAdmissionPolicyDenial exposes the supported-window denial
