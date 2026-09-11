@@ -1180,6 +1180,13 @@ func runTeardownMode(
 		if err != nil {
 			return fmt.Errorf("configure teardown retirement finalizer: %w", err)
 		}
+		releaseTeardown, _, err := newTeardownPhases(clientset, rollout, contract)
+		if err != nil {
+			return err
+		}
+		if err := releaseTeardown.RetireParameterizedBindings(ctx); err != nil {
+			return fmt.Errorf("retire the bindings that read the release activation parameter: %w", err)
+		}
 		if err := finalizer.Finalize(ctx); err != nil {
 			return fmt.Errorf("finalize teardown retirement: %w", err)
 		}

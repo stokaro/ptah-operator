@@ -1348,6 +1348,15 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 					t.privilegeAdmissionGuardNames(),
 					[]string{"get"},
 				),
+				// The bindings that read the release activation parameter are
+				// retired before it is deleted, so no guard is left denying every
+				// write it matches for want of a parameter.
+				privilegePolicyRule(
+					[]string{"admissionregistration.k8s.io"},
+					[]string{"validatingadmissionpolicybindings"},
+					t.privilegeAdmissionGuardNames(),
+					[]string{"delete"},
+				),
 				privilegePolicyRule(
 					[]string{"authorization.k8s.io"},
 					[]string{"subjectaccessreviews", "selfsubjectaccessreviews"},
