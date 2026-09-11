@@ -49,6 +49,7 @@
 {{- $parentHookJobOriginGuardName := include "ptah-operator.parentHookJobOriginGuardPolicyName" . -}}
 {{- $parentHookJobContractGuardName := include "ptah-operator.parentHookJobContractPolicyName" . -}}
 {{- $legacyControllerGuardDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $parentOriginReadyName := printf "ptah-operator-parent-origin-ready-v2-%s" $legacyControllerGuardDigest -}}
 {{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $legacyControllerGuardDigest -}}
 {{- $legacyControllerWriteGuardName := printf "ptah-operator-controller-write-guard-v1-%s" $legacyControllerGuardDigest -}}
 {{- $legacyControllerJobWriteGuardName := printf "ptah-operator-job-write-guard-v1-%s" $legacyControllerGuardDigest -}}
@@ -742,6 +743,10 @@ rules:
     resources: ["configmaps"]
     resourceNames: [{{ $retirementMarkerName | quote }}]
     verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $parentOriginReadyName | quote }}]
+    verbs: ["get", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

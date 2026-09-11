@@ -758,6 +758,7 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 	// The seal is the one marker update the hook principal makes; its exact
 	// shape is held by the marker transition validations.
 	hookUsernamePattern := "^system:serviceaccount:" + regexp.QuoteMeta(g.rollout.ReleaseNamespace) + ":" + strings.TrimPrefix(hookPattern, "^")
+	teardownUsernamePattern := "^system:serviceaccount:" + regexp.QuoteMeta(g.rollout.ReleaseNamespace) + ":" + strings.TrimPrefix(teardownPattern, "^")
 	message := parentHookOriginDenialMessage()
 	namespaceGuard := NamespaceDeletionGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
 	authority := parentHookAdmissionAuthorityExpression(namespaceGuard)
@@ -830,7 +831,7 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 				// sealed predecessor marker when it retires it. Which marker a hook may
 				// touch is named in its Role; this guard asks only that the caller is a
 				// hook of this release. Every other caller still needs release authority.
-				{Expression: fmt.Sprintf(`!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation in ["UPDATE", "DELETE"] && request.userInfo.username.matches(%q)) || (%s)`, hookUsernamePattern, authority), Message: message},
+				{Expression: fmt.Sprintf(`!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation in ["UPDATE", "DELETE"] && request.userInfo.username.matches(%q)) || (request.operation == "DELETE" && request.userInfo.username.matches(%q)) || (%s)`, hookUsernamePattern, teardownUsernamePattern, authority), Message: message},
 				{Expression: `!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true`, Message: message},
 				{Expression: `!variables.isReadinessMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (` + g.readinessMarkerShapeExpression("object", false) + `) : (` + g.readinessMarkerShapeExpression("object", true) + `))`, Message: message},
 				{Expression: `!variables.isReadinessMarker || !(request.operation in ["UPDATE", "DELETE"]) || (` + g.readinessMarkerShapeExpression("oldObject", true) + `)`, Message: message},

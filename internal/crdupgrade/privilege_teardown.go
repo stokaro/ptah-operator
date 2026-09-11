@@ -1382,6 +1382,11 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 					[]string{t.retirementMarkerName()},
 					[]string{"get", "update"},
 				),
+				privilegePolicyRule(
+					[]string{""}, []string{"configmaps"},
+					[]string{ParentOriginReadyMarkerName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName)},
+					[]string{"get", "delete"},
+				),
 			},
 		},
 		privilegeAuthorizationContract{

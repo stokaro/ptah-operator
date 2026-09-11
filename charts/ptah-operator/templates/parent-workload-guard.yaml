@@ -268,6 +268,7 @@
 {{- $hookPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-crd-v" $hookBase)) -}}
 {{- $hookServiceAccountUsernamePattern := printf "^system:serviceaccount:%s:%s" (regexQuoteMeta .Release.Namespace) (trimPrefix "^" $hookPattern) -}}
 {{- $teardownPattern := printf "^%s[1-9][0-9]*-[0-9a-f]{12}$" (regexQuoteMeta (printf "%s-cleanup-v" $hookBase)) -}}
+{{- $teardownServiceAccountUsernamePattern := printf "^system:serviceaccount:%s:%s" (regexQuoteMeta .Release.Namespace) (trimPrefix "^" $teardownPattern) -}}
 {{- $controllerServiceAccountBase := include "ptah-operator.serviceAccountBaseName" . -}}
 {{- if .Values.serviceAccount.create -}}
 {{- $controllerServiceAccountBase = $controllerServiceAccountBase | trunc 38 | trimSuffix "-" -}}
@@ -480,7 +481,7 @@
       (printf `!variables.isProtectedJob || !variables.isStatusUpdate || (%s)` $statusPreservesIdentity)
       (printf `!variables.isProtectedJob || !variables.isDelete || (%s)` $terminalJob)
       (printf `!variables.isProtectedJob || !variables.isDelete || (%s)` $hookAuthority)
-      (printf `!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation in ["UPDATE", "DELETE"] && request.userInfo.username.matches(%q)) || (%s)` $hookServiceAccountUsernamePattern $hookAuthority)
+      (printf `!variables.isMarker || variables.isServiceAccountObjectConvergenceProbe || (variables.isConvergenceMarker && request.operation in ["UPDATE", "DELETE"] && request.userInfo.username.matches(%q)) || (request.operation == "DELETE" && request.userInfo.username.matches(%q)) || (%s)` $hookServiceAccountUsernamePattern $teardownServiceAccountUsernamePattern $hookAuthority)
       `!variables.isServiceAccountObjectConvergenceProbe || request.dryRun == true`
       (printf `!variables.isReadinessMarker || !variables.isMainWrite || (request.operation == "CREATE" ? (%s) : (%s))` $parentOriginReadyCreateShape $parentOriginReadyStoredShape)
       (printf `!variables.isReadinessMarker || !(request.operation in ["UPDATE", "DELETE"]) || (%s)` $parentOriginReadyOldShape)
