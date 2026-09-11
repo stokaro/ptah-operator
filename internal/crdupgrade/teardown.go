@@ -753,6 +753,27 @@ func (t *ReleaseTeardown) hookIdentityProbeMarkerTarget(guard *RolloutGuard) tea
 	}
 }
 
+// HookIdentityProbeMarkerTarget returns the retirement target for the probe
+// ConfigMap the release keeps across upgrades. Helm is told to keep it, so
+// nothing in the ordinary deletion phase removes it and the last teardown hook
+// has to.
+func HookIdentityProbeMarkerTarget(rollout *RolloutGuard) (TeardownRetirementMarkerTarget, error) {
+	if rollout == nil {
+		return TeardownRetirementMarkerTarget{}, fmt.Errorf("hook identity probe marker rollout is required")
+	}
+	name := HookIdentityProbeObjectName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
+	policyName := HookIdentityProbeGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
+	if name == "" || policyName == "" {
+		return TeardownRetirementMarkerTarget{}, fmt.Errorf("hook identity probe marker identity is incomplete")
+	}
+	return TeardownRetirementMarkerTarget{
+		Name: name,
+		Verify: func(actual *corev1.ConfigMap) error {
+			return verifyHookIdentityProbeMarker(actual, rollout, name, policyName)
+		},
+	}, nil
+}
+
 func verifyHookIdentityProbeMarker(object *corev1.ConfigMap, guard *RolloutGuard, name, policyName string) error {
 	wantAnnotations := map[string]string{
 		"helm.sh/hook":                           "pre-install,pre-upgrade",

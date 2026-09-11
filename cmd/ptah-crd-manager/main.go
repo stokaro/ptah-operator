@@ -1172,7 +1172,11 @@ func runTeardownMode(
 		if err != nil {
 			return fmt.Errorf("derive parent origin readiness retirement marker: %w", err)
 		}
-		finalizer, err := newTeardownRetirementFinalizer(configMaps, guard, convergenceMarker, readinessMarker)
+		probeMarker, err := crdupgrade.HookIdentityProbeMarkerTarget(rollout)
+		if err != nil {
+			return fmt.Errorf("derive hook identity probe retirement marker: %w", err)
+		}
+		finalizer, err := newTeardownRetirementFinalizer(configMaps, guard, convergenceMarker, readinessMarker, probeMarker)
 		if err != nil {
 			return fmt.Errorf("configure teardown retirement finalizer: %w", err)
 		}

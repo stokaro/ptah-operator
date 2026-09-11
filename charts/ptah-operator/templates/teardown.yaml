@@ -730,7 +730,7 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames: [{{ $probeObjectName | quote }}]
-    verbs: ["get"]
+    verbs: ["get", "delete"]
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames: [{{ $activationName | quote }}]

@@ -1365,7 +1365,7 @@ func (t *PrivilegeTeardown) teardownAuthorizationContracts() []privilegeAuthoriz
 				privilegePolicyRule(
 					[]string{""}, []string{"configmaps"},
 					[]string{HookIdentityProbeObjectName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage)},
-					[]string{"get"},
+					[]string{"get", "delete"},
 				),
 				privilegePolicyRule(
 					[]string{""}, []string{"configmaps"},
