@@ -761,6 +761,17 @@ func (g *TeardownRetirementGuard) originalFencePolicy(name, policyWeight string)
 	return g.fencePolicy(name, "pre-delete", policyWeight, false)
 }
 
+// teardownRetirementPredecessorInventory records which release sequences may
+// have preceded each sequence, written when that sequence is prepared and never
+// edited afterwards. The fence guards the same markers whether or not a
+// predecessor is present, because a release installed into a namespace that
+// never held one renders exactly the fence a release upgraded into it does.
+// The chart carries the same inventory; the two are one contract.
+var teardownRetirementPredecessorInventory = map[int32][]int32{
+	1: {},
+	2: {1},
+}
+
 func (g *TeardownRetirementGuard) dormantFencePolicy(name string) (*admissionregistrationv1.ValidatingAdmissionPolicy, error) {
 	return g.fencePolicy(name, "", "", true)
 }
@@ -828,8 +839,15 @@ func (g *TeardownRetirementGuard) fencePolicy(name, hook, policyWeight string, b
 		AdmissionConvergenceMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, g.rollout.ReleaseSequence),
 		ParentOriginReadyMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName),
 	}
-	if g.rollout.PreviousControllerReleaseSequence > 0 {
-		retainedMarkers = append(retainedMarkers, AdmissionConvergenceMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, g.rollout.PreviousControllerReleaseSequence))
+	predecessorSequences, recorded := teardownRetirementPredecessorInventory[g.rollout.ReleaseSequence]
+	if !recorded {
+		return nil, fmt.Errorf("teardown retirement sequence %d has no explicit append-only predecessor inventory", g.rollout.ReleaseSequence)
+	}
+	for _, sequence := range predecessorSequences {
+		retainedMarkers = append(retainedMarkers, AdmissionConvergenceMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, sequence))
+	}
+	if g.rollout.PreviousControllerReleaseSequence > 0 && !slices.Contains(predecessorSequences, g.rollout.PreviousControllerReleaseSequence) {
+		return nil, fmt.Errorf("teardown retirement found predecessor sequence %d outside the recorded inventory", g.rollout.PreviousControllerReleaseSequence)
 	}
 	protectedRetainedMarkerDelete := fmt.Sprintf(`request.operation == "DELETE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && oldObject != null && oldObject.metadata.name in %s`, g.rollout.ReleaseNamespace, celStringList(retainedMarkers))
 	markerRequest := g.markerProbeRequestExpression(probe)
