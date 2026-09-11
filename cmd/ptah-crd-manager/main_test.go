@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -381,3 +383,49 @@ func TestNewRolloutGuardUsesDecodedPriorityClassContract(t *testing.T) {
 }
 
 const validRuntimeAdmissionContractJSON = `{"version":1,"namespace":"ptah-system","commonInitContainerResources":{},"controllerContainerResources":{},"certificateContainerResources":{},"imagePullSecrets":[],"priorityClassName":"","priorityClassValue":0,"priorityClassPreemptionPolicy":"PreemptLowerPriority","controllerServiceAccountName":"ptah-controller","certificateServiceAccountName":"ptah-certificate","controllerServiceAccountCreate":false,"controllerServiceAccountEnforceMountableSecrets":false,"controllerSecretNames":["ptah-webhook"],"certificateSecretNames":[],"certificateRuntimeEnabled":false}`
+
+// A hook that refuses prints its reason to stderr, which stays inside the Pod.
+// Helm reports only that the Job failed, so the reason reaches the person who
+// ran the uninstall through the termination message or not at all.
+func TestReportTerminationMessageWritesTheRefusal(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "termination-log")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	original := terminationMessageFile
+	terminationMessageFile = path
+	t.Cleanup(func() { terminationMessageFile = original })
+
+	reportTerminationMessage(errors.New("foreign ClusterRoleBinding/example names a protected ServiceAccount"))
+
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ptah-crd-manager: foreign ClusterRoleBinding/example names a protected ServiceAccount\n"
+	if string(written) != want {
+		t.Fatalf("termination message = %q, want %q", written, want)
+	}
+}
+
+func TestReportTerminationMessageBoundsAndSurvivesAMissingFile(t *testing.T) {
+	original := terminationMessageFile
+	terminationMessageFile = filepath.Join(t.TempDir(), "absent")
+	t.Cleanup(func() { terminationMessageFile = original })
+	reportTerminationMessage(errors.New("no file here"))
+
+	path := filepath.Join(t.TempDir(), "termination-log")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	terminationMessageFile = path
+	reportTerminationMessage(errors.New(strings.Repeat("x", terminationMessageLimit*2)))
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(written) != terminationMessageLimit {
+		t.Fatalf("termination message length = %d, want %d", len(written), terminationMessageLimit)
+	}
+}

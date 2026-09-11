@@ -43,8 +43,37 @@ func main() {
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "ptah-crd-manager: %v\n", err)
+		reportTerminationMessage(err)
 		os.Exit(1)
 	}
+}
+
+// terminationMessageFile is the file Kubernetes reads a failed container's
+// message from. Every hook container declares it and the policy that reads it.
+var terminationMessageFile = "/dev/termination-log"
+
+// terminationMessageLimit is what Kubernetes keeps of that file.
+const terminationMessageLimit = 4096
+
+// reportTerminationMessage puts the refusal where the person who ran Helm can
+// read it. A hook that refuses prints its reason to stderr, which stays inside
+// the Pod: Helm reports only that the Job failed, so an operator is told that
+// an uninstall was refused and never why. Writing the same reason to the
+// termination message carries it into the Job's status and out through Helm.
+// It is best effort: a manager that cannot write the file has already said
+// what happened on stderr, and failing here would replace a precise refusal
+// with a write error.
+func reportTerminationMessage(err error) {
+	message := fmt.Sprintf("ptah-crd-manager: %v\n", err)
+	if len(message) > terminationMessageLimit {
+		message = message[:terminationMessageLimit]
+	}
+	file, openErr := os.OpenFile(terminationMessageFile, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if openErr != nil {
+		return
+	}
+	defer func() { _ = file.Close() }()
+	_, _ = file.WriteString(message)
 }
 
 func run(parent context.Context, args []string, output io.Writer) error {
