@@ -4103,7 +4103,14 @@ run_uninstall_proof() {
 		"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \
 		"$fresh_current_marker" "$fresh_current_inventory"
 	fresh_current_marker_name=$(jq -er '.metadata.name' "$fresh_current_marker")
-	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
+	# This install puts a different release in place, so the running controller
+	# rebinds the schema's execution to its own image under a new epoch. That is
+	# the one change it owes, and it owes nothing else: identity, spec, every
+	# other status field and every condition but the binding one stay as they
+	# were, which is what this assertion holds it to.
+	assert_object_execution_binding_refreshed ptahschema "$PROOF_SCHEMA" \
+		"$WORK_DIR/ptahschema-before.json" "$E2E_CANDIDATE_IMAGE"
+	for resource in ptahschemaplan ptahschemaapproval; do
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
 	capture_certificate_secret_names
