@@ -4157,11 +4157,34 @@ static_require_order "$deadline_terminal_section" 'DeadlineExceeded full Job pro
 	"scan_fault_file \"\$RESOURCE_FILE\" \"the exact DeadlineExceeded Apply Job\"" \
 	"grep -Fx \"\$deadline_terminal_pod_uid\" \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" \
 	"${fault_shared_full_write_marker} \"\$deadline_terminal_uid\""
+# A Job the scheduling barrier holds never becomes terminal, so the periodic
+# audit can never reach it and a proof that destroys it has to account for it
+# where it stands. That promotion is the one this contract pins: the barrier has
+# to be up, the Job has to be the named UID and unfinished, the Pods have to be
+# the ones this Job owns, and every one of them has to be unscheduled and
+# unstarted before a single UID is written.
+blocked_audit_section=$(sed -n '/^audit_blocked_read_job()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+# shellcheck disable=SC2016 # Exact source markers retain jq and shell variables literally.
+static_require_order "$blocked_audit_section" 'held read-only Job full audit' \
+	'[ "$READ_WORKLOAD_BARRIER_ACTIVE" -eq 1 ] ||' \
+	'.metadata.uid == $uid and' \
+	'all((.type != "Complete" and .type != "Failed") or .status != "True")' \
+	'.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and' \
+	'-l "batch.kubernetes.io/controller-uid=${blocked_audit_uid}" -o json' \
+	'(.spec.nodeName // "") == "" and' \
+	'all(.state.running == null and .state.terminated == null)' \
+	'scan_fault_file "$RESOURCE_FILE"' \
+	'materialize_fault_job_pod_uids "$blocked_audit_pods"' \
+	'record_audited_uid "$FULLY_AUDITED_FAULT_PODS_FILE" "$blocked_audit_pod_uid"' \
+	"${fault_shared_full_write_marker} \"\$blocked_audit_uid\""
 static_require_count "$fault_script" \
-	"record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" 3 \
+	"record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" 4 \
 	'fault full-Pod write sites'
-static_require_count "$fault_script" "$fault_shared_full_write_marker" 2 \
+static_require_count "$fault_script" "$fault_shared_full_write_marker" 3 \
 	'fault shared full-Job write sites'
+static_require_count "$blocked_audit_section" "$fault_shared_full_write_marker" 1 \
+	'held read-only Job full-Job writes'
 static_require_count "$fault_runtime_audit_function_section" \
 	"$fault_shared_full_write_marker" 1 'fault runtime full-Job writes'
 static_require_count "$deadline_terminal_section" "$fault_shared_full_write_marker" 1 \

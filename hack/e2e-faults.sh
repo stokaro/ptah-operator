@@ -919,6 +919,84 @@ assert_fault_audit_complete() {
 	done
 }
 
+# audit_fault_runtime reaches a Job only once it is Complete or Failed, and a
+# Pod only once its containers have terminated. A Job the scheduling barrier
+# holds is neither, so a proof that removes such a Job, or suspends the schema
+# that owns it, leaves UIDs the watch recorded and no later pass can ever
+# account for, and the phase ends by refusing them. Audit the held Job where it
+# stands instead: read it and every Pod it owns, prove they never started, and
+# scan both. An object that ran nothing wrote no logs, so that is the complete
+# audit it can owe, and the ledgers record it as complete.
+audit_blocked_read_job() {
+	blocked_audit_name=$1
+	blocked_audit_uid=$2
+	[ "$READ_WORKLOAD_BARRIER_ACTIVE" -eq 1 ] ||
+		fail "held Job $blocked_audit_name was audited without the scheduling barrier"
+	blocked_audit_job=$(k -n "$TEST_NAMESPACE" get job "$blocked_audit_name" -o json)
+	printf '%s\n' "$blocked_audit_job" | jq -e \
+		--arg uid "$blocked_audit_uid" '
+      .metadata.uid == $uid and
+      (.status.conditions // [] |
+        all((.type != "Complete" and .type != "Failed") or .status != "True"))
+    ' >/dev/null ||
+		fail "held Job $blocked_audit_name is not the unfinished Job UID $blocked_audit_uid"
+	printf '%s\n' "$blocked_audit_job" | jq -e \
+		--arg controllerImage "$CONTROLLER_IMAGE" \
+		--arg controllerRevision "$CONTROLLER_REVISION" \
+		--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
+      .metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and
+      .metadata.labels["app.kubernetes.io/component"] == "schema-operation" and
+      (.metadata.annotations["operator.ptah.dev/execution-binding-id"] |
+        test("^v1-[0-9a-f]{32}$")) and
+      .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+      .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+      .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
+      .spec.template.metadata.annotations["operator.ptah.dev/execution-binding-id"] ==
+        .metadata.annotations["operator.ptah.dev/execution-binding-id"] and
+      .spec.template.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
+      .spec.template.metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
+      .spec.template.metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion
+    ' >/dev/null ||
+		fail "held fault-test Job $blocked_audit_name lacks its exact controller execution identity"
+	# The Job controller creates the Pod at once and the barrier leaves it
+	# unscheduled, but a Pod that appeared after this audit would reach the watch
+	# with nothing in the ledger. So wait for the Pod this Job owns rather than
+	# auditing whatever exists at this instant.
+	blocked_audit_deadline=$(deadline_from_now)
+	while :; do
+		blocked_audit_pods=$(k -n "$TEST_NAMESPACE" get pods \
+			-l "batch.kubernetes.io/controller-uid=${blocked_audit_uid}" -o json)
+		if [ "$(printf '%s\n' "$blocked_audit_pods" | jq '.items | length')" -gt 0 ]; then
+			break
+		fi
+		[ "$(date +%s)" -lt "$blocked_audit_deadline" ] ||
+			fail "held Job $blocked_audit_name never created the Pod its audit has to cover"
+		sleep 1
+	done
+	printf '%s\n' "$blocked_audit_pods" | jq -e '
+      all(.items[];
+        (.spec.nodeName // "") == "" and
+        ([.status.initContainerStatuses // [], .status.containerStatuses // [],
+          .status.ephemeralContainerStatuses // []] | add |
+          all(.state.running == null and .state.terminated == null)))
+    ' >/dev/null ||
+		fail "a Pod of held Job $blocked_audit_name started before its audit could stand for the whole Job"
+	printf '%s\n' "$blocked_audit_job" >"$RESOURCE_FILE"
+	printf '%s\n' "$blocked_audit_pods" >>"$RESOURCE_FILE"
+	scan_fault_file "$RESOURCE_FILE" \
+		"the held fault-test Job $blocked_audit_name UID $blocked_audit_uid and its unstarted Pods"
+	: >"$RESOURCE_FILE"
+	materialize_fault_job_pod_uids "$blocked_audit_pods"
+	while IFS= read -r blocked_audit_pod_uid; do
+		[ -n "$blocked_audit_pod_uid" ] || continue
+		record_audited_uid "$AUDITED_FAULT_PODS_FILE" "$blocked_audit_pod_uid"
+		record_audited_uid "$FULLY_AUDITED_FAULT_PODS_FILE" "$blocked_audit_pod_uid"
+	done <"$FAULT_JOB_POD_UIDS_FILE"
+	record_audited_uid "$AUDITED_FAULT_JOBS_FILE" "$blocked_audit_uid"
+	record_audited_uid "$SHARED_AUDITED_JOBS_FILE" "$blocked_audit_uid"
+	record_audited_uid "$SHARED_FULLY_AUDITED_JOBS_FILE" "$blocked_audit_uid"
+}
+
 audit_protected_terminal_job() {
 	protected_job_name=$1
 	protected_job_uid=$2
@@ -5101,50 +5179,51 @@ READ_LOSS_JOB_NAME=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_READ_LOSS_SCHEMA
 	-o jsonpath='{.status.activeOperation.jobName}')
 READ_LOSS_JOB_UID=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_READ_LOSS_SCHEMA" \
 	-o jsonpath='{.status.activeOperation.jobUID}')
-# Two refusals rather than `A && B || fail`: ShellCheck 0.9.0, which CI runs,
-# reports SC2015 on that chain and 0.11.0 does not.
+# Two refusals rather than `A && B || fail`, a chain ShellCheck 0.9.x reports as
+# SC2015 and the pinned 0.11.0 does not.
 [ -n "$READ_LOSS_JOB_NAME" ] ||
 	fail "the held read-only operation did not publish its Job name"
 [ -n "$READ_LOSS_JOB_UID" ] ||
 	fail "the held read-only operation did not publish its Job UID"
 assert_read_workload_blocked "$READ_LOSS_JOB_UID" \
 	"the held $READ_LOSS_OPERATION Job this proof removes"
-# Audit before the removal: every watched Job and Pod UID must reach the ledger,
-# and this Job and its Pod stop existing in the next step.
-audit_fault_runtime
+# A held Job is never terminal, so the periodic audit cannot account for it and
+# the next step destroys it. Audit it where it stands.
+audit_blocked_read_job "$READ_LOSS_JOB_NAME" "$READ_LOSS_JOB_UID"
 k -n "$TEST_NAMESPACE" delete job "$READ_LOSS_JOB_NAME" --wait=true >/dev/null
 wait_for_absence job "$READ_LOSS_JOB_NAME"
-read_loss_recovered=$(printf '.status.activeOperation == null or ((.status.activeOperation.jobUID // "") != "%s")' \
-	"$READ_LOSS_JOB_UID")
-wait_for_schema "$PG_READ_LOSS_SCHEMA" "$read_loss_recovered" \
-	"the removed $READ_LOSS_OPERATION operation to be retried or given up"
-k -n "$TEST_NAMESPACE" get job "$READ_LOSS_JOB_NAME" --ignore-not-found -o name |
-	grep -q . && fail "the removed read-only Job was recreated under its own name"
+# Recovery is a replacement Job, not a cleared field. The controller empties
+# jobUID and delays the redispatch by the failure retry interval, so a wait that
+# only refuses the removed UID is satisfied by that intermediate status, and a
+# regression that never dispatches again would pass it.
+read_loss_retried=$(printf '
+      .status.activeOperation != null and
+      .status.activeOperation.type == "%s" and
+      ((.status.activeOperation.jobName // "") | length) > 0 and
+      ((.status.activeOperation.jobUID // "") | length) > 0 and
+      .status.activeOperation.jobUID != "%s"
+    ' "$READ_LOSS_OPERATION" "$READ_LOSS_JOB_UID")
+wait_for_schema "$PG_READ_LOSS_SCHEMA" "$read_loss_retried" \
+	"the removed $READ_LOSS_OPERATION operation to be dispatched again under a new Job"
+[ -z "$(k -n "$TEST_NAMESPACE" get job "$READ_LOSS_JOB_NAME" --ignore-not-found -o name)" ] ||
+	fail "the removed read-only Job was recreated under its own name"
+READ_LOSS_RETRY_NAME=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_READ_LOSS_SCHEMA" \
+	-o jsonpath='{.status.activeOperation.jobName}')
 READ_LOSS_RETRY_UID=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_READ_LOSS_SCHEMA" \
 	-o jsonpath='{.status.activeOperation.jobUID}')
-if [ -n "$READ_LOSS_RETRY_UID" ]; then
-	[ "$READ_LOSS_RETRY_UID" != "$READ_LOSS_JOB_UID" ] ||
-		fail "the retried read-only operation kept the removed Job UID"
-	# The retry is held by the same barrier, and that is what proves the operator
-	# re-dispatched the operation rather than only forgetting the removed Job.
-	assert_read_workload_blocked "$READ_LOSS_RETRY_UID" \
-		"the retried $READ_LOSS_OPERATION Job"
-fi
+[ "$READ_LOSS_RETRY_NAME" != "$READ_LOSS_JOB_NAME" ] ||
+	fail "the retried read-only operation reused the removed Job name"
+# The replacement is held by the same barrier, and that is what proves the
+# operator re-dispatched the operation rather than only forgetting the removed
+# Job. It never runs either, so it is audited where it stands too.
+assert_read_workload_blocked "$READ_LOSS_RETRY_UID" \
+	"the retried $READ_LOSS_OPERATION Job"
+audit_blocked_read_job "$READ_LOSS_RETRY_NAME" "$READ_LOSS_RETRY_UID"
 assert_database_column postgresql "$PG_READ_LOSS_DB" fault_token 0
-# Every Job UID the watch records has to reach the credential ledger, and the
-# audit is throttled to one pass every thirty seconds because it dumps the
-# namespace and reads every manager log. A completed Job survives that window,
-# because cleanup only stamps a five-minute TTL, but a Job removed with its
-# schema does not: garbage collection takes it at once. Releasing the barrier
-# while this schema still existed let the held Job finish and the operator open
-# the next operation of the read chain, and that Job was created after the last
-# audit and collected with the schema, so its UID reached the watch and never
-# reached the ledger.
-#
-# Suspension is the documented stop button for a read-only operation, so the
-# schema is suspended while the barrier still holds it. Nothing new is
-# dispatched after that, which makes the last audit final rather than a race
-# against the next operation.
+# Suspension is the documented stop button for a read-only operation, and it is
+# taken while the barrier still holds the replacement. Nothing is dispatched
+# after it, so the two audits above stay final instead of racing the next
+# operation of the read chain into existence.
 k -n "$TEST_NAMESPACE" patch ptahschema "$PG_READ_LOSS_SCHEMA" --type=merge \
 	-p '{"spec":{"suspend":true}}' >/dev/null
 wait_for_schema "$PG_READ_LOSS_SCHEMA" '
@@ -5152,7 +5231,6 @@ wait_for_schema "$PG_READ_LOSS_SCHEMA" '
       .status.activeOperation == null and
       .status.pendingObservation == null
     ' "the held read-only operation to be discarded by suspension"
-audit_fault_runtime
 k -n "$TEST_NAMESPACE" delete ptahschema "$PG_READ_LOSS_SCHEMA" --wait=false >/dev/null
 wait_for_absence ptahschema "$PG_READ_LOSS_SCHEMA"
 stop_read_workload_barrier
