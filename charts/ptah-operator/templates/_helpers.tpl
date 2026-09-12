@@ -813,7 +813,8 @@ crdupgrade compiles the same pattern.
 A single cluster-wide name. The anchor is not release-scoped: it exists to keep
 the API server's ConfigMap parameter informer alive across the gap between one
 release being uninstalled and the next being installed, so it cannot carry a
-release identity that either release owns.
+release identity that either release owns. templates/parameter-informer-anchor.yaml
+carries the measurement and the upstream references.
 */ -}}
 {{- define "ptah-operator.parameterInformerAnchorName" -}}
 ptah-operator-parameter-informer-anchor

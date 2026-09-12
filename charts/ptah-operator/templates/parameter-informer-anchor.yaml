@@ -16,6 +16,13 @@ same generation is refused with "no params found" although the parameter is
 present. The code is identical in 1.35, 1.36 and 1.37, so every supported
 version behaves this way.
 
+Upstream: kubernetes/kubernetes#133827 reports it, open and triage-accepted
+since September 2025; kubernetes/kubernetes#141015 is the fix for this exact
+case, which reached master during the 1.37 code freeze and is still unmerged,
+so the earliest release that could carry it is past the window this chart
+supports. A CRD parameter kind takes the dynamic-informer path and is not
+affected, which is the structural fix if this pair ever has to go.
+
 This pair is what stays alive across the gap. It is inert on purpose: it names
 a ConfigMap nothing creates, admits whatever it matches, and ignores its own
 failures. It is also deliberately not release-scoped and not part of any

@@ -296,6 +296,15 @@ and a binding that denies on a missing parameter refuses every request it
 matches. Without the anchor, uninstalling the operator would leave the next
 install unable to run its own hooks until the API servers restarted.
 
+The defect is upstream and open:
+[kubernetes/kubernetes#133827](https://github.com/kubernetes/kubernetes/issues/133827)
+reports it, and
+[kubernetes/kubernetes#141015](https://github.com/kubernetes/kubernetes/pull/141015)
+is the fix for this exact case. That fix reached master during the 1.37 code
+freeze and is still unmerged, so no release in the supported window carries it.
+A CRD parameter kind resolves through a different informer path and is not
+affected.
+
 Delete the anchor only while another bound ConfigMap-parameter policy exists,
 or before the API servers restart. Reinstalling the chart recreates it.
 

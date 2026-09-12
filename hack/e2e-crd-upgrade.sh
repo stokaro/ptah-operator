@@ -2933,7 +2933,10 @@ assert_release_runtime_removed() {
 	# what keeps the API server resolving ConfigMap policy parameters at all once
 	# this release's policies are gone, so the uninstall has to leave it behind:
 	# the next install resolves its own parameters through the informer this pair
-	# kept alive.
+	# kept alive. The defect it covers is kubernetes/kubernetes#133827, whose fix
+	# kubernetes/kubernetes#141015 is unmerged; the chart template
+	# charts/ptah-operator/templates/parameter-informer-anchor.yaml carries the
+	# mechanism and the measurement.
 	for anchor_resource in validatingadmissionpolicy validatingadmissionpolicybinding; do
 		kube get "$anchor_resource" ptah-operator-parameter-informer-anchor >/dev/null ||
 			fail "$anchor_resource/ptah-operator-parameter-informer-anchor did not survive uninstall"

@@ -38,6 +38,13 @@ const (
 	admissionConvergenceMutationDenialMessage = "Ptah admission convergence marker rejects persistent updates"
 	admissionConvergenceContractDenialMessage = "Ptah admission convergence marker or activation parameter differs from the exact release contract"
 
+	// Both refusals are treated as transient here, and the second one is only
+	// transient because the chart keeps one bound ConfigMap parameter policy
+	// alive at all times. An API server that has cancelled its ConfigMap
+	// parameter informer never restarts it and refuses this way permanently:
+	// kubernetes/kubernetes#133827, whose fix kubernetes/kubernetes#141015 is
+	// unmerged. charts/ptah-operator/templates/parameter-informer-anchor.yaml
+	// holds the mechanism and the pair that prevents it.
 	admissionConvergenceParamKindNotSynced = "failed to configure binding: paramKind kind `/v1, Kind=ConfigMap` not yet synced to use for admission"
 	admissionConvergenceParamNotFound      = "failed to configure binding: no params found for policy binding with `Deny` parameterNotFoundAction"
 )
