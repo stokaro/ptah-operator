@@ -3861,10 +3861,13 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 			wantError:   "fault lifecycle",
 		},
 		{
-			name:        "fault lifecycle hidden in false branch",
-			old:         `"$ROOT_DIR/hack/e2e-faults.sh"`,
-			replacement: "if false; then\n\t\"$ROOT_DIR/hack/e2e-faults.sh\"\nfi",
-			wantError:   "always-false wrapper",
+			name: "fault lifecycle hidden in false branch",
+			old: "\"$ROOT_DIR/hack/e2e-faults.sh\" ||\n" +
+				"\tfail \"the restart and fault-injection phase failed; its reason is above\"",
+			replacement: "if false; then\n" +
+				"\t\"$ROOT_DIR/hack/e2e-faults.sh\" ||\n" +
+				"\t\tfail \"the restart and fault-injection phase failed; its reason is above\"\nfi",
+			wantError: "always-false wrapper",
 		},
 		{
 			name:        "operation audit omitted",

@@ -2,13 +2,22 @@
 
 set -eu
 
-# A rerun with debug logging produces a line-numbered trace without a source
-# change. GitHub sets RUNNER_DEBUG=1 for "Re-run with debug logging", and
-# E2E_TRACE=1 does the same locally. PS4 is single-quoted so the line number is
-# the traced command's, not this line's.
+# A rerun with debug logging traces this phase without a source change. GitHub
+# sets RUNNER_DEBUG=1 for "Re-run with debug logging", and E2E_TRACE=1 does the
+# same locally. PS4 is single-quoted so each prefix is expanded at the traced
+# command, not here.
+#
+# dash, which is /bin/sh on the runner, has no LINENO: the reference would stay
+# literal in every prefix and, under set -u, print "LINENO: parameter not set"
+# before each traced command. So ask the shell, and name the script alone when
+# it cannot number the line.
 if [ "${RUNNER_DEBUG:-0}" = 1 ] || [ "${E2E_TRACE:-0}" = 1 ]; then
-	# shellcheck disable=SC3028 # LINENO is undefined in strict POSIX sh and set in every shell that runs this.
-	PS4='+ ${0##*/}:${LINENO}: '
+	# shellcheck disable=SC3028 # Read only where the shell sets it; the else branch is the shell that does not.
+	if [ -n "${LINENO:-}" ]; then
+		PS4='+ ${0##*/}:${LINENO}: '
+	else
+		PS4='+ ${0##*/}: '
+	fi
 	set -x
 fi
 
@@ -1668,10 +1677,11 @@ wait_for_late_activation_hook_log_capture_ready() {
 }
 
 # The helper's regular-executable check is spelled as a refusal rather than as
-# `A && B && C || fail`. ShellCheck 0.9.0, which CI runs, reports SC2015 on that
-# chain because the final branch can run when the first test succeeded; here
-# that is the intent, and the if-form says so without the ambiguity. 0.11.0 does
-# not report it at all, so the chain reads clean locally and red in CI.
+# `A && B && C || fail`. ShellCheck 0.9.x reports SC2015 on that chain because
+# the final branch can run when the first test succeeded; here that is the
+# intent, and the if-form says so without the ambiguity. The pinned 0.11.0 does
+# not report it at all, which is how the chain read clean under one version and
+# red under another before support/tools.json made the version exact.
 arm_late_activation_hook_log_captures() {
 	[ -n "$EXPECTED_PREFLIGHT_HOOK_NAME" ] || fail "rendered preflight hook name is unavailable"
 	[ -n "$EXPECTED_RECONCILE_HOOK_NAME" ] || fail "rendered reconcile hook name is unavailable"

@@ -3042,7 +3042,14 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("PostgreSQL lifecycle", `run_engine_lifecycle postgresql PostgreSQL postgres "$PG_SECRET"`),
 		exactSourceLine("external PostgreSQL lifecycle", `run_external_postgresql_lifecycle`),
 		exactSourceLine("MySQL lifecycle", `run_engine_lifecycle mysql MySQL mysql "$MYSQL_SECRET"`),
-		exactSourceLine("fault lifecycle", `"$ROOT_DIR/hack/e2e-faults.sh"`),
+		// The nested phase call is guarded: a phase script prints its own reason
+		// and exits non-zero, and an unguarded call would end this one at that
+		// command with only its EXIT handler left to speak for a phase that had
+		// already spoken.
+		exactSourceLineSequence("fault lifecycle", []string{
+			`"$ROOT_DIR/hack/e2e-faults.sh" ||`,
+			`fail "the restart and fault-injection phase failed; its reason is above"`,
+		}),
 		exactSourceLine("audited operation evidence", `assert_observed_jobs_audited`),
 		exactSourceLine("terminal data-plane lifecycle evidence", `printf '%s\n' 'e2e data plane: PASS PostgreSQL, external PostgreSQL, MySQL, OCI, restart, and fault lifecycle'`),
 	}

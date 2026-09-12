@@ -2357,16 +2357,19 @@ external_pg_main_wiring_count() {
     /^[[:space:]]*run_engine_lifecycle mysql MySQL mysql "\$MYSQL_SECRET"[[:space:]]*$/ && stage == 7 {
       stage = 8; next
     }
-    /^[[:space:]]*"\$ROOT_DIR\/hack\/e2e-faults\.sh"[[:space:]]*$/ && stage == 8 {
+    /^[[:space:]]*"\$ROOT_DIR\/hack\/e2e-faults\.sh" \|\|[[:space:]]*$/ && stage == 8 {
       stage = 9; next
     }
-    /^[[:space:]]*assert_external_postgresql_catalog[[:space:]]*$/ && stage == 9 {
+    /^[[:space:]]*fail "the restart and fault-injection phase failed; its reason is above"[[:space:]]*$/ && stage == 9 {
       stage = 10; next
     }
-    /^[[:space:]]*audit_runtime_credentials[[:space:]]*$/ && stage == 10 {
+    /^[[:space:]]*assert_external_postgresql_catalog[[:space:]]*$/ && stage == 10 {
       stage = 11; next
     }
-    /^[[:space:]]*assert_observed_jobs_audited[[:space:]]*$/ && stage == 11 {
+    /^[[:space:]]*audit_runtime_credentials[[:space:]]*$/ && stage == 11 {
+      stage = 12; next
+    }
+    /^[[:space:]]*assert_observed_jobs_audited[[:space:]]*$/ && stage == 12 {
       count++; stage = 0; next
     }
     END { print count + 0 }

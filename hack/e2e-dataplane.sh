@@ -2,13 +2,22 @@
 
 set -eu
 
-# A rerun with debug logging produces a line-numbered trace without a source
-# change. GitHub sets RUNNER_DEBUG=1 for "Re-run with debug logging", and
-# E2E_TRACE=1 does the same locally. PS4 is single-quoted so the line number is
-# the traced command's, not this line's.
+# A rerun with debug logging traces this phase without a source change. GitHub
+# sets RUNNER_DEBUG=1 for "Re-run with debug logging", and E2E_TRACE=1 does the
+# same locally. PS4 is single-quoted so each prefix is expanded at the traced
+# command, not here.
+#
+# dash, which is /bin/sh on the runner, has no LINENO: the reference would stay
+# literal in every prefix and, under set -u, print "LINENO: parameter not set"
+# before each traced command. So ask the shell, and name the script alone when
+# it cannot number the line.
 if [ "${RUNNER_DEBUG:-0}" = 1 ] || [ "${E2E_TRACE:-0}" = 1 ]; then
-	# shellcheck disable=SC3028 # LINENO is undefined in strict POSIX sh and set in every shell that runs this.
-	PS4='+ ${0##*/}:${LINENO}: '
+	# shellcheck disable=SC3028 # Read only where the shell sets it; the else branch is the shell that does not.
+	if [ -n "${LINENO:-}" ]; then
+		PS4='+ ${0##*/}:${LINENO}: '
+	else
+		PS4='+ ${0##*/}: '
+	fi
 	set -x
 fi
 
@@ -6196,7 +6205,8 @@ E2E_RESULT_ASSERT_BINARY=$RESULT_ASSERT_BINARY \
 E2E_CONTROLLER_IMAGE=$CONTROLLER_IMAGE \
 E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
-	"$ROOT_DIR/hack/e2e-faults.sh"
+	"$ROOT_DIR/hack/e2e-faults.sh" ||
+	fail "the restart and fault-injection phase failed; its reason is above"
 assert_mysql_destructive_refusal_durable
 assert_external_postgresql_catalog
 audit_runtime_credentials
