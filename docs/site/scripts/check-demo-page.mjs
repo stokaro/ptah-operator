@@ -17,6 +17,8 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { rank } from '../src/lib/run-order.mjs';
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const siteRoot = join(scriptDir, '..');
 const repositoryRoot = join(siteRoot, '..', '..');
@@ -119,6 +121,9 @@ async function main() {
   }
 
   const record = JSON.parse(readFileSync(join(repositoryRoot, 'demo', 'recordings', 'runs.json'), 'utf8'));
+  // The same order the page puts them in, read from the same module, so this
+  // check cannot be measuring a different first run from the one on the page.
+  const ordered = [...record.scenarios].sort((left, right) => rank(left.tags?.[0]) - rank(right.tags?.[0]));
   const base = detectBase(distRoot);
   const { server, port } = await startServer(distRoot, base);
   const origin = `http://127.0.0.1:${port}${base}`;
@@ -147,7 +152,7 @@ async function main() {
     // The frame carries the first run in full. Counted from the recording
     // rather than against a figure written here, which would pass whatever the
     // page happened to render.
-    const firstRunLines = record.scenarios[0].events.filter(([kind]) => kind !== 'sync' && kind !== 'wait').length;
+    const firstRunLines = ordered[0].events.filter(([kind]) => kind !== 'sync' && kind !== 'wait').length;
     if (withoutScript.lines < firstRunLines) {
       problems.push(
         `the frame's transcript carries ${withoutScript.lines} lines and the first run has ${firstRunLines}`,
@@ -176,7 +181,7 @@ async function main() {
 
     // A tile opens the run it names. With one run there is no switch to make,
     // and the assertion would pass by comparing a value with itself.
-    const second = record.scenarios[1];
+    const second = ordered[1];
     if (!second) {
       console.warn('check-demo-page.mjs: one run recorded, so switching between tiles was not measured');
     }

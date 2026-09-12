@@ -6,8 +6,10 @@
  */
 import runs from '../../../../demo/recordings/runs.json';
 
-/** Every run, in the catalog's reading order. */
-export const Runs = runs.order.map((id) => runs.scenarios.find((one) => one.id === id)).filter(Boolean);
+import { rank } from './run-order.mjs';
+
+/** Every run, in the reading order, and within a tag as they were recorded. */
+export const Runs = [...runs.scenarios].sort((left, right) => rank(left.tags?.[0]) - rank(right.tags?.[0]));
 
 /**
  * What the player reads, built from the same recording the page renders.
@@ -27,7 +29,8 @@ export function playerCatalog() {
 			caption: run.tagline,
 		};
 	}
-	return { scenarios, pinned: runs.order.slice(0, 1), rotating: runs.order, order: runs.order };
+	const order = Runs.map((run) => run.id);
+	return { scenarios, pinned: order.slice(0, 1), rotating: order, order };
 }
 
 /**

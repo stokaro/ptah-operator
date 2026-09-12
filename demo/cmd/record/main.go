@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -144,7 +143,6 @@ func run(arguments []string, diagnostics io.Writer) error {
 	if existing != nil {
 		record.Scenarios = merge(existing.Scenarios, record.Scenarios)
 	}
-	record.Order = orderOf(record.Scenarios)
 	record.Source = commonSource(record.Scenarios)
 
 	if err := writeRecord(outputFile, record); err != nil {
@@ -262,30 +260,6 @@ func countSteps(loaded []scenario) int {
 		total += len(one.Steps)
 	}
 	return total
-}
-
-// orderOf is the catalog's reading order: by tag, and within a tag by the order
-// the scenarios were recorded. A tag scattered over a grid is decoration; the
-// same tag three tiles in a row is a section.
-func orderOf(recorded []recording) []string {
-	var tags []string
-	byTag := map[string][]string{}
-	for _, one := range recorded {
-		tag := ""
-		if len(one.Tags) > 0 {
-			tag = one.Tags[0]
-		}
-		if _, seen := byTag[tag]; !seen {
-			tags = append(tags, tag)
-		}
-		byTag[tag] = append(byTag[tag], one.ID)
-	}
-	sort.SliceStable(tags, func(first, second int) bool { return first < second })
-	order := make([]string, 0, len(recorded))
-	for _, tag := range tags {
-		order = append(order, byTag[tag]...)
-	}
-	return order
 }
 
 func writeRecord(path string, record runRecord) error {

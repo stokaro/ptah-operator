@@ -14,13 +14,15 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { TagOrder } from '../src/lib/run-order.mjs';
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDir, '..', '..', '..');
 
 // Every run states what it is of, and has checks behind it. A scenario with no
 // check is a session nobody verified, which is the one thing a recording may
 // not be.
-export function problemsIn(record, scenarioIds) {
+export function problemsIn(record, scenarioIds, tagOrder = []) {
   const problems = [];
   const recorded = record.scenarios ?? [];
 
@@ -60,11 +62,19 @@ export function problemsIn(record, scenarioIds) {
   for (const id of scenarioIds) {
     if (!seen.has(id)) problems.push(`demo/scenarios/${id}.yaml has no recorded run`);
   }
-  for (const id of record.order ?? []) {
-    if (!seen.has(id)) problems.push(`the reading order names ${id}, which is not recorded`);
-  }
-  if ((record.order ?? []).length !== recorded.length) {
-    problems.push('the reading order and the recorded runs are different lengths');
+  // The reading order is the site's, not the recording's. What is checked here
+  // is that every tag a run carries has a place in it: a tag nobody ordered
+  // sorts to the end, which is a scenario quietly falling off the front of the
+  // catalog rather than an error anyone would see.
+  for (const run of recorded) {
+    const tag = run.tags?.[0];
+    if (!tag) {
+      problems.push(`${run.id} carries no tag, so the catalog cannot place it`);
+      continue;
+    }
+    if (!tagOrder.includes(tag)) {
+      problems.push(`${run.id} is tagged ${tag}, which the catalog's reading order does not name`);
+    }
   }
   return problems;
 }
@@ -98,17 +108,18 @@ function selftest() {
       PTAH_VERSION: 'v0',
       EXECUTOR_IMAGE: 'registry/x@sha256:ab',
     },
-    order: ['one'],
     scenarios: [
       {
         id: 'one',
+        tags: ['Lab'],
         source: { commit: 'abc' },
         events: [['cmd', 'kubectl get ptahschema']],
         checks: [{ step: 1, passed: true }],
       },
     ],
   };
-  const clean = problemsIn(good, ['one']);
+  const order = ['Lab'];
+  const clean = problemsIn(good, ['one'], order);
   if (clean.length !== 0) throw new Error(`a sound recording reported ${clean.join('; ')}`);
 
   const cases = [
@@ -121,11 +132,20 @@ function selftest() {
     [{ ...good, scenarios: [{ ...good.scenarios[0], source: {} }] }, 'which commit produced it'],
   ];
   for (const [record, want] of cases) {
-    const found = problemsIn(record, ['one']).join('; ');
+    const found = problemsIn(record, ['one'], order).join('; ');
     if (!found.includes(want)) throw new Error(`expected ${want}, found ${found || 'nothing'}`);
   }
-  const missing = problemsIn(good, ['one', 'two']).join('; ');
+  const missing = problemsIn(good, ['one', 'two'], order).join('; ');
   if (!missing.includes('two.yaml has no recorded run')) throw new Error(`expected a missing run, found ${missing}`);
+
+  const untagged = problemsIn(
+    { ...good, scenarios: [{ ...good.scenarios[0], tags: ['Nowhere'] }] },
+    ['one'],
+    order,
+  ).join('; ');
+  if (!untagged.includes('reading order does not name')) {
+    throw new Error(`a tag outside the reading order was accepted: ${untagged}`);
+  }
 
   const live = livenessProblemsIn([['page', 'Live cluster']]);
   if (live.length !== 1) throw new Error('a page calling a replay live was not reported');
@@ -160,7 +180,7 @@ function main() {
     readFileSync(join(scriptDir, '..', 'src', 'pages', 'demo', name), 'utf8'),
   ]);
 
-  const problems = problemsIn(record, scenarioIds).concat(livenessProblemsIn(pages));
+  const problems = problemsIn(record, scenarioIds, TagOrder).concat(livenessProblemsIn(pages));
   if (problems.length > 0) {
     console.error(`check-demo.mjs: ${problems.length} problem(s):\n- ${problems.join('\n- ')}`);
     process.exit(1);

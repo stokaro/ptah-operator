@@ -74,20 +74,6 @@ steps:
 	}
 }
 
-func TestOrderGroupsByTag(t *testing.T) {
-	t.Parallel()
-	order := orderOf([]recording{
-		{ID: "drift", Tags: []string{"Operations"}},
-		{ID: "first-apply", Tags: []string{"Lifecycle"}},
-		{ID: "suspend-resume", Tags: []string{"Operations"}},
-		{ID: "schema-update", Tags: []string{"Lifecycle"}},
-	})
-	want := "drift,suspend-resume,first-apply,schema-update"
-	if got := strings.Join(order, ","); got != want {
-		t.Fatalf("orderOf returned %s, expected %s", got, want)
-	}
-}
-
 func TestMergeReplacesOneRunAndKeepsTheRest(t *testing.T) {
 	t.Parallel()
 	existing := []recording{{ID: "first-apply", Title: "old"}, {ID: "drift", Title: "old"}}

@@ -23,7 +23,7 @@ approve a plan, watch a destructive change refused, close drift, fail and
 recover. Each one is checked while it runs, and published only if every
 condition it claims held.
 
-[Read the recorded runs](/demo/)
+[Read the recorded runs](demo/)
 
 ## Reconciliation model
 
