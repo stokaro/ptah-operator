@@ -2,14 +2,37 @@
 
 set -eu
 
+# A rerun with debug logging produces a line-numbered trace without a source
+# change. GitHub sets RUNNER_DEBUG=1 for "Re-run with debug logging", and
+# E2E_TRACE=1 does the same locally. PS4 is single-quoted so the line number is
+# the traced command's, not this line's.
+if [ "${RUNNER_DEBUG:-0}" = 1 ] || [ "${E2E_TRACE:-0}" = 1 ]; then
+	# shellcheck disable=SC3028 # LINENO is undefined in strict POSIX sh and set in every shell that runs this.
+	PS4='+ ${0##*/}:${LINENO}: '
+	set -x
+fi
+
 KUBECONFIG_FILE=${E2E_KUBECONFIG:?E2E_KUBECONFIG is required}
 OPERATOR_NAMESPACE=${E2E_OPERATOR_NAMESPACE:?E2E_OPERATOR_NAMESPACE is required}
 TEST_NAMESPACE=${E2E_TEST_NAMESPACE:?E2E_TEST_NAMESPACE is required}
 HELM_RELEASE=${E2E_HELM_RELEASE:?E2E_HELM_RELEASE is required}
 CHART_PACKAGE=${E2E_CHART_PACKAGE:?E2E_CHART_PACKAGE is required}
 
+# A command that fails outside a guard calling fail ends the shell with no
+# reason printed, and the EXIT trap then dumps diagnostics that explain
+# nothing. So fail records that it spoke, in a file rather than a variable
+# so that a fail inside a subshell still counts, and the trap says so when
+# nothing did.
+PHASE_REASON_MARKER=${TMPDIR:-/tmp}/ptah-e2e-reason-cert-rotation.$$
+
 fail() {
 	printf 'e2e certificate rotation: %s\n' "$*" >&2
+	# Tolerant of an unset marker: this function is also extracted and run on
+	# its own by hack/e2e_cert_rotation_test.go, and a reporting helper that
+	# fails is worse than one that reports nothing.
+	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
+		: >"$PHASE_REASON_MARKER" 2>/dev/null || true
+	fi
 	exit 1
 }
 
@@ -339,6 +362,14 @@ cleanup_upgrade_files() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
+	# The marker is unset when this handler is extracted and run on its own
+	# by hack/e2e_cert_rotation_test.go; there is nothing to report then.
+	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
+		if [ "$status" -ne 0 ] && [ ! -f "$PHASE_REASON_MARKER" ]; then
+			printf 'e2e certificate rotation: exited with status %s at a command that failed under set -e; no proof reported a reason\n' "$status" >&2
+		fi
+		rm -f -- "$PHASE_REASON_MARKER"
+	fi
 	if [ "$LEGACY_SECRET_RESTORE_REQUIRED" -eq 1 ] && ! restore_legacy_secret; then
 		printf '%s\n' 'e2e certificate rotation: failure-atomic legacy Secret restoration failed' >&2
 		printf 'e2e certificate rotation: protected recovery files retained at %s\n' \

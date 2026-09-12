@@ -2,6 +2,16 @@
 
 set -eu
 
+# A rerun with debug logging produces a line-numbered trace without a source
+# change. GitHub sets RUNNER_DEBUG=1 for "Re-run with debug logging", and
+# E2E_TRACE=1 does the same locally. PS4 is single-quoted so the line number is
+# the traced command's, not this line's.
+if [ "${RUNNER_DEBUG:-0}" = 1 ] || [ "${E2E_TRACE:-0}" = 1 ]; then
+	# shellcheck disable=SC3028 # LINENO is undefined in strict POSIX sh and set in every shell that runs this.
+	PS4='+ ${0##*/}:${LINENO}: '
+	set -x
+fi
+
 unset CDPATH
 BOOTSTRAP_ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
 # The private re-entry argument only selects the verification phase. It never
@@ -110,8 +120,21 @@ SKIPPED_PHASES=
 # later host subprocess can inherit their values.
 unset REGISTRY_PASSWORD EXTERNAL_PG_ADMIN_PASSWORD EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL
 
+# A command that fails outside a guard calling fail ends the shell with no
+# reason printed, and the EXIT trap then dumps diagnostics that explain
+# nothing. So fail records that it spoke, in a file rather than a variable
+# so that a fail inside a subshell still counts, and the trap says so when
+# nothing did.
+PHASE_REASON_MARKER=${TMPDIR:-/tmp}/ptah-e2e-reason-kind.$$
+
 fail() {
 	printf 'e2e: %s\n' "$*" >&2
+	# Tolerant of an unset marker: this function is also extracted and run on
+	# its own by hack/e2e_cert_rotation_test.go, and a reporting helper that
+	# fails is worse than one that reports nothing.
+	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
+		: >"$PHASE_REASON_MARKER" 2>/dev/null || true
+	fi
 	exit 1
 }
 
@@ -1256,6 +1279,14 @@ cleanup() {
 	# sets it, and the caller removes them by name afterwards.
 	if [ "$status" -ne 0 ] && [ "${E2E_KEEP_ON_FAILURE:-0}" = 1 ]; then
 		trap - EXIT
+	# The marker is unset when this handler is extracted and run on its own
+	# by hack/e2e_cert_rotation_test.go; there is nothing to report then.
+	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
+		if [ "$status" -ne 0 ] && [ ! -f "$PHASE_REASON_MARKER" ]; then
+			printf 'e2e: exited with status %s at a command that failed under set -e; no proof reported a reason\n' "$status" >&2
+		fi
+		rm -f -- "$PHASE_REASON_MARKER"
+	fi
 		printf 'e2e: E2E_KEEP_ON_FAILURE=1: retaining cluster %s (kubeconfig %s), registry %s, database %s and %s\n' \
 			"$CLUSTER_NAME" "$KUBECONFIG_FILE" "$REGISTRY_CONTAINER" "$EXTERNAL_PG_CONTAINER" "$WORK_DIR" >&2
 		exit "$status"
