@@ -10,6 +10,12 @@
  * demonstration's own narration (typed too), and everything else arrives whole.
  * `sync` moves the pill in the terminal bar, `wait` is a beat, `blank` is a
  * spacer.
+ *
+ * The comments below name ptah.run's two surfaces -- the hero that plays by
+ * itself and the listed sessions that wait to be asked -- because that is where
+ * each behavior was decided. This site has only the second: every frame here
+ * carries `data-demo-static`, so nothing starts without being asked, and the
+ * hero paths are the ones a reader of this copy will not reach.
  */
 import { CLASS, esc, wideRuns } from "./transcript.mjs";
 
@@ -485,8 +491,10 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
     var narrow = window.matchMedia("(max-width: 720px)");
 
     function autoplays() {
-      // A listed session never starts itself: twenty-four of them would be
-      // twenty-four things moving on one page.
+      // A listed session never starts itself: a page of them would be a page of
+      // things moving at once. Pressing Play is a request, and it is honored
+      // under reduced motion too -- what the preference governs is what starts
+      // without being asked.
       return demo.hasAttribute("data-demo-autoplay") && !still.matches && !narrow.matches;
     }
 
