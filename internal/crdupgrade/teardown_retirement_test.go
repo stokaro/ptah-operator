@@ -173,13 +173,8 @@ func TestTeardownRetirementPhaseIsDerivedFromExactActivation(t *testing.T) {
 	t.Parallel()
 
 	guard := NewTeardownRetirementGuard(teardownRetirementTestRollout())
-	bootstrap := activationObject(guard.rollout.releaseActivationGuard(), 0)
-	active := bootstrap.DeepCopy()
-	active.Data = map[string]string{
-		activeReleaseDataKey:         strconv.FormatInt(int64(guard.rollout.ReleaseSequence), 10),
-		controllerCredentialsDataKey: string(ControllerCredentialsActive),
-	}
-	draining := bootstrap.DeepCopy()
+	active := activationObject(guard.rollout.releaseActivationGuard(), 0)
+	draining := active.DeepCopy()
 	draining.Data = map[string]string{
 		activeReleaseDataKey:                "0",
 		controllerCredentialsDataKey:        string(ControllerCredentialsDraining),
@@ -188,7 +183,7 @@ func TestTeardownRetirementPhaseIsDerivedFromExactActivation(t *testing.T) {
 	}
 	foreignDrain := draining.DeepCopy()
 	foreignDrain.Data[controllerCredentialsAttemptDataKey] = strings.Repeat("f", 64)
-	foreignObject := bootstrap.DeepCopy()
+	foreignObject := active.DeepCopy()
 	foreignObject.Labels[instanceLabel] = "foreign"
 
 	tests := []struct {
@@ -199,9 +194,6 @@ func TestTeardownRetirementPhaseIsDerivedFromExactActivation(t *testing.T) {
 		wantErr string
 	}{
 		{name: "credential active", object: active, want: TeardownRetirementActive},
-		// A release ends by emptying this parameter, so a verified object that
-		// names no active release is as terminal as an absent one.
-		{name: "emptied to bootstrap", object: bootstrap, want: TeardownRetirementTerminal},
 		{name: "matching credential drain", object: draining, want: TeardownRetirementActive},
 		{name: "activation absent", err: apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, ReleaseActivationName), want: TeardownRetirementTerminal},
 		{name: "unauthorized read", err: apierrors.NewForbidden(schema.GroupResource{Resource: "configmaps"}, ReleaseActivationName, errors.New("denied")), wantErr: "get teardown retirement activation"},

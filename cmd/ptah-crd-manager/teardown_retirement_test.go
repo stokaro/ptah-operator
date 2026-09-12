@@ -535,7 +535,7 @@ func TestTeardownRetirementCredentialObserverHonorsCancellation(t *testing.T) {
 	}
 }
 
-func TestTeardownRetirementFinalizerEmptiesActivationAfterTheMarkers(t *testing.T) {
+func TestTeardownRetirementFinalizerDeletesMarkersBeforeActivation(t *testing.T) {
 	t.Parallel()
 
 	guard := teardownRetirementManagerTestGuard()
@@ -575,7 +575,7 @@ func TestTeardownRetirementFinalizerEmptiesActivationAfterTheMarkers(t *testing.
 	if err := finalizer.Finalize(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{secondary.Name}
+	wantOrder := []string{secondary.Name, crdupgrade.ReleaseActivationName}
 	if !reflect.DeepEqual(client.deletes, wantOrder) {
 		t.Fatalf("deletion order = %v, want %v", client.deletes, wantOrder)
 	}
@@ -585,23 +585,8 @@ func TestTeardownRetirementFinalizerEmptiesActivationAfterTheMarkers(t *testing.
 			t.Errorf("ConfigMap/%s deletion lacks UID/resourceVersion preconditions", name)
 		}
 	}
-	// The parameter stays, emptied. A deleted one is what the next release in
-	// this namespace cannot recover from.
-	remaining := client.objects[crdupgrade.ReleaseActivationName]
-	if remaining == nil {
-		t.Fatal("finalizer deleted the release activation parameter")
-	}
-	if !reflect.DeepEqual(remaining.Data, crdupgrade.ReleaseActivationBootstrapData()) {
-		t.Fatalf("release activation data = %v, want the bootstrap state", remaining.Data)
-	}
-	if len(client.updates) != 1 || client.updates[0].Name != crdupgrade.ReleaseActivationName {
-		t.Fatalf("updates = %v, want exactly the release activation reset", client.updates)
-	}
 	if err := finalizer.Finalize(context.Background()); err != nil {
 		t.Fatalf("completed retry: %v", err)
-	}
-	if len(client.updates) != 1 {
-		t.Fatalf("a completed retry rewrote the parameter: %v", client.updates)
 	}
 	if len(client.deletes) != len(wantOrder) {
 		t.Fatalf("completed retry issued more mutations: %v", client.deletes)
@@ -626,11 +611,9 @@ func TestTeardownRetirementFinalizerAcceptsOnlyContiguousRetryPrefixes(t *testin
 		wantDeleteCount int
 		wantError       string
 	}{
-		// Only the markers are deleted now; the activation parameter is emptied
-		// in place, so each of these expects one deletion fewer than it did.
-		{name: "fresh", presentMarkers: []bool{true, true}, activation: true, wantDeleteCount: 2},
-		{name: "first marker already deleted", presentMarkers: []bool{false, true}, activation: true, wantDeleteCount: 1},
-		{name: "all markers already deleted", presentMarkers: []bool{false, false}, activation: true, wantDeleteCount: 0},
+		{name: "fresh", presentMarkers: []bool{true, true}, activation: true, wantDeleteCount: 3},
+		{name: "first marker already deleted", presentMarkers: []bool{false, true}, activation: true, wantDeleteCount: 2},
+		{name: "all markers already deleted", presentMarkers: []bool{false, false}, activation: true, wantDeleteCount: 1},
 		{name: "complete", presentMarkers: []bool{false, false}, activation: false},
 		{name: "non-contiguous marker prefix", presentMarkers: []bool{true, false}, activation: true, wantError: "non-contiguous"},
 		{name: "activation absent before retained secondary marker", presentMarkers: []bool{true, false}, activation: false, wantError: "retains"},
@@ -715,10 +698,7 @@ func TestTeardownRetirementFinalizerRejectsForeignObjectWithoutMutation(t *testi
 func TestTeardownRetirementFinalizerResumesAfterEveryDelete(t *testing.T) {
 	t.Parallel()
 
-	// One deletion happens now, the retained secondary marker. What follows it
-	// is the activation reset, so a crash after that deletion is the resume
-	// point this has to survive.
-	for crashAfter := 1; crashAfter <= 1; crashAfter++ {
+	for crashAfter := 1; crashAfter <= 2; crashAfter++ {
 		t.Run(strconv.Itoa(crashAfter), func(t *testing.T) {
 			t.Parallel()
 			guard := teardownRetirementManagerTestGuard()
@@ -763,12 +743,8 @@ func TestTeardownRetirementFinalizerResumesAfterEveryDelete(t *testing.T) {
 			if err := finalizer.Finalize(context.Background()); err != nil {
 				t.Fatalf("retry Finalize() error = %v", err)
 			}
-			if len(client.objects) != 2 || client.objects[dedicated.Name] == nil {
+			if len(client.objects) != 1 || client.objects[dedicated.Name] == nil {
 				t.Fatalf("retry retained %d ConfigMaps; dedicated marker present = %t", len(client.objects), client.objects[dedicated.Name] != nil)
-			}
-			activation := client.objects[crdupgrade.ReleaseActivationName]
-			if activation == nil || !reflect.DeepEqual(activation.Data, crdupgrade.ReleaseActivationBootstrapData()) {
-				t.Fatalf("retry left the activation parameter as %v, want the bootstrap state", activation)
 			}
 		})
 	}

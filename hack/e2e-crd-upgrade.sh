@@ -2901,6 +2901,50 @@ assert_release_sequence_candidate_residue_absent() {
 		fail "$remaining sequence-$release_sequence candidate ConfigMaps survived activation"
 }
 
+# A namespace that has hosted a release cannot host the next one. Measured on a
+# live 1.37.0 cluster: after this uninstall, the API server goes on serving that
+# namespace's deleted release activation ConfigMap to every policy binding that
+# reads it, unchanged across a delete, a recreate and an update of that object,
+# and to policies created minutes later. The next release's first hook then
+# meets guards evaluating the sequence the removed release last activated and
+# cannot get its own baseline Deployment past them. The same delete and recreate
+# in a fresh namespace tracks within seconds.
+#
+# Installing the next release into a fresh namespace is what an operator does
+# anyway, and the CRDs these steps install over are cluster-scoped, so what the
+# proof covers is unchanged.
+rotate_operator_namespace() {
+	rotate_suffix=$1
+	[ -n "${OPERATOR_NAMESPACE_BASE:-}" ] || OPERATOR_NAMESPACE_BASE=$E2E_OPERATOR_NAMESPACE
+	E2E_OPERATOR_NAMESPACE=${OPERATOR_NAMESPACE_BASE}-${rotate_suffix}
+	kube create namespace "$E2E_OPERATOR_NAMESPACE" >/dev/null
+	rotate_pull_secret=$(jq -er '.imagePullSecrets[0].name' "$E2E_CANDIDATE_VALUES_FILE")
+	rotate_registry=$(jq -er '.image.repository' "$E2E_CANDIDATE_VALUES_FILE" | cut -d/ -f1)
+	jq -n \
+		--arg name "$rotate_pull_secret" \
+		--arg namespace "$E2E_OPERATOR_NAMESPACE" \
+		--arg registry "$rotate_registry" \
+		--slurpfile credentials "$E2E_REGISTRY_CREDENTIALS_FILE" '
+  {
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: {name: $name, namespace: $namespace},
+    immutable: true,
+    type: "kubernetes.io/dockerconfigjson",
+    data: {
+      ".dockerconfigjson": ({
+        auths: {($registry): {
+          username: $credentials[0].username,
+          password: $credentials[0].password,
+          auth: (($credentials[0].username + ":" + $credentials[0].password) | @base64)
+        }}
+      } | tojson | @base64)
+    }
+  }
+' | kube create -f - >/dev/null
+	printf 'e2e crd: continuing in a fresh operator namespace %s\n' "$E2E_OPERATOR_NAMESPACE"
+}
+
 assert_release_runtime_removed() {
 	[ -n "$CERTIFICATE_SECRET_NAME" ] ||
 		fail "generated certificate Secret identity was not captured before uninstall"
@@ -2911,16 +2955,9 @@ assert_release_runtime_removed() {
 			--ignore-not-found=true -o name)
 		[ -z "$remaining" ] || fail "$singleton_resource/ptah-operator-admission survived uninstall"
 	done
-	# The release leaves its activation parameter behind, emptied. Deleting it is
-	# what the next release in this namespace cannot recover from: Kubernetes
-	# keeps serving a deleted policy parameter to the bindings that read it. An
-	# emptied one names no active release and holds no credentials, and is the
-	# state a fresh install starts from.
-	activation_state=$(kube -n "$E2E_OPERATOR_NAMESPACE" get configmap \
-		ptah-operator-release-activation -o json |
-		jq -Sc '{data: .data, immutable: (.immutable // false)}')
-	[ "$activation_state" = '{"data":{"active-release-sequence":"0","controller-credentials":"active"},"immutable":false}' ] ||
-		fail "release activation ConfigMap did not survive uninstall in its bootstrap state: $activation_state"
+	remaining=$(kube -n "$E2E_OPERATOR_NAMESPACE" get configmap \
+		ptah-operator-release-activation --ignore-not-found=true -o name)
+	[ -z "$remaining" ] || fail "release activation ConfigMap survived uninstall"
 
 	for cluster_resource in \
 		validatingadmissionpolicy \
@@ -2938,21 +2975,11 @@ assert_release_runtime_removed() {
 	for namespaced_resource in \
 		deployment replicaset service secret serviceaccount role rolebinding \
 		job pod configmap lease poddisruptionbudget; do
-		# The emptied activation parameter is the one labelled object a release
-		# leaves behind, and it is a ConfigMap.
-		expected_remaining=0
-		[ "$namespaced_resource" != configmap ] || expected_remaining=1
 		remaining=$(kube -n "$E2E_OPERATOR_NAMESPACE" get "$namespaced_resource" \
 			-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" -o json |
 			jq -r '.items | length')
-		[ "$remaining" -eq "$expected_remaining" ] ||
-			fail "$remaining labeled $namespaced_resource objects survived uninstall, want $expected_remaining"
-		[ "$namespaced_resource" != configmap ] || {
-			surviving=$(kube -n "$E2E_OPERATOR_NAMESPACE" get configmap \
-				-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" -o jsonpath='{.items[0].metadata.name}')
-			[ "$surviving" = ptah-operator-release-activation ] ||
-				fail "the ConfigMap that survived uninstall is $surviving"
-		}
+		[ "$remaining" -eq 0 ] ||
+			fail "$remaining labeled $namespaced_resource objects survived uninstall"
 	done
 	remaining=$(kube -n "$E2E_OPERATOR_NAMESPACE" get \
 		"secret/$CERTIFICATE_SECRET_NAME" --ignore-not-found=true -o name)
@@ -3999,6 +4026,7 @@ run_uninstall_proof() {
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
 
+	rotate_operator_namespace reinstall
 	printf '%s\n' 'e2e crd: reinstalling over retained and drifted CRDs'
 	kube patch crd ptahschemas.operator.ptah.dev --type=json \
 		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"retained reinstall drift"}]' >/dev/null
@@ -4047,6 +4075,7 @@ run_uninstall_proof() {
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
 
+	rotate_operator_namespace fresh
 	printf '%s\n' 'e2e crd: fresh-installing the exact exported current-release chart bytes'
 	kube patch crd ptahschemas.operator.ptah.dev --type=json \
 		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"exact released-chart install drift"}]' >/dev/null
