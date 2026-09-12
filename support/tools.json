@@ -1,0 +1,8 @@
+{
+  "description": "Exact versions of the third-party tools the static gate refuses to run without. ShellCheck findings are version-dependent, so an unpinned version makes a local pass and a CI pass two different claims.",
+  "shellcheck": {
+    "version": "v0.11.0",
+    "linuxAmd64Url": "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz",
+    "linuxAmd64Sha256": "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198"
+  }
+}

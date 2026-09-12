@@ -251,13 +251,30 @@ done
 sh -n "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 dash -n "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 
-# The version is printed because these findings are version-dependent and the
-# mismatch is otherwise invisible: shellcheck 0.11.0 reports an unreachable trap
-# handler as SC2329 on the function, while 0.9.x and 0.10.x report SC2317 on
-# each command in its body. A suppression naming only one of the two is green
-# for whoever ran it and red on the other, which is how a pull request reached
-# review with a file that passes locally and fails here.
-printf 'e2e static: shellcheck %s\n' "$(shellcheck --version | awk '/^version:/ { print $2 }')"
+# These findings are version-dependent, so an unpinned version makes a local pass
+# and a CI pass two different claims. 0.11.0 reports an unreachable trap handler
+# as SC2329 on the function while 0.9.x and 0.10.x report SC2317 on each command
+# in its body, and 0.9.x reports SC2015 on an `A && B || fail` chain that 0.11.0
+# does not. Both differences have already produced a pull request that was green
+# for whoever ran it and red here.
+#
+# So the version is exact, the way the kind version is, and the CI workflow
+# installs this one from support/tools.json rather than taking whatever the
+# runner image happens to ship.
+EXPECTED_SHELLCHECK_VERSION=$(jq -r '.shellcheck.version // empty' "$ROOT_DIR/support/tools.json")
+[ -n "$EXPECTED_SHELLCHECK_VERSION" ] || {
+	printf '%s\n' 'e2e static: support/tools.json does not declare the required shellcheck version' >&2
+	exit 1
+}
+ACTUAL_SHELLCHECK_VERSION=v$(shellcheck --version | awk '/^version:/ { print $2 }')
+[ "$ACTUAL_SHELLCHECK_VERSION" = "$EXPECTED_SHELLCHECK_VERSION" ] || {
+	printf 'e2e static: shellcheck %s is required, got %s\n' \
+		"$EXPECTED_SHELLCHECK_VERSION" "$ACTUAL_SHELLCHECK_VERSION" >&2
+	printf 'e2e static: %s carries it\n' \
+		"$(jq -r '.shellcheck.linuxAmd64Url // "the ShellCheck release page"' "$ROOT_DIR/support/tools.json")" >&2
+	exit 1
+}
+printf 'e2e static: shellcheck %s\n' "$ACTUAL_SHELLCHECK_VERSION"
 shellcheck "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
