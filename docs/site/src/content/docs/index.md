@@ -1,6 +1,11 @@
 ---
 title: Ptah Operator
 description: A Kubernetes control plane that converges PostgreSQL and MySQL schemas from immutable OCI artifacts.
+# Starlight appends the site title to every page title. This page is named
+# after the site, so without the override its tab reads the name twice.
+head:
+  - tag: title
+    content: Ptah Operator
 ---
 
 Ptah Operator is a Kubernetes-native control plane for continuously converging

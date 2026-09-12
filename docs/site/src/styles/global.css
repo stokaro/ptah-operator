@@ -1,0 +1,366 @@
+@layer base, starlight, theme, components, utilities;
+
+@import '@astrojs/starlight-tailwind';
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+
+@theme {
+  /* The two faces the documentation shares with ptah.run; see fonts.css. */
+  --font-sans: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --color-accent-50: oklch(0.97 0.025 230);
+  --color-accent-100: oklch(0.93 0.05 230);
+  --color-accent-200: oklch(0.88 0.075 230);
+  --color-accent-300: oklch(0.8 0.11 230);
+  --color-accent-400: oklch(0.71 0.15 230);
+  --color-accent-500: oklch(0.63 0.18 230);
+  /* Light-theme links and selected navigation use this value against white.
+   * Keep it at the same hue as the brand blue, but dark enough for WCAG AA
+   * body-text contrast and for white selected-item text. */
+  --color-accent-600: oklch(0.47 0.16 238);
+  --color-accent-700: oklch(0.47 0.16 238);
+  --color-accent-800: oklch(0.39 0.13 240);
+  --color-accent-900: oklch(0.31 0.09 242);
+  --color-accent-950: oklch(0.22 0.06 245);
+
+  --color-gray-50: oklch(0.985 0.003 250);
+  --color-gray-100: oklch(0.95 0.006 250);
+  --color-gray-200: oklch(0.9 0.009 250);
+  --color-gray-300: oklch(0.8 0.012 250);
+  --color-gray-400: oklch(0.65 0.015 250);
+  --color-gray-500: oklch(0.51 0.018 250);
+  --color-gray-600: oklch(0.4 0.018 250);
+  --color-gray-700: oklch(0.32 0.016 250);
+  --color-gray-800: oklch(0.24 0.014 250);
+  --color-gray-900: oklch(0.18 0.012 250);
+  --color-gray-950: oklch(0.13 0.01 250);
+}
+
+/*
+ * Starlight uses one 18.75rem value for both desktop side rails. That leaves
+ * the navigation room it does not need and lets the table of contents claim a
+ * large share of a laptop viewport. Ptah keeps the two jobs independent: a
+ * 16rem navigation rail and a narrower 14.5rem context rail. The Ptah design
+ * draws the context rail at 220px; the 14.5rem measured here stays, as the
+ * reading measures below do (stokaro/ptah#2893).
+ *
+ * These rules are unlayered so they can override Starlight's layered component
+ * styles without depending on selector weight. Below 80rem the page has no
+ * context rail at all -- the band below says why -- so only the left rail
+ * width applies there.
+ *
+ * Two layouts share this file. The default, "envelope", is what a reader
+ * arrives to. The docs concept's "column" layout is opt-in under
+ * `:root[data-ptah-layout='column']`; the block after this one sets its
+ * measures and the `>= 80rem` block at the end of the file places its frame.
+ *
+ * Both ship. Head.astro's switch renders in production too, `?layout=column`
+ * selects the second, and Head.astro remembers the choice, so a reader who
+ * presses the control stays in that layout across pages. This comment said the
+ * opposite once, and the layout nothing claimed to ship was measured by
+ * nothing: scripts/check-responsive.mjs takes the layout as an axis now and
+ * runs its pass under each (stokaro/ptah#2930).
+ */
+:root {
+	--sl-sidebar-width: 16rem;
+	--ptah-toc-width: 14.5rem;
+	--sl-content-width: 70rem;
+	--ptah-prose-width: 60rem;
+	/* The article and table of contents need at least this much room. The
+	 * padding belongs to ContentPanel, so include it here rather than making the
+	 * article's wide-content measure narrower than 70rem. */
+	--ptah-doc-frame-min-width: calc(
+		var(--sl-content-width) + var(--sl-content-pad-x) + var(--sl-content-pad-x) +
+			var(--ptah-toc-width)
+	);
+	/* Cap the blank space between the navigation rail and the article frame so
+	 * the prose starts no farther from navigation than one navigation-rail
+	 * width. ContentPanel supplies the remaining padding before the prose. */
+	--ptah-doc-frame-gutter-cap: calc(var(--sl-sidebar-width) - var(--sl-content-pad-x));
+}
+
+/*
+ * The concept's layout: a reading column with a wide gutter (Docs Concept,
+ * notes and implementation notes; screens 1a, 1b, 1c).
+ *
+ * The 60rem prose column above is about 120 characters per line at 16px;
+ * comfortable reading is 65 to 80. Prose therefore drops to 44rem (704px, about
+ * 72 characters at the concept's 16.5px). The things that are wide because
+ * their content is wide -- code, tables, figures, .ptah-wide-content -- take
+ * the article pane less the panel's 48px padding a side, on the same left
+ * edge as the prose. That shell is a function of the viewport rather than a
+ * figure: 720px at 1280, where the pane beside the rail is 1024 and the
+ * contents rail 208; 884px once the frame reaches its 80rem cap, where the
+ * contents rail has grown to 300 (`--ptah-toc-width` above). The 60rem figure
+ * the envelope's shell suggests is not reached at any width this repository
+ * measures, and a table that needs more than the shell scrolls inside its own
+ * container (`.ptah-wide-table`, applied by the page or its generator) rather
+ * than losing its right-hand columns -- stokaro/ptah#2941. The contents rail
+ * narrows from 14.5rem to 13rem (208px) at 1280: its links are 13.5px sans,
+ * and the concept draws the rail at 208 in screen 1a.
+ *
+ * The frame that holds the article and the contents rail is capped at 80rem
+ * (1280px). That figure is the width of screen 1a, where the frame fills the
+ * pane beside the rail exactly: 256 (rail) + 48 + 720 (article column) + 48 +
+ * 208 (contents) = 1280. On wider screens the frame stops at 1280 and the pane
+ * splits the surplus 0.6 : 1 around it -- see the `>= 80rem` block at the end
+ * of the file for the arithmetic.
+ */
+:root[data-ptah-layout='column'] {
+	--ptah-prose-width: 44rem;
+	--sl-content-width: 60rem;
+	/* The contents rail grows with the frame: 13rem (208px) beside a 64rem
+	 * pane at 1280 (screen 1a), 18.75rem (300px) once the frame reaches its
+	 * 80rem cap (screen 1b, drawn at 2560). The pane is the viewport less the
+	 * 16rem navigation rail, so the rail widens by 92px over the 256px between
+	 * those two panes, 0.359375 of each pixel, and stops with the frame. A rail
+	 * fixed at 13rem left a 176px column for the "Copy as Markdown" control and
+	 * the headings while the frame's far gutter stood empty beside it. */
+	--ptah-toc-width: clamp(13rem, calc(13rem + (100vw - 80rem) * 0.359375), 18.75rem);
+	/* Screen 1b's grid, `minmax(64px, 0.6fr) minmax(0, 1280px) 1fr`, gives the
+	 * gutter on the navigation side 0.6 of a unit and the far gutter 1. Of the
+	 * surplus, the left share is therefore 0.6 / 1.6 = 0.375 and the right
+	 * 1 / 1.6 = 0.625. */
+	--ptah-doc-frame-max-width: 80rem;
+	--ptah-doc-frame-left-share: 0.375;
+}
+
+/*
+ * The outer article shell keeps 70rem available for code, diagrams, and wide
+ * tables. Ordinary prose and headings use a 60rem reading column with the same
+ * left edge. The article-and-TOC frame below centers while its outer gutters
+ * fit below the cap. On wider screens it grows toward the TOC instead of
+ * pushing the reading column farther away from navigation.
+ *
+ * The column layout changes the two measures (60rem shell, 44rem prose), not
+ * these rules: prose narrows by `max-inline-size`, which can never make a
+ * child wider than its shell, so the same selectors serve both layouts and
+ * neither can scroll the page sideways.
+ */
+.sl-markdown-content > :where(
+	p,
+	ul,
+	ol,
+	blockquote,
+	dl,
+	hr,
+	.sl-heading-wrapper,
+	details,
+	.starlight-aside
+) {
+	max-inline-size: var(--ptah-prose-width);
+	margin-inline: 0 auto;
+}
+
+.sl-markdown-content > :where(p:has(> img:only-child), figure, .ptah-wide-content) {
+	max-inline-size: none;
+}
+
+.main-pane .page-heading {
+	max-inline-size: var(--ptah-prose-width);
+	margin-inline: 0 auto;
+}
+
+/*
+ * The "On this page" strip that stands in for the contents rail is 40px tall,
+ * as the concept draws it on the phone (1d) and in the 72-80rem band (1c);
+ * Starlight's props.css makes it 3rem (48px). PageFrame pads the page top by
+ * this variable, MobileTableOfContents sizes the strip's summary by it, and
+ * Page.astro adds it to `scroll-padding-top`, so the one value keeps all three
+ * in step and toc.css only has to draw the strip.
+ *
+ * Starlight zeroes the variable from 72rem in a layered rule, and an unlayered
+ * `:root` value would beat that at every width, leaving 40px of dead padding
+ * above the article once the rail is back. So the value is set only below
+ * 80rem: on the phone and in the band, where the strip is drawn. Above 80rem
+ * Starlight's own 0rem applies. Pages without a table of contents keep 0 at
+ * every width: Page.astro's `html:not([data-has-toc])` outweighs `:root`.
+ */
+@media (width < 80rem) {
+	:root {
+		--sl-mobile-toc-height: 2.5rem;
+	}
+}
+
+/*
+ * Starlight gives the table of contents a rail of its own from 72rem. That
+ * breakpoint belongs to a column pinned at 45rem, where the rail cost the
+ * reader nothing the layout was going to hand them anyway. Once the column can
+ * grow, the rail costs it 248px: measured, the column read 616px at 1152 --
+ * narrower than the same page reads at 1024 (736px) or at 1100 (812px) -- so
+ * widening the window by one pixel took 247px of text away.
+ *
+ * The rail therefore starts where it stops taking anything: at 80rem the
+ * column beside it measures 744px, still wider than the 45rem the site read
+ * before this change. Between 72rem and 80rem the page keeps its single column
+ * and Starlight's mobile disclosure, exactly as it does at 71rem.
+ *
+ * The column layout behaves the same way in this band: its 44rem prose fits the
+ * single column at 1024 with room to spare (768px pane, 24px padding a side,
+ * 720px shell), so nothing in this block needs to know which layout is on.
+ *
+ * A media query cannot read a custom property, so 80rem is spelled out in both
+ * blocks and the two have to move together. The upper bound is exclusive
+ * (`width < 80rem`) rather than a `max-width` a hair below it: a `max-width` of
+ * 79.99rem and a `min-width` of 80rem leave 0.16px between them where neither
+ * block applies, and a fractional viewport landing there gets Starlight's own
+ * rail sizing against a full-width pane.
+ */
+@media (min-width: 72rem) and (width < 80rem) {
+	:root {
+		/* Page.astro drops the disclosure from the anchor offset at 72em and is
+		 * bundled after this file, so an `html` selector here would lose on source
+		 * order. `:root` outweighs it instead. The strip height itself comes from
+		 * the `width < 80rem` block above. */
+		scroll-padding-top: calc(1.5rem + var(--sl-nav-height) + var(--sl-mobile-toc-height));
+	}
+
+	/* TwoColumnContent, back to the shape it has at 71rem: no flex row, and a
+	 * rail that is neither fixed nor bordered nor a column. */
+	.lg\:sl-flex {
+		display: block;
+	}
+
+	.right-sidebar-container {
+		position: static;
+		width: auto;
+	}
+
+	.right-sidebar {
+		position: static;
+		width: auto;
+		height: auto;
+		padding-top: 0;
+		border-inline-start: 0;
+		overflow: visible;
+	}
+
+	[data-has-sidebar][data-has-toc] .main-pane {
+		/* Starlight's own 72rem rule narrows this pane to leave room for the
+		 * rail, and right-aligns the column inside it. Neither is wanted with no
+		 * rail to leave room for: measured with this rule deleted, its `min()`
+		 * gives the pane 640px of an available 896px at 1152, and the column
+		 * 592px. */
+		--sl-content-margin-inline: 0 auto;
+		width: 100%;
+	}
+
+	/* PageSidebar renders both tables of contents and lets the breakpoint pick
+	 * one. Pick the disclosure. */
+	.right-sidebar-panel {
+		display: none;
+	}
+
+	.lg\:sl-hidden {
+		display: block;
+	}
+}
+
+@media (min-width: 80rem) {
+	[data-has-sidebar][data-has-toc] .lg\:sl-flex {
+		/* Center the minimum frame until either outer gutter reaches the cap.
+		 * Past that point, keep both outer gutters fixed and put every additional
+		 * pixel into the article pane, between its 70rem shell and the TOC. */
+		width: min(
+			100%,
+			max(
+				var(--ptah-doc-frame-min-width),
+				calc(
+					100% - var(--ptah-doc-frame-gutter-cap) -
+						var(--ptah-doc-frame-gutter-cap)
+				)
+			)
+		);
+		margin-inline: auto;
+	}
+
+	.right-sidebar-container {
+		flex: 0 0 var(--ptah-toc-width);
+		width: var(--ptah-toc-width);
+	}
+
+	.right-sidebar {
+		width: var(--ptah-toc-width);
+	}
+
+	[data-has-sidebar][data-has-toc] .main-pane {
+		/* The article takes the remaining frame width. Keep the content shell at
+		 * its left edge so any ultra-wide surplus becomes space before the TOC,
+		 * not space between navigation and prose. */
+		flex: 1 1 auto;
+		--sl-content-margin-inline: 0 auto;
+		width: calc(100% - var(--ptah-toc-width));
+	}
+
+	.right-sidebar-panel .sl-container {
+		width: calc(var(--ptah-toc-width) - 2 * var(--sl-sidebar-pad-x));
+		max-width: none;
+	}
+
+	/*
+	 * The column layout's frame. The rail, the TOC column and the article pane
+	 * inside the frame are the same as above -- Starlight pins the navigation
+	 * to the left edge at full height through PageFrame (`.sidebar-pane` is
+	 * fixed, `.main-frame` is padded by `--sl-content-inline-start`), and the
+	 * TOC and pane rules read `--ptah-toc-width`. Only the frame's width and
+	 * position differ.
+	 *
+	 * Width: the whole pane beside the rail, up to 80rem. At the rail's first
+	 * width, 1280, the pane measures 1024 and the frame with it: the contents
+	 * rail is 208, the article pane 816, the shell 720, and the 704px prose fits
+	 * with 16px to spare -- screen 1a's grid, 256 / 1fr / 208, with its 48px
+	 * padding. At the 80rem cap the contents rail has grown to 300, so the
+	 * article pane is 980 and the shell 884: the rail's growth is what the
+	 * frame's surplus buys, and it comes out of the shell rather than out of a
+	 * gutter. A wide-content shell of 960 would need a 1356px frame at that
+	 * rail width, or a rail held at 208, and the rail was widened deliberately
+	 * (see `--ptah-toc-width`).
+	 *
+	 * Position, once the pane is wider than the frame (a viewport past 96rem =
+	 * 1536px; the concept's notes round this to "above 100rem"): the surplus is
+	 * split 0.375 : 0.625 so the gutter beside the navigation is 0.6 of the far
+	 * one and the text stays near its menu. At 1920 the pane is 1664, the
+	 * surplus 384, the gutters 144 and 240. At 2560 the pane is 2304, the
+	 * surplus 1024, the gutters 384 and 640; screen 1b draws 378 and 630 at the
+	 * same width because its rail is 272 rather than 256. Below the cap the
+	 * `calc()` goes negative and `max()` holds the margin at 0.
+	 *
+	 * Screen 1b also floors the near gutter at 64px (`minmax(64px, 0.6fr)`),
+	 * which would narrow the frame below 80rem for panes between 1280 and 1450.
+	 * Not carried over: the frame's own 48px padding already keeps the prose
+	 * off the rail, and a frame that shrinks as the window grows is the defect
+	 * the band comment above describes.
+	 */
+	:root[data-ptah-layout='column'][data-has-sidebar][data-has-toc] .lg\:sl-flex {
+		width: min(100%, var(--ptah-doc-frame-max-width));
+		margin-inline-start: max(
+			0px,
+			calc((100% - var(--ptah-doc-frame-max-width)) * var(--ptah-doc-frame-left-share))
+		);
+		margin-inline-end: 0;
+	}
+
+	/* The article's padding inside the frame: 36px above the breadcrumb, 48px a
+	 * side, 72px under the footer (screen 1a; 1b pads the sides by 48 as well).
+	 * Starlight pads each ContentPanel by 24px a side and 24px top and bottom,
+	 * and pads `main` by a further 3vh at the foot; the panel paddings are set
+	 * directly rather than through `--sl-content-pad-x`, which Starlight's
+	 * Header also reads for its column gap. The title panel is the first child
+	 * of `main` on every page that has no banner; with a banner the title panel
+	 * keeps Starlight's 24px. */
+	:root[data-ptah-layout='column'] {
+		--sl-main-pad: 0;
+	}
+
+	:root[data-ptah-layout='column'] .main-pane .content-panel {
+		padding-inline: 3rem;
+	}
+
+	:root[data-ptah-layout='column'] .main-pane main > .content-panel:first-child {
+		padding-top: 2.25rem;
+	}
+
+	:root[data-ptah-layout='column'] .main-pane main > .content-panel:last-child {
+		padding-bottom: 4.5rem;
+	}
+}

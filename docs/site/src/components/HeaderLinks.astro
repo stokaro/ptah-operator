@@ -1,0 +1,55 @@
+---
+/**
+ * The right-hand links of the header, as text rather than icons, the way
+ * ptah.run's own header reads them. Replaces Starlight's SocialIcons, so it
+ * also renders inside the mobile menu footer.
+ *
+ * Three of the four leave this site, and that is the point: the operator's
+ * guide and Ptah's are two sites, and a reader who arrived at one of them by
+ * search has to be able to reach the other without knowing it exists. The
+ * addresses come from the one module that declares them.
+ */
+import config from 'virtual:starlight/user-config';
+import { PtahDocsURL, PtahSiteOrigin, CompatibilityURL } from '../lib/docs-origin.mjs';
+
+const { siteTitleHref } = Astro.locals.starlightRoute;
+const social = config.social ?? [];
+const ptahHost = new URL(PtahSiteOrigin).host;
+---
+
+{/* The project site, named by its host, the way the concept's header reads it. */}
+<a class="ptah-nav-link" href={`${PtahSiteOrigin}/`} translate="no">{ptahHost}</a>
+{/* Ptah's documentation. The operator runs a Ptah, and the schema formats, the
+    OCI artifact and the CLI are documented there rather than here. */}
+<a class="ptah-nav-link" href={PtahDocsURL('edge', '')}>Ptah docs</a>
+{/* Which Ptah build this operator works with. It is published on Ptah's site
+    because it is about both, and it is current rather than versioned. */}
+<a class="ptah-nav-link" href={CompatibilityURL}>Compatibility</a>
+{/* Install is the first page after the Overview of the "Start" group in
+    src/sidebar.mjs; the header names it by its route so it stays a plain link. */}
+<a class="ptah-nav-link" href={`${siteTitleHref}start/install/`}>Install</a>
+{
+  social.map(({ href, label }) => (
+    <a class="ptah-nav-link" href={href} rel="me">
+      {label}<span aria-hidden="true">&nbsp;↗</span>
+    </a>
+  ))
+}
+
+<style>
+  /* 500 13.5px sans in ink; the accent on hover. The gap between links is the
+   * header's (header.css), 22px. The block padding is invisible in a centered
+   * 52px row and lifts a 13.5px line to a 25px pointer target. */
+  .ptah-nav-link {
+    color: var(--sl-color-white);
+    font-size: 0.84375rem;
+    font-weight: 500;
+    line-height: 1;
+    padding-block: 0.375rem;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .ptah-nav-link:hover {
+    color: var(--sl-color-text-accent);
+  }
+</style>

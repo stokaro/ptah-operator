@@ -32,8 +32,14 @@ export function inspect(root) {
   } else {
     const index = JSON.parse(readFileSync(indexPath, 'utf8'));
     const expected = order(directories);
-    if ((index.versions ?? []).join(',') !== expected.join(',')) {
-      problems.push(`versions.json lists ${(index.versions ?? []).join(',')} and the root holds ${expected.join(',')}`);
+    const listed = (index.versions ?? []).map((entry) => entry?.slug);
+    if (listed.join(',') !== expected.join(',')) {
+      problems.push(`versions.json lists ${listed.join(',')} and the root holds ${expected.join(',')}`);
+    }
+    for (const entry of index.versions ?? []) {
+      if (!entry?.slug || !entry?.label) {
+        problems.push(`versions.json carries an entry with no slug or label; the version pill reads both`);
+      }
     }
     if (!directories.includes(index.default)) {
       problems.push(`versions.json serves ${index.default}, which is not a published directory`);
@@ -79,7 +85,16 @@ function selftest() {
 
   write('edge', { documentation_version: 'edge', source_commit: commit });
   write('v0.1.0', { documentation_version: 'v0.1.0', source_commit: other });
-  writeFileSync(join(root, 'versions.json'), JSON.stringify({ default: 'v0.1.0', versions: ['edge', 'v0.1.0'] }));
+  writeFileSync(
+    join(root, 'versions.json'),
+    JSON.stringify({
+      default: 'v0.1.0',
+      versions: [
+        { slug: 'edge', label: 'edge' },
+        { slug: 'v0.1.0', label: 'v0.1.0' },
+      ],
+    }),
+  );
   let problems = inspect(root);
   if (problems.length !== 0) throw new Error(`a correct root was refused: ${problems.join('; ')}`);
 
@@ -94,11 +109,11 @@ function selftest() {
   write('v0.1.0', { documentation_version: 'edge', source_commit: other });
   problems = inspect(root);
   if (!problems.some((problem) => problem.includes('carries build info for'))) {
-    throw new Error(`a mislabelled directory was accepted: ${problems.join('; ')}`);
+    throw new Error(`a mislabeled directory was accepted: ${problems.join('; ')}`);
   }
 
   rmSync(root, { recursive: true, force: true });
-  console.log('check-versions.mjs --selftest: OK (correct root, relabeled build, mislabelled directory)');
+  console.log('check-versions.mjs --selftest: OK (correct root, relabeled build, mislabeled directory)');
 }
 
 function main() {
