@@ -51,6 +51,26 @@ cd docs/site && npm ci && npm run build
 
 builds it from this checkout.
 
+## See it run
+
+[![Demonstration](https://github.com/stokaro/ptah-operator/actions/workflows/demo.yml/badge.svg)](https://github.com/stokaro/ptah-operator/actions/workflows/demo.yml)
+
+[Recorded runs](https://operator.ptah.run/demo/) are terminal sessions captured
+while the operator ran against a real cluster: applying a schema, changing it,
+approving a plan, refusing a destructive change, closing drift, failing and
+recovering. Each one is checked while it is recorded -- the conditions the
+session claims are read off the live objects -- and published only if every
+check held.
+
+The badge is the weekly re-recording on `master`, not the sessions the site
+plays. Green means every scenario still holds against a cluster built from
+`master`; what a reader watches is the recording committed in
+`demo/recordings/runs.json`, which changes only when somebody records it. A red
+badge is therefore a demonstration that has stopped being true, which is worth
+knowing before somebody reads it as current.
+
+[`demo/`](demo/README.md) is how it is built and how to run it yourself.
+
 ## Documentation
 
 The user guide is published at
