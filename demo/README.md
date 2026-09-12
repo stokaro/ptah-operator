@@ -1,8 +1,9 @@
 # The demonstration
 
-Nine scenarios, run against a real Kubernetes cluster with the operator
-installed from its chart, recorded while they run, and replayed on
-[operator.ptah.run](https://operator.ptah.run/edge/demo/).
+Scenarios run against a real Kubernetes cluster with the operator installed from
+its chart, recorded while they run, and replayed on
+[operator.ptah.run](https://operator.ptah.run/demo/). One file in
+`scenarios/` is one scenario; that directory is the census.
 
 Nothing here is written for the page. A transcript is what the commands
 printed, and a recording exists only because every condition its scenario
