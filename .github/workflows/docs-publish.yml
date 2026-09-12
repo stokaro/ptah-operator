@@ -1,0 +1,159 @@
+name: Publish documentation
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'docs/site/**'
+      - 'support/ptah.json'
+      - 'charts/ptah-operator/values.yaml'
+      - '.github/workflows/docs-publish.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Deploys queue rather than cancel, because a cancelled deploy leaves the site
+# as the previous one published while the run that would have replaced it is
+# gone. The staleness refusal below is what stops a queued run from publishing
+# an older tree after a newer one already went out.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    name: Assemble every published version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs/site/package-lock.json
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      # A queued run holds the tree it started from. Publishing it after a newer
+      # run already deployed would put an older site back, so a run that is no
+      # longer master's tip does nothing and lets the newer one publish.
+      - name: Refuse to publish a tree master has moved past
+        id: freshness
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin master
+          tip="$(git rev-parse --verify FETCH_HEAD)"
+          here="$(git rev-parse --verify HEAD)"
+          if [ "$tip" != "$here" ]; then
+            echo "master is at $tip and this run holds $here; a newer run publishes instead"
+            echo "stale=true" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "stale=false" >>"$GITHUB_OUTPUT"
+
+      - name: Verify the compatibility catalogue
+        if: steps.freshness.outputs.stale == 'false'
+        run: go run ./hack/verifyptahsupport
+
+      # One build per published version, each from that version's own revision.
+      # The whole site is assembled on every run, so a deploy cannot drop a
+      # version by forgetting it: what is uploaded is always the complete set
+      # the catalogue declares.
+      - name: Build every published version
+        if: steps.freshness.outputs.stale == 'false'
+        run: |
+          set -euo pipefail
+          site="$GITHUB_WORKSPACE/_site"
+          mkdir -p "$site"
+
+          node -e '
+            const fs = require("node:fs");
+            const catalog = JSON.parse(fs.readFileSync("support/ptah.json", "utf8"));
+            const rows = (catalog.releases ?? [])
+              .filter((entry) => entry.documentation?.published)
+              .map((entry) => ({
+                version: entry.operator,
+                source: entry.documentation.source,
+                fix: entry.documentation.fixRevision ?? "",
+              }));
+            if (rows.length === 0) throw new Error("the catalogue publishes no documentation at all");
+            process.stdout.write(rows.map((row) => [row.version, row.source, row.fix].join(" ")).join("\n") + "\n");
+          ' >"$RUNNER_TEMP/published"
+
+          while read -r version source fix; do
+            [ -n "$version" ] || continue
+            ref="${fix:-$source}"
+            printf '::group::%s from %s\n' "$version" "$ref"
+
+            if [ -n "$fix" ]; then
+              # A documentation fix belongs to the release it is assigned to.
+              # It has to descend from that release's tag, and it may change
+              # nothing but the site: a fix that carried code or chart changes
+              # would be publishing development under an old version number.
+              git merge-base --is-ancestor "$source" "$fix" ||
+                { echo "$version assigns fix $fix, which does not descend from $source" >&2; exit 1; }
+              outside="$(git diff --name-only "$source" "$fix" -- . ':(exclude)docs/site' | head -n 5)"
+              if [ -n "$outside" ]; then
+                echo "$version assigns fix $fix, which changes files outside docs/site:" >&2
+                printf '%s\n' "$outside" >&2
+                exit 1
+              fi
+            fi
+
+            commit="$(git rev-parse --verify "${ref}^{commit}")"
+            workdir="$(mktemp -d)"
+            git worktree add --force "$workdir" "$commit"
+            (
+              cd "$workdir/docs/site"
+              npm ci
+              DOCS_VERSION="$version" DOCS_SOURCE_REF="$ref" ASTRO_TELEMETRY_DISABLED=1 npm run build
+              node scripts/write-build-info.mjs \
+                --output dist/build-info.json \
+                --version "$version" \
+                --source-ref "$ref" \
+                --source-commit "$commit"
+              DOCS_VERSION="$version" npm run check:links
+              DOCS_VERSION="$version" DOCS_SOURCE_REF="$ref" DOCS_SOURCE_COMMIT="$commit" npm run check:build-info
+            )
+            mkdir -p "$site/$version"
+            cp -R "$workdir/docs/site/dist/." "$site/$version/"
+            git worktree remove --force "$workdir"
+            printf '::endgroup::\n'
+          done <"$RUNNER_TEMP/published"
+
+      - name: Write the version index and read the assembled root back
+        if: steps.freshness.outputs.stale == 'false'
+        run: |
+          set -euo pipefail
+          node docs/site/scripts/gen-versions.mjs "$GITHUB_WORKSPACE/_site"
+          node docs/site/scripts/check-versions.mjs "$GITHUB_WORKSPACE/_site"
+
+      - name: Configure Pages
+        if: steps.freshness.outputs.stale == 'false'
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - name: Upload the assembled site
+        if: steps.freshness.outputs.stale == 'false'
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: _site
+      - name: Deploy
+        id: deploy
+        if: steps.freshness.outputs.stale == 'false'
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
