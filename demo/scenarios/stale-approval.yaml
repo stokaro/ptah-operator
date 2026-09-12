@@ -54,7 +54,7 @@ steps:
     sync: converged
     expect:
       exit: 0
-      stdout_contains: [Consumed, ApprovedPlan]
+      stdout_contains: [Consumed, DispatchCommitted]
 
   - note: Now someone changes the desired state. The approved plan describes a world that moved.
     run: |
@@ -75,7 +75,7 @@ steps:
       condition:
         type: ApprovalRequired
         status: "True"
-        reason: AwaitingApproval
+        reason: PlanReady
     run: |
       kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
         | jq -r '.status.phase, .status.plan.fingerprint'

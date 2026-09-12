@@ -19,7 +19,10 @@ const { id, title, events, where } = Astro.props;
 const firstSync = events.find(([kind]) => kind === 'sync');
 ---
 
-<div class="term demo" data-demo data-demo-scenario={id}>
+<!-- data-demo-static: the transcript stays on the page and the player waits to
+	be asked. A documentation page that started typing at a reader who scrolled
+	past it would be taking the page away from them. -->
+<div class="term demo" data-demo data-demo-static data-demo-scenario={id}>
 	<div class="term-bar">
 		<span class="demo-where">{where ?? `sh · ${id}`}</span>
 		<span class="demo-sync" data-demo-sync hidden>{firstSync?.[1] ?? ''}</span>

@@ -30,13 +30,15 @@ steps:
       condition:
         type: ApprovalRequired
         status: "True"
-        reason: AwaitingApproval
+        reason: PlanReady
     run: |
       kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
         | jq -r '.status.phase, (.status.conditions[] | select(.type == "ApprovalRequired") | .message)'
     sync: awaiting approval
     expect:
       exit: 0
+      # AwaitingApproval is the phase the command printed, not a phrase from a
+      # message. What the condition says is read as fields in the await above.
       stdout_contains: [AwaitingApproval]
 
   - note: Nothing was created. This is what waiting looks like from the database.
@@ -127,4 +129,4 @@ steps:
         condition:
           type: Consumed
           status: "True"
-          reason: ApprovedPlan
+          reason: DispatchCommitted

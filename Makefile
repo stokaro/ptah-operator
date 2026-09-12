@@ -183,8 +183,10 @@ demo-serve:
 demo-test:
 	$(GO) test ./demo/...
 	$(GO) run ./demo/cmd/record -root . -check
-	cd docs/site && npm ci && npm run check:demo:selftest && npm run check:demo && \
-		npm run build && npm run check:links && npm run check:navigation
+	cd docs/site && npm ci && \
+		npm run check:demo:selftest && npm run check:demo-page:selftest && \
+		npm run check:demo && npm run build && \
+		npm run check:links && npm run check:navigation && npm run check:demo-page
 
 demo-down:
 	@[ -f "$(DEMO_ENVIRONMENT)" ] || { printf 'demo: no lab to remove\n'; exit 0; }

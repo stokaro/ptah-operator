@@ -45,6 +45,11 @@ jobs:
       - name: Install site dependencies
         working-directory: docs/site
         run: npm ci
+      # Without a browser the demonstration check skips, and a skip reads as a
+      # pass. CI=1 makes it fail instead, so the browser is installed here.
+      - name: Install the browser the demonstration check drives
+        working-directory: docs/site
+        run: npx playwright install --with-deps chromium
       # Every gate proves itself before it judges anything. A checker that
       # stopped checking passes over a broken site exactly as it passes over a
       # correct one.
@@ -59,6 +64,7 @@ jobs:
           npm run check:gen-versions:selftest
           npm run check:values:selftest
           npm run check:demo:selftest
+          npm run check:demo-page:selftest
       - name: The values table matches the chart
         working-directory: docs/site
         run: npm run check:values
@@ -105,6 +111,7 @@ jobs:
           npm run check:links
           npm run check:navigation
           npm run check:build-info
+          npm run check:demo-page
       # A release's pages are built from that release's own revision, so the
       # pull request proves that path too rather than only the one master
       # happens to take. It runs only when a release is declared: until then

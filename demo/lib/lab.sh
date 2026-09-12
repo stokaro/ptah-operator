@@ -238,6 +238,10 @@ lab_publish() {
 #
 # It runs in the cluster, as a Pod reading the same Secret the operator reads,
 # so a scenario that shows the database never puts a URL on a command line.
+#
+# Both of psql's streams arrive as one. A terminal shows them interleaved, and
+# psql writes some of what a reader came for -- "Did not find any relations" --
+# to stderr; splitting them here would publish half of what the command said.
 lab_psql() {
 	lab_psql_statement=$1
 	lab_require E2E_TEST_NAMESPACE LAB_POSTGRES_IMAGE
@@ -255,7 +259,7 @@ lab_psql() {
         restartPolicy: "Never", automountServiceAccountToken: false,
         containers: [{
           name: "psql", image: $image, imagePullPolicy: "IfNotPresent",
-          command: ["sh", "-c", "exec psql \"$DATABASE_URL\" --no-psqlrc --pset pager=off -v ON_ERROR_STOP=1 -c \"$STATEMENT\""],
+          command: ["sh", "-c", "exec psql \"$DATABASE_URL\" --no-psqlrc --pset pager=off -v ON_ERROR_STOP=1 -c \"$STATEMENT\" 2>&1"],
           env: [
             {name: "DATABASE_URL", valueFrom: {secretKeyRef: {name: "demo-database", key: "url"}}},
             {name: "STATEMENT", value: $statement}
