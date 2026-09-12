@@ -87,8 +87,12 @@ was built against.
 - A clean tree. The harness archives the exact commit it runs, and refuses a
   working copy that does not match it.
 
-Verified on macOS against a Linux Docker context, and on Linux. Windows is not
-verified: the harness is POSIX shell throughout.
+Measured on macOS against a remote Linux Docker context. The `demo` job in
+`.github/workflows/ci.yml` runs the same targets on a Linux runner, which is
+where Linux is exercised on every run rather than once.
+
+Windows is not verified and is not expected to work: the harness and these
+scripts are POSIX shell throughout.
 
 ## When something fails
 
