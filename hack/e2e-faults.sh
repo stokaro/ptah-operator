@@ -5122,16 +5122,31 @@ if [ -n "$READ_LOSS_RETRY_UID" ]; then
 		"the retried $READ_LOSS_OPERATION Job"
 fi
 assert_database_column postgresql "$PG_READ_LOSS_DB" fault_token 0
-# Every watched Job UID has to reach the credential ledger, and the audit is
-# throttled to one pass every thirty seconds because it dumps the namespace and
-# every manager log. Releasing the barrier here would start a read chain that
-# creates and retires Jobs inside one of those windows, so the fixture is
-# audited and removed while it is still held, exactly as the deletion proof
-# above does, and the barrier comes off only to let the deletion finish.
+# Every Job UID the watch records has to reach the credential ledger, and the
+# audit is throttled to one pass every thirty seconds because it dumps the
+# namespace and reads every manager log. A completed Job survives that window,
+# because cleanup only stamps a five-minute TTL, but a Job removed with its
+# schema does not: garbage collection takes it at once. Releasing the barrier
+# while this schema still existed let the held Job finish and the operator open
+# the next operation of the read chain, and that Job was created after the last
+# audit and collected with the schema, so its UID reached the watch and never
+# reached the ledger.
+#
+# Suspension is the documented stop button for a read-only operation, so the
+# schema is suspended while the barrier still holds it. Nothing new is
+# dispatched after that, which makes the last audit final rather than a race
+# against the next operation.
+k -n "$TEST_NAMESPACE" patch ptahschema "$PG_READ_LOSS_SCHEMA" --type=merge \
+	-p '{"spec":{"suspend":true}}' >/dev/null
+wait_for_schema "$PG_READ_LOSS_SCHEMA" '
+      .spec.suspend == true and
+      .status.activeOperation == null and
+      .status.pendingObservation == null
+    ' "the held read-only operation to be discarded by suspension"
 audit_fault_runtime
 k -n "$TEST_NAMESPACE" delete ptahschema "$PG_READ_LOSS_SCHEMA" --wait=false >/dev/null
-stop_read_workload_barrier
 wait_for_absence ptahschema "$PG_READ_LOSS_SCHEMA"
+stop_read_workload_barrier
 
 PG_DELETE_DB=e2e_fault_pg_delete
 PG_DELETE_SECRET=e2e-fault-pg-delete-db
