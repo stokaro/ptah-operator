@@ -5111,9 +5111,27 @@ wait_for_schema "$PG_READ_LOSS_SCHEMA" "$read_loss_recovered" \
 	"the removed $READ_LOSS_OPERATION operation to be retried or given up"
 k -n "$TEST_NAMESPACE" get job "$READ_LOSS_JOB_NAME" --ignore-not-found -o name |
 	grep -q . && fail "the removed read-only Job was recreated under its own name"
-stop_read_workload_barrier
-wait_for_plan "$PG_READ_LOSS_SCHEMA"
+READ_LOSS_RETRY_UID=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_READ_LOSS_SCHEMA" \
+	-o jsonpath='{.status.activeOperation.jobUID}')
+if [ -n "$READ_LOSS_RETRY_UID" ]; then
+	[ "$READ_LOSS_RETRY_UID" != "$READ_LOSS_JOB_UID" ] ||
+		fail "the retried read-only operation kept the removed Job UID"
+	# The retry is held by the same barrier, and that is what proves the operator
+	# re-dispatched the operation rather than only forgetting the removed Job.
+	assert_read_workload_blocked "$READ_LOSS_RETRY_UID" \
+		"the retried $READ_LOSS_OPERATION Job"
+fi
 assert_database_column postgresql "$PG_READ_LOSS_DB" fault_token 0
+# Every watched Job UID has to reach the credential ledger, and the audit is
+# throttled to one pass every thirty seconds because it dumps the namespace and
+# every manager log. Releasing the barrier here would start a read chain that
+# creates and retires Jobs inside one of those windows, so the fixture is
+# audited and removed while it is still held, exactly as the deletion proof
+# above does, and the barrier comes off only to let the deletion finish.
+audit_fault_runtime
+k -n "$TEST_NAMESPACE" delete ptahschema "$PG_READ_LOSS_SCHEMA" --wait=false >/dev/null
+stop_read_workload_barrier
+wait_for_absence ptahschema "$PG_READ_LOSS_SCHEMA"
 
 PG_DELETE_DB=e2e_fault_pg_delete
 PG_DELETE_SECRET=e2e-fault-pg-delete-db
