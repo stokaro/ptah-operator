@@ -112,6 +112,20 @@ commit descends from the release it is assigned to.
 Most releases need no entry. This is the explicit exception rather than a
 documentation branch per release.
 
+## Where it is published
+
+The matrix a reader sees is on Ptah's documentation site, at
+[docs.ptah.run/compatibility/operator/](https://docs.ptah.run/compatibility/operator/).
+It is generated from a copy of this file, refreshed by automation rather than
+edited there, and it sits outside that site's per-version archives so that it
+answers with the current catalog rather than with whatever was true when a Ptah
+release shipped.
+
+`.github/workflows/notify-compatibility.yml` announces a revision when this file
+changes on master. The announcement carries a repository and a commit and
+nothing else; the reconciliation on the other side runs on a schedule, so a
+missed announcement makes the refresh late rather than lost.
+
 Database engines are a separate axis and live in
 [database support](databases.md); Kubernetes versions live in
 [Kubernetes support](kubernetes.md).

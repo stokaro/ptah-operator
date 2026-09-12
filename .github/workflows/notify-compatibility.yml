@@ -1,0 +1,61 @@
+name: Notify compatibility consumers
+
+# Tells stokaro/ptah that the compatibility catalog moved, and tells it nothing
+# else: a repository, a commit, and no instruction of any kind.
+#
+# This is the prompt path, not the mechanism. That repository reconciles the two
+# files on a schedule, so a run that is skipped here -- because the credential
+# is not configured, or because the dispatch failed -- makes the refresh late
+# rather than lost.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'support/ptah.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: notify-compatibility
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    name: Announce the catalog revision
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # Announce a catalog that is valid, and no other kind. A malformed file
+      # would be refused on the receiving side too, and announcing it anyway
+      # would spend a failed run there to learn what this run already knows.
+      - name: Verify the catalog before announcing it
+        run: go run ./hack/verifyptahsupport
+      - name: Send the revision
+        env:
+          DISPATCH_TOKEN: ${{ secrets.PTAH_COMPATIBILITY_DISPATCH_TOKEN }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo "PTAH_COMPATIBILITY_DISPATCH_TOKEN is not configured, so no notification is sent."
+            echo "stokaro/ptah reconciles the catalog on its own schedule; this only makes it prompt."
+            exit 0
+          fi
+          GH_TOKEN="$DISPATCH_TOKEN" gh api repos/stokaro/ptah/dispatches \
+            --method POST \
+            --field event_type=operator-compatibility \
+            --field 'client_payload[repository]=stokaro/ptah-operator' \
+            --field "client_payload[commit]=$COMMIT"
+          echo "announced $COMMIT"

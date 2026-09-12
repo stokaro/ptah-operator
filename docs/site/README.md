@@ -63,3 +63,16 @@ HTTP as well as HTTPS. The certificate is approved, so turning it on is a
 single toggle in the same settings page.
 
 Nothing here touches the settings that serve `docs.ptah.run`.
+
+## Announcing the catalog
+
+`.github/workflows/notify-compatibility.yml` tells `stokaro/ptah` that the
+compatibility catalog moved, so the matrix it publishes refreshes promptly. It
+sends a repository and a commit and nothing else.
+
+It needs one secret in this repository, **`PTAH_COMPATIBILITY_DISPATCH_TOKEN`**:
+a fine-grained token scoped to `stokaro/ptah` alone with **Contents: read and
+write**, which is the permission a `repository_dispatch` requires. Without it
+the step says so and exits zero: the receiving repository reconciles the two
+files on a schedule, so a missing notification makes the refresh late rather
+than lost.
