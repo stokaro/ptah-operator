@@ -76,7 +76,8 @@ steps:
     run: demo/bin/lab psql "\d orders"
     expect:
       exit: 0
-      stdout_contains: [orders_customer_id_fkey, customers]
+      # The constraint by what it does, not by the name the renderer chose.
+      stdout_contains: ["FOREIGN KEY (customer_id) REFERENCES customers"]
       resource:
         kind: ptahschema
         name: storefront
