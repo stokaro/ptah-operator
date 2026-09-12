@@ -1,7 +1,7 @@
 id: manual-approval
 title: Approve a plan
 tagline: With apply set to OnApproval, nothing runs until a person approves that exact plan.
-learn: What an approval is bound to, and what happens to one that names a plan nobody kept.
+learn: What an approval is bound to, and how much of that binding you never type.
 tags: [Safety]
 
 reset:

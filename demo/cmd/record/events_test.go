@@ -39,7 +39,7 @@ func TestOutputEventsPublishNothingForNothing(t *testing.T) {
 	}
 }
 
-// A step that shows stderr is showing a refusal, and the refusal is coloured as
+// A step that shows stderr is showing a refusal, and the refusal is colored as
 // one. The SQL rule still wins where a statement appears, because a plan the
 // operator refused is the thing the reader came for.
 func TestOutputEventsRespectTheStreamTheStepNamed(t *testing.T) {

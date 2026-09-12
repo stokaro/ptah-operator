@@ -174,14 +174,20 @@ async function main() {
     const typed = await page.evaluate(() => document.querySelector('[data-demo-screen]')?.textContent?.trim() ?? '');
     if (typed.length === 0) problems.push('pressing Play typed nothing into the screen');
 
-    // A tile opens the run it names.
-    const second = record.scenarios[1] ?? record.scenarios[0];
-    await page.locator(`[data-demo-scenario="${second.id}"]`).first().click();
-    await page.waitForTimeout(500);
-    const showing = await page.evaluate(() =>
-      document.querySelector('[data-demo]')?.getAttribute('data-demo-scenario'),
-    );
-    if (showing !== second.id) problems.push(`a tile for ${second.id} left the frame on ${showing}`);
+    // A tile opens the run it names. With one run there is no switch to make,
+    // and the assertion would pass by comparing a value with itself.
+    const second = record.scenarios[1];
+    if (!second) {
+      console.warn('check-demo-page.mjs: one run recorded, so switching between tiles was not measured');
+    }
+    if (second) {
+      await page.locator(`[data-demo-tile][data-demo-scenario="${second.id}"]`).first().click();
+      await page.waitForTimeout(500);
+      const showing = await page.evaluate(() =>
+        document.querySelector('[data-demo]')?.getAttribute('data-demo-scenario'),
+      );
+      if (showing !== second.id) problems.push(`a tile for ${second.id} left the frame on ${showing}`);
+    }
     if (failures.length > 0) problems.push(`the player threw: ${failures.join('; ')}`);
     await live.close();
 

@@ -4,7 +4,7 @@
  * reader without JavaScript gets and what a reader who does not want to wait
  * for a typewriter reads. The player replaces one of those blocks with a live
  * screen built the same way. Both import this file, so a printed session and a
- * played one cannot wrap differently or colour a line differently.
+ * played one cannot wrap differently or color a line differently.
  */
 
 // The class each event kind carries. A kind missing here renders unwrapped,

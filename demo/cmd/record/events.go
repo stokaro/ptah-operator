@@ -46,7 +46,7 @@ func commandEvents(run string) []event {
 
 // outputEvents renders captured output, one event per line.
 //
-// SQL is marked so the player can colour it, because the plan is the thing a
+// SQL is marked so the player can color it, because the plan is the thing a
 // reader of this demonstration came for. Everything else is ordinary output;
 // a stream captured from stderr is marked as such only when the step failed on
 // purpose, which the caller decides.
@@ -58,7 +58,7 @@ func outputEvents(text string, kind string) []event {
 	events := make([]event, 0, len(lines))
 	for _, line := range lines {
 		// A blank line inside output is a spacer, and the player draws one
-		// rather than an empty output row whose colour says something was
+		// rather than an empty output row whose color says something was
 		// printed there.
 		if strings.TrimSpace(line) == "" {
 			events = append(events, event{kindBlank})

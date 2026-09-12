@@ -10,7 +10,7 @@
 //   node scripts/check-demo.mjs
 //   node scripts/check-demo.mjs --selftest
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -119,7 +119,12 @@ function main() {
     selftest();
     return;
   }
-  const record = JSON.parse(readFileSync(join(repositoryRoot, 'demo', 'recordings', 'runs.json'), 'utf8'));
+  const recordPath = join(repositoryRoot, 'demo', 'recordings', 'runs.json');
+  if (!existsSync(recordPath)) {
+    console.error(`check-demo.mjs: ${recordPath} is missing; record the runs first (make demo)`);
+    process.exit(1);
+  }
+  const record = JSON.parse(readFileSync(recordPath, 'utf8'));
   const scenarioDir = join(repositoryRoot, 'demo', 'scenarios');
   const scenarioIds = readdirSync(scenarioDir)
     .filter((name) => name.endsWith('.yaml'))

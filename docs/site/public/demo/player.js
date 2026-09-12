@@ -476,7 +476,7 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
       replayBtn.hidden = !playing;
     }
 
-    // Two reasons to hold still, one behaviour. Reduced motion is a stated
+    // Two reasons to hold still, one behavior. Reduced motion is a stated
     // preference. A narrow screen is a judgement: the commands wrap there, so
     // typing reflows the block line by line, it costs a phone battery for a
     // 30-second story nobody scrolled down to wait for, and the transcript is
