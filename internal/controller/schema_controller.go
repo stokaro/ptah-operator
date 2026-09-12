@@ -1010,7 +1010,7 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			return r.finishUncertainApply(ctx, schema, nil, fmt.Errorf("dispatched Apply Job is missing and will not be recreated"))
 		}
 		if schema.Spec.Suspend {
-			return r.suspendUndispatchedOperation(ctx, schema)
+			return r.suspendActiveOperation(ctx, schema)
 		}
 		current, currentErr := r.operationInputFingerprint(schema, operation.Type)
 		if currentErr != nil || current != operation.InputFingerprint {
@@ -1208,6 +1208,16 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 	}
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("read active Job: %w", err)
+	}
+	// Suspension is the stop button, and a read-only operation has produced
+	// nothing durable. Waiting for its dispatched Job to reach its own active
+	// deadline holds a suspended schema for that entire budget, a quarter of an
+	// hour by default. Discard it exactly as a changed input discards a
+	// dispatched read-only operation: the Job keeps its own deadline, and its
+	// Pods can no longer claim an operation this schema no longer has. Post-apply
+	// proof is excluded because that work outranks suspension by design.
+	if schema.Spec.Suspend && schema.Status.PendingObservation == nil && isReadOnlyOperation(operation) {
+		return r.suspendActiveOperation(ctx, schema)
 	}
 	if operation.JobUID != "" && operation.JobUID != job.UID {
 		if operation.Type == operatorv1alpha1.OperationApply {
@@ -1556,7 +1566,7 @@ func (r *SchemaReconciler) blockVerification(
 	return ctrl.Result{RequeueAfter: interval(schema)}, nil
 }
 
-func (r *SchemaReconciler) suspendUndispatchedOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
+func (r *SchemaReconciler) suspendActiveOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	before := schema.DeepCopy()
 	if operation != nil && (operation.Type == operatorv1alpha1.OperationApply ||
@@ -1812,7 +1822,7 @@ func (r *SchemaReconciler) consumeResult(
 				if err != nil {
 					return ctrl.Result{}, err
 				}
-				schema.Status.Plan = currentPlanStatus(published, now)
+				schema.Status.Plan = currentPlanStatus(published)
 				setPlanPolicyStatus(schema, published)
 				next := metav1.NewTime(now.Add(interval(schema)))
 				schema.Status.NextReconciliationTime = &next
@@ -2708,10 +2718,21 @@ func (r *SchemaReconciler) cleanupRetiredExecutionBindingOperation(
 	return ctrl.Result{Requeue: true}, nil
 }
 
-func retiredReadOnlyJobMatches(
+// readOnlyJobEnvelopeMatches holds a retired read-only Job to the exact
+// envelope the workload builder writes. Its two callers differ in one thing:
+// what they know about the committed Job UID. After an ordinary dispatch the
+// operation carries it and the live object must repeat it; after a cutover
+// that lost it, the operation carries none and the caller is about to
+// reconstruct it from this object. Everything else, including the two
+// supported annotation envelopes, stays one implementation. A predicate that
+// accepted only the five-key envelope would reject every Job a current
+// manager built, and a Job it rejects is never harvested: its cleanup is
+// never scheduled and it outlives the release that created it.
+func readOnlyJobEnvelopeMatches(
 	schema *operatorv1alpha1.PtahSchema,
 	operation *operatorv1alpha1.ActiveOperationStatus,
 	job *batchv1.Job,
+	committedUID bool,
 ) bool {
 	if schema == nil || schema.Status.ExecutionBinding == nil || !isReadOnlyOperation(operation) || job == nil ||
 		operation.ID == "" || job.UID == "" || operation.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch ||
@@ -2725,9 +2746,16 @@ func retiredReadOnlyJobMatches(
 		) {
 		return false
 	}
+	if committedUID {
+		if operation.JobUID == "" || operation.JobUID != job.UID {
+			return false
+		}
+	} else if operation.JobUID != "" {
+		return false
+	}
 	expectedName, err := workload.NameFor(schema, *operation.DeepCopy())
 	if err != nil || operation.JobName != expectedName || job.Name != expectedName ||
-		operation.JobUID == "" || operation.JobUID != job.UID || operation.AdmissionSnapshot == nil ||
+		operation.AdmissionSnapshot == nil ||
 		podintent.ValidateSnapshot(operation.AdmissionSnapshot) != nil {
 		return false
 	}
@@ -2785,65 +2813,20 @@ func retiredReadOnlyJobMatches(
 	return err == nil && templateDigest == operation.AdmissionSnapshot.TemplateDigest
 }
 
+func retiredReadOnlyJobMatches(
+	schema *operatorv1alpha1.PtahSchema,
+	operation *operatorv1alpha1.ActiveOperationStatus,
+	job *batchv1.Job,
+) bool {
+	return readOnlyJobEnvelopeMatches(schema, operation, job, true)
+}
+
 func retiredPredecessorReadOnlyJobMatches(
 	schema *operatorv1alpha1.PtahSchema,
 	operation *operatorv1alpha1.ActiveOperationStatus,
 	job *batchv1.Job,
 ) bool {
-	if schema == nil || schema.Status.ExecutionBinding == nil || !isReadOnlyOperation(operation) || job == nil ||
-		operation.ID == "" || operation.JobUID != "" || job.UID == "" ||
-		!validExecutionBindingID(operation.ExecutionBindingID) ||
-		operation.ExecutionBindingID == schema.Status.ExecutionBinding.Epoch ||
-		!exactControllerOwner(
-			job.OwnerReferences,
-			operatorv1alpha1.GroupVersion.String(),
-			"PtahSchema",
-			schema.Name,
-			schema.UID,
-		) {
-		return false
-	}
-	expectedName, err := workload.NameFor(schema, *operation.DeepCopy())
-	if err != nil || operation.JobName != expectedName || job.Name != expectedName || operation.AdmissionSnapshot == nil {
-		return false
-	}
-	if err := podintent.ValidateSnapshot(operation.AdmissionSnapshot); err != nil {
-		return false
-	}
-	wantLabels := map[string]string{
-		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   "schema-operation",
-		workload.LabelSchema:      schema.Name,
-		workload.LabelOperation:   strings.ToLower(string(operation.Type)),
-		workload.LabelOperationID: workload.OperationIDLabelValue(operation.ID),
-	}
-	if !reflect.DeepEqual(job.Labels, wantLabels) {
-		return false
-	}
-	ptahVersion := job.Annotations[workload.AnnotationPtahVersion]
-	if ptahVersion == "" || strings.TrimSpace(ptahVersion) != ptahVersion {
-		return false
-	}
-	wantAnnotations := map[string]string{
-		workload.AnnotationOperationID:             operation.ID,
-		workload.AnnotationInputFingerprint:        operation.InputFingerprint,
-		workload.AnnotationPtahVersion:             ptahVersion,
-		workload.AnnotationExecutionBindingID:      operation.ExecutionBindingID,
-		workload.AnnotationAdmissionSnapshotDigest: operation.AdmissionSnapshot.Digest,
-	}
-	if !reflect.DeepEqual(job.Annotations, wantAnnotations) ||
-		!reflect.DeepEqual(job.Spec.Template.Annotations, wantAnnotations) {
-		return false
-	}
-	normalized := job.DeepCopy()
-	if err := normalizeGeneratedJobSelector(normalized); err != nil ||
-		!reflect.DeepEqual(normalized.Spec.Template.Labels, wantLabels) {
-		return false
-	}
-	template := normalized.Spec.Template.DeepCopy()
-	delete(template.Annotations, workload.AnnotationAdmissionSnapshotDigest)
-	templateDigest, err := podintent.DigestTemplate(template)
-	return err == nil && templateDigest == operation.AdmissionSnapshot.TemplateDigest
+	return readOnlyJobEnvelopeMatches(schema, operation, job, false)
 }
 
 func executionBindingChangeFenced(schema *operatorv1alpha1.PtahSchema) bool {
@@ -4359,7 +4342,7 @@ func artifactAccessBinding(schema *operatorv1alpha1.PtahSchema) *operatorv1alpha
 	return binding
 }
 
-func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan, now metav1.Time) *operatorv1alpha1.CurrentPlanStatus {
+func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.CurrentPlanStatus {
 	return &operatorv1alpha1.CurrentPlanStatus{
 		Name: plan.Name, UID: plan.UID, Fingerprint: plan.Spec.Fingerprint, ContentDigest: plan.Spec.ContentDigest,
 		ArtifactDigest: plan.Spec.ArtifactDigest, CoordinationDigest: plan.Spec.CoordinationDigest,
@@ -4373,7 +4356,7 @@ func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan, now metav1.Time) *
 		ControllerStateVersion:   plan.Spec.ControllerStateVersion,
 		PtahVersion:              plan.Spec.PtahVersion, ExecutorImage: plan.Spec.ExecutorImage, RunnerImage: plan.Spec.RunnerImage,
 		RunnerProtocolVersion: plan.Spec.RunnerProtocolVersion, Destructive: plan.Spec.Destructive,
-		StatementCount: plan.Spec.StatementCount, CreatedAt: now,
+		StatementCount: plan.Spec.StatementCount, CreatedAt: plan.CreationTimestamp,
 	}
 }
 
@@ -4431,7 +4414,7 @@ func approvalMatches(approval *operatorv1alpha1.PtahSchemaApproval, schema *oper
 	if plan == nil || plan.Spec.ContractVersion != fingerprint.CurrentPlanContractVersion {
 		return false
 	}
-	return approvalMatchesPlanStatus(approval, schema, currentPlanStatus(plan, metav1.Time{}))
+	return approvalMatchesPlanStatus(approval, schema, currentPlanStatus(plan))
 }
 
 func approvalMatchesPlanStatus(

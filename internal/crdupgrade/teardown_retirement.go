@@ -486,6 +486,84 @@ func (g *TeardownRetirementGuard) exactBindingForHook(name, hook, weight, target
 	}
 }
 
+// admissionPolicySpecDifference names the first part of a policy spec that two
+// contracts disagree on, and for a validation the index and both expressions,
+// bounded. The comparison itself stays exact; only the refusal is readable,
+// because it is read from a hook Pod's termination message.
+func admissionPolicySpecDifference(actual, expected admissionregistrationv1.ValidatingAdmissionPolicySpec) string {
+	if !reflect.DeepEqual(actual.MatchConstraints, expected.MatchConstraints) {
+		return "match constraints"
+	}
+	if len(actual.MatchConditions) != len(expected.MatchConditions) {
+		return fmt.Sprintf("match condition count %d, want %d", len(actual.MatchConditions), len(expected.MatchConditions))
+	}
+	for index := range expected.MatchConditions {
+		if reflect.DeepEqual(actual.MatchConditions[index], expected.MatchConditions[index]) {
+			continue
+		}
+		return fmt.Sprintf("match condition %d %q %s",
+			index,
+			expected.MatchConditions[index].Name,
+			expressionDifference(actual.MatchConditions[index].Expression, expected.MatchConditions[index].Expression),
+		)
+	}
+	if !reflect.DeepEqual(actual.ParamKind, expected.ParamKind) {
+		return "param kind"
+	}
+	if len(actual.Variables) != len(expected.Variables) {
+		return fmt.Sprintf("variable count %d, want %d", len(actual.Variables), len(expected.Variables))
+	}
+	for index := range expected.Variables {
+		if !reflect.DeepEqual(actual.Variables[index], expected.Variables[index]) {
+			return fmt.Sprintf("variable %d %q", index, expected.Variables[index].Name)
+		}
+	}
+	if len(actual.Validations) != len(expected.Validations) {
+		return fmt.Sprintf("validation count %d, want %d", len(actual.Validations), len(expected.Validations))
+	}
+	for index := range expected.Validations {
+		if reflect.DeepEqual(actual.Validations[index], expected.Validations[index]) {
+			continue
+		}
+		return fmt.Sprintf("validation %d %s",
+			index,
+			expressionDifference(actual.Validations[index].Expression, expected.Validations[index].Expression),
+		)
+	}
+	return "spec"
+}
+
+// expressionDifference reports where two expressions first disagree and shows
+// the same window of each. These expressions run to thousands of characters and
+// are read from a termination message, so a prefix of both says nothing.
+func expressionDifference(actual, expected string) string {
+	offset := 0
+	for offset < len(actual) && offset < len(expected) && actual[offset] == expected[offset] {
+		offset++
+	}
+	const window = 200
+	start := offset - 40
+	if start < 0 {
+		start = 0
+	}
+	return fmt.Sprintf("first differs at %d of %d/%d: is %s, want %s",
+		offset, len(actual), len(expected),
+		boundedWindow(actual, start, window),
+		boundedWindow(expected, start, window),
+	)
+}
+
+func boundedWindow(expression string, start, length int) string {
+	if start >= len(expression) {
+		return strconv.Quote("")
+	}
+	end := start + length
+	if end > len(expression) {
+		end = len(expression)
+	}
+	return strconv.Quote(expression[start:end])
+}
+
 func exactTeardownRetirementMetadata(actual, expected metav1.ObjectMeta) bool {
 	return actual.Name == expected.Name && actual.GenerateName == "" && actual.Namespace == "" &&
 		actual.DeletionTimestamp == nil && actual.DeletionGracePeriodSeconds == nil &&
@@ -683,6 +761,17 @@ func (g *TeardownRetirementGuard) originalFencePolicy(name, policyWeight string)
 	return g.fencePolicy(name, "pre-delete", policyWeight, false)
 }
 
+// teardownRetirementPredecessorInventory records which release sequences may
+// have preceded each sequence, written when that sequence is prepared and never
+// edited afterwards. The fence guards the same markers whether or not a
+// predecessor is present, because a release installed into a namespace that
+// never held one renders exactly the fence a release upgraded into it does.
+// The chart carries the same inventory; the two are one contract.
+var teardownRetirementPredecessorInventory = map[int32][]int32{
+	1: {},
+	2: {1},
+}
+
 func (g *TeardownRetirementGuard) dormantFencePolicy(name string) (*admissionregistrationv1.ValidatingAdmissionPolicy, error) {
 	return g.fencePolicy(name, "", "", true)
 }
@@ -750,8 +839,15 @@ func (g *TeardownRetirementGuard) fencePolicy(name, hook, policyWeight string, b
 		AdmissionConvergenceMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, g.rollout.ReleaseSequence),
 		ParentOriginReadyMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName),
 	}
-	if g.rollout.PreviousControllerReleaseSequence > 0 {
-		retainedMarkers = append(retainedMarkers, AdmissionConvergenceMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, g.rollout.PreviousControllerReleaseSequence))
+	predecessorSequences, recorded := teardownRetirementPredecessorInventory[g.rollout.ReleaseSequence]
+	if !recorded {
+		return nil, fmt.Errorf("teardown retirement sequence %d has no explicit append-only predecessor inventory", g.rollout.ReleaseSequence)
+	}
+	for _, sequence := range predecessorSequences {
+		retainedMarkers = append(retainedMarkers, AdmissionConvergenceMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName, sequence))
+	}
+	if g.rollout.PreviousControllerReleaseSequence > 0 && !slices.Contains(predecessorSequences, g.rollout.PreviousControllerReleaseSequence) {
+		return nil, fmt.Errorf("teardown retirement found predecessor sequence %d outside the recorded inventory", g.rollout.PreviousControllerReleaseSequence)
 	}
 	protectedRetainedMarkerDelete := fmt.Sprintf(`request.operation == "DELETE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && oldObject != null && oldObject.metadata.name in %s`, g.rollout.ReleaseNamespace, celStringList(retainedMarkers))
 	markerRequest := g.markerProbeRequestExpression(probe)
@@ -928,8 +1024,16 @@ func generatedPodRequestNameExpressionFor(nameExpression, jobName string) string
 	return fmt.Sprintf(`(%[1]s.startsWith(%[2]q) && %[1]s.size() == %[3]d && %[1]s.substring(%[4]d).matches("^[a-z0-9]{%[5]d}$"))`, nameExpression, prefix, len(prefix)+kubernetesGeneratedSuffixLen, len(prefix), kubernetesGeneratedSuffixLen)
 }
 
+// teardownRetirementHelmAuthorizerExpression asks the caller for the verb it
+// is using, on the guards themselves. An actor that may delete the guards can
+// dismantle the fence outright, so requiring exactly that verb is the same
+// boundary the create and update branches draw. Asking a delete for all three
+// verbs cost six authorizer calls in one expression, which is past the CEL
+// runtime budget: the expression errored, and a fence that fails closed turned
+// every protected Job deletion into a denial, including the release's own hook
+// cleanup.
 func teardownRetirementHelmAuthorizerExpression() string {
-	return `(request.operation == "CREATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed()) || (request.operation == "UPDATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed()) || (request.operation == "DELETE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("delete").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("delete").allowed())`
+	return `(request.operation == "CREATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed()) || (request.operation == "UPDATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed()) || (request.operation == "DELETE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("delete").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("delete").allowed())`
 }
 
 func teardownRetirementExactPrincipalExpression(username string, groups ...string) string {
@@ -1080,7 +1184,7 @@ func (g *TeardownRetirementGuard) forwardBootstrapArgsValidationExpression(conta
 	mode := fmt.Sprintf(`%s == %q ? "teardown-retirement-probe-a" : "teardown-retirement-gate"`, jobSelector, g.probeAJobName())
 	timeout := fmt.Sprintf(`%s == %q ? "--timeout=60s" : "--timeout=90s"`, jobSelector, g.probeAJobName())
 	parts := []string{
-		fmt.Sprintf(`has(%[1]s.args) && %[2]s.size() == 29`, container, args),
+		fmt.Sprintf(`has(%[1]s.args) && %[2]s.size() == 30`, container, args),
 		fmt.Sprintf(`%s[0] == (%s)`, args, mode),
 		fmt.Sprintf(`%s[1] == (%s)`, args, timeout),
 		fmt.Sprintf(`%s[2] == %q`, args, "--release-name="+g.rollout.ReleaseName),
@@ -1110,6 +1214,7 @@ func (g *TeardownRetirementGuard) forwardBootstrapArgsValidationExpression(conta
 		fmt.Sprintf(`%s[26].matches("^--runtime-deployment-config-expressions-b64=[A-Za-z0-9+/]+={0,2}$")`, args),
 		fmt.Sprintf(`%s[27].matches("^--runtime-pod-config-expressions-b64=[A-Za-z0-9+/]+={0,2}$")`, args),
 		fmt.Sprintf(`%s[28].matches("^--runtime-admission-contract-b64=[A-Za-z0-9+/]+={0,2}$")`, args),
+		fmt.Sprintf(`%s[29].startsWith("--previous-controller-manager-image=")`, args),
 	}
 	return strings.Join(parts, " && ")
 }
@@ -1291,15 +1396,21 @@ func (g *TeardownRetirementGuard) VerifyOriginalFences(
 		if err != nil {
 			return fmt.Errorf("get teardown retirement fence policy %s: %w", expectedPolicy.Name, err)
 		}
-		if !exactTeardownRetirementMetadata(actualPolicy.ObjectMeta, expectedPolicy.ObjectMeta) || !reflect.DeepEqual(actualPolicy.Spec, expectedPolicy.Spec) {
-			return fmt.Errorf("teardown retirement fence policy %s differs from the exact original contract", expectedPolicy.Name)
+		if !exactTeardownRetirementMetadata(actualPolicy.ObjectMeta, expectedPolicy.ObjectMeta) {
+			return fmt.Errorf("teardown retirement fence policy %s differs from the exact original contract: metadata", expectedPolicy.Name)
+		}
+		if !reflect.DeepEqual(actualPolicy.Spec, expectedPolicy.Spec) {
+			return fmt.Errorf("teardown retirement fence policy %s differs from the exact original contract: %s", expectedPolicy.Name, admissionPolicySpecDifference(actualPolicy.Spec, expectedPolicy.Spec))
 		}
 		actualBinding, err := bindings.Get(ctx, expectedBinding.Name, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("get teardown retirement fence binding %s: %w", expectedBinding.Name, err)
 		}
-		if !exactTeardownRetirementMetadata(actualBinding.ObjectMeta, expectedBinding.ObjectMeta) || !reflect.DeepEqual(actualBinding.Spec, expectedBinding.Spec) {
-			return fmt.Errorf("teardown retirement fence binding %s differs from the exact original contract", expectedBinding.Name)
+		if !exactTeardownRetirementMetadata(actualBinding.ObjectMeta, expectedBinding.ObjectMeta) {
+			return fmt.Errorf("teardown retirement fence binding %s differs from the exact original contract: metadata", expectedBinding.Name)
+		}
+		if !reflect.DeepEqual(actualBinding.Spec, expectedBinding.Spec) {
+			return fmt.Errorf("teardown retirement fence binding %s differs from the exact original contract: spec", expectedBinding.Name)
 		}
 	}
 	return nil

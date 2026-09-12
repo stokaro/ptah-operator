@@ -128,6 +128,7 @@ var managerArgumentPrefixes = []string{
 	"--runtime-deployment-config-expressions-b64=",
 	"--runtime-pod-config-expressions-b64=",
 	"--runtime-admission-contract-b64=",
+	"--previous-controller-manager-image=",
 }
 
 // previousControllerArguments are the manager arguments the chart fills from
@@ -141,6 +142,7 @@ var previousControllerArguments = map[int]*regexp.Regexp{
 	16: regexp.MustCompile(`^[A-Za-z0-9-]*$`),
 	17: regexp.MustCompile(`^(true|false)$`),
 	18: regexp.MustCompile(`^[0-9]*$`),
+	29: regexp.MustCompile(`^(|[^\s@]+@sha256:[0-9a-f]{64})$`),
 }
 
 // maskPreviousControllerArguments reduces the previous-controller arguments

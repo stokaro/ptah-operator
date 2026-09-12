@@ -309,6 +309,10 @@ func (g *ServiceAccountObjectGuard) ExpectedPolicy() (*admissionregistrationv1.V
 	updateIdentity := `object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) && object.metadata.uid == oldObject.metadata.uid && has(object.metadata.resourceVersion) && object.metadata.resourceVersion == oldObject.metadata.resourceVersion && has(object.metadata.creationTimestamp) == has(oldObject.metadata.creationTimestamp) && (!has(object.metadata.creationTimestamp) || object.metadata.creationTimestamp == oldObject.metadata.creationTimestamp)`
 	namespaceCleanup := serviceAccountNamespaceControllerCleanupExpression(g.rollout.ReleaseNamespace)
 	authority := parentHookAdmissionAuthorityExpression(NamespaceDeletionGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName))
+	releaseTeardown := serviceAccountReleaseTeardownExpression(
+		g.rollout.ReleaseNamespace,
+		patterns.cleanupPrincipalPattern(g.rollout.ReleaseNamespace),
+	)
 
 	policy := &admissionregistrationv1.ValidatingAdmissionPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
@@ -339,7 +343,7 @@ func (g *ServiceAccountObjectGuard) ExpectedPolicy() (*admissionregistrationv1.V
 			Validations: []admissionregistrationv1.Validation{
 				{Expression: `variables.isCreate || variables.isUpdate || variables.isDelete`, Message: message},
 				{Expression: `variables.isManagedController || variables.isExternalController || variables.isCertificate || variables.isHook || variables.isCleanup || variables.isQuiesce || variables.isBootstrap`, Message: message},
-				{Expression: fmt.Sprintf(`(!variables.isDelete && (%s)) || (variables.isDelete && ((%s) || (%s)))`, authority, authority, namespaceCleanup), Message: message},
+				{Expression: fmt.Sprintf(`(!variables.isDelete && (%s)) || (variables.isDelete && ((%s) || (%s) || (%s)))`, authority, authority, namespaceCleanup, releaseTeardown), Message: message},
 				{Expression: `!variables.isDelete || (request.name == "" || request.name == variables.name)`, Message: message},
 				{Expression: `variables.isCreate || (` + oldIdentity + `)`, Message: message},
 				{Expression: `variables.isDelete || (` + objectShape + `)`, Message: message},
@@ -557,6 +561,10 @@ func (g *ServiceAccountObjectGuard) patterns() (serviceAccountObjectPatterns, er
 	return result, nil
 }
 
+func (p serviceAccountObjectPatterns) cleanupPrincipalPattern(namespace string) string {
+	return "^" + regexp.QuoteMeta("system:serviceaccount:"+namespace+":") + strings.TrimPrefix(p.cleanup, "^")
+}
+
 func (p serviceAccountObjectPatterns) managedControllerExpression(name string) string {
 	if p.managedController == "" {
 		return "false"
@@ -581,6 +589,21 @@ func (p serviceAccountObjectPatterns) protectedNameExpression(name string) strin
 		name, p.cleanup,
 		name, p.quiesce,
 		name, p.bootstrap,
+	)
+}
+
+// serviceAccountReleaseTeardownExpression recognises this release's own
+// teardown identity. It revokes the identities the release created, before
+// Helm's deletion phase runs, and it holds no admission authority of its own:
+// it is a pre-delete hook ServiceAccount this same guard admitted, and it
+// stops existing when the uninstall ends. The principal is a pattern for the
+// same reason the object names are: this contract is release-stable and may
+// not carry one attempt's sequence or image.
+func serviceAccountReleaseTeardownExpression(namespace, cleanupPrincipalPattern string) string {
+	return fmt.Sprintf(
+		`request.userInfo.username.matches(%q) && request.userInfo.groups.size() == 3 && "system:serviceaccounts" in request.userInfo.groups && %q in request.userInfo.groups && "system:authenticated" in request.userInfo.groups`,
+		cleanupPrincipalPattern,
+		"system:serviceaccounts:"+namespace,
 	)
 }
 

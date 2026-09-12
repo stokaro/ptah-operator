@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -756,7 +757,7 @@ func (o *teardownRetirementCredentialObserver) Wait(ctx context.Context) error {
 					return ctxErr
 				}
 				if waitErr := waitCtx.Err(); waitErr != nil {
-					return o.waitFailure(waitErr)
+					return o.waitFailure(waitErr, everUnauthorized)
 				}
 				return fmt.Errorf("observe cleanup credential retirement at API endpoint %q: %w", endpoint.name, err)
 			}
@@ -788,7 +789,7 @@ func (o *teardownRetirementCredentialObserver) Wait(ctx context.Context) error {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
-			return o.waitFailure(err)
+			return o.waitFailure(err, everUnauthorized)
 		}
 	}
 }
@@ -826,12 +827,26 @@ func (o *teardownRetirementCredentialObserver) observeEndpoint(
 	return false, nil
 }
 
-func (o *teardownRetirementCredentialObserver) waitFailure(err error) error {
+// The endpoints that never answered Unauthorized are the diagnosis. Without
+// them the deadline says only that the credential stayed usable somewhere,
+// and the somewhere has to be reconstructed from a cluster the run tears down.
+func (o *teardownRetirementCredentialObserver) waitFailure(err error, everUnauthorized map[string]bool) error {
 	if errors.Is(err, context.DeadlineExceeded) {
+		stillAuthorized := make([]string, 0, len(o.endpoints))
+		for _, endpoint := range o.endpoints {
+			if !everUnauthorized[endpoint.name] {
+				stillAuthorized = append(stillAuthorized, endpoint.name)
+			}
+		}
+		where := "every frozen API endpoint answered Unauthorized at some point, but never all of them at once"
+		if len(stillAuthorized) != 0 {
+			where = "these frozen API endpoints never answered Unauthorized: " + strings.Join(stillAuthorized, ", ")
+		}
 		return fmt.Errorf(
-			"cleanup credential was not continuously Unauthorized on every frozen API endpoint for %s within %s: %w",
+			"cleanup credential was not continuously Unauthorized on every frozen API endpoint for %s within %s (%s): %w",
 			o.stabilityDuration,
 			o.retirementTimeout,
+			where,
 			context.DeadlineExceeded,
 		)
 	}
@@ -857,6 +872,7 @@ func (o *teardownRetirementCredentialObserver) Close() {
 
 type teardownRetirementConfigMapClient interface {
 	Get(context.Context, string, metav1.GetOptions) (*corev1.ConfigMap, error)
+	Update(context.Context, *corev1.ConfigMap, metav1.UpdateOptions) (*corev1.ConfigMap, error)
 	Delete(context.Context, string, metav1.DeleteOptions) error
 }
 
@@ -946,6 +962,22 @@ func (f *teardownRetirementFinalizer) Finalize(ctx context.Context) error {
 	}
 	if err != nil {
 		return fmt.Errorf("re-read release activation for final deletion: %w", err)
+	}
+	// Return the parameter to the state a fresh install starts from, then delete
+	// it. Kubernetes keeps serving the last value it saw for that object while
+	// something was reading it, so the bindings are deliberately still bound
+	// here: what the API server goes on serving after the delete is the state a
+	// reinstall in this namespace needs, not the sequence this release last
+	// activated. The state above has already been verified, so the reset is the
+	// last thing that changes it.
+	bootstrap := activation.DeepCopy()
+	bootstrap.Data = crdupgrade.ReleaseActivationBootstrapData()
+	if !reflect.DeepEqual(activation.Data, bootstrap.Data) {
+		updated, updateErr := f.configMaps.Update(ctx, bootstrap, metav1.UpdateOptions{})
+		if updateErr != nil {
+			return fmt.Errorf("return release activation to its bootstrap state: %w", updateErr)
+		}
+		activation = updated
 	}
 	if err := f.configMaps.Delete(ctx, f.activationName, teardownRetirementDeleteOptions(activation)); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete release activation as final API mutation: %w", err)

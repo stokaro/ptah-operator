@@ -33,9 +33,8 @@ type ControllerRBACClient interface {
 
 // ControllerRBACTransition moves stable bindings from one immutable
 // controller ServiceAccount to the next. It never creates a binding or role.
-// The current binary contains an exact contract only for the supported
-// release-sequence-zero predecessor; the state-machine representation already
-// supports the additional runtime-admission binding introduced in sequence 1.
+// Only explicitly frozen predecessor contracts are supported. A sequence-1
+// predecessor also contributes its runtime-admission and discovery bindings.
 type ControllerRBACTransition struct {
 	rollout   *RolloutGuard
 	client    ControllerRBACClient
@@ -820,12 +819,9 @@ func controllerRBACContract(
 			postApplyRole:    &runtimeRole,
 		}, nil
 	}
-	if rollout.ReleaseSequence != 1 || rollout.PreviousControllerReleaseSequence != 0 {
-		return controllerRBACTransitionContract{}, fmt.Errorf(
-			"controller RBAC transition from release sequence %d to %d requires an explicit frozen predecessor role contract",
-			rollout.PreviousControllerReleaseSequence,
-			rollout.ReleaseSequence,
-		)
+	predecessorRules, err := frozenPredecessorControllerRoleRules(rollout, runtimeContract)
+	if err != nil {
+		return controllerRBACTransitionContract{}, err
 	}
 	contract := controllerRBACTransitionContract{
 		bindings:         bindings,
@@ -834,19 +830,24 @@ func controllerRBACContract(
 			{
 				name:             bindingName,
 				cluster:          true,
-				predecessorRules: legacyControllerClusterRoleRules(),
+				predecessorRules: predecessorRules.cluster,
 				candidateRules:   currentControllerClusterRoleRules(rollout),
 			},
 			{
 				name:             bindingName,
 				namespace:        rollout.CoordinationNamespace,
-				predecessorRules: legacyControllerCoordinationRoleRules(),
+				predecessorRules: predecessorRules.coordination,
 				candidateRules:   currentControllerCoordinationRoleRules(),
 			},
 		},
 		postApplyRole: &runtimeRole,
 	}
 	if rollout.PreviousControllerReleaseSequence >= 1 {
+		// This Role already grants the predecessor access to its runtime
+		// identity and admission marker. Keep it in every exact inventory and
+		// revocation probe, not in the candidate-only post-apply contour.
+		runtimeRole.predecessorRules = predecessorRules.runtime
+		contract.roles = append(contract.roles, runtimeRole)
 		contract.postApplyBinding = nil
 		contract.postApplyRole = nil
 	}
@@ -854,6 +855,147 @@ func controllerRBACContract(
 		contract.roles = append(contract.roles, discoveryRole)
 	}
 	return contract, nil
+}
+
+// frozenControllerRoleContract is what one shipped release sequence published
+// for the controller. A transition verifies the live objects against the
+// predecessor's exact rules and then proves those grants are gone, so a
+// sequence records what it published instead of letting a later release
+// recompute it: rules that widen or narrow between sequences would otherwise
+// make the predecessor's own objects unrecognizable.
+type frozenControllerRoleContract struct {
+	cluster      func(controllerRoleIdentity) []rbacv1.PolicyRule
+	coordination func() []rbacv1.PolicyRule
+	runtime      func(controllerRoleIdentity, RuntimeAdmissionContract) []rbacv1.PolicyRule
+}
+
+type frozenControllerRoleRules struct {
+	cluster      []rbacv1.PolicyRule
+	coordination []rbacv1.PolicyRule
+	runtime      []rbacv1.PolicyRule
+}
+
+// Append-only. Bumping CurrentReleaseSequence means recording the contract the
+// outgoing sequence published here, as a literal, before the new sequence can
+// succeed it.
+var frozenControllerRoleContracts = map[int32]frozenControllerRoleContract{
+	1: {
+		cluster:      sequence1ControllerClusterRoleRules,
+		coordination: sequence1ControllerCoordinationRoleRules,
+		runtime:      sequence1ControllerRuntimeRoleRules,
+	},
+}
+
+func frozenPredecessorControllerRoleRules(rollout *RolloutGuard, runtimeContract RuntimeAdmissionContract) (frozenControllerRoleRules, error) {
+	unsupported := fmt.Errorf(
+		"controller RBAC transition from release sequence %d to %d requires an explicit frozen predecessor role contract",
+		rollout.PreviousControllerReleaseSequence,
+		rollout.ReleaseSequence,
+	)
+	if rollout.PreviousControllerReleaseSequence == 0 {
+		if rollout.ReleaseSequence != 1 {
+			return frozenControllerRoleRules{}, unsupported
+		}
+		return frozenControllerRoleRules{
+			cluster:      legacyControllerClusterRoleRules(),
+			coordination: legacyControllerCoordinationRoleRules(),
+		}, nil
+	}
+	if rollout.ReleaseSequence != rollout.PreviousControllerReleaseSequence+1 {
+		return frozenControllerRoleRules{}, unsupported
+	}
+	frozen, recorded := frozenControllerRoleContracts[rollout.PreviousControllerReleaseSequence]
+	if !recorded || frozen.cluster == nil || frozen.coordination == nil || frozen.runtime == nil {
+		return frozenControllerRoleRules{}, unsupported
+	}
+	predecessor := predecessorControllerRoleIdentity(rollout)
+	if predecessor.managerImage == "" {
+		return frozenControllerRoleRules{}, fmt.Errorf(
+			"controller RBAC transition out of release sequence %d requires the predecessor manager image",
+			rollout.PreviousControllerReleaseSequence,
+		)
+	}
+	previousRuntime := runtimeContract
+	previousRuntime.ControllerServiceAccountName = rollout.PreviousControllerServiceAccountName
+	return frozenControllerRoleRules{
+		cluster:      frozen.cluster(predecessor),
+		coordination: frozen.coordination(),
+		runtime:      frozen.runtime(predecessor, previousRuntime),
+	}, nil
+}
+
+// The runtime-admission Role sequence 1 published. Its controller identity and
+// mutable admission marker belong to the predecessor, not the candidate. Keep
+// the rules literal rather than inheriting future current-role changes.
+func sequence1ControllerRuntimeRoleRules(identity controllerRoleIdentity, contract RuntimeAdmissionContract) []rbacv1.PolicyRule {
+	rules := []rbacv1.PolicyRule{
+		privilegePolicyRule(
+			[]string{""}, []string{"serviceaccounts"},
+			[]string{contract.ControllerServiceAccountName, contract.CertificateServiceAccountName},
+			[]string{"get"},
+		),
+		privilegePolicyRule([]string{""}, []string{"limitranges"}, nil, []string{"list"}),
+		privilegePolicyRule(
+			[]string{""}, []string{"configmaps"},
+			[]string{AdmissionConvergenceMarkerName(contract.Namespace, identity.releaseName, identity.releaseSequence)},
+			[]string{"get", "update"},
+		),
+		privilegePolicyRule([]string{""}, []string{"configmaps"}, []string{ReleaseActivationName}, []string{"get"}),
+	}
+	if contract.Namespace == corev1.NamespaceDefault {
+		rules = append(rules, privilegePolicyRule([]string{"discovery.k8s.io"}, []string{"endpointslices"}, nil, []string{"list"}))
+	}
+	return rules
+}
+
+// The controller ClusterRole release sequence 1 published. Frozen: it is a
+// literal record of a shipped contract, not a view of the current one, so it
+// does not follow currentControllerClusterRoleRules when that changes.
+func sequence1ControllerClusterRoleRules(identity controllerRoleIdentity) []rbacv1.PolicyRule {
+	crdNames := []string{
+		"ptahschemaapprovals.operator.ptah.dev",
+		"ptahschemaplans.operator.ptah.dev",
+		"ptahschemas.operator.ptah.dev",
+	}
+	return []rbacv1.PolicyRule{
+		privilegePolicyRule([]string{"apiextensions.k8s.io"}, []string{"customresourcedefinitions"}, crdNames, []string{"get"}),
+		privilegePolicyRule(
+			[]string{"admissionregistration.k8s.io"},
+			[]string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"},
+			[]string{AdmissionConfigurationName},
+			[]string{"get"},
+		),
+		privilegePolicyRule(
+			[]string{"admissionregistration.k8s.io"},
+			[]string{"validatingadmissionpolicies", "validatingadmissionpolicybindings"},
+			retainedAdmissionGuardNames(identity),
+			[]string{"get"},
+		),
+		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas"}, nil, []string{"get", "list", "watch", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, nil, []string{"update"}),
+		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, nil, []string{"get", "update", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemaplans"}, nil, []string{"get", "list", "watch", "create"}),
+		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemaapprovals"}, nil, []string{"get", "list", "watch"}),
+		privilegePolicyRule([]string{"batch"}, []string{"jobs"}, nil, []string{"get", "list", "watch", "create", "patch"}),
+		privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"get", "list", "watch"}),
+		privilegePolicyRule([]string{""}, []string{"pods/log"}, nil, []string{"get"}),
+		privilegePolicyRule([]string{""}, []string{"serviceaccounts"}, nil, []string{"get"}),
+		privilegePolicyRule([]string{""}, []string{"limitranges"}, nil, []string{"list"}),
+		privilegePolicyRule([]string{"node.k8s.io"}, []string{"runtimeclasses"}, nil, []string{"get"}),
+		privilegePolicyRule([]string{"scheduling.k8s.io"}, []string{"priorityclasses"}, nil, []string{"get", "list"}),
+		privilegePolicyRule([]string{""}, []string{"configmaps"}, nil, []string{"get", "list", "watch", "create"}),
+		privilegePolicyRule([]string{""}, []string{"events"}, nil, []string{"create", "patch", "update"}),
+	}
+}
+
+// The controller coordination Role release sequence 1 published, frozen for the
+// same reason.
+func sequence1ControllerCoordinationRoleRules() []rbacv1.PolicyRule {
+	return []rbacv1.PolicyRule{{
+		APIGroups: []string{"coordination.k8s.io"},
+		Resources: []string{"leases"},
+		Verbs:     []string{"get", "create", "update"},
+	}}
 }
 
 func legacyControllerClusterRoleRules() []rbacv1.PolicyRule {
@@ -978,33 +1120,73 @@ func currentControllerRuntimeGuardNames(rollout *RolloutGuard) []string {
 	return currentRetainedAdmissionGuardNames(rollout)
 }
 
-func currentRetainedAdmissionGuardNames(rollout *RolloutGuard) []string {
-	names := []string{
-		RolloutGuardPolicyName(rollout.ReleaseSequence),
-		RuntimeGuardPolicyName(rollout.ReleaseSequence),
-		RuntimePodGuardPolicyName(rollout.ReleaseSequence),
-		HookIdentityGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
-		HookIdentityProbeGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
-		ReleaseActivationGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
-		AdmissionConvergencePolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
-		ServiceAccountObjectGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
-		ServiceAccountOriginGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
-		ControllerWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
-		ControllerJobWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
-		ControllerChunkWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
-		ControllerPlanWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
-		CertificateMutatingWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
-		CertificateValidatingWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
-		NamespaceDeletionGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
-		ParentReplicaSetGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
-		ParentHookPodOriginGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
-		ParentHookJobOriginGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName),
-		ParentHookJobContractPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
+// controllerRoleIdentity is the release identity a controller role contract was
+// published under. Retained guard names carry the release sequence and the
+// manager image, so a predecessor's rules cannot be rebuilt from the identity
+// of the release that succeeds it.
+type controllerRoleIdentity struct {
+	releaseNamespace          string
+	releaseName               string
+	releaseSequence           int32
+	managerImage              string
+	certificateRuntimeEnabled bool
+}
+
+func candidateControllerRoleIdentity(rollout *RolloutGuard) controllerRoleIdentity {
+	return controllerRoleIdentity{
+		releaseNamespace:          rollout.ReleaseNamespace,
+		releaseName:               rollout.ReleaseName,
+		releaseSequence:           rollout.ReleaseSequence,
+		managerImage:              rollout.ManagerImage,
+		certificateRuntimeEnabled: rollout.CertificateRuntimeEnabled,
 	}
-	if rollout.CertificateRuntimeEnabled {
-		names = append(names, StagingSecretGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName))
+}
+
+// The predecessor's namespace, release name and certificate runtime come from
+// the release being upgraded: they are the same release. Its sequence and
+// manager image are the ones the chart discovered from the live controller and
+// passed in, because the candidate's own values name a different identity.
+func predecessorControllerRoleIdentity(rollout *RolloutGuard) controllerRoleIdentity {
+	return controllerRoleIdentity{
+		releaseNamespace:          rollout.ReleaseNamespace,
+		releaseName:               rollout.ReleaseName,
+		releaseSequence:           rollout.PreviousControllerReleaseSequence,
+		managerImage:              rollout.PreviousControllerManagerImage,
+		certificateRuntimeEnabled: rollout.CertificateRuntimeEnabled,
+	}
+}
+
+func retainedAdmissionGuardNames(identity controllerRoleIdentity) []string {
+	names := []string{
+		RolloutGuardPolicyName(identity.releaseSequence),
+		RuntimeGuardPolicyName(identity.releaseSequence),
+		RuntimePodGuardPolicyName(identity.releaseSequence),
+		HookIdentityGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		HookIdentityProbeGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ReleaseActivationGuardPolicyName(identity.releaseNamespace, identity.releaseName),
+		AdmissionConvergencePolicyName(identity.releaseNamespace, identity.releaseName),
+		ServiceAccountObjectGuardPolicyName(identity.releaseNamespace, identity.releaseName),
+		ServiceAccountOriginGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerJobWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerChunkWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerPlanWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		CertificateMutatingWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName),
+		CertificateValidatingWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName),
+		NamespaceDeletionGuardPolicyName(identity.releaseNamespace, identity.releaseName),
+		ParentReplicaSetGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ParentHookPodOriginGuardPolicyName(identity.releaseNamespace, identity.releaseName),
+		ParentHookJobOriginGuardPolicyName(identity.releaseNamespace, identity.releaseName),
+		ParentHookJobContractPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+	}
+	if identity.certificateRuntimeEnabled {
+		names = append(names, StagingSecretGuardPolicyName(identity.releaseNamespace, identity.releaseName))
 	}
 	return names
+}
+
+func currentRetainedAdmissionGuardNames(rollout *RolloutGuard) []string {
+	return retainedAdmissionGuardNames(candidateControllerRoleIdentity(rollout))
 }
 
 func currentCRDManagerAdmissionGuardNames(rollout *RolloutGuard) []string {
@@ -1281,4 +1463,28 @@ func listControllerClusterRoleBindings(ctx context.Context, client ControllerRBA
 		return page.ListMeta, len(page.Items), nil
 	})
 	return items, err
+}
+
+// PredecessorRetiredAdmissionGuardNames are the retained policies and bindings a
+// predecessor sequence sealed. The chart grants the retiring hook exactly these
+// by name, and this list is what that grant is compared against.
+func PredecessorRetiredAdmissionGuardNames(rollout *RolloutGuard) []string {
+	if rollout == nil || rollout.PreviousControllerReleaseSequence == 0 {
+		return nil
+	}
+	identity := predecessorControllerRoleIdentity(rollout)
+	return []string{
+		RolloutGuardPolicyName(identity.releaseSequence),
+		RuntimeGuardPolicyName(identity.releaseSequence),
+		RuntimePodGuardPolicyName(identity.releaseSequence),
+		HookIdentityGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		HookIdentityProbeGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ParentReplicaSetGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ParentHookJobContractPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ServiceAccountOriginGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerJobWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerChunkWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerPlanWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+	}
 }

@@ -65,6 +65,53 @@ func TestProtectedRuntimePodStabilityObserverUsesGapFreeListWatch(t *testing.T) 
 	}
 }
 
+// The last event a watch delivers can precede the Pod actually going away.
+// An observer that only refreshes on an event would then hold "Pods remain"
+// with nothing left to correct it, and the credential fence would wait out its
+// deadline for a condition that had already been met.
+func TestProtectedRuntimePodObserverRereadsWhileUnproven(t *testing.T) {
+	t.Parallel()
+
+	rollout := admissionConvergenceTestRollout()
+	snapshots := &scriptedProtectedRuntimePodSnapshotter{snapshots: []crdupgrade.ProtectedRuntimePodSnapshot{
+		{ResourceVersion: "10", PodsRemain: true},
+		{ResourceVersion: "11", PodsRemain: true},
+		{ResourceVersion: "12"},
+	}}
+	watcher := &recordingProtectedRuntimePodWatcher{watches: []watch.Interface{
+		watch.NewFakeWithChanSize(4, false),
+		watch.NewFakeWithChanSize(4, false),
+		watch.NewFakeWithChanSize(4, false),
+	}}
+	observer, err := newProtectedRuntimePodStabilityObserver(snapshots, watcher, rollout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(observer.Close)
+
+	if _, proven, err := observer.Observe(context.Background(), "topology"); err != nil || proven {
+		t.Fatalf("initial Observe() proven = %t, err = %v, want an unproven observation", proven, err)
+	}
+	// No event arrives. The observation is still unproven, so the snapshot is
+	// read again rather than held.
+	if _, proven, err := observer.Observe(context.Background(), "topology"); err != nil || proven {
+		t.Fatalf("second Observe() proven = %t, err = %v, want an unproven observation", proven, err)
+	}
+	identity, proven, err := observer.Observe(context.Background(), "topology")
+	if err != nil || !proven || identity == "" {
+		t.Fatalf("Observe() after the Pods went away = %q, %t, %v, want a proven observation", identity, proven, err)
+	}
+	if got := len(watcher.options); got != 3 {
+		t.Fatalf("watch restarts = %d, want one per unproven sweep", got)
+	}
+	// Proven observations are carried by the watch alone, so the identity holds
+	// still and the stability window can elapse.
+	held, proven, err := observer.Observe(context.Background(), "topology")
+	if err != nil || !proven || held != identity {
+		t.Fatalf("Observe() after proving = %q, %t, %v, want the identity held at %q", held, proven, err, identity)
+	}
+}
+
 func TestProtectedRuntimePodObserverRejectsUnsafeSnapshotsAndEvents(t *testing.T) {
 	t.Parallel()
 

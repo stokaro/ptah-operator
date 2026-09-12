@@ -73,10 +73,20 @@ FEATURE_GATE_135_EXPECTED=$WORK_DIR/feature-gate-1.35.expected.yaml
 FEATURE_GATE_136_ACTUAL=$WORK_DIR/feature-gate-1.36.yaml
 FEATURE_GATE_137_ACTUAL=$WORK_DIR/feature-gate-1.37.yaml
 FEATURE_GATE_137_EXPECTED=$WORK_DIR/feature-gate-1.37.expected.yaml
+CRD_UPGRADE_INVOCATION_ENV=$WORK_DIR/crd-upgrade-invocation-env
+CRD_UNINSTALL_INVOCATION_ENV=$WORK_DIR/crd-uninstall-invocation-env
+EXIT_LATCH_PROBE_SCRIPT=$WORK_DIR/exit-latch-probe.sh
+EXIT_LATCH_FUNCTIONS=$WORK_DIR/exit-latch-functions
 STATIC_PTAH_VERSION=e2e-explicit-version
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	case "$WORK_DIR" in
 		"${TMPDIR:-/tmp}"/ptah-operator-e2e-static.*) rm -rf -- "$WORK_DIR" ;;
@@ -1236,6 +1246,19 @@ for engine in postgresql mysql; do
 		exit 1
 	}
 	grep -F 'fault_token ' "$ROOT_DIR/testdata/e2e/${engine}-fault-v1.sql" >/dev/null
+	# The fault databases are seeded from the v3 fixture, so the fault schema has
+	# to be that fixture plus the fault_token column. Anything else plans a drop,
+	# the schema blocks on a destructive plan, and the fault phase waits for an
+	# approval boundary it can never reach. Trailing commas move with the column,
+	# so compare the fixtures without them.
+	fault_seed_lines=$(sed 's/,$//' "$ROOT_DIR/testdata/e2e/${engine}-v3.sql")
+	fault_desired_lines=$(grep -v 'fault_token ' \
+		"$ROOT_DIR/testdata/e2e/${engine}-fault-v1.sql" | sed 's/,$//')
+	[ "$fault_desired_lines" = "$fault_seed_lines" ] || {
+		printf 'e2e static: %s-fault-v1.sql must be %s-v3.sql plus the fault_token column\n' \
+			"$engine" "$engine" >&2
+		exit 1
+	}
 done
 for lifecycle_marker in \
 	'wait_for_in_sync' \
@@ -1565,13 +1588,24 @@ static_require_order "$next_release_crd_source" \
 	'capture_controller_service_account_identity' \
 	'"$current_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"' \
 	'"$current_sequence_marker" "$current_sequence_inventory"' \
-	'helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
+	'retry_same_candidate_with_diagnostics' \
 	'"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE"' \
 	'"$next_sequence_marker" "$next_sequence_inventory"' \
 	'assert_inventory_resources_absent' \
 	'"$current_sequence_inventory" "$current_sequence_marker_name"' \
 	'assert_release_sequence_candidate_residue_absent "$current_release_sequence"' \
 	'e2e crd: synthetic sequence-%s upgrade retired the exact sequence-%s admission and controller identity'
+# shellcheck disable=SC2016 # Exact helper ordering retains runtime variables literally.
+static_require_order "$next_release_crd_source" \
+	'same-candidate retry capture and authoritative Helm failure' \
+	'retry_same_candidate_with_diagnostics() {' \
+	'LATE_ACTIVATION_PREFLIGHT_LOG_FILE=$WORK_DIR/retry-preflight.log' \
+	'LATE_ACTIVATION_RECONCILE_LOG_FILE=$WORK_DIR/retry-reconcile.log' \
+	'arm_late_activation_hook_log_captures' \
+	'if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE"' \
+	'finish_late_activation_hook_log_captures || retry_capture_status=$?' \
+	'return "$retry_helm_status"' \
+	'verify_late_activation_preflight_capture'
 # shellcheck disable=SC2016 # Ordered markers intentionally retain runtime variables literally.
 static_require_order "$next_release_crd_source" \
 	'next chart reinstall and final zero-residue proof' \
@@ -3923,6 +3957,18 @@ static_require_order "$live_job_evidence_section" 'durable Job evidence fail-clo
 	'[ -n "$live_evidence_pod" ]' \
 	'.metadata.name == $podName and .metadata.uid == $podUID' \
 	'.uid == $jobUID and .name == $jobName and .controller == true'
+# A loop that is an if condition runs in this shell, so an exit inside it ends
+# the phase rather than the loop, and the phase dies with no message at all.
+# The shape reads as "run the loop and take its answer", which is why it was
+# written; refuse it, and carry the answer in a variable instead.
+for phase_script in "$ROOT_DIR"/hack/e2e-*.sh; do
+	if grep -nE '^[[:space:]]*if[[:space:]]+(!)?[[:space:]]*while[[:space:]]' \
+		"$phase_script" >/dev/null; then
+		printf 'e2e static: %s uses a loop as an if condition; an exit inside it ends the phase\n' \
+			"${phase_script##*/}" >&2
+		exit 1
+	fi
+done
 ledger_selftest_script=$(sed -n '1,$p' \
 	"$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh")
 for ledger_selftest_marker in \
@@ -3985,9 +4031,9 @@ uncertain_read_proof_section=$(sed -n '/^capture_uncertain_read_proof_pair()/,/^
 uncertain_zero_evidence_defaults_present() {
 	zero_evidence_section=$1
 	[ "$(printf '%s\n' "$zero_evidence_section" |
-		grep -Fc '(.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs')" -eq 2 ] &&
+		grep -Fc '(.status.pendingObservation.applyPodUIDs // []) as $recordedPodUIDs')" -eq 2 ] &&
 		[ "$(printf '%s\n' "$zero_evidence_section" |
-			grep -Fc '(.status.pendingObservation.applyPodCount // 0) == $applyPodCount')" -eq 2 ]
+			grep -Fc '(.status.pendingObservation.applyPodCount // 0) == ($recordedPodUIDs | length)')" -eq 2 ]
 }
 uncertain_zero_evidence_defaults_present "$uncertain_read_proof_section" || {
 	printf '%s\n' 'e2e static: uncertain Apply proof does not normalize both omitted Pod evidence fields' >&2
@@ -3995,7 +4041,7 @@ uncertain_zero_evidence_defaults_present "$uncertain_read_proof_section" || {
 }
 # shellcheck disable=SC2016 # The mutant intentionally replaces a literal jq variable.
 uncertain_zero_evidence_mutant=$(printf '%s\n' "$uncertain_read_proof_section" |
-	sed 's#(.status.pendingObservation.applyPodCount // 0) == \$applyPodCount#.status.pendingObservation.applyPodCount == $applyPodCount#')
+	sed 's#(.status.pendingObservation.applyPodCount // 0) == (\$recordedPodUIDs | length)#.status.pendingObservation.applyPodCount == ($recordedPodUIDs | length)#')
 if uncertain_zero_evidence_defaults_present "$uncertain_zero_evidence_mutant"; then
 	printf '%s\n' 'e2e static: uncertain Apply zero-evidence wiring mutant was not rejected' >&2
 	exit 1
@@ -4117,7 +4163,7 @@ static_require_order "$running_deadline_scenario_section" 'running Apply deadlin
 	'"$MYSQL_TIMEOUT_OPERATION_ID" "$DEADLINE_PTAH_STARTED_AT"' \
 	'stop_mysql_barrier' \
 	'capture_uncertain_read_proof_pair "$MYSQL_TIMEOUT_SCHEMA"' \
-	'"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" 1' \
+	'"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" deadline' \
 	'assert_approval_consumed "$MYSQL_TIMEOUT_APPROVAL" "$MYSQL_TIMEOUT_ORIGINAL_PLAN_UID"' \
 	'Kubernetes-timeout recovery did not retain exactly one fresh Observe Job' \
 	'Kubernetes-timeout recovery did not retain exactly one fresh Plan Job' \
@@ -5560,7 +5606,9 @@ printf '%s\n' "$crd_role_section" | grep -F 'verbs: ["get", "update"]' >/dev/nul
 printf '%s\n' "$crd_role_section" |
 	grep -F 'resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]' >/dev/null
 [ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["list"]')" -eq 3 ]
-[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["get", "patch"]')" -eq 2 ]
+# Only the stable ClusterRoleBinding is mutable through cluster-wide RBAC.
+# Namespaced transition rules are checked against the compiled Role inventory.
+[ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["get", "patch"]')" -eq 1 ]
 [ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["create"]')" -eq 1 ]
 for crd_manager_rbac_marker in \
 	'resources: ["clusterrolebindings"]' \
@@ -5570,8 +5618,8 @@ for crd_manager_rbac_marker in \
 		grep -F -- "$crd_manager_rbac_marker" >/dev/null
 done
 if printf '%s\n' "$crd_role_section" |
-	grep -Eq 'verbs:.*(delete|watch)|resources:.*(\*|endpointslices)'; then
-	printf '%s\n' 'e2e static: CRD manager hook ClusterRole contains an unsafe verb, wildcard, or cluster-wide EndpointSlice access' >&2
+	grep -Eq 'verbs:.*(bind|escalate|delete|watch)|resources:.*(\*|endpointslices|"roles")'; then
+	printf '%s\n' 'e2e static: fresh-install CRD manager ClusterRole contains an unsafe verb, wildcard, or cluster-wide namespaced access' >&2
 	exit 1
 fi
 for crd_runtime_marker in \
@@ -6029,9 +6077,9 @@ for crd_live_marker in \
 	'controller-only downgrade preflight prevented the certificate rotator from remaining ready' \
 	'blocked candidate manager rewrote future PtahSchema state' \
 	'reinstalling over retained and drifted CRDs' \
-	'pre-install hook did not reconcile a retained CRD' \
+	'the reinstall did not reconcile a retained CRD another manager drifted' \
 	'fresh-installing the exact exported current-release chart bytes' \
-	'exact current-release chart pre-install hook did not reconcile a retained CRD' \
+	'the exact released-chart install did not reconcile a retained CRD another manager drifted' \
 	'exact exported current-release chart passed fresh install and zero-residue uninstall' \
 	'uninstall retained CRDs and live objects'; do
 	grep -F -- "$crd_live_marker" "$ROOT_DIR/hack/e2e-kind.sh" \
@@ -6058,13 +6106,18 @@ for hook_progress_marker in \
 	'expected_name=$(expected_hook_progress_name "$component")' \
 	'.metadata.name == $expected_name and' \
 	'--as-uid "$HOOK_PROGRESS_ADVERSARY_UID"' \
-	'expect_hook_progress_authorization yes delete jobs' \
-	'expect_hook_progress_authorization yes patch jobs/status' \
-	'expect_hook_progress_authorization yes patch pods' \
-	'expect_hook_progress_authorization yes patch pods/status' \
-	'expect_hook_progress_authorization no create jobs' \
-	'expect_hook_progress_authorization no update jobs' \
-	'expect_hook_progress_authorization no update pods' \
+	'HOOK_PROGRESS_AUTHORIZATION_SECONDS=90' \
+	'wait_for_hook_progress_authorization' \
+	'--server "https://${HOOK_PROGRESS_AUTHORIZATION_ENDPOINT}:6443"' \
+	'create --raw /apis/authorization.k8s.io/v1/selfsubjectaccessreviews -f -' \
+	"'delete jobs' 'get jobs' 'get jobs/status' 'patch jobs/status'" \
+	"'get pods' 'patch pods' 'get pods/status' 'patch pods/status'" \
+	"'create validatingadmissionpolicies.admissionregistration.k8s.io'" \
+	"'create validatingadmissionpolicybindings.admissionregistration.k8s.io'" \
+	"'create jobs' 'update jobs' 'update pods'" \
+	'expect_hook_progress_authorization yes "${hook_auth_capability%% *}" "${hook_auth_capability#* }"' \
+	'expect_hook_progress_authorization no "${hook_auth_capability%% *}" "${hook_auth_capability#* }"' \
+	'[ "$hook_auth_endpoint_count" -eq 3 ]' \
 	'Ptah E2E hook progress hold rejected controller status advancement' \
 	'Ptah hook parent origin guard rejected an unauthorized Job' \
 	'Ptah hook Pod origin guard rejected an unauthorized Pod' \
@@ -6278,6 +6331,136 @@ done
 # shellcheck disable=SC2016 # Match the literal runtime ROOT_DIR expression in the harness.
 crd_script_invocation='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"'
 [ "$(grep -Fc "$crd_script_invocation" "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ]
+
+# The uninstall phase re-runs the upgrade proof inside itself, so it needs every
+# variable the upgrade invocation passes. A name the uninstall invocation drops
+# does not announce itself: the phase script refuses it through ${VAR:?...},
+# which ends that shell without setting $?.
+crd_invocation_environment() {
+	# GNU awk drops an unescaped terminal backslash in a -v assignment. Build
+	# the continuation inside the program so the exact line match is portable.
+	awk -v phase="E2E_PHASE=$1" -v target='"$ROOT_DIR/hack/e2e-crd-upgrade.sh"' '
+		index($0, "E2E_") == 1 {
+			block = block $0 "\n"
+			if ($0 == phase " \\") { matched = 1 }
+			next
+		}
+		index($0, target) > 0 {
+			if (matched) { printf "%s", block }
+			block = ""
+			matched = 0
+			next
+		}
+		{ block = ""; matched = 0 }
+	' "${2:-$ROOT_DIR/hack/e2e-kind.sh}" | sed 's/=.*//' | sort -u
+}
+
+# shellcheck disable=SC2016 # These are literal harness lines, not commands to execute.
+crd_invocation_parser_probe=$(printf '%s\n' \
+	"E2E_WRONG_PHASE=value \\" \
+	"E2E_PHASE=uninstall \\" \
+	'  "$ROOT_DIR/hack/e2e-crd-upgrade.sh"' \
+	"E2E_WRONG_TARGET=value \\" \
+	"E2E_PHASE=upgrade \\" \
+	'  "$ROOT_DIR/hack/another-phase.sh"' \
+	"E2E_REQUIRED=value \\" \
+	"E2E_PHASE=upgrade \\" \
+	'  "$ROOT_DIR/hack/e2e-crd-upgrade.sh"' |
+	crd_invocation_environment upgrade -)
+[ "$crd_invocation_parser_probe" = "$(printf '%s\n' E2E_PHASE E2E_REQUIRED)" ] || {
+	printf '%s\n' 'e2e static: CRD environment parser mixed invocation blocks or lost an assignment' >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # A phase without a continuation is not part of the command environment.
+crd_invocation_parser_probe=$(printf '%s\n' \
+	"E2E_REQUIRED=value \\" \
+	'E2E_PHASE=upgrade' \
+	'  "$ROOT_DIR/hack/e2e-crd-upgrade.sh"' |
+	crd_invocation_environment upgrade -)
+[ -z "$crd_invocation_parser_probe" ] || {
+	printf '%s\n' 'e2e static: CRD environment parser accepted a phase without a command continuation' >&2
+	exit 1
+}
+
+crd_invocation_environment upgrade >"$CRD_UPGRADE_INVOCATION_ENV"
+crd_invocation_environment uninstall >"$CRD_UNINSTALL_INVOCATION_ENV"
+for crd_invocation_env_file in "$CRD_UPGRADE_INVOCATION_ENV" "$CRD_UNINSTALL_INVOCATION_ENV"; do
+	[ -s "$crd_invocation_env_file" ] || {
+		printf 'e2e static: could not read a CRD phase invocation environment from hack/e2e-kind.sh\n' >&2
+		exit 1
+	}
+done
+crd_invocation_env_missing=$(grep -Fxv -f "$CRD_UNINSTALL_INVOCATION_ENV" \
+	"$CRD_UPGRADE_INVOCATION_ENV" || true)
+[ -z "$crd_invocation_env_missing" ] || {
+	printf 'e2e static: the uninstall CRD phase does not receive %s\n' \
+		"$(printf '%s' "$crd_invocation_env_missing" | tr '\n' ' ')" >&2
+	exit 1
+}
+
+# A shell that ends on a refused ${VAR:?...} or an unset name under set -u never
+# sets $?, so an EXIT trap that reports $? reports the previous command's
+# success. Every trap in the harness therefore latches its own completion.
+assert_exit_traps_latched() {
+	latch_script=$1
+	sed -n 's/^[[:space:]]*trap \([a-z_][a-z_]*\) EXIT$/\1/p' \
+		"$latch_script" >"$EXIT_LATCH_FUNCTIONS"
+	while IFS= read -r latch_function; do
+		awk -v fn="$latch_function" '
+			{
+				if (found && checked < 2) {
+					checked++
+					if (index($0, "[ \"$status\" -ne 0 ] || [ \"$") > 0 &&
+						index($0, "_COMPLETED\" -eq 1 ] || status=1") > 0) {
+						latched = 1
+					}
+				}
+				line = $0
+				sub(/^[ \t]+/, "", line)
+				if (line == fn "() {") { found = 1; checked = 0 }
+			}
+			END { exit latched ? 0 : 1 }
+		' "$latch_script" || {
+			printf 'e2e static: EXIT trap %s in %s reports $? without a completion latch\n' \
+				"$latch_function" "$latch_script" >&2
+			exit 1
+		}
+	done <"$EXIT_LATCH_FUNCTIONS"
+}
+for latch_candidate in $(git -C "$ROOT_DIR" ls-files 'hack/*.sh'); do
+	assert_exit_traps_latched "$ROOT_DIR/$latch_candidate"
+done
+
+# The latch is load-bearing only if the guarded shape really refuses, so run it.
+# The shape is printed rather than written as a heredoc body: a heredoc would add
+# a second literal fail-fast mode line to this file's own source contract.
+# shellcheck disable=SC2016 # The probe expands when it runs, not while written.
+printf '%s\n' \
+	'#!/bin/sh' \
+	'' \
+	'set -eu' \
+	'' \
+	'PHASE_COMPLETED=0' \
+	'cleanup() {' \
+	'	status=$?' \
+	'	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1' \
+	'	trap - EXIT HUP INT TERM' \
+	'	exit "$status"' \
+	'}' \
+	'trap cleanup EXIT' \
+	'true' \
+	'EXIT_LATCH_PROBE=${EXIT_LATCH_PROBE:?probe value is required}' \
+	'PHASE_COMPLETED=1' \
+	'printf "%s\\n" "$EXIT_LATCH_PROBE"' \
+	>"$EXIT_LATCH_PROBE_SCRIPT"
+if sh "$EXIT_LATCH_PROBE_SCRIPT" >/dev/null 2>&1; then
+	printf '%s\n' 'e2e static: the completion latch reported a refused expansion as a pass' >&2
+	exit 1
+fi
+EXIT_LATCH_PROBE=probe-value sh "$EXIT_LATCH_PROBE_SCRIPT" >/dev/null || {
+	printf '%s\n' 'e2e static: the completion latch refused a script that reached its end' >&2
+	exit 1
+}
 # shellcheck disable=SC2016 # Match literal runtime provenance expressions in the harness.
 controller_revision_assignment='CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:?E2E_CONTROLLER_REVISION is required inside the source snapshot}'
 grep -F -- "$controller_revision_assignment" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
@@ -6339,4 +6522,5 @@ printf '%s\n' "$docker_build_dry_run" |
 	exit 1
 }
 
+PHASE_COMPLETED=1
 printf '%s\n' 'e2e static: PASS'

@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/apiserver/pkg/cel/library"
 )
 
 const testRuntimeAdmissionContractB64 = "e30="
@@ -1547,6 +1548,7 @@ func evaluateRolloutCEL(t *testing.T, expression string, values, variables map[s
 			}),
 		)),
 		ext.Strings(),
+		library.Quantity(),
 	)
 	if err != nil {
 		t.Fatal(err)

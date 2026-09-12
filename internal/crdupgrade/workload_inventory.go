@@ -569,6 +569,22 @@ func (i *WorkloadInventory) runtimeDeployment(
 	return deployment, nil
 }
 
+// retiredRuntimeReplicaSet reports whether a protected ReplicaSet is the
+// revision a cutover replaced. A Deployment keeps the ReplicaSets of its
+// earlier revisions, and a cutover changes the runtime ServiceAccount, so the
+// revision it replaced names the predecessor's. Such a ReplicaSet is the
+// Deployment's own history: this teardown has already held it to an exact
+// controller reference, it names the recorded predecessor and nothing else,
+// and it is scaled to zero with no Pod of its own. A ReplicaSet naming any
+// other identity is refused, as is one that could still run.
+func (i *WorkloadInventory) retiredRuntimeReplicaSet(replicaSet *appsv1.ReplicaSet, serviceAccount string) bool {
+	previous := i.rollout.PreviousControllerServiceAccountName
+	return previous != "" && serviceAccount == previous &&
+		replicaSet.Spec.Replicas != nil && *replicaSet.Spec.Replicas == 0 &&
+		replicaSet.Status.Replicas == 0 && replicaSet.Status.ReadyReplicas == 0 &&
+		replicaSet.Status.AvailableReplicas == 0
+}
+
 func (i *WorkloadInventory) verifyRuntimeReplicaSet(
 	replicaSet *appsv1.ReplicaSet,
 	deployment *appsv1.Deployment,
@@ -588,7 +604,8 @@ func (i *WorkloadInventory) verifyRuntimeReplicaSet(
 	}
 
 	serviceAccount := replicaSet.Spec.Template.Spec.ServiceAccountName
-	if deployment.Spec.Template.Spec.ServiceAccountName != serviceAccount {
+	if deployment.Spec.Template.Spec.ServiceAccountName != serviceAccount &&
+		!i.retiredRuntimeReplicaSet(replicaSet, serviceAccount) {
 		return fmt.Errorf("protected runtime ReplicaSet %s ServiceAccount %s does not match expected Deployment template", replicaSetObject, serviceAccount)
 	}
 	if deployment.Spec.Selector == nil || len(deployment.Spec.Selector.MatchExpressions) != 0 || len(deployment.Spec.Selector.MatchLabels) != 3 {

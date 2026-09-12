@@ -71,9 +71,18 @@ WORKLOAD_TIMEOUT_SECONDS=120
 METRICS_TIMEOUT_SECONDS=30
 HA_SCHEMA=leader-failover
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
+	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
+	trap - EXIT HUP INT TERM
 	k delete namespace "$HA_TEST_NAMESPACE" --ignore-not-found --wait=false \
 		>/dev/null 2>&1 || true
+	exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
@@ -552,4 +561,5 @@ done
 k -n "$HA_TEST_NAMESPACE" wait --for=delete ptahschema/"$HA_SCHEMA" --timeout=60s
 k delete namespace "$HA_TEST_NAMESPACE" --wait=true --timeout=120s >/dev/null
 
+PHASE_COMPLETED=1
 printf '%s\n' 'e2e HA: PASS one Lease, exact RBAC, Pod failover, admitted operation, and custom metrics'

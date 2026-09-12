@@ -120,7 +120,7 @@ spec:
 {{- $mode := printf `%s == %q ? "teardown-retirement-probe-a" : "teardown-retirement-gate"` .selector .probeJob -}}
 {{- $timeout := printf `%s == %q ? "--timeout=60s" : "--timeout=90s"` .selector .probeJob -}}
 {{- $parts := list
-      (printf `has(%[1]s.args) && %[2]s.size() == 29` .container $args)
+      (printf `has(%[1]s.args) && %[2]s.size() == 30` .container $args)
       (printf `%s[0] == (%s)` $args $mode)
       (printf `%s[1] == (%s)` $args $timeout)
       (printf `%s[2] == %q` $args (printf "--release-name=%s" .releaseName))
@@ -149,7 +149,8 @@ spec:
       (printf `%s[25].matches("^--certificate-runtime-args-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
       (printf `%s[26].matches("^--runtime-deployment-config-expressions-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
       (printf `%s[27].matches("^--runtime-pod-config-expressions-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
-      (printf `%s[28].matches("^--runtime-admission-contract-b64=[A-Za-z0-9+/]+={0,2}$")` $args) -}}
+      (printf `%s[28].matches("^--runtime-admission-contract-b64=[A-Za-z0-9+/]+={0,2}$")` $args)
+      (printf `%s[29].startsWith("--previous-controller-manager-image=")` $args) -}}
 {{- join " && " $parts -}}
 {{- end -}}
 
@@ -163,6 +164,7 @@ spec:
 {{- $controllerServiceAccount := .controllerServiceAccount -}}
 {{- $previousControllerServiceAccount := .previousControllerServiceAccount -}}
 {{- $previousSequence := .previousSequence -}}
+{{- $predecessorSequences := .predecessorSequences -}}
 {{- $controllerDeployment := .controllerDeployment -}}
 {{- $certificateServiceAccount := .certificateServiceAccount -}}
 {{- $bootstrapServiceAccount := .bootstrapServiceAccount -}}
@@ -189,8 +191,22 @@ spec:
 {{- $controllerUsernames = append $controllerUsernames $previousUsername -}}
 {{- $controllerNames = append $controllerNames $previousControllerServiceAccount -}}
 {{- end -}}
-{{- $controllerCallerMatch := printf `request.userInfo.username in %s` ($controllerUsernames | toJson) -}}
-{{- $controllerNameMatch := printf `request.name in %s` ($controllerNames | toJson) -}}
+{{/*
+The compiled contract writes these two CEL lists with ", " between elements,
+as every other guard in this chart does. toJson writes no separator, which is
+the same text for one element and a different one for two, so the difference
+appeared only once a predecessor existed and only against a live cluster.
+*/}}
+{{- $quotedControllerUsernames := list -}}
+{{- range $quotedUsername := $controllerUsernames -}}
+{{- $quotedControllerUsernames = append $quotedControllerUsernames (printf "%q" $quotedUsername) -}}
+{{- end -}}
+{{- $quotedControllerNames := list -}}
+{{- range $quotedName := $controllerNames -}}
+{{- $quotedControllerNames = append $quotedControllerNames (printf "%q" $quotedName) -}}
+{{- end -}}
+{{- $controllerCallerMatch := printf `request.userInfo.username in [%s]` (join ", " $quotedControllerUsernames) -}}
+{{- $controllerNameMatch := printf `request.name in [%s]` (join ", " $quotedControllerNames) -}}
 {{- $markerContext := dict "name" .markerName "namespace" $root.Release.Namespace "releaseName" $root.Release.Name "sequence" $sequence "managerImage" $managerImage "attempt" $attempt -}}
 {{- $objectMarkerShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "object") $markerContext) -}}
 {{- $oldMarkerShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "oldObject") $markerContext) -}}
@@ -233,8 +249,11 @@ spec:
       "ptah-operator-release-activation"
       (include "ptah-operator.admissionConvergenceMarkerName" $root)
       (printf "ptah-operator-parent-origin-ready-v2-%s" (printf "%s\n%s" $root.Release.Namespace $root.Release.Name | sha256sum | trunc 12)) -}}
-{{- if gt (atoi $previousSequence) 0 -}}
-{{- $retainedMarkers = append $retainedMarkers (printf "ptah-admission-convergence-v1-%s-%s" $previousSequence (printf "%s\n%s" $root.Release.Namespace $root.Release.Name | sha256sum | trunc 12)) -}}
+{{- range $predecessorSequence := $predecessorSequences -}}
+{{- $retainedMarkers = append $retainedMarkers (printf "ptah-admission-convergence-v1-%s-%s" $predecessorSequence (printf "%s\n%s" $root.Release.Namespace $root.Release.Name | sha256sum | trunc 12)) -}}
+{{- end -}}
+{{- if and (gt (atoi $previousSequence) 0) (not (has $previousSequence $predecessorSequences)) -}}
+{{- fail (printf "teardown retirement found predecessor sequence %s outside the recorded inventory" $previousSequence) -}}
 {{- end -}}
 {{- $protectedRetainedMarkerDelete := printf `request.operation == "DELETE" && request.resource.group == "" && request.resource.version == "v1" && request.resource.resource == "configmaps" && (!has(request.subResource) || request.subResource == "") && request.namespace == %q && oldObject != null && oldObject.metadata.name in %s` $root.Release.Namespace ($retainedMarkers | toJson) -}}
 {{- $match := printf `(%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s) || (%s)` $protectedCaller $protectedToken $protectedJob $protectedJobDelete $protectedJobStatus $protectedPodWrite $protectedPodDelete $protectedPodStatus $dangerousPodSubresource -}}
@@ -266,7 +285,7 @@ spec:
 {{- $jobControllerPrincipal := `(request.userInfo.username == "system:kube-controller-manager" && request.userInfo.groups.size() == 1 && "system:authenticated" in request.userInfo.groups) || (request.userInfo.username == "system:serviceaccount:kube-system:job-controller" && request.userInfo.groups.size() == 3 && "system:serviceaccounts" in request.userInfo.groups && "system:serviceaccounts:kube-system" in request.userInfo.groups && "system:authenticated" in request.userInfo.groups)` -}}
 {{- $schedulerPrincipal := `(request.userInfo.username == "system:kube-scheduler" && request.userInfo.groups.size() == 1 && "system:authenticated" in request.userInfo.groups) || (request.userInfo.username == "system:serviceaccount:kube-system:kube-scheduler" && request.userInfo.groups.size() == 3 && "system:serviceaccounts" in request.userInfo.groups && "system:serviceaccounts:kube-system" in request.userInfo.groups && "system:authenticated" in request.userInfo.groups)` -}}
 {{- $nodePrincipal := `request.userInfo.username.matches("^system:node:.+$") && request.userInfo.groups.size() == 2 && "system:nodes" in request.userInfo.groups && "system:authenticated" in request.userInfo.groups && has(oldObject.spec.nodeName) && oldObject.spec.nodeName != "" && request.userInfo.username == "system:node:" + oldObject.spec.nodeName` -}}
-{{- $helmAuthorizer := `(request.operation == "CREATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed()) || (request.operation == "UPDATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed()) || (request.operation == "DELETE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("delete").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("delete").allowed())` -}}
+{{- $helmAuthorizer := `(request.operation == "CREATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("create").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("create").allowed()) || (request.operation == "UPDATE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("update").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("update").allowed()) || (request.operation == "DELETE" && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicies").check("delete").allowed() && authorizer.group("admissionregistration.k8s.io").resource("validatingadmissionpolicybindings").check("delete").allowed())` -}}
 {{- $jobPod := "object.spec.template.spec" -}}
 {{- $jobTemplateMetadata := "object.spec.template.metadata" -}}
 {{- $jobContainer := "object.spec.template.spec.containers[0]" -}}
@@ -534,9 +553,25 @@ spec:
 {{- end -}}
 
 {{- $sequence := include "ptah-operator.releaseSequence" . -}}
-{{- if ne $sequence "1" -}}
+{{/*
+Append-only predecessor inventory. A release records the sequences whose
+retained markers can still exist when it is uninstalled. The operator's
+predecessor retirement deletes a predecessor's guards, bindings and sealed
+marker during the upgrade that replaces it; what survives that retirement is
+the admission convergence marker whose name carries the predecessor's own
+sequence, and the teardown has to protect it from a foreign deletion while the
+uninstall runs. Preparing a release appends its own entry here and never edits
+an older one, so the list reads as the history it is. Rendering refuses for a
+sequence nobody recorded, because a teardown that cannot name those markers
+would leave them unguarded.
+*/}}
+{{- $predecessorInventory := dict
+      "1" (list)
+      "2" (list "1") -}}
+{{- if not (hasKey $predecessorInventory $sequence) -}}
 {{- fail (printf "teardown retirement sequence %s has no explicit append-only predecessor inventory" $sequence) -}}
 {{- end -}}
+{{- $predecessorSequences := index $predecessorInventory $sequence -}}
 {{- $managerImage := include "ptah-operator.managerImage" . -}}
 {{- $attempt := printf "%s\n%s\n%s\n%s" .Release.Namespace .Release.Name $sequence $managerImage | sha256sum -}}
 {{- $attempt12 := trunc 12 $attempt -}}
@@ -623,6 +658,7 @@ spec:
       "controllerServiceAccount" $controllerServiceAccount
       "previousControllerServiceAccount" $previousControllerServiceAccount
       "previousSequence" $previousSequence
+      "predecessorSequences" $predecessorSequences
       "controllerDeployment" $controllerName
       "certificateServiceAccount" $certificateName
       "bootstrapServiceAccount" $bootstrapName
@@ -702,6 +738,14 @@ rules:
     resources: ["configmaps"]
     resourceNames: [{{ $markerName | quote }}]
     verbs: ["get", "update"]
+  # The probe derives the teardown retirement phase from the durable release
+  # activation parameter, and it runs before any wider identity exists. Reading
+  # that one object is all it needs: the parameter is retired later, by the
+  # identity that owns it.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["ptah-operator-release-activation"]
+    verbs: ["get"]
   {{- if eq .Release.Namespace "default" }}
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]

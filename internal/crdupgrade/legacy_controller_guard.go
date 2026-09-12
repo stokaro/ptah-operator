@@ -241,6 +241,7 @@ func legacyServiceAccountOriginObjects(rollout *RolloutGuard, name string) (
 		PreviousControllerServiceAccountUIDAnnotation,
 		PreviousControllerServiceAccountManagedAnnotation,
 		PreviousControllerReleaseSequenceAnnotation,
+		PreviousControllerManagerImageAnnotation,
 	} {
 		delete(policy.Annotations, annotation)
 		delete(binding.Annotations, annotation)

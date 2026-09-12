@@ -1,0 +1,123 @@
+{{- /*
+The API server keeps one informer per parameter kind, shared by every policy
+that names that kind. When the last bound policy naming a kind goes away, the
+API server cancels that informer; because the kind is a built-in one it comes
+from the typed shared informer factory, which refuses to start an informer it
+has already started once. The cancelled informer is therefore never replaced.
+Its store keeps whatever it held when it stopped, and it still reports itself
+as synced, so every later policy that reads a ConfigMap parameter resolves
+against a frozen cache: parameters written afterwards are invisible, and a
+binding with parameterNotFoundAction Deny refuses every request it matches.
+
+Measured on kind 1.35.8 with three API servers: with one bound ConfigMap
+parameter policy left alive across the gap, a policy generation created a
+minute later resolves its parameter on the first attempt; with none left, the
+same generation is refused with "no params found" although the parameter is
+present. The code is identical in 1.35, 1.36 and 1.37, so every supported
+version behaves this way.
+
+Upstream: kubernetes/kubernetes#133827 reports it, open and triage-accepted
+since September 2025; kubernetes/kubernetes#141015 is the fix for this exact
+case, which reached master during the 1.37 code freeze and is still unmerged,
+so the earliest release that could carry it is past the window this chart
+supports. A CRD parameter kind takes the dynamic-informer path and is not
+affected, which is the structural fix if this pair ever has to go.
+
+This pair is what stays alive across the gap. It is inert on purpose: it names
+a ConfigMap nothing creates, admits whatever it matches, and ignores its own
+failures. It is also deliberately not release-scoped and not part of any
+release inventory, because the gap it covers is the one between a release being
+uninstalled and the next one being installed. Uninstalling the operator leaves
+it behind for that reason. Deleting it is safe only while another bound
+ConfigMap parameter policy exists, or before the API servers restart.
+*/ -}}
+{{- $anchorName := include "ptah-operator.parameterInformerAnchorName" . -}}
+{{- $policy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $anchorName -}}
+{{- $binding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $anchorName -}}
+{{- with $policy -}}
+{{- $labels := default (dict) .metadata.labels -}}
+{{- if or
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index $labels "app.kubernetes.io/component")) "parameter-informer-anchor")
+      (ne (default "" (index (default (dict) .spec.paramKind) "apiVersion")) "v1")
+      (ne (default "" (index (default (dict) .spec.paramKind) "kind")) "ConfigMap") -}}
+{{- fail (printf "retained ValidatingAdmissionPolicy %s is foreign or no longer anchors a ConfigMap parameter informer" $anchorName) -}}
+{{- end -}}
+{{- end -}}
+{{- with $binding -}}
+{{- $labels := default (dict) .metadata.labels -}}
+{{- if or
+      (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
+      (ne (default "" (index $labels "app.kubernetes.io/component")) "parameter-informer-anchor")
+      (ne (default "" .spec.policyName) $anchorName)
+      (ne (default "" (index (default (dict) .spec.paramRef) "parameterNotFoundAction")) "Allow") -}}
+{{- fail (printf "retained ValidatingAdmissionPolicyBinding %s is foreign or no longer anchors a ConfigMap parameter informer" $anchorName) -}}
+{{- end -}}
+{{- end -}}
+{{- if not $policy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $anchorName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-400"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/component: parameter-informer-anchor
+spec:
+  failurePolicy: Ignore
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        resourceNames: [{{ $anchorName | quote }}]
+        scope: Namespaced
+  validations:
+    - expression: "true"
+      message: "Ptah parameter informer anchor admits every request it matches"
+---
+{{- end }}
+{{- if not $binding }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $anchorName }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-399"
+    helm.sh/resource-policy: keep
+    operator.ptah.dev/rollout-guard-version: "1"
+  labels:
+    app.kubernetes.io/managed-by: ptah-operator
+    app.kubernetes.io/component: parameter-informer-anchor
+spec:
+  policyName: {{ $anchorName }}
+  matchResources:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["configmaps"]
+        resourceNames: [{{ $anchorName | quote }}]
+        scope: Namespaced
+  paramRef:
+    name: {{ $anchorName }}
+    namespace: kube-system
+    parameterNotFoundAction: Allow
+  validationActions: [Deny]
+---
+{{- end }}

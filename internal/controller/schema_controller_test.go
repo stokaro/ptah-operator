@@ -1148,6 +1148,53 @@ func TestSourceRefreshConditionsPreserveLastKnownEvidence(t *testing.T) {
 		assertEvidence(t, want, actual)
 		assertFreshnessUnknown(t, actual, "RefreshSuspended", "SourceFreshnessUnknown")
 	})
+
+	// A dispatched read-only Job can outlive the request to stop: it holds its
+	// own active deadline, a quarter of an hour by default, and nothing about a
+	// read of the database has to survive. Suspension has to reach the schema
+	// while that Job is still running.
+	t.Run("suspended after dispatch", func(t *testing.T) {
+		schema, policyConfig := fixture()
+		want := schema.DeepCopy()
+		reconciler, api := fakeReconciler(t, staticLogs{}, schema, policyConfig)
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(schema)}
+		dispatched := false
+		for pass := 0; pass < 8 && !dispatched; pass++ {
+			if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+				t.Fatalf("dispatch Reconcile() error = %v", err)
+			}
+			jobs := &batchv1.JobList{}
+			if err := api.List(context.Background(), jobs, client.InNamespace(schema.Namespace)); err != nil {
+				t.Fatal(err)
+			}
+			dispatched = len(jobs.Items) == 1 && !jobTerminal(&jobs.Items[0])
+		}
+		if !dispatched {
+			t.Fatal("read-only Job was never dispatched")
+		}
+		claimed := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), claimed); err != nil {
+			t.Fatal(err)
+		}
+		if claimed.Status.ActiveOperation == nil {
+			t.Fatal("dispatched read-only operation is missing")
+		}
+		claimed.Spec.Suspend = true
+		if err := api.Update(context.Background(), claimed); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("suspend Reconcile() error = %v", err)
+		}
+		actual := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), client.ObjectKeyFromObject(schema), actual); err != nil {
+			t.Fatal(err)
+		}
+		if actual.Status.ActiveOperation != nil || actual.Status.Phase != operatorv1alpha1.PhaseSuspended {
+			t.Fatalf("suspended dispatched status = %#v", actual.Status)
+		}
+		assertEvidence(t, want, actual)
+	})
 }
 
 func TestMissingReadOnlyJobWithPersistedUIDAdvancesAttemptBeforeRecreate(t *testing.T) {

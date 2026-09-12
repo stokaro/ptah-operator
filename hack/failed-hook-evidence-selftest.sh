@@ -5,8 +5,14 @@ set -eu
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-hook-evidence.XXXXXX")
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	case "$WORK_DIR" in
 	"${TMPDIR:-/tmp}"/ptah-hook-evidence.*) rm -rf -- "$WORK_DIR" ;;
@@ -88,4 +94,5 @@ expect_rejected two-failures '.hooks[2].last_run = .hooks[1].last_run'
 expect_rejected later-hook-ran '.hooks[2].last_run = .hooks[0].last_run'
 expect_rejected malformed-later-weight '.hooks[2].weight = "not-a-weight"'
 
+PHASE_COMPLETED=1
 printf '%s\n' 'failed hook evidence self-test: PASS'

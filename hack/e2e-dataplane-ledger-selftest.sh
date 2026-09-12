@@ -12,8 +12,14 @@ FUNCTIONS_FILE=$WORK_DIR/functions.sh
 ERROR_FILE=$WORK_DIR/error.txt
 OUTPUT_FILE=$WORK_DIR/output.txt
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	case "$WORK_DIR" in
 	"${TMPDIR:-/tmp}"/ptah-operator-ledger-selftest.*) rm -rf -- "$WORK_DIR" ;;
@@ -1359,4 +1365,5 @@ schema_boundary_successful_path
 plan_storage_immutability_successful_path
 fault_successful_paths
 
+PHASE_COMPLETED=1
 printf '%s\n' 'e2e ledger self-test: PASS'

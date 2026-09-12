@@ -17,6 +17,9 @@ E2E_NEXT_CONTROLLER_IMAGE=${E2E_NEXT_CONTROLLER_IMAGE:-}
 E2E_CURRENT_RELEASE_SEQUENCE=${E2E_CURRENT_RELEASE_SEQUENCE:-}
 E2E_NEXT_RELEASE_SEQUENCE=${E2E_NEXT_RELEASE_SEQUENCE:-}
 E2E_DOCKER_CONTEXT=${E2E_DOCKER_CONTEXT:-}
+E2E_KIND_CLUSTER_NAME=${E2E_KIND_CLUSTER_NAME:-}
+E2E_API_SERVER_NODE_INVENTORY_FILE=${E2E_API_SERVER_NODE_INVENTORY_FILE:-}
+E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=${E2E_API_SERVER_ENDPOINT_INVENTORY_FILE:-}
 E2E_EXTERNAL_POSTGRES_CONTAINER_ID=${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:-}
 
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
@@ -102,6 +105,11 @@ HOOK_PROGRESS_POD_UID=
 HOOK_PROGRESS_BLOCKED_STABILITY_SECONDS=3
 HOOK_PROGRESS_HOLD_STABILITY_ATTEMPTS=5
 HOOK_PROGRESS_WAIT_SECONDS=90
+HOOK_PROGRESS_AUTHORIZATION_SECONDS=90
+HOOK_PROGRESS_AUTHORIZATION_CONTAINER_ID=
+HOOK_PROGRESS_AUTHORIZATION_ENDPOINTS=$WORK_DIR/hook-progress-authorization-endpoints
+HOOK_PROGRESS_AUTHORIZATION_DEADLINE=
+HOOK_PROGRESS_AUTHORIZATION_ENDPOINT=
 KUBERNETES_MAJOR_MINOR=
 CANDIDATE_CRD_SCHEMA_VERSION=$(awk '
   $1 == "operator.ptah.dev/crd-schema-version:" {
@@ -111,8 +119,14 @@ CANDIDATE_CRD_SCHEMA_VERSION=$(awk '
   }
 ' "$ROOT_DIR/config/crd/bases/operator.ptah.dev_ptahschemas.yaml")
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	# E2E_KEEP_ON_FAILURE=1 keeps a failed phase's work directory and every
 	# cluster object it created, so the refusal that ended it can be read from
@@ -353,6 +367,49 @@ assert_object_unchanged() {
 	cmp "$before" "$after" || fail "$resource/$name UID, spec, or status changed during CRD management"
 }
 
+# A release-sequence upgrade replaces the data plane that produced a schema's
+# retained evidence, so the operator records the candidate manager under a new
+# execution-binding epoch and marks every retained condition for refresh. That
+# is the whole delta a user's object is allowed to show: the identity, the
+# spec, the plan and every other status field stay exactly as they were, and a
+# condition that did not move keeps its own reason and message.
+assert_object_execution_binding_refreshed() {
+	resource=$1
+	name=$2
+	before=$3
+	expected_controller_image=$4
+	after=$WORK_DIR/${resource}-after.json
+	object_evidence "$resource" "$name" "$after"
+	jq -e --arg image "$expected_controller_image" '
+      .status.executionBinding.controllerImage == $image and
+      (.status.executionBinding.epoch | test("^v1-[0-9a-f]{32}$"))
+    ' "$after" >/dev/null ||
+		fail "$resource/$name did not record the candidate execution binding"
+	[ "$(jq -r '.status.executionBinding.epoch' "$before")" != \
+		"$(jq -r '.status.executionBinding.epoch' "$after")" ] ||
+		fail "$resource/$name kept the predecessor execution-binding epoch"
+	for evidence_side in "$before" "$after"; do
+		jq -S 'del(
+          .status.executionBinding.controllerImage,
+          .status.executionBinding.epoch,
+          .status.conditions
+        )' "$evidence_side" >"$evidence_side.binding-invariant"
+	done
+	cmp "$before.binding-invariant" "$after.binding-invariant" ||
+		fail "$resource/$name changed outside the execution-binding refresh"
+	jq -S '[.status.conditions[] | {type, status, reason, message}]' "$before" >"$before.conditions"
+	jq -S --slurpfile before_conditions "$before.conditions" '
+      [.status.conditions[] | {type, status, reason, message}] as $after_conditions |
+      $before_conditions[0] as $kept_conditions |
+      ([$after_conditions[] | select(.reason == "ExecutionBindingChanged")] | length) > 0 and
+      (([$kept_conditions[].type] - [$after_conditions[].type]) | length) == 0 and
+      ([$after_conditions[] | select(.reason != "ExecutionBindingChanged")] |
+        all(. as $kept | $kept_conditions | any(. == $kept)))
+    ' "$after" >"$after.conditions-verdict"
+	[ "$(cat "$after.conditions-verdict")" = true ] ||
+		fail "$resource/$name conditions moved for a reason other than the execution-binding refresh"
+}
+
 crd_evidence() {
 	name=$1
 	destination=$2
@@ -583,28 +640,139 @@ verify_hook_progress_hold_transition() {
 	fail "hook progress hold policy did not converge to the exact monotonic transition"
 }
 
-# expect_hook_progress_authorization asks the adversary's own view of RBAC.
-# A subresource is passed through --subresource: kubectl 1.36 answers "no" to
-# the slash spelling "jobs/status" while a SubjectAccessReview for the same
-# attributes is allowed, so the spelling decided the answer. kubectl also exits
-# 1 for an honest "no", which is an answer rather than a failed query; only a
-# status above 1 means the query itself failed.
+# Use the parent's exact three-endpoint inventory, not repeated samples through
+# the load balancer. Pin the exec container by ID after checking its name and
+# kind-network address against the same Node inventory; there is no caller-
+# supplied Docker exec target or fallback endpoint.
+prepare_hook_progress_authorization_endpoints() {
+	[ -n "$E2E_DOCKER_CONTEXT" ] || fail "hook progress authorization requires an explicit Docker context"
+	printf '%s\n' "$E2E_KIND_CLUSTER_NAME" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$' ||
+		fail "hook progress authorization requires a DNS-label kind cluster name"
+	[ "${#E2E_KIND_CLUSTER_NAME}" -le 63 ] || fail "hook progress kind cluster name exceeds 63 bytes"
+	require_mode_0600_regular_file "$E2E_API_SERVER_NODE_INVENTORY_FILE" hook-progress-node-inventory
+	require_mode_0600_regular_file "$E2E_API_SERVER_ENDPOINT_INVENTORY_FILE" hook-progress-endpoint-inventory
+	cp "$E2E_API_SERVER_NODE_INVENTORY_FILE" "$WORK_DIR/hook-progress-authorization-nodes.json"
+	cp "$E2E_API_SERVER_ENDPOINT_INVENTORY_FILE" "$WORK_DIR/hook-progress-authorization-slices.json"
+	jq -e --arg cluster "$E2E_KIND_CLUSTER_NAME" \
+		--slurpfile nodes "$WORK_DIR/hook-progress-authorization-nodes.json" \
+		-f "$ROOT_DIR/hack/api-server-endpoint-inventory.jq" \
+		"$WORK_DIR/hook-progress-authorization-slices.json" >/dev/null ||
+		fail "hook progress authorization inventory is not the exact three control-plane endpoints"
+	jq -er '[.items[] | select(.metadata.labels["kubernetes.io/service-name"] == "kubernetes") |
+		.endpoints[].addresses[]] | sort[]' "$WORK_DIR/hook-progress-authorization-slices.json" \
+		>"$HOOK_PROGRESS_AUTHORIZATION_ENDPOINTS" || fail "could not materialize hook progress endpoints"
+	hook_auth_primary_address=$(jq -er --arg name "${E2E_KIND_CLUSTER_NAME}-control-plane" '
+		.items[] | select(.metadata.name == $name) | .status.addresses[] |
+		select(.type == "InternalIP") | .address
+	' "$WORK_DIR/hook-progress-authorization-nodes.json") || fail "hook progress primary Node address is missing"
+	hook_auth_container=$(docker --context "$E2E_DOCKER_CONTEXT" container inspect \
+		--format '{"id":{{json .Id}},"name":{{json .Name}},"address":{{json .NetworkSettings.Networks.kind.IPAddress}}}' \
+		"${E2E_KIND_CLUSTER_NAME}-control-plane") || fail "could not inspect the hook progress control-plane container"
+	HOOK_PROGRESS_AUTHORIZATION_CONTAINER_ID=$(printf '%s\n' "$hook_auth_container" |
+		jq -er --arg name "/${E2E_KIND_CLUSTER_NAME}-control-plane" --arg address "$hook_auth_primary_address" '
+			select(.name == $name and .address == $address and (.id | test("^[a-f0-9]{64}$"))) | .id
+		') || fail "hook progress Docker container does not match the exact primary Node"
+}
+
+# One raw SelfSubjectAccessReview avoids discovery and pins all authorization
+# attributes. Only an honest missing positive grant is retryable. Errors,
+# malformed answers, and unexpected extra grants fail immediately.
 expect_hook_progress_authorization() {
-	expected=$1
-	verb=$2
-	resource=${3%%/*}
-	subresource=
+	hook_auth_expected=$1
+	hook_auth_verb=$2
+	hook_auth_resource=${3%%/*}
+	hook_auth_subresource=
+	hook_auth_namespace=$E2E_OPERATOR_NAMESPACE
 	case "$3" in
-	*/*) subresource=${3#*/} ;;
+	*/*) hook_auth_subresource=${3#*/} ;;
 	esac
-	allowed=$(hook_progress_adversary_kube auth can-i "$verb" "$resource" \
-		--subresource="$subresource" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --request-timeout=15s \
-		2>"$WORK_DIR/hook-progress-can-i.err") && can_i_status=0 || can_i_status=$?
-	[ "$can_i_status" -le 1 ] ||
-		fail "hook progress adversary authorization query for $verb $3 failed with status $can_i_status: $(cat "$WORK_DIR/hook-progress-can-i.err")"
-	[ "$allowed" = "$expected" ] ||
-		fail "hook progress adversary authorization for $verb $3 is $allowed, expected $expected"
+	case "$hook_auth_resource" in
+	jobs) hook_auth_group='batch' ;;
+	pods) hook_auth_group= ;;
+	*.admissionregistration.k8s.io)
+		hook_auth_group=admissionregistration.k8s.io
+		hook_auth_resource=${hook_auth_resource%%.*}
+		hook_auth_namespace=
+		;;
+	*) fail "unsupported hook progress authorization resource $3" ;;
+	esac
+	[ -n "$HOOK_PROGRESS_ADVERSARY_UID" ] || fail "hook progress adversary UID is missing"
+	hook_auth_remaining=$((HOOK_PROGRESS_AUTHORIZATION_DEADLINE - $(date +%s)))
+	[ "$hook_auth_remaining" -gt 0 ] ||
+		fail "hook progress authorization timed out at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT for $hook_auth_verb $3"
+	[ "$hook_auth_remaining" -le 15 ] || hook_auth_remaining=15
+	jq -n --arg namespace "$hook_auth_namespace" --arg verb "$hook_auth_verb" \
+		--arg group "$hook_auth_group" --arg resource "$hook_auth_resource" --arg subresource "$hook_auth_subresource" '
+		{apiVersion:"authorization.k8s.io/v1",kind:"SelfSubjectAccessReview",
+		 spec:{resourceAttributes:{namespace:$namespace,verb:$verb,group:$group,resource:$resource,subresource:$subresource}}}
+	' >"$WORK_DIR/hook-progress-authorization-request.json" || fail "could not encode hook progress authorization request"
+	if docker --context "$E2E_DOCKER_CONTEXT" exec -i "$HOOK_PROGRESS_AUTHORIZATION_CONTAINER_ID" \
+		kubectl --kubeconfig /etc/kubernetes/admin.conf \
+		--server "https://${HOOK_PROGRESS_AUTHORIZATION_ENDPOINT}:6443" --tls-server-name kubernetes \
+		--as "system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$HOOK_PROGRESS_ADVERSARY" \
+		--as-uid "$HOOK_PROGRESS_ADVERSARY_UID" \
+		--as-group system:serviceaccounts \
+		--as-group "system:serviceaccounts:$E2E_OPERATOR_NAMESPACE" \
+		--as-group system:authenticated --request-timeout="${hook_auth_remaining}s" \
+		create --raw /apis/authorization.k8s.io/v1/selfsubjectaccessreviews -f - \
+		<"$WORK_DIR/hook-progress-authorization-request.json" \
+		>"$WORK_DIR/hook-progress-authorization-response.json" \
+		2>"$WORK_DIR/hook-progress-authorization.err"; then
+		:
+	else
+		hook_auth_status=$?
+		fail "hook progress authorization query failed at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT for $hook_auth_verb $3 (exit $hook_auth_status)"
+	fi
+	hook_auth_allowed=$(jq -ser '
+		select(length == 1) | .[0] |
+		select(.apiVersion == "authorization.k8s.io/v1" and .kind == "SelfSubjectAccessReview") |
+		.status | select((.allowed | type) == "boolean" and
+			((has("denied") | not) or (.denied | type) == "boolean") and
+			((has("evaluationError") | not) or .evaluationError == "") and
+			(.allowed != true or .denied != true)) | .allowed | tostring
+	' "$WORK_DIR/hook-progress-authorization-response.json") ||
+		fail "hook progress authorization response is malformed or incomplete at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT for $hook_auth_verb $3"
+	[ "$(date +%s)" -lt "$HOOK_PROGRESS_AUTHORIZATION_DEADLINE" ] ||
+		fail "hook progress authorization exceeded its aggregate deadline at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT for $hook_auth_verb $3"
+	case "$hook_auth_expected:$hook_auth_allowed" in
+	yes:true | no:false) return 0 ;;
+	yes:false) return 1 ;;
+	*) fail "hook progress adversary has an unexpected $hook_auth_verb $3 grant at $HOOK_PROGRESS_AUTHORIZATION_ENDPOINT" ;;
+	esac
+}
+
+wait_for_hook_progress_authorization() {
+	prepare_hook_progress_authorization_endpoints
+	# This budget covers authorization-query convergence, not Docker connection
+	# setup or inventory preparation. Each inner API request also has its own cap.
+	HOOK_PROGRESS_AUTHORIZATION_DEADLINE=$(($(date +%s) + HOOK_PROGRESS_AUTHORIZATION_SECONDS))
+	while [ "$(date +%s)" -lt "$HOOK_PROGRESS_AUTHORIZATION_DEADLINE" ]; do
+		hook_auth_ready=1
+		hook_auth_endpoint_count=0
+		while IFS= read -r HOOK_PROGRESS_AUTHORIZATION_ENDPOINT; do
+			hook_auth_endpoint_count=$((hook_auth_endpoint_count + 1))
+			for hook_auth_capability in 'delete jobs' 'get jobs' 'get jobs/status' 'patch jobs/status' \
+				'get pods' 'patch pods' 'get pods/status' 'patch pods/status'; do
+				if expect_hook_progress_authorization yes "${hook_auth_capability%% *}" "${hook_auth_capability#* }"; then
+					:
+				else
+					hook_auth_ready=0
+				fi
+			done
+			for hook_auth_capability in \
+				'create validatingadmissionpolicies.admissionregistration.k8s.io' \
+				'create validatingadmissionpolicybindings.admissionregistration.k8s.io' \
+				'create jobs' 'update jobs' 'update pods'; do
+				expect_hook_progress_authorization no "${hook_auth_capability%% *}" "${hook_auth_capability#* }"
+			done
+		done <"$HOOK_PROGRESS_AUTHORIZATION_ENDPOINTS"
+		[ "$hook_auth_endpoint_count" -eq 3 ] || fail "hook progress authorization did not query all three API servers"
+		if [ "$hook_auth_ready" -eq 1 ]; then
+			return 0
+		fi
+		sleep 1
+	done
+	fail "hook progress adversary authorization did not converge on all three API servers"
 }
 
 create_hook_progress_adversary_and_hold() {
@@ -679,19 +847,7 @@ EOF
 		get serviceaccount "$HOOK_PROGRESS_ADVERSARY" -o jsonpath='{.metadata.uid}' \
 		--request-timeout=15s)
 	[ -n "$HOOK_PROGRESS_ADVERSARY_UID" ] || fail "hook progress adversary has no UID"
-	expect_hook_progress_authorization yes delete jobs
-	expect_hook_progress_authorization yes patch jobs/status
-	expect_hook_progress_authorization yes patch pods
-	expect_hook_progress_authorization yes patch pods/status
-	expect_hook_progress_authorization yes get jobs/status
-	expect_hook_progress_authorization yes get pods/status
-	expect_hook_progress_authorization no create \
-		validatingadmissionpolicies.admissionregistration.k8s.io
-	expect_hook_progress_authorization no create \
-		validatingadmissionpolicybindings.admissionregistration.k8s.io
-	expect_hook_progress_authorization no create jobs
-	expect_hook_progress_authorization no update jobs
-	expect_hook_progress_authorization no update pods
+	wait_for_hook_progress_authorization
 
 	held_components='["crd-manager-image-check","hook-identity-probe","crd-manager-preflight","crd-manager"]'
 	hold_expression=$(hook_progress_hold_expression "$held_components")
@@ -1512,6 +1668,10 @@ arm_late_activation_hook_log_captures() {
 		--failure-class-file "$LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE" \
 		--timeout 3m >/dev/null 2>&1 &
 	LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=$!
+	# The reconcile hook waits on the controller credential fence before it
+	# reports, and the blocker holds that fence for as long as the proof needs.
+	# Silence there is the scenario, not an unavailable stream, so this capture
+	# waits for the hook rather than for its first byte.
 	"$LATE_ACTIVATION_HOOK_CAPTURE_BINARY" \
 		--kubeconfig "$E2E_KUBECONFIG" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" \
@@ -1523,7 +1683,8 @@ arm_late_activation_hook_log_captures() {
 		--ready-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE" \
 		--error-file "$LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE" \
 		--failure-class-file "$LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE" \
-		--timeout 3m >/dev/null 2>&1 &
+		--log-start-timeout 8m \
+		--timeout 9m >/dev/null 2>&1 &
 	LATE_ACTIVATION_RECONCILE_CAPTURE_PID=$!
 	wait_for_late_activation_hook_log_capture_ready \
 		"$LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID" \
@@ -1742,6 +1903,65 @@ emit_late_activation_preflight_diagnostic_if_available() {
 	fi
 }
 
+emit_same_candidate_retry_reconcile_diagnostic_if_available() {
+	[ "$(late_activation_capture_status_summary "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE")" = captured ] || return 0
+	[ -s "$LATE_ACTIVATION_RECONCILE_LOG_FILE" ] || return 0
+	if hook_diagnostic_is_safe "$LATE_ACTIVATION_RECONCILE_LOG_FILE"; then
+		cat "$LATE_ACTIVATION_RECONCILE_LOG_FILE" >&2
+	else
+		printf '%s\n' 'e2e crd: retry reconcile diagnostic withheld by credential and format scanner' >&2
+	fi
+}
+
+# A failed hook can disappear before Helm returns. Arm the same UID/owner/render-
+# bound capture before the retry, with fresh destinations that cannot overwrite
+# the intentional failure's evidence. Neither capture nor diagnostics can turn
+# a failed Helm operation into success.
+retry_same_candidate_with_diagnostics() {
+	# Helm 4 applies server-side, and a conflict is raised for a field whose
+	# value this apply changes while another manager owns it. A release-sequence
+	# upgrade stops the runtime in its pre-upgrade hook, so the hook owns
+	# .spec.replicas with the value 0 that this apply has to raise again. Every
+	# other field the hook writes it writes to the value this chart applies, so
+	# the force is confined to what the release owns and the cutover moved.
+	LATE_ACTIVATION_PREFLIGHT_LOG_FILE=$WORK_DIR/retry-preflight.log
+	LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE=$WORK_DIR/retry-preflight-capture-status
+	LATE_ACTIVATION_PREFLIGHT_CAPTURE_ERRORS_FILE=$WORK_DIR/retry-preflight-capture-errors
+	LATE_ACTIVATION_PREFLIGHT_FAILURE_CLASS_FILE=$WORK_DIR/retry-preflight-failure-class
+	LATE_ACTIVATION_PREFLIGHT_CAPTURE_READY_FILE=$WORK_DIR/retry-preflight-capture-ready
+	LATE_ACTIVATION_RECONCILE_LOG_FILE=$WORK_DIR/retry-reconcile.log
+	LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE=$WORK_DIR/retry-reconcile-capture-status
+	LATE_ACTIVATION_RECONCILE_CAPTURE_ERRORS_FILE=$WORK_DIR/retry-reconcile-capture-errors
+	LATE_ACTIVATION_RECONCILE_FAILURE_CLASS_FILE=$WORK_DIR/retry-reconcile-failure-class
+	LATE_ACTIVATION_RECONCILE_CAPTURE_READY_FILE=$WORK_DIR/retry-reconcile-capture-ready
+	arm_late_activation_hook_log_captures
+	retry_helm_status=0
+	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
+		--force-conflicts \
+		--wait --timeout 7m >"$WORK_DIR/same-candidate-retry.out" \
+		2>"$WORK_DIR/same-candidate-retry.err"; then
+		:
+	else
+		retry_helm_status=$?
+	fi
+	retry_capture_status=0
+	finish_late_activation_hook_log_captures || retry_capture_status=$?
+	if [ "$retry_helm_status" -ne 0 ]; then
+		# Run optional diagnostic emitters in subshells so even a scanner's
+		# refusal cannot replace the original Helm failure status.
+		(emit_late_activation_preflight_diagnostic_if_available) || true
+		(emit_same_candidate_retry_reconcile_diagnostic_if_available) || true
+		printf 'e2e crd: same-candidate retry failed (Helm exit %s; capture exit %s; preflight %s; reconcile %s)\n' \
+			"$retry_helm_status" "$retry_capture_status" \
+			"$(late_activation_capture_status_summary "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE")" \
+			"$(late_activation_capture_status_summary "$LATE_ACTIVATION_RECONCILE_CAPTURE_STATUS_FILE")" >&2
+		return "$retry_helm_status"
+	fi
+	[ "$retry_capture_status" -eq 0 ] || fail "same-candidate retry hook captures did not both complete successfully"
+	verify_late_activation_preflight_capture
+}
+
 verify_late_activation_preflight_capture() {
 	require_mode_0600_regular_file "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE" late-activation-preflight-capture-status
 	[ "$(sed -n '1p' "$LATE_ACTIVATION_PREFLIGHT_CAPTURE_STATUS_FILE")" = captured ] ||
@@ -1853,29 +2073,117 @@ emit_late_activation_failure_summary() {
 	printf 'e2e crd: late activation evidence summary: %s\n' "$activation_summary" >&2
 }
 
-restore_runtime_deployment_snapshot() {
-	deployment_name=$1
-	snapshot=$2
-	live=$WORK_DIR/${deployment_name}-late-failure-live.json
-	restored=$WORK_DIR/${deployment_name}-late-failure-restored.json
-	kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$deployment_name" -o json >"$live"
-	jq --slurpfile desired "$snapshot" '
-      .metadata.labels = $desired[0].metadata.labels |
-      .metadata.annotations = $desired[0].metadata.annotations |
-      .metadata.ownerReferences = ($desired[0].metadata.ownerReferences // []) |
-      .metadata.finalizers = ($desired[0].metadata.finalizers // []) |
-      .spec = $desired[0].spec |
-      del(.status)
-    ' "$live" >"$restored"
-	kube replace -f "$restored" >/dev/null ||
-		fail "successor rollout guards blocked exact current-release Deployment recovery for $deployment_name"
+assert_late_activation_drain() {
+	kube -n "$E2E_OPERATOR_NAMESPACE" get configmap ptah-operator-release-activation -o json |
+		jq -e --arg current "$late_current_sequence" --arg next "$late_next_sequence" \
+			--arg attempt "$late_candidate_attempt" --arg image "$late_current_image" \
+			--arg namespace "$E2E_OPERATOR_NAMESPACE" --arg release "$E2E_HELM_RELEASE" '
+          .metadata.namespace == $namespace and
+          .metadata.annotations["operator.ptah.dev/release-name"] == $release and
+          .metadata.annotations["operator.ptah.dev/release-namespace"] == $namespace and
+          .metadata.annotations["operator.ptah.dev/release-sequence"] == $current and
+          .metadata.annotations["operator.ptah.dev/manager-image"] == $image and
+          (.data | keys | sort) == ["active-release-sequence", "controller-credentials", "controller-credentials-attempt", "controller-credentials-target-release-sequence"] and
+          .data["active-release-sequence"] == $current and
+          .data["controller-credentials"] == "draining" and
+          .data["controller-credentials-target-release-sequence"] == $next and
+          ($attempt | test("^[0-9a-f]{64}$")) and
+          .data["controller-credentials-attempt"] == $attempt
+        ' >/dev/null ||
+		fail "late failure did not preserve the exact predecessor sequence and candidate drain tuple"
+}
+
+assert_late_activation_candidate_unchanged() {
+	late_retry_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE") ||
+		fail "could not checksum the late activation candidate chart"
+	late_retry_values_sha256=$(file_sha256 "$E2E_NEXT_VALUES_FILE") ||
+		fail "could not checksum the late activation candidate values"
+	if [ "$late_retry_chart_sha256" != "$late_candidate_chart_sha256" ] ||
+		[ "$late_retry_values_sha256" != "$late_candidate_values_sha256" ] ||
+		[ "$E2E_NEXT_CONTROLLER_IMAGE" != "$late_candidate_image" ] ||
+		[ "$E2E_NEXT_RELEASE_SEQUENCE" != "$late_next_sequence" ]; then
+		fail "late activation recovery changed the candidate chart, values, image, or sequence"
+	fi
+}
+
+assert_late_activation_cutover() {
+	late_origin_name=ptah-operator-service-account-origin-guard-v2-$(printf '%s' "$late_candidate_attempt" | cut -c1-12)
+	kube get validatingadmissionpolicy "$late_origin_name" -o json >"$WORK_DIR/late-activation-origin.json"
+	late_candidate_service_account=$(jq -er \
+		--arg next "$late_next_sequence" --arg image "$late_candidate_image" \
+		--arg previous "$current_sequence_service_account" \
+		--arg previous_uid "$(jq -er '.serviceAccountUID' "$current_sequence_identity")" '
+          select(
+            .metadata.annotations["operator.ptah.dev/release-sequence"] == $next and
+            .metadata.annotations["operator.ptah.dev/manager-image"] == $image and
+            .metadata.annotations["operator.ptah.dev/previous-controller-service-account-name"] == $previous and
+            .metadata.annotations["operator.ptah.dev/previous-controller-service-account-uid"] == $previous_uid
+          ) |
+          .metadata.annotations["operator.ptah.dev/controller-service-account-name"] |
+          select(type == "string" and length > 0 and . != $previous)
+        ' "$WORK_DIR/late-activation-origin.json") ||
+		fail "late failure lost the exact retained predecessor and candidate identity"
+	late_coordination_namespace=$(jq -er --arg namespace "$E2E_OPERATOR_NAMESPACE" \
+		'.coordination.namespace // "" | if . == "" then $namespace else . end' \
+		"$WORK_DIR/current-release-values.json")
+	kube get clusterrolebindings,rolebindings --all-namespaces -o json >"$WORK_DIR/late-activation-bindings.json"
+	jq -e --arg namespace "$E2E_OPERATOR_NAMESPACE" --arg coordination "$late_coordination_namespace" \
+		--arg controller "$CONTROLLER_DEPLOYMENT" --arg certificate "$ROTATOR_DEPLOYMENT" \
+		--arg candidate "$late_candidate_service_account" --arg previous "$current_sequence_service_account" '
+      def subject($name): {kind: "ServiceAccount", name: $name, namespace: $namespace};
+      .items as $bindings |
+      [
+        {kind: "ClusterRoleBinding", namespace: "", name: $controller, roleKind: "ClusterRole", subjects: [subject($candidate)]},
+        {kind: "RoleBinding", namespace: $namespace, name: ($controller + "-runtime-admission"), roleKind: "Role", subjects: [subject($candidate), subject($certificate)]},
+        {kind: "RoleBinding", namespace: $coordination, name: $controller, roleKind: "Role", subjects: [subject($candidate)]}
+      ] + (if $namespace == "default" then [] else [
+        {kind: "RoleBinding", namespace: "default", name: ($controller + "-runtime-discovery"), roleKind: "Role", subjects: [subject($candidate), subject($certificate)]}
+      ] end) | all(.[]; . as $target |
+        [$bindings[] | select(.kind == $target.kind and (.metadata.namespace // "") == $target.namespace and .metadata.name == $target.name)] as $matches |
+        ($matches | length) == 1 and
+        ($matches[0] |
+          .roleRef == {apiGroup: "rbac.authorization.k8s.io", kind: $target.roleKind, name: $target.name} and
+          [.subjects[] | if .apiGroup == "" then del(.apiGroup) else . end] == $target.subjects)
+      ) and
+      ($namespace != "default" or all($bindings[];
+        .kind != "RoleBinding" or .metadata.namespace != "default" or .metadata.name != ($controller + "-runtime-discovery"))) and
+      all($bindings[]; all(.subjects[]?; .kind != "ServiceAccount" or .namespace != $namespace or .name != $previous))
+    ' "$WORK_DIR/late-activation-bindings.json" >/dev/null ||
+		fail "late failure did not leave the exact namespace-scoped candidate bindings with the predecessor removed"
+
+	# These real authorization responses complement the hook's captured late
+	# boundary: reaching Activate already required the continuous Pod fence and
+	# predecessor authorization denial on every advertised API server.
+	for late_probe in schema runtime coordination discovery; do
+		case "$late_probe" in
+		schema) late_attributes=$(jq -nc '{group: "operator.ptah.dev", resource: "ptahschemas", subresource: "status", verb: "update"}') ;;
+		runtime) late_attributes=$(jq -nc --arg ns "$E2E_OPERATOR_NAMESPACE" --arg name "$current_sequence_marker_name" '{namespace: $ns, resource: "configmaps", name: $name, verb: "update"}') ;;
+		coordination) late_attributes=$(jq -nc --arg ns "$late_coordination_namespace" '{namespace: $ns, group: "coordination.k8s.io", resource: "leases", verb: "update"}') ;;
+		discovery) late_attributes=$(jq -nc '{namespace: "default", group: "discovery.k8s.io", resource: "endpointslices", verb: "list"}') ;;
+		esac
+		jq -nc --arg namespace "$E2E_OPERATOR_NAMESPACE" --arg previous "$current_sequence_service_account" \
+			--argjson attributes "$late_attributes" '{
+          apiVersion: "authorization.k8s.io/v1", kind: "SubjectAccessReview",
+          spec: {user: ("system:serviceaccount:" + $namespace + ":" + $previous),
+            groups: ["system:serviceaccounts", ("system:serviceaccounts:" + $namespace), "system:authenticated"],
+            resourceAttributes: $attributes}
+        }' | kube create -f - -o json >"$WORK_DIR/late-activation-${late_probe}-authorization.json"
+		jq -e '.status.allowed == false and (.status.evaluationError // "") == ""' \
+			"$WORK_DIR/late-activation-${late_probe}-authorization.json" >/dev/null ||
+			fail "late failure retained predecessor $late_probe authorization"
+	done
 }
 
 prove_late_activation_failure_recovery() {
 	late_current_sequence=$1
 	late_next_sequence=$2
 	late_current_image=$3
-	printf '%s\n' 'e2e crd: proving current-release recovery after a late pre-activation failure'
+	printf '%s\n' 'e2e crd: proving the durable boundary for same-candidate late-failure recovery'
+	late_candidate_chart_sha256=$(file_sha256 "$E2E_NEXT_CHART_PACKAGE")
+	late_candidate_values_sha256=$(file_sha256 "$E2E_NEXT_VALUES_FILE")
+	late_candidate_image=$E2E_NEXT_CONTROLLER_IMAGE
+	late_candidate_attempt=$(printf '%s\n%s\n%s\n%s' "$E2E_OPERATOR_NAMESPACE" \
+		"$E2E_HELM_RELEASE" "$late_next_sequence" "$late_candidate_image" | stdin_sha256)
 	runtime_deployment_names
 	controller_snapshot=$WORK_DIR/controller-before-late-activation-failure.json
 	rotator_snapshot=$WORK_DIR/rotator-before-late-activation-failure.json
@@ -1889,9 +2197,23 @@ prove_late_activation_failure_recovery() {
 	create_late_activation_blocker
 	arm_late_activation_hook_log_captures
 	late_upgrade_succeeded=false
+	# The window has to outlast the hook, not the other way round. The reconcile
+	# hook carries --timeout 360s under a Job deadline of 390s, and a sequence
+	# bump spends that budget on the predecessor retirement preflight and the
+	# continuous credential fence before it reaches the activation write the
+	# blocker refuses. At two minutes Helm gave up first and deleted the hook's
+	# own Role and ClusterRole, so the Pod reported losing them instead of the
+	# refusal the proof came for.
+	# Helm 4 applies server-side, and a conflict is raised for a field whose
+	# value this apply changes while another manager owns it. A release-sequence
+	# upgrade stops the runtime in its pre-upgrade hook, so the hook owns
+	# .spec.replicas with the value 0 that this apply has to raise again. Every
+	# other field the hook writes it writes to the value this chart applies, so
+	# the force is confined to what the release owns and the cutover moved.
 	if helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
-		--wait --timeout 2m >"$WORK_DIR/late-activation-failure.out" \
+		--force-conflicts \
+		--wait --timeout 7m >"$WORK_DIR/late-activation-failure.out" \
 		2>"$WORK_DIR/late-activation-failure.err"; then
 		late_upgrade_succeeded=true
 	fi
@@ -1956,7 +2278,6 @@ prove_late_activation_failure_recovery() {
 		emit_late_activation_failure_summary "$late_status_file"
 		fail "late activation failure did not stop at the exact reconcile-hook boundary"
 	fi
-	delete_late_activation_blocker
 	if [ "$late_activation_captures_succeeded" != true ]; then
 		emit_late_activation_preflight_diagnostic_if_available
 		emit_late_activation_failure_summary "$late_status_file"
@@ -1964,11 +2285,7 @@ prove_late_activation_failure_recovery() {
 	fi
 	verify_late_activation_preflight_capture
 	emit_late_activation_reconcile_diagnostic
-
-	kube -n "$E2E_OPERATOR_NAMESPACE" get configmap ptah-operator-release-activation -o json |
-		jq -e --arg current "$late_current_sequence" \
-			'.data["active-release-sequence"] == $current' >/dev/null ||
-		fail "late failure advanced the release activation marker past sequence $late_current_sequence"
+	assert_late_activation_drain
 	controller_state_version=$(jq -er \
 		'.metadata.annotations["operator.ptah.dev/controller-state-version"]' "$controller_snapshot")
 	for deployment_name in "$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT"; do
@@ -1982,18 +2299,14 @@ prove_late_activation_failure_recovery() {
             ' >/dev/null || fail "late failure did not leave $deployment_name at the exact staged boundary"
 	done
 
-	restore_runtime_deployment_snapshot "$CONTROLLER_DEPLOYMENT" "$controller_snapshot"
-	restore_runtime_deployment_snapshot "$ROTATOR_DEPLOYMENT" "$rotator_snapshot"
-	wait_runtime_ready
-	snapshot_runtime_deployment "$CONTROLLER_DEPLOYMENT" \
-		"$WORK_DIR/controller-after-late-activation-recovery.json"
-	snapshot_runtime_deployment "$ROTATOR_DEPLOYMENT" \
-		"$WORK_DIR/rotator-after-late-activation-recovery.json"
-	cmp "$controller_snapshot" "$WORK_DIR/controller-after-late-activation-recovery.json" ||
-		fail "controller Deployment was not restored exactly after the late activation failure"
-	cmp "$rotator_snapshot" "$WORK_DIR/rotator-after-late-activation-recovery.json" ||
-		fail "certificate Deployment was not restored exactly after the late activation failure"
-	printf '%s\n' 'e2e crd: current-release late-failure recovery passed'
+	assert_late_activation_cutover
+	kube -n "$E2E_OPERATOR_NAMESPACE" get pods -o json |
+		jq -e --arg previous "$current_sequence_service_account" --arg candidate "$late_candidate_service_account" \
+			--arg certificate "$ROTATOR_DEPLOYMENT" '
+          all(.items[]; .spec.serviceAccountName != $previous and
+            .spec.serviceAccountName != $candidate and .spec.serviceAccountName != $certificate)
+        ' >/dev/null || fail "late failure left a protected runtime Pod after credential cutover"
+	printf '%s\n' 'e2e crd: exact late-failure drain, quiescence, and RBAC boundary proved'
 }
 
 # The controller dispatches a read-only Job for an unsuspended schema whose
@@ -2474,7 +2787,11 @@ capture_controller_service_account_identity() {
       [.items[] | select(
         .metadata.labels["app.kubernetes.io/instance"] == $release and
         .metadata.labels["app.kubernetes.io/component"] == "controller" and
-        .metadata.labels["operator.ptah.dev/release-sequence"] == $sequence
+        # The chart carries the release sequence as an annotation on the
+        # Deployment and on its Pod template, which is where the retained
+        # guards read it. It is not a label, so selecting on one matched
+        # nothing.
+        .metadata.annotations["operator.ptah.dev/release-sequence"] == $sequence
       )] |
       if length != 1 then error("controller Deployment cardinality differs") else .[0] end |
       select(
@@ -2610,6 +2927,19 @@ assert_release_runtime_removed() {
 			jq -r '.items | length')
 		[ "$remaining" -eq 0 ] ||
 			fail "$remaining labeled $cluster_resource objects survived uninstall"
+	done
+
+	# The parameter informer anchor carries no release label on purpose. It is
+	# what keeps the API server resolving ConfigMap policy parameters at all once
+	# this release's policies are gone, so the uninstall has to leave it behind:
+	# the next install resolves its own parameters through the informer this pair
+	# kept alive. The defect it covers is kubernetes/kubernetes#133827, whose fix
+	# kubernetes/kubernetes#141015 is unmerged; the chart template
+	# charts/ptah-operator/templates/parameter-informer-anchor.yaml carries the
+	# mechanism and the measurement.
+	for anchor_resource in validatingadmissionpolicy validatingadmissionpolicybinding; do
+		kube get "$anchor_resource" ptah-operator-parameter-informer-anchor >/dev/null ||
+			fail "$anchor_resource/ptah-operator-parameter-informer-anchor did not survive uninstall"
 	done
 	for namespaced_resource in \
 		deployment replicaset service secret serviceaccount role rolebinding \
@@ -2749,8 +3079,18 @@ assert_runtime_blocked() {
 
 wait_runtime_ready() {
 	runtime_deployment_names
-	kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$CONTROLLER_DEPLOYMENT" --timeout=3m >/dev/null
-	kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$ROTATOR_DEPLOYMENT" --timeout=3m >/dev/null
+	for ready_deployment in "$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT"; do
+		if ! kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$ready_deployment" --timeout=3m >/dev/null; then
+			kube -n "$E2E_OPERATOR_NAMESPACE" get pods \
+				-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" -o json 2>/dev/null |
+				jq -c '.items[:10][] | {pod: .metadata.name, init: [
+                  .status.initContainerStatuses[:8][]? |
+                  {name: .name, waitingReason: .state.waiting.reason,
+                    terminatedReason: .state.terminated.reason, exitCode: .state.terminated.exitCode}
+                ]}' >&2 || true
+			fail "runtime Deployment $E2E_OPERATOR_NAMESPACE/$ready_deployment did not become ready within 3m"
+		fi
+	done
 }
 
 controller_write_evidence() {
@@ -2861,10 +3201,24 @@ prove_controller_object_supported_window_guard() {
 
 	baseline_stdout=$WORK_DIR/controller-object-baseline.out
 	baseline_stderr=$WORK_DIR/controller-object-baseline.err
-	if controller_kube create --dry-run=server -o json -f "$base_manifest" \
-		>"$baseline_stdout" 2>"$baseline_stderr"; then
-		fail "controller-object baseline bypassed the semantic Job write boundary"
-	fi
+	# This boundary is the webhook's answer, and the manager rolled out a moment
+	# ago, so its Service can still hold an endpoint that refuses the connection.
+	# Retry only while the API server reports it could not reach the webhook at
+	# all: a refusal that arrives is the answer under test, whatever it says.
+	baseline_deadline=$(($(date +%s) + 120))
+	while :; do
+		if controller_kube create --dry-run=server -o json -f "$base_manifest" \
+			>"$baseline_stdout" 2>"$baseline_stderr"; then
+			fail "controller-object baseline bypassed the semantic Job write boundary"
+		fi
+		grep -Eq 'failed calling webhook|no endpoints available|connection refused|service unavailable' \
+			"$baseline_stderr" || break
+		[ "$(date +%s)" -lt "$baseline_deadline" ] || {
+			cat "$baseline_stderr" >&2
+			fail "controller write webhook stayed unreachable for the baseline boundary"
+		}
+		sleep 2
+	done
 	if grep -F 'Ptah controller Job write guard rejected an unsafe workload shape' \
 		"$baseline_stdout" "$baseline_stderr" >/dev/null; then
 		fail "controller-object baseline does not satisfy the structural VAP contract"
@@ -3495,33 +3849,39 @@ run_next_release_upgrade_proof() {
 
 	prepare_expected_hook_names "$E2E_NEXT_CHART_PACKAGE" "$E2E_NEXT_VALUES_FILE"
 	materialize_identity_hook_credential_patterns
+	# After the genuine hook stops the predecessor and revokes its grants,
+	# stage the handoff while no runtime can consume or clean up the Job.
+	# Do not delete or resurrect Deployments across that recovery boundary.
 	printf '%s\n' 'e2e crd: dispatching a read-only Job the successor must retire'
 	READ_ONLY_JOB_SCHEMA=$SUCCESSOR_READ_ONLY_JOB_SCHEMA
 	dispatch_read_only_job_fixture
 	prove_late_activation_failure_recovery \
 		"$current_release_sequence" "$next_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"
-	stop_runtime_deployments
 	set_pod_webhook_failure_policy Fail Ignore
 	stage_read_only_job_completion
 	set_pod_webhook_failure_policy Ignore Fail
 	stage_read_only_job_uid_gap
-
-	before_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
+	assert_late_activation_drain
+	assert_late_activation_candidate_unchanged
+	delete_late_activation_blocker
+	before_retry_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
 		jq -er '.version | select(type == "number" and . >= 1)')
-	printf 'e2e crd: upgrading current release sequence %s to synthetic sequence %s\n' \
+	[ "$before_retry_revision" -eq "$late_revision" ] ||
+		fail "late activation recovery did not resume the exact failed Helm revision"
+	printf 'e2e crd: retrying current release sequence %s to the same synthetic sequence %s\n' \
 		"$current_release_sequence" "$next_release_sequence"
-	helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
-		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
-		--wait --timeout 5m >/dev/null
+	# Keep the outer Helm wait beyond the unchanged 360s/390s hook budgets,
+	# just as for the failed attempt; every credential fence runs again.
+	retry_same_candidate_with_diagnostics
 	wait_runtime_ready
 	wait_for_read_only_job_cleanup
 	quiesce_read_only_job_schema
 	after_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
-		jq -er '.version | select(type == "number" and . >= 1)')
-	[ "$after_revision" -eq $((before_revision + 1)) ] ||
-		fail "synthetic next-release upgrade did not create exactly one Helm revision"
+		jq -er 'select(.info.status == "deployed") | .version | select(type == "number" and . >= 1)')
+	[ "$after_revision" -eq $((late_revision + 1)) ] ||
+		fail "same-candidate recovery did not create exactly one retry Helm revision"
 
 	capture_controller_service_account_identity \
 		"$next_release_sequence" "$E2E_NEXT_CONTROLLER_IMAGE" \
@@ -3550,12 +3910,32 @@ run_next_release_upgrade_proof() {
 	assert_inventory_resources_absent \
 		"$current_sequence_inventory" "$current_sequence_marker_name"
 	assert_release_sequence_candidate_residue_absent "$current_release_sequence"
-	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
+	assert_object_execution_binding_refreshed ptahschema "$PROOF_SCHEMA" \
+		"$WORK_DIR/ptahschema-before.json" "$E2E_NEXT_CONTROLLER_IMAGE"
+	for resource in ptahschemaplan ptahschemaapproval; do
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" \
 			"$WORK_DIR/${resource}-before.json"
 	done
+	# The refresh above is the only change this upgrade may make. Everything
+	# after it, including the uninstall, is held to the state it leaves behind.
+	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
+		object_evidence "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
+	done
+	printf '%s\n' 'e2e crd: same-candidate late-failure recovery passed'
 	printf 'e2e crd: synthetic sequence-%s upgrade retired the exact sequence-%s admission and controller identity\n' \
 		"$next_release_sequence" "$current_release_sequence"
+}
+
+# quiesce_termination_message prints what the failed quiescence hook left in its
+# termination message. A pre-delete hook that fails is retained, so its Pod is
+# still there to read; an absent Pod prints nothing and lets the caller decide.
+quiesce_termination_message() {
+	quiesce_pod=$(kube -n "$E2E_OPERATOR_NAMESPACE" get pods \
+		-l app.kubernetes.io/component=crd-manager-teardown-quiesce \
+		-o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null || true)
+	[ -n "$quiesce_pod" ] || return 0
+	kube -n "$E2E_OPERATOR_NAMESPACE" get pod "$quiesce_pod" \
+		-o jsonpath='{.status.containerStatuses[0].state.terminated.message}' 2>/dev/null || true
 }
 
 run_uninstall_proof() {
@@ -3591,10 +3971,19 @@ run_uninstall_proof() {
 		--wait --timeout 2m >"$WORK_DIR/blocked-uninstall.out" 2>"$WORK_DIR/blocked-uninstall.err"; then
 		fail "uninstall with a foreign controller binding unexpectedly succeeded"
 	fi
+	# Helm reports a failed hook as "Job Failed" and carries nothing of the
+	# hook's own words, so the refusal reaches an administrator where Kubernetes
+	# keeps it: the failed hook Pod's termination message, which is what kubectl
+	# shows for that Job. Accept Helm's output too, in case a later Helm surfaces
+	# the message itself.
+	blocked_reason=$WORK_DIR/blocked-uninstall.reason
+	quiesce_termination_message >"$blocked_reason"
 	if ! grep -F "foreign ClusterRoleBinding/$FOREIGN_TEARDOWN_BINDING" \
 		"$WORK_DIR/blocked-uninstall.err" >/dev/null &&
 		! grep -F "foreign ClusterRoleBinding/$FOREIGN_TEARDOWN_BINDING" \
-			"$WORK_DIR/blocked-uninstall.out" >/dev/null; then
+			"$WORK_DIR/blocked-uninstall.out" >/dev/null &&
+		! grep -F "foreign ClusterRoleBinding/$FOREIGN_TEARDOWN_BINDING" \
+			"$blocked_reason" >/dev/null; then
 		fail "blocked uninstall did not report the foreign controller binding"
 	fi
 	runtime_deployment_evidence >"$WORK_DIR/runtime-after-blocked-uninstall.json"
@@ -3623,13 +4012,24 @@ run_uninstall_proof() {
 	printf '%s\n' 'e2e crd: reinstalling over retained and drifted CRDs'
 	kube patch crd ptahschemas.operator.ptah.dev --type=json \
 		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"retained reinstall drift"}]' >/dev/null
+	# The drift above is written by kubectl, which owns the field it added.
+	# Helm 4 applies the chart's CRDs server-side on install and refuses to
+	# change a field another manager owns, so an install over a retained CRD
+	# somebody edited needs the force. It is confined to the CRDs this chart
+	# ships.
+	#
+	# That apply also happens before any hook runs, so what this step proves is
+	# that the install converges a retained CRD, not that the hook does. The
+	# hook's own CRD convergence is proved on the upgrade above, where Helm
+	# leaves the CRDs alone and the same drift needs no force.
 	helm_e2e install "$E2E_HELM_RELEASE" "$E2E_NEXT_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
+		--force-conflicts \
 		--wait --timeout 5m >/dev/null
 	description=$(kube get crd ptahschemas.operator.ptah.dev \
 		-o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.description}')
 	[ "$description" != "retained reinstall drift" ] ||
-		fail "pre-install hook did not reconcile a retained CRD"
+		fail "the reinstall did not reconcile a retained CRD another manager drifted"
 	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
@@ -3660,14 +4060,19 @@ run_uninstall_proof() {
 	printf '%s\n' 'e2e crd: fresh-installing the exact exported current-release chart bytes'
 	kube patch crd ptahschemas.operator.ptah.dev --type=json \
 		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"exact released-chart install drift"}]' >/dev/null
+	# The drift above is written by kubectl, which owns the field it added, and
+	# Helm 4 refuses to change a field another manager owns. This install carries
+	# the force for the same reason the one before it does, and proves the same
+	# thing: that the install converges a retained CRD.
 	helm_e2e install "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_CANDIDATE_VALUES_FILE" \
+		--force-conflicts \
 		--wait --timeout 5m >/dev/null
 	wait_runtime_ready
 	description=$(kube get crd ptahschemas.operator.ptah.dev \
 		-o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.description}')
 	[ "$description" != "exact released-chart install drift" ] ||
-		fail "exact current-release chart pre-install hook did not reconcile a retained CRD"
+		fail "the exact released-chart install did not reconcile a retained CRD another manager drifted"
 	capture_controller_service_account_identity \
 		"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \
 		"$WORK_DIR/fresh-current-sequence-${E2E_CURRENT_RELEASE_SEQUENCE}-controller-identity.json"
@@ -3679,8 +4084,21 @@ run_uninstall_proof() {
 		"$E2E_CURRENT_RELEASE_SEQUENCE" "$E2E_CANDIDATE_IMAGE" \
 		"$fresh_current_marker" "$fresh_current_inventory"
 	fresh_current_marker_name=$(jq -er '.metadata.name' "$fresh_current_marker")
-	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
+	# This install puts a different release in place, so the running controller
+	# rebinds the schema's execution to its own image under a new epoch. That is
+	# the one change it owes, and it owes nothing else: identity, spec, every
+	# other status field and every condition but the binding one stay as they
+	# were, which is what this assertion holds it to.
+	assert_object_execution_binding_refreshed ptahschema "$PROOF_SCHEMA" \
+		"$WORK_DIR/ptahschema-before.json" "$E2E_CANDIDATE_IMAGE"
+	for resource in ptahschemaplan ptahschemaapproval; do
 		assert_object_unchanged "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
+	done
+	# The refresh above is the only change this install may make, as it is for
+	# the sequence upgrade. Everything after it, including this release's own
+	# uninstall, is held to the state it leaves behind.
+	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
+		object_evidence "$resource" "$PROOF_SCHEMA" "$WORK_DIR/${resource}-before.json"
 	done
 	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
@@ -3708,4 +4126,5 @@ case "$E2E_PHASE" in
 	*) fail "unsupported E2E_PHASE $E2E_PHASE" ;;
 esac
 
+PHASE_COMPLETED=1
 printf 'e2e crd: PASS phase=%s\n' "$E2E_PHASE"

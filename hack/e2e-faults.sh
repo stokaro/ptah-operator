@@ -55,6 +55,7 @@ WATCH_BARRIER_SEQUENCE=0
 PG_BARRIER_TOKENS=
 MYSQL_BARRIER_PID=
 MYSQL_BARRIER_READY_LOCK=
+MYSQL_BARRIER_DATABASE=
 STATUS_RBAC_PAUSED=0
 STATUS_RBAC_RULE_INDEX=
 STATUS_RBAC_ORIGINAL_VERBS=
@@ -187,8 +188,14 @@ stop_pid() {
 	wait "$stop_target" >/dev/null 2>&1 || true
 }
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	set +e
 	stop_pid "$FOLLOW_LOG_PID"
@@ -245,13 +252,22 @@ cleanup() {
 		fi
 		READ_WORKLOAD_BARRIER_ACTIVE=0
 	fi
-	case "$WORK_DIR" in
-	"${TMPDIR:-/tmp}"/ptah-operator-fault-e2e.*) rm -rf -- "$WORK_DIR" ;;
-	*)
-		printf 'e2e faults: refusing to remove unexpected work directory %s\n' "$WORK_DIR" >&2
-		status=1
-		;;
-	esac
+	# The watch frames, the captured results and the schema snapshots this phase
+	# asserts on live here, and they are the only way to read a failure without
+	# running the whole lifecycle again. Keep them when the caller asked to keep
+	# a failed run.
+	if [ "$status" -ne 0 ] && [ "${E2E_KEEP_ON_FAILURE:-0}" = 1 ]; then
+		printf 'e2e faults: E2E_KEEP_ON_FAILURE=1: retaining work directory %s\n' \
+			"$WORK_DIR" >&2
+	else
+		case "$WORK_DIR" in
+		"${TMPDIR:-/tmp}"/ptah-operator-fault-e2e.*) rm -rf -- "$WORK_DIR" ;;
+		*)
+			printf 'e2e faults: refusing to remove unexpected work directory %s\n' "$WORK_DIR" >&2
+			status=1
+			;;
+		esac
+	fi
 	exit "$status"
 }
 trap cleanup EXIT
@@ -738,11 +754,18 @@ audit_fault_runtime() {
         ')
 		[ "$(printf '%s\n' "$audit_job_pods" | jq '.items | length')" -gt 0 ] || continue
 		materialize_fault_job_pod_uids "$audit_job_pods"
-		if ! while IFS= read -r audit_job_pod_uid; do
-				grep -Fx "$audit_job_pod_uid" "$FULLY_AUDITED_FAULT_PODS_FILE" >/dev/null || exit 1
-			done <"$FAULT_JOB_POD_UIDS_FILE"; then
-			continue
-		fi
+		# A loop that is an if condition runs in this shell, so exiting it exits
+		# the phase. Carry the answer in a variable instead: a Job whose Pods are
+		# not all fully audited yet is skipped, not fatal.
+		audit_job_pods_audited=1
+		while IFS= read -r audit_job_pod_uid; do
+			[ -n "$audit_job_pod_uid" ] || continue
+			if ! grep -Fx "$audit_job_pod_uid" "$FULLY_AUDITED_FAULT_PODS_FILE" >/dev/null; then
+				audit_job_pods_audited=0
+				break
+			fi
+		done <"$FAULT_JOB_POD_UIDS_FILE"
+		[ "$audit_job_pods_audited" -eq 1 ] || continue
 		printf '%s\n' "$audit_job_object" >"$RESOURCE_FILE"
 		printf '%s\n' "$audit_job_pods" >>"$RESOURCE_FILE"
 		scan_fault_file "$RESOURCE_FILE" \
@@ -1199,22 +1222,33 @@ watch_heartbeat_loop() {
 	heartbeat_error_file=$4
 	heartbeat_sequence=0
 	heartbeat_status=0
+	# Each round writes through the release's own admission webhooks, so one
+	# round can fail on a webhook call that outran its five-second timeout while
+	# the manager was under load. That is not evidence that a watch stopped,
+	# which is what this heartbeat exists to prove, so a round is retried and
+	# only a run of failures ends it. The attempt's stderr stays out of the
+	# evidence file until the run is decided, because an empty evidence file is
+	# what the assertions read.
+	heartbeat_failures=0
+	heartbeat_attempt_error=${heartbeat_error_file}.attempt
+	: >"$heartbeat_attempt_error"
 	while [ ! -f "$heartbeat_stop_file" ]; do
+		: >"$heartbeat_attempt_error"
 		heartbeat_marker="fault-watch-$$-${heartbeat_sequence}-$(date +%s)"
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate job e2e-fault-push-postgresql \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_error_file" &
+			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_job_pid=$!
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate pod "$heartbeat_pod" \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_error_file" &
+			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_pod_pid=$!
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate ptahschema e2e-suspended-schema \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_error_file" &
+			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_schema_pid=$!
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate ptahschemaapproval e2e-approval \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_error_file" &
+			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_approval_pid=$!
 		k --request-timeout=8s -n "$OPERATOR_NAMESPACE" annotate lease e2e-fault-watch-heartbeat \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_error_file" &
+			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_lease_pid=$!
 		heartbeat_update_status=0
 		for heartbeat_update_pid in \
@@ -1223,9 +1257,16 @@ watch_heartbeat_loop() {
 			wait "$heartbeat_update_pid" || heartbeat_update_status=1
 		done
 		if [ "$heartbeat_update_status" -ne 0 ]; then
-			heartbeat_status=1
-			break
+			heartbeat_failures=$((heartbeat_failures + 1))
+			if [ "$heartbeat_failures" -ge 3 ]; then
+				sed -n 'p' "$heartbeat_attempt_error" >>"$heartbeat_error_file"
+				heartbeat_status=1
+				break
+			fi
+			sleep 2
+			continue
 		fi
+		heartbeat_failures=0
 		heartbeat_sequence=$((heartbeat_sequence + 1))
 		heartbeat_sleep=0
 		while [ "$heartbeat_sleep" -lt 5 ] && [ ! -f "$heartbeat_stop_file" ]; do
@@ -1397,10 +1438,8 @@ establish_watch_barrier() {
 }
 
 start_watch() {
-	watch_resource=$1
-	watch_list_namespace=$2
-	watch_path=$3
-	watch_stem=$4
+	watch_path=$1
+	watch_stem=$2
 	watch_file="$WORK_DIR/watch-${watch_stem}.jsonl"
 	watch_error_file="$WORK_DIR/watch-${watch_stem}.err"
 	watch_frame_directory=$WORK_DIR/watch-${watch_stem}.frames
@@ -1410,12 +1449,20 @@ start_watch() {
 	mkdir -m 700 "$watch_frame_directory"
 	: >"$watch_file"
 	: >"$watch_error_file"
-	if [ -n "$watch_list_namespace" ]; then
-		k -n "$watch_list_namespace" get "$watch_resource" -o json >"$watch_initial_list"
-	else
-		k get "$watch_resource" -o json >"$watch_initial_list"
-	fi
-	watch_rv=$(jq -er '.metadata.resourceVersion' "$watch_initial_list")
+	# kubectl aggregates a collection into its own List and clears the
+	# resourceVersion, because a paginated aggregate has no single consistent
+	# one. Starting a watch from that empty string does not mean "from the list":
+	# the API server replays the current state as ADDED events, so every
+	# long-lived fixture object enters the stream as if this phase had created
+	# it. Read the collection straight from the API, which answers with the
+	# typed list and the resourceVersion the watch has to continue from.
+	k get --raw "$watch_path" >"$watch_initial_list"
+	watch_rv=$(jq -er '
+      if (.metadata.resourceVersion | type) == "string" and
+        (.metadata.resourceVersion | length) > 0
+      then .metadata.resourceVersion
+      else error("collection list carries no resourceVersion to watch from") end
+    ' "$watch_initial_list")
 	if [ "$watch_stem" = jobs ]; then
 		# The list resourceVersion and the following watch form one gap-free
 		# boundary. Persist the list side so a short-lived Job created between
@@ -1435,11 +1482,11 @@ start_watch() {
 }
 
 start_watches() {
-	start_watch jobs.batch "$TEST_NAMESPACE" "/apis/batch/v1/namespaces/${TEST_NAMESPACE}/jobs" jobs
-	start_watch pods "$TEST_NAMESPACE" "/api/v1/namespaces/${TEST_NAMESPACE}/pods" pods
-	start_watch ptahschemas.operator.ptah.dev "$TEST_NAMESPACE" "/apis/operator.ptah.dev/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemas" schemas
-	start_watch ptahschemaapprovals.operator.ptah.dev "$TEST_NAMESPACE" "/apis/operator.ptah.dev/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemaapprovals" approvals
-	start_watch leases.coordination.k8s.io "$OPERATOR_NAMESPACE" "/apis/coordination.k8s.io/v1/namespaces/${OPERATOR_NAMESPACE}/leases" leases
+	start_watch "/apis/batch/v1/namespaces/${TEST_NAMESPACE}/jobs" jobs
+	start_watch "/api/v1/namespaces/${TEST_NAMESPACE}/pods" pods
+	start_watch "/apis/operator.ptah.dev/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemas" schemas
+	start_watch "/apis/operator.ptah.dev/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemaapprovals" approvals
+	start_watch "/apis/coordination.k8s.io/v1/namespaces/${OPERATOR_NAMESPACE}/leases" leases
 }
 
 assert_watches_alive() {
@@ -1886,9 +1933,14 @@ wait_for_operation_job_terminal() {
 	fail "timed out waiting for the terminal $terminal_operation Job for $terminal_schema"
 }
 
+# A Job is removed once it is terminal, by its own TTL or by the controller
+# that owns it. Reading it again after the wait is a race the harness loses at
+# random, so the snapshot that proved terminality is what every caller reads:
+# TERMINAL_JOB_OBJECT holds it, and nothing re-fetches the object afterwards.
 wait_for_exact_job_terminal() {
 	exact_job_name=$1
 	exact_job_uid=$2
+	TERMINAL_JOB_OBJECT=
 	exact_job_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$exact_job_deadline" ]; do
 		maybe_audit_fault_runtime
@@ -1901,6 +1953,7 @@ wait_for_exact_job_terminal() {
           .status.conditions // [] |
           any((.type == "Complete" or .type == "Failed") and .status == "True")
         ' >/dev/null; then
+				TERMINAL_JOB_OBJECT=$exact_job_object
 				return 0
 			fi
 		fi
@@ -1915,7 +1968,7 @@ capture_exact_job_result() {
 	result_operation=$3
 	result_output=$4
 	wait_for_exact_job_terminal "$result_job_name" "$result_job_uid"
-	result_job_object=$(k -n "$TEST_NAMESPACE" get job "$result_job_name" -o json)
+	result_job_object=$TERMINAL_JOB_OBJECT
 	printf '%s\n' "$result_job_object" | jq -e \
 		--arg uid "$result_job_uid" \
 		--arg operation "$result_operation" \
@@ -2286,9 +2339,20 @@ capture_uncertain_read_proof_pair() {
 	uncertain_observe_checkpoint=${10}
 	uncertain_plan_checkpoint=${11}
 	uncertain_apply_pod_count=${12:-1}
+	uncertain_apply_pod_optional=false
+	# Kubernetes deletes the Pods of a Job that exceeds its active deadline, and
+	# the operator records the terminal Pod evidence it can still see at the
+	# mutation boundary. Whether the deletion lands before that read is a race
+	# this proof does not control, so "deadline" accepts the exact Pod or none,
+	# and requires the recorded count to match the recorded list either way.
 	case "$uncertain_apply_pod_count" in
 	0) uncertain_apply_pod_uids='[]' ;;
 	1) uncertain_apply_pod_uids=$(jq -cn --arg uid "$uncertain_apply_pod_uid" '[$uid]') ;;
+	deadline)
+		uncertain_apply_pod_uids=$(jq -cn --arg uid "$uncertain_apply_pod_uid" '[$uid]')
+		uncertain_apply_pod_optional=true
+		uncertain_apply_pod_count=1
+		;;
 	*) fail "$uncertain_schema recovery proof has an unsupported Apply Pod evidence count" ;;
 	esac
 	[ "$READ_WORKLOAD_BARRIER_ACTIVE" -eq 1 ] ||
@@ -2324,6 +2388,7 @@ capture_uncertain_read_proof_pair() {
 		--arg applyJobUID "$uncertain_apply_job_uid" \
 		--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
 		--argjson applyPodCount "$uncertain_apply_pod_count" \
+		--argjson applyPodOptional "$uncertain_apply_pod_optional" \
 		--arg leaseEpoch "$uncertain_lease_epoch" \
 		--arg controllerImage "$CONTROLLER_IMAGE" \
 		--arg controllerRevision "$CONTROLLER_REVISION" \
@@ -2336,8 +2401,11 @@ capture_uncertain_read_proof_pair() {
       .status.pendingObservation.applyOperationID == $applyOperation and
       .status.pendingObservation.applyJobName == $applyJobName and
       .status.pendingObservation.applyJobUID == $applyJobUID and
-      (.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs and
-      (.status.pendingObservation.applyPodCount // 0) == $applyPodCount and
+      ((.status.pendingObservation.applyPodUIDs // []) as $recordedPodUIDs |
+        (if $applyPodOptional
+         then ($recordedPodUIDs == [] or $recordedPodUIDs == $applyPodUIDs)
+         else $recordedPodUIDs == $applyPodUIDs end) and
+        (.status.pendingObservation.applyPodCount // 0) == ($recordedPodUIDs | length)) and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
       .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch and
       .status.pendingObservation.plan.controllerImage == $controllerImage and
@@ -2348,8 +2416,55 @@ capture_uncertain_read_proof_pair() {
       .status.pendingLockRelease == null and
       all(.status.conditions[];
         if (.type == "InSync" or .type == "Ready") then .status != "True" else true end)
-    ' >/dev/null ||
+    ' >/dev/null || {
+		# The status is frozen by the status-write barrier at this point, so the
+		# mismatch is a fact about what the controller last wrote. Name it: the
+		# assertion above compares fifteen fields and said only that one of them
+		# differs.
+		printf '%s\n' "$uncertain_held_observe" | jq -c '{
+          held: {
+            phase: .status.phase,
+            activeType: .status.activeOperation.type,
+            activeID: .status.activeOperation.id,
+            activeJobUID: .status.activeOperation.jobUID,
+            activeLeaseEpoch: .status.activeOperation.leaseEpoch,
+            outcome: .status.pendingObservation.outcome,
+            applyOperationID: .status.pendingObservation.applyOperationID,
+            applyJobName: .status.pendingObservation.applyJobName,
+            applyJobUID: .status.pendingObservation.applyJobUID,
+            applyPodUIDs: (.status.pendingObservation.applyPodUIDs // []),
+            applyPodCount: (.status.pendingObservation.applyPodCount // 0),
+            pendingLeaseEpoch: .status.pendingObservation.leaseEpoch,
+            planRequired: (.status.pendingObservation.planRequired // false),
+            bindingEpoch: .status.executionBinding.epoch,
+            planBindingID: .status.pendingObservation.plan.executionBindingID,
+            appliedType: (.status.applied | type),
+            pendingLockReleaseType: (.status.pendingLockRelease | type),
+            trueConditions: [.status.conditions[] | select(.status == "True") | .type]
+          }
+        }' >&2
+		jq -nc \
+			--arg observeUID "$UNCERTAIN_OBSERVE_JOB_UID" \
+			--arg observeOperation "$UNCERTAIN_OBSERVE_OPERATION_ID" \
+			--arg applyOperation "$uncertain_apply_operation" \
+			--arg applyJobName "$uncertain_apply_job_name" \
+			--arg applyJobUID "$uncertain_apply_job_uid" \
+			--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
+			--argjson applyPodCount "$uncertain_apply_pod_count" \
+			--argjson applyPodOptional "$uncertain_apply_pod_optional" \
+			--arg leaseEpoch "$uncertain_lease_epoch" '
+          {expected: {
+            activeType: "Observe", activeID: $observeOperation,
+            activeJobUID: $observeUID, activeLeaseEpoch: $leaseEpoch,
+            outcome: "OutcomeUnknown", applyOperationID: $applyOperation,
+            applyJobName: $applyJobName, applyJobUID: $applyJobUID,
+            applyPodUIDs: $applyPodUIDs, applyPodCount: $applyPodCount,
+            pendingLeaseEpoch: $leaseEpoch, planRequired: false,
+            phase: "VerifyingConvergence", appliedType: "null"
+          }}
+        ' >&2
 		fail "$uncertain_schema did not retain its exact uncertain Apply snapshot through Observe"
+	}
 	assert_lease_held_without_release "$uncertain_lease_name" "$uncertain_lease_uid" \
 		"$uncertain_lease_holder" "$uncertain_lease_epoch"
 
@@ -2384,6 +2499,7 @@ capture_uncertain_read_proof_pair() {
 		--arg applyJobUID "$uncertain_apply_job_uid" \
 		--argjson applyPodUIDs "$uncertain_apply_pod_uids" \
 		--argjson applyPodCount "$uncertain_apply_pod_count" \
+		--argjson applyPodOptional "$uncertain_apply_pod_optional" \
 		--arg leaseEpoch "$uncertain_lease_epoch" \
 		--arg controllerImage "$CONTROLLER_IMAGE" \
 		--arg controllerRevision "$CONTROLLER_REVISION" \
@@ -2396,8 +2512,11 @@ capture_uncertain_read_proof_pair() {
       .status.pendingObservation.applyOperationID == $applyOperation and
       .status.pendingObservation.applyJobName == $applyJobName and
       .status.pendingObservation.applyJobUID == $applyJobUID and
-      (.status.pendingObservation.applyPodUIDs // []) == $applyPodUIDs and
-      (.status.pendingObservation.applyPodCount // 0) == $applyPodCount and
+      ((.status.pendingObservation.applyPodUIDs // []) as $recordedPodUIDs |
+        (if $applyPodOptional
+         then ($recordedPodUIDs == [] or $recordedPodUIDs == $applyPodUIDs)
+         else $recordedPodUIDs == $applyPodUIDs end) and
+        (.status.pendingObservation.applyPodCount // 0) == ($recordedPodUIDs | length)) and
       .status.pendingObservation.leaseEpoch == $leaseEpoch and
       .status.pendingObservation.plan.executionBindingID == .status.executionBinding.epoch and
       .status.pendingObservation.plan.controllerImage == $controllerImage and
@@ -3564,9 +3683,20 @@ assert_uncertain_apply_proof_history() {
 	unknown_plan_mode=${11:-same-plan}
 	unknown_old_actual_fingerprint=${12:-}
 	unknown_apply_pod_count=${13:-1}
+	unknown_apply_pod_optional=false
+	# Kubernetes deletes the Pods of a Job that exceeds its active deadline, and
+	# the operator records the terminal Pod evidence it can still see at the
+	# mutation boundary. Whether the deletion lands before that read is a race
+	# this proof does not control, so "deadline" accepts the exact Pod or none,
+	# and requires the recorded count to match the recorded list either way.
 	case "$unknown_apply_pod_count" in
 	0) unknown_apply_pod_uids='[]' ;;
 	1) unknown_apply_pod_uids=$(jq -cn --arg uid "$unknown_apply_pod_uid" '[$uid]') ;;
+	deadline)
+		unknown_apply_pod_uids=$(jq -cn --arg uid "$unknown_apply_pod_uid" '[$uid]')
+		unknown_apply_pod_optional=true
+		unknown_apply_pod_count=1
+		;;
 	*) fail "$unknown_schema proof history has an unsupported Apply Pod evidence count" ;;
 	esac
 	unknown_final_schema=$WORK_DIR/${unknown_schema}-final-schema.json
@@ -3598,6 +3728,7 @@ assert_uncertain_apply_proof_history() {
 		--arg freshPlanUID "$unknown_fresh_plan_uid" \
 		--argjson applyPodUIDs "$unknown_apply_pod_uids" \
 		--argjson applyPodCount "$unknown_apply_pod_count" \
+		--argjson applyPodOptional "$unknown_apply_pod_optional" \
 		--arg planMode "$unknown_plan_mode" \
 		--arg oldActual "$unknown_old_actual_fingerprint" \
 		--arg controllerImage "$CONTROLLER_IMAGE" \
@@ -3760,8 +3891,11 @@ assert_uncertain_apply_proof_history() {
 	      $apply.value.status.activeOperation.terminationGracePeriodSeconds == 30 and
 	      $origin.applyJobName == $apply.value.status.activeOperation.jobName and
 	      $origin.applyJobUID == $applyJobUID and
-	      $origin.applyPodUIDs == $applyPodUIDs and
-	      $origin.applyPodCount == $applyPodCount and
+	      (($origin.applyPodUIDs // []) as $recordedPodUIDs |
+	        (if $applyPodOptional
+	         then ($recordedPodUIDs == [] or $recordedPodUIDs == $applyPodUIDs)
+	         else $recordedPodUIDs == $applyPodUIDs end) and
+	        ($origin.applyPodCount // 0) == ($recordedPodUIDs | length)) and
 	      $unknown.value.status.phase == "VerifyingConvergence" and
 	      $unknown.value.status.applied == null and
 	      $unknown.value.status.pendingLockRelease == null and
@@ -3802,7 +3936,8 @@ assert_uncertain_apply_proof_history() {
           $final.status.pendingObservation == null and $final.status.pendingLockRelease == null and
           $final.status.applied == null and $final.status.plan == null and
           ($final.status.conditions | any(
-            .type == "InSync" and .status == "True" and .reason == "ScopedConverged"))
+            .type == "InSync" and .status == "True" and
+            .reason == "ConvergedAfterUnknownOutcome"))
         elif $planMode == "same-plan" then
           final_awaits_fresh($final; $fresh; $freshPlanUID) and
           $fresh.spec.fingerprint == $origin.plan.fingerprint and
@@ -3818,8 +3953,60 @@ assert_uncertain_apply_proof_history() {
           immutable_plan_inputs_match($fresh; $origin.plan)
         else false end) and
       all($schemas[]; .status.applied == null)
-    ' "$unknown_schema_watch" >/dev/null ||
+    ' "$unknown_schema_watch" >/dev/null || {
+		# This compares a hundred facts across four watches and says only that
+		# one of them differs. Print the inputs the branch reads, so the next
+		# reader does not spend a lifecycle run finding out which.
+		jq -nc \
+			--arg planMode "$unknown_plan_mode" \
+			--arg oldActual "$unknown_old_actual_fingerprint" \
+			--arg freshPlanUID "$unknown_fresh_plan_uid" \
+			--arg observeJobUID "$unknown_observe_job_uid" \
+			--arg planJobUID "$unknown_plan_job_uid" \
+			--arg leaseUID "$unknown_lease_uid" \
+			--arg leaseEpoch "$unknown_lease_epoch" \
+			--slurpfile finalSchema "$unknown_final_schema" \
+			--slurpfile freshPlan "$unknown_fresh_plan" \
+			--slurpfile jobs "$unknown_job_watch" \
+			--slurpfile leases "$unknown_lease_watch" '
+          {
+            asked: {
+              planMode: $planMode, oldActual: $oldActual,
+              freshPlanUID: $freshPlanUID, observeJobUID: $observeJobUID,
+              planJobUID: $planJobUID, leaseUID: $leaseUID, leaseEpoch: $leaseEpoch
+            },
+            final: ($finalSchema[0] | {
+              phase: .status.phase,
+              planUID: .status.plan.uid, planName: .status.plan.name,
+              planFingerprint: .status.plan.fingerprint,
+              planActual: .status.plan.actualStateFingerprint,
+              approvalType: (.status.plan.approval | type),
+              appliedType: (.status.applied | type),
+              activeType: (.status.activeOperation | type),
+              pendingObservationType: (.status.pendingObservation | type),
+              pendingLockReleaseType: (.status.pendingLockRelease | type),
+              bindingEpoch: .status.executionBinding.epoch,
+              inSyncReasons: [.status.conditions[] |
+                select(.type == "InSync") | {status, reason}]
+            }),
+            fresh: ($freshPlan[0] | {
+              uid: .metadata.uid, name: .metadata.name,
+              fingerprint: .spec.fingerprint,
+              actual: .spec.actualStateFingerprint,
+              contentDigest: .spec.contentDigest,
+              destructive: .spec.destructive,
+              statementCount: .spec.statementCount,
+              bindingID: .spec.executionBindingID,
+              schemaRefUID: .spec.schemaRef.uid
+            }),
+            watches: {
+              jobEvents: ($jobs | length),
+              leaseEvents: ($leases | length)
+            }
+          }
+        ' >&2
 		fail "$unknown_schema did not retain one uncertain Apply Lease and immutable proof snapshot through Observe and Plan"
+	}
 }
 
 start_pg_barrier() {
@@ -3865,6 +4052,7 @@ start_mysql_barrier() {
 	barrier_guard="${barrier_token}_guard"
 	barrier_ready="${barrier_token}_ready"
 	MYSQL_BARRIER_READY_LOCK=$barrier_ready
+	MYSQL_BARRIER_DATABASE=$barrier_database
 	barrier_sql="SELECT GET_LOCK('${barrier_guard}', 0); LOCK TABLES e2e_widgets READ; SELECT GET_LOCK('${barrier_ready}', 0); DO SLEEP(${FAULT_BARRIER_SECONDS}); UNLOCK TABLES; SELECT RELEASE_LOCK('${barrier_ready}'); SELECT RELEASE_LOCK('${barrier_guard}')"
 	# shellcheck disable=SC2016 # Variables expand inside the database container.
 	k -n "$TEST_NAMESPACE" exec deployment/"$MYSQL_SERVICE" -- \
@@ -3879,6 +4067,21 @@ start_mysql_barrier() {
 stop_mysql_barrier() {
 	barrier_ready=$MYSQL_BARRIER_READY_LOCK
 	[ -n "$barrier_ready" ] || return 0
+	# MySQL runs a queued DDL after the client that sent it is gone: a killed
+	# Apply Pod leaves its ALTER waiting on this barrier's table lock, and
+	# releasing the lock applies it minutes after the Job died, which is not
+	# what a killed Job means to the proofs that follow. Measured: an ALTER
+	# whose client was killed at 4 seconds landed when the lock was released
+	# 20 seconds later. Kill what the dead Apply left behind first, so the
+	# barrier releases into an idle database. Only what waits for this barrier's
+	# table lock is abandoned work: the recovery Observe reads through a READ
+	# lock without waiting, and killing it costs the proof the result it came
+	# for.
+	barrier_abandoned=$(mysql_root_query mysql "SELECT ID FROM information_schema.processlist WHERE USER = '${MYSQL_APP_USER}' AND DB = '${MYSQL_BARRIER_DATABASE}' AND STATE LIKE 'Waiting for table%'")
+	for barrier_thread in $barrier_abandoned; do
+		printf '%s\n' "$barrier_thread" | grep -Eq '^[1-9][0-9]*$' || continue
+		mysql_root_query mysql "KILL ${barrier_thread}" >/dev/null 2>&1 || true
+	done
 	barrier_id=$(mysql_root_query mysql "SELECT IS_USED_LOCK('${barrier_ready}')" | tr -d '[:space:]')
 	printf '%s\n' "$barrier_id" | grep -Eq '^[1-9][0-9]*$' ||
 		fail "could not identify the MySQL metadata barrier connection"
@@ -3886,6 +4089,7 @@ stop_mysql_barrier() {
 	stop_pid "$MYSQL_BARRIER_PID"
 	MYSQL_BARRIER_PID=
 	MYSQL_BARRIER_READY_LOCK=
+	MYSQL_BARRIER_DATABASE=
 }
 
 assert_pg_apply_lock_wait() {
@@ -3924,11 +4128,17 @@ assert_active_identity() {
 
 wait_for_in_sync() {
 	sync_schema=$1
-	wait_for_schema "$sync_schema" '
-      .status.phase == "InSync" and .status.pendingObservation == null and
+	# An Apply whose outcome was unknown converges under its own reason: the
+	# managed scope matches, but no Apply attribution is recorded. Ask for the
+	# reason the scenario earned, so a scenario that never lost attribution
+	# cannot pass on the weaker one.
+	sync_reason=${2:-ScopedConverged}
+	wait_for_schema "$sync_schema" "
+      .status.phase == \"InSync\" and .status.pendingObservation == null and
       .status.activeOperation == null and .status.pendingLockRelease == null and
-	  (.status.conditions | any(.type == "InSync" and .status == "True" and .reason == "ScopedConverged"))
-    ' "post-apply observation to prove convergence"
+      (.status.conditions | any(.type == \"InSync\" and .status == \"True\" and
+        .reason == \"${sync_reason}\"))
+    " "post-apply observation to prove convergence as ${sync_reason}"
 }
 
 run_credential_principal_refusal() {
@@ -4184,11 +4394,15 @@ wait_for_deadline_job_terminal_and_audit "$MYSQL_TIMEOUT_JOB_NAME" \
 	"$MYSQL_TIMEOUT_POD_UID" "$MYSQL_TIMEOUT_POD_NAME" \
 	"$MYSQL_TIMEOUT_OPERATION_ID" "$DEADLINE_PTAH_STARTED_AT"
 stop_mysql_barrier
+# Kubernetes deletes the Pods of a Job that exceeds its active deadline, so the
+# mutation boundary has no terminal Pod to record: the snapshot keeps the Job
+# identity and no Pod evidence. Every other uncertainty proof here ends with a
+# Pod that terminated on its own and is still there to be counted.
 capture_uncertain_read_proof_pair "$MYSQL_TIMEOUT_SCHEMA" \
 	"$MYSQL_TIMEOUT_OPERATION_ID" "$MYSQL_TIMEOUT_JOB_NAME" "$MYSQL_TIMEOUT_JOB_UID" \
 	"$MYSQL_TIMEOUT_POD_UID" "$MYSQL_TIMEOUT_LEASE_NAME" "$MYSQL_TIMEOUT_LEASE_UID" \
 	"$MYSQL_TIMEOUT_LEASE_HOLDER" "$MYSQL_TIMEOUT_LEASE_EPOCH" \
-	"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" 1
+	"$MYSQL_TIMEOUT_OBSERVE_CHECKPOINT" "$MYSQL_TIMEOUT_PLAN_CHECKPOINT" deadline
 MYSQL_TIMEOUT_RECOVERY_OBSERVE_UID=$UNCERTAIN_OBSERVE_JOB_UID
 MYSQL_TIMEOUT_RECOVERY_PLAN_UID=$UNCERTAIN_PLAN_JOB_UID
 wait_for_schema "$MYSQL_TIMEOUT_SCHEMA" '
@@ -4293,10 +4507,20 @@ start_follow_logs "$OPERATOR_NAMESPACE" "$OLD_MANAGER_POD_NAME" manager-restart 
 # The retained runtime guard pins the release's Deployments, so a rollout
 # restart, which writes a Pod-template annotation, is refused. Replacing the
 # Pods is what this proof needs and what the guard leaves to the ReplicaSet.
-k -n "$OPERATOR_NAMESPACE" delete pod \
+# Replace them one at a time: the manager serves the admission webhooks, and
+# deleting every replica at once leaves the API server with no backend, which
+# fails any request the webhooks gate until a replacement is ready.
+manager_restart_pods=$(k -n "$OPERATOR_NAMESPACE" get pods \
 	-l "app.kubernetes.io/name=ptah-operator,app.kubernetes.io/instance=${HELM_RELEASE},app.kubernetes.io/component=controller" \
-	--wait=false >/dev/null
-k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" --timeout="${TIMEOUT_SECONDS}s" >/dev/null
+	-o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+[ -n "$manager_restart_pods" ] || fail "no manager Pod was available to replace"
+for manager_restart_pod in $manager_restart_pods; do
+	k -n "$OPERATOR_NAMESPACE" delete pod "$manager_restart_pod" --wait=true \
+		--timeout="${TIMEOUT_SECONDS}s" >/dev/null
+	k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" \
+		--timeout="${TIMEOUT_SECONDS}s" >/dev/null
+	load_ready_manager_pod_uids
+done
 finish_follow_logs "old manager logs through the restart"
 load_ready_manager_pod_uids
 assert_manager_pods_replaced "$OLD_MANAGER_POD_UIDS" "$MANAGER_POD_UIDS"
@@ -4346,7 +4570,7 @@ MYSQL_RECOVERY_OBSERVE_JOB=$(k -n "$TEST_NAMESPACE" get jobs \
     if length == 1 then .[0].metadata.name else error("recovery Observe Job UID is not live exactly once") end
   ')
 wait_for_exact_job_terminal "$MYSQL_RECOVERY_OBSERVE_JOB" "$MYSQL_RECOVERY_OBSERVE_UID"
-k -n "$TEST_NAMESPACE" get job "$MYSQL_RECOVERY_OBSERVE_JOB" -o json |
+printf '%s\n' "$TERMINAL_JOB_OBJECT" |
 	jq -e --arg uid "$MYSQL_RECOVERY_OBSERVE_UID" '
       .metadata.uid == $uid and
       (.status.conditions // [] | any(.type == "Complete" and .status == "True")) and
@@ -4398,7 +4622,7 @@ MYSQL_RECOVERY_PLAN_JOB=$(k -n "$TEST_NAMESPACE" get jobs \
     if length == 1 then .[0].metadata.name else error("recovery Plan Job UID is not live exactly once") end
   ')
 wait_for_exact_job_terminal "$MYSQL_RECOVERY_PLAN_JOB" "$MYSQL_RECOVERY_PLAN_JOB_UID"
-k -n "$TEST_NAMESPACE" get job "$MYSQL_RECOVERY_PLAN_JOB" -o json |
+printf '%s\n' "$TERMINAL_JOB_OBJECT" |
 	jq -e --arg uid "$MYSQL_RECOVERY_PLAN_JOB_UID" '
       .metadata.uid == $uid and
       (.status.conditions // [] | any(.type == "Complete" and .status == "True")) and
@@ -4712,7 +4936,7 @@ ALIAS_B_RECOVERY_OBSERVE_UID=$UNCERTAIN_OBSERVE_JOB_UID
 ALIAS_B_RECOVERY_PLAN_UID=$UNCERTAIN_PLAN_JOB_UID
 ALIAS_B_RECOVERY_OBSERVE_RESULT=$UNCERTAIN_OBSERVE_RESULT
 ALIAS_B_RECOVERY_PLAN_RESULT=$UNCERTAIN_PLAN_RESULT
-wait_for_in_sync "$PG_ALIAS_SCHEMA_B"
+wait_for_in_sync "$PG_ALIAS_SCHEMA_B" ConvergedAfterUnknownOutcome
 assert_approval_consumed "$ALIAS_B_APPROVAL" "$ALIAS_B_PLAN_UID"
 ALIAS_B_FINAL_SCHEMA=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_ALIAS_SCHEMA_B" -o json)
 printf '%s\n' "$ALIAS_B_FINAL_SCHEMA" | jq -e \
@@ -5321,7 +5545,7 @@ assert_uncertain_apply_proof_history "$MYSQL_TIMEOUT_SCHEMA" \
 	"$MYSQL_TIMEOUT_OPERATION_ID" "$MYSQL_TIMEOUT_JOB_UID" "$MYSQL_TIMEOUT_LEASE_UID" \
 	"$MYSQL_TIMEOUT_LEASE_HOLDER" "$MYSQL_TIMEOUT_LEASE_EPOCH" \
 	"$MYSQL_TIMEOUT_RECOVERY_OBSERVE_UID" "$MYSQL_TIMEOUT_RECOVERY_PLAN_UID" \
-	"$MYSQL_TIMEOUT_FRESH_PLAN_UID" "$MYSQL_TIMEOUT_POD_UID" same-plan "" 1
+	"$MYSQL_TIMEOUT_FRESH_PLAN_UID" "$MYSQL_TIMEOUT_POD_UID" same-plan "" deadline
 assert_post_apply_proof_history "$PG_RESTART_SCHEMA" "$PG_OPERATION_ID" "$PG_JOB_UID" \
 	"$PG_LEASE_UID" "$PG_LEASE_HOLDER" "$PG_LEASE_EPOCH" \
 	"$PG_RESTART_PROOF_OBSERVE_JOB_UID" "$PG_RESTART_PROOF_PLAN_JOB_UID"
@@ -5334,4 +5558,5 @@ assert_no_overlapping_operation_jobs
 assert_fault_audit_complete
 record_fault_jobs_for_parent
 
+PHASE_COMPLETED=1
 printf '%s\n' 'e2e faults: PASS watches, Kubernetes deadline recovery, stale-plan preflight, native lock barriers, restart identity, uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms'

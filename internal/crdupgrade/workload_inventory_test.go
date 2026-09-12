@@ -1141,3 +1141,42 @@ func (c *workloadInventoryDeploymentClient) Get(_ context.Context, name string, 
 	}
 	return object, nil
 }
+
+// A Deployment keeps the ReplicaSets of its earlier revisions, and a cutover
+// changes the runtime ServiceAccount, so the revision it replaced names the
+// predecessor's. Teardown has to accept that history and still refuse a
+// ReplicaSet that names another identity or could run again.
+func TestWorkloadInventoryAcceptsTheRevisionACutoverReplaced(t *testing.T) {
+	fixture := newRuntimeInventoryFixture()
+	fixture.guard.PreviousControllerServiceAccountName = "ptah-operator-previous"
+	_, retired, _ := runtimeInventoryChain(
+		fixture.guard,
+		fixture.guard.ControllerDeploymentName,
+		fixture.guard.PreviousControllerServiceAccountName,
+		"controller",
+		"retired1",
+	)
+	zero := int32(0)
+	retired.Spec.Replicas = &zero
+	retired.Status = appsv1.ReplicaSetStatus{}
+	fixture.replicaSets.objects[retired.Name] = retired
+
+	if err := fixture.inventory.VerifyRuntimeBeforeQuiesce(context.Background()); err != nil {
+		t.Fatalf("VerifyRuntimeBeforeQuiesce() rejected the revision a cutover replaced: %v", err)
+	}
+
+	running := int32(1)
+	retired.Spec.Replicas = &running
+	if err := fixture.inventory.VerifyRuntimeBeforeQuiesce(context.Background()); err == nil {
+		t.Fatal("VerifyRuntimeBeforeQuiesce() accepted a retired ReplicaSet that can run again")
+	}
+
+	// A ReplicaSet naming any other identity is not a protected runtime
+	// ReplicaSet and never reaches this check: the inventory selects the ones
+	// that name a runtime ServiceAccount of this release.
+	retired.Spec.Replicas = &zero
+	retired.Spec.Template.Spec.ServiceAccountName = "ptah-operator-someone-else"
+	if err := fixture.inventory.VerifyRuntimeBeforeQuiesce(context.Background()); err != nil {
+		t.Fatalf("VerifyRuntimeBeforeQuiesce() rejected an unrelated ReplicaSet: %v", err)
+	}
+}

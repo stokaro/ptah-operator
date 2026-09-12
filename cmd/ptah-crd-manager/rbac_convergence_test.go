@@ -139,8 +139,8 @@ func TestNewTeardownRBACConvergenceBarrierDiscoversEveryDirectEndpoint(t *testin
 	if len(configs) != 2 {
 		t.Fatalf("client factory calls = %d, want 2", len(configs))
 	}
-	if got := authorizationSweepSize(barrier); got != 65 {
-		t.Fatalf("authorization sweep size = %d, want 65 exact retired-subject plus current-credential probes", got)
+	if got := authorizationSweepSize(barrier); got != 67 {
+		t.Fatalf("authorization sweep size = %d, want 67 exact retired-subject plus current-credential probes", got)
 	}
 	for index, config := range configs {
 		if config == base {
@@ -834,7 +834,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		probeCounts[probe.Subject.Name] = len(probe.Checks)
 		probeChecks[probe.Subject.Name] = authorizationCheckNames(probe.Checks)
 	}
-	if want := map[string]int{"controller": 19, "certificate": 7, "hook-quiesce": 16}; !reflect.DeepEqual(probeCounts, want) {
+	if want := map[string]int{"controller": 19, "certificate": 8, "hook-quiesce": 17}; !reflect.DeepEqual(probeCounts, want) {
 		t.Fatalf("retired subject probe counts = %#v, want %#v", probeCounts, want)
 	}
 	for _, test := range []struct {
@@ -974,8 +974,8 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 			t.Errorf("check %q includes intentional residual RBAC deletion for %q", check.Name, attributes.Name)
 		}
 	}
-	if len(checks) != 61 || len(byName) != 61 {
-		t.Fatalf("authorization checks = %d total/%d unique, want 61/61", len(checks), len(byName))
+	if len(checks) != 63 || len(byName) != 63 {
+		t.Fatalf("authorization checks = %d total/%d unique, want 63/63", len(checks), len(byName))
 	}
 	for _, name := range wantChecks {
 		if byName[name] == nil {
@@ -1100,6 +1100,88 @@ func TestTeardownAuthorizationProbesCoverPreviousAdmissionMarkerDeletion(t *test
 	}
 }
 
+func TestTeardownAuthorizationProbesCoverOnlyInheritedRoleBindGrants(t *testing.T) {
+	t.Parallel()
+	for _, namespaces := range [][2]string{
+		{"ptah-system", "ptah-system"}, {"ptah-system", "ptah-coordination"},
+		{"ptah-system", "default"}, {"default", "default"}, {"default", "ptah-coordination"},
+	} {
+		for _, previousSequence := range []int32{-1, 0, 1} {
+			t.Run(fmt.Sprintf("%s/%s/previous=%d", namespaces[0], namespaces[1], previousSequence), func(t *testing.T) {
+				rollout := validRBACRolloutGuard()
+				rollout.ReleaseNamespace, rollout.CoordinationNamespace = namespaces[0], namespaces[1]
+				if previousSequence >= 0 {
+					rollout.PreviousControllerServiceAccountName = "previous-controller"
+					rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
+					rollout.PreviousControllerReleaseSequence = previousSequence
+					rollout.ReleaseSequence = previousSequence + 1
+				}
+				attempt := sha256.Sum256([]byte(strings.Join([]string{
+					rollout.ReleaseNamespace, rollout.ReleaseName, fmt.Sprint(rollout.ReleaseSequence), rollout.ManagerImage,
+				}, "\n")))
+				rollout.HookServiceAccountName = fmt.Sprintf("ptah-operator-crd-v%d-%x", rollout.ReleaseSequence, attempt[:6])
+				contract := validRBACAdmissionContract()
+				contract.Namespace = rollout.ReleaseNamespace
+				probes, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := map[string]bool{}
+				controller := rollout.ControllerDeploymentName
+				if previousSequence >= 0 {
+					want["clusterroles//"+controller] = true
+					want["roles/"+rollout.CoordinationNamespace+"/"+controller] = true
+				}
+				if previousSequence > 0 {
+					want["roles/"+rollout.ReleaseNamespace+"/"+controller+"-runtime-admission"] = true
+					if rollout.ReleaseNamespace != metav1.NamespaceDefault {
+						want["roles/default/"+controller+"-runtime-discovery"] = true
+					}
+				}
+				got := map[string]bool{}
+				for _, probe := range probes {
+					for _, check := range probe.Checks {
+						attr := check.ResourceAttributes
+						if attr == nil || attr.Verb != "bind" {
+							continue
+						}
+						if probe.Subject.Name != "hook-quiesce" || attr.Group != "rbac.authorization.k8s.io" || attr.Name == "" {
+							t.Fatalf("unexpected bind denial probe for %q: %#v", probe.Subject.Name, attr)
+						}
+						key := attr.Resource + "/" + attr.Namespace + "/" + attr.Name
+						if got[key] {
+							t.Fatalf("duplicate bind denial probe %q", key)
+						}
+						got[key] = true
+					}
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("bind denial probes = %v, want %v", got, want)
+				}
+				grants, err := crdupgrade.RevokedPrivilegeMutationGrants(rollout, contract)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := validateTeardownAuthorizationProbeCompleteness(probes, selfChecks, grants); err != nil {
+					t.Fatal(err)
+				}
+				for index, probe := range probes {
+					for checkIndex, check := range probe.Checks {
+						if check.ResourceAttributes == nil || check.ResourceAttributes.Verb != "bind" {
+							continue
+						}
+						missing := append([]crdupgrade.AuthorizationProbe(nil), probes...)
+						missing[index].Checks = append(append([]crdupgrade.AuthorizationCheck(nil), probe.Checks[:checkIndex]...), probe.Checks[checkIndex+1:]...)
+						if err := validateTeardownAuthorizationProbeCompleteness(missing, selfChecks, grants); err == nil {
+							t.Fatalf("missing bind probe %q was accepted", check.Name)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestTeardownAuthorizationChecksUseSeparateCoordinationNamespace(t *testing.T) {
 	rollout := validRBACRolloutGuard()
 	rollout.CoordinationNamespace = "ptah-coordination"
@@ -1122,15 +1204,15 @@ func TestTeardownAuthorizationChecksUseSeparateCoordinationNamespace(t *testing.
 			t.Errorf("check %q namespace = %q, want %q", name, attributes.Namespace, rollout.CoordinationNamespace)
 		}
 	}
-	if len(checks) != 62 {
-		t.Fatalf("split-namespace authorization check count = %d, want 62", len(checks))
+	if len(checks) != 65 {
+		t.Fatalf("split-namespace authorization check count = %d, want 65", len(checks))
 	}
 	_, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
 	if err != nil {
 		t.Fatalf("teardownAuthorizationProbes() error = %v", err)
 	}
-	if len(selfChecks) != 24 {
-		t.Fatalf("split-namespace current cleanup credential check count = %d, want 24", len(selfChecks))
+	if len(selfChecks) != 25 {
+		t.Fatalf("split-namespace current cleanup credential check count = %d, want 25", len(selfChecks))
 	}
 	privilegeName := mustTeardownPrivilegeRoleName(t, rollout.HookServiceAccountName)
 	selfNames := authorizationCheckNames(selfChecks)
@@ -1156,15 +1238,15 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      metav1.NamespaceDefault,
 			coordinationNamespace: metav1.NamespaceDefault,
 			wantSelfChecks:        18,
-			wantAllChecks:         56,
+			wantAllChecks:         57,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault},
 		},
 		{
 			name:                  "release and discovery coincide",
 			releaseNamespace:      metav1.NamespaceDefault,
 			coordinationNamespace: "ptah-coordination",
-			wantSelfChecks:        19,
-			wantAllChecks:         57,
+			wantSelfChecks:        20,
+			wantAllChecks:         59,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-coordination"},
 		},
 		{
@@ -1172,15 +1254,15 @@ func TestTeardownAuthorizationChecksDeduplicateDefaultNamespacePrivileges(t *tes
 			releaseNamespace:      "ptah-system",
 			coordinationNamespace: metav1.NamespaceDefault,
 			wantSelfChecks:        23,
-			wantAllChecks:         61,
+			wantAllChecks:         63,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-system"},
 		},
 		{
 			name:                  "all split",
 			releaseNamespace:      "ptah-system",
 			coordinationNamespace: "ptah-coordination",
-			wantSelfChecks:        24,
-			wantAllChecks:         62,
+			wantSelfChecks:        25,
+			wantAllChecks:         65,
 			wantCleanupNamespaces: []string{metav1.NamespaceDefault, "ptah-coordination", "ptah-system"},
 		},
 	} {
@@ -1250,9 +1332,9 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					for _, probe := range probes {
 						counts[probe.Subject.Name] = len(probe.Checks)
 					}
-					wantCounts := map[string]int{"controller": 19, "hook-quiesce": 16}
+					wantCounts := map[string]int{"controller": 19, "hook-quiesce": 17}
 					if certificateEnabled {
-						wantCounts["certificate"] = 7
+						wantCounts["certificate"] = 8
 					}
 					if !reflect.DeepEqual(counts, wantCounts) {
 						t.Fatalf("retired subject probe counts = %#v, want %#v", counts, wantCounts)
@@ -1260,7 +1342,9 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 
 					wantSelfChecks := 16
 					if splitCoordinationNamespace {
-						wantSelfChecks++
+						// A separate coordination namespace has both a cleanup
+						// self-revocation binding and an exact hook binding.
+						wantSelfChecks += 2
 					}
 					if controllerServiceAccountCreated {
 						wantSelfChecks++
@@ -1275,9 +1359,9 @@ func TestTeardownAuthorizationProbesCoverConditionalRBACBranches(t *testing.T) {
 					if err != nil {
 						t.Fatalf("teardownAuthorizationChecks() error = %v", err)
 					}
-					wantUnion := 34 + wantSelfChecks
+					wantUnion := 35 + wantSelfChecks
 					if certificateEnabled {
-						wantUnion += 4
+						wantUnion += 5
 					}
 					if len(checks) != wantUnion {
 						t.Fatalf("authorization check union = %d, want %d", len(checks), wantUnion)
@@ -1333,6 +1417,135 @@ func TestTeardownAuthorizationProbeCompletenessRejectsMissingAndForeignChecks(t 
 	}
 }
 
+func TestTeardownAuthorizationBarrierValidatesWithAVersionedPredecessor(t *testing.T) {
+	rollout := validRBACRolloutGuard()
+	rollout.PreviousControllerServiceAccountName = "ptah-controller-v1-0123456789ab"
+	rollout.PreviousControllerServiceAccountUID = "previous-controller-uid"
+	rollout.PreviousControllerReleaseSequence = 1
+	rollout.PreviousControllerManagerImage = "registry.example.test/ptah-operator@sha256:abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+	rollout.ReleaseSequence = 2
+	rollout.HookServiceAccountName = "ptah-operator-crd-v2-0123456789ab"
+	contract := validRBACAdmissionContract()
+
+	probes, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
+	if err != nil {
+		t.Fatalf("teardownAuthorizationProbes() error = %v", err)
+	}
+
+	// A predecessor leaves a whole list of retained guards behind, and the
+	// barrier refuses two checks that share a name. One check name per guard
+	// is what keeps a probe reportable and the barrier constructible.
+	retired := crdupgrade.PredecessorRetiredAdmissionGuardNames(rollout)
+	if len(retired) < 2 {
+		t.Fatalf("a versioned predecessor retains %d guards, want more than one", len(retired))
+	}
+	hookChecks := map[string]struct{}{}
+	for _, probe := range probes {
+		seen := map[string]struct{}{}
+		for _, check := range probe.Checks {
+			if _, duplicate := seen[check.Name]; duplicate {
+				t.Fatalf("subject %q uses the authorization check name %q twice", probe.Subject.Name, check.Name)
+			}
+			seen[check.Name] = struct{}{}
+		}
+		if probe.Subject.Name == "hook-quiesce" {
+			hookChecks = seen
+		}
+	}
+	for _, name := range retired {
+		for _, kind := range []string{"policy", "binding"} {
+			want := "delete predecessor retained admission " + kind + " " + name
+			if _, found := hookChecks[want]; !found {
+				t.Fatalf("missing authorization check %q", want)
+			}
+		}
+	}
+
+	barrier := crdupgrade.NewRBACConvergenceBarrier(
+		[]crdupgrade.NamedAuthorizationReviewClient{{
+			Name:             "kubernetes-0",
+			TopologyIdentity: "10.0.0.2:6443",
+			Client:           &deniedSubjectAccessReviewClient{},
+		}},
+		probes,
+		selfChecks,
+		500*time.Millisecond,
+		10*time.Second,
+	)
+	if err := barrier.Validate(); err != nil {
+		t.Fatalf("barrier validation with a versioned predecessor failed: %v", err)
+	}
+}
+
+func TestTeardownAuthorizationProbesFollowTheCertificateCanaryContractVersion(t *testing.T) {
+	const canaryName = "ptah-operator-cert-canary"
+	contract := validRBACAdmissionContract()
+
+	rollout := validRBACRolloutGuard()
+	probes, selfChecks, err := teardownAuthorizationProbes(rollout, contract)
+	if err != nil {
+		t.Fatalf("teardownAuthorizationProbes() error = %v", err)
+	}
+	grants, err := crdupgrade.RevokedPrivilegeMutationGrants(rollout, contract)
+	if err != nil {
+		t.Fatalf("RevokedPrivilegeMutationGrants() error = %v", err)
+	}
+	canaryIndex, canaryCheck := -1, -1
+	for index, probe := range probes {
+		if probe.Subject.Name != "certificate" {
+			continue
+		}
+		for checkIndex, check := range probe.Checks {
+			attributes := check.ResourceAttributes
+			if attributes == nil || attributes.Resource != "configmaps" || attributes.Name != canaryName {
+				continue
+			}
+			if attributes.Verb != "update" || attributes.Group != "" || attributes.Namespace != rollout.ReleaseNamespace {
+				t.Fatalf("certificate canary probe attributes = %#v", attributes)
+			}
+			canaryIndex, canaryCheck = index, checkIndex
+		}
+	}
+	if canaryIndex < 0 {
+		t.Fatal("the second admission contract has no certificate canary ConfigMap probe")
+	}
+
+	// The revoked contract carries that grant, so dropping its probe has to be
+	// refused: the API server would never be asked whether the retired Role
+	// still answers yes.
+	reduced := append([]crdupgrade.AuthorizationProbe(nil), probes...)
+	checks := reduced[canaryIndex].Checks
+	reduced[canaryIndex].Checks = append(append([]crdupgrade.AuthorizationCheck(nil), checks[:canaryCheck]...), checks[canaryCheck+1:]...)
+	if err := validateTeardownAuthorizationProbeCompleteness(reduced, selfChecks, grants); err == nil ||
+		!strings.Contains(err.Error(), "omit") || !strings.Contains(err.Error(), canaryName) {
+		t.Fatalf("missing canary probe validation error = %v, want the omitted canary grant", err)
+	}
+
+	// The first contract never granted it, and a probe for a grant the release
+	// did not hold is refused from the other side.
+	first := mutateRBACRollout(rollout, func(guard *crdupgrade.RolloutGuard) {
+		guard.AdmissionContractVersion = 1
+	})
+	firstProbes, firstSelfChecks, err := teardownAuthorizationProbes(first, contract)
+	if err != nil {
+		t.Fatalf("teardownAuthorizationProbes() first contract error = %v", err)
+	}
+	firstGrants, err := crdupgrade.RevokedPrivilegeMutationGrants(first, contract)
+	if err != nil {
+		t.Fatalf("RevokedPrivilegeMutationGrants() first contract error = %v", err)
+	}
+	if err := validateTeardownAuthorizationProbeCompleteness(firstProbes, firstSelfChecks, firstGrants); err != nil {
+		t.Fatalf("first contract probe completeness error = %v", err)
+	}
+	for _, probe := range firstProbes {
+		for _, check := range probe.Checks {
+			if attributes := check.ResourceAttributes; attributes != nil && attributes.Name == canaryName {
+				t.Fatalf("first contract probes the canary ConfigMap: %q", check.Name)
+			}
+		}
+	}
+}
+
 func TestTeardownAuthorizationContractOmitsDisabledCertificateIdentityAndMutations(t *testing.T) {
 	rollout := validRBACRolloutGuard()
 	rollout.CertificateArgs = nil
@@ -1378,6 +1591,9 @@ func TestTeardownAuthorizationChecksRejectsAmbiguousCertificateArguments(t *test
 		{name: "staging aliases serving Secret", args: []string{"--lease-name=lease", "--staging-secret-name=ptah-operator-webhook"}, want: "staging and serving Secret identities must differ"},
 		{name: "invalid recovery flag", args: []string{"--lease-name=lease", "--staging-secret-name=stage", "--recreate-missing-secret=yes"}, want: "exactly true or false"},
 		{name: "duplicate recovery flag", args: []string{"--lease-name=lease", "--staging-secret-name=stage", "--recreate-missing-secret=true", "--recreate-missing-secret=false"}, want: "is duplicated"},
+		{name: "missing canary ConfigMap", args: []string{"--lease-name=lease", "--staging-secret-name=stage"}, want: "--candidate-probe-config-map-name= is required"},
+		{name: "duplicate canary ConfigMap", args: []string{"--lease-name=lease", "--staging-secret-name=stage", "--candidate-probe-config-map-name=one", "--candidate-probe-config-map-name=two"}, want: "--candidate-probe-config-map-name= is duplicated"},
+		{name: "padded canary ConfigMap", args: []string{"--lease-name=lease", "--staging-secret-name=stage", "--candidate-probe-config-map-name= canary"}, want: "empty or padded value"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1551,11 +1767,13 @@ func validRBACRolloutGuard() *crdupgrade.RolloutGuard {
 		ControllerDeploymentName:     "ptah-operator",
 		CertificateDeploymentName:    "ptah-certificate",
 		ReleaseSequence:              1,
-		ManagerImage:                 "registry.example.test/ptah-operator@sha256:1234",
+		ManagerImage:                 "registry.example.test/ptah-operator@sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+		AdmissionContractVersion:     2,
 		CertificateArgs: []string{
 			"--lease-name=ptah-cert-rotation",
 			"--staging-secret-name=ptah-cert-rotation-stage",
 			"--recreate-missing-secret=true",
+			"--candidate-probe-config-map-name=ptah-operator-cert-canary",
 		},
 	}
 }

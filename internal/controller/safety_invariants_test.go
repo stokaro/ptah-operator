@@ -2712,6 +2712,53 @@ func TestRetiredPredecessorReadOnlyUIDAdoptionRejectsUnprovenJob(t *testing.T) {
 	}
 }
 
+// The workload builder stamps controller provenance on every Job it creates,
+// so a Job a live predecessor leaves behind carries eight annotations, not the
+// five a manager without provenance wrote. A predicate that accepts only the
+// five-key envelope rejects every Job a current manager built: the lost UID is
+// never reconstructed, cleanup is never scheduled, and the Job outlives the
+// release that created it.
+func TestRetiredPredecessorReadOnlyJobMatchesProvenanceEnvelope(t *testing.T) {
+	t.Parallel()
+
+	schema, job := predecessorReadOnlyLateCreateFixture(t, operatorv1alpha1.OperationResolve)
+	newBinding := schema.Status.ExecutionBinding.DeepCopy()
+	newBinding.Epoch = "v1-22222222222222222222222222222222"
+	schema.Status.ExecutionBinding = newBinding
+
+	for key, value := range map[string]string{
+		workload.AnnotationControllerImage:        testControllerImage,
+		workload.AnnotationControllerRevision:     testControllerRevision,
+		workload.AnnotationControllerStateVersion: "1",
+	} {
+		job.Annotations[key] = value
+		job.Spec.Template.Annotations[key] = value
+	}
+	operation := schema.Status.ActiveOperation
+	templateDigest, err := podintent.DigestTemplate(&job.Spec.Template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.AdmissionSnapshot.TemplateDigest = templateDigest
+	operation.AdmissionSnapshot.Digest = ""
+	snapshotDigest, err := fingerprint.DigestCanonicalJSON(*operation.AdmissionSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation.AdmissionSnapshot.Digest = snapshotDigest
+	job.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
+	job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshotDigest
+
+	if !retiredPredecessorReadOnlyJobMatches(schema, operation, job) {
+		t.Fatal("retiredPredecessorReadOnlyJobMatches() rejected the envelope the builder writes")
+	}
+	committed := job.DeepCopy()
+	operation.JobUID = committed.UID
+	if !retiredReadOnlyJobMatches(schema, operation, committed) {
+		t.Fatal("retiredReadOnlyJobMatches() rejected the envelope the builder writes")
+	}
+}
+
 func TestRetiredReadOnlyJobCleanupSurvivesStatusPatchCrash(t *testing.T) {
 	t.Parallel()
 
@@ -4279,7 +4326,7 @@ func safetyApprovalFixture(t *testing.T) (*operatorv1alpha1.PtahSchema, *operato
 			Dialect:                  "postgresql",
 		},
 	}
-	schema.Status.Plan = currentPlanStatus(plan, metav1.NewTime(time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC)))
+	schema.Status.Plan = currentPlanStatus(plan)
 	approvedAt := metav1.NewTime(time.Date(2026, 8, 30, 11, 30, 0, 0, time.UTC))
 	approval := &operatorv1alpha1.PtahSchemaApproval{
 		ObjectMeta: metav1.ObjectMeta{Namespace: schema.Namespace, Name: "approval", UID: "approval-uid"},

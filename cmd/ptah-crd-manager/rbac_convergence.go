@@ -633,6 +633,15 @@ func buildTeardownAuthorizationChecks(
 		rollout.ReleaseName,
 		rollout.ReleaseSequence,
 	)
+	retirementMarkerName, err := crdupgrade.TeardownRetirementProbeName(
+		rollout.ReleaseNamespace,
+		rollout.ReleaseName,
+		rollout.ReleaseSequence,
+		rollout.ManagerImage,
+	)
+	if err != nil {
+		return teardownAuthorizationCheckSets{}, fmt.Errorf("derive teardown retirement marker identity: %w", err)
+	}
 	const arbitraryObjectName = "ptah-authorization-revocation-probe"
 
 	sets := teardownAuthorizationCheckSets{all: make([]crdupgrade.AuthorizationCheck, 0, 64)}
@@ -679,6 +688,7 @@ func buildTeardownAuthorizationChecks(
 	appendResource(teardownCheckHook|teardownCheckCertificate, "update validating admission singleton", "admissionregistration.k8s.io", "v1", "validatingwebhookconfigurations", "", "", "update", crdupgrade.AdmissionConfigurationName)
 	appendResource(teardownCheckHook, "update release activation ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", crdupgrade.ReleaseActivationName)
 	appendResource(teardownCheckHook, "update hook identity probe ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", probeObjectName)
+	appendResource(teardownCheckHook, "update teardown retirement marker ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", retirementMarkerName)
 	markerTargets := teardownCheckHook | teardownCheckController
 	if contract.CertificateRuntimeEnabled {
 		markerTargets |= teardownCheckCertificate
@@ -690,14 +700,38 @@ func buildTeardownAuthorizationChecks(
 			rollout.ReleaseName,
 			rollout.PreviousControllerReleaseSequence,
 		)
+		appendResource(teardownCheckHook, "update predecessor admission convergence marker ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", previousMarkerName)
 		appendResource(teardownCheckHook, "delete predecessor admission convergence marker ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "delete", previousMarkerName)
+		previousProbeName := crdupgrade.HookIdentityProbeObjectName(
+			rollout.ReleaseNamespace,
+			rollout.ReleaseName,
+			rollout.PreviousControllerReleaseSequence,
+			rollout.PreviousControllerManagerImage,
+		)
+		appendResource(teardownCheckHook, "delete predecessor hook identity probe ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "delete", previousProbeName)
+		// The retiring hook is granted get and delete on exactly the objects the
+		// predecessor sealed, so every one of them is probed as revoked.
+		for _, name := range crdupgrade.PredecessorRetiredAdmissionGuardNames(rollout) {
+			appendResource(teardownCheckHook, "delete predecessor retained admission policy "+name, "admissionregistration.k8s.io", "v1", "validatingadmissionpolicies", "", "", "delete", name)
+			appendResource(teardownCheckHook, "delete predecessor retained admission binding "+name, "admissionregistration.k8s.io", "v1", "validatingadmissionpolicybindings", "", "", "delete", name)
+		}
 	}
 	appendResource(teardownCheckHook, "patch stable controller ClusterRoleBinding", "rbac.authorization.k8s.io", "v1", "clusterrolebindings", "", "", "patch", rollout.ControllerDeploymentName)
 	appendResource(teardownCheckHook, "patch stable controller RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", rollout.CoordinationNamespace, "patch", rollout.ControllerDeploymentName)
 	appendResource(teardownCheckHook, "patch runtime admission RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", rollout.ReleaseNamespace, "patch", rollout.ControllerDeploymentName+"-runtime-admission")
-	// The hook's ClusterRole names the discovery binding whatever namespace the
-	// release lives in, so the revoked grant is probed unconditionally.
-	appendResource(teardownCheckHook, "patch runtime discovery RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", metav1.NamespaceDefault, "patch", crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
+	if rollout.ReleaseNamespace != metav1.NamespaceDefault {
+		appendResource(teardownCheckHook, "patch runtime discovery RoleBinding", "rbac.authorization.k8s.io", "v1", "rolebindings", "", metav1.NamespaceDefault, "patch", crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
+	}
+	if rollout.PreviousControllerServiceAccountName != "" {
+		appendResource(teardownCheckHook, "bind stable controller ClusterRole", "rbac.authorization.k8s.io", "v1", "clusterroles", "", "", "bind", rollout.ControllerDeploymentName)
+		appendResource(teardownCheckHook, "bind stable controller Role", "rbac.authorization.k8s.io", "v1", "roles", "", rollout.CoordinationNamespace, "bind", rollout.ControllerDeploymentName)
+		if rollout.PreviousControllerReleaseSequence > 0 && rollout.ReleaseNamespace != metav1.NamespaceDefault {
+			appendResource(teardownCheckHook, "bind runtime discovery Role", "rbac.authorization.k8s.io", "v1", "roles", "", metav1.NamespaceDefault, "bind", crdupgrade.ControllerDiscoveryBindingName(rollout.ControllerDeploymentName))
+		}
+	}
+	if rollout.PreviousControllerReleaseSequence > 0 {
+		appendResource(teardownCheckHook, "bind runtime admission Role", "rbac.authorization.k8s.io", "v1", "roles", "", rollout.ReleaseNamespace, "bind", rollout.ControllerDeploymentName+"-runtime-admission")
+	}
 	appendResource(teardownCheckHook, "create SubjectAccessReview", "authorization.k8s.io", "v1", "subjectaccessreviews", "", "", "create", arbitraryObjectName)
 
 	// Controller mutations. Every resource/subresource and mutating verb from
@@ -758,6 +792,18 @@ func buildTeardownAuthorizationChecks(
 			appendResource(teardownCheckCertificate, "create webhook Secret", "", "v1", "secrets", "", rollout.ReleaseNamespace, "create", rollout.WebhookSecretName)
 		}
 		appendResource(teardownCheckCertificate, "update certificate rotation Lease", "coordination.k8s.io", "v1", "leases", "", rollout.ReleaseNamespace, "update", certificateLeaseName)
+		// The canary ConfigMap is the rotator's own admission probe target, and
+		// only the second admission contract grants it. The retired certificate
+		// Role carries the same rule under the same condition, so a probe that
+		// ignored the contract version would either miss a revoked grant or
+		// claim one the release never held.
+		if rollout.AdmissionContractVersion >= 2 {
+			canaryConfigMapName, canaryErr := exactRuntimeArgument(rollout.CertificateArgs, "--candidate-probe-config-map-name=")
+			if canaryErr != nil {
+				return teardownAuthorizationCheckSets{}, fmt.Errorf("certificate rotation canary ConfigMap identity: %w", canaryErr)
+			}
+			appendResource(teardownCheckCertificate, "update certificate rotation canary ConfigMap", "", "v1", "configmaps", "", rollout.ReleaseNamespace, "update", canaryConfigMapName)
+		}
 	}
 
 	// Temporary cleanup mutation is name-bounded. Probe every non-residual
@@ -795,9 +841,9 @@ func buildTeardownAuthorizationChecks(
 		{kind: "RoleBinding", resource: "rolebindings", namespace: rollout.ReleaseNamespace, names: namespacedRBACNames},
 	}
 	if rollout.CoordinationNamespace != rollout.ReleaseNamespace {
-		coordinationNames := []string{rollout.ControllerDeploymentName}
+		coordinationNames := []string{rollout.ControllerDeploymentName, rollout.HookServiceAccountName}
 		if rollout.CoordinationNamespace == metav1.NamespaceDefault {
-			coordinationNames = append(coordinationNames, rollout.HookServiceAccountName, quiesceName)
+			coordinationNames = append(coordinationNames, quiesceName)
 			if contract.CertificateRuntimeEnabled {
 				coordinationNames = append(coordinationNames, certificateDiscoveryName)
 			}

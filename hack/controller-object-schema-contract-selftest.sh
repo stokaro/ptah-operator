@@ -7,8 +7,14 @@ ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
 FILTER=$ROOT_DIR/hack/controller-object-schema-contract.jq
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-controller-object-schema-selftest.XXXXXX")
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	case "$WORK_DIR" in
 	"${TMPDIR:-/tmp}"/ptah-controller-object-schema-selftest.*) rm -rf -- "$WORK_DIR" ;;
@@ -100,4 +106,5 @@ if evaluate 1.38 "$batch_fixture" "$core_fixture" 2>/dev/null; then
 	exit 1
 fi
 
+PHASE_COMPLETED=1
 printf '%s\n' 'controller object schema self-test: PASS'

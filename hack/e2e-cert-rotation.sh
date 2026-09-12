@@ -330,8 +330,14 @@ restore_legacy_secret() {
 	return 0
 }
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup_upgrade_files() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	if [ "$LEGACY_SECRET_RESTORE_REQUIRED" -eq 1 ] && ! restore_legacy_secret; then
 		printf '%s\n' 'e2e certificate rotation: failure-atomic legacy Secret restoration failed' >&2
@@ -762,4 +768,5 @@ if printf '%s' "$RECREATE_LOGS" | grep -Eiq -- 'PRIVATE[ _-]?KEY|-----BEGIN [A-Z
 	fail "missing-Secret recovery logs contain private key material"
 fi
 
+PHASE_COMPLETED=1
 printf '%s\n' 'e2e certificate rotation: PASS live Helm lookup, corrupt-CA recovery, and exact guarded recreation'

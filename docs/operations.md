@@ -7,6 +7,40 @@ it. Helm 3 is not supported: it reaches end of life before this operator's
 first release, and it applies client-side, so the release's objects carry no
 server-side apply ownership for a later upgrade to take back.
 
+An upgrade that moves the release to a new sequence needs `--force-conflicts`:
+
+```sh
+helm upgrade <release> <chart> --values <values> --force-conflicts
+```
+
+Such an upgrade stops the runtime in its pre-upgrade hook, which leaves
+`.spec.replicas` at zero under the hook's own field manager, and the apply that
+follows has to raise it again. Server-side apply reports that as a conflict.
+Every other field the hook writes it writes to the value the chart applies, and
+an equal value is never a conflict, so the force is confined to the replica
+count the cutover moved. An upgrade that keeps the release sequence does not
+stop the runtime and does not need the flag.
+
+An uninstall returns the release activation ConfigMap to the state a fresh
+install starts from and only then deletes it. Kubernetes keeps serving a
+deleted policy parameter to the bindings that read it, so what it keeps serving
+has to be the bootstrap state; otherwise a reinstall in the same namespace
+meets guards reading the sequence the removed release last activated, and its
+first hook cannot get a Deployment past them.
+
+An install over CRDs an earlier release left behind needs the same flag when
+anything else has edited them. Helm applies the chart's CRDs server-side on
+install, so a field a `kubectl patch` or another controller owns is a conflict
+until the install is told to take it back:
+
+```sh
+helm install <release> <chart> --values <values> --force-conflicts
+```
+
+The flag makes the chart's CRDs win over whoever edited them, so use it when
+that is what you mean. An upgrade does not need it for this: Helm leaves
+existing CRDs alone, and the release's own hook converges them.
+
 Install CRDs and the controller through the Helm chart. Supply digest-pinned
 manager, executor, and runner images. The chart refuses all three when only a
 tag is supplied. Manager Pods, hooks, and controller identity all use the same
@@ -162,6 +196,16 @@ can skip the drain only when the activation state and complete preflight prove
 that no predecessor, candidate ServiceAccount, candidate grant, protected Pod,
 or prior drain exists.
 
+For a predecessor cutover, the hook receives `bind` only on the stable
+controller ClusterRole and the exact existing controller Roles in their
+coordination, release, and discovery namespaces. A fresh install receives no
+`bind` grant. The ServiceAccount-origin guard permits only the current reconcile
+Pod to replace the predecessor subject with the candidate subject during that
+attempt's exact draining state. Role references, binding identity and metadata,
+and certificate subjects must remain unchanged. Other binding writes, including
+granting a role to the hook itself, are denied. Uninstall includes every issued
+`bind` grant in the direct authorization-revocation proof.
+
 Each release attempt also owns an immutable, sequence-keyed admission marker.
 The chart inventories at most the active predecessor marker and current
 candidate marker, rejects gaps, future or malformed markers, and refuses a
@@ -206,15 +250,63 @@ Secret `create` permission.
 CRD updates are necessarily separate Kubernetes API transactions. The complete
 dry-run prevents predictable partial upgrades, but an API failure or concurrent
 administrator change can still interrupt the real update sequence. In that
-case, leave the old running manager in place, resolve the API or policy failure,
-and rerun the same candidate upgrade. Do not edit the remaining CRDs to imitate
-the candidate and do not use server-side apply conflict forcing. A rollback to
-an image whose embedded schemas differ also remains blocked by its init
-verifier; select a manager version compatible with the schemas already stored.
+case, resolve the API or policy failure and rerun the identical candidate chart,
+image, and values. Before credential draining begins, the predecessor can remain
+running. Once the retained activation parameter records `phase=draining`, its
+controller identity is fenced and its grants may already belong to the candidate,
+even while `active-release-sequence` still names the predecessor. Restoring old
+Deployment snapshots cannot reverse that state or make the predecessor ready.
+Do not manually reset the activation parameter or controller bindings; let the
+same candidate retry complete the forward transition. Do not edit the remaining
+CRDs to imitate the candidate and do not use server-side apply conflict forcing.
+A rollback to an image whose embedded schemas differ also remains blocked by its
+init verifier; select a manager version compatible with the schemas already stored.
+
+During a retry before candidate activation, an enforcement probe may need a
+dry-run copy of a stopped, candidate-stamped Deployment with the predecessor's
+top-level identity and desired replica count. The original Pod template, UID,
+and resource version remain unchanged. The replica count comes from the
+preserved predecessor verifier arguments, or the certificate contract's fixed
+single replica, never from the new candidate's controller settings. The full
+retained admission rules must accept that baseline before the probe adds its
+reserved annotation and requires an isolated denial. These requests are all
+dry-run: they do not restart the predecessor or change its persisted identity.
+
+A separate [post-activation recovery gap](https://github.com/stokaro/ptah-operator/issues/22)
+remains when activation has advanced but Helm has not replaced the stopped
+predecessor Pod template. The pre-activation probe correction does not cover
+that later boundary. Do not reset activation state or controller bindings to
+work around it.
 
 Helm retains CRDs and their custom resources on uninstall. Back them up before
 schema work anyway; uninstalling the release removes the controller and
 admission resources, not the database changes previously executed by Ptah.
+
+An uninstall also leaves behind one cluster-scoped pair named
+`ptah-operator-parameter-informer-anchor`: a ValidatingAdmissionPolicy and its
+binding. They admit everything they match, name a ConfigMap nothing creates,
+and exist for one reason. The API server keeps a single informer per admission
+parameter kind, and when the last bound policy naming a built-in kind goes away
+it cancels that informer and cannot start it again: the replacement comes from
+the typed shared informer factory, which refuses to restart an informer it has
+already started. The cancelled informer still reports itself as synced, so
+every later policy that reads a ConfigMap parameter resolves against a cache
+frozen at the moment it stopped. Parameters written afterwards are invisible,
+and a binding that denies on a missing parameter refuses every request it
+matches. Without the anchor, uninstalling the operator would leave the next
+install unable to run its own hooks until the API servers restarted.
+
+The defect is upstream and open:
+[kubernetes/kubernetes#133827](https://github.com/kubernetes/kubernetes/issues/133827)
+reports it, and
+[kubernetes/kubernetes#141015](https://github.com/kubernetes/kubernetes/pull/141015)
+is the fix for this exact case. That fix reached master during the 1.37 code
+freeze and is still unmerged, so no release in the supported window carries it.
+A CRD parameter kind resolves through a different informer path and is not
+affected.
+
+Delete the anchor only while another bound ConfigMap-parameter policy exists,
+or before the API servers restart. Reinstalling the chart recreates it.
 
 Uninstall is a fail-closed, ordered retirement protocol. Two release-stable
 validating admission fences are ordinary chart resources and therefore exist
@@ -565,9 +657,10 @@ the still-running predecessor rotator out of its existing CA-only updates. The
 rotator treats its configured production webhook names as required identity
 anchors, then rotates every additional entry targeting the exact production
 Service plus the exact canary entry. URL and foreign-Service entries remain
-untouched. This does not make a quiesced predecessor restartable after
-candidate activation. The release and image ratchets intentionally block that
-rollback, and recovery after quiescence is to retry the same candidate. Helm
+untouched. This does not make a predecessor restartable once credential draining
+begins, including after a failure before candidate activation. The credential,
+release, and image ratchets intentionally block backward recovery; retry the
+same candidate to finish the interrupted transition. Helm
 installs and binds these policies before granting certificate update access.
 Every hook and runtime init verifier requires their observed generations to
 have no CEL warnings and proves their exact denials through every directly

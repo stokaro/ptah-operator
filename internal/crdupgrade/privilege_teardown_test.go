@@ -522,6 +522,7 @@ func TestPrivilegeTeardownDeletesExactPrivilegesBeforeServiceAccounts(t *testing
 		"RoleBinding/" + corev1.NamespaceDefault + "/" + mustCertificateDiscoveryRoleName(t, fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName),
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + hook,
 		"RoleBinding/" + corev1.NamespaceDefault + "/" + hook,
+		"RoleBinding/" + fixture.guard.CoordinationNamespace + "/" + hook,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + bootstrap,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + probe,
 		"RoleBinding/" + fixture.guard.ReleaseNamespace + "/" + quiesce,
@@ -923,6 +924,46 @@ func TestPrivilegeTeardownSharesReleaseScopedPrivilegeWhenCoordinationMatches(t 
 		t.Fatalf("Teardown() error = %v", err)
 	}
 	fixture.assertOnlyCleanupAccessRemains(t)
+}
+
+func TestPrivilegeTeardownRetiresSeparateCoordinationHookBinding(t *testing.T) {
+	fixture := newPrivilegeTeardownFixtureWithCoordination(t, true, true, "ptah-coordination")
+	key := privilegeBindingKey(fixture.guard.CoordinationNamespace, fixture.guard.HookServiceAccountName)
+	binding := fixture.roleBindings.objects[key]
+	if binding == nil {
+		t.Fatal("separate coordination hook RoleBinding is absent from the retirement inventory")
+	}
+	role := fixture.roles.objects[key]
+	if role == nil || !reflect.DeepEqual(role.Rules, fixture.teardown.hookBindingTransitionRules(fixture.guard.CoordinationNamespace)) {
+		t.Fatal("separate coordination hook Role differs from the exact transition contract")
+	}
+	cleanup := fixture.roles.objects[privilegeBindingKey(fixture.guard.CoordinationNamespace, fixture.cleanupPrivilege)]
+	if cleanup == nil || len(cleanup.Rules) != 1 || !containsString(cleanup.Rules[0].ResourceNames, binding.Name) {
+		t.Fatal("coordination cleanup Role cannot delete the exact hook binding")
+	}
+	if err := fixture.teardown.Teardown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.roleBindings.objects[key] != nil {
+		t.Fatal("coordination hook RoleBinding survived privilege retirement")
+	}
+	fixture.assertOnlyCleanupAccessRemains(t)
+}
+
+func TestPrivilegeTeardownRejectsDriftedCoordinationHookRoleBeforeMutation(t *testing.T) {
+	fixture := newPrivilegeTeardownFixtureWithCoordination(t, true, true, "ptah-coordination")
+	key := privilegeBindingKey(fixture.guard.CoordinationNamespace, fixture.guard.HookServiceAccountName)
+	role := fixture.roles.objects[key]
+	if role == nil {
+		t.Fatal("separate coordination hook Role is absent")
+	}
+	role.Rules[0].Verbs = append(role.Rules[0].Verbs, "bind")
+	if err := fixture.teardown.Teardown(context.Background()); err == nil || !strings.Contains(err.Error(), "policy rules differ") {
+		t.Fatalf("drifted hook Role teardown error = %v", err)
+	}
+	if len(fixture.events) != 0 {
+		t.Fatalf("privileges changed before drift rejection: %v", fixture.events)
+	}
 }
 
 func TestPrivilegeTeardownPropagatesUIDAndResourceVersionPreconditions(t *testing.T) {
@@ -1724,14 +1765,40 @@ func TestPrivilegeTeardownCertificateEndpointSliceRolesAreNamespaceBound(t *test
 
 func TestPrivilegeTeardownFailsClosedWithoutPredecessorInventory(t *testing.T) {
 	fixture := newPrivilegeTeardownFixture(t, true, true)
-	fixture.guard.ReleaseSequence = 2
-	fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v2-0123456789ab"
+	fixture.guard.ReleaseSequence = 3
+	fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v3-0123456789ab"
 	err := fixture.teardown.Preflight(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "requires an explicit predecessor privilege inventory") {
 		t.Fatalf("Preflight() error = %v, want predecessor inventory refusal", err)
 	}
 	if len(fixture.events) != 0 {
 		t.Fatalf("missing predecessor inventory caused mutations: %v", fixture.events)
+	}
+}
+
+// A sequence records what its predecessor may still own, and an entry that
+// records nothing has to be checked rather than assumed: a cutover retires the
+// predecessor's controller identity before it activates, so finding one is
+// state this teardown has no contract for.
+func TestPrivilegeTeardownRefusesAnUnrecordedPredecessorControllerIdentity(t *testing.T) {
+	if _, recorded := predecessorPrivilegeInventory[2]; !recorded {
+		t.Fatal("release sequence 2 has no recorded predecessor privilege inventory")
+	}
+	if predecessorPrivilegeInventory[2].controllerServiceAccount {
+		t.Fatal("release sequence 2 records a predecessor controller ServiceAccount")
+	}
+	fixture := newPrivilegeTeardownFixtureAtSequence(t, true, true, 2)
+	if err := fixture.teardown.Preflight(context.Background()); err != nil {
+		t.Fatalf("Preflight() error = %v, want a recorded sequence to be accepted", err)
+	}
+
+	fixture = newPrivilegeTeardownFixtureWithPredecessor(t, 2)
+	err := fixture.teardown.Preflight(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "still carries a predecessor controller identity") {
+		t.Fatalf("Preflight() error = %v, want a predecessor controller identity refusal", err)
+	}
+	if len(fixture.events) != 0 {
+		t.Fatalf("an unrecorded predecessor identity caused mutations: %v", fixture.events)
 	}
 }
 
@@ -1771,11 +1838,53 @@ func newPrivilegeTeardownFixture(t *testing.T, controllerAccountCreate, certific
 	return newPrivilegeTeardownFixtureWithCoordination(t, controllerAccountCreate, certificateEnabled, "ptah-coordination")
 }
 
+// newPrivilegeTeardownFixtureAtSequence builds the same fixture for a later
+// release sequence, so every derived identity is that sequence's own rather
+// than a sequence-1 name a test mutated afterwards.
+func newPrivilegeTeardownFixtureAtSequence(
+	t *testing.T,
+	controllerAccountCreate bool,
+	certificateEnabled bool,
+	sequence int32,
+) *privilegeTeardownFixture {
+	return newPrivilegeTeardownFixtureAt(t, controllerAccountCreate, certificateEnabled, "ptah-coordination", sequence, false)
+}
+
+// newPrivilegeTeardownFixtureWithPredecessor builds the fixture for a later
+// sequence whose predecessor controller ServiceAccount is still present, the
+// state a completed cutover must not leave behind.
+func newPrivilegeTeardownFixtureWithPredecessor(
+	t *testing.T,
+	sequence int32,
+) *privilegeTeardownFixture {
+	fixture := newPrivilegeTeardownFixtureAt(t, true, true, "ptah-coordination", sequence, true)
+	fixture.serviceAccounts.objects[fixture.guard.PreviousControllerServiceAccountName] = &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            fixture.guard.PreviousControllerServiceAccountName,
+			Namespace:       fixture.guard.ReleaseNamespace,
+			UID:             fixture.guard.PreviousControllerServiceAccountUID,
+			ResourceVersion: "1",
+		},
+	}
+	return fixture
+}
+
 func newPrivilegeTeardownFixtureWithCoordination(
 	t *testing.T,
 	controllerAccountCreate bool,
 	certificateEnabled bool,
 	coordinationNamespace string,
+) *privilegeTeardownFixture {
+	return newPrivilegeTeardownFixtureAt(t, controllerAccountCreate, certificateEnabled, coordinationNamespace, 1, false)
+}
+
+func newPrivilegeTeardownFixtureAt(
+	t *testing.T,
+	controllerAccountCreate bool,
+	certificateEnabled bool,
+	coordinationNamespace string,
+	sequence int32,
+	previousController bool,
 ) *privilegeTeardownFixture {
 	t.Helper()
 	guard := &RolloutGuard{
@@ -1791,7 +1900,7 @@ func newPrivilegeTeardownFixtureWithCoordination(
 		WebhookSecretName:            "ptah-e2e-webhook-cert",
 		WebhookPort:                  9443,
 		CertificateHealthPort:        8081,
-		HookServiceAccountName:       "ptah-e2e-operator-crd-v1-0123456789ab",
+		HookServiceAccountName:       fmt.Sprintf("ptah-e2e-operator-crd-v%d-0123456789ab", sequence),
 		ControllerServiceAccountName: "ptah-e2e-operator",
 		ControllerDeploymentName:     "ptah-e2e-operator",
 		ControllerReplicas:           1,
@@ -1799,7 +1908,7 @@ func newPrivilegeTeardownFixtureWithCoordination(
 		CertificateRuntimeEnabled:    certificateEnabled,
 		ControllerStateVersion:       1,
 		AdmissionContractVersion:     1,
-		ReleaseSequence:              1,
+		ReleaseSequence:              sequence,
 		ManagerImage:                 "ghcr.io/stokaro/ptah-operator@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		ControllerArgs:               []string{"--leader-elect=true"},
 		CertificateArgs: []string{
@@ -1825,6 +1934,11 @@ func newPrivilegeTeardownFixtureWithCoordination(
 	fixture.roles = &fakePrivilegeRoles{objects: map[string]*rbacv1.Role{}, getErr: map[string]error{}}
 	fixture.clusterRoles = &fakePrivilegeClusterRoles{objects: map[string]*rbacv1.ClusterRole{}, deleteErrors: map[string]error{}, events: &fixture.events}
 	fixture.serviceAccounts = &fakePrivilegeServiceAccounts{objects: map[string]*corev1.ServiceAccount{}, getErr: map[string]error{}, deleteErrors: map[string]error{}, events: &fixture.events}
+	if previousController {
+		guard.PreviousControllerServiceAccountName = "previous-controller"
+		guard.PreviousControllerServiceAccountUID = "previous-controller-uid"
+		guard.PreviousControllerReleaseSequence = sequence - 1
+	}
 	cleanupName, err := TeardownServiceAccountName(guard.HookServiceAccountName, guard.ReleaseSequence)
 	if err != nil {
 		t.Fatalf("derive cleanup ServiceAccount: %v", err)

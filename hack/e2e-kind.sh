@@ -26,9 +26,11 @@ if [ "${1:-}" != --source-snapshot ]; then
 	SOURCE_SNAPSHOT_WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-source.XXXXXX")
 	SOURCE_SNAPSHOT_ARCHIVE=$SOURCE_SNAPSHOT_WORK_DIR/source.tar
 	SOURCE_SNAPSHOT_ROOT=$SOURCE_SNAPSHOT_WORK_DIR/source
+	SNAPSHOT_BOOTSTRAP_COMPLETED=0
 	# shellcheck disable=SC2317,SC2329 # Invoked by the EXIT trap installed below.
 	snapshot_cleanup() {
 		status=$?
+		[ "$status" -ne 0 ] || [ "$SNAPSHOT_BOOTSTRAP_COMPLETED" -eq 1 ] || status=1
 		trap - EXIT HUP INT TERM
 		cleanup_failed=0
 		case "$SOURCE_SNAPSHOT_WORK_DIR" in
@@ -62,6 +64,7 @@ if [ "${1:-}" != --source-snapshot ]; then
 	fi
 	export E2E_SOURCE_REPOSITORY_ROOT
 	export E2E_CONTROLLER_REVISION E2E_PTAH_SIBLING_SOURCE_DIR
+	SNAPSHOT_BOOTSTRAP_COMPLETED=1
 	"$SOURCE_SNAPSHOT_ROOT/hack/e2e-kind.sh" --source-snapshot "$@"
 	exit $?
 fi
@@ -93,6 +96,14 @@ E2E_DIRECT_HOST_ACCESS=${E2E_DIRECT_HOST_ACCESS:-0}
 E2E_DEBUG_LOGS=${E2E_DEBUG_LOGS:-0}
 DEBUG_LOG_FOLLOWER_PID=
 E2E_RELEASE_CHART_OUTPUT=${E2E_RELEASE_CHART_OUTPUT:-}
+# A diagnosis run may leave out the phases between the install and the one
+# under investigation. Rebuilding an hour and three quarters of state to reach
+# a failure that lives in the last phase is the wrong loop, and the phases in
+# between are the bulk of that hour. Naming a phase here removes it from the
+# run. A run that removed anything never prints the pass line: it prints its
+# own, so neither a reader nor a grep can take it for a lifecycle result.
+E2E_DIAGNOSIS_SKIP_PHASES=${E2E_DIAGNOSIS_SKIP_PHASES:-}
+SKIPPED_PHASES=
 
 # An imported variable retains its export attribute after reassignment in POSIX
 # shells. Clear secret-bearing names before generating task credentials so no
@@ -104,6 +115,13 @@ fail() {
 	exit 1
 }
 
+for requested_phase in $E2E_DIAGNOSIS_SKIP_PHASES; do
+	case $requested_phase in
+		upgrade | ha | assert | cert-rotation | dataplane | uninstall) ;;
+		*) fail "E2E_DIAGNOSIS_SKIP_PHASES names $requested_phase, which is not a lifecycle phase" ;;
+	esac
+done
+
 require_command() {
 	command -v "$1" >/dev/null 2>&1 || fail "required command is not installed: $1"
 }
@@ -112,9 +130,11 @@ verify_snapshot_source() (
 	# A separate extraction also validates direct private re-entry: ignored files,
 	# changed executable modes, and symlinks must not change the tested inputs.
 	verification_dir=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e-source-verification.XXXXXX")
+	SNAPSHOT_VERIFICATION_COMPLETED=0
 	# shellcheck disable=SC2317,SC2329 # Invoked by the EXIT trap installed below.
 	snapshot_verification_cleanup() {
 		status=$?
+		[ "$status" -ne 0 ] || [ "$SNAPSHOT_VERIFICATION_COMPLETED" -eq 1 ] || status=1
 		trap - EXIT HUP INT TERM
 		case "$verification_dir" in
 			"${TMPDIR:-/tmp}"/ptah-operator-e2e-source-verification.*)
@@ -133,6 +153,7 @@ verify_snapshot_source() (
 	git -c core.filemode=true diff --no-index --quiet --no-ext-diff --no-textconv -- \
 		"$verification_dir/source" "$ROOT_DIR" ||
 		fail "E2E source snapshot differs from the exact operator commit"
+	SNAPSHOT_VERIFICATION_COMPLETED=1
 )
 
 sha256() {
@@ -1186,8 +1207,36 @@ collect_diagnostics() {
 	helm --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" status "$HELM_RELEASE" >&2 || true
 }
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+# Every phase is a separate script driven entirely by the environment this
+# harness hands it. Recording that environment beside the retained work
+# directory is what lets hack/e2e-rerun-phase.sh put a phase back on the
+# cluster a failed run left behind, instead of spending an hour rebuilding the
+# state the phase needs before it can fail again. The record comes from env
+# itself, which reports exactly what the command received, so it cannot drift
+# from the call.
+run_recorded_phase() {
+	recorded_phase=$1
+	shift
+	env | grep '^E2E_' | LC_ALL=C sort >"$WORK_DIR/phase-$recorded_phase.env"
+	case " $E2E_DIAGNOSIS_SKIP_PHASES " in
+		*" $recorded_phase "*)
+			SKIPPED_PHASES="$SKIPPED_PHASES $recorded_phase"
+			printf 'e2e: DIAGNOSIS: phase %s left out by E2E_DIAGNOSIS_SKIP_PHASES\n' \
+				"$recorded_phase" >&2
+			return 0
+			;;
+	esac
+	"$@"
+}
+
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	# A failed run leaves nothing to inspect once its cluster is gone. With
 	# E2E_KEEP_ON_FAILURE=1 the task-created cluster, registry, database
 	# container and work directory stay for a local diagnosis; nothing in CI
@@ -2110,11 +2159,14 @@ E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_KUBERNETES_VERSION=$K8S_VERSION \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
 E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
+E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
+E2E_API_SERVER_NODE_INVENTORY_FILE=$NODE_READINESS_FILE \
+E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=$API_SERVER_ENDPOINT_INVENTORY_FILE \
 E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
 E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
 E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
 E2E_PHASE=upgrade \
-	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"
+	run_recorded_phase upgrade "$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -2123,7 +2175,7 @@ E2E_FOREIGN_NAMESPACE=$FOREIGN_NAMESPACE \
 E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
-	"$ROOT_DIR/hack/e2e-ha.sh"
+	run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -2136,14 +2188,14 @@ E2E_PTAH_VERSION=$E2E_PTAH_VERSION \
 E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
 E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
 E2E_CONTROLLER_STATE_VERSION=1 \
-	"$ROOT_DIR/hack/e2e-assert.sh"
+	run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
 E2E_CHART_PACKAGE=$CHART_PACKAGE \
-	"$ROOT_DIR/hack/e2e-cert-rotation.sh"
+	run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
@@ -2175,9 +2227,10 @@ E2E_TLS_PROXY_SERVICE=$TLS_PROXY_SERVICE \
 E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE \
 E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \
 E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
-	"$ROOT_DIR/hack/e2e-dataplane.sh"
+	run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \
 E2E_HELM_RELEASE=$HELM_RELEASE \
@@ -2190,8 +2243,22 @@ E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE \
 E2E_CURRENT_RELEASE_SEQUENCE=$CURRENT_RELEASE_SEQUENCE \
 E2E_NEXT_RELEASE_SEQUENCE=$NEXT_RELEASE_SEQUENCE \
 E2E_KUBERNETES_VERSION=$K8S_VERSION \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \
+E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \
+E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \
+E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \
+E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \
+E2E_API_SERVER_NODE_INVENTORY_FILE=$NODE_READINESS_FILE \
+E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=$API_SERVER_ENDPOINT_INVENTORY_FILE \
 E2E_PHASE=uninstall \
-	"$ROOT_DIR/hack/e2e-crd-upgrade.sh"
+	run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"
 
 export_release_chart
-printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"
+PHASE_COMPLETED=1
+if [ -n "$SKIPPED_PHASES" ]; then
+	printf 'e2e: DIAGNOSIS ONLY Kubernetes=%s cluster=%s: phases left out:%s; this is not a lifecycle result\n' \
+		"$server_version" "$CLUSTER_NAME" "$SKIPPED_PHASES"
+else
+	printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"
+fi

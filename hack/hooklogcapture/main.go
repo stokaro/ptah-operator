@@ -35,6 +35,7 @@ type options struct {
 	errorFile        string
 	failureClassFile string
 	timeout          time.Duration
+	logStartTimeout  time.Duration
 }
 
 func main() {
@@ -97,7 +98,7 @@ func execute(args []string) int {
 		jobName:          opts.jobName,
 		hookMode:         hookMode(opts.hookMode),
 		expectedJob:      expectedJob,
-		logStartTimeout:  defaultLogStartTimeout,
+		logStartTimeout:  opts.logStartTimeout,
 		logRetryInterval: defaultLogRetryDelay,
 		maxLogBytes:      defaultMaxLogBytes,
 	}, output)
@@ -113,7 +114,7 @@ func execute(args []string) int {
 }
 
 func parseOptions(args []string) (options, error) {
-	opts := options{timeout: defaultCaptureTimeout}
+	opts := options{timeout: defaultCaptureTimeout, logStartTimeout: defaultLogStartTimeout}
 	flags := flag.NewFlagSet("hooklogcapture", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to the kubeconfig used for the capture")
@@ -127,6 +128,11 @@ func parseOptions(args []string) (options, error) {
 	flags.StringVar(&opts.errorFile, "error-file", "", "private destination for errors")
 	flags.StringVar(&opts.failureClassFile, "failure-class-file", "", "private destination for the bounded failure class")
 	flags.DurationVar(&opts.timeout, "timeout", opts.timeout, "maximum lifetime of the capture")
+	// A hook that waits on a barrier before it reports writes nothing for as
+	// long as the barrier holds, and silence is not a capture failure. The
+	// caller raises this where it knows the hook can legitimately be quiet.
+	flags.DurationVar(&opts.logStartTimeout, "log-start-timeout", opts.logStartTimeout,
+		"how long the hook Pod may write nothing before the capture calls the stream unavailable")
 	if err := flags.Parse(args); err != nil {
 		return opts, err
 	}
@@ -158,6 +164,9 @@ func parseOptions(args []string) (options, error) {
 	}
 	if opts.timeout <= 0 || opts.timeout > 15*time.Minute {
 		return opts, errors.New("--timeout must be greater than zero and no more than 15m")
+	}
+	if opts.logStartTimeout <= 0 || opts.logStartTimeout >= opts.timeout {
+		return opts, errors.New("--log-start-timeout must be greater than zero and shorter than --timeout")
 	}
 	return opts, nil
 }

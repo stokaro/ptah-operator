@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,6 +42,9 @@ type protectedRuntimePodStabilityObserver struct {
 	identity   string
 	proven     bool
 }
+
+// One request of the observation, not the watch it keeps.
+const protectedRuntimePodRequestTimeout = 5 * time.Second
 
 func newProtectedRuntimePodStabilityObserver(
 	inventory protectedRuntimePodSnapshotter,
@@ -92,6 +96,20 @@ func (o *protectedRuntimePodStabilityObserver) Observe(ctx context.Context, _ st
 		if err := o.restart(ctx); err != nil {
 			return "", false, err
 		}
+		return o.identity, o.proven, nil
+	}
+	// The verdict is refreshed by restart, and restart runs on an event. A Pod
+	// that disappears after the last event this watch delivers would leave the
+	// observer holding "Pods remain" with nothing left to correct it, and the
+	// barrier would wait for a condition that is already true. While the
+	// observation is unproven the snapshot is therefore re-read every sweep;
+	// once proven, the watch alone carries it and the identity stays stable,
+	// which is what the stability window measures.
+	if !o.proven {
+		if err := o.restart(ctx); err != nil {
+			return "", false, fmt.Errorf("re-read protected runtime Pods for an unproven observation: %w", err)
+		}
+		return o.identity, o.proven, nil
 	}
 
 	for range protectedRuntimePodWatchDrainLimit {
@@ -153,7 +171,13 @@ func (o *protectedRuntimePodStabilityObserver) Close() {
 
 func (o *protectedRuntimePodStabilityObserver) restart(ctx context.Context) error {
 	o.Close()
-	snapshot, err := o.inventory.ProtectedRuntimePodSnapshot(ctx)
+	// The list is bounded so one request that never answers cannot spend the
+	// barrier's whole deadline. The watch is not: it is what the next sweeps
+	// observe, and a watch that ends with this call would change the observed
+	// identity every sweep.
+	listCtx, cancelList := context.WithTimeout(ctx, protectedRuntimePodRequestTimeout)
+	snapshot, err := o.inventory.ProtectedRuntimePodSnapshot(listCtx)
+	cancelList()
 	if err != nil {
 		return fmt.Errorf("list protected runtime Pods for stability watch: %w", err)
 	}

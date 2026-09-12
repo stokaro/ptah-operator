@@ -201,6 +201,7 @@ type RolloutGuard struct {
 	PreviousControllerServiceAccountUID     types.UID
 	PreviousControllerServiceAccountManaged bool
 	PreviousControllerReleaseSequence       int32
+	PreviousControllerManagerImage          string
 	ControllerDeploymentName                string
 	ControllerReplicas                      int32
 	CertificateDeploymentName               string
@@ -505,6 +506,13 @@ func (g *RolloutGuard) ReleaseActivationState(ctx context.Context) (ReleaseActiv
 // before any credential grace period begins.
 func (g *RolloutGuard) BeginControllerCredentialDrain(ctx context.Context) (ReleaseActivationState, error) {
 	return g.releaseActivationGuard().BeginDraining(ctx)
+}
+
+// AbandonControllerCredentialDrain gives back a drain this candidate began and
+// did not complete, so a failed upgrade does not fence the active release out
+// of its own runtime.
+func (g *RolloutGuard) AbandonControllerCredentialDrain(ctx context.Context) error {
+	return g.releaseActivationGuard().AbandonDraining(ctx)
 }
 
 // CandidateRuntimeConverged reports whether the candidate release is already
@@ -875,15 +883,27 @@ func (g *RolloutGuard) verifyBinding(binding *admissionregistrationv1.Validating
 }
 
 func (g *RolloutGuard) verifyGuardMetadata(kind string, metadata metav1.ObjectMeta, name string) error {
-	if metadata.Name != name ||
-		metadata.Annotations[rolloutGuardVersionAnnotation] != rolloutGuardVersion ||
-		metadata.Annotations[ReleaseNameAnnotation] != g.ReleaseName ||
-		metadata.Annotations[ReleaseNamespaceAnnotation] != g.ReleaseNamespace ||
-		metadata.Annotations[ReleaseSequenceAnnotation] != strconv.FormatInt(int64(g.ReleaseSequence), 10) ||
-		metadata.Labels[managedByLabel] != rolloutGuardManagedBy ||
-		metadata.Labels[instanceLabel] != g.ReleaseName ||
-		metadata.Labels["app.kubernetes.io/component"] != rolloutGuardComponent {
-		return fmt.Errorf("fixed guard %s/%s has foreign or incomplete ownership", kind, metadata.Name)
+	// The field that disagrees is named. A guard carries eight of them and the
+	// refusal is read from a hook Pod's termination message, where "foreign or
+	// incomplete" alone costs a whole lifecycle run to narrow down.
+	for _, field := range []struct {
+		what string
+		got  string
+		want string
+	}{
+		{"name", metadata.Name, name},
+		{"annotation " + rolloutGuardVersionAnnotation, metadata.Annotations[rolloutGuardVersionAnnotation], rolloutGuardVersion},
+		{"annotation " + ReleaseNameAnnotation, metadata.Annotations[ReleaseNameAnnotation], g.ReleaseName},
+		{"annotation " + ReleaseNamespaceAnnotation, metadata.Annotations[ReleaseNamespaceAnnotation], g.ReleaseNamespace},
+		{"annotation " + ReleaseSequenceAnnotation, metadata.Annotations[ReleaseSequenceAnnotation], strconv.FormatInt(int64(g.ReleaseSequence), 10)},
+		{"label " + managedByLabel, metadata.Labels[managedByLabel], rolloutGuardManagedBy},
+		{"label " + instanceLabel, metadata.Labels[instanceLabel], g.ReleaseName},
+		{"label app.kubernetes.io/component", metadata.Labels["app.kubernetes.io/component"], rolloutGuardComponent},
+	} {
+		if field.got != field.want {
+			return fmt.Errorf("fixed guard %s/%s has foreign or incomplete ownership: %s is %q, want %q",
+				kind, metadata.Name, field.what, field.got, field.want)
+		}
 	}
 	return nil
 }
@@ -938,9 +958,10 @@ func (g *RolloutGuard) waitPolicyReady(ctx context.Context, name string) error {
 	})
 }
 
-// waitEnforced first proves that an unchanged Deployment is accepted, then
-// adds only the target policy's reserved token. This makes the resulting
-// single-cause denial attributable to one policy even while retained guards
+// waitEnforced first proves that a Deployment baseline is accepted, then
+// adds only the target policy's reserved token. A stopped predecessor may
+// need a dry-run-only active-identity baseline; no probe is persisted.
+// The resulting single-cause denial is attributable to one policy while guards
 // overlap during an upgrade.
 func (g *RolloutGuard) waitEnforced(ctx context.Context, policyName, denialMessage string) error {
 	return wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
@@ -1010,7 +1031,8 @@ func (g *RolloutGuard) enforcementProbeDeployment(ctx context.Context) (*appsv1.
 		deployment, err := g.Deployments.Get(ctx, name, metav1.GetOptions{})
 		switch {
 		case err == nil:
-			return deployment, false, nil
+			baseline, err := g.drainingEnforcementProbeBaseline(ctx, deployment)
+			return baseline, false, err
 		case apierrors.IsNotFound(err):
 			lastNotFound = err
 		default:
@@ -1026,6 +1048,125 @@ func (g *RolloutGuard) enforcementProbeDeployment(ctx context.Context) (*appsv1.
 		return nil, false, fmt.Errorf("cannot safely create a bootstrap enforcement probe while release sequence %d is active and both runtime Deployments are missing: %w", identity.active, lastNotFound)
 	}
 	return g.bootstrapProbeDeployment(g.ControllerDeploymentName), true, nil
+}
+
+// drainingEnforcementProbeBaseline handles only the interrupted pre-activation
+// cutover: quiescence stamped the candidate's top-level identity but preserved
+// the active predecessor's template. The normal stop transition permits no
+// extra annotation, so adding the probe token would trigger unrelated denials.
+// Restore the active identity and desired replicas in a private dry-run copy;
+// the full retained policies must accept it before the sentinel is attempted.
+func (g *RolloutGuard) drainingEnforcementProbeBaseline(ctx context.Context, deployment *appsv1.Deployment) (*appsv1.Deployment, error) {
+	if !g.isCandidateStampedStoppedDeployment(deployment) {
+		return deployment, nil
+	}
+	identity, err := g.releaseActivationIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.releaseActivationGuard().verifyCandidateCompatibility(identity); err != nil {
+		return nil, fmt.Errorf("verify candidate identity for stopped Deployment probe: %w", err)
+	}
+	if identity.active >= uint64(g.ReleaseSequence) {
+		// Post-activation recovery is not a predecessor drain. Never invent an
+		// older active identity or replace the template to make a probe pass.
+		return deployment, nil
+	}
+	if identity.phase != ControllerCredentialsDraining {
+		return nil, fmt.Errorf("candidate-stamped stopped Deployment probe requires the exact candidate credential drain")
+	}
+	if identity.active > 0 && deployment.Name == g.ControllerDeploymentName {
+		// Every supported certificate contract has exactly one desired replica.
+		// Prefer it over recovering a controller replica count from verifier args.
+		certificate, getErr := g.Deployments.Get(ctx, g.CertificateDeploymentName, metav1.GetOptions{})
+		switch {
+		case getErr == nil:
+			deployment = certificate
+		case apierrors.IsNotFound(getErr):
+			// Certificate-disabled releases can use their preserved controller.
+		default:
+			return nil, fmt.Errorf("get stopped certificate Deployment for enforcement probe: %w", getErr)
+		}
+	}
+	if deployment.Name != g.ControllerDeploymentName && deployment.Name != g.CertificateDeploymentName {
+		return nil, fmt.Errorf("stopped enforcement probe Deployment has an unexpected name")
+	}
+	component := "controller"
+	if deployment.Name == g.CertificateDeploymentName {
+		component = "certificate-rotation"
+	}
+	if err := g.verifyDeployment(deploymentTarget{name: deployment.Name, component: component}, deployment); err != nil {
+		return nil, err
+	}
+	if !g.isCandidateStampedStoppedDeployment(deployment) || deployment.UID == "" || deployment.ResourceVersion == "" ||
+		deployment.DeletionTimestamp != nil || deployment.Status.Replicas != 0 || deployment.Status.ReadyReplicas != 0 ||
+		deployment.Status.AvailableReplicas != 0 || deployment.Status.UpdatedReplicas != 0 {
+		return nil, fmt.Errorf("Deployment %s is not an identified, fully stopped candidate-stamped probe baseline", deployment.Name)
+	}
+	if _, found := deployment.Annotations[guardEnforcementProbeAnnotation]; found {
+		return nil, fmt.Errorf("Deployment %s already contains the reserved enforcement probe annotation", deployment.Name)
+	}
+	baseline := deployment.DeepCopy()
+	if identity.active == 0 {
+		for _, annotation := range []string{ControllerStateVersionAnnotation, ReleaseSequenceAnnotation} {
+			if _, found := baseline.Spec.Template.Annotations[annotation]; found {
+				return nil, fmt.Errorf("bootstrap stopped Deployment %s has a versioned runtime template", deployment.Name)
+			}
+			delete(baseline.Annotations, annotation)
+		}
+		return baseline, nil
+	}
+	state := strconv.FormatUint(identity.state, 10)
+	sequence := strconv.FormatUint(identity.active, 10)
+	pod := &deployment.Spec.Template.Spec
+	if deployment.Spec.Template.Annotations[ControllerStateVersionAnnotation] != state ||
+		deployment.Spec.Template.Annotations[ReleaseSequenceAnnotation] != sequence ||
+		len(pod.Containers) != 1 || pod.Containers[0].Image != identity.image ||
+		len(pod.InitContainers) != 1 || pod.InitContainers[0].Image != identity.image ||
+		pod.InitContainers[0].Name != "verify-candidate-runtime" ||
+		!slices.Equal(pod.InitContainers[0].Command, []string{"/ptah-crd-manager"}) ||
+		len(pod.InitContainers[0].Args) == 0 || pod.InitContainers[0].Args[0] != "runtime-verify" {
+		return nil, fmt.Errorf("stopped Deployment %s does not preserve the active predecessor runtime identity", deployment.Name)
+	}
+	replicas := int32(1)
+	if component == "controller" {
+		replicas, err = predecessorProbeControllerReplicas(pod.InitContainers[0].Args)
+		if err != nil {
+			return nil, fmt.Errorf("recover stopped controller probe replicas: %w", err)
+		}
+	}
+	baseline.Annotations[ControllerStateVersionAnnotation] = state
+	baseline.Annotations[ReleaseSequenceAnnotation] = sequence
+	baseline.Spec.Replicas = int32Ptr(replicas)
+	return baseline, nil
+}
+
+func (g *RolloutGuard) isCandidateStampedStoppedDeployment(deployment *appsv1.Deployment) bool {
+	return deployment != nil && deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 &&
+		deployment.Annotations[ControllerStateVersionAnnotation] == strconv.FormatInt(int64(g.ControllerStateVersion), 10) &&
+		deployment.Annotations[ReleaseSequenceAnnotation] == strconv.FormatInt(int64(g.ReleaseSequence), 10)
+}
+
+func predecessorProbeControllerReplicas(args []string) (int32, error) {
+	var replicas int32
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "--controller-replicas") {
+			continue
+		}
+		value, found := strings.CutPrefix(arg, "--controller-replicas=")
+		if !found || replicas != 0 || !positiveExactDecimalPattern.MatchString(value) {
+			return 0, fmt.Errorf("predecessor verifier must contain one canonical --controller-replicas value")
+		}
+		parsed, err := strconv.ParseInt(value, 10, 32)
+		if err != nil {
+			return 0, fmt.Errorf("predecessor verifier controller replicas exceed the positive int32 range")
+		}
+		replicas = int32(parsed)
+	}
+	if replicas == 0 {
+		return 0, fmt.Errorf("predecessor verifier lacks --controller-replicas")
+	}
+	return replicas, nil
 }
 
 func (g *RolloutGuard) rolloutCreateBoundaryProbe(ctx context.Context) (*appsv1.Deployment, error) {
@@ -1132,6 +1273,10 @@ func (g *RolloutGuard) verifierArgs(verifyControllerState bool) []string {
 		"--runtime-deployment-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimeDeploymentConfigExpressions),
 		"--runtime-pod-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimePodConfigExpressions),
 		"--runtime-admission-contract-b64=" + g.RuntimeAdmissionContractB64,
+		// Appended rather than grouped with the other predecessor flags: every
+		// earlier position is pinned by index in the CEL the chart and this
+		// package both render, and an insertion would move all of them.
+		"--previous-controller-manager-image=" + g.PreviousControllerManagerImage,
 	}
 	if verifyControllerState {
 		args = append(args, "--verify-controller-state=true")
@@ -1249,7 +1394,7 @@ func deploymentStopTransitionExpression() string {
 	stateAnnotation := strconv.Quote(ControllerStateVersionAnnotation)
 	releaseAnnotation := strconv.Quote(ReleaseSequenceAnnotation)
 	return fmt.Sprintf(
-		`variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation == "UPDATE" && oldObject != null && variables.activationValid && variables.newRelease > variables.activeRelease && variables.newState > 0 && variables.isReleaseHook && has(dyn(object).spec.replicas) && dyn(object).spec.replicas == 0 && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) == has(oldObject.metadata.uid) && (!has(object.metadata.uid) || object.metadata.uid == oldObject.metadata.uid) && object.metadata.labels == oldObject.metadata.labels && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.metadata.annotations) && %[1]s in object.metadata.annotations && object.metadata.annotations[%[1]s] == string(variables.newState) && %[2]s in object.metadata.annotations && object.metadata.annotations[%[2]s] == string(variables.newRelease) && object.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (has(oldObject.metadata.annotations) && key in oldObject.metadata.annotations && object.metadata.annotations[key] == oldObject.metadata.annotations[key])) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (key in object.metadata.annotations && oldObject.metadata.annotations[key] == object.metadata.annotations[key]))) && dyn(object).spec.template == dyn(oldObject).spec.template && dyn(object).spec.selector == dyn(oldObject).spec.selector && (has(dyn(object).spec.strategy) == has(dyn(oldObject).spec.strategy)) && (!has(dyn(object).spec.strategy) || dyn(object).spec.strategy == dyn(oldObject).spec.strategy) && (has(dyn(object).spec.minReadySeconds) == has(dyn(oldObject).spec.minReadySeconds)) && (!has(dyn(object).spec.minReadySeconds) || dyn(object).spec.minReadySeconds == dyn(oldObject).spec.minReadySeconds) && (has(dyn(object).spec.revisionHistoryLimit) == has(dyn(oldObject).spec.revisionHistoryLimit)) && (!has(dyn(object).spec.revisionHistoryLimit) || dyn(object).spec.revisionHistoryLimit == dyn(oldObject).spec.revisionHistoryLimit) && (has(dyn(object).spec.paused) == has(dyn(oldObject).spec.paused)) && (!has(dyn(object).spec.paused) || dyn(object).spec.paused == dyn(oldObject).spec.paused) && (has(dyn(object).spec.progressDeadlineSeconds) == has(dyn(oldObject).spec.progressDeadlineSeconds)) && (!has(dyn(object).spec.progressDeadlineSeconds) || dyn(object).spec.progressDeadlineSeconds == dyn(oldObject).spec.progressDeadlineSeconds)`,
+		`variables.isDeployment && (!has(request.subResource) || request.subResource == "") && request.operation == "UPDATE" && oldObject != null && variables.activationValid && (variables.newRelease > variables.activeRelease || variables.teardownStop) && variables.newState > 0 && variables.isReleaseHook && has(dyn(object).spec.replicas) && dyn(object).spec.replicas == 0 && object.metadata.name == oldObject.metadata.name && object.metadata.namespace == oldObject.metadata.namespace && has(object.metadata.uid) == has(oldObject.metadata.uid) && (!has(object.metadata.uid) || object.metadata.uid == oldObject.metadata.uid) && object.metadata.labels == oldObject.metadata.labels && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences) && has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers) && has(object.metadata.generateName) == has(oldObject.metadata.generateName) && (!has(object.metadata.generateName) || object.metadata.generateName == oldObject.metadata.generateName) && has(object.metadata.deletionTimestamp) == has(oldObject.metadata.deletionTimestamp) && (!has(object.metadata.deletionTimestamp) || object.metadata.deletionTimestamp == oldObject.metadata.deletionTimestamp) && has(object.metadata.annotations) && %[1]s in object.metadata.annotations && object.metadata.annotations[%[1]s] == string(variables.newState) && %[2]s in object.metadata.annotations && object.metadata.annotations[%[2]s] == string(variables.newRelease) && object.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (has(oldObject.metadata.annotations) && key in oldObject.metadata.annotations && object.metadata.annotations[key] == oldObject.metadata.annotations[key])) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(key, key in [%[1]s, %[2]s] || (key in object.metadata.annotations && oldObject.metadata.annotations[key] == object.metadata.annotations[key]))) && dyn(object).spec.template == dyn(oldObject).spec.template && dyn(object).spec.selector == dyn(oldObject).spec.selector && (has(dyn(object).spec.strategy) == has(dyn(oldObject).spec.strategy)) && (!has(dyn(object).spec.strategy) || dyn(object).spec.strategy == dyn(oldObject).spec.strategy) && (has(dyn(object).spec.minReadySeconds) == has(dyn(oldObject).spec.minReadySeconds)) && (!has(dyn(object).spec.minReadySeconds) || dyn(object).spec.minReadySeconds == dyn(oldObject).spec.minReadySeconds) && (has(dyn(object).spec.revisionHistoryLimit) == has(dyn(oldObject).spec.revisionHistoryLimit)) && (!has(dyn(object).spec.revisionHistoryLimit) || dyn(object).spec.revisionHistoryLimit == dyn(oldObject).spec.revisionHistoryLimit) && (has(dyn(object).spec.paused) == has(dyn(oldObject).spec.paused)) && (!has(dyn(object).spec.paused) || dyn(object).spec.paused == dyn(oldObject).spec.paused) && (has(dyn(object).spec.progressDeadlineSeconds) == has(dyn(oldObject).spec.progressDeadlineSeconds)) && (!has(dyn(object).spec.progressDeadlineSeconds) || dyn(object).spec.progressDeadlineSeconds == dyn(oldObject).spec.progressDeadlineSeconds)`,
 		stateAnnotation,
 		releaseAnnotation,
 	)
@@ -1324,10 +1469,28 @@ func (g *RolloutGuard) policy(stateVersion, admissionVersion int32) *admissionre
 				{Name: "activeRelease", Expression: fmt.Sprintf(`params != null && has(params.data) && %q in params.data && params.data[%q].matches("^(0|[1-9][0-9]*)$") ? int(params.data[%q]) : -1`, activeReleaseDataKey, activeReleaseDataKey, activeReleaseDataKey)},
 				{Name: "activeState", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "activeAdmission", Expression: fmt.Sprintf(`params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
+				// A release is stopped toward a newer one during a cutover, and in
+				// place during an uninstall. The second has no newer release to move
+				// to, so it is recognised by the durable drain its own quiesce hook
+				// persisted first: the credentials are draining toward the sequence
+				// that is active, which is the sequence being stopped. Every other
+				// part of a stop transition still holds, the caller included.
 				{Name: "isReleaseHook", Expression: g.releaseHookUsernameExpression()},
 				{Name: "isCandidateHook", Expression: fmt.Sprintf(`request.userInfo.username == %q`, g.candidateHookUsername())},
 				{Name: "newAdmission", Expression: fmt.Sprintf(`variables.isAdmission && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : 0`, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation, AdmissionContractVersionAnnotation)},
 				{Name: "isActiveIdentity", Expression: rolloutActiveIdentityExpression()},
+				// A release is stopped toward a newer one during a cutover, and in
+				// place during an uninstall. The second has no newer release to move
+				// to, so it is recognised by the durable drain its own quiesce hook
+				// persisted first: the credentials are draining toward the sequence
+				// that is active, which is the sequence being stopped. Every other
+				// part of a stop transition still holds, the caller included.
+				{Name: "teardownStop", Expression: fmt.Sprintf(
+					`variables.newRelease == variables.activeRelease && params != null && has(params.data) && %[1]q in params.data && params.data[%[1]q] == %[2]q && %[3]q in params.data && params.data[%[3]q] == string(variables.activeRelease)`,
+					controllerCredentialsDataKey,
+					string(ControllerCredentialsDraining),
+					controllerCredentialsTargetDataKey,
+				)},
 				{Name: "stopTransition", Expression: deploymentStopTransitionExpression()},
 			},
 			Validations: []admissionregistrationv1.Validation{
@@ -1601,6 +1764,10 @@ func (g *RolloutGuard) hookArgs(mode string) []string {
 		"--runtime-deployment-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimeDeploymentConfigExpressions),
 		"--runtime-pod-config-expressions-b64=" + encodeRuntimeArgs(g.RuntimePodConfigExpressions),
 		"--runtime-admission-contract-b64=" + g.RuntimeAdmissionContractB64,
+		// Appended rather than grouped with the other predecessor flags: every
+		// earlier position is pinned by index in the CEL the chart and this
+		// package both render, and an insertion would move all of them.
+		"--previous-controller-manager-image=" + g.PreviousControllerManagerImage,
 	}
 }
 
@@ -1801,6 +1968,18 @@ func (g *RolloutGuard) runtimePolicy(stateVersion, releaseSequence int32, manage
 				{Name: "templateState", Expression: fmt.Sprintf(`has(dyn(object).spec.template.metadata.annotations) && %q in dyn(object).spec.template.metadata.annotations ? dyn(object).spec.template.metadata.annotations[%q] : ""`, ControllerStateVersionAnnotation, ControllerStateVersionAnnotation)},
 				{Name: "templateRelease", Expression: fmt.Sprintf(`has(dyn(object).spec.template.metadata.annotations) && %q in dyn(object).spec.template.metadata.annotations ? dyn(object).spec.template.metadata.annotations[%q] : ""`, ReleaseSequenceAnnotation, ReleaseSequenceAnnotation)},
 				{Name: "isActiveIdentity", Expression: runtimeActiveDeploymentIdentityExpression()},
+				// A release is stopped toward a newer one during a cutover, and in
+				// place during an uninstall. The second has no newer release to move
+				// to, so it is recognised by the durable drain its own quiesce hook
+				// persisted first: the credentials are draining toward the sequence
+				// that is active, which is the sequence being stopped. Every other
+				// part of a stop transition still holds, the caller included.
+				{Name: "teardownStop", Expression: fmt.Sprintf(
+					`variables.newRelease == variables.activeRelease && params != null && has(params.data) && %[1]q in params.data && params.data[%[1]q] == %[2]q && %[3]q in params.data && params.data[%[3]q] == string(variables.activeRelease)`,
+					controllerCredentialsDataKey,
+					string(ControllerCredentialsDraining),
+					controllerCredentialsTargetDataKey,
+				)},
 				{Name: "stopTransition", Expression: deploymentStopTransitionExpression()},
 			},
 			Validations: validations,

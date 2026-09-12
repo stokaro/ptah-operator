@@ -32,7 +32,10 @@ import (
 const (
 	defaultTimeout                   = 2 * time.Minute
 	retiredCredentialRevocationDelay = 65 * time.Second
-	supportedModes                   = "image-check, identity-probe, preflight, reconcile, teardown-retirement-probe-a, teardown-retirement-gate, teardown-quiesce, teardown, teardown-retirement-final, verify, or runtime-verify"
+	// Compensating a drain runs after the failure it compensates, often the
+	// expiry of the deadline that carried the cutover.
+	abandonDrainTimeout = 30 * time.Second
+	supportedModes      = "image-check, identity-probe, preflight, reconcile, teardown-retirement-probe-a, teardown-retirement-gate, teardown-quiesce, teardown, teardown-retirement-final, verify, or runtime-verify"
 )
 
 func main() {
@@ -40,8 +43,37 @@ func main() {
 	defer stop()
 	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "ptah-crd-manager: %v\n", err)
+		reportTerminationMessage(err)
 		os.Exit(1)
 	}
+}
+
+// terminationMessageFile is the file Kubernetes reads a failed container's
+// message from. Every hook container declares it and the policy that reads it.
+var terminationMessageFile = "/dev/termination-log"
+
+// terminationMessageLimit is what Kubernetes keeps of that file.
+const terminationMessageLimit = 4096
+
+// reportTerminationMessage puts the refusal where the person who ran Helm can
+// read it. A hook that refuses prints its reason to stderr, which stays inside
+// the Pod: Helm reports only that the Job failed, so an operator is told that
+// an uninstall was refused and never why. Writing the same reason to the
+// termination message carries it into the Job's status and out through Helm.
+// It is best effort: a manager that cannot write the file has already said
+// what happened on stderr, and failing here would replace a precise refusal
+// with a write error.
+func reportTerminationMessage(err error) {
+	message := fmt.Sprintf("ptah-crd-manager: %v\n", err)
+	if len(message) > terminationMessageLimit {
+		message = message[:terminationMessageLimit]
+	}
+	file, openErr := os.OpenFile(terminationMessageFile, os.O_WRONLY|os.O_TRUNC, 0o600)
+	if openErr != nil {
+		return
+	}
+	defer func() { _ = file.Close() }()
+	_, _ = file.WriteString(message)
 }
 
 func run(parent context.Context, args []string, output io.Writer) error {
@@ -69,6 +101,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 	previousControllerServiceAccountUID := flags.String("previous-controller-service-account-uid", "", "immutable UID of the controller ServiceAccount active before candidate cutover")
 	previousControllerServiceAccountManagedFlag := flags.String("previous-controller-service-account-managed", "", "whether Helm safely owns the previous controller ServiceAccount, exactly true or false")
 	previousControllerReleaseSequence := flags.Int64("previous-controller-release-sequence", 0, "release sequence active before candidate cutover")
+	previousControllerManagerImage := flags.String("previous-controller-manager-image", "", "manager image of the release sequence active before candidate cutover")
 	controllerDeploymentName := flags.String("controller-deployment-name", "", "exact controller Deployment name")
 	controllerReplicas := flags.Int64("controller-replicas", 0, "exact candidate controller replica count")
 	certificateDeploymentName := flags.String("certificate-deployment-name", "", "exact certificate-rotator Deployment name")
@@ -197,6 +230,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*certificateDeploymentName,
 			int32(*releaseSequence),
 			int32(*previousControllerReleaseSequence),
+			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -241,6 +275,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*certificateDeploymentName,
 			int32(*releaseSequence),
 			int32(*previousControllerReleaseSequence),
+			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -316,6 +351,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*certificateDeploymentName,
 			int32(*releaseSequence),
 			int32(*previousControllerReleaseSequence),
+			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -354,7 +390,28 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			ctx,
 			stateClients,
 			int64(controllerstate.CurrentVersion),
-			func(prepareCtx context.Context) error {
+			func(prepareCtx context.Context) (prepareErr error) {
+				// A drain fences the active release out of its own runtime. If
+				// this candidate begins one and then fails, it gives the fence
+				// back on the way out; otherwise an upgrade that changed nothing
+				// leaves the release unable to start until a later Helm
+				// operation succeeds. The compensation runs on its own deadline
+				// because the failure being compensated is often the expiry of
+				// this one.
+				drainBegun := false
+				defer func() {
+					if prepareErr == nil || !drainBegun {
+						return
+					}
+					abandonCtx, cancelAbandon := context.WithTimeout(
+						context.WithoutCancel(prepareCtx), abandonDrainTimeout)
+					defer cancelAbandon()
+					if abandonErr := rollout.AbandonControllerCredentialDrain(abandonCtx); abandonErr != nil {
+						prepareErr = fmt.Errorf(
+							"%w (the controller credential drain could not be abandoned: %v)",
+							prepareErr, abandonErr)
+					}
+				}()
 				if readyErr := serviceAccountObjectGuard.WaitReady(prepareCtx); readyErr != nil {
 					return fmt.Errorf("wait for stable ServiceAccount object guard: %w", readyErr)
 				}
@@ -409,6 +466,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 					if graceErr != nil {
 						return fmt.Errorf("begin controller credential drain: %w", graceErr)
 					}
+					drainBegun = true
 				}
 
 				// The final sentinel is ordered after every retained release guard.
@@ -559,6 +617,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*certificateDeploymentName,
 			int32(*releaseSequence),
 			int32(*previousControllerReleaseSequence),
+			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -590,6 +649,7 @@ func run(parent context.Context, args []string, output io.Writer) error {
 			*certificateDeploymentName,
 			int32(*releaseSequence),
 			int32(*previousControllerReleaseSequence),
+			*previousControllerManagerImage,
 		)
 		if expectedErr != nil {
 			return expectedErr
@@ -724,6 +784,7 @@ func runtimeInvariants(
 	previousControllerServiceAccountName string, previousControllerServiceAccountUID types.UID,
 	previousControllerServiceAccountManaged bool, controllerDeploymentName,
 	certificateDeploymentName string, releaseSequence, previousControllerReleaseSequence int32,
+	previousControllerManagerImage string,
 ) (crdupgrade.RuntimeInvariants, error) {
 	if leaderElection != "true" && leaderElection != "false" {
 		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("leader-election must be exactly true or false")
@@ -745,6 +806,13 @@ func runtimeInvariants(
 	} else if previousControllerServiceAccountUID == "" {
 		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller ServiceAccount UID is required")
 	}
+	if previousControllerReleaseSequence == 0 {
+		if previousControllerManagerImage != "" {
+			return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller manager image requires a previous release sequence")
+		}
+	} else if previousControllerManagerImage == "" {
+		return crdupgrade.RuntimeInvariants{}, fmt.Errorf("previous controller manager image is required with a previous release sequence")
+	}
 	return crdupgrade.RuntimeInvariants{
 		ReleaseName:                             releaseName,
 		ReleaseNamespace:                        releaseNamespace,
@@ -760,6 +828,7 @@ func runtimeInvariants(
 		PreviousControllerServiceAccountUID:     previousControllerServiceAccountUID,
 		PreviousControllerServiceAccountManaged: previousControllerServiceAccountManaged,
 		PreviousControllerReleaseSequence:       previousControllerReleaseSequence,
+		PreviousControllerManagerImage:          previousControllerManagerImage,
 		ControllerDeploymentName:                controllerDeploymentName,
 		CertificateDeploymentName:               certificateDeploymentName,
 		ControllerStateVersion:                  controllerstate.CurrentVersion,
@@ -802,6 +871,7 @@ func newRolloutGuard(
 		PreviousControllerServiceAccountUID:     expected.PreviousControllerServiceAccountUID,
 		PreviousControllerServiceAccountManaged: expected.PreviousControllerServiceAccountManaged,
 		PreviousControllerReleaseSequence:       expected.PreviousControllerReleaseSequence,
+		PreviousControllerManagerImage:          expected.PreviousControllerManagerImage,
 		ControllerDeploymentName:                expected.ControllerDeploymentName,
 		ControllerReplicas:                      controllerReplicas,
 		CertificateDeploymentName:               expected.CertificateDeploymentName,
@@ -1102,7 +1172,11 @@ func runTeardownMode(
 		if err != nil {
 			return fmt.Errorf("derive parent origin readiness retirement marker: %w", err)
 		}
-		finalizer, err := newTeardownRetirementFinalizer(configMaps, guard, convergenceMarker, readinessMarker)
+		probeMarker, err := crdupgrade.HookIdentityProbeMarkerTarget(rollout)
+		if err != nil {
+			return fmt.Errorf("derive hook identity probe retirement marker: %w", err)
+		}
+		finalizer, err := newTeardownRetirementFinalizer(configMaps, guard, convergenceMarker, readinessMarker, probeMarker)
 		if err != nil {
 			return fmt.Errorf("configure teardown retirement finalizer: %w", err)
 		}
@@ -1297,6 +1371,7 @@ func validateModeFlags(mode string, flags *flag.FlagSet) error {
 			"previous-controller-service-account-uid",
 			"previous-controller-service-account-managed",
 			"previous-controller-release-sequence",
+			"previous-controller-manager-image",
 			"controller-deployment-name",
 			"controller-replicas",
 			"certificate-deployment-name",

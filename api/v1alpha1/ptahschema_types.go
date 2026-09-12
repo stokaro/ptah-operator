@@ -570,14 +570,17 @@ type CurrentPlanStatus struct {
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
 	ControllerRevision string `json:"controllerRevision,omitempty"`
 	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32       `json:"controllerStateVersion,omitempty"`
-	PtahVersion            string      `json:"ptahVersion"`
-	ExecutorImage          string      `json:"executorImage"`
-	RunnerImage            string      `json:"runnerImage"`
-	RunnerProtocolVersion  int32       `json:"runnerProtocolVersion"`
-	Destructive            bool        `json:"destructive"`
-	StatementCount         int32       `json:"statementCount"`
-	CreatedAt              metav1.Time `json:"createdAt"`
+	ControllerStateVersion int32  `json:"controllerStateVersion,omitempty"`
+	PtahVersion            string `json:"ptahVersion"`
+	ExecutorImage          string `json:"executorImage"`
+	RunnerImage            string `json:"runnerImage"`
+	RunnerProtocolVersion  int32  `json:"runnerProtocolVersion"`
+	Destructive            bool   `json:"destructive"`
+	StatementCount         int32  `json:"statementCount"`
+	// CreatedAt is the plan object's own creation time, copied like every
+	// other field here, so an audit of this record and of the plan it names
+	// cannot disagree about when the plan came into being.
+	CreatedAt metav1.Time `json:"createdAt"`
 
 	Approval *ConsumedApprovalStatus `json:"approval,omitempty"`
 }

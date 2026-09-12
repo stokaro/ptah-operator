@@ -49,6 +49,7 @@
 {{- $parentHookJobOriginGuardName := include "ptah-operator.parentHookJobOriginGuardPolicyName" . -}}
 {{- $parentHookJobContractGuardName := include "ptah-operator.parentHookJobContractPolicyName" . -}}
 {{- $legacyControllerGuardDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $parentOriginReadyName := printf "ptah-operator-parent-origin-ready-v2-%s" $legacyControllerGuardDigest -}}
 {{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $legacyControllerGuardDigest -}}
 {{- $legacyControllerWriteGuardName := printf "ptah-operator-controller-write-guard-v1-%s" $legacyControllerGuardDigest -}}
 {{- $legacyControllerJobWriteGuardName := printf "ptah-operator-job-write-guard-v1-%s" $legacyControllerGuardDigest -}}
@@ -56,6 +57,14 @@
 {{- $legacyControllerPlanWriteGuardName := printf "ptah-operator-plan-write-guard-v1-%s" $legacyControllerGuardDigest -}}
 {{- $legacyServiceAccountOriginGuardName := printf "ptah-operator-service-account-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
 {{- $legacyRuntimeParentGuardName := printf "ptah-operator-runtime-parent-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{/*
+The teardown retirement inventory still names the parent-origin guards a
+release installed by an older chart left behind. Quiescence reads every
+target in that inventory before it stops anything, and a name it may not
+read is refused before it can be found absent.
+*/}}
+{{- $legacyParentHookPodOriginGuardName := printf "ptah-operator-hook-pod-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $legacyParentHookJobOriginGuardName := printf "ptah-operator-hook-parent-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -140,6 +149,8 @@ rules:
       - {{ $legacyControllerPlanWriteGuardName }}
       - {{ $legacyServiceAccountOriginGuardName }}
       - {{ $legacyRuntimeParentGuardName }}
+      - {{ $legacyParentHookPodOriginGuardName }}
+      - {{ $legacyParentHookJobOriginGuardName }}
       - {{ $retirementFenceAName }}
       - {{ $retirementFenceBName }}
       {{- if $certificateRecoveryEnabled }}
@@ -432,8 +443,8 @@ rules:
     resources: ["rolebindings"]
     resourceNames:
       - {{ $controllerName | quote }}
-      {{- if eq $coordinationNamespace "default" }}
       - {{ $hookServiceAccountName | quote }}
+      {{- if eq $coordinationNamespace "default" }}
       - {{ $quiesceName | quote }}
       {{- if $certificateRuntimeEnabled }}
       - {{ $certificateDiscoveryRoleName | quote }}
@@ -667,6 +678,8 @@ rules:
       - {{ $legacyControllerPlanWriteGuardName }}
       - {{ $legacyServiceAccountOriginGuardName }}
       - {{ $legacyRuntimeParentGuardName }}
+      - {{ $legacyParentHookPodOriginGuardName }}
+      - {{ $legacyParentHookJobOriginGuardName }}
       - {{ $retirementFenceAName }}
       - {{ $retirementFenceBName }}
       {{- if $certificateRecoveryEnabled }}
@@ -694,7 +707,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["list"]
+    verbs: ["list", "watch"]
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     resourceNames:
@@ -717,11 +730,11 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames: [{{ $probeObjectName | quote }}]
-    verbs: ["get"]
+    verbs: ["get", "delete"]
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames: [{{ $activationName | quote }}]
-    verbs: ["get", "delete"]
+    verbs: ["get", "update", "delete"]
   - apiGroups: [""]
     resources: ["configmaps"]
     resourceNames: [{{ $admissionConvergenceMarkerName | quote }}]
@@ -730,6 +743,10 @@ rules:
     resources: ["configmaps"]
     resourceNames: [{{ $retirementMarkerName | quote }}]
     verbs: ["get", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: [{{ $parentOriginReadyName | quote }}]
+    verbs: ["get", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

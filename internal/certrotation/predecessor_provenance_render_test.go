@@ -36,6 +36,7 @@ data:
   previousSequence: {{ $principal.releaseSequence | quote }}
   previousUID: {{ $principal.uid | quote }}
   previousManaged: {{ $principal.managed | quote }}
+  previousManagerImage: {{ $principal.managerImage | quote }}
 `
 
 func TestControllerPredecessorProvenanceRender(t *testing.T) {
@@ -338,6 +339,7 @@ func retainedControllerPrincipalObject(kind, weight, previousName string) map[st
 				"operator.ptah.dev/previous-controller-service-account-uid":     previousUID,
 				"operator.ptah.dev/previous-controller-service-account-managed": "false",
 				"operator.ptah.dev/previous-controller-release-sequence":        "0",
+				"operator.ptah.dev/previous-controller-manager-image":           "",
 			},
 			"labels": map[string]any{
 				"app.kubernetes.io/managed-by": "ptah-operator",

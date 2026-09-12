@@ -15,6 +15,8 @@
 package main
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -179,7 +181,7 @@ func TestVerifyE2ESourceSnapshotRejectsLivePathMutations(t *testing.T) {
 		},
 		{
 			name:        "child evidence script read from live checkout",
-			old:         `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
+			old:         `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
 			replacement: `"$SOURCE_REPOSITORY_ROOT/hack/e2e-cert-rotation.sh"`,
 			wantError:   "live checkout path escapes",
 		},
@@ -755,6 +757,203 @@ func TestVerifyKindHAConfig(t *testing.T) {
 				t.Fatalf("verifyKindHAConfig() error = %v, want substring %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestLateActivationDrainRequiresExactPendingTuple(t *testing.T) {
+	t.Parallel()
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Fatal(err)
+	}
+	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
+	function := extractE2EShellFunction(t, source, "assert_late_activation_drain")
+	for _, test := range []struct {
+		name   string
+		key    string
+		value  any
+		remove bool
+		want   bool
+	}{
+		{name: "exact pending candidate", want: true},
+		{name: "active predecessor is not recovery", key: "controller-credentials", value: "active"},
+		{name: "candidate already activated", key: "active-release-sequence", value: "2"},
+		{name: "wrong target", key: "controller-credentials-target-release-sequence", value: "1"},
+		{name: "missing target", key: "controller-credentials-target-release-sequence", remove: true},
+		{name: "wrong attempt", key: "controller-credentials-attempt", value: strings.Repeat("b", 64)},
+		{name: "prefix collision", key: "controller-credentials-attempt", value: strings.Repeat("a", 63) + "b"},
+		{name: "short attempt", key: "controller-credentials-attempt", value: strings.Repeat("a", 12)},
+		{name: "missing attempt", key: "controller-credentials-attempt", remove: true},
+		{name: "extra key", key: "unexpected", value: "value"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			data := map[string]any{
+				"active-release-sequence": "1", "controller-credentials": "draining",
+				"controller-credentials-target-release-sequence": "2",
+				"controller-credentials-attempt":                 strings.Repeat("a", 64),
+			}
+			if test.remove {
+				delete(data, test.key)
+			} else if test.key != "" {
+				data[test.key] = test.value
+			}
+			fixture, err := json.Marshal(map[string]any{
+				"metadata": map[string]any{"namespace": "operator", "annotations": map[string]string{
+					"operator.ptah.dev/release-name": "ptah", "operator.ptah.dev/release-namespace": "operator",
+					"operator.ptah.dev/release-sequence": "1", "operator.ptah.dev/manager-image": "previous-image",
+				}},
+				"data": data,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			script := "set -eu\nfail() { printf '%s\\n' \"$*\" >&2; exit 1; }\nkube() { cat; }\n" + function + "\nassert_late_activation_drain\n"
+			command := exec.Command(shPath, "-c", script)
+			command.Env = append(os.Environ(), "E2E_OPERATOR_NAMESPACE=operator", "E2E_HELM_RELEASE=ptah",
+				"late_current_sequence=1", "late_next_sequence=2", "late_current_image=previous-image",
+				"late_candidate_attempt="+strings.Repeat("a", 64))
+			command.Stdin = bytes.NewReader(fixture)
+			output, err := command.CombinedOutput()
+			if got := err == nil; got != test.want {
+				t.Fatalf("pending drain accepted = %t, want %t: %s", got, test.want, output)
+			}
+		})
+	}
+}
+
+func TestLateActivationRetryRejectsChangedCandidate(t *testing.T) {
+	t.Parallel()
+	shPath, err := exec.LookPath("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade)
+	functions := strings.Replace(extractE2EShellFunction(t, source, "file_sha256"), "file_sha256() {", "real_file_sha256() {", 1) + "\n" +
+		"file_sha256() { real_file_sha256 \"$1\"; if [ \"$checksum_failure_path\" = \"$1\" ]; then return 73; fi; }\n" +
+		extractE2EShellFunction(t, source, "assert_late_activation_candidate_unchanged")
+	for _, mutation := range []string{"none", "chart", "values", "image", "sequence", "chart checksum failure", "values checksum failure"} {
+		t.Run(mutation, func(t *testing.T) {
+			t.Parallel()
+			directory := t.TempDir()
+			chartPath := filepath.Join(directory, "candidate.tgz")
+			valuesPath := filepath.Join(directory, "candidate-values.json")
+			chart, values := []byte("immutable chart fixture"), []byte(`{"image":"candidate"}`)
+			chartDigest, valuesDigest := sha256.Sum256(chart), sha256.Sum256(values)
+			image, sequence := "candidate-image", "2"
+			checksumFailurePath := ""
+			switch mutation {
+			case "chart":
+				chart = []byte("replacement chart")
+			case "values":
+				values = []byte(`{"image":"replacement"}`)
+			case "image":
+				image = "replacement-image"
+			case "sequence":
+				sequence = "3"
+			case "chart checksum failure":
+				checksumFailurePath = chartPath
+			case "values checksum failure":
+				checksumFailurePath = valuesPath
+			}
+			for path, contents := range map[string][]byte{chartPath: chart, valuesPath: values} {
+				if err := os.WriteFile(path, contents, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			command := exec.Command(shPath, "-c", "set -eu\nfail() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"+functions+"\nassert_late_activation_candidate_unchanged\n")
+			command.Env = append(os.Environ(), "E2E_NEXT_CHART_PACKAGE="+chartPath, "E2E_NEXT_VALUES_FILE="+valuesPath,
+				"E2E_NEXT_CONTROLLER_IMAGE="+image, "E2E_NEXT_RELEASE_SEQUENCE="+sequence,
+				fmt.Sprintf("late_candidate_chart_sha256=%x", chartDigest), fmt.Sprintf("late_candidate_values_sha256=%x", valuesDigest),
+				"late_candidate_image=candidate-image", "late_next_sequence=2", "checksum_failure_path="+checksumFailurePath)
+			output, err := command.CombinedOutput()
+			if got, want := err == nil, mutation == "none"; got != want {
+				t.Fatalf("candidate retry accepted = %t, want %t: %s", got, want, output)
+			}
+		})
+	}
+}
+
+func TestLateActivationCutoverRequiresExactBindings(t *testing.T) {
+	t.Parallel()
+	jqPath, err := exec.LookPath("jq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := extractE2EShellFunction(t, readE2ESource(t, repositoryE2EWiringFiles().crdUpgrade), "assert_late_activation_cutover")
+	_, filter, found := strings.Cut(source, `--arg candidate "$late_candidate_service_account" --arg previous "$current_sequence_service_account" '`+"\n")
+	if !found {
+		t.Fatal("late activation binding filter start is missing")
+	}
+	filter, _, found = strings.Cut(filter, "' \"$WORK_DIR/late-activation-bindings.json\"")
+	if !found {
+		t.Fatal("late activation binding filter end is missing")
+	}
+	for _, topology := range []struct{ namespace, coordination string }{
+		{"operator", "coordination"}, {"operator", "operator"}, {"operator", "default"},
+		{"default", "coordination"}, {"default", "default"},
+	} {
+		for _, mutation := range []string{"none", "missing", "duplicate", "previous", "foreign previous grant", "extra subject", "missing certificate", "wrong role", "wrong namespace", "extra discovery"} {
+			t.Run(topology.namespace+"/"+topology.coordination+"/"+mutation, func(t *testing.T) {
+				t.Parallel()
+				subject := func(name string) map[string]any {
+					return map[string]any{"kind": "ServiceAccount", "name": name, "namespace": topology.namespace}
+				}
+				binding := func(kind, namespace, name, roleKind string, certificate bool) map[string]any {
+					subjects := []any{subject("candidate")}
+					if certificate {
+						subjects = append(subjects, subject("certificate"))
+					}
+					return map[string]any{"kind": kind, "metadata": map[string]any{"name": name, "namespace": namespace},
+						"roleRef": map[string]any{"apiGroup": "rbac.authorization.k8s.io", "kind": roleKind, "name": name}, "subjects": subjects}
+				}
+				bindings := []any{
+					binding("ClusterRoleBinding", "", "controller", "ClusterRole", false),
+					binding("RoleBinding", topology.namespace, "controller-runtime-admission", "Role", true),
+					binding("RoleBinding", topology.coordination, "controller", "Role", false),
+				}
+				if topology.namespace != "default" {
+					bindings = append(bindings, binding("RoleBinding", "default", "controller-runtime-discovery", "Role", true))
+				}
+				runtimeBinding := bindings[1].(map[string]any)
+				switch mutation {
+				case "missing":
+					bindings = bindings[:len(bindings)-1]
+				case "duplicate":
+					bindings = append(bindings, bindings[0])
+				case "previous":
+					bindings[0].(map[string]any)["subjects"] = []any{subject("previous")}
+				case "foreign previous grant":
+					foreign := binding("ClusterRoleBinding", "", "foreign", "ClusterRole", false)
+					foreign["subjects"] = []any{subject("previous")}
+					bindings = append(bindings, foreign)
+				case "extra subject":
+					runtimeBinding["subjects"] = append(runtimeBinding["subjects"].([]any), subject("extra"))
+				case "missing certificate":
+					runtimeBinding["subjects"] = []any{subject("candidate")}
+				case "wrong role":
+					runtimeBinding["roleRef"].(map[string]any)["name"] = "foreign"
+				case "wrong namespace":
+					runtimeBinding["metadata"].(map[string]any)["namespace"] = "foreign"
+				case "extra discovery":
+					bindings = append(bindings, binding("RoleBinding", "default", "controller-runtime-discovery", "Role", true))
+				}
+				fixture, err := json.Marshal(map[string]any{"items": bindings})
+				if err != nil {
+					t.Fatal(err)
+				}
+				command := exec.Command(jqPath, "-e", "--arg", "namespace", topology.namespace, "--arg", "coordination", topology.coordination,
+					"--arg", "controller", "controller", "--arg", "certificate", "certificate", "--arg", "candidate", "candidate", "--arg", "previous", "previous", filter)
+				command.Stdin = bytes.NewReader(fixture)
+				output, err := command.CombinedOutput()
+				if got, want := err == nil, mutation == "none"; got != want {
+					t.Fatalf("candidate bindings accepted = %t, want %t: %s", got, want, output)
+				}
+			})
+		}
 	}
 }
 
@@ -2940,64 +3139,64 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		{
 			name: "upgrade child call removed",
 			old: "E2E_PHASE=upgrade \\\n" +
-				"\t\"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
+				"\trun_recorded_phase upgrade \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
 			replacement: `true # upgrade child call removed`,
 			wantError:   "candidate upgrade lifecycle",
 		},
 		{
 			name: "upgrade child call hidden in false branch",
 			old: "E2E_PHASE=upgrade \\\n" +
-				"\t\"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
+				"\trun_recorded_phase upgrade \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"",
 			replacement: "if false; then\n\tE2E_PHASE=upgrade \\\n" +
-				"\t\t\"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"\nfi",
+				"\t\trun_recorded_phase upgrade \"$ROOT_DIR/hack/e2e-crd-upgrade.sh\"\nfi",
 			wantError: "always-false wrapper",
 		},
 		{
 			name:        "high availability lifecycle omitted",
-			old:         `"$ROOT_DIR/hack/e2e-ha.sh"`,
+			old:         `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`,
 			replacement: `true # high availability lifecycle omitted`,
 			wantError:   "high-availability lifecycle",
 		},
 		{
 			name:        "high availability lifecycle hidden in false branch",
-			old:         `"$ROOT_DIR/hack/e2e-ha.sh"`,
-			replacement: "if false; then\n\t\"$ROOT_DIR/hack/e2e-ha.sh\"\nfi",
+			old:         `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`,
+			replacement: "if false; then\n\trun_recorded_phase ha \"$ROOT_DIR/hack/e2e-ha.sh\"\nfi",
 			wantError:   "always-false wrapper",
 		},
 		{
 			name:        "control plane lifecycle omitted",
-			old:         `"$ROOT_DIR/hack/e2e-assert.sh"`,
+			old:         `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`,
 			replacement: `true # control plane lifecycle omitted`,
 			wantError:   "control-plane lifecycle",
 		},
 		{
 			name:        "control plane lifecycle hidden in false branch",
-			old:         `"$ROOT_DIR/hack/e2e-assert.sh"`,
-			replacement: "if false; then\n\t\"$ROOT_DIR/hack/e2e-assert.sh\"\nfi",
+			old:         `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`,
+			replacement: "if false; then\n\trun_recorded_phase assert \"$ROOT_DIR/hack/e2e-assert.sh\"\nfi",
 			wantError:   "always-false wrapper",
 		},
 		{
 			name:        "certificate lifecycle omitted",
-			old:         `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
+			old:         `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
 			replacement: `true # certificate lifecycle omitted`,
 			wantError:   "certificate lifecycle",
 		},
 		{
 			name:        "certificate lifecycle hidden in false branch",
-			old:         `"$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
-			replacement: "if false; then\n\t\"$ROOT_DIR/hack/e2e-cert-rotation.sh\"\nfi",
+			old:         `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`,
+			replacement: "if false; then\n\trun_recorded_phase cert-rotation \"$ROOT_DIR/hack/e2e-cert-rotation.sh\"\nfi",
 			wantError:   "always-false wrapper",
 		},
 		{
 			name:        "data plane lifecycle omitted",
-			old:         `"$ROOT_DIR/hack/e2e-dataplane.sh"`,
+			old:         `run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"`,
 			replacement: `true # data plane lifecycle omitted`,
 			wantError:   "data-plane and OCI lifecycle",
 		},
 		{
 			name:        "data plane lifecycle hidden in false branch",
-			old:         `"$ROOT_DIR/hack/e2e-dataplane.sh"`,
-			replacement: "if false; then\n\t\"$ROOT_DIR/hack/e2e-dataplane.sh\"\nfi",
+			old:         `run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"`,
+			replacement: "if false; then\n\trun_recorded_phase dataplane \"$ROOT_DIR/hack/e2e-dataplane.sh\"\nfi",
 			wantError:   "always-false wrapper",
 		},
 		{
@@ -3044,16 +3243,19 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "installed chart export omitted",
-			old:         "\nexport_release_chart\nprintf 'e2e: PASS Kubernetes=%s cluster=%s\\n'",
-			replacement: "\n: # installed chart export omitted\nprintf 'e2e: PASS Kubernetes=%s cluster=%s\\n'",
+			old:         "\nexport_release_chart\nPHASE_COMPLETED=1\nif [ -n \"$SKIPPED_PHASES\" ]; then",
+			replacement: "\n: # installed chart export omitted\nPHASE_COMPLETED=1\nif [ -n \"$SKIPPED_PHASES\" ]; then",
 			wantError:   "post-lifecycle installed chart export",
 		},
 		{
 			name: "installed chart export moved after terminal evidence",
 			old: "export_release_chart\n" +
-				"printf 'e2e: PASS Kubernetes=%s cluster=%s\\n' \"$server_version\" \"$CLUSTER_NAME\"",
-			replacement: "printf 'e2e: PASS Kubernetes=%s cluster=%s\\n' \"$server_version\" \"$CLUSTER_NAME\"\n" +
-				"export_release_chart",
+				"PHASE_COMPLETED=1\n" +
+				"if [ -n \"$SKIPPED_PHASES\" ]; then",
+			replacement: "PHASE_COMPLETED=1\n" +
+				"printf 'e2e: PASS Kubernetes=%s cluster=%s\\n' \"$server_version\" \"$CLUSTER_NAME\"\n" +
+				"export_release_chart\n" +
+				"if [ -n \"$SKIPPED_PHASES\" ]; then",
 			wantError: "terminal Kubernetes lifecycle evidence",
 		},
 		{
@@ -3073,6 +3275,18 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			old:         `printf 'e2e: PASS Kubernetes=%s cluster=%s\n' "$server_version" "$CLUSTER_NAME"`,
 			replacement: `printf '%s\n' 'e2e lifecycle finished without evidence'`,
 			wantError:   "terminal Kubernetes lifecycle evidence",
+		},
+		{
+			name:        "diagnosis run reaches the pass line",
+			old:         `if [ -n "$SKIPPED_PHASES" ]; then`,
+			replacement: `if false; then`,
+			wantError:   "diagnosis-only terminal evidence",
+		},
+		{
+			name:        "phase left out without a record",
+			old:         "\t\t\tSKIPPED_PHASES=\"$SKIPPED_PHASES $recorded_phase\"\n",
+			replacement: "",
+			wantError:   "diagnosis phase record",
 		},
 		{
 			name:        "early successful exit",
@@ -4181,8 +4395,8 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD late activation dual captures are not armed",
 			child:       "crd-upgrade",
-			old:         "\tarm_late_activation_hook_log_captures\n",
-			replacement: "\t: # late activation hook captures omitted\n",
+			old:         "\tcreate_late_activation_blocker\n\tarm_late_activation_hook_log_captures\n",
+			replacement: "\tcreate_late_activation_blocker\n\t: # late activation hook captures omitted\n",
 			wantError:   "late activation dual capture arming",
 		},
 		{
@@ -4370,7 +4584,7 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			child:       "crd-upgrade",
 			old:         "emit_late_activation_reconcile_diagnostic() {\n",
 			replacement: "emit_late_activation_reconcile_diagnostic() {\n\tcat \"$LATE_ACTIVATION_RECONCILE_LOG_FILE\" >&2\n",
-			wantError:   "late activation reconcile safe diagnostic emission",
+			wantError:   "exact reconcile blocker diagnostic emission contract",
 		},
 		{
 			name:        "CRD late activation preflight is not name-bound",
@@ -4452,16 +4666,163 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD late failure skips the activation marker check",
 			child:       "crd-upgrade",
-			old:         `fail "late failure advanced the release activation marker past sequence $late_current_sequence"`,
+			old:         `fail "late failure did not preserve the exact predecessor sequence and candidate drain tuple"`,
 			replacement: `true # activation marker check removed`,
-			wantError:   "late activation marker remains uncommitted",
+			wantError:   "late activation exact pending drain tuple",
 		},
 		{
-			name:        "CRD late failure skips current-release Deployment restore",
+			name:        "CRD late failure skips candidate RBAC cutover proof",
 			child:       "crd-upgrade",
-			old:         `restore_runtime_deployment_snapshot "$CONTROLLER_DEPLOYMENT" "$controller_snapshot"`,
-			replacement: `true # current-release restore removed`,
-			wantError:   "current-release Deployment restore",
+			old:         "\tassert_late_activation_cutover\n",
+			replacement: "\t: # candidate RBAC cutover proof removed\n",
+			wantError:   "late activation candidate cutover boundary",
+		},
+		{
+			name:        "CRD late failure accepts active credentials",
+			child:       "crd-upgrade",
+			old:         `.data["controller-credentials"] == "draining" and`,
+			replacement: `.data["controller-credentials"] == "active" and`,
+			wantError:   "late activation exact pending drain tuple",
+		},
+		{
+			name:        "CRD late failure accepts the wrong drain target",
+			child:       "crd-upgrade",
+			old:         `.data["controller-credentials-target-release-sequence"] == $next and`,
+			replacement: `.data["controller-credentials-target-release-sequence"] == $current and`,
+			wantError:   "late activation exact pending drain tuple",
+		},
+		{
+			name:        "CRD late failure ignores the full drain attempt",
+			child:       "crd-upgrade",
+			old:         `.data["controller-credentials-attempt"] == $attempt`,
+			replacement: `.data["controller-credentials-attempt"] != ""`,
+			wantError:   "late activation exact pending drain tuple",
+		},
+		{
+			name:        "CRD late failure permits extra drain fields",
+			child:       "crd-upgrade",
+			old:         `(.data | keys | sort) == ["active-release-sequence", "controller-credentials", "controller-credentials-attempt", "controller-credentials-target-release-sequence"] and`,
+			replacement: `(.data | length) >= 4 and`,
+			wantError:   "late activation exact pending drain tuple",
+		},
+		{
+			name:        "CRD late failure skips predecessor authorization denial",
+			child:       "crd-upgrade",
+			old:         `jq -e '.status.allowed == false and (.status.evaluationError // "") == ""' \`,
+			replacement: `jq -e '.status.allowed != null' \`,
+			wantError:   "late activation predecessor authorization denial",
+		},
+		{
+			name:        "CRD recovery permits changed candidate image",
+			child:       "crd-upgrade",
+			old:         `[ "$E2E_NEXT_CONTROLLER_IMAGE" != "$late_candidate_image" ] ||`,
+			replacement: `[ -z "$E2E_NEXT_CONTROLLER_IMAGE" ] ||`,
+			wantError:   "late activation immutable candidate retry inputs",
+		},
+		{
+			name:        "CRD recovery permits changed candidate package",
+			child:       "crd-upgrade",
+			old:         `if [ "$late_retry_chart_sha256" != "$late_candidate_chart_sha256" ] ||`,
+			replacement: `if [ ! -f "$E2E_NEXT_CHART_PACKAGE" ] ||`,
+			wantError:   "late activation immutable candidate retry inputs",
+		},
+		{
+			name:        "CRD recovery ignores candidate chart checksum failure",
+			child:       "crd-upgrade",
+			old:         `fail "could not checksum the late activation candidate chart"`,
+			replacement: `: # checksum failure ignored`,
+			wantError:   "late activation immutable candidate retry inputs",
+		},
+		{
+			name:        "CRD recovery ignores candidate values checksum failure",
+			child:       "crd-upgrade",
+			old:         `fail "could not checksum the late activation candidate values"`,
+			replacement: `: # checksum failure ignored`,
+			wantError:   "late activation immutable candidate retry inputs",
+		},
+		{
+			name:        "CRD recovery skips candidate identity recheck",
+			child:       "crd-upgrade",
+			old:         "\tassert_late_activation_candidate_unchanged\n",
+			replacement: "\t: # changed candidate allowed\n",
+			wantError:   "successor read-only Job dispatch before the late activation failure",
+		},
+		{
+			name:        "CRD recovery removes blocker before staging the UID gap",
+			child:       "crd-upgrade",
+			old:         "\tstage_read_only_job_uid_gap\n\tassert_late_activation_drain\n\tassert_late_activation_candidate_unchanged\n\tdelete_late_activation_blocker\n",
+			replacement: "\tdelete_late_activation_blocker\n\tstage_read_only_job_uid_gap\n\tassert_late_activation_drain\n\tassert_late_activation_candidate_unchanged\n",
+			wantError:   "successor read-only Job dispatch before the late activation failure",
+		},
+		{
+			name:        "CRD recovery permits extra Helm revisions",
+			child:       "crd-upgrade",
+			old:         `[ "$after_revision" -eq $((late_revision + 1)) ] ||`,
+			replacement: `[ "$after_revision" -gt "$late_revision" ] ||`,
+			wantError:   "same-candidate recovery exactly one retry revision",
+		},
+		{
+			name:        "CRD recovery skips candidate readiness",
+			child:       "crd-upgrade",
+			old:         "\twait_runtime_ready\n\twait_for_read_only_job_cleanup\n\tquiesce_read_only_job_schema\n\tafter_revision=",
+			replacement: "\twait_for_read_only_job_cleanup\n\tquiesce_read_only_job_schema\n\tafter_revision=",
+			wantError:   "successor read-only Job cleanup after activation",
+		},
+		{
+			name:        "CRD recovery returns successfully before doing any work",
+			child:       "crd-upgrade",
+			old:         "run_next_release_upgrade_proof() {\n",
+			replacement: "run_next_release_upgrade_proof() {\n\treturn 0\n",
+			wantError:   "successful return",
+		},
+		{
+			name:        "CRD recovery drain helper returns before its assertions",
+			child:       "crd-upgrade",
+			old:         "assert_late_activation_drain() {\n",
+			replacement: "assert_late_activation_drain() {\n\treturn 0\n",
+			wantError:   "successful return",
+		},
+		{
+			name:        "CRD recovery candidate helper returns before its assertions",
+			child:       "crd-upgrade",
+			old:         "assert_late_activation_candidate_unchanged() {\n",
+			replacement: "assert_late_activation_candidate_unchanged() {\n\treturn 0\n",
+			wantError:   "successful return",
+		},
+		{
+			name:        "CRD recovery cutover helper returns before its assertions",
+			child:       "crd-upgrade",
+			old:         "assert_late_activation_cutover() {\n",
+			replacement: "assert_late_activation_cutover() {\n\treturn 0\n",
+			wantError:   "successful return",
+		},
+		{
+			name:        "CRD recovery manually resurrects the predecessor",
+			child:       "crd-upgrade",
+			old:         "\tprintf '%s\\n' 'e2e crd: exact late-failure drain, quiescence, and RBAC boundary proved'\n",
+			replacement: "\tstart_runtime_deployments\n\tprintf '%s\\n' 'e2e crd: exact late-failure drain, quiescence, and RBAC boundary proved'\n",
+			wantError:   "same-candidate recovery must preserve the genuine hook boundary",
+		},
+		{
+			name:        "CRD recovery retries a different chart",
+			child:       "crd-upgrade",
+			old:         "\tretry_helm_status=0\n\tif helm_e2e upgrade \"$E2E_HELM_RELEASE\" \"$E2E_NEXT_CHART_PACKAGE\" \\\n",
+			replacement: "\tretry_helm_status=0\n\tif helm_e2e upgrade \"$E2E_HELM_RELEASE\" \"$E2E_CHART_PACKAGE\" \\\n",
+			wantError:   "same-candidate recovery exact Helm retry",
+		},
+		{
+			name:        "CRD recovery skips final active tuple",
+			child:       "crd-upgrade",
+			old:         "\tassert_release_activation_sequence \\\n\t\t\"$next_release_sequence\" \"$E2E_NEXT_CONTROLLER_IMAGE\"\n",
+			replacement: "\t: # candidate activation omitted\n",
+			wantError:   "same-candidate recovery final activation and retirement",
+		},
+		{
+			name:        "CRD recovery skips predecessor admission retirement",
+			child:       "crd-upgrade",
+			old:         "\tassert_inventory_resources_absent \\\n\t\t\"$current_sequence_inventory\" \"$current_sequence_marker_name\"\n",
+			replacement: "\t: # predecessor inventory cleanup omitted\n",
+			wantError:   "same-candidate recovery final activation and retirement",
 		},
 		{
 			name:        "CRD read-only Job terminal fixture bypasses Job controller",
@@ -4825,8 +5186,8 @@ func TestUpgradeHookProgressProofRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "adversary UID omitted",
-			old:         "\t\t--as-uid \"$HOOK_PROGRESS_ADVERSARY_UID\" \\\n",
-			replacement: "",
+			old:         "\tkubectl --kubeconfig \"$E2E_KUBECONFIG\" \\\n\t\t--as \"system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$HOOK_PROGRESS_ADVERSARY\" \\\n\t\t--as-uid \"$HOOK_PROGRESS_ADVERSARY_UID\" \\\n",
+			replacement: "\tkubectl --kubeconfig \"$E2E_KUBECONFIG\" \\\n\t\t--as \"system:serviceaccount:$E2E_OPERATOR_NAMESPACE:$HOOK_PROGRESS_ADVERSARY\" \\\n",
 			wantError:   "UID-bound adversary impersonation",
 		},
 		{
@@ -4843,8 +5204,8 @@ func TestUpgradeHookProgressProofRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "Pod main patch authorization removed",
-			old:         "\texpect_hook_progress_authorization yes patch pods\n",
-			replacement: "\texpect_hook_progress_authorization no patch pods\n",
+			old:         "\t\t\t\t'get pods' 'patch pods' 'get pods/status' 'patch pods/status'; do\n",
+			replacement: "\t\t\t\t'get pods' 'get pods/status' 'patch pods/status'; do\n",
 			wantError:   "least-privilege adversary authorization",
 		},
 		{
@@ -4931,6 +5292,7 @@ func verifyUpgradeHookProgressProofSource(path string) error {
 	}
 	criticalFunctions := []string{
 		"hook_progress_adversary_kube",
+		"wait_for_hook_progress_authorization",
 		"wait_for_hook_progress_hold_ready",
 		"probe_hook_progress_hold_state",
 		"expect_hook_progress_hold_denial",
@@ -4990,18 +5352,16 @@ func verifyUpgradeHookProgressProofSource(path string) error {
 		`resources: ["jobs"]`,
 		`resources: ["jobs/status"]`,
 		`resources: ["pods", "pods/status"]`,
-		`expect_hook_progress_authorization yes delete jobs`,
-		`expect_hook_progress_authorization yes patch jobs/status`,
-		`expect_hook_progress_authorization yes patch pods`,
-		`expect_hook_progress_authorization yes patch pods/status`,
-		`expect_hook_progress_authorization no create jobs`,
-		`expect_hook_progress_authorization no update jobs`,
-		`expect_hook_progress_authorization no update pods`,
+		`wait_for_hook_progress_authorization`,
 	}); err != nil {
 		return err
 	}
-	if !regexp.MustCompile(`(?m)^[ \t]*expect_hook_progress_authorization yes patch pods[ \t]*$`).Match(create) {
-		return fmt.Errorf("%s: least-privilege adversary authorization lacks Pod main-resource patch", path)
+	if err := requireHookProgressMarkers(path, "least-privilege adversary authorization", functions["wait_for_hook_progress_authorization"], []string{
+		`'delete jobs' 'get jobs' 'get jobs/status' 'patch jobs/status'`,
+		`'get pods' 'patch pods' 'get pods/status' 'patch pods/status'`,
+		`'create jobs' 'update jobs' 'update pods'`,
+	}); err != nil {
+		return err
 	}
 	if err := requireHookProgressMarkers(path, "stable hold publication", create, []string{
 		`resources: ["jobs/status"]`,

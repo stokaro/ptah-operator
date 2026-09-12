@@ -41,12 +41,14 @@ func serviceAccountOriginGuardDenialMessage() string {
 // authenticator proves that their token is bound to an expected Pod. It also
 // prevents users from minting a token for any protected ServiceAccount: only a
 // kubelet may request such a token, and it must bind that token to an expected
-// workload Pod.
+// workload Pod. The current reconcile hook may update controller bindings only
+// for the exact predecessor-to-candidate cutover during its credential drain.
 type ServiceAccountOriginGuard struct {
 	Policies                                ValidatingAdmissionPolicyReader
 	Bindings                                ValidatingAdmissionPolicyBindingReader
 	ReleaseName                             string
 	ReleaseNamespace                        string
+	CoordinationNamespace                   string
 	HookServiceAccountName                  string
 	ControllerServiceAccountName            string
 	ControllerServiceAccountManaged         bool
@@ -54,6 +56,7 @@ type ServiceAccountOriginGuard struct {
 	PreviousControllerServiceAccountUID     types.UID
 	PreviousControllerServiceAccountManaged bool
 	PreviousControllerReleaseSequence       int32
+	PreviousControllerManagerImage          string
 	CertificateServiceAccountName           string
 	ControllerDeploymentName                string
 	CertificateDeploymentName               string
@@ -77,6 +80,7 @@ func NewServiceAccountOriginGuard(rollout *RolloutGuard) *ServiceAccountOriginGu
 		Bindings:                                rollout.Bindings,
 		ReleaseName:                             rollout.ReleaseName,
 		ReleaseNamespace:                        rollout.ReleaseNamespace,
+		CoordinationNamespace:                   rollout.CoordinationNamespace,
 		HookServiceAccountName:                  rollout.HookServiceAccountName,
 		ControllerServiceAccountName:            rollout.ControllerServiceAccountName,
 		ControllerServiceAccountManaged:         rollout.ControllerServiceAccountManaged,
@@ -84,6 +88,7 @@ func NewServiceAccountOriginGuard(rollout *RolloutGuard) *ServiceAccountOriginGu
 		PreviousControllerServiceAccountUID:     rollout.PreviousControllerServiceAccountUID,
 		PreviousControllerServiceAccountManaged: rollout.PreviousControllerServiceAccountManaged,
 		PreviousControllerReleaseSequence:       rollout.PreviousControllerReleaseSequence,
+		PreviousControllerManagerImage:          rollout.PreviousControllerManagerImage,
 		CertificateServiceAccountName:           rollout.CertificateDeploymentName,
 		ControllerDeploymentName:                rollout.ControllerDeploymentName,
 		CertificateDeploymentName:               rollout.CertificateDeploymentName,
@@ -225,7 +230,7 @@ func (g *ServiceAccountOriginGuard) policy() (*admissionregistrationv1.Validatin
 				{Name: "callerPodUID", Expression: fmt.Sprintf(`has(request.userInfo.extra) && %q in request.userInfo.extra && request.userInfo.extra[%q].size() == 1 ? request.userInfo.extra[%q][0] : ""`, serviceAccountPodUIDExtra, serviceAccountPodUIDExtra, serviceAccountPodUIDExtra)},
 			},
 			Validations: []admissionregistrationv1.Validation{
-				{Expression: g.activationParameterExpression(), Message: denial},
+				{Expression: fmt.Sprintf("(%s) && (%s)", g.activationParameterExpression(), g.bindingTransitionExpression()), Message: denial},
 				{
 					Expression: fmt.Sprintf(
 						`!variables.isControllerCaller || (variables.controllerCredentialPhase == %q && (%s))`,
@@ -287,6 +292,87 @@ func (g *ServiceAccountOriginGuard) activationParameterExpression() string {
 	return activation.activationObjectShapeExpression("params")
 }
 
+// bindingTransitionExpression confines the hook's name-bounded bind authority
+// to the subject-only cutover. Scope the fence to this exact hook, not its
+// release family: a retained predecessor policy must permit its successor.
+// Keep this in the first validation, which the frozen legacy conversion drops.
+func (g *ServiceAccountOriginGuard) bindingTransitionExpression() string {
+	caller := fmt.Sprintf(`request.userInfo.username == %q && request.resource.group == "rbac.authorization.k8s.io" && request.resource.resource in ["clusterrolebindings", "rolebindings"]`,
+		"system:serviceaccount:"+g.ReleaseNamespace+":"+g.HookServiceAccountName)
+	if g.PreviousControllerServiceAccountName == "" {
+		return "!(" + caller + ")"
+	}
+	targets := []string{
+		g.bindingTransitionTargetExpression("ClusterRoleBinding", "", g.ControllerDeploymentName, false),
+		g.bindingTransitionTargetExpression("RoleBinding", g.CoordinationNamespace, g.ControllerDeploymentName, false),
+	}
+	if g.PreviousControllerReleaseSequence > 0 {
+		targets = append(targets, g.bindingTransitionTargetExpression("RoleBinding", g.ReleaseNamespace, g.ControllerDeploymentName+"-runtime-admission", true))
+		if g.ReleaseNamespace != metav1.NamespaceDefault {
+			targets = append(targets, g.bindingTransitionTargetExpression("RoleBinding", metav1.NamespaceDefault, controllerDiscoveryBindingName(g.ControllerDeploymentName), true))
+		}
+	}
+	parts := []string{
+		`request.operation == "UPDATE" && (!has(request.subResource) || request.subResource == "") && request.resource.version == "v1" && object != null && oldObject != null`,
+		strings.ReplaceAll(generatedPodRequestNameExpression(g.HookServiceAccountName), "request.name", "variables.callerPodName"),
+		`variables.callerPodUID != ""`,
+		fmt.Sprintf(`variables.activeRelease == %d && variables.controllerCredentialPhase == %q && (%s) == %d && (%s) == %q`,
+			g.PreviousControllerReleaseSequence, ControllerCredentialsDraining,
+			decimalCEL("params", controllerCredentialsTargetDataKey, false), g.ReleaseSequence,
+			stringDataCEL("params", controllerCredentialsAttemptDataKey),
+			hookIdentityDigest(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)),
+		`has(object.metadata.uid) && object.metadata.uid != "" && has(object.metadata.resourceVersion) && object.metadata.resourceVersion != ""`,
+		fmt.Sprintf(`has(object.metadata.labels) && object.metadata.labels[%q] == "Helm" && object.metadata.labels[%q] == %q && has(object.metadata.annotations) && object.metadata.annotations[%q] == %q && object.metadata.annotations[%q] == %q`,
+			managedByLabel, instanceLabel, g.ReleaseName, helmReleaseNameAnnotation, g.ReleaseName, helmReleaseNamespaceAnnotation, g.ReleaseNamespace),
+		`(!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && !has(object.metadata.deletionGracePeriodSeconds) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0)`,
+	}
+	// managedFields is server-maintained and may change before validating
+	// admission. Every semantic metadata field remains unchanged, including
+	// resourceVersion, so this cannot be used to bypass the optimistic lock.
+	for _, field := range []string{"name", "generateName", "namespace", "selfLink", "uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "deletionGracePeriodSeconds", "labels", "annotations", "ownerReferences", "finalizers"} {
+		newPath, oldPath := "object.metadata."+field, "oldObject.metadata."+field
+		parts = append(parts, fmt.Sprintf(`has(%[1]s) == has(%[2]s) && (!has(%[1]s) || %[1]s == %[2]s)`, newPath, oldPath))
+	}
+	parts = append(parts, "("+strings.Join(targets, " || ")+")")
+	return "!(" + caller + ") || (" + strings.Join(parts, " && ") + ")"
+}
+
+func (g *ServiceAccountOriginGuard) bindingTransitionTargetExpression(kind, namespace, name string, certificate bool) string {
+	resource, roleKind := "rolebindings", "Role"
+	if kind == "ClusterRoleBinding" {
+		resource, roleKind = "clusterrolebindings", "ClusterRole"
+	}
+	parts := []string{
+		fmt.Sprintf(`request.resource.resource == %q && request.kind.group == "rbac.authorization.k8s.io" && request.kind.version == "v1" && request.kind.kind == %q && request.name == %q && object.metadata.name == %q`, resource, kind, name, name),
+		fmt.Sprintf(`dyn(object).roleRef == {"apiGroup": "rbac.authorization.k8s.io", "kind": %q, "name": %q} && dyn(oldObject).roleRef == dyn(object).roleRef`, roleKind, name),
+	}
+	if namespace == "" {
+		parts = append(parts, `(!has(request.namespace) || request.namespace == "") && (!has(object.metadata.namespace) || object.metadata.namespace == "")`)
+	} else {
+		parts = append(parts, fmt.Sprintf(`has(request.namespace) && request.namespace == %q && has(object.metadata.namespace) && object.metadata.namespace == %q`, namespace, namespace))
+	}
+	count := 1
+	if certificate {
+		count++
+	}
+	parts = append(parts, fmt.Sprintf(`has(dyn(object).subjects) && dyn(object).subjects.size() == %d && has(dyn(oldObject).subjects) && dyn(oldObject).subjects.size() == %d`, count, count))
+	parts = append(parts,
+		bindingServiceAccountSubjectExpression("dyn(oldObject).subjects[0]", g.ReleaseNamespace, g.PreviousControllerServiceAccountName),
+		bindingServiceAccountSubjectExpression("dyn(object).subjects[0]", g.ReleaseNamespace, g.ControllerServiceAccountName),
+	)
+	if certificate {
+		parts = append(parts,
+			bindingServiceAccountSubjectExpression("dyn(oldObject).subjects[1]", g.ReleaseNamespace, g.CertificateServiceAccountName),
+			`dyn(object).subjects[1] == dyn(oldObject).subjects[1]`,
+		)
+	}
+	return "(" + strings.Join(parts, " && ") + ")"
+}
+
+func bindingServiceAccountSubjectExpression(subject, namespace, name string) string {
+	return fmt.Sprintf(`%[1]s.kind == "ServiceAccount" && %[1]s.name == %[2]q && %[1]s.namespace == %[3]q && (!has(%[1]s.apiGroup) || %[1]s.apiGroup == "")`, subject, name, namespace)
+}
+
 func (g *ServiceAccountOriginGuard) binding() *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
 	name := ServiceAccountOriginGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage)
 	deny := admissionregistrationv1.DenyAction
@@ -323,6 +409,7 @@ func (g *ServiceAccountOriginGuard) metadata(name string) metav1.ObjectMeta {
 			PreviousControllerServiceAccountUIDAnnotation:     string(g.PreviousControllerServiceAccountUID),
 			PreviousControllerServiceAccountManagedAnnotation: strconv.FormatBool(g.PreviousControllerServiceAccountManaged),
 			PreviousControllerReleaseSequenceAnnotation:       strconv.FormatInt(int64(g.PreviousControllerReleaseSequence), 10),
+			PreviousControllerManagerImageAnnotation:          g.PreviousControllerManagerImage,
 		},
 		Labels: map[string]string{
 			managedByLabel:                rolloutGuardManagedBy,
@@ -409,6 +496,7 @@ func (g *ServiceAccountOriginGuard) validate() error {
 	for name, value := range map[string]string{
 		"release name":                     g.ReleaseName,
 		"release namespace":                g.ReleaseNamespace,
+		"coordination namespace":           g.CoordinationNamespace,
 		"hook service account name":        g.HookServiceAccountName,
 		"controller service account name":  g.ControllerServiceAccountName,
 		"certificate service account name": g.CertificateServiceAccountName,

@@ -562,8 +562,14 @@ collect_diagnostics() {
 	printf '%s\n' 'e2e data plane: raw events and logs are suppressed to protect credential-isolation failures' >&2
 }
 
+# A refused parameter expansion (${VAR:?...}) or an unset name under set -u
+# ends the shell without setting $?, so an EXIT trap that reports $? reads the
+# previous command's success and a script that never finished reports a pass.
+# The latch is set where the script reaches its own end; the trap trusts it.
+PHASE_COMPLETED=0
 cleanup() {
 	status=$?
+	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
 	set +e
 	if [ "$status" -ne 0 ]; then
@@ -6165,4 +6171,5 @@ assert_external_postgresql_catalog
 audit_runtime_credentials
 assert_observed_jobs_audited
 
+PHASE_COMPLETED=1
 printf '%s\n' 'e2e data plane: PASS PostgreSQL, external PostgreSQL, MySQL, OCI, restart, and fault lifecycle'

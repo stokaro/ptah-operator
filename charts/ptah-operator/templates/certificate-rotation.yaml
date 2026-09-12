@@ -147,6 +147,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certificate-rotation
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
@@ -190,6 +191,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certificate-rotation
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -239,6 +241,7 @@ metadata:
   name: {{ $rotatorName }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certificate-rotation
 rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
@@ -298,6 +301,7 @@ metadata:
   name: {{ $rotatorName }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: certificate-rotation
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

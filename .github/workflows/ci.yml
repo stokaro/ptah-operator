@@ -159,7 +159,10 @@ jobs:
     name: Kubernetes ${{ matrix.minor }} full lifecycle
     needs: [support-matrix, verify]
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Data-plane and fault acceptance already approach 90 minutes on hosted
+    # runners. Leave a bounded budget for the subsequent upgrade and uninstall
+    # proofs; their individual operation deadlines remain unchanged.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:

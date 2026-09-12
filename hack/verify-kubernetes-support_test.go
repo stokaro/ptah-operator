@@ -414,12 +414,12 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "        id: untrusted-lifecycle\n",
 		},
 		"job default shell": {
-			old: "    timeout-minutes: 90\n    strategy:\n",
-			new: "    timeout-minutes: 90\n    defaults:\n      run:\n        shell: 'true {0}'\n    strategy:\n",
+			old: "    timeout-minutes: 180\n    strategy:\n",
+			new: "    timeout-minutes: 180\n    defaults:\n      run:\n        shell: 'true {0}'\n    strategy:\n",
 		},
 		"job default working directory": {
-			old: "    timeout-minutes: 90\n    strategy:\n",
-			new: "    timeout-minutes: 90\n    defaults:\n      run:\n        working-directory: /tmp\n    strategy:\n",
+			old: "    timeout-minutes: 180\n    strategy:\n",
+			new: "    timeout-minutes: 180\n    defaults:\n      run:\n        working-directory: /tmp\n    strategy:\n",
 		},
 		"bypassed lifecycle shell": {
 			old: "        shell: bash\n        run: make e2e\n",
@@ -470,8 +470,8 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "    timeout-minutes: 30\n",
 		},
 		"E2E timeout drift": {
-			old: "    timeout-minutes: 90\n",
-			new: "    timeout-minutes: 95\n",
+			old: "    timeout-minutes: 180\n",
+			new: "    timeout-minutes: 185\n",
 		},
 		"gate timeout drift": {
 			old: "    timeout-minutes: 5\n",
@@ -785,12 +785,12 @@ func TestVerifyReleaseWorkflowRejectsSupportEvidenceMutations(t *testing.T) {
 			new: "      actions: write\n",
 		},
 		"short preflight job": {
-			old: "    timeout-minutes: 170\n",
-			new: "    timeout-minutes: 160\n",
+			old: "    timeout-minutes: 260\n",
+			new: "    timeout-minutes: 250\n",
 		},
 		"short support poll": {
-			old: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"160\"\n",
-			new: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"140\"\n",
+			old: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"250\"\n",
+			new: "          SUPPORT_POLL_TIMEOUT_MINUTES: \"230\"\n",
 		},
 		"default branch binding": {
 			old: "          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}\n",

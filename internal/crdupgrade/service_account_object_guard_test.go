@@ -410,6 +410,12 @@ func TestServiceAccountObjectGuardNamedAndCollectionDelete(t *testing.T) {
 	oldObject := serviceAccountObjectForDelete(guard, name)
 	namespace := map[string]any{"metadata": map[string]any{"name": guard.rollout.ReleaseNamespace}}
 	terminatingNamespace := map[string]any{"metadata": map[string]any{"name": guard.rollout.ReleaseNamespace, "deletionTimestamp": "2026-09-05T00:00:00Z"}}
+	cleanupAccount, err := TeardownServiceAccountName(guard.rollout.HookServiceAccountName, guard.rollout.ReleaseSequence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupPrincipal := "system:serviceaccount:" + guard.rollout.ReleaseNamespace + ":" + cleanupAccount
+	releaseGroups := []any{"system:serviceaccounts", "system:serviceaccounts:" + guard.rollout.ReleaseNamespace, "system:authenticated"}
 
 	tests := []struct {
 		name        string
@@ -466,6 +472,35 @@ func TestServiceAccountObjectGuardNamedAndCollectionDelete(t *testing.T) {
 			},
 		},
 		{name: "named delete mismatch", requestName: "different", username: "helm-installer", authorized: true, namespace: namespace},
+		{
+			name:        "release teardown identity",
+			requestName: name,
+			username:    cleanupPrincipal,
+			groups:      releaseGroups,
+			namespace:   namespace,
+			want:        true,
+		},
+		{
+			name:        "release teardown identity with an extra group",
+			requestName: name,
+			username:    cleanupPrincipal,
+			groups:      append(append([]any(nil), releaseGroups...), "system:masters"),
+			namespace:   namespace,
+		},
+		{
+			name:        "teardown identity of another namespace",
+			requestName: name,
+			username:    "system:serviceaccount:other:" + cleanupAccount,
+			groups:      []any{"system:serviceaccounts", "system:serviceaccounts:other", "system:authenticated"},
+			namespace:   namespace,
+		},
+		{
+			name:        "an identity that only looks like a teardown account",
+			requestName: name,
+			username:    "system:serviceaccount:" + guard.rollout.ReleaseNamespace + ":ptah-foreign-cleanup-v2-0123456789ab",
+			groups:      releaseGroups,
+			namespace:   namespace,
+		},
 	}
 
 	for _, test := range tests {

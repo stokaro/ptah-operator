@@ -10,12 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -272,15 +274,340 @@ func TestControllerRBACTransitionSnapshotsConstructorIdentity(t *testing.T) {
 	}
 }
 
-func TestControllerRBACTransitionRejectsUnfrozenFuturePredecessor(t *testing.T) {
+func TestControllerRBACTransitionAcceptsFrozenPredecessor(t *testing.T) {
+	t.Parallel()
+	fixture := newFrozenControllerRBACTransitionFixture(t)
+	transition := fixture.transition
+	if err := transition.Preflight(context.Background()); err != nil {
+		t.Fatalf("sequence-1 predecessor Preflight() error = %v", err)
+	}
+	if len(fixture.client.patchCalls) != 0 {
+		t.Fatal("sequence-1 predecessor preflight mutated bindings")
+	}
+	if err := transition.Transition(context.Background()); err != nil {
+		t.Fatalf("sequence-1 to sequence-2 Transition() error = %v", err)
+	}
+	if err := transition.VerifyComplete(context.Background()); err != nil {
+		t.Fatalf("sequence-1 to sequence-2 VerifyComplete() error = %v", err)
+	}
+	wantTargets := []string{
+		controllerRBACObjectKey(true, "", fixture.guard.ControllerDeploymentName),
+		controllerRBACObjectKey(false, fixture.guard.ReleaseNamespace, fixture.guard.ControllerDeploymentName+"-runtime-admission"),
+		controllerRBACObjectKey(false, fixture.guard.CoordinationNamespace, fixture.guard.ControllerDeploymentName),
+		controllerRBACObjectKey(false, corev1.NamespaceDefault, fixture.guard.ControllerDeploymentName+"-runtime-discovery"),
+	}
+	if len(fixture.client.patchCalls) != 2*len(wantTargets) {
+		t.Fatalf("transition patch count = %d, want %d", len(fixture.client.patchCalls), 2*len(wantTargets))
+	}
+	for index, call := range fixture.client.patchCalls {
+		if call.key != wantTargets[index/2] || call.dryRun != (index%2 == 0) {
+			t.Errorf("patch %d targets %s with dryRun=%t, want %s with dryRun=%t", index, call.key, call.dryRun, wantTargets[index/2], index%2 == 0)
+		}
+		var fixedSubjects []rbacv1.Subject
+		if index/2 == 1 || index/2 == 3 {
+			fixedSubjects = []rbacv1.Subject{controllerRBACServiceAccountSubject(fixture.guard.ReleaseNamespace, fixture.runtimeContract.CertificateServiceAccountName)}
+		}
+		assertControllerRBACJSONPatch(t, call.patch, fixture.guard, fixture.previousSubject(), fixture.candidateSubject(), fixedSubjects...)
+	}
+	// A fresh constructor must recognize the completed sequence transition
+	// without replaying any binding mutation.
+	retry, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := retry.Preflight(context.Background()); err != nil {
+		t.Fatalf("sequence-2 retry Preflight() error = %v", err)
+	}
+	if err := retry.Transition(context.Background()); err != nil {
+		t.Fatalf("sequence-2 retry Transition() error = %v", err)
+	}
+	if err := retry.VerifyComplete(context.Background()); err != nil {
+		t.Fatalf("sequence-2 retry VerifyComplete() error = %v", err)
+	}
+	if len(fixture.client.patchCalls) != 2*len(wantTargets) {
+		t.Fatal("completed sequence-2 retry mutated bindings")
+	}
+}
+
+func TestControllerRBACTransitionFrozenRuntimeRoleValidation(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name         string
+		identityOnly bool
+		mutate       func(*controllerRBACTransitionFixture, string)
+	}{
+		{name: "missing", mutate: func(f *controllerRBACTransitionFixture, key string) {
+			delete(f.client.roles, key)
+		}},
+		{name: "foreign ownership", mutate: func(f *controllerRBACTransitionFixture, key string) {
+			f.client.roles[key].Annotations[helmReleaseNameAnnotation] = "foreign-release"
+		}},
+		{name: "widened rules", mutate: func(f *controllerRBACTransitionFixture, key string) {
+			f.client.roles[key].Rules[0].Verbs = append(f.client.roles[key].Rules[0].Verbs, "list")
+		}},
+		{name: "replaced UID", identityOnly: true, mutate: func(f *controllerRBACTransitionFixture, key string) {
+			f.client.roles[key].UID = "replacement-runtime-role-uid"
+		}},
+		{name: "changed resourceVersion", identityOnly: true, mutate: func(f *controllerRBACTransitionFixture, key string) {
+			f.client.roles[key].ResourceVersion = "99"
+		}},
+	} {
+		for _, phase := range []string{"preflight", "before transition", "during dry-run", "after transition"} {
+			// An initial UID or resourceVersion is learned from the first exact
+			// snapshot. Only a later change can be identified as drift.
+			if test.identityOnly && phase == "preflight" {
+				continue
+			}
+			t.Run(test.name+"/"+phase, func(t *testing.T) {
+				t.Parallel()
+				fixture := newFrozenControllerRBACTransitionFixture(t)
+				key := privilegeBindingKey(fixture.guard.ReleaseNamespace, fixture.guard.ControllerDeploymentName+"-runtime-admission")
+				mutate := func() { test.mutate(fixture, key) }
+				if phase != "preflight" {
+					if err := fixture.transition.Preflight(context.Background()); err != nil {
+						t.Fatalf("initial Preflight() error = %v", err)
+					}
+				}
+				var err error
+				wantPatchCalls := 0
+				switch phase {
+				case "preflight":
+					mutate()
+					err = fixture.transition.Preflight(context.Background())
+				case "before transition":
+					mutate()
+					err = fixture.transition.Transition(context.Background())
+				case "during dry-run":
+					fixture.client.afterDryRun = mutate
+					err = fixture.transition.Transition(context.Background())
+					wantPatchCalls = 1
+				case "after transition":
+					if err := fixture.transition.Transition(context.Background()); err != nil {
+						t.Fatalf("initial Transition() error = %v", err)
+					}
+					wantPatchCalls = len(fixture.client.patchCalls)
+					mutate()
+					err = fixture.transition.VerifyComplete(context.Background())
+				}
+				if err == nil {
+					t.Fatalf("%s accepted %s runtime Role", phase, test.name)
+				}
+				if len(fixture.client.patchCalls) != wantPatchCalls {
+					t.Fatalf("patch count = %d, want %d before runtime Role refusal", len(fixture.client.patchCalls), wantPatchCalls)
+				}
+				if phase == "during dry-run" && !fixture.client.patchCalls[0].dryRun {
+					t.Fatal("runtime Role drift allowed a persistent binding patch")
+				}
+			})
+		}
+	}
+}
+
+func TestControllerRBACTransitionFrozenRuntimeRoleAuthorizationProbe(t *testing.T) {
+	t.Parallel()
+	fixture := newFrozenControllerRBACTransitionFixture(t)
+	probe, err := fixture.transition.PredecessorAuthorizationProbe()
+	if err != nil {
+		t.Fatalf("PredecessorAuthorizationProbe() error = %v", err)
+	}
+	wantSubject := AuthorizationSubject{
+		Name:   "previous-controller",
+		User:   "system:serviceaccount:" + fixture.guard.ReleaseNamespace + ":" + fixture.guard.PreviousControllerServiceAccountName,
+		UID:    string(fixture.guard.PreviousControllerServiceAccountUID),
+		Groups: []string{"system:serviceaccounts", "system:serviceaccounts:" + fixture.guard.ReleaseNamespace, "system:authenticated"},
+	}
+	if !reflect.DeepEqual(probe.Subject, wantSubject) {
+		t.Fatalf("authorization subject = %#v, want %#v", probe.Subject, wantSubject)
+	}
+	want := authorizationv1.ResourceAttributes{
+		Namespace: fixture.guard.ReleaseNamespace,
+		Verb:      "update",
+		Group:     "",
+		Version:   "v1",
+		Resource:  "configmaps",
+		Name:      AdmissionConvergenceMarkerName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, 1),
+	}
+	candidateMarker := AdmissionConvergenceMarkerName(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName, 2)
+	matched := 0
+	for _, check := range probe.Checks {
+		if reflect.DeepEqual(check.ResourceAttributes, &want) {
+			matched++
+		}
+		if attributes := check.ResourceAttributes; attributes != nil && attributes.Resource == "configmaps" &&
+			attributes.Verb == "update" && attributes.Name == candidateMarker {
+			t.Error("predecessor authorization probe uses the candidate admission marker")
+		}
+	}
+	if matched != 1 {
+		t.Fatalf("exact sequence-1 admission marker update checks = %d, want 1", matched)
+	}
+}
+
+func TestControllerRBACTransitionFrozenRuntimeRoleCandidateRulesRequireCompleteCutover(t *testing.T) {
+	t.Parallel()
+	for cursor := 0; cursor <= 4; cursor++ {
+		t.Run(strconv.Itoa(cursor), func(t *testing.T) {
+			t.Parallel()
+			fixture := newFrozenControllerRBACTransitionFixture(t)
+			if len(fixture.transition.contract.bindings) != 4 {
+				t.Fatalf("sequence-1 transition binding count = %d, want 4", len(fixture.transition.contract.bindings))
+			}
+			for _, binding := range fixture.transition.contract.bindings[:cursor] {
+				fixture.setBindingSubject(binding, fixture.candidateSubject())
+			}
+			key := privilegeBindingKey(fixture.guard.ReleaseNamespace, fixture.guard.ControllerDeploymentName+"-runtime-admission")
+			fixture.client.roles[key].Rules = currentControllerRuntimeRoleRules(fixture.guard, fixture.runtimeContract)
+			err := fixture.transition.Preflight(context.Background())
+			if cursor != 4 {
+				if err == nil || !strings.Contains(err.Error(), "exact predecessor contract") {
+					t.Fatalf("Preflight() error = %v, want premature candidate runtime Role refusal", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("complete candidate Preflight() error = %v", err)
+			}
+			if err := fixture.transition.Transition(context.Background()); err != nil {
+				t.Fatalf("complete candidate Transition() error = %v", err)
+			}
+			if err := fixture.transition.VerifyComplete(context.Background()); err != nil {
+				t.Fatalf("complete candidate VerifyComplete() error = %v", err)
+			}
+			if len(fixture.client.patchCalls) != 0 {
+				t.Fatal("complete candidate runtime Role caused binding replay")
+			}
+		})
+	}
+}
+
+func TestFrozenPredecessorRuntimeRoleRules(t *testing.T) {
+	t.Parallel()
+	for _, namespace := range []string{"ptah-system", corev1.NamespaceDefault} {
+		t.Run(namespace, func(t *testing.T) {
+			t.Parallel()
+			fixture := newFrozenControllerRBACTransitionFixture(t)
+			fixture.guard.ReleaseNamespace = namespace
+			fixture.runtimeContract.Namespace = namespace
+			rules, err := frozenPredecessorControllerRoleRules(fixture.guard, fixture.runtimeContract)
+			if err != nil {
+				t.Fatalf("frozen predecessor role rules error = %v", err)
+			}
+			want := []rbacv1.PolicyRule{
+				{APIGroups: []string{""}, Resources: []string{"serviceaccounts"}, ResourceNames: []string{fixture.guard.PreviousControllerServiceAccountName, fixture.runtimeContract.CertificateServiceAccountName}, Verbs: []string{"get"}},
+				{APIGroups: []string{""}, Resources: []string{"limitranges"}, Verbs: []string{"list"}},
+				{APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{AdmissionConvergenceMarkerName(namespace, fixture.guard.ReleaseName, 1)}, Verbs: []string{"get", "update"}},
+				{APIGroups: []string{""}, Resources: []string{"configmaps"}, ResourceNames: []string{ReleaseActivationName}, Verbs: []string{"get"}},
+			}
+			if namespace == corev1.NamespaceDefault {
+				want = append(want, rbacv1.PolicyRule{APIGroups: []string{"discovery.k8s.io"}, Resources: []string{"endpointslices"}, Verbs: []string{"list"}})
+			}
+			if !reflect.DeepEqual(rules.runtime, want) {
+				t.Fatalf("frozen runtime Role rules = %#v, want exact sequence-1 rules %#v", rules.runtime, want)
+			}
+		})
+	}
+}
+
+// The predecessor's guard names carry its manager image, so its frozen rules
+// cannot be built without one.
+func TestControllerRBACTransitionRejectsPredecessorWithoutManagerImage(t *testing.T) {
 	t.Parallel()
 	fixture := newControllerRBACTransitionFixture(t, 0)
 	fixture.guard.ReleaseSequence = 2
 	fixture.guard.PreviousControllerReleaseSequence = 1
 	fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v2-0123456789ab"
 	_, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
-	if err == nil || !strings.Contains(err.Error(), "requires an explicit frozen predecessor role contract") {
-		t.Fatalf("NewControllerRBACTransition() error = %v, want unfrozen predecessor refusal", err)
+	if err == nil || !strings.Contains(err.Error(), "requires the predecessor manager image") {
+		t.Fatalf("NewControllerRBACTransition() error = %v, want a missing predecessor image refusal", err)
+	}
+}
+
+func TestControllerRBACTransitionRejectsUnfrozenFuturePredecessor(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name             string
+		sequence         int32
+		previousSequence int32
+	}{
+		{name: "unrecorded predecessor", sequence: 3, previousSequence: 2},
+		{name: "skipped sequence", sequence: 3, previousSequence: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newControllerRBACTransitionFixture(t, 0)
+			fixture.guard.ReleaseSequence = test.sequence
+			fixture.guard.PreviousControllerReleaseSequence = test.previousSequence
+			fixture.guard.PreviousControllerManagerImage = predecessorManagerImage
+			fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v3-0123456789ab"
+			_, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
+			if err == nil || !strings.Contains(err.Error(), "requires an explicit frozen predecessor role contract") {
+				t.Fatalf("NewControllerRBACTransition() error = %v, want unfrozen predecessor refusal", err)
+			}
+		})
+	}
+}
+
+// The frozen contract records what a shipped sequence published. A predecessor
+// running a different manager image publishes different retained guard names,
+// and the transition has to expect those, not the candidate's.
+func TestFrozenPredecessorRulesFollowThePredecessorIdentity(t *testing.T) {
+	t.Parallel()
+	fixture := newControllerRBACTransitionFixture(t, 0)
+	fixture.guard.ReleaseSequence = 2
+	fixture.guard.PreviousControllerReleaseSequence = 1
+	fixture.guard.PreviousControllerManagerImage = predecessorManagerImage
+	predecessorRules, err := frozenPredecessorControllerRoleRules(fixture.guard, fixture.runtimeContract)
+	if err != nil {
+		t.Fatalf("frozenPredecessorControllerRoleRules() error = %v", err)
+	}
+	var guardRule *rbacv1.PolicyRule
+	for index, rule := range predecessorRules.cluster {
+		if len(rule.Resources) == 2 && rule.Resources[0] == "validatingadmissionpolicies" {
+			guardRule = &predecessorRules.cluster[index]
+			break
+		}
+	}
+	if guardRule == nil {
+		t.Fatal("frozen predecessor rules do not name the retained admission guards")
+	}
+	if fixture.guard.ManagerImage == predecessorManagerImage {
+		t.Fatal("fixture must use distinct predecessor and candidate manager images")
+	}
+	// Both expected inventories use sequence 1. Only the manager image varies,
+	// so a sequence mismatch cannot hide accidentally using the candidate image.
+	namesForImage := func(managerImage string) []string {
+		namespace, release := fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName
+		return []string{
+			RolloutGuardPolicyName(1),
+			RuntimeGuardPolicyName(1),
+			RuntimePodGuardPolicyName(1),
+			HookIdentityGuardPolicyName(namespace, release, 1, managerImage),
+			HookIdentityProbeGuardPolicyName(namespace, release, 1, managerImage),
+			ReleaseActivationGuardPolicyName(namespace, release),
+			AdmissionConvergencePolicyName(namespace, release),
+			ServiceAccountObjectGuardPolicyName(namespace, release),
+			ServiceAccountOriginGuardPolicyName(namespace, release, 1, managerImage),
+			ControllerWriteGuardPolicyName(namespace, release, 1, managerImage),
+			ControllerJobWriteGuardPolicyName(namespace, release, 1, managerImage),
+			ControllerChunkWriteGuardPolicyName(namespace, release, 1, managerImage),
+			ControllerPlanWriteGuardPolicyName(namespace, release, 1, managerImage),
+			CertificateMutatingWriteGuardPolicyName(namespace, release),
+			CertificateValidatingWriteGuardPolicyName(namespace, release),
+			NamespaceDeletionGuardPolicyName(namespace, release),
+			ParentReplicaSetGuardPolicyName(namespace, release, 1, managerImage),
+			ParentHookPodOriginGuardPolicyName(namespace, release),
+			ParentHookJobOriginGuardPolicyName(namespace, release),
+			ParentHookJobContractPolicyName(namespace, release, 1, managerImage),
+		}
+	}
+	wantNames := namesForImage(predecessorManagerImage)
+	if !reflect.DeepEqual(guardRule.ResourceNames, wantNames) {
+		t.Fatalf("predecessor guard names = %v, want exact sequence-1 predecessor inventory %v", guardRule.ResourceNames, wantNames)
+	}
+	for _, name := range namesForImage(fixture.guard.ManagerImage) {
+		if !slices.Contains(wantNames, name) && slices.Contains(guardRule.ResourceNames, name) {
+			t.Errorf("predecessor rule grants candidate-image guard %s at the predecessor sequence", name)
+		}
 	}
 }
 
@@ -471,9 +798,9 @@ func TestControllerRBACTransitionFutureTargetSetSupportsEveryPrefix(t *testing.T
 			fixture.guard.ReleaseSequence = 2
 			fixture.guard.PreviousControllerReleaseSequence = 1
 			fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v2-0123456789ab"
-			// This white-box test exercises the already-structured three-target
-			// state machine. The public constructor still rejects this sequence
-			// until its predecessor role contract is frozen.
+			// This white-box test isolates the three-target cursor state machine.
+			// The frozen-predecessor test above covers the complete sequence-1
+			// to sequence-2 transition through the public constructor.
 			fixture.transition.rollout = cloneControllerRBACRollout(fixture.guard)
 			runtime := controllerRBACBindingContract{
 				name:      fixture.guard.ControllerDeploymentName + "-runtime-admission",
@@ -841,6 +1168,7 @@ func assertControllerRBACJSONPatch(
 	patch []byte,
 	guard *RolloutGuard,
 	previous, candidate rbacv1.Subject,
+	fixedSubjects ...rbacv1.Subject,
 ) {
 	t.Helper()
 	var operations []struct {
@@ -868,8 +1196,8 @@ func assertControllerRBACJSONPatch(
 	if err := json.Unmarshal(operations[4].Value, &newSubjects); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(oldSubjects, []rbacv1.Subject{previous}) ||
-		!reflect.DeepEqual(newSubjects, []rbacv1.Subject{candidate}) {
+	if !reflect.DeepEqual(oldSubjects, append([]rbacv1.Subject{previous}, fixedSubjects...)) ||
+		!reflect.DeepEqual(newSubjects, append([]rbacv1.Subject{candidate}, fixedSubjects...)) {
 		t.Fatalf("JSON patch subjects = %#v -> %#v", oldSubjects, newSubjects)
 	}
 	if !strings.Contains(string(operations[2].Value), guard.ControllerDeploymentName) {
@@ -882,6 +1210,55 @@ type controllerRBACTransitionFixture struct {
 	runtimeContract RuntimeAdmissionContract
 	client          *fakeControllerRBACClient
 	transition      *ControllerRBACTransition
+}
+
+// A predecessor sequence runs its own manager image, which its retained guard
+// names carry.
+const predecessorManagerImage = "registry.example/ptah@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+func newFrozenControllerRBACTransitionFixture(t *testing.T) *controllerRBACTransitionFixture {
+	t.Helper()
+	fixture := newControllerRBACTransitionFixture(t, 0)
+	fixture.guard.ReleaseSequence = 2
+	fixture.guard.PreviousControllerReleaseSequence = 1
+	fixture.guard.PreviousControllerManagerImage = predecessorManagerImage
+	fixture.guard.HookServiceAccountName = "ptah-e2e-operator-crd-v2-0123456789ab"
+	transition, err := NewControllerRBACTransition(fixture.guard, fixture.runtimeContract, fixture.client)
+	if err != nil {
+		t.Fatalf("NewControllerRBACTransition() out of the frozen sequence error = %v", err)
+	}
+	fixture.transition = transition
+	// Populate the sequence-1 objects absent from the legacy fixture. The
+	// transition keeps exactly the contract its public constructor built.
+	fixture.client.clusterRoles[fixture.guard.ControllerDeploymentName].Rules = sequence1ControllerClusterRoleRules(controllerRoleIdentity{
+		releaseNamespace: fixture.guard.ReleaseNamespace,
+		releaseName:      fixture.guard.ReleaseName,
+		releaseSequence:  1,
+		managerImage:     predecessorManagerImage,
+	})
+	for _, contract := range transition.contract.bindings {
+		if !contract.cluster {
+			fixture.client.roleBindings[privilegeBindingKey(contract.namespace, contract.name)] = controllerRBACRoleBinding(
+				fixture.guard, contract, fixture.previousSubject(), types.UID("binding-"+contract.name), "12",
+			)
+		}
+	}
+	discoveryName := fixture.guard.ControllerDeploymentName + "-runtime-discovery"
+	fixture.client.roles[privilegeBindingKey(corev1.NamespaceDefault, discoveryName)] = &rbacv1.Role{
+		ObjectMeta: controllerRBACObjectMeta(fixture.guard, discoveryName, corev1.NamespaceDefault, "discovery-role-uid", "7"),
+		Rules:      currentControllerDiscoveryRoleRules(),
+	}
+	runtimeName := fixture.guard.ControllerDeploymentName + "-runtime-admission"
+	predecessor := *fixture.guard
+	predecessor.ReleaseSequence = 1
+	predecessor.ManagerImage = predecessorManagerImage
+	predecessorRuntime := fixture.runtimeContract
+	predecessorRuntime.ControllerServiceAccountName = fixture.guard.PreviousControllerServiceAccountName
+	fixture.client.roles[privilegeBindingKey(fixture.guard.ReleaseNamespace, runtimeName)] = &rbacv1.Role{
+		ObjectMeta: controllerRBACObjectMeta(fixture.guard, runtimeName, fixture.guard.ReleaseNamespace, "runtime-role-uid", "7"),
+		Rules:      currentControllerRuntimeRoleRules(&predecessor, predecessorRuntime),
+	}
+	return fixture
 }
 
 func newControllerRBACTransitionFixture(t *testing.T, cursor int) *controllerRBACTransitionFixture {

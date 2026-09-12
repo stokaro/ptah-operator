@@ -325,10 +325,24 @@ func (t *ReleaseTeardown) validatedGuard() (*RolloutGuard, error) {
 	if err := guard.validateIdentity(); err != nil {
 		return nil, fmt.Errorf("validate release teardown identity: %w", err)
 	}
-	if guard.ReleaseSequence != 1 {
+	if _, recorded := releaseTeardownPredecessorInventory[guard.ReleaseSequence]; !recorded {
 		return nil, fmt.Errorf("release teardown sequence %d has no explicit predecessor identity inventory; refusing incomplete cleanup", guard.ReleaseSequence)
 	}
 	return &guard, nil
+}
+
+// releaseTeardownPredecessorInventory records what a predecessor may still have
+// left for this teardown to remove, one entry per release sequence, written
+// when that sequence is prepared and never edited afterwards.
+//
+// Nothing precedes the first sequence. The second records nothing either: a
+// release-sequence cutover retires the predecessor's admission pairs and
+// controller identity before it activates, and the lifecycle proves exactly
+// that in the upgrade before it reaches an uninstall. A sequence nobody
+// recorded is still refused.
+var releaseTeardownPredecessorInventory = map[int32][]string{
+	1: {},
+	2: {},
 }
 
 func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error) {
@@ -751,6 +765,27 @@ func (t *ReleaseTeardown) hookIdentityProbeMarkerTarget(guard *RolloutGuard) tea
 			return t.configMaps.Delete(ctx, name, options)
 		},
 	}
+}
+
+// HookIdentityProbeMarkerTarget returns the retirement target for the probe
+// ConfigMap the release keeps across upgrades. Helm is told to keep it, so
+// nothing in the ordinary deletion phase removes it and the last teardown hook
+// has to.
+func HookIdentityProbeMarkerTarget(rollout *RolloutGuard) (TeardownRetirementMarkerTarget, error) {
+	if rollout == nil {
+		return TeardownRetirementMarkerTarget{}, fmt.Errorf("hook identity probe marker rollout is required")
+	}
+	name := HookIdentityProbeObjectName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
+	policyName := HookIdentityProbeGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage)
+	if name == "" || policyName == "" {
+		return TeardownRetirementMarkerTarget{}, fmt.Errorf("hook identity probe marker identity is incomplete")
+	}
+	return TeardownRetirementMarkerTarget{
+		Name: name,
+		Verify: func(actual *corev1.ConfigMap) error {
+			return verifyHookIdentityProbeMarker(actual, rollout, name, policyName)
+		},
+	}, nil
 }
 
 func verifyHookIdentityProbeMarker(object *corev1.ConfigMap, guard *RolloutGuard, name, policyName string) error {
