@@ -631,6 +631,13 @@ func (g *TeardownRetirementGuard) Phase(ctx context.Context, reader TeardownReti
 	}
 	switch state.ControllerCredentialPhase {
 	case ControllerCredentialsActive:
+		// A release ends by emptying this parameter instead of deleting it, so
+		// a verified object naming no active release is terminal for the same
+		// reason an absent one is. The object is verified first: the state is
+		// read from this release's own parameter or from nothing.
+		if state.ActiveReleaseSequence == 0 {
+			return TeardownRetirementTerminal, nil
+		}
 		return TeardownRetirementActive, nil
 	case ControllerCredentialsDraining:
 		if state.DrainTargetReleaseSequence != g.rollout.ReleaseSequence || state.DrainAttempt != g.attempt() {
