@@ -6,15 +6,8 @@
  */
 import runs from '../../../../demo/recordings/runs.json';
 
-export const Recording = runs;
-
 /** Every run, in the catalog's reading order. */
 export const Runs = runs.order.map((id) => runs.scenarios.find((one) => one.id === id)).filter(Boolean);
-
-/** One run by its id. */
-export function runById(id) {
-	return runs.scenarios.find((one) => one.id === id);
-}
 
 /**
  * What the player reads, built from the same recording the page renders.
