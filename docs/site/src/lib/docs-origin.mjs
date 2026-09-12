@@ -17,6 +17,10 @@ export const Origin = 'https://operator.ptah.run';
 // that site or builds against it; this is the address of a link.
 export const PtahOrigin = 'https://docs.ptah.run';
 
+// PtahSiteOrigin is the project's own site, which the header names by its host
+// the way ptah.run's header does.
+export const PtahSiteOrigin = 'https://ptah.run';
+
 // BasePath is the site-root-relative prefix every page of one version lives
 // under, with leading and trailing slashes.
 //

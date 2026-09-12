@@ -152,7 +152,15 @@ function main() {
     console.error('gen-versions.mjs: no version directory was assembled');
     process.exit(1);
   }
-  writeFileSync(join(root, 'versions.json'), `${JSON.stringify({ default: defaultVersion, versions }, null, 2)}\n`);
+  // {slug, label} rather than bare strings: the version pill in
+  // SiteTitle.astro reads this file at runtime and builds its options from
+  // those two fields, and Ptah's own version index has the same shape, so one
+  // reader can be written against both.
+  const index = {
+    default: defaultVersion,
+    versions: versions.map((name) => ({ slug: name, label: name })),
+  };
+  writeFileSync(join(root, 'versions.json'), `${JSON.stringify(index, null, 2)}\n`);
   writeFileSync(join(root, 'index.html'), indexHTML(defaultVersion, versions));
   console.log(`gen-versions.mjs: ${versions.length} version(s), apex serves ${defaultVersion}`);
 }
