@@ -8,3 +8,6 @@
 *.test
 *.prof
 *.log
+
+# The demonstration lab writes its kubeconfig, environment and logs here.
+/demo/.lab/
