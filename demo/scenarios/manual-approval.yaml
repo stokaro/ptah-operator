@@ -122,11 +122,13 @@ steps:
       exit: 0
       stdout_contains: [customers]
 
-  - note: The approval was for one plan, and it has been used.
-    run: kubectl -n "$NAMESPACE" get ptahschemaapproval
+  - note: It was dispatched once, and is already stale. Retiring a used approval shows why.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahschemaapproval storefront-v1 -o json \
+        | jq -r '.status.conditions[] | "\(.type)\t\(.status)\t\(.reason)"'
     expect:
       exit: 0
-      stdout_contains: [storefront-v1]
+      stdout_contains: [Consumed, DispatchCommitted]
       resource:
         kind: ptahschemaapproval
         name: storefront-v1

@@ -57,9 +57,14 @@ steps:
       exit: 0
       stdout_contains: [storefront]
 
-  - note: The SQL of the newest plan. An ALTER and a CREATE, not a second CREATE TABLE customers.
+  - note: The SQL it applied. An ALTER and a CREATE, not a second CREATE TABLE customers.
+    # The plan is found by the fingerprint the status recorded as applied. A
+    # converged schema carries no current plan -- there is nothing left to do --
+    # so reading status.plan here would read an empty name.
     run: |
-      PLAN=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.plan.name}')
+      APPLIED=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.applied.planFingerprint}')
+      PLAN=$(kubectl -n "$NAMESPACE" get ptahschemaplan -o json \
+        | jq -r --arg fingerprint "$APPLIED" '.items[] | select(.spec.fingerprint == $fingerprint) | .metadata.name')
       CHUNK=$(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" -o jsonpath='{.spec.chunks[0].name}')
       kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
         | base64 -d | jq -r '.statements[].sql'

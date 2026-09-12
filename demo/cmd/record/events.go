@@ -46,37 +46,48 @@ func commandEvents(run string) []event {
 
 // outputEvents renders captured output, one event per line.
 //
-// SQL is marked so the player can color it, because the plan is the thing a
-// reader of this demonstration came for. Everything else is ordinary output;
-// a stream captured from stderr is marked as such only when the step failed on
-// purpose, which the caller decides.
+// A statement the operator plans or applies is the subject of this
+// demonstration, so it is marked wherever it appears -- and a statement spans
+// lines, so the marking continues to the end of it rather than colouring only
+// the keyword line and leaving the columns under it as ordinary output.
 func outputEvents(text string, kind string) []event {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	events := make([]event, 0, len(lines))
+	statement := false
 	for _, line := range lines {
 		// A blank line inside output is a spacer, and the player draws one
 		// rather than an empty output row whose color says something was
-		// printed there.
+		// printed there. It also ends whatever statement was being printed.
 		if strings.TrimSpace(line) == "" {
+			statement = false
 			events = append(events, event{kindBlank})
 			continue
 		}
-		events = append(events, event{lineKind(line, kind), line})
+		if sqlLine.MatchString(line) {
+			statement = true
+		}
+		if statement {
+			events = append(events, event{kindSQL, line})
+			if statementEnds(line) {
+				statement = false
+			}
+			continue
+		}
+		events = append(events, event{kind, line})
 	}
 	return events
 }
 
-var sqlLine = regexp.MustCompile(`^\s*(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|SELECT|BEGIN|COMMIT)\b`)
-
-// lineKind marks a line of output. A statement the operator plans or applies is
-// the subject of this demonstration, so it is marked wherever it appears rather
-// than only inside a block somebody remembered to label.
-func lineKind(line, fallback string) string {
-	if sqlLine.MatchString(line) {
-		return kindSQL
-	}
-	return fallback
+// statementEnds reports whether a line closes the statement it is part of.
+//
+// The terminator, or the closing parenthesis of a CREATE TABLE the renderer
+// wrote without one. Anything else is another line of the same statement.
+func statementEnds(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasSuffix(trimmed, ";") || trimmed == ")" || trimmed == ");"
 }
+
+var sqlLine = regexp.MustCompile(`^\s*(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|SELECT|BEGIN|COMMIT)\b`)
