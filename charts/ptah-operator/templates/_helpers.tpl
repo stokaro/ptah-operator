@@ -809,6 +809,16 @@ crdupgrade compiles the same pattern.
 {{- printf "ptah-operator-namespace-deletion-guard-v1-%s" (printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12) -}}
 {{- end -}}
 
+{{- /*
+A single cluster-wide name. The anchor is not release-scoped: it exists to keep
+the API server's ConfigMap parameter informer alive across the gap between one
+release being uninstalled and the next being installed, so it cannot carry a
+release identity that either release owns.
+*/ -}}
+{{- define "ptah-operator.parameterInformerAnchorName" -}}
+ptah-operator-parameter-informer-anchor
+{{- end -}}
+
 {{- define "ptah-operator.controllerWriteGuardPolicyName" -}}
 {{- printf "ptah-operator-controller-write-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}

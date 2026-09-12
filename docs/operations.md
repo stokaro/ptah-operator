@@ -282,6 +282,23 @@ Helm retains CRDs and their custom resources on uninstall. Back them up before
 schema work anyway; uninstalling the release removes the controller and
 admission resources, not the database changes previously executed by Ptah.
 
+An uninstall also leaves behind one cluster-scoped pair named
+`ptah-operator-parameter-informer-anchor`: a ValidatingAdmissionPolicy and its
+binding. They admit everything they match, name a ConfigMap nothing creates,
+and exist for one reason. The API server keeps a single informer per admission
+parameter kind, and when the last bound policy naming a built-in kind goes away
+it cancels that informer and cannot start it again: the replacement comes from
+the typed shared informer factory, which refuses to restart an informer it has
+already started. The cancelled informer still reports itself as synced, so
+every later policy that reads a ConfigMap parameter resolves against a cache
+frozen at the moment it stopped. Parameters written afterwards are invisible,
+and a binding that denies on a missing parameter refuses every request it
+matches. Without the anchor, uninstalling the operator would leave the next
+install unable to run its own hooks until the API servers restarted.
+
+Delete the anchor only while another bound ConfigMap-parameter policy exists,
+or before the API servers restart. Reinstalling the chart recreates it.
+
 Uninstall is a fail-closed, ordered retirement protocol. Two release-stable
 validating admission fences are ordinary chart resources and therefore exist
 before an uninstall starts. Their narrow form protects the fixed bootstrap
