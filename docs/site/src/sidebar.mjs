@@ -17,6 +17,10 @@ export const sidebar = [
     ],
   },
   {
+    label: 'See it run',
+    items: [{ label: 'Recorded runs', link: '/demo/' }],
+  },
+  {
     label: 'Use',
     items: [
       { label: 'Configuration', link: '/use/configuration/' },

@@ -1,0 +1,82 @@
+id: schema-update
+title: Change the schema
+tagline: A second revision, a new digest, and the difference applied as one plan.
+learn: How a change reaches a database, and why the plan is the thing to review.
+tags: [Lifecycle]
+
+reset:
+  - demo/bin/lab reset
+  - demo/bin/lab publish v1 > demo/.lab/digest
+  - demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | kubectl apply -f -
+  - kubectl -n "$NAMESPACE" wait --for=condition=InSync --timeout=360s ptahschema/storefront
+
+steps:
+  - note: Where it starts -- one table, converged.
+    run: demo/bin/lab psql "\dt"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [customers]
+      stdout_absent: [orders]
+
+  - note: The next revision adds a column and a table that references the first.
+    run: diff -u demo/schemas/v1.sql demo/schemas/v2.sql || true
+    expect:
+      exit: 0
+      stdout_contains: ["+  signed_up_at timestamptz", "+CREATE TABLE orders"]
+
+  - note: Publish it. A different artifact, so a different digest.
+    run: demo/bin/lab publish v2 | tee demo/.lab/digest
+    sync: publishing
+    expect:
+      exit: 0
+      stdout_contains: ["sha256:"]
+
+  - note: Point the same resource at the new digest. One field changes.
+    run: |
+      kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge \
+        -p "{\"spec\":{\"desired\":{\"ociRef\":\"oci://$E2E_REGISTRY_HOST/schemas/demo@$(cat demo/.lab/digest)\"}}}"
+    sync: planning
+    expect:
+      exit: 0
+      stdout_contains: [patched]
+
+  - note: A new plan, against the database as it actually is rather than as v1 left it.
+    await:
+      kind: ptahschema
+      name: storefront
+      timeout: 6m
+      generation: current
+      condition:
+        type: InSync
+        status: "True"
+        reason: ScopedConverged
+    run: kubectl -n "$NAMESPACE" get ptahschemaplan
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [storefront]
+
+  - note: The SQL of the newest plan. An ALTER and a CREATE, not a second CREATE TABLE customers.
+    run: |
+      PLAN=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.plan.name}')
+      CHUNK=$(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" -o jsonpath='{.spec.chunks[0].name}')
+      kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
+        | base64 -d | jq -r '.statements[].sql'
+    expect:
+      exit: 0
+      stdout_contains: ['ALTER TABLE "customers"', 'CREATE TABLE "orders"']
+
+  - note: And the database has both, with the foreign key the declaration asked for.
+    run: demo/bin/lab psql "\d orders"
+    expect:
+      exit: 0
+      stdout_contains: [orders_customer_id_fkey, customers]
+      resource:
+        kind: ptahschema
+        name: storefront
+        fields:
+          - path: status.phase
+            equals: InSync
+          - path: status.applied.artifactDigest
+            notEmpty: true

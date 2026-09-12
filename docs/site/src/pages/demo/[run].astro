@@ -1,0 +1,84 @@
+---
+/* One recorded run, in full: the session, what it teaches, and what was
+ * checked while it ran.
+ *
+ * The checks are the difference between this and a screencast. Each one is a
+ * claim the scenario file makes -- a command's exit status, a condition read as
+ * type, status and reason on a live object -- and the recording exists only
+ * because every one of them held.
+ */
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import RunFrame from '../../components/RunFrame.astro';
+import { Runs, playerCatalog, labSummary } from '../../lib/runs.mjs';
+
+export function getStaticPaths() {
+	return Runs.map((run) => ({ params: { run: run.id }, props: { run } }));
+}
+
+const { run } = Astro.props;
+const catalog = playerCatalog();
+const lab = labSummary();
+const base = import.meta.env.BASE_URL;
+---
+
+<StarlightPage
+	frontmatter={{
+		title: run.title,
+		description: run.tagline,
+		tableOfContents: false,
+	}}
+>
+	<p class="ptah-demo-lede">{run.tagline}</p>
+	<p class="ptah-demo-learn"><strong>What it shows.</strong> {run.learn}</p>
+
+	<p class="ptah-demo-replay">
+		A replay of a verified run, not a live cluster. {run.checks.length} checks held while it was recorded.
+	</p>
+
+	<RunFrame id={run.id} title={run.title} events={run.events} />
+
+	<h2>What was checked</h2>
+	<p>
+		Every step states what has to hold before its output may be published. A condition is read as its
+		type, status and reason on the live object, never as a phrase in a message.
+	</p>
+	<div class="ptah-demo-checks">
+		<table>
+			<thead>
+				<tr><th>Step</th><th>Claim</th><th>Held</th></tr>
+			</thead>
+			<tbody>
+				{run.checks.map((check) => (
+					<tr>
+						<td>{check.step}</td>
+						<td><code>{check.claim}</code></td>
+						<td>{check.passed ? 'yes' : 'no'}</td>
+					</tr>
+				))}
+			</tbody>
+		</table>
+	</div>
+
+	<h2>What it ran against</h2>
+	<ul class="ptah-demo-lab">
+		{lab.map((one) => (
+			<li><span class="ptah-demo-lab-label">{one.label}</span><span class="ptah-demo-lab-value">{one.value}</span></li>
+		))}
+	</ul>
+
+	<p>
+		The scenario is <code>demo/scenarios/{run.id}.yaml</code>, and <code>make demo</code> replays the
+		whole set against a lab of your own.
+		<a href={`${base}demo/`}>All recorded runs</a>.
+	</p>
+
+	<dialog class="demo-modal" data-demo-modal aria-labelledby="run-title">
+		<div class="demo-modal-head">
+			<h2 id="run-title" data-demo-title></h2>
+			<p data-demo-caption></p>
+		</div>
+	</dialog>
+</StarlightPage>
+
+<script is:inline set:html={`window.PTAH_RUNS = ${JSON.stringify(catalog)};`} />
+<script type="module" src={`${base}demo/player.js`}></script>

@@ -58,9 +58,24 @@ jobs:
           npm run check:versions:selftest
           npm run check:gen-versions:selftest
           npm run check:values:selftest
+          npm run check:demo:selftest
       - name: The values table matches the chart
         working-directory: docs/site
         run: npm run check:values
+      # The recording the site plays is held against the scenarios it claims to
+      # be of, and against its own checks. A run published with a failed check
+      # would be a demonstration of something that did not happen.
+      - name: The recorded runs match their scenarios
+        working-directory: docs/site
+        run: npm run check:demo
+      # The scenarios parse and state an expectation for every step. This runs
+      # without a cluster: what it refuses is a scenario file that could not be
+      # recorded, long before a lab is built for it.
+      - name: The scenarios are valid
+        run: |
+          set -euo pipefail
+          go test ./demo/...
+          go run ./demo/cmd/record -root . -check
       - name: Build the development site
         working-directory: docs/site
         env:

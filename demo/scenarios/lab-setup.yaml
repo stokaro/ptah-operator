@@ -1,0 +1,58 @@
+id: lab-setup
+title: Stand up the lab
+tagline: >
+  A four-node kind cluster, the chart installed from a package, and the two
+  images the operator will run pinned by digest.
+learn: >
+  What the rest of these runs are against, and how to check that an install
+  finished rather than merely started.
+tags: [Lab]
+
+reset:
+  - demo/bin/lab reset
+
+steps:
+  - note: The lab is one cluster, built from the versions this repository declares.
+    run: demo/bin/lab versions
+    sync: lab ready
+    expect:
+      exit: 0
+      stdout_contains: [kubernetes, kind, operator, executor, ptah]
+
+  - note: The operator runs in its own namespace, two replicas, one leader.
+    run: kubectl -n "$OPERATOR_NAMESPACE" get deployment
+    expect:
+      exit: 0
+      stdout_contains: [ptah]
+
+  - note: Available means the install finished. The image is a digest, so one exact build runs.
+    await:
+      kind: deployment
+      name: $CONTROLLER
+      namespace: $OPERATOR_NAMESPACE
+      timeout: 3m
+      condition:
+        type: Available
+        status: "True"
+        reason: MinimumReplicasAvailable
+    run: |
+      kubectl -n "$OPERATOR_NAMESPACE" get deployment -o json \
+        | jq -r '.items[].spec.template.spec.containers[].image'
+    expect:
+      exit: 0
+      stdout_contains: ["@sha256:"]
+
+  - note: Three resources -- the desired state, the plan, and the decision that lets it run.
+    run: |
+      kubectl get crd -o custom-columns=NAME:.metadata.name,ESTABLISHED:'.status.conditions[?(@.type=="Established")].status' \
+        ptahschemas.operator.ptah.dev ptahschemaplans.operator.ptah.dev ptahschemaapprovals.operator.ptah.dev
+    expect:
+      exit: 0
+      stdout_contains: [ptahschemas, ptahschemaplans, ptahschemaapprovals]
+
+  - note: The namespace it works in. Credentials are Secrets; the policy cannot be edited.
+    run: kubectl -n "$NAMESPACE" get secret,configmap
+    expect:
+      exit: 0
+      stdout_contains: [demo-database, demo-registry, demo-verification-policy]
+      stdout_absent: [password]

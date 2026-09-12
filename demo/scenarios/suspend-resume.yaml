@@ -1,0 +1,88 @@
+id: suspend-resume
+title: Suspend and resume
+tagline: One field stops reconciliation without deleting anything, and resuming picks up where it stopped.
+learn: How to take a database out of the operator's hands during an incident, and give it back.
+tags: [Operations]
+
+reset:
+  - demo/bin/lab reset
+  - demo/bin/lab publish v1 > demo/.lab/digest
+  - demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | kubectl apply -f -
+  - kubectl -n "$NAMESPACE" wait --for=condition=InSync --timeout=360s ptahschema/storefront
+
+steps:
+  - note: Converged, and reconciliation is active.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
+        | jq -r '.status.conditions[] | select(.type == "Suspended") | "\(.type)\t\(.status)\t\(.reason)"'
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [Suspended, "False", Active]
+
+  - note: Suspend it. One boolean, and the resource stays exactly where it is.
+    run: kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge -p '{"spec":{"suspend":true}}'
+    sync: suspended
+    expect:
+      exit: 0
+      stdout_contains: [patched]
+
+  - note: The operator says it is suspended, with the reason on the condition.
+    await:
+      kind: ptahschema
+      name: storefront
+      timeout: 3m
+      generation: current
+      condition:
+        type: Suspended
+        status: "True"
+        reason: Suspended
+    run: kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.phase}{"\n"}'
+    expect:
+      exit: 0
+      stdout_contains: [Suspended]
+
+  - note: Now publish a change it would otherwise pick up, and point the resource at it.
+    run: |
+      DIGEST=$(demo/bin/lab publish v2)
+      kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge \
+        -p "{\"spec\":{\"desired\":{\"ociRef\":\"oci://$E2E_REGISTRY_HOST/schemas/demo@$DIGEST\"}}}"
+    expect:
+      exit: 0
+      stdout_contains: [patched]
+
+  - note: Nothing happens, which is the point. The database is untouched.
+    run: demo/bin/lab psql "\dt"
+    expect:
+      exit: 0
+      stdout_absent: [orders]
+      resource:
+        kind: ptahschema
+        name: storefront
+        condition:
+          type: Suspended
+          status: "True"
+          reason: Suspended
+
+  - note: Resume, and it starts from what is actually there rather than from what it remembered.
+    run: kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge -p '{"spec":{"suspend":false}}'
+    sync: applying
+    expect:
+      exit: 0
+      stdout_contains: [patched]
+
+  - note: It plans against the live database and converges on the revision it was given.
+    await:
+      kind: ptahschema
+      name: storefront
+      timeout: 6m
+      generation: current
+      condition:
+        type: InSync
+        status: "True"
+        reason: ScopedConverged
+    run: demo/bin/lab psql "\dt"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [customers, orders]

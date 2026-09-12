@@ -1,0 +1,557 @@
+/* The recorded-run player and the tile catalog (see ../ptah.css).
+ *
+ * The same design as ptah.run's In practice page, and the same markup, so the
+ * player ported beside it needs no changes. What is different here is only
+ * where the colors come from: this site has Starlight's tokens, and the block
+ * below maps the design's names onto them rather than restating a palette that
+ * would then have two answers.
+ */
+
+.demo,
+.tiles,
+.demo-modal {
+	--sans: var(--font-sans);
+	--mono: var(--font-mono);
+	--fg: var(--sl-color-white);
+	--fg2: var(--sl-color-gray-2);
+	--mute: var(--sl-color-gray-3);
+	--line: var(--sl-color-hairline);
+	--line2: var(--sl-color-hairline-light);
+	--acc: var(--sl-color-text-accent);
+
+	/* The terminal keeps its own palette in both themes: a light page around a
+	 * dark frame is what a terminal looks like, and reading it as light-on-dark
+	 * is what tells a reader it is one. */
+	--term: #0b0a09;
+	--termfg: #ece5da;
+	--termmute: #8d8377;
+	--termacc: oklch(0.82 0.11 225);
+	--termline: #2e2823;
+	--termamber: var(--ptah-amber);
+}
+
+:root[data-theme='light'] .demo,
+:root[data-theme='light'] .tiles,
+:root[data-theme='light'] .demo-modal {
+	--term: #14181d;
+	--termfg: #e2e6ea;
+	--termmute: #7b858f;
+	--termacc: oklch(0.8 0.11 230);
+	--termline: rgba(255, 255, 255, 0.08);
+	--termamber: oklch(0.8 0.15 70);
+}
+
+/* ---------- The terminal frame ---------- */
+
+.term {
+	border: 1px solid var(--line);
+	border-radius: 3px;
+	background: var(--term);
+	color: var(--termfg);
+	overflow: hidden;
+}
+.term-bar {
+	display: flex;
+	justify-content: space-between;
+	padding: 8px 16px;
+	border-bottom: 1px solid var(--termline);
+	font: 12px var(--mono);
+	color: var(--termmute);
+}
+.term pre {
+	padding: 20px 22px;
+	font: 13.5px/1.7 var(--mono);
+	margin: 0;
+	background: none;
+}
+.term .p {
+	color: var(--termamber);
+}
+.term .m {
+	color: var(--termmute);
+}
+.term .a {
+	color: var(--termacc);
+}
+
+ * copy from sight only, then replays it into .demo-screen.
+ */
+.demo .term-bar {
+  align-items: center;
+  gap: 12px;
+}
+.demo-where {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.demo-sync {
+  margin-inline-start: auto;
+  padding: 1px 7px;
+  border: 1px solid var(--termline);
+  border-radius: 2px;
+  font-size: 11.5px;
+  color: var(--termmute);
+  white-space: nowrap;
+}
+/* Amber, not red: a pending change is the normal state of a migration tool,
+ * not a fault. It is the same amber the prompt uses. */
+.demo-sync[data-state="pending"] {
+  color: var(--termamber);
+  border-color: color-mix(in oklab, var(--termamber) 40%, transparent);
+}
+.demo-controls {
+  display: flex;
+  gap: 6px;
+}
+/* A shape and a word. The shape is what the eye finds on a second visit; the
+ * word is what removes the doubt on the first, and Play beside Replay is
+ * exactly the pair a lone triangle and a lone arc would leave ambiguous. */
+.demo-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--termline);
+  border-radius: 2px;
+  background: none;
+  color: var(--termfg);
+  font: 500 12px var(--sans);
+  padding: 3px 8px 3px 6px;
+  min-height: 24px;
+  cursor: pointer;
+}
+.demo-btn svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+  flex: none;
+}
+.demo-btn .i-play,
+.demo-btn .i-close,
+.demo[data-paused="1"] .i-pause,
+.demo.is-open .i-expand {
+  display: none;
+}
+.demo[data-paused="1"] .i-play,
+.demo.is-open .i-close {
+  display: block;
+}
+.demo[data-paused="1"] span.i-play,
+.demo.is-open span.i-close {
+  display: inline;
+}
+/* The multiplier is the whole control: a word beside it would say what the
+ * number already says, and this is the one button in the bar whose label
+ * changes, so it also reserves the width of the widest of the four values --
+ * a control that grows as you press it moves the buttons beside it. */
+.demo-btn-speed {
+  justify-content: center;
+  padding: 3px 6px;
+}
+[data-demo-speed-label] {
+  min-width: 2.3em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.demo-btn:hover {
+  border-color: var(--termmute);
+}
+.demo-btn:focus-visible {
+  outline: 2px solid var(--termacc);
+  outline-offset: 1px;
+}
+.demo-screen {
+  /* A Go file arrives with tabs in it, and the frame is narrower than an
+   * editor. Four columns pushes an annotation past the edge for no gain; two
+   * indents it just as clearly. */
+  tab-size: 2;
+  /* At rest the session is a transcript: its own height, readable top to
+   * bottom, selectable and pasteable. While it plays it becomes a shell --
+   * fixed height, scrolled to the end -- so the page does not reflow line by
+   * line and the newest output stays where the eye already is.
+   *
+   * The height is the only thing that changes. Laying the lines out with flex
+   * to pin them to the bottom looked equivalent and was not: a flex container
+   * makes every child a row, so the `$` span left its command and stood on a
+   * line of its own. */
+  margin: 0;
+  /* Ptah's diagnostics name the consequence and the safer order, so they are
+   * long. Without wrapping they left the frame and the reader got half a
+   * sentence: the reason is the finding, not decoration on it. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* One line, one block, so a line too long for the frame wraps under its own
+ * indent instead of restarting at column zero. The printed transcript is built
+ * the same way, by scripts/build-runs.mjs, so a session reads identically
+ * whether it was played or was already there. */
+.demo-screen .l,
+.demo-transcript .l,
+.tile-transcript .l {
+  display: block;
+  padding-inline-start: 2ch;
+  text-indent: -2ch;
+}
+/* Except the ones whose meaning is their alignment. A column header wrapped
+ * over three lines is not a narrow table, it is rubble -- which is what a
+ * phone made of `oci inspect`. These scroll sideways, the way they would in a
+ * terminal that narrow, while the prose around them still wraps. */
+.demo-screen .l-wide,
+.demo-transcript .l-wide,
+.tile-transcript .l-wide {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.demo-screen,
+.demo-transcript,
+.tile-transcript {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+.demo-transcript {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+/* One height whether or not it is playing, so the block does not jump when the
+ * session starts. Scrollable rather than clipped: a reader who looks up from
+ * the page mid-session should be able to go back and read what they missed
+ * instead of waiting for the loop. */
+@media (min-width: 721px) {
+  .demo-screen {
+    height: 372px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--termline) transparent;
+  }
+}
+.demo-cursor {
+  color: var(--termamber);
+}
+.demo-cursor[data-on="0"] {
+  opacity: 0;
+}
+/* The line the database gained. It arrives with the apply, and the tint is the
+ * only thing on this page that marks a moment rather than a kind of text. */
+.demo-screen .n {
+  color: var(--termacc);
+  background: color-mix(in oklab, var(--termacc) 14%, transparent);
+}
+/* The demo's own narration, in the shell's syntax so nobody mistakes it for
+ * something Ptah printed. Dimmer than Ptah's muted output for the same reason:
+ * one of these is the program talking and the other is not. */
+.term .c {
+  color: color-mix(in oklab, var(--termmute) 72%, transparent);
+}
+/* The finding that stops the build. Amber rather than the accent: blue is the
+ * SQL Ptah writes, and this is the line that says it will not write any. */
+.demo-screen .e {
+  color: var(--termamber);
+}
+/* How far through the session, as the last two pixels of the frame. It is the
+ * one moving thing on the page that is not text, so it stays a rule rather
+ * than becoming a bar with a track, a radius and a label. */
+.demo-progress {
+  height: 2px;
+  background: var(--termline);
+}
+.demo-progress > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--termacc);
+}
+
+/* The scenario chooser reads as a caption with a choice in it, not as a tab
+ * strip: this page spends its chrome on the terminal, and two words in the
+ * page's own type are enough to say which session is playing. */
+.demo-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  margin-top: 2px;
+}
+.demo-pick-btn {
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: none;
+  padding: 0 0 2px;
+  font: 500 13px var(--sans);
+  color: var(--mute);
+  cursor: pointer;
+}
+.demo-pick-btn:hover {
+  color: var(--fg2);
+}
+.demo-pick-btn[aria-pressed="true"] {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+}
+.demo-pick-btn:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 3px;
+}
+
+/* The sessions page. Twenty-four transcripts stacked down a column was a page
+ * nobody reached the bottom of; a grid is a thing you scan. A tile says what
+ * the session is and what it starts with, and opening one puts the whole
+ * transcript in front of the reader at once -- readable immediately, playable
+ * if they would rather watch. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tile-slot {
+  display: flex;
+  min-width: 0;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 15px 13px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: none;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.tile:hover {
+  border-color: var(--fg2);
+}
+.tile:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+.tile-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tile-name {
+  font: 500 15px/1.3 var(--sans);
+  color: var(--fg);
+}
+.tile-tag {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  font: 500 11px var(--sans);
+  color: var(--mute);
+  white-space: nowrap;
+}
+.tile-note {
+  font: 13.5px/1.5 var(--sans);
+  color: var(--fg2);
+  text-wrap: pretty;
+}
+/* The first command, so a tile says what the session does in the language the
+ * session is written in. One line, clipped: it is a label, not the session. */
+.tile-cmd {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--line2);
+  font: 12px var(--mono);
+  color: var(--mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tile-prompt {
+  color: var(--acc);
+}
+.tile-meta {
+  font: 11.5px var(--sans);
+  color: var(--mute);
+}
+/* Without the script the tiles do nothing, so the transcripts they stand for
+ * are the page instead. With it, the overlay is where a session is read and
+ * twenty-four transcripts in the tab order would be twenty-four detours. */
+.tile-transcript {
+  margin-top: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--term);
+  color: var(--termfg);
+  font: 13px/1.55 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 2;
+}
+.tile-transcript .l {
+  display: block;
+  padding-inline-start: 2ch;
+  text-indent: -2ch;
+}
+.js .tile-transcript {
+  display: none;
+}
+html:not(.js) .tile {
+  display: none;
+}
+html:not(.js) .tile-slot {
+  display: block;
+}
+
+/* The overlay names what it is showing, above the frame rather than inside it:
+ * the terminal bar is the session's own chrome and has no room for a title. */
+.demo-modal-head {
+  margin-bottom: 12px;
+  /* It arrives with the page dimming rather than landing on top of it. The
+   * frame is already moving by then, so the words settle a moment behind it
+   * instead of competing for the same instant. `@starting-style` is what makes
+   * the entry animate at all: the dialog goes from `display: none`, and a
+   * transition has nothing to start from without it. */
+  opacity: 0;
+  transition: opacity 260ms ease 80ms;
+}
+.demo-modal[open] .demo-modal-head {
+  opacity: 1;
+}
+@starting-style {
+  .demo-modal[open] .demo-modal-head {
+    opacity: 0;
+  }
+}
+.demo-modal-head h2 {
+  font: 500 19px/1.3 var(--sans);
+  letter-spacing: -0.01em;
+  color: var(--fg);
+}
+.demo-modal-head p {
+  margin-top: 4px;
+  max-width: 70ch;
+  font: 14px/1.5 var(--sans);
+  color: var(--fg2);
+  text-wrap: pretty;
+}
+/* Leaving is not entering in reverse. Arriving is a reveal and can take its
+ * time; dismissing should get out of the way, so the page is back long before
+ * the frame has finished shrinking into the tile it came from.
+ *
+ * The head goes with it. It does not fly anywhere -- only the frame does -- so
+ * left alone it hangs at full strength over a page that is already coming
+ * back, which is the part that looked broken. */
+/* [open] is still on the dialog while it leaves, and `.demo-modal[open]` is
+ * the same specificity as `.demo-modal.is-leaving` but sits later in the file,
+ * so the backdrop held at full strength until the dialog closed and then
+ * vanished in one frame. This has to outrank it, not merely follow it. */
+.demo-modal.is-leaving[open]::backdrop {
+  opacity: 0;
+  transition-duration: 160ms;
+}
+/* `[open]` again: the head's own open rule is the same specificity as a bare
+ * `.is-leaving`, so the leaving one has to carry it or the head would sit at
+ * full strength on the way out, which is where this started. */
+.demo-modal.is-leaving[open] .demo-modal-head {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.demo.is-live .demo-transcript {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+
+/* ---------- The page around the runs ----------
+ *
+ * The catalog and a run's own page sit inside Starlight's content column, so
+ * these are content styles rather than a second layout: what they add is the
+ * strip of versions a recording was made against, and the line that says a
+ * replay is a replay.
+ */
+
+.ptah-demo-lede {
+	font-size: 1.0625rem;
+	color: var(--sl-color-gray-2);
+	max-width: 42rem;
+}
+
+.ptah-demo-learn {
+	max-width: 42rem;
+	color: var(--sl-color-gray-2);
+}
+
+/* What the run was recorded against. A transcript without this pairing is a
+ * screenshot: the same commands against another operator build are another
+ * demonstration. */
+.ptah-demo-lab {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0 1.75rem;
+	margin: 1.25rem 0;
+	padding: 0;
+	list-style: none;
+	border-top: 1px solid var(--sl-color-hairline-light);
+	border-bottom: 1px solid var(--sl-color-hairline-light);
+	padding-block: 0.75rem;
+}
+.ptah-demo-lab li {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	margin: 0;
+	padding: 0;
+}
+.ptah-demo-lab-label {
+	font-size: 0.75rem;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--sl-color-gray-3);
+}
+.ptah-demo-lab-value {
+	font-family: var(--font-mono);
+	font-size: 0.8125rem;
+	color: var(--sl-color-white);
+}
+
+/* Never "Live". The frame replays bytes a recorder captured, and a reader who
+ * takes it for a live cluster has been told something untrue. */
+.ptah-demo-replay {
+	margin: 0 0 0.75rem;
+	font-size: 0.8125rem;
+	color: var(--sl-color-gray-3);
+}
+
+.ptah-demo-checks {
+	overflow-x: auto;
+}
+.ptah-demo-checks table {
+	width: 100%;
+	font-size: 0.8125rem;
+}
+.ptah-demo-checks code {
+	font-size: 0.78125rem;
+	white-space: nowrap;
+}
+
+.tile-more {
+	margin: 0.5rem 0 0;
+	font-size: 0.8125rem;
+}
+
+/* The tiles sit in the content column, which is narrower than ptah.run's page.
+ * Two across at the usual reading width, one on a phone. */
+.sl-markdown-content .tiles {
+	margin-block: 1.5rem;
+	padding: 0;
+}

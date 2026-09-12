@@ -1,0 +1,130 @@
+id: manual-approval
+title: Approve a plan
+tagline: With apply set to OnApproval, nothing runs until a person approves that exact plan.
+learn: What an approval is bound to, and what happens to one that names a plan nobody kept.
+tags: [Safety]
+
+reset:
+  - demo/bin/lab reset
+  - demo/bin/lab publish v1 > demo/.lab/digest
+
+steps:
+  - note: Same resource, one field different -- apply is OnApproval, which is the default.
+    run: APPLY=OnApproval demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | tee demo/.lab/storefront.yaml
+    sync: applying
+    expect:
+      exit: 0
+      stdout_contains: ["apply: OnApproval"]
+
+  - note: Apply it, and the operator plans but stops.
+    run: kubectl apply -f demo/.lab/storefront.yaml
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: It has a plan and it is waiting. The database has not been touched.
+    await:
+      kind: ptahschema
+      name: storefront
+      timeout: 6m
+      condition:
+        type: ApprovalRequired
+        status: "True"
+        reason: AwaitingApproval
+    run: |
+      kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
+        | jq -r '.status.phase, (.status.conditions[] | select(.type == "ApprovalRequired") | .message)'
+    sync: awaiting approval
+    expect:
+      exit: 0
+      stdout_contains: [AwaitingApproval]
+
+  - note: Nothing was created. This is what waiting looks like from the database.
+    run: demo/bin/lab psql "\dt"
+    expect:
+      exit: 0
+      stdout_contains: ["Did not find any relations"]
+
+  - note: Read the plan before approving it. This is what would run.
+    run: |
+      PLAN=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.plan.name}')
+      CHUNK=$(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" -o jsonpath='{.spec.chunks[0].name}')
+      kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
+        | base64 -d | jq -r '.statements[] | "\(.severity)\t\(.sql)"'
+    expect:
+      exit: 0
+      stdout_contains: ['CREATE TABLE "customers"', safe]
+
+  - note: An approval names the schema, the plan, and the fingerprint of that plan.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahschema storefront -o json > demo/.lab/schema.json
+      kubectl -n "$NAMESPACE" get ptahschemaplan \
+        "$(jq -r .status.plan.name demo/.lab/schema.json)" -o json > demo/.lab/plan.json
+      jq -n --slurpfile schema demo/.lab/schema.json --slurpfile plan demo/.lab/plan.json '
+        {
+          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchemaApproval",
+          metadata: {name: "storefront-v1"},
+          spec: {
+            schemaRef: {name: $schema[0].metadata.name, uid: $schema[0].metadata.uid},
+            planRef:   {name: $plan[0].metadata.name,   uid: $plan[0].metadata.uid},
+            planFingerprint: $plan[0].spec.fingerprint
+          }
+        }' | tee demo/.lab/approval.json | jq -c .spec
+    expect:
+      exit: 0
+      stdout_contains: ['"planFingerprint":"sha256:']
+
+  - note: Create it. The webhook stamps who you are and binds the rest of the plan's identity.
+    run: kubectl -n "$NAMESPACE" create -f demo/.lab/approval.json
+    sync: approved
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: None of this was typed. The webhook read it off the plan being approved.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahschemaapproval storefront-v1 -o json \
+        | jq -r '.spec | {approver: .approver.username, ptahVersion, executorImage, artifactDigest, executionBindingID}'
+    expect:
+      exit: 0
+      stdout_contains: [approver, ptahVersion, executorImage]
+      resource:
+        kind: ptahschemaapproval
+        name: storefront-v1
+        fields:
+          - path: spec.approver.username
+            notEmpty: true
+          - path: spec.artifactDigest
+            notEmpty: true
+          - path: spec.executorImage
+            notEmpty: true
+          - path: spec.mutationRequestUID
+            notEmpty: true
+
+  - note: With the decision recorded, the plan runs and convergence is proved.
+    await:
+      kind: ptahschema
+      name: storefront
+      timeout: 6m
+      condition:
+        type: InSync
+        status: "True"
+        reason: ScopedConverged
+    run: demo/bin/lab psql "\dt"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [customers]
+
+  - note: The approval was for one plan, and it has been used.
+    run: kubectl -n "$NAMESPACE" get ptahschemaapproval
+    expect:
+      exit: 0
+      stdout_contains: [storefront-v1]
+      resource:
+        kind: ptahschemaapproval
+        name: storefront-v1
+        condition:
+          type: Consumed
+          status: "True"
+          reason: ApprovedPlan

@@ -1,0 +1,76 @@
+---
+/* The catalog of recorded runs.
+ *
+ * Every run is printed here as a transcript. Open one and the player types it
+ * out; read it and you have the same session. Nothing on this page was written
+ * for the page: demo/cmd/record ran each scenario against a kind cluster with
+ * the operator installed from its chart, checked the cluster reached the state
+ * the scenario claims, and wrote what the commands printed.
+ */
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import RunFrame from '../../components/RunFrame.astro';
+import { Runs, Recording, playerCatalog, labSummary, checkCount } from '../../lib/runs.mjs';
+import { preview, counts, transcript } from '../../../public/demo/transcript.mjs';
+
+const catalog = playerCatalog();
+const lab = labSummary();
+const checks = checkCount();
+const first = Runs[0];
+const base = import.meta.env.BASE_URL;
+---
+
+<StarlightPage
+	frontmatter={{
+		title: 'The operator, recorded',
+		description:
+			'Nine runs of the Ptah operator against a real Kubernetes cluster: apply, change, approve, refuse, drift, fail and recover. Read one, or watch it typed.',
+		tableOfContents: false,
+	}}
+>
+	<p class="ptah-demo-lede">
+		Nine sessions, recorded at the terminal against a four-node kind cluster with the operator installed
+		from its chart. Each one is checked while it runs: a recording is published only if every condition
+		it claims held on the live cluster. Open one to read it; <strong>Play</strong> types it out.
+	</p>
+
+	<ul class="ptah-demo-lab">
+		{lab.map((one) => (
+			<li><span class="ptah-demo-lab-label">{one.label}</span><span class="ptah-demo-lab-value">{one.value}</span></li>
+		))}
+		<li><span class="ptah-demo-lab-label">Checks held</span><span class="ptah-demo-lab-value">{checks}</span></li>
+	</ul>
+
+	<p class="ptah-demo-replay">
+		A replay of a verified run, not a live cluster. Nothing on this page talks to anything.
+	</p>
+
+	{first && <RunFrame id={first.id} title={first.title} events={first.events} />}
+
+	<ul class="tiles">
+		{Runs.map((run) => (
+			<li class="tile-slot">
+				<button class="tile" type="button" data-demo-tile data-demo-scenario={run.id}>
+					<span class="tile-head">
+						<span class="tile-name">{run.title}</span><span class="tile-tag">{run.tags[0]}</span>
+					</span>
+					<span class="tile-note">{run.tagline}</span>
+					<span class="tile-cmd"><span class="tile-prompt">$</span> {preview(run.events)}</span>
+					<span class="tile-meta">{counts(run.events)} · {run.checks.length} checks</span>
+				</button>
+				{/* The printed copy of every run, for a reader without the player. */}
+				<pre class="tile-transcript" aria-label={`${run.title} transcript`} set:html={transcript(run.events)} />
+				<p class="tile-more"><a href={`./${run.id}/`}>Read {run.title.toLowerCase()} in full</a></p>
+			</li>
+		))}
+	</ul>
+
+	<dialog class="demo-modal" data-demo-modal aria-labelledby="run-title">
+		<div class="demo-modal-head">
+			<h2 id="run-title" data-demo-title></h2>
+			<p data-demo-caption></p>
+		</div>
+	</dialog>
+</StarlightPage>
+
+<script is:inline set:html={`window.PTAH_RUNS = ${JSON.stringify(catalog)};`} />
+<script type="module" src={`${base}demo/player.js`}></script>

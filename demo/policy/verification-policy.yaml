@@ -1,0 +1,8 @@
+# What the operator will accept as a desired schema.
+#
+# The policy is a ConfigMap the PtahSchema names, not a flag on the controller:
+# each namespace says for itself what an artifact has to be before its contents
+# reach a database.
+version: 1
+artifact_types:
+  - application/vnd.stokaro.ptah.schema.v1

@@ -18,7 +18,9 @@
     "values:write": "node scripts/build-values-reference.mjs --write",
     "check:values": "node scripts/build-values-reference.mjs",
     "check:values:selftest": "node scripts/build-values-reference.mjs --selftest",
-    "check:gen-versions:selftest": "node scripts/gen-versions.mjs --selftest"
+    "check:gen-versions:selftest": "node scripts/gen-versions.mjs --selftest",
+    "check:demo": "node scripts/check-demo.mjs",
+    "check:demo:selftest": "node scripts/check-demo.mjs --selftest"
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.0",

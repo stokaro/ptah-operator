@@ -1,0 +1,62 @@
+id: drift
+title: Close the drift
+tagline: Someone changes the database by hand. The operator notices and puts it back.
+learn: What drift detection reads, and what it does about what it finds.
+tags: [Operations]
+
+reset:
+  - demo/bin/lab reset
+  - demo/bin/lab publish v2 > demo/.lab/digest
+  - demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | kubectl apply -f -
+  - kubectl -n "$NAMESPACE" wait --for=condition=InSync --timeout=360s ptahschema/storefront
+
+steps:
+  - note: Converged, and the operator says so with a reason rather than a timestamp.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
+        | jq -r '.status.conditions[] | select(.type == "DriftDetected" or .type == "InSync") | "\(.type)\t\(.status)\t\(.reason)"'
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [ScopedConverged]
+
+  - note: Now change the database behind its back, the way an incident does.
+    run: demo/bin/lab psql "ALTER TABLE customers DROP COLUMN signed_up_at"
+    sync: drift
+    expect:
+      exit: 0
+      stdout_contains: [ALTER TABLE]
+
+  - note: The column is gone. The declaration still asks for it.
+    run: demo/bin/lab psql "\d customers"
+    expect:
+      exit: 0
+      stdout_absent: [signed_up_at]
+
+  - note: Nobody is asked. The operator observes on its interval and closes it.
+    # The command is a read, re-run until the column is back. Waiting on the
+    # InSync condition would prove nothing here: no spec changed, so the
+    # condition that was true before the drift is still true during it.
+    retry: 6m
+    run: demo/bin/lab psql "\d customers"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [signed_up_at]
+
+  - note: It closed the drift with a plan, the same way it does everything else.
+    # DriftDetected is still True the moment the column comes back: the
+    # operator proves convergence by observing again, and this waits for that
+    # rather than reading the condition mid-flight.
+    await:
+      kind: ptahschema
+      name: storefront
+      timeout: 6m
+      condition:
+        type: DriftDetected
+        status: "False"
+        reason: ScopedConverged
+    run: kubectl -n "$NAMESPACE" get ptahschemaplan
+    expect:
+      exit: 0
+      stdout_contains: [storefront]

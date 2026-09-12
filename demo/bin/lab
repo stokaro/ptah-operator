@@ -1,0 +1,75 @@
+#!/bin/sh
+# The demonstration lab's own commands.
+#
+# A scenario step runs this rather than forty lines of jq, and every one of
+# those lines is in demo/lib/lab.sh where a reader can follow it. What a step
+# publishes is the command a reader would run against their own lab after
+# cloning this repository.
+set -eu
+
+LAB_ROOT=${LAB_ROOT:-$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)}
+export LAB_ROOT
+
+# The environment the bootstrap wrote. Every name below comes from it.
+LAB_ENVIRONMENT=${LAB_ENVIRONMENT:-$LAB_ROOT/demo/.lab/environment}
+[ -f "$LAB_ENVIRONMENT" ] || {
+	printf 'lab: no lab at %s; bring one up with make demo-up\n' "$LAB_ENVIRONMENT" >&2
+	exit 1
+}
+set -a
+# shellcheck disable=SC1090 -- the path is the lab's, and it is a NAME=value file
+. "$LAB_ENVIRONMENT"
+set +a
+
+LAB_POSTGRES_IMAGE=${E2E_POSTGRES_IMAGE:-}
+export LAB_POSTGRES_IMAGE
+export DOCKER_CONFIG=${E2E_DOCKER_CONFIG:-${DOCKER_CONFIG:-}}
+
+. "$LAB_ROOT/demo/lib/support.sh"
+. "$LAB_ROOT/demo/lib/lab.sh"
+
+lab_usage() {
+	cat >&2 <<'USAGE'
+usage: demo/bin/lab <command>
+
+  prepare              create the namespace, its routes, credentials and policy
+  reset                remove every schema, plan and approval, and empty the database
+  publish <revision>   push demo/schemas/<revision>.sql and print its digest
+  psql <statement>     run one statement against the demonstration's database
+  manifest <name> <digest>
+                       render demo/manifests/<name>.yaml for this lab
+  namespace            print the namespace the lab runs in
+  versions             print what the lab is made of
+USAGE
+	exit 2
+}
+
+[ "$#" -gt 0 ] || lab_usage
+lab_command=$1
+shift
+
+case "$lab_command" in
+prepare) lab_prepare ;;
+reset) lab_reset ;;
+publish)
+	[ "$#" -eq 1 ] || lab_usage
+	lab_publish "$1"
+	;;
+psql)
+	[ "$#" -eq 1 ] || lab_usage
+	lab_psql "$1"
+	;;
+manifest)
+	[ "$#" -eq 2 ] || lab_usage
+	lab_manifest "$1" "$2"
+	;;
+namespace) printf '%s\n' "$E2E_TEST_NAMESPACE" ;;
+versions)
+	printf 'kubernetes  %s\n' "$E2E_KUBERNETES_VERSION"
+	printf 'kind        %s\n' "$(support_kind_version)"
+	printf 'operator    %s\n' "$E2E_CONTROLLER_REVISION"
+	printf 'executor    %s\n' "$E2E_EXECUTOR_IMAGE"
+	printf 'ptah        %s\n' "$E2E_PTAH_VERSION"
+	;;
+*) lab_usage ;;
+esac

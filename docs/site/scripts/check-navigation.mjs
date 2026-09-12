@@ -10,6 +10,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { sidebar } from '../src/sidebar.mjs';
+import runs from '../../../demo/recordings/runs.json' with { type: 'json' };
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 
@@ -48,6 +49,14 @@ export function builtRoutes(root) {
 // EXEMPT are pages a reader reaches without navigating to them.
 const EXEMPT = new Set(['/404/']);
 
+// A recorded run has a page of its own, reached from the catalog the sidebar
+// offers rather than from the sidebar. The set is derived from the recording,
+// so a page with no run behind it and a run with no page are both still
+// findings -- which is the whole of what this check is for.
+function runRoutes() {
+  return runs.scenarios.map((one) => `/demo/${one.id}/`);
+}
+
 function selftest() {
   const flattened = routes([
     { label: 'A', items: [{ label: 'one', link: '/one/' }, { label: 'nested', items: [{ label: 'two', link: '/two/' }] }] },
@@ -66,7 +75,7 @@ function main() {
     console.error('check-navigation.mjs: dist/ is missing; build the site first');
     process.exit(1);
   }
-  const declared = routes(sidebar);
+  const declared = routes(sidebar).concat(runRoutes());
   const built = builtRoutes(root).filter((route) => !EXEMPT.has(route));
   if (declared.length === 0 || built.length === 0) {
     console.error('check-navigation.mjs: the sidebar or the build is empty, so this check would pass by comparing nothing');
@@ -84,7 +93,10 @@ function main() {
     console.error(`check-navigation.mjs: ${problems.length} problem(s):\n- ${problems.join('\n- ')}`);
     process.exit(1);
   }
-  console.log(`check-navigation.mjs: OK (${declared.length} pages, each navigable and each navigated to)`);
+  console.log(
+    `check-navigation.mjs: OK (${declared.length} pages, each navigable and each navigated to, ` +
+      `including ${runs.scenarios.length} recorded runs)`,
+  );
 }
 
 main();

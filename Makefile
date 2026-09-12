@@ -11,7 +11,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build e2e-static e2e
+.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build e2e-static e2e demo demo-up demo-record demo-serve demo-test demo-down
 
 all: verify build
 
@@ -133,3 +133,67 @@ e2e-static:
 
 e2e:
 	DOCKER_CONTEXT="$(DOCKER_CONTEXT)" ./hack/e2e-kind.sh
+
+# ---------------------------------------------------------------------------
+# The demonstration lab.
+#
+# demo/ holds three parts: the scenarios, the recorder that runs them against a
+# live cluster, and the player on the documentation site. `demo` does the whole
+# round trip; the targets under it are the steps, so a scenario can be
+# re-recorded without rebuilding the cluster.
+#
+# The lab is the end-to-end harness stopped after its bootstrap. There is no
+# second cluster, no second chart install and no second set of pinned images:
+# what the suite proves is what the demonstration runs on.
+
+DEMO_ENVIRONMENT := demo/.lab/environment
+DEMO_KUBERNETES_VERSION ?= 1.37.0
+DEMO_RUN_ID ?= demo
+
+demo: demo-up demo-record
+	@printf 'demo: recorded. Read it with: make demo-serve\n'
+
+demo-up:
+	@if [ -f "$(DEMO_ENVIRONMENT)" ]; then \
+		printf 'demo: a lab is already up (%s). Remove it with: make demo-down\n' "$(DEMO_ENVIRONMENT)"; \
+		exit 0; \
+	fi
+	@mkdir -p demo/.lab
+	K8S_VERSION="$(DEMO_KUBERNETES_VERSION)" \
+		E2E_STOP_AFTER=bootstrap \
+		E2E_ENVIRONMENT_FILE="$(CURDIR)/$(DEMO_ENVIRONMENT)" \
+		E2E_RUN_ID="$(DEMO_RUN_ID)" \
+		DOCKER_CONTEXT="$(DOCKER_CONTEXT)" \
+		./hack/e2e-kind.sh
+	./demo/bin/lab prepare
+
+demo-record:
+	@[ -f "$(DEMO_ENVIRONMENT)" ] || { \
+		printf 'demo: no lab. Bring one up with: make demo-up\n' >&2; \
+		exit 1; \
+	}
+	$(GO) run ./demo/cmd/record -root .
+
+demo-serve:
+	cd docs/site && npm ci && npm run dev
+
+# What runs without a cluster: the scenarios parse and state an expectation for
+# every step, the recorder's own units, and the site builds from the recording
+# that is committed.
+demo-test:
+	$(GO) test ./demo/...
+	$(GO) run ./demo/cmd/record -root . -check
+	cd docs/site && npm ci && npm run check:demo:selftest && npm run check:demo && \
+		npm run build && npm run check:links && npm run check:navigation
+
+demo-down:
+	@[ -f "$(DEMO_ENVIRONMENT)" ] || { printf 'demo: no lab to remove\n'; exit 0; }
+	@set -a; . "./$(DEMO_ENVIRONMENT)"; set +a; \
+		export DOCKER_CONFIG="$$E2E_DOCKER_CONFIG"; \
+		printf 'demo: removing cluster %s\n' "$$E2E_KIND_CLUSTER_NAME"; \
+		kind delete cluster --name "$$E2E_KIND_CLUSTER_NAME" >/dev/null 2>&1 || true; \
+		for container in "$$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" "$$E2E_REGISTRY_CONTAINER_ID"; do \
+			[ -n "$$container" ] || continue; \
+			docker --context "$$E2E_DOCKER_CONTEXT" container rm -fv "$$container" >/dev/null 2>&1 || true; \
+		done
+	rm -rf demo/.lab

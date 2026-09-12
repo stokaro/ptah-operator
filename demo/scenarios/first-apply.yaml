@@ -1,0 +1,114 @@
+id: first-apply
+title: Apply a schema
+tagline: Publish a schema as an artifact, point the operator at it, and watch it converge.
+learn: What the operator does between a desired state and a database, and how it says it is done.
+tags: [Lifecycle]
+
+reset:
+  - demo/bin/lab reset
+
+steps:
+  - note: The desired state is SQL. This is the whole of it.
+    run: cat demo/schemas/v1.sql
+    sync: publishing
+    expect:
+      exit: 0
+      stdout_contains: [CREATE TABLE customers]
+
+  - note: Publish it. The push runs in the cluster, as the Ptah build the operator will run.
+    run: DIGEST=$(demo/bin/lab publish v1) && echo "$DIGEST" | tee demo/.lab/digest
+    expect:
+      exit: 0
+      stdout_contains: ["sha256:"]
+
+  - note: That is the command it ran. An artifact, a dialect, a version.
+    run: |
+      kubectl -n "$NAMESPACE" get job demo-push-v1 \
+        -o jsonpath='{.spec.template.spec.containers[0].args}' | jq -r 'join(" ")'
+    expect:
+      exit: 0
+      stdout_contains: [schema push, --dialect postgres]
+
+  - note: The resource names the artifact by digest, and the credentials by Secret.
+    run: demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | tee demo/.lab/storefront.yaml
+    sync: applying
+    expect:
+      exit: 0
+      stdout_contains: ["kind: PtahSchema", "ociRef: oci://", "urlFrom"]
+      stdout_absent: ["password:"]
+
+  - note: Apply it. Nothing else is typed after this; the operator does the rest.
+    run: kubectl apply -f demo/.lab/storefront.yaml
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: Resolve, verify, observe, plan, apply, and prove. Each is a condition.
+    await:
+      kind: ptahschema
+      name: storefront
+      timeout: 6m
+      condition:
+        type: InSync
+        status: "True"
+        reason: ScopedConverged
+    run: |
+      kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
+        | jq -r '.status.conditions[] | "\(.type)\t\(.status)\t\(.reason)"' | column -t -s "$(printf '\t')"
+    sync: converged
+    expect:
+      exit: 0
+      # The claim is the condition, read as fields in the resource block below.
+      # What stdout is asked for is only that the reader was shown it.
+      stdout_contains: [InSync, ScopedConverged, JobCompleted]
+      resource:
+        kind: ptahschema
+        name: storefront
+        condition:
+          type: Ready
+          status: "True"
+          reason: InSync
+        fields:
+          - path: status.phase
+            equals: InSync
+          - path: status.applied.artifactDigest
+            notEmpty: true
+
+  - note: Applying says False, reason JobCompleted. A finished Job is not a converged database.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
+        | jq -r '.status.conditions[] | select(.type == "Applying" or .type == "InSync") | "\(.type): \(.message)"'
+    expect:
+      exit: 0
+      # A message is prose and will be reworded. What this step claims is in
+      # the resource block: the reason on Applying is JobCompleted, and that is
+      # not the same thing as converged.
+      stdout_contains: ["Applying:", "InSync:"]
+      resource:
+        kind: ptahschema
+        name: storefront
+        condition:
+          type: Applying
+          status: "False"
+          reason: JobCompleted
+
+  - note: The plan it derived, and the SQL that plan carried.
+    run: kubectl -n "$NAMESPACE" get ptahschemaplan
+    expect:
+      exit: 0
+      stdout_contains: [storefront]
+
+  - note: The SQL lives in an immutable ConfigMap, not in a status field or a log line.
+    run: |
+      CHUNK=$(kubectl -n "$NAMESPACE" get ptahschemaplan -o jsonpath='{.items[0].spec.chunks[0].name}')
+      kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
+        | base64 -d | jq -r '.statements[].sql'
+    expect:
+      exit: 0
+      stdout_contains: ['CREATE TABLE "customers"']
+
+  - note: And the database has it.
+    run: demo/bin/lab psql "\d customers"
+    expect:
+      exit: 0
+      stdout_contains: [customers_pkey]
