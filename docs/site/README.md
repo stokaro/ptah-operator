@@ -44,26 +44,22 @@ publishes nothing and leaves the newer run to it.
 
 ## GitHub Pages and DNS
 
-The repository part is complete. What remains is account configuration that no
-workflow can perform:
+Configured, and verified on 2026-09-12 against the live zone and the repository
+settings:
 
-1. In the repository settings, set **Pages → Build and deployment → Source** to
-   **GitHub Actions**. The publish workflow supplies the artifact; no branch is
-   served.
-2. Set **Pages → Custom domain** to `operator.ptah.run` and leave
-   **Enforce HTTPS** enabled once the certificate is issued.
-3. In the DNS zone for `ptah.run`, add:
+- `operator.ptah.run` is a CNAME to `stokaro.github.io`, resolving to GitHub's
+  Pages addresses.
+- Pages serves this repository with **Build and deployment → Source: GitHub
+  Actions**, which is what the publish workflow supplies an artifact to. No
+  branch is served.
+- The custom domain is verified and its certificate is issued.
 
-   ```dns
-   operator   CNAME   stokaro.github.io.
-   ```
+The custom domain lives in the repository settings rather than in a `CNAME`
+file in the artifact, because this deploy assembles `_site` from scratch on
+every run and a committed file would have to be copied into it each time.
 
-   A CNAME is correct here because `operator` is a subdomain. Do not change the
-   records that serve `docs.ptah.run`.
-4. Wait for the certificate. GitHub issues it after the CNAME resolves; until
-   then the site answers over HTTP only.
+One setting is still open: **Enforce HTTPS** is off, so the site answers over
+HTTP as well as HTTPS. The certificate is approved, so turning it on is a
+single toggle in the same settings page.
 
-The custom domain is configured in the repository settings rather than by a
-`CNAME` file in the artifact, because this deploy assembles `_site` from
-scratch on every run and a file committed to the tree would have to be copied
-into it by hand each time.
+Nothing here touches the settings that serve `docs.ptah.run`.
