@@ -69,12 +69,22 @@ export function problemsIn(record, scenarioIds) {
   return problems;
 }
 
-// A replay is never announced as live. The word is the one thing a reader
-// would take at face value, and taking it at face value would be wrong.
+// A replay is never announced as live. The word is the one thing a reader would
+// take at face value, and taking it at face value would be wrong.
+//
+// Nor does a page type the number of runs. The recording is where that is
+// known, and a page that repeats it keeps working on the day it stops being
+// true -- which is the only day it matters.
+const SPELLED = /\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:runs|sessions|scenarios|recordings)\b/i;
+
 export function livenessProblemsIn(sources) {
   const problems = [];
   for (const [name, text] of sources) {
     if (/\bLive\b/.test(text)) problems.push(`${name} calls a replay live`);
+    const spelled = SPELLED.exec(text);
+    if (spelled) problems.push(`${name} types the count of runs ("${spelled[0]}") instead of reading it`);
+    const digits = /\b\d+\s+(?:runs|sessions|scenarios|recordings)\b/i.exec(text);
+    if (digits) problems.push(`${name} types the count of runs ("${digits[0]}") instead of reading it`);
   }
   return problems;
 }
@@ -119,8 +129,14 @@ function selftest() {
 
   const live = livenessProblemsIn([['page', 'Live cluster']]);
   if (live.length !== 1) throw new Error('a page calling a replay live was not reported');
+  const counted = livenessProblemsIn([['page', 'Nine sessions, recorded'], ['page', '9 runs of the operator']]);
+  if (counted.length !== 2) throw new Error(`a typed count was not reported: ${JSON.stringify(counted)}`);
+  const derived = livenessProblemsIn([['page', '{Runs.length} sessions, recorded at the terminal']]);
+  if (derived.length !== 0) throw new Error(`a derived count was reported: ${JSON.stringify(derived)}`);
 
-  console.log('check-demo.mjs --selftest: OK (checks, failures, coverage, order, and the word Live)');
+  console.log(
+    'check-demo.mjs --selftest: OK (checks, failures, coverage, order, the word Live, and a typed count)',
+  );
 }
 
 function main() {

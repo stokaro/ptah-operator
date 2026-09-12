@@ -18,7 +18,7 @@ the complete database end-to-end matrix is green and a release is published.
 
 ## See it run
 
-Nine sessions recorded against a real cluster: apply a schema, change it,
+Terminal sessions recorded against a real cluster: apply a schema, change it,
 approve a plan, watch a destructive change refused, close drift, fail and
 recover. Each one is checked while it runs, and published only if every
 condition it claims held.

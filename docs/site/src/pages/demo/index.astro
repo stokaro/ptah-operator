@@ -9,7 +9,7 @@
  */
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import RunFrame from '../../components/RunFrame.astro';
-import { Runs, Recording, playerCatalog, labSummary, checkCount } from '../../lib/runs.mjs';
+import { Runs, playerCatalog, labSummary, checkCount } from '../../lib/runs.mjs';
 import { preview, counts, transcript } from '../../../public/demo/transcript.mjs';
 
 const catalog = playerCatalog();
@@ -23,14 +23,17 @@ const base = import.meta.env.BASE_URL;
 	frontmatter={{
 		title: 'The operator, recorded',
 		description:
-			'Nine runs of the Ptah operator against a real Kubernetes cluster: apply, change, approve, refuse, drift, fail and recover. Read one, or watch it typed.',
+			`${Runs.length} runs of the Ptah operator against a real Kubernetes cluster: apply, change, ` +
+			'approve, refuse, drift, fail and recover. Read one, or watch it typed.',
 		tableOfContents: false,
 	}}
 >
+	{/* The count is read off the recording. A number typed here is a number that
+		stops being true the first time a scenario is added. */}
 	<p class="ptah-demo-lede">
-		Nine sessions, recorded at the terminal against a four-node kind cluster with the operator installed
-		from its chart. Each one is checked while it runs: a recording is published only if every condition
-		it claims held on the live cluster. Open one to read it; <strong>Play</strong> types it out.
+		{Runs.length} sessions, recorded at the terminal against a four-node kind cluster with the operator
+		installed from its chart. Each one is checked while it runs: a recording is published only if every
+		condition it claims held on the live cluster. Open one to read it; <strong>Play</strong> types it out.
 	</p>
 
 	<ul class="ptah-demo-lab">
