@@ -2,6 +2,25 @@
 
 set -eu
 
+# A rerun with debug logging traces this phase without a source change. GitHub
+# sets RUNNER_DEBUG=1 for "Re-run with debug logging", and E2E_TRACE=1 does the
+# same locally. PS4 is single-quoted so each prefix is expanded at the traced
+# command, not here.
+#
+# dash, which is /bin/sh on the runner, has no LINENO: the reference would stay
+# literal in every prefix and, under set -u, print "LINENO: parameter not set"
+# before each traced command. So ask the shell, and name the script alone when
+# it cannot number the line.
+if [ "${RUNNER_DEBUG:-0}" = 1 ] || [ "${E2E_TRACE:-0}" = 1 ]; then
+	# shellcheck disable=SC3028 # Read only where the shell sets it; the else branch is the shell that does not.
+	if [ -n "${LINENO:-}" ]; then
+		PS4='+ ${0##*/}:${LINENO}: '
+	else
+		PS4='+ ${0##*/}: '
+	fi
+	set -x
+fi
+
 unset CDPATH
 BOOTSTRAP_ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
 # The private re-entry argument only selects the verification phase. It never
@@ -110,8 +129,21 @@ SKIPPED_PHASES=
 # later host subprocess can inherit their values.
 unset REGISTRY_PASSWORD EXTERNAL_PG_ADMIN_PASSWORD EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL
 
+# A command that fails outside a guard calling fail ends the shell with no
+# reason printed, and the EXIT trap then dumps diagnostics that explain
+# nothing. So fail records that it spoke, in a file rather than a variable
+# so that a fail inside a subshell still counts, and the trap says so when
+# nothing did.
+PHASE_REASON_MARKER=${TMPDIR:-/tmp}/ptah-e2e-reason-kind.$$
+
 fail() {
 	printf 'e2e: %s\n' "$*" >&2
+	# Tolerant of an unset marker: this function is also extracted and run on
+	# its own by hack/e2e_cert_rotation_test.go, and a reporting helper that
+	# fails is worse than one that reports nothing.
+	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
+		: >"$PHASE_REASON_MARKER" 2>/dev/null || true
+	fi
 	exit 1
 }
 
@@ -1243,13 +1275,29 @@ run_recorded_phase() {
 			return 0
 			;;
 	esac
-	"$@"
+	# A phase script prints its own reason and exits non-zero. Calling it
+	# unguarded ends this driver at that command under set -e, leaving its EXIT
+	# handler to report a status and no reason for a phase that gave one. Name
+	# the phase instead, and let the reason it printed stand.
+	if ! "$@"; then
+		fail "phase $recorded_phase failed; its reason is above"
+	fi
 }
 
 PHASE_COMPLETED=0
 cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
+	# Ahead of the retention branch, which exits on its own: a run cleaned up
+	# normally is exactly the one whose reason would otherwise go unsaid. The
+	# marker is unset when this handler is extracted and run on its own by
+	# hack/e2e_cert_rotation_test.go; there is nothing to report then.
+	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
+		if [ "$status" -ne 0 ] && [ ! -f "$PHASE_REASON_MARKER" ]; then
+			printf 'e2e: exited with status %s at a command that failed under set -e; no proof reported a reason\n' "$status" >&2
+		fi
+		rm -f -- "$PHASE_REASON_MARKER"
+	fi
 	# A failed run leaves nothing to inspect once its cluster is gone. With
 	# E2E_KEEP_ON_FAILURE=1 the task-created cluster, registry, database
 	# container and work directory stay for a local diagnosis; nothing in CI

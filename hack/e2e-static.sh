@@ -251,13 +251,30 @@ done
 sh -n "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 dash -n "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 
-# The version is printed because these findings are version-dependent and the
-# mismatch is otherwise invisible: shellcheck 0.11.0 reports an unreachable trap
-# handler as SC2329 on the function, while 0.9.x and 0.10.x report SC2317 on
-# each command in its body. A suppression naming only one of the two is green
-# for whoever ran it and red on the other, which is how a pull request reached
-# review with a file that passes locally and fails here.
-printf 'e2e static: shellcheck %s\n' "$(shellcheck --version | awk '/^version:/ { print $2 }')"
+# These findings are version-dependent, so an unpinned version makes a local pass
+# and a CI pass two different claims. 0.11.0 reports an unreachable trap handler
+# as SC2329 on the function while 0.9.x and 0.10.x report SC2317 on each command
+# in its body, and 0.9.x reports SC2015 on an `A && B || fail` chain that 0.11.0
+# does not. Both differences have already produced a pull request that was green
+# for whoever ran it and red here.
+#
+# So the version is exact, the way the kind version is, and the CI workflow
+# installs this one from support/tools.json rather than taking whatever the
+# runner image happens to ship.
+EXPECTED_SHELLCHECK_VERSION=$(jq -r '.shellcheck.version // empty' "$ROOT_DIR/support/tools.json")
+[ -n "$EXPECTED_SHELLCHECK_VERSION" ] || {
+	printf '%s\n' 'e2e static: support/tools.json does not declare the required shellcheck version' >&2
+	exit 1
+}
+ACTUAL_SHELLCHECK_VERSION=v$(shellcheck --version | awk '/^version:/ { print $2 }')
+[ "$ACTUAL_SHELLCHECK_VERSION" = "$EXPECTED_SHELLCHECK_VERSION" ] || {
+	printf 'e2e static: shellcheck %s is required, got %s\n' \
+		"$EXPECTED_SHELLCHECK_VERSION" "$ACTUAL_SHELLCHECK_VERSION" >&2
+	printf 'e2e static: %s carries it\n' \
+		"$(jq -r '.shellcheck.linuxAmd64Url // "the ShellCheck release page"' "$ROOT_DIR/support/tools.json")" >&2
+	exit 1
+}
+printf 'e2e static: shellcheck %s\n' "$ACTUAL_SHELLCHECK_VERSION"
 shellcheck "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
@@ -2340,16 +2357,19 @@ external_pg_main_wiring_count() {
     /^[[:space:]]*run_engine_lifecycle mysql MySQL mysql "\$MYSQL_SECRET"[[:space:]]*$/ && stage == 7 {
       stage = 8; next
     }
-    /^[[:space:]]*"\$ROOT_DIR\/hack\/e2e-faults\.sh"[[:space:]]*$/ && stage == 8 {
+    /^[[:space:]]*"\$ROOT_DIR\/hack\/e2e-faults\.sh" \|\|[[:space:]]*$/ && stage == 8 {
       stage = 9; next
     }
-    /^[[:space:]]*assert_external_postgresql_catalog[[:space:]]*$/ && stage == 9 {
+    /^[[:space:]]*fail "the restart and fault-injection phase failed; its reason is above"[[:space:]]*$/ && stage == 9 {
       stage = 10; next
     }
-    /^[[:space:]]*audit_runtime_credentials[[:space:]]*$/ && stage == 10 {
+    /^[[:space:]]*assert_external_postgresql_catalog[[:space:]]*$/ && stage == 10 {
       stage = 11; next
     }
-    /^[[:space:]]*assert_observed_jobs_audited[[:space:]]*$/ && stage == 11 {
+    /^[[:space:]]*audit_runtime_credentials[[:space:]]*$/ && stage == 11 {
+      stage = 12; next
+    }
+    /^[[:space:]]*assert_observed_jobs_audited[[:space:]]*$/ && stage == 12 {
       count++; stage = 0; next
     }
     END { print count + 0 }
@@ -4137,11 +4157,34 @@ static_require_order "$deadline_terminal_section" 'DeadlineExceeded full Job pro
 	"scan_fault_file \"\$RESOURCE_FILE\" \"the exact DeadlineExceeded Apply Job\"" \
 	"grep -Fx \"\$deadline_terminal_pod_uid\" \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" \
 	"${fault_shared_full_write_marker} \"\$deadline_terminal_uid\""
+# A Job the scheduling barrier holds never becomes terminal, so the periodic
+# audit can never reach it and a proof that destroys it has to account for it
+# where it stands. That promotion is the one this contract pins: the barrier has
+# to be up, the Job has to be the named UID and unfinished, the Pods have to be
+# the ones this Job owns, and every one of them has to be unscheduled and
+# unstarted before a single UID is written.
+blocked_audit_section=$(sed -n '/^audit_blocked_read_job()/,/^}/p' \
+	"$ROOT_DIR/hack/e2e-faults.sh")
+# shellcheck disable=SC2016 # Exact source markers retain jq and shell variables literally.
+static_require_order "$blocked_audit_section" 'held read-only Job full audit' \
+	'[ "$READ_WORKLOAD_BARRIER_ACTIVE" -eq 1 ] ||' \
+	'.metadata.uid == $uid and' \
+	'all((.type != "Complete" and .type != "Failed") or .status != "True")' \
+	'.metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and' \
+	'-l "batch.kubernetes.io/controller-uid=${blocked_audit_uid}" -o json' \
+	'(.spec.nodeName // "") == "" and' \
+	'all(.state.running == null and .state.terminated == null)' \
+	'scan_fault_file "$RESOURCE_FILE"' \
+	'materialize_fault_job_pod_uids "$blocked_audit_pods"' \
+	'record_audited_uid "$FULLY_AUDITED_FAULT_PODS_FILE" "$blocked_audit_pod_uid"' \
+	"${fault_shared_full_write_marker} \"\$blocked_audit_uid\""
 static_require_count "$fault_script" \
-	"record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" 3 \
+	"record_audited_uid \"\$FULLY_AUDITED_FAULT_PODS_FILE\"" 4 \
 	'fault full-Pod write sites'
-static_require_count "$fault_script" "$fault_shared_full_write_marker" 2 \
+static_require_count "$fault_script" "$fault_shared_full_write_marker" 3 \
 	'fault shared full-Job write sites'
+static_require_count "$blocked_audit_section" "$fault_shared_full_write_marker" 1 \
+	'held read-only Job full-Job writes'
 static_require_count "$fault_runtime_audit_function_section" \
 	"$fault_shared_full_write_marker" 1 'fault runtime full-Job writes'
 static_require_count "$deadline_terminal_section" "$fault_shared_full_write_marker" 1 \

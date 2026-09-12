@@ -127,6 +127,22 @@ jobs:
               ;;
           esac
           printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
+      - name: Install the pinned ShellCheck
+        id: shellcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -er '.shellcheck.version' support/tools.json)"
+          url="$(jq -er '.shellcheck.linuxAmd64Url' support/tools.json)"
+          digest="$(jq -er '.shellcheck.linuxAmd64Sha256' support/tools.json)"
+          install_dir="$RUNNER_TEMP/shellcheck"
+          mkdir -p "$install_dir"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/shellcheck.tar.xz" "$url"
+          echo "$digest  $RUNNER_TEMP/shellcheck.tar.xz" | sha256sum --check
+          tar --extract --xz --file "$RUNNER_TEMP/shellcheck.tar.xz" --directory "$install_dir" --strip-components 1
+          chmod 0755 "$install_dir/shellcheck"
+          "$install_dir/shellcheck" --version | grep -qx "version: ${version#v}"
+          echo "$install_dir" >> "$GITHUB_PATH"
       - name: Run project verification
         id: project-verify
         env:

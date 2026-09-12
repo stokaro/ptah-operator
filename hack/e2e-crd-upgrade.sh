@@ -2,6 +2,25 @@
 
 set -eu
 
+# A rerun with debug logging traces this phase without a source change. GitHub
+# sets RUNNER_DEBUG=1 for "Re-run with debug logging", and E2E_TRACE=1 does the
+# same locally. PS4 is single-quoted so each prefix is expanded at the traced
+# command, not here.
+#
+# dash, which is /bin/sh on the runner, has no LINENO: the reference would stay
+# literal in every prefix and, under set -u, print "LINENO: parameter not set"
+# before each traced command. So ask the shell, and name the script alone when
+# it cannot number the line.
+if [ "${RUNNER_DEBUG:-0}" = 1 ] || [ "${E2E_TRACE:-0}" = 1 ]; then
+	# shellcheck disable=SC3028 # Read only where the shell sets it; the else branch is the shell that does not.
+	if [ -n "${LINENO:-}" ]; then
+		PS4='+ ${0##*/}:${LINENO}: '
+	else
+		PS4='+ ${0##*/}: '
+	fi
+	set -x
+fi
+
 E2E_KUBECONFIG=${E2E_KUBECONFIG:?E2E_KUBECONFIG is required}
 E2E_OPERATOR_NAMESPACE=${E2E_OPERATOR_NAMESPACE:?E2E_OPERATOR_NAMESPACE is required}
 E2E_PROOF_NAMESPACE=${E2E_PROOF_NAMESPACE:?E2E_PROOF_NAMESPACE is required}
@@ -128,6 +147,14 @@ cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
 	trap - EXIT HUP INT TERM
+	# The marker is unset when this handler is extracted and run on its own
+	# by hack/e2e_cert_rotation_test.go; there is nothing to report then.
+	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
+		if [ "$status" -ne 0 ] && [ ! -f "$PHASE_REASON_MARKER" ]; then
+			printf 'e2e crd: exited with status %s at a command that failed under set -e; no proof reported a reason\n' "$status" >&2
+		fi
+		rm -f -- "$PHASE_REASON_MARKER"
+	fi
 	# E2E_KEEP_ON_FAILURE=1 keeps a failed phase's work directory and every
 	# cluster object it created, so the refusal that ended it can be read from
 	# the objects that produced it. Background processes are still stopped.
@@ -222,8 +249,21 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
+# A command that fails outside a guard calling fail ends the shell with no
+# reason printed, and the EXIT trap then dumps diagnostics that explain
+# nothing. So fail records that it spoke, in a file rather than a variable
+# so that a fail inside a subshell still counts, and the trap says so when
+# nothing did.
+PHASE_REASON_MARKER=${TMPDIR:-/tmp}/ptah-e2e-reason-crd-upgrade.$$
+
 fail() {
 	printf 'e2e crd: %s\n' "$*" >&2
+	# Tolerant of an unset marker: this function is also extracted and run on
+	# its own by hack/e2e_cert_rotation_test.go, and a reporting helper that
+	# fails is worse than one that reports nothing.
+	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
+		: >"$PHASE_REASON_MARKER" 2>/dev/null || true
+	fi
 	exit 1
 }
 
@@ -1637,10 +1677,11 @@ wait_for_late_activation_hook_log_capture_ready() {
 }
 
 # The helper's regular-executable check is spelled as a refusal rather than as
-# `A && B && C || fail`. ShellCheck 0.9.0, which CI runs, reports SC2015 on that
-# chain because the final branch can run when the first test succeeded; here
-# that is the intent, and the if-form says so without the ambiguity. 0.11.0 does
-# not report it at all, so the chain reads clean locally and red in CI.
+# `A && B && C || fail`. ShellCheck 0.9.x reports SC2015 on that chain because
+# the final branch can run when the first test succeeded; here that is the
+# intent, and the if-form says so without the ambiguity. The pinned 0.11.0 does
+# not report it at all, which is how the chain read clean under one version and
+# red under another before support/tools.json made the version exact.
 arm_late_activation_hook_log_captures() {
 	[ -n "$EXPECTED_PREFLIGHT_HOOK_NAME" ] || fail "rendered preflight hook name is unavailable"
 	[ -n "$EXPECTED_RECONCILE_HOOK_NAME" ] || fail "rendered reconcile hook name is unavailable"

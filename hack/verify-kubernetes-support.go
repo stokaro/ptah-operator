@@ -70,7 +70,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "12cb2706255853596c2f4aefff70dec9e3943ddf5d7685bedcfdf512f3151d1e"
+	ciWorkflowSHA256                = "2139f5cc6b749da6d281b159bd3e77f068dae3f9ed878fb8f8c9f1ac3832ada4"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseWorkflowSHA256           = "cb548f744819a0f8196e2056d7d581a284e754bd4319de17c6c0af9fd1eb4f78"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
@@ -656,7 +656,7 @@ echo "commit=$commit" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: verify must run unconditionally with a %d-minute timeout", path, ciVerifyTimeoutMinutes)
 	}
 	verifySteps, err := requireWorkflowStepOrder(path, "verify", verifyJob, []string{
-		"checkout", "setup-go", "verify-support", "crd-baseline", "project-verify",
+		"checkout", "setup-go", "verify-support", "crd-baseline", "shellcheck", "project-verify",
 	})
 	if err != nil {
 		return err
@@ -745,10 +745,32 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		}) {
 		return fmt.Errorf("%s: crd-baseline must select the exact audited event-specific Git commit", path)
 	}
-	if verifySteps[4].Name != "Run project verification" ||
-		verifySteps[4].If != "" || verifySteps[4].Uses != "" || verifySteps[4].Run != "make verify-source" ||
+	// ShellCheck findings are version-dependent, and the runner image ships
+	// whatever it ships. The static gate refuses a version other than the one
+	// support/tools.json declares, so this step has to install that one before
+	// verification runs, and it has to read the version, the URL and the digest
+	// from that same file rather than repeating them here.
+	if verifySteps[4].Name != "Install the pinned ShellCheck" ||
+		verifySteps[4].If != "" || verifySteps[4].Uses != "" ||
 		verifySteps[4].Shell != "bash" || verifySteps[4].WorkingDirectory != "" ||
-		len(verifySteps[4].With) != 0 || !equalStringMap(verifySteps[4].Env, map[string]string{
+		len(verifySteps[4].With) != 0 || len(verifySteps[4].Env) != 0 {
+		return fmt.Errorf("%s: the pinned ShellCheck install must be an unconditional bash step with no inputs", path)
+	}
+	for _, required := range []string{
+		"support/tools.json",
+		"sha256sum --check",
+		".shellcheck.version",
+		".shellcheck.linuxAmd64Url",
+		".shellcheck.linuxAmd64Sha256",
+	} {
+		if !strings.Contains(verifySteps[4].Run, required) {
+			return fmt.Errorf("%s: the pinned ShellCheck install does not read %q", path, required)
+		}
+	}
+	if verifySteps[5].Name != "Run project verification" ||
+		verifySteps[5].If != "" || verifySteps[5].Uses != "" || verifySteps[5].Run != "make verify-source" ||
+		verifySteps[5].Shell != "bash" || verifySteps[5].WorkingDirectory != "" ||
+		len(verifySteps[5].With) != 0 || !equalStringMap(verifySteps[5].Env, map[string]string{
 		"CRD_SCHEMA_BASELINE_REF":              "${{ steps.crd-baseline.outputs.baseline }}",
 		"CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE": "true",
 	}) {
@@ -3020,7 +3042,14 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("PostgreSQL lifecycle", `run_engine_lifecycle postgresql PostgreSQL postgres "$PG_SECRET"`),
 		exactSourceLine("external PostgreSQL lifecycle", `run_external_postgresql_lifecycle`),
 		exactSourceLine("MySQL lifecycle", `run_engine_lifecycle mysql MySQL mysql "$MYSQL_SECRET"`),
-		exactSourceLine("fault lifecycle", `"$ROOT_DIR/hack/e2e-faults.sh"`),
+		// The nested phase call is guarded: a phase script prints its own reason
+		// and exits non-zero, and an unguarded call would end this one at that
+		// command with only its EXIT handler left to speak for a phase that had
+		// already spoken.
+		exactSourceLineSequence("fault lifecycle", []string{
+			`"$ROOT_DIR/hack/e2e-faults.sh" ||`,
+			`fail "the restart and fault-injection phase failed; its reason is above"`,
+		}),
 		exactSourceLine("audited operation evidence", `assert_observed_jobs_audited`),
 		exactSourceLine("terminal data-plane lifecycle evidence", `printf '%s\n' 'e2e data plane: PASS PostgreSQL, external PostgreSQL, MySQL, OCI, restart, and fault lifecycle'`),
 	}
