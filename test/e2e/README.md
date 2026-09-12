@@ -35,9 +35,12 @@ Required inputs:
   `support/kubernetes.json` when the tested version is in the support window;
   callers must provide it explicitly for any other version.
 
-The harness builds its Ptah executor from commit
-`00fc362c943bfb9d0363d5890bf449a2a9b5e7cf` in a sibling Ptah checkout by
-default. Set `E2E_PTAH_SOURCE_DIR` and `E2E_PTAH_REVISION` to select another
+The harness builds its Ptah executor from the commit the compatibility
+catalogue records as verified, read from
+[`support/ptah.json`](../../support/ptah.json), in a sibling Ptah checkout by
+default. The catalogue is the only place that commit is written down, because
+the claim it publishes and the build this suite exercises have to be the same
+one. Set `E2E_PTAH_SOURCE_DIR` and `E2E_PTAH_REVISION` to select another
 checkout and exact commit. When no sibling checkout exists, the harness clones
 `E2E_PTAH_GIT_URL` into its task-owned temporary directory.
 `E2E_EXECUTOR_IMAGE` may instead provide a digest-pinned external image, in

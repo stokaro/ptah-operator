@@ -23,6 +23,8 @@ matrix. Installation requires both its digest-pinned image and an explicit
 version identity verified from that image's provenance. The chart has no
 executor-version default and cannot silently assign an unrelated version to a
 different digest; both values remain part of every plan and applied binding.
+Which build that is, and what has actually been run against it, is
+[Ptah compatibility](ptah-support.md).
 
 ## PostgreSQL authority
 

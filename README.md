@@ -118,6 +118,7 @@ treated as the same policy.
 - [Condition reason contract](docs/condition-reasons.md)
 - [Kubernetes support policy](docs/kubernetes-support.md)
 - [Database support and privileges](docs/database-support.md)
+- [Ptah compatibility](docs/ptah-support.md)
 - [Releases and provenance](docs/releases.md)
 
 `PtahMigration` is deliberately not folded into `PtahSchema`. A future
