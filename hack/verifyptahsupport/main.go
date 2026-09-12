@@ -12,17 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Command verify-ptah-support validates the Ptah compatibility catalogue and
+// Command verify-ptah-support validates the Ptah compatibility catalog and
 // exports the one value the pipeline reads from it.
 //
-// The catalogue is the canonical answer to "which Ptah build does this operator
+// The catalog is the canonical answer to "which Ptah build does this operator
 // version work with", and it separates three states a table usually blurs: what
 // is DECLARED, what was VERIFIED, and what nobody has data for. An unverified
 // combination is not an incompatible one, and a single verified build is not a
 // supported range.
 //
 // The program performs no network requests. It reads support/ptah.json, the
-// lifecycle script and the workflow, and refuses a catalogue that is malformed,
+// lifecycle script and the workflow, and refuses a catalog that is malformed,
 // self-contradictory, or no longer the only place the tested Ptah commit is
 // written down.
 package main
@@ -44,15 +44,15 @@ const (
 	workflowPath  = ".github/workflows/ci.yml"
 	// The audited workflow contract describes the lifecycle job's environment
 	// literally, so it held a copy of the commit too -- one nothing compared
-	// against the catalogue. It names the support job's output now, and this
+	// against the catalog. It names the support job's output now, and this
 	// path keeps it that way.
 	workflowContractPath = "hack/verify-kubernetes-support.go"
-	// schemaVersion is the shape this program understands. A catalogue written
+	// schemaVersion is the shape this program understands. A catalog written
 	// for a later shape is refused rather than read with the fields this
 	// program happens to recognize.
 	schemaVersion = 1
 	// ptahVersionLimit mirrors the chart's own limit on execution.ptahVersion,
-	// so a catalogue cannot record an identity the chart would refuse to bind.
+	// so a catalog cannot record an identity the chart would refuse to bind.
 	ptahVersionLimit = 128
 	edgeVersion      = "edge"
 	// developmentSource is the revision the development guide is built from.
@@ -203,7 +203,7 @@ func validationDate(now string) (time.Time, error) {
 	return parsed, nil
 }
 
-// validate holds the catalogue to its own shape.
+// validate holds the catalog to its own shape.
 func validate(loaded catalog, today time.Time) error {
 	var problems []error
 
@@ -238,7 +238,7 @@ func validateDate(lastVerified string, today time.Time) []error {
 func validateReleases(loaded catalog) []error {
 	var problems []error
 	if len(loaded.Releases) == 0 {
-		return []error{errors.New("the catalogue lists no operator version; an empty table claims nothing and reads as complete")}
+		return []error{errors.New("the catalog lists no operator version; an empty table claims nothing and reads as complete")}
 	}
 
 	seen := make(map[string]bool, len(loaded.Releases))
@@ -254,7 +254,7 @@ func validateReleases(loaded catalog) []error {
 		problems = append(problems, validateRelease(entry, loaded.Evidence)...)
 	}
 	if edges != 1 {
-		problems = append(problems, fmt.Errorf("the catalogue names %s %d times; the development state is one row and is always present", edgeVersion, edges))
+		problems = append(problems, fmt.Errorf("the catalog names %s %d times; the development state is one row and is always present", edgeVersion, edges))
 	}
 	return problems
 }
@@ -420,7 +420,7 @@ func validateMeasurement(name string, measurement verified, claim declared, evid
 	}
 	if _, found := evidenceByName[measurement.Evidence]; !found {
 		problems = append(problems, fmt.Errorf(
-			"%s cites evidence %q, which the catalogue does not describe", name, measurement.Evidence))
+			"%s cites evidence %q, which the catalog does not describe", name, measurement.Evidence))
 	}
 	if measurement.PtahRelease != nil && claim.Range == nil && strings.TrimSpace(claim.Statement) == "" {
 		problems = append(problems, fmt.Errorf("%s verified a release and declares neither a range nor a reason", name))
@@ -431,7 +431,7 @@ func validateMeasurement(name string, measurement verified, claim declared, evid
 // validateDescribe ties the human-readable identity to the commit it names.
 //
 // The string is what `git describe --tags --always` calls the commit in a
-// complete Ptah checkout, and it is in the catalogue so a reader sees something
+// complete Ptah checkout, and it is in the catalog so a reader sees something
 // other than forty hex characters. A shallow checkout describes the same commit
 // as a bare abbreviation, so the shape is not fixed -- what must hold is that
 // whatever is written here is an identity OF this commit.
@@ -490,7 +490,7 @@ func validateEvidenceIsUsed(loaded catalog) []error {
 
 // checkSinglePin refuses a second copy of the tested Ptah commit.
 //
-// The catalogue is only worth reading while it is the declaration the suite
+// The catalog is only worth reading while it is the declaration the suite
 // actually builds from. A commit written into the lifecycle script or the
 // workflow as well would keep working on the day the two disagree, and the
 // published matrix would then name a build nothing ran.

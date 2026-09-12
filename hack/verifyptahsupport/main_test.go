@@ -22,9 +22,9 @@ import (
 	"time"
 )
 
-// The fixtures name commits of their own. Reusing the catalogue's real pin
+// The fixtures name commits of their own. Reusing the catalog's real pin
 // would read as a test of production data, and a fixture that happens to match
-// it would keep passing after the catalogue moved on.
+// it would keep passing after the catalog moved on.
 const (
 	testCommit      = "abcdef0123456789abcdef0123456789abcdef01"
 	testOtherCommit = "1111111111111111111111111111111111111111"
@@ -68,16 +68,16 @@ func validCatalog() catalog {
 	}
 }
 
-func TestValidateAcceptsTheCatalogueShape(t *testing.T) {
+func TestValidateAcceptsTheCatalogShape(t *testing.T) {
 	t.Parallel()
 
 	if err := validate(validCatalog(), testToday(t)); err != nil {
-		t.Fatalf("the valid catalogue was refused: %v", err)
+		t.Fatalf("the valid catalog was refused: %v", err)
 	}
 }
 
 // TestValidateRefusesTheShapesThatBlurAClaim drives one rule per row. Every
-// case starts from the accepted catalogue above, so a row that stops failing is
+// case starts from the accepted catalog above, so a row that stops failing is
 // a rule that stopped being in effect rather than a fixture that drifted.
 func TestValidateRefusesTheShapesThatBlurAClaim(t *testing.T) {
 	t.Parallel()
@@ -302,11 +302,11 @@ func TestValidateRefusesTheShapesThatBlurAClaim(t *testing.T) {
 			wantErr: "does not say what ran",
 		},
 		{
-			name: "evidence the catalogue does not describe",
+			name: "evidence the catalog does not describe",
 			mutate: func(c *catalog) {
 				c.Releases[0].Verified[0].Evidence = "somebody tried it"
 			},
-			wantErr: "which the catalogue does not describe",
+			wantErr: "which the catalog does not describe",
 		},
 		{
 			name: "evidence that backs nothing",
@@ -340,7 +340,7 @@ func TestValidateRefusesTheShapesThatBlurAClaim(t *testing.T) {
 
 			err := validate(loaded, testToday(t))
 			if err == nil {
-				t.Fatalf("the catalogue was accepted; wanted a refusal naming %q", test.wantErr)
+				t.Fatalf("the catalog was accepted; wanted a refusal naming %q", test.wantErr)
 			}
 			if !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("refused for the wrong reason:\n wanted: %s\n got:    %v", test.wantErr, err)
@@ -442,7 +442,7 @@ func TestCheckSinglePinAcceptsAnotherCommit(t *testing.T) {
 }
 
 // TestLoadRefusesAnUnknownField keeps a field nobody reads from looking like a
-// field somebody honored. A catalogue carrying `supported: true` beside the
+// field somebody honored. A catalog carrying `supported: true` beside the
 // declared and verified halves would publish a claim this program never saw.
 func TestLoadRefusesAnUnknownField(t *testing.T) {
 	t.Parallel()
@@ -454,7 +454,7 @@ func TestLoadRefusesAnUnknownField(t *testing.T) {
 
 	_, err := load(path)
 	if err == nil {
-		t.Fatal("a catalogue carrying an unknown field was accepted")
+		t.Fatal("a catalog carrying an unknown field was accepted")
 	}
 	if !strings.Contains(err.Error(), "supported") {
 		t.Fatalf("refused for the wrong reason: %v", err)

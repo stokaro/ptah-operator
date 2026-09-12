@@ -66,7 +66,7 @@ it down:
 make verify-ptah-support
 ```
 
-The guard refuses a catalogue that is malformed or self-contradictory, and it
+The guard refuses a catalog that is malformed or self-contradictory, and it
 refuses the lifecycle script or the CI workflow carrying the commit a second
 time. A literal in either place would keep working on the day the two
 disagreed, and the published matrix would then name a build nothing ran.

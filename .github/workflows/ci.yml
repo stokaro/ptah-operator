@@ -45,11 +45,11 @@ jobs:
           matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
       # The lifecycle job needs the tested Ptah commit twice -- to check the
-      # source out and to build the executor from it -- and the catalogue is
+      # source out and to build the executor from it -- and the catalog is
       # where that commit is declared. Exporting it here is what keeps the
       # published compatibility claim and the build that backs it one value;
       # a literal in either place would keep working on the day they diverged.
-      - name: Validate the Ptah compatibility catalogue and export its pin
+      - name: Validate the Ptah compatibility catalog and export its pin
         id: ptah
         shell: bash
         run: |

@@ -36,9 +36,9 @@ Required inputs:
   callers must provide it explicitly for any other version.
 
 The harness builds its Ptah executor from the commit the compatibility
-catalogue records as verified, read from
+catalog records as verified, read from
 [`support/ptah.json`](../../support/ptah.json), in a sibling Ptah checkout by
-default. The catalogue is the only place that commit is written down, because
+default. The catalog is the only place that commit is written down, because
 the claim it publishes and the build this suite exercises have to be the same
 one. Set `E2E_PTAH_SOURCE_DIR` and `E2E_PTAH_REVISION` to select another
 checkout and exact commit. When no sibling checkout exists, the harness clones

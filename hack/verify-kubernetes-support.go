@@ -70,7 +70,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "73f6155d775af58a51589a8cfd225f660d25dffd13478a40c750ecbecbcb7fe5"
+	ciWorkflowSHA256                = "12cb2706255853596c2f4aefff70dec9e3943ddf5d7685bedcfdf512f3151d1e"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseWorkflowSHA256           = "cb548f744819a0f8196e2056d7d581a284e754bd4319de17c6c0af9fd1eb4f78"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"

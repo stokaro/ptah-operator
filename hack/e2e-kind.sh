@@ -223,7 +223,7 @@ SUPPORTED_KIND_NODE_IMAGE=$("$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \
 	"$ROOT_DIR/support/kubernetes.json" "$K8S_VERSION") ||
 	fail "Kubernetes $K8S_VERSION is not an exact member of support/kubernetes.json"
 # The Ptah build this suite verifies is declared once, in the compatibility
-# catalogue, because the claim the catalogue publishes and the commit the suite
+# catalog, because the claim the catalog publishes and the commit the suite
 # actually builds have to be the same commit. A default here would be a second
 # list, and the first day they disagreed the published matrix would name a
 # build nothing ran.

@@ -4,9 +4,9 @@
 //
 // Which versions exist is not this script's opinion. It reads the published
 // directories that the deploy actually assembled, and holds them against the
-// compatibility catalogue, which is where a version's documentation is
+// compatibility catalog, which is where a version's documentation is
 // declared. A directory nobody declared and a declaration nobody built are
-// both refused: the first publishes pages no catalogue knows about, and the
+// both refused: the first publishes pages no catalog knows about, and the
 // second is the missing link the matrix would otherwise render.
 
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -56,7 +56,7 @@ export function computeDefault(names) {
   return release ?? (names.includes(EDGE) ? EDGE : null);
 }
 
-// declaredVersions reads the catalogue for the versions whose guide is
+// declaredVersions reads the catalog for the versions whose guide is
 // published, so the assembled root and the compatibility claim cannot disagree.
 export function declaredVersions(catalog) {
   return (catalog.releases ?? [])
@@ -68,12 +68,12 @@ export function reconcile(built, declared) {
   const problems = [];
   for (const name of built) {
     if (!declared.includes(name)) {
-      problems.push(`${name} was built and the catalogue does not publish it`);
+      problems.push(`${name} was built and the catalog does not publish it`);
     }
   }
   for (const name of declared) {
     if (!built.includes(name)) {
-      problems.push(`${name} is published by the catalogue and was not built`);
+      problems.push(`${name} is published by the catalog and was not built`);
     }
   }
   return problems;

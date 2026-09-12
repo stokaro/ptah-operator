@@ -37,10 +37,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      # The compatibility catalogue is what the site's version index reconciles
+      # The compatibility catalog is what the site's version index reconciles
       # against, so the page that publishes it and the file it comes from are
       # checked in one place.
-      - name: Verify the compatibility catalogue
+      - name: Verify the compatibility catalog
         run: go run ./hack/verifyptahsupport
       - name: Install site dependencies
         working-directory: docs/site

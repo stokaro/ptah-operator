@@ -21,7 +21,7 @@ declared.
 One directory per operator version, each built from that version's own
 revision. Which versions exist is declared in `support/ptah.json`, beside the
 compatibility claim, so the published set and the matrix cannot disagree:
-`gen-versions.mjs` refuses a directory the catalogue does not publish and a
+`gen-versions.mjs` refuses a directory the catalog does not publish and a
 declaration nothing built.
 
 The development guide is `edge`, built from `master`. A release is built from

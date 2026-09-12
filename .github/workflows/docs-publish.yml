@@ -68,14 +68,14 @@ jobs:
           fi
           echo "stale=false" >>"$GITHUB_OUTPUT"
 
-      - name: Verify the compatibility catalogue
+      - name: Verify the compatibility catalog
         if: steps.freshness.outputs.stale == 'false'
         run: go run ./hack/verifyptahsupport
 
       # One build per published version, each from that version's own revision.
       # The whole site is assembled on every run, so a deploy cannot drop a
       # version by forgetting it: what is uploaded is always the complete set
-      # the catalogue declares.
+      # the catalog declares.
       - name: Build every published version
         if: steps.freshness.outputs.stale == 'false'
         run: |
@@ -93,7 +93,7 @@ jobs:
                 source: entry.documentation.source,
                 fix: entry.documentation.fixRevision ?? "",
               }));
-            if (rows.length === 0) throw new Error("the catalogue publishes no documentation at all");
+            if (rows.length === 0) throw new Error("the catalog publishes no documentation at all");
             process.stdout.write(rows.map((row) => [row.version, row.source, row.fix].join(" ")).join("\n") + "\n");
           ' >"$RUNNER_TEMP/published"
 

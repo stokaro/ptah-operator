@@ -87,7 +87,7 @@ function selftest() {
   write('v0.1.0', { documentation_version: 'v0.1.0', source_commit: commit });
   problems = inspect(root);
   if (!problems.some((problem) => problem.includes('two builds rather than one build'))) {
-    throw new Error(`a relabelled build was accepted: ${problems.join('; ')}`);
+    throw new Error(`a relabeled build was accepted: ${problems.join('; ')}`);
   }
 
   // And a directory whose build info belongs to another version.
@@ -98,7 +98,7 @@ function selftest() {
   }
 
   rmSync(root, { recursive: true, force: true });
-  console.log('check-versions.mjs --selftest: OK (correct root, relabelled build, mislabelled directory)');
+  console.log('check-versions.mjs --selftest: OK (correct root, relabeled build, mislabelled directory)');
 }
 
 function main() {
