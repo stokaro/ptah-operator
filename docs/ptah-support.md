@@ -40,7 +40,9 @@ everything".
 | `operator` | `edge` for the development state, or an exact `vMAJOR.MINOR.PATCH` release. |
 | `stage` | `development` or `released`. |
 | `documentation.published` | Whether a guide exists for this operator version. The published matrix renders a link only when it does. |
-| `documentation.source` | The revision that guide is built from. |
+| `documentation.source` | The revision that guide is built from: `master` for the development state, and its own tag for a release. |
+| `documentation.fixRevision` | An exact commit that replaces the tag as the build revision for one release. |
+| `documentation.fixReason` | What that fix corrects. Required beside a fix revision. |
 | `declared.range` | The promised Ptah versions, or `null`. |
 | `declared.statement` | Why there is no range, when there is none. |
 | `verified[].ptahRelease` | The released Ptah version, or `null` when the verified build is not a release. |
@@ -79,6 +81,33 @@ Adding an operator release adds a row with its own `verified` list. A release
 that has not been run against any Ptah build gets `unverifiedReason` rather than
 an empty list, and the table then shows a version nobody has measured instead of
 a version that works with everything.
+
+## Correcting a release guide
+
+A release's pages are built from that release's own tag, so a correction cannot
+arrive by editing master. Assign the corrected revision to the release instead:
+
+```json
+"documentation": {
+  "published": true,
+  "source": "v0.1.0",
+  "fixRevision": "<exact 40-character commit>",
+  "fixReason": "the install command named a chart path that never shipped"
+}
+```
+
+The Git tag does not move and no new binary is released. The revision is a
+commit rather than a branch because the published pages must stay the ones
+somebody named, and the reason is required because a fix with no stated
+correction is indistinguishable from a rebuild.
+
+What a fix may carry is a correction to a command or an explanation. What it may
+not carry is a feature from development into an older guide. The offline guard
+holds the shape; the publish workflow holds the property it cannot see, that the
+commit descends from the release it is assigned to.
+
+Most releases need no entry. This is the explicit exception rather than a
+documentation branch per release.
 
 Database engines are a separate axis and live in
 [database support](database-support.md); Kubernetes versions live in

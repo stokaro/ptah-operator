@@ -140,6 +140,89 @@ func TestValidateRefusesTheShapesThatBlurAClaim(t *testing.T) {
 			wantErr: "does not publish it",
 		},
 		{
+			name: "a release guide built from a branch",
+			mutate: func(c *catalog) {
+				c.Releases[0].Operator = "v0.1.0"
+				c.Releases[0].Stage = "released"
+				c.Releases = append(c.Releases, release{
+					Operator:      edgeVersion,
+					Stage:         "development",
+					Documentation: documentation{Published: true, Source: "master"},
+					Declared:      declared{Statement: "no range is claimed"},
+					Verified:      []verified{c.Releases[0].Verified[0]},
+				})
+			},
+			wantErr: "a release builds from its own tag",
+		},
+		{
+			name: "a development guide built from a tag",
+			mutate: func(c *catalog) {
+				c.Releases[0].Documentation.Source = "v0.1.0"
+			},
+			wantErr: "the development state builds from master",
+		},
+		{
+			name: "a documentation fix that is not a commit",
+			mutate: func(c *catalog) {
+				c.Releases[0].Operator = "v0.1.0"
+				c.Releases[0].Stage = "released"
+				c.Releases[0].Documentation.Source = "v0.1.0"
+				c.Releases[0].Documentation.FixRevision = "docs-fix-branch"
+				c.Releases[0].Documentation.FixReason = "a wrong command"
+				c.Releases = append(c.Releases, release{
+					Operator:      edgeVersion,
+					Stage:         "development",
+					Documentation: documentation{Published: true, Source: "master"},
+					Declared:      declared{Statement: "no range is claimed"},
+					Verified:      []verified{c.Releases[0].Verified[0]},
+				})
+			},
+			wantErr: "a branch would let the published pages move afterwards",
+		},
+		{
+			name: "a documentation fix with no reason",
+			mutate: func(c *catalog) {
+				c.Releases[0].Operator = "v0.1.0"
+				c.Releases[0].Stage = "released"
+				c.Releases[0].Documentation.Source = "v0.1.0"
+				c.Releases[0].Documentation.FixRevision = testOtherCommit
+				c.Releases = append(c.Releases, release{
+					Operator:      edgeVersion,
+					Stage:         "development",
+					Documentation: documentation{Published: true, Source: "master"},
+					Declared:      declared{Statement: "no range is claimed"},
+					Verified:      []verified{c.Releases[0].Verified[0]},
+				})
+			},
+			wantErr: "does not say what it corrects",
+		},
+		{
+			name: "a documentation fix on the development state",
+			mutate: func(c *catalog) {
+				c.Releases[0].Documentation.FixRevision = testOtherCommit
+				c.Releases[0].Documentation.FixReason = "a wrong command"
+			},
+			wantErr: "already builds from master",
+		},
+		{
+			name: "a fix reason with no fix",
+			mutate: func(c *catalog) {
+				c.Releases[0].Documentation.FixReason = "a wrong command"
+			},
+			wantErr: "gives a reason for a documentation fix it does not assign",
+		},
+		{
+			name: "an unpublished version carrying a fix",
+			mutate: func(c *catalog) {
+				c.Releases[0].Documentation = documentation{
+					Published:   false,
+					FixRevision: testOtherCommit,
+					FixReason:   "a wrong command",
+				}
+			},
+			wantErr: "publishes nothing to apply it to",
+		},
+		{
 			name: "no declared range and no reason",
 			mutate: func(c *catalog) {
 				c.Releases[0].Declared.Statement = ""
@@ -297,6 +380,29 @@ func TestValidateAcceptsAnAbbreviatedIdentity(t *testing.T) {
 
 	if err := validate(loaded, testToday(t)); err != nil {
 		t.Fatalf("an abbreviation of the verified commit was refused: %v", err)
+	}
+}
+
+// TestValidateAcceptsAReleaseDocumentationFix is the control for the four
+// refusals above it. The mechanism has to be usable, or the rules that shape it
+// would be refusing a correction nobody could ever make.
+func TestValidateAcceptsAReleaseDocumentationFix(t *testing.T) {
+	t.Parallel()
+
+	loaded := validCatalog()
+	released := loaded.Releases[0]
+	released.Operator = "v0.1.0"
+	released.Stage = "released"
+	released.Documentation = documentation{
+		Published:   true,
+		Source:      "v0.1.0",
+		FixRevision: testOtherCommit,
+		FixReason:   "the install command named a chart path that never shipped",
+	}
+	loaded.Releases = []release{loaded.Releases[0], released}
+
+	if err := validate(loaded, testToday(t)); err != nil {
+		t.Fatalf("a correctly assigned documentation fix was refused: %v", err)
 	}
 }
 

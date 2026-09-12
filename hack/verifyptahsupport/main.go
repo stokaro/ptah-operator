@@ -55,6 +55,8 @@ const (
 	// so a catalogue cannot record an identity the chart would refuse to bind.
 	ptahVersionLimit = 128
 	edgeVersion      = "edge"
+	// developmentSource is the revision the development guide is built from.
+	developmentSource = "master"
 )
 
 var (
@@ -87,11 +89,27 @@ type release struct {
 	Limitations      []string      `json:"limitations,omitempty"`
 }
 
-// documentation says whether this operator version has a published guide, which
-// is what stops a compatibility table rendering a link to a page nobody built.
+// documentation says whether this operator version has a published guide, and
+// which revision that guide is built from.
+//
+// It is what stops a compatibility table rendering a link to a page nobody
+// built, and it is what keeps a release's pages the release's own: a published
+// version names the revision its guide comes from, never "whatever master says
+// today".
 type documentation struct {
 	Published bool   `json:"published"`
 	Source    string `json:"source,omitempty"`
+	// FixRevision replaces Source as the build revision for one release,
+	// without moving that release's Git tag and without a new binary.
+	//
+	// It is an exact commit because the whole point is that the pages a reader
+	// sees are a revision somebody named, and a branch would let them move
+	// afterwards. What it may carry is a correction to the guide; what it may
+	// not carry is a feature from development, and the publish workflow checks
+	// the one property this program cannot: that the commit descends from the
+	// release it is assigned to.
+	FixRevision string `json:"fixRevision,omitempty"`
+	FixReason   string `json:"fixReason,omitempty"`
 }
 
 // declared is the support claim, which is a promise rather than a measurement.
@@ -274,14 +292,69 @@ func validateRelease(entry release, evidenceByName map[string]evidence) []error 
 // version whose guide was never built must say so, because the compatibility
 // table reads this field to decide whether it may render a link at all.
 func validateDocumentation(name string, doc documentation) []error {
+	var problems []error
 	source := strings.TrimSpace(doc.Source)
+	fix := strings.TrimSpace(doc.FixRevision)
+	reason := strings.TrimSpace(doc.FixReason)
+
 	if doc.Published && source == "" {
-		return []error{fmt.Errorf("%s publishes documentation and names no source revision", name)}
+		problems = append(problems, fmt.Errorf("%s publishes documentation and names no source revision", name))
 	}
-	if !doc.Published && source != "" {
-		return []error{fmt.Errorf("%s names documentation source %q and does not publish it", name, source)}
+	if !doc.Published {
+		if source != "" {
+			problems = append(problems, fmt.Errorf("%s names documentation source %q and does not publish it", name, source))
+		}
+		if fix != "" {
+			problems = append(problems, fmt.Errorf("%s assigns a documentation fix and publishes nothing to apply it to", name))
+		}
+		return problems
 	}
-	return nil
+
+	// The source a version builds from is its own: master for the development
+	// state, and the release's own tag for a release. A release built from a
+	// branch would republish today's pages under an old version number, which
+	// is the one thing a version switcher must never do.
+	switch {
+	case name == edgeVersion:
+		if source != developmentSource {
+			problems = append(problems, fmt.Errorf(
+				"%s builds its guide from %q; the development state builds from %s", name, source, developmentSource))
+		}
+	case releasePattern.MatchString(name):
+		if source != name {
+			problems = append(problems, fmt.Errorf(
+				"%s builds its guide from %q; a release builds from its own tag", name, source))
+		}
+	}
+
+	problems = append(problems, validateFixRevision(name, fix, reason)...)
+	return problems
+}
+
+// validateFixRevision holds the after-the-fact correction to the one shape that
+// keeps it honest: an exact commit, a stated reason, and only on a release.
+func validateFixRevision(name, fix, reason string) []error {
+	if fix == "" {
+		if reason != "" {
+			return []error{fmt.Errorf("%s gives a reason for a documentation fix it does not assign", name)}
+		}
+		return nil
+	}
+	var problems []error
+	if name == edgeVersion {
+		problems = append(problems, fmt.Errorf(
+			"%s assigns a documentation fix revision; the development state already builds from %s", name, developmentSource))
+	}
+	if !commitPattern.MatchString(fix) {
+		problems = append(problems, fmt.Errorf(
+			"%s assigns documentation fix %q, which is not an exact 40-character lowercase Git commit; "+
+				"a branch would let the published pages move afterwards", name, fix))
+	}
+	if reason == "" {
+		problems = append(problems, fmt.Errorf(
+			"%s assigns a documentation fix and does not say what it corrects", name))
+	}
+	return problems
 }
 
 func validateDeclared(name string, claim declared) []error {
