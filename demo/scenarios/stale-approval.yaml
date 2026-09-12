@@ -1,7 +1,7 @@
 id: stale-approval
-title: Retire a stale approval
-tagline: An approval names one plan. Change the desired state and it stops applying to anything.
-learn: Why an approval cannot be reused, and what the operator does with one that no longer fits.
+title: Retire a used approval
+tagline: An approval describes one plan against one observed state. Applying it moves that state.
+learn: Why a signature cannot authorize twice, and what the operator does with one that no longer fits.
 tags: [Safety]
 
 reset:
@@ -11,14 +11,14 @@ reset:
   - kubectl -n "$NAMESPACE" wait --for=condition=ApprovalRequired --timeout=360s ptahschema/storefront
 
 steps:
-  - note: A plan is waiting for a decision.
+  - note: A plan is waiting for a decision, and it is named by its fingerprint.
     run: kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.phase}{"\n"}{.status.plan.fingerprint}{"\n"}'
     sync: awaiting approval
     expect:
       exit: 0
       stdout_contains: [AwaitingApproval, "sha256:"]
 
-  - note: Approve it, bound to that plan and that fingerprint.
+  - note: Approve it, bound to that schema, that plan and that fingerprint.
     run: |
       kubectl -n "$NAMESPACE" get ptahschema storefront -o json > demo/.lab/schema.json
       kubectl -n "$NAMESPACE" get ptahschemaplan \
@@ -38,12 +38,11 @@ steps:
       exit: 0
       stdout_contains: [created]
 
-  - note: It converges, and the approval is marked used rather than left lying around.
+  - note: It converges, and the approval records that it was the one dispatched.
     await:
       kind: ptahschema
       name: storefront
       timeout: 6m
-      generation: current
       condition:
         type: InSync
         status: "True"
@@ -55,8 +54,31 @@ steps:
     expect:
       exit: 0
       stdout_contains: [Consumed, DispatchCommitted]
+      resource:
+        kind: ptahschemaapproval
+        name: storefront-v1
+        condition:
+          type: Consumed
+          status: "True"
+          reason: DispatchCommitted
 
-  - note: Now someone changes the desired state. The approved plan describes a world that moved.
+  - note: And already stale. It described a plan against the database before the apply.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahschemaapproval storefront-v1 -o json \
+        | jq -r '.status.conditions[] | select(.type == "Stale") | .message'
+    sync: stale
+    expect:
+      exit: 0
+      stdout_contains: ["no longer matches"]
+      resource:
+        kind: ptahschemaapproval
+        name: storefront-v1
+        condition:
+          type: Stale
+          status: "True"
+          reason: PlanNoLongerCurrent
+
+  - note: So it cannot authorize a second time. Change the desired state and see.
     run: |
       DIGEST=$(demo/bin/lab publish v2)
       kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge \
@@ -66,17 +88,13 @@ steps:
       exit: 0
       stdout_contains: [patched]
 
-  - note: A new plan, and the operator waits again. The old approval is not reused.
+  - note: A new plan, and the operator waits again. Nothing carries over.
     await:
       kind: ptahschema
       name: storefront
       timeout: 6m
       generation: current
       condition:
-        # Waiting, not PlanReady. PlanReady is the moment the plan was
-        # published; Waiting is the state the operator stays in until someone
-        # decides, and a demonstration that watched the moment would be racing
-        # the controller.
         type: ApprovalRequired
         status: "True"
         reason: Waiting
@@ -88,23 +106,7 @@ steps:
       exit: 0
       stdout_contains: [AwaitingApproval]
 
-  - note: The approval says why it no longer applies, by reason and not by prose.
-    run: |
-      kubectl -n "$NAMESPACE" get ptahschemaapproval storefront-v1 -o json \
-        | jq -r '.status.conditions[] | "\(.type)\t\(.status)\t\(.reason)"'
-    sync: stale
-    expect:
-      exit: 0
-      stdout_contains: [Stale]
-      resource:
-        kind: ptahschemaapproval
-        name: storefront-v1
-        condition:
-          type: Stale
-          status: "True"
-          reason: PlanNoLongerCurrent
-
-  - note: And the change it was never approved for has not run.
+  - note: And the change nobody approved has not run.
     run: demo/bin/lab psql "\d customers"
     expect:
       exit: 0

@@ -153,18 +153,21 @@ DEMO_RUN_ID ?= demo
 demo: demo-up demo-record
 	@printf 'demo: recorded. Read it with: make demo-serve\n'
 
+# The bootstrap is skipped when a lab is already up; the namespace fixtures are
+# applied either way, because they are idempotent and because a lab that was
+# brought up before a fixture changed would otherwise keep the old one.
 demo-up:
-	@if [ -f "$(DEMO_ENVIRONMENT)" ]; then \
-		printf 'demo: a lab is already up (%s). Remove it with: make demo-down\n' "$(DEMO_ENVIRONMENT)"; \
-		exit 0; \
-	fi
 	@mkdir -p demo/.lab
-	K8S_VERSION="$(DEMO_KUBERNETES_VERSION)" \
+	@if [ -f "$(DEMO_ENVIRONMENT)" ]; then \
+		printf 'demo: a lab is already up (%s); remove it with make demo-down\n' "$(DEMO_ENVIRONMENT)"; \
+	else \
+		K8S_VERSION="$(DEMO_KUBERNETES_VERSION)" \
 		E2E_STOP_AFTER=bootstrap \
 		E2E_ENVIRONMENT_FILE="$(CURDIR)/$(DEMO_ENVIRONMENT)" \
 		E2E_RUN_ID="$(DEMO_RUN_ID)" \
 		DOCKER_CONTEXT="$(DOCKER_CONTEXT)" \
-		./hack/e2e-kind.sh
+		./hack/e2e-kind.sh; \
+	fi
 	./demo/bin/lab prepare
 
 demo-record:

@@ -21,7 +21,7 @@ steps:
       exit: 0
       stdout_contains: ["sha256:"]
 
-  - note: That is the command it ran. An artifact, a dialect, a version.
+  - note: That is the command it ran. A reference, a dialect, and the file it read.
     run: |
       kubectl -n "$NAMESPACE" get job demo-push-v1 \
         -o jsonpath='{.spec.template.spec.containers[0].args}' | jq -r 'join(" ")'
