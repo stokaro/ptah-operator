@@ -1,4 +1,7 @@
-# Operations
+---
+title: Operations
+description: Installing, upgrading, watching and recovering a running operator.
+---
 
 ## Installation and upgrades
 
@@ -45,7 +48,7 @@ Install CRDs and the controller through the Helm chart. Supply digest-pinned
 manager, executor, and runner images. The chart refuses all three when only a
 tag is supplied. Manager Pods, hooks, and controller identity all use the same
 `image.repository@image.digest` reference. See the
-[installation example](../README.md#install-from-this-checkout) for the required
+[installation example](../start/install.md) for the required
 values.
 
 Upgrades are supported from the first published release onward. Every release
@@ -835,7 +838,7 @@ kubectl -n <namespace> get events --field-selector involvedObject.name=<name>
 ```
 
 The complete stable condition-reason vocabulary is cataloged in
-[Condition reasons](condition-reasons.md). Automation should compare the
+[Condition reasons](../troubleshoot/condition-reasons.md). Automation should compare the
 `type`, `status`, and `reason` tuple and require `observedGeneration` to match
 the resource generation; condition messages are diagnostic text, not an API.
 
@@ -1083,6 +1086,6 @@ headroom below the Kubernetes object-size limit after API JSON base64 encoding.
 ## Kubernetes versions
 
 The supported minor window and update procedure are defined in
-[Kubernetes support](kubernetes-support.md). A support-window change adds the
+[Kubernetes support](../support/kubernetes.md). A support-window change adds the
 new minor and removes the oldest minor atomically, after the entire real-cluster
 matrix succeeds.

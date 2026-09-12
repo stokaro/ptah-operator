@@ -41,7 +41,7 @@ const (
 	defaultKindReleasesURL = "https://api.github.com/repos/kubernetes-sigs/kind/releases?per_page=100"
 	manifestRelativePath   = "support/kubernetes.json"
 	chartRelativePath      = "charts/ptah-operator/Chart.yaml"
-	docsRelativePath       = "docs/kubernetes-support.md"
+	docsRelativePath       = "docs/site/src/content/docs/support/kubernetes.md"
 	windowSize             = 3
 	verificationRefreshAge = 21 * 24 * time.Hour
 	maximumResponseBytes   = 16 << 20

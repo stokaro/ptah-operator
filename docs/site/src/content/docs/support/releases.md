@@ -1,4 +1,7 @@
-# Releases and provenance
+---
+title: Releases and provenance
+description: What a release publishes and how to verify it before installing.
+---
 
 Every `v<chart-version>` tag publishes one version-addressed release set:
 

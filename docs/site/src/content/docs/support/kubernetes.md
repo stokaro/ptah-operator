@@ -1,4 +1,7 @@
-# Kubernetes support
+---
+title: Kubernetes support
+description: The supported minor window, how it is declared, and how it moves.
+---
 
 Ptah Operator supports the three minor Kubernetes release branches that the Kubernetes project currently maintains. Every pull request and the weekly default-branch run execute the same complete PostgreSQL and MySQL reconciliation lifecycle against a real cluster for each supported minor; a version is not part of the supported window unless its matrix job is required and green. Every matrix cluster has three control-plane nodes and one worker. Upgrade and teardown barriers address each advertised API server directly, so a warm cache on one peer cannot hide stale authorization or admission state on another peer.
 
@@ -20,7 +23,7 @@ The exact patch versions in this table are test environments, not a restriction 
 
 ## Source of truth
 
-[`support/kubernetes.json`](../support/kubernetes.json) is the machine-readable source of truth. It records the ordered minor window, the kind version, digest-pinned multi-architecture node images, and the UTC date of the last persisted upstream-verification checkpoint. CI builds its matrix directly from this file; it does not maintain a second version list.
+`support/kubernetes.json` is the machine-readable source of truth. It records the ordered minor window, the kind version, digest-pinned multi-architecture node images, and the UTC date of the last persisted upstream-verification checkpoint. CI builds its matrix directly from this file; it does not maintain a second version list.
 
 The Helm `kubeVersion` range is a derived, packaged value because a chart cannot read a repository file after publication. Run this guard after changing support metadata:
 
@@ -40,7 +43,7 @@ That command reads the official Kubernetes stable release, derives the consecuti
 
 ## Moving the window
 
-The weekly [`update-kubernetes-support.yml`](../.github/workflows/update-kubernetes-support.yml) workflow performs live discovery with read-only permissions and exports only a size-limited, digest-bound patch over the three generated support files. Its `-output=proposal` validation mode accepts either the already reviewed profile or exactly the immediate next supported minor while requiring the compiled dependency and reachable Job/Pod API digest to remain at the frozen reviewed boundary. This mode authorizes publishing discovery evidence only; it cannot produce a CI matrix or release evidence. A separate job with content and pull-request write access applies that patch, opens or updates the `automation/kubernetes-support-window` pull request, and exports the exact pushed commit and pull-request identity. It replaces an existing automation branch only when the remote head is already an ancestor of the validated base or is exactly one untouched bot-authored support commit over such an ancestor, with no mode changes or paths outside the generated support bundle; any unmerged human review commit makes the refresh fail closed instead of overwriting that work. A final job has Actions write access but no content or pull-request write access; it revalidates the remote branch and open pull request against those outputs, explicitly dispatches the CI and Release workflows, and confirms that both new manual runs resolve to that commit. The token-generated update therefore receives the same source verification, complete three-minor cluster matrix, and release-package smoke checks as a human-authored pull request without combining repository publication and workflow-dispatch authority in one job.
+The weekly `.github/workflows/update-kubernetes-support.yml` workflow performs live discovery with read-only permissions and exports only a size-limited, digest-bound patch over the three generated support files. Its `-output=proposal` validation mode accepts either the already reviewed profile or exactly the immediate next supported minor while requiring the compiled dependency and reachable Job/Pod API digest to remain at the frozen reviewed boundary. This mode authorizes publishing discovery evidence only; it cannot produce a CI matrix or release evidence. A separate job with content and pull-request write access applies that patch, opens or updates the `automation/kubernetes-support-window` pull request, and exports the exact pushed commit and pull-request identity. It replaces an existing automation branch only when the remote head is already an ancestor of the validated base or is exactly one untouched bot-authored support commit over such an ancestor, with no mode changes or paths outside the generated support bundle; any unmerged human review commit makes the refresh fail closed instead of overwriting that work. A final job has Actions write access but no content or pull-request write access; it revalidates the remote branch and open pull request against those outputs, explicitly dispatches the CI and Release workflows, and confirms that both new manual runs resolve to that commit. The token-generated update therefore receives the same source verification, complete three-minor cluster matrix, and release-package smoke checks as a human-authored pull request without combining repository publication and workflow-dispatch authority in one job.
 
 When Kubernetes publishes a new minor release, the automation follows this policy:
 

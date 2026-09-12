@@ -1,4 +1,7 @@
-# Database support and privileges
+---
+title: Databases and privileges
+description: The supported engines and the least authority each one needs.
+---
 
 The initial operator support contract is deliberately narrower than every
 database that the Ptah CLI can address. A database release line is supported by
@@ -24,7 +27,7 @@ version identity verified from that image's provenance. The chart has no
 executor-version default and cannot silently assign an unrelated version to a
 different digest; both values remain part of every plan and applied binding.
 Which build that is, and what has actually been run against it, is
-[Ptah compatibility](ptah-support.md).
+[Ptah compatibility](ptah.md).
 
 ## PostgreSQL authority
 

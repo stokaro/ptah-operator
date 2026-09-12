@@ -1,4 +1,7 @@
-# Ptah Operator
+---
+title: Ptah Operator
+description: A Kubernetes control plane that converges PostgreSQL and MySQL schemas from immutable OCI artifacts.
+---
 
 Ptah Operator is a Kubernetes-native control plane for continuously converging
 PostgreSQL and MySQL schemas from immutable OCI artifacts. Database work runs
@@ -38,34 +41,17 @@ Key safety properties:
 - Deletion and suspension never execute cleanup SQL.
 - An uncertain apply outcome always returns to observation instead of replay.
 
-## Install and first schema
+## Where to go next
 
-The guide lives on its own site: [operator.ptah.run](https://operator.ptah.run/).
-It carries installation, the three values the chart refuses to guess, a first
-worked schema, configuration, operations, the security model, the condition
-reasons and the support windows.
+[Install](start/install.md) the chart, then give it
+[a first schema](start/first-schema.md). What the operator does with that
+schema afterwards is [operations](use/operations.md), and what it refuses is
+[the security model](use/security.md).
 
-```sh
-cd docs/site && npm ci && npm run build
-```
+## Ptah itself
 
-builds it from this checkout.
-
-## Documentation
-
-The user guide is published at
-[operator.ptah.run](https://operator.ptah.run/) and its pages live in
-`docs/site/src/content/docs`. One document is deliberately not part of it:
-
-- [Architecture and state machine](docs/architecture.md), which is written for
-  somebody changing this code rather than for somebody running it.
-
-Ptah itself -- the schema formats, the OCI artifact layout, the CLI -- is
-documented at [docs.ptah.run](https://docs.ptah.run/edge/), and which Ptah
-builds have been verified with this operator is published as the
-[compatibility matrix](https://docs.ptah.run/compatibility/operator/).
-
-`PtahMigration` is deliberately not folded into `PtahSchema`. A future
-versioned-migration controller can reuse the OCI transport, credential
-isolation, execution protocol, and target coordination primitives while
-retaining its own API and state machine.
+The artifacts this operator applies are built with Ptah, and the schema
+formats, the OCI artifact layout and the CLI are documented on
+[Ptah's own site](https://docs.ptah.run/edge/). Which Ptah build this operator
+runs, and which have actually been verified with it, is
+[Ptah compatibility](support/ptah.md).

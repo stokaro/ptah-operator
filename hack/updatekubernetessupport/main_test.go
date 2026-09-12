@@ -216,7 +216,7 @@ func TestSecureRedirectPolicy(t *testing.T) {
 func TestApplyUpdateChangesOnlyDerivedSupportFiles(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	for _, directory := range []string{"support", "charts/ptah-operator", "docs"} {
+	for _, directory := range []string{"support", "charts/ptah-operator", filepath.Dir(docsRelativePath)} {
 		if err := os.MkdirAll(filepath.Join(root, directory), 0o700); err != nil {
 			t.Fatalf("create %s: %v", directory, err)
 		}

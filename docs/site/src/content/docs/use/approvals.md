@@ -1,4 +1,7 @@
-# Exact-plan approvals
+---
+title: Exact-plan approvals
+description: Why an approval names one plan, and what the operator refuses when it does not.
+---
 
 An approval is an independent authorization object, not a Boolean field on the
 schema. The approver must explicitly select all three stable identifiers:
@@ -13,7 +16,7 @@ corrects a conflicting value. The validating webhook then checks the complete
 post-mutation object against the current schema, plan storage commit, observed
 database state, artifact digest, policy bytes, and execution images.
 
-Start from [the minimal approval example](../examples/approval.yaml). Obtain the
+Start from the minimal approval example in `examples/approval.yaml`. Obtain the
 values only after reviewing the plan:
 
 ```sh
@@ -26,7 +29,7 @@ The plan resource contains immutable chunk names and digests; exact SQL is in
 those controller-owned ConfigMaps. The built-in approver ClusterRole does not
 grant cluster-wide ConfigMap access. Before review, a namespace administrator
 must grant `get` on every current chunk name to the approver. Start from the
-[least-privilege Role template](../examples/approver-plan-reader-role.yaml),
+least-privilege Role template in `examples/approver-plan-reader-role.yaml`,
 copy all `.spec.chunks[*].name` values into `resourceNames`, and bind that Role
 only to the reviewer. Replace the Role for the next plan. A broader Role that
 can read every ConfigMap in an application namespace is easier to operate but

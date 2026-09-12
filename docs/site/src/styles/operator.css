@@ -1,0 +1,33 @@
+/* The family resemblance to Ptah's documentation, and nothing more.
+ *
+ * Ptah's site carries its own component tree, self-hosted faces and a token
+ * file shared with ptah.run. None of that is imported here: this site builds
+ * from its own repository with no checkout of Ptah and no download of its
+ * design, so what it borrows is the one thing a reader recognizes across two
+ * sites -- the accent -- over Starlight's own defaults.
+ *
+ * The accent values are the ones Ptah's tokens declare for each theme. */
+:root {
+  --sl-color-accent-low: oklch(0.955 0.025 238);
+  --sl-color-accent: oklch(0.47 0.16 238);
+  --sl-color-accent-high: oklch(0.39 0.13 240);
+}
+
+:root[data-theme='dark'] {
+  --sl-color-accent-low: oklch(0.27 0.05 235);
+  --sl-color-accent: oklch(0.78 0.11 225);
+  --sl-color-accent-high: oklch(0.86 0.08 225);
+}
+
+/* The version this build documents, beside the title. A reader arriving from a
+ * search result is on one version of two sites, and the header is where that
+ * has to be legible. */
+.site-title .operator-version {
+  font-size: var(--sl-text-xs);
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.35rem;
+  margin-inline-start: 0.5rem;
+  color: var(--sl-color-gray-2);
+  white-space: nowrap;
+}

@@ -1,11 +1,14 @@
-# Ptah compatibility
+---
+title: Ptah compatibility
+description: Which Ptah build this operator runs, what has been verified, and what nobody has measured.
+---
 
 The operator does not contain Ptah. It runs one, as a job whose container image
 and version identity the installation binds, so "which Ptah works with this
 operator" is a question about that executor and not about the CLI a person used
 to build the OCI artifact.
 
-[`support/ptah.json`](../support/ptah.json) is the machine-readable answer, and
+`support/ptah.json` is the machine-readable answer, and
 it is canonical: the lifecycle suite takes the commit it builds the executor
 from out of this file, and the compatibility table published on the Ptah
 documentation site is generated from a copy of it.
@@ -110,5 +113,5 @@ Most releases need no entry. This is the explicit exception rather than a
 documentation branch per release.
 
 Database engines are a separate axis and live in
-[database support](database-support.md); Kubernetes versions live in
-[Kubernetes support](kubernetes-support.md).
+[database support](databases.md); Kubernetes versions live in
+[Kubernetes support](kubernetes.md).

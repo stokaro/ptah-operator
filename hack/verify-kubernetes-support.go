@@ -42,7 +42,7 @@ const (
 	workflowPath                   = ".github/workflows/ci.yml"
 	updateWorkflowPath             = ".github/workflows/update-kubernetes-support.yml"
 	releaseWorkflowPath            = ".github/workflows/release.yml"
-	docsPath                       = "docs/kubernetes-support.md"
+	docsPath                       = "docs/site/src/content/docs/support/kubernetes.md"
 	makefilePath                   = "Makefile"
 	e2eHarnessPath                 = "hack/e2e-kind.sh"
 	e2eSupportImageResolverPath    = "hack/e2e-kubernetes-support-image.sh"
