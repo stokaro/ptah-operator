@@ -502,6 +502,10 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
       var scenario = SCENARIOS[name];
       if (!scenario) return;
       SCRIPT = scenario.script;
+      // The frame says which session it is showing. A reader who followed a
+      // link into an expanded run, and anything reading the page, both need the
+      // answer from the DOM rather than from what was there when it loaded.
+      demo.setAttribute("data-demo-scenario", name);
       where.textContent = scenario.where;
       if (caption) caption.textContent = scenario.caption;
       if (title) title.textContent = scenario.label;

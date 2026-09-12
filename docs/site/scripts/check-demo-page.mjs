@@ -132,15 +132,26 @@ async function main() {
     const quiet = await browser.newContext({ javaScriptEnabled: false });
     const still = await quiet.newPage();
     await still.goto(`${origin}demo/`, { waitUntil: 'load' });
-    const withoutScript = await still.evaluate(countsIn.toString().replace('export ', '') + '; countsIn(document)');
+    // The function is sent as a string and called in the page: the page has no
+    // module of its own to import it from, and one definition is what keeps
+    // this check and its self-test measuring the same thing.
+    const withoutScript = await still.evaluate(
+      `(${countsIn.toString().replace(/^export\s+/, '')})(document)`,
+    );
     if (withoutScript.tiles !== record.scenarios.length) {
       problems.push(`without JavaScript the catalog shows ${withoutScript.tiles} of ${record.scenarios.length} runs`);
     }
     if (withoutScript.transcripts !== record.scenarios.length) {
       problems.push(`without JavaScript ${withoutScript.transcripts} transcripts are in the markup`);
     }
-    if (withoutScript.lines < 10) {
-      problems.push(`the frame's transcript carries ${withoutScript.lines} lines without JavaScript`);
+    // The frame carries the first run in full. Counted from the recording
+    // rather than against a figure written here, which would pass whatever the
+    // page happened to render.
+    const firstRunLines = record.scenarios[0].events.filter(([kind]) => kind !== 'sync' && kind !== 'wait').length;
+    if (withoutScript.lines < firstRunLines) {
+      problems.push(
+        `the frame's transcript carries ${withoutScript.lines} lines and the first run has ${firstRunLines}`,
+      );
     }
     await quiet.close();
 

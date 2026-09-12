@@ -74,7 +74,12 @@
 	color: var(--termacc);
 }
 
- * copy from sight only, then replays it into .demo-screen.
+/* ---------- The player ----------
+ *
+ * Without the script the transcript below the screen is the page: every
+ * command and every line of output is in the markup, which is also what a
+ * screen reader and a crawler read. The player hides that copy from sight
+ * only, then replays it into .demo-screen.
  */
 .demo .term-bar {
   align-items: center;
@@ -394,6 +399,9 @@
   padding-inline-start: 2ch;
   text-indent: -2ch;
 }
+/* A tile is a control, so it exists only where something can act on it. The
+ * `js` class is set on the root before first paint; without it the page is the
+ * transcripts, which is the whole of every session. */
 .js .tile-transcript {
   display: none;
 }
@@ -535,9 +543,17 @@ html:not(.js) .tile-slot {
 .ptah-demo-checks {
 	overflow-x: auto;
 }
-.ptah-demo-checks table {
+.sl-markdown-content .ptah-demo-checks table {
 	width: 100%;
 	font-size: 0.8125rem;
+}
+.sl-markdown-content .ptah-demo-checks td:first-child,
+.sl-markdown-content .ptah-demo-checks th:first-child {
+	width: 4rem;
+}
+.sl-markdown-content .ptah-demo-checks td:last-child,
+.sl-markdown-content .ptah-demo-checks th:last-child {
+	width: 5rem;
 }
 .ptah-demo-checks code {
 	font-size: 0.78125rem;
@@ -549,9 +565,38 @@ html:not(.js) .tile-slot {
 	font-size: 0.8125rem;
 }
 
-/* The tiles sit in the content column, which is narrower than ptah.run's page.
- * Two across at the usual reading width, one on a phone. */
+/* The tiles sit inside a documentation page, where an unordered list is styled
+ * for prose: markers, an indent, and space between items. A catalog is a grid
+ * of controls, so those are taken off again here rather than by writing the
+ * markup as something other than the list it is. */
 .sl-markdown-content .tiles {
 	margin-block: 1.5rem;
+	padding-inline-start: 0;
+	list-style: none;
+}
+.sl-markdown-content .tiles > li {
+	margin: 0;
 	padding: 0;
+}
+.sl-markdown-content .tiles > li::marker {
+	content: none;
+}
+
+/* A slot is the tile, the link under it, and -- where the player is absent --
+ * the whole transcript. They stack; ptah.run's slot holds only the tile. */
+.tile-slot {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.sl-markdown-content .tile-more {
+	margin: 0.4rem 0 0;
+	font-size: 0.8125rem;
+}
+.sl-markdown-content .tile-more a {
+	color: var(--sl-color-gray-2);
+}
+.sl-markdown-content .tile-more a:hover {
+	color: var(--sl-color-text-accent);
 }

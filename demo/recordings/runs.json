@@ -1,0 +1,26 @@
+{
+  "recordedAt": "2026-09-12T00:00:00Z",
+  "lab": {
+    "KUBERNETES_VERSION": "1.37.0",
+    "KIND_CLUSTER_NAME": "ptah-demo",
+    "CONTROLLER_REVISION": "0000000000000000000000000000000000000000",
+    "EXECUTOR_IMAGE": "registry/ptah-executor@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "PTAH_VERSION": "v0.0.0"
+  },
+  "source": {"commit": "0000000000000000000000000000000000000000", "describe": "stub"},
+  "scenarios": [
+    {
+      "id": "first-apply", "title": "Apply a schema", "tagline": "A tagline.", "learn": "A lesson.",
+      "tags": ["Lifecycle"], "commands": 1, "lines": 3,
+      "events": [["sync", "applying"], ["note", "# A note."], ["cmd", "kubectl apply -f storefront.yaml"], ["out", "ptahschema.operator.ptah.dev/storefront created"]],
+      "checks": [{"scenario": "first-apply", "step": 1, "claim": "exits 0", "passed": true}]
+    },
+    {
+      "id": "drift", "title": "Close the drift", "tagline": "A tagline.", "learn": "A lesson.",
+      "tags": ["Operations"], "commands": 1, "lines": 3,
+      "events": [["note", "# A note."], ["cmd", "demo/bin/lab psql \"\\dt\""], ["out", " public | customers | table"], ["blank"], ["sql", "ALTER TABLE \"customers\" ADD COLUMN \"signed_up_at\" timestamptz"]],
+      "checks": [{"scenario": "drift", "step": 1, "claim": "exits 0", "passed": true}]
+    }
+  ],
+  "order": ["first-apply", "drift"]
+}

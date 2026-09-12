@@ -32,7 +32,8 @@ const base = import.meta.env.BASE_URL;
 	<p class="ptah-demo-learn"><strong>What it shows.</strong> {run.learn}</p>
 
 	<p class="ptah-demo-replay">
-		A replay of a verified run, not a live cluster. {run.checks.length} checks held while it was recorded.
+		A replay of a verified run, not a live cluster. {run.checks.length}
+		{run.checks.length === 1 ? ' check held' : ' checks held'} while it was recorded.
 	</p>
 
 	<RunFrame id={run.id} title={run.title} events={run.events} />
@@ -68,8 +69,7 @@ const base = import.meta.env.BASE_URL;
 
 	<p>
 		The scenario is <code>demo/scenarios/{run.id}.yaml</code>, and <code>make demo</code> replays the
-		whole set against a lab of your own.
-		<a href={`${base}demo/`}>All recorded runs</a>.
+		whole set against a lab of your own. <a href={`${base}demo/`}>All recorded runs</a>.
 	</p>
 
 	<dialog class="demo-modal" data-demo-modal aria-labelledby="run-title">
@@ -80,5 +80,9 @@ const base = import.meta.env.BASE_URL;
 	</dialog>
 </StarlightPage>
 
+{/* The root carries `js` before first paint, so the tiles are controls and
+	the printed transcripts step aside. Without the script neither happens, and
+	the page is every session in full. */}
+<script is:inline>document.documentElement.classList.add('js');</script>
 <script is:inline set:html={`window.PTAH_RUNS = ${JSON.stringify(catalog)};`} />
 <script type="module" src={`${base}demo/player.js`}></script>
