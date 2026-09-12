@@ -109,7 +109,8 @@ kubectl --kubeconfig "$E2E_KUBECONFIG" -n "$E2E_OPERATOR_NAMESPACE" logs -l app.
 demo/bin/lab psql '\dt'
 ```
 
-Two failures are worth naming because they look like the operator being wrong:
+Three failures are worth naming because each looks like the operator being
+wrong and is not:
 
 - **A wait that returns at once.** A condition that was already true proves
   nothing about what a step just did. A step that changes the spec waits with
@@ -119,6 +120,9 @@ Two failures are worth naming because they look like the operator being wrong:
   two pushes of one file, and a tag is write-once. `demo/bin/lab publish` gives
   each push its own tag for that reason; what the operator is pointed at is the
   digest the push returned.
+- **A plan that cannot be found.** A converged schema carries no current plan,
+  because there is nothing left to do. After convergence the plan that ran is
+  found by the fingerprint `status.applied` names, not through `status.plan`.
 
 ## What a recording may not carry
 
