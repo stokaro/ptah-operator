@@ -1,11 +1,7 @@
 id: lab-setup
 title: Stand up the lab
-tagline: >
-  A four-node kind cluster, the chart installed from a package, and the two
-  images the operator will run pinned by digest.
-learn: >
-  What the rest of these runs are against, and how to check that an install
-  finished rather than merely started.
+tagline: A four-node kind cluster, the chart from a package, and every image pinned by digest.
+learn: What the other runs are against, and how to tell an install that finished from one that started.
 tags: [Lab]
 
 reset:

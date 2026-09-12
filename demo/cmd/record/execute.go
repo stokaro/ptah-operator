@@ -80,11 +80,13 @@ func (r *recorder) run(ctx context.Context, current scenario) (recording, error)
 		}
 	}
 
+	// Trimmed: a folded scalar in the scenario file ends with a newline, and a
+	// title with a newline in it is a title the page renders with one.
 	recorded := recording{
 		ID:      current.ID,
-		Title:   current.Title,
-		Tagline: current.Tagline,
-		Learn:   current.Learn,
+		Title:   strings.TrimSpace(current.Title),
+		Tagline: strings.TrimSpace(current.Tagline),
+		Learn:   strings.TrimSpace(current.Learn),
 		Tags:    current.Tags,
 	}
 	for index, one := range current.Steps {
