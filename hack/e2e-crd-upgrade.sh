@@ -3198,10 +3198,24 @@ prove_controller_object_supported_window_guard() {
 
 	baseline_stdout=$WORK_DIR/controller-object-baseline.out
 	baseline_stderr=$WORK_DIR/controller-object-baseline.err
-	if controller_kube create --dry-run=server -o json -f "$base_manifest" \
-		>"$baseline_stdout" 2>"$baseline_stderr"; then
-		fail "controller-object baseline bypassed the semantic Job write boundary"
-	fi
+	# This boundary is the webhook's answer, and the manager rolled out a moment
+	# ago, so its Service can still hold an endpoint that refuses the connection.
+	# Retry only while the API server reports it could not reach the webhook at
+	# all: a refusal that arrives is the answer under test, whatever it says.
+	baseline_deadline=$(($(date +%s) + 120))
+	while :; do
+		if controller_kube create --dry-run=server -o json -f "$base_manifest" \
+			>"$baseline_stdout" 2>"$baseline_stderr"; then
+			fail "controller-object baseline bypassed the semantic Job write boundary"
+		fi
+		grep -Eq 'failed calling webhook|no endpoints available|connection refused|service unavailable' \
+			"$baseline_stderr" || break
+		[ "$(date +%s)" -lt "$baseline_deadline" ] || {
+			cat "$baseline_stderr" >&2
+			fail "controller write webhook stayed unreachable for the baseline boundary"
+		}
+		sleep 2
+	done
 	if grep -F 'Ptah controller Job write guard rejected an unsafe workload shape' \
 		"$baseline_stdout" "$baseline_stderr" >/dev/null; then
 		fail "controller-object baseline does not satisfy the structural VAP contract"
