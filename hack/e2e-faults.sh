@@ -5092,8 +5092,12 @@ READ_LOSS_JOB_NAME=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_READ_LOSS_SCHEMA
 	-o jsonpath='{.status.activeOperation.jobName}')
 READ_LOSS_JOB_UID=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_READ_LOSS_SCHEMA" \
 	-o jsonpath='{.status.activeOperation.jobUID}')
-[ -n "$READ_LOSS_JOB_NAME" ] && [ -n "$READ_LOSS_JOB_UID" ] ||
-	fail "the held read-only operation did not publish its exact Job identity"
+# Two refusals rather than `A && B || fail`: ShellCheck 0.9.0, which CI runs,
+# reports SC2015 on that chain and 0.11.0 does not.
+[ -n "$READ_LOSS_JOB_NAME" ] ||
+	fail "the held read-only operation did not publish its Job name"
+[ -n "$READ_LOSS_JOB_UID" ] ||
+	fail "the held read-only operation did not publish its Job UID"
 assert_read_workload_blocked "$READ_LOSS_JOB_UID" \
 	"the held $READ_LOSS_OPERATION Job this proof removes"
 # Audit before the removal: every watched Job and Pod UID must reach the ledger,
