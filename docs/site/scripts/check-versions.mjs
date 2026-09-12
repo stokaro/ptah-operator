@@ -11,7 +11,7 @@ import { existsSync, readFileSync, readdirSync, mkdirSync, writeFileSync, rmSync
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isVersionFolder, order } from './gen-versions.mjs';
+import { isVersionFolder, order, ROOT_ALIASES } from './gen-versions.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 
@@ -70,6 +70,21 @@ export function inspect(root) {
     }
     commits.set(info.source_commit, name);
   }
+  // A root alias is what another site links to. An alias with nothing behind it
+  // is a 404 on someone else's page, which is invisible from here.
+  const defaultVersion = existsSync(indexPath)
+    ? JSON.parse(readFileSync(indexPath, 'utf8')).default
+    : null;
+  for (const route of ROOT_ALIASES) {
+    if (!existsSync(join(root, route, 'index.html'))) {
+      problems.push(`/${route}/ is linked from elsewhere and the assembled root does not answer it`);
+      continue;
+    }
+    if (defaultVersion && !existsSync(join(root, defaultVersion, route, 'index.html'))) {
+      problems.push(`/${route}/ redirects into ${defaultVersion}, which publishes no such page`);
+    }
+  }
+
   return problems;
 }
 
@@ -95,8 +110,25 @@ function selftest() {
       ],
     }),
   );
+  for (const route of ROOT_ALIASES) {
+    mkdirSync(join(root, route), { recursive: true });
+    writeFileSync(join(root, route, 'index.html'), '<!doctype html>');
+    mkdirSync(join(root, 'v0.1.0', route), { recursive: true });
+    writeFileSync(join(root, 'v0.1.0', route, 'index.html'), '<!doctype html>');
+  }
   let problems = inspect(root);
   if (problems.length !== 0) throw new Error(`a correct root was refused: ${problems.join('; ')}`);
+
+  // An alias nothing is behind is the failure another site would carry.
+  for (const route of ROOT_ALIASES) rmSync(join(root, route), { recursive: true, force: true });
+  problems = inspect(root);
+  if (!problems.some((problem) => problem.includes('does not answer it'))) {
+    throw new Error(`a missing root alias was accepted: ${problems.join('; ')}`);
+  }
+  for (const route of ROOT_ALIASES) {
+    mkdirSync(join(root, route), { recursive: true });
+    writeFileSync(join(root, route, 'index.html'), '<!doctype html>');
+  }
 
   // The failure this file exists for: one build published twice.
   write('v0.1.0', { documentation_version: 'v0.1.0', source_commit: commit });
