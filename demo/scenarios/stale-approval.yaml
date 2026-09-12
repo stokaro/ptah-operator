@@ -73,9 +73,13 @@ steps:
       timeout: 6m
       generation: current
       condition:
+        # Waiting, not PlanReady. PlanReady is the moment the plan was
+        # published; Waiting is the state the operator stays in until someone
+        # decides, and a demonstration that watched the moment would be racing
+        # the controller.
         type: ApprovalRequired
         status: "True"
-        reason: PlanReady
+        reason: Waiting
     run: |
       kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
         | jq -r '.status.phase, .status.plan.fingerprint'
