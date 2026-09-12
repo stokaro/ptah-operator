@@ -11,7 +11,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support update-kubernetes-support verify-release docker-build e2e-static e2e
+.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build e2e-static e2e
 
 all: verify build
 
@@ -89,7 +89,7 @@ manifests:
 
 verify: verify-source test-race
 
-verify-source: fmt-check generate manifests verify-crd-schema-history verify-kubernetes-support verify-release e2e-static vet build test
+verify-source: fmt-check generate manifests verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-release e2e-static vet build test
 	@git diff --exit-code -- api/v1alpha1/zz_generated.deepcopy.go config/crd/bases charts/ptah-operator/crds internal/crdupgrade/assets
 
 verify-crd-schema-history: manifests
@@ -97,6 +97,9 @@ verify-crd-schema-history: manifests
 
 verify-kubernetes-support:
 	$(GO) run ./hack/verify-kubernetes-support.go
+
+verify-ptah-support:
+	$(GO) run ./hack/verifyptahsupport
 
 # This target performs live upstream discovery. Normal verification is offline.
 update-kubernetes-support:

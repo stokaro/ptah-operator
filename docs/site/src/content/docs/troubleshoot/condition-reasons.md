@@ -1,4 +1,7 @@
-# Condition reasons
+---
+title: Condition reasons
+description: What each condition reason means and what to do about it.
+---
 
 Kubernetes Conditions are the operator's stable machine interface. Consumers
 should evaluate the complete `type`, `status`, and `reason` tuple and use

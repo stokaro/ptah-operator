@@ -82,7 +82,7 @@ E2E_EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 E2E_RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 E2E_PTAH_VERSION=${E2E_PTAH_VERSION:-}
 E2E_PTAH_SOURCE_DIR=${E2E_PTAH_SOURCE_DIR:-}
-E2E_PTAH_REVISION=${E2E_PTAH_REVISION:-00fc362c943bfb9d0363d5890bf449a2a9b5e7cf}
+E2E_PTAH_REVISION=${E2E_PTAH_REVISION:-}
 E2E_PTAH_GIT_URL=${E2E_PTAH_GIT_URL:-https://github.com/stokaro/ptah.git}
 E2E_REGISTRY_IMAGE=${E2E_REGISTRY_IMAGE:-registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33}
 E2E_POSTGRES_SOURCE_IMAGE=${E2E_POSTGRES_SOURCE_IMAGE:-postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73}
@@ -222,6 +222,19 @@ K8S_MAJOR_MINOR=$(printf '%s\n' "$K8S_VERSION" | cut -d. -f1,2)
 SUPPORTED_KIND_NODE_IMAGE=$("$ROOT_DIR/hack/e2e-kubernetes-support-image.sh" \
 	"$ROOT_DIR/support/kubernetes.json" "$K8S_VERSION") ||
 	fail "Kubernetes $K8S_VERSION is not an exact member of support/kubernetes.json"
+# The Ptah build this suite verifies is declared once, in the compatibility
+# catalog, because the claim the catalog publishes and the commit the suite
+# actually builds have to be the same commit. A default here would be a second
+# list, and the first day they disagreed the published matrix would name a
+# build nothing ran.
+if [ -z "$E2E_PTAH_REVISION" ]; then
+	E2E_PTAH_REVISION=$(jq -r '
+		[.releases[] | select(.operator == "edge") | .verified[].ptahCommit] | first // empty
+	' "$ROOT_DIR/support/ptah.json") ||
+		fail "support/ptah.json could not be read for the verified Ptah commit"
+	[ -n "$E2E_PTAH_REVISION" ] ||
+		fail "support/ptah.json declares no verified Ptah commit for the edge operator"
+fi
 printf '%s\n' "$E2E_PTAH_REVISION" | grep -Eq '^[0-9a-f]{40}$' ||
 	fail "E2E_PTAH_REVISION must be an exact 40-character lowercase Git commit"
 if [ -z "$KIND_NODE_IMAGE" ]; then

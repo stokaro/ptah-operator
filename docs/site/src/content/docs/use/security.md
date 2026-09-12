@@ -1,4 +1,7 @@
-# Security model
+---
+title: Security model
+description: Trust boundaries, artifact integrity, and what a deployment still owes.
+---
 
 ## Trust boundaries
 
@@ -18,8 +21,8 @@ The operator separates four authorities:
    same-namespace Secret selectors resolved by the kubelet.
 
 Start namespace-scoped bindings from the
-[desired-state author](../examples/desired-state-author-role.yaml) and
-[diagnostic reader](../examples/diagnostic-reader-role.yaml) examples. The
+desired-state author (`examples/desired-state-author-role.yaml`) and
+diagnostic reader (`examples/diagnostic-reader-role.yaml`) examples. The
 chart's optional approver ClusterRole remains unbound, so these three human
 permission sets can be assigned to different identities. Diagnostic access
 deliberately excludes Secrets and plan-chunk ConfigMaps; grant exact plan-chunk
@@ -201,9 +204,9 @@ SQL output.
 
 - Apply namespace NetworkPolicies that allow executor Pods to reach only the
   required registry, DNS, and database endpoints. Start from the
-  [egress-policy example](../examples/networkpolicy-egress.yaml).
+  egress-policy example in `examples/networkpolicy-egress.yaml`.
 - Grant the database user the minimum DDL and introspection privileges needed
-  for the selected schemas. See [Database support and privileges](database-support.md)
+  for the selected schemas. See [Database support and privileges](../support/databases.md)
   and do not use a cluster-wide administrative account.
 - Pin manager, runner, and executor images by digest and verify their release
   provenance before installation.

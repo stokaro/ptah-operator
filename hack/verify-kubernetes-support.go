@@ -42,7 +42,7 @@ const (
 	workflowPath                   = ".github/workflows/ci.yml"
 	updateWorkflowPath             = ".github/workflows/update-kubernetes-support.yml"
 	releaseWorkflowPath            = ".github/workflows/release.yml"
-	docsPath                       = "docs/kubernetes-support.md"
+	docsPath                       = "docs/site/src/content/docs/support/kubernetes.md"
 	makefilePath                   = "Makefile"
 	e2eHarnessPath                 = "hack/e2e-kind.sh"
 	e2eSupportImageResolverPath    = "hack/e2e-kubernetes-support-image.sh"
@@ -70,7 +70,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "6f12ddb5d62be7e6157fef740616b7056b505338ef79285679c5f1da851d9fb9"
+	ciWorkflowSHA256                = "12cb2706255853596c2f4aefff70dec9e3943ddf5d7685bedcfdf512f3151d1e"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseWorkflowSHA256           = "cb548f744819a0f8196e2056d7d581a284e754bd4319de17c6c0af9fd1eb4f78"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
@@ -619,9 +619,10 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		return fmt.Errorf("%s: support-matrix must run unconditionally with a %d-minute timeout", path, ciSupportMatrixTimeoutMinutes)
 	}
 	if !equalStringMap(supportMatrix.Outputs, map[string]string{
-		"matrix": "${{ steps.matrix.outputs.matrix }}",
+		"matrix":      "${{ steps.matrix.outputs.matrix }}",
+		"ptah_commit": "${{ steps.ptah.outputs.commit }}",
 	}) {
-		return fmt.Errorf("%s: support-matrix output must bind exactly to the matrix step output", path)
+		return fmt.Errorf("%s: support-matrix outputs must bind exactly to the matrix and Ptah pin step outputs", path)
 	}
 	matrixStep, err := requireWorkflowStep(path, "support-matrix", supportMatrix, "matrix")
 	if err != nil {
@@ -633,6 +634,21 @@ echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 `
 	if matrixStep.If != "" || matrixStep.Shell != "bash" || matrixStep.Run != wantMatrixRun {
 		return fmt.Errorf("%s: support-matrix step must unconditionally export the verified dynamic matrix", path)
+	}
+	// The Ptah pin travels the same way the Kubernetes matrix does, and for the
+	// same reason: the lifecycle job needs the tested commit before it can
+	// check anything out, and a literal in the job would be a second
+	// declaration of a claim support/ptah.json publishes.
+	ptahStep, err := requireWorkflowStep(path, "support-matrix", supportMatrix, "ptah")
+	if err != nil {
+		return err
+	}
+	const wantPtahRun = `set -euo pipefail
+commit="$(go run ./hack/verifyptahsupport -output=commit)"
+echo "commit=$commit" >> "$GITHUB_OUTPUT"
+`
+	if ptahStep.If != "" || ptahStep.Shell != "bash" || ptahStep.Run != wantPtahRun {
+		return fmt.Errorf("%s: support-matrix step must unconditionally export the verified Ptah commit", path)
 	}
 
 	verifyJob := workflow.Jobs["verify"]
@@ -825,7 +841,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	wantMatrixEnv := map[string]string{
 		"DOCKER_CONTEXT":           "${{ steps.docker-context.outputs.name }}",
 		"E2E_DIRECT_HOST_ACCESS":   "1",
-		"E2E_PTAH_REVISION":        "00fc362c943bfb9d0363d5890bf449a2a9b5e7cf",
+		"E2E_PTAH_REVISION":        "${{ needs.support-matrix.outputs.ptah_commit }}",
 		"E2E_PTAH_SOURCE_DIR":      "${{ runner.temp }}/ptah",
 		"E2E_RELEASE_CHART_OUTPUT": "${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
 		"E2E_RUN_ID":               "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}",

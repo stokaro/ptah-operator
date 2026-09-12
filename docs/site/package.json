@@ -1,0 +1,28 @@
+{
+  "name": "ptah-operator-docs",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check:links": "node scripts/check-links.mjs",
+    "check:links:selftest": "node scripts/check-links.mjs --selftest",
+    "check:versions": "node scripts/check-versions.mjs",
+    "check:versions:selftest": "node scripts/check-versions.mjs --selftest",
+    "check:build-info": "node scripts/check-build-info.mjs",
+    "check:build-info:selftest": "node scripts/check-build-info.mjs --selftest",
+    "check:navigation": "node scripts/check-navigation.mjs",
+    "check:navigation:selftest": "node scripts/check-navigation.mjs --selftest",
+    "values:write": "node scripts/build-values-reference.mjs --write",
+    "check:values": "node scripts/build-values-reference.mjs",
+    "check:values:selftest": "node scripts/build-values-reference.mjs --selftest",
+    "check:gen-versions:selftest": "node scripts/gen-versions.mjs --selftest"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.42.0",
+    "astro": "7.3.1",
+    "sharp": "^0.35.0"
+  }
+}

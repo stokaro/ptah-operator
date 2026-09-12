@@ -1,0 +1,136 @@
+name: Documentation
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOFLAGS: -mod=readonly
+
+jobs:
+  site:
+    name: Build and check the documentation site
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs/site/package-lock.json
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # The compatibility catalog is what the site's version index reconciles
+      # against, so the page that publishes it and the file it comes from are
+      # checked in one place.
+      - name: Verify the compatibility catalog
+        run: go run ./hack/verifyptahsupport
+      - name: Install site dependencies
+        working-directory: docs/site
+        run: npm ci
+      # Every gate proves itself before it judges anything. A checker that
+      # stopped checking passes over a broken site exactly as it passes over a
+      # correct one.
+      - name: Self-test the documentation gates
+        working-directory: docs/site
+        run: |
+          set -euo pipefail
+          npm run check:links:selftest
+          npm run check:navigation:selftest
+          npm run check:build-info:selftest
+          npm run check:versions:selftest
+          npm run check:gen-versions:selftest
+          npm run check:values:selftest
+      - name: The values table matches the chart
+        working-directory: docs/site
+        run: npm run check:values
+      - name: Build the development site
+        working-directory: docs/site
+        env:
+          DOCS_VERSION: edge
+          DOCS_SOURCE_REF: master
+          ASTRO_TELEMETRY_DISABLED: "1"
+        run: npm run build
+      - name: Record what this build came from
+        working-directory: docs/site
+        env:
+          DOCS_SOURCE_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/write-build-info.mjs \
+            --output dist/build-info.json \
+            --version edge \
+            --source-ref master \
+            --source-commit "$DOCS_SOURCE_COMMIT"
+      - name: Check the built site
+        working-directory: docs/site
+        env:
+          DOCS_VERSION: edge
+          DOCS_SOURCE_REF: master
+          DOCS_SOURCE_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          npm run check:links
+          npm run check:navigation
+          npm run check:build-info
+      # A release's pages are built from that release's own revision, so the
+      # pull request proves that path too rather than only the one master
+      # happens to take. It runs only when a release is declared: until then
+      # there is nothing to build and pretending otherwise would invent a
+      # version.
+      - name: Build the oldest declared release from its own revision
+        run: |
+          set -euo pipefail
+          release="$(
+            node -e '
+              const fs = require("node:fs");
+              const catalog = JSON.parse(fs.readFileSync("support/ptah.json", "utf8"));
+              const published = (catalog.releases ?? []).filter((entry) => entry.documentation?.published);
+              const releases = published.filter((entry) => entry.operator !== "edge");
+              if (releases.length === 0) { process.stdout.write(""); process.exit(0); }
+              const oldest = releases[releases.length - 1];
+              process.stdout.write(JSON.stringify({
+                version: oldest.operator,
+                ref: oldest.documentation.fixRevision || oldest.documentation.source,
+              }));
+            '
+          )"
+          if [ -z "$release" ]; then
+            echo "no release declares a published guide yet; nothing to build from a tag"
+            exit 0
+          fi
+          version="$(printf '%s' "$release" | node -e 'process.stdin.on("data", (d) => process.stdout.write(JSON.parse(d).version))')"
+          ref="$(printf '%s' "$release" | node -e 'process.stdin.on("data", (d) => process.stdout.write(JSON.parse(d).ref))')"
+          workdir="$(mktemp -d)"
+          trap 'git worktree remove --force "$workdir" >/dev/null 2>&1 || true' EXIT
+          commit="$(git rev-parse --verify "${ref}^{commit}")"
+          git worktree add --force "$workdir" "$commit"
+          (
+            cd "$workdir/docs/site"
+            npm ci
+            DOCS_VERSION="$version" DOCS_SOURCE_REF="$ref" ASTRO_TELEMETRY_DISABLED=1 npm run build
+            node scripts/write-build-info.mjs \
+              --output dist/build-info.json \
+              --version "$version" \
+              --source-ref "$ref" \
+              --source-commit "$commit"
+            DOCS_VERSION="$version" npm run check:links
+            DOCS_VERSION="$version" DOCS_SOURCE_REF="$ref" DOCS_SOURCE_COMMIT="$commit" npm run check:build-info
+          )
