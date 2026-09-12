@@ -36,7 +36,7 @@ steps:
       condition:
         type: Suspended
         status: "True"
-        reason: Suspended
+        reason: Requested
     run: kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.phase}{"\n"}'
     expect:
       exit: 0
@@ -62,7 +62,7 @@ steps:
         condition:
           type: Suspended
           status: "True"
-          reason: Suspended
+          reason: Requested
 
   - note: Resume, and it starts from what is actually there rather than from what it remembered.
     run: kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge -p '{"spec":{"suspend":false}}'
