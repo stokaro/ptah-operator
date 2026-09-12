@@ -12,26 +12,33 @@ export LAB_ROOT
 
 # The environment the bootstrap wrote. Every name below comes from it.
 LAB_ENVIRONMENT=${LAB_ENVIRONMENT:-$LAB_ROOT/demo/.lab/environment}
-[ -f "$LAB_ENVIRONMENT" ] || {
-	printf 'lab: no lab at %s; bring one up with make demo-up\n' "$LAB_ENVIRONMENT" >&2
-	exit 1
-}
-set -a
-# shellcheck disable=SC1090 -- the path is the lab's, and it is a NAME=value file
-. "$LAB_ENVIRONMENT"
-set +a
-
-LAB_POSTGRES_IMAGE=${E2E_POSTGRES_IMAGE:-}
-export LAB_POSTGRES_IMAGE
-export DOCKER_CONFIG=${E2E_DOCKER_CONFIG:-${DOCKER_CONFIG:-}}
 
 . "$LAB_ROOT/demo/lib/support.sh"
 . "$LAB_ROOT/demo/lib/lab.sh"
+
+# read_environment loads what the bootstrap wrote. Every command but `up` and
+# `down` needs it, and a missing file is a lab nobody built rather than a
+# condition to work around.
+read_environment() {
+	[ -f "$LAB_ENVIRONMENT" ] || {
+		printf 'lab: no lab at %s; bring one up with make demo-up\n' "$LAB_ENVIRONMENT" >&2
+		exit 1
+	}
+	set -a
+	# shellcheck disable=SC1090 -- the path is the lab's, and it is a NAME=value file
+	. "$LAB_ENVIRONMENT"
+	set +a
+	LAB_POSTGRES_IMAGE=${E2E_POSTGRES_IMAGE:-}
+	export LAB_POSTGRES_IMAGE
+	export DOCKER_CONFIG=${E2E_DOCKER_CONFIG:-${DOCKER_CONFIG:-}}
+}
 
 lab_usage() {
 	cat >&2 <<'USAGE'
 usage: demo/bin/lab <command>
 
+  up                   build the lab, unless one is already up, and prepare it
+  down                 remove the cluster and the containers the lab created
   prepare              create the namespace, its routes, credentials and policy
   reset                remove every schema, plan and approval, and empty the database
   publish <revision>   push demo/schemas/<revision>.sql and print its digest
@@ -49,22 +56,37 @@ lab_command=$1
 shift
 
 case "$lab_command" in
-prepare) lab_prepare ;;
-reset) lab_reset ;;
+up) lab_up ;;
+down) lab_down ;;
+prepare)
+	read_environment
+	lab_prepare
+	;;
+reset)
+	read_environment
+	lab_reset
+	;;
 publish)
 	[ "$#" -eq 1 ] || lab_usage
+	read_environment
 	lab_publish "$1"
 	;;
 psql)
 	[ "$#" -eq 1 ] || lab_usage
+	read_environment
 	lab_psql "$1"
 	;;
 manifest)
 	[ "$#" -eq 2 ] || lab_usage
+	read_environment
 	lab_manifest "$1" "$2"
 	;;
-namespace) printf '%s\n' "$E2E_TEST_NAMESPACE" ;;
+namespace)
+	read_environment
+	printf '%s\n' "$E2E_TEST_NAMESPACE"
+	;;
 versions)
+	read_environment
 	printf 'kubernetes  %s\n' "$E2E_KUBERNETES_VERSION"
 	printf 'kind        %s\n' "$(support_kind_version)"
 	printf 'operator    %s\n' "$E2E_CONTROLLER_REVISION"

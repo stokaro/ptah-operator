@@ -29,7 +29,9 @@ export function problemsIn(record, scenarioIds) {
   for (const key of ['KUBERNETES_VERSION', 'CONTROLLER_REVISION', 'PTAH_VERSION', 'EXECUTOR_IMAGE']) {
     if (!record.lab?.[key]) problems.push(`the recording does not say which ${key} it ran against`);
   }
-  if (!record.source?.commit) problems.push('the recording does not say which commit produced it');
+  // Per run, because one may be re-recorded without the others. The
+  // record-level commit is present only when they all agree, so its absence is
+  // a fact about the recording rather than a gap in it.
 
   const seen = new Set();
   for (const run of recorded) {
@@ -43,6 +45,7 @@ export function problemsIn(record, scenarioIds) {
     for (const check of run.checks ?? []) {
       if (!check.passed) problems.push(`${run.id} step ${check.step} is published with a failed check`);
     }
+    if (!run.source?.commit) problems.push(`${run.id} does not say which commit produced it`);
     if ((run.events ?? []).length === 0) problems.push(`${run.id} carries no event`);
     if (!(run.events ?? []).some(([kind]) => kind === 'cmd')) {
       problems.push(`${run.id} runs no command`);
@@ -85,9 +88,15 @@ function selftest() {
       PTAH_VERSION: 'v0',
       EXECUTOR_IMAGE: 'registry/x@sha256:ab',
     },
-    source: { commit: 'abc' },
     order: ['one'],
-    scenarios: [{ id: 'one', events: [['cmd', 'kubectl get ptahschema']], checks: [{ step: 1, passed: true }] }],
+    scenarios: [
+      {
+        id: 'one',
+        source: { commit: 'abc' },
+        events: [['cmd', 'kubectl get ptahschema']],
+        checks: [{ step: 1, passed: true }],
+      },
+    ],
   };
   const clean = problemsIn(good, ['one']);
   if (clean.length !== 0) throw new Error(`a sound recording reported ${clean.join('; ')}`);
@@ -99,7 +108,7 @@ function selftest() {
       'published with a failed check',
     ],
     [{ ...good, scenarios: [{ ...good.scenarios[0], events: [['out', 'x']] }] }, 'runs no command'],
-    [{ ...good, source: {} }, 'which commit produced it'],
+    [{ ...good, scenarios: [{ ...good.scenarios[0], source: {} }] }, 'which commit produced it'],
   ];
   for (const [record, want] of cases) {
     const found = problemsIn(record, ['one']).join('; ');

@@ -319,3 +319,48 @@ lab_manifest() {
 		-e "s|\${SUSPEND}|${SUSPEND:-false}|g" \
 		"$lab_manifest_file"
 }
+
+# lab_up builds the lab and prepares it.
+#
+# The build is the end-to-end harness stopped after its bootstrap, and it is
+# skipped when a lab is already up. The namespace fixtures are applied either
+# way: they are idempotent, and a lab brought up before a fixture changed would
+# otherwise keep the old one.
+lab_up() {
+	mkdir -p "$(dirname "$LAB_ENVIRONMENT")"
+	if [ -f "$LAB_ENVIRONMENT" ]; then
+		printf 'lab: a lab is already up (%s); remove it with make demo-down\n' "$LAB_ENVIRONMENT"
+	else
+		K8S_VERSION="${LAB_KUBERNETES_VERSION:-1.37.0}" \
+			E2E_STOP_AFTER=bootstrap \
+			E2E_ENVIRONMENT_FILE="$LAB_ENVIRONMENT" \
+			E2E_RUN_ID="${LAB_RUN_ID:-demo}" \
+			DOCKER_CONTEXT="${DOCKER_CONTEXT:-remote-dev-container}" \
+			"$LAB_ROOT/hack/e2e-kind.sh"
+	fi
+	read_environment
+	lab_prepare
+}
+
+# lab_down removes the cluster and the containers the lab created.
+#
+# Those, by the identifiers the bootstrap wrote, and nothing else. A Docker
+# context is shared, and a demonstration is not a reason to remove somebody
+# else's container.
+lab_down() {
+	[ -f "$LAB_ENVIRONMENT" ] || {
+		printf 'lab: no lab to remove\n'
+		return 0
+	}
+	read_environment
+	printf 'lab: removing cluster %s\n' "$E2E_KIND_CLUSTER_NAME"
+	kind delete cluster --name "$E2E_KIND_CLUSTER_NAME" >/dev/null 2>&1 || true
+	for lab_down_container in \
+		"${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:-}" \
+		"${E2E_REGISTRY_CONTAINER_ID:-}"; do
+		[ -n "$lab_down_container" ] || continue
+		docker --context "$E2E_DOCKER_CONTEXT" container rm -fv \
+			"$lab_down_container" >/dev/null 2>&1 || true
+	done
+	rm -rf "$(dirname "$LAB_ENVIRONMENT")"
+}

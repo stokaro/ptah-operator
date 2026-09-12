@@ -2718,7 +2718,15 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err := rejectStaticControlFlowBypass(harness, harnessContents, harnessContract[len(harnessContract)-1].pattern); err != nil {
 		return err
 	}
-	if err := rejectEarlySuccessfulExit(harness, harnessContents, harnessContract[len(harnessContract)-1].pattern); err != nil {
+	// The harness has one early successful exit: the mode that brings the
+	// environment up for the demonstration and keeps it. It is audited in full
+	// below and then hidden from the scan, so every other early exit is still
+	// refused -- which is the whole of what that scan is for.
+	handoff, err := auditBootstrapHandoff(harness, harnessContents)
+	if err != nil {
+		return err
+	}
+	if err := rejectEarlySuccessfulExit(harness, handoff, harnessContract[len(harnessContract)-1].pattern); err != nil {
 		return err
 	}
 
@@ -5564,4 +5572,61 @@ func errorsIsEOF(err error) bool {
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+// bootstrapHandoffOpener is the one block in the harness that may end in a
+// successful exit before the lifecycle has run.
+const bootstrapHandoffOpener = `if [ "$E2E_STOP_AFTER" = bootstrap ]; then`
+
+// auditBootstrapHandoff holds the demonstration lab's hand-off to its contract
+// and returns the harness with that block masked.
+//
+// The contract is what makes the early exit safe to permit: the block runs only
+// under the mode that asks for it, it releases the cleanup trap it is leaving
+// the environment behind for, it writes the environment where the caller named,
+// and its last statement is that exit. Masking is by spaces rather than by
+// deletion so every line number the scan reports is still the file's.
+func auditBootstrapHandoff(path string, contents []byte) ([]byte, error) {
+	opener := []byte("\n" + bootstrapHandoffOpener + "\n")
+	start := bytes.Index(contents, opener)
+	if start < 0 {
+		return nil, fmt.Errorf("%s: the demonstration lab hand-off is missing its audited opener", path)
+	}
+	if bytes.Count(contents, opener) != 1 {
+		return nil, fmt.Errorf("%s: the demonstration lab hand-off opener appears more than once", path)
+	}
+	closer := []byte("\nfi\n")
+	end := bytes.Index(contents[start+len(opener):], closer)
+	if end < 0 {
+		return nil, fmt.Errorf("%s: the demonstration lab hand-off is not closed at column zero", path)
+	}
+	block := contents[start+len(opener) : start+len(opener)+end]
+
+	for _, required := range []string{
+		"trap - EXIT HUP INT TERM",
+		`>"$E2E_ENVIRONMENT_FILE"`,
+	} {
+		if !bytes.Contains(block, []byte(required)) {
+			return nil, fmt.Errorf(
+				"%s: the demonstration lab hand-off does not %s, so leaving the environment behind is not what it does",
+				path, required)
+		}
+	}
+	lines := bytes.Split(bytes.TrimRight(block, "\n"), []byte("\n"))
+	if last := bytes.TrimSpace(lines[len(lines)-1]); !bytes.Equal(last, []byte("exit 0")) {
+		return nil, fmt.Errorf(
+			"%s: the demonstration lab hand-off ends with %q rather than its exit", path, last)
+	}
+	if count := bytes.Count(block, []byte("exit")); count != 1 {
+		return nil, fmt.Errorf(
+			"%s: the demonstration lab hand-off holds %d exits; it may hold the one it ends with", path, count)
+	}
+
+	masked := append([]byte(nil), contents...)
+	for index := start + len(opener); index < start+len(opener)+end; index++ {
+		if masked[index] != '\n' {
+			masked[index] = ' '
+		}
+	}
+	return masked, nil
 }

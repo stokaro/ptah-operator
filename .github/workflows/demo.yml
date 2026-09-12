@@ -1,0 +1,165 @@
+name: Demonstration
+
+# The recorded runs, made against a real cluster.
+#
+# The lab is the one the lifecycle uses -- hack/e2e-kind.sh stopped after its
+# bootstrap -- so what a reader watches on the site is the environment this
+# repository proves. What this workflow refuses is a scenario that no longer
+# holds: the recorder fails on the first expectation that does not.
+#
+# It runs on a schedule and on request rather than on every pull request. A
+# recording takes a cluster and twenty minutes, and the scenarios themselves are
+# checked without one by the documentation workflow on every change.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOFLAGS: -mod=readonly
+
+jobs:
+  record:
+    name: Record the demonstration
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      # The support window and the verified Ptah commit are declared in this
+      # repository, and read here rather than passed in: this workflow runs on
+      # its own schedule, and a second answer to either would be a second
+      # support claim.
+      - name: Read the support window and the verified Ptah commit
+        id: support
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          commit="$(go run ./hack/verifyptahsupport -output=commit)"
+          echo "ptah_commit=$commit" >> "$GITHUB_OUTPUT"
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+        with:
+          version: v4.2.4
+      - name: Check out pinned Ptah executor source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: stokaro/ptah
+          ref: ${{ steps.support.outputs.ptah_commit }}
+          path: .demo/ptah
+          persist-credentials: false
+      - name: Stage pinned Ptah source outside the operator build context
+        run: |
+          mv "$GITHUB_WORKSPACE/.demo/ptah" "$RUNNER_TEMP/ptah"
+          rmdir "$GITHUB_WORKSPACE/.demo"
+      # One minor, and the newest is the one a reader would install against. It
+      # is selected from the same matrix the lifecycle fans out over, so the two
+      # cannot name different releases.
+      - name: Select the newest supported Kubernetes minor
+        id: target
+        env:
+          SUPPORT_MATRIX: ${{ steps.support.outputs.matrix }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          newest="$(printf '%s' "$SUPPORT_MATRIX" | jq -c '[.[]] | last')"
+          for field in minor_slug kind_version kubernetes_version; do
+            value="$(printf '%s' "$newest" | jq -er --arg field "$field" '.[$field]')"
+            printf '%s=%s\n' "$field" "$value" >> "$GITHUB_OUTPUT"
+          done
+      - name: Install kind
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install "sigs.k8s.io/kind@${{ steps.target.outputs.kind_version }}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Install matching kubectl
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/bin"
+          mkdir -p "$install_dir"
+          base_url="https://dl.k8s.io/release/v${{ steps.target.outputs.kubernetes_version }}/bin/linux/amd64"
+          curl --fail --location --silent --show-error --output "$install_dir/kubectl" "$base_url/kubectl"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
+          echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
+          chmod 0755 "$install_dir/kubectl"
+          echo "$install_dir" >> "$GITHUB_PATH"
+      - name: Configure explicit Docker context
+        id: docker-context
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes apache2-utils openssh-server
+
+          ssh_key="$RUNNER_TEMP/ptah-demo-ssh"
+          known_hosts="$RUNNER_TEMP/ptah-demo-known-hosts"
+          install -d -m 0700 "$HOME/.ssh"
+          ssh-keygen -q -t ed25519 -N '' -f "$ssh_key"
+          install -m 0600 "$ssh_key.pub" "$HOME/.ssh/authorized_keys"
+          sudo systemctl restart ssh
+          ssh-keyscan -H 127.0.0.1 > "$known_hosts"
+          {
+            printf '%s\n' 'Host ptah-demo-docker'
+            printf '%s\n' '  HostName 127.0.0.1'
+            printf '  User %s\n' "$USER"
+            printf '  IdentityFile %s\n' "$ssh_key"
+            printf '%s\n' '  IdentitiesOnly yes'
+            printf '%s\n' '  StrictHostKeyChecking yes'
+            printf '  UserKnownHostsFile %s\n' "$known_hosts"
+          } > "$HOME/.ssh/config"
+          chmod 0600 "$HOME/.ssh/config"
+
+          context_name="ptah-demo-${{ steps.target.outputs.minor_slug }}"
+          docker context create "$context_name" --docker host=ssh://ptah-demo-docker
+          docker --context "$context_name" info >/dev/null
+          printf 'name=%s\n' "$context_name" >> "$GITHUB_OUTPUT"
+      - name: Bring the lab up and record every scenario
+        env:
+          DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
+          E2E_DIRECT_HOST_ACCESS: "1"
+          E2E_PTAH_REVISION: ${{ steps.support.outputs.ptah_commit }}
+          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
+          DEMO_KUBERNETES_VERSION: ${{ steps.target.outputs.kubernetes_version }}
+          DEMO_RUN_ID: demo-${{ github.run_id }}-${{ github.run_attempt }}
+        shell: bash
+        run: make demo-up demo-record
+      # Uploaded rather than committed. A recording names the lab it was made
+      # against, and a run of this job is a different lab from the one the
+      # committed file names; replacing it here would change the versions the
+      # site publishes without anyone deciding to.
+      - name: Preserve what this run recorded
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: demonstration-recording
+          path: |
+            demo/recordings/runs.json
+            demo/.lab/environment
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Remove the lab
+        if: always()
+        run: make demo-down
+      - name: Remove explicit Docker context
+        if: always() && steps.docker-context.outputs.name != ''
+        run: docker context rm --force "${{ steps.docker-context.outputs.name }}"

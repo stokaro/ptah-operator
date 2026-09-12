@@ -25,6 +25,8 @@ type recorder struct {
 	// normalizer prepares captured text for publication, and refuses text
 	// carrying a lab credential.
 	normalizer normalizer
+	// source is the commit every scenario this run records was made at.
+	source map[string]string
 	// log receives progress, so a run that takes minutes says what it is on.
 	log func(format string, arguments ...any)
 }
@@ -51,15 +53,20 @@ type check struct {
 
 // recording is one scenario as it ran.
 type recording struct {
-	ID       string   `json:"id"`
-	Title    string   `json:"title"`
-	Tagline  string   `json:"tagline"`
-	Learn    string   `json:"learn"`
-	Tags     []string `json:"tags"`
-	Commands int      `json:"commands"`
-	Lines    int      `json:"lines"`
-	Events   []event  `json:"events"`
-	Checks   []check  `json:"checks"`
+	ID string `json:"id"`
+	// Source is the commit of this repository the scenario ran from. It is per
+	// scenario because one may be re-recorded without the others, and a record
+	// that named a single commit would then name it for eight transcripts that
+	// were not made at it.
+	Source   map[string]string `json:"source"`
+	Title    string            `json:"title"`
+	Tagline  string            `json:"tagline"`
+	Learn    string            `json:"learn"`
+	Tags     []string          `json:"tags"`
+	Commands int               `json:"commands"`
+	Lines    int               `json:"lines"`
+	Events   []event           `json:"events"`
+	Checks   []check           `json:"checks"`
 }
 
 // run executes one scenario and returns what a reader will see.
@@ -84,6 +91,7 @@ func (r *recorder) run(ctx context.Context, current scenario) (recording, error)
 	// title with a newline in it is a title the page renders with one.
 	recorded := recording{
 		ID:      current.ID,
+		Source:  r.source,
 		Title:   strings.TrimSpace(current.Title),
 		Tagline: strings.TrimSpace(current.Tagline),
 		Learn:   strings.TrimSpace(current.Learn),

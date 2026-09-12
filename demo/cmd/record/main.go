@@ -111,7 +111,7 @@ func run(arguments []string, diagnostics io.Writer) error {
 	}
 
 	record := runRecord{Lab: live.describe()}
-	if record.Source, err = sourceIdentity(*root); err != nil {
+	if recorder.source, err = sourceIdentity(*root); err != nil {
 		return err
 	}
 	// Re-recording one scenario keeps the rest, so iterating on a scenario
@@ -145,6 +145,7 @@ func run(arguments []string, diagnostics io.Writer) error {
 		record.Scenarios = merge(existing.Scenarios, record.Scenarios)
 	}
 	record.Order = orderOf(record.Scenarios)
+	record.Source = commonSource(record.Scenarios)
 
 	if err := writeRecord(outputFile, record); err != nil {
 		return err
@@ -161,9 +162,12 @@ func run(arguments []string, diagnostics io.Writer) error {
 type runRecord struct {
 	RecordedAt string            `json:"recordedAt"`
 	Lab        map[string]string `json:"lab"`
-	Source     map[string]string `json:"source"`
-	Scenarios  []recording       `json:"scenarios"`
-	Order      []string          `json:"order"`
+	// Source is the commit every scenario in the record was made at, and is
+	// absent when they were not all made at one. A record that named a commit
+	// eight of its nine transcripts predate would be the wrong kind of true.
+	Source    map[string]string `json:"source,omitempty"`
+	Scenarios []recording       `json:"scenarios"`
+	Order     []string          `json:"order"`
 }
 
 func (r runRecord) checks() int {
@@ -189,6 +193,21 @@ func sourceIdentity(root string) (map[string]string, error) {
 		identity[name] = value
 	}
 	return identity, nil
+}
+
+// commonSource returns the commit every scenario was recorded at, or nothing
+// when they disagree.
+func commonSource(recorded []recording) map[string]string {
+	if len(recorded) == 0 {
+		return nil
+	}
+	first := recorded[0].Source
+	for _, one := range recorded[1:] {
+		if !maps.Equal(one.Source, first) {
+			return nil
+		}
+	}
+	return first
 }
 
 func loadScenarios(directory string) ([]scenario, error) {

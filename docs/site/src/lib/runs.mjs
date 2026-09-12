@@ -54,6 +54,18 @@ export function labSummary() {
 	].filter((one) => one.value);
 }
 
+/**
+ * What one run was recorded against, and from which commit of this repository.
+ *
+ * The commit is the run's own: a scenario may be re-recorded without the
+ * others, and the record names a single commit only when they agree.
+ */
+export function runSummary(run) {
+	return labSummary().concat(
+		run.source?.commit ? [{ label: 'Scenarios at', value: shortRevision(run.source.commit) }] : [],
+	);
+}
+
 function shortRevision(revision) {
 	return revision ? revision.slice(0, 12) : '';
 }

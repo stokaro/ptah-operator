@@ -1,0 +1,2877 @@
+{
+  "recordedAt": "2026-09-12T15:47:52Z",
+  "lab": {
+    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-lab-1-206dc31ea3.svc.cluster.local:5000/ptah-operator@sha256:78a15f7388c669e857291819b97238030c279f8198f948ba6ef7650ebff3f62c",
+    "CONTROLLER_REVISION": "bd08bbad9091baf11480dca1268b394a57fec0e8",
+    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-lab-1-206dc31ea3.svc.cluster.local:5000/ptah-executor@sha256:ab9d5e6e8de6d95c7565b21138a0aa108c6dd6ddd33c6835386de7e26073a70a",
+    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-lab-1-206dc31ea3",
+    "KUBERNETES_VERSION": "1.37.0",
+    "PTAH_REVISION": "00fc362c943bfb9d0363d5890bf449a2a9b5e7cf",
+    "PTAH_VERSION": "v0.3.0-201-g00fc362c9",
+    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-lab-1-206dc31ea3.svc.cluster.local:5000/ptah-runner@sha256:78a15f7388c669e857291819b97238030c279f8198f948ba6ef7650ebff3f62c"
+  },
+  "source": {
+    "commit": "87282c0efd38c23782b232abdea5a49951a40b90",
+    "describe": "87282c0"
+  },
+  "scenarios": [
+    {
+      "id": "destructive-block",
+      "title": "Refuse a destructive change",
+      "tagline": "The third revision drops a column. The policy says no, and says so before anything runs.",
+      "learn": "How a policy stops a plan, and where to read what it stopped.",
+      "tags": [
+        "Safety"
+      ],
+      "commands": 8,
+      "lines": 51,
+      "events": [
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# Converged on v2, and the email column holds data."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"INSERT INTO customers (id, email) VALUES (1, 'a@example.test') RETURNING id, email\""
+        ],
+        [
+          "out",
+          " id |     email"
+        ],
+        [
+          "out",
+          "----+----------------"
+        ],
+        [
+          "out",
+          "  1 | a@example.test"
+        ],
+        [
+          "out",
+          "(1 row)"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "sql",
+          "INSERT 0 1"
+        ],
+        [
+          "note",
+          "# The next revision removes that column. Someone meant it; the database does not know that."
+        ],
+        [
+          "cmd",
+          "diff -u demo/schemas/v2.sql demo/schemas/v3.sql || true"
+        ],
+        [
+          "out",
+          "--- demo/schemas/v2.sql\t2026-09-12 16:49:33.748913280 +0200"
+        ],
+        [
+          "out",
+          "+++ demo/schemas/v3.sql\t2026-09-12 16:49:33.751804561 +0200"
+        ],
+        [
+          "out",
+          "@@ -1,6 +1,5 @@"
+        ],
+        [
+          "sql",
+          " CREATE TABLE customers ("
+        ],
+        [
+          "sql",
+          "   id bigint NOT NULL PRIMARY KEY,"
+        ],
+        [
+          "sql",
+          "-  email text NOT NULL,"
+        ],
+        [
+          "sql",
+          "   signed_up_at timestamptz"
+        ],
+        [
+          "sql",
+          " );"
+        ],
+        [
+          "note",
+          "# The policy in force allows nothing destructive."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o jsonpath='{.spec.policy}{\"\\n\"}'"
+        ],
+        [
+          "out",
+          "{\"allowDestructive\":false,\"apply\":\"Always\",\"driftSeverity\":\"all\",\"lockTimeout\":\"30s\",\"transactionMode\":\"file\"}"
+        ],
+        [
+          "sync",
+          "planning"
+        ],
+        [
+          "note",
+          "# Publish v3 and point the resource at it."
+        ],
+        [
+          "cmd",
+          "DIGEST=$(demo/bin/lab publish v3)"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" patch ptahschema storefront --type=merge \\"
+        ],
+        [
+          "cont",
+          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$E2E_REGISTRY_HOST/schemas/demo@$DIGEST\\\"}}}\""
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.dev/storefront patched"
+        ],
+        [
+          "sync",
+          "blocked"
+        ],
+        [
+          "note",
+          "# It plans, marks the plan destructive, and stops there."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.phase, (.status.conditions[] | select(.type == \"Ready\") | .message)'"
+        ],
+        [
+          "out",
+          "Blocked"
+        ],
+        [
+          "out",
+          "Plan is blocked by destructive-change policy"
+        ],
+        [
+          "note",
+          "# The plan exists and says what it is. Destructive is a property of the plan, not a guess."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschemaplan"
+        ],
+        [
+          "out",
+          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   AGE"
+        ],
+        [
+          "out",
+          "ptah-plan-352dbc2a764d4262868a70ab   storefront   sha256:352dbc2a764d4262868a70abafeb0be3428c5d92828c4b970efb2701aa76d612   3            false         49s"
+        ],
+        [
+          "out",
+          "ptah-plan-e1730d4e05a378529760a97a   storefront   sha256:e1730d4e05a378529760a97a37035f8008ce72c0926bc8c9efdd542b5878911c   2            true          1s"
+        ],
+        [
+          "note",
+          "# And this is the statement the policy refused to run."
+        ],
+        [
+          "cmd",
+          "PLAN=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront -o jsonpath='{.status.plan.name}')"
+        ],
+        [
+          "cont",
+          "CHUNK=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" -o jsonpath='{.spec.chunks[0].name}')"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+        ],
+        [
+          "cont",
+          "  | base64 -d | jq -r '.statements[] | \"\\(.severity)  \\(.sql)  -- \\(.reason)\"'"
+        ],
+        [
+          "out",
+          "destructive  -- Remove columns from table: customers --"
+        ],
+        [
+          "out",
+          "-- ALTER statements: --"
+        ],
+        [
+          "sql",
+          "ALTER TABLE \"customers\" DROP COLUMN \"email\" CASCADE  -- DROP COLUMN removes existing column data"
+        ],
+        [
+          "sql",
+          "safe  -- WARNING: Dropping column customers.email with CASCADE - This will delete data and dependent objects! --  -- does not remove data or tighten constraints"
+        ],
+        [
+          "note",
+          "# The column and its data are still there. A refusal that let it run would not be one."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"SELECT id, email FROM customers\""
+        ],
+        [
+          "out",
+          " id |     email"
+        ],
+        [
+          "out",
+          "----+----------------"
+        ],
+        [
+          "out",
+          "  1 | a@example.test"
+        ],
+        [
+          "out",
+          "(1 row)"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "destructive-block",
+          "step": 1,
+          "claim": "exits 0, prints \"a@example.test\"",
+          "passed": true
+        },
+        {
+          "scenario": "destructive-block",
+          "step": 2,
+          "claim": "exits 0, prints \"-  email text NOT NULL\"",
+          "passed": true
+        },
+        {
+          "scenario": "destructive-block",
+          "step": 3,
+          "claim": "exits 0, prints \"\\\"allowDestructive\\\":false\"",
+          "passed": true
+        },
+        {
+          "scenario": "destructive-block",
+          "step": 4,
+          "claim": "exits 0, prints \"patched\"",
+          "passed": true
+        },
+        {
+          "scenario": "destructive-block",
+          "step": 5,
+          "claim": "ptahschema/storefront: Ready=False (PolicyBlocked)",
+          "passed": true
+        },
+        {
+          "scenario": "destructive-block",
+          "step": 5,
+          "claim": "exits 0, prints \"Blocked\"",
+          "passed": true
+        },
+        {
+          "scenario": "destructive-block",
+          "step": 6,
+          "claim": "exits 0, prints \"storefront\", prints \"true\"",
+          "passed": true
+        },
+        {
+          "scenario": "destructive-block",
+          "step": 7,
+          "claim": "exits 0, prints \"DROP COLUMN\"",
+          "passed": true
+        },
+        {
+          "scenario": "destructive-block",
+          "step": 8,
+          "claim": "exits 0, prints \"a@example.test\"",
+          "passed": true
+        },
+        {
+          "scenario": "destructive-block",
+          "step": 8,
+          "claim": "ptahschema/storefront: status.phase=Blocked",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "drift",
+      "title": "Close the drift",
+      "tagline": "Someone changes the database by hand. The operator notices and puts it back.",
+      "learn": "What drift detection reads, and what it does about what it finds.",
+      "tags": [
+        "Operations"
+      ],
+      "commands": 5,
+      "lines": 36,
+      "events": [
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# Converged, and the operator says so with a reason rather than a timestamp."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.conditions[] | select(.type == \"DriftDetected\" or .type == \"InSync\") | \"\\(.type)\\t\\(.status)\\t\\(.reason)\"'"
+        ],
+        [
+          "out",
+          "DriftDetected\tFalse\tScopedConverged"
+        ],
+        [
+          "out",
+          "InSync\tTrue\tScopedConverged"
+        ],
+        [
+          "sync",
+          "drift"
+        ],
+        [
+          "note",
+          "# Now change the database behind its back, the way an incident does."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"ALTER TABLE customers DROP COLUMN signed_up_at\""
+        ],
+        [
+          "sql",
+          "ALTER TABLE"
+        ],
+        [
+          "note",
+          "# The column is gone. The declaration still asks for it."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\d customers\""
+        ],
+        [
+          "out",
+          "             Table \"public.customers\""
+        ],
+        [
+          "out",
+          " Column |  Type  | Collation | Nullable | Default"
+        ],
+        [
+          "out",
+          "--------+--------+-----------+----------+---------"
+        ],
+        [
+          "out",
+          " id     | bigint |           | not null |"
+        ],
+        [
+          "out",
+          " email  | text   |           | not null |"
+        ],
+        [
+          "out",
+          "Indexes:"
+        ],
+        [
+          "out",
+          "    \"customers_pkey\" PRIMARY KEY, btree (id)"
+        ],
+        [
+          "out",
+          "Referenced by:"
+        ],
+        [
+          "out",
+          "    TABLE \"orders\" CONSTRAINT \"fk_orders_customer_id\" FOREIGN KEY (customer_id) REFERENCES customers(id)"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# Nobody is asked. The operator observes on its interval and closes it."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\d customers\""
+        ],
+        [
+          "out",
+          "                         Table \"public.customers\""
+        ],
+        [
+          "out",
+          "    Column    |           Type           | Collation | Nullable | Default"
+        ],
+        [
+          "out",
+          "--------------+--------------------------+-----------+----------+---------"
+        ],
+        [
+          "out",
+          " id           | bigint                   |           | not null |"
+        ],
+        [
+          "out",
+          " email        | text                     |           | not null |"
+        ],
+        [
+          "out",
+          " signed_up_at | timestamp with time zone |           |          |"
+        ],
+        [
+          "out",
+          "Indexes:"
+        ],
+        [
+          "out",
+          "    \"customers_pkey\" PRIMARY KEY, btree (id)"
+        ],
+        [
+          "out",
+          "Referenced by:"
+        ],
+        [
+          "out",
+          "    TABLE \"orders\" CONSTRAINT \"fk_orders_customer_id\" FOREIGN KEY (customer_id) REFERENCES customers(id)"
+        ],
+        [
+          "note",
+          "# It closed the drift with a plan, the same way it does everything else."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschemaplan"
+        ],
+        [
+          "out",
+          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   AGE"
+        ],
+        [
+          "out",
+          "ptah-plan-1691f9eb4eb9f2c19ab9cc81   storefront   sha256:1691f9eb4eb9f2c19ab9cc8121a5be4b1c47900fe2356cf7f3f0241ee9950512   3            false         116s"
+        ],
+        [
+          "out",
+          "ptah-plan-b0a362bf7ea881cdd5f72a74   storefront   sha256:b0a362bf7ea881cdd5f72a74f5b0906ebee78403fc5e7786378d042112c28db0   1            false         19s"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "drift",
+          "step": 1,
+          "claim": "exits 0, prints \"ScopedConverged\"",
+          "passed": true
+        },
+        {
+          "scenario": "drift",
+          "step": 2,
+          "claim": "exits 0, prints \"ALTER TABLE\"",
+          "passed": true
+        },
+        {
+          "scenario": "drift",
+          "step": 3,
+          "claim": "exits 0, never prints \"signed_up_at\"",
+          "passed": true
+        },
+        {
+          "scenario": "drift",
+          "step": 4,
+          "claim": "exits 0, prints \"signed_up_at\"",
+          "passed": true
+        },
+        {
+          "scenario": "drift",
+          "step": 5,
+          "claim": "ptahschema/storefront: DriftDetected=False (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "drift",
+          "step": 5,
+          "claim": "exits 0, prints \"storefront\"",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "failure-recovery",
+      "title": "Fail, then recover",
+      "tagline": "Point it at a database that is not there. It says so, keeps trying, and converges when it is.",
+      "learn": "What a failure looks like in the status, and that recovery needs no intervention beyond the fix.",
+      "tags": [
+        "Operations"
+      ],
+      "commands": 6,
+      "lines": 31,
+      "events": [
+        [
+          "sync",
+          "applying"
+        ],
+        [
+          "note",
+          "# The same resource, pointed at a database that does not answer."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab manifest storefront \"$(cat demo/.lab/digest)\" \\"
+        ],
+        [
+          "cont",
+          "  | sed 's/name: demo-database/name: demo-database-broken/' \\"
+        ],
+        [
+          "cont",
+          "  | kubectl apply -f -"
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.dev/storefront created"
+        ],
+        [
+          "sync",
+          "failed"
+        ],
+        [
+          "note",
+          "# It reports the database as unreachable, with a reason a machine can read."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.phase, (.status.conditions[] | select(.type == \"ReconciliationFailed\") | .message)'"
+        ],
+        [
+          "out",
+          "Failed"
+        ],
+        [
+          "out",
+          "child_exit: ptah exited with code 2"
+        ],
+        [
+          "note",
+          "# A failure is an event too, so it is in the record rather than only in a log."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get events --field-selector involvedObject.name=storefront --sort-by=.lastTimestamp | tail -5"
+        ],
+        [
+          "out",
+          "12s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
+        ],
+        [
+          "out",
+          "12s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-337ba657e5697166 started"
+        ],
+        [
+          "out",
+          "9s          Normal    OperationCompleted   ptahschema/storefront   verify operation completed"
+        ],
+        [
+          "out",
+          "8s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-92104d403fc86347 started"
+        ],
+        [
+          "out",
+          "2s          Warning   OperationFailed      ptahschema/storefront   child_exit: ptah exited with code 2"
+        ],
+        [
+          "note",
+          "# No credential in any of it. This is the whole status the operator wrote."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json | jq -r '.status | tostring' | head -c 400"
+        ],
+        [
+          "out",
+          "{\"activeOperation\":{\"attempt\":2,\"coordinationDigest\":\"sha256:1f99f1e0ceb341a5b6ca5da75161513672b13c811fc50e1725fc7dec0f8aa99f\",\"executionBindingID\":\"v1-a438d07b1268caa1db06998f2e5cfc8a\",\"id\":\"sha256:3923284d3c8153e924e199eaa8f2bf9a23218bb6008e23bdaec795f000293c43\",\"inputFingerprint\":\"sha256:6576d439fa88c060eff5b2d20ce296047e0c5961655fcf3bb6695dd3171375c3\",\"jobName\":\"ptah-observe-storefront-72c2e69"
+        ],
+        [
+          "sync",
+          "applying"
+        ],
+        [
+          "note",
+          "# Now fix the one thing that was wrong."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" patch ptahschema storefront --type=merge \\"
+        ],
+        [
+          "cont",
+          "  -p '{\"spec\":{\"target\":{\"urlFrom\":{\"name\":\"demo-database\",\"key\":\"url\"}}}}'"
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.dev/storefront patched"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# It retries on its own interval and converges. Nothing was restarted by hand."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\dt\""
+        ],
+        [
+          "out",
+          "             List of relations"
+        ],
+        [
+          "out",
+          " Schema |   Name    | Type  |     Owner"
+        ],
+        [
+          "out",
+          "--------+-----------+-------+---------------"
+        ],
+        [
+          "out",
+          " public | customers | table | ptah_external"
+        ],
+        [
+          "out",
+          "(1 row)"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "failure-recovery",
+          "step": 1,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "failure-recovery",
+          "step": 2,
+          "claim": "ptahschema/storefront: ReconciliationFailed=True (OperationFailed)",
+          "passed": true
+        },
+        {
+          "scenario": "failure-recovery",
+          "step": 2,
+          "claim": "exits 0, prints \"Failed\"",
+          "passed": true
+        },
+        {
+          "scenario": "failure-recovery",
+          "step": 3,
+          "claim": "exits 0, prints \"storefront\"",
+          "passed": true
+        },
+        {
+          "scenario": "failure-recovery",
+          "step": 4,
+          "claim": "exits 0, never prints \"nobody:nobody\"",
+          "passed": true
+        },
+        {
+          "scenario": "failure-recovery",
+          "step": 5,
+          "claim": "exits 0, prints \"patched\"",
+          "passed": true
+        },
+        {
+          "scenario": "failure-recovery",
+          "step": 6,
+          "claim": "ptahschema/storefront: InSync=True (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "failure-recovery",
+          "step": 6,
+          "claim": "exits 0, prints \"customers\"",
+          "passed": true
+        },
+        {
+          "scenario": "failure-recovery",
+          "step": 6,
+          "claim": "ptahschema/storefront: ReconciliationFailed=False (Succeeded)",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "first-apply",
+      "title": "Apply a schema",
+      "tagline": "Publish a schema as an artifact, point the operator at it, and watch it converge.",
+      "learn": "What the operator does between a desired state and a database, and how it says it is done.",
+      "tags": [
+        "Lifecycle"
+      ],
+      "commands": 10,
+      "lines": 105,
+      "events": [
+        [
+          "sync",
+          "publishing"
+        ],
+        [
+          "note",
+          "# The desired state is SQL. This is the whole of it."
+        ],
+        [
+          "cmd",
+          "cat demo/schemas/v1.sql"
+        ],
+        [
+          "sql",
+          "CREATE TABLE customers ("
+        ],
+        [
+          "sql",
+          "  id bigint NOT NULL PRIMARY KEY,"
+        ],
+        [
+          "sql",
+          "  email text NOT NULL"
+        ],
+        [
+          "sql",
+          ");"
+        ],
+        [
+          "note",
+          "# Publish it. The push runs in the cluster, as the Ptah build the operator will run."
+        ],
+        [
+          "cmd",
+          "DIGEST=$(demo/bin/lab publish v1) \u0026\u0026 echo \"$DIGEST\" | tee demo/.lab/digest"
+        ],
+        [
+          "out",
+          "sha256:68918f03f6de781f21314e66128dbe14d457983e882db95f4afbc1e2e0ba98fa"
+        ],
+        [
+          "note",
+          "# That is the command it ran. A reference, a dialect, and the file it read."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get job demo-push-v1 \\"
+        ],
+        [
+          "cont",
+          "  -o jsonpath='{.spec.template.spec.containers[0].args}' | jq -r 'join(\" \")'"
+        ],
+        [
+          "out",
+          "schema push oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo:v1-bf096b37 --schema-file /schema/schema.sql --dialect postgres --plain-http"
+        ],
+        [
+          "sync",
+          "applying"
+        ],
+        [
+          "note",
+          "# The resource names the artifact by digest, and the credentials by Secret."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab manifest storefront \"$(cat demo/.lab/digest)\" | tee demo/.lab/storefront.yaml"
+        ],
+        [
+          "out",
+          "# The desired state of one database, as a Kubernetes resource."
+        ],
+        [
+          "out",
+          "#"
+        ],
+        [
+          "out",
+          "# Nothing here is a credential. The database URL and the registry password are"
+        ],
+        [
+          "out",
+          "# named, and read by the operator from Secrets this namespace holds; what the"
+        ],
+        [
+          "out",
+          "# resource carries is which artifact, which database, and what the operator is"
+        ],
+        [
+          "out",
+          "# allowed to do about the difference."
+        ],
+        [
+          "out",
+          "apiVersion: operator.ptah.dev/v1alpha1"
+        ],
+        [
+          "out",
+          "kind: PtahSchema"
+        ],
+        [
+          "out",
+          "metadata:"
+        ],
+        [
+          "out",
+          "  name: storefront"
+        ],
+        [
+          "out",
+          "  namespace: demo"
+        ],
+        [
+          "out",
+          "spec:"
+        ],
+        [
+          "out",
+          "  target:"
+        ],
+        [
+          "out",
+          "    engine: PostgreSQL"
+        ],
+        [
+          "out",
+          "    # Every resource that can reach this physical database, through any alias"
+        ],
+        [
+          "out",
+          "    # or credential, has to use this exact key. It is how two of them are kept"
+        ],
+        [
+          "out",
+          "    # from planning against each other."
+        ],
+        [
+          "out",
+          "    coordinationKey: demo/storefront/primary"
+        ],
+        [
+          "out",
+          "    urlFrom:"
+        ],
+        [
+          "out",
+          "      name: demo-database"
+        ],
+        [
+          "out",
+          "      key: url"
+        ],
+        [
+          "out",
+          "  desired:"
+        ],
+        [
+          "out",
+          "    # A digest, not a tag: what was reviewed is what runs."
+        ],
+        [
+          "out",
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:68918f03f6de781f21314e66128dbe14d457983e882db95f4afbc1e2e0ba98fa"
+        ],
+        [
+          "out",
+          "    registryAuthFrom:"
+        ],
+        [
+          "out",
+          "      name: demo-registry"
+        ],
+        [
+          "out",
+          "      mode: Environment"
+        ],
+        [
+          "out",
+          "      usernameKey: username"
+        ],
+        [
+          "out",
+          "      passwordKey: password"
+        ],
+        [
+          "out",
+          "      registryKey: registry"
+        ],
+        [
+          "out",
+          "    verificationPolicyFrom:"
+        ],
+        [
+          "out",
+          "      name: demo-verification-policy"
+        ],
+        [
+          "out",
+          "      key: policy.yaml"
+        ],
+        [
+          "out",
+          "    transport:"
+        ],
+        [
+          "out",
+          "      plainHTTP: true"
+        ],
+        [
+          "out",
+          "  policy:"
+        ],
+        [
+          "out",
+          "    apply: Always"
+        ],
+        [
+          "out",
+          "    allowDestructive: false"
+        ],
+        [
+          "out",
+          "    driftSeverity: all"
+        ],
+        [
+          "out",
+          "  interval: 1m"
+        ],
+        [
+          "out",
+          "  suspend: false"
+        ],
+        [
+          "out",
+          "  execution:"
+        ],
+        [
+          "out",
+          "    activeDeadlineSeconds: 300"
+        ],
+        [
+          "out",
+          "    failureRetryInterval: 10s"
+        ],
+        [
+          "out",
+          "    connectTimeout: 30s"
+        ],
+        [
+          "note",
+          "# Apply it. Nothing else is typed after this; the operator does the rest."
+        ],
+        [
+          "cmd",
+          "kubectl apply -f demo/.lab/storefront.yaml"
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.dev/storefront created"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# Resolve, verify, observe, plan, apply, and prove. Each is a condition."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.conditions[] | \"\\(.type)\\t\\(.status)\\t\\(.reason)\"' | column -t -s \"$(printf '\\t')\""
+        ],
+        [
+          "out",
+          "EngineSupported       True   SupportedEngine"
+        ],
+        [
+          "out",
+          "Ready                 True   InSync"
+        ],
+        [
+          "out",
+          "ReconciliationFailed  False  Succeeded"
+        ],
+        [
+          "out",
+          "ArtifactResolved      True   DigestPinned"
+        ],
+        [
+          "out",
+          "ArtifactVerified      True   PolicySatisfied"
+        ],
+        [
+          "out",
+          "DatabaseReachable     True   Observed"
+        ],
+        [
+          "out",
+          "DriftDetected         False  ScopedConverged"
+        ],
+        [
+          "out",
+          "InSync                True   ScopedConverged"
+        ],
+        [
+          "out",
+          "ApprovalRequired      False  Satisfied"
+        ],
+        [
+          "out",
+          "PlanReady             False  NoChanges"
+        ],
+        [
+          "out",
+          "Applying              False  JobCompleted"
+        ],
+        [
+          "out",
+          "Suspended             False  Active"
+        ],
+        [
+          "note",
+          "# Applying says False, reason JobCompleted. A finished Job is not a converged database."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.conditions[] | select(.type == \"Applying\" or .type == \"InSync\") | \"\\(.type): \\(.message)\"'"
+        ],
+        [
+          "out",
+          "InSync: A stable scoped plan proves convergence"
+        ],
+        [
+          "out",
+          "Applying: Apply Job completed; convergence observation is pending"
+        ],
+        [
+          "note",
+          "# The plan it derived, and the SQL that plan carried."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschemaplan"
+        ],
+        [
+          "out",
+          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   AGE"
+        ],
+        [
+          "out",
+          "ptah-plan-541147bfc914e5593cf408a8   storefront   sha256:541147bfc914e5593cf408a8dedfd19f03a024895df28d4900f51ddc14d63014   1            false         18s"
+        ],
+        [
+          "note",
+          "# The SQL lives in an immutable ConfigMap, not in a status field or a log line."
+        ],
+        [
+          "cmd",
+          "CHUNK=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan -o jsonpath='{.items[0].spec.chunks[0].name}')"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+        ],
+        [
+          "cont",
+          "  | base64 -d | jq -r '.statements[].sql'"
+        ],
+        [
+          "out",
+          "-- POSTGRES TABLE: customers --"
+        ],
+        [
+          "sql",
+          "CREATE TABLE \"customers\" ("
+        ],
+        [
+          "sql",
+          "  \"id\" bigint PRIMARY KEY NOT NULL,"
+        ],
+        [
+          "sql",
+          "  \"email\" text NOT NULL"
+        ],
+        [
+          "sql",
+          ")"
+        ],
+        [
+          "note",
+          "# And the database has it."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\d customers\""
+        ],
+        [
+          "out",
+          "             Table \"public.customers\""
+        ],
+        [
+          "out",
+          " Column |  Type  | Collation | Nullable | Default"
+        ],
+        [
+          "out",
+          "--------+--------+-----------+----------+---------"
+        ],
+        [
+          "out",
+          " id     | bigint |           | not null |"
+        ],
+        [
+          "out",
+          " email  | text   |           | not null |"
+        ],
+        [
+          "out",
+          "Indexes:"
+        ],
+        [
+          "out",
+          "    \"customers_pkey\" PRIMARY KEY, btree (id)"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "first-apply",
+          "step": 1,
+          "claim": "exits 0, prints \"CREATE TABLE customers\"",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 2,
+          "claim": "exits 0, prints \"sha256:\"",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 3,
+          "claim": "exits 0, prints \"schema push\", prints \"--dialect postgres\"",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 4,
+          "claim": "exits 0, prints \"kind: PtahSchema\", prints \"ociRef: oci://\", prints \"urlFrom\", never prints \"password:\"",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 5,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 6,
+          "claim": "ptahschema/storefront: InSync=True (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 6,
+          "claim": "exits 0, prints \"InSync\", prints \"ScopedConverged\", prints \"JobCompleted\"",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 6,
+          "claim": "ptahschema/storefront: Ready=True (InSync), status.phase=InSync, status.applied.artifactDigest is set",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 7,
+          "claim": "exits 0, prints \"Applying:\", prints \"InSync:\"",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 7,
+          "claim": "ptahschema/storefront: Applying=False (JobCompleted)",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 8,
+          "claim": "exits 0, prints \"storefront\"",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 9,
+          "claim": "exits 0, prints \"CREATE TABLE \\\"customers\\\"\"",
+          "passed": true
+        },
+        {
+          "scenario": "first-apply",
+          "step": 10,
+          "claim": "exits 0, prints \"customers_pkey\"",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "lab-setup",
+      "title": "Stand up the lab",
+      "tagline": "A four-node kind cluster, the chart installed from a package, and the two images the operator will run pinned by digest.\n",
+      "learn": "What the rest of these runs are against, and how to check that an install finished rather than merely started.\n",
+      "tags": [
+        "Lab"
+      ],
+      "commands": 5,
+      "lines": 35,
+      "events": [
+        [
+          "sync",
+          "lab ready"
+        ],
+        [
+          "note",
+          "# The lab is one cluster, built from the versions this repository declares."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab versions"
+        ],
+        [
+          "out",
+          "kubernetes  1.37.0"
+        ],
+        [
+          "out",
+          "kind        v0.33.0"
+        ],
+        [
+          "out",
+          "operator    bd08bbad9091baf11480dca1268b394a57fec0e8"
+        ],
+        [
+          "out",
+          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:ab9d5e6e8de6d95c7565b21138a0aa108c6dd6ddd33c6835386de7e26073a70a"
+        ],
+        [
+          "out",
+          "ptah        v0.3.0-201-g00fc362c9"
+        ],
+        [
+          "note",
+          "# The operator runs in its own namespace, two replicas, one leader."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$OPERATOR_NAMESPACE\" get deployment"
+        ],
+        [
+          "out",
+          "NAME                                                           READY   UP-TO-DATE   AVAILABLE   AGE"
+        ],
+        [
+          "out",
+          "ptah-operator-cert-rotator                                     1/1     1            1           70m"
+        ],
+        [
+          "out",
+          "ptah-operator                                                  2/2     2            2           70m"
+        ],
+        [
+          "note",
+          "# Available means the install finished. The image is a digest, so one exact build runs."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$OPERATOR_NAMESPACE\" get deployment -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.items[].spec.template.spec.containers[].image'"
+        ],
+        [
+          "out",
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:78a15f7388c669e857291819b97238030c279f8198f948ba6ef7650ebff3f62c"
+        ],
+        [
+          "out",
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:78a15f7388c669e857291819b97238030c279f8198f948ba6ef7650ebff3f62c"
+        ],
+        [
+          "note",
+          "# Three resources -- the desired state, the plan, and the decision that lets it run."
+        ],
+        [
+          "cmd",
+          "kubectl get crd -o custom-columns=NAME:.metadata.name,ESTABLISHED:'.status.conditions[?(@.type==\"Established\")].status' \\"
+        ],
+        [
+          "cont",
+          "  ptahschemas.operator.ptah.dev ptahschemaplans.operator.ptah.dev ptahschemaapprovals.operator.ptah.dev"
+        ],
+        [
+          "out",
+          "NAME                                    ESTABLISHED"
+        ],
+        [
+          "out",
+          "ptahschemas.operator.ptah.dev           True"
+        ],
+        [
+          "out",
+          "ptahschemaplans.operator.ptah.dev       True"
+        ],
+        [
+          "out",
+          "ptahschemaapprovals.operator.ptah.dev   True"
+        ],
+        [
+          "note",
+          "# The namespace it works in. Credentials are Secrets; the policy cannot be edited."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get secret,configmap"
+        ],
+        [
+          "out",
+          "NAME                          TYPE                             DATA   AGE"
+        ],
+        [
+          "out",
+          "secret/demo-database          Opaque                           1      63m"
+        ],
+        [
+          "out",
+          "secret/demo-database-broken   Opaque                           1      2m3s"
+        ],
+        [
+          "out",
+          "secret/demo-registry          Opaque                           4      63m"
+        ],
+        [
+          "out",
+          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      63m"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "NAME                                 DATA   AGE"
+        ],
+        [
+          "out",
+          "configmap/demo-verification-policy   1      63m"
+        ],
+        [
+          "out",
+          "configmap/kube-root-ca.crt           1      64m"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "lab-setup",
+          "step": 1,
+          "claim": "exits 0, prints \"kubernetes\", prints \"kind\", prints \"operator\", prints \"executor\", prints \"ptah\"",
+          "passed": true
+        },
+        {
+          "scenario": "lab-setup",
+          "step": 2,
+          "claim": "exits 0, prints \"ptah\"",
+          "passed": true
+        },
+        {
+          "scenario": "lab-setup",
+          "step": 3,
+          "claim": "deployment/$CONTROLLER: Available=True (MinimumReplicasAvailable)",
+          "passed": true
+        },
+        {
+          "scenario": "lab-setup",
+          "step": 3,
+          "claim": "exits 0, prints \"@sha256:\"",
+          "passed": true
+        },
+        {
+          "scenario": "lab-setup",
+          "step": 4,
+          "claim": "exits 0, prints \"ptahschemas\", prints \"ptahschemaplans\", prints \"ptahschemaapprovals\"",
+          "passed": true
+        },
+        {
+          "scenario": "lab-setup",
+          "step": 5,
+          "claim": "exits 0, prints \"demo-database\", prints \"demo-registry\", prints \"demo-verification-policy\", never prints \"password\"",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "manual-approval",
+      "title": "Approve a plan",
+      "tagline": "With apply set to OnApproval, nothing runs until a person approves that exact plan.",
+      "learn": "What an approval is bound to, and how much of that binding you never type.",
+      "tags": [
+        "Safety"
+      ],
+      "commands": 10,
+      "lines": 109,
+      "events": [
+        [
+          "sync",
+          "applying"
+        ],
+        [
+          "note",
+          "# Same resource, one field different -- apply is OnApproval, which is the default."
+        ],
+        [
+          "cmd",
+          "APPLY=OnApproval demo/bin/lab manifest storefront \"$(cat demo/.lab/digest)\" | tee demo/.lab/storefront.yaml"
+        ],
+        [
+          "out",
+          "# The desired state of one database, as a Kubernetes resource."
+        ],
+        [
+          "out",
+          "#"
+        ],
+        [
+          "out",
+          "# Nothing here is a credential. The database URL and the registry password are"
+        ],
+        [
+          "out",
+          "# named, and read by the operator from Secrets this namespace holds; what the"
+        ],
+        [
+          "out",
+          "# resource carries is which artifact, which database, and what the operator is"
+        ],
+        [
+          "out",
+          "# allowed to do about the difference."
+        ],
+        [
+          "out",
+          "apiVersion: operator.ptah.dev/v1alpha1"
+        ],
+        [
+          "out",
+          "kind: PtahSchema"
+        ],
+        [
+          "out",
+          "metadata:"
+        ],
+        [
+          "out",
+          "  name: storefront"
+        ],
+        [
+          "out",
+          "  namespace: demo"
+        ],
+        [
+          "out",
+          "spec:"
+        ],
+        [
+          "out",
+          "  target:"
+        ],
+        [
+          "out",
+          "    engine: PostgreSQL"
+        ],
+        [
+          "out",
+          "    # Every resource that can reach this physical database, through any alias"
+        ],
+        [
+          "out",
+          "    # or credential, has to use this exact key. It is how two of them are kept"
+        ],
+        [
+          "out",
+          "    # from planning against each other."
+        ],
+        [
+          "out",
+          "    coordinationKey: demo/storefront/primary"
+        ],
+        [
+          "out",
+          "    urlFrom:"
+        ],
+        [
+          "out",
+          "      name: demo-database"
+        ],
+        [
+          "out",
+          "      key: url"
+        ],
+        [
+          "out",
+          "  desired:"
+        ],
+        [
+          "out",
+          "    # A digest, not a tag: what was reviewed is what runs."
+        ],
+        [
+          "out",
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:b99d635e3c00d6211572ea83aa81e6881952558ac44041da17270084f59f9127"
+        ],
+        [
+          "out",
+          "    registryAuthFrom:"
+        ],
+        [
+          "out",
+          "      name: demo-registry"
+        ],
+        [
+          "out",
+          "      mode: Environment"
+        ],
+        [
+          "out",
+          "      usernameKey: username"
+        ],
+        [
+          "out",
+          "      passwordKey: password"
+        ],
+        [
+          "out",
+          "      registryKey: registry"
+        ],
+        [
+          "out",
+          "    verificationPolicyFrom:"
+        ],
+        [
+          "out",
+          "      name: demo-verification-policy"
+        ],
+        [
+          "out",
+          "      key: policy.yaml"
+        ],
+        [
+          "out",
+          "    transport:"
+        ],
+        [
+          "out",
+          "      plainHTTP: true"
+        ],
+        [
+          "out",
+          "  policy:"
+        ],
+        [
+          "out",
+          "    apply: OnApproval"
+        ],
+        [
+          "out",
+          "    allowDestructive: false"
+        ],
+        [
+          "out",
+          "    driftSeverity: all"
+        ],
+        [
+          "out",
+          "  interval: 1m"
+        ],
+        [
+          "out",
+          "  suspend: false"
+        ],
+        [
+          "out",
+          "  execution:"
+        ],
+        [
+          "out",
+          "    activeDeadlineSeconds: 300"
+        ],
+        [
+          "out",
+          "    failureRetryInterval: 10s"
+        ],
+        [
+          "out",
+          "    connectTimeout: 30s"
+        ],
+        [
+          "note",
+          "# Apply it, and the operator plans but stops."
+        ],
+        [
+          "cmd",
+          "kubectl apply -f demo/.lab/storefront.yaml"
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.dev/storefront created"
+        ],
+        [
+          "sync",
+          "awaiting approval"
+        ],
+        [
+          "note",
+          "# It has a plan and it is waiting. The database has not been touched."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.phase, (.status.conditions[] | select(.type == \"ApprovalRequired\") | .message)'"
+        ],
+        [
+          "out",
+          "AwaitingApproval"
+        ],
+        [
+          "out",
+          "Create an approval bound to the current plan fingerprint"
+        ],
+        [
+          "note",
+          "# Nothing was created. This is what waiting looks like from the database."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\dt\""
+        ],
+        [
+          "out",
+          "Did not find any relations."
+        ],
+        [
+          "note",
+          "# Read the plan before approving it. This is what would run."
+        ],
+        [
+          "cmd",
+          "PLAN=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront -o jsonpath='{.status.plan.name}')"
+        ],
+        [
+          "cont",
+          "CHUNK=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" -o jsonpath='{.spec.chunks[0].name}')"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+        ],
+        [
+          "cont",
+          "  | base64 -d | jq -r '.statements[] | \"\\(.severity)\\t\\(.sql)\"'"
+        ],
+        [
+          "out",
+          "safe\t-- POSTGRES TABLE: customers --"
+        ],
+        [
+          "sql",
+          "CREATE TABLE \"customers\" ("
+        ],
+        [
+          "sql",
+          "  \"id\" bigint PRIMARY KEY NOT NULL,"
+        ],
+        [
+          "sql",
+          "  \"email\" text NOT NULL"
+        ],
+        [
+          "sql",
+          ")"
+        ],
+        [
+          "note",
+          "# An approval names the schema, the plan, and the fingerprint of that plan."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \u003e demo/.lab/schema.json"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" get ptahschemaplan \\"
+        ],
+        [
+          "cont",
+          "  \"$(jq -r .status.plan.name demo/.lab/schema.json)\" -o json \u003e demo/.lab/plan.json"
+        ],
+        [
+          "cont",
+          "jq -n --slurpfile schema demo/.lab/schema.json --slurpfile plan demo/.lab/plan.json '"
+        ],
+        [
+          "cont",
+          "  {"
+        ],
+        [
+          "cont",
+          "    apiVersion: \"operator.ptah.dev/v1alpha1\", kind: \"PtahSchemaApproval\","
+        ],
+        [
+          "cont",
+          "    metadata: {name: \"storefront-v1\"},"
+        ],
+        [
+          "cont",
+          "    spec: {"
+        ],
+        [
+          "cont",
+          "      schemaRef: {name: $schema[0].metadata.name, uid: $schema[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planRef:   {name: $plan[0].metadata.name,   uid: $plan[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planFingerprint: $plan[0].spec.fingerprint"
+        ],
+        [
+          "cont",
+          "    }"
+        ],
+        [
+          "cont",
+          "  }' | tee demo/.lab/approval.json | jq -c .spec"
+        ],
+        [
+          "out",
+          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-334b39751d82d0736b15703f\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:334b39751d82d0736b15703f466daa234d50ae754ec942e4233c8f31a9bad3dd\"}"
+        ],
+        [
+          "sync",
+          "approved"
+        ],
+        [
+          "note",
+          "# Create it. The webhook stamps who you are and binds the rest of the plan's identity."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" create -f demo/.lab/approval.json"
+        ],
+        [
+          "out",
+          "ptahschemaapproval.operator.ptah.dev/storefront-v1 created"
+        ],
+        [
+          "note",
+          "# None of this was typed. The webhook read it off the plan being approved."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschemaapproval storefront-v1 -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.spec | {approver: .approver.username, ptahVersion, executorImage, artifactDigest, executionBindingID}'"
+        ],
+        [
+          "out",
+          "{"
+        ],
+        [
+          "out",
+          "  \"approver\": \"kubernetes-admin\","
+        ],
+        [
+          "out",
+          "  \"ptahVersion\": \"v0.3.0-201-g00fc362c9\","
+        ],
+        [
+          "out",
+          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:ab9d5e6e8de6d95c7565b21138a0aa108c6dd6ddd33c6835386de7e26073a70a\","
+        ],
+        [
+          "out",
+          "  \"artifactDigest\": \"sha256:b99d635e3c00d6211572ea83aa81e6881952558ac44041da17270084f59f9127\","
+        ],
+        [
+          "out",
+          "  \"executionBindingID\": \"v1-e80b7de8e3325db54227d3ac9dbaae3e\""
+        ],
+        [
+          "out",
+          "}"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# With the decision recorded, the plan runs and convergence is proved."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\dt\""
+        ],
+        [
+          "out",
+          "             List of relations"
+        ],
+        [
+          "out",
+          " Schema |   Name    | Type  |     Owner"
+        ],
+        [
+          "out",
+          "--------+-----------+-------+---------------"
+        ],
+        [
+          "out",
+          " public | customers | table | ptah_external"
+        ],
+        [
+          "out",
+          "(1 row)"
+        ],
+        [
+          "note",
+          "# It was dispatched once, and is already stale. Retiring a used approval shows why."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschemaapproval storefront-v1 -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.conditions[] | \"\\(.type)\\t\\(.status)\\t\\(.reason)\"'"
+        ],
+        [
+          "out",
+          "Accepted\tFalse\tPlanNoLongerCurrent"
+        ],
+        [
+          "out",
+          "Stale\tTrue\tPlanNoLongerCurrent"
+        ],
+        [
+          "out",
+          "Consumed\tTrue\tDispatchCommitted"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "manual-approval",
+          "step": 1,
+          "claim": "exits 0, prints \"apply: OnApproval\"",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 2,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 3,
+          "claim": "ptahschema/storefront: ApprovalRequired=True (Waiting)",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 3,
+          "claim": "exits 0, prints \"AwaitingApproval\"",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 4,
+          "claim": "exits 0, prints \"Did not find any relations\"",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 5,
+          "claim": "exits 0, prints \"CREATE TABLE \\\"customers\\\"\", prints \"safe\"",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 6,
+          "claim": "exits 0, prints \"\\\"planFingerprint\\\":\\\"sha256:\"",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 7,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 8,
+          "claim": "exits 0, prints \"approver\", prints \"ptahVersion\", prints \"executorImage\"",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 8,
+          "claim": "ptahschemaapproval/storefront-v1: spec.approver.username is set, spec.artifactDigest is set, spec.executorImage is set, spec.mutationRequestUID is set",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 9,
+          "claim": "ptahschema/storefront: InSync=True (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 9,
+          "claim": "exits 0, prints \"customers\"",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 10,
+          "claim": "exits 0, prints \"Consumed\", prints \"DispatchCommitted\"",
+          "passed": true
+        },
+        {
+          "scenario": "manual-approval",
+          "step": 10,
+          "claim": "ptahschemaapproval/storefront-v1: Consumed=True (DispatchCommitted)",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "schema-update",
+      "title": "Change the schema",
+      "tagline": "A second revision, a new digest, and the difference applied as one plan.",
+      "learn": "How a change reaches a database, and why the plan is the thing to review.",
+      "tags": [
+        "Lifecycle"
+      ],
+      "commands": 7,
+      "lines": 66,
+      "events": [
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# Where it starts -- one table, converged."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\dt\""
+        ],
+        [
+          "out",
+          "             List of relations"
+        ],
+        [
+          "out",
+          " Schema |   Name    | Type  |     Owner"
+        ],
+        [
+          "out",
+          "--------+-----------+-------+---------------"
+        ],
+        [
+          "out",
+          " public | customers | table | ptah_external"
+        ],
+        [
+          "out",
+          "(1 row)"
+        ],
+        [
+          "note",
+          "# The next revision adds a column and a table that references the first."
+        ],
+        [
+          "cmd",
+          "diff -u demo/schemas/v1.sql demo/schemas/v2.sql || true"
+        ],
+        [
+          "out",
+          "--- demo/schemas/v1.sql\t2026-09-12 16:49:33.745185294 +0200"
+        ],
+        [
+          "out",
+          "+++ demo/schemas/v2.sql\t2026-09-12 16:49:33.748913280 +0200"
+        ],
+        [
+          "out",
+          "@@ -1,4 +1,11 @@"
+        ],
+        [
+          "sql",
+          " CREATE TABLE customers ("
+        ],
+        [
+          "sql",
+          "   id bigint NOT NULL PRIMARY KEY,"
+        ],
+        [
+          "sql",
+          "-  email text NOT NULL"
+        ],
+        [
+          "sql",
+          "+  email text NOT NULL,"
+        ],
+        [
+          "sql",
+          "+  signed_up_at timestamptz"
+        ],
+        [
+          "sql",
+          "+);"
+        ],
+        [
+          "out",
+          "+"
+        ],
+        [
+          "out",
+          "+CREATE TABLE orders ("
+        ],
+        [
+          "out",
+          "+  id bigint NOT NULL PRIMARY KEY,"
+        ],
+        [
+          "out",
+          "+  customer_id bigint NOT NULL REFERENCES customers (id),"
+        ],
+        [
+          "out",
+          "+  total_cents bigint NOT NULL"
+        ],
+        [
+          "out",
+          " );"
+        ],
+        [
+          "sync",
+          "publishing"
+        ],
+        [
+          "note",
+          "# Publish it. A different artifact, so a different digest."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab publish v2 | tee demo/.lab/digest"
+        ],
+        [
+          "out",
+          "sha256:d9b8a72cd4d9302b66dba64b46bc59ebfa41a8faf98232867efa336e941c91ec"
+        ],
+        [
+          "sync",
+          "planning"
+        ],
+        [
+          "note",
+          "# Point the same resource at the new digest. One field changes."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" patch ptahschema storefront --type=merge \\"
+        ],
+        [
+          "cont",
+          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$E2E_REGISTRY_HOST/schemas/demo@$(cat demo/.lab/digest)\\\"}}}\""
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.dev/storefront patched"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# A new plan, against the database as it actually is rather than as v1 left it."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschemaplan"
+        ],
+        [
+          "out",
+          "NAME                                 SCHEMA       FINGERPRINT                                                               STATEMENTS   DESTRUCTIVE   AGE"
+        ],
+        [
+          "out",
+          "ptah-plan-6541659f4e639999b4515350   storefront   sha256:6541659f4e639999b4515350ec5320cf73cf92f1046eed9c8aa91543dcc34c26   1            false         66s"
+        ],
+        [
+          "out",
+          "ptah-plan-daf5cc5c4fee5f2f4c3a9964   storefront   sha256:daf5cc5c4fee5f2f4c3a99640bab25077317e0d82fe822a42089c8a21dd54153   3            false         19s"
+        ],
+        [
+          "note",
+          "# The SQL it applied. An ALTER and a CREATE, not a second CREATE TABLE customers."
+        ],
+        [
+          "cmd",
+          "APPLIED=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront -o jsonpath='{.status.applied.planFingerprint}')"
+        ],
+        [
+          "cont",
+          "PLAN=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r --arg fingerprint \"$APPLIED\" '.items[] | select(.spec.fingerprint == $fingerprint) | .metadata.name')"
+        ],
+        [
+          "cont",
+          "CHUNK=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" -o jsonpath='{.spec.chunks[0].name}')"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+        ],
+        [
+          "cont",
+          "  | base64 -d | jq -r '.statements[].sql'"
+        ],
+        [
+          "out",
+          "-- POSTGRES TABLE: orders --"
+        ],
+        [
+          "sql",
+          "CREATE TABLE \"orders\" ("
+        ],
+        [
+          "sql",
+          "  \"id\" bigint PRIMARY KEY NOT NULL,"
+        ],
+        [
+          "sql",
+          "  \"customer_id\" bigint NOT NULL,"
+        ],
+        [
+          "sql",
+          "  \"total_cents\" bigint NOT NULL"
+        ],
+        [
+          "sql",
+          ")"
+        ],
+        [
+          "out",
+          "-- Add/modify columns for table: customers --"
+        ],
+        [
+          "out",
+          "-- ALTER statements: --"
+        ],
+        [
+          "sql",
+          "ALTER TABLE \"customers\" ADD COLUMN \"signed_up_at\" timestamptz"
+        ],
+        [
+          "sql",
+          "-- ALTER statements: --"
+        ],
+        [
+          "sql",
+          "ALTER TABLE \"orders\" ADD CONSTRAINT \"fk_orders_customer_id\" FOREIGN KEY (\"customer_id\") REFERENCES \"customers\"(\"id\")"
+        ],
+        [
+          "note",
+          "# And the database has both, with the foreign key the declaration asked for."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\d orders\""
+        ],
+        [
+          "out",
+          "                 Table \"public.orders\""
+        ],
+        [
+          "out",
+          "   Column    |  Type  | Collation | Nullable | Default"
+        ],
+        [
+          "out",
+          "-------------+--------+-----------+----------+---------"
+        ],
+        [
+          "out",
+          " id          | bigint |           | not null |"
+        ],
+        [
+          "out",
+          " customer_id | bigint |           | not null |"
+        ],
+        [
+          "out",
+          " total_cents | bigint |           | not null |"
+        ],
+        [
+          "out",
+          "Indexes:"
+        ],
+        [
+          "out",
+          "    \"orders_pkey\" PRIMARY KEY, btree (id)"
+        ],
+        [
+          "out",
+          "Foreign-key constraints:"
+        ],
+        [
+          "out",
+          "    \"fk_orders_customer_id\" FOREIGN KEY (customer_id) REFERENCES customers(id)"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "schema-update",
+          "step": 1,
+          "claim": "exits 0, prints \"customers\", never prints \"orders\"",
+          "passed": true
+        },
+        {
+          "scenario": "schema-update",
+          "step": 2,
+          "claim": "exits 0, prints \"+  signed_up_at timestamptz\", prints \"+CREATE TABLE orders\"",
+          "passed": true
+        },
+        {
+          "scenario": "schema-update",
+          "step": 3,
+          "claim": "exits 0, prints \"sha256:\"",
+          "passed": true
+        },
+        {
+          "scenario": "schema-update",
+          "step": 4,
+          "claim": "exits 0, prints \"patched\"",
+          "passed": true
+        },
+        {
+          "scenario": "schema-update",
+          "step": 5,
+          "claim": "ptahschema/storefront: InSync=True (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "schema-update",
+          "step": 5,
+          "claim": "exits 0, prints \"storefront\"",
+          "passed": true
+        },
+        {
+          "scenario": "schema-update",
+          "step": 6,
+          "claim": "exits 0, prints \"ALTER TABLE \\\"customers\\\"\", prints \"CREATE TABLE \\\"orders\\\"\"",
+          "passed": true
+        },
+        {
+          "scenario": "schema-update",
+          "step": 7,
+          "claim": "exits 0, prints \"FOREIGN KEY (customer_id) REFERENCES customers\"",
+          "passed": true
+        },
+        {
+          "scenario": "schema-update",
+          "step": 7,
+          "claim": "ptahschema/storefront: status.phase=InSync, status.applied.artifactDigest is set",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "stale-approval",
+      "title": "Retire a used approval",
+      "tagline": "An approval describes one plan against one observed state. Applying it moves that state.",
+      "learn": "Why a signature cannot authorize twice, and what the operator does with one that no longer fits.",
+      "tags": [
+        "Safety"
+      ],
+      "commands": 7,
+      "lines": 48,
+      "events": [
+        [
+          "sync",
+          "awaiting approval"
+        ],
+        [
+          "note",
+          "# A plan is waiting for a decision, and it is named by its fingerprint."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o jsonpath='{.status.phase}{\"\\n\"}{.status.plan.fingerprint}{\"\\n\"}'"
+        ],
+        [
+          "out",
+          "AwaitingApproval"
+        ],
+        [
+          "out",
+          "sha256:3c1bbd484743e0b0d6afa1be26eef43370eedac266d5960700d3bb33dadfed36"
+        ],
+        [
+          "sync",
+          "approved"
+        ],
+        [
+          "note",
+          "# Approve it, bound to that schema, that plan and that fingerprint."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \u003e demo/.lab/schema.json"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" get ptahschemaplan \\"
+        ],
+        [
+          "cont",
+          "  \"$(jq -r .status.plan.name demo/.lab/schema.json)\" -o json \u003e demo/.lab/plan.json"
+        ],
+        [
+          "cont",
+          "jq -n --slurpfile schema demo/.lab/schema.json --slurpfile plan demo/.lab/plan.json '"
+        ],
+        [
+          "cont",
+          "  {"
+        ],
+        [
+          "cont",
+          "    apiVersion: \"operator.ptah.dev/v1alpha1\", kind: \"PtahSchemaApproval\","
+        ],
+        [
+          "cont",
+          "    metadata: {name: \"storefront-v1\"},"
+        ],
+        [
+          "cont",
+          "    spec: {"
+        ],
+        [
+          "cont",
+          "      schemaRef: {name: $schema[0].metadata.name, uid: $schema[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planRef:   {name: $plan[0].metadata.name,   uid: $plan[0].metadata.uid},"
+        ],
+        [
+          "cont",
+          "      planFingerprint: $plan[0].spec.fingerprint"
+        ],
+        [
+          "cont",
+          "    }"
+        ],
+        [
+          "cont",
+          "  }' | kubectl -n \"$NAMESPACE\" create -f -"
+        ],
+        [
+          "out",
+          "ptahschemaapproval.operator.ptah.dev/storefront-v1 created"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# It converges, and the approval records that it was the one dispatched."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschemaapproval storefront-v1 -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.conditions[] | \"\\(.type)\\t\\(.status)\\t\\(.reason)\"'"
+        ],
+        [
+          "out",
+          "Accepted\tFalse\tPlanNoLongerCurrent"
+        ],
+        [
+          "out",
+          "Stale\tTrue\tPlanNoLongerCurrent"
+        ],
+        [
+          "out",
+          "Consumed\tTrue\tDispatchCommitted"
+        ],
+        [
+          "sync",
+          "stale"
+        ],
+        [
+          "note",
+          "# And already stale. It described a plan against the database before the apply."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschemaapproval storefront-v1 -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.conditions[] | select(.type == \"Stale\") | .message'"
+        ],
+        [
+          "out",
+          "The approved plan no longer matches the current database state"
+        ],
+        [
+          "sync",
+          "planning"
+        ],
+        [
+          "note",
+          "# So it cannot authorize a second time. Change the desired state and see."
+        ],
+        [
+          "cmd",
+          "DIGEST=$(demo/bin/lab publish v2)"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" patch ptahschema storefront --type=merge \\"
+        ],
+        [
+          "cont",
+          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$E2E_REGISTRY_HOST/schemas/demo@$DIGEST\\\"}}}\""
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.dev/storefront patched"
+        ],
+        [
+          "sync",
+          "awaiting approval"
+        ],
+        [
+          "note",
+          "# A new plan, and the operator waits again. Nothing carries over."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.phase, .status.plan.fingerprint'"
+        ],
+        [
+          "out",
+          "AwaitingApproval"
+        ],
+        [
+          "out",
+          "sha256:af8c8b8c6c143848d4a88563688ccf56ba2797829a42056a0fafc21537fa69dc"
+        ],
+        [
+          "note",
+          "# And the change nobody approved has not run."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\d customers\""
+        ],
+        [
+          "out",
+          "             Table \"public.customers\""
+        ],
+        [
+          "out",
+          " Column |  Type  | Collation | Nullable | Default"
+        ],
+        [
+          "out",
+          "--------+--------+-----------+----------+---------"
+        ],
+        [
+          "out",
+          " id     | bigint |           | not null |"
+        ],
+        [
+          "out",
+          " email  | text   |           | not null |"
+        ],
+        [
+          "out",
+          "Indexes:"
+        ],
+        [
+          "out",
+          "    \"customers_pkey\" PRIMARY KEY, btree (id)"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "stale-approval",
+          "step": 1,
+          "claim": "exits 0, prints \"AwaitingApproval\", prints \"sha256:\"",
+          "passed": true
+        },
+        {
+          "scenario": "stale-approval",
+          "step": 2,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "stale-approval",
+          "step": 3,
+          "claim": "ptahschema/storefront: InSync=True (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "stale-approval",
+          "step": 3,
+          "claim": "exits 0, prints \"Consumed\", prints \"DispatchCommitted\"",
+          "passed": true
+        },
+        {
+          "scenario": "stale-approval",
+          "step": 3,
+          "claim": "ptahschemaapproval/storefront-v1: Consumed=True (DispatchCommitted)",
+          "passed": true
+        },
+        {
+          "scenario": "stale-approval",
+          "step": 4,
+          "claim": "exits 0, prints \"no longer matches\"",
+          "passed": true
+        },
+        {
+          "scenario": "stale-approval",
+          "step": 4,
+          "claim": "ptahschemaapproval/storefront-v1: Stale=True (PlanNoLongerCurrent)",
+          "passed": true
+        },
+        {
+          "scenario": "stale-approval",
+          "step": 5,
+          "claim": "exits 0, prints \"patched\"",
+          "passed": true
+        },
+        {
+          "scenario": "stale-approval",
+          "step": 6,
+          "claim": "ptahschema/storefront: ApprovalRequired=True (Waiting)",
+          "passed": true
+        },
+        {
+          "scenario": "stale-approval",
+          "step": 6,
+          "claim": "exits 0, prints \"AwaitingApproval\"",
+          "passed": true
+        },
+        {
+          "scenario": "stale-approval",
+          "step": 7,
+          "claim": "exits 0, never prints \"signed_up_at\"",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "id": "suspend-resume",
+      "title": "Suspend and resume",
+      "tagline": "One field stops reconciliation without deleting anything, and resuming picks up where it stopped.",
+      "learn": "How to take a database out of the operator's hands during an incident, and give it back.",
+      "tags": [
+        "Operations"
+      ],
+      "commands": 7,
+      "lines": 33,
+      "events": [
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# Converged, and reconciliation is active."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '.status.conditions[] | select(.type == \"Suspended\") | \"\\(.type)\\t\\(.status)\\t\\(.reason)\"'"
+        ],
+        [
+          "out",
+          "Suspended\tFalse\tActive"
+        ],
+        [
+          "sync",
+          "suspended"
+        ],
+        [
+          "note",
+          "# Suspend it. One boolean, and the resource stays exactly where it is."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" patch ptahschema storefront --type=merge -p '{\"spec\":{\"suspend\":true}}'"
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.dev/storefront patched"
+        ],
+        [
+          "note",
+          "# The operator says it is suspended, with the reason on the condition."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o jsonpath='{.status.phase}{\"\\n\"}'"
+        ],
+        [
+          "out",
+          "Suspended"
+        ],
+        [
+          "note",
+          "# Now publish a change it would otherwise pick up, and point the resource at it."
+        ],
+        [
+          "cmd",
+          "DIGEST=$(demo/bin/lab publish v2)"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" patch ptahschema storefront --type=merge \\"
+        ],
+        [
+          "cont",
+          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$E2E_REGISTRY_HOST/schemas/demo@$DIGEST\\\"}}}\""
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.dev/storefront patched"
+        ],
+        [
+          "note",
+          "# Nothing happens, which is the point. The database is untouched."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\dt\""
+        ],
+        [
+          "out",
+          "             List of relations"
+        ],
+        [
+          "out",
+          " Schema |   Name    | Type  |     Owner"
+        ],
+        [
+          "out",
+          "--------+-----------+-------+---------------"
+        ],
+        [
+          "out",
+          " public | customers | table | ptah_external"
+        ],
+        [
+          "out",
+          "(1 row)"
+        ],
+        [
+          "sync",
+          "applying"
+        ],
+        [
+          "note",
+          "# Resume, and it starts from what is actually there rather than from what it remembered."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" patch ptahschema storefront --type=merge -p '{\"spec\":{\"suspend\":false}}'"
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.dev/storefront patched"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# It plans against the live database and converges on the revision it was given."
+        ],
+        [
+          "cmd",
+          "demo/bin/lab psql \"\\dt\""
+        ],
+        [
+          "out",
+          "             List of relations"
+        ],
+        [
+          "out",
+          " Schema |   Name    | Type  |     Owner"
+        ],
+        [
+          "out",
+          "--------+-----------+-------+---------------"
+        ],
+        [
+          "out",
+          " public | customers | table | ptah_external"
+        ],
+        [
+          "out",
+          " public | orders    | table | ptah_external"
+        ],
+        [
+          "out",
+          "(2 rows)"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "suspend-resume",
+          "step": 1,
+          "claim": "exits 0, prints \"Suspended\", prints \"False\", prints \"Active\"",
+          "passed": true
+        },
+        {
+          "scenario": "suspend-resume",
+          "step": 2,
+          "claim": "exits 0, prints \"patched\"",
+          "passed": true
+        },
+        {
+          "scenario": "suspend-resume",
+          "step": 3,
+          "claim": "ptahschema/storefront: Suspended=True (Requested)",
+          "passed": true
+        },
+        {
+          "scenario": "suspend-resume",
+          "step": 3,
+          "claim": "exits 0, prints \"Suspended\"",
+          "passed": true
+        },
+        {
+          "scenario": "suspend-resume",
+          "step": 4,
+          "claim": "exits 0, prints \"patched\"",
+          "passed": true
+        },
+        {
+          "scenario": "suspend-resume",
+          "step": 5,
+          "claim": "exits 0, never prints \"orders\"",
+          "passed": true
+        },
+        {
+          "scenario": "suspend-resume",
+          "step": 5,
+          "claim": "ptahschema/storefront: Suspended=True (Requested)",
+          "passed": true
+        },
+        {
+          "scenario": "suspend-resume",
+          "step": 6,
+          "claim": "exits 0, prints \"patched\"",
+          "passed": true
+        },
+        {
+          "scenario": "suspend-resume",
+          "step": 7,
+          "claim": "ptahschema/storefront: InSync=True (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "suspend-resume",
+          "step": 7,
+          "claim": "exits 0, prints \"customers\", prints \"orders\"",
+          "passed": true
+        }
+      ]
+    }
+  ],
+  "order": [
+    "destructive-block",
+    "manual-approval",
+    "stale-approval",
+    "drift",
+    "failure-recovery",
+    "suspend-resume",
+    "first-apply",
+    "schema-update",
+    "lab-setup"
+  ]
+}

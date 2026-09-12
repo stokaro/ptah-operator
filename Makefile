@@ -11,7 +11,12 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build e2e-static e2e demo demo-up demo-record demo-serve demo-test demo-down
+.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build e2e-static e2e
+
+# A second declaration rather than a longer first one: the lifecycle targets
+# above are audited as one line, and appending to it is a change to that audit
+# for the sake of a demonstration.
+.PHONY: demo demo-up demo-record demo-serve demo-test demo-down
 
 all: verify build
 
@@ -155,26 +160,16 @@ demo: demo-up demo-record
 
 # The bootstrap is skipped when a lab is already up; the namespace fixtures are
 # applied either way, because they are idempotent and because a lab that was
-# brought up before a fixture changed would otherwise keep the old one.
+# brought up before a fixture changed would otherwise keep the old one. Both
+# decisions live in demo/bin/lab, where the shell they need is shell.
 demo-up:
-	@mkdir -p demo/.lab
-	@if [ -f "$(DEMO_ENVIRONMENT)" ]; then \
-		printf 'demo: a lab is already up (%s); remove it with make demo-down\n' "$(DEMO_ENVIRONMENT)"; \
-	else \
-		K8S_VERSION="$(DEMO_KUBERNETES_VERSION)" \
-		E2E_STOP_AFTER=bootstrap \
-		E2E_ENVIRONMENT_FILE="$(CURDIR)/$(DEMO_ENVIRONMENT)" \
-		E2E_RUN_ID="$(DEMO_RUN_ID)" \
-		DOCKER_CONTEXT="$(DOCKER_CONTEXT)" \
-		./hack/e2e-kind.sh; \
-	fi
-	./demo/bin/lab prepare
+	LAB_ENVIRONMENT="$(CURDIR)/$(DEMO_ENVIRONMENT)" \
+	LAB_KUBERNETES_VERSION="$(DEMO_KUBERNETES_VERSION)" \
+	LAB_RUN_ID="$(DEMO_RUN_ID)" \
+	DOCKER_CONTEXT="$(DOCKER_CONTEXT)" \
+		./demo/bin/lab up
 
 demo-record:
-	@[ -f "$(DEMO_ENVIRONMENT)" ] || { \
-		printf 'demo: no lab. Bring one up with: make demo-up\n' >&2; \
-		exit 1; \
-	}
 	$(GO) run ./demo/cmd/record -root .
 
 demo-serve:
@@ -192,13 +187,4 @@ demo-test:
 		npm run check:links && npm run check:navigation && npm run check:demo-page
 
 demo-down:
-	@[ -f "$(DEMO_ENVIRONMENT)" ] || { printf 'demo: no lab to remove\n'; exit 0; }
-	@set -a; . "./$(DEMO_ENVIRONMENT)"; set +a; \
-		export DOCKER_CONFIG="$$E2E_DOCKER_CONFIG"; \
-		printf 'demo: removing cluster %s\n' "$$E2E_KIND_CLUSTER_NAME"; \
-		kind delete cluster --name "$$E2E_KIND_CLUSTER_NAME" >/dev/null 2>&1 || true; \
-		for container in "$$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" "$$E2E_REGISTRY_CONTAINER_ID"; do \
-			[ -n "$$container" ] || continue; \
-			docker --context "$$E2E_DOCKER_CONTEXT" container rm -fv "$$container" >/dev/null 2>&1 || true; \
-		done
-	rm -rf demo/.lab
+	LAB_ENVIRONMENT="$(CURDIR)/$(DEMO_ENVIRONMENT)" ./demo/bin/lab down
