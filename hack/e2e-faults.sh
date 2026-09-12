@@ -5066,6 +5066,51 @@ wait_for_absence ptahschema "$PG_ALIAS_SCHEMA_B"
 k -n "$TEST_NAMESPACE" get ptahschemaapproval "$ALIAS_B_APPROVAL" >/dev/null ||
 	fail "the user-owned consumed approval unexpectedly disappeared with its schema"
 
+printf '%s\n' 'e2e faults: removing a held read-only Job while its operation is active'
+PG_READ_LOSS_DB=e2e_fault_pg_read_loss
+PG_READ_LOSS_SECRET=e2e-fault-pg-read-loss-db
+PG_READ_LOSS_SCHEMA=e2e-fault-pg-read-loss
+create_database postgresql "$PG_READ_LOSS_DB" "$PG_READ_LOSS_SECRET"
+# A read-only Job that disappears while its operation is active left a schema in
+# Verifying forever once, with the operation still naming a Job the API server
+# no longer had. The controller takes one branch for every read-only operation,
+# chosen by isReadOnlyOperation rather than by type, so holding the first one of
+# the read chain exercises what Verify would reach. The barrier is a NoSchedule
+# taint, so raising it before the schema exists holds that Job with certainty
+# instead of racing a window that is otherwise a fraction of a second wide.
+start_read_workload_barrier
+create_schema "$PG_READ_LOSS_SCHEMA" PostgreSQL "$PG_READ_LOSS_SECRET" "$PG_REFERENCE" e2e/fault/read-loss
+wait_for_schema "$PG_READ_LOSS_SCHEMA" '
+      .status.activeOperation != null and
+      (.status.activeOperation.type | IN("Resolve", "Verify", "Observe", "Plan")) and
+      ((.status.activeOperation.jobName // "") | length) > 0 and
+      ((.status.activeOperation.jobUID // "") | length) > 0
+    ' "a held read-only operation bound to its own Job"
+READ_LOSS_OPERATION=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_READ_LOSS_SCHEMA" \
+	-o jsonpath='{.status.activeOperation.type}')
+READ_LOSS_JOB_NAME=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_READ_LOSS_SCHEMA" \
+	-o jsonpath='{.status.activeOperation.jobName}')
+READ_LOSS_JOB_UID=$(k -n "$TEST_NAMESPACE" get ptahschema "$PG_READ_LOSS_SCHEMA" \
+	-o jsonpath='{.status.activeOperation.jobUID}')
+[ -n "$READ_LOSS_JOB_NAME" ] && [ -n "$READ_LOSS_JOB_UID" ] ||
+	fail "the held read-only operation did not publish its exact Job identity"
+assert_read_workload_blocked "$READ_LOSS_JOB_UID" \
+	"the held $READ_LOSS_OPERATION Job this proof removes"
+# Audit before the removal: every watched Job and Pod UID must reach the ledger,
+# and this Job and its Pod stop existing in the next step.
+audit_fault_runtime
+k -n "$TEST_NAMESPACE" delete job "$READ_LOSS_JOB_NAME" --wait=true >/dev/null
+wait_for_absence job "$READ_LOSS_JOB_NAME"
+read_loss_recovered=$(printf '.status.activeOperation == null or ((.status.activeOperation.jobUID // "") != "%s")' \
+	"$READ_LOSS_JOB_UID")
+wait_for_schema "$PG_READ_LOSS_SCHEMA" "$read_loss_recovered" \
+	"the removed $READ_LOSS_OPERATION operation to be retried or given up"
+k -n "$TEST_NAMESPACE" get job "$READ_LOSS_JOB_NAME" --ignore-not-found -o name |
+	grep -q . && fail "the removed read-only Job was recreated under its own name"
+stop_read_workload_barrier
+wait_for_plan "$PG_READ_LOSS_SCHEMA"
+assert_database_column postgresql "$PG_READ_LOSS_DB" fault_token 0
+
 PG_DELETE_DB=e2e_fault_pg_delete
 PG_DELETE_SECRET=e2e-fault-pg-delete-db
 PG_DELETE_SCHEMA=e2e-fault-pg-delete
