@@ -565,6 +565,48 @@ html:not(.js) .tile-slot {
 	font-size: 0.8125rem;
 }
 
+/* Starlight styles every `pre` inside content: its own background, its own
+ * size. A terminal frame and a printed transcript are not prose code blocks, so
+ * these take their own back. The rules are repeated under `.sl-markdown-content`
+ * rather than moved there, because the sheet is also what the design is, and a
+ * reader of it should see the terminal's values where the terminal is defined.
+ *
+ * This was invisible in the dark theme: Starlight's code background there is
+ * within a shade of the terminal's, so the transcripts looked right while the
+ * light theme rendered them light-on-light -- and the printed transcript is the
+ * whole of the page for a reader without the player. */
+.sl-markdown-content .tile-transcript {
+	background: var(--term);
+	color: var(--termfg);
+	font: 13px/1.55 var(--mono);
+	padding: 14px 16px;
+	border: 1px solid var(--line);
+	border-radius: 2px;
+}
+.sl-markdown-content .demo-screen,
+.sl-markdown-content .demo-transcript {
+	background: none;
+	color: var(--termfg);
+	font: 13.5px/1.7 var(--mono);
+	padding: 20px 22px;
+	border: 0;
+	border-radius: 0;
+}
+.sl-markdown-content .term pre {
+	margin: 0;
+}
+/* The tile and the frame are the design's, not the documentation body's: 16px
+ * at 1.5, and the tile's own ink rather than a button's user-agent black. */
+.sl-markdown-content .tile {
+	font-size: 1rem;
+	line-height: 1.5;
+	color: var(--fg);
+}
+.sl-markdown-content .term {
+	font-size: 1rem;
+	line-height: 1.5;
+}
+
 /* The tiles sit inside a documentation page, where an unordered list is styled
  * for prose: markers, an indent, and space between items. A catalog is a grid
  * of controls, so those are taken off again here rather than by writing the
