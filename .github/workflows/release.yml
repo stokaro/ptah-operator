@@ -556,6 +556,21 @@ jobs:
           [[ "$TESTED_CHART_SHA256" =~ ^[0-9a-f]{64}$ ]]
           [[ "$chart_sha256" == "$TESTED_CHART_SHA256" ]]
           printf 'path=%s\n' "$chart_path" >> "$GITHUB_OUTPUT"
+      # The plugin a person installs, one file per client platform, built from
+      # the tag's own source with the version stamped in -- so
+      # `kubectl ptah --version` names the release it came from.
+      #
+      # .goreleaser.yaml says which platforms and how, the way ptah.run builds
+      # its own CLI. It writes into dist/client, so --clean removes only what
+      # it wrote and leaves this transaction's own artifacts in dist/ alone.
+      # Publishing stays here: goreleaser builds and does not release.
+      - name: Build the kubectl plugin for the supported client platforms
+        id: client
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: v2.15.4
+          args: build --clean
       - name: Materialize immutable release assets
         id: artifacts
         env:
@@ -566,6 +581,9 @@ jobs:
           set -euo pipefail
           manifest=dist/release-manifest.txt
           chart_path='${{ steps.chart-package.outputs.path }}'
+          # Beside the chart and the manifest, which is where the checksum file
+          # names them and where the upload reads them from.
+          mv dist/client/kubectl-ptah-* dist/
           mode='${{ steps.transaction.outputs.mode }}'
           if [[ "$mode" == fresh || "$mode" == prepared ]]; then
             image_digest='${{ steps.image.outputs.digest }}'
@@ -585,6 +603,7 @@ jobs:
               printf 'image-tag=%s\n' '${{ steps.transaction.outputs.image-tag }}'
               printf 'chart-asset=%s\n' "$(basename "$chart_path")"
               printf 'chart-asset-sha256=%s\n' "$chart_asset_sha256"
+              printf 'client-assets=%s\n' 'kubectl-ptah-darwin-amd64,kubectl-ptah-darwin-arm64,kubectl-ptah-linux-amd64,kubectl-ptah-linux-arm64'
               printf 'support-evidence-run-id=%s\n' "$TESTED_SUPPORT_EVIDENCE_RUN_ID"
               printf 'kubernetes-support-window=%s\n' "$TESTED_KUBERNETES_SUPPORT_WINDOW"
             } > "$manifest"
@@ -592,7 +611,9 @@ jobs:
           chart_name="$(basename "$chart_path")"
           (
             cd dist
-            sha256sum "$chart_name" release-manifest.txt > SHA256SUMS
+            sha256sum "$chart_name" release-manifest.txt \
+              kubectl-ptah-darwin-amd64 kubectl-ptah-darwin-arm64 \
+              kubectl-ptah-linux-amd64 kubectl-ptah-linux-arm64 > SHA256SUMS
           )
           go run ./hack/releaseverify \
             -tag "$GITHUB_REF_NAME" \
@@ -708,6 +729,10 @@ jobs:
             ${{ steps.chart-package.outputs.path }}
             dist/release-manifest.txt
             dist/SHA256SUMS
+            dist/kubectl-ptah-darwin-amd64
+            dist/kubectl-ptah-darwin-arm64
+            dist/kubectl-ptah-linux-amd64
+            dist/kubectl-ptah-linux-arm64
       - name: Commit final manifest to prepared draft
         id: finalize-journal
         if: steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'
@@ -788,7 +813,11 @@ jobs:
           expected_names="$(printf '%s\n' \
             "$(basename '${{ steps.chart-package.outputs.path }}')" \
             release-manifest.txt \
-            SHA256SUMS | sort)"
+            SHA256SUMS \
+            kubectl-ptah-darwin-amd64 \
+            kubectl-ptah-darwin-arm64 \
+            kubectl-ptah-linux-amd64 \
+            kubectl-ptah-linux-arm64 | sort)"
           release_json="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME")"
           [[ "$(jq -r '.draft' <<<"$release_json")" == true ]]
           jq -j '.body' <<<"$release_json" > "$RUNNER_TEMP/release-body.txt"
@@ -901,7 +930,11 @@ jobs:
           expected_names="$(printf '%s\n' \
             "$(basename '${{ steps.chart-package.outputs.path }}')" \
             release-manifest.txt \
-            SHA256SUMS | sort)"
+            SHA256SUMS \
+            kubectl-ptah-darwin-amd64 \
+            kubectl-ptah-darwin-arm64 \
+            kubectl-ptah-linux-amd64 \
+            kubectl-ptah-linux-arm64 | sort)"
           mode='${{ steps.transaction.outputs.mode }}'
           release_json="$(gh api \
             -H 'X-GitHub-Api-Version: 2026-03-10' \

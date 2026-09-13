@@ -19,7 +19,6 @@ steps:
     run: |
       eval "$(demo/bin/lab credentials)"
       export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-      export PATH="$(demo/bin/lab ptah):$PATH"
       echo "registry: $PTAH_OCI_REGISTRY"
     sync: publishing
     expect:
@@ -31,7 +30,6 @@ steps:
     run: |
       eval "$(demo/bin/lab credentials)"
       export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-      export PATH="$(demo/bin/lab ptah):$PATH"
       ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
         --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
         | tee /dev/stderr | sed -n 's/^Digest: //p' > demo/.lab/digest
@@ -109,21 +107,12 @@ steps:
       exit: 0
       stdout_contains: [storefront]
 
-  - note: The SQL lives in immutable ConfigMaps, not in a status field or a log line.
-    # The plan is found by the fingerprint the status recorded as applied, and
-    # every chunk of it is read. Taking the first plan in the namespace and its
-    # first chunk answers only where one schema has one plan of one chunk, which
-    # is a property of this namespace rather than of the operator.
-    run: |
-      APPLIED=$(kubectl -n "$NAMESPACE" get ptahschema storefront \
-        -o jsonpath='{.status.applied.planFingerprint}')
-      PLAN=$(kubectl -n "$NAMESPACE" get ptahschemaplan -o json \
-        | jq -r --arg f "$APPLIED" '.items[] | select(.spec.fingerprint == $f) | .metadata.name')
-      for CHUNK in $(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" \
-        -o jsonpath='{range .spec.chunks[*]}{.name}{"\n"}{end}'); do
-        kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
-          | base64 -d | jq -r '.statements[].sql'
-      done
+  - note: What it ran is stored, and one read-only command prints it.
+    # The plan lives in immutable ConfigMaps that a manifest binds by index,
+    # size and digest. This reads it the way the operator does: every chunk,
+    # checked against its binding, joined in order and checked as a whole
+    # before a line of it is printed.
+    run: kubectl ptah plan storefront --applied -n "$NAMESPACE" -o sql
     expect:
       exit: 0
       stdout_contains: ['CREATE TABLE "customers"']

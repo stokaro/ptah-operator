@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,6 +94,11 @@ func TestBootstrapHandsOverWhatTheTeardownRemoves(t *testing.T) {
 		if !strings.Contains(string(contents), handed) {
 			t.Fatalf("the bootstrap does not hand over %s, so a teardown cannot remove it", handed)
 		}
+	}
+	// The caller sources this file, so a value holding spaces is a command
+	// line: the first image would be the variable and the second would be run.
+	if !strings.Contains(string(contents), `tr '\n' ','`) {
+		t.Fatal("the bootstrap does not separate the image list with commas, so sourcing the file runs the second image")
 	}
 }
 
@@ -248,6 +254,20 @@ func newTeardownLab(t *testing.T) teardownLab {
 // down runs the teardown the way `make demo-down` does, through the entry
 // point rather than through the library, so what is driven is the command a
 // reader runs.
+// recordImages writes the list the bootstrap hands over, in the shape it writes
+// it: one value, comma-separated, safe for a shell to source.
+func (l teardownLab) recordImages(t *testing.T, images []string) {
+	t.Helper()
+	file, err := os.OpenFile(l.environment, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("open the environment: %v", err)
+	}
+	defer file.Close()
+	if _, err := fmt.Fprintf(file, "E2E_CREATED_IMAGE_REFS=%s\n", strings.Join(images, ",")); err != nil {
+		t.Fatalf("record the images: %v", err)
+	}
+}
+
 func (l teardownLab) down(t *testing.T, stub map[string]string) ([]byte, error) {
 	t.Helper()
 	command := exec.Command(filepath.Join(l.root, "demo", "bin", "lab"), "down")
@@ -280,7 +300,8 @@ func stubCommands(t *testing.T) string {
 			"case \"$what\" in\n" +
 			"\"container ls\") printf '%s' \"${STUB_CONTAINERS:-}\" ;;\n" +
 			"\"volume ls\") printf '%s' \"${STUB_VOLUMES:-}\" ;;\n" +
-			"\"image inspect\") exit 1 ;;\n" +
+			"\"image inspect\") [ -n \"${STUB_IMAGES:-}\" ] || exit 1 ;;\n" +
+			"\"image rm\") printf '%s\\n' \"$3\" >> \"${STUB_LOG:-/dev/null}\" ;;\n" +
 			"esac\n" +
 			"exit 0\n",
 	}
@@ -367,4 +388,37 @@ func (l resetLab) reset(t *testing.T, stub map[string]string) ([]byte, error) {
 		command.Env = append(command.Env, name+"="+value)
 	}
 	return command.CombinedOutput()
+}
+
+// The bootstrap hands the images over as one value, and the teardown removes
+// every one of them.
+//
+// The value is comma-separated because the environment file is sourced: with
+// spaces, the shell reading it would run the second image reference as a
+// command, and the teardown would be handed one image where the run created
+// several.
+func TestLabDownRemovesEveryImageTheBootstrapRecorded(t *testing.T) {
+	t.Parallel()
+	lab := newTeardownLab(t)
+	removed := filepath.Join(t.TempDir(), "removed")
+	images := []string{"registry.invalid/first:tag", "registry.invalid/second:tag"}
+	lab.recordImages(t, images)
+
+	output, err := lab.down(t, map[string]string{
+		"STUB_IMAGES": "yes",
+		"STUB_LOG":    removed,
+	})
+	if err != nil {
+		t.Fatalf("lab down failed: %v\n%s", err, output)
+	}
+
+	attempted, readErr := os.ReadFile(removed)
+	if readErr != nil {
+		t.Fatalf("read what the teardown removed: %v\n%s", readErr, output)
+	}
+	for _, image := range images {
+		if !strings.Contains(string(attempted), image) {
+			t.Fatalf("the teardown did not remove %s; it removed:\n%s", image, attempted)
+		}
+	}
 }

@@ -58,27 +58,23 @@ repository ships is left alone.
 The database went from empty to holding the table:
 
 ```sh
-demo/bin/lab psql '\dt'
+NAMESPACE=$(demo/bin/lab namespace)
+kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c '\dt'
 ```
 
-Read what the operator actually ran. The SQL lives in a controller-owned
-ConfigMap rather than in a status field or a log line:
+Read what the operator actually ran. The SQL lives in controller-owned
+ConfigMaps rather than in a status field or a log line, and
+[`kubectl ptah`](../../use/read-a-plan/) reads it back:
 
 ```sh
-NAMESPACE=$(demo/bin/lab namespace)
-APPLIED=$(kubectl -n "$NAMESPACE" get ptahschema storefront \
-  -o jsonpath='{.status.applied.planFingerprint}')
-PLAN=$(kubectl -n "$NAMESPACE" get ptahschemaplan -o json \
-  | jq -r --arg f "$APPLIED" '.items[] | select(.spec.fingerprint == $f) | .metadata.name')
-CHUNK=$(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" \
-  -o jsonpath='{.spec.chunks[0].name}')
-kubectl -n "$NAMESPACE" get configmap "$CHUNK" \
-  -o jsonpath='{.binaryData.chunk}' | base64 -d | jq -r '.statements[].sql'
+export PATH="$(demo/bin/lab tools):$PATH"
+kubectl ptah plan storefront --applied -n "$NAMESPACE" -o sql
 ```
 
-The plan is found by the fingerprint the status recorded as applied, not by
-picking the newest one. A converged schema carries no current plan, because
-there is nothing left to do.
+The lab builds that binary for you; outside it you install one from a release.
+`--applied` is the plan the last confirmed apply ran, which is what this
+scenario is about: a converged schema carries no current plan, because there is
+nothing left to do.
 
 And the conditions, which are what the operator says rather than what a Job
 did:

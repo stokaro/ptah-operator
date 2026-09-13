@@ -48,13 +48,20 @@ stops: `ApprovalRequired` becomes `True` and the phase is `AwaitingApproval`.
 Nothing has run against the database yet.
 
 Read the plan before approving it. The SQL is in controller-owned ConfigMaps
-rather than in the status, so this reads the first chunk of the current plan:
+rather than in the status, and [`kubectl ptah`](../../use/read-a-plan/) reads it
+back the way the operator does:
 
 ```sh
-PLAN=$(kubectl -n application get ptahschema application -o jsonpath='{.status.plan.name}')
-CHUNK=$(kubectl -n application get ptahschemaplan "$PLAN" -o jsonpath='{.spec.chunks[0].name}')
-kubectl -n application get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
-  | base64 -d | jq -r '.statements[] | "\(.severity)\t\(.sql)"'
+kubectl ptah plan application -n application
+```
+
+Without a selection that is the current plan, which is the one waiting for an
+approval. `-o json` gives the stored plan document, if you want the severity
+the planner recorded beside each statement:
+
+```sh
+kubectl ptah plan application -n application -o json \
+  | jq -r '.statements[] | "\(.severity)\t\(.sql)"'
 ```
 
 An approval names the schema, the plan and that plan's fingerprint. Everything

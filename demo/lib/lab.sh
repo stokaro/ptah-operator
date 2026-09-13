@@ -266,6 +266,10 @@ lab_up() {
 	fi
 	read_environment
 	lab_prepare
+	# Built once, here, so a scenario's steps are the commands and not the
+	# preparation for them. A reader installs kubectl-ptah from a release and
+	# has ptah already; the lab is standing in for both.
+	lab_tools >/dev/null
 }
 
 # lab_down removes what the bootstrap created, and nothing else.
@@ -388,7 +392,14 @@ lab_down_remove_one() {
 # images. An image that is already gone is not a failure, and a daemon that
 # cannot answer has already been reported by the labelled removals above.
 lab_down_remove_images() {
-	for lab_down_image in ${E2E_CREATED_IMAGE_REFS:-}; do
+	# The bootstrap writes the list with commas, because the caller sources
+	# that file and a value with a space in it is a command line. Splitting on
+	# them is this one expansion; everything after it is quoted.
+	IFS=,
+	# shellcheck disable=SC2086 # The comma-separated list is split on purpose.
+	set -- ${E2E_CREATED_IMAGE_REFS:-}
+	unset IFS
+	for lab_down_image in "$@"; do
 		docker --context "$E2E_DOCKER_CONTEXT" image inspect \
 			"$lab_down_image" >/dev/null 2>&1 || continue
 		docker --context "$E2E_DOCKER_CONTEXT" image rm \
@@ -446,10 +457,32 @@ lab_down_remove_lab_directory() {
 # The executor image cannot supply it. That image is built for the cluster's
 # platform, and a demonstration is watched from a machine that is often another
 # one.
+# lab_tools builds the two command-line tools a scenario uses and prints the
+# directory holding them.
+#
+# `ptah` publishes a schema as an artifact and comes from the exact Ptah source
+# the lab's executor was built from, so the CLI doing the publishing is the
+# build that reads it back. `kubectl-ptah` reads a stored plan and comes from
+# this repository, which is where it ships from.
+lab_tools() {
+	lab_tools_bin="$LAB_ROOT/demo/.lab/bin"
+	mkdir -p "$lab_tools_bin"
+	lab_tools_client
+	lab_ptah
+	printf '%s\n' "$lab_tools_bin"
+}
+
+# lab_tools_client builds the kubectl plugin from this repository.
+lab_tools_client() {
+	[ -x "$lab_tools_bin/kubectl-ptah" ] && return 0
+	printf 'lab: building kubectl-ptah for this machine\n' >&2
+	( cd "$LAB_ROOT" && go build -o "$lab_tools_bin/kubectl-ptah" ./cmd/kubectl-ptah ) ||
+		lab_fail "could not build kubectl-ptah from $LAB_ROOT"
+}
+
 lab_ptah() {
 	lab_ptah_bin="$LAB_ROOT/demo/.lab/bin"
 	if [ -x "$lab_ptah_bin/ptah" ]; then
-		printf '%s\n' "$lab_ptah_bin"
 		return 0
 	fi
 	# A lab built from a prebuilt executor image archived no Ptah source, so
@@ -463,7 +496,6 @@ lab_ptah() {
 	printf 'lab: building ptah %s for this machine\n' "${E2E_PTAH_VERSION:-}" >&2
 	( cd "$E2E_PTAH_BUILD_CONTEXT" && go build -o "$lab_ptah_bin/ptah" ./cmd/ptah ) ||
 		lab_fail "could not build the Ptah CLI from $E2E_PTAH_BUILD_CONTEXT"
-	printf '%s\n' "$lab_ptah_bin"
 }
 
 # lab_registry_address prints the address a client outside the cluster publishes

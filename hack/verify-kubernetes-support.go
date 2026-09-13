@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stokaro/ptah-operator/hack/releasecontract"
 	"gopkg.in/yaml.v3"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -70,9 +71,8 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "2139f5cc6b749da6d281b159bd3e77f068dae3f9ed878fb8f8c9f1ac3832ada4"
+	ciWorkflowSHA256                = "54b23c45302ce86c581f9f646f544c725def687129c1169bbad751c059ba09c3"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
-	releaseWorkflowSHA256           = "cb548f744819a0f8196e2056d7d581a284e754bd4319de17c6c0af9fd1eb4f78"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
 	releaseChartExportRunSHA256     = "a34800805204a2caa071d03939f9337f3472028ecb8b9c11ed26723294eb8082"
@@ -656,7 +656,8 @@ echo "commit=$commit" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: verify must run unconditionally with a %d-minute timeout", path, ciVerifyTimeoutMinutes)
 	}
 	verifySteps, err := requireWorkflowStepOrder(path, "verify", verifyJob, []string{
-		"checkout", "setup-go", "verify-support", "crd-baseline", "shellcheck", "project-verify",
+		"checkout", "setup-go", "verify-support", "crd-baseline", "shellcheck",
+		"client-build-config", "project-verify",
 	})
 	if err != nil {
 		return err
@@ -767,10 +768,18 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 			return fmt.Errorf("%s: the pinned ShellCheck install does not read %q", path, required)
 		}
 	}
-	if verifySteps[5].Name != "Run project verification" ||
-		verifySteps[5].If != "" || verifySteps[5].Uses != "" || verifySteps[5].Run != "make verify-source" ||
-		verifySteps[5].Shell != "bash" || verifySteps[5].WorkingDirectory != "" ||
-		len(verifySteps[5].With) != 0 || !equalStringMap(verifySteps[5].Env, map[string]string{
+	// The client build configuration is checked where a pull request sees it:
+	// a release reads its platforms out of that file, so one goreleaser refuses
+	// is a release that cannot be cut.
+	if verifySteps[5].Name != "Check the client build configuration" ||
+		!strings.HasPrefix(verifySteps[5].Uses, "goreleaser/goreleaser-action@") ||
+		verifySteps[5].Run != "" || verifySteps[5].With["args"] != "check" {
+		return fmt.Errorf("%s: the client build configuration is not checked with goreleaser", path)
+	}
+	if verifySteps[6].Name != "Run project verification" ||
+		verifySteps[6].If != "" || verifySteps[6].Uses != "" || verifySteps[6].Run != "make verify-source" ||
+		verifySteps[6].Shell != "bash" || verifySteps[6].WorkingDirectory != "" ||
+		len(verifySteps[6].With) != 0 || !equalStringMap(verifySteps[6].Env, map[string]string{
 		"CRD_SCHEMA_BASELINE_REF":              "${{ steps.crd-baseline.outputs.baseline }}",
 		"CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE": "true",
 	}) {
@@ -1363,7 +1372,7 @@ func verifyReleaseWorkflow(path string) error {
 			return fmt.Errorf("%s: immutable release manifest is missing support evidence binding %q", path, marker)
 		}
 	}
-	return verifyAuditedWorkflowDigest(path, contents, releaseWorkflowSHA256)
+	return verifyAuditedWorkflowDigest(path, contents, releasecontract.WorkflowSHA256)
 }
 
 type workflowDocument struct {

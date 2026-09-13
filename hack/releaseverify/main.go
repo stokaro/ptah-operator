@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stokaro/ptah-operator/hack/releasecontract"
 	"gopkg.in/yaml.v3"
 )
 
@@ -48,14 +49,14 @@ var (
 		"publish/draft":                      "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
 		"publish/stage-inspect":              "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
 		"publish/chart-package":              "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8",
-		"publish/artifacts":                  "d8b898954b7f77f61fd8ecde63414f2e9a423531c5982d40c805d9be8fbde64c",
+		"publish/artifacts":                  "3b684e7422b28920bf2253a99ffef11dd106b77e4c5c0fe683486b3988bea82b",
 		"publish/image-structure":            "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
 		"publish/finalize-journal":           "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
 		"publish/asset-auth":                 "e1c7c1e7eefef128a64a883a73c56dab37d8f1dd24436daa84b7a077896ea8ee",
-		"publish/asset-sync":                 "8ac2fce0ed0460b72eee90bb530e1c17da79ed62f4e54877a780bd8dbbc34e4e",
+		"publish/asset-sync":                 "9edd9f8cac27bffcecf3bd2d456d2e007eeaa9e8223a18c58940e00b94c25db6",
 		"publish/image-signature":            "e0b994a90bc38dd8019f4b4157a72e5f6cab1873f3bc1ca39b8ca41dcb023d5e",
 		"publish/final-verify":               "1ad635ea3d03dc718ecfff46a020a5bcfef28f5bb2b8932c5d3245e37286d843",
-		"publish/publish-release":            "3ff6501266556d3d352e9af3af8b7f2ea79db14ff5f474417b49a9686856de8e",
+		"publish/publish-release":            "ba0397a317ec34cb0e98c2c8c575a0afc1e0ed441e39121b7eda787cd4269a7c",
 	}
 )
 
@@ -70,10 +71,8 @@ const (
 	buildkitImage              = "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
 	sbomDigest                 = "sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
 	sbomGenerator              = "docker.io/docker/buildkit-syft-scanner:stable-1@" + sbomDigest
-	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "cb548f744819a0f8196e2056d7d581a284e754bd4319de17c6c0af9fd1eb4f78"
 )
 
 func main() {
@@ -1909,7 +1908,8 @@ func verifyWorkflowSemantics(document []byte) error {
 		[]string{
 			"checkout", "setup-go", "setup-buildx", "release", "immutability-preflight", "transaction",
 			"journal-attestation", "draft", "stage-inspect", "registry-login", "image", "build-checkpoint",
-			"chart-package", "artifacts", "image-structure", "asset-attestation", "finalize-journal", "asset-auth", "asset-sync",
+			"chart-package", "client", "artifacts", "image-structure", "asset-attestation", "finalize-journal",
+			"asset-auth", "asset-sync",
 			"image-attestation", "setup-cosign", "image-signature", "final-verify", "publish-release",
 		},
 		map[string]string{
@@ -1921,6 +1921,7 @@ func verifyWorkflowSemantics(document []byte) error {
 			"journal-attestation": "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"build-checkpoint":    "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"asset-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"client":              "goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94",
 			"image-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"setup-cosign":        "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
 		}); err != nil {
@@ -2063,7 +2064,9 @@ func verifyWorkflowSemantics(document []byte) error {
 	}
 
 	if err := verifyAttestationStep(steps, "asset-attestation", map[string]string{
-		"subject-path": "${{ steps.chart-package.outputs.path }}\ndist/release-manifest.txt\ndist/SHA256SUMS\n",
+		"subject-path": "${{ steps.chart-package.outputs.path }}\ndist/release-manifest.txt\ndist/SHA256SUMS\n" +
+			"dist/kubectl-ptah-darwin-amd64\ndist/kubectl-ptah-darwin-arm64\n" +
+			"dist/kubectl-ptah-linux-amd64\ndist/kubectl-ptah-linux-arm64\n",
 	}, "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'"); err != nil {
 		return err
 	}
@@ -2160,7 +2163,7 @@ func verifyWorkflowSemantics(document []byte) error {
 
 func verifyWorkflowDigest(document []byte) error {
 	actualDigest := fmt.Sprintf("%x", sha256.Sum256(document))
-	if actualDigest != releaseWorkflowSHA256 {
+	if actualDigest != releasecontract.WorkflowSHA256 {
 		return fmt.Errorf("release workflow digest %s differs from the audited contract", actualDigest)
 	}
 	return nil
@@ -2300,12 +2303,88 @@ func requireRunBindings(steps map[string]workflowStep, id string, bindings ...st
 	return nil
 }
 
+// clientBinaryTemplate is the only name shape this reads.
+//
+// GoReleaser renders a binary name from a template, and the release manifest,
+// SHA256SUMS, the attestation and the upload all carry the rendered name. One
+// shape, checked, is what lets this derive those names instead of holding a
+// second list beside the build configuration.
+const (
+	clientBuildID        = "kubectl-ptah"
+	clientBinaryTemplate = "kubectl-ptah-{{ .Os }}-{{ .Arch }}"
+	clientDistDirectory  = "dist/client"
+)
+
+// clientAssets returns the plugin binaries a release publishes, read from the
+// build configuration.
+//
+// The operator is installed by a chart and the plugin is installed by a person,
+// so the plugin ships as a file per client platform rather than inside the
+// image. Which platforms is .goreleaser.yaml's answer; this program checks the
+// release against it rather than against a list of its own, which would be one
+// more place to forget.
+func clientAssets(root string) ([]string, error) {
+	document, err := os.ReadFile(filepath.Join(root, ".goreleaser.yaml"))
+	if err != nil {
+		return nil, fmt.Errorf("read the build configuration: %w", err)
+	}
+	var config struct {
+		Dist   string `yaml:"dist"`
+		Builds []struct {
+			ID              string   `yaml:"id"`
+			Binary          string   `yaml:"binary"`
+			GOOS            []string `yaml:"goos"`
+			GOARCH          []string `yaml:"goarch"`
+			NoUniqueDistDir bool     `yaml:"no_unique_dist_dir"`
+		} `yaml:"builds"`
+	}
+	if err := yaml.Unmarshal(document, &config); err != nil {
+		return nil, fmt.Errorf("parse the build configuration: %w", err)
+	}
+	if config.Dist != clientDistDirectory {
+		return nil, fmt.Errorf(
+			"the build configuration writes to %q, and the release moves the binaries out of %q",
+			config.Dist, clientDistDirectory)
+	}
+	for _, build := range config.Builds {
+		if build.ID != clientBuildID {
+			continue
+		}
+		if build.Binary != clientBinaryTemplate {
+			return nil, fmt.Errorf(
+				"the %s build names its binary %q, and the release publishes %q",
+				clientBuildID, build.Binary, clientBinaryTemplate)
+		}
+		if !build.NoUniqueDistDir {
+			return nil, fmt.Errorf(
+				"the %s build keeps a directory per target, and the release moves four files out of one",
+				clientBuildID)
+		}
+		if len(build.GOOS) == 0 || len(build.GOARCH) == 0 {
+			return nil, fmt.Errorf("the %s build names no platform", clientBuildID)
+		}
+		var assets []string
+		for _, operatingSystem := range build.GOOS {
+			for _, architecture := range build.GOARCH {
+				assets = append(assets, fmt.Sprintf("kubectl-ptah-%s-%s", operatingSystem, architecture))
+			}
+		}
+		sort.Strings(assets)
+		return assets, nil
+	}
+	return nil, fmt.Errorf("the build configuration has no %s build", clientBuildID)
+}
+
 func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA string) error {
 	supportWindow, err := repositoryKubernetesSupportWindow(root)
 	if err != nil {
 		return err
 	}
-	manifest, fields, err := parseReleaseManifest(manifestPath, tag, sourceSHA, supportWindow)
+	assets, err := clientAssets(root)
+	if err != nil {
+		return err
+	}
+	manifest, fields, err := parseReleaseManifest(manifestPath, tag, sourceSHA, supportWindow, assets)
 	if err != nil {
 		return err
 	}
@@ -2333,8 +2412,18 @@ func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sour
 	}
 	wantChecksums := fmt.Sprintf("%s  %s\n%x  release-manifest.txt\n",
 		chartDigest, fields["chart-asset"], sha256.Sum256(manifest))
+	// Every client binary, digested from the file that will be uploaded. A
+	// checksum file that named one and shipped another would be a checksum file
+	// nobody could use.
+	for _, asset := range assets {
+		binary, err := os.ReadFile(filepath.Join(filepath.Dir(checksumsPath), asset))
+		if err != nil {
+			return fmt.Errorf("read client asset: %w", err)
+		}
+		wantChecksums += fmt.Sprintf("%x  %s\n", sha256.Sum256(binary), asset)
+	}
 	if string(checksums) != wantChecksums {
-		return errors.New("SHA256SUMS is not the exact checksum set for the chart and manifest")
+		return errors.New("SHA256SUMS is not the exact checksum set for the chart, the manifest and the client binaries")
 	}
 	return nil
 }
@@ -2382,7 +2471,7 @@ func verifyPreparedJournal(path, tag, sourceSHA string) error {
 	return nil
 }
 
-func parseReleaseManifest(path, tag, sourceSHA, supportWindow string) ([]byte, map[string]string, error) {
+func parseReleaseManifest(path, tag, sourceSHA, supportWindow string, clientAssets []string) ([]byte, map[string]string, error) {
 	if !commitPattern.MatchString(sourceSHA) {
 		return nil, nil, fmt.Errorf("source SHA %q is not a full lowercase commit SHA", sourceSHA)
 	}
@@ -2395,7 +2484,7 @@ func parseReleaseManifest(path, tag, sourceSHA, supportWindow string) ([]byte, m
 	}
 	wantKeys := []string{
 		"version", "source-repository", "source-ref", "source-sha", "transaction",
-		"image", "image-tag", "chart-asset", "chart-asset-sha256",
+		"image", "image-tag", "chart-asset", "chart-asset-sha256", "client-assets",
 		"support-evidence-run-id", "kubernetes-support-window",
 	}
 	fields, err := exactRecords(document, wantKeys, "release manifest")
@@ -2409,6 +2498,7 @@ func parseReleaseManifest(path, tag, sourceSHA, supportWindow string) ([]byte, m
 		"source-ref":                "refs/tags/" + tag,
 		"source-sha":                sourceSHA,
 		"chart-asset":               "ptah-operator-" + version + ".tgz",
+		"client-assets":             strings.Join(clientAssets, ","),
 		"kubernetes-support-window": supportWindow,
 	}
 	for key, want := range wantExact {

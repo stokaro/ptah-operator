@@ -490,16 +490,7 @@ func validPlanCommandOutcome(result *Result, outcome commandOutcome, redactor Re
 }
 
 func planDryRunOutput(plan dataplane.PlanFile) []byte {
-	var sql strings.Builder
-	for _, statement := range plan.Statements {
-		text := strings.TrimSpace(statement.SQL)
-		if text == "" {
-			continue
-		}
-		sql.WriteString(strings.TrimSuffix(text, ";"))
-		sql.WriteString(";\n")
-	}
-	return []byte("Planned schema changes:\n" + strings.TrimSpace(sql.String()) + "\n")
+	return []byte("Planned schema changes:\n" + strings.TrimSpace(dataplane.StatementsSQL(plan)) + "\n")
 }
 
 func planApplyOutput(plan dataplane.PlanFile) []byte {

@@ -1871,6 +1871,7 @@ fi
 
 printf 'e2e: building %s with Docker context %s\n' "$OPERATOR_IMAGE" "$SELECTED_DOCKER_CONTEXT"
 IMAGE_CREATED=1
+add_created_image "$OPERATOR_IMAGE"
 docker --context "$DOCKER_CONTEXT" buildx build \
 	--builder "$DOCKER_CONTEXT" \
 	--load \
@@ -2273,7 +2274,10 @@ if [ "$E2E_STOP_AFTER" = bootstrap ]; then
 		# the directory holding the kubeconfig and the credentials.
 		printf 'E2E_TASK_CLAIM_VOLUME=%s\n' "$TASK_CLAIM_VOLUME"
 		printf 'E2E_WORK_DIR=%s\n' "$WORK_DIR"
-		printf 'E2E_CREATED_IMAGE_REFS=%s\n' "$(printf '%s' "$CREATED_IMAGE_REFS" | tr '\n' ' ')"
+		# Comma-separated, because the caller sources this file: a value with
+		# a space in it is a command line, and the second image would be run
+		# rather than recorded.
+		printf 'E2E_CREATED_IMAGE_REFS=%s\n' "$(printf '%s' "$CREATED_IMAGE_REFS" | tr '\n' ',')"
 		printf 'E2E_DOCKER_CONTEXT=%s\n' "$DOCKER_CONTEXT"
 		printf 'E2E_DOCKER_CONFIG=%s\n' "$DOCKER_CLI_CONFIG"
 		printf 'E2E_DOCKER_ENDPOINT=%s\n' "$DOCKER_ENDPOINT"

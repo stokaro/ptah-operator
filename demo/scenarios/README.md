@@ -25,7 +25,6 @@ reset:
   - |
     eval "$(demo/bin/lab credentials)"
     export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-    export PATH="$(demo/bin/lab ptah):$PATH"
     ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
       --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
       | sed -n 's/^Digest: //p' > demo/.lab/digest
@@ -138,3 +137,6 @@ published name holds.
 
 A `reset` block is not published and is not held to this: it is the
 preparation, and it may use the lab's scripts freely.
+
+The commands themselves are `kubectl`, `ptah` and `kubectl-ptah`, which the lab
+puts on `PATH` before a step runs. A step never installs one.

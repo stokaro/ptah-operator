@@ -12,7 +12,6 @@ reset:
   - |
     eval "$(demo/bin/lab credentials)"
     export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-    export PATH="$(demo/bin/lab ptah):$PATH"
     ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
       --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
       | sed -n 's/^Digest: //p' > demo/.lab/digest
@@ -63,15 +62,12 @@ steps:
       stderr_contains: ["Did not find any relations"]
 
   - note: Read the plan before approving it. This is what would run.
-    # Every chunk, because a plan is chunked by size and reviewing the first
-    # one is reviewing part of what would run.
+    # The current plan, because nothing has been applied yet. -o json is the
+    # stored plan document, so the severity beside each statement is the
+    # plan's own rather than a reading of the SQL.
     run: |
-      PLAN=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.plan.name}')
-      for CHUNK in $(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" \
-        -o jsonpath='{range .spec.chunks[*]}{.name}{"\n"}{end}'); do
-        kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
-          | base64 -d | jq -r '.statements[] | "\(.severity)\t\(.sql)"'
-      done
+      kubectl ptah plan storefront --current -n "$NAMESPACE" -o json \
+        | jq -r '.statements[] | "\(.severity)\t\(.sql)"'
     expect:
       exit: 0
       stdout_contains: ['CREATE TABLE "customers"', safe]

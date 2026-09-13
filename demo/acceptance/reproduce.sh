@@ -69,7 +69,7 @@ trap cleanup EXIT
 say 'preparing: reading the lab environment'
 eval "$("$ROOT_DIR/demo/bin/lab" credentials)"
 export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-PATH="$("$ROOT_DIR/demo/bin/lab" ptah):$PATH"
+PATH="$("$ROOT_DIR/demo/bin/lab" tools):$PATH"
 export PATH
 [ -n "${E2E_REGISTRY_HOST:-}" ] || fail 'the lab environment carries no E2E_REGISTRY_HOST'
 REGISTRY_IN_CLUSTER=$E2E_REGISTRY_HOST
@@ -111,6 +111,9 @@ rules:
   - apiGroups: [batch]
     resources: [jobs]
     verbs: [get, list, watch]
+  # Reading a plan needs the plan's own objects and nothing more: no Secret,
+  # no Pod log, no exec, and nothing cluster-wide. The get verbs above cover
+  # it; the configmaps rule is what holds the plan's chunks.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -232,5 +235,23 @@ JOBS=$(kubectl -n "$NAMESPACE" get jobs -o json |
 if kubectl -n "$NAMESPACE" auth can-i create jobs >/dev/null; then
 	fail 'the account gained the verb that creates a Job during the run'
 fi
+
+# The plan is read back through the client a reader installs, as the same
+# account, with no more access than the rest of this run had.
+say 'reading the applied plan with kubectl ptah'
+kubectl ptah plan "$SCHEMA" --applied -n "$NAMESPACE" -o sql | grep -q 'CREATE TABLE' ||
+	fail 'the applied plan does not carry the statement that created the table'
+kubectl ptah plan "$SCHEMA" --applied -n "$NAMESPACE" -o json | grep -q '"statements"' ||
+	fail 'the stored plan document did not come back as JSON'
+
+# The Jobs go, and the plan stays readable. What a reader looks at afterwards is
+# the plan the operator stored, not the pod that ran it: a Job that has been
+# collected takes its logs with it and leaves the plan where it was.
+say 'removing the executor Jobs the operator created'
+admin -n "$NAMESPACE" delete jobs --all --ignore-not-found --timeout=120s >/dev/null
+LEFT=$(kubectl -n "$NAMESPACE" get jobs -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep -c . || true)
+[ "$LEFT" -eq 0 ] || fail "the namespace still holds $LEFT Job(s), so the check below would prove nothing"
+kubectl ptah plan "$SCHEMA" --applied -n "$NAMESPACE" -o sql | grep -q 'CREATE TABLE' ||
+	fail 'the applied plan became unreadable once its Job was gone'
 
 say "repeated the scenario with no script of ours, under an account that may not create a Job ($JOBS of its Jobs ran)"
