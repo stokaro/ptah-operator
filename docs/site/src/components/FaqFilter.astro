@@ -8,10 +8,12 @@
  * match, including a group heading whose questions all went, and says how many
  * of how many are left.
  *
- * A chip names its questions; free text matches what a question says. The two
- * are different lookups on purpose: a reader who has the failure does not have
- * the words the answer is written in, so "drift ignored" has to reach the
- * question that says "drift disappeared". src/faq-symptoms.mjs is that map.
+ * A chip is state, not text: it selects the questions it names, a second one
+ * widens the result to questions under either, and the field narrows whatever
+ * is left. The two lookups are different on purpose -- a reader who has the
+ * failure does not have the words the answer is written in, so "status
+ * Unknown" has to reach questions that never use the phrase.
+ * src/faq-symptoms.mjs is that map.
  *
  * Without JavaScript the field and the chips are absent and every question is
  * on the page, which is the right fallback for a page that is meant to be read.
@@ -114,24 +116,25 @@ const { symptoms, count } = Astro.props;
       const chips = [...this.querySelectorAll('[data-faq-symptom]')];
       const total = Number(this.dataset.count) || questions.length;
 
-      // A chip names its questions; free text matches what a question says.
-      // The two are different lookups on purpose: a reader who has the symptom
-      // does not have the words the answer is written in.
-      // Keyed on the lowercased label, because the field is compared
-      // lowercased: a label with a capital in it -- an identifier such as
-      // UnsupportedEngine -- would otherwise match nothing.
+      // A chip is state, not text: it selects the questions it names, and a
+      // second one widens the result to questions under either. The field is
+      // the other way in, for a reader who has words rather than a symptom,
+      // and it narrows whatever the chips left. Both lookups exist because a
+      // reader who has the failure does not have the words the answer is
+      // written in -- the chip carries that route, the text cannot.
+      const active = new Set();
       const bySymptom = new Map(
-        chips.map((chip) => [
-          chip.dataset.faqSymptom.toLowerCase(),
-          new Set(chip.dataset.faqQuestions.split(' ')),
-        ]),
+        chips.map((chip) => [chip.dataset.faqSymptom, new Set(chip.dataset.faqQuestions.split(' '))]),
       );
 
       const render = () => {
         const term = field.value.trim().toLowerCase();
-        const picked = bySymptom.get(term);
-        const shown = questions.filter((q) =>
-          term === '' ? true : picked ? picked.has(q.id) : q.haystack.includes(term),
+        const picked = [...active].flatMap((symptom) => [...(bySymptom.get(symptom) ?? [])]);
+        const chosen = new Set(picked);
+        const shown = questions.filter(
+          (q) =>
+            (active.size === 0 || chosen.has(q.id)) &&
+            (term === '' || q.haystack.includes(term)),
         );
         const visible = new Set(shown.map((q) => q.id));
 
@@ -144,14 +147,17 @@ const { symptoms, count } = Astro.props;
           for (const node of group.chrome) node.hidden = hide;
         }
         for (const chip of chips) {
-          chip.setAttribute('aria-pressed', String(chip.dataset.faqSymptom.toLowerCase() === term));
+          chip.setAttribute('aria-pressed', String(active.has(chip.dataset.faqSymptom)));
         }
 
-        countEl.textContent = term === '' ? `${total} questions` : `${shown.length} of ${total}`;
-        clearEl.hidden = term === '';
+        const filtered = active.size > 0 || term !== '';
+        countEl.textContent = filtered ? `${shown.length} of ${total}` : `${total} questions`;
+        clearEl.hidden = !filtered;
         emptyEl.hidden = shown.length > 0;
         if (shown.length === 0) {
-          emptyEl.textContent = `No question matches "${field.value.trim()}". Try the site search, or open Troubleshooting.`;
+          emptyEl.textContent = term
+            ? `No question matches "${field.value.trim()}" under the symptoms you picked. Try the site search, or open Condition reasons.`
+            : 'No question carries those symptoms.';
         }
       };
 
@@ -159,13 +165,13 @@ const { symptoms, count } = Astro.props;
       for (const chip of chips) {
         chip.addEventListener('click', () => {
           const symptom = chip.dataset.faqSymptom;
-          const active = field.value.trim().toLowerCase() === symptom.toLowerCase();
-          field.value = active ? '' : symptom;
+          if (active.has(symptom)) active.delete(symptom);
+          else active.add(symptom);
           render();
-          field.focus();
         });
       }
       clearEl.addEventListener('click', () => {
+        active.clear();
         field.value = '';
         render();
         field.focus();
@@ -176,6 +182,7 @@ const { symptoms, count } = Astro.props;
       const revealHash = () => {
         const id = decodeURIComponent(location.hash.replace(/^#/, ''));
         if (!id || !document.getElementById(id)) return;
+        active.clear();
         field.value = '';
         render();
         document.getElementById(id)?.scrollIntoView({ block: 'start' });
