@@ -13,7 +13,12 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A superseded pull-request run is cancelled: only the newest push is worth
+  # three kind clusters. A push to master is not, because the run a later merge
+  # cancels is the run nobody ever reads, and its commit then sits unverified
+  # while looking fine. Five consecutive master commits went without a verdict
+  # that way, which is how the port race in #37 stayed hidden.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GOFLAGS: -mod=readonly

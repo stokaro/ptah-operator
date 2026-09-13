@@ -330,8 +330,16 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 		new string
 	}{
 		"superseded CI not canceled": {
-			old: "  cancel-in-progress: true\n",
+			old: "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
 			new: "  cancel-in-progress: false\n",
+		},
+		// The expression decides which commits reach a verdict, so only the
+		// reviewed one is accepted. A plausible-looking variant that spares
+		// every branch would leave a superseded pull-request run racing its
+		// successor over three kind clusters.
+		"unreviewed cancellation expression": {
+			old: "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+			new: "  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}\n",
 		},
 		"workflow default shell": {
 			old: "env:\n  GOFLAGS: -mod=readonly\n\njobs:\n",
