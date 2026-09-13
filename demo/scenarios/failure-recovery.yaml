@@ -13,7 +13,7 @@ reset:
 steps:
   - note: The same resource, pointed at a database that does not answer.
     run: |
-      demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" \
+      APPLY=Always demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" \
         | sed 's/name: demo-database/name: demo-database-broken/' \
         | kubectl apply -f -
     sync: applying

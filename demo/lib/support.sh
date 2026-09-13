@@ -18,6 +18,19 @@ support_newest_minor() {
 	jq -er '[.releases[].minor] | last' "$LAB_ROOT/support/kubernetes.json"
 }
 
+# support_newest_version prints the exact Kubernetes release the lab runs.
+#
+# Read out of the newest minor's node image, which is where the patch is
+# declared: the manifest names a minor and a digest-pinned image, and the image
+# tag carries the release. The harness demands an exact x.y.z and refuses a
+# release outside the window, so a version written down anywhere else stops
+# working the day the window moves.
+support_newest_version() {
+	support_node_image "$(support_newest_minor)" |
+		sed -n 's|^kindest/node:v\([0-9][0-9.]*\)@sha256:[0-9a-f]\{64\}$|\1|p' |
+		grep -E '^[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
 # support_node_image prints the digest-pinned node image for one minor, and
 # fails when that minor is not in the window.
 support_node_image() {

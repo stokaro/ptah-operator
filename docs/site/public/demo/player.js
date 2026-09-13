@@ -286,6 +286,31 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
       pending = null;
     }
 
+    // What the beat in flight still owes, in planned time.
+    function remaining(beat) {
+      return beat ? Math.max(0, beat.ms - (Date.now() - beat.at) * rate) : 0;
+    }
+
+    // Pausing stops the chain and keeps the beat, which halt() would throw
+    // away. The beat in flight is usually the rest of a line being typed, and
+    // step() has already moved the script index past the event that line
+    // belongs to -- so resuming through step() would drop whatever was on
+    // screen when the reader pressed Pause and overwrite it with the next
+    // event.
+    function suspend() {
+      clearTimeout(timer);
+      if (pending) pending = { ms: remaining(pending), fn: pending.fn, at: Date.now() };
+    }
+
+    // Resuming finishes that beat if there was one, and otherwise starts the
+    // next event. A reader who paused between events is owed no remainder.
+    function resume() {
+      var beat = pending;
+      pending = null;
+      if (beat) return after(beat.ms, beat.fn);
+      step();
+    }
+
     function after(ms, fn) {
       halt();
       pending = { ms: ms, fn: fn, at: Date.now() };
@@ -298,10 +323,10 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
 
     function setRate(next) {
       var beat = pending;
-      // What the beat in flight still owes, in planned time. Without this a
-      // reader who speeds up during a four-second pause waits out the old
-      // pause first, and the control reads as broken.
-      var left = beat ? Math.max(0, beat.ms - (Date.now() - beat.at) * rate) : 0;
+      // Without carrying the remainder a reader who speeds up during a
+      // four-second pause waits out the old pause first, and the control reads
+      // as broken.
+      var left = remaining(beat);
       rate = next;
       speedLabel.textContent = next + "\u00d7";
       speedBtn.setAttribute("aria-label", "Playback speed, " + next + "\u00d7. Press to change.");
@@ -738,11 +763,11 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
       enliven();
       if (!playing) return start();
       paused = !paused;
-      halt();
+      suspend();
       if (paused) freezeProgress();
       paint();
       label();
-      if (!paused) step();
+      if (!paused) resume();
     });
 
     function watchVisibility() {
@@ -760,11 +785,11 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
           // Off screen is not paused: the control still says Pause, and coming
           // back resumes rather than restarting somewhere the reader never saw.
           if (!playing || paused) return;
-          // Clear before resuming: one chain of timeouts, always. Calling
-          // step() beside a pending one advances the script twice per tick.
-          halt();
+          // Stop before resuming: one chain of timeouts, always. Calling
+          // resume() beside a pending one advances the script twice per tick.
+          suspend();
           if (!visible) return freezeProgress();
-          step();
+          resume();
         }, { threshold: 0.25 }).observe(demo);
       }
     }

@@ -69,6 +69,13 @@ func run(arguments []string, diagnostics io.Writer) error {
 	if !filepath.IsAbs(outputFile) {
 		outputFile = filepath.Join(*root, outputFile)
 	}
+	// Before the lab, because a tree the recording could not name is a reason
+	// to stop that costs nothing to find out.
+	source, err := sourceIdentity(*root, outputFile)
+	if err != nil {
+		return err
+	}
+
 	environmentFile := *environment
 	if !filepath.IsAbs(environmentFile) {
 		environmentFile = filepath.Join(*root, environmentFile)
@@ -109,10 +116,8 @@ func run(arguments []string, diagnostics io.Writer) error {
 		log:          log,
 	}
 
+	recorder.source = source
 	record := runRecord{Lab: live.describe()}
-	if recorder.source, err = sourceIdentity(*root); err != nil {
-		return err
-	}
 	// Re-recording one scenario keeps the rest, so iterating on a scenario
 	// does not cost a full pass over nine of them. The lab has to be the one
 	// the file was written against: a recording that mixed two labs would
@@ -177,12 +182,21 @@ func (r runRecord) checks() int {
 }
 
 // sourceIdentity records which commit of this repository the scenarios and the
-// recorder came from, so a recording can be reproduced rather than trusted.
-func sourceIdentity(root string) (map[string]string, error) {
+// recorder came from.
+//
+// It refuses a tree that does not match that commit. A recording names a commit
+// so that somebody can check the commit out and produce the same transcripts;
+// recorded from edited files, the name is of a tree that never existed and the
+// claim cannot be checked. The output file is the exception, because writing it
+// is what the recorder is doing.
+func sourceIdentity(root, output string) (map[string]string, error) {
+	if err := refuseDirtyTree(root, output); err != nil {
+		return nil, err
+	}
 	identity := map[string]string{}
 	for name, arguments := range map[string]string{
 		"commit":   "git -C %s rev-parse HEAD",
-		"describe": "git -C %s describe --tags --always --dirty",
+		"describe": "git -C %s describe --tags --always",
 	} {
 		value, err := gitOutput(fmt.Sprintf(arguments, root))
 		if err != nil {
@@ -191,6 +205,39 @@ func sourceIdentity(root string) (map[string]string, error) {
 		identity[name] = value
 	}
 	return identity, nil
+}
+
+// refuseDirtyTree reports every tracked change that is not the recording itself.
+func refuseDirtyTree(root, output string) error {
+	status, err := gitLines(fmt.Sprintf("git -C %s status --porcelain --untracked-files=no", root))
+	if err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(root, output)
+	if err != nil {
+		relative = output
+	}
+	relative = filepath.ToSlash(relative)
+
+	var changed []string
+	for _, line := range status {
+		// Porcelain v1: two status characters, a space, then the path.
+		if len(line) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(line[3:])
+		if path == relative {
+			continue
+		}
+		changed = append(changed, path)
+	}
+	if len(changed) == 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"the tree has changes the recording would not name:\n  %s\n\n"+
+			"A recording names a commit so it can be reproduced from it. Commit these first",
+		strings.Join(changed, "\n  "))
 }
 
 // commonSource returns the commit every scenario was recorded at, or nothing

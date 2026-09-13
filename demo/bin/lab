@@ -31,6 +31,13 @@ read_environment() {
 	LAB_POSTGRES_IMAGE=${E2E_POSTGRES_IMAGE:-}
 	export LAB_POSTGRES_IMAGE
 	export DOCKER_CONFIG=${E2E_DOCKER_CONFIG:-${DOCKER_CONFIG:-}}
+	# kind takes its daemon from the environment, not from a Docker context, so
+	# without these it looks at a local daemon and reports no such cluster --
+	# which reads exactly like a cluster that is already gone.
+	if [ -n "${E2E_DOCKER_ENDPOINT:-}" ]; then
+		export DOCKER_HOST="$E2E_DOCKER_ENDPOINT"
+		export KIND_EXPERIMENTAL_PROVIDER=docker
+	fi
 }
 
 lab_usage() {

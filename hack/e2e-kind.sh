@@ -2256,6 +2256,12 @@ if [ "$E2E_STOP_AFTER" = bootstrap ]; then
 		printf 'E2E_EXTERNAL_POSTGRES_SERVICE=%s\n' "$EXTERNAL_PG_SERVICE"
 		printf 'E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=%s\n' "$EXTERNAL_PG_CREDENTIALS_FILE"
 		printf 'E2E_KIND_CLUSTER_NAME=%s\n' "$CLUSTER_NAME"
+		# What a later teardown has to remove. The bootstrap releases the cleanup
+		# trap, so nothing else knows the claim it holds, the images it built or
+		# the directory holding the kubeconfig and the credentials.
+		printf 'E2E_TASK_CLAIM_VOLUME=%s\n' "$TASK_CLAIM_VOLUME"
+		printf 'E2E_WORK_DIR=%s\n' "$WORK_DIR"
+		printf 'E2E_CREATED_IMAGE_REFS=%s\n' "$(printf '%s' "$CREATED_IMAGE_REFS" | tr '\n' ' ')"
 		printf 'E2E_DOCKER_CONTEXT=%s\n' "$DOCKER_CONTEXT"
 		printf 'E2E_DOCKER_CONFIG=%s\n' "$DOCKER_CLI_CONFIG"
 		printf 'E2E_DOCKER_ENDPOINT=%s\n' "$DOCKER_ENDPOINT"
