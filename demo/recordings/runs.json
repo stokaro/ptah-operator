@@ -1,25 +1,25 @@
 {
-  "recordedAt": "2026-09-13T03:57:49Z",
+  "recordedAt": "2026-09-13T08:07:09Z",
   "lab": {
-    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-operator@sha256:cc38ab71122410ee3518bd56316c233fdbc03774426e00c4c1d6657875522c70",
-    "CONTROLLER_REVISION": "a41c148115b2abcfd5180a846335634fdc0dba8f",
-    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-executor@sha256:3e609518c4e01841f3ea85067733a745321d68e878c0be2675ace3907961023c",
+    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-operator@sha256:98d3156656a5a0725b2b66968ba980d37c67c1a3a6b0e48ab992be54cfe89a58",
+    "CONTROLLER_REVISION": "6143c6ec5c87079813d761eff7b0bdb02f3d387e",
+    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-executor@sha256:5c52e03a2092981ecd8d97f2126a2e06fa7e453087ba997f165b3f6a70ad6c0e",
     "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-03c2a0e0b9",
     "KUBERNETES_VERSION": "1.37.0",
     "PTAH_REVISION": "00fc362c943bfb9d0363d5890bf449a2a9b5e7cf",
     "PTAH_VERSION": "v0.3.0-201-g00fc362c9",
-    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-runner@sha256:cc38ab71122410ee3518bd56316c233fdbc03774426e00c4c1d6657875522c70"
+    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-runner@sha256:98d3156656a5a0725b2b66968ba980d37c67c1a3a6b0e48ab992be54cfe89a58"
   },
   "source": {
-    "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
-    "describe": "68449a0"
+    "commit": "afe1d12be7ae3f6c25898048976ca31ab21f7d85",
+    "describe": "afe1d12"
   },
   "scenarios": [
     {
       "id": "destructive-block",
       "source": {
-        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
-        "describe": "68449a0"
+        "commit": "afe1d12be7ae3f6c25898048976ca31ab21f7d85",
+        "describe": "afe1d12"
       },
       "title": "Refuse a destructive change",
       "tagline": "The third revision drops a column. The policy says no, and says so before anything runs.",
@@ -28,7 +28,7 @@
         "Safety"
       ],
       "commands": 8,
-      "lines": 58,
+      "lines": 53,
       "events": [
         [
           "sync",
@@ -76,11 +76,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v2.sql\t2026-09-12 16:49:33.748913280 +0200"
+          "--- demo/schemas/v2.sql\t2026-09-13 09:02:15.829832473 +0200"
         ],
         [
           "out",
-          "+++ demo/schemas/v3.sql\t2026-09-12 16:49:33.751804561 +0200"
+          "+++ demo/schemas/v3.sql\t2026-09-13 09:02:15.830158138 +0200"
         ],
         [
           "out",
@@ -133,10 +133,6 @@
         [
           "cont",
           "export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY"
-        ],
-        [
-          "cont",
-          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
         ],
         [
           "cont",
@@ -200,11 +196,11 @@
         ],
         [
           "out",
-          "ptah-plan-b01cb0cd8634830a211e32dd   storefront   sha256:b01cb0cd8634830a211e32dd368eb3f7841a9ba14edbe7121ec1e31ad3f1ed71   3            false         41s"
+          "ptah-plan-09d3fe39e8cdc8f6c1f7c495   storefront   sha256:09d3fe39e8cdc8f6c1f7c495a5ad02648afb3634cb46412bb22a498e14c1f3b3   2            true          2s"
         ],
         [
           "out",
-          "ptah-plan-fccdb29856367fb8482cc9b3   storefront   sha256:fccdb29856367fb8482cc9b3e519835b35f0e6d4920fd56cd6a19a77f786b9c5   2            true          2s"
+          "ptah-plan-c2b6f7931536510b42dd4349   storefront   sha256:c2b6f7931536510b42dd4349d5666a8862a8c7d3654301d6017455434b267784   3            false         42s"
         ],
         [
           "note",
@@ -212,27 +208,11 @@
         ],
         [
           "cmd",
-          "PLAN=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront -o jsonpath='{.status.plan.name}')"
+          "kubectl ptah plan storefront --current -n \"$NAMESPACE\" -o json \\"
         ],
         [
           "cont",
-          "for CHUNK in $(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" \\"
-        ],
-        [
-          "cont",
-          "  -o jsonpath='{range .spec.chunks[*]}{.name}{\"\\n\"}{end}'); do"
-        ],
-        [
-          "cont",
-          "  kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
-        ],
-        [
-          "cont",
-          "    | base64 -d | jq -r '.statements[] | \"\\(.severity)  \\(.sql)  -- \\(.reason)\"'"
-        ],
-        [
-          "cont",
-          "done"
+          "  | jq -r '.statements[] | \"\\(.severity)  \\(.sql)  -- \\(.reason)\"'"
         ],
         [
           "out",
@@ -341,8 +321,8 @@
     {
       "id": "drift",
       "source": {
-        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
-        "describe": "68449a0"
+        "commit": "afe1d12be7ae3f6c25898048976ca31ab21f7d85",
+        "describe": "afe1d12"
       },
       "title": "Close the drift",
       "tagline": "Someone changes the database by hand. The operator notices and puts it back.",
@@ -503,11 +483,11 @@
         ],
         [
           "out",
-          "ptah-plan-1447911fd19499f496b6d14a   storefront   sha256:1447911fd19499f496b6d14a95d1cbc7f2adc73678fc8190027c1fb9c024a940   3            false         115s"
+          "ptah-plan-2f58047afd6f4a488b363a97   storefront   sha256:2f58047afd6f4a488b363a972394e5a809e064cb5db918da26fad087f12b9743   3            false         119s"
         ],
         [
           "out",
-          "ptah-plan-82af8393c9bde7dec799a081   storefront   sha256:82af8393c9bde7dec799a081245c8917f061beb487cb9266a2dd7bd5ce41baf1   1            false         18s"
+          "ptah-plan-4767bbe447d0c7ade75e57ba   storefront   sha256:4767bbe447d0c7ade75e57ba162311df1926cfbb88f46e6bd9c58de14a68e785   1            false         21s"
         ]
       ],
       "checks": [
@@ -552,8 +532,8 @@
     {
       "id": "failure-recovery",
       "source": {
-        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
-        "describe": "68449a0"
+        "commit": "afe1d12be7ae3f6c25898048976ca31ab21f7d85",
+        "describe": "afe1d12"
       },
       "title": "Fail, then recover",
       "tagline": "Point it at a database that is not there. It says so, keeps trying, and converges when it is.",
@@ -622,23 +602,23 @@
         ],
         [
           "out",
-          "12s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
+          "11s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
         ],
         [
           "out",
-          "12s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-7c51e630f76c03e8 started"
+          "11s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-a413de7ad9f79ac0 started"
         ],
         [
           "out",
-          "9s          Normal    OperationCompleted   ptahschema/storefront   verify operation completed"
+          "8s          Normal    OperationCompleted   ptahschema/storefront   verify operation completed"
         ],
         [
           "out",
-          "9s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-91d21ca5a79e96cb started"
+          "8s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-e84c935ec0909b55 started"
         ],
         [
           "out",
-          "2s          Warning   OperationFailed      ptahschema/storefront   child_exit: ptah exited with code 2"
+          "1s          Warning   OperationFailed      ptahschema/storefront   child_exit: ptah exited with code 2"
         ],
         [
           "note",
@@ -650,7 +630,7 @@
         ],
         [
           "out",
-          "{\"activeOperation\":{\"attempt\":2,\"coordinationDigest\":\"sha256:1f99f1e0ceb341a5b6ca5da75161513672b13c811fc50e1725fc7dec0f8aa99f\",\"executionBindingID\":\"v1-00148c0119cc31bd7b104130433dd32f\",\"id\":\"sha256:feaf267ff1fc6917545c9c94c3e5a707ed077f1ff2f63ced065eb7f04ef7e3f3\",\"inputFingerprint\":\"sha256:91e6e09825e3cc117871a94bf5f11cbd8bd88e26292a9a6a5b921f5891b5b6f2\",\"jobName\":\"ptah-observe-storefront-ac3c902"
+          "{\"activeOperation\":{\"attempt\":2,\"coordinationDigest\":\"sha256:1f99f1e0ceb341a5b6ca5da75161513672b13c811fc50e1725fc7dec0f8aa99f\",\"executionBindingID\":\"v1-b589c355725d583d8fcffd7bef56ce64\",\"id\":\"sha256:a3f2d5133ca88f9cff4d59cbc04b8253273490df9d0d0b95cf45a869b9905cc6\",\"inputFingerprint\":\"sha256:dbd891444c8349e4c4c11cb98a9de022079f6996a6e4bab714b1d39b9db68c73\",\"jobName\":\"ptah-observe-storefront-31178b2"
         ],
         [
           "sync",
@@ -765,8 +745,8 @@
     {
       "id": "first-apply",
       "source": {
-        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
-        "describe": "68449a0"
+        "commit": "afe1d12be7ae3f6c25898048976ca31ab21f7d85",
+        "describe": "afe1d12"
       },
       "title": "Apply a schema",
       "tagline": "Publish a schema as an artifact, point the operator at it, and watch it converge.",
@@ -775,7 +755,7 @@
         "Lifecycle"
       ],
       "commands": 10,
-      "lines": 121,
+      "lines": 111,
       "events": [
         [
           "sync",
@@ -823,10 +803,6 @@
         ],
         [
           "cont",
-          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
-        ],
-        [
-          "cont",
           "echo \"registry: $PTAH_OCI_REGISTRY\""
         ],
         [
@@ -847,10 +823,6 @@
         ],
         [
           "cont",
-          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
-        ],
-        [
-          "cont",
           "ptah schema push \"oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$\" \\"
         ],
         [
@@ -863,11 +835,11 @@
         ],
         [
           "err",
-          "Pushed schema as oci://127.0.0.1:24429/schemas/demo:v1-53576"
+          "Pushed schema as oci://127.0.0.1:24429/schemas/demo:v1-56911"
         ],
         [
           "err",
-          "Digest: sha256:dba229aaf4821ef0eda35dd1e42bc38b7aae97a5a6693991b33fbb5cbc9280be"
+          "Digest: sha256:a717c3e264c970af7211cf046267aeeea91f7bcc584e3b3344148cdfb699e94d"
         ],
         [
           "err",
@@ -875,7 +847,7 @@
         ],
         [
           "err",
-          "Tags: [v1-53576]"
+          "Tags: [v1-56911]"
         ],
         [
           "sync",
@@ -983,7 +955,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:dba229aaf4821ef0eda35dd1e42bc38b7aae97a5a6693991b33fbb5cbc9280be"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:a717c3e264c970af7211cf046267aeeea91f7bcc584e3b3344148cdfb699e94d"
         ],
         [
           "out",
@@ -1179,47 +1151,15 @@
         ],
         [
           "out",
-          "ptah-plan-e621971e063482a56f23a9e9   storefront   sha256:e621971e063482a56f23a9e9468d2c67ab44fcbc6df537147f7109a815638279   1            false         20s"
+          "ptah-plan-1d8c13718ff83545a14b3dbf   storefront   sha256:1d8c13718ff83545a14b3dbf33587643166e8e33e517da26de21143f2b91ed9d   1            false         20s"
         ],
         [
           "note",
-          "# The SQL lives in immutable ConfigMaps, not in a status field or a log line."
+          "# What it ran is stored, and one read-only command prints it."
         ],
         [
           "cmd",
-          "APPLIED=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront \\"
-        ],
-        [
-          "cont",
-          "  -o jsonpath='{.status.applied.planFingerprint}')"
-        ],
-        [
-          "cont",
-          "PLAN=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan -o json \\"
-        ],
-        [
-          "cont",
-          "  | jq -r --arg f \"$APPLIED\" '.items[] | select(.spec.fingerprint == $f) | .metadata.name')"
-        ],
-        [
-          "cont",
-          "for CHUNK in $(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" \\"
-        ],
-        [
-          "cont",
-          "  -o jsonpath='{range .spec.chunks[*]}{.name}{\"\\n\"}{end}'); do"
-        ],
-        [
-          "cont",
-          "  kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
-        ],
-        [
-          "cont",
-          "    | base64 -d | jq -r '.statements[].sql'"
-        ],
-        [
-          "cont",
-          "done"
+          "kubectl ptah plan storefront --applied -n \"$NAMESPACE\" -o sql"
         ],
         [
           "out",
@@ -1239,7 +1179,7 @@
         ],
         [
           "sql",
-          ")"
+          ");"
         ],
         [
           "note",
@@ -1362,8 +1302,8 @@
     {
       "id": "lab-setup",
       "source": {
-        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
-        "describe": "68449a0"
+        "commit": "afe1d12be7ae3f6c25898048976ca31ab21f7d85",
+        "describe": "afe1d12"
       },
       "title": "Stand up the lab",
       "tagline": "A four-node kind cluster, the chart from a package, and every image pinned by digest.",
@@ -1396,11 +1336,11 @@
         ],
         [
           "out",
-          "operator    a41c148115b2abcfd5180a846335634fdc0dba8f"
+          "operator    6143c6ec5c87079813d761eff7b0bdb02f3d387e"
         ],
         [
           "out",
-          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:3e609518c4e01841f3ea85067733a745321d68e878c0be2675ace3907961023c"
+          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:5c52e03a2092981ecd8d97f2126a2e06fa7e453087ba997f165b3f6a70ad6c0e"
         ],
         [
           "out",
@@ -1420,11 +1360,11 @@
         ],
         [
           "out",
-          "ptah-operator-cert-rotator                                     1/1     1            1           3h1m"
+          "ptah-operator-cert-rotator                                     1/1     1            1           27m"
         ],
         [
           "out",
-          "ptah-operator                                                  2/2     2            2           3h1m"
+          "ptah-operator                                                  2/2     2            2           27m"
         ],
         [
           "note",
@@ -1440,11 +1380,11 @@
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:cc38ab71122410ee3518bd56316c233fdbc03774426e00c4c1d6657875522c70"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:98d3156656a5a0725b2b66968ba980d37c67c1a3a6b0e48ab992be54cfe89a58"
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:cc38ab71122410ee3518bd56316c233fdbc03774426e00c4c1d6657875522c70"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:98d3156656a5a0725b2b66968ba980d37c67c1a3a6b0e48ab992be54cfe89a58"
         ],
         [
           "note",
@@ -1488,19 +1428,19 @@
         ],
         [
           "out",
-          "secret/demo-database          Opaque                           6      179m"
+          "secret/demo-database          Opaque                           6      22m"
         ],
         [
           "out",
-          "secret/demo-database-broken   Opaque                           1      107s"
+          "secret/demo-database-broken   Opaque                           1      109s"
         ],
         [
           "out",
-          "secret/demo-registry          Opaque                           4      179m"
+          "secret/demo-registry          Opaque                           4      22m"
         ],
         [
           "out",
-          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      179m"
+          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      22m"
         ],
         [
           "blank",
@@ -1512,11 +1452,11 @@
         ],
         [
           "out",
-          "configmap/demo-verification-policy   1      179m"
+          "configmap/demo-verification-policy   1      21m"
         ],
         [
           "out",
-          "configmap/kube-root-ca.crt           1      179m"
+          "configmap/kube-root-ca.crt           1      22m"
         ]
       ],
       "checks": [
@@ -1561,8 +1501,8 @@
     {
       "id": "manual-approval",
       "source": {
-        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
-        "describe": "68449a0"
+        "commit": "afe1d12be7ae3f6c25898048976ca31ab21f7d85",
+        "describe": "afe1d12"
       },
       "title": "Approve a plan",
       "tagline": "With apply set to OnApproval, nothing runs until a person approves that exact plan.",
@@ -1571,7 +1511,7 @@
         "Safety"
       ],
       "commands": 10,
-      "lines": 111,
+      "lines": 107,
       "events": [
         [
           "sync",
@@ -1679,7 +1619,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:e2e4d1356f20124e60a82c8ea09a56f0bda24cecfb084d89aed6a0aea6dc654b"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:a3f7975b4156c9e7b39279b3d4d1f59cdfc47e13efad9c4b4a0d911f5b79b1cf"
         ],
         [
           "out",
@@ -1819,27 +1759,11 @@
         ],
         [
           "cmd",
-          "PLAN=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront -o jsonpath='{.status.plan.name}')"
+          "kubectl ptah plan storefront --current -n \"$NAMESPACE\" -o json \\"
         ],
         [
           "cont",
-          "for CHUNK in $(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" \\"
-        ],
-        [
-          "cont",
-          "  -o jsonpath='{range .spec.chunks[*]}{.name}{\"\\n\"}{end}'); do"
-        ],
-        [
-          "cont",
-          "  kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
-        ],
-        [
-          "cont",
-          "    | base64 -d | jq -r '.statements[] | \"\\(.severity)\\t\\(.sql)\"'"
-        ],
-        [
-          "cont",
-          "done"
+          "  | jq -r '.statements[] | \"\\(.severity)\\t\\(.sql)\"'"
         ],
         [
           "out",
@@ -1919,7 +1843,7 @@
         ],
         [
           "out",
-          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-a41d80b6e8fcd7d6294c6a1c\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:a41d80b6e8fcd7d6294c6a1c89095ccf59ec8ce965f81f825b16540467153b53\"}"
+          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-2c2602e3a772df37867ede50\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:2c2602e3a772df37867ede50f291d4e9b705e9803a149cb6727e452d15eaeafb\"}"
         ],
         [
           "sync",
@@ -1963,15 +1887,15 @@
         ],
         [
           "out",
-          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:3e609518c4e01841f3ea85067733a745321d68e878c0be2675ace3907961023c\","
+          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:5c52e03a2092981ecd8d97f2126a2e06fa7e453087ba997f165b3f6a70ad6c0e\","
         ],
         [
           "out",
-          "  \"artifactDigest\": \"sha256:e2e4d1356f20124e60a82c8ea09a56f0bda24cecfb084d89aed6a0aea6dc654b\","
+          "  \"artifactDigest\": \"sha256:a3f7975b4156c9e7b39279b3d4d1f59cdfc47e13efad9c4b4a0d911f5b79b1cf\","
         ],
         [
           "out",
-          "  \"executionBindingID\": \"v1-1a2e8dfa3a0a71b1ae51e91a4c5c72da\""
+          "  \"executionBindingID\": \"v1-a640ee7f3177ba26656c1414f49a5d65\""
         ],
         [
           "out",
@@ -2124,8 +2048,8 @@
     {
       "id": "schema-update",
       "source": {
-        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
-        "describe": "68449a0"
+        "commit": "afe1d12be7ae3f6c25898048976ca31ab21f7d85",
+        "describe": "afe1d12"
       },
       "title": "Change the schema",
       "tagline": "A second revision, a new digest, and the difference applied as one plan.",
@@ -2134,7 +2058,7 @@
         "Lifecycle"
       ],
       "commands": 7,
-      "lines": 76,
+      "lines": 68,
       "events": [
         [
           "sync",
@@ -2178,11 +2102,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v1.sql\t2026-09-12 16:49:33.745185294 +0200"
+          "--- demo/schemas/v1.sql\t2026-09-13 09:02:15.829441891 +0200"
         ],
         [
           "out",
-          "+++ demo/schemas/v2.sql\t2026-09-12 16:49:33.748913280 +0200"
+          "+++ demo/schemas/v2.sql\t2026-09-13 09:02:15.829832473 +0200"
         ],
         [
           "out",
@@ -2254,10 +2178,6 @@
         ],
         [
           "cont",
-          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
-        ],
-        [
-          "cont",
           "ptah schema push \"oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$\" \\"
         ],
         [
@@ -2270,11 +2190,11 @@
         ],
         [
           "err",
-          "Pushed schema as oci://127.0.0.1:24429/schemas/demo:v2-53840"
+          "Pushed schema as oci://127.0.0.1:24429/schemas/demo:v2-58635"
         ],
         [
           "err",
-          "Digest: sha256:d7e04ce1614b5e0b0a751207983b1884679f6e937b381695a7017d282ef16b30"
+          "Digest: sha256:99706ac7e98d8d34407b850e05a192e634aa40b3a3805c4109b555f6a33661cf"
         ],
         [
           "err",
@@ -2282,7 +2202,7 @@
         ],
         [
           "err",
-          "Tags: [v2-53840]"
+          "Tags: [v2-58635]"
         ],
         [
           "sync",
@@ -2322,11 +2242,11 @@
         ],
         [
           "out",
-          "ptah-plan-bcd4c4cb715b9d98a829dcb1   storefront   sha256:bcd4c4cb715b9d98a829dcb1d6e1a5246aa51e7f5130db1c4f32f91b42e3ecb6   1            false         57s"
+          "ptah-plan-52d399f04ff28bc8982e81a7   storefront   sha256:52d399f04ff28bc8982e81a7498cc9b609e7546135256acd81caf0cb24105073   1            false         59s"
         ],
         [
           "out",
-          "ptah-plan-d26f942fd27cdec1dd939ca5   storefront   sha256:d26f942fd27cdec1dd939ca535dc69d0bd9eccf43a1fdd0015ced5287d9ff327   3            false         17s"
+          "ptah-plan-f95233ba23307108df451284   storefront   sha256:f95233ba23307108df451284bcf5bc772eeb794883dd8bc4a41a63e2a71973a5   3            false         18s"
         ],
         [
           "note",
@@ -2334,35 +2254,7 @@
         ],
         [
           "cmd",
-          "APPLIED=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront -o jsonpath='{.status.applied.planFingerprint}')"
-        ],
-        [
-          "cont",
-          "PLAN=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan -o json \\"
-        ],
-        [
-          "cont",
-          "  | jq -r --arg fingerprint \"$APPLIED\" '.items[] | select(.spec.fingerprint == $fingerprint) | .metadata.name')"
-        ],
-        [
-          "cont",
-          "for CHUNK in $(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" \\"
-        ],
-        [
-          "cont",
-          "  -o jsonpath='{range .spec.chunks[*]}{.name}{\"\\n\"}{end}'); do"
-        ],
-        [
-          "cont",
-          "  kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
-        ],
-        [
-          "cont",
-          "    | base64 -d | jq -r '.statements[].sql'"
-        ],
-        [
-          "cont",
-          "done"
+          "kubectl ptah plan storefront --applied -n \"$NAMESPACE\" -o sql"
         ],
         [
           "out",
@@ -2386,7 +2278,7 @@
         ],
         [
           "sql",
-          ")"
+          ");"
         ],
         [
           "out",
@@ -2398,15 +2290,15 @@
         ],
         [
           "sql",
-          "ALTER TABLE \"customers\" ADD COLUMN \"signed_up_at\" timestamptz"
+          "ALTER TABLE \"customers\" ADD COLUMN \"signed_up_at\" timestamptz;"
         ],
         [
-          "sql",
+          "out",
           "-- ALTER statements: --"
         ],
         [
           "sql",
-          "ALTER TABLE \"orders\" ADD CONSTRAINT \"fk_orders_customer_id\" FOREIGN KEY (\"customer_id\") REFERENCES \"customers\"(\"id\")"
+          "ALTER TABLE \"orders\" ADD CONSTRAINT \"fk_orders_customer_id\" FOREIGN KEY (\"customer_id\") REFERENCES \"customers\"(\"id\");"
         ],
         [
           "note",
@@ -2517,8 +2409,8 @@
     {
       "id": "stale-approval",
       "source": {
-        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
-        "describe": "68449a0"
+        "commit": "afe1d12be7ae3f6c25898048976ca31ab21f7d85",
+        "describe": "afe1d12"
       },
       "title": "Retire a used approval",
       "tagline": "An approval describes one plan against one observed state. Applying it moves that state.",
@@ -2527,7 +2419,7 @@
         "Safety"
       ],
       "commands": 7,
-      "lines": 53,
+      "lines": 52,
       "events": [
         [
           "sync",
@@ -2547,7 +2439,7 @@
         ],
         [
           "out",
-          "sha256:b8f67950fd8a73ebfed763aa2bfe4153b483187b44c992d20c1137621716353c"
+          "sha256:26711de82bd448a59085972d6280a9c9f18082a92754df77667e705839e0680f"
         ],
         [
           "sync",
@@ -2679,10 +2571,6 @@
         ],
         [
           "cont",
-          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
-        ],
-        [
-          "cont",
           "DIGEST=$(ptah schema push \"oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$\" \\"
         ],
         [
@@ -2727,7 +2615,7 @@
         ],
         [
           "out",
-          "sha256:01d4a5ffee5a3b4d2b9ac61d5bc62572472725f8eb66af21b16531692029976a"
+          "sha256:261ff0c72b66270226bd1b18e4be3bd168565fcbdbd523a2718d48e9ad40966d"
         ],
         [
           "note",
@@ -2838,8 +2726,8 @@
     {
       "id": "suspend-resume",
       "source": {
-        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
-        "describe": "68449a0"
+        "commit": "afe1d12be7ae3f6c25898048976ca31ab21f7d85",
+        "describe": "afe1d12"
       },
       "title": "Suspend and resume",
       "tagline": "One field stops reconciliation without deleting anything, and resuming picks up where it stopped.",
@@ -2848,7 +2736,7 @@
         "Operations"
       ],
       "commands": 7,
-      "lines": 38,
+      "lines": 37,
       "events": [
         [
           "sync",
@@ -2909,10 +2797,6 @@
         [
           "cont",
           "export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY"
-        ],
-        [
-          "cont",
-          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
         ],
         [
           "cont",
