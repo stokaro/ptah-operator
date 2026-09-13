@@ -25,12 +25,12 @@ read_environment() {
 		exit 1
 	}
 	set -a
-	# shellcheck disable=SC1090 -- the path is the lab's, and it is a NAME=value file
+	# shellcheck disable=SC1090 # The path is the lab's, and it is a NAME=value file.
 	. "$LAB_ENVIRONMENT"
 	set +a
 	LAB_POSTGRES_IMAGE=${E2E_POSTGRES_IMAGE:-}
 	export LAB_POSTGRES_IMAGE
-	export DOCKER_CONFIG=${E2E_DOCKER_CONFIG:-${DOCKER_CONFIG:-}}
+	export DOCKER_CONFIG="${E2E_DOCKER_CONFIG:-${DOCKER_CONFIG:-}}"
 	# kind takes its daemon from the environment, not from a Docker context, so
 	# without these it looks at a local daemon and reports no such cluster --
 	# which reads exactly like a cluster that is already gone.
@@ -48,10 +48,11 @@ usage: demo/bin/lab <command>
   down                 remove the cluster and the containers the lab created
   prepare              create the namespace, its routes, credentials and policy
   reset                remove every schema, plan and approval, and empty the database
-  publish <revision>   push demo/schemas/<revision>.sql and print its digest
-  psql <statement>     run one statement against the demonstration's database
   manifest <name> <digest>
                        render demo/manifests/<name>.yaml for this lab
+  credentials          print the registry credentials this lab generated
+  ptah                 print a directory holding the product's CLI, building it once
+  registry             print the address a publishing client uses
   namespace            print the namespace the lab runs in
   versions             print what the lab is made of
 USAGE
@@ -73,20 +74,22 @@ reset)
 	read_environment
 	lab_reset
 	;;
-publish)
-	[ "$#" -eq 1 ] || lab_usage
+credentials)
 	read_environment
-	lab_publish "$1"
-	;;
-psql)
-	[ "$#" -eq 1 ] || lab_usage
-	read_environment
-	lab_psql "$1"
+	lab_credentials
 	;;
 manifest)
 	[ "$#" -eq 2 ] || lab_usage
 	read_environment
 	lab_manifest "$1" "$2"
+	;;
+ptah)
+	read_environment
+	lab_ptah
+	;;
+registry)
+	read_environment
+	lab_registry_address
 	;;
 namespace)
 	read_environment

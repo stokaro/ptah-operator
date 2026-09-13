@@ -99,6 +99,27 @@ export function livenessProblemsIn(sources) {
   return problems;
 }
 
+// The run page states what each name a command reads holds. The recorder owns
+// that list -- it refuses a step reading anything else -- so the page is held
+// to the recorder's own declaration and not to a second copy of it.
+export function publishedVariablesIn(source) {
+  const block = source.match(/var publishedVariables = map\[string\]bool\{([\s\S]*?)\n\}/);
+  if (!block) return [];
+  return [...block[1].matchAll(/"([A-Z][A-Z0-9_]*)":/g)].map((match) => match[1]);
+}
+
+export function environmentProblemsIn(page, names) {
+  const problems = [];
+  if (names.length === 0) {
+    problems.push('the recorder declares no published variable, so this checked nothing');
+    return problems;
+  }
+  for (const name of names) {
+    if (!page.includes(name)) problems.push(`the run page does not say what ${name} holds`);
+  }
+  return problems;
+}
+
 function selftest() {
   const good = {
     recordedAt: '2026-09-12T00:00:00Z',
@@ -154,8 +175,33 @@ function selftest() {
   const derived = livenessProblemsIn([['page', '{Runs.length} sessions, recorded at the terminal']]);
   if (derived.length !== 0) throw new Error(`a derived count was reported: ${JSON.stringify(derived)}`);
 
+  const declaration = [
+    'var publishedVariables = map[string]bool{',
+    '\t"KUBECONFIG":          true,',
+    '\t"NAMESPACE":           true,',
+    '}',
+  ].join('\n');
+  const declared = publishedVariablesIn(declaration);
+  if (declared.join(',') !== 'KUBECONFIG,NAMESPACE') {
+    throw new Error(`read the declaration as ${declared.join(',')}`);
+  }
+  if (publishedVariablesIn('there is no declaration here').length !== 0) {
+    throw new Error('a source without the declaration produced names');
+  }
+  if (environmentProblemsIn('KUBECONFIG and NAMESPACE', declared).length !== 0) {
+    throw new Error('a page stating both names was reported');
+  }
+  const partial = environmentProblemsIn('KUBECONFIG alone', declared).join('; ');
+  if (!partial.includes('does not say what NAMESPACE holds')) {
+    throw new Error(`an unstated name was not reported: ${partial || 'nothing'}`);
+  }
+  if (environmentProblemsIn('KUBECONFIG and NAMESPACE', []).length !== 1) {
+    throw new Error('an empty declaration passed, which is a check that measured nothing');
+  }
+
   console.log(
-    'check-demo.mjs --selftest: OK (checks, failures, coverage, order, the word Live, and a typed count)',
+    'check-demo.mjs --selftest: OK (checks, failures, coverage, order, the word Live, a typed ' +
+      'count, and the published environment)',
   );
 }
 
@@ -180,7 +226,14 @@ function main() {
     readFileSync(join(scriptDir, '..', 'src', 'pages', 'demo', name), 'utf8'),
   ]);
 
-  const problems = problemsIn(record, scenarioIds, TagOrder).concat(livenessProblemsIn(pages));
+  const recorderSource = readFileSync(
+    join(repositoryRoot, 'demo', 'cmd', 'record', 'scenario.go'),
+    'utf8',
+  );
+  const runPage = pages.find(([name]) => name.endsWith('[run].astro'))[1];
+  const problems = problemsIn(record, scenarioIds, TagOrder)
+    .concat(livenessProblemsIn(pages))
+    .concat(environmentProblemsIn(runPage, publishedVariablesIn(recorderSource)));
   if (problems.length > 0) {
     console.error(`check-demo.mjs: ${problems.length} problem(s):\n- ${problems.join('\n- ')}`);
     process.exit(1);

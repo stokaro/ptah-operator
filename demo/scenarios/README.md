@@ -22,7 +22,13 @@ tags: [Lifecycle]               # the first tag groups the catalog
 # not the preparation.
 reset:
   - demo/bin/lab reset
-  - demo/bin/lab publish v1 > demo/.lab/digest
+  - |
+    eval "$(demo/bin/lab credentials)"
+    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+    export PATH="$(demo/bin/lab ptah):$PATH"
+    ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
+      --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
+      | sed -n 's/^Digest: //p' > demo/.lab/digest
 
 steps:
   - note: One line of narration, under 96 characters.
@@ -115,3 +121,20 @@ the width it replaced, so a table stays where kubectl put it.
 
 Nothing else. Not the order of events, not the plan, not the fingerprint an
 approval names, and not the reason on a condition.
+
+## What a step may read
+
+A step is published, and a reader repeats it, so a step reads only names a
+reader can have: `KUBECONFIG`, `NAMESPACE`, `OPERATOR_NAMESPACE`, `CONTROLLER`,
+`REGISTRY_IN_CLUSTER`, the three `PTAH_OCI_*` credentials, `PATH` and `HOME`.
+Anything else the step sets itself, in the same block, where a reader sees it
+being set.
+
+The recorder refuses a step that reads another name and says which one. The
+`E2E_` names the bootstrap writes are the ones this keeps out: they are how
+`demo/bin/lab` finds the lab's own pieces, and a command printing one would
+resolve nowhere but here. [`../README.md`](../README.md) states what each
+published name holds.
+
+A `reset` block is not published and is not held to this: it is the
+preparation, and it may use the lab's scripts freely.

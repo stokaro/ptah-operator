@@ -16,7 +16,7 @@ REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
 # for the sake of a demonstration.
-.PHONY: demo demo-up demo-record demo-serve demo-test demo-down
+.PHONY: demo demo-up demo-record demo-serve demo-test demo-reproduce demo-down
 
 all: verify build
 
@@ -189,6 +189,13 @@ demo-test:
 		npm run check:demo:selftest && npm run check:demo-page:selftest && \
 		npm run check:demo && npm run build && \
 		npm run check:links && npm run check:navigation && npm run check:demo-page
+
+# The acceptance criterion the demonstration is written against: after the
+# environment is standing, a scenario can be repeated from what the pages
+# publish, with no script of ours reachable, by an account that may not create
+# a Job. It needs a live lab.
+demo-reproduce:
+	LAB_ENVIRONMENT="$(CURDIR)/$(DEMO_ENVIRONMENT)" ./demo/acceptance/reproduce.sh
 
 demo-down:
 	LAB_ENVIRONMENT="$(CURDIR)/$(DEMO_ENVIRONMENT)" ./demo/bin/lab down

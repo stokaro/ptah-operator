@@ -277,6 +277,20 @@ ACTUAL_SHELLCHECK_VERSION=v$(shellcheck --version | awk '/^version:/ { print $2 
 printf 'e2e static: shellcheck %s\n' "$ACTUAL_SHELLCHECK_VERSION"
 shellcheck "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 
+# The demonstration's shell is published: a reader repeats what a scenario ran.
+# The census comes from git rather than from a glob, and holds above a floor,
+# because a glob that stopped matching reports nothing and reads as a pass.
+DEMO_SHELL=$(git -C "$ROOT_DIR" ls-files demo/bin/lab 'demo/lib/*.sh' 'demo/acceptance/*.sh')
+DEMO_SHELL_COUNT=$(printf '%s\n' "$DEMO_SHELL" | grep -c . || true)
+[ "$DEMO_SHELL_COUNT" -ge 4 ] || {
+	printf 'e2e static: the demonstration ships more shell than the %s files this checked\n' \
+		"$DEMO_SHELL_COUNT" >&2
+	exit 1
+}
+# shellcheck disable=SC2086 # The census is one tracked path per line, none with a space.
+(cd "$ROOT_DIR" && shellcheck -x $DEMO_SHELL)
+printf 'e2e static: %s demonstration scripts\n' "$DEMO_SHELL_COUNT"
+
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
 
 # shellcheck disable=SC2016 # These checks intentionally match literal script variables.
