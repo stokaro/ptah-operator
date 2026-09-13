@@ -374,33 +374,180 @@ var shellVariables = map[string]bool{
 // inside the filter, where the shell never looks.
 var variableRead = regexp.MustCompile(`\$\{?([A-Z][A-Z0-9_]*)\}?`)
 
-// variableSet matches a name the step itself gives a value: an assignment, a
-// for loop's own variable, or a `read` into it. Each is its own shape, so each
-// is its own pattern rather than one alternation nobody can read.
-var variableSet = []*regexp.Regexp{
-	regexp.MustCompile(`(?m)(?:^|[;&|(\s])([A-Z][A-Z0-9_]*)=`),
-	regexp.MustCompile(`(?m)(?:^|[;&|(\s])for\s+([A-Z][A-Z0-9_]*)\s+in\s`),
-	regexp.MustCompile(`(?m)(?:^|[;&|(\s])read\s+(?:-[A-Za-z]+\s+)*([A-Z][A-Z0-9_]*)`),
-}
-
 // unpublishedVariables returns the names a reader could not resolve, in the
 // order they are read, without repeating one.
+//
+// The shell is read in its own order. A name is resolvable at a read only if
+// something earlier in the step set it and that value outlived the command it
+// was written for: an assignment in front of a command belongs to that command
+// alone, so `APPLY=Always cmd "$APPLY"` reads whatever the caller's environment
+// happened to hold, and so does every later line.
 func unpublishedVariables(run string) []string {
 	known := map[string]bool{}
-	for _, pattern := range variableSet {
-		for _, match := range pattern.FindAllStringSubmatch(run, -1) {
-			known[match[1]] = true
-		}
-	}
-	var unpublished []string
 	seen := map[string]bool{}
-	for _, match := range variableRead.FindAllStringSubmatch(run, -1) {
-		name := match[1]
-		if publishedVariables[name] || shellVariables[name] || known[name] || seen[name] {
-			continue
+	var unpublished []string
+	for _, segment := range shellSegments(run) {
+		for _, name := range shellReads(segment) {
+			if publishedVariables[name] || shellVariables[name] || known[name] || seen[name] {
+				continue
+			}
+			seen[name] = true
+			unpublished = append(unpublished, name)
 		}
-		seen[name] = true
-		unpublished = append(unpublished, name)
+		for _, name := range segmentSets(segment) {
+			known[name] = true
+		}
 	}
 	return unpublished
+}
+
+// segmentSets returns the names one segment leaves set behind it: a standalone
+// assignment, a for loop's own variable, and what `read` was told to fill.
+func segmentSets(segment string) []string {
+	words := shellWords(segment)
+	var assigned []string
+	index := 0
+	for ; index < len(words); index++ {
+		name, _, found := strings.Cut(words[index], "=")
+		if !found || !shellName.MatchString(name) {
+			break
+		}
+		assigned = append(assigned, name)
+	}
+	// A command word after them means they were written for that command, and
+	// the shell drops them when it returns.
+	if index < len(words) {
+		assigned = nil
+	}
+
+	for position, word := range words {
+		switch word {
+		case "for":
+			if position+2 < len(words) && words[position+2] == "in" && shellName.MatchString(words[position+1]) {
+				assigned = append(assigned, words[position+1])
+			}
+		case "read":
+			for _, target := range words[position+1:] {
+				if strings.HasPrefix(target, "-") {
+					continue
+				}
+				if shellName.MatchString(target) {
+					assigned = append(assigned, target)
+				}
+				break
+			}
+		}
+	}
+	return assigned
+}
+
+var shellName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// shellReads returns the names one segment expands.
+//
+// What sits in single quotes is not one of them: the shell hands it over as
+// written, which is how a jq filter carries a `$` the shell never sees.
+func shellReads(segment string) []string {
+	var names []string
+	for _, match := range variableRead.FindAllStringSubmatch(withoutLiterals(segment), -1) {
+		names = append(names, match[1])
+	}
+	return names
+}
+
+// shellSegments splits a step's shell into the pieces the shell runs one after
+// another. A separator inside quotes or inside a substitution is text, not a
+// separator, so the scan carries both.
+func shellSegments(run string) []string {
+	var segments []string
+	var current strings.Builder
+	flush := func() {
+		if strings.TrimSpace(current.String()) != "" {
+			segments = append(segments, current.String())
+		}
+		current.Reset()
+	}
+	scan(run, func(r rune, single, double bool, depth int) {
+		if !single && !double && depth == 0 && strings.ContainsRune(";\n&|", r) {
+			flush()
+			return
+		}
+		current.WriteRune(r)
+	})
+	flush()
+	return segments
+}
+
+// shellWords splits one segment into the words the shell would pass along.
+func shellWords(segment string) []string {
+	var words []string
+	var current strings.Builder
+	flush := func() {
+		if current.Len() > 0 {
+			words = append(words, current.String())
+		}
+		current.Reset()
+	}
+	scan(segment, func(r rune, single, double bool, depth int) {
+		if !single && !double && depth == 0 && (r == ' ' || r == '\t' || r == '\n') {
+			flush()
+			return
+		}
+		current.WriteRune(r)
+	})
+	flush()
+	return words
+}
+
+// withoutLiterals blanks what single quotes protect, keeping every other
+// character where it was.
+func withoutLiterals(segment string) string {
+	var out strings.Builder
+	scan(segment, func(r rune, single, double bool, depth int) {
+		if single {
+			out.WriteRune(' ')
+			return
+		}
+		out.WriteRune(r)
+	})
+	return out.String()
+}
+
+// scan walks shell text once and reports each character with what the shell
+// would make of it: whether quotes protect it, and how deep inside a
+// substitution it sits. A backslash escapes the character behind it, and a
+// backslash before a newline is dropped the way the shell drops it.
+func scan(text string, visit func(r rune, single, double bool, depth int)) {
+	single, double, escaped := false, false, false
+	depth := 0
+	for _, r := range text {
+		switch {
+		case escaped:
+			escaped = false
+			if r != '\n' {
+				visit(r, single, double, depth)
+			}
+			continue
+		case single:
+			if r != '\'' {
+				visit(r, true, false, depth)
+				continue
+			}
+			single = false
+		case r == '\\':
+			escaped = true
+			continue
+		case r == '\'':
+			single = true
+		case r == '"':
+			double = !double
+		case r == '(':
+			depth++
+		case r == ')':
+			if depth > 0 {
+				depth--
+			}
+		}
+		visit(r, false, double, depth)
+	}
 }

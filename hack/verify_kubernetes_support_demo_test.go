@@ -15,6 +15,10 @@ func TestAuditBootstrapHandoff(t *testing.T) {
 	sound := []byte(strings.Join([]string{
 		"#!/bin/sh",
 		"set -eu",
+		// Both names the hand-off prints are assigned where every path reaches
+		// them, which is what keeps set -u from ending the run there.
+		"E2E_ENVIRONMENT_FILE=",
+		"KUBECONFIG_FILE=/dev/null",
 		bootstrapHandoffOpener,
 		"\t[ -n \"$E2E_ENVIRONMENT_FILE\" ] || fail \"name a file\"",
 		"\t{ printf 'E2E_KUBECONFIG=%s\\n' \"$KUBECONFIG_FILE\"; } >\"$E2E_ENVIRONMENT_FILE\"",
@@ -55,6 +59,16 @@ func TestAuditBootstrapHandoff(t *testing.T) {
 			name:    "the block does not end with its exit",
 			mutate:  func(s string) string { return strings.Replace(s, "\texit 0\nfi", "\texit 0\n\tls\nfi", 1) },
 			problem: "ends with",
+		},
+		{
+			// The Ptah build context is assigned only when the executor is
+			// built from source, so a caller who supplies an executor image
+			// used to lose the whole lab at this line.
+			name: "a name assigned only on one path",
+			mutate: func(s string) string {
+				return strings.Replace(s, "KUBECONFIG_FILE=/dev/null\n", "", 1)
+			},
+			problem: "nothing assigns at the top level",
 		},
 		{
 			name:    "a second exit hides inside it",

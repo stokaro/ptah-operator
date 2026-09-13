@@ -207,9 +207,15 @@ func sourceIdentity(root, output string) (map[string]string, error) {
 	return identity, nil
 }
 
-// refuseDirtyTree reports every tracked change that is not the recording itself.
+// refuseDirtyTree reports every change that is not the recording itself.
+//
+// Untracked files count. loadScenarios reads the scenario directory rather than
+// the index, so a scenario nobody committed is recorded like any other, under a
+// commit whose tree does not hold it -- which is the reproducibility this guard
+// exists to protect. What the lab writes inside the repository is ignored by
+// .gitignore, and git leaves an ignored file out of this listing.
 func refuseDirtyTree(root, output string) error {
-	status, err := gitLines(fmt.Sprintf("git -C %s status --porcelain --untracked-files=no", root))
+	status, err := gitLines(fmt.Sprintf("git -C %s status --porcelain --untracked-files=all", root))
 	if err != nil {
 		return err
 	}

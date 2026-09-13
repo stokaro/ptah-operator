@@ -284,7 +284,7 @@ func TestUnpublishedVariablesReadsWhatAReaderCannotResolve(t *testing.T) {
 		},
 		{
 			name: "the lab's own name",
-			run:  `kubectl patch -p '{"ociRef":"oci://$E2E_REGISTRY_HOST/schemas/demo"}'`,
+			run:  `kubectl patch -p "{\"ociRef\":\"oci://$E2E_REGISTRY_HOST/schemas/demo\"}"`,
 			want: []string{"E2E_REGISTRY_HOST"},
 		},
 		{
@@ -305,8 +305,39 @@ func TestUnpublishedVariablesReadsWhatAReaderCannotResolve(t *testing.T) {
 			want: []string{"APPLIED"},
 		},
 		{
-			name: "a name prefixed to the command",
+			// A prefix assignment belongs to the command it is written for, and
+			// the expansion beside it is resolved first, out of whatever the
+			// caller's environment held.
+			name: "a name prefixed to the command it is read in",
 			run:  `APPLY=Always demo/bin/lab manifest storefront "$APPLY"`,
+			want: []string{"APPLY"},
+		},
+		{
+			name: "a name prefixed to a command and read after it",
+			run:  "APPLY=Always demo/bin/lab manifest storefront\necho \"$APPLY\"",
+			want: []string{"APPLY"},
+		},
+		{
+			name: "a name prefixed to a command and never read",
+			run:  `APPLY=Always demo/bin/lab manifest storefront "$(cat demo/.lab/digest)"`,
+		},
+		{
+			name: "a name read before the step assigns it",
+			run:  "kubectl patch -p \"$DIGEST\"\nDIGEST=$(ptah schema push)",
+			want: []string{"DIGEST"},
+		},
+		{
+			// The shell hands a single-quoted word over as written, so what
+			// looks like an expansion inside one is the reader of that word's
+			// business, not the shell's.
+			name: "a dollar inside single quotes",
+			run:  `kubectl get -o json | jq -r '.items[] | select(.name == $NAME)'`,
+		},
+		{
+			// A pipe inside a substitution is not a separator, so the name this
+			// assigns is still assigned.
+			name: "an assignment whose value holds a pipe",
+			run:  "PLAN=$(kubectl get plan -o json | jq -r .name)\nkubectl get plan \"$PLAN\"",
 		},
 		{
 			name: "the same unpublished name twice",
