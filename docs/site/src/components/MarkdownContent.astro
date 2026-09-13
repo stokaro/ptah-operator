@@ -1,0 +1,34 @@
+---
+/**
+ * Starlight's content wrapper, with the FAQ's filter in front of its questions.
+ *
+ * The rail belongs above the content, which on every other page is exactly what
+ * Starlight renders here, so this override adds one element for one route and
+ * is otherwise the upstream component.
+ *
+ * It is an override rather than a component the page imports, because the page
+ * cannot be MDX. Every question declares its anchor as `### Question {#anchor}`,
+ * and MDX reads a brace as the start of an expression: converting the page
+ * turns every anchor into a parse error. The anchors are the page's interface --
+ * people link to single questions -- so the page stays Markdown and the
+ * component comes to it.
+ */
+import '@astrojs/starlight/style/markdown.css';
+import FaqFilter from './FaqFilter.astro';
+import { faqSymptoms } from '../faq-symptoms.mjs';
+
+const { entry } = Astro.locals.starlightRoute;
+
+// Matched on the entry id rather than on the URL, so a base path or a version
+// prefix cannot change the answer.
+const isFaq = entry.id === 'faq' || entry.id === 'faq.md';
+
+// The questions are `###` under a `##` group, so the count comes from the
+// source rather than from a number kept in step by hand.
+const questionCount = (entry.body?.match(/^### /gm) ?? []).length;
+---
+
+{isFaq && <FaqFilter symptoms={faqSymptoms} count={questionCount} />}
+<div class:list={['sl-markdown-content', isFaq && 'ptah-faq']}>
+  <slot />
+</div>

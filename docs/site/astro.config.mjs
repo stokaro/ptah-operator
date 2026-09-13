@@ -7,6 +7,7 @@ import { sidebar } from './src/sidebar.mjs';
 import { Origin, BasePath } from './src/lib/docs-origin.mjs';
 import { satteri } from '@astrojs/markdown-satteri';
 import markdownHeadingIds from './src/lib/markdown-heading-ids.mjs';
+import markdownFaqVerdict from './src/lib/markdown-faq-verdict.mjs';
 
 // The version this build documents, and the revision it was built from. Both
 // come from the publishing workflow rather than from this file: a release is
@@ -23,7 +24,7 @@ export default defineConfig({
     // its text and has no syntax for an author-chosen id. This plugin reads a
     // trailing `{#id}` and sets the id Satteri then honours, so a question
     // can be reworded without breaking a link somebody shared.
-    processor: satteri({ hastPlugins: [markdownHeadingIds()] }),
+    processor: satteri({ hastPlugins: [markdownHeadingIds(), markdownFaqVerdict()] }),
   },
   integrations: [
     starlight({
@@ -44,13 +45,28 @@ export default defineConfig({
       // repository alone.
       customCss: ['./src/styles/fonts.css', './src/styles/global.css', './src/styles/ptah.css'],
       lastUpdated: true,
+      // A symptom is worth searching for as well as clicking: the FAQ's chips
+      // are words the prose does not contain, so they reach the reader only
+      // through the page's searchAliases, and a curated alias outranks an
+      // incidental body match.
+      pagefind: {
+        ranking: { metaWeights: { searchAliases: 16 } },
+      },
       components: {
         // The brand row with the version pill, the text header links across to
         // Ptah, and the light/dark toggle -- the three header surfaces the
         // shared design shapes.
+        // The title, plus the page's search aliases as Pagefind metadata.
+        PageTitle: './src/components/PageTitle.astro',
         SiteTitle: './src/components/SiteTitle.astro',
         SocialIcons: './src/components/HeaderLinks.astro',
         ThemeSelect: './src/components/ThemeToggle.astro',
+        // Upstream's content wrapper, plus the FAQ's filter. The FAQ cannot
+        // be MDX -- its anchors are `{#id}`, which MDX reads as an
+        // expression -- so the component comes to the page.
+        MarkdownContent: './src/components/MarkdownContent.astro',
+        // The contents rail, with the FAQ's word for what it lists.
+        TableOfContents: './src/components/TableOfContents.astro',
       },
       // Edit links address the revision this build came from, not the default
       // branch. A reader on a release page who follows "Edit page" has to land

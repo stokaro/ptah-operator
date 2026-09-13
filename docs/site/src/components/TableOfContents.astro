@@ -1,0 +1,36 @@
+---
+/**
+ * The contents rail, with the FAQ's own word for what it lists.
+ *
+ * The FAQ's headings are its question groups, not the sections of one
+ * argument, so "On this page" describes something the page does not have.
+ * Every other page keeps Starlight's wording.
+ *
+ * The markup is upstream's, down to the `<starlight-toc>` element and its
+ * script, so the current heading still follows the scroll position. The
+ * package exports `components/*` only, so the list and the script are reached
+ * by file path; a moved file fails the build rather than silently losing the
+ * highlight.
+ */
+import TableOfContentsList from '../../node_modules/@astrojs/starlight/dist/components-internals/TableOfContents/TableOfContentsList.astro';
+
+const { entry, toc } = Astro.locals.starlightRoute;
+
+const isFaq = entry.id === 'faq' || entry.id === 'faq.md';
+const contentsLabel = isFaq ? 'Groups' : Astro.locals.t('tableOfContents.onThisPage');
+---
+
+{
+	toc && (
+		<starlight-toc data-min-h={toc.minHeadingLevel} data-max-h={toc.maxHeadingLevel}>
+			<nav aria-labelledby="starlight__on-this-page">
+				<h2 id="starlight__on-this-page">{contentsLabel}</h2>
+				<TableOfContentsList toc={toc.items} />
+			</nav>
+		</starlight-toc>
+	)
+}
+
+<script>
+	import '../../node_modules/@astrojs/starlight/dist/components-internals/TableOfContents/starlight-toc.js';
+</script>

@@ -214,3 +214,25 @@
 .mobile-preferences .ptah-header-toggles {
 	display: none;
 }
+
+/* The first top-level page after the last disclosure group opens the pair a
+ * reader reaches for when something is wrong. A rule above it says those rows
+ * answer across the groups rather than inside one. */
+.sidebar-content .top-level > li:has(> details) + li:has(> a) {
+	margin-top: 10px;
+	padding-top: 8px;
+	border-top: 1px solid var(--sl-color-hairline);
+}
+
+/* The question count beside FAQ: a figure, so it takes the mono face and the
+ * row's own ink rather than Starlight's pill. */
+.sidebar-content a .sl-badge {
+	border: 0;
+	padding: 0;
+	background: none;
+	font-family: var(--__sl-font-mono, monospace);
+	font-size: 12px;
+	font-weight: 400;
+	color: inherit;
+	opacity: 0.75;
+}

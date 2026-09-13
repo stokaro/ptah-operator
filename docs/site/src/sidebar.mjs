@@ -15,7 +15,6 @@ export const sidebar = [
       { label: 'Try it locally', link: '/start/try-it/' },
       { label: 'Install', link: '/start/install/' },
       { label: 'First schema', link: '/start/first-schema/' },
-      { label: 'FAQ', link: '/faq/' },
     ],
   },
   {
@@ -33,10 +32,6 @@ export const sidebar = [
     ],
   },
   {
-    label: 'Troubleshoot',
-    items: [{ label: 'Condition reasons', link: '/troubleshoot/condition-reasons/' }],
-  },
-  {
     label: 'Support',
     items: [
       { label: 'Ptah compatibility', link: '/support/ptah/' },
@@ -45,4 +40,8 @@ export const sidebar = [
       { label: 'Releases and provenance', link: '/support/releases/' },
     ],
   },
+  // The two pages a reader reaches for when something is wrong. They answer
+  // across the groups above rather than inside one, so they sit beside them.
+  { label: 'Condition reasons', link: '/troubleshoot/condition-reasons/' },
+  { label: 'FAQ', link: '/faq/', badge: { text: '28', variant: 'default' } },
 ];
