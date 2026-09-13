@@ -1,0 +1,45 @@
+# The desired state of one database, as a Kubernetes resource.
+#
+# Nothing here is a credential. The database URL and the registry password are
+# named, and read by the operator from Secrets this namespace holds; what the
+# resource carries is which artifact, which database, and what the operator is
+# allowed to do about the difference.
+apiVersion: operator.ptah.dev/v1alpha1
+kind: PtahSchema
+metadata:
+  name: storefront
+  namespace: ${NAMESPACE}
+spec:
+  target:
+    engine: PostgreSQL
+    # Every resource that can reach this physical database, through any alias
+    # or credential, has to use this exact key. It is how two of them are kept
+    # from planning against each other.
+    coordinationKey: demo/storefront/primary
+    urlFrom:
+      name: demo-database
+      key: url
+  desired:
+    # A digest, not a tag: what was reviewed is what runs.
+    ociRef: oci://${REGISTRY}/schemas/demo@${DIGEST}
+    registryAuthFrom:
+      name: demo-registry
+      mode: Environment
+      usernameKey: username
+      passwordKey: password
+      registryKey: registry
+    verificationPolicyFrom:
+      name: demo-verification-policy
+      key: policy.yaml
+    transport:
+      plainHTTP: true
+  policy:
+    apply: ${APPLY}
+    allowDestructive: ${ALLOW_DESTRUCTIVE}
+    driftSeverity: all
+  interval: ${INTERVAL}
+  suspend: ${SUSPEND}
+  execution:
+    activeDeadlineSeconds: 300
+    failureRetryInterval: 10s
+    connectTimeout: 30s

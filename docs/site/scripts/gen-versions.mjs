@@ -9,7 +9,7 @@
 // both refused: the first publishes pages no catalog knows about, and the
 // second is the missing link the matrix would otherwise render.
 
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -104,6 +104,31 @@ ${items}
 `;
 }
 
+// ROOT_ALIASES are addresses other sites link to, kept at the site root so a
+// link from elsewhere does not name a version and then rot when a release
+// ships. Each one redirects to the same page of whichever version the apex
+// serves. The list is short on purpose: a root alias per page would be a second
+// copy of the site's routes, free to disagree with the first.
+export const ROOT_ALIASES = ['demo'];
+
+function aliasHTML(defaultVersion, route) {
+  const target = `${Origin}/${defaultVersion}/${route}/`;
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ptah Operator documentation</title>
+    <link rel="canonical" href="${target}" />
+    <meta http-equiv="refresh" content="0; url=${target}" />
+  </head>
+  <body>
+    <p>Redirecting to <a href="${target}">${defaultVersion}/${route}/</a>.</p>
+  </body>
+</html>
+`;
+}
+
 function selftest() {
   const ordered = order(['v0.2.0', EDGE, 'v0.10.0', 'v0.1.0']);
   if (ordered.join(',') !== 'edge,v0.10.0,v0.2.0,v0.1.0') {
@@ -120,7 +145,11 @@ function selftest() {
     throw new Error(`reconcile said ${JSON.stringify(missing)}`);
   }
   if (isVersionFolder('v1.2') || isVersionFolder('nightly')) throw new Error('a non-version folder was accepted');
-  console.log('gen-versions.mjs --selftest: OK (order, default, both reconcile directions, folder shape)');
+  const alias = aliasHTML('v0.1.0', 'demo');
+  if (!alias.includes('/v0.1.0/demo/')) throw new Error('a root alias did not address the default version');
+  console.log(
+    'gen-versions.mjs --selftest: OK (order, default, both reconcile directions, folder shape, root aliases)',
+  );
 }
 
 function main() {
@@ -162,7 +191,19 @@ function main() {
   };
   writeFileSync(join(root, 'versions.json'), `${JSON.stringify(index, null, 2)}\n`);
   writeFileSync(join(root, 'index.html'), indexHTML(defaultVersion, versions));
-  console.log(`gen-versions.mjs: ${versions.length} version(s), apex serves ${defaultVersion}`);
+  for (const route of ROOT_ALIASES) {
+    const published = join(root, defaultVersion, route, 'index.html');
+    if (!existsSync(published)) {
+      console.error(`gen-versions.mjs: ${defaultVersion} publishes no /${route}/, so the root alias would 404`);
+      process.exit(1);
+    }
+    mkdirSync(join(root, route), { recursive: true });
+    writeFileSync(join(root, route, 'index.html'), aliasHTML(defaultVersion, route));
+  }
+  console.log(
+    `gen-versions.mjs: ${versions.length} version(s), apex serves ${defaultVersion}, ` +
+      `${ROOT_ALIASES.length} root alias(es)`,
+  );
 }
 
 // Only when this file is the program. check-versions.mjs imports the ordering

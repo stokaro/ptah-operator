@@ -102,6 +102,11 @@ E2E_RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 E2E_PTAH_VERSION=${E2E_PTAH_VERSION:-}
 E2E_PTAH_SOURCE_DIR=${E2E_PTAH_SOURCE_DIR:-}
 E2E_PTAH_REVISION=${E2E_PTAH_REVISION:-}
+# E2E_STOP_AFTER=bootstrap brings the environment up, keeps it, and runs no
+# phase. The demonstration lab uses it, so that one bootstrap serves both the
+# suite and the recorded scenarios.
+E2E_STOP_AFTER=${E2E_STOP_AFTER:-}
+E2E_ENVIRONMENT_FILE=${E2E_ENVIRONMENT_FILE:-}
 E2E_PTAH_GIT_URL=${E2E_PTAH_GIT_URL:-https://github.com/stokaro/ptah.git}
 E2E_REGISTRY_IMAGE=${E2E_REGISTRY_IMAGE:-registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33}
 E2E_POSTGRES_SOURCE_IMAGE=${E2E_POSTGRES_SOURCE_IMAGE:-postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73}
@@ -2208,6 +2213,65 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s -n default \
 	run ptah-e2e-foreign-pod-admission --image=registry.k8s.io/pause:3.10 \
 	--restart=Never --dry-run=server -o name >/dev/null ||
 	fail "a Pod without Ptah labels or a Ptah Job owner was refused after the current-release install"
+
+# The demonstration lab stops here, and keeps what it built.
+#
+# Everything above is the environment the suite needs and the demonstration
+# needs too: an isolated registry with credentials and TLS, an external
+# PostgreSQL, the chart installed from a reproducible package with digest-pinned
+# images and an explicit Ptah version, and the admission policies proved to
+# admit a foreign Pod. A second bootstrap for the demonstration would be a
+# second answer to every one of those, and the first one to drift would do so
+# silently.
+#
+# What the mode changes is only what happens next: no phase script runs, the
+# cleanup trap is released so the environment survives the exit, and what the
+# phases would have received is written to a file the recorder reads.
+if [ "$E2E_STOP_AFTER" = bootstrap ]; then
+	[ -n "$E2E_ENVIRONMENT_FILE" ] ||
+		fail "E2E_STOP_AFTER=bootstrap requires E2E_ENVIRONMENT_FILE to name where to write the environment"
+	{
+		printf 'E2E_KUBECONFIG=%s\n' "$KUBECONFIG_FILE"
+		printf 'E2E_OPERATOR_NAMESPACE=%s\n' "$OPERATOR_NAMESPACE"
+		printf 'E2E_TEST_NAMESPACE=%s\n' "$TEST_NAMESPACE"
+		printf 'E2E_FOREIGN_NAMESPACE=%s\n' "$FOREIGN_NAMESPACE"
+		printf 'E2E_HELM_RELEASE=%s\n' "$HELM_RELEASE"
+		printf 'E2E_CONTROLLER_NAME=%s\n' "$RUNTIME_FULLNAME"
+		printf 'E2E_CONTROLLER_IMAGE=%s\n' "$CANDIDATE_OPERATOR_IMAGE"
+		printf 'E2E_CONTROLLER_REVISION=%s\n' "$CONTROLLER_REVISION"
+		printf 'E2E_CONTROLLER_STATE_VERSION=%s\n' 1
+		printf 'E2E_EXECUTOR_IMAGE=%s\n' "$E2E_EXECUTOR_IMAGE"
+		printf 'E2E_RUNNER_IMAGE=%s\n' "$E2E_RUNNER_IMAGE"
+		printf 'E2E_POSTGRES_IMAGE=%s\n' "$E2E_POSTGRES_IMAGE"
+		printf 'E2E_PTAH_VERSION=%s\n' "$E2E_PTAH_VERSION"
+		printf 'E2E_PTAH_REVISION=%s\n' "$E2E_PTAH_REVISION"
+		printf 'E2E_REGISTRY_HOST=%s\n' "$REGISTRY_HOST"
+		printf 'E2E_REGISTRY_SERVICE=%s\n' "$REGISTRY_SERVICE"
+		printf 'E2E_REGISTRY_IP=%s\n' "$REGISTRY_IP"
+		printf 'E2E_REGISTRY_CONTAINER_ID=%s\n' "$REGISTRY_CONTAINER_ID"
+		printf 'E2E_REGISTRY_USERNAME=%s\n' "$REGISTRY_USERNAME"
+		printf 'E2E_REGISTRY_CREDENTIALS_FILE=%s\n' "$REGISTRY_CREDENTIALS_FILE"
+		printf 'E2E_EXTERNAL_POSTGRES_CONTAINER_ID=%s\n' "$EXTERNAL_PG_CONTAINER_ID"
+		printf 'E2E_EXTERNAL_POSTGRES_IP=%s\n' "$EXTERNAL_PG_IP"
+		printf 'E2E_EXTERNAL_POSTGRES_SERVICE=%s\n' "$EXTERNAL_PG_SERVICE"
+		printf 'E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=%s\n' "$EXTERNAL_PG_CREDENTIALS_FILE"
+		printf 'E2E_KIND_CLUSTER_NAME=%s\n' "$CLUSTER_NAME"
+		printf 'E2E_DOCKER_CONTEXT=%s\n' "$DOCKER_CONTEXT"
+		printf 'E2E_DOCKER_CONFIG=%s\n' "$DOCKER_CLI_CONFIG"
+		printf 'E2E_DOCKER_ENDPOINT=%s\n' "$DOCKER_ENDPOINT"
+		printf 'E2E_KUBERNETES_VERSION=%s\n' "$K8S_VERSION"
+		printf 'E2E_CHART_PACKAGE=%s\n' "$CHART_PACKAGE"
+		printf 'E2E_CANDIDATE_VALUES_FILE=%s\n' "$CANDIDATE_VALUES_FILE"
+	} >"$E2E_ENVIRONMENT_FILE"
+	trap - EXIT HUP INT TERM
+	printf 'e2e: bootstrap complete and retained\n'
+	printf 'e2e:   cluster      %s (Kubernetes %s)\n' "$CLUSTER_NAME" "$K8S_VERSION"
+	printf 'e2e:   kubeconfig   %s\n' "$KUBECONFIG_FILE"
+	printf 'e2e:   namespace    %s\n' "$TEST_NAMESPACE"
+	printf 'e2e:   environment  %s\n' "$E2E_ENVIRONMENT_FILE"
+	printf 'e2e:   remove it    kind delete cluster --name %s\n' "$CLUSTER_NAME"
+	exit 0
+fi
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \

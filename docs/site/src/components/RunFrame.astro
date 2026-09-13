@@ -1,0 +1,94 @@
+---
+/* One recorded run: the terminal frame, and the transcript inside it.
+ *
+ * The transcript in the markup is the page. A reader without JavaScript, a
+ * screen reader and a crawler all get the whole session; the player hides that
+ * copy from sight and replays the same events into the screen above it. Both
+ * come from demo/recordings/runs.json, so neither can drift from the other.
+ */
+import { transcript } from '../../public/demo/transcript.mjs';
+
+interface Props {
+	id: string;
+	title: string;
+	events: [string, string?][];
+	where?: string;
+}
+
+const { id, title, events, where } = Astro.props;
+const firstSync = events.find(([kind]) => kind === 'sync');
+---
+
+<!-- data-demo-static: the transcript stays on the page and the player waits to
+	be asked. A documentation page that started typing at a reader who scrolled
+	past it would be taking the page away from them. -->
+<div class="term demo" data-demo data-demo-static data-demo-scenario={id}>
+	<div class="term-bar">
+		<span class="demo-where">{where ?? `sh · ${id}`}</span>
+		<span class="demo-sync" data-demo-sync hidden>{firstSync?.[1] ?? ''}</span>
+		<span class="demo-controls" data-demo-controls hidden>
+			<button
+				class="demo-btn demo-btn-speed"
+				type="button"
+				data-demo-speed
+				aria-label="Playback speed, 1×. Press to change."
+				title="Speed"><span data-demo-speed-label>1×</span></button
+			>
+			<button class="demo-btn" type="button" data-demo-toggle aria-label="Play the recording" title="Play">
+				<svg class="i-pause" viewBox="0 0 16 16" aria-hidden="true" focusable="false"
+					><path d="M5.25 3.5h1.9v9h-1.9zM8.85 3.5h1.9v9h-1.9z" fill="currentColor"></path></svg
+				>
+				<svg class="i-play" viewBox="0 0 16 16" aria-hidden="true" focusable="false"
+					><path d="M5.5 3.4l7 4.6-7 4.6z" fill="currentColor"></path></svg
+				>
+				<span class="i-pause">Pause</span><span class="i-play">Play</span>
+			</button>
+			<button class="demo-btn" type="button" data-demo-replay aria-label="Replay the recording" title="Replay" hidden>
+				<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"
+					><path
+						d="M13.2 8a5.2 5.2 0 1 1-1.75-3.9"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"></path><path
+						d="M12.4 1.9v2.9H9.5"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"></path></svg
+				>
+				<span>Replay</span>
+			</button>
+			<button
+				class="demo-btn"
+				type="button"
+				data-demo-expand
+				aria-expanded="false"
+				aria-label="Expand the recording"
+				title="Expand"
+			>
+				<svg class="i-expand" viewBox="0 0 16 16" aria-hidden="true" focusable="false"
+					><path
+						d="M6.2 2.6H2.6v3.6M9.8 13.4h3.6V9.8M13.4 6.2V2.6H9.8M2.6 9.8v3.6h3.6"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"></path></svg
+				>
+				<svg class="i-close" viewBox="0 0 16 16" aria-hidden="true" focusable="false"
+					><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+					></path></svg
+				>
+				<span class="i-expand">Expand</span><span class="i-close">Close</span>
+			</button>
+		</span>
+	</div>
+
+	<pre class="demo-screen" data-demo-screen aria-hidden="true" hidden></pre>
+
+	<pre class="demo-transcript" data-demo-transcript aria-label={`${title} transcript`} set:html={transcript(events)} />
+
+	<div class="demo-progress" data-demo-progress hidden aria-hidden="true"><span></span></div>
+</div>

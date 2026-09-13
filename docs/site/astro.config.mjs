@@ -62,5 +62,11 @@ export default defineConfig({
   ],
   vite: {
     plugins: [tailwindcss()],
+    server: {
+      // The recorded runs live in demo/, outside this site's root, because the
+      // recorder writes them and the repository's own build reads them. A
+      // second copy under src/ is the thing that would go stale.
+      fs: { allow: ['../..'] },
+    },
   },
 });

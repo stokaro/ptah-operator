@@ -16,6 +16,23 @@ npm run check:values
 page from `charts/ptah-operator/values.yaml`, which is where those values are
 declared.
 
+## The recorded runs
+
+`/demo/` and a page per run are built from `demo/recordings/runs.json`, which
+[`demo/`](../../demo/README.md) writes by running each scenario against a live
+cluster. The site renders every run as a transcript in the markup and ships
+`public/demo/player.js`, which replays the same events; both read
+`public/demo/transcript.mjs`, so the printed session and the played one cannot
+differ.
+
+```sh
+npm run check:demo         # the recording matches the scenarios, and every check held
+npm run check:demo-page    # both pages in a browser, with and without the player
+```
+
+The browser check needs Playwright's chromium. Without it the check says what to
+install and skips; under `CI=1` it fails instead.
+
 ## Versions
 
 One directory per operator version, each built from that version's own

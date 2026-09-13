@@ -13,6 +13,11 @@ REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
 .PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build e2e-static e2e
 
+# A second declaration rather than a longer first one: the lifecycle targets
+# above are audited as one line, and appending to it is a change to that audit
+# for the sake of a demonstration.
+.PHONY: demo demo-up demo-record demo-serve demo-test demo-down
+
 all: verify build
 
 build:
@@ -133,3 +138,53 @@ e2e-static:
 
 e2e:
 	DOCKER_CONTEXT="$(DOCKER_CONTEXT)" ./hack/e2e-kind.sh
+
+# ---------------------------------------------------------------------------
+# The demonstration lab.
+#
+# demo/ holds three parts: the scenarios, the recorder that runs them against a
+# live cluster, and the player on the documentation site. `demo` does the whole
+# round trip; the targets under it are the steps, so a scenario can be
+# re-recorded without rebuilding the cluster.
+#
+# The lab is the end-to-end harness stopped after its bootstrap. There is no
+# second cluster, no second chart install and no second set of pinned images:
+# what the suite proves is what the demonstration runs on.
+
+DEMO_ENVIRONMENT := demo/.lab/environment
+DEMO_KUBERNETES_VERSION ?= 1.37.0
+DEMO_RUN_ID ?= demo
+
+demo: demo-up demo-record
+	@printf 'demo: recorded. Read it with: make demo-serve\n'
+
+# The bootstrap is skipped when a lab is already up; the namespace fixtures are
+# applied either way, because they are idempotent and because a lab that was
+# brought up before a fixture changed would otherwise keep the old one. Both
+# decisions live in demo/bin/lab, where the shell they need is shell.
+demo-up:
+	LAB_ENVIRONMENT="$(CURDIR)/$(DEMO_ENVIRONMENT)" \
+	LAB_KUBERNETES_VERSION="$(DEMO_KUBERNETES_VERSION)" \
+	LAB_RUN_ID="$(DEMO_RUN_ID)" \
+	DOCKER_CONTEXT="$(DOCKER_CONTEXT)" \
+		./demo/bin/lab up
+
+demo-record:
+	$(GO) run ./demo/cmd/record -root .
+
+demo-serve:
+	cd docs/site && npm ci && npm run dev
+
+# What runs without a cluster: the scenarios parse and state an expectation for
+# every step, the recorder's own units, and the site builds from the recording
+# that is committed.
+demo-test:
+	$(GO) test ./demo/...
+	$(GO) run ./demo/cmd/record -root . -check
+	cd docs/site && npm ci && \
+		npm run check:demo:selftest && npm run check:demo-page:selftest && \
+		npm run check:demo && npm run build && \
+		npm run check:links && npm run check:navigation && npm run check:demo-page
+
+demo-down:
+	LAB_ENVIRONMENT="$(CURDIR)/$(DEMO_ENVIRONMENT)" ./demo/bin/lab down

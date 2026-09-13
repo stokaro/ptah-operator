@@ -1,4 +1,17 @@
-# Ptah Operator
+<p align="center"><img src="docs/site/src/assets/logo.svg" alt="The Ptah mark: an amber capstone above two sky-blue courses on a dark rounded square" width="72" height="72"></p>
+
+<h1 align="center">Ptah Operator</h1>
+
+<p align="center">A Kubernetes control plane that converges PostgreSQL and MySQL schemas from immutable OCI artifacts.</p>
+
+<p align="center">
+  <a href="https://github.com/stokaro/ptah-operator/actions/workflows/ci.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/ci.yml?branch=master&label=ci&logo=github" alt="Status of the CI workflow on the master branch, which verifies the source, runs the race detector and drives the full Kubernetes lifecycle"></a>
+  <a href="https://github.com/stokaro/ptah-operator/actions/workflows/demo.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/demo.yml?branch=master&label=demonstration&logo=github" alt="Status of the weekly demonstration workflow on the master branch, which re-records every scenario against a real cluster"></a>
+  <a href="https://github.com/stokaro/ptah-operator/actions/workflows/docs.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/docs.yml?branch=master&label=docs&logo=github" alt="Status of the documentation workflow on the master branch"></a>
+  <a href="https://github.com/stokaro/ptah-operator/blob/master/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/stokaro/ptah-operator?label=go&logo=go&logoColor=white" alt="The Go version declared in go.mod"></a>
+</p>
+
+<p align="center"><a href="https://operator.ptah.run/edge/start/install/">Install</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">First schema</a> · <a href="https://operator.ptah.run/demo/">Recorded runs</a> · <a href="https://operator.ptah.run/">Documentation</a> · <a href="https://docs.ptah.run/compatibility/operator/">Ptah compatibility</a></p>
 
 Ptah Operator is a Kubernetes-native control plane for continuously converging
 PostgreSQL and MySQL schemas from immutable OCI artifacts. Database work runs
@@ -50,6 +63,24 @@ cd docs/site && npm ci && npm run build
 ```
 
 builds it from this checkout.
+
+## See it run
+
+[Recorded runs](https://operator.ptah.run/demo/) are terminal sessions captured
+while the operator ran against a real cluster: applying a schema, changing it,
+approving a plan, refusing a destructive change, closing drift, failing and
+recovering. Each one is checked while it is recorded -- the conditions the
+session claims are read off the live objects -- and published only if every
+check held.
+
+The `demonstration` badge above is the weekly re-recording on `master`, not the
+sessions the site plays. Green means every scenario still holds against a cluster built from
+`master`; what a reader watches is the recording committed in
+`demo/recordings/runs.json`, which changes only when somebody records it. A red
+badge is therefore a demonstration that has stopped being true, which is worth
+knowing before somebody reads it as current.
+
+[`demo/`](demo/README.md) is how it is built and how to run it yourself.
 
 ## Documentation
 

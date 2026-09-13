@@ -1,0 +1,84 @@
+id: failure-recovery
+title: Fail, then recover
+tagline: Point it at a database that is not there. It says so, keeps trying, and converges when it is.
+learn: What a failure looks like in the status, and that recovery needs no intervention beyond the fix.
+tags: [Operations]
+
+reset:
+  - demo/bin/lab reset
+  - demo/bin/lab publish v1 > demo/.lab/digest
+  - kubectl -n "$NAMESPACE" delete secret demo-database-broken --ignore-not-found
+  - kubectl -n "$NAMESPACE" create secret generic demo-database-broken --from-literal=url='postgres://nobody:nobody@no-such-database.demo.svc.cluster.local:5432/storefront?sslmode=disable' 
+
+steps:
+  - note: The same resource, pointed at a database that does not answer.
+    run: |
+      demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" \
+        | sed 's/name: demo-database/name: demo-database-broken/' \
+        | kubectl apply -f -
+    sync: applying
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: It reports the database as unreachable, with a reason a machine can read.
+    await:
+      kind: ptahschema
+      name: storefront
+      timeout: 6m
+      generation: current
+      condition:
+        type: ReconciliationFailed
+        status: "True"
+        reason: OperationFailed
+    run: |
+      kubectl -n "$NAMESPACE" get ptahschema storefront -o json \
+        | jq -r '.status.phase, (.status.conditions[] | select(.type == "ReconciliationFailed") | .message)'
+    sync: failed
+    expect:
+      exit: 0
+      stdout_contains: [Failed]
+
+  - note: A failure is an event too, so it is in the record rather than only in a log.
+    run: kubectl -n "$NAMESPACE" get events --field-selector involvedObject.name=storefront --sort-by=.lastTimestamp | tail -5
+    expect:
+      exit: 0
+      stdout_contains: [storefront]
+
+  - note: No credential in any of it. This is the whole status the operator wrote.
+    run: kubectl -n "$NAMESPACE" get ptahschema storefront -o json | jq -r '.status | tostring' | head -c 400
+    expect:
+      exit: 0
+      stdout_absent: ["nobody:nobody"]
+
+  - note: Now fix the one thing that was wrong.
+    run: |
+      kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge \
+        -p '{"spec":{"target":{"urlFrom":{"name":"demo-database","key":"url"}}}}'
+    sync: applying
+    expect:
+      exit: 0
+      stdout_contains: [patched]
+
+  - note: It retries on its own interval and converges. Nothing was restarted by hand.
+    await:
+      kind: ptahschema
+      name: storefront
+      timeout: 6m
+      generation: current
+      condition:
+        type: InSync
+        status: "True"
+        reason: ScopedConverged
+    run: demo/bin/lab psql "\dt"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [customers]
+      resource:
+        kind: ptahschema
+        name: storefront
+        condition:
+          type: ReconciliationFailed
+          status: "False"
+          reason: Succeeded

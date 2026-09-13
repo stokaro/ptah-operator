@@ -18,7 +18,11 @@
     "values:write": "node scripts/build-values-reference.mjs --write",
     "check:values": "node scripts/build-values-reference.mjs",
     "check:values:selftest": "node scripts/build-values-reference.mjs --selftest",
-    "check:gen-versions:selftest": "node scripts/gen-versions.mjs --selftest"
+    "check:gen-versions:selftest": "node scripts/gen-versions.mjs --selftest",
+    "check:demo": "node scripts/check-demo.mjs",
+    "check:demo:selftest": "node scripts/check-demo.mjs --selftest",
+    "check:demo-page": "node scripts/check-demo-page.mjs",
+    "check:demo-page:selftest": "node scripts/check-demo-page.mjs --selftest"
   },
   "dependencies": {
     "@astrojs/starlight": "0.42.0",
@@ -27,5 +31,8 @@
     "astro": "7.3.1",
     "sharp": "^0.35.0",
     "tailwindcss": "4.3.3"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
   }
 }
