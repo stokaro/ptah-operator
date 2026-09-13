@@ -849,6 +849,15 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The platforms the build configuration declares, which is what the
+	// release is checked against.
+	assets, err := clientAssets(root)
+	if err != nil {
+		t.Fatalf("read the client assets: %v", err)
+	}
+	if len(assets) == 0 {
+		t.Fatal("the build configuration declares no client binary, so this measured nothing")
+	}
 	directory := t.TempDir()
 	chartName := "ptah-operator-0.1.0.tgz"
 	chartPath := filepath.Join(directory, chartName)
@@ -871,7 +880,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		"support-evidence-run-id=456\n"+
 		"kubernetes-support-window=%s\n",
 		repositoryName, tag, sourceSHA, imageName, digest, imageName, sourceSHA, chartName, chartSum,
-		strings.Join(clientAssets, ","), supportWindow)
+		strings.Join(assets, ","), supportWindow)
 	manifestPath := filepath.Join(directory, "release-manifest.txt")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
@@ -881,7 +890,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 	// covers each one and matches the file that would be uploaded.
 	checksums := fmt.Sprintf("%s  %s\n%x  release-manifest.txt\n",
 		chartSum, chartName, sha256.Sum256([]byte(manifest)))
-	for _, asset := range clientAssets {
+	for _, asset := range assets {
 		binary := []byte("binary bytes of " + asset)
 		if err := os.WriteFile(filepath.Join(directory, asset), binary, 0o600); err != nil {
 			t.Fatal(err)
@@ -901,7 +910,7 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		"missing support run":  strings.Replace(manifest, "support-evidence-run-id=456\n", "", 1),
 		"extra manifest field": manifest + "unexpected=value\n",
 		"a client asset nobody built": strings.Replace(manifest,
-			"client-assets="+strings.Join(clientAssets, ","),
+			"client-assets="+strings.Join(assets, ","),
 			"client-assets=kubectl-ptah-plan9-386", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -964,5 +973,88 @@ func TestVerifyPreparedJournal(t *testing.T) {
 	}
 	if err := verifyPreparedJournal(path, tag, sourceSHA); err == nil {
 		t.Fatal("verifyPreparedJournal() accepted final evidence in the intent-only journal")
+	}
+}
+
+// The published asset names come from the build configuration, so the workflow
+// and the manifest cannot name a platform nobody builds -- or miss one.
+func TestClientAssetsComeFromTheBuildConfiguration(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join("..", "..")
+
+	assets, err := clientAssets(root)
+	if err != nil {
+		t.Fatalf("clientAssets() error = %v", err)
+	}
+
+	workflow, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, asset := range assets {
+		// Uploaded, checksummed and attested: the three places a missing name
+		// would leave a release that is short one file and says nothing.
+		if bytes.Count(workflow, []byte(asset)) < 3 {
+			t.Fatalf("the release workflow mentions %s fewer than three times", asset)
+		}
+	}
+	if !bytes.Contains(workflow, []byte("goreleaser/goreleaser-action@")) {
+		t.Fatal("the release workflow does not build the client with goreleaser")
+	}
+}
+
+// A configuration this program cannot read is refused rather than guessed at.
+func TestClientAssetsFailurePath(t *testing.T) {
+	t.Parallel()
+	sound, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		mutate  func(string) string
+		problem string
+	}{
+		{
+			name:    "another output directory",
+			mutate:  func(s string) string { return strings.Replace(s, "dist: dist/client", "dist: dist", 1) },
+			problem: "the release moves the binaries out of",
+		},
+		{
+			name: "another binary name",
+			mutate: func(s string) string {
+				return strings.Replace(s, "binary: kubectl-ptah-{{ .Os }}-{{ .Arch }}", "binary: kubectl-ptah", 1)
+			},
+			problem: "names its binary",
+		},
+		{
+			name: "a directory per target",
+			mutate: func(s string) string {
+				return strings.Replace(s, "no_unique_dist_dir: true", "no_unique_dist_dir: false", 1)
+			},
+			problem: "keeps a directory per target",
+		},
+		{
+			name:    "another build",
+			mutate:  func(s string) string { return strings.Replace(s, "id: kubectl-ptah", "id: something-else", 1) },
+			problem: "no kubectl-ptah build",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, ".goreleaser.yaml"), []byte(test.mutate(string(sound))), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := clientAssets(root)
+			if err == nil {
+				t.Fatalf("clientAssets() accepted %s", test.name)
+			}
+			if !strings.Contains(err.Error(), test.problem) {
+				t.Fatalf("clientAssets() said %q, which does not carry %q", err, test.problem)
+			}
+		})
 	}
 }

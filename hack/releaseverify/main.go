@@ -48,9 +48,8 @@ var (
 		"publish/immutability-preflight":     "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
 		"publish/draft":                      "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
 		"publish/stage-inspect":              "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
-		"publish/client":                     "f33d569e4834bddceadfc9b53c9ad0c37d1e496a09ba3c858ebf185983cc3dcf",
 		"publish/chart-package":              "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8",
-		"publish/artifacts":                  "55c5b42a0d66539a346a198a574e59350b4d6f0ec79ff2568043b78737ff1242",
+		"publish/artifacts":                  "3b684e7422b28920bf2253a99ffef11dd106b77e4c5c0fe683486b3988bea82b",
 		"publish/image-structure":            "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
 		"publish/finalize-journal":           "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
 		"publish/asset-auth":                 "e1c7c1e7eefef128a64a883a73c56dab37d8f1dd24436daa84b7a077896ea8ee",
@@ -1922,6 +1921,7 @@ func verifyWorkflowSemantics(document []byte) error {
 			"journal-attestation": "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"build-checkpoint":    "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"asset-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
+			"client":              "goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94",
 			"image-attestation":   "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
 			"setup-cosign":        "sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6",
 		}); err != nil {
@@ -2303,16 +2303,76 @@ func requireRunBindings(steps map[string]workflowStep, id string, bindings ...st
 	return nil
 }
 
-// clientAssets are the kubectl plugin binaries a release publishes.
+// clientBinaryTemplate is the only name shape this reads.
+//
+// GoReleaser renders a binary name from a template, and the release manifest,
+// SHA256SUMS, the attestation and the upload all carry the rendered name. One
+// shape, checked, is what lets this derive those names instead of holding a
+// second list beside the build configuration.
+const (
+	clientBuildID        = "kubectl-ptah"
+	clientBinaryTemplate = "kubectl-ptah-{{ .Os }}-{{ .Arch }}"
+	clientDistDirectory  = "dist/client"
+)
+
+// clientAssets returns the plugin binaries a release publishes, read from the
+// build configuration.
 //
 // The operator is installed by a chart and the plugin is installed by a person,
 // so the plugin ships as a file per client platform rather than inside the
-// image. The order here is the order SHA256SUMS lists them in.
-var clientAssets = []string{
-	"kubectl-ptah-darwin-amd64",
-	"kubectl-ptah-darwin-arm64",
-	"kubectl-ptah-linux-amd64",
-	"kubectl-ptah-linux-arm64",
+// image. Which platforms is .goreleaser.yaml's answer; this program checks the
+// release against it rather than against a list of its own, which would be one
+// more place to forget.
+func clientAssets(root string) ([]string, error) {
+	document, err := os.ReadFile(filepath.Join(root, ".goreleaser.yaml"))
+	if err != nil {
+		return nil, fmt.Errorf("read the build configuration: %w", err)
+	}
+	var config struct {
+		Dist   string `yaml:"dist"`
+		Builds []struct {
+			ID              string   `yaml:"id"`
+			Binary          string   `yaml:"binary"`
+			GOOS            []string `yaml:"goos"`
+			GOARCH          []string `yaml:"goarch"`
+			NoUniqueDistDir bool     `yaml:"no_unique_dist_dir"`
+		} `yaml:"builds"`
+	}
+	if err := yaml.Unmarshal(document, &config); err != nil {
+		return nil, fmt.Errorf("parse the build configuration: %w", err)
+	}
+	if config.Dist != clientDistDirectory {
+		return nil, fmt.Errorf(
+			"the build configuration writes to %q, and the release moves the binaries out of %q",
+			config.Dist, clientDistDirectory)
+	}
+	for _, build := range config.Builds {
+		if build.ID != clientBuildID {
+			continue
+		}
+		if build.Binary != clientBinaryTemplate {
+			return nil, fmt.Errorf(
+				"the %s build names its binary %q, and the release publishes %q",
+				clientBuildID, build.Binary, clientBinaryTemplate)
+		}
+		if !build.NoUniqueDistDir {
+			return nil, fmt.Errorf(
+				"the %s build keeps a directory per target, and the release moves four files out of one",
+				clientBuildID)
+		}
+		if len(build.GOOS) == 0 || len(build.GOARCH) == 0 {
+			return nil, fmt.Errorf("the %s build names no platform", clientBuildID)
+		}
+		var assets []string
+		for _, operatingSystem := range build.GOOS {
+			for _, architecture := range build.GOARCH {
+				assets = append(assets, fmt.Sprintf("kubectl-ptah-%s-%s", operatingSystem, architecture))
+			}
+		}
+		sort.Strings(assets)
+		return assets, nil
+	}
+	return nil, fmt.Errorf("the build configuration has no %s build", clientBuildID)
 }
 
 func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA string) error {
@@ -2320,7 +2380,11 @@ func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sour
 	if err != nil {
 		return err
 	}
-	manifest, fields, err := parseReleaseManifest(manifestPath, tag, sourceSHA, supportWindow)
+	assets, err := clientAssets(root)
+	if err != nil {
+		return err
+	}
+	manifest, fields, err := parseReleaseManifest(manifestPath, tag, sourceSHA, supportWindow, assets)
 	if err != nil {
 		return err
 	}
@@ -2351,7 +2415,7 @@ func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sour
 	// Every client binary, digested from the file that will be uploaded. A
 	// checksum file that named one and shipped another would be a checksum file
 	// nobody could use.
-	for _, asset := range clientAssets {
+	for _, asset := range assets {
 		binary, err := os.ReadFile(filepath.Join(filepath.Dir(checksumsPath), asset))
 		if err != nil {
 			return fmt.Errorf("read client asset: %w", err)
@@ -2407,7 +2471,7 @@ func verifyPreparedJournal(path, tag, sourceSHA string) error {
 	return nil
 }
 
-func parseReleaseManifest(path, tag, sourceSHA, supportWindow string) ([]byte, map[string]string, error) {
+func parseReleaseManifest(path, tag, sourceSHA, supportWindow string, clientAssets []string) ([]byte, map[string]string, error) {
 	if !commitPattern.MatchString(sourceSHA) {
 		return nil, nil, fmt.Errorf("source SHA %q is not a full lowercase commit SHA", sourceSHA)
 	}

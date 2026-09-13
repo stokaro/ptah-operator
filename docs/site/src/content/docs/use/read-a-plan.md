@@ -21,7 +21,7 @@ kubectl ptah plan storefront -n application
 `kubectl <verb>`, so installing the plugin is putting one file there.
 
 Each release publishes a binary for the supported client platforms and a
-`checksums.txt` beside them:
+`SHA256SUMS` beside them:
 
 ```sh
 version=<release tag>
@@ -29,8 +29,8 @@ platform=darwin-arm64   # or linux-amd64, linux-arm64, darwin-amd64
 base=https://github.com/stokaro/ptah-operator/releases/download/$version
 
 curl -fsSLO "$base/kubectl-ptah-$platform"
-curl -fsSLO "$base/checksums.txt"
-shasum -a 256 --check --ignore-missing checksums.txt
+curl -fsSLO "$base/SHA256SUMS"
+shasum -a 256 --check --ignore-missing SHA256SUMS
 
 install -m 0755 "kubectl-ptah-$platform" /usr/local/bin/kubectl-ptah
 kubectl ptah --version

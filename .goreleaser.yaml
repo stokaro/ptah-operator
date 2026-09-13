@@ -1,0 +1,39 @@
+# The client binary a person installs, built the way ptah.run builds its own.
+#
+# Only the plugin is built here. The operator ships as a container image the
+# release workflow builds and signs, and the chart as a package that workflow
+# produces reproducibly; neither is a file a reader downloads and runs.
+#
+# This config builds and nothing else. Publication stays in the release
+# transaction, which checksums, attests and uploads the exact files this
+# produces -- a second publisher would leave a release whose asset set nothing
+# checked.
+version: 2
+
+project_name: ptah-operator
+
+# Beside the release transaction's own artifacts rather than over them: the
+# journal and the packaged chart are already in dist/ by the time this runs.
+dist: dist/client
+
+builds:
+  - id: kubectl-ptah
+    main: ./cmd/kubectl-ptah
+    # The name a reader downloads, and the name the release manifest,
+    # SHA256SUMS and the attestation all carry. no_unique_dist_dir keeps the
+    # four files side by side instead of one per target directory.
+    binary: kubectl-ptah-{{ .Os }}-{{ .Arch }}
+    no_unique_dist_dir: true
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version=v{{ .Version }}
