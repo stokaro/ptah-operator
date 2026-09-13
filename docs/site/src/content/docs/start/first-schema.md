@@ -39,3 +39,61 @@ What the schema reports while it converges is
 [the status progression](../use/operations.md#normal-status-progression), and
 what each reason means is
 [condition reasons](../troubleshoot/condition-reasons.md).
+
+## It stops, and waits for you
+
+The example sets `apply: OnApproval`, which is also the default. The operator
+resolves the artifact, observes the database and publishes a plan, and then
+stops: `ApprovalRequired` becomes `True` and the phase is `AwaitingApproval`.
+Nothing has run against the database yet.
+
+Read the plan before approving it. The SQL is in controller-owned ConfigMaps
+rather than in the status, so this reads the first chunk of the current plan:
+
+```sh
+PLAN=$(kubectl -n application get ptahschema application -o jsonpath='{.status.plan.name}')
+CHUNK=$(kubectl -n application get ptahschemaplan "$PLAN" -o jsonpath='{.spec.chunks[0].name}')
+kubectl -n application get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
+  | base64 -d | jq -r '.statements[] | "\(.severity)\t\(.sql)"'
+```
+
+An approval names the schema, the plan and that plan's fingerprint. Everything
+else on it is stamped by the admission webhook from the plan being approved,
+which is why this creates it from what the API server already holds rather than
+from values copied by hand:
+
+```sh
+kubectl -n application get ptahschema application -o json > schema.json
+kubectl -n application get ptahschemaplan \
+  "$(jq -r .status.plan.name schema.json)" -o json > plan.json
+jq -n --slurpfile schema schema.json --slurpfile plan plan.json '
+  {
+    apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchemaApproval",
+    metadata: {name: "application-first"},
+    spec: {
+      schemaRef: {name: $schema[0].metadata.name, uid: $schema[0].metadata.uid},
+      planRef:   {name: $plan[0].metadata.name,   uid: $plan[0].metadata.uid},
+      planFingerprint: $plan[0].spec.fingerprint
+    }
+  }' | kubectl -n application create -f -
+```
+
+Creating it requires a binding that grants the approval verbs;
+`examples/approver-plan-reader-role.yaml` is the reader half and
+[exact-plan approvals](../use/approvals.md) is why the binding is separate from
+the one that writes the desired state.
+
+With the decision recorded the plan runs, and convergence is proved by a second
+observation rather than by the Job finishing:
+
+```sh
+kubectl -n application get ptahschema application \
+  -o jsonpath='{range .status.conditions[*]}{.type}{"\t"}{.status}{"\t"}{.reason}{"\n"}{end}'
+```
+
+`InSync=True` with reason `ScopedConverged` is the end of it. `Applying=False`
+with reason `JobCompleted` beside it is the distinction worth reading twice: the
+Job finished, and that is not the same claim.
+
+Watch the whole sequence, including this one, in
+[the recorded runs](../../demo/).

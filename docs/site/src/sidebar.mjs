@@ -12,6 +12,7 @@ export const sidebar = [
     label: 'Start',
     items: [
       { label: 'Overview', link: '/' },
+      { label: 'Try it locally', link: '/start/try-it/' },
       { label: 'Install', link: '/start/install/' },
       { label: 'First schema', link: '/start/first-schema/' },
     ],
