@@ -10,7 +10,10 @@ permissions:
 
 concurrency:
   group: docs-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Same rule as ci.yml: a superseded pull-request run goes, a master commit
+  # keeps its own verdict. This job is short enough that a merge rarely catches
+  # it, which makes the loss rarer rather than different.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GOFLAGS: -mod=readonly

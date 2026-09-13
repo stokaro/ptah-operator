@@ -71,7 +71,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "54b23c45302ce86c581f9f646f544c725def687129c1169bbad751c059ba09c3"
+	ciWorkflowSHA256                = "38e9d983cde6189c499d523182b982352afd9b4fd74a05e00653ea7a817ad6e1"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -565,11 +565,37 @@ func verifyWorkflow(path string) error {
 	return verifyAuditedWorkflowDigest(path, contents, ciWorkflowSHA256)
 }
 
+// ciCancelInProgressExpression cancels a superseded pull-request run and leaves
+// a push to master alone. It is matched exactly: any other expression is an
+// unreviewed rule about which commits get a verdict.
+const ciCancelInProgressExpression = "${{ github.event_name == 'pull_request' }}"
+
+// ciCancelsSupersededPullRequests accepts the two spellings that cancel a
+// superseded pull-request run: the literal true, which cancels on every ref,
+// and the audited expression, which cancels only on a pull request. Everything
+// else is refused. `false` leaves a stale run racing the new one, and any other
+// expression decides, without review, which commits reach a verdict at all.
+func ciCancelsSupersededPullRequests(node yaml.Node) bool {
+	if node.Kind != yaml.ScalarNode {
+		return false
+	}
+	switch node.Tag {
+	case "!!bool":
+		return node.Value == "true"
+	case "!!str":
+		return node.Value == ciCancelInProgressExpression
+	default:
+		return false
+	}
+}
+
 func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents []byte) error {
-	cancelInProgress := workflow.Concurrency.CancelInProgress
 	if workflow.Concurrency.Group != "ci-${{ github.workflow }}-${{ github.ref }}" ||
-		cancelInProgress.Kind != yaml.ScalarNode || cancelInProgress.Tag != "!!bool" || cancelInProgress.Value != "true" {
-		return fmt.Errorf("%s: CI must cancel superseded runs of the same workflow and ref", path)
+		!ciCancelsSupersededPullRequests(workflow.Concurrency.CancelInProgress) {
+		return fmt.Errorf(
+			"%s: CI must cancel a superseded pull-request run, and must not let a later merge cancel a master commit's verdict",
+			path,
+		)
 	}
 	required := []string{
 		"go run ./hack/verify-kubernetes-support.go -output=matrix",
