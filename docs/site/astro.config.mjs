@@ -5,6 +5,8 @@ import tailwindcss from '@tailwindcss/vite';
 
 import { sidebar } from './src/sidebar.mjs';
 import { Origin, BasePath } from './src/lib/docs-origin.mjs';
+import { satteri } from '@astrojs/markdown-satteri';
+import markdownHeadingIds from './src/lib/markdown-heading-ids.mjs';
 
 // The version this build documents, and the revision it was built from. Both
 // come from the publishing workflow rather than from this file: a release is
@@ -16,6 +18,13 @@ const DOCS_SOURCE_REF = process.env.DOCS_SOURCE_REF || 'master';
 export default defineConfig({
   site: Origin,
   base: BasePath(DOCS_VERSION),
+  markdown: {
+    // Astro 7 renders Markdown through Satteri, which slugs a heading from
+    // its text and has no syntax for an author-chosen id. This plugin reads a
+    // trailing `{#id}` and sets the id Satteri then honours, so a question
+    // can be reworded without breaking a link somebody shared.
+    processor: satteri({ hastPlugins: [markdownHeadingIds()] }),
+  },
   integrations: [
     starlight({
       // The product, without the version. Starlight appends the site title to

@@ -9,6 +9,8 @@
     "preview": "astro preview",
     "check:links": "node scripts/check-links.mjs",
     "check:links:selftest": "node scripts/check-links.mjs --selftest",
+    "check:heading-anchors": "node scripts/check-heading-anchors.mjs",
+    "check:heading-anchors:selftest": "node scripts/check-heading-anchors.mjs --selftest",
     "check:versions": "node scripts/check-versions.mjs",
     "check:versions:selftest": "node scripts/check-versions.mjs --selftest",
     "check:build-info": "node scripts/check-build-info.mjs",
@@ -25,6 +27,7 @@
     "check:demo-page:selftest": "node scripts/check-demo-page.mjs --selftest"
   },
   "dependencies": {
+    "@astrojs/markdown-satteri": "0.4.1",
     "@astrojs/starlight": "0.42.0",
     "@astrojs/starlight-tailwind": "5.0.0",
     "@tailwindcss/vite": "4.3.3",
