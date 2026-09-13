@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stokaro/ptah-operator/hack/releasecontract"
 	"gopkg.in/yaml.v3"
 )
 
@@ -71,10 +72,8 @@ const (
 	buildkitImage              = "moby/buildkit:v0.32.2@sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8"
 	sbomDigest                 = "sha256:ae4f3b554449e7e25548e7d8ccc029d17357348e30c6e3df01b92bc93654d6a9"
 	sbomGenerator              = "docker.io/docker/buildkit-syft-scanner:stable-1@" + sbomDigest
-	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "c6c197e1f2d1dbfa13a3df874fadd8df1992bbac24d82df10064064a5f2da239"
 )
 
 func main() {
@@ -2164,7 +2163,7 @@ func verifyWorkflowSemantics(document []byte) error {
 
 func verifyWorkflowDigest(document []byte) error {
 	actualDigest := fmt.Sprintf("%x", sha256.Sum256(document))
-	if actualDigest != releaseWorkflowSHA256 {
+	if actualDigest != releasecontract.WorkflowSHA256 {
 		return fmt.Errorf("release workflow digest %s differs from the audited contract", actualDigest)
 	}
 	return nil

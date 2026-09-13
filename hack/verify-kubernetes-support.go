@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stokaro/ptah-operator/hack/releasecontract"
 	"gopkg.in/yaml.v3"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -72,7 +73,6 @@ const (
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
 	ciWorkflowSHA256                = "2139f5cc6b749da6d281b159bd3e77f068dae3f9ed878fb8f8c9f1ac3832ada4"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
-	releaseWorkflowSHA256           = "cb548f744819a0f8196e2056d7d581a284e754bd4319de17c6c0af9fd1eb4f78"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
 	releaseChartExportRunSHA256     = "a34800805204a2caa071d03939f9337f3472028ecb8b9c11ed26723294eb8082"
@@ -1363,7 +1363,7 @@ func verifyReleaseWorkflow(path string) error {
 			return fmt.Errorf("%s: immutable release manifest is missing support evidence binding %q", path, marker)
 		}
 	}
-	return verifyAuditedWorkflowDigest(path, contents, releaseWorkflowSHA256)
+	return verifyAuditedWorkflowDigest(path, contents, releasecontract.WorkflowSHA256)
 }
 
 type workflowDocument struct {

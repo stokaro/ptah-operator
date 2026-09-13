@@ -5473,12 +5473,24 @@ else
 	}
 fi
 
+# The versions the CRDs must carry are the ones the Makefile stamps them with,
+# read rather than restated: a number written here again is a number that stops
+# agreeing with the stamp the moment either one moves.
+EXPECTED_CRD_SCHEMA_VERSION=$(sed -n 's/^CRD_SCHEMA_VERSION := //p' "$ROOT_DIR/Makefile")
+EXPECTED_CONTROLLER_STATE_VERSION=$(sed -n 's/^CONTROLLER_STATE_VERSION := //p' "$ROOT_DIR/Makefile")
+case "$EXPECTED_CRD_SCHEMA_VERSION$EXPECTED_CONTROLLER_STATE_VERSION" in
+'' | *[!0-9]*)
+	printf '%s\n' 'e2e static: the Makefile does not declare both stamped versions as numbers' >&2
+	exit 1
+	;;
+esac
+
 for crd_file in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	crd_basename=${crd_file##*/}
 	cmp "$crd_file" "$ROOT_DIR/charts/ptah-operator/crds/$crd_basename"
 	cmp "$crd_file" "$ROOT_DIR/internal/crdupgrade/assets/$crd_basename"
-	[ "$(grep -Fc 'operator.ptah.dev/controller-state-version: "1"' "$crd_file")" -eq 1 ]
-	[ "$(grep -Fc 'operator.ptah.dev/crd-schema-version: "1"' "$crd_file")" -eq 1 ]
+	[ "$(grep -Fc "operator.ptah.dev/controller-state-version: \"$EXPECTED_CONTROLLER_STATE_VERSION\"" "$crd_file")" -eq 1 ]
+	[ "$(grep -Fc "operator.ptah.dev/crd-schema-version: \"$EXPECTED_CRD_SCHEMA_VERSION\"" "$crd_file")" -eq 1 ]
 	[ "$(grep -Ec 'operator[.]ptah[.]dev/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
 done
 [ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 3 ]
@@ -5493,8 +5505,11 @@ for crd_directory in \
 		exit 1
 	fi
 done
-grep -F 'CRD_SCHEMA_VERSION := 1' "$ROOT_DIR/Makefile" >/dev/null
-grep -F 'CONTROLLER_STATE_VERSION := 1' "$ROOT_DIR/Makefile" >/dev/null
+# Declared, and a number. Not a particular number: the values move when a CRD
+# schema or the controller state contract moves, and the stamp above already
+# holds the generated files to whatever the Makefile says.
+grep -Eq '^CRD_SCHEMA_VERSION := [0-9]+$' "$ROOT_DIR/Makefile"
+grep -Eq '^CONTROLLER_STATE_VERSION := [0-9]+$' "$ROOT_DIR/Makefile"
 # shellcheck disable=SC2016 # Match the literal deterministic-mode command in the generator.
 grep -F 'chmod 0644 "$STAMP_TEMP"' "$ROOT_DIR/hack/stamp-crd-schema-version.sh" >/dev/null
 grep -F 'ComputeSchemaDigest(crd)' "$ROOT_DIR/hack/crdschemadigest/main.go" >/dev/null
