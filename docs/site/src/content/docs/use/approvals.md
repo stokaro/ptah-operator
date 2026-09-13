@@ -36,7 +36,8 @@ can read every ConfigMap in an application namespace is easier to operate but
 also exposes unrelated configuration.
 
 Once the access is granted, read the plan with
-[`kubectl ptah`](../read-a-plan/):
+[`kubectl ptah`](../read-a-plan/), which is a plugin the reviewer
+[installs once](../read-a-plan/#install):
 
 ```sh
 kubectl ptah plan application --current -n application

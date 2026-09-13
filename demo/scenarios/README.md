@@ -139,4 +139,6 @@ A `reset` block is not published and is not held to this: it is the
 preparation, and it may use the lab's scripts freely.
 
 The commands themselves are `kubectl`, `ptah` and `kubectl-ptah`, which the lab
-puts on `PATH` before a step runs. A step never installs one.
+puts on `PATH` before a step runs. A step never installs one; a reader installs
+`kubectl-ptah` from a release, which
+[Read a plan](https://operator.ptah.run/edge/use/read-a-plan/#install) carries.

@@ -36,9 +36,9 @@ and update the schema reference; delete-and-recreate is intentionally not
 treated as the same policy.
 
 What the schema reports while it converges is
-[the status progression](../use/operations.md#normal-status-progression), and
+[the status progression](../../use/operations/#normal-status-progression), and
 what each reason means is
-[condition reasons](../troubleshoot/condition-reasons.md).
+[condition reasons](../../troubleshoot/condition-reasons/).
 
 ## It stops, and waits for you
 
@@ -49,7 +49,8 @@ Nothing has run against the database yet.
 
 Read the plan before approving it. The SQL is in controller-owned ConfigMaps
 rather than in the status, and [`kubectl ptah`](../../use/read-a-plan/) reads it
-back the way the operator does:
+back the way the operator does. It is a plugin you
+[install once](../../use/read-a-plan/#install):
 
 ```sh
 kubectl ptah plan application -n application
@@ -87,7 +88,7 @@ jq -n --slurpfile schema schema.json --slurpfile plan plan.json '
 
 Creating it requires a binding that grants the approval verbs;
 `examples/approver-plan-reader-role.yaml` is the reader half and
-[exact-plan approvals](../use/approvals.md) is why the binding is separate from
+[exact-plan approvals](../../use/approvals/) is why the binding is separate from
 the one that writes the desired state.
 
 With the decision recorded the plan runs, and convergence is proved by a second

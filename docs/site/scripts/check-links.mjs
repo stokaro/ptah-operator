@@ -6,7 +6,7 @@
 // and a page that moved all look fine in the source and land on a 404.
 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -26,10 +26,39 @@ export function htmlFiles(root) {
 }
 
 // internalLinks returns the hrefs a reader can follow inside this build.
+//
+// Relative ones count. A page is served from a directory, so `../read-a-plan/`
+// is an ordinary link a reader follows and an ordinary link an edit can break;
+// reading only the site-absolute ones left every relative link unchecked.
 export function internalLinks(html) {
   return distinct([...html.matchAll(/href="([^"]+)"/g)].map((match) => match[1]))
-    .filter((href) => href.startsWith('/'))
-    .filter((href) => !href.startsWith('//'));
+    .filter((href) => !/^[a-z][a-z0-9+.-]*:/i.test(href))
+    .filter((href) => !href.startsWith('//'))
+    .filter((href) => !href.startsWith('#'));
+}
+
+// pageURL is the path a built file is served at.
+export function pageURL(root, base, file) {
+  const withinRoot = relative(root, file).split(sep).join('/');
+  const withoutIndex = withinRoot.endsWith('/index.html')
+    ? withinRoot.slice(0, -'index.html'.length)
+    : withinRoot;
+  return base + withoutIndex;
+}
+
+// absolute resolves a link the way a browser does, against the page holding it.
+export function absolute(from, href) {
+  if (href.startsWith('/')) return href;
+  const [path, fragment] = href.split('#');
+  const resolved = new URL(path, `https://site.invalid${from}`);
+  return resolved.pathname + (fragment === undefined ? '' : `#${fragment}`);
+}
+
+// A link to a source file is a link the deploy does not serve. Starlight leaves
+// `../support/ptah.md` exactly as written, so it renders as a 404 a reader
+// meets and no build log mentions.
+export function markdownLinks(hrefs) {
+  return hrefs.filter((href) => /\.mdx?($|[#?])/.test(href));
 }
 
 export function anchors(html) {
@@ -61,7 +90,25 @@ function selftest() {
   if (!resolveTarget(root, '/edge/', '/edge/gone/').missing) throw new Error('a missing page was reported present');
   const target = resolveTarget(root, '/edge/', '/edge/page/#here');
   if (!anchors(readFileSync(target.file, 'utf8')).has('here')) throw new Error('a real anchor was not found');
-  console.log('check-links.mjs --selftest: OK (link extraction, resolution, both directions, anchors)');
+  // A relative link is followed from the page holding it, and a link to a
+  // source file is not a link at all.
+  if (absolute('/edge/use/security/', '../read-a-plan/#install') !== '/edge/use/read-a-plan/#install') {
+    throw new Error('a relative link did not resolve against its page');
+  }
+  if (absolute('/edge/use/security/', '/edge/faq/') !== '/edge/faq/') {
+    throw new Error('an absolute link was rewritten');
+  }
+  if (pageURL(root, '/edge/', join(root, 'page', 'index.html')) !== '/edge/page/') {
+    throw new Error('a page URL was derived wrongly');
+  }
+  if (markdownLinks(['../support/ptah.md', '../support/ptah.md#x', '../support/ptah/']).length !== 2) {
+    throw new Error('a link to a source file was not reported');
+  }
+  if (internalLinks('<a href="mailto:x@y.z">m</a><a href="#top">t</a><a href="../page/">p</a>').length !== 1) {
+    throw new Error('link extraction took something a reader cannot follow inside the build');
+  }
+
+  console.log('check-links.mjs --selftest: OK (extraction, resolution both ways, anchors, relative links, source-file links)');
 }
 
 function main() {
@@ -86,15 +133,21 @@ function main() {
   let checked = 0;
   for (const page of pages) {
     const html = readFileSync(page, 'utf8');
-    for (const href of internalLinks(html)) {
+    const from = pageURL(root, base, page);
+    for (const source of internalLinks(html)) {
       checked += 1;
+      if (markdownLinks([source]).length > 0) {
+        problems.push(`${relative(root, page)} links to ${source}, a source file the deploy does not serve`);
+        continue;
+      }
+      const href = absolute(from, source);
       const target = resolveTarget(root, base, href);
       if (target.missing) {
-        problems.push(`${relative(root, page)} links to ${href}, which this build does not serve`);
+        problems.push(`${relative(root, page)} links to ${source}, which this build does not serve`);
         continue;
       }
       if (target.fragment && !anchors(readFileSync(target.file, 'utf8')).has(target.fragment)) {
-        problems.push(`${relative(root, page)} links to ${href}, whose target has no such anchor`);
+        problems.push(`${relative(root, page)} links to ${source}, whose target has no such anchor`);
       }
     }
   }
