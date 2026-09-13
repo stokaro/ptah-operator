@@ -8,6 +8,7 @@
   <a href="https://github.com/stokaro/ptah-operator/actions/workflows/ci.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/ci.yml?branch=master&label=ci&logo=github" alt="Status of the CI workflow on the master branch, which verifies the source, runs the race detector and drives the full Kubernetes lifecycle"></a>
   <a href="https://github.com/stokaro/ptah-operator/actions/workflows/demo.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/demo.yml?branch=master&label=demonstration&logo=github" alt="Status of the weekly demonstration workflow on the master branch, which re-records every scenario against a real cluster"></a>
   <a href="https://github.com/stokaro/ptah-operator/actions/workflows/docs.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/stokaro/ptah-operator/docs.yml?branch=master&label=docs&logo=github" alt="Status of the documentation workflow on the master branch"></a>
+  <a href="https://github.com/stokaro/ptah-operator/blob/master/LICENSE"><img src="https://img.shields.io/github/license/stokaro/ptah-operator?label=license&color=blue" alt="The license badge, reading MIT"></a>
   <a href="https://github.com/stokaro/ptah-operator/blob/master/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/stokaro/ptah-operator?label=go&logo=go&logoColor=white" alt="The Go version declared in go.mod"></a>
 </p>
 
@@ -100,3 +101,16 @@ builds have been verified with this operator is published as the
 versioned-migration controller can reuse the OCI transport, credential
 isolation, execution protocol, and target coordination primitives while
 retaining its own API and state machine.
+
+## License and help
+
+Ptah Operator is published under the [MIT license](LICENSE).
+
+For questions and bug reports, open an issue in
+[stokaro/ptah-operator](https://github.com/stokaro/ptah-operator/issues).
+Anything the Ptah CLI does on its own belongs in
+[stokaro/ptah](https://github.com/stokaro/ptah/issues) instead.
+[CONTRIBUTING.md](CONTRIBUTING.md) covers what makes a report actionable and
+what a change has to pass, and participation is covered by the
+[Code of Conduct](CODE_OF_CONDUCT.md). Commercial enquiries go to
+`ask@stokaro.com`.

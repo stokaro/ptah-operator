@@ -1,0 +1,13 @@
+# A blank issue stays available: not every report fits a form, and a form that
+# turns somebody away costs more than an unstructured issue costs to triage.
+blank_issues_enabled: true
+contact_links:
+  - name: Ptah CLI, schemas, and migrations
+    url: https://github.com/stokaro/ptah/issues
+    about: Schema rendering, migration files, dialect support, and anything the CLI does on its own belong in the Ptah repository. A report filed here has to be moved before anyone can act on it.
+  - name: Condition reasons
+    url: https://operator.ptah.run/troubleshoot/condition-reasons/
+    about: What each condition reason means and what to do about it. Many surprising states are deliberate refusals that name themselves.
+  - name: Commercial enquiries
+    url: mailto:ask@stokaro.com
+    about: Commercial questions. Bug reports and feature requests belong on this tracker, where they stay public and get labeled.

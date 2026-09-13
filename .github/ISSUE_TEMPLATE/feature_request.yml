@@ -1,0 +1,55 @@
+name: Feature request
+description: The operator cannot do something you need, or can only do it awkwardly.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The safety model is the reason for most of the current shape, so a
+        request that names the guarantee it needs is easier to place than one
+        that names a field.
+
+  - type: textarea
+    id: task
+    attributes:
+      label: What are you trying to do
+      description: The task, and why the outcome matters.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Which part of the lifecycle
+      options:
+        - Resolve the artifact reference
+        - Verify the artifact
+        - Observe the database
+        - Plan
+        - Approval
+        - Apply
+        - Convergence proof after apply
+        - Chart, configuration, or RBAC
+        - Conditions, status, or observability
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What you do today
+      description: The workaround, the manual step, or the other tool you reach for.
+    validations:
+      required: true
+
+  - type: textarea
+    id: guarantee
+    attributes:
+      label: What must stay true
+      description: >-
+        Optional. If the change touches apply, approval, or credential handling,
+        say which guarantee you still need: no unapproved mutation, no blind
+        replay, no credential in status, and so on.
+    validations:
+      required: false
