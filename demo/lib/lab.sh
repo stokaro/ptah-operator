@@ -361,8 +361,25 @@ lab_down() {
 	read_environment
 	lab_require E2E_KIND_CLUSTER_NAME E2E_DOCKER_CONTEXT
 
+	lab_down_incomplete=0
 	printf 'lab: removing cluster %s\n' "$E2E_KIND_CLUSTER_NAME"
 	kind delete cluster --name "$E2E_KIND_CLUSTER_NAME" >/dev/null 2>&1 || true
+	# Asked again, because the delete is quiet about a daemon it could not
+	# reach. A teardown that says it removed a cluster still running is worse
+	# than one that fails: the next run is refused and nothing says why.
+	#
+	# Three answers, not two. A daemon that did not answer is not a cluster
+	# that is gone, and reading the first as the second is how the silence
+	# became a success in the first place.
+	if lab_down_clusters=$(kind get clusters 2>/dev/null); then
+		if printf '%s\n' "$lab_down_clusters" | grep -qxF "$E2E_KIND_CLUSTER_NAME"; then
+			printf 'lab: could not remove cluster %s\n' "$E2E_KIND_CLUSTER_NAME" >&2
+			lab_down_incomplete=1
+		fi
+	else
+		printf 'lab: could not ask whether cluster %s is gone\n' "$E2E_KIND_CLUSTER_NAME" >&2
+		lab_down_incomplete=1
+	fi
 
 	# By owner label, so a container or volume this run created is removed and
 	# one another run created is not. The label is the harness's, and it is on
@@ -388,6 +405,10 @@ lab_down() {
 	done
 
 	lab_down_remove_work_directory
+	if [ "$lab_down_incomplete" -ne 0 ]; then
+		printf 'lab: teardown is incomplete; the environment file is kept so it can be retried\n' >&2
+		return 1
+	fi
 	lab_down_remove_lab_directory
 	printf 'lab: removed\n'
 }

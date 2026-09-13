@@ -32,13 +32,7 @@ func TestLabDownRemovesNothingOutsideTheLabDirectory(t *testing.T) {
 		t.Fatalf("write the environment: %v", err)
 	}
 
-	command := exec.Command(filepath.Join(root, "demo", "bin", "lab"), "down")
-	command.Dir = root
-	command.Env = append(os.Environ(), "LAB_ENVIRONMENT="+environment)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("lab down: %v\n%s", err, output)
-	}
+	output := removeLabDirectory(t, root, environment)
 
 	if _, err := os.Stat(bystander); err != nil {
 		t.Fatalf("lab down removed a file it does not own: %v\n%s", err, output)
@@ -73,13 +67,7 @@ func TestLabDownRefusesAnUnexpectedWorkDirectory(t *testing.T) {
 		t.Fatalf("write the environment: %v", err)
 	}
 
-	command := exec.Command(filepath.Join(root, "demo", "bin", "lab"), "down")
-	command.Dir = root
-	command.Env = append(os.Environ(), "LAB_ENVIRONMENT="+environment)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("lab down: %v\n%s", err, output)
-	}
+	output := removeWorkDirectory(t, root, environment, work)
 	if _, err := os.Stat(work); err != nil {
 		t.Fatalf("lab down removed a work directory that is not the harness's: %v", err)
 	}
@@ -106,6 +94,36 @@ func TestBootstrapHandsOverWhatTheTeardownRemoves(t *testing.T) {
 			t.Fatalf("the bootstrap does not hand over %s, so a teardown cannot remove it", handed)
 		}
 	}
+}
+
+// The teardown's two directory decisions, driven one at a time. They are what
+// these tests are about, and running the whole teardown would put a Docker
+// daemon between the test and the decision.
+func removeLabDirectory(t *testing.T, root, environment string) []byte {
+	t.Helper()
+	return labShell(t, root, environment, "lab_down_remove_lab_directory")
+}
+
+func removeWorkDirectory(t *testing.T, root, environment, work string) []byte {
+	t.Helper()
+	return labShell(t, root, environment, "E2E_WORK_DIR='"+work+"'; lab_down_remove_work_directory")
+}
+
+func labShell(t *testing.T, root, environment, call string) []byte {
+	t.Helper()
+	script := "set -eu\n" +
+		"LAB_ROOT=" + root + "\n" +
+		"LAB_ENVIRONMENT=" + environment + "\n" +
+		". " + filepath.Join(root, "demo", "lib", "support.sh") + "\n" +
+		". " + filepath.Join(root, "demo", "lib", "lab.sh") + "\n" +
+		call + "\n"
+	command := exec.Command("/bin/sh", "-c", script)
+	command.Dir = root
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", call, err, output)
+	}
+	return output
 }
 
 func repositoryRoot(t *testing.T) string {
