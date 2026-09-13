@@ -3340,11 +3340,31 @@ immutable: true
 binaryData:
   chunk: cHJvYmU=
 EOF
-	if controller_kube create --dry-run=server -f "$manifest" >/dev/null 2>"$error_file"; then
-		fail "controller direct-write webhook accepted a structurally valid chunk without a persisted plan"
-	fi
-	grep -F 'directly read plan manifest' "$error_file" >/dev/null ||
-		fail "controller direct-write probe did not reach the uncached semantic webhook boundary"
+	# This runs immediately after the manager rollout, so the webhook may not be
+	# serving yet. Every webhook here is failurePolicy: Fail, so an unready one
+	# still rejects the create -- the refusal below is satisfied by the API
+	# server rather than by the boundary this proves, and the message is a
+	# connection error instead of the semantic one. Retry until the rejection is
+	# the semantic one.
+	#
+	# Acceptance is not retried: with failurePolicy: Fail nothing accepts this
+	# chunk while the webhook is away, so an accepted create is the defect the
+	# probe exists to catch.
+	deadline=$(($(date +%s) + 60))
+	while :; do
+		if controller_kube create --dry-run=server -f "$manifest" >/dev/null 2>"$error_file"; then
+			fail "controller direct-write webhook accepted a structurally valid chunk without a persisted plan"
+		fi
+		if grep -F 'directly read plan manifest' "$error_file" >/dev/null; then
+			return
+		fi
+		[ "$(date +%s)" -lt "$deadline" ] || break
+		sleep 1
+	done
+	# The sibling Job probe prints what it got before giving up; this one used to
+	# swallow it, which cost a whole run to work out what had rejected the write.
+	cat "$error_file" >&2
+	fail "controller direct-write probe did not reach the uncached semantic webhook boundary"
 }
 
 prove_controller_write_guard() {
