@@ -1,0 +1,90 @@
+name: Bug report
+description: The operator behaves differently from what the documentation says, or from what it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Read the condition first. Conditions are the operator's stable machine
+        interface, and
+        [Condition reasons](https://operator.ptah.run/troubleshoot/condition-reasons/)
+        says what each reason means. Many surprising states are deliberate
+        refusals that name themselves.
+
+        **Redact credentials.** Database URLs, registry secrets, and anything
+        else the Secrets hold.
+
+  - type: input
+    id: operator-version
+    attributes:
+      label: Operator version
+      description: The chart version, or the manager image digest.
+      placeholder: "v0.1.0, or ghcr.io/stokaro/ptah-operator@sha256:..."
+    validations:
+      required: true
+
+  - type: input
+    id: images
+    attributes:
+      label: Executor and runner images
+      description: >-
+        `execution.executorImage`, `execution.runnerImage`, and
+        `execution.ptahVersion`. They are part of every plan and applied binding,
+        so they are part of the report.
+    validations:
+      required: true
+
+  - type: input
+    id: kubernetes
+    attributes:
+      label: Kubernetes version and distribution
+      placeholder: "1.31.4, EKS / GKE / AKS / kind / k3s"
+    validations:
+      required: true
+
+  - type: input
+    id: engine
+    attributes:
+      label: Database engine and server version
+      placeholder: "PostgreSQL 17.2, MySQL 8.4.3"
+    validations:
+      required: true
+
+  - type: textarea
+    id: conditions
+    attributes:
+      label: Conditions and observed generation
+      description: >-
+        The full `type`, `status`, and `reason` for each condition, plus
+        `status.observedGeneration` and `metadata.generation`.
+      render: shell
+      placeholder: "kubectl -n <ns> get ptahschema <name> -o yaml | yq '.status'"
+    validations:
+      required: true
+
+  - type: textarea
+    id: resource
+    attributes:
+      label: The PtahSchema
+      description: With credentials removed.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: >-
+        Include the controller log lines and the Job output where you have them,
+        verbatim.
+      render: shell
+    validations:
+      required: true
