@@ -142,6 +142,12 @@ func (s step) validate(scenarioID string, index int) []error {
 	if strings.TrimSpace(s.Run) == "" {
 		problems = append(problems, fmt.Errorf("%s runs nothing", where))
 	}
+	for _, name := range unpublishedVariables(s.Run) {
+		problems = append(problems, fmt.Errorf(
+			"%s reads $%s, which the demonstration does not publish; a reader repeating this "+
+				"command has no such variable, so either the step sets it or demo/README.md "+
+				"states where the value comes from", where, name))
+	}
 	// A note is one line in a terminal frame. Two sentences of narration
 	// between two commands is a paragraph the reader scrolls past, and the
 	// scenario is what has to be shortened, not the frame.
@@ -333,4 +339,68 @@ func (f field) matches(object map[string]any) error {
 		return fmt.Errorf("%s is %q, expected %q", f.Path, value, f.Equals)
 	}
 	return nil
+}
+
+// publishedVariables are the environment names a step may read.
+//
+// demo/README.md states what each one holds and where a reader's own value
+// comes from, which is what makes a published command repeatable. The lab's
+// own E2E_ names are deliberately absent: demo/bin/lab reads those to compose a
+// manifest, and a step that read one would print a command that resolves
+// nowhere but in this repository's lab.
+var publishedVariables = map[string]bool{
+	"KUBECONFIG":          true,
+	"NAMESPACE":           true,
+	"OPERATOR_NAMESPACE":  true,
+	"CONTROLLER":          true,
+	"REGISTRY_IN_CLUSTER": true,
+	"PTAH_OCI_REGISTRY":   true,
+	"PTAH_OCI_USERNAME":   true,
+	"PTAH_OCI_PASSWORD":   true,
+}
+
+// shellVariables are the reader's shell's own, not the demonstration's. They
+// are kept out of the list above because a page telling a reader what PATH
+// holds would be telling them something they already have.
+var shellVariables = map[string]bool{
+	"PATH": true,
+	"HOME": true,
+}
+
+// variableRead matches a shell expansion of an upper-case name.
+//
+// Upper-case only. That is the shell's convention for an environment variable,
+// and it leaves jq's own alone: a scenario passes `--arg f` and reads `$f`
+// inside the filter, where the shell never looks.
+var variableRead = regexp.MustCompile(`\$\{?([A-Z][A-Z0-9_]*)\}?`)
+
+// variableSet matches a name the step itself gives a value: an assignment, a
+// for loop's own variable, or a `read` into it. Each is its own shape, so each
+// is its own pattern rather than one alternation nobody can read.
+var variableSet = []*regexp.Regexp{
+	regexp.MustCompile(`(?m)(?:^|[;&|(\s])([A-Z][A-Z0-9_]*)=`),
+	regexp.MustCompile(`(?m)(?:^|[;&|(\s])for\s+([A-Z][A-Z0-9_]*)\s+in\s`),
+	regexp.MustCompile(`(?m)(?:^|[;&|(\s])read\s+(?:-[A-Za-z]+\s+)*([A-Z][A-Z0-9_]*)`),
+}
+
+// unpublishedVariables returns the names a reader could not resolve, in the
+// order they are read, without repeating one.
+func unpublishedVariables(run string) []string {
+	known := map[string]bool{}
+	for _, pattern := range variableSet {
+		for _, match := range pattern.FindAllStringSubmatch(run, -1) {
+			known[match[1]] = true
+		}
+	}
+	var unpublished []string
+	seen := map[string]bool{}
+	for _, match := range variableRead.FindAllStringSubmatch(run, -1) {
+		name := match[1]
+		if publishedVariables[name] || shellVariables[name] || known[name] || seen[name] {
+			continue
+		}
+		seen[name] = true
+		unpublished = append(unpublished, name)
+	}
+	return unpublished
 }

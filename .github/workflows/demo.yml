@@ -143,6 +143,12 @@ jobs:
           DEMO_RUN_ID: demo-${{ github.run_id }}-${{ github.run_attempt }}
         shell: bash
         run: make demo-up demo-record
+      # The pages claim a reader can repeat a scenario with none of this
+      # repository's scripts. Claiming it in prose and measuring it weekly are
+      # different things, and only the second one stays true.
+      - name: Repeat a scenario without the lab's scripts
+        shell: bash
+        run: make demo-reproduce
       # Uploaded rather than committed. A recording names the lab it was made
       # against, and a run of this job is a different lab from the one the
       # committed file names; replacing it here would change the versions the

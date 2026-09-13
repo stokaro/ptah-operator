@@ -67,6 +67,31 @@ const base = import.meta.env.BASE_URL;
 		))}
 	</ul>
 
+	<h2>What the commands read</h2>
+	<p>
+		A session is repeated, not admired, so every name in it is one your own environment can carry.
+		There is nothing else: no helper of ours stands between a command and the cluster, and the
+		recorder refuses a step that reads a name this list does not hold.
+	</p>
+	<ul class="ptah-demo-lab">
+		<li><span class="ptah-demo-lab-label">KUBECONFIG</span><span class="ptah-demo-lab-value">the cluster the commands run against</span></li>
+		<li><span class="ptah-demo-lab-label">NAMESPACE</span><span class="ptah-demo-lab-value">the namespace the schema and its database credentials live in</span></li>
+		<li><span class="ptah-demo-lab-label">OPERATOR_NAMESPACE</span><span class="ptah-demo-lab-value">where the chart installed the operator</span></li>
+		<li><span class="ptah-demo-lab-label">CONTROLLER</span><span class="ptah-demo-lab-value">the controller Deployment&rsquo;s name, from that release</span></li>
+		<li><span class="ptah-demo-lab-label">REGISTRY_IN_CLUSTER</span><span class="ptah-demo-lab-value">the registry address a Pod in the cluster resolves</span></li>
+		<li><span class="ptah-demo-lab-label">PTAH_OCI_REGISTRY</span><span class="ptah-demo-lab-value">the registry address the push goes to</span></li>
+		<li><span class="ptah-demo-lab-label">PTAH_OCI_USERNAME</span><span class="ptah-demo-lab-value">the account that push uses</span></li>
+		<li><span class="ptah-demo-lab-label">PTAH_OCI_PASSWORD</span><span class="ptah-demo-lab-value">its password, which no command prints</span></li>
+	</ul>
+	<p>
+		A session also uses <code>demo/bin/lab</code> in two places, and both are the lab handing over what
+		it generated rather than doing the demonstration&rsquo;s work:
+		<code>lab credentials</code> prints the three registry values above, and <code>lab manifest</code>
+		fills the published template with values the step states. Run
+		<code>demo/acceptance/reproduce.sh</code> to watch the same scenario repeated from a directory
+		where neither exists, by an account that may not create a Job.
+	</p>
+
 	<p>
 		The scenario is <code>demo/scenarios/{run.id}.yaml</code>, and <code>make demo</code> replays the
 		whole set against a lab of your own. <a href={`${base}demo/`}>All recorded runs</a>.

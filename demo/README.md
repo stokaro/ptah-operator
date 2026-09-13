@@ -42,7 +42,54 @@ else, and the first of the two to drift would do so silently.
 
 `demo/bin/lab prepare` adds what a namespace needs on top of that: the two
 Services that route to the registry and the database containers, the
-credentials as Secrets, and the verification policy as an immutable ConfigMap.
+credentials as Secrets, the verification policy as an immutable ConfigMap, and
+a `psql` Deployment that reads the database Secret. The client is there so a
+scenario can look at the database with `kubectl exec` instead of through a
+helper of ours; standing it up is the environment's job, and reading a table is
+the reader's.
+
+The script has two duties and no third. It stands the environment up, and it
+composes a manifest out of values a caller states. It decides nothing a
+scenario shows: `lab manifest` refuses to run without `APPLY=`, because the
+apply policy is the reader's choice and a script that picked one would be
+answering the question the scenario asks.
+
+## The environment a step runs in
+
+A step is published, so a reader repeats it. Every name a step may read is
+therefore one a reader's own environment can carry, and the recorder refuses a
+step that reads anything else:
+
+| Name | Holds | Where a reader's own comes from |
+| --- | --- | --- |
+| `KUBECONFIG` | the cluster the commands run against | their own cluster |
+| `NAMESPACE` | the namespace the schema lives in | the namespace they chose |
+| `OPERATOR_NAMESPACE` | where the chart installed the operator | their Helm release |
+| `CONTROLLER` | the controller Deployment's name | `helm get manifest`, or `kubectl get deploy` |
+| `REGISTRY_IN_CLUSTER` | the registry address a Pod resolves | their registry's in-cluster name |
+| `PTAH_OCI_REGISTRY` | the registry address the push goes to | their registry |
+| `PTAH_OCI_USERNAME`, `PTAH_OCI_PASSWORD` | the credentials for that push | their registry's credentials |
+
+In the lab, the first five come from `demo/.lab/environment`, which the
+bootstrap wrote, and the three `PTAH_OCI_` values from `demo/bin/lab
+credentials`, which prints the generated registry's. Both are the environment
+handing a reader what it generated. Nothing else crosses into a step: the `E2E_` names the harness
+writes are read by `demo/bin/lab` alone, and a step naming one is refused with
+the name it read.
+
+## Repeating a scenario without the lab's scripts
+
+```sh
+make demo-reproduce
+```
+
+It runs the first scenario's published commands against a live lab with
+`demo/bin/lab` unreachable, under a ServiceAccount that may not create a Job,
+and asserts the schema converged. The first half is the claim the pages make:
+what a scenario shows is `kubectl`, `ptah` and a manifest, and a reader needs
+nothing of ours to repeat it. The second is the claim the operator makes: the
+executor's Job is the operator's to create, and a reader who cannot create one
+still gets a converged database.
 
 ## Recording
 
@@ -106,7 +153,7 @@ The lab stays up after a failure, which is the point of it being a lab:
 set -a; . demo/.lab/environment; set +a
 kubectl --kubeconfig "$E2E_KUBECONFIG" -n "$E2E_TEST_NAMESPACE" get ptahschema -o yaml
 kubectl --kubeconfig "$E2E_KUBECONFIG" -n "$E2E_OPERATOR_NAMESPACE" logs -l app.kubernetes.io/component=controller
-demo/bin/lab psql '\dt'
+kubectl --kubeconfig "$E2E_KUBECONFIG" -n "$E2E_TEST_NAMESPACE" exec deploy/demo-psql -- psql -c '\dt'
 ```
 
 Three failures are worth naming because each looks like the operator being
@@ -117,9 +164,9 @@ wrong and is not:
   `generation: current`; a step that changes only the database uses `retry` and
   watches the database settle.
 - **A publish that is refused.** A Ptah artifact is not byte-identical between
-  two pushes of one file, and a tag is write-once. `demo/bin/lab publish` gives
-  each push its own tag for that reason; what the operator is pointed at is the
-  digest the push returned.
+  two pushes of one file, and a tag is write-once. Every `ptah schema push` in
+  a scenario ends its tag with `$$` for that reason; what the operator is
+  pointed at is the digest the push returned, never the tag.
 - **A plan that cannot be found.** A converged schema carries no current plan,
   because there is nothing left to do. After convergence the plan that ran is
   found by the fingerprint `status.applied` names, not through `status.plan`.

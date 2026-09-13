@@ -6,7 +6,16 @@ tags: [Operations]
 
 reset:
   - demo/bin/lab reset
-  - demo/bin/lab publish v1 > demo/.lab/digest
+  # The lab generates the registry's credentials and address, and says what
+  # they are. What publishes the artifact is `ptah schema push`, the product's
+  # own command, run the way a reader or a CI job runs it.
+  - |
+    eval "$(demo/bin/lab credentials)"
+    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+    export PATH="$(demo/bin/lab ptah):$PATH"
+    ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
+      --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
+      | sed -n 's/^Digest: //p' > demo/.lab/digest
   - APPLY=Always demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | kubectl apply -f -
   - kubectl -n "$NAMESPACE" wait --for=condition=InSync --timeout=360s ptahschema/storefront
 
@@ -44,15 +53,20 @@ steps:
 
   - note: Now publish a change it would otherwise pick up, and point the resource at it.
     run: |
-      DIGEST=$(demo/bin/lab publish v2)
+      eval "$(demo/bin/lab credentials)"
+      export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+      export PATH="$(demo/bin/lab ptah):$PATH"
+      DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$" \
+        --schema-file demo/schemas/v2.sql --dialect postgres --plain-http \
+        | sed -n 's/^Digest: //p')
       kubectl -n "$NAMESPACE" patch ptahschema storefront --type=merge \
-        -p "{\"spec\":{\"desired\":{\"ociRef\":\"oci://$E2E_REGISTRY_HOST/schemas/demo@$DIGEST\"}}}"
+        -p "{\"spec\":{\"desired\":{\"ociRef\":\"oci://$REGISTRY_IN_CLUSTER/schemas/demo@$DIGEST\"}}}"
     expect:
       exit: 0
       stdout_contains: [patched]
 
   - note: Nothing happens, which is the point. The database is untouched.
-    run: demo/bin/lab psql "\dt"
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
     expect:
       exit: 0
       stdout_absent: [orders]
@@ -81,7 +95,7 @@ steps:
         type: InSync
         status: "True"
         reason: ScopedConverged
-    run: demo/bin/lab psql "\dt"
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
     sync: converged
     expect:
       exit: 0

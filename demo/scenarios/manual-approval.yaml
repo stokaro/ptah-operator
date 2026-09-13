@@ -6,7 +6,16 @@ tags: [Safety]
 
 reset:
   - demo/bin/lab reset
-  - demo/bin/lab publish v1 > demo/.lab/digest
+  # The lab generates the registry's credentials and address, and says what
+  # they are. What publishes the artifact is `ptah schema push`, the product's
+  # own command, run the way a reader or a CI job runs it.
+  - |
+    eval "$(demo/bin/lab credentials)"
+    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+    export PATH="$(demo/bin/lab ptah):$PATH"
+    ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
+      --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
+      | sed -n 's/^Digest: //p' > demo/.lab/digest
 
 steps:
   - note: Same resource, one field different -- apply is OnApproval, which is the default.
@@ -46,17 +55,23 @@ steps:
       stdout_contains: [AwaitingApproval]
 
   - note: Nothing was created. This is what waiting looks like from the database.
-    run: demo/bin/lab psql "\dt"
+    # psql says so on stderr, so that is the stream this step shows.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
+    show: [stderr]
     expect:
       exit: 0
-      stdout_contains: ["Did not find any relations"]
+      stderr_contains: ["Did not find any relations"]
 
   - note: Read the plan before approving it. This is what would run.
+    # Every chunk, because a plan is chunked by size and reviewing the first
+    # one is reviewing part of what would run.
     run: |
       PLAN=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.plan.name}')
-      CHUNK=$(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" -o jsonpath='{.spec.chunks[0].name}')
-      kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
-        | base64 -d | jq -r '.statements[] | "\(.severity)\t\(.sql)"'
+      for CHUNK in $(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" \
+        -o jsonpath='{range .spec.chunks[*]}{.name}{"\n"}{end}'); do
+        kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
+          | base64 -d | jq -r '.statements[] | "\(.severity)\t\(.sql)"'
+      done
     expect:
       exit: 0
       stdout_contains: ['CREATE TABLE "customers"', safe]
@@ -116,7 +131,7 @@ steps:
         type: InSync
         status: "True"
         reason: ScopedConverged
-    run: demo/bin/lab psql "\dt"
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
     sync: converged
     expect:
       exit: 0

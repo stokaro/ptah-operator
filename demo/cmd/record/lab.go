@@ -97,9 +97,14 @@ var labVariables = []string{
 
 // environment is what a scenario step runs with.
 //
-// KUBECONFIG and NAMESPACE are the two a reader types themselves, so they are
-// spelled the way a reader would have them. LAB_ROOT is the repository, which
-// is what demo/bin/lab needs to find its own helpers.
+// A step reads only the names below, and demo/README.md states what each one
+// holds and where a reader's own value comes from. The E2E_ names go in for
+// demo/bin/lab, which composes manifests out of them; a step that named one
+// would publish a command whose variable a reader has never heard of, and
+// stepReadsOnlyPublishedVariables refuses that.
+//
+// LAB_ROOT is the repository, which is what demo/bin/lab needs to find its own
+// helpers.
 func (l lab) environment(root string) ([]string, error) {
 	namespace, err := l.required("E2E_TEST_NAMESPACE")
 	if err != nil {
@@ -116,10 +121,13 @@ func (l lab) environment(root string) ([]string, error) {
 		"LAB_ROOT=" + root,
 		"KUBECONFIG=" + kubeconfig,
 		"NAMESPACE=" + namespace,
-		// The two names a step needs that are not the demonstration's own: the
-		// operator's release namespace and the Deployment the chart named.
+		// The operator's release namespace and the Deployment the chart named.
 		"OPERATOR_NAMESPACE=" + l.values["E2E_OPERATOR_NAMESPACE"],
 		"CONTROLLER=" + l.values["E2E_CONTROLLER_NAME"],
+		// The registry's in-cluster address. It is a second address of the one
+		// registry: a push goes to PTAH_OCI_REGISTRY over a forwarded port, and
+		// the operator resolves the same digest through this one.
+		"REGISTRY_IN_CLUSTER=" + l.values["E2E_REGISTRY_HOST"],
 	}
 	for _, name := range labVariables {
 		if value, ok := l.values[name]; ok {

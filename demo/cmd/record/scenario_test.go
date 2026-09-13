@@ -270,3 +270,88 @@ func TestFieldMatches(t *testing.T) {
 		})
 	}
 }
+
+func TestUnpublishedVariablesReadsWhatAReaderCannotResolve(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		run  string
+		want []string
+	}{
+		{
+			name: "a published name",
+			run:  `kubectl -n "$NAMESPACE" get ptahschema storefront`,
+		},
+		{
+			name: "the lab's own name",
+			run:  `kubectl patch -p '{"ociRef":"oci://$E2E_REGISTRY_HOST/schemas/demo"}'`,
+			want: []string{"E2E_REGISTRY_HOST"},
+		},
+		{
+			name: "a name the step assigns first",
+			run:  "DIGEST=$(ptah schema push)\nkubectl patch -p \"$DIGEST\"",
+		},
+		{
+			name: "a loop's own variable",
+			run:  "for CHUNK in $(kubectl get plan); do\n  kubectl get configmap \"$CHUNK\"\ndone",
+		},
+		{
+			name: "a name read into by read",
+			run:  "kubectl get pods | while read -r POD; do echo \"$POD\"; done",
+		},
+		{
+			name: "jq's own variable",
+			run:  `kubectl get -o json | jq -r --arg f "$APPLIED" 'select(.f == $f)'`,
+			want: []string{"APPLIED"},
+		},
+		{
+			name: "a name prefixed to the command",
+			run:  `APPLY=Always demo/bin/lab manifest storefront "$APPLY"`,
+		},
+		{
+			name: "the same unpublished name twice",
+			run:  `echo "$E2E_PTAH_VERSION" "$E2E_PTAH_VERSION"`,
+			want: []string{"E2E_PTAH_VERSION"},
+		},
+		{
+			name: "a braced expansion",
+			run:  `echo "${E2E_KIND_CLUSTER_NAME}"`,
+			want: []string{"E2E_KIND_CLUSTER_NAME"},
+		},
+		{
+			name: "the shell's own process id",
+			run:  `ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$"`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			got := unpublishedVariables(test.run)
+			if strings.Join(got, ",") != strings.Join(test.want, ",") {
+				t.Fatalf("unpublishedVariables reported %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+// TestEveryScenarioReadsOnlyPublishedVariables is the control for the rule
+// above: the corpus it governs has to pass it, or the rule is one nobody could
+// have written a scenario against.
+func TestEveryScenarioReadsOnlyPublishedVariables(t *testing.T) {
+	t.Parallel()
+	scenarios, err := loadScenarios("../../scenarios")
+	if err != nil {
+		t.Fatalf("load the scenarios: %v", err)
+	}
+	if len(scenarios) == 0 {
+		t.Fatal("loaded no scenarios, so this test measured nothing")
+	}
+	for _, current := range scenarios {
+		for index, one := range current.Steps {
+			if unpublished := unpublishedVariables(one.Run); len(unpublished) > 0 {
+				t.Errorf("%s step %d reads %v", current.ID, index+1, unpublished)
+			}
+		}
+	}
+}

@@ -15,19 +15,30 @@ steps:
       exit: 0
       stdout_contains: [CREATE TABLE customers]
 
-  - note: Publish it. The push runs in the cluster, as the Ptah build the operator will run.
-    run: DIGEST=$(demo/bin/lab publish v1) && echo "$DIGEST" | tee demo/.lab/digest
-    expect:
-      exit: 0
-      stdout_contains: ["sha256:"]
-
-  - note: That is the command it ran. A reference, a dialect, and the file it read.
+  - note: The lab tells you where its registry is and what it generated for you.
     run: |
-      kubectl -n "$NAMESPACE" get job demo-push-v1 \
-        -o jsonpath='{.spec.template.spec.containers[0].args}' | jq -r 'join(" ")'
+      eval "$(demo/bin/lab credentials)"
+      export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+      export PATH="$(demo/bin/lab ptah):$PATH"
+      echo "registry: $PTAH_OCI_REGISTRY"
+    sync: publishing
     expect:
       exit: 0
-      stdout_contains: [schema push, --dialect postgres]
+      stdout_contains: ["registry: "]
+      stdout_absent: ["PTAH_OCI_PASSWORD"]
+
+  - note: Publish the schema. This is ptah's own command, run as you or CI would.
+    run: |
+      eval "$(demo/bin/lab credentials)"
+      export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+      export PATH="$(demo/bin/lab ptah):$PATH"
+      ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
+        --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
+        | tee /dev/stderr | sed -n 's/^Digest: //p' > demo/.lab/digest
+    show: [stderr]
+    expect:
+      exit: 0
+      stderr_contains: ["Pushed schema as oci://", "Digest: sha256:"]
 
   - note: The resource names the artifact by digest, and the credentials by Secret.
     run: APPLY=Always demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | tee demo/.lab/storefront.yaml
@@ -98,17 +109,27 @@ steps:
       exit: 0
       stdout_contains: [storefront]
 
-  - note: The SQL lives in an immutable ConfigMap, not in a status field or a log line.
+  - note: The SQL lives in immutable ConfigMaps, not in a status field or a log line.
+    # The plan is found by the fingerprint the status recorded as applied, and
+    # every chunk of it is read. Taking the first plan in the namespace and its
+    # first chunk answers only where one schema has one plan of one chunk, which
+    # is a property of this namespace rather than of the operator.
     run: |
-      CHUNK=$(kubectl -n "$NAMESPACE" get ptahschemaplan -o jsonpath='{.items[0].spec.chunks[0].name}')
-      kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
-        | base64 -d | jq -r '.statements[].sql'
+      APPLIED=$(kubectl -n "$NAMESPACE" get ptahschema storefront \
+        -o jsonpath='{.status.applied.planFingerprint}')
+      PLAN=$(kubectl -n "$NAMESPACE" get ptahschemaplan -o json \
+        | jq -r --arg f "$APPLIED" '.items[] | select(.spec.fingerprint == $f) | .metadata.name')
+      for CHUNK in $(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" \
+        -o jsonpath='{range .spec.chunks[*]}{.name}{"\n"}{end}'); do
+        kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
+          | base64 -d | jq -r '.statements[].sql'
+      done
     expect:
       exit: 0
       stdout_contains: ['CREATE TABLE "customers"']
 
   - note: And the database has it.
-    run: demo/bin/lab psql "\d customers"
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\d customers"
     expect:
       exit: 0
       stdout_contains: [customers_pkey]

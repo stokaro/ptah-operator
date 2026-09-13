@@ -2249,6 +2249,12 @@ if [ "$E2E_STOP_AFTER" = bootstrap ]; then
 		printf 'E2E_REGISTRY_SERVICE=%s\n' "$REGISTRY_SERVICE"
 		printf 'E2E_REGISTRY_IP=%s\n' "$REGISTRY_IP"
 		printf 'E2E_REGISTRY_CONTAINER_ID=%s\n' "$REGISTRY_CONTAINER_ID"
+		# What a client outside the cluster needs to publish an artifact the
+		# operator will read: the registry's address on the Docker host, and the
+		# exact Ptah source the executor was built from, so the CLI doing the
+		# publishing is the build that will read it back.
+		printf 'E2E_REGISTRY_HOST_ADDRESS=%s\n' "$REMOTE_REGISTRY"
+		printf 'E2E_PTAH_BUILD_CONTEXT=%s\n' "$PTAH_BUILD_CONTEXT"
 		printf 'E2E_REGISTRY_USERNAME=%s\n' "$REGISTRY_USERNAME"
 		printf 'E2E_REGISTRY_CREDENTIALS_FILE=%s\n' "$REGISTRY_CREDENTIALS_FILE"
 		printf 'E2E_EXTERNAL_POSTGRES_CONTAINER_ID=%s\n' "$EXTERNAL_PG_CONTAINER_ID"

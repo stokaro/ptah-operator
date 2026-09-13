@@ -6,7 +6,16 @@ tags: [Operations]
 
 reset:
   - demo/bin/lab reset
-  - demo/bin/lab publish v1 > demo/.lab/digest
+  # The lab generates the registry's credentials and address, and says what
+  # they are. What publishes the artifact is `ptah schema push`, the product's
+  # own command, run the way a reader or a CI job runs it.
+  - |
+    eval "$(demo/bin/lab credentials)"
+    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+    export PATH="$(demo/bin/lab ptah):$PATH"
+    ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
+      --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
+      | sed -n 's/^Digest: //p' > demo/.lab/digest
   - kubectl -n "$NAMESPACE" delete secret demo-database-broken --ignore-not-found
   - kubectl -n "$NAMESPACE" create secret generic demo-database-broken --from-literal=url='postgres://nobody:nobody@no-such-database.demo.svc.cluster.local:5432/storefront?sslmode=disable' 
 
@@ -70,7 +79,7 @@ steps:
         type: InSync
         status: "True"
         reason: ScopedConverged
-    run: demo/bin/lab psql "\dt"
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
     sync: converged
     expect:
       exit: 0
