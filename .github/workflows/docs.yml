@@ -62,6 +62,7 @@ jobs:
           set -euo pipefail
           npm run check:links:selftest
           npm run check:heading-anchors:selftest
+          npm run check:faq-groups:selftest
           npm run check:navigation:selftest
           npm run check:build-info:selftest
           npm run check:versions:selftest
@@ -115,6 +116,7 @@ jobs:
           npm run check:links
           npm run check:navigation
           npm run check:heading-anchors
+          npm run check:faq-groups
           npm run check:build-info
           npm run check:demo-page
       # A release's pages are built from that release's own revision, so the
