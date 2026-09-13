@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -5633,4 +5634,69 @@ func writeMutatedE2ESource(t *testing.T, name, source, old, replacement string) 
 		t.Fatal(err)
 	}
 	return path
+}
+
+// TestPublishedPortsStayBelowTheEphemeralFloor measures the rule rather than
+// pinning the literals: a future edit that moves either range back over the
+// kernel's ephemeral floor reintroduces the race that failed master with
+//
+//	failed to bind host port for 127.0.0.1:47966:172.18.0.6:6443/tcp:
+//	address already in use
+//
+// A port at or above the floor can be handed to an outgoing connection as its
+// source port, and this suite pulls images immediately before kind binds the
+// cluster's published port.
+func TestPublishedPortsStayBelowTheEphemeralFloor(t *testing.T) {
+	t.Parallel()
+
+	source := readE2ESource(t, repositoryE2EWiringFiles().harness)
+
+	// The lowest floor Linux is configured with in practice. The harness reads
+	// the running kernel's own value; this is the bound the ranges are written
+	// against, so the test does not depend on the machine it runs on.
+	const ephemeralFloor = 32768
+
+	for _, test := range []struct {
+		name    string
+		pattern *regexp.Regexp
+	}{
+		{
+			name:    "api server",
+			pattern: regexp.MustCompile(`E2E_API_SERVER_PORT=\$\(\((\d+) \+ port_seed % (\d+)\)\)`),
+		},
+		{
+			name:    "registry",
+			pattern: regexp.MustCompile(`E2E_REGISTRY_PORT=\$\(\((\d+) \+ registry_seed % (\d+)\)\)`),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			match := test.pattern.FindStringSubmatch(source)
+			if match == nil {
+				t.Fatalf("no port derivation found for %s in %s", test.name, repositoryE2EWiringFiles().harness)
+			}
+			base, err := strconv.Atoi(match[1])
+			if err != nil {
+				t.Fatalf("base: %v", err)
+			}
+			span, err := strconv.Atoi(match[2])
+			if err != nil {
+				t.Fatalf("span: %v", err)
+			}
+			highest := base + span - 1
+			if highest >= ephemeralFloor {
+				t.Fatalf("%s derives up to %d, which reaches the ephemeral floor %d; keep the range below it",
+					test.name, highest, ephemeralFloor)
+			}
+		})
+	}
+
+	// The derived ranges are only half the rule: an operator may supply either
+	// port, and the race does not care who chose it.
+	if !strings.Contains(source, `if [ "$published_port" -ge "$EPHEMERAL_PORT_FLOOR" ]; then`) {
+		t.Fatal("the harness no longer refuses a supplied port at or above the ephemeral floor")
+	}
+	if !strings.Contains(source, "/proc/sys/net/ipv4/ip_local_port_range") {
+		t.Fatal("the harness no longer reads the running kernel's ephemeral floor")
+	}
 }
