@@ -152,7 +152,11 @@ e2e:
 # what the suite proves is what the demonstration runs on.
 
 DEMO_ENVIRONMENT := demo/.lab/environment
-DEMO_KUBERNETES_VERSION ?= 1.37.0
+# Empty by default: demo/bin/lab reads the newest release out of
+# support/kubernetes.json. A version written here is a second answer to which
+# releases are supported, and the harness refuses one outside the window, so
+# this target would stop working the day the window moves.
+DEMO_KUBERNETES_VERSION ?=
 DEMO_RUN_ID ?= demo
 
 demo: demo-up demo-record

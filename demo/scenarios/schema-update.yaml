@@ -7,7 +7,7 @@ tags: [Lifecycle]
 reset:
   - demo/bin/lab reset
   - demo/bin/lab publish v1 > demo/.lab/digest
-  - demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | kubectl apply -f -
+  - APPLY=Always demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | kubectl apply -f -
   - kubectl -n "$NAMESPACE" wait --for=condition=InSync --timeout=360s ptahschema/storefront
 
 steps:

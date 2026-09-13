@@ -300,7 +300,24 @@ lab_reset() {
 # the registry it runs, and the digest a push returned. The policy fields are
 # substituted too, because the scenarios differ in exactly those and a second
 # near-identical manifest is how two of them drift apart.
+#
+# What it will not do is choose a policy. A renderer that defaulted `apply` to
+# something other than the API's default would be deciding, quietly, the one
+# thing a reader of the rendered manifest most needs to have decided
+# themselves -- and the manifest it printed would not be the manifest the API
+# would have produced from the same intent.
 lab_manifest() {
+	[ -n "${APPLY:-}" ] || {
+		printf 'lab: set APPLY to the policy this scenario is about (Never, OnApproval or Always)\n' >&2
+		exit 1
+	}
+	case "${APPLY}" in
+	Never | OnApproval | Always) ;;
+	*)
+		printf 'lab: APPLY=%s is not a policy the API accepts\n' "$APPLY" >&2
+		exit 1
+		;;
+	esac
 	lab_manifest_name=$1
 	lab_manifest_digest=$2
 	lab_manifest_file="$LAB_ROOT/demo/manifests/${lab_manifest_name}.yaml"
@@ -313,7 +330,7 @@ lab_manifest() {
 		-e "s|\${NAMESPACE}|$E2E_TEST_NAMESPACE|g" \
 		-e "s|\${REGISTRY}|$E2E_REGISTRY_HOST|g" \
 		-e "s|\${DIGEST}|$lab_manifest_digest|g" \
-		-e "s|\${APPLY}|${APPLY:-Always}|g" \
+		-e "s|\${APPLY}|${APPLY}|g" \
 		-e "s|\${ALLOW_DESTRUCTIVE}|${ALLOW_DESTRUCTIVE:-false}|g" \
 		-e "s|\${INTERVAL}|${INTERVAL:-1m}|g" \
 		-e "s|\${SUSPEND}|${SUSPEND:-false}|g" \
@@ -331,7 +348,7 @@ lab_up() {
 	if [ -f "$LAB_ENVIRONMENT" ]; then
 		printf 'lab: a lab is already up (%s); remove it with make demo-down\n' "$LAB_ENVIRONMENT"
 	else
-		K8S_VERSION="${LAB_KUBERNETES_VERSION:-1.37.0}" \
+		K8S_VERSION="${LAB_KUBERNETES_VERSION:-$(support_newest_version)}" \
 			E2E_STOP_AFTER=bootstrap \
 			E2E_ENVIRONMENT_FILE="$LAB_ENVIRONMENT" \
 			E2E_RUN_ID="${LAB_RUN_ID:-demo}" \
@@ -342,25 +359,110 @@ lab_up() {
 	lab_prepare
 }
 
-# lab_down removes the cluster and the containers the lab created.
+# lab_down removes what the bootstrap created, and nothing else.
 #
-# Those, by the identifiers the bootstrap wrote, and nothing else. A Docker
-# context is shared, and a demonstration is not a reason to remove somebody
-# else's container.
+# The bootstrap releases the harness's cleanup trap so the environment survives,
+# which means this is the only thing that will ever remove it. Everything the
+# harness creates carries an owner label naming this cluster, so containers and
+# volumes are swept by that label rather than by a list of identifiers a later
+# harness change would leave behind. The images and the work directory are not
+# labelled, so the bootstrap writes down what it made.
+#
+# A lab left half-removed is worse than one left up: the task claim alone makes
+# the next `make demo-up` refuse to run, and nothing says why.
 lab_down() {
 	[ -f "$LAB_ENVIRONMENT" ] || {
 		printf 'lab: no lab to remove\n'
 		return 0
 	}
 	read_environment
+	lab_require E2E_KIND_CLUSTER_NAME E2E_DOCKER_CONTEXT
+
+	lab_down_incomplete=0
 	printf 'lab: removing cluster %s\n' "$E2E_KIND_CLUSTER_NAME"
 	kind delete cluster --name "$E2E_KIND_CLUSTER_NAME" >/dev/null 2>&1 || true
-	for lab_down_container in \
-		"${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:-}" \
-		"${E2E_REGISTRY_CONTAINER_ID:-}"; do
-		[ -n "$lab_down_container" ] || continue
+	# Asked again, because the delete is quiet about a daemon it could not
+	# reach. A teardown that says it removed a cluster still running is worse
+	# than one that fails: the next run is refused and nothing says why.
+	#
+	# Three answers, not two. A daemon that did not answer is not a cluster
+	# that is gone, and reading the first as the second is how the silence
+	# became a success in the first place.
+	if lab_down_clusters=$(kind get clusters 2>/dev/null); then
+		if printf '%s\n' "$lab_down_clusters" | grep -qxF "$E2E_KIND_CLUSTER_NAME"; then
+			printf 'lab: could not remove cluster %s\n' "$E2E_KIND_CLUSTER_NAME" >&2
+			lab_down_incomplete=1
+		fi
+	else
+		printf 'lab: could not ask whether cluster %s is gone\n' "$E2E_KIND_CLUSTER_NAME" >&2
+		lab_down_incomplete=1
+	fi
+
+	# By owner label, so a container or volume this run created is removed and
+	# one another run created is not. The label is the harness's, and it is on
+	# every resource the harness makes outside the cluster.
+	lab_down_owner="operator.ptah.dev/e2e-owner=$E2E_KIND_CLUSTER_NAME"
+	for lab_down_container in $(docker --context "$E2E_DOCKER_CONTEXT" container ls \
+		--all --quiet --filter "label=$lab_down_owner" 2>/dev/null); do
 		docker --context "$E2E_DOCKER_CONTEXT" container rm -fv \
 			"$lab_down_container" >/dev/null 2>&1 || true
 	done
-	rm -rf "$(dirname "$LAB_ENVIRONMENT")"
+	for lab_down_volume in $(docker --context "$E2E_DOCKER_CONTEXT" volume ls \
+		--quiet --filter "label=$lab_down_owner" 2>/dev/null); do
+		docker --context "$E2E_DOCKER_CONTEXT" volume rm \
+			"$lab_down_volume" >/dev/null 2>&1 || true
+	done
+
+	# The images the bootstrap built and mirrored. They carry no owner label and
+	# their tags are shared with no other run, so the list it wrote is the only
+	# answer; a name pattern would reach another run's images.
+	for lab_down_image in ${E2E_CREATED_IMAGE_REFS:-}; do
+		docker --context "$E2E_DOCKER_CONTEXT" image rm \
+			"$lab_down_image" >/dev/null 2>&1 || true
+	done
+
+	lab_down_remove_work_directory
+	if [ "$lab_down_incomplete" -ne 0 ]; then
+		printf 'lab: teardown is incomplete; the environment file is kept so it can be retried\n' >&2
+		return 1
+	fi
+	lab_down_remove_lab_directory
+	printf 'lab: removed\n'
+}
+
+# lab_down_remove_work_directory removes the kubeconfig, the chart package and
+# the credential files the bootstrap wrote.
+#
+# Only under the name the harness gives it. It holds a registry password and a
+# database URL, so leaving it behind leaves those on disk; removing something
+# else because a variable was pointed elsewhere is the worse mistake, so the
+# path has to look like the harness's own.
+lab_down_remove_work_directory() {
+	case "${E2E_WORK_DIR:-}" in
+	"${TMPDIR:-/tmp}"/ptah-operator-e2e.* | /tmp/ptah-operator-e2e.*)
+		rm -rf -- "$E2E_WORK_DIR"
+		;;
+	'') ;;
+	*)
+		printf 'lab: refusing to remove unexpected work directory %s\n' \
+			"$E2E_WORK_DIR" >&2
+		;;
+	esac
+}
+
+# lab_down_remove_lab_directory removes demo/.lab, and only demo/.lab.
+#
+# LAB_ENVIRONMENT is an input. Removing the directory it happens to sit in would
+# delete whatever else is there, so the directory is removed only when it is the
+# repository's own; otherwise the file that says a lab exists is removed and the
+# rest is left alone.
+lab_down_remove_lab_directory() {
+	lab_down_directory=$(CDPATH='' cd -- "$(dirname -- "$LAB_ENVIRONMENT")" && pwd)
+	if [ "$lab_down_directory" = "$LAB_ROOT/demo/.lab" ]; then
+		rm -rf -- "$lab_down_directory"
+		return 0
+	fi
+	printf 'lab: %s is not the lab directory, so only the environment file is removed\n' \
+		"$lab_down_directory" >&2
+	rm -f -- "$LAB_ENVIRONMENT"
 }

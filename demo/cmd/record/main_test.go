@@ -153,8 +153,14 @@ func TestLabEnvironmentCarriesWhatAStepReads(t *testing.T) {
 	}
 }
 
+// write puts one file on disk, creating the directories above it. Every caller
+// wants the parent, and a helper that refuses to make it just moves the mkdir
+// into each test.
 func write(t *testing.T, path, content string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
