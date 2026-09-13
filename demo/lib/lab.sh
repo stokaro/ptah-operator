@@ -193,8 +193,13 @@ lab_reset() {
 		--timeout=60s >/dev/null
 	k -n "$E2E_TEST_NAMESPACE" delete ptahschemaplan --all --ignore-not-found \
 		--timeout=60s >/dev/null
+	# Every scenario starts from an empty database, so a drop that did not run
+	# is not a detail to carry on from: the next scenario would be recorded
+	# against whatever the last one left, and the failure would surface as a
+	# plan nobody can explain several steps later.
 	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-psql -- \
-		psql -qAt -c "DROP TABLE IF EXISTS orders, customers CASCADE" >/dev/null 2>&1 || true
+		psql -qAt -c "DROP TABLE IF EXISTS orders, customers CASCADE" >/dev/null ||
+		lab_fail "could not empty the demonstration database"
 }
 
 # lab_manifest renders one manifest template.
@@ -306,32 +311,92 @@ lab_down() {
 	# one another run created is not. The label is the harness's, and it is on
 	# every resource the harness makes outside the cluster.
 	lab_down_owner="operator.ptah.dev/e2e-owner=$E2E_KIND_CLUSTER_NAME"
-	for lab_down_container in $(docker --context "$E2E_DOCKER_CONTEXT" container ls \
-		--all --quiet --filter "label=$lab_down_owner" 2>/dev/null); do
-		docker --context "$E2E_DOCKER_CONTEXT" container rm -fv \
-			"$lab_down_container" >/dev/null 2>&1 || true
-	done
-	for lab_down_volume in $(docker --context "$E2E_DOCKER_CONTEXT" volume ls \
-		--quiet --filter "label=$lab_down_owner" 2>/dev/null); do
-		docker --context "$E2E_DOCKER_CONTEXT" volume rm \
-			"$lab_down_volume" >/dev/null 2>&1 || true
-	done
+	lab_down_remove_labelled container
+	lab_down_remove_labelled volume
+	lab_down_remove_images
 
-	# The images the bootstrap built and mirrored. They carry no owner label and
-	# their tags are shared with no other run, so the list it wrote is the only
-	# answer; a name pattern would reach another run's images.
-	for lab_down_image in ${E2E_CREATED_IMAGE_REFS:-}; do
-		docker --context "$E2E_DOCKER_CONTEXT" image rm \
-			"$lab_down_image" >/dev/null 2>&1 || true
-	done
-
-	lab_down_remove_work_directory
 	if [ "$lab_down_incomplete" -ne 0 ]; then
-		printf 'lab: teardown is incomplete; the environment file is kept so it can be retried\n' >&2
+		printf 'lab: teardown is incomplete; the environment file and the work directory are kept so it can be retried\n' >&2
 		return 1
 	fi
+	# Only now. The work directory holds the task-scoped Docker context this
+	# function resolves, so removing it before the teardown has finished leaves
+	# a retry unable to reach the daemon that still holds what is left.
+	lab_down_remove_work_directory
 	lab_down_remove_lab_directory
 	printf 'lab: removed\n'
+}
+
+# lab_down_list_labelled prints the ids of one kind of object this lab labelled.
+lab_down_list_labelled() {
+	case "$1" in
+	container)
+		docker --context "$E2E_DOCKER_CONTEXT" container ls \
+			--all --quiet --filter "label=$lab_down_owner"
+		;;
+	volume)
+		docker --context "$E2E_DOCKER_CONTEXT" volume ls \
+			--quiet --filter "label=$lab_down_owner"
+		;;
+	esac
+}
+
+# lab_down_remove_labelled removes them, and says so when it could not.
+#
+# Every step is read. A Docker command that could not run at all lists nothing,
+# and an unchecked list of nothing reads exactly like a lab with nothing left --
+# which is how a teardown reports success over the task claim that refuses the
+# next run.
+lab_down_remove_labelled() {
+	lab_down_kind=$1
+	if ! lab_down_ids=$(lab_down_list_labelled "$lab_down_kind" 2>/dev/null); then
+		printf 'lab: could not ask which %ss this lab created\n' "$lab_down_kind" >&2
+		lab_down_incomplete=1
+		return 0
+	fi
+	for lab_down_id in $lab_down_ids; do
+		lab_down_remove_one "$lab_down_kind" "$lab_down_id" || {
+			printf 'lab: could not remove %s %s\n' "$lab_down_kind" "$lab_down_id" >&2
+			lab_down_incomplete=1
+		}
+	done
+	# Asked again, for the reason the cluster is asked again: a removal that
+	# reported nothing and a removal that did nothing are different answers.
+	if ! lab_down_left=$(lab_down_list_labelled "$lab_down_kind" 2>/dev/null); then
+		printf 'lab: could not ask whether any %s of this lab is left\n' "$lab_down_kind" >&2
+		lab_down_incomplete=1
+		return 0
+	fi
+	if [ -n "$lab_down_left" ]; then
+		printf 'lab: %s left behind: %s\n' "$lab_down_kind" \
+			"$(printf '%s' "$lab_down_left" | tr '\n' ' ')" >&2
+		lab_down_incomplete=1
+	fi
+}
+
+lab_down_remove_one() {
+	case "$1" in
+	container) docker --context "$E2E_DOCKER_CONTEXT" container rm -fv "$2" >/dev/null 2>&1 ;;
+	volume) docker --context "$E2E_DOCKER_CONTEXT" volume rm "$2" >/dev/null 2>&1 ;;
+	esac
+}
+
+# lab_down_remove_images removes what the bootstrap built and mirrored.
+#
+# They carry no owner label and their tags are shared with no other run, so the
+# list it wrote is the only answer; a name pattern would reach another run's
+# images. An image that is already gone is not a failure, and a daemon that
+# cannot answer has already been reported by the labelled removals above.
+lab_down_remove_images() {
+	for lab_down_image in ${E2E_CREATED_IMAGE_REFS:-}; do
+		docker --context "$E2E_DOCKER_CONTEXT" image inspect \
+			"$lab_down_image" >/dev/null 2>&1 || continue
+		docker --context "$E2E_DOCKER_CONTEXT" image rm \
+			"$lab_down_image" >/dev/null 2>&1 || {
+			printf 'lab: could not remove image %s\n' "$lab_down_image" >&2
+			lab_down_incomplete=1
+		}
+	done
 }
 
 # lab_down_remove_work_directory removes the kubeconfig, the chart package and
@@ -382,12 +447,16 @@ lab_down_remove_lab_directory() {
 # platform, and a demonstration is watched from a machine that is often another
 # one.
 lab_ptah() {
-	lab_require E2E_PTAH_BUILD_CONTEXT
 	lab_ptah_bin="$LAB_ROOT/demo/.lab/bin"
 	if [ -x "$lab_ptah_bin/ptah" ]; then
 		printf '%s\n' "$lab_ptah_bin"
 		return 0
 	fi
+	# A lab built from a prebuilt executor image archived no Ptah source, so
+	# there is nothing here to build a CLI from. That is a configuration a
+	# reader chose, not a fault: say what it costs and where a CLI comes from.
+	[ -n "${E2E_PTAH_BUILD_CONTEXT:-}" ] ||
+		lab_fail "this lab was built from the executor image ${E2E_EXECUTOR_IMAGE:-} rather than from Ptah source, so it kept none to build the CLI from; install ptah yourself and put it on PATH"
 	[ -f "$E2E_PTAH_BUILD_CONTEXT/go.mod" ] ||
 		lab_fail "the lab kept no Ptah source at $E2E_PTAH_BUILD_CONTEXT"
 	mkdir -p "$lab_ptah_bin"

@@ -41,6 +41,13 @@ func TestRefuseDirtyTree(t *testing.T) {
 			want: "Makefile",
 		},
 		{
+			// loadScenarios reads the directory, so this one would be recorded
+			// under a commit that does not have it.
+			name: "an untracked scenario",
+			make: func() { write(t, filepath.Join(root, "demo", "scenarios", "invented.yaml"), "id: invented\n") },
+			want: "demo/scenarios/invented.yaml",
+		},
+		{
 			name: "a staged addition",
 			make: func() {
 				write(t, filepath.Join(root, "demo", "scenarios", "new.yaml"), "id: new\n")
@@ -64,18 +71,20 @@ func TestRefuseDirtyTree(t *testing.T) {
 			gitRun(t, root, "git", "checkout", "--", ".")
 			gitRun(t, root, "git", "reset", "-q")
 			_ = os.Remove(filepath.Join(root, "demo", "scenarios", "new.yaml"))
+			_ = os.Remove(filepath.Join(root, "demo", "scenarios", "invented.yaml"))
 		})
 	}
 }
 
-// An untracked file is not a change to what the commit holds, so it is not a
-// reason to refuse: the lab writes its scratch files inside the repository.
-func TestRefuseDirtyTreeIgnoresUntrackedFiles(t *testing.T) {
+// The lab writes its scratch files inside the repository, and .gitignore names
+// that directory. An ignored file is not a change to what the commit holds, so
+// it is not a reason to refuse a recording.
+func TestRefuseDirtyTreeIgnoresTheLabScratchDirectory(t *testing.T) {
 	t.Parallel()
 	root := newRepository(t)
 	write(t, filepath.Join(root, "demo", ".lab", "environment"), "E2E_KUBECONFIG=/tmp/x\n")
 	if err := refuseDirtyTree(root, filepath.Join(root, "demo", "recordings", "runs.json")); err != nil {
-		t.Fatalf("an untracked file was refused: %v", err)
+		t.Fatalf("an ignored scratch file was refused: %v", err)
 	}
 }
 
@@ -85,6 +94,9 @@ func newRepository(t *testing.T) string {
 	gitRun(t, root, "git", "init", "-q", "-b", "master")
 	gitRun(t, root, "git", "config", "user.email", "recorder@example.test")
 	gitRun(t, root, "git", "config", "user.name", "Recorder")
+	// The repository this guard reads has one, and what it names is what the
+	// lab writes while a recording runs.
+	write(t, filepath.Join(root, ".gitignore"), "/demo/.lab/\n")
 	write(t, filepath.Join(root, "Makefile"), "demo:\n")
 	write(t, filepath.Join(root, "demo", "scenarios", "drift.yaml"), "id: drift\n")
 	write(t, filepath.Join(root, "demo", "recordings", "runs.json"), "{}\n")

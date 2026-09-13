@@ -5651,6 +5651,10 @@ func auditBootstrapHandoff(path string, contents []byte) ([]byte, error) {
 			"%s: the demonstration lab hand-off holds %d exits; it may hold the one it ends with", path, count)
 	}
 
+	if err := auditHandoffNames(path, block, contents); err != nil {
+		return nil, err
+	}
+
 	masked := append([]byte(nil), contents...)
 	for index := start + len(opener); index < start+len(opener)+end; index++ {
 		if masked[index] != '\n' {
@@ -5658,4 +5662,44 @@ func auditBootstrapHandoff(path string, contents []byte) ([]byte, error) {
 		}
 	}
 	return masked, nil
+}
+
+// handoffExpansion matches a name the hand-off expands, and handoffDefaulted the
+// subset that carries its own default at the use site.
+var (
+	handoffExpansion = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z0-9_]*)`)
+	handoffDefaulted = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*):`)
+)
+
+// auditHandoffNames refuses a hand-off that prints a variable the bootstrap
+// assigns only on one of its paths.
+//
+// The harness runs under set -u, and the hand-off is its last act. A name
+// assigned inside a conditional -- the Ptah build context, which exists only
+// when the executor was built from source -- therefore kills the bootstrap at
+// the moment it should be writing the lab's environment, and only for the
+// caller who took the other path. A top-level assignment is what makes the
+// value's absence an empty string that the reader of the file can act on.
+func auditHandoffNames(path string, block, contents []byte) error {
+	defaulted := map[string]bool{}
+	for _, match := range handoffDefaulted.FindAllSubmatch(block, -1) {
+		defaulted[string(match[1])] = true
+	}
+	reported := map[string]bool{}
+	for _, match := range handoffExpansion.FindAllSubmatch(block, -1) {
+		name := string(match[1])
+		if defaulted[name] || reported[name] {
+			continue
+		}
+		reported[name] = true
+		assigned := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + `=`)
+		if assigned.Match(contents) {
+			continue
+		}
+		return fmt.Errorf(
+			"%s: the demonstration lab hand-off prints $%s, which nothing assigns at the top level; "+
+				"under set -u the bootstrap dies here for whichever caller took the path that skips it, "+
+				"so give the name a top-level default", path, name)
+	}
+	return nil
 }

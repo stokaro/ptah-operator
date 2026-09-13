@@ -1815,6 +1815,12 @@ if [ "$E2E_DIRECT_HOST_ACCESS" -eq 0 ]; then
 	fi
 fi
 
+# Empty unless the executor is built here. A caller who supplies
+# E2E_EXECUTOR_IMAGE gets no Ptah source, and the bootstrap hand-off prints this
+# name; without the assignment set -u ends the run at the line that should have
+# written the lab's environment. The lab command reads the empty value and says
+# where a Ptah CLI has to come from instead.
+PTAH_BUILD_CONTEXT=
 if [ -z "$E2E_EXECUTOR_IMAGE" ]; then
 	if [ -z "$E2E_PTAH_SOURCE_DIR" ]; then
 		if [ -n "$E2E_PTAH_SIBLING_SOURCE_DIR" ] &&

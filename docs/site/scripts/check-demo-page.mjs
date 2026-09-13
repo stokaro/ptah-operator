@@ -72,6 +72,26 @@ export function countsIn(document) {
   };
 }
 
+// The beat a pause is measured in: the last line of output before a note.
+//
+// The player gives a reader at least a second to read output before the next
+// step is announced, and the note at the end of that beat is a visible change.
+// A pause taken there and released is therefore something a clock can see.
+export function pausePoint(events) {
+  const output = new Set(['out', 'sql', 'new', 'err']);
+  const skipped = new Set(['blank', 'sync', 'wait', 'mute']);
+  for (let index = 1; index < events.length; index += 1) {
+    if (events[index][0] !== 'note') continue;
+    for (let back = index - 1; back >= 0; back -= 1) {
+      const [kind, text] = events[back];
+      if (skipped.has(kind)) continue;
+      if (!output.has(kind)) break;
+      return { after: String(text).trim(), then: String(events[index][1]).trim() };
+    }
+  }
+  return null;
+}
+
 function selftest() {
   // The shape the page has to have, asserted against a stub rather than a
   // browser: a check whose only failure mode is "playwright is not installed"
@@ -91,7 +111,91 @@ function selftest() {
   if (counts.tiles !== 2 || counts.transcripts !== 2 || counts.frames !== 1 || counts.lines !== 3) {
     throw new Error(`countsIn read ${JSON.stringify(counts)}`);
   }
-  console.log('check-demo-page.mjs --selftest: OK (what a page has to carry)');
+  const beat = pausePoint([
+    ['sync', 'ready'],
+    ['note', '# first'],
+    ['cmd', 'kubectl get'],
+    ['out', 'NAME'],
+    ['out', 'ptah-operator'],
+    ['blank', ''],
+    ['note', '# second'],
+  ]);
+  if (!beat || beat.after !== 'ptah-operator' || beat.then !== '# second') {
+    throw new Error(`pausePoint read ${JSON.stringify(beat)}`);
+  }
+  // A run that never announces a step after output has no beat of this kind,
+  // and saying so is better than pausing somewhere a clock cannot read.
+  if (pausePoint([['note', '# only'], ['cmd', 'kubectl get'], ['out', 'NAME']]) !== null) {
+    throw new Error('pausePoint invented a beat in a run that has none');
+  }
+  // A note straight after a command is not it: nothing was read in between.
+  if (pausePoint([['cmd', 'kubectl get'], ['note', '# next']]) !== null) {
+    throw new Error('pausePoint took a note that follows no output');
+  }
+
+  console.log('check-demo-page.mjs --selftest: OK (what a page has to carry, and where a pause is measured)');
+}
+
+// measurePause drives one pause over a beat and reports what it took to come
+// back, or the problems it found on the way.
+async function measurePause(browser, origin, beat) {
+  const problems = [];
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const screenLength = () =>
+    page.evaluate(() => (document.querySelector('[data-demo-screen]')?.textContent ?? '').length);
+  try {
+    await page.goto(`${origin}demo/`, { waitUntil: 'load' });
+    await page.waitForSelector('[data-demo-controls]:not([hidden])', { timeout: 10_000 });
+    const toggle = page.locator('[data-demo-toggle]').first();
+    await toggle.click();
+    await page.waitForFunction(
+      (needle) => (document.querySelector('[data-demo-screen]')?.textContent ?? '').includes(needle),
+      beat.after.slice(0, 48),
+      { timeout: 60_000, polling: 25 },
+    );
+
+    // Into the beat, rather than at its edge. What is in flight the moment the
+    // last line of output lands is the short beat between two lines; the beat
+    // this measures is the one after it, which the player gives a reader to
+    // read what was printed before the next step is announced.
+    let settled = await screenLength();
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await page.waitForTimeout(120);
+      const now = await screenLength();
+      if (now === settled) break;
+      settled = now;
+    }
+
+    await toggle.click();
+    const held = await screenLength();
+    // Longer than the beat it interrupted. A pause the beat outlives says
+    // nothing: what the defect did was subtract the time spent paused from the
+    // beat, so only a pause that outlasts it leaves nothing to come back to.
+    await page.waitForTimeout(8000);
+    if ((await screenLength()) !== held) problems.push('the player kept typing while it was paused');
+
+    const resumedAt = Date.now();
+    await toggle.click();
+    await page.waitForFunction(
+      (was) => (document.querySelector('[data-demo-screen]')?.textContent ?? '').length > was,
+      held,
+      { timeout: 20_000, polling: 20 },
+    );
+    const waited = Date.now() - resumedAt;
+    // The beat this pause interrupted is at least a second long, and a pause
+    // longer than the beat used to leave nothing of it: the screen moved the
+    // instant the reader pressed Play.
+    if (waited < 400) {
+      problems.push(
+        `resuming skipped the beat it interrupted: the screen moved ${waited}ms after Play, ` +
+          'and the beat a pause taken there interrupts runs for at least a second',
+      );
+    }
+  } finally {
+    await context.close();
+  }
+  return problems;
 }
 
 async function main() {
@@ -195,6 +299,14 @@ async function main() {
     }
     if (failures.length > 0) problems.push(`the player threw: ${failures.join('; ')}`);
     await live.close();
+
+    // Pausing keeps the beat it interrupted, and resuming waits it out.
+    const beat = pausePoint(ordered[0].events);
+    if (!beat) {
+      console.warn('check-demo-page.mjs: the first run announces no step after output, so pausing was not measured');
+    } else {
+      problems.push(...(await measurePause(browser, origin, beat)));
+    }
 
     // A reader who asked for reduced motion gets the session, not a
     // typewriter: the transcript stays and nothing types on its own.
