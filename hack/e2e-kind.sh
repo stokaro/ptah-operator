@@ -430,9 +430,26 @@ EXTERNAL_PG_ADMIN_PASSWORD="e2eExternalPgAdmin${external_pg_admin_credential_suf
 [ "$EXTERNAL_PG_ADMIN_PASSWORD" != "$EXTERNAL_PG_PASSWORD" ] ||
 	fail "external PostgreSQL admin and application credentials must differ"
 
+# Both published ports have to stay below the kernel's ephemeral range. A port
+# inside it is handed out as the source port of an outgoing connection, and the
+# image pulls this suite makes immediately before creating the cluster open
+# enough of them that the bind kind performs afterwards loses the race:
+#
+#   failed to bind host port for 127.0.0.1:47966:172.18.0.6:6443/tcp:
+#   address already in use
+#
+# The port and the Kubernetes version move between occurrences, which is what a
+# race looks like from the outside. The registry port has never hit it, and that
+# asymmetry is the measurement: its range already sits below the floor, while
+# the API server range used to put 86 percent of its ports above it.
+EPHEMERAL_PORT_FLOOR=32768
+if [ -r /proc/sys/net/ipv4/ip_local_port_range ]; then
+	EPHEMERAL_PORT_FLOOR=$(awk '{print $1}' /proc/sys/net/ipv4/ip_local_port_range)
+fi
+
 if [ -z "$E2E_API_SERVER_PORT" ]; then
 	port_seed=$(printf '%s' "$CLUSTER_NAME" | cksum | awk '{print $1}')
-	E2E_API_SERVER_PORT=$((30000 + port_seed % 20000))
+	E2E_API_SERVER_PORT=$((29000 + port_seed % 3768))
 fi
 printf '%s\n' "$E2E_API_SERVER_PORT" | grep -Eq '^[0-9]+$' || fail "E2E_API_SERVER_PORT must be numeric"
 if [ "$E2E_API_SERVER_PORT" -lt 1024 ] || [ "$E2E_API_SERVER_PORT" -gt 65535 ]; then
@@ -446,6 +463,14 @@ printf '%s\n' "$E2E_REGISTRY_PORT" | grep -Eq '^[0-9]+$' || fail "E2E_REGISTRY_P
 if [ "$E2E_REGISTRY_PORT" -lt 1024 ] || [ "$E2E_REGISTRY_PORT" -gt 65535 ]; then
 	fail "E2E_REGISTRY_PORT must be between 1024 and 65535"
 fi
+# Checked after both ports are known, so an explicitly supplied port is held to
+# the same rule as a derived one: the race does not care which chose it.
+for published_port in "$E2E_API_SERVER_PORT" "$E2E_REGISTRY_PORT"; do
+	if [ "$published_port" -ge "$EPHEMERAL_PORT_FLOOR" ]; then
+		fail "published port $published_port is at or above the kernel ephemeral floor $EPHEMERAL_PORT_FLOOR, so the kernel can hand it to an outgoing connection before the cluster binds it; set E2E_API_SERVER_PORT and E2E_REGISTRY_PORT below the floor"
+	fi
+done
+
 REMOTE_REGISTRY="127.0.0.1:${E2E_REGISTRY_PORT}"
 
 export DOCKER_HOST="$DOCKER_ENDPOINT"
