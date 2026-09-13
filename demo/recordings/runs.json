@@ -1,25 +1,25 @@
 {
-  "recordedAt": "2026-09-12T16:02:06Z",
+  "recordedAt": "2026-09-13T03:57:49Z",
   "lab": {
-    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-lab-1-206dc31ea3.svc.cluster.local:5000/ptah-operator@sha256:78a15f7388c669e857291819b97238030c279f8198f948ba6ef7650ebff3f62c",
-    "CONTROLLER_REVISION": "bd08bbad9091baf11480dca1268b394a57fec0e8",
-    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-lab-1-206dc31ea3.svc.cluster.local:5000/ptah-executor@sha256:ab9d5e6e8de6d95c7565b21138a0aa108c6dd6ddd33c6835386de7e26073a70a",
-    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-lab-1-206dc31ea3",
+    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-operator@sha256:cc38ab71122410ee3518bd56316c233fdbc03774426e00c4c1d6657875522c70",
+    "CONTROLLER_REVISION": "a41c148115b2abcfd5180a846335634fdc0dba8f",
+    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-executor@sha256:3e609518c4e01841f3ea85067733a745321d68e878c0be2675ace3907961023c",
+    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-03c2a0e0b9",
     "KUBERNETES_VERSION": "1.37.0",
     "PTAH_REVISION": "00fc362c943bfb9d0363d5890bf449a2a9b5e7cf",
     "PTAH_VERSION": "v0.3.0-201-g00fc362c9",
-    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-lab-1-206dc31ea3.svc.cluster.local:5000/ptah-runner@sha256:78a15f7388c669e857291819b97238030c279f8198f948ba6ef7650ebff3f62c"
+    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-runner@sha256:cc38ab71122410ee3518bd56316c233fdbc03774426e00c4c1d6657875522c70"
   },
   "source": {
-    "commit": "681dfed0eed5140f7328b0d24366ee2c9c2f0809",
-    "describe": "681dfed-dirty"
+    "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
+    "describe": "68449a0"
   },
   "scenarios": [
     {
       "id": "destructive-block",
       "source": {
-        "commit": "681dfed0eed5140f7328b0d24366ee2c9c2f0809",
-        "describe": "681dfed-dirty"
+        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
+        "describe": "68449a0"
       },
       "title": "Refuse a destructive change",
       "tagline": "The third revision drops a column. The policy says no, and says so before anything runs.",
@@ -28,7 +28,7 @@
         "Safety"
       ],
       "commands": 8,
-      "lines": 51,
+      "lines": 58,
       "events": [
         [
           "sync",
@@ -40,7 +40,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"INSERT INTO customers (id, email) VALUES (1, 'a@example.test') RETURNING id, email\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"INSERT INTO customers (id, email) VALUES (1, 'a@example.test') RETURNING id, email\""
         ],
         [
           "out",
@@ -128,7 +128,27 @@
         ],
         [
           "cmd",
-          "DIGEST=$(demo/bin/lab publish v3)"
+          "eval \"$(demo/bin/lab credentials)\""
+        ],
+        [
+          "cont",
+          "export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY"
+        ],
+        [
+          "cont",
+          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
+        ],
+        [
+          "cont",
+          "DIGEST=$(ptah schema push \"oci://$PTAH_OCI_REGISTRY/schemas/demo:v3-$$\" \\"
+        ],
+        [
+          "cont",
+          "  --schema-file demo/schemas/v3.sql --dialect postgres --plain-http \\"
+        ],
+        [
+          "cont",
+          "  | sed -n 's/^Digest: //p')"
         ],
         [
           "cont",
@@ -136,7 +156,7 @@
         ],
         [
           "cont",
-          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$E2E_REGISTRY_HOST/schemas/demo@$DIGEST\\\"}}}\""
+          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$REGISTRY_IN_CLUSTER/schemas/demo@$DIGEST\\\"}}}\""
         ],
         [
           "out",
@@ -180,11 +200,11 @@
         ],
         [
           "out",
-          "ptah-plan-0b63fa2dad3997fe2bcb368f   storefront   sha256:0b63fa2dad3997fe2bcb368f7b9299e1aac911735cfa59ca29ffd79c0e9c697d   2            true          2s"
+          "ptah-plan-b01cb0cd8634830a211e32dd   storefront   sha256:b01cb0cd8634830a211e32dd368eb3f7841a9ba14edbe7121ec1e31ad3f1ed71   3            false         41s"
         ],
         [
           "out",
-          "ptah-plan-372d782b9272a4bb6f00ce04   storefront   sha256:372d782b9272a4bb6f00ce04f22582eff4ac1f5799fec1514177c0a4ff2ec7b2   3            false         49s"
+          "ptah-plan-fccdb29856367fb8482cc9b3   storefront   sha256:fccdb29856367fb8482cc9b3e519835b35f0e6d4920fd56cd6a19a77f786b9c5   2            true          2s"
         ],
         [
           "note",
@@ -196,15 +216,23 @@
         ],
         [
           "cont",
-          "CHUNK=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" -o jsonpath='{.spec.chunks[0].name}')"
+          "for CHUNK in $(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" \\"
         ],
         [
           "cont",
-          "kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+          "  -o jsonpath='{range .spec.chunks[*]}{.name}{\"\\n\"}{end}'); do"
         ],
         [
           "cont",
-          "  | base64 -d | jq -r '.statements[] | \"\\(.severity)  \\(.sql)  -- \\(.reason)\"'"
+          "  kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+        ],
+        [
+          "cont",
+          "    | base64 -d | jq -r '.statements[] | \"\\(.severity)  \\(.sql)  -- \\(.reason)\"'"
+        ],
+        [
+          "cont",
+          "done"
         ],
         [
           "out",
@@ -228,7 +256,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"SELECT id, email FROM customers\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"SELECT id, email FROM customers\""
         ],
         [
           "out",
@@ -313,8 +341,8 @@
     {
       "id": "drift",
       "source": {
-        "commit": "681dfed0eed5140f7328b0d24366ee2c9c2f0809",
-        "describe": "681dfed-dirty"
+        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
+        "describe": "68449a0"
       },
       "title": "Close the drift",
       "tagline": "Someone changes the database by hand. The operator notices and puts it back.",
@@ -359,7 +387,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"ALTER TABLE customers DROP COLUMN signed_up_at\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"ALTER TABLE customers DROP COLUMN signed_up_at\""
         ],
         [
           "sql",
@@ -371,7 +399,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\d customers\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\d customers\""
         ],
         [
           "out",
@@ -419,7 +447,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\d customers\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\d customers\""
         ],
         [
           "out",
@@ -475,11 +503,11 @@
         ],
         [
           "out",
-          "ptah-plan-731d3c6d19dc5846f6bb316e   storefront   sha256:731d3c6d19dc5846f6bb316ea564d4ed8c1bda0e34cfb83828fc843e6c2e6659   1            false         17s"
+          "ptah-plan-1447911fd19499f496b6d14a   storefront   sha256:1447911fd19499f496b6d14a95d1cbc7f2adc73678fc8190027c1fb9c024a940   3            false         115s"
         ],
         [
           "out",
-          "ptah-plan-cf942c30fac668fc36895130   storefront   sha256:cf942c30fac668fc36895130758b55290a78e84f810968ac54fdcff3212a805f   3            false         115s"
+          "ptah-plan-82af8393c9bde7dec799a081   storefront   sha256:82af8393c9bde7dec799a081245c8917f061beb487cb9266a2dd7bd5ce41baf1   1            false         18s"
         ]
       ],
       "checks": [
@@ -524,8 +552,8 @@
     {
       "id": "failure-recovery",
       "source": {
-        "commit": "681dfed0eed5140f7328b0d24366ee2c9c2f0809",
-        "describe": "681dfed-dirty"
+        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
+        "describe": "68449a0"
       },
       "title": "Fail, then recover",
       "tagline": "Point it at a database that is not there. It says so, keeps trying, and converges when it is.",
@@ -546,7 +574,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab manifest storefront \"$(cat demo/.lab/digest)\" \\"
+          "APPLY=Always demo/bin/lab manifest storefront \"$(cat demo/.lab/digest)\" \\"
         ],
         [
           "cont",
@@ -598,7 +626,7 @@
         ],
         [
           "out",
-          "12s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-1e624f0937c69e56 started"
+          "12s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-7c51e630f76c03e8 started"
         ],
         [
           "out",
@@ -606,7 +634,7 @@
         ],
         [
           "out",
-          "9s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-3e6c76385e25dc68 started"
+          "9s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-91d21ca5a79e96cb started"
         ],
         [
           "out",
@@ -622,7 +650,7 @@
         ],
         [
           "out",
-          "{\"activeOperation\":{\"attempt\":2,\"coordinationDigest\":\"sha256:1f99f1e0ceb341a5b6ca5da75161513672b13c811fc50e1725fc7dec0f8aa99f\",\"executionBindingID\":\"v1-3cd1817a1ceac5e2847d384188add130\",\"id\":\"sha256:69bab3ee5ca27064ceb06a109a9f91152a563e3a11acaeb4613b8c556a3ed467\",\"inputFingerprint\":\"sha256:f444de22968db64c5839bb3cc0bf149c792e2e30fd0608552e9c965a4c2cd2d8\",\"jobName\":\"ptah-observe-storefront-8c3c7db"
+          "{\"activeOperation\":{\"attempt\":2,\"coordinationDigest\":\"sha256:1f99f1e0ceb341a5b6ca5da75161513672b13c811fc50e1725fc7dec0f8aa99f\",\"executionBindingID\":\"v1-00148c0119cc31bd7b104130433dd32f\",\"id\":\"sha256:feaf267ff1fc6917545c9c94c3e5a707ed077f1ff2f63ced065eb7f04ef7e3f3\",\"inputFingerprint\":\"sha256:91e6e09825e3cc117871a94bf5f11cbd8bd88e26292a9a6a5b921f5891b5b6f2\",\"jobName\":\"ptah-observe-storefront-ac3c902"
         ],
         [
           "sync",
@@ -654,7 +682,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\dt\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\dt\""
         ],
         [
           "out",
@@ -737,8 +765,8 @@
     {
       "id": "first-apply",
       "source": {
-        "commit": "681dfed0eed5140f7328b0d24366ee2c9c2f0809",
-        "describe": "681dfed-dirty"
+        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
+        "describe": "68449a0"
       },
       "title": "Apply a schema",
       "tagline": "Publish a schema as an artifact, point the operator at it, and watch it converge.",
@@ -747,7 +775,7 @@
         "Lifecycle"
       ],
       "commands": 10,
-      "lines": 105,
+      "lines": 121,
       "events": [
         [
           "sync",
@@ -778,32 +806,76 @@
           ");"
         ],
         [
-          "note",
-          "# Publish it. The push runs in the cluster, as the Ptah build the operator will run."
-        ],
-        [
-          "cmd",
-          "DIGEST=$(demo/bin/lab publish v1) && echo \"$DIGEST\" | tee demo/.lab/digest"
-        ],
-        [
-          "out",
-          "sha256:c22aadad4ffc320bfbff062fd67a98dc5640fb79be3ee3fa6cb8452b0899d619"
+          "sync",
+          "publishing"
         ],
         [
           "note",
-          "# That is the command it ran. A reference, a dialect, and the file it read."
+          "# The lab tells you where its registry is and what it generated for you."
         ],
         [
           "cmd",
-          "kubectl -n \"$NAMESPACE\" get job demo-push-v1 \\"
+          "eval \"$(demo/bin/lab credentials)\""
         ],
         [
           "cont",
-          "  -o jsonpath='{.spec.template.spec.containers[0].args}' | jq -r 'join(\" \")'"
+          "export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY"
+        ],
+        [
+          "cont",
+          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
+        ],
+        [
+          "cont",
+          "echo \"registry: $PTAH_OCI_REGISTRY\""
         ],
         [
           "out",
-          "schema push oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo:v1-2724b3d3 --schema-file /schema/schema.sql --dialect postgres --plain-http"
+          "registry: 127.0.0.1:24429"
+        ],
+        [
+          "note",
+          "# Publish the schema. This is ptah's own command, run as you or CI would."
+        ],
+        [
+          "cmd",
+          "eval \"$(demo/bin/lab credentials)\""
+        ],
+        [
+          "cont",
+          "export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY"
+        ],
+        [
+          "cont",
+          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
+        ],
+        [
+          "cont",
+          "ptah schema push \"oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$\" \\"
+        ],
+        [
+          "cont",
+          "  --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \\"
+        ],
+        [
+          "cont",
+          "  | tee /dev/stderr | sed -n 's/^Digest: //p' \u003e demo/.lab/digest"
+        ],
+        [
+          "err",
+          "Pushed schema as oci://127.0.0.1:24429/schemas/demo:v1-53576"
+        ],
+        [
+          "err",
+          "Digest: sha256:dba229aaf4821ef0eda35dd1e42bc38b7aae97a5a6693991b33fbb5cbc9280be"
+        ],
+        [
+          "err",
+          "Version:"
+        ],
+        [
+          "err",
+          "Tags: [v1-53576]"
         ],
         [
           "sync",
@@ -815,7 +887,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab manifest storefront \"$(cat demo/.lab/digest)\" | tee demo/.lab/storefront.yaml"
+          "APPLY=Always demo/bin/lab manifest storefront \"$(cat demo/.lab/digest)\" | tee demo/.lab/storefront.yaml"
         ],
         [
           "out",
@@ -911,7 +983,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:c22aadad4ffc320bfbff062fd67a98dc5640fb79be3ee3fa6cb8452b0899d619"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:dba229aaf4821ef0eda35dd1e42bc38b7aae97a5a6693991b33fbb5cbc9280be"
         ],
         [
           "out",
@@ -1107,23 +1179,47 @@
         ],
         [
           "out",
-          "ptah-plan-3866ca33a39e21f5a53f4573   storefront   sha256:3866ca33a39e21f5a53f4573023ba059bf45b02d59edb8fab9c1cd72e31acab0   1            false         18s"
+          "ptah-plan-e621971e063482a56f23a9e9   storefront   sha256:e621971e063482a56f23a9e9468d2c67ab44fcbc6df537147f7109a815638279   1            false         20s"
         ],
         [
           "note",
-          "# The SQL lives in an immutable ConfigMap, not in a status field or a log line."
+          "# The SQL lives in immutable ConfigMaps, not in a status field or a log line."
         ],
         [
           "cmd",
-          "CHUNK=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan -o jsonpath='{.items[0].spec.chunks[0].name}')"
+          "APPLIED=$(kubectl -n \"$NAMESPACE\" get ptahschema storefront \\"
         ],
         [
           "cont",
-          "kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+          "  -o jsonpath='{.status.applied.planFingerprint}')"
         ],
         [
           "cont",
-          "  | base64 -d | jq -r '.statements[].sql'"
+          "PLAN=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r --arg f \"$APPLIED\" '.items[] | select(.spec.fingerprint == $f) | .metadata.name')"
+        ],
+        [
+          "cont",
+          "for CHUNK in $(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" \\"
+        ],
+        [
+          "cont",
+          "  -o jsonpath='{range .spec.chunks[*]}{.name}{\"\\n\"}{end}'); do"
+        ],
+        [
+          "cont",
+          "  kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+        ],
+        [
+          "cont",
+          "    | base64 -d | jq -r '.statements[].sql'"
+        ],
+        [
+          "cont",
+          "done"
         ],
         [
           "out",
@@ -1151,7 +1247,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\d customers\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\d customers\""
         ],
         [
           "out",
@@ -1192,13 +1288,13 @@
         {
           "scenario": "first-apply",
           "step": 2,
-          "claim": "exits 0, prints \"sha256:\"",
+          "claim": "exits 0, prints \"registry: \", never prints \"PTAH_OCI_PASSWORD\"",
           "passed": true
         },
         {
           "scenario": "first-apply",
           "step": 3,
-          "claim": "exits 0, prints \"schema push\", prints \"--dialect postgres\"",
+          "claim": "exits 0, reports \"Pushed schema as oci://\", reports \"Digest: sha256:\"",
           "passed": true
         },
         {
@@ -1266,8 +1362,8 @@
     {
       "id": "lab-setup",
       "source": {
-        "commit": "681dfed0eed5140f7328b0d24366ee2c9c2f0809",
-        "describe": "681dfed-dirty"
+        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
+        "describe": "68449a0"
       },
       "title": "Stand up the lab",
       "tagline": "A four-node kind cluster, the chart from a package, and every image pinned by digest.",
@@ -1300,11 +1396,11 @@
         ],
         [
           "out",
-          "operator    bd08bbad9091baf11480dca1268b394a57fec0e8"
+          "operator    a41c148115b2abcfd5180a846335634fdc0dba8f"
         ],
         [
           "out",
-          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:ab9d5e6e8de6d95c7565b21138a0aa108c6dd6ddd33c6835386de7e26073a70a"
+          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:3e609518c4e01841f3ea85067733a745321d68e878c0be2675ace3907961023c"
         ],
         [
           "out",
@@ -1324,11 +1420,11 @@
         ],
         [
           "out",
-          "ptah-operator-cert-rotator                                     1/1     1            1           84m"
+          "ptah-operator-cert-rotator                                     1/1     1            1           3h1m"
         ],
         [
           "out",
-          "ptah-operator                                                  2/2     2            2           84m"
+          "ptah-operator                                                  2/2     2            2           3h1m"
         ],
         [
           "note",
@@ -1344,11 +1440,11 @@
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:78a15f7388c669e857291819b97238030c279f8198f948ba6ef7650ebff3f62c"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:cc38ab71122410ee3518bd56316c233fdbc03774426e00c4c1d6657875522c70"
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:78a15f7388c669e857291819b97238030c279f8198f948ba6ef7650ebff3f62c"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:cc38ab71122410ee3518bd56316c233fdbc03774426e00c4c1d6657875522c70"
         ],
         [
           "note",
@@ -1392,19 +1488,19 @@
         ],
         [
           "out",
-          "secret/demo-database          Opaque                           1      78m"
+          "secret/demo-database          Opaque                           6      179m"
         ],
         [
           "out",
-          "secret/demo-database-broken   Opaque                           1      2m4s"
+          "secret/demo-database-broken   Opaque                           1      107s"
         ],
         [
           "out",
-          "secret/demo-registry          Opaque                           4      78m"
+          "secret/demo-registry          Opaque                           4      179m"
         ],
         [
           "out",
-          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      78m"
+          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      179m"
         ],
         [
           "blank",
@@ -1416,11 +1512,11 @@
         ],
         [
           "out",
-          "configmap/demo-verification-policy   1      78m"
+          "configmap/demo-verification-policy   1      179m"
         ],
         [
           "out",
-          "configmap/kube-root-ca.crt           1      78m"
+          "configmap/kube-root-ca.crt           1      179m"
         ]
       ],
       "checks": [
@@ -1465,8 +1561,8 @@
     {
       "id": "manual-approval",
       "source": {
-        "commit": "681dfed0eed5140f7328b0d24366ee2c9c2f0809",
-        "describe": "681dfed-dirty"
+        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
+        "describe": "68449a0"
       },
       "title": "Approve a plan",
       "tagline": "With apply set to OnApproval, nothing runs until a person approves that exact plan.",
@@ -1475,7 +1571,7 @@
         "Safety"
       ],
       "commands": 10,
-      "lines": 109,
+      "lines": 111,
       "events": [
         [
           "sync",
@@ -1583,7 +1679,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:8a4a1b36642495b29d3f1dec3f54994563c83bf830a45f8aacdf63cfc79191a0"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:e2e4d1356f20124e60a82c8ea09a56f0bda24cecfb084d89aed6a0aea6dc654b"
         ],
         [
           "out",
@@ -1711,10 +1807,10 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\dt\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\dt\""
         ],
         [
-          "out",
+          "err",
           "Did not find any relations."
         ],
         [
@@ -1727,15 +1823,23 @@
         ],
         [
           "cont",
-          "CHUNK=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" -o jsonpath='{.spec.chunks[0].name}')"
+          "for CHUNK in $(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" \\"
         ],
         [
           "cont",
-          "kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+          "  -o jsonpath='{range .spec.chunks[*]}{.name}{\"\\n\"}{end}'); do"
         ],
         [
           "cont",
-          "  | base64 -d | jq -r '.statements[] | \"\\(.severity)\\t\\(.sql)\"'"
+          "  kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+        ],
+        [
+          "cont",
+          "    | base64 -d | jq -r '.statements[] | \"\\(.severity)\\t\\(.sql)\"'"
+        ],
+        [
+          "cont",
+          "done"
         ],
         [
           "out",
@@ -1763,7 +1867,7 @@
         ],
         [
           "cmd",
-          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json > demo/.lab/schema.json"
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \u003e demo/.lab/schema.json"
         ],
         [
           "cont",
@@ -1771,7 +1875,7 @@
         ],
         [
           "cont",
-          "  \"$(jq -r .status.plan.name demo/.lab/schema.json)\" -o json > demo/.lab/plan.json"
+          "  \"$(jq -r .status.plan.name demo/.lab/schema.json)\" -o json \u003e demo/.lab/plan.json"
         ],
         [
           "cont",
@@ -1815,7 +1919,7 @@
         ],
         [
           "out",
-          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"<uid>\"},\"planRef\":{\"name\":\"ptah-plan-58bbe26e5ff867a0c76731d4\",\"uid\":\"<uid>\"},\"planFingerprint\":\"sha256:58bbe26e5ff867a0c76731d4dbc3bf35701d830066a8855eb98d196b5339a82d\"}"
+          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-a41d80b6e8fcd7d6294c6a1c\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:a41d80b6e8fcd7d6294c6a1c89095ccf59ec8ce965f81f825b16540467153b53\"}"
         ],
         [
           "sync",
@@ -1859,15 +1963,15 @@
         ],
         [
           "out",
-          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:ab9d5e6e8de6d95c7565b21138a0aa108c6dd6ddd33c6835386de7e26073a70a\","
+          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:3e609518c4e01841f3ea85067733a745321d68e878c0be2675ace3907961023c\","
         ],
         [
           "out",
-          "  \"artifactDigest\": \"sha256:8a4a1b36642495b29d3f1dec3f54994563c83bf830a45f8aacdf63cfc79191a0\","
+          "  \"artifactDigest\": \"sha256:e2e4d1356f20124e60a82c8ea09a56f0bda24cecfb084d89aed6a0aea6dc654b\","
         ],
         [
           "out",
-          "  \"executionBindingID\": \"v1-bc7d9d8e39064584df2b48468e100199\""
+          "  \"executionBindingID\": \"v1-1a2e8dfa3a0a71b1ae51e91a4c5c72da\""
         ],
         [
           "out",
@@ -1883,7 +1987,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\dt\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\dt\""
         ],
         [
           "out",
@@ -1958,7 +2062,7 @@
         {
           "scenario": "manual-approval",
           "step": 4,
-          "claim": "exits 0, prints \"Did not find any relations\"",
+          "claim": "exits 0, reports \"Did not find any relations\"",
           "passed": true
         },
         {
@@ -2020,8 +2124,8 @@
     {
       "id": "schema-update",
       "source": {
-        "commit": "681dfed0eed5140f7328b0d24366ee2c9c2f0809",
-        "describe": "681dfed-dirty"
+        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
+        "describe": "68449a0"
       },
       "title": "Change the schema",
       "tagline": "A second revision, a new digest, and the difference applied as one plan.",
@@ -2030,7 +2134,7 @@
         "Lifecycle"
       ],
       "commands": 7,
-      "lines": 66,
+      "lines": 76,
       "events": [
         [
           "sync",
@@ -2042,7 +2146,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\dt\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\dt\""
         ],
         [
           "out",
@@ -2138,15 +2242,47 @@
         ],
         [
           "note",
-          "# Publish it. A different artifact, so a different digest."
+          "# Publish the next revision, with the same command as the first."
         ],
         [
           "cmd",
-          "demo/bin/lab publish v2 | tee demo/.lab/digest"
+          "eval \"$(demo/bin/lab credentials)\""
         ],
         [
-          "out",
-          "sha256:e6b7f0254c6f519c630e2a5dbd132f3311a002b6f686113015380e9f60f2527d"
+          "cont",
+          "export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY"
+        ],
+        [
+          "cont",
+          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
+        ],
+        [
+          "cont",
+          "ptah schema push \"oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$\" \\"
+        ],
+        [
+          "cont",
+          "  --schema-file demo/schemas/v2.sql --dialect postgres --plain-http \\"
+        ],
+        [
+          "cont",
+          "  | tee /dev/stderr | sed -n 's/^Digest: //p' \u003e demo/.lab/digest"
+        ],
+        [
+          "err",
+          "Pushed schema as oci://127.0.0.1:24429/schemas/demo:v2-53840"
+        ],
+        [
+          "err",
+          "Digest: sha256:d7e04ce1614b5e0b0a751207983b1884679f6e937b381695a7017d282ef16b30"
+        ],
+        [
+          "err",
+          "Version:"
+        ],
+        [
+          "err",
+          "Tags: [v2-53840]"
         ],
         [
           "sync",
@@ -2162,7 +2298,7 @@
         ],
         [
           "cont",
-          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$E2E_REGISTRY_HOST/schemas/demo@$(cat demo/.lab/digest)\\\"}}}\""
+          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$REGISTRY_IN_CLUSTER/schemas/demo@$(cat demo/.lab/digest)\\\"}}}\""
         ],
         [
           "out",
@@ -2186,11 +2322,11 @@
         ],
         [
           "out",
-          "ptah-plan-28208ca590c1a8ac99aca6fa   storefront   sha256:28208ca590c1a8ac99aca6fafba58264d4e78075bf893fc6a8f03c70a33262a5   1            false         63s"
+          "ptah-plan-bcd4c4cb715b9d98a829dcb1   storefront   sha256:bcd4c4cb715b9d98a829dcb1d6e1a5246aa51e7f5130db1c4f32f91b42e3ecb6   1            false         57s"
         ],
         [
           "out",
-          "ptah-plan-f9cba82383cf6b199e033b20   storefront   sha256:f9cba82383cf6b199e033b20cd70ecc9ebef42f9f066a85bc192776a301a0d24   3            false         19s"
+          "ptah-plan-d26f942fd27cdec1dd939ca5   storefront   sha256:d26f942fd27cdec1dd939ca535dc69d0bd9eccf43a1fdd0015ced5287d9ff327   3            false         17s"
         ],
         [
           "note",
@@ -2210,15 +2346,23 @@
         ],
         [
           "cont",
-          "CHUNK=$(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" -o jsonpath='{.spec.chunks[0].name}')"
+          "for CHUNK in $(kubectl -n \"$NAMESPACE\" get ptahschemaplan \"$PLAN\" \\"
         ],
         [
           "cont",
-          "kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+          "  -o jsonpath='{range .spec.chunks[*]}{.name}{\"\\n\"}{end}'); do"
         ],
         [
           "cont",
-          "  | base64 -d | jq -r '.statements[].sql'"
+          "  kubectl -n \"$NAMESPACE\" get configmap \"$CHUNK\" -o jsonpath='{.binaryData.chunk}' \\"
+        ],
+        [
+          "cont",
+          "    | base64 -d | jq -r '.statements[].sql'"
+        ],
+        [
+          "cont",
+          "done"
         ],
         [
           "out",
@@ -2270,7 +2414,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\d orders\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\d orders\""
         ],
         [
           "out",
@@ -2329,7 +2473,7 @@
         {
           "scenario": "schema-update",
           "step": 3,
-          "claim": "exits 0, prints \"sha256:\"",
+          "claim": "exits 0, reports \"Pushed schema as oci://\", reports \"Digest: sha256:\"",
           "passed": true
         },
         {
@@ -2373,8 +2517,8 @@
     {
       "id": "stale-approval",
       "source": {
-        "commit": "681dfed0eed5140f7328b0d24366ee2c9c2f0809",
-        "describe": "681dfed-dirty"
+        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
+        "describe": "68449a0"
       },
       "title": "Retire a used approval",
       "tagline": "An approval describes one plan against one observed state. Applying it moves that state.",
@@ -2383,7 +2527,7 @@
         "Safety"
       ],
       "commands": 7,
-      "lines": 48,
+      "lines": 53,
       "events": [
         [
           "sync",
@@ -2403,7 +2547,7 @@
         ],
         [
           "out",
-          "sha256:a3fe65c2af4591619ea5ef8da31bc5b5f3ac983d233c5badf3472ba3ee5e0b1a"
+          "sha256:b8f67950fd8a73ebfed763aa2bfe4153b483187b44c992d20c1137621716353c"
         ],
         [
           "sync",
@@ -2415,7 +2559,7 @@
         ],
         [
           "cmd",
-          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json > demo/.lab/schema.json"
+          "kubectl -n \"$NAMESPACE\" get ptahschema storefront -o json \u003e demo/.lab/schema.json"
         ],
         [
           "cont",
@@ -2423,7 +2567,7 @@
         ],
         [
           "cont",
-          "  \"$(jq -r .status.plan.name demo/.lab/schema.json)\" -o json > demo/.lab/plan.json"
+          "  \"$(jq -r .status.plan.name demo/.lab/schema.json)\" -o json \u003e demo/.lab/plan.json"
         ],
         [
           "cont",
@@ -2527,7 +2671,27 @@
         ],
         [
           "cmd",
-          "DIGEST=$(demo/bin/lab publish v2)"
+          "eval \"$(demo/bin/lab credentials)\""
+        ],
+        [
+          "cont",
+          "export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY"
+        ],
+        [
+          "cont",
+          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
+        ],
+        [
+          "cont",
+          "DIGEST=$(ptah schema push \"oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$\" \\"
+        ],
+        [
+          "cont",
+          "  --schema-file demo/schemas/v2.sql --dialect postgres --plain-http \\"
+        ],
+        [
+          "cont",
+          "  | sed -n 's/^Digest: //p')"
         ],
         [
           "cont",
@@ -2535,7 +2699,7 @@
         ],
         [
           "cont",
-          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$E2E_REGISTRY_HOST/schemas/demo@$DIGEST\\\"}}}\""
+          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$REGISTRY_IN_CLUSTER/schemas/demo@$DIGEST\\\"}}}\""
         ],
         [
           "out",
@@ -2563,7 +2727,7 @@
         ],
         [
           "out",
-          "sha256:993c8a466b62e8a675936d5411e47de626c2ce4fe8d02b980d38b2daab43f2d3"
+          "sha256:01d4a5ffee5a3b4d2b9ac61d5bc62572472725f8eb66af21b16531692029976a"
         ],
         [
           "note",
@@ -2571,7 +2735,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\d customers\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\d customers\""
         ],
         [
           "out",
@@ -2674,8 +2838,8 @@
     {
       "id": "suspend-resume",
       "source": {
-        "commit": "681dfed0eed5140f7328b0d24366ee2c9c2f0809",
-        "describe": "681dfed-dirty"
+        "commit": "68449a02a8f37d6ee48b03884b725922ade9e29c",
+        "describe": "68449a0"
       },
       "title": "Suspend and resume",
       "tagline": "One field stops reconciliation without deleting anything, and resuming picks up where it stopped.",
@@ -2684,7 +2848,7 @@
         "Operations"
       ],
       "commands": 7,
-      "lines": 33,
+      "lines": 38,
       "events": [
         [
           "sync",
@@ -2740,7 +2904,27 @@
         ],
         [
           "cmd",
-          "DIGEST=$(demo/bin/lab publish v2)"
+          "eval \"$(demo/bin/lab credentials)\""
+        ],
+        [
+          "cont",
+          "export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY"
+        ],
+        [
+          "cont",
+          "export PATH=\"$(demo/bin/lab ptah):$PATH\""
+        ],
+        [
+          "cont",
+          "DIGEST=$(ptah schema push \"oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$\" \\"
+        ],
+        [
+          "cont",
+          "  --schema-file demo/schemas/v2.sql --dialect postgres --plain-http \\"
+        ],
+        [
+          "cont",
+          "  | sed -n 's/^Digest: //p')"
         ],
         [
           "cont",
@@ -2748,7 +2932,7 @@
         ],
         [
           "cont",
-          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$E2E_REGISTRY_HOST/schemas/demo@$DIGEST\\\"}}}\""
+          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$REGISTRY_IN_CLUSTER/schemas/demo@$DIGEST\\\"}}}\""
         ],
         [
           "out",
@@ -2760,7 +2944,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\dt\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\dt\""
         ],
         [
           "out",
@@ -2808,7 +2992,7 @@
         ],
         [
           "cmd",
-          "demo/bin/lab psql \"\\dt\""
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\dt\""
         ],
         [
           "out",
@@ -2898,5 +3082,6 @@
         }
       ]
     }
-  ]
+  ],
+  "order": null
 }
