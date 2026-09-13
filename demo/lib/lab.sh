@@ -331,7 +331,7 @@ lab_up() {
 	if [ -f "$LAB_ENVIRONMENT" ]; then
 		printf 'lab: a lab is already up (%s); remove it with make demo-down\n' "$LAB_ENVIRONMENT"
 	else
-		K8S_VERSION="${LAB_KUBERNETES_VERSION:-1.37.0}" \
+		K8S_VERSION="${LAB_KUBERNETES_VERSION:-$(support_newest_version)}" \
 			E2E_STOP_AFTER=bootstrap \
 			E2E_ENVIRONMENT_FILE="$LAB_ENVIRONMENT" \
 			E2E_RUN_ID="${LAB_RUN_ID:-demo}" \
@@ -342,25 +342,89 @@ lab_up() {
 	lab_prepare
 }
 
-# lab_down removes the cluster and the containers the lab created.
+# lab_down removes what the bootstrap created, and nothing else.
 #
-# Those, by the identifiers the bootstrap wrote, and nothing else. A Docker
-# context is shared, and a demonstration is not a reason to remove somebody
-# else's container.
+# The bootstrap releases the harness's cleanup trap so the environment survives,
+# which means this is the only thing that will ever remove it. Everything the
+# harness creates carries an owner label naming this cluster, so containers and
+# volumes are swept by that label rather than by a list of identifiers a later
+# harness change would leave behind. The images and the work directory are not
+# labelled, so the bootstrap writes down what it made.
+#
+# A lab left half-removed is worse than one left up: the task claim alone makes
+# the next `make demo-up` refuse to run, and nothing says why.
 lab_down() {
 	[ -f "$LAB_ENVIRONMENT" ] || {
 		printf 'lab: no lab to remove\n'
 		return 0
 	}
 	read_environment
+	lab_require E2E_KIND_CLUSTER_NAME E2E_DOCKER_CONTEXT
+
 	printf 'lab: removing cluster %s\n' "$E2E_KIND_CLUSTER_NAME"
 	kind delete cluster --name "$E2E_KIND_CLUSTER_NAME" >/dev/null 2>&1 || true
-	for lab_down_container in \
-		"${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:-}" \
-		"${E2E_REGISTRY_CONTAINER_ID:-}"; do
-		[ -n "$lab_down_container" ] || continue
+
+	# By owner label, so a container or volume this run created is removed and
+	# one another run created is not. The label is the harness's, and it is on
+	# every resource the harness makes outside the cluster.
+	lab_down_owner="operator.ptah.dev/e2e-owner=$E2E_KIND_CLUSTER_NAME"
+	for lab_down_container in $(docker --context "$E2E_DOCKER_CONTEXT" container ls \
+		--all --quiet --filter "label=$lab_down_owner" 2>/dev/null); do
 		docker --context "$E2E_DOCKER_CONTEXT" container rm -fv \
 			"$lab_down_container" >/dev/null 2>&1 || true
 	done
-	rm -rf "$(dirname "$LAB_ENVIRONMENT")"
+	for lab_down_volume in $(docker --context "$E2E_DOCKER_CONTEXT" volume ls \
+		--quiet --filter "label=$lab_down_owner" 2>/dev/null); do
+		docker --context "$E2E_DOCKER_CONTEXT" volume rm \
+			"$lab_down_volume" >/dev/null 2>&1 || true
+	done
+
+	# The images the bootstrap built and mirrored. They carry no owner label and
+	# their tags are shared with no other run, so the list it wrote is the only
+	# answer; a name pattern would reach another run's images.
+	for lab_down_image in ${E2E_CREATED_IMAGE_REFS:-}; do
+		docker --context "$E2E_DOCKER_CONTEXT" image rm \
+			"$lab_down_image" >/dev/null 2>&1 || true
+	done
+
+	lab_down_remove_work_directory
+	lab_down_remove_lab_directory
+	printf 'lab: removed\n'
+}
+
+# lab_down_remove_work_directory removes the kubeconfig, the chart package and
+# the credential files the bootstrap wrote.
+#
+# Only under the name the harness gives it. It holds a registry password and a
+# database URL, so leaving it behind leaves those on disk; removing something
+# else because a variable was pointed elsewhere is the worse mistake, so the
+# path has to look like the harness's own.
+lab_down_remove_work_directory() {
+	case "${E2E_WORK_DIR:-}" in
+	"${TMPDIR:-/tmp}"/ptah-operator-e2e.* | /tmp/ptah-operator-e2e.*)
+		rm -rf -- "$E2E_WORK_DIR"
+		;;
+	'') ;;
+	*)
+		printf 'lab: refusing to remove unexpected work directory %s\n' \
+			"$E2E_WORK_DIR" >&2
+		;;
+	esac
+}
+
+# lab_down_remove_lab_directory removes demo/.lab, and only demo/.lab.
+#
+# LAB_ENVIRONMENT is an input. Removing the directory it happens to sit in would
+# delete whatever else is there, so the directory is removed only when it is the
+# repository's own; otherwise the file that says a lab exists is removed and the
+# rest is left alone.
+lab_down_remove_lab_directory() {
+	lab_down_directory=$(CDPATH='' cd -- "$(dirname -- "$LAB_ENVIRONMENT")" && pwd)
+	if [ "$lab_down_directory" = "$LAB_ROOT/demo/.lab" ]; then
+		rm -rf -- "$lab_down_directory"
+		return 0
+	fi
+	printf 'lab: %s is not the lab directory, so only the environment file is removed\n' \
+		"$lab_down_directory" >&2
+	rm -f -- "$LAB_ENVIRONMENT"
 }
