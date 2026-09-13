@@ -300,7 +300,24 @@ lab_reset() {
 # the registry it runs, and the digest a push returned. The policy fields are
 # substituted too, because the scenarios differ in exactly those and a second
 # near-identical manifest is how two of them drift apart.
+#
+# What it will not do is choose a policy. A renderer that defaulted `apply` to
+# something other than the API's default would be deciding, quietly, the one
+# thing a reader of the rendered manifest most needs to have decided
+# themselves -- and the manifest it printed would not be the manifest the API
+# would have produced from the same intent.
 lab_manifest() {
+	[ -n "${APPLY:-}" ] || {
+		printf 'lab: set APPLY to the policy this scenario is about (Never, OnApproval or Always)\n' >&2
+		exit 1
+	}
+	case "${APPLY}" in
+	Never | OnApproval | Always) ;;
+	*)
+		printf 'lab: APPLY=%s is not a policy the API accepts\n' "$APPLY" >&2
+		exit 1
+		;;
+	esac
 	lab_manifest_name=$1
 	lab_manifest_digest=$2
 	lab_manifest_file="$LAB_ROOT/demo/manifests/${lab_manifest_name}.yaml"
@@ -313,7 +330,7 @@ lab_manifest() {
 		-e "s|\${NAMESPACE}|$E2E_TEST_NAMESPACE|g" \
 		-e "s|\${REGISTRY}|$E2E_REGISTRY_HOST|g" \
 		-e "s|\${DIGEST}|$lab_manifest_digest|g" \
-		-e "s|\${APPLY}|${APPLY:-Always}|g" \
+		-e "s|\${APPLY}|${APPLY}|g" \
 		-e "s|\${ALLOW_DESTRUCTIVE}|${ALLOW_DESTRUCTIVE:-false}|g" \
 		-e "s|\${INTERVAL}|${INTERVAL:-1m}|g" \
 		-e "s|\${SUSPEND}|${SUSPEND:-false}|g" \

@@ -30,7 +30,7 @@ steps:
       stdout_contains: [schema push, --dialect postgres]
 
   - note: The resource names the artifact by digest, and the credentials by Secret.
-    run: demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | tee demo/.lab/storefront.yaml
+    run: APPLY=Always demo/bin/lab manifest storefront "$(cat demo/.lab/digest)" | tee demo/.lab/storefront.yaml
     sync: applying
     expect:
       exit: 0
