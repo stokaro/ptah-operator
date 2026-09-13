@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -116,7 +117,11 @@ func (l lab) environment(root string) ([]string, error) {
 	}
 
 	environment := []string{
-		"PATH=" + os.Getenv("PATH"),
+		// The lab's own tools first. A reader has kubectl and ptah installed
+		// and takes kubectl-ptah from a release; in the lab both are built
+		// into demo/.lab/bin, and a step is the command rather than the
+		// installation of what runs it.
+		"PATH=" + filepath.Join(root, "demo", ".lab", "bin") + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
 		"LAB_ROOT=" + root,
 		"KUBECONFIG=" + kubeconfig,

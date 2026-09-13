@@ -302,6 +302,25 @@ func DriftReportDigest(report DriftReport) (string, error) {
 // explicitly configured database engine.
 func DialectMatches(engine, dialect string) bool { return dialectMatches(engine, dialect) }
 
+// StatementsSQL renders a plan's statements as they were stored.
+//
+// One statement per entry, in the order the plan holds them, each terminated
+// once. Nothing is re-split on a semicolon: a statement may carry one inside a
+// string, a comment or a function body, and splitting there would hand a reader
+// SQL the plan never held.
+func StatementsSQL(plan PlanFile) string {
+	var sql strings.Builder
+	for _, statement := range plan.Statements {
+		text := strings.TrimSpace(statement.SQL)
+		if text == "" {
+			continue
+		}
+		sql.WriteString(strings.TrimSuffix(text, ";"))
+		sql.WriteString(";\n")
+	}
+	return sql.String()
+}
+
 func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 	var plan PlanFile
 	if err := decodeJSON(data, &plan, true); err != nil {

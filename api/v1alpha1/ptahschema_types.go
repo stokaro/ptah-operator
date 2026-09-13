@@ -595,10 +595,19 @@ type ConsumedApprovalStatus struct {
 
 // AppliedStatus is written only after post-apply observation proves convergence.
 type AppliedStatus struct {
-	ArtifactDigest       string `json:"artifactDigest"`
-	PlanFingerprint      string `json:"planFingerprint"`
-	CoordinationDigest   string `json:"coordinationDigest"`
-	TargetIdentityDigest string `json:"targetIdentityDigest"`
+	ArtifactDigest string `json:"artifactDigest"`
+	// PlanRef names the stored plan this apply ran. It is what a reader
+	// addresses to see the SQL that was applied, instead of searching the
+	// namespace for a fingerprint.
+	//
+	// Optional, because a record written before the field existed carries only
+	// PlanFingerprint. It does not replace that fingerprint: the reference says
+	// which object to read and the fingerprint says whether the object read is
+	// the one this record was written for.
+	PlanRef              *ImmutableObjectReference `json:"planRef,omitempty"`
+	PlanFingerprint      string                    `json:"planFingerprint"`
+	CoordinationDigest   string                    `json:"coordinationDigest"`
+	TargetIdentityDigest string                    `json:"targetIdentityDigest"`
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID,omitempty"`
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`

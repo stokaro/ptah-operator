@@ -35,9 +35,18 @@ only to the reviewer. Replace the Role for the next plan. A broader Role that
 can read every ConfigMap in an application namespace is easier to operate but
 also exposes unrelated configuration.
 
-After access is granted, verify every chunk against its recorded digest and
-review the chunks in ascending `.spec.chunks[*].index` order. An approval of
-hashes without inspecting the referenced SQL is not an independent review.
+Once the access is granted, read the plan with
+[`kubectl ptah`](../read-a-plan/):
+
+```sh
+kubectl ptah plan application --current -n application
+```
+
+It reads every chunk, checks each against the digest and size the plan records,
+joins them in index order and checks the whole document against
+`spec.contentDigest` before printing a line. An approval of hashes without
+reading the SQL they refer to is not an independent review, and neither is
+reading one chunk of a plan that has several.
 
 Fill those values in the approval and use server-side dry run to inspect the
 object after authenticated identity and derived bindings are stamped:

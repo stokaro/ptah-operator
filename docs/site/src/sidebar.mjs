@@ -25,6 +25,7 @@ export const sidebar = [
     label: 'Use',
     items: [
       { label: 'Configuration', link: '/use/configuration/' },
+      { label: 'Read a plan', link: '/use/read-a-plan/' },
       { label: 'Exact-plan approvals', link: '/use/approvals/' },
       { label: 'Operations', link: '/use/operations/' },
       { label: 'Security model', link: '/use/security/' },

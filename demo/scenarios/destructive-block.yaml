@@ -12,7 +12,6 @@ reset:
   - |
     eval "$(demo/bin/lab credentials)"
     export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-    export PATH="$(demo/bin/lab ptah):$PATH"
     ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$" \
       --schema-file demo/schemas/v2.sql --dialect postgres --plain-http \
       | sed -n 's/^Digest: //p' > demo/.lab/digest
@@ -43,7 +42,6 @@ steps:
     run: |
       eval "$(demo/bin/lab credentials)"
       export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-      export PATH="$(demo/bin/lab ptah):$PATH"
       DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v3-$$" \
         --schema-file demo/schemas/v3.sql --dialect postgres --plain-http \
         | sed -n 's/^Digest: //p')
@@ -79,13 +77,11 @@ steps:
       stdout_contains: [storefront, "true"]
 
   - note: And this is the statement the policy refused to run.
+    # The plan is stored whether or not it may run, so a refusal is a thing a
+    # reader can look at rather than infer from a log.
     run: |
-      PLAN=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.plan.name}')
-      for CHUNK in $(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" \
-        -o jsonpath='{range .spec.chunks[*]}{.name}{"\n"}{end}'); do
-        kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
-          | base64 -d | jq -r '.statements[] | "\(.severity)  \(.sql)  -- \(.reason)"'
-      done
+      kubectl ptah plan storefront --current -n "$NAMESPACE" -o json \
+        | jq -r '.statements[] | "\(.severity)  \(.sql)  -- \(.reason)"'
     expect:
       exit: 0
       stdout_contains: ["DROP COLUMN"]

@@ -12,7 +12,6 @@ reset:
   - |
     eval "$(demo/bin/lab credentials)"
     export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-    export PATH="$(demo/bin/lab ptah):$PATH"
     ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
       --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
       | sed -n 's/^Digest: //p' > demo/.lab/digest
@@ -55,7 +54,6 @@ steps:
     run: |
       eval "$(demo/bin/lab credentials)"
       export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-      export PATH="$(demo/bin/lab ptah):$PATH"
       DIGEST=$(ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$" \
         --schema-file demo/schemas/v2.sql --dialect postgres --plain-http \
         | sed -n 's/^Digest: //p')

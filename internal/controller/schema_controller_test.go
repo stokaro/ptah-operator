@@ -2979,3 +2979,40 @@ func mustTestCoordinationDigest() string {
 	}
 	return digest
 }
+
+// The applied record names the plan it ran, from the same snapshot as
+// everything else in it. Reading the reference off status.plan instead would
+// name whichever plan the controller had reached by then, which is not the plan
+// the record is about.
+func TestAppliedStatusForNamesThePlanItWasBuiltFrom(t *testing.T) {
+	now := metav1.NewTime(time.Unix(1764000000, 0).UTC())
+	snapshot := operatorv1alpha1.CurrentPlanStatus{
+		Name:        "ptah-plan-0123456789abcdef01234567",
+		UID:         types.UID("ba9f6a1e-7d6f-4f57-9e0c-1f0d7ec1a111"),
+		Fingerprint: "sha256:" + strings.Repeat("a", 64),
+	}
+
+	applied := appliedStatusFor(snapshot, now)
+
+	if applied.PlanRef == nil {
+		t.Fatal("the applied record names no plan, so a reader has to search the namespace for one")
+	}
+	if applied.PlanRef.Name != snapshot.Name || applied.PlanRef.UID != snapshot.UID {
+		t.Fatalf("the applied record names %+v, and the plan it was built from is %s/%s",
+			applied.PlanRef, snapshot.Name, snapshot.UID)
+	}
+	// The fingerprint stays: the reference says which object to read, and the
+	// fingerprint says whether the object read is the one this record is about.
+	if applied.PlanFingerprint != snapshot.Fingerprint {
+		t.Fatalf("the applied record carries the fingerprint %q, want %q", applied.PlanFingerprint, snapshot.Fingerprint)
+	}
+}
+
+// A snapshot with no plan identity is left without a reference rather than
+// given an empty one: a name with no UID cannot be checked against anything.
+func TestAppliedStatusForLeavesTheReferenceOutWhenThereIsNoPlanIdentity(t *testing.T) {
+	applied := appliedStatusFor(operatorv1alpha1.CurrentPlanStatus{Name: "ptah-plan-x"}, metav1.Now())
+	if applied.PlanRef != nil {
+		t.Fatalf("the applied record names %+v, which nothing can verify", applied.PlanRef)
+	}
+}

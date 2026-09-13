@@ -12,7 +12,6 @@ reset:
   - |
     eval "$(demo/bin/lab credentials)"
     export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-    export PATH="$(demo/bin/lab ptah):$PATH"
     ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v1-$$" \
       --schema-file demo/schemas/v1.sql --dialect postgres --plain-http \
       | sed -n 's/^Digest: //p' > demo/.lab/digest
@@ -38,7 +37,6 @@ steps:
     run: |
       eval "$(demo/bin/lab credentials)"
       export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
-      export PATH="$(demo/bin/lab ptah):$PATH"
       ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/demo:v2-$$" \
         --schema-file demo/schemas/v2.sql --dialect postgres --plain-http \
         | tee /dev/stderr | sed -n 's/^Digest: //p' > demo/.lab/digest
@@ -74,18 +72,10 @@ steps:
       stdout_contains: [storefront]
 
   - note: The SQL it applied. An ALTER and a CREATE, not a second CREATE TABLE customers.
-    # The plan is found by the fingerprint the status recorded as applied. A
-    # converged schema carries no current plan -- there is nothing left to do --
-    # so reading status.plan here would read an empty name.
-    run: |
-      APPLIED=$(kubectl -n "$NAMESPACE" get ptahschema storefront -o jsonpath='{.status.applied.planFingerprint}')
-      PLAN=$(kubectl -n "$NAMESPACE" get ptahschemaplan -o json \
-        | jq -r --arg fingerprint "$APPLIED" '.items[] | select(.spec.fingerprint == $fingerprint) | .metadata.name')
-      for CHUNK in $(kubectl -n "$NAMESPACE" get ptahschemaplan "$PLAN" \
-        -o jsonpath='{range .spec.chunks[*]}{.name}{"\n"}{end}'); do
-        kubectl -n "$NAMESPACE" get configmap "$CHUNK" -o jsonpath='{.binaryData.chunk}' \
-          | base64 -d | jq -r '.statements[].sql'
-      done
+    # --applied, because a converged schema carries no current plan: there is
+    # nothing left to do. The two are different questions, and this scenario is
+    # about what ran.
+    run: kubectl ptah plan storefront --applied -n "$NAMESPACE" -o sql
     expect:
       exit: 0
       stdout_contains: ['ALTER TABLE "customers"', 'CREATE TABLE "orders"']

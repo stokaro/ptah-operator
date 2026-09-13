@@ -867,15 +867,27 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		"image-tag=%s:tx-%s-123\n"+
 		"chart-asset=%s\n"+
 		"chart-asset-sha256=%s\n"+
+		"client-assets=%s\n"+
 		"support-evidence-run-id=456\n"+
 		"kubernetes-support-window=%s\n",
-		repositoryName, tag, sourceSHA, imageName, digest, imageName, sourceSHA, chartName, chartSum, supportWindow)
+		repositoryName, tag, sourceSHA, imageName, digest, imageName, sourceSHA, chartName, chartSum,
+		strings.Join(clientAssets, ","), supportWindow)
 	manifestPath := filepath.Join(directory, "release-manifest.txt")
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// One binary per client platform, beside the chart and the manifest. The
+	// contents stand in for a build; what is measured is that the checksum file
+	// covers each one and matches the file that would be uploaded.
 	checksums := fmt.Sprintf("%s  %s\n%x  release-manifest.txt\n",
 		chartSum, chartName, sha256.Sum256([]byte(manifest)))
+	for _, asset := range clientAssets {
+		binary := []byte("binary bytes of " + asset)
+		if err := os.WriteFile(filepath.Join(directory, asset), binary, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		checksums += fmt.Sprintf("%x  %s\n", sha256.Sum256(binary), asset)
+	}
 	checksumsPath := filepath.Join(directory, "SHA256SUMS")
 	if err := os.WriteFile(checksumsPath, []byte(checksums), 0o600); err != nil {
 		t.Fatal(err)
@@ -888,6 +900,9 @@ func TestVerifyReleaseAssets(t *testing.T) {
 		"different window":     strings.Replace(manifest, "kubernetes-support-window="+supportWindow, "kubernetes-support-window=9.98,9.99,9.100", 1),
 		"missing support run":  strings.Replace(manifest, "support-evidence-run-id=456\n", "", 1),
 		"extra manifest field": manifest + "unexpected=value\n",
+		"a client asset nobody built": strings.Replace(manifest,
+			"client-assets="+strings.Join(clientAssets, ","),
+			"client-assets=kubectl-ptah-plan9-386", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := os.WriteFile(manifestPath, []byte(mutation), 0o600); err != nil {

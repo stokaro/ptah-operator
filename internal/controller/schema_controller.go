@@ -4361,7 +4361,7 @@ func currentPlanStatus(plan *operatorv1alpha1.PtahSchemaPlan) *operatorv1alpha1.
 }
 
 func appliedStatusFor(plan operatorv1alpha1.CurrentPlanStatus, now metav1.Time) *operatorv1alpha1.AppliedStatus {
-	return &operatorv1alpha1.AppliedStatus{
+	applied := &operatorv1alpha1.AppliedStatus{
 		ArtifactDigest: plan.ArtifactDigest, PlanFingerprint: plan.Fingerprint,
 		CoordinationDigest: plan.CoordinationDigest, TargetIdentityDigest: plan.TargetIdentityDigest,
 		ExecutionBindingID: plan.ExecutionBindingID,
@@ -4370,6 +4370,13 @@ func appliedStatusFor(plan operatorv1alpha1.CurrentPlanStatus, now metav1.Time) 
 		PtahVersion: plan.PtahVersion, ExecutorImage: plan.ExecutorImage, RunnerImage: plan.RunnerImage,
 		RunnerProtocolVersion: plan.RunnerProtocolVersion, CompletedAt: now,
 	}
+	// From the same snapshot as everything else here. Reading the reference off
+	// status.plan instead would name whichever plan the controller has reached
+	// by now, which is not the plan this record is about.
+	if plan.Name != "" && plan.UID != "" {
+		applied.PlanRef = &operatorv1alpha1.ImmutableObjectReference{Name: plan.Name, UID: plan.UID}
+	}
+	return applied
 }
 
 func pendingMatchesCurrentSchema(schema *operatorv1alpha1.PtahSchema, pending *operatorv1alpha1.PendingObservationStatus) bool {

@@ -51,6 +51,21 @@ Key safety properties:
 - Deletion and suspension never execute cleanup SQL.
 - An uncertain apply outcome always returns to observation instead of replay.
 
+## Reading what it applied
+
+The SQL lives in immutable ConfigMaps a plan binds by index, size and digest,
+never in a status field or a log line. `kubectl ptah` reads it back the way the
+operator does:
+
+```sh
+kubectl ptah plan storefront --applied -n application -o sql
+```
+
+It is a read-only client, published with each release as a `kubectl` plugin for
+the supported client platforms. [Read a
+plan](https://operator.ptah.run/edge/use/read-a-plan/) carries the installation
+and the namespace-scoped RBAC it needs.
+
 ## Install and first schema
 
 The guide lives on its own site: [operator.ptah.run](https://operator.ptah.run/).

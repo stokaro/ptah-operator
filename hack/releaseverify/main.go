@@ -47,15 +47,16 @@ var (
 		"publish/immutability-preflight":     "08d725a97a83d3a7c16fc1fe7c0e75f8b363a9e5fc43e79482a83996d9b99025",
 		"publish/draft":                      "209b2c53dd93d134a098c9d9e6e9e85ee58718ca650399accaa75787d6f475ff",
 		"publish/stage-inspect":              "a9bca2e0409204157b32b98595af68f45df5f1110806e2a689fa68b43ab1ddf3",
+		"publish/client":                     "f33d569e4834bddceadfc9b53c9ad0c37d1e496a09ba3c858ebf185983cc3dcf",
 		"publish/chart-package":              "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8",
-		"publish/artifacts":                  "d8b898954b7f77f61fd8ecde63414f2e9a423531c5982d40c805d9be8fbde64c",
+		"publish/artifacts":                  "55c5b42a0d66539a346a198a574e59350b4d6f0ec79ff2568043b78737ff1242",
 		"publish/image-structure":            "2d4e40651f9a84ec9f5d394abcec2794958a422eec1e858e49937706813d8b44",
 		"publish/finalize-journal":           "0c241512711f0556bd45daf9c57d0e7bfeccb850e6d3db9fecb7431b20ded763",
 		"publish/asset-auth":                 "e1c7c1e7eefef128a64a883a73c56dab37d8f1dd24436daa84b7a077896ea8ee",
-		"publish/asset-sync":                 "8ac2fce0ed0460b72eee90bb530e1c17da79ed62f4e54877a780bd8dbbc34e4e",
+		"publish/asset-sync":                 "9edd9f8cac27bffcecf3bd2d456d2e007eeaa9e8223a18c58940e00b94c25db6",
 		"publish/image-signature":            "e0b994a90bc38dd8019f4b4157a72e5f6cab1873f3bc1ca39b8ca41dcb023d5e",
 		"publish/final-verify":               "1ad635ea3d03dc718ecfff46a020a5bcfef28f5bb2b8932c5d3245e37286d843",
-		"publish/publish-release":            "3ff6501266556d3d352e9af3af8b7f2ea79db14ff5f474417b49a9686856de8e",
+		"publish/publish-release":            "ba0397a317ec34cb0e98c2c8c575a0afc1e0ed441e39121b7eda787cd4269a7c",
 	}
 )
 
@@ -73,7 +74,7 @@ const (
 	// releaseWorkflowSHA256 makes every workflow edit an explicit policy edit.
 	// Semantic checks below keep the failure actionable; the digest closes gaps
 	// where critical shell text could otherwise be hidden in comments or dead branches.
-	releaseWorkflowSHA256 = "cb548f744819a0f8196e2056d7d581a284e754bd4319de17c6c0af9fd1eb4f78"
+	releaseWorkflowSHA256 = "c6c197e1f2d1dbfa13a3df874fadd8df1992bbac24d82df10064064a5f2da239"
 )
 
 func main() {
@@ -1909,7 +1910,8 @@ func verifyWorkflowSemantics(document []byte) error {
 		[]string{
 			"checkout", "setup-go", "setup-buildx", "release", "immutability-preflight", "transaction",
 			"journal-attestation", "draft", "stage-inspect", "registry-login", "image", "build-checkpoint",
-			"chart-package", "artifacts", "image-structure", "asset-attestation", "finalize-journal", "asset-auth", "asset-sync",
+			"chart-package", "client", "artifacts", "image-structure", "asset-attestation", "finalize-journal",
+			"asset-auth", "asset-sync",
 			"image-attestation", "setup-cosign", "image-signature", "final-verify", "publish-release",
 		},
 		map[string]string{
@@ -2063,7 +2065,9 @@ func verifyWorkflowSemantics(document []byte) error {
 	}
 
 	if err := verifyAttestationStep(steps, "asset-attestation", map[string]string{
-		"subject-path": "${{ steps.chart-package.outputs.path }}\ndist/release-manifest.txt\ndist/SHA256SUMS\n",
+		"subject-path": "${{ steps.chart-package.outputs.path }}\ndist/release-manifest.txt\ndist/SHA256SUMS\n" +
+			"dist/kubectl-ptah-darwin-amd64\ndist/kubectl-ptah-darwin-arm64\n" +
+			"dist/kubectl-ptah-linux-amd64\ndist/kubectl-ptah-linux-arm64\n",
 	}, "steps.transaction.outputs.mode == 'fresh' || steps.transaction.outputs.mode == 'prepared'"); err != nil {
 		return err
 	}
@@ -2300,6 +2304,18 @@ func requireRunBindings(steps map[string]workflowStep, id string, bindings ...st
 	return nil
 }
 
+// clientAssets are the kubectl plugin binaries a release publishes.
+//
+// The operator is installed by a chart and the plugin is installed by a person,
+// so the plugin ships as a file per client platform rather than inside the
+// image. The order here is the order SHA256SUMS lists them in.
+var clientAssets = []string{
+	"kubectl-ptah-darwin-amd64",
+	"kubectl-ptah-darwin-arm64",
+	"kubectl-ptah-linux-amd64",
+	"kubectl-ptah-linux-arm64",
+}
+
 func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sourceSHA string) error {
 	supportWindow, err := repositoryKubernetesSupportWindow(root)
 	if err != nil {
@@ -2333,8 +2349,18 @@ func verifyReleaseAssets(root, manifestPath, checksumsPath, chartPath, tag, sour
 	}
 	wantChecksums := fmt.Sprintf("%s  %s\n%x  release-manifest.txt\n",
 		chartDigest, fields["chart-asset"], sha256.Sum256(manifest))
+	// Every client binary, digested from the file that will be uploaded. A
+	// checksum file that named one and shipped another would be a checksum file
+	// nobody could use.
+	for _, asset := range clientAssets {
+		binary, err := os.ReadFile(filepath.Join(filepath.Dir(checksumsPath), asset))
+		if err != nil {
+			return fmt.Errorf("read client asset: %w", err)
+		}
+		wantChecksums += fmt.Sprintf("%x  %s\n", sha256.Sum256(binary), asset)
+	}
 	if string(checksums) != wantChecksums {
-		return errors.New("SHA256SUMS is not the exact checksum set for the chart and manifest")
+		return errors.New("SHA256SUMS is not the exact checksum set for the chart, the manifest and the client binaries")
 	}
 	return nil
 }
@@ -2395,7 +2421,7 @@ func parseReleaseManifest(path, tag, sourceSHA, supportWindow string) ([]byte, m
 	}
 	wantKeys := []string{
 		"version", "source-repository", "source-ref", "source-sha", "transaction",
-		"image", "image-tag", "chart-asset", "chart-asset-sha256",
+		"image", "image-tag", "chart-asset", "chart-asset-sha256", "client-assets",
 		"support-evidence-run-id", "kubernetes-support-window",
 	}
 	fields, err := exactRecords(document, wantKeys, "release manifest")
@@ -2409,6 +2435,7 @@ func parseReleaseManifest(path, tag, sourceSHA, supportWindow string) ([]byte, m
 		"source-ref":                "refs/tags/" + tag,
 		"source-sha":                sourceSHA,
 		"chart-asset":               "ptah-operator-" + version + ".tgz",
+		"client-assets":             strings.Join(clientAssets, ","),
 		"kubernetes-support-window": supportWindow,
 	}
 	for key, want := range wantExact {

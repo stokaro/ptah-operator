@@ -15,6 +15,10 @@ claims held on the live cluster.
 steps a reader watches, the narration between them, and the conditions that
 have to hold. [`scenarios/README.md`](scenarios/README.md) is the format.
 
+**`cmd/kubectl-ptah`** is the read-only client a scenario uses to show a stored
+plan. It ships to readers as a `kubectl` plugin; here it is one more command on
+the path.
+
 **`cmd/record`** executes them against the lab, checks the cluster reached the
 state each scenario claims, and writes `recordings/runs.json`.
 
@@ -73,7 +77,13 @@ step that reads anything else:
 In the lab, the first five come from `demo/.lab/environment`, which the
 bootstrap wrote, and the three `PTAH_OCI_` values from `demo/bin/lab
 credentials`, which prints the generated registry's. Both are the environment
-handing a reader what it generated. Nothing else crosses into a step: the `E2E_` names the harness
+handing a reader what it generated.
+
+A step also expects three commands on `PATH`: `kubectl`, `ptah` and
+`kubectl-ptah`. A reader installs all three; the lab builds the last two into
+`demo/.lab/bin` when it comes up (`demo/bin/lab tools` builds them on demand and
+prints that directory) and the recorder puts it first on `PATH`. What a step
+shows is therefore the command, not the installing of what runs it. Nothing else crosses into a step: the `E2E_` names the harness
 writes are read by `demo/bin/lab` alone, and a step naming one is refused with
 the name it read.
 
@@ -129,7 +139,9 @@ was built against.
 - Docker, reachable through the context `make` passes (`DOCKER_CONTEXT`,
   `remote-dev-container` by default). The bootstrap builds images, so a remote
   context with a few cores is much faster than a laptop.
-- `kind`, `kubectl`, `helm`, `jq`, `git`, Go and Node.
+- `kind`, `kubectl`, `helm`, `jq`, `git`, Go and Node. Go is what builds the
+  two commands a scenario runs, `ptah` and `kubectl-ptah`, into
+  `demo/.lab/bin`; nothing has to be installed for them.
 - About 8 GB of memory and 20 GB of disk for the cluster, the registry and the
   mirrored images.
 - A clean tree. The harness archives the exact commit it runs, and refuses a

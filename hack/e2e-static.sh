@@ -291,6 +291,29 @@ DEMO_SHELL_COUNT=$(printf '%s\n' "$DEMO_SHELL" | grep -c . || true)
 (cd "$ROOT_DIR" && shellcheck -x $DEMO_SHELL)
 printf 'e2e static: %s demonstration scripts\n' "$DEMO_SHELL_COUNT"
 
+# Every image the harness builds is recorded as one it created.
+#
+# The record is the only answer a teardown has: the images carry no owner label,
+# so one the harness built and never recorded stays on the daemon and refuses
+# the next run for an identity nobody is using. That is how the demonstration
+# lab's operator image was left behind.
+BUILT_IMAGE_VARIABLES=$(grep -oE -- '--tag "\$[A-Z_]+"' "$ROOT_DIR/hack/e2e-kind.sh" |
+	sed 's/.*"\$\([A-Z_]*\)"/\1/' | sort -u)
+BUILT_IMAGE_COUNT=$(printf '%s\n' "$BUILT_IMAGE_VARIABLES" | grep -c . || true)
+[ "$BUILT_IMAGE_COUNT" -ge 4 ] || {
+	printf 'e2e static: found %s built images, and the harness builds more than that\n' \
+		"$BUILT_IMAGE_COUNT" >&2
+	exit 1
+}
+printf '%s\n' "$BUILT_IMAGE_VARIABLES" | while IFS= read -r built_image; do
+	grep -qF "add_created_image \"\$$built_image\"" "$ROOT_DIR/hack/e2e-kind.sh" || {
+		printf 'e2e static: the harness builds $%s and never records it, so a teardown cannot remove it\n' \
+			"$built_image" >&2
+		exit 1
+	}
+done || exit 1
+printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_IMAGE_COUNT"
+
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
 
 # shellcheck disable=SC2016 # These checks intentionally match literal script variables.
