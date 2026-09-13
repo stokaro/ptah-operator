@@ -127,5 +127,5 @@ nothing else; the reconciliation on the other side runs on a schedule, so a
 missed announcement makes the refresh late rather than lost.
 
 Database engines are a separate axis and live in
-[database support](databases.md); Kubernetes versions live in
-[Kubernetes support](kubernetes.md).
+[database support](../databases/); Kubernetes versions live in
+[Kubernetes support](../kubernetes/).

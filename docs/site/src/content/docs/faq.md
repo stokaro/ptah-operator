@@ -125,8 +125,26 @@ approval. Updates cannot change `spec`; create a new approval for a new plan. Se
 Yes. The plan resource carries immutable chunk names and digests, and the SQL
 lives in controller-owned ConfigMaps that the built-in approver ClusterRole
 deliberately cannot read. A namespace administrator grants `get` on the current
-chunk names through a least-privilege Role, replaced for the next plan. Approving
-hashes without reading the SQL is not an independent review. See [Exact-plan approvals](../use/approvals/).
+chunk names through a least-privilege Role, replaced for the next plan. Once
+granted, `kubectl ptah plan <schema> --current` reads it; approving hashes
+without reading the SQL is not an independent review. See
+[Exact-plan approvals](../use/approvals/) and
+[Read a plan](../use/read-a-plan/), which carries the
+[install](../use/read-a-plan/#install).
+
+## How do I see the SQL a plan holds? {#read-a-plan}
+
+`kubectl ptah plan <schema> -n <namespace>` prints it, and `--applied` prints
+what the last confirmed apply ran instead of what would run next. The plugin is
+a read-only client published with each release and
+[installed once](../use/read-a-plan/#install); it reads every chunk, checks
+each against the digest and size the plan records, joins them in order and
+checks the whole document before printing a line.
+
+Decoding the chunk ConfigMaps by hand is not the supported way to read a plan
+and is wrong for any plan larger than one chunk: the document is split by bytes,
+so a boundary can fall inside a SQL string, a JSON escape or a multi-byte
+character. See [Read a plan](../use/read-a-plan/).
 
 ## The operator recorded a plan and refuses to apply it. Why? {#plan-recorded-not-applied}
 

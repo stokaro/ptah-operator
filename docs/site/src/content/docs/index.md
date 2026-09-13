@@ -57,10 +57,10 @@ Key safety properties:
 
 ## Where to go next
 
-[Install](start/install.md) the chart, then give it
-[a first schema](start/first-schema.md). What the operator does with that
-schema afterwards is [operations](use/operations.md), and what it refuses is
-[the security model](use/security.md).
+[Install](start/install/) the chart, then give it
+[a first schema](start/first-schema/). What the operator does with that
+schema afterwards is [operations](use/operations/), and what it refuses is
+[the security model](use/security/).
 
 ## Ptah itself
 
@@ -68,4 +68,4 @@ The artifacts this operator applies are built with Ptah, and the schema
 formats, the OCI artifact layout and the CLI are documented on
 [Ptah's own site](https://docs.ptah.run/edge/). Which Ptah build this operator
 runs, and which have actually been verified with it, is
-[Ptah compatibility](support/ptah.md).
+[Ptah compatibility](support/ptah/).

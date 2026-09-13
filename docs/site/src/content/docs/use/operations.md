@@ -48,7 +48,7 @@ Install CRDs and the controller through the Helm chart. Supply digest-pinned
 manager, executor, and runner images. The chart refuses all three when only a
 tag is supplied. Manager Pods, hooks, and controller identity all use the same
 `image.repository@image.digest` reference. See the
-[installation example](../start/install.md) for the required
+[installation example](../../start/install/) for the required
 values.
 
 Upgrades are supported from the first published release onward. Every release
@@ -838,7 +838,7 @@ kubectl -n <namespace> get events --field-selector involvedObject.name=<name>
 ```
 
 The complete stable condition-reason vocabulary is cataloged in
-[Condition reasons](../troubleshoot/condition-reasons.md). Automation should compare the
+[Condition reasons](../../troubleshoot/condition-reasons/). Automation should compare the
 `type`, `status`, and `reason` tuple and require `observedGeneration` to match
 the resource generation; condition messages are diagnostic text, not an API.
 
@@ -1083,9 +1083,16 @@ runner rejects a larger native plan before publication. Accepted bytes are
 stored in immutable 512 KiB binary ConfigMap chunks; that chunk size leaves
 headroom below the Kubernetes object-size limit after API JSON base64 encoding.
 
+The chunks are storage, not a reading interface. `kubectl ptah plan <schema>`
+reads a stored plan back the way the operator does -- every chunk against its
+digest and size, joined in index order, the whole document against its content
+digest -- and `--applied` reads the one the last confirmed apply ran. See
+[Read a plan](../read-a-plan/), which carries the
+[install](../read-a-plan/#install).
+
 ## Kubernetes versions
 
 The supported minor window and update procedure are defined in
-[Kubernetes support](../support/kubernetes.md). A support-window change adds the
+[Kubernetes support](../../support/kubernetes/). A support-window change adds the
 new minor and removes the oldest minor atomically, after the entire real-cluster
 matrix succeeds.

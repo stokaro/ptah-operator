@@ -142,7 +142,13 @@ ConfigMap and `PtahSchemaPlan` read access in application namespaces
 accordingly. The built-in approver role can read plan metadata but deliberately
 cannot read every ConfigMap cluster-wide. Grant a separate namespace Role
 restricted to the current plan chunk names, as described in
-[Exact-plan approvals](approvals.md).
+[Exact-plan approvals](../approvals/). What that access is used with is
+`kubectl ptah`, a read-only client that needs `get` on the schema, the plan and
+those ConfigMaps and nothing else; [Read a plan](../read-a-plan/) carries the
+Role and the [install](../read-a-plan/#install). What that access is used with is
+`kubectl ptah`, a read-only client that needs `get` on the schema, the plan and
+those ConfigMaps and nothing else; [Read a plan](../read-a-plan/) carries the
+Role and the [install](../read-a-plan/#install).
 
 Approval admission fails closed. It binds names to UIDs, rejects a plan whose
 storage commit is incomplete, rejects changed policy bytes or target state, and
@@ -206,7 +212,7 @@ SQL output.
   required registry, DNS, and database endpoints. Start from the
   egress-policy example in `examples/networkpolicy-egress.yaml`.
 - Grant the database user the minimum DDL and introspection privileges needed
-  for the selected schemas. See [Database support and privileges](../support/databases.md)
+  for the selected schemas. See [Database support and privileges](../../support/databases/)
   and do not use a cluster-wide administrative account.
 - Pin manager, runner, and executor images by digest and verify their release
   provenance before installation.
