@@ -93,6 +93,34 @@ func (fakeJobs) NameFor(_ *operatorv1alpha1.PtahSchema, operation operatorv1alph
 	return "ptah-" + strings.ToLower(string(operation.Type)) + "-test", nil
 }
 
+func (fakeJobs) NameForMigration(
+	migration *operatorv1alpha1.PtahMigration,
+	operation operatorv1alpha1.MigrationOperationStatus,
+) (string, error) {
+	return workload.NameForMigration(migration, operation)
+}
+
+func (fakeJobs) BuildMigration(
+	migration *operatorv1alpha1.PtahMigration,
+	operation operatorv1alpha1.MigrationOperationStatus,
+) (*batchv1.Job, error) {
+	annotations := map[string]string{workload.AnnotationExecutionBindingID: operation.ExecutionBindingID}
+	if operation.AdmissionSnapshot != nil {
+		annotations[workload.AnnotationAdmissionSnapshotDigest] = operation.AdmissionSnapshot.Digest
+	}
+	controller := true
+	blockDeletion := true
+	return &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Namespace: migration.Namespace, Name: operation.JobName,
+		Annotations: annotations,
+		OwnerReferences: []metav1.OwnerReference{{
+			APIVersion: operatorv1alpha1.GroupVersion.String(), Kind: "PtahMigration",
+			Name: migration.Name, UID: migration.UID,
+			Controller: &controller, BlockOwnerDeletion: &blockDeletion,
+		}},
+	}, Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Annotations: annotations}}}}, nil
+}
+
 func (attemptNamedJobs) NameFor(
 	schema *operatorv1alpha1.PtahSchema,
 	operation operatorv1alpha1.ActiveOperationStatus,

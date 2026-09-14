@@ -141,6 +141,17 @@ func (b Builder) NameFor(
 	return NameFor(schema, operation)
 }
 
+// NameForMigration delegates to the package-level deterministic naming contract.
+func (b Builder) NameForMigration(
+	migration *operatorv1alpha1.PtahMigration,
+	operation operatorv1alpha1.MigrationOperationStatus,
+) (string, error) {
+	if err := b.validate(); err != nil {
+		return "", err
+	}
+	return NameForMigration(migration, operation)
+}
+
 // ExecutionBinding returns the immutable execution identity recorded in every
 // plan and approval fingerprint.
 func (b Builder) ExecutionBinding() (
