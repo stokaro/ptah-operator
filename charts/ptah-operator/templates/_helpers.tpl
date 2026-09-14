@@ -922,8 +922,8 @@ ptah-operator-parameter-informer-anchor
 {{- define "ptah-operator.certificateRuntimeArgsJSON" -}}
 {{- $rotatorName := include "ptah-operator.certRotatorServiceAccountName" . -}}
 {{- $certificateRuntimeEnabled := and .Values.certificateRotation.enabled (not .Values.webhook.existingSecret) -}}
-{{- $mutatingWebhookNames := "mapproval.operator.ptah.run" -}}
-{{- $validatingWebhookNames := "vapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run" -}}
+{{- $mutatingWebhookNames := "mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run" -}}
+{{- $validatingWebhookNames := "vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run" -}}
 {{- $args := list
       (printf "--namespace=%s" .Release.Namespace)
       (printf "--release-name=%s" .Release.Name)
