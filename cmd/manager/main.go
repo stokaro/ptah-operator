@@ -166,6 +166,18 @@ func main() {
 		log.Error(err, "register PtahSchema controller")
 		os.Exit(1)
 	}
+	migrations := &controller.MigrationReconciler{
+		Client: manager.GetClient(), APIReader: manager.GetAPIReader(), Scheme: manager.GetScheme(),
+		Recorder:         manager.GetEventRecorderFor("ptah-migration-controller"),
+		Logs:             controller.ClientsetPodLogs{Client: clientset},
+		Jobs:             builder,
+		Telemetry:        operatorMetrics,
+		AdmissionOptions: admissionOptions,
+	}
+	if err := migrations.SetupWithManager(manager); err != nil {
+		log.Error(err, "register PtahMigration controller")
+		os.Exit(1)
+	}
 
 	decoder := cradmission.NewDecoder(manager.GetScheme())
 	manager.GetWebhookServer().Register(mutateApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.ApprovalHandler{
