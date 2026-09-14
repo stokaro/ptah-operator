@@ -42,7 +42,7 @@ func TestBuildMigrationCredentialAndInputIsolationByOperation(t *testing.T) {
 			operation: operatorv1alpha1.MigrationOperationHistory,
 			want: []string{
 				"PTAH_DB_URL", "PTAH_EXPECTED_DATABASE_ENGINE", "PTAH_COORDINATION_DIGEST",
-				"PTAH_MIGRATIONS_DIR", "PTAH_CONNECT_TIMEOUT", "PTAH_LOCK_TIMEOUT",
+				"PTAH_MIGRATIONS_DIR", "PTAH_CONNECT_TIMEOUT", "PTAH_MIGRATION_LOCK_TIMEOUT",
 			},
 			absent: []string{
 				"PTAH_REQUESTED_REFERENCE", "PTAH_RESOLVED_REFERENCE", "PTAH_VERIFICATION_POLICY",
