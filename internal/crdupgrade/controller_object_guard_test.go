@@ -62,16 +62,17 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 
 	guard := testControllerObjectGuard()
 	entries := guard.entries()
-	if len(entries) != 3 {
-		t.Fatalf("controller object guard entries = %d, want three typed policies", len(entries))
+	if len(entries) != 4 {
+		t.Fatalf("controller object guard entries = %d, want four typed policies", len(entries))
 	}
 	wantGVK := map[string]struct {
 		apiGroup   string
 		apiVersion string
 	}{
-		"jobs":            {apiGroup: "batch", apiVersion: "v1"},
-		"configmaps":      {apiGroup: "", apiVersion: "v1"},
-		"ptahschemaplans": {apiGroup: "operator.ptah.run", apiVersion: "v1alpha1"},
+		"jobs":               {apiGroup: "batch", apiVersion: "v1"},
+		"configmaps":         {apiGroup: "", apiVersion: "v1"},
+		"ptahschemaplans":    {apiGroup: "operator.ptah.run", apiVersion: "v1alpha1"},
+		"ptahmigrationplans": {apiGroup: "operator.ptah.run", apiVersion: "v1alpha1"},
 	}
 	seenResources := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {

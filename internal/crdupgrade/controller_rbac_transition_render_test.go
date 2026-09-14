@@ -450,6 +450,18 @@ func assertTransitionRenderedClusterRoleRules(
 		t.Fatalf("decode rendered ClusterRole/%s: %v", name, err)
 	}
 	if !reflect.DeepEqual(role.Rules, want) {
+		for index := range max(len(role.Rules), len(want)) {
+			var rendered, expected string
+			if index < len(role.Rules) {
+				rendered = fmt.Sprintf("%v %v %v", role.Rules[index].Resources, role.Rules[index].Verbs, role.Rules[index].ResourceNames)
+			}
+			if index < len(want) {
+				expected = fmt.Sprintf("%v %v %v", want[index].Resources, want[index].Verbs, want[index].ResourceNames)
+			}
+			if rendered != expected {
+				t.Logf("rule %d rendered %s\n        want %s", index, rendered, expected)
+			}
+		}
 		t.Fatalf("rendered ClusterRole/%s differs from the exact controller transition contract", name)
 	}
 }

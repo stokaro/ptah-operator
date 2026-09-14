@@ -16,10 +16,16 @@ const (
 	controllerJobWriteGuardNamePrefix  = "ptah-operator-job-write-guard-v2-"
 	controllerChunkWriteGuardPrefix    = "ptah-operator-chunk-write-guard-v2-"
 	controllerPlanWriteGuardNamePrefix = "ptah-operator-plan-write-guard-v2-"
+	// The migration plan is a separate kind with a separate shape, so it gets
+	// its own boundary rather than a widened one: the schema plan contract
+	// stays exactly as strict as it was.
+	controllerMigrationPlanWriteGuardNamePrefix = "ptah-operator-migration-plan-write-guard-v1-"
 
 	controllerJobWriteGuardComponent   = "controller-job-write-guard"
 	controllerChunkWriteGuardComponent = "controller-chunk-write-guard"
 	controllerPlanWriteGuardComponent  = "controller-plan-write-guard"
+
+	controllerMigrationPlanWriteGuardComponent = "controller-migration-plan-write-guard"
 
 	controllerObjectPolicyWeight  = "-152"
 	controllerObjectBindingWeight = "-147"
@@ -41,6 +47,12 @@ func ControllerChunkWriteGuardPolicyName(releaseNamespace, releaseName string, r
 // the manager's structural PtahSchemaPlan write boundary.
 func ControllerPlanWriteGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
 	return controllerObjectGuardPolicyName(controllerPlanWriteGuardNamePrefix, releaseNamespace, releaseName, releaseSequence, managerImage)
+}
+
+// ControllerMigrationPlanWriteGuardPolicyName returns the stable release-owned
+// name of the manager's structural migration plan write boundary.
+func ControllerMigrationPlanWriteGuardPolicyName(releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
+	return controllerObjectGuardPolicyName(controllerMigrationPlanWriteGuardNamePrefix, releaseNamespace, releaseName, releaseSequence, managerImage)
 }
 
 func controllerObjectGuardPolicyName(prefix, releaseNamespace, releaseName string, releaseSequence int32, managerImage string) string {
@@ -183,10 +195,20 @@ func (g *ControllerObjectGuard) entries() []controllerObjectGuardEntry {
 			operations:    []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
 			denialMessage: "Ptah controller plan write guard rejected an unsafe manifest shape",
 		},
+		{
+			name:          ControllerMigrationPlanWriteGuardPolicyName(g.ReleaseNamespace, g.ReleaseName, g.ReleaseSequence, g.ManagerImage),
+			component:     controllerMigrationPlanWriteGuardComponent,
+			apiGroups:     []string{"operator.ptah.run"},
+			apiVersions:   []string{"v1alpha1"},
+			resource:      "ptahmigrationplans",
+			operations:    []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+			denialMessage: "Ptah controller migration plan write guard rejected an unsafe manifest shape",
+		},
 	}
 	entries[0].validations = controllerJobWriteValidations(entries[0].denialMessage)
 	entries[1].validations = controllerChunkWriteValidations(entries[1].denialMessage)
 	entries[2].validations = controllerPlanWriteValidations(entries[2].denialMessage)
+	entries[3].validations = controllerMigrationPlanWriteValidations(entries[3].denialMessage)
 	return entries
 }
 
@@ -523,6 +545,22 @@ func controllerPlanWriteValidations(message string) []admissionregistrationv1.Va
 	)
 	validations[1].Expression = controllerPlanContractExpression()
 	return validations
+}
+
+// controllerMigrationPlanWriteValidations bounds the manifest the controller
+// may publish for a migration.
+//
+// A migration plan is a version sequence with per-migration checksums and the
+// history it was computed against, so the contract checks those rather than the
+// schema plan's chunk projection: there is no chunk store behind it, because
+// the statements are in the artifact rather than in the plan.
+func controllerMigrationPlanWriteValidations(message string) []admissionregistrationv1.Validation {
+	return controllerObjectValidations(message,
+		`has(object.metadata.labels) && object.metadata.labels.size() == 1 && "operator.ptah.run/migration" in object.metadata.labels && object.metadata.labels["operator.ptah.run/migration"] != "" && object.metadata.name.matches("^ptah-mplan-[0-9a-f]{24}$") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahMigration" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/migration"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion && dyn(object).spec.migrationRef.name == object.metadata.labels["operator.ptah.run/migration"] && dyn(object).spec.migrationRef.uid == object.metadata.ownerReferences[0].uid`,
+		`dyn(object).spec.contractVersion == 1 && dyn(object).spec.fingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.historyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.artifactDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.coordinationDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.targetIdentityDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.policyFingerprint.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.verificationPolicyUID != "" && dyn(object).spec.verificationPolicyDigest.matches("^sha256:[0-9a-f]{64}$") && dyn(object).spec.currentVersion >= 0 && dyn(object).spec.executionBindingID.matches("^v1-[0-9a-f]{32}$") && dyn(object).spec.controllerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.controllerImage == variables.activeControllerImage && dyn(object).spec.controllerRevision != "" && dyn(object).spec.controllerStateVersion >= 1 && dyn(object).spec.controllerStateVersion == variables.activeControllerState && dyn(object).spec.ptahVersion != "" && dyn(object).spec.executorImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerImage.matches("^[^[:space:]@]+@sha256:[0-9a-f]{64}$") && dyn(object).spec.runnerProtocolVersion >= 1`,
+		`dyn(object).spec.migrations.size() >= 1 && dyn(object).spec.migrations.size() <= 256 && dyn(object).spec.migrations.all(migration, migration.version >= 1 && migration.checksum != "" && migration.checksum.size() <= 128 && (!has(migration.transactionMode) || migration.transactionMode in ["file", "none"]))`,
+		`!has(dyn(object).status)`,
+	)
 }
 
 func controllerPlanContractExpression() string {

@@ -497,7 +497,8 @@ wrote; crdupgrade builds the same names from the same identity.
       (printf "ptah-operator-controller-write-guard-v2-%s" $digest)
       (printf "ptah-operator-job-write-guard-v2-%s" $digest)
       (printf "ptah-operator-chunk-write-guard-v2-%s" $digest)
-      (printf "ptah-operator-plan-write-guard-v2-%s" $digest) }}
+      (printf "ptah-operator-plan-write-guard-v2-%s" $digest)
+      (printf "ptah-operator-migration-plan-write-guard-v1-%s" $digest) }}
 - {{ $name }}
 {{- end -}}
 {{- end -}}
@@ -852,6 +853,10 @@ ptah-operator-parameter-informer-anchor
 
 {{- define "ptah-operator.controllerPlanWriteGuardPolicyName" -}}
 {{- printf "ptah-operator-plan-write-guard-v2-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
+{{- end -}}
+
+{{- define "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" -}}
+{{- printf "ptah-operator-migration-plan-write-guard-v1-%s" (include "ptah-operator.hookIdentityDigest" . | trunc 12) -}}
 {{- end -}}
 
 {{- define "ptah-operator.certificateMutatingWriteGuardPolicyName" -}}

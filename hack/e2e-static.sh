@@ -5838,12 +5838,13 @@ controller_object_guard_names=$(awk '
   $1 == "name:" &&
     ($2 ~ /^ptah-operator-job-write-guard-v2-/ ||
      $2 ~ /^ptah-operator-chunk-write-guard-v2-/ ||
-     $2 ~ /^ptah-operator-plan-write-guard-v2-/) {
+     $2 ~ /^ptah-operator-plan-write-guard-v2-/ ||
+     $2 ~ /^ptah-operator-migration-plan-write-guard-v1-/) {
     print $2
   }
 ' "$ROLLOUT_GUARD_RENDER" | sort -u)
-[ "$(printf '%s\n' "$controller_object_guard_names" | grep -c .)" -eq 3 ] || {
-	printf '%s\n' 'e2e static: rendered controller object boundary lacks three typed guard identities' >&2
+[ "$(printf '%s\n' "$controller_object_guard_names" | grep -c .)" -eq 4 ] || {
+	printf '%s\n' 'e2e static: rendered controller object boundary lacks four typed guard identities' >&2
 	exit 1
 }
 for controller_object_guard_name in $controller_object_guard_names; do
@@ -5869,6 +5870,8 @@ controller_chunk_guard_name=$(printf '%s\n' "$controller_object_guard_names" |
 	grep -E '^ptah-operator-chunk-write-guard-v2-')
 controller_plan_guard_name=$(printf '%s\n' "$controller_object_guard_names" |
 	grep -E '^ptah-operator-plan-write-guard-v2-')
+controller_migration_plan_guard_name=$(printf '%s\n' "$controller_object_guard_names" |
+	grep -E '^ptah-operator-migration-plan-write-guard-v1-')
 controller_object_guard_contracts=$(awk '
   function reset() {
     kind = ""
@@ -5882,7 +5885,8 @@ controller_object_guard_contracts=$(awk '
     parameter_not_found = ""
   }
   function emit() {
-    if (name ~ /^ptah-operator-(job|chunk|plan)-write-guard-v2-/) {
+    if (name ~ /^ptah-operator-(job|chunk|plan)-write-guard-v2-/ ||
+        name ~ /^ptah-operator-migration-plan-write-guard-v1-/) {
       print kind ":" name ":" weight ":" param_kind ":" param_name ":" param_namespace ":" parameter_not_found
     }
     reset()
@@ -5913,7 +5917,9 @@ for controller_object_guard_contract in \
 	"ValidatingAdmissionPolicy:$controller_chunk_guard_name:-152:ConfigMap:::" \
 	"ValidatingAdmissionPolicyBinding:$controller_chunk_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny" \
 	"ValidatingAdmissionPolicy:$controller_plan_guard_name:-152:ConfigMap:::" \
-	"ValidatingAdmissionPolicyBinding:$controller_plan_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny"; do
+	"ValidatingAdmissionPolicyBinding:$controller_plan_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny" \
+	"ValidatingAdmissionPolicy:$controller_migration_plan_guard_name:-152:ConfigMap:::" \
+	"ValidatingAdmissionPolicyBinding:$controller_migration_plan_guard_name:-147::ptah-operator-release-activation:ptah-e2e:Deny"; do
 	[ "$(printf '%s\n' "$controller_object_guard_contracts" |
 		grep -Fxc -- "$controller_object_guard_contract")" -eq 1 ] || {
 		printf 'e2e static: controller object guard lacks exact activation contract %s\n' \
@@ -5936,6 +5942,8 @@ for controller_object_marker in \
 	'resources: ["jobs"]' \
 	'resources: ["configmaps"]' \
 	'resources: ["ptahschemaplans"]' \
+	'resources: ["ptahmigrationplans"]' \
+	'Ptah controller migration plan write guard rejected an unsafe manifest shape' \
 	'dyn(object).spec.ttlSecondsAfterFinished == 300' \
 	'dyn(object).binaryData[\"chunk\"].size() <= 524288' \
 	'dyn(object).spec.contractVersion == 2' \
@@ -6037,7 +6045,8 @@ activation_hook_order=$(awk '
         component == "admission-convergence" ||
         (kind == "ConfigMap" && name == "ptah-operator-release-activation") ||
         (kind == "ValidatingAdmissionPolicyBinding" &&
-         component ~ /^controller-(job|chunk|plan)-write-guard$/)) {
+         component ~ /^controller-(job|chunk|plan)-write-guard$/ ||
+         component == "controller-migration-plan-write-guard")) {
       print kind ":" weight
     }
     kind = ""
@@ -6069,7 +6078,7 @@ for activation_hook in \
 	}
 done
 [ "$(printf '%s\n' "$activation_hook_order" |
-	grep -Fxc -- 'ValidatingAdmissionPolicyBinding:-147')" -eq 3 ] || {
+	grep -Fxc -- 'ValidatingAdmissionPolicyBinding:-147')" -eq 4 ] || {
 	printf '%s\n' 'e2e static: controller object bindings do not render after the activation self-guard' >&2
 	exit 1
 }

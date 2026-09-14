@@ -26,8 +26,8 @@ func TestReleaseTeardownDeletesExactInventoryInSafeOrder(t *testing.T) {
 
 	fixture := newReleaseTeardownFixture(t)
 	wantOrder := expectedReleaseTeardownOrder(fixture.guard)
-	if len(wantOrder) != 45 {
-		t.Fatalf("known teardown inventory has %d objects, want 45", len(wantOrder))
+	if len(wantOrder) != 47 {
+		t.Fatalf("known teardown inventory has %d objects, want 47", len(wantOrder))
 	}
 	if err := fixture.teardown.Preflight(context.Background()); err != nil {
 		t.Fatalf("read-only preflight: %v", err)
@@ -714,6 +714,7 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 	controllerJobWriteName := ControllerJobWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	controllerChunkWriteName := ControllerChunkWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	controllerPlanWriteName := ControllerPlanWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
+	controllerMigrationPlanWriteName := ControllerMigrationPlanWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName, guard.ReleaseSequence, guard.ManagerImage)
 	certificateMutatingWriteName := CertificateMutatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	certificateValidatingWriteName := CertificateValidatingWriteGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
 	namespaceName := NamespaceDeletionGuardPolicyName(guard.ReleaseNamespace, guard.ReleaseName)
@@ -723,6 +724,7 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 		rolloutName, runtimeName, runtimePodName,
 		serviceAccountName, controllerWriteName,
 		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
+		controllerMigrationPlanWriteName,
 	}
 	remaining := []string{
 		hookName, hookProbeName,
@@ -738,6 +740,7 @@ func expectedReleaseTeardownOrder(guard *RolloutGuard) []string {
 		serviceAccountObjectName,
 		serviceAccountName, controllerWriteName,
 		controllerJobWriteName, controllerChunkWriteName, controllerPlanWriteName,
+		controllerMigrationPlanWriteName,
 		certificateMutatingWriteName, certificateValidatingWriteName,
 	}
 	policies = append(policies, namespaceName)
