@@ -250,6 +250,18 @@ type MigrationHistoryStatus struct {
 	// +kubebuilder:validation:Minimum=0
 	PendingCount int32 `json:"pendingCount"`
 
+	// Fingerprint is this exact reading of the revision table. A plan names it
+	// as its premise, and a history that moved between planning and execution
+	// invalidates the plan rather than being applied to.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	Fingerprint string `json:"fingerprint"`
+
+	// TargetIdentityDigest is the credential-free identity of the database this
+	// history was read from, as the executor derived it. A plan that was made
+	// against one database is never executed against another.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	TargetIdentityDigest string `json:"targetIdentityDigest"`
+
 	// Dirty reports a revision row a failed or interrupted run left behind.
 	// Nothing applies while one exists.
 	Dirty bool `json:"dirty,omitempty"`

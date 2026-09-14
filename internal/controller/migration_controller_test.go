@@ -142,6 +142,7 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 		wantPhase  operatorv1alpha1.MigrationPhase
 		wantReady  metav1.ConditionStatus
 		wantReason operatorv1alpha1.ConditionReason
+		wantPlan   bool
 	}{
 		{
 			name: "every migration is applied",
@@ -150,8 +151,8 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 				CurrentVersion:  3,
 				TotalMigrations: 2,
 				Migrations: []dataplane.MigrationRecord{
-					{Version: 2, State: dataplane.MigrationStateApplied},
-					{Version: 3, State: dataplane.MigrationStateApplied},
+					{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
 				},
 			},
 			wantPhase:  operatorv1alpha1.MigrationPhaseInSync,
@@ -166,13 +167,14 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 				TotalMigrations:   3,
 				HasPendingChanges: true,
 				Migrations: []dataplane.MigrationRecord{
-					{Version: 2, State: dataplane.MigrationStateApplied},
-					{Version: 3, State: dataplane.MigrationStatePending},
+					{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStatePending},
 				},
 			},
-			wantPhase:  operatorv1alpha1.MigrationPhasePlanning,
+			wantPhase:  operatorv1alpha1.MigrationPhaseAwaitingApproval,
 			wantReady:  metav1.ConditionFalse,
-			wantReason: operatorv1alpha1.ReasonMigrationsPending,
+			wantReason: operatorv1alpha1.ReasonAwaitingApproval,
+			wantPlan:   true,
 		},
 		{
 			name: "an interrupted run left a dirty row",
@@ -181,8 +183,8 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 				CurrentVersion:  3,
 				TotalMigrations: 2,
 				Migrations: []dataplane.MigrationRecord{
-					{Version: 2, State: dataplane.MigrationStateApplied},
-					{Version: 3, State: dataplane.MigrationStateDirty},
+					{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateDirty},
 				},
 				DirtyRevision: &dataplane.MigrationDirty{Version: 3, Applied: 2, Total: 5},
 			},
@@ -197,8 +199,8 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 				CurrentVersion:  3,
 				TotalMigrations: 2,
 				Migrations: []dataplane.MigrationRecord{
-					{Version: 2, State: dataplane.MigrationStateModified},
-					{Version: 3, State: dataplane.MigrationStateApplied},
+					{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateModified},
+					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
 				},
 			},
 			wantPhase:  operatorv1alpha1.MigrationPhaseBlocked,
@@ -221,17 +223,20 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			frame := migrationFrame(t, runner.Result{
 				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
 				OperationID: operation.ID, ChildExitCode: 0,
-				CoordinationDigest: operation.CoordinationDigest,
-				MigrationHistory:   &report,
+				CoordinationDigest:   operation.CoordinationDigest,
+				TargetIdentityDigest: testDigest,
+				MigrationHistory:     &report,
 			})
-			reconciler, api := fakeMigrationReconciler(t, staticLogs{content: frame}, migration, job, pod)
+			reconciler, api := fakeMigrationReconciler(
+				t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap(),
+			)
 
 			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
 				t.Fatalf("Reconcile() error = %v", err)
 			}
 			actual := readMigration(t, api, migration)
 			if actual.Status.Phase != test.wantPhase {
-				t.Fatalf("phase = %q, want %q", actual.Status.Phase, test.wantPhase)
+				t.Fatalf("phase = %q, want %q (conditions %#v)", actual.Status.Phase, test.wantPhase, actual.Status.Conditions)
 			}
 			if actual.Status.History == nil {
 				t.Fatal("the history was not published")
@@ -245,6 +250,35 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			}
 			if actual.Status.NextReconciliationTime == nil {
 				t.Fatal("a settled migration scheduled no next reconciliation")
+			}
+			if !test.wantPlan {
+				if actual.Status.Plan != nil {
+					t.Fatalf("a history with nothing to plan published %#v", actual.Status.Plan)
+				}
+				return
+			}
+			if actual.Status.Plan == nil {
+				t.Fatal("a pending sequence published no plan")
+			}
+			plans := &operatorv1alpha1.PtahMigrationPlanList{}
+			if err := api.List(context.Background(), plans); err != nil {
+				t.Fatal(err)
+			}
+			if len(plans.Items) != 1 {
+				t.Fatalf("published plans = %d, want one", len(plans.Items))
+			}
+			plan := plans.Items[0]
+			if plan.Name != actual.Status.Plan.Name || plan.Spec.MigrationRef.UID != migration.UID {
+				t.Fatalf("plan identity = %#v", plan.ObjectMeta)
+			}
+			if plan.Spec.HistoryFingerprint != actual.Status.History.Fingerprint {
+				t.Fatal("the plan does not name the history it was computed against")
+			}
+			if len(plan.Spec.Migrations) != 1 || plan.Spec.Migrations[0].Version != 3 {
+				t.Fatalf("planned sequence = %#v", plan.Spec.Migrations)
+			}
+			if plan.Spec.TargetIdentityDigest != testDigest || plan.Spec.ArtifactDigest != testDigest {
+				t.Fatalf("plan bindings = %#v", plan.Spec)
 			}
 		})
 	}

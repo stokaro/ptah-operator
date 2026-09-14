@@ -299,7 +299,7 @@ webhooks:
       - apiGroups: ["operator.ptah.run"]
         apiVersions: ["v1alpha1"]
         operations: ["CREATE"]
-        resources: ["ptahschemaplans"]
+        resources: ["ptahschemaplans", "ptahmigrationplans"]
         scope: Namespaced
   {{- if $certificateRuntimeEnabled }}
   - name: certificate-rotation-canary-validate.operator.ptah.run

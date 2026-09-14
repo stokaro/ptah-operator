@@ -756,12 +756,14 @@ func buildTeardownAuthorizationChecks(
 		{name: "PtahSchemaPlan", resource: "ptahschemaplans"},
 		{name: "PtahSchemaApproval", resource: "ptahschemaapprovals"},
 		{name: "PtahMigration", resource: "ptahmigrations"},
+		{name: "PtahMigrationPlan", resource: "ptahmigrationplans"},
 	} {
 		for _, verb := range []string{"update", "patch"} {
 			appendResource(teardownCheckController, verb+" "+target.name+" status", "operator.ptah.run", "v1alpha1", target.resource, "status", rollout.ReleaseNamespace, verb, arbitraryObjectName)
 		}
 	}
 	appendResource(teardownCheckController, "create PtahSchemaPlan", "operator.ptah.run", "v1alpha1", "ptahschemaplans", "", rollout.ReleaseNamespace, "create", arbitraryObjectName)
+	appendResource(teardownCheckController, "create PtahMigrationPlan", "operator.ptah.run", "v1alpha1", "ptahmigrationplans", "", rollout.ReleaseNamespace, "create", arbitraryObjectName)
 	for _, verb := range []string{"create", "patch"} {
 		appendResource(teardownCheckController, verb+" operation Job", "batch", "v1", "jobs", "", rollout.ReleaseNamespace, verb, arbitraryObjectName)
 	}

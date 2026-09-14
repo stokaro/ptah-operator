@@ -157,6 +157,14 @@ func (v *Validator) Validate(ctx context.Context, req admissionv1.AdmissionReque
 			return denyf("operator manager may only create immutable PtahSchemaPlan manifests")
 		}
 		return v.validatePlanCreate(ctx, req)
+	case migrationPlanResource:
+		if err := validateRequestType(req, migrationPlanResource, migrationPlanKind); err != nil {
+			return err
+		}
+		if req.Operation != admissionv1.Create {
+			return denyf("operator manager may only create immutable PtahMigrationPlan manifests")
+		}
+		return v.validateMigrationPlanCreate(ctx, req)
 	default:
 		return denyf("resource is outside the operator manager write contract")
 	}
