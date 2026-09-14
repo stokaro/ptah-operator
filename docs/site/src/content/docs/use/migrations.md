@@ -34,6 +34,8 @@ URL never talks to your registry.
 
 ## The minimal resource
 
+`examples/ptahmigration.yaml` is the annotated version; this is the shape:
+
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1
 kind: PtahMigration
@@ -98,7 +100,8 @@ arbitrary SQL, and no analyzer classifies arbitrary SQL as safe.
 
 An approval names the migration, the plan and the plan's fingerprint; the
 admission webhook fills in the rest from the plan itself and refuses any value
-that conflicts with it:
+that conflicts with it. `examples/migration-approval.yaml` carries the commands
+that print those three identifiers:
 
 ```yaml
 apiVersion: operator.ptah.run/v1alpha1

@@ -1,0 +1,40 @@
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: orders
+  namespace: application
+spec:
+  target:
+    engine: PostgreSQL
+    # Every resource that can mutate this physical database, including through
+    # another DNS alias, proxy, or credential, must use this exact non-secret
+    # key. It is what makes a schema and a migration take turns rather than run
+    # at once.
+    coordinationKey: production/application-primary
+    urlFrom:
+      name: application-database
+      key: url
+  artifact:
+    # A tag is resolved to a digest once per cycle, and the digest is what every
+    # later operation carries. A digest here pins it for good.
+    ociRef: oci://ghcr.io/example/orders-migrations:stable
+    verificationPolicyFrom:
+      name: ptah-verification-policy
+      key: policy.yaml
+  policy:
+    # A migration artifact carries arbitrary SQL, and no analyzer classifies
+    # arbitrary SQL as safe, so the conservative setting is the default one.
+    apply: OnApproval
+    # The wait for the database's own migration lock, which is not the
+    # Kubernetes Lease: two controllers that never run at the same time still
+    # need the database to serialize them.
+    lockTimeout: 5m
+  interval: 10m
+  execution:
+    activeDeadlineSeconds: 900
+    failureRetryInterval: 30s
+    connectTimeout: 10s
+    # The identity the Jobs run as. It is never the controller's own: a Job that
+    # could act as the controller could write the status that judges it.
+    serviceAccountName: ptah-execution
+  suspend: false

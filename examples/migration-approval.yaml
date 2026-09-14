@@ -1,0 +1,25 @@
+# One decision, bound to one plan and to the history that plan was computed
+# against. Read the plan first:
+#
+#   kubectl ptah migration orders -n application
+#
+# then copy the three identifiers the operator published:
+#
+#   kubectl -n application get ptahmigration orders -o jsonpath='{.metadata.uid}{"\n"}{.status.plan.name}{"\n"}{.status.plan.uid}{"\n"}'
+#   kubectl -n application get ptahmigrationplan <plan-name> -o jsonpath='{.spec.fingerprint}{"\n"}'
+#
+# Everything else is filled in from the plan by the admission webhook, which
+# refuses any value that conflicts with it. An approval authorizes one run.
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigrationApproval
+metadata:
+  name: orders-approval
+  namespace: application
+spec:
+  migrationRef:
+    name: orders
+    uid: <metadata.uid of the PtahMigration>
+  planRef:
+    name: <status.plan.name>
+    uid: <status.plan.uid>
+  planFingerprint: <spec.fingerprint of that plan>
