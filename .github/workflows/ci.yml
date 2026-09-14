@@ -156,6 +156,7 @@ jobs:
       # until the image stopped doing so, and a job that assumes it fails
       # with "helm: executable file not found" on tests nothing changed.
       - name: Set up Helm
+        id: verify-helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
           version: v4.2.4
@@ -214,6 +215,7 @@ jobs:
       # until the image stopped doing so, and a job that assumes it fails
       # with "helm: executable file not found" on tests nothing changed.
       - name: Set up Helm
+        id: race-helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
           version: v4.2.4
