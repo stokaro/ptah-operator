@@ -79,6 +79,26 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      # setup-go caches the module downloads and, on a key miss, whatever build
+      # output existed when that job ended. Its key is the Go version and
+      # go.sum, so it changes only when a dependency does: every run after the
+      # first restores that one snapshot and reports "Cache hit occurred on the
+      # primary key, not saving cache", and the compilation this job did is
+      # thrown away. The build cache therefore rolls on its own key, newest
+      # first, and is saved every run.
+      #
+      # Per job, because the objects are not interchangeable: a -race build is a
+      # different cache than a plain one, and one shared key would have each run
+      # evict the other's entries.
+      - name: Cache the Go build output
+        id: verify-build-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-verify-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-build-${{ runner.os }}-verify-${{ hashFiles('go.sum') }}-
+            go-build-${{ runner.os }}-verify-
       - name: Verify Kubernetes support window
         id: verify-support
         shell: bash
@@ -183,6 +203,26 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      # setup-go caches the module downloads and, on a key miss, whatever build
+      # output existed when that job ended. Its key is the Go version and
+      # go.sum, so it changes only when a dependency does: every run after the
+      # first restores that one snapshot and reports "Cache hit occurred on the
+      # primary key, not saving cache", and the compilation this job did is
+      # thrown away. The build cache therefore rolls on its own key, newest
+      # first, and is saved every run.
+      #
+      # Per job, because the objects are not interchangeable: a -race build is a
+      # different cache than a plain one, and one shared key would have each run
+      # evict the other's entries.
+      - name: Cache the Go build output
+        id: race-build-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-race-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-build-${{ runner.os }}-race-${{ hashFiles('go.sum') }}-
+            go-build-${{ runner.os }}-race-
       # A pull request runs the race detector over every package. The four
       # shell mutation suites it skips rewrite fixtures and re-run a static
       # verifier in one goroutine, so the detector finds nothing in them while
