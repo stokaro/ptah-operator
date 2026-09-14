@@ -129,6 +129,16 @@
 
 /* ---------- the page ---------- */
 
+/* Starlight reserves the icon's room as padding on the heading, in em of the
+ * heading, and pulls the link back over it by the same em measured on the link
+ * -- which inherits the prose size. A group heading is half the size of the
+ * prose around it, so the link is pulled further than the room reserved for it
+ * and the icon lands on the last word. Sizing the link with the heading makes
+ * both ems the same measure again. */
+.sl-markdown-content.ptah-faq .sl-heading-wrapper.level-h2 > .sl-anchor-link {
+	font-size: 0.8125rem;
+}
+
 /* Starlight wraps a heading with its anchor link and makes the heading itself
  * `display: inline`, so vertical space and rules sit on the wrapper. An inline
  * heading given a border paints it across its own line box, which is a rule
