@@ -172,9 +172,13 @@ func Run(ctx context.Context, config Config) Result {
 	if config.Executor == nil {
 		config.Executor = OSExecutor{}
 	}
-	if config.Operation == OperationResolve || config.Operation == OperationVerify {
+	// Every operation that reaches the registry prepares its access first: the
+	// authority check, the authenticated-plain-HTTP refusal and the verified CA
+	// snapshot the child reads. The migration operations reach it by the
+	// resolved digest rather than by the requested reference.
+	if ociReference, reachesRegistry := operationOCIReference(config.Operation, inputs); reachesRegistry {
 		preparedEnvironment, cleanupCA, err := PrepareOCISourceAccess(
-			inputs.RequestedReference,
+			ociReference,
 			environment,
 			config.TempDir,
 		)
@@ -288,6 +292,14 @@ func Run(ctx context.Context, config Config) Result {
 		// any retry. Even an executable-start ambiguity is handled fail-safe.
 		result.MutationStarted = true
 	}
+	if config.Operation == OperationMigrationApply {
+		// The same rule, and one more: a migration child that is cancelled, or
+		// that fails to be executed at all, may already have committed
+		// statements, and nothing outside the database can say. So the frame
+		// claims both until a validated run report narrows it.
+		result.MutationStarted = true
+		result.Uncertain = true
+	}
 	consumeOutcome(
 		&result,
 		outcome,
@@ -313,32 +325,17 @@ func Run(ctx context.Context, config Config) Result {
 	if config.Operation == OperationApply && result.Error == nil && !bytes.Equal(outcome.stdout.bytes(), applyExpectedOutput) {
 		setResultError(&result, "invalid_apply_output", errors.New("native apply output does not match the approved plan transcript"), redactor, config.Diagnostics)
 	}
+	// The migration document is read on both paths, and before the exit status
+	// is allowed to classify anything. A run that stopped is exactly the run
+	// whose controller has to be told what the database now holds, and a
+	// nonzero exit is how Ptah reports that it stopped -- reading the report
+	// only on the clean path drops the evidence precisely when it decides the
+	// next move. Truncated output is not a document, so it is not read.
+	if config.Operation == OperationMigrationHistory || config.Operation == OperationMigrationApply {
+		decodeMigrationReport(&result, config, outcome, redactor)
+	}
 	if result.Error == nil {
 		switch config.Operation {
-		case OperationMigrationHistory:
-			report, err := dataplane.DecodeMigrationStatus(outcome.stdout.bytes())
-			if err != nil {
-				setResultError(&result, "invalid_migration_history_output",
-					errors.New("migration history output failed strict validation"), redactor, config.Diagnostics)
-				break
-			}
-			result.MigrationHistory = &report
-		case OperationMigrationApply:
-			// The document is read on both paths. A run that stopped is exactly
-			// the run whose controller has to be told what the database now
-			// holds, and the exit status cannot tell it.
-			report, err := dataplane.DecodeMigrationRun(outcome.stdout.bytes())
-			if err != nil {
-				setResultError(&result, "invalid_migration_run_output",
-					errors.New("migration run output failed strict validation"), redactor, config.Diagnostics)
-				break
-			}
-			result.MigrationRun = &report
-			result.MutationStarted = report.Outcome != dataplane.MigrationOutcomeUpToDate &&
-				report.Outcome != dataplane.MigrationOutcomeDryRun
-			// Partial and unknown are the two outcomes no retry may follow.
-			result.Uncertain = report.Outcome == dataplane.MigrationOutcomePartial ||
-				report.Outcome == dataplane.MigrationOutcomeUnknown
 		case OperationResolve:
 			if len(outcome.stderr.bytes()) != 0 {
 				setResultError(&result, "invalid_resolve_output", errors.New("resolve command emitted unexpected diagnostics"), redactor, config.Diagnostics)
@@ -359,6 +356,65 @@ func Run(ctx context.Context, config Config) Result {
 		result.Uncertain = true
 	}
 	return result
+}
+
+// decodeMigrationReport reads the typed document a migration command wrote,
+// whatever the child's exit status said, and lets a validated report settle
+// what the frame claims about the database.
+//
+// An unreadable document is only this function's error to report when nothing
+// else already failed: a child that exited nonzero and wrote nothing is
+// reported as the child exit it was, not as malformed output.
+func decodeMigrationReport(result *Result, config Config, outcome commandOutcome, redactor Redactor) {
+	if outcome.err != nil || outcome.stdout.dropped() != 0 {
+		return
+	}
+	if config.Operation == OperationMigrationHistory {
+		report, err := dataplane.DecodeMigrationStatus(outcome.stdout.bytes())
+		if err != nil {
+			if result.Error == nil {
+				setResultError(result, "invalid_migration_history_output",
+					errors.New("migration history output failed strict validation"), redactor, config.Diagnostics)
+			}
+			return
+		}
+		result.MigrationHistory = &report
+		return
+	}
+	report, err := dataplane.DecodeMigrationRun(outcome.stdout.bytes())
+	if err != nil {
+		if result.Error == nil {
+			setResultError(result, "invalid_migration_run_output",
+				errors.New("migration run output failed strict validation"), redactor, config.Diagnostics)
+		}
+		return
+	}
+	result.MigrationRun = &report
+	// The report is the only thing that may narrow what was claimed before the
+	// child ran: an outcome that moved nothing releases the mutation claim, and
+	// only an outcome the database accounted for releases the uncertainty.
+	result.MutationStarted = report.Outcome != dataplane.MigrationOutcomeUpToDate &&
+		report.Outcome != dataplane.MigrationOutcomeDryRun
+	// Partial and unknown are the two outcomes no retry may follow.
+	result.Uncertain = report.Outcome == dataplane.MigrationOutcomePartial ||
+		report.Outcome == dataplane.MigrationOutcomeUnknown
+}
+
+// operationOCIReference is the reference an operation fetches, and whether it
+// reaches a registry at all. Resolve and verify are told a requested reference;
+// the migration operations are told the digest the controller already resolved,
+// and read that artifact as their migration directory. An empty reference is
+// still handed over, so the refusal stays the registry access one rather than
+// becoming a different error depending on which field was blank.
+func operationOCIReference(operation Operation, inputs Inputs) (string, bool) {
+	switch operation {
+	case OperationResolve, OperationVerify:
+		return inputs.RequestedReference, true
+	case OperationMigrationHistory, OperationMigrationApply:
+		return inputs.ResolvedReference, true
+	default:
+		return "", false
+	}
 }
 
 // runPlan accepts a plan only when two uninterrupted native reads return the

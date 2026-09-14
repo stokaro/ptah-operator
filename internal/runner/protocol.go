@@ -358,7 +358,8 @@ func validateResult(result Result, options ParseOptions) error {
 		}
 	}
 	if result.Error != nil && result.Error.Code == "invalid_oci_access" {
-		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify
+		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify ||
+			result.Operation == OperationMigrationHistory || result.Operation == OperationMigrationApply
 		expected := Result{
 			ProtocolVersion: result.ProtocolVersion,
 			Operation:       result.Operation,
@@ -384,7 +385,7 @@ func validateResult(result Result, options ParseOptions) error {
 	if result.Uncertain && !result.MutationStarted {
 		return fmt.Errorf("%w: uncertain result without a mutation attempt", ErrMalformedFrame)
 	}
-	if result.Operation != OperationApply && (result.MutationStarted || result.Uncertain) {
+	if !result.Operation.Mutating() && (result.MutationStarted || result.Uncertain) {
 		return fmt.Errorf("%w: mutation metadata on a read-only operation", ErrMalformedFrame)
 	}
 	if result.Operation != OperationPlan && result.Stdout != "" {
@@ -419,6 +420,18 @@ func validateResult(result Result, options ParseOptions) error {
 	}
 	if result.ResolvedDigest != "" && result.Operation != OperationResolve && result.Operation != OperationVerify {
 		return fmt.Errorf("%w: resolved digest on an unrelated operation", ErrMalformedFrame)
+	}
+	if result.MigrationHistory != nil && result.Operation != OperationMigrationHistory {
+		return fmt.Errorf("%w: migration history on an unrelated operation", ErrMalformedFrame)
+	}
+	if result.MigrationRun != nil && result.Operation != OperationMigrationApply {
+		return fmt.Errorf("%w: migration run report on an unrelated operation", ErrMalformedFrame)
+	}
+	if result.Error == nil && result.Operation == OperationMigrationHistory && result.MigrationHistory == nil {
+		return fmt.Errorf("%w: successful migration history lacks its report", ErrMalformedFrame)
+	}
+	if result.Error == nil && result.Operation == OperationMigrationApply && result.MigrationRun == nil {
+		return fmt.Errorf("%w: successful migration run lacks its report", ErrMalformedFrame)
 	}
 	if result.ObservedArtifactType != "" && result.Operation != OperationVerify {
 		return fmt.Errorf("%w: artifact type on a non-verify operation", ErrMalformedFrame)

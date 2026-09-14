@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stokaro/ptah-operator/internal/dataplane"
 )
 
 type shortWriter struct{}
@@ -351,6 +353,27 @@ func TestParserRejectsImpossibleSuccessfulResultShapes(t *testing.T) {
 			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "resolve-nonzero",
 				ChildExitCode: 1},
 		},
+		{
+			name: "migration history success without its report",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationMigrationHistory,
+				OperationID: "history-no-report", ChildExitCode: 0, CoordinationDigest: digest},
+		},
+		{
+			name: "migration run success without its report",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationMigrationApply,
+				OperationID: "run-no-report", ChildExitCode: 0, CoordinationDigest: digest, MutationStarted: true},
+		},
+		{
+			name: "migration history report on an unrelated operation",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationObserve, OperationID: "observe-history",
+				ChildExitCode: 0, CoordinationDigest: digest, MigrationHistory: &dataplane.MigrationStatusReport{ContractVersion: 1}},
+		},
+		{
+			name: "migration run report on an unrelated operation",
+			result: Result{ProtocolVersion: ProtocolVersion, Operation: OperationApply, OperationID: "apply-run-report",
+				ChildExitCode: 0, CoordinationDigest: digest, MutationStarted: true,
+				MigrationRun: &dataplane.MigrationRunReport{ContractVersion: 1, Direction: "up", Outcome: dataplane.MigrationOutcomeApplied}},
+		},
 	}
 
 	for _, test := range tests {
@@ -541,4 +564,37 @@ func handcraftedIntegrityValidFrame(t *testing.T, result Result) []byte {
 	}
 	digest := sha256.Sum256(payload)
 	return []byte(fmt.Sprintf("%s%d %s\n%s%s\n", frameHeader, len(payload), hex.EncodeToString(digest[:]), payload, frameFooter))
+}
+
+// A migration apply writes to the database, so its frame carries the same
+// mutation metadata an apply does -- and a stopped run carries it with the
+// report that says what the database holds.
+func TestFrameCarriesMigrationMutationMetadata(t *testing.T) {
+	t.Parallel()
+
+	digest := "sha256:" + strings.Repeat("9", 64)
+	report := &dataplane.MigrationRunReport{
+		ContractVersion: 1,
+		Direction:       "up",
+		Outcome:         dataplane.MigrationOutcomePartial,
+	}
+	result := Result{
+		ProtocolVersion: ProtocolVersion, Operation: OperationMigrationApply, OperationID: "run-partial",
+		ChildExitCode: 1, CoordinationDigest: digest, MutationStarted: true, Uncertain: true,
+		MigrationRun: report,
+		Error:        &ResultError{Code: "child_exit", Message: "ptah exited with code 1"},
+	}
+
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	parsed, err := ParseResultFor(frame, result.Operation, result.OperationID)
+	if err != nil {
+		t.Fatalf("ParseResultFor() error = %v", err)
+	}
+	if !parsed.MutationStarted || !parsed.Uncertain || parsed.MigrationRun == nil ||
+		parsed.MigrationRun.Outcome != dataplane.MigrationOutcomePartial {
+		t.Fatalf("ParseResultFor() = %#v", parsed)
+	}
 }

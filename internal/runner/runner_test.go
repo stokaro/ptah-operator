@@ -2264,3 +2264,105 @@ func observationProbeDiagnostic(candidate, databaseFingerprint string) string {
 		"); the database changed since the plan was computed, so re-run `schema plan` " +
 		"against the current database and review the fresh plan\n"
 }
+
+// migrationRunDocument is what `ptah migrations up --json` writes: the outcome
+// the database accounted for, which is the only thing that says what a stopped
+// run left behind.
+func migrationRunDocument(outcome string) string {
+	return fmt.Sprintf(
+		`{"contract_version":1,"direction":"up","outcome":%q,"planned":[3],"applied":[],`+
+			`"error":"failed to apply migration 3",`+
+			`"status":{"contract_version":1,"current_version":2,"total_migrations":3,"has_pending_changes":true,`+
+			`"dirty_revision":{"version":3,"applied":2,"total":5}}}`,
+		outcome,
+	)
+}
+
+func migrationEnvironment(operationID string) []string {
+	return append(databaseEnvironment(operationID),
+		envResolvedReference+"=oci://registry.example/team/app-migrations@sha256:"+strings.Repeat("a", 64),
+	)
+}
+
+// A migration that stopped is the run whose report matters most: the exit
+// status says only that Ptah stopped, and the document says what the database
+// now holds.
+func TestMigrationApplyKeepsItsReportWhenPtahStops(t *testing.T) {
+	t.Parallel()
+
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{
+		stdout:   migrationRunDocument("partial"),
+		exitCode: 1,
+	}}}
+	result := Run(context.Background(), Config{
+		Operation:   OperationMigrationApply,
+		Environment: migrationEnvironment("migration-apply-stopped"),
+		Executor:    executor,
+	})
+
+	if result.Error == nil || result.Error.Code != "child_exit" {
+		t.Fatalf("Run() error = %#v, want the child exit", result.Error)
+	}
+	if result.MigrationRun == nil {
+		t.Fatalf("Run() = %#v, want the run report the child wrote", result)
+	}
+	if result.MigrationRun.Status == nil || result.MigrationRun.Status.DirtyRevision == nil {
+		t.Fatal("the run report reached the frame without the database's account of it")
+	}
+	if !result.MutationStarted || !result.Uncertain {
+		t.Fatalf("a partial run reported MutationStarted=%t Uncertain=%t", result.MutationStarted, result.Uncertain)
+	}
+	if _, err := MarshalFrame(result); err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+}
+
+// A migration child that cannot be read is the ambiguous case: it may have
+// committed statements, and nothing outside the database can say.
+func TestMigrationApplyClaimsTheMutationWhenTheChildCannotBeRead(t *testing.T) {
+	t.Parallel()
+
+	executor := &scriptedExecutor{t: t, responses: []scriptedResponse{{err: errors.New("context canceled")}}}
+	result := Run(context.Background(), Config{
+		Operation:   OperationMigrationApply,
+		Environment: migrationEnvironment("migration-apply-ambiguous"),
+		Executor:    executor,
+	})
+
+	if result.Error == nil {
+		t.Fatalf("Run() = %#v, want an execution failure", result)
+	}
+	if result.MigrationRun != nil {
+		t.Fatalf("Run() = %#v, want no report from a child that was not read", result)
+	}
+	if !result.MutationStarted || !result.Uncertain {
+		t.Fatalf("an unread migration child reported MutationStarted=%t Uncertain=%t", result.MutationStarted, result.Uncertain)
+	}
+	if _, err := MarshalFrame(result); err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+}
+
+// The migration operations read the artifact from the registry, so they get the
+// same access preparation as the operations that resolve and verify it: the
+// authority check and the verified CA snapshot, before any child runs.
+func TestMigrationOperationsPrepareRegistryAccessBeforeTheChild(t *testing.T) {
+	t.Parallel()
+
+	for _, operation := range []Operation{OperationMigrationHistory, OperationMigrationApply} {
+		operation := operation
+		t.Run(string(operation), func(t *testing.T) {
+			t.Parallel()
+			executor := &scriptedExecutor{t: t}
+			environment := append(databaseEnvironment("migration-registry-access"),
+				envResolvedReference+"=oci://user:password@registry.example/team/app-migrations@sha256:"+strings.Repeat("a", 64),
+			)
+			result := Run(context.Background(), Config{
+				Operation: operation, Environment: environment, Executor: executor,
+			})
+			if result.Error == nil || result.Error.Code != "invalid_oci_access" || len(executor.calls) != 0 {
+				t.Fatalf("Run() = %#v, commands = %d", result, len(executor.calls))
+			}
+		})
+	}
+}
