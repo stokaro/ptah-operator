@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "2"
-    operator.ptah.run/crd-schema-digest: "sha256:a603244cfb165d87f5cad9d13a04c07ffa9d731210d698f5ed3bae3501133f70"
+    operator.ptah.run/crd-schema-version: "3"
+    operator.ptah.run/crd-schema-digest: "sha256:d683872411fbe357fe9b06903fea7cdeaaed1efcbb638aea3c0978f20133157e"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahmigrationplans.operator.ptah.run
 spec:
@@ -129,9 +129,7 @@ spec:
                 maxItems: 256
                 minItems: 1
                 type: array
-                x-kubernetes-list-map-keys:
-                - version
-                x-kubernetes-list-type: map
+                x-kubernetes-list-type: atomic
               policyFingerprint:
                 type: string
               ptahVersion:

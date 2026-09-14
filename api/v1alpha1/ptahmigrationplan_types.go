@@ -65,9 +65,13 @@ type PtahMigrationPlanSpec struct {
 	// +kubebuilder:validation:MaxLength=128
 	Fingerprint string `json:"fingerprint"`
 
-	// Migrations is the exact sequence, in execution order.
-	// +listType=map
-	// +listMapKey=version
+	// Migrations is the exact sequence, in execution order, and the order is
+	// the content: a plan that applies the same migrations in another order is
+	// a different plan. So the list is atomic rather than a map keyed by
+	// version -- a map declares the order insignificant, and it would also
+	// require the version to be unique, which is the thing VersionKey exists
+	// to say it is not.
+	// +listType=atomic
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=256
 	Migrations []PlannedMigration `json:"migrations"`

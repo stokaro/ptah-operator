@@ -951,8 +951,20 @@ func sequence1ControllerRuntimeRoleRules(identity controllerRoleIdentity, contra
 // The controller ClusterRole release sequence 1 published. Frozen: it is a
 // literal record of a shipped contract, not a view of the current one, so it
 // does not follow currentControllerClusterRoleRules when that changes.
+//
+// The CRD list is the exception while sequence 1 is unshipped. support/ptah.json
+// declares this operator's only release as edge, in development, so no cluster
+// holds a sequence-1 release this record could contradict -- and it has to
+// describe the chart that publishes it, because an upgrade preflights the live
+// sequence-1 role against this table. A table naming three CRDs against a chart
+// granting six refuses the upgrade before it starts, which is how the lifecycle
+// first failed on this change. The day a version ships, this list freezes with
+// it.
 func sequence1ControllerClusterRoleRules(identity controllerRoleIdentity) []rbacv1.PolicyRule {
 	crdNames := []string{
+		"ptahmigrationapprovals.operator.ptah.run",
+		"ptahmigrationplans.operator.ptah.run",
+		"ptahmigrations.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",
 		"ptahschemaplans.operator.ptah.run",
 		"ptahschemas.operator.ptah.run",
