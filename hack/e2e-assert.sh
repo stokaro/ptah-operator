@@ -299,7 +299,7 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
           {apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE"],
             resources: ["configmaps"], scope: "Namespaced"},
           {apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"], operations: ["CREATE"],
-            resources: ["ptahschemaplans"], scope: "Namespaced"}
+            resources: ["ptahschemaplans", "ptahmigrationplans"], scope: "Namespaced"}
         ]))
     ' >/dev/null || fail "validating webhooks are not exact and fail-closed"
 
