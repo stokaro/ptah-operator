@@ -199,10 +199,35 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 			return CommandSpec{}, errors.New("reconstructed plan path is empty")
 		}
 		spec.Args = []string{"schema", "apply", "--plan", inputs.PlanPath, "--auto-approve"}
+	case OperationMigrationHistory, OperationMigrationApply:
+		// The migration directory is the artifact itself, by digest: the same
+		// bytes the controller resolved and verified, never a tag re-resolved
+		// inside the Job.
+		if err := validateReference(inputs.ResolvedReference, "resolved reference"); err != nil {
+			return CommandSpec{}, err
+		}
+		if err := requirePinnedReference(inputs.ResolvedReference); err != nil {
+			return CommandSpec{}, err
+		}
+		verb := "status"
+		if operation == OperationMigrationApply {
+			verb = "up"
+		}
+		spec.Args = []string{"migrations", verb, "--migrations-dir", inputs.ResolvedReference, "--json"}
 	default:
 		return CommandSpec{}, fmt.Errorf("unsupported operation %q", operation)
 	}
 	return spec, nil
+}
+
+// requirePinnedReference refuses a reference that is not digest-pinned. A Job
+// told to run migrations from a tag would resolve it again, inside the Job,
+// against whatever the registry answers then.
+func requirePinnedReference(reference string) error {
+	if _, err := digestFromReference(reference); err != nil {
+		return errors.New("migration artifact reference is not pinned to a digest")
+	}
+	return nil
 }
 
 func buildInspectArtifactCommand(ptahBinary, resolvedReference string) (CommandSpec, error) {

@@ -47,11 +47,31 @@ const (
 	OperationObserve Operation = "observe"
 	OperationPlan    Operation = "plan"
 	OperationApply   Operation = "apply"
+	// OperationMigrationHistory reads the database's own migration history
+	// against a migration artifact, and changes nothing.
+	OperationMigrationHistory Operation = "migration-history"
+	// OperationMigrationApply runs the pending migrations of a migration
+	// artifact.
+	OperationMigrationApply Operation = "migration-apply"
 )
 
 func (o Operation) Valid() bool {
 	switch o {
-	case OperationResolve, OperationVerify, OperationObserve, OperationPlan, OperationApply:
+	case OperationResolve, OperationVerify, OperationObserve, OperationPlan, OperationApply,
+		OperationMigrationHistory, OperationMigrationApply:
+		return true
+	default:
+		return false
+	}
+}
+
+// Mutating reports whether an operation may change the database.
+//
+// A runner that predates an operation refuses it by name, which is what keeps
+// an old executor from being asked to run migrations it cannot account for.
+func (o Operation) Mutating() bool {
+	switch o {
+	case OperationApply, OperationMigrationApply:
 		return true
 	default:
 		return false
@@ -125,8 +145,15 @@ type Result struct {
 	PlanOutcome              PlanOutcome           `json:"planOutcome,omitempty"`
 	MutationStarted          bool                  `json:"mutationStarted,omitempty"`
 	Uncertain                bool                  `json:"uncertain,omitempty"`
-	Error                    *ResultError          `json:"error,omitempty"`
-	Truncation               *TruncationMetadata   `json:"truncation,omitempty"`
+	// MigrationHistory is the history a migration-history operation read, and
+	// MigrationRun the evidence a migration-apply operation left. Both are the
+	// documents Ptah produced, validated before they were carried here: the
+	// controller decides from the database's own account rather than from this
+	// process's exit status.
+	MigrationHistory *dataplane.MigrationStatusReport `json:"migrationHistory,omitempty"`
+	MigrationRun     *dataplane.MigrationRunReport    `json:"migrationRun,omitempty"`
+	Error            *ResultError                     `json:"error,omitempty"`
+	Truncation       *TruncationMetadata              `json:"truncation,omitempty"`
 }
 
 // ParseOptions optionally binds a parsed frame to the Job contract that

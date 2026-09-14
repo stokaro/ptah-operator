@@ -315,6 +315,30 @@ func Run(ctx context.Context, config Config) Result {
 	}
 	if result.Error == nil {
 		switch config.Operation {
+		case OperationMigrationHistory:
+			report, err := dataplane.DecodeMigrationStatus(outcome.stdout.bytes())
+			if err != nil {
+				setResultError(&result, "invalid_migration_history_output",
+					errors.New("migration history output failed strict validation"), redactor, config.Diagnostics)
+				break
+			}
+			result.MigrationHistory = &report
+		case OperationMigrationApply:
+			// The document is read on both paths. A run that stopped is exactly
+			// the run whose controller has to be told what the database now
+			// holds, and the exit status cannot tell it.
+			report, err := dataplane.DecodeMigrationRun(outcome.stdout.bytes())
+			if err != nil {
+				setResultError(&result, "invalid_migration_run_output",
+					errors.New("migration run output failed strict validation"), redactor, config.Diagnostics)
+				break
+			}
+			result.MigrationRun = &report
+			result.MutationStarted = report.Outcome != dataplane.MigrationOutcomeUpToDate &&
+				report.Outcome != dataplane.MigrationOutcomeDryRun
+			// Partial and unknown are the two outcomes no retry may follow.
+			result.Uncertain = report.Outcome == dataplane.MigrationOutcomePartial ||
+				report.Outcome == dataplane.MigrationOutcomeUnknown
 		case OperationResolve:
 			if len(outcome.stderr.bytes()) != 0 {
 				setResultError(&result, "invalid_resolve_output", errors.New("resolve command emitted unexpected diagnostics"), redactor, config.Diagnostics)
@@ -932,7 +956,8 @@ func outputWasTruncated(result *Result) bool {
 
 func operationNeedsDatabase(operation Operation) bool {
 	switch operation {
-	case OperationObserve, OperationPlan, OperationApply:
+	case OperationObserve, OperationPlan, OperationApply,
+		OperationMigrationHistory, OperationMigrationApply:
 		return true
 	default:
 		return false
