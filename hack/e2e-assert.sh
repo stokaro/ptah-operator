@@ -676,7 +676,7 @@ k create -f "$webhook_scope_job_file" >/dev/null
 spoof_job_uid=$(k -n "$TEST_NAMESPACE" get job "$WEBHOOK_SPOOF_JOB" \
 	-o jsonpath='{.metadata.uid}')
 wait_for_job_failed_create "$WEBHOOK_SPOOF_JOB" "$spoof_job_uid" \
-	'managed Pod Job has no exact PtahSchema controller identity' ||
+	'managed Pod Job has no exact operator controller identity' ||
 	fail "a foreign Job spoofing managed-operation labels was not denied by the Pod intent webhook"
 delete_webhook_scope_fixtures
 
