@@ -215,6 +215,14 @@
 	display: none;
 }
 
+/* This site's theme control is one button rather than the documentation site's
+ * pair, and the phone header already carries it (header.css), so the drawer's
+ * footer does not draw a second one. It is the same element either way; this
+ * copy is only not shown. */
+.mobile-preferences .ptah-header-toggle {
+	display: none;
+}
+
 /* The first top-level page after the last disclosure group opens the pair a
  * reader reaches for when something is wrong. A rule above it says those rows
  * answer across the groups rather than inside one. */

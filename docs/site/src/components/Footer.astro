@@ -1,0 +1,61 @@
+---
+/**
+ * The article footer: a meta row with what the page states about itself, then
+ * previous / next as two cards. Registered in astro.config.mjs as the override
+ * of Starlight's Footer, whose EditLink, LastUpdated and Pagination it
+ * replaces; the route data they read is the same.
+ *
+ * The markup is the one Ptah's documentation site renders, and
+ * src/styles/ptah/furniture.css ("Footer") styles that markup and no other: a
+ * site that keeps the stylesheet and leaves Starlight's own footer in place
+ * gets Starlight's cards under the design's pages. What this copy leaves out is
+ * what this site has no source for -- the evidence date and the page's source
+ * commit -- rather than a different arrangement of the same facts.
+ */
+const { editUrl, lang, lastUpdated, pagination } = Astro.locals.starlightRoute;
+const { prev, next } = pagination;
+
+// The same format on both sites: medium date, read in UTC so a reader west of
+// the line is not told a page was updated tomorrow.
+const updated = lastUpdated ? lastUpdated.toLocaleDateString(lang, { dateStyle: 'medium', timeZone: 'UTC' }) : '';
+---
+
+<footer class="ptah-footer">
+	{(lastUpdated || editUrl) && (
+		<div class="ptah-footer-meta">
+			<div class="ptah-footer-facts">
+				{lastUpdated && (
+					<span class="ptah-footer-fact">
+						{Astro.locals.t('page.lastUpdated')}{' '}
+						<time datetime={lastUpdated.toISOString()}>{updated}</time>
+					</span>
+				)}
+			</div>
+
+			{editUrl && (
+				<div class="ptah-footer-links">
+					<a class="ptah-footer-link" href={editUrl.href} target="_blank" rel="noreferrer" data-footer-action="edit">
+						{Astro.locals.t('page.editLink')} <span aria-hidden="true">↗</span>
+					</a>
+				</div>
+			)}
+		</div>
+	)}
+
+	{(prev || next) && (
+		<nav class="ptah-pagination" aria-label="Previous and next pages">
+			{prev && (
+				<a class="ptah-pagination-card ptah-pagination-prev" href={prev.href} rel="prev">
+					<span class="ptah-pagination-label">← {Astro.locals.t('page.previousLink')}</span>
+					<span class="ptah-pagination-title">{prev.label}</span>
+				</a>
+			)}
+			{next && (
+				<a class="ptah-pagination-card ptah-pagination-next" href={next.href} rel="next">
+					<span class="ptah-pagination-label">{Astro.locals.t('page.nextLink')} →</span>
+					<span class="ptah-pagination-title">{next.label}</span>
+				</a>
+			)}
+		</nav>
+	)}
+</footer>

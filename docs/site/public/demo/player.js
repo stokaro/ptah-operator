@@ -16,6 +16,11 @@
  * each behavior was decided. This site has only the second: every frame here
  * carries `data-demo-static`, so nothing starts without being asked, and the
  * hero paths are the ones a reader of this copy will not reach.
+ *
+ * One page, one session. A run has a page of its own and the frame on it plays
+ * where it stands, so this copy carries no overlay, no scenario picker and no
+ * flight between the two: what ptah.run does by moving one frame around the
+ * page, this site does by linking to the page the session is on.
  */
 import { CLASS, esc, wideRuns } from "./transcript.mjs";
 
@@ -23,7 +28,6 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
   "use strict";
 
   var doc = document;
-  var root = doc.documentElement;
 
   function $(sel, ctx) {
     return (ctx || doc).querySelector(sel);
@@ -47,35 +51,10 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
     var speedBtn = $("[data-demo-speed]", demo);
     var speedLabel = $("[data-demo-speed-label]", demo);
     var replayBtn = $("[data-demo-replay]", demo);
-    var expandBtn = $("[data-demo-expand]", demo);
     var progress = $("[data-demo-progress]", demo);
     var progressFill = $("span", progress);
-    var modal = $("[data-demo-modal]");
-    var where = $(".demo-where", demo);
-    var pick = $("[data-demo-pick]");
-    // Filled once the scenarios exist: two of these buttons are slots, and a
-    // slot with no scenario on it is not a button yet.
-    var pickBtns;
-    var caption = $("[data-demo-caption]");
-    var title = $("[data-demo-title]");
 
     var SCENARIOS = RUNS.scenarios;
-
-    // Two of the picker's four buttons are empty slots. Fill them before
-    // anything queries the picker: a slot with no scenario is not a button.
-    if (pick) {
-      var pool = RUNS.rotating.slice();
-      var slots = $$("[data-demo-slot]", pick);
-      for (var i = 0; i < slots.length && pool.length; i++) {
-        var key = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
-        slots[i].setAttribute("data-demo-scenario", key);
-        slots[i].textContent = SCENARIOS[key].label;
-        slots[i].hidden = false;
-      }
-      pickBtns = $$("[data-demo-scenario]", pick);
-    } else {
-      pickBtns = [];
-    }
 
     // The session this node starts on: what the markup names, or the first
     // pinned one, which is what the home page's transcript carries.
@@ -393,8 +372,8 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
       if (paused) return;
       var event = SCRIPT[at];
       if (!event) {
-        // A reader who pressed Play, or who expanded it, asked for one run.
-        // Nothing is waiting for the reader once the session is over, so the
+        // A reader who pressed Play asked for one run of it. Nothing is
+        // waiting for the reader once the session is over, so the
         // caret goes. Left blinking on a finished frame it asks for input that
         // does not exist, which is the one thing a caret should never say.
         idle = false;
@@ -529,35 +508,12 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
       return demo.hasAttribute("data-demo-autoplay") && !still.matches && !narrow.matches;
     }
 
-    // Expanded, the session is something the reader chose to watch, so it runs
-    // once and stops on its last frame. In the hero it is ambient and comes
-    // round again, because a reader arriving mid-session should not have to
-    // guess what the first half said.
+    // A session that starts itself is ambient and comes round again, because a
+    // reader arriving mid-session should not have to guess what the first half
+    // said. One that was asked for runs once and stops on its last frame, which
+    // is every session on this site.
     function loops() {
-      return autoplays() && !demo.classList.contains("is-open");
-    }
-
-    function choose(name) {
-      var scenario = SCENARIOS[name];
-      if (!scenario) return;
-      SCRIPT = scenario.script;
-      // The frame says which session it is showing. A reader who followed a
-      // link into an expanded run, and anything reading the page, both need the
-      // answer from the DOM rather than from what was there when it loaded.
-      demo.setAttribute("data-demo-scenario", name);
-      where.textContent = scenario.where;
-      if (caption) caption.textContent = scenario.caption;
-      if (title) title.textContent = scenario.label;
-      for (var i = 0; i < pickBtns.length; i++) {
-        pickBtns[i].setAttribute(
-          "aria-pressed",
-          pickBtns[i].getAttribute("data-demo-scenario") === name ? "true" : "false"
-        );
-      }
-      // Switching is a request to watch that one, so it plays where the first
-      // one would have played and settles where it would have settled.
-      if (autoplays()) start();
-      else settle();
+      return autoplays();
     }
 
     // Going live swaps the transcript for the player. On the home page that
@@ -575,7 +531,6 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
       syncPill.hidden = false;
       controls.hidden = false;
       progress.hidden = false;
-      if (pick) pick.hidden = false;
       settle();
       watchVisibility();
       blink = setInterval(function () {
@@ -589,174 +544,6 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
         cursor.setAttribute("data-on", cursor.getAttribute("data-on") === "1" ? "0" : "1");
       }, 530);
     }
-
-    for (var b = 0; b < pickBtns.length; b++) {
-      pickBtns[b].addEventListener("click", function () {
-        choose(this.getAttribute("data-demo-scenario"));
-      });
-    }
-
-    // On a grid page the player has no place of its own: it lives out of sight
-    // until a tile asks for it, and goes back out of sight when the overlay
-    // closes. On the home page it is the hero and is never hidden.
-    var hiddenAtHome = demo.hidden;
-
-    // Expanding moves the terminal rather than copying it: one node, one
-    // running session, so the script does not restart and the two copies
-    // cannot disagree about where it is.
-    var home = demo.nextSibling;
-    var homeParent = demo.parentNode;
-
-    // The frame travels between its place in the page and the overlay instead
-    // of one panel vanishing and another appearing, so the reader keeps hold of
-    // the thing they clicked. Both positions are only ever known here, after
-    // the move: measure where it was, let it land, then play the difference.
-    var flight = null;
-
-    // Arriving takes its time; leaving gets out of the way.
-    var ARRIVE = 420;
-    var LEAVE = 300;
-
-    function fly(from, to, done) {
-      // Drop the handlers before cancelling: `cancel` is delivered later, and a
-      // late `land` would clear the flight that replaced it. An interrupted
-      // flight leaves from wherever it had got to, because `from` was measured
-      // with its transform still applied.
-      if (flight) {
-        flight.onfinish = null;
-        flight.oncancel = null;
-        flight.cancel();
-        flight = null;
-      }
-      if (still.matches || !demo.animate || !from.width || !to || !to.width) {
-        if (done) done();
-        return;
-      }
-      // The frame sits at `from` and has to read as arriving at `to`. Opening
-      // moves the node first and plays the difference backwards; closing plays
-      // it forwards and moves the node when it lands, because a frame inside a
-      // closed dialog has no box left to fly to.
-      var offset = function (a, b) {
-        return (
-          "translate(" +
-          (a.left - b.left) +
-          "px," +
-          (a.top - b.top) +
-          "px) scale(" +
-          a.width / b.width +
-          "," +
-          a.height / b.height +
-          ")"
-        );
-      };
-      var here = demo.getBoundingClientRect();
-      var frames = done
-        ? [
-            { transform: "none", transformOrigin: "0 0", opacity: 1 },
-            { transform: offset(to, here), transformOrigin: "0 0", opacity: 0.4 }
-          ]
-        : [
-            { transform: offset(from, here), transformOrigin: "0 0" },
-            { transform: "none", transformOrigin: "0 0" }
-          ];
-      demo.classList.add("is-flying");
-      flight = demo.animate(
-        frames,
-        // Long enough to read as one movement, and eased at both ends: a curve
-        // that spends most of its distance in the first third arrives before
-        // the eye has followed it, which reads as a jump with a tail.
-        { duration: done ? LEAVE : ARRIVE, easing: "cubic-bezier(0.4, 0.02, 0.2, 1)" }
-      );
-      var land = function () {
-        demo.classList.remove("is-flying");
-        flight = null;
-        if (done) done();
-      };
-      flight.onfinish = land;
-      flight.oncancel = land;
-    }
-
-    // The tile a session was opened from, so closing goes back to it rather
-    // than nowhere. On the home page there is no tile and the hero is the
-    // anchor, which is why the two directions are not one code path: the hero's
-    // box is only knowable after the node has moved back into it, and a tile's
-    // box is knowable at any time.
-    var anchor = null;
-
-    function setOpen(open, from) {
-      expandBtn.setAttribute("aria-expanded", open ? "true" : "false");
-      expandBtn.setAttribute("aria-label", (open ? "Close" : "Expand") + " the demo");
-      expandBtn.setAttribute("title", open ? "Close" : "Expand");
-      demo.classList.toggle("is-open", open);
-
-      if (open) {
-        anchor = from || null;
-        var origin = from || demo.getBoundingClientRect();
-        modal.appendChild(demo);
-        modal.showModal();
-        root.classList.add("is-modal-open");
-        screen.scrollTop = screen.scrollHeight;
-        return fly(origin, demo.getBoundingClientRect());
-      }
-
-      var goHome = function () {
-        root.classList.remove("is-modal-open");
-        modal.classList.remove("is-leaving");
-        homeParent.insertBefore(demo, home);
-        demo.hidden = hiddenAtHome;
-        if (modal.open) modal.close();
-        screen.scrollTop = screen.scrollHeight;
-        // Back in the hero it is ambient again. A run that ended under the
-        // overlay's one-shot rule starts over; one still playing carries on.
-        if (!playing && autoplays()) start();
-      };
-
-      // With a tile to return to, the frame shrinks back into it while the page
-      // comes out from under the dim; without one, the node goes home first and
-      // the difference is played from there.
-      if (anchor) {
-        var back = anchor;
-        anchor = null;
-        modal.classList.add("is-leaving");
-        return fly(demo.getBoundingClientRect(), back, goHome);
-      }
-      var was = demo.getBoundingClientRect();
-      goHome();
-      fly(was, demo.getBoundingClientRect());
-    }
-
-    expandBtn.addEventListener("click", function () {
-      enliven();
-      setOpen(expandBtn.getAttribute("aria-expanded") !== "true");
-    });
-
-    // On a page that is a grid rather than a hero, the tiles are the control:
-    // one player, opened onto whichever session was pressed, growing out of the
-    // tile that was pressed so the reader keeps hold of what they clicked.
-    var tiles = $$("[data-demo-tile]");
-    for (var t = 0; t < tiles.length; t++) {
-      tiles[t].addEventListener("click", function () {
-        demo.hidden = false;
-        choose(this.getAttribute("data-demo-scenario"));
-        enliven();
-        setOpen(true, this.getBoundingClientRect());
-      });
-    }
-    // Escape closes the dialog itself, which would strip the frame of the box
-    // the return flight is measured from, so it is refused and routed through
-    // the same path the button takes.
-    modal.addEventListener("cancel", function (event) {
-      event.preventDefault();
-      setOpen(false);
-    });
-    modal.addEventListener("click", function (event) {
-      if (event.target === modal) setOpen(false);
-    });
-    // Whatever else closes it -- a browser affordance, a form -- still has to
-    // leave the button label and the moved node in a consistent state.
-    modal.addEventListener("close", function () {
-      if (demo.parentNode === modal) setOpen(false);
-    });
 
     speedBtn.addEventListener("click", function () {
       setRate(RATES[(RATES.indexOf(rate) + 1) % RATES.length]);

@@ -1,0 +1,48 @@
+---
+/**
+ * The navigation rail. Registered in astro.config.mjs as the override of
+ * Starlight's Sidebar.
+ *
+ * The rail, the component and its stylesheet are the ones Ptah's documentation
+ * site renders, copied here for the reason the stylesheets are copied: this
+ * site has to build from this repository alone. src/styles/ptah/sidebar.css
+ * styles this markup and no other, so a site that keeps the stylesheet and
+ * drops the component gets Starlight's rail with none of the design on it.
+ *
+ * The same three parts as Starlight's own component, in the same order:
+ * SidebarPersister (session storage for the open groups and the scroll
+ * position), the list of groups, and the mobile menu footer below it. The one
+ * part that differs is the list: the site's SidebarSublist renders a nested
+ * group as a label above its pages instead of a second disclosure, which is
+ * why the whole component is overridden rather than restyled.
+ *
+ * SidebarPersister and MobileMenuFooter come from the package's public
+ * `components/*` export; nothing here reaches into Starlight's internals. If
+ * the site ever overrides MobileMenuFooter in astro.config.mjs, import it from
+ * `virtual:starlight/components/MobileMenuFooter` here instead, the way
+ * Starlight's own Sidebar does, or the override will not show in the drawer.
+ */
+import MobileMenuFooter from '@astrojs/starlight/components/MobileMenuFooter.astro';
+import SidebarPersister from '@astrojs/starlight/components/SidebarPersister.astro';
+import SidebarSublist from './SidebarSublist.astro';
+
+const { sidebar } = Astro.locals.starlightRoute;
+---
+
+<SidebarPersister>
+  <SidebarSublist sublist={sidebar} />
+</SidebarPersister>
+
+<div class="md:sl-hidden">
+  <MobileMenuFooter />
+</div>
+
+<script>
+  /* The groups' open-and-close transition (sidebar.css) is armed one frame
+   * after load, so the groups SidebarPersister restores from session storage
+   * while the page loads take their place at once instead of sliding open on
+   * every navigation. The same class arms the caret's turn. */
+  requestAnimationFrame(() => {
+    document.querySelectorAll('.sidebar-content').forEach((pane) => pane.classList.add('is-animated'));
+  });
+</script>

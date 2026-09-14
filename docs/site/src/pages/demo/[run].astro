@@ -33,7 +33,8 @@ const base = import.meta.env.BASE_URL;
 
 	<p class="ptah-demo-replay">
 		A replay of a verified run, not a live cluster. {run.checks.length}
-		{run.checks.length === 1 ? ' check held' : ' checks held'} while it was recorded.
+		{run.checks.length === 1 ? ' check held' : ' checks held'} while it was recorded.{' '}
+		<strong>Play</strong> types it out in the frame below; the transcript is the same session, already there.
 	</p>
 
 	<RunFrame id={run.id} title={run.title} events={run.events} />
@@ -100,17 +101,7 @@ const base = import.meta.env.BASE_URL;
 		whole set against a lab of your own. <a href={`${base}demo/`}>All recorded runs</a>.
 	</p>
 
-	<dialog class="demo-modal not-content" data-demo-modal aria-labelledby="run-title">
-		<div class="demo-modal-head">
-			<h2 id="run-title" data-demo-title></h2>
-			<p data-demo-caption></p>
-		</div>
-	</dialog>
 </StarlightPage>
 
-{/* The root carries `js` before first paint, so the tiles are controls and
-	the printed transcripts step aside. Without the script neither happens, and
-	the page is every session in full. */}
-<script is:inline>document.documentElement.classList.add('js');</script>
 <script is:inline set:html={`window.PTAH_RUNS = ${JSON.stringify(catalog)};`} />
 <script type="module" src={`${base}demo/player.js`}></script>

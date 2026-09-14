@@ -61,12 +61,21 @@ export default defineConfig({
         SiteTitle: './src/components/SiteTitle.astro',
         SocialIcons: './src/components/HeaderLinks.astro',
         ThemeSelect: './src/components/ThemeToggle.astro',
+        // The navigation rail. src/styles/ptah/sidebar.css styles this markup
+        // and nothing else, so without the override the rail keeps Starlight's
+        // own look while the rest of the page wears the design.
+        Sidebar: './src/components/Sidebar.astro',
+        // The meta row and the previous / next cards. furniture.css styles this
+        // markup; Starlight's own footer would wear none of it.
+        Footer: './src/components/Footer.astro',
         // Upstream's content wrapper, plus the FAQ's filter. The FAQ cannot
         // be MDX -- its anchors are `{#id}`, which MDX reads as an
         // expression -- so the component comes to the page.
         MarkdownContent: './src/components/MarkdownContent.astro',
-        // The contents rail, with the FAQ's word for what it lists.
+        // The contents rail, with the FAQ's word for what it lists, and below
+        // the rail's breakpoint the strip that replaces it.
         TableOfContents: './src/components/TableOfContents.astro',
+        MobileTableOfContents: './src/components/MobileTableOfContents.astro',
       },
       // Edit links address the revision this build came from, not the default
       // branch. A reader on a release page who follows "Edit page" has to land
