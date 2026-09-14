@@ -69,6 +69,10 @@ type JobBuilder interface {
 		operation operatorv1alpha1.ActiveOperationStatus,
 		plan *operatorv1alpha1.PtahSchemaPlan,
 	) (*batchv1.Job, error)
+	BuildMigration(
+		migration *operatorv1alpha1.PtahMigration,
+		operation operatorv1alpha1.MigrationOperationStatus,
+	) (*batchv1.Job, error)
 }
 
 var _ JobBuilder = workload.Builder{}
@@ -190,15 +194,14 @@ func (v *Validator) validateJobCreate(ctx context.Context, req admissionv1.Admis
 		return denyf("new Job must not inject status")
 	}
 
-	schemaOwner, err := exactControllerOwner(
-		job.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchema",
-	)
+	owner, ownerKind, err := subjectOwner(job.OwnerReferences)
 	if err != nil {
-		return denyf("Job does not have one exact PtahSchema controller owner: %v", err)
+		return denyf("Job does not have one exact operator controller owner: %v", err)
 	}
-	schema, err := v.readSchema(ctx, job.Namespace, schemaOwner)
+	if ownerKind == "PtahMigration" {
+		return v.validateMigrationJobCreate(ctx, job, owner)
+	}
+	schema, err := v.readSchema(ctx, job.Namespace, owner)
 	if err != nil {
 		return err
 	}
@@ -218,7 +221,7 @@ func (v *Validator) validateJobCreate(ctx context.Context, req admissionv1.Admis
 	if err := validateAdmissionSnapshot(operation, expected); err != nil {
 		return denyf("active operation Pod admission snapshot is invalid: %v", err)
 	}
-	if err := validateJobIntent(job, expected, schema, true); err != nil {
+	if err := validateJobIntent(job, expected, schemaSubject(schema), true); err != nil {
 		return denyf("Job is outside the active operation intent: %v", err)
 	}
 	return nil
@@ -246,20 +249,15 @@ func (v *Validator) validateJobUpdate(ctx context.Context, req admissionv1.Admis
 		*job.Spec.TTLSecondsAfterFinished != cleanupTTLSeconds {
 		return denyf("Job update is not the exact nil-to-300 cleanup TTL transition")
 	}
-	owner, err := exactControllerOwner(
-		oldJob.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchema",
-	)
+	owner, ownerKind, err := subjectOwner(oldJob.OwnerReferences)
 	if err != nil {
-		return denyf("old Job does not have one exact PtahSchema controller owner: %v", err)
+		return denyf("old Job does not have one exact operator controller owner: %v", err)
 	}
-	newOwner, err := exactControllerOwner(
-		job.OwnerReferences,
-		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchema",
-	)
-	if err != nil || !apiequality.Semantic.DeepEqual(owner, newOwner) {
+	if ownerKind == "PtahMigration" {
+		return v.validateMigrationJobUpdate(ctx, oldJob, job, owner)
+	}
+	newOwner, newOwnerKind, err := subjectOwner(job.OwnerReferences)
+	if err != nil || newOwnerKind != ownerKind || !apiequality.Semantic.DeepEqual(owner, newOwner) {
 		return denyf("Job cleanup update changed the PtahSchema controller owner")
 	}
 	schema, err := v.readSchemaForJobUpdate(ctx, oldJob.Namespace, owner)
@@ -321,7 +319,7 @@ func (v *Validator) validateJobUpdate(ctx context.Context, req admissionv1.Admis
 	if err := validateAdmissionSnapshot(operation, expected); err != nil {
 		return denyf("active operation Pod admission snapshot is invalid: %v", err)
 	}
-	if err := validateJobIntent(oldJob, expected, schema, true); err != nil {
+	if err := validateJobIntent(oldJob, expected, schemaSubject(schema), true); err != nil {
 		return denyf("terminal Job is outside the active operation intent: %v", err)
 	}
 	if err := validateOnlyCleanupTTLChanged(oldJob, job); err != nil {
@@ -941,12 +939,35 @@ func (v *Validator) planForJob(
 	return plan, nil
 }
 
+// subjectIdentity is the resource a managed Job belongs to. Both kinds dispatch
+// the same kind of Job, so the intent comparison differs only in whose name and
+// UID the ownership graph has to carry.
+type subjectIdentity struct {
+	kind string
+	name string
+	uid  types.UID
+}
+
+func schemaSubject(schema *operatorv1alpha1.PtahSchema) subjectIdentity {
+	if schema == nil {
+		return subjectIdentity{}
+	}
+	return subjectIdentity{kind: "PtahSchema", name: schema.Name, uid: schema.UID}
+}
+
+func migrationSubject(migration *operatorv1alpha1.PtahMigration) subjectIdentity {
+	if migration == nil {
+		return subjectIdentity{}
+	}
+	return subjectIdentity{kind: "PtahMigration", name: migration.Name, uid: migration.UID}
+}
+
 func validateJobIntent(
 	actual, expected *batchv1.Job,
-	schema *operatorv1alpha1.PtahSchema,
+	subject subjectIdentity,
 	allowGeneratedIdentity bool,
 ) error {
-	if actual == nil || expected == nil || schema == nil {
+	if actual == nil || expected == nil || subject.kind == "" || subject.name == "" || subject.uid == "" {
 		return errors.New("Job intent inputs are incomplete")
 	}
 	if actual.Namespace != expected.Namespace || actual.Name != expected.Name {
@@ -955,9 +976,9 @@ func validateJobIntent(
 	if _, err := exactNamedControllerOwner(
 		actual.OwnerReferences,
 		operatorv1alpha1.GroupVersion.String(),
-		"PtahSchema",
-		schema.Name,
-		schema.UID,
+		subject.kind,
+		subject.name,
+		subject.uid,
 	); err != nil {
 		return err
 	}
@@ -1326,7 +1347,7 @@ func (v *Validator) validatePlanSourceJob(ctx context.Context, schema *operatorv
 	}
 	harvested := job.DeepCopy()
 	harvested.Spec.TTLSecondsAfterFinished = nil
-	if err := validateJobIntent(harvested, expected, schema, true); err != nil {
+	if err := validateJobIntent(harvested, expected, schemaSubject(schema), true); err != nil {
 		return denyf("terminal Plan Job is outside its immutable operation intent: %v", err)
 	}
 	return nil
