@@ -255,9 +255,14 @@ func (b Builder) Build(
 		annotations[AnnotationAdmissionSnapshotDigest] = operation.AdmissionSnapshot.Digest
 	}
 
-	deadline := activeDeadlineSeconds(schema)
-	if operation.Type == operatorv1alpha1.OperationApply && operation.ExecutionNotAfter != nil {
-		deadline = int64(operation.ExecutionNotAfter.Sub(operation.StartedAt.Time) / time.Second)
+	deadline, err := boundedDeadline(
+		activeDeadlineSeconds(schema.Spec.Execution),
+		operation.Type == operatorv1alpha1.OperationApply,
+		operation.StartedAt,
+		operation.ExecutionNotAfter,
+	)
+	if err != nil {
+		return nil, err
 	}
 	backoffLimit := int32(0)
 	falseValue := false
@@ -317,7 +322,7 @@ func (b Builder) Build(
 					ActiveDeadlineSeconds:         &deadline,
 					AutomountServiceAccountToken:  &falseValue,
 					EnableServiceLinks:            &falseValue,
-					ServiceAccountName:            executionServiceAccountName(schema),
+					ServiceAccountName:            executionServiceAccountName(schema.Spec.Execution),
 					ImagePullSecrets:              append([]corev1.LocalObjectReference(nil), schema.Spec.Execution.ImagePullSecrets...),
 					RestartPolicy:                 corev1.RestartPolicyNever,
 					TerminationGracePeriodSeconds: &terminationGrace,
@@ -373,9 +378,9 @@ func (b Builder) Build(
 // the namespace's default account written out rather than a Job that admission
 // refuses. Kubernetes would bind that same account to a Pod that names none;
 // writing it down is what makes the identity reviewable.
-func executionServiceAccountName(schema *operatorv1alpha1.PtahSchema) string {
-	if schema.Spec.Execution.ServiceAccountName != "" {
-		return schema.Spec.Execution.ServiceAccountName
+func executionServiceAccountName(execution operatorv1alpha1.ExecutionSpec) string {
+	if execution.ServiceAccountName != "" {
+		return execution.ServiceAccountName
 	}
 	return "default"
 }
@@ -644,6 +649,31 @@ func (b Builder) schemaFetch(
 	if err != nil {
 		return corev1.Container{}, corev1.Container{}, nil, err
 	}
+	return b.artifactFetch(
+		source,
+		fetchContainerName,
+		[]string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath},
+		resources,
+		falseValue, trueValue, nonRootID,
+	)
+}
+
+// artifactFetch builds the container pair that materializes one verified,
+// digest-pinned artifact into a shared memory volume: a guard that validates
+// the source authority, and a fetch that holds the registry credentials.
+//
+// Both resources share it on purpose. This pair is where the registry
+// credentials live, and the whole point of it is that the container which later
+// holds the database URL never sees them. A second copy would be a second place
+// for that separation to drift.
+func (b Builder) artifactFetch(
+	source operatorv1alpha1.OCIArtifactAccessBinding,
+	fetchName string,
+	fetchArgs []string,
+	resources corev1.ResourceRequirements,
+	falseValue, trueValue *bool,
+	nonRootID *int64,
+) (corev1.Container, corev1.Container, []corev1.Volume, error) {
 	environment := []corev1.EnvVar{
 		literalEnv("HOME", fetchWorkPath),
 		literalEnv("TMPDIR", fetchWorkPath),
@@ -729,11 +759,11 @@ func (b Builder) schemaFetch(
 		VolumeMounts:    guardMounts,
 	}
 	fetch := corev1.Container{
-		Name:            fetchContainerName,
+		Name:            fetchName,
 		Image:           b.ExecutorImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		Command:         []string{ptahBinaryPath},
-		Args:            []string{"schema", "pull", source.ResolvedReference, "--out", sourceFilePath},
+		Args:            fetchArgs,
 		WorkingDir:      fetchWorkPath,
 		Env:             fetchEnvironment,
 		Resources:       resources,
@@ -1240,9 +1270,33 @@ func shortLabelHash(value string) string {
 // after selecting by this collision-resistant hash.
 func OperationIDLabelValue(value string) string { return shortLabelHash(value) }
 
-func activeDeadlineSeconds(schema *operatorv1alpha1.PtahSchema) int64 {
-	if schema.Spec.Execution.ActiveDeadlineSeconds > 0 {
-		return schema.Spec.Execution.ActiveDeadlineSeconds
+// boundedDeadline returns the Job deadline. A mutating operation carries an
+// absolute instant after which its child may not still be running, and the Job
+// deadline is what remains of it, so a Pod scheduled late inherits the original
+// bound rather than a fresh one.
+//
+// A window that has already closed yields no Job: Kubernetes refuses a
+// non-positive activeDeadlineSeconds, and a claim whose execution bound passed
+// before dispatch is one the controller has to retire rather than send.
+func boundedDeadline(
+	fallback int64,
+	bounded bool,
+	startedAt metav1.Time,
+	notAfter *metav1.Time,
+) (int64, error) {
+	if !bounded || notAfter == nil {
+		return fallback, nil
+	}
+	remaining := int64(notAfter.Sub(startedAt.Time) / time.Second)
+	if remaining <= 0 {
+		return 0, errors.New("operation execution window closed before dispatch")
+	}
+	return remaining, nil
+}
+
+func activeDeadlineSeconds(execution operatorv1alpha1.ExecutionSpec) int64 {
+	if execution.ActiveDeadlineSeconds > 0 {
+		return execution.ActiveDeadlineSeconds
 	}
 	return defaultActiveDeadlineSeconds
 }
