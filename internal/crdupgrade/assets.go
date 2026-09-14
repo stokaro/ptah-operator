@@ -35,7 +35,7 @@ const (
 	ControllerStateVersionAnnotation = "operator.ptah.run/controller-state-version"
 	// CurrentCRDSchemaVersion must match CRD_SCHEMA_VERSION in the Makefile and
 	// every generated CRD annotation.
-	CurrentCRDSchemaVersion uint64 = 6
+	CurrentCRDSchemaVersion uint64 = 7
 )
 
 var expectedNames = []string{

@@ -40,12 +40,16 @@ const (
 
 	mutatingApprovalWebhookName                    = "mapproval.operator.ptah.run"
 	validatingApprovalWebhookName                  = "vapproval.operator.ptah.run"
+	mutatingMigrationApprovalWebhookName           = "mmigrationapproval.operator.ptah.run"
+	validatingMigrationApprovalWebhookName         = "vmigrationapproval.operator.ptah.run"
 	podIntentWebhookName                           = "vpodintent.operator.ptah.run"
 	controllerWriteWebhookName                     = "vcontrollerwrite.operator.ptah.run"
 	mutatingCertificateCanaryWebhookName           = "certificate-rotation-canary-mutate.operator.ptah.run"
 	validatingCertificateCanaryWebhookName         = "certificate-rotation-canary-validate.operator.ptah.run"
 	mutatingApprovalPath                           = "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"
 	validatingApprovalPath                         = "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"
+	mutatingMigrationApprovalPath                  = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+	validatingMigrationApprovalPath                = "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
 	podIntentPath                                  = "/validate-v1-pod-ptah-operation-intent"
 	controllerWritePath                            = "/validate-operator-controller-write"
 	mutatingCertificateCanaryPath                  = "/candidate/mutate"
@@ -360,7 +364,10 @@ type webhookView struct {
 }
 
 func verifyMutatingWebhookContract(configuration *admissionregistrationv1.MutatingWebhookConfiguration, expected RuntimeInvariants) error {
-	contracts := []webhookContract{currentMutatingApprovalWebhookContract(expected)}
+	contracts := []webhookContract{
+		currentMutatingApprovalWebhookContract(expected),
+		currentMutatingMigrationApprovalWebhookContract(expected),
+	}
 	if expected.AdmissionContractVersion >= 2 {
 		contracts = append(contracts, currentMutatingCertificateCanaryWebhookContract(expected))
 	}
@@ -418,6 +425,7 @@ func verifyMutatingWebhookContracts(
 func verifyValidatingWebhookContract(configuration *admissionregistrationv1.ValidatingWebhookConfiguration, expected RuntimeInvariants) error {
 	contracts := []webhookContract{
 		currentValidatingApprovalWebhookContract(expected),
+		currentValidatingMigrationApprovalWebhookContract(expected),
 		currentPodIntentWebhookContract(expected),
 		currentControllerWriteWebhookContract(expected),
 	}
@@ -536,6 +544,25 @@ func currentValidatingApprovalWebhookContract(expected RuntimeInvariants) webhoo
 		sideEffects: admissionregistrationv1.SideEffectClassNone, timeoutSeconds: expected.WebhookTimeoutSeconds,
 		matchConditions: []admissionregistrationv1.MatchCondition{},
 	}
+}
+
+// The migration approval entries are separate contracts rather than widened
+// ones: they carry a different decision, and a rule that listed both kinds
+// would let one kind's webhook outage decide the other kind's admission.
+func currentMutatingMigrationApprovalWebhookContract(expected RuntimeInvariants) webhookContract {
+	contract := currentMutatingApprovalWebhookContract(expected)
+	contract.name = mutatingMigrationApprovalWebhookName
+	contract.path = mutatingMigrationApprovalPath
+	contract.rules[0].Rule.Resources = []string{"ptahmigrationapprovals"}
+	return contract
+}
+
+func currentValidatingMigrationApprovalWebhookContract(expected RuntimeInvariants) webhookContract {
+	contract := currentValidatingApprovalWebhookContract(expected)
+	contract.name = validatingMigrationApprovalWebhookName
+	contract.path = validatingMigrationApprovalPath
+	contract.rules[0].Rule.Resources = []string{"ptahmigrationapprovals"}
+	return contract
 }
 
 func currentPodIntentWebhookContract(expected RuntimeInvariants) webhookContract {

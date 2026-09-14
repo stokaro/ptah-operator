@@ -152,6 +152,21 @@ type MigrationOperationStatus struct {
 	DispatchNotAfter  *metav1.Time `json:"dispatchNotAfter,omitempty"`
 	ExecutionNotAfter *metav1.Time `json:"executionNotAfter,omitempty"`
 
+	// LeaseEpoch is the database lock acquisition this claim was authorized
+	// under, and LeaseDurationSeconds how long that acquisition was taken for.
+	// A result produced across an epoch change is discarded rather than read:
+	// the lock it held was somebody else's by then.
+	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
+	LeaseEpoch string `json:"leaseEpoch,omitempty"`
+	// +kubebuilder:validation:Minimum=1
+	LeaseDurationSeconds int32 `json:"leaseDurationSeconds,omitempty"`
+	// LeaseContinuityLost records that the epoch changed under this claim.
+	LeaseContinuityLost bool `json:"leaseContinuityLost,omitempty"`
+
+	// ApprovalRef is the approval that authorized this Apply, recorded before
+	// dispatch so the run is attributable to the decision that permitted it.
+	ApprovalRef *ImmutableObjectReference `json:"approvalRef,omitempty"`
+
 	// AdmissionSnapshot is the Pod envelope resolved before dispatch and bound
 	// into the Job and its Pod template. It is what lets Pod admission permit
 	// the built-in mutations that are modeled and safe while refusing any other

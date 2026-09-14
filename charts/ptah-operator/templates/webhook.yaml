@@ -52,12 +52,14 @@
 {{- $tlsCrt = $cert.Cert | b64enc -}}
 {{- $tlsKey = $cert.Key | b64enc -}}
 {{- end -}}
-{{- $entryBundles := dict "mutating" $caBundle "mutatingCanary" $caBundle "approvalValidating" $caBundle "podValidating" $caBundle "controllerWriteValidating" $caBundle "validatingCanary" $caBundle -}}
+{{- $entryBundles := dict "mutating" $caBundle "migrationMutating" $caBundle "mutatingCanary" $caBundle "approvalValidating" $caBundle "migrationApprovalValidating" $caBundle "podValidating" $caBundle "controllerWriteValidating" $caBundle "validatingCanary" $caBundle -}}
 {{- if not .Values.webhook.existingSecret -}}
 {{- if $existingMutating -}}
 {{- range $existingMutating.webhooks -}}
 {{- if and (eq .name "mapproval.operator.ptah.run") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
 {{- $_ := set $entryBundles "mutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
+{{- else if and (eq .name "mmigrationapproval.operator.ptah.run") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
+{{- $_ := set $entryBundles "migrationMutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- else if and $certificateRuntimeEnabled (eq .name "certificate-rotation-canary-mutate.operator.ptah.run") .clientConfig.service (eq .clientConfig.service.name $candidateServiceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
 {{- $_ := set $entryBundles "mutatingCanary" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- end -}}
@@ -68,6 +70,8 @@
 {{- if and .clientConfig.service (eq .clientConfig.service.namespace $.Release.Namespace) -}}
 {{- if and (eq .clientConfig.service.name $serviceName) (eq .name "vapproval.operator.ptah.run") -}}
 {{- $_ := set $entryBundles "approvalValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
+{{- else if and (eq .clientConfig.service.name $serviceName) (eq .name "vmigrationapproval.operator.ptah.run") -}}
+{{- $_ := set $entryBundles "migrationApprovalValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- else if and (eq .clientConfig.service.name $serviceName) (eq .name "vpodintent.operator.ptah.run") -}}
 {{- $_ := set $entryBundles "podValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- else if and (eq .clientConfig.service.name $serviceName) (eq .name "vcontrollerwrite.operator.ptah.run") -}}
@@ -141,6 +145,26 @@ webhooks:
         apiVersions: ["v1alpha1"]
         operations: ["CREATE"]
         resources: ["ptahschemaapprovals"]
+        scope: Namespaced
+  - name: mmigrationapproval.operator.ptah.run
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    reinvocationPolicy: Never
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    clientConfig:
+      caBundle: {{ index $entryBundles "migrationMutating" }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $serviceName }}
+        path: /mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval
+        port: 443
+    rules:
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE"]
+        resources: ["ptahmigrationapprovals"]
         scope: Namespaced
   {{- if $certificateRuntimeEnabled }}
   - name: certificate-rotation-canary-mutate.operator.ptah.run
@@ -227,6 +251,25 @@ webhooks:
         apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["ptahschemaapprovals"]
+        scope: Namespaced
+  - name: vmigrationapproval.operator.ptah.run
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    timeoutSeconds: {{ .Values.webhook.timeoutSeconds }}
+    clientConfig:
+      caBundle: {{ index $entryBundles "migrationApprovalValidating" }}
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ $serviceName }}
+        path: /validate-operator-ptah-run-v1alpha1-ptahmigrationapproval
+        port: 443
+    rules:
+      - apiGroups: ["operator.ptah.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ptahmigrationapprovals"]
         scope: Namespaced
   - name: vpodintent.operator.ptah.run
     admissionReviewVersions: ["v1"]

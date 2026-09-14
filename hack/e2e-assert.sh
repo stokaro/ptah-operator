@@ -208,7 +208,8 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
       .webhooks |
       (map(.name) | sort) == [
         "certificate-rotation-canary-mutate.operator.ptah.run",
-        "mapproval.operator.ptah.run"
+        "mapproval.operator.ptah.run",
+        "mmigrationapproval.operator.ptah.run"
       ] and
       (map(select(.name == "mapproval.operator.ptah.run")) | all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and
@@ -252,6 +253,7 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
         "certificate-rotation-canary-validate.operator.ptah.run",
         "vapproval.operator.ptah.run",
         "vcontrollerwrite.operator.ptah.run",
+        "vmigrationapproval.operator.ptah.run",
         "vpodintent.operator.ptah.run"
       ] and
       (map(select(.name == "vapproval.operator.ptah.run")) | length == 1 and all(.[];

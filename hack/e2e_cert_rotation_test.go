@@ -165,11 +165,13 @@ func TestCertificateE2EParkedWebhookInventory(t *testing.T) {
 				fixture := newCertificateShellFixture(t)
 				entries := [][3]string{
 					{"mapproval.operator.ptah.run", "webhook", "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"},
+					{"mmigrationapproval.operator.ptah.run", "webhook", "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"},
 					{"certificate-rotation-canary-mutate.operator.ptah.run", "candidate", "/candidate/mutate"},
 				}
 				if kind == "validatingwebhookconfiguration" {
 					entries = [][3]string{
 						{"vapproval.operator.ptah.run", "webhook", "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"},
+						{"vmigrationapproval.operator.ptah.run", "webhook", "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"},
 						{"vpodintent.operator.ptah.run", "webhook", "/validate-v1-pod-ptah-operation-intent"},
 						{"vcontrollerwrite.operator.ptah.run", "webhook", "/validate-operator-controller-write"},
 						{"certificate-rotation-canary-validate.operator.ptah.run", "candidate", "/candidate/validate"},

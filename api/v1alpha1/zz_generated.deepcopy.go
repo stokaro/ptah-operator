@@ -378,6 +378,11 @@ func (in *MigrationOperationStatus) DeepCopyInto(out *MigrationOperationStatus) 
 		in, out := &in.ExecutionNotAfter, &out.ExecutionNotAfter
 		*out = (*in).DeepCopy()
 	}
+	if in.ApprovalRef != nil {
+		in, out := &in.ApprovalRef, &out.ApprovalRef
+		*out = new(ImmutableObjectReference)
+		**out = **in
+	}
 	if in.AdmissionSnapshot != nil {
 		in, out := &in.AdmissionSnapshot, &out.AdmissionSnapshot
 		*out = new(PodAdmissionSnapshot)

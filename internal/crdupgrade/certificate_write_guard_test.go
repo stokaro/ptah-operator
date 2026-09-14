@@ -189,12 +189,14 @@ func TestCertificateWriteGuardCELContracts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(certificateMutatingWebhookNames(), []string{
 		mutatingApprovalWebhookName,
+		mutatingMigrationApprovalWebhookName,
 		mutatingCertificateCanaryWebhookName,
 	}) {
 		t.Fatalf("mutating webhook order is not the exact release inventory: %#v", certificateMutatingWebhookNames())
 	}
 	if !reflect.DeepEqual(certificateValidatingWebhookNames(), []string{
 		validatingApprovalWebhookName,
+		validatingMigrationApprovalWebhookName,
 		podIntentWebhookName,
 		controllerWriteWebhookName,
 		validatingCertificateCanaryWebhookName,

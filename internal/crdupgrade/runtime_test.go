@@ -54,10 +54,11 @@ func TestRuntimeVerifierAcceptsVersionOneExternalCertificateContractWithoutCanar
 	} {
 		annotations[AdmissionContractVersionAnnotation] = "1"
 	}
+	// Version one has every release-owned entry and no certificate canary.
 	mutating := verifier.Mutating.(*mutatingAdmissionClient).object
-	mutating.Webhooks = mutating.Webhooks[:1]
+	mutating.Webhooks = mutating.Webhooks[:2]
 	validating := verifier.Validating.(*validatingAdmissionClient).object
-	validating.Webhooks = validating.Webhooks[:3]
+	validating.Webhooks = validating.Webhooks[:4]
 	if err := verifier.Verify(context.Background()); err != nil {
 		t.Fatalf("Verify version-one external certificate contract: %v", err)
 	}
@@ -220,14 +221,14 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 		mutate func(*RuntimeVerifier)
 	}{
 		{
-			name: "cardinality", want: "expected exactly 2",
+			name: "cardinality", want: "expected exactly 3",
 			mutate: func(verifier *RuntimeVerifier) {
 				client := verifier.Mutating.(*mutatingAdmissionClient)
 				client.object.Webhooks = append(client.object.Webhooks, client.object.Webhooks[0])
 			},
 		},
 		{
-			name: "validating missing webhook", want: "expected exactly 4",
+			name: "validating missing webhook", want: "expected exactly 5",
 			mutate: func(verifier *RuntimeVerifier) {
 				client := verifier.Validating.(*validatingAdmissionClient)
 				client.object.Webhooks = client.object.Webhooks[:1]
@@ -948,6 +949,7 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 		ObjectMeta: metav1.ObjectMeta{Name: AdmissionConfigurationName, Annotations: copyStrings(annotations)},
 		Webhooks: []admissionregistrationv1.MutatingWebhook{
 			readyMutatingApprovalWebhook(expected),
+			readyMutatingMigrationApprovalWebhook(expected),
 			readyMutatingCertificateCanaryWebhook(expected),
 		},
 	}}
@@ -955,6 +957,7 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 		ObjectMeta: metav1.ObjectMeta{Name: AdmissionConfigurationName, Annotations: copyStrings(annotations)},
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{
 			readyValidatingApprovalWebhook(expected),
+			readyValidatingMigrationApprovalWebhook(expected),
 			readyPodIntentWebhook(expected),
 			readyControllerWriteWebhook(expected),
 			readyValidatingCertificateCanaryWebhook(expected),
@@ -1099,6 +1102,30 @@ func readyWebhookClientConfig(expected RuntimeInvariants, path string) admission
 			Port:      valuePointer(int32(443)),
 		},
 	}
+}
+
+func readyMutatingMigrationApprovalWebhook(expected RuntimeInvariants) admissionregistrationv1.MutatingWebhook {
+	webhook := readyMutatingApprovalWebhook(expected)
+	webhook.Name = mutatingMigrationApprovalWebhookName
+	webhook.ClientConfig = readyWebhookClientConfig(expected, mutatingMigrationApprovalPath)
+	webhook.Rules = migrationApprovalRules([]admissionregistrationv1.OperationType{admissionregistrationv1.Create})
+	return webhook
+}
+
+func readyValidatingMigrationApprovalWebhook(expected RuntimeInvariants) admissionregistrationv1.ValidatingWebhook {
+	webhook := readyValidatingApprovalWebhook(expected)
+	webhook.Name = validatingMigrationApprovalWebhookName
+	webhook.ClientConfig = readyWebhookClientConfig(expected, validatingMigrationApprovalPath)
+	webhook.Rules = migrationApprovalRules([]admissionregistrationv1.OperationType{
+		admissionregistrationv1.Create, admissionregistrationv1.Update,
+	})
+	return webhook
+}
+
+func migrationApprovalRules(operations []admissionregistrationv1.OperationType) []admissionregistrationv1.RuleWithOperations {
+	rules := approvalRules(operations)
+	rules[0].Rule.Resources = []string{"ptahmigrationapprovals"}
+	return rules
 }
 
 func approvalRules(operations []admissionregistrationv1.OperationType) []admissionregistrationv1.RuleWithOperations {

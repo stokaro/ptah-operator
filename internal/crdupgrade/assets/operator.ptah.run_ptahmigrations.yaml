@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "6"
-    operator.ptah.run/crd-schema-digest: "sha256:cee486545f9b9a96f1b4d3177758f8c914abd42facf5dfd33ec6ca04c993f549"
+    operator.ptah.run/crd-schema-version: "7"
+    operator.ptah.run/crd-schema-digest: "sha256:ed07526cd49ada0bebbc75e2c314e6ad16916d05b51e52dbe55275f61cf3f3ed"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -982,6 +982,16 @@ spec:
                     - templateDigest
                     - version
                     type: object
+                  approvalRef:
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
                   attempt:
                     format: int32
                     minimum: 1
@@ -1010,6 +1020,15 @@ spec:
                     minLength: 1
                     type: string
                   jobUID:
+                    type: string
+                  leaseContinuityLost:
+                    type: boolean
+                  leaseDurationSeconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  leaseEpoch:
+                    pattern: ^v1-[0-9a-f]{32}$
                     type: string
                   planRef:
                     properties:
