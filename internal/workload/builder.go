@@ -45,6 +45,12 @@ const (
 	// LabelOperationID carries a label-safe hash of the full operation ID.
 	LabelOperationID = "operator.ptah.run/operation-id"
 
+	// ComponentSchemaOperation and ComponentMigrationOperation are the two
+	// values LabelComponent takes. They say which resource dispatched a Job,
+	// and admission reads them to decide which claim judges it.
+	ComponentSchemaOperation    = "schema-operation"
+	ComponentMigrationOperation = "migration-operation"
+
 	// AnnotationOperationID binds Pod logs to the full operation claim.
 	AnnotationOperationID = "operator.ptah.run/operation-id"
 	// AnnotationInputFingerprint records the operation's immutable input hash.
@@ -235,7 +241,7 @@ func (b Builder) Build(
 
 	labels := map[string]string{
 		LabelManagedBy:   "ptah-operator",
-		LabelComponent:   "schema-operation",
+		LabelComponent:   ComponentSchemaOperation,
 		LabelSchema:      schema.Name,
 		LabelOperation:   strings.ToLower(string(operation.Type)),
 		LabelOperationID: shortLabelHash(operation.ID),

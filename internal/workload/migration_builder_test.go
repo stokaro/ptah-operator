@@ -213,7 +213,7 @@ func TestBuildMigrationHardensEveryContainerAndPod(t *testing.T) {
 		job.OwnerReferences[0].BlockOwnerDeletion == nil || !*job.OwnerReferences[0].BlockOwnerDeletion {
 		t.Fatalf("migration owner reference = %#v", job.OwnerReferences)
 	}
-	if job.Labels[LabelMigration] != migration.Name || job.Labels[LabelComponent] != migrationComponent ||
+	if job.Labels[LabelMigration] != migration.Name || job.Labels[LabelComponent] != ComponentMigrationOperation ||
 		job.Labels[LabelOperation] != "history" {
 		t.Fatalf("job labels = %#v", job.Labels)
 	}
@@ -239,9 +239,13 @@ func TestBuildMigrationApplyCarriesItsPlanAndBounds(t *testing.T) {
 	if job.Spec.ActiveDeadlineSeconds == nil || *job.Spec.ActiveDeadlineSeconds != 300 {
 		t.Fatalf("activeDeadlineSeconds = %v, want what remains of the execution window", job.Spec.ActiveDeadlineSeconds)
 	}
-	if job.Annotations[AnnotationMigrationPlan] != operation.PlanRef.Name ||
-		job.Annotations[AnnotationMigrationPlanUID] != string(operation.PlanRef.UID) {
-		t.Fatalf("plan annotations = %#v", job.Annotations)
+	// The Job carries no plan annotation: the claim names the plan, admission
+	// reads the claim, and the sealed Job contract has no key for a migration
+	// plan until the plan kind itself exists.
+	for _, annotation := range job.Annotations {
+		if strings.Contains(annotation, string(operation.PlanRef.UID)) {
+			t.Fatal("the Job carries a plan binding the sealed contract does not know")
+		}
 	}
 }
 

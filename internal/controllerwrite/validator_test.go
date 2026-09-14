@@ -103,6 +103,16 @@ func (b staticJobBuilder) Build(
 	return b.job.DeepCopy(), nil
 }
 
+func (b staticJobBuilder) BuildMigration(
+	_ *operatorv1alpha1.PtahMigration,
+	_ operatorv1alpha1.MigrationOperationStatus,
+) (*batchv1.Job, error) {
+	if b.err != nil {
+		return nil, b.err
+	}
+	return b.job.DeepCopy(), nil
+}
+
 func TestValidationHandlerAllowsExactJobCreate(t *testing.T) {
 	t.Parallel()
 

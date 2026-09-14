@@ -12,6 +12,7 @@ import (
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	cradmission "sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
@@ -96,13 +97,13 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 	if job.UID == "" || job.UID != jobOwner.UID {
 		return cradmission.Denied("managed Pod owner does not match the current Job UID")
 	}
-	schemaOwner, ok := exactControllerReference(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahSchema")
+	subject, ok := operationSubjectFor(job.OwnerReferences)
 	if !ok {
 		if managedPodIdentity(pod.Labels) || managedPodIdentity(job.Labels) ||
 			oldPod != nil && managedPodIdentity(oldPod.Labels) {
-			return cradmission.Denied("managed Pod Job has no exact PtahSchema controller identity")
+			return cradmission.Denied("managed Pod Job has no exact operator controller identity")
 		}
-		return cradmission.Allowed("Job is not an operator schema workload")
+		return cradmission.Allowed("Job is not an operator workload")
 	}
 	if err := validateJobExecutionEnvelope(job); err != nil {
 		return cradmission.Denied("managed Pod Job is outside the one-shot execution envelope: " + err.Error())
@@ -127,15 +128,12 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 		return cradmission.Denied("managed Pod update changed finalizers outside Job cleanup")
 	}
 	if pod.Labels[workload.LabelManagedBy] != "ptah-operator" ||
-		pod.Labels[workload.LabelComponent] != "schema-operation" {
+		pod.Labels[workload.LabelComponent] != subject.component {
 		return cradmission.Denied("operator Pod removed its managed workload identity")
 	}
-	schema := &operatorv1alpha1.PtahSchema{}
-	if err := h.Reader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: schemaOwner.Name}, schema); err != nil {
-		return podIntentReadError("read owning PtahSchema", err)
-	}
-	if schema.UID == "" || schema.UID != schemaOwner.UID {
-		return cradmission.Denied("managed Job owner does not match the current PtahSchema UID")
+	claim, response := h.readClaim(ctx, pod.Namespace, subject)
+	if response != nil {
+		return *response
 	}
 	for key, value := range map[string]string{
 		batchv1.ControllerUidLabel: string(job.UID),
@@ -149,7 +147,7 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 	}
 	if req.Operation == admissionv1.Create {
 		if !apiequality.Semantic.DeepEqual(pod.Labels, job.Spec.Template.Labels) ||
-			!createAnnotationsMatch(pod.Annotations, job.Spec.Template.Annotations, operationSnapshot(schema)) {
+			!createAnnotationsMatch(pod.Annotations, job.Spec.Template.Annotations, claim.snapshot) {
 			return cradmission.Denied("managed Pod metadata does not match the bound Job template")
 		}
 	} else if oldPod == nil ||
@@ -159,34 +157,33 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 		!containsStringMap(pod.Annotations, job.Spec.Template.Annotations) {
 		return cradmission.Denied("managed Pod update changed immutable metadata")
 	}
-	operation := schema.Status.ActiveOperation
-	if operation == nil || operation.AdmissionSnapshot == nil {
+	if claim.snapshot == nil {
 		return cradmission.Denied("managed Pod has no persisted admission snapshot")
 	}
-	if operation.JobName != job.Name || operation.JobUID != "" && operation.JobUID != job.UID {
+	if claim.jobName != job.Name || claim.jobUID != "" && claim.jobUID != job.UID {
 		return cradmission.Denied("managed Pod does not match the active operation Job identity")
 	}
-	if operation.ID == "" || pod.Annotations[workload.AnnotationOperationID] != operation.ID ||
-		job.Annotations[workload.AnnotationOperationID] != operation.ID ||
-		pod.Labels[workload.LabelOperationID] != workload.OperationIDLabelValue(operation.ID) {
+	if claim.operationID == "" || pod.Annotations[workload.AnnotationOperationID] != claim.operationID ||
+		job.Annotations[workload.AnnotationOperationID] != claim.operationID ||
+		pod.Labels[workload.LabelOperationID] != workload.OperationIDLabelValue(claim.operationID) {
 		return cradmission.Denied("managed Pod operation identity does not match status")
 	}
-	if pod.Labels[workload.LabelSchema] != schema.Name ||
-		pod.Labels[workload.LabelOperation] != strings.ToLower(string(operation.Type)) {
+	if pod.Labels[subject.subjectLabel] != claim.subjectName ||
+		pod.Labels[workload.LabelOperation] != strings.ToLower(claim.operationType) {
 		return cradmission.Denied("managed Pod operation labels do not match status")
 	}
-	digest := operation.AdmissionSnapshot.Digest
+	digest := claim.snapshot.Digest
 	if digest == "" || pod.Annotations[workload.AnnotationAdmissionSnapshotDigest] != digest ||
 		job.Annotations[workload.AnnotationAdmissionSnapshotDigest] != digest ||
 		job.Spec.Template.Annotations[workload.AnnotationAdmissionSnapshotDigest] != digest {
 		return cradmission.Denied("managed Pod admission digest does not match status and Job")
 	}
 	current, err := Resolve(ctx, h.Reader, pod.Namespace, &job.Spec.Template, Options{
-		DefaultTolerationsEnabled:           operation.AdmissionSnapshot.DefaultTolerationsEnabled,
-		DefaultNotReadyTolerationSeconds:    operation.AdmissionSnapshot.DefaultNotReadyTolerationSeconds,
-		DefaultUnreachableTolerationSeconds: operation.AdmissionSnapshot.DefaultUnreachableTolerationSeconds,
-		ExtendedResourceTolerationEnabled:   operation.AdmissionSnapshot.ExtendedResourceTolerationEnabled,
-		AlwaysPullImagesEnabled:             operation.AdmissionSnapshot.AlwaysPullImagesEnabled,
+		DefaultTolerationsEnabled:           claim.snapshot.DefaultTolerationsEnabled,
+		DefaultNotReadyTolerationSeconds:    claim.snapshot.DefaultNotReadyTolerationSeconds,
+		DefaultUnreachableTolerationSeconds: claim.snapshot.DefaultUnreachableTolerationSeconds,
+		ExtendedResourceTolerationEnabled:   claim.snapshot.ExtendedResourceTolerationEnabled,
+		AlwaysPullImagesEnabled:             claim.snapshot.AlwaysPullImagesEnabled,
 	})
 	if err != nil {
 		return podIntentReadError("re-resolve current Pod admission bindings", err)
@@ -194,15 +191,18 @@ func (h *ValidationHandler) Handle(ctx context.Context, req cradmission.Request)
 	if current.Digest != digest {
 		return cradmission.Denied("current Pod admission objects differ from the persisted snapshot")
 	}
-	if err := ValidatePodSpec(&pod.Spec, &job.Spec.Template, operation.AdmissionSnapshot); err != nil {
+	if err := ValidatePodSpec(&pod.Spec, &job.Spec.Template, claim.snapshot); err != nil {
 		return cradmission.Denied("managed Pod is outside the persisted admission envelope: " + err.Error())
 	}
 	return cradmission.Allowed("managed Pod matches the persisted admission envelope")
 }
 
 func managedPodIdentity(labels map[string]string) bool {
-	return labels[workload.LabelManagedBy] == "ptah-operator" &&
-		labels[workload.LabelComponent] == "schema-operation"
+	if labels[workload.LabelManagedBy] != "ptah-operator" {
+		return false
+	}
+	component := labels[workload.LabelComponent]
+	return component == workload.ComponentSchemaOperation || component == workload.ComponentMigrationOperation
 }
 
 func isKubernetesJobController(username string) bool {
@@ -343,11 +343,96 @@ func uniqueControllerReference(
 	return *found, true
 }
 
-func operationSnapshot(schema *operatorv1alpha1.PtahSchema) *operatorv1alpha1.PodAdmissionSnapshot {
-	if schema == nil || schema.Status.ActiveOperation == nil {
-		return nil
+// operationSubject is the resource a managed Job belongs to. A PtahSchema and a
+// PtahMigration dispatch the same kind of Pod under the same admission envelope,
+// so the two differ only in the owner kind, the component, and the label that
+// names the subject.
+type operationSubject struct {
+	kind         string
+	component    string
+	subjectLabel string
+	owner        metav1.OwnerReference
+}
+
+// operationClaim is the part of a subject's status that judges one Pod.
+type operationClaim struct {
+	subjectName   string
+	operationID   string
+	operationType string
+	jobName       string
+	jobUID        types.UID
+	snapshot      *operatorv1alpha1.PodAdmissionSnapshot
+}
+
+func operationSubjectFor(references []metav1.OwnerReference) (operationSubject, bool) {
+	for _, subject := range []operationSubject{
+		{kind: "PtahSchema", component: workload.ComponentSchemaOperation, subjectLabel: workload.LabelSchema},
+		{kind: "PtahMigration", component: workload.ComponentMigrationOperation, subjectLabel: workload.LabelMigration},
+	} {
+		owner, ok := exactControllerReference(references, operatorv1alpha1.GroupVersion.String(), subject.kind)
+		if !ok {
+			continue
+		}
+		subject.owner = owner
+		return subject, true
 	}
-	return schema.Status.ActiveOperation.AdmissionSnapshot
+	return operationSubject{}, false
+}
+
+// readClaim reads the subject and returns the claim that judges the Pod, or the
+// response that refuses it.
+func (h *ValidationHandler) readClaim(
+	ctx context.Context,
+	namespace string,
+	subject operationSubject,
+) (operationClaim, *cradmission.Response) {
+	key := client.ObjectKey{Namespace: namespace, Name: subject.owner.Name}
+	if subject.kind == "PtahMigration" {
+		migration := &operatorv1alpha1.PtahMigration{}
+		if err := h.Reader.Get(ctx, key, migration); err != nil {
+			response := podIntentReadError("read owning PtahMigration", err)
+			return operationClaim{}, &response
+		}
+		if migration.UID == "" || migration.UID != subject.owner.UID {
+			response := cradmission.Denied("managed Job owner does not match the current PtahMigration UID")
+			return operationClaim{}, &response
+		}
+		operation := migration.Status.ActiveOperation
+		if operation == nil {
+			response := cradmission.Denied("managed Pod has no persisted admission snapshot")
+			return operationClaim{}, &response
+		}
+		return operationClaim{
+			subjectName:   migration.Name,
+			operationID:   operation.ID,
+			operationType: string(operation.Type),
+			jobName:       operation.JobName,
+			jobUID:        operation.JobUID,
+			snapshot:      operation.AdmissionSnapshot,
+		}, nil
+	}
+	schema := &operatorv1alpha1.PtahSchema{}
+	if err := h.Reader.Get(ctx, key, schema); err != nil {
+		response := podIntentReadError("read owning PtahSchema", err)
+		return operationClaim{}, &response
+	}
+	if schema.UID == "" || schema.UID != subject.owner.UID {
+		response := cradmission.Denied("managed Job owner does not match the current PtahSchema UID")
+		return operationClaim{}, &response
+	}
+	operation := schema.Status.ActiveOperation
+	if operation == nil {
+		response := cradmission.Denied("managed Pod has no persisted admission snapshot")
+		return operationClaim{}, &response
+	}
+	return operationClaim{
+		subjectName:   schema.Name,
+		operationID:   operation.ID,
+		operationType: string(operation.Type),
+		jobName:       operation.JobName,
+		jobUID:        operation.JobUID,
+		snapshot:      operation.AdmissionSnapshot,
+	}, nil
 }
 
 func exactJobTrackingFinalizerRemoval(oldPod, newPod *corev1.Pod, subresource string) bool {

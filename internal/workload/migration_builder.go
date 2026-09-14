@@ -20,7 +20,6 @@ import (
 )
 
 const (
-	migrationComponent          = "migration-operation"
 	migrationFetchContainerName = "fetch-migrations"
 
 	// migrationsPath is the directory the fetch container writes the migration
@@ -32,11 +31,6 @@ const (
 	// LabelMigration associates a Job with its namespaced PtahMigration name,
 	// as LabelSchema does for a schema operation.
 	LabelMigration = "operator.ptah.run/migration"
-
-	// AnnotationMigrationPlan and AnnotationMigrationPlanUID record the exact
-	// plan object an Apply carries out.
-	AnnotationMigrationPlan    = "operator.ptah.run/migration-plan"
-	AnnotationMigrationPlanUID = "operator.ptah.run/migration-plan-uid"
 )
 
 // NameForMigration returns the Job name bound to every field that
@@ -132,7 +126,7 @@ func (b Builder) BuildMigration(
 
 	labels := map[string]string{
 		LabelManagedBy:   "ptah-operator",
-		LabelComponent:   migrationComponent,
+		LabelComponent:   ComponentMigrationOperation,
 		LabelMigration:   migration.Name,
 		LabelOperation:   strings.ToLower(string(operation.Type)),
 		LabelOperationID: shortLabelHash(operation.ID),
@@ -144,6 +138,13 @@ func (b Builder) BuildMigration(
 	annotations[AnnotationControllerImage] = b.ControllerImage
 	annotations[AnnotationControllerRevision] = b.ControllerRevision
 	annotations[AnnotationControllerStateVersion] = strconv.FormatInt(int64(b.ControllerStateVersion), 10)
+	if operation.AdmissionSnapshot != nil {
+		if !sha256Pattern.MatchString(operation.AdmissionSnapshot.Digest) ||
+			!sha256Pattern.MatchString(operation.AdmissionSnapshot.TemplateDigest) {
+			return nil, errors.New("Pod admission snapshot and template digests must be lowercase SHA-256 digests")
+		}
+		annotations[AnnotationAdmissionSnapshotDigest] = operation.AdmissionSnapshot.Digest
+	}
 
 	backoffLimit := int32(0)
 	falseValue := false
@@ -347,8 +348,6 @@ func migrationDataPlane(
 				literalEnv(runner.EnvDispatchNotAfter, operation.DispatchNotAfter.UTC().Format(time.RFC3339Nano)),
 				literalEnv(runner.EnvExecutionNotAfter, operation.ExecutionNotAfter.UTC().Format(time.RFC3339Nano)),
 			)
-			annotations[AnnotationMigrationPlan] = operation.PlanRef.Name
-			annotations[AnnotationMigrationPlanUID] = string(operation.PlanRef.UID)
 		}
 	}
 

@@ -656,6 +656,21 @@ func validationHandlerFixture(t *testing.T) (*podintent.ValidationHandler, *core
 func validationHandlerFixtureForJobName(t *testing.T, jobName string) (*podintent.ValidationHandler, *corev1.Pod) {
 	t.Helper()
 
+	return subjectFixture(t, jobName, "PtahSchema")
+}
+
+// validationHandlerFixtureForMigration builds the same Pod under a
+// PtahMigration claim. The envelope is the schema path's; only the subject and
+// its labels differ.
+func validationHandlerFixtureForMigration(t *testing.T, jobName string) (*podintent.ValidationHandler, *corev1.Pod) {
+	t.Helper()
+
+	return subjectFixture(t, jobName, "PtahMigration")
+}
+
+func subjectFixture(t *testing.T, jobName, subjectKind string) (*podintent.ValidationHandler, *corev1.Pod) {
+	t.Helper()
+
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
 		corev1.AddToScheme,
@@ -669,11 +684,15 @@ func validationHandlerFixtureForJobName(t *testing.T, jobName string) (*podinten
 		}
 	}
 	operationID := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	component, subjectLabel, operationLabel := workload.ComponentSchemaOperation, workload.LabelSchema, "apply"
+	if subjectKind == "PtahMigration" {
+		component, subjectLabel, operationLabel = workload.ComponentMigrationOperation, workload.LabelMigration, "history"
+	}
 	labels := map[string]string{
 		workload.LabelManagedBy:   "ptah-operator",
-		workload.LabelComponent:   "schema-operation",
-		workload.LabelSchema:      "app",
-		workload.LabelOperation:   "apply",
+		workload.LabelComponent:   component,
+		subjectLabel:              "app",
+		workload.LabelOperation:   operationLabel,
 		workload.LabelOperationID: workload.OperationIDLabelValue(operationID),
 	}
 	annotations := map[string]string{workload.AnnotationOperationID: operationID}
@@ -701,11 +720,19 @@ func validationHandlerFixtureForJobName(t *testing.T, jobName string) (*podinten
 		labels[key] = value
 	}
 	annotations[workload.AnnotationAdmissionSnapshotDigest] = snapshot.Digest
-	schema := &operatorv1alpha1.PtahSchema{
+	var subject client.Object = &operatorv1alpha1.PtahSchema{
 		ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "app", UID: "schema-uid", ResourceVersion: "21"},
 		Status: operatorv1alpha1.PtahSchemaStatus{ActiveOperation: &operatorv1alpha1.ActiveOperationStatus{
 			Type: operatorv1alpha1.OperationApply, ID: operationID, JobName: jobName, AdmissionSnapshot: snapshot,
 		}},
+	}
+	if subjectKind == "PtahMigration" {
+		subject = &operatorv1alpha1.PtahMigration{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "app", UID: "migration-uid", ResourceVersion: "21"},
+			Status: operatorv1alpha1.PtahMigrationStatus{ActiveOperation: &operatorv1alpha1.MigrationOperationStatus{
+				Type: operatorv1alpha1.MigrationOperationHistory, ID: operationID, JobName: jobName, AdmissionSnapshot: snapshot,
+			}},
+		}
 	}
 	parallelism := int32(1)
 	completions := int32(1)
@@ -715,7 +742,7 @@ func validationHandlerFixtureForJobName(t *testing.T, jobName string) (*podinten
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: "team-a", Name: jobName, UID: "job-uid", ResourceVersion: "22",
 			Labels: labels, Annotations: annotations,
-			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(schema, operatorv1alpha1.GroupVersion.WithKind("PtahSchema"))},
+			OwnerReferences: []metav1.OwnerReference{*metav1.NewControllerRef(subject, operatorv1alpha1.GroupVersion.WithKind(subjectKind))},
 		},
 		Spec: batchv1.JobSpec{
 			Parallelism: &parallelism, Completions: &completions, BackoffLimit: &backoffLimit,
@@ -734,7 +761,7 @@ func validationHandlerFixtureForJobName(t *testing.T, jobName string) (*podinten
 		},
 		Spec: *admittedPodSpec(template, snapshot),
 	}
-	objects := append(admissionFixtureObjects(), schema, job)
+	objects := append(admissionFixtureObjects(), subject, job)
 	reader := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build()
 	return &podintent.ValidationHandler{Reader: reader, Decoder: cradmission.NewDecoder(scheme)}, pod
 }
@@ -770,4 +797,53 @@ func podUpdateRequest(t *testing.T, oldPod, pod *corev1.Pod) cradmission.Request
 	}
 	request.OldObject = runtime.RawExtension{Raw: raw}
 	return request
+}
+
+func TestValidationHandlerJudgesAMigrationPodByItsOwnClaim(t *testing.T) {
+	t.Parallel()
+
+	handler, pod := validationHandlerFixtureForMigration(t, "ptah-m-history-app")
+	response := handler.Handle(context.Background(), podRequest(t, pod))
+	if !response.Allowed {
+		t.Fatalf("Handle() denied a migration Pod inside its claim: %#v", response.Result)
+	}
+}
+
+func TestValidationHandlerRejectsMigrationPodOutsideItsClaim(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*corev1.Pod)
+	}{
+		{
+			name: "operation label does not match the claim",
+			mutate: func(pod *corev1.Pod) {
+				pod.Labels[workload.LabelOperation] = "apply"
+			},
+		},
+		{
+			name: "subject label names another migration",
+			mutate: func(pod *corev1.Pod) {
+				pod.Labels[workload.LabelMigration] = "someone-else"
+			},
+		},
+		{
+			name: "component claims the schema envelope",
+			mutate: func(pod *corev1.Pod) {
+				pod.Labels[workload.LabelComponent] = workload.ComponentSchemaOperation
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			handler, pod := validationHandlerFixtureForMigration(t, "ptah-m-history-app")
+			test.mutate(pod)
+			if response := handler.Handle(context.Background(), podRequest(t, pod)); response.Allowed {
+				t.Fatal("Handle() admitted a migration Pod outside its claim")
+			}
+		})
+	}
 }

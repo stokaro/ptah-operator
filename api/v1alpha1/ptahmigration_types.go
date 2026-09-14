@@ -151,6 +151,13 @@ type MigrationOperationStatus struct {
 	// DispatchNotAfter and ExecutionNotAfter bound the claim in time.
 	DispatchNotAfter  *metav1.Time `json:"dispatchNotAfter,omitempty"`
 	ExecutionNotAfter *metav1.Time `json:"executionNotAfter,omitempty"`
+
+	// AdmissionSnapshot is the Pod envelope resolved before dispatch and bound
+	// into the Job and its Pod template. It is what lets Pod admission permit
+	// the built-in mutations that are modeled and safe while refusing any other
+	// change to what the Pod executes. A migration Pod is judged by the same
+	// envelope as a schema Pod, because it is the same kind of Pod.
+	AdmissionSnapshot *PodAdmissionSnapshot `json:"admissionSnapshot,omitempty"`
 }
 
 // MigrationPolicy decides when a planned sequence may execute.

@@ -237,12 +237,12 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
         $quote + "app.kubernetes.io/managed-by" + $quote + " in " + $object + ".metadata.labels && " +
         $object + ".metadata.labels[" + $quote + "app.kubernetes.io/managed-by" + $quote + "] == " + $quote + "ptah-operator" + $quote + " && " +
         $quote + "app.kubernetes.io/component" + $quote + " in " + $object + ".metadata.labels && " +
-        $object + ".metadata.labels[" + $quote + "app.kubernetes.io/component" + $quote + "] == " + $quote + "schema-operation" + $quote + ")";
+        $object + ".metadata.labels[" + $quote + "app.kubernetes.io/component" + $quote + "] in [" + $quote + "schema-operation" + $quote + ", " + $quote + "migration-operation" + $quote + "])";
       def operation_owner($object):
         "(has(" + $object + ".metadata.ownerReferences) && " +
         $object + ".metadata.ownerReferences.exists(ref, ref.apiVersion == " + $quote + "batch/v1" + $quote +
         " && ref.kind == " + $quote + "Job" + $quote + " && ref.controller == true && ref.name.matches(" +
-        $quote + "^ptah-(resolve|verify|observe|plan|apply)-" + $quote + ")))";
+        $quote + "^ptah-(m-)?(resolve|verify|observe|plan|history|apply)-" + $quote + ")))";
       def operation_pod_condition:
         operation_labels("object") + " || " + operation_owner("object") +
         " || (request.operation == " + $quote + "UPDATE" + $quote + " && oldObject != null && ( " +

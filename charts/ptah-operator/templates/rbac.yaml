@@ -65,6 +65,17 @@ rules:
   - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemaapprovals"]
     verbs: ["get", "list", "watch"]
+  # The migration resource is read by the controller write guard before it
+  # admits a migration Job, and written by the migration controller.
+  - apiGroups: ["operator.ptah.run"]
+    resources: ["ptahmigrations"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["operator.ptah.run"]
+    resources: ["ptahmigrations/finalizers"]
+    verbs: ["update"]
+  - apiGroups: ["operator.ptah.run"]
+    resources: ["ptahmigrations/status"]
+    verbs: ["get", "update", "patch"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch", "create", "patch"]

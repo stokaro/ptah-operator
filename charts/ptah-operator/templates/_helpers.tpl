@@ -1,3 +1,21 @@
+{{/*
+ptah-operator.migrationJobShape derives the migration Job's sealed contract from
+the schema Job's by the exact substitutions that distinguish the two subjects.
+internal/crdupgrade/controller_object_guard.go performs the same substitutions in
+the same order, and a render test compares the two results byte for byte.
+*/}}
+{{- define "ptah-operator.migrationJobShape" -}}
+{{- . | replace `"operator.ptah.run/schema"` `"operator.ptah.run/migration"` | replace `"schema-operation"` `"migration-operation"` | replace `["resolve", "verify", "observe", "plan", "apply"]` `["resolve", "verify", "history", "apply"]` | replace `["observe", "plan"]` `["history", "apply"]` | replace `"ptah-" + object.metadata.labels` `"ptah-m-" + object.metadata.labels` | replace `^ptah-(resolve|verify|observe|plan|apply)-` `^ptah-m-(resolve|verify|history|apply)-` | replace `"PtahSchema"` `"PtahMigration"` | replace `"fetch-schema"` `"fetch-migrations"` -}}
+{{- end -}}
+
+{{/*
+ptah-operator.eitherSubject admits a Job that satisfies the schema shape or the
+migration shape, and nothing else.
+*/}}
+{{- define "ptah-operator.eitherSubject" -}}
+({{ . }}) || ({{ include "ptah-operator.migrationJobShape" . }})
+{{- end -}}
+
 {{- define "ptah-operator.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
