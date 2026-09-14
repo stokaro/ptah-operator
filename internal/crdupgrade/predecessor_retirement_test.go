@@ -37,17 +37,17 @@ func TestPredecessorRetirementSealCurrentBuildsExactCanonicalInventory(t *testin
 	if marker.Immutable == nil || !*marker.Immutable {
 		t.Fatal("sealed marker is mutable")
 	}
-	if len(inventory.Entries) != 25 {
-		t.Fatalf("sealed inventory entry count = %d, want 25", len(inventory.Entries))
+	if len(inventory.Entries) != 27 {
+		t.Fatalf("sealed inventory entry count = %d, want 27", len(inventory.Entries))
 	}
-	for index := 0; index < 24; index += 2 {
+	for index := 0; index < 26; index += 2 {
 		if inventory.Entries[index].Kind != "ValidatingAdmissionPolicy" ||
 			inventory.Entries[index+1].Kind != "ValidatingAdmissionPolicyBinding" ||
 			inventory.Entries[index].Name != inventory.Entries[index+1].Name {
 			t.Fatalf("sealed pair %d = %#v / %#v", index/2, inventory.Entries[index], inventory.Entries[index+1])
 		}
 	}
-	if got := inventory.Entries[24]; got.Kind != "ConfigMap" || got.Name != fixture.probeName {
+	if got := inventory.Entries[26]; got.Kind != "ConfigMap" || got.Name != fixture.probeName {
 		t.Fatalf("sealed hook probe = %#v", got)
 	}
 	raw := marker.Data[PredecessorRetirementInventoryDataKey]
@@ -128,8 +128,8 @@ func TestPredecessorRetirementDeletesBindingsThenPoliciesThenMarkers(t *testing.
 			return err
 		}
 		probes := target.Probes()
-		if len(probes) != 12 {
-			return fmt.Errorf("probe count = %d, want 12", len(probes))
+		if len(probes) != predecessorRetirementPairCount {
+			return fmt.Errorf("probe count = %d, want %d", len(probes), predecessorRetirementPairCount)
 		}
 		for index, name := range fixture.pairNames {
 			if probes[index].PolicyName != name || probes[index].BindingName != name ||
@@ -157,17 +157,18 @@ func TestPredecessorRetirementDeletesBindingsThenPoliciesThenMarkers(t *testing.
 	if len(fixture.policies.objects) != 0 || len(fixture.bindings.objects) != 0 || len(fixture.configMaps.objects) != 0 {
 		t.Fatalf("retirement left residue: policies=%d bindings=%d ConfigMaps=%d", len(fixture.policies.objects), len(fixture.bindings.objects), len(fixture.configMaps.objects))
 	}
-	if got := fixture.recorder.kinds(); !reflect.DeepEqual(got, []string{
-		"ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicyBinding",
-		"ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicyBinding",
-		"ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicyBinding", "ValidatingAdmissionPolicyBinding",
-		"Barrier",
-		"ValidatingAdmissionPolicy", "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicy",
-		"ValidatingAdmissionPolicy", "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicy",
-		"ValidatingAdmissionPolicy", "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicy",
-		"ConfigMap", "ConfigMap",
-	}) {
-		t.Fatalf("retirement order = %v", got)
+	// Every binding, then the barrier, then every policy, then the two markers.
+	wantOrder := make([]string, 0, 2*predecessorRetirementPairCount+3)
+	for range predecessorRetirementPairCount {
+		wantOrder = append(wantOrder, "ValidatingAdmissionPolicyBinding")
+	}
+	wantOrder = append(wantOrder, "Barrier")
+	for range predecessorRetirementPairCount {
+		wantOrder = append(wantOrder, "ValidatingAdmissionPolicy")
+	}
+	wantOrder = append(wantOrder, "ConfigMap", "ConfigMap")
+	if got := fixture.recorder.kinds(); !reflect.DeepEqual(got, wantOrder) {
+		t.Fatalf("retirement order = %v, want %v", got, wantOrder)
 	}
 	for _, event := range fixture.recorder.events {
 		if event == "Barrier" {
@@ -191,10 +192,15 @@ func TestPredecessorRetirementResumesOnlyContiguousPhases(t *testing.T) {
 	}{
 		{name: "fresh", wantBarrierCalls: 1},
 		{name: "partial bindings", deletedBindings: 5, wantBarrierCalls: 1},
-		{name: "all bindings", deletedBindings: 12, wantBarrierCalls: 1},
-		{name: "partial policies", deletedBindings: 12, deletedPolicies: 7, wantBarrierCalls: 1},
-		{name: "all pairs", deletedBindings: 12, deletedPolicies: 12},
-		{name: "marker only", deletedBindings: 12, deletedPolicies: 12, deleteProbe: true},
+		{name: "all bindings", deletedBindings: predecessorRetirementPairCount, wantBarrierCalls: 1},
+		{name: "partial policies", deletedBindings: predecessorRetirementPairCount, deletedPolicies: 7, wantBarrierCalls: 1},
+		{name: "all pairs", deletedBindings: predecessorRetirementPairCount, deletedPolicies: predecessorRetirementPairCount},
+		{
+			name:            "marker only",
+			deletedBindings: predecessorRetirementPairCount,
+			deletedPolicies: predecessorRetirementPairCount,
+			deleteProbe:     true,
+		},
 	}
 	for _, test := range tests {
 		test := test
@@ -328,7 +334,7 @@ func TestPredecessorRetirementBarrierFailurePreservesPoliciesAndMarkers(t *testi
 	if len(fixture.bindings.objects) != 0 {
 		t.Fatalf("bindings remaining after barrier boundary = %d", len(fixture.bindings.objects))
 	}
-	if len(fixture.policies.objects) != 12 || fixture.configMaps.objects[fixture.probeName] == nil ||
+	if len(fixture.policies.objects) != predecessorRetirementPairCount || fixture.configMaps.objects[fixture.probeName] == nil ||
 		fixture.configMaps.objects[fixture.previousMarkerName] == nil {
 		t.Fatal("barrier failure removed a policy or marker")
 	}

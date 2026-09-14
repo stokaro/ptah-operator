@@ -591,6 +591,7 @@ func TestFrozenPredecessorRulesFollowThePredecessorIdentity(t *testing.T) {
 			ControllerJobWriteGuardPolicyName(namespace, release, 1, managerImage),
 			ControllerChunkWriteGuardPolicyName(namespace, release, 1, managerImage),
 			ControllerPlanWriteGuardPolicyName(namespace, release, 1, managerImage),
+			ControllerMigrationPlanWriteGuardPolicyName(namespace, release, 1, managerImage),
 			CertificateMutatingWriteGuardPolicyName(namespace, release),
 			CertificateValidatingWriteGuardPolicyName(namespace, release),
 			NamespaceDeletionGuardPolicyName(namespace, release),
