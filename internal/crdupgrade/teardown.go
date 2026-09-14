@@ -157,17 +157,11 @@ func (t *ReleaseTeardown) preflight(ctx context.Context) ([]teardownTarget, []bo
 	if !anyTeardownTargetPresent(present) {
 		return targets, present, nil
 	}
-	if err := validateOptionalTeardownGroups(targets, present); err != nil {
-		return nil, nil, err
-	}
 	// A retry may observe only a contiguous prefix already removed by an
-	// earlier invocation. Optional predecessor groups keep their own cursor and
-	// do not make an otherwise complete current-release inventory look sparse.
+	// earlier invocation, so a gap is only a gap once something after it is
+	// still there.
 	seenPresent := false
 	for index, found := range present {
-		if targets[index].optionalGroup != "" {
-			continue
-		}
 		if found {
 			seenPresent = true
 			continue
@@ -181,28 +175,6 @@ func (t *ReleaseTeardown) preflight(ctx context.Context) ([]teardownTarget, []bo
 		}
 	}
 	return targets, present, nil
-}
-
-func validateOptionalTeardownGroups(targets []teardownTarget, present []bool) error {
-	seenPresent := map[string]bool{}
-	for index, target := range targets {
-		if target.optionalGroup == "" {
-			continue
-		}
-		if present[index] {
-			seenPresent[target.optionalGroup] = true
-			continue
-		}
-		if seenPresent[target.optionalGroup] {
-			return fmt.Errorf(
-				"release teardown optional inventory %s is incomplete: %s/%s is missing after a retained object",
-				target.optionalGroup,
-				target.kind,
-				target.name,
-			)
-		}
-	}
-	return nil
 }
 
 func anyTeardownTargetPresent(present []bool) bool {
@@ -231,7 +203,6 @@ func (i teardownIdentity) deleteOptions() metav1.DeleteOptions {
 type teardownTarget struct {
 	kind                         string
 	name                         string
-	optionalGroup                string
 	admissionConvergenceBoundary bool
 	inspect                      func(context.Context) (teardownIdentity, bool, error)
 	delete                       func(context.Context, metav1.DeleteOptions) error
@@ -241,7 +212,6 @@ type teardownGuardContract struct {
 	name          string
 	parameterized bool
 	sentinel      bool
-	optionalGroup string
 	verifyPolicy  func(*admissionregistrationv1.ValidatingAdmissionPolicy) error
 	verifyBinding func(*admissionregistrationv1.ValidatingAdmissionPolicyBinding) error
 }
@@ -463,7 +433,6 @@ func teardownGuardContracts(guard *RolloutGuard) ([]teardownGuardContract, error
 			},
 		})
 	}
-	contracts = append(contracts, legacyControllerTeardownContracts(guard)...)
 	for _, entry := range certificateWrite.entries() {
 		entry := entry
 		contracts = append(contracts, teardownGuardContract{
@@ -603,7 +572,7 @@ func (t *ReleaseTeardown) validatingWebhookTarget(expected RuntimeInvariants) te
 func (t *ReleaseTeardown) bindingTarget(contract teardownGuardContract) teardownTarget {
 	const kind = "ValidatingAdmissionPolicyBinding"
 	return teardownTarget{
-		kind: kind, name: contract.name, optionalGroup: contract.optionalGroup,
+		kind: kind, name: contract.name,
 		inspect: func(ctx context.Context) (teardownIdentity, bool, error) {
 			object, err := t.bindings.Get(ctx, contract.name, metav1.GetOptions{})
 			if apierrors.IsNotFound(err) {
@@ -630,7 +599,7 @@ func (t *ReleaseTeardown) bindingTarget(contract teardownGuardContract) teardown
 func (t *ReleaseTeardown) policyTarget(contract teardownGuardContract) teardownTarget {
 	const kind = "ValidatingAdmissionPolicy"
 	return teardownTarget{
-		kind: kind, name: contract.name, optionalGroup: contract.optionalGroup,
+		kind: kind, name: contract.name,
 		inspect: func(ctx context.Context) (teardownIdentity, bool, error) {
 			object, err := t.policies.Get(ctx, contract.name, metav1.GetOptions{})
 			if apierrors.IsNotFound(err) {

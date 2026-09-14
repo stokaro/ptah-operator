@@ -29,20 +29,14 @@ const (
 	parentOriginReadyVersionAnnotation = "operator.ptah.run/parent-origin-ready-version"
 	parentOriginReadyVersion           = "2"
 
-	parentReplicaSetPolicyWeight            = "-139"
-	parentReplicaSetBindingWeight           = "-138"
-	parentHookOriginPolicyWeight            = "-137"
-	parentHookOriginBindingWeight           = "-136"
-	parentHookPodOriginPolicyWeight         = "-135"
-	parentHookPodOriginBindingWeight        = "-134"
-	parentHookContractPolicyWeight          = "-133"
-	parentHookContractBindingWeight         = "-132"
-	legacyHookOriginRetiredBindingWeight    = "9"
-	legacyHookOriginRetiredPolicyWeight     = "10"
-	legacyHookPodOriginRetiredBindingWeight = "11"
-	legacyHookPodOriginRetiredPolicyWeight  = "12"
-
-	legacyParentWorkloadOriginTeardownGroup = "parent-workload-origin-v1"
+	parentReplicaSetPolicyWeight     = "-139"
+	parentReplicaSetBindingWeight    = "-138"
+	parentHookOriginPolicyWeight     = "-137"
+	parentHookOriginBindingWeight    = "-136"
+	parentHookPodOriginPolicyWeight  = "-135"
+	parentHookPodOriginBindingWeight = "-134"
+	parentHookContractPolicyWeight   = "-133"
+	parentHookContractBindingWeight  = "-132"
 )
 
 // ParentReplicaSetGuardPolicyName returns the append-only release-owned
@@ -58,19 +52,11 @@ func ParentHookJobOriginGuardPolicyName(releaseNamespace, releaseName string) st
 	return parentHookOriginGuardPrefix + parentWorkloadStableDigest(releaseNamespace, releaseName)
 }
 
-func legacyParentHookJobOriginGuardPolicyName(releaseNamespace, releaseName string) string {
-	return "ptah-operator-hook-parent-origin-guard-v1-" + parentWorkloadStableDigest(releaseNamespace, releaseName)
-}
-
 // ParentHookPodOriginGuardPolicyName returns the stable release-owned gate
 // which permits hook Pods only when the built-in Job controller creates them
 // through an exact Job ownership and label chain.
 func ParentHookPodOriginGuardPolicyName(releaseNamespace, releaseName string) string {
 	return parentHookPodOriginPrefix + parentWorkloadStableDigest(releaseNamespace, releaseName)
-}
-
-func legacyParentHookPodOriginGuardPolicyName(releaseNamespace, releaseName string) string {
-	return "ptah-operator-hook-pod-origin-guard-v1-" + parentWorkloadStableDigest(releaseNamespace, releaseName)
 }
 
 // ParentHookJobContractPolicyName returns the append-only exact contract for
@@ -689,52 +675,6 @@ func (g *ParentWorkloadGuard) hookPodOriginPolicy() *admissionregistrationv1.Val
 	return policy
 }
 
-// legacyHookPodOriginPolicy freezes the release-stable v1 contract exactly as
-// it was emitted before the append-only v2 boundary. It is verify-only: fresh
-// installs neither render nor require it, while uninstall can reject a drifted
-// retained object before replacing it with the retirement marker.
-func (g *ParentWorkloadGuard) legacyHookPodOriginPolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {
-	fail := admissionregistrationv1.Fail
-	exact := admissionregistrationv1.Exact
-	name := legacyParentHookPodOriginGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
-	hookPattern, teardownPattern := g.hookServiceAccountPatterns()
-	message := parentHookPodOriginDenialMessage()
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
-		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
-		ObjectMeta: g.legacyOriginMetadata(name, parentHookPodOriginPolicyWeight),
-		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
-			FailurePolicy: &fail,
-			MatchConstraints: &admissionregistrationv1.MatchResources{
-				MatchPolicy:       &exact,
-				NamespaceSelector: &metav1.LabelSelector{},
-				ObjectSelector:    &metav1.LabelSelector{},
-				ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{{
-					RuleWithOperations: admissionregistrationv1.RuleWithOperations{
-						Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
-						Rule: admissionregistrationv1.Rule{
-							APIGroups: []string{""}, APIVersions: []string{"v1"}, Resources: []string{"pods"}, Scope: scopePtr(admissionregistrationv1.NamespacedScope),
-						},
-					},
-				}},
-			},
-			MatchConditions: []admissionregistrationv1.MatchCondition{{
-				Name:       "release-hook-service-account-pattern",
-				Expression: fmt.Sprintf(`request.namespace == %q && has(dyn(object).spec.serviceAccountName) && (dyn(object).spec.serviceAccountName.matches(%q) || dyn(object).spec.serviceAccountName.matches(%q))`, g.rollout.ReleaseNamespace, hookPattern, teardownPattern),
-			}},
-			Variables: []admissionregistrationv1.Variable{{Name: "owner", Expression: `object.metadata.ownerReferences[0]`}},
-			Validations: []admissionregistrationv1.Validation{
-				{Expression: `!has(request.subResource) || request.subResource == ""`, Message: message},
-				{Expression: `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]`, Message: message},
-				{Expression: fmt.Sprintf(`object.metadata.namespace == request.namespace && has(dyn(object).spec.serviceAccountName) && (dyn(object).spec.serviceAccountName.matches(%q) || dyn(object).spec.serviceAccountName.matches(%q))`, hookPattern, teardownPattern), Message: message},
-				{Expression: `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1`, Message: message},
-				{Expression: `variables.owner.apiVersion == "batch/v1" && variables.owner.kind == "Job" && has(variables.owner.name) && variables.owner.name != "" && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion`, Message: message},
-				{Expression: `has(object.metadata.labels) && ["batch.kubernetes.io/job-name", "batch.kubernetes.io/controller-uid"].all(key, key in object.metadata.labels) && object.metadata.labels["batch.kubernetes.io/job-name"] == variables.owner.name && object.metadata.labels["batch.kubernetes.io/controller-uid"] == variables.owner.uid`, Message: message},
-				{Expression: generatedPodNameValidationExpression("variables.owner.name"), Message: message},
-			},
-		},
-	}
-}
-
 // parentHookOriginConvergenceProbeExpression recognizes an admission
 // convergence probe aimed at any guard: a dry-run UPDATE of the convergence
 // marker under a probe field manager. It names no release sequence, because
@@ -860,150 +800,6 @@ func (g *ParentWorkloadGuard) hookJobOriginPolicy() *admissionregistrationv1.Val
 		Message:    message,
 	})
 	return policy
-}
-
-// legacyHookJobOriginPolicy freezes the release-stable v1 Job contract. The
-// retained v1 object is deliberately not adopted or updated: an exact instance
-// can coexist with v2 until uninstall, while any semantic drift fails closed.
-func (g *ParentWorkloadGuard) legacyHookJobOriginPolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {
-	fail := admissionregistrationv1.Fail
-	exact := admissionregistrationv1.Exact
-	name := legacyParentHookJobOriginGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
-	hookPattern, teardownPattern := g.hookServiceAccountPatterns()
-	message := parentHookOriginDenialMessage()
-	authority := parentHookAdmissionAuthorityExpression(NamespaceDeletionGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName))
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
-		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
-		ObjectMeta: g.legacyOriginMetadata(name, parentHookOriginPolicyWeight),
-		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
-			FailurePolicy: &fail,
-			MatchConstraints: &admissionregistrationv1.MatchResources{
-				MatchPolicy:       &exact,
-				NamespaceSelector: &metav1.LabelSelector{},
-				ObjectSelector:    &metav1.LabelSelector{},
-				ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{{
-					RuleWithOperations: admissionregistrationv1.RuleWithOperations{
-						Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
-						Rule: admissionregistrationv1.Rule{
-							APIGroups: []string{"batch"}, APIVersions: []string{"v1"}, Resources: []string{"jobs"}, Scope: scopePtr(admissionregistrationv1.NamespacedScope),
-						},
-					},
-				}},
-			},
-			MatchConditions: []admissionregistrationv1.MatchCondition{{
-				Name: "release-hook-service-account-pattern",
-				Expression: fmt.Sprintf(
-					`request.namespace == %q && ((has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.template.spec.serviceAccountName) && (dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q) || dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q))))`,
-					g.rollout.ReleaseNamespace, hookPattern, teardownPattern, hookPattern, teardownPattern,
-				),
-			}},
-			Validations: []admissionregistrationv1.Validation{
-				{Expression: `!has(request.subResource) || request.subResource == ""`, Message: message},
-				{Expression: fmt.Sprintf(`has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))`, hookPattern, teardownPattern), Message: message},
-				{Expression: authority, Message: message},
-			},
-		},
-	}
-}
-
-func (g *ParentWorkloadGuard) legacyOriginEntries() []parentGuardEntry {
-	jobPolicy := g.legacyHookJobOriginPolicy()
-	jobBinding := g.binding(jobPolicy.Name, false)
-	jobBinding.ObjectMeta = g.legacyOriginMetadata(jobPolicy.Name, parentHookOriginBindingWeight)
-	podPolicy := g.legacyHookPodOriginPolicy()
-	podBinding := g.binding(podPolicy.Name, false)
-	podBinding.ObjectMeta = g.legacyOriginMetadata(podPolicy.Name, parentHookPodOriginBindingWeight)
-	return []parentGuardEntry{
-		{
-			name: jobPolicy.Name, description: "legacy hook parent origin guard",
-			policy: jobPolicy, binding: jobBinding,
-			verifyPolicy: func(actual *admissionregistrationv1.ValidatingAdmissionPolicy) error {
-				return g.verifyPolicy(actual, jobPolicy, false)
-			},
-			verifyBinding: func(actual *admissionregistrationv1.ValidatingAdmissionPolicyBinding) error {
-				return g.verifyBinding(actual, jobBinding, false)
-			},
-		},
-		{
-			name: podPolicy.Name, description: "legacy hook Pod origin guard",
-			policy: podPolicy, binding: podBinding,
-			verifyPolicy: func(actual *admissionregistrationv1.ValidatingAdmissionPolicy) error {
-				return g.verifyPolicy(actual, podPolicy, false)
-			},
-			verifyBinding: func(actual *admissionregistrationv1.ValidatingAdmissionPolicyBinding) error {
-				return g.verifyBinding(actual, podBinding, false)
-			},
-		},
-	}
-}
-
-func (g *ParentWorkloadGuard) legacyOriginMetadata(name, weight string) metav1.ObjectMeta {
-	metadata := g.metadata(name, false)
-	metadata.Annotations["helm.sh/hook"] = "pre-install,pre-upgrade"
-	metadata.Annotations["helm.sh/hook-weight"] = weight
-	metadata.Annotations["helm.sh/resource-policy"] = "keep"
-	return metadata
-}
-
-func (g *ParentWorkloadGuard) legacyOriginRetirementPolicy(name, weight string) *admissionregistrationv1.ValidatingAdmissionPolicy {
-	fail := admissionregistrationv1.Fail
-	exact := admissionregistrationv1.Exact
-	return &admissionregistrationv1.ValidatingAdmissionPolicy{
-		TypeMeta:   metav1.TypeMeta{APIVersion: admissionregistrationv1.SchemeGroupVersion.String(), Kind: "ValidatingAdmissionPolicy"},
-		ObjectMeta: g.legacyOriginRetirementMetadata(name, weight),
-		Spec: admissionregistrationv1.ValidatingAdmissionPolicySpec{
-			FailurePolicy: &fail,
-			MatchConstraints: &admissionregistrationv1.MatchResources{
-				MatchPolicy:       &exact,
-				NamespaceSelector: &metav1.LabelSelector{},
-				ObjectSelector:    &metav1.LabelSelector{},
-				ResourceRules: []admissionregistrationv1.NamedRuleWithOperations{{
-					RuleWithOperations: admissionregistrationv1.RuleWithOperations{
-						Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
-						Rule: admissionregistrationv1.Rule{
-							APIGroups: []string{""}, APIVersions: []string{"v1"}, Resources: []string{"configmaps"}, Scope: scopePtr(admissionregistrationv1.NamespacedScope),
-						},
-					},
-				}},
-			},
-			MatchConditions: []admissionregistrationv1.MatchCondition{{
-				Name:       "retired-parent-origin-marker",
-				Expression: fmt.Sprintf(`request.namespace == %q && request.name == %q`, g.rollout.ReleaseNamespace, ParentOriginReadyMarkerName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)),
-			}},
-			Validations: []admissionregistrationv1.Validation{{
-				Expression: "true",
-				Message:    "Retired parent-origin boundary is inert",
-			}},
-		},
-	}
-}
-
-func (g *ParentWorkloadGuard) legacyOriginRetirementBinding(name, weight string) *admissionregistrationv1.ValidatingAdmissionPolicyBinding {
-	binding := g.binding(name, false)
-	binding.ObjectMeta = g.legacyOriginRetirementMetadata(name, weight)
-	return binding
-}
-
-func (g *ParentWorkloadGuard) legacyOriginRetirementMetadata(name, weight string) metav1.ObjectMeta {
-	metadata := g.metadata(name, false)
-	metadata.Annotations["helm.sh/hook"] = "post-upgrade"
-	metadata.Annotations["helm.sh/hook-weight"] = weight
-	metadata.Annotations["helm.sh/hook-delete-policy"] = "before-hook-creation,hook-succeeded"
-	metadata.Labels["app.kubernetes.io/component"] = "parent-workload-guard-retirement"
-	return metadata
-}
-
-func (g *ParentWorkloadGuard) legacyOriginRetirementEntries() []parentGuardEntry {
-	jobName := legacyParentHookJobOriginGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
-	jobPolicy := g.legacyOriginRetirementPolicy(jobName, legacyHookOriginRetiredPolicyWeight)
-	jobBinding := g.legacyOriginRetirementBinding(jobName, legacyHookOriginRetiredBindingWeight)
-	podName := legacyParentHookPodOriginGuardPolicyName(g.rollout.ReleaseNamespace, g.rollout.ReleaseName)
-	podPolicy := g.legacyOriginRetirementPolicy(podName, legacyHookPodOriginRetiredPolicyWeight)
-	podBinding := g.legacyOriginRetirementBinding(podName, legacyHookPodOriginRetiredBindingWeight)
-	return []parentGuardEntry{
-		{name: jobName, policy: jobPolicy, binding: jobBinding},
-		{name: podName, policy: podPolicy, binding: podBinding},
-	}
 }
 
 func (g *ParentWorkloadGuard) hookJobContractPolicy() *admissionregistrationv1.ValidatingAdmissionPolicy {

@@ -402,8 +402,8 @@ func TestTeardownRetirementInventoryIsSortedDeduplicatedAndBounded(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pairs) < 26 {
-		t.Fatalf("retirement inventory has %d pairs; want all current, stable, legacy, and optional pairs", len(pairs))
+	if len(pairs) < 21 {
+		t.Fatalf("retirement inventory has %d pairs; want all current, stable and optional pairs", len(pairs))
 	}
 	names := make([]string, len(pairs))
 	for index, pair := range pairs {
@@ -443,104 +443,46 @@ func TestTeardownRetirementInventoryIsSortedDeduplicatedAndBounded(t *testing.T)
 func TestTeardownRetirementActivePreflightAcceptsEveryCrashTransition(t *testing.T) {
 	t.Parallel()
 
-	for _, legacyPresent := range []bool{false, true} {
-		legacyPresent := legacyPresent
-		t.Run(fmt.Sprintf("legacy-present-%t", legacyPresent), func(t *testing.T) {
-			t.Parallel()
-			inventory := newTeardownRetirementTestInventory(t, legacyPresent)
-			for index, pair := range inventory.pairs {
-				steps := []struct {
-					name            string
-					policy, binding teardownRetirementObjectForm
-				}{
-					{name: "baseline", policy: teardownRetirementObjectOriginal, binding: teardownRetirementObjectOriginal},
-					{name: "policy deleted", policy: teardownRetirementObjectAbsent, binding: teardownRetirementObjectOriginal},
-					{name: "policy created", policy: teardownRetirementObjectRetired, binding: teardownRetirementObjectOriginal},
-					{name: "binding deleted", policy: teardownRetirementObjectRetired, binding: teardownRetirementObjectAbsent},
-					{name: "binding created", policy: teardownRetirementObjectRetired, binding: teardownRetirementObjectRetired},
-					{name: "replay policy deleted", policy: teardownRetirementObjectAbsent, binding: teardownRetirementObjectRetired},
-					{name: "success cleanup complete", policy: teardownRetirementObjectAbsent, binding: teardownRetirementObjectAbsent},
-				}
-				if !inventory.originPresent(pair) {
-					steps = slices.Delete(steps, 0, 3)
-				}
-				for _, step := range steps {
-					policies, bindings := inventory.baseline()
-					for previous := 0; previous < index; previous++ {
-						inventory.set(policies, bindings, inventory.pairs[previous], teardownRetirementObjectRetired, teardownRetirementObjectRetired)
-					}
-					inventory.set(policies, bindings, pair, step.policy, step.binding)
-					if _, err := inventory.guard.PreflightPairsForPhase(
-						context.Background(),
-						&rolloutPolicyClient{objects: policies},
-						&rolloutBindingClient{objects: bindings},
-						TeardownRetirementActive,
-					); err != nil {
-						t.Fatalf("pair %d %s after %s: %v", index, pair.Original.Name, step.name, err)
-					}
-				}
-			}
-		})
-	}
-}
-
-func TestTeardownRetirementParentV1UpgradeAndFreshInstallStates(t *testing.T) {
-	t.Parallel()
-
-	fresh := newTeardownRetirementTestInventory(t, false)
-	policies, bindings := fresh.baseline()
-	if _, err := fresh.guard.PreflightPairsForPhase(
-		context.Background(),
-		&rolloutPolicyClient{objects: policies},
-		&rolloutBindingClient{objects: bindings},
-		TeardownRetirementActive,
-	); err != nil {
-		t.Fatalf("fresh install without retained parent v1 pairs: %v", err)
-	}
-	for _, name := range []string{
-		legacyParentHookJobOriginGuardPolicyName(fresh.guard.rollout.ReleaseNamespace, fresh.guard.rollout.ReleaseName),
-		legacyParentHookPodOriginGuardPolicyName(fresh.guard.rollout.ReleaseNamespace, fresh.guard.rollout.ReleaseName),
-	} {
-		if policies[name] != nil || bindings[name] != nil {
-			t.Fatalf("fresh install baseline unexpectedly contains parent v1 pair %s", name)
+	inventory := newTeardownRetirementTestInventory(t)
+	for index, pair := range inventory.pairs {
+		steps := []struct {
+			name            string
+			policy, binding teardownRetirementObjectForm
+		}{
+			{name: "baseline", policy: teardownRetirementObjectOriginal, binding: teardownRetirementObjectOriginal},
+			{name: "policy deleted", policy: teardownRetirementObjectAbsent, binding: teardownRetirementObjectOriginal},
+			{name: "policy created", policy: teardownRetirementObjectRetired, binding: teardownRetirementObjectOriginal},
+			{name: "binding deleted", policy: teardownRetirementObjectRetired, binding: teardownRetirementObjectAbsent},
+			{name: "binding created", policy: teardownRetirementObjectRetired, binding: teardownRetirementObjectRetired},
+			{name: "replay policy deleted", policy: teardownRetirementObjectAbsent, binding: teardownRetirementObjectRetired},
+			{name: "success cleanup complete", policy: teardownRetirementObjectAbsent, binding: teardownRetirementObjectAbsent},
 		}
-	}
-
-	upgrade := newTeardownRetirementTestInventory(t, true)
-	policies, bindings = upgrade.baseline()
-	if _, err := upgrade.guard.PreflightPairsForPhase(
-		context.Background(),
-		&rolloutPolicyClient{objects: policies},
-		&rolloutBindingClient{objects: bindings},
-		TeardownRetirementActive,
-	); err != nil {
-		t.Fatalf("upgrade from exact retained parent v1 pairs: %v", err)
-	}
-	legacyJobName := legacyParentHookJobOriginGuardPolicyName(upgrade.guard.rollout.ReleaseNamespace, upgrade.guard.rollout.ReleaseName)
-	changed := policies[legacyJobName].DeepCopy()
-	changed.Spec.Validations[0].Expression = "true"
-	policies[legacyJobName] = changed
-	if _, err := upgrade.guard.PreflightPairsForPhase(
-		context.Background(),
-		&rolloutPolicyClient{objects: policies},
-		&rolloutBindingClient{objects: bindings},
-		TeardownRetirementActive,
-	); err == nil {
-		t.Fatal("drifted retained parent v1 policy was accepted")
+		if !inventory.originPresent(pair) {
+			steps = slices.Delete(steps, 0, 3)
+		}
+		for _, step := range steps {
+			policies, bindings := inventory.baseline()
+			for previous := 0; previous < index; previous++ {
+				inventory.set(policies, bindings, inventory.pairs[previous], teardownRetirementObjectRetired, teardownRetirementObjectRetired)
+			}
+			inventory.set(policies, bindings, pair, step.policy, step.binding)
+			if _, err := inventory.guard.PreflightPairsForPhase(
+				context.Background(),
+				&rolloutPolicyClient{objects: policies},
+				&rolloutBindingClient{objects: bindings},
+				TeardownRetirementActive,
+			); err != nil {
+				t.Fatalf("pair %d %s after %s: %v", index, pair.Original.Name, step.name, err)
+			}
+		}
 	}
 }
 
 func TestTeardownRetirementActivePreflightIsClosedUnderRepeatedRetries(t *testing.T) {
 	t.Parallel()
 
-	inventory := newTeardownRetirementTestInventory(t, true)
-	frontier := -1
-	for index := len(inventory.pairs) / 2; index < len(inventory.pairs); index++ {
-		if inventory.pairs[index].Original.OptionalGroup == "" {
-			frontier = index
-			break
-		}
-	}
+	inventory := newTeardownRetirementTestInventory(t)
+	frontier := len(inventory.pairs) / 2
 	if frontier < 4 {
 		t.Fatal("test inventory has no useful mandatory frontier")
 	}
@@ -575,16 +517,7 @@ func TestTeardownRetirementActivePreflightIsClosedUnderRepeatedRetries(t *testin
 func TestTeardownRetirementActivePreflightRejectsForeignAndUnreachableStates(t *testing.T) {
 	t.Parallel()
 
-	inventory := newTeardownRetirementTestInventory(t, true)
-	legacy := make([]int, 0, 2)
-	for index, pair := range inventory.pairs {
-		if pair.Original.OptionalGroup != "" {
-			legacy = append(legacy, index)
-		}
-	}
-	if len(legacy) < 2 {
-		t.Fatal("test inventory has fewer than two optional legacy pairs")
-	}
+	inventory := newTeardownRetirementTestInventory(t)
 	tests := []struct {
 		name    string
 		arrange func(map[string]*admissionregistrationv1.ValidatingAdmissionPolicy, map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding)
@@ -597,9 +530,6 @@ func TestTeardownRetirementActivePreflightRejectsForeignAndUnreachableStates(t *
 		}},
 		{name: "progress after untouched pair", arrange: func(policies map[string]*admissionregistrationv1.ValidatingAdmissionPolicy, bindings map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding) {
 			inventory.set(policies, bindings, inventory.pairs[1], teardownRetirementObjectRetired, teardownRetirementObjectOriginal)
-		}},
-		{name: "inconsistent optional origin", arrange: func(policies map[string]*admissionregistrationv1.ValidatingAdmissionPolicy, bindings map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding) {
-			inventory.set(policies, bindings, inventory.pairs[legacy[1]], teardownRetirementObjectAbsent, teardownRetirementObjectAbsent)
 		}},
 		{name: "foreign policy", arrange: func(policies map[string]*admissionregistrationv1.ValidatingAdmissionPolicy, _ map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding) {
 			changed := policies[inventory.pairs[0].Original.Name].DeepCopy()
@@ -628,7 +558,7 @@ func TestTeardownRetirementActivePreflightRejectsForeignAndUnreachableStates(t *
 func TestTeardownRetirementTerminalPreflightNeverReopensAuthority(t *testing.T) {
 	t.Parallel()
 
-	inventory := newTeardownRetirementTestInventory(t, true)
+	inventory := newTeardownRetirementTestInventory(t)
 	nonAuthoritative := [][2]teardownRetirementObjectForm{
 		{teardownRetirementObjectRetired, teardownRetirementObjectRetired},
 		{teardownRetirementObjectRetired, teardownRetirementObjectAbsent},
@@ -996,21 +926,12 @@ type teardownRetirementTestInventory struct {
 	originalBindings map[string]*admissionregistrationv1.ValidatingAdmissionPolicyBinding
 }
 
-func newTeardownRetirementTestInventory(t *testing.T, legacyPresent bool) teardownRetirementTestInventory {
+func newTeardownRetirementTestInventory(t *testing.T) teardownRetirementTestInventory {
 	t.Helper()
 	fixture := newReleaseTeardownFixture(t)
-	if legacyPresent {
-		fixture = newReleaseTeardownFixtureWithLegacyControllerGuards(t)
-	}
 	rollout := fixture.guard
 	policyClient := fixture.policies
 	bindingClient := fixture.bindings
-	if legacyPresent {
-		for _, entry := range NewParentWorkloadGuard(rollout).legacyOriginEntries() {
-			policyClient.objects[entry.name] = entry.policy.DeepCopy()
-			bindingClient.objects[entry.name] = entry.binding.DeepCopy()
-		}
-	}
 	guard := NewTeardownRetirementGuard(rollout)
 	pairs, err := guard.RetirementPairs()
 	if err != nil {
@@ -1022,10 +943,7 @@ func newTeardownRetirementTestInventory(t *testing.T, legacyPresent bool) teardo
 		policy := policyClient.objects[pair.Original.Name]
 		binding := bindingClient.objects[pair.Original.Name]
 		if policy == nil || binding == nil {
-			if pair.Original.OptionalGroup == "" || legacyPresent {
-				t.Fatalf("original pair %s is missing from the test fixture", pair.Original.Name)
-			}
-			continue
+			t.Fatalf("original pair %s is missing from the test fixture", pair.Original.Name)
 		}
 		if err := pair.Original.VerifyPolicy(policy); err != nil {
 			t.Fatalf("fixture policy %s: %v", pair.Original.Name, err)

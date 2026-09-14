@@ -450,77 +450,6 @@ func TestParentHookPodMainUpdateCannotEraseProtectionBoundary(t *testing.T) {
 	t.Fatal("stable Pod guard has no tracking-finalizer-only main UPDATE validation")
 }
 
-func TestLegacyParentOriginContractsRemainFrozenAndCoexistWithImageCheck(t *testing.T) {
-	t.Parallel()
-
-	guard := NewParentWorkloadGuard(runtimePodGuardFixture())
-	hookPattern, teardownPattern := guard.hookServiceAccountPatterns()
-	legacyJob := guard.legacyHookJobOriginPolicy()
-	legacyPod := guard.legacyHookPodOriginPolicy()
-	if legacyJob.Name != legacyParentHookJobOriginGuardPolicyName(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName) ||
-		legacyPod.Name != legacyParentHookPodOriginGuardPolicyName(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName) {
-		t.Fatal("legacy parent-origin names differ from the frozen v1 identities")
-	}
-	for _, entry := range guard.legacyOriginEntries() {
-		if entry.policy.Annotations["helm.sh/resource-policy"] != "keep" || entry.binding.Annotations["helm.sh/resource-policy"] != "keep" ||
-			entry.policy.Annotations["helm.sh/hook"] != "pre-install,pre-upgrade" || entry.binding.Annotations["helm.sh/hook"] != "pre-install,pre-upgrade" {
-			t.Fatalf("legacy parent-origin pair %s no longer proves Helm retention across upgrade", entry.name)
-		}
-	}
-	if len(legacyJob.Spec.MatchConstraints.ResourceRules) != 1 ||
-		!reflect.DeepEqual(legacyJob.Spec.MatchConstraints.ResourceRules[0].Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update}) ||
-		!reflect.DeepEqual(legacyJob.Spec.MatchConstraints.ResourceRules[0].Resources, []string{"jobs"}) ||
-		len(legacyJob.Spec.Variables) != 0 || len(legacyJob.Spec.Validations) != 3 {
-		t.Fatalf("legacy Job origin contract drifted: %#v", legacyJob.Spec)
-	}
-	wantJobMatch := fmt.Sprintf(
-		`request.namespace == %q && ((has(dyn(object).spec.template.spec.serviceAccountName) && (dyn(object).spec.template.spec.serviceAccountName.matches(%q) || dyn(object).spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(dyn(oldObject).spec.template.spec.serviceAccountName) && (dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q) || dyn(oldObject).spec.template.spec.serviceAccountName.matches(%q))))`,
-		guard.rollout.ReleaseNamespace, hookPattern, teardownPattern, hookPattern, teardownPattern,
-	)
-	if len(legacyJob.Spec.MatchConditions) != 1 || legacyJob.Spec.MatchConditions[0].Expression != wantJobMatch ||
-		legacyJob.Spec.Validations[0].Expression != `!has(request.subResource) || request.subResource == ""` ||
-		legacyJob.Spec.Validations[2].Expression != parentHookAdmissionAuthorityExpression(NamespaceDeletionGuardPolicyName(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName)) {
-		t.Fatal("legacy Job origin CEL differs from the frozen v1 contract")
-	}
-	if len(legacyPod.Spec.MatchConstraints.ResourceRules) != 1 ||
-		!reflect.DeepEqual(legacyPod.Spec.MatchConstraints.ResourceRules[0].Operations, []admissionregistrationv1.OperationType{admissionregistrationv1.Create}) ||
-		!reflect.DeepEqual(legacyPod.Spec.MatchConstraints.ResourceRules[0].Resources, []string{"pods"}) ||
-		len(legacyPod.Spec.Variables) != 1 || legacyPod.Spec.Variables[0].Name != "owner" || len(legacyPod.Spec.Validations) != 7 {
-		t.Fatalf("legacy Pod origin contract drifted: %#v", legacyPod.Spec)
-	}
-	wantPodMatch := fmt.Sprintf(`request.namespace == %q && has(dyn(object).spec.serviceAccountName) && (dyn(object).spec.serviceAccountName.matches(%q) || dyn(object).spec.serviceAccountName.matches(%q))`, guard.rollout.ReleaseNamespace, hookPattern, teardownPattern)
-	if len(legacyPod.Spec.MatchConditions) != 1 || legacyPod.Spec.MatchConditions[0].Expression != wantPodMatch ||
-		legacyPod.Spec.Validations[1].Expression != `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]` ||
-		legacyPod.Spec.Validations[6].Expression != generatedPodNameValidationExpression("variables.owner.name") {
-		t.Fatal("legacy Pod origin CEL differs from the frozen v1 contract")
-	}
-
-	imageCheckJob := map[string]any{"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"automountServiceAccountToken": false}}}}
-	jobRequest := map[string]any{
-		"namespace": guard.rollout.ReleaseNamespace,
-		"operation": "CREATE",
-		"name":      guard.hookImageCheckJobName(),
-		"resource":  map[string]any{"group": "batch", "version": "v1", "resource": "jobs"},
-	}
-	if got := evaluateRolloutCEL(t, legacyJob.Spec.MatchConditions[0].Expression, map[string]any{"request": jobRequest, "object": imageCheckJob, "oldObject": nil}, nil); got != false {
-		t.Fatalf("legacy v1 Job origin unexpectedly matches credentialless image-check: %v", got)
-	}
-	currentJob := stripParentAdmissionConvergenceDependencyProbe(t, guard.hookJobOriginPolicy())
-	if got := evaluateRolloutCEL(t, currentJob.Spec.MatchConditions[0].Expression, map[string]any{"request": jobRequest, "object": imageCheckJob, "oldObject": nil}, nil); got != true {
-		t.Fatalf("v2 Job origin does not match credentialless image-check: %v", got)
-	}
-
-	imageCheckPod := parentHookImageCheckPod(guard)
-	podRequest := map[string]any{"namespace": guard.rollout.ReleaseNamespace, "operation": "CREATE"}
-	if got := evaluateRolloutCEL(t, legacyPod.Spec.MatchConditions[0].Expression, map[string]any{"request": podRequest, "object": imageCheckPod, "oldObject": nil}, nil); got != false {
-		t.Fatalf("legacy v1 Pod origin unexpectedly matches credentialless image-check Pod: %v", got)
-	}
-	currentPod := stripParentAdmissionConvergenceDependencyProbe(t, guard.hookPodOriginPolicy())
-	if got := evaluateRolloutCEL(t, currentPod.Spec.MatchConditions[0].Expression, map[string]any{"request": podRequest, "object": imageCheckPod, "oldObject": nil}, nil); got != true {
-		t.Fatalf("v2 Pod origin does not match credentialless image-check Pod: %v", got)
-	}
-}
-
 func parentHookImageCheckPod(guard *ParentWorkloadGuard) map[string]any {
 	jobName := guard.hookImageCheckJobName()
 	return map[string]any{
@@ -1340,11 +1269,6 @@ func TestRenderedParentWorkloadGuardsMatchCompiledContracts(t *testing.T) {
 		}
 		if err := entry.verifyBinding(bindings[entry.name]); err != nil {
 			t.Fatalf("rendered %s binding: %v", entry.description, err)
-		}
-	}
-	for _, legacy := range guard.legacyOriginEntries() {
-		if policies[legacy.name] != nil || bindings[legacy.name] != nil {
-			t.Fatalf("fresh chart unexpectedly renders legacy v1 parent-origin pair %s", legacy.name)
 		}
 	}
 	weights := map[string][2]string{

@@ -606,7 +606,7 @@ would leave them unguarded.
 {{- $oldMarkerShape := include "ptah-operator.teardownRetirementMarkerShape" (merge (dict "object" "oldObject") $markerContext) -}}
 {{- $fenceAFieldManager := printf "ptah-teardown-v1-%s" (printf "1\n%s\n%s" $fenceA $attempt | sha256sum) -}}
 {{- $fenceBFieldManager := printf "ptah-teardown-v1-%s" (printf "1\n%s\n%s" $fenceB $attempt | sha256sum) -}}
-{{- $legacyDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
 {{- $guardNames := list
       (include "ptah-operator.releaseActivationGuardPolicyName" .)
       (include "ptah-operator.rolloutGuardPolicyName" .)
@@ -618,20 +618,12 @@ would leave them unguarded.
       (include "ptah-operator.parentHookJobOriginGuardPolicyName" .)
       (include "ptah-operator.parentHookPodOriginGuardPolicyName" .)
       (include "ptah-operator.parentHookJobContractPolicyName" .)
-      (printf "ptah-operator-hook-parent-origin-guard-v1-%s" $legacyDigest)
-      (printf "ptah-operator-hook-pod-origin-guard-v1-%s" $legacyDigest)
-      (printf "ptah-operator-service-account-object-guard-v1-%s" $legacyDigest)
+      (printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest)
       (include "ptah-operator.serviceAccountOriginGuardPolicyName" .)
       (include "ptah-operator.controllerWriteGuardPolicyName" .)
       (include "ptah-operator.controllerJobWriteGuardPolicyName" .)
       (include "ptah-operator.controllerChunkWriteGuardPolicyName" .)
       (include "ptah-operator.controllerPlanWriteGuardPolicyName" .)
-      (printf "ptah-operator-controller-write-guard-v1-%s" $legacyDigest)
-      (printf "ptah-operator-job-write-guard-v1-%s" $legacyDigest)
-      (printf "ptah-operator-chunk-write-guard-v1-%s" $legacyDigest)
-      (printf "ptah-operator-plan-write-guard-v1-%s" $legacyDigest)
-      (printf "ptah-operator-service-account-origin-guard-v1-%s" $legacyDigest)
-      (printf "ptah-operator-runtime-parent-guard-v1-%s" $legacyDigest)
       (include "ptah-operator.certificateMutatingWriteGuardPolicyName" .)
       (include "ptah-operator.certificateValidatingWriteGuardPolicyName" .)
       (include "ptah-operator.namespaceDeletionGuardPolicyName" .)

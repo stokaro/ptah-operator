@@ -92,13 +92,6 @@
 {{- $currentCount = add1 $currentCount -}}
 {{- end -}}
 {{- end -}}
-{{- $legacyCount := 0 -}}
-{{- $legacyOriginalCount := 0 -}}
-{{- range .legacy -}}
-{{- if .object -}}
-{{- $legacyCount = add1 $legacyCount -}}
-{{- end -}}
-{{- end -}}
 {{- if and (ne $currentCount 0) (ne $currentCount (len .current)) -}}
 {{- fail "retained v2 parent-origin boundary is sparse; refusing unsafe partial repair" -}}
 {{- end -}}
@@ -138,55 +131,6 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- range $entry := .legacy -}}
-{{- with $entry.object -}}
-{{- $annotations := default (dict) .metadata.annotations -}}
-{{- $labels := default (dict) .metadata.labels -}}
-{{- $isOriginal := and
-      (eq .apiVersion "admissionregistration.k8s.io/v1")
-      (eq .kind $entry.kind)
-      (eq .metadata.name $entry.name)
-      (eq (default "" .metadata.namespace) "")
-      (eq (len $annotations) 6)
-      (eq (default "" (index $annotations "helm.sh/hook")) "pre-install,pre-upgrade")
-      (eq (default "" (index $annotations "helm.sh/hook-weight")) $entry.weight)
-      (eq (default "" (index $annotations "helm.sh/resource-policy")) "keep")
-      (eq (default "" (index $annotations "operator.ptah.run/rollout-guard-version")) "1")
-      (eq (default "" (index $annotations "operator.ptah.run/release-name")) $.root.Release.Name)
-      (eq (default "" (index $annotations "operator.ptah.run/release-namespace")) $.root.Release.Namespace)
-      (eq (len $labels) 3)
-      (eq (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
-      (eq (default "" (index $labels "app.kubernetes.io/instance")) $.root.Release.Name)
-      (eq (default "" (index $labels "app.kubernetes.io/component")) "parent-workload-guard")
-      (eq (len (default (list) .metadata.ownerReferences)) 0)
-      (eq (len (default (list) .metadata.finalizers)) 0)
-      (deepEqual (default (dict) .spec) $entry.spec) -}}
-{{- $isRetired := and
-      (eq .apiVersion "admissionregistration.k8s.io/v1")
-      (eq .kind $entry.kind)
-      (eq .metadata.name $entry.name)
-      (eq (default "" .metadata.namespace) "")
-      (eq (len $annotations) 6)
-      (eq (default "" (index $annotations "helm.sh/hook")) "post-upgrade")
-      (eq (default "" (index $annotations "helm.sh/hook-weight")) $entry.retiredWeight)
-      (eq (default "" (index $annotations "helm.sh/hook-delete-policy")) "before-hook-creation,hook-succeeded")
-      (eq (default "" (index $annotations "operator.ptah.run/rollout-guard-version")) "1")
-      (eq (default "" (index $annotations "operator.ptah.run/release-name")) $.root.Release.Name)
-      (eq (default "" (index $annotations "operator.ptah.run/release-namespace")) $.root.Release.Namespace)
-      (eq (len $labels) 3)
-      (eq (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
-      (eq (default "" (index $labels "app.kubernetes.io/instance")) $.root.Release.Name)
-      (eq (default "" (index $labels "app.kubernetes.io/component")) "parent-workload-guard-retirement")
-      (eq (len (default (list) .metadata.ownerReferences)) 0)
-      (eq (len (default (list) .metadata.finalizers)) 0)
-      (deepEqual (default (dict) .spec) $entry.retiredSpec) -}}
-{{- if $isOriginal -}}
-{{- $legacyOriginalCount = add1 $legacyOriginalCount -}}
-{{- else if not $isRetired -}}
-{{- fail (printf "retained %s %s differs from every crash-reachable v1 parent-origin state" $entry.kind $entry.name) -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
 {{- $markerPresent := not (empty .marker) -}}
 {{- if $markerPresent -}}
 {{- $marker := .marker -}}
@@ -220,9 +164,6 @@
 {{- end -}}
 {{- end -}}
 {{- if .root.Release.IsInstall -}}
-{{- if ne $legacyCount 0 -}}
-{{- fail "install unexpectedly found a retained v1 parent-origin boundary" -}}
-{{- end -}}
 {{- if $markerPresent -}}
 {{- if ne $currentCount (len .current) -}}
 {{- fail "readiness marker exists without the complete exact v2 parent-origin boundary" -}}
@@ -231,17 +172,12 @@
 {{- fail "first-install retry found v2 parent-origin objects without exact bootstrap activation evidence" -}}
 {{- end -}}
 {{- else if .root.Release.IsUpgrade -}}
-{{- if $markerPresent -}}
-{{- if ne $currentCount (len .current) -}}
-{{- fail "v2-aware upgrade is missing its complete exact parent-origin boundary" -}}
-{{- end -}}
-{{- else if eq $legacyCount 0 -}}
-{{- /* Neither the v2 readiness marker nor the v1 parent-origin boundary: the
-      release being upgraded carries no Ptah identity, and the operator does
-      not adopt one. */ -}}
-{{- fail "upgrade requires a predecessor release that carries Ptah identity metadata: neither the v2 parent-origin readiness marker nor the v1 parent-origin boundary exists" -}}
-{{- else if or (ne $legacyOriginalCount (len .legacy)) (and (ne $currentCount 0) (ne $currentCount (len .current))) -}}
-{{- fail "first v2 upgrade requires the complete exact v1 predecessor and no sparse v2 repair" -}}
+{{- if not $markerPresent -}}
+{{- /* The release being upgraded carries no Ptah identity, and the operator
+      does not adopt one. */ -}}
+{{- fail "upgrade requires a predecessor release that carries Ptah identity metadata: the parent-origin readiness marker does not exist" -}}
+{{- else if ne $currentCount (len .current) -}}
+{{- fail "upgrade is missing its complete exact parent-origin boundary" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -527,44 +463,11 @@
 {{- $originBindingSpec := dict "policyName" "" "validationActions" (list "Deny") -}}
 
 {{- $stableDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
-{{- $legacyHookOriginName := printf "ptah-operator-hook-parent-origin-guard-v1-%s" $stableDigest -}}
-{{- $legacyHookPodOriginName := printf "ptah-operator-hook-pod-origin-guard-v1-%s" $stableDigest -}}
 {{- /* The v1 hook-origin guards below are the objects the last managed
       release created, frozen: they must read as that chart emitted them, not
       as today's helpers would. They deliberately keep typed field access
       (object.spec, not dyn(object).spec), and the render fixture pins them
       against the exact managed revision. */ -}}
-{{- $legacyHookOriginSpec := dict
-      "failurePolicy" "Fail"
-      "matchConstraints" (dict "matchPolicy" "Exact" "namespaceSelector" (dict) "objectSelector" (dict) "resourceRules" (list
-        (dict "apiGroups" (list "batch") "apiVersions" (list "v1") "operations" (list "CREATE" "UPDATE") "resources" (list "jobs") "scope" "Namespaced")))
-      "matchConditions" (list (dict "name" "release-hook-service-account-pattern" "expression" (printf `request.namespace == %q && ((has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))) || (request.operation == "UPDATE" && has(oldObject.spec.template.spec.serviceAccountName) && (oldObject.spec.template.spec.serviceAccountName.matches(%q) || oldObject.spec.template.spec.serviceAccountName.matches(%q))))` .Release.Namespace $hookPattern $teardownPattern $hookPattern $teardownPattern)))
-      "validations" (list
-        (dict "expression" `!has(request.subResource) || request.subResource == ""` "message" $hookOriginMessage)
-        (dict "expression" (printf `has(object.spec.template.spec.serviceAccountName) && (object.spec.template.spec.serviceAccountName.matches(%q) || object.spec.template.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern) "message" $hookOriginMessage)
-        (dict "expression" $hookAuthority "message" $hookOriginMessage)) -}}
-{{- $legacyHookPodOriginSpec := dict
-      "failurePolicy" "Fail"
-      "matchConstraints" (dict "matchPolicy" "Exact" "namespaceSelector" (dict) "objectSelector" (dict) "resourceRules" (list
-        (dict "apiGroups" (list "") "apiVersions" (list "v1") "operations" (list "CREATE") "resources" (list "pods") "scope" "Namespaced")))
-      "matchConditions" (list (dict "name" "release-hook-service-account-pattern" "expression" (printf `request.namespace == %q && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` .Release.Namespace $hookPattern $teardownPattern)))
-      "variables" (list (dict "name" "owner" "expression" `object.metadata.ownerReferences[0]`))
-      "validations" (list
-        (dict "expression" `!has(request.subResource) || request.subResource == ""` "message" $hookPodOriginMessage)
-        (dict "expression" `request.userInfo.username in ["system:kube-controller-manager", "system:serviceaccount:kube-system:job-controller"]` "message" $hookPodOriginMessage)
-        (dict "expression" (printf `object.metadata.namespace == request.namespace && has(object.spec.serviceAccountName) && (object.spec.serviceAccountName.matches(%q) || object.spec.serviceAccountName.matches(%q))` $hookPattern $teardownPattern) "message" $hookPodOriginMessage)
-        (dict "expression" `has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1` "message" $hookPodOriginMessage)
-        (dict "expression" `variables.owner.apiVersion == "batch/v1" && variables.owner.kind == "Job" && has(variables.owner.name) && variables.owner.name != "" && has(variables.owner.uid) && variables.owner.uid != "" && has(variables.owner.controller) && variables.owner.controller && has(variables.owner.blockOwnerDeletion) && variables.owner.blockOwnerDeletion` "message" $hookPodOriginMessage)
-        (dict "expression" `has(object.metadata.labels) && ["batch.kubernetes.io/job-name", "batch.kubernetes.io/controller-uid"].all(key, key in object.metadata.labels) && object.metadata.labels["batch.kubernetes.io/job-name"] == variables.owner.name && object.metadata.labels["batch.kubernetes.io/controller-uid"] == variables.owner.uid` "message" $hookPodOriginMessage)
-        (dict "expression" `has(object.metadata.generateName) && object.metadata.generateName == variables.owner.name + "-" && object.metadata.name.size() == (object.metadata.generateName.size() > 58 ? object.metadata.generateName.substring(0, 58) : object.metadata.generateName).size() + 5 && object.metadata.name.startsWith((object.metadata.generateName.size() > 58 ? object.metadata.generateName.substring(0, 58) : object.metadata.generateName)) && object.metadata.name.substring((object.metadata.generateName.size() > 58 ? object.metadata.generateName.substring(0, 58) : object.metadata.generateName).size()).matches("^[a-z0-9]{5}$")` "message" $hookPodOriginMessage)) -}}
-{{- $retiredOriginPolicySpec := dict
-      "failurePolicy" "Fail"
-      "matchConstraints" (dict "matchPolicy" "Exact" "namespaceSelector" (dict) "objectSelector" (dict) "resourceRules" (list
-        (dict "apiGroups" (list "") "apiVersions" (list "v1") "operations" (list "UPDATE") "resources" (list "configmaps") "scope" "Namespaced")))
-      "matchConditions" (list (dict "name" "retired-parent-origin-marker" "expression" (printf `request.namespace == %q && request.name == %q` .Release.Namespace $parentOriginReadyName)))
-      "validations" (list (dict "expression" `true` "message" "Retired parent-origin boundary is inert")) -}}
-{{- $legacyHookOriginBindingSpec := dict "policyName" $legacyHookOriginName "validationActions" (list "Deny") -}}
-{{- $legacyHookPodOriginBindingSpec := dict "policyName" $legacyHookPodOriginName "validationActions" (list "Deny") -}}
 
 {{- $replicaSetPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $replicaSetName -}}
 {{- $replicaSetBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $replicaSetName -}}
@@ -574,10 +477,6 @@
 {{- $hookPodOriginBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $hookPodOriginName -}}
 {{- $hookContractPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $hookContractName -}}
 {{- $hookContractBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $hookContractName -}}
-{{- $legacyHookOriginPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $legacyHookOriginName -}}
-{{- $legacyHookOriginBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $legacyHookOriginName -}}
-{{- $legacyHookPodOriginPolicy := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicy" "" $legacyHookPodOriginName -}}
-{{- $legacyHookPodOriginBinding := lookup "admissionregistration.k8s.io/v1" "ValidatingAdmissionPolicyBinding" "" $legacyHookPodOriginName -}}
 {{- $parentOriginReadyMarker := lookup "v1" "ConfigMap" .Release.Namespace $parentOriginReadyName -}}
 {{- $releaseNamespaceObject := lookup "v1" "Namespace" "" .Release.Namespace -}}
 {{- $activation := lookup "v1" "ConfigMap" .Release.Namespace "ptah-operator-release-activation" -}}
@@ -628,12 +527,7 @@
         (dict "kind" "ValidatingAdmissionPolicy" "object" $hookOriginPolicy "name" $hookOriginName "weight" "-137" "spec" $hookOriginSpec)
         (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $hookOriginBinding "name" $hookOriginName "weight" "-136" "spec" (dict "policyName" $hookOriginName "validationActions" (list "Deny")))
         (dict "kind" "ValidatingAdmissionPolicy" "object" $hookPodOriginPolicy "name" $hookPodOriginName "weight" "-135" "spec" $hookPodSpec)
-        (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $hookPodOriginBinding "name" $hookPodOriginName "weight" "-134" "spec" (dict "policyName" $hookPodOriginName "validationActions" (list "Deny"))))
-      "legacy" (list
-        (dict "kind" "ValidatingAdmissionPolicy" "object" $legacyHookOriginPolicy "name" $legacyHookOriginName "weight" "-137" "spec" $legacyHookOriginSpec "retiredWeight" "10" "retiredSpec" $retiredOriginPolicySpec)
-        (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $legacyHookOriginBinding "name" $legacyHookOriginName "weight" "-136" "spec" $legacyHookOriginBindingSpec "retiredWeight" "9" "retiredSpec" $legacyHookOriginBindingSpec)
-        (dict "kind" "ValidatingAdmissionPolicy" "object" $legacyHookPodOriginPolicy "name" $legacyHookPodOriginName "weight" "-135" "spec" $legacyHookPodOriginSpec "retiredWeight" "12" "retiredSpec" $retiredOriginPolicySpec)
-        (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $legacyHookPodOriginBinding "name" $legacyHookPodOriginName "weight" "-134" "spec" $legacyHookPodOriginBindingSpec "retiredWeight" "11" "retiredSpec" $legacyHookPodOriginBindingSpec))) -}}
+        (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $hookPodOriginBinding "name" $hookPodOriginName "weight" "-134" "spec" (dict "policyName" $hookPodOriginName "validationActions" (list "Deny"))))) -}}
 {{- range $entry := list
       (dict "kind" "ValidatingAdmissionPolicy" "object" $replicaSetPolicy "name" $replicaSetName "candidate" false)
       (dict "kind" "ValidatingAdmissionPolicyBinding" "object" $replicaSetBinding "name" $replicaSetName "candidate" false)
@@ -1024,80 +918,4 @@ immutable: true
 data:
 {{- range $key, $value := $parentOriginReadyData }}
   {{ $key }}: {{ $value | quote }}
-{{- end }}
-{{- if and .Release.IsUpgrade (or $legacyHookOriginPolicy $legacyHookOriginBinding $legacyHookPodOriginPolicy $legacyHookPodOriginBinding) }}
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: {{ $legacyHookOriginName }}
-  annotations:
-    helm.sh/hook: post-upgrade
-    helm.sh/hook-weight: "9"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
-    operator.ptah.run/rollout-guard-version: "1"
-    operator.ptah.run/release-name: {{ .Release.Name | quote }}
-    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
-  labels:
-    app.kubernetes.io/managed-by: ptah-operator
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: parent-workload-guard-retirement
-spec:
-  policyName: {{ $legacyHookOriginName }}
-  validationActions: [Deny]
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: {{ $legacyHookOriginName }}
-  annotations:
-    helm.sh/hook: post-upgrade
-    helm.sh/hook-weight: "10"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
-    operator.ptah.run/rollout-guard-version: "1"
-    operator.ptah.run/release-name: {{ .Release.Name | quote }}
-    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
-  labels:
-    app.kubernetes.io/managed-by: ptah-operator
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: parent-workload-guard-retirement
-spec:
-{{ toYaml $retiredOriginPolicySpec | indent 2 }}
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicyBinding
-metadata:
-  name: {{ $legacyHookPodOriginName }}
-  annotations:
-    helm.sh/hook: post-upgrade
-    helm.sh/hook-weight: "11"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
-    operator.ptah.run/rollout-guard-version: "1"
-    operator.ptah.run/release-name: {{ .Release.Name | quote }}
-    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
-  labels:
-    app.kubernetes.io/managed-by: ptah-operator
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: parent-workload-guard-retirement
-spec:
-  policyName: {{ $legacyHookPodOriginName }}
-  validationActions: [Deny]
----
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingAdmissionPolicy
-metadata:
-  name: {{ $legacyHookPodOriginName }}
-  annotations:
-    helm.sh/hook: post-upgrade
-    helm.sh/hook-weight: "12"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
-    operator.ptah.run/rollout-guard-version: "1"
-    operator.ptah.run/release-name: {{ .Release.Name | quote }}
-    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
-  labels:
-    app.kubernetes.io/managed-by: ptah-operator
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: parent-workload-guard-retirement
-spec:
-{{ toYaml $retiredOriginPolicySpec | indent 2 }}
 {{- end }}

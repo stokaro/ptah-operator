@@ -793,24 +793,6 @@ func TestPrivilegeTeardownRejectsForeignBindingsBeforeMutation(t *testing.T) {
 	}
 }
 
-func TestPrivilegeTeardownScopesLegacyControllerGuardAuthorityToFullCleanup(t *testing.T) {
-	fixture := newPrivilegeTeardownFixture(t, true, true)
-	privilegeNames := fixture.teardown.privilegeAdmissionGuardNames()
-	runtimeNames := fixture.teardown.runtimeAdmissionGuardNames()
-	bootstrapNames := fixture.teardown.bootstrapAdmissionGuardNames()
-	for _, name := range legacyControllerGuardNames(fixture.guard.ReleaseNamespace, fixture.guard.ReleaseName) {
-		if !stringSliceContains(privilegeNames, name) {
-			t.Fatalf("full cleanup admission inventory is missing %s", name)
-		}
-		if stringSliceContains(runtimeNames, name) {
-			t.Fatalf("runtime authority unexpectedly includes legacy guard %s", name)
-		}
-		if stringSliceContains(bootstrapNames, name) {
-			t.Fatalf("bootstrap authority unexpectedly includes legacy guard %s", name)
-		}
-	}
-}
-
 func TestPrivilegeTeardownRetainsExternalControllerServiceAccount(t *testing.T) {
 	fixture := newPrivilegeTeardownFixture(t, false, true)
 	fixture.serviceAccounts.objects[fixture.contract.ControllerServiceAccountName] = &corev1.ServiceAccount{

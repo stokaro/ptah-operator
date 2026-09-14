@@ -9,8 +9,8 @@
 {{- $leaseName := include "ptah-operator.certRotationLeaseName" . -}}
 {{- $configurationName := include "ptah-operator.approvalWebhookConfigurationName" . -}}
 {{- $serviceName := include "ptah-operator.webhookServiceName" . -}}
-{{- $legacyParentOriginDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
-{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $legacyParentOriginDigest -}}
+{{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest -}}
 {{- if .Values.certificateRotation.recreateMissingSecret }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
@@ -282,8 +282,6 @@ rules:
       - {{ include "ptah-operator.parentHookJobOriginGuardPolicyName" . }}
       - {{ include "ptah-operator.parentHookJobContractPolicyName" . }}
       - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
-      - {{ printf "ptah-operator-hook-pod-origin-guard-v1-%s" $legacyParentOriginDigest }}
-      - {{ printf "ptah-operator-hook-parent-origin-guard-v1-%s" $legacyParentOriginDigest }}
     verbs: ["get"]
   - apiGroups: ["scheduling.k8s.io"]
     resources: ["priorityclasses"]
