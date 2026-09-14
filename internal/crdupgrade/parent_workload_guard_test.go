@@ -709,7 +709,7 @@ func TestReplicaSetGarbageCollectorCleanupIsFinalizerRemovalOnly(t *testing.T) {
 				"name":       "ptah-controller",
 				"uid":        "deployment-uid",
 			}},
-			"finalizers": []any{"foregroundDeletion", "operator.ptah.dev/protect"},
+			"finalizers": []any{"foregroundDeletion", "operator.ptah.run/protect"},
 		},
 		"spec":   map[string]any{"replicas": int64(0), "selector": map[string]any{"matchLabels": map[string]any{"pod-template-hash": "abc12"}}},
 		"status": map[string]any{"replicas": int64(0)},
@@ -735,10 +735,10 @@ func TestReplicaSetGarbageCollectorCleanupIsFinalizerRemovalOnly(t *testing.T) {
 			object["metadata"].(map[string]any)["finalizers"] = []any{"after.example/finalizer", "before.example/finalizer"}
 		}},
 		{name: "same finalizers", mutate: func(object, _, _ map[string]any) {
-			object["metadata"].(map[string]any)["finalizers"] = []any{"foregroundDeletion", "operator.ptah.dev/protect"}
+			object["metadata"].(map[string]any)["finalizers"] = []any{"foregroundDeletion", "operator.ptah.run/protect"}
 		}},
 		{name: "add finalizer", mutate: func(object, _, _ map[string]any) {
-			object["metadata"].(map[string]any)["finalizers"] = []any{"foregroundDeletion", "operator.ptah.dev/protect", "foreign.example/finalizer"}
+			object["metadata"].(map[string]any)["finalizers"] = []any{"foregroundDeletion", "operator.ptah.run/protect", "foreign.example/finalizer"}
 		}},
 		{name: "replace finalizer", mutate: func(object, _, _ map[string]any) {
 			object["metadata"].(map[string]any)["finalizers"] = []any{"foreign.example/finalizer"}
@@ -798,7 +798,7 @@ func TestReplicaSetGarbageCollectorCleanupIsFinalizerRemovalOnly(t *testing.T) {
 			t.Parallel()
 			oldObject := parentGuardCELClone(t, base)
 			object := parentGuardCELClone(t, oldObject)
-			object["metadata"].(map[string]any)["finalizers"] = []any{"operator.ptah.dev/protect"}
+			object["metadata"].(map[string]any)["finalizers"] = []any{"operator.ptah.run/protect"}
 			request := map[string]any{
 				"operation": "UPDATE",
 				"userInfo":  map[string]any{"username": "system:serviceaccount:kube-system:generic-garbage-collector"},

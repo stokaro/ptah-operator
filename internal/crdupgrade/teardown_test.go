@@ -778,7 +778,7 @@ func newReleaseTeardownFixture(t *testing.T) *releaseTeardownFixture {
 				"helm.sh/hook":                           "pre-install,pre-upgrade",
 				"helm.sh/hook-weight":                    hookIdentityProbeMarkerWeight,
 				"helm.sh/resource-policy":                "keep",
-				"operator.ptah.dev/hook-identity-policy": probePolicyName,
+				"operator.ptah.run/hook-identity-policy": probePolicyName,
 			},
 			Labels: map[string]string{
 				managedByLabel:                rolloutGuardManagedBy,

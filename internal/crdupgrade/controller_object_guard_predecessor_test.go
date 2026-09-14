@@ -229,7 +229,7 @@ func predecessorControllerPlanProbe(t *testing.T) map[string]any {
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: "team-a",
 			Name:      "ptah-plan-111111111111111111111111",
-			Labels:    map[string]string{"operator.ptah.dev/schema": schemaName},
+			Labels:    map[string]string{"operator.ptah.run/schema": schemaName},
 			OwnerReferences: []metav1.OwnerReference{{
 				APIVersion:         operatorv1alpha1.GroupVersion.String(),
 				Kind:               "PtahSchema",

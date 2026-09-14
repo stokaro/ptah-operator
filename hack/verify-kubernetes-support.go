@@ -2371,9 +2371,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("daemon-side task claim create latch", `TASK_CLAIM_CREATE_STARTED=0`),
 		exactSourceLine("task claim ownership verifier implementation", `task_claim_matches_owner() {`),
 		exactSourceLineSequence("task claim exact immutable labels", []string{
-			`.["operator.ptah.dev/e2e-owner"] == $owner and`,
-			`.["operator.ptah.dev/e2e-component"] == "task-claim" and`,
-			`.["operator.ptah.dev/e2e-claim-token"] == $token`,
+			`.["operator.ptah.run/e2e-owner"] == $owner and`,
+			`.["operator.ptah.run/e2e-component"] == "task-claim" and`,
+			`.["operator.ptah.run/e2e-claim-token"] == $token`,
 		}),
 		exactSourceLine("task claim acquisition implementation", `acquire_task_claim() {`),
 		exactSourceLineSequence("task claim cleanup armed before create", []string{
@@ -2382,9 +2382,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		}),
 		exactSourceLineSequence("atomic daemon-side task claim creation", []string{
 			`if ! created_claim=$(docker --context "$DOCKER_CONTEXT" volume create \`,
-			`--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \`,
-			`--label 'operator.ptah.dev/e2e-component=task-claim' \`,
-			`--label "operator.ptah.dev/e2e-claim-token=${TASK_CLAIM_TOKEN}" \`,
+			`--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}" \`,
+			`--label 'operator.ptah.run/e2e-component=task-claim' \`,
+			`--label "operator.ptah.run/e2e-claim-token=${TASK_CLAIM_TOKEN}" \`,
 			`"$TASK_CLAIM_VOLUME"); then`,
 		}),
 		exactSourceLineSequence("task claim post-create ownership latch", []string{
@@ -2397,18 +2397,18 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLineSequence("image-audit exact full-ID labels", []string{
 			`.[0].Id == $id and`,
 			`.[0].Name == $name and`,
-			`.[0].Config.Labels["operator.ptah.dev/e2e-owner"] == $owner and`,
-			`.[0].Config.Labels["operator.ptah.dev/e2e-component"] == "image-audit" and`,
-			`.[0].Config.Labels["operator.ptah.dev/e2e-claim-token"] == $token`,
+			`.[0].Config.Labels["operator.ptah.run/e2e-owner"] == $owner and`,
+			`.[0].Config.Labels["operator.ptah.run/e2e-component"] == "image-audit" and`,
+			`.[0].Config.Labels["operator.ptah.run/e2e-claim-token"] == $token`,
 		}),
 		exactSourceLine("image-audit creation implementation", `create_image_audit_container() {`),
 		exactSourceLine("image-audit cleanup armed before create", `IMAGE_AUDIT_CONTAINER_CREATED=1`),
 		exactSourceLineSequence("image-audit labeled creation", []string{
 			`if ! image_audit_id=$(docker --context "$DOCKER_CONTEXT" create \`,
 			`--name "$IMAGE_AUDIT_CONTAINER" \`,
-			`--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \`,
-			`--label 'operator.ptah.dev/e2e-component=image-audit' \`,
-			`--label "operator.ptah.dev/e2e-claim-token=${TASK_CLAIM_TOKEN}" \`,
+			`--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}" \`,
+			`--label 'operator.ptah.run/e2e-component=image-audit' \`,
+			`--label "operator.ptah.run/e2e-claim-token=${TASK_CLAIM_TOKEN}" \`,
 			`"$image_audit_source"); then`,
 		}),
 		exactSourceLineSequence("image-audit captured full-ID latch", []string{
@@ -2838,7 +2838,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("durable Job archive schema-operation binding", `.schema == $schema and .operation == $operation and`),
 		exactSourceLine("durable Job archive Job identity binding", `.job.uid == $uid and (.job.name | type) == "string" and (.job.name | length) > 0 and`),
 		exactSourceLineSequence("durable Job archive schema-owner manifest binding", []string{
-			`.job.owner.apiVersion == "operator.ptah.dev/v1alpha1" and`,
+			`.job.owner.apiVersion == "operator.ptah.run/v1alpha1" and`,
 			`.job.owner.kind == "PtahSchema" and .job.owner.name == $schema and`,
 			`(.job.owner.uid | type) == "string" and (.job.owner.uid | length) > 0 and`,
 			`($expectedSchemaUID == "" or .job.owner.uid == $expectedSchemaUID) and`,
@@ -2847,21 +2847,21 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("durable Job archive Pod owner binding", `.pod.owner.name == .job.name and .pod.owner.uid == .job.uid and`),
 		exactSourceLine("durable Job archive object digest binding", `.digests.jobSHA256 == $jobDigest and .digests.podSHA256 == $podDigest and`),
 		exactSourceLine("durable Job archive transport digest binding", `.digests.rawLogSHA256 == $logDigest and .digests.resultSHA256 == $resultDigest`),
-		exactSourceLine("durable Job archive Job label operation-ID binding", `.spec.template.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and`),
-		exactSourceLine("durable Job archive Job annotation operation-ID binding", `.spec.template.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and`),
+		exactSourceLine("durable Job archive Job label operation-ID binding", `.spec.template.metadata.labels["operator.ptah.run/operation-id"] == $operationLabel and`),
+		exactSourceLine("durable Job archive Job annotation operation-ID binding", `.spec.template.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and`),
 		exactSourceLineSequence("durable Job archive exact schema ownerReference", []string{
 			`([.metadata.ownerReferences[]? | select(`,
-			`.apiVersion == "operator.ptah.dev/v1alpha1" and .kind == "PtahSchema" and`,
+			`.apiVersion == "operator.ptah.run/v1alpha1" and .kind == "PtahSchema" and`,
 			`.name == $schema and .uid == $schemaUID and .controller == true)] | length) == 1 and`,
 		}),
 		exactSourceLine("durable Job archive Job completion contract", `.spec.podReplacementPolicy == "Failed" and .spec.backoffLimit == 0 and`),
 		exactSourceLineSequence("durable Job archive Pod identity binding", []string{
 			`.metadata.uid == $podUID and .metadata.name == $podName and`,
 			`.metadata.generateName == ($jobName + "-") and`,
-			`.metadata.labels["operator.ptah.dev/schema"] == $schema and`,
-			`.metadata.labels["operator.ptah.dev/operation"] == $operation and`,
-			`.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and`,
-			`.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and`,
+			`.metadata.labels["operator.ptah.run/schema"] == $schema and`,
+			`.metadata.labels["operator.ptah.run/operation"] == $operation and`,
+			`.metadata.labels["operator.ptah.run/operation-id"] == $operationLabel and`,
+			`.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and`,
 		}),
 		exactSourceLineSequence("durable Job archive normalized result binding", []string{
 			`.protocolVersion == 5 and .operation == $operation and`,
@@ -2879,23 +2879,23 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("supplied Job evidence identity validation implementation", `validate_supplied_job_evidence_identity() {`),
 		exactSourceLineSequence("supplied Job evidence exact Job identity binding", []string{
 			`$job.metadata.uid == $jobUID and $job.metadata.name == $jobName and`,
-			`$job.metadata.labels["operator.ptah.dev/schema"] == $schema and`,
-			`$job.metadata.labels["operator.ptah.dev/operation"] == $operation and`,
-			`$job.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and`,
-			`$job.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and`,
+			`$job.metadata.labels["operator.ptah.run/schema"] == $schema and`,
+			`$job.metadata.labels["operator.ptah.run/operation"] == $operation and`,
+			`$job.metadata.labels["operator.ptah.run/operation-id"] == $operationLabel and`,
+			`$job.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and`,
 		}),
 		exactSourceLineSequence("supplied Job evidence exact schema ownerReference", []string{
 			`([$job.metadata.ownerReferences[]? | select(`,
-			`.apiVersion == "operator.ptah.dev/v1alpha1" and .kind == "PtahSchema" and`,
+			`.apiVersion == "operator.ptah.run/v1alpha1" and .kind == "PtahSchema" and`,
 			`.name == $schema and .uid == $schemaUID and .controller == true)] | length) == 1 and`,
 		}),
 		exactSourceLineSequence("supplied Job evidence exact Pod identity binding", []string{
 			`$pod.metadata.uid == $podUID and $pod.metadata.name == $podName and`,
 			`$pod.metadata.generateName == ($jobName + "-") and`,
-			`$pod.metadata.labels["operator.ptah.dev/schema"] == $schema and`,
-			`$pod.metadata.labels["operator.ptah.dev/operation"] == $operation and`,
-			`$pod.metadata.labels["operator.ptah.dev/operation-id"] == $operationLabel and`,
-			`$pod.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and`,
+			`$pod.metadata.labels["operator.ptah.run/schema"] == $schema and`,
+			`$pod.metadata.labels["operator.ptah.run/operation"] == $operation and`,
+			`$pod.metadata.labels["operator.ptah.run/operation-id"] == $operationLabel and`,
+			`$pod.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and`,
 		}),
 		exactSourceLineSequence("supplied Job evidence exact Pod owner binding", []string{
 			`([$pod.metadata.ownerReferences[]? | select(`,
@@ -2922,7 +2922,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`if ! publish_schema_uid=$(jq -er \`,
 			`--arg schema "$publish_schema" '`,
 			`[.metadata.ownerReferences[]? | select(`,
-			`.apiVersion == "operator.ptah.dev/v1alpha1" and .kind == "PtahSchema" and`,
+			`.apiVersion == "operator.ptah.run/v1alpha1" and .kind == "PtahSchema" and`,
 			`.name == $schema and .controller == true and`,
 			`(.uid | type) == "string" and (.uid | length) > 0)] |`,
 		}),
@@ -2950,7 +2950,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		}),
 		exactSourceLineSequence("durable Job archive persisted schema-owner binding", []string{
 			`owner: {`,
-			`apiVersion: "operator.ptah.dev/v1alpha1",`,
+			`apiVersion: "operator.ptah.run/v1alpha1",`,
 			`kind: "PtahSchema",`,
 			`uid: $schemaUID,`,
 			`name: $schema,`,
@@ -3151,9 +3151,9 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("automatic external PostgreSQL archived Apply workload evidence", `cp "$CAPTURED_JOB_EVIDENCE_DIR/job.json" "$automatic_apply_job_file" ||`),
 		exactSourceLine("automatic external PostgreSQL archived Apply Pod evidence", `cp "$CAPTURED_JOB_EVIDENCE_DIR/pod.json" "$automatic_apply_pod_file" ||`),
 		exactSourceLineSequence("automatic external PostgreSQL Apply annotation bindings", []string{
-			`.["operator.ptah.dev/plan-fingerprint"] == $planFingerprint and`,
-			`.["operator.ptah.dev/plan-content-digest"] == $contentDigest and`,
-			`.["operator.ptah.dev/execution-binding-id"] == $executionBinding;`,
+			`.["operator.ptah.run/plan-fingerprint"] == $planFingerprint and`,
+			`.["operator.ptah.run/plan-content-digest"] == $contentDigest and`,
+			`.["operator.ptah.run/execution-binding-id"] == $executionBinding;`,
 		}),
 		exactSourceLine("automatic external PostgreSQL Apply runner image binding", `select(.name == "install-runner" and .image == $runnerImage)] | length) == 1 and`),
 		exactSourceLine("automatic external PostgreSQL Apply executor image binding", `select(.name == "ptah" and .image == $executorImage)] | length) == 1 and`),
@@ -3326,7 +3326,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`grep -F 'wait for release activation guard before persistence' \`,
 					`"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||`,
 					`missing_blocker_evidence="$missing_blocker_evidence activation-phase"`,
-					`grep -F 'late-activation-blocker.operator.ptah.dev' \`,
+					`grep -F 'late-activation-blocker.operator.ptah.run' \`,
 					`"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||`,
 					`missing_blocker_evidence="$missing_blocker_evidence blocker-webhook"`,
 					`grep -F 'service "ptah-operator-e2e-missing-blocker" not found' \`,
@@ -4306,7 +4306,7 @@ const lateActivationReconcileDiagnosticContract = `emit_late_activation_reconcil
 	grep -F 'wait for release activation guard before persistence' \
 		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
 		missing_blocker_evidence="$missing_blocker_evidence activation-phase"
-	grep -F 'late-activation-blocker.operator.ptah.dev' \
+	grep -F 'late-activation-blocker.operator.ptah.run' \
 		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
 		missing_blocker_evidence="$missing_blocker_evidence blocker-webhook"
 	grep -F 'service "ptah-operator-e2e-missing-blocker" not found' \

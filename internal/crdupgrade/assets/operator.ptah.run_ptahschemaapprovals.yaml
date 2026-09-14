@@ -3,34 +3,37 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    operator.ptah.dev/controller-state-version: "1"
-    operator.ptah.dev/crd-schema-version: "3"
-    operator.ptah.dev/crd-schema-digest: "sha256:6a718ab3a24cb4d81ea4a51585cd9beecd45276e9cf724120b8002c4852e03ad"
+    operator.ptah.run/controller-state-version: "1"
+    operator.ptah.run/crd-schema-version: "2"
+    operator.ptah.run/crd-schema-digest: "sha256:f38673e18b068f7c08c50fa5da5aebc642558f2e4b7bfe27f284474364731ba0"
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: ptahmigrationplans.operator.ptah.dev
+  name: ptahschemaapprovals.operator.ptah.run
 spec:
-  group: operator.ptah.dev
+  group: operator.ptah.run
   names:
-    kind: PtahMigrationPlan
-    listKind: PtahMigrationPlanList
-    plural: ptahmigrationplans
+    kind: PtahSchemaApproval
+    listKind: PtahSchemaApprovalList
+    plural: ptahschemaapprovals
     shortNames:
-    - ptahmplan
-    singular: ptahmigrationplan
+    - ptahapprove
+    singular: ptahschemaapproval
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.migrationRef.name
-      name: Migration
+    - jsonPath: .spec.schemaRef.name
+      name: Schema
       type: string
-    - jsonPath: .spec.currentVersion
-      name: From
-      type: integer
-    - jsonPath: .spec.migrations.length()
-      name: Steps
-      type: integer
-    - jsonPath: .status.conditions[?(@.type=='Current')].status
-      name: Current
+    - jsonPath: .spec.planRef.name
+      name: Plan
+      type: string
+    - jsonPath: .spec.approver.username
+      name: Approver
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Accepted')].status
+      name: Accepted
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Stale')].status
+      name: Stale
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -47,13 +50,27 @@ spec:
             type: object
           spec:
             properties:
+              actualStateFingerprint:
+                type: string
+              approvedAt:
+                format: date-time
+                type: string
+              approver:
+                properties:
+                  groups:
+                    items:
+                      type: string
+                    maxItems: 64
+                    type: array
+                  uid:
+                    type: string
+                  username:
+                    type: string
+                required:
+                - username
+                type: object
               artifactDigest:
                 type: string
-              contractVersion:
-                format: int32
-                maximum: 1
-                minimum: 1
-                type: integer
               controllerImage:
                 pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
                 type: string
@@ -68,27 +85,18 @@ spec:
                 type: integer
               coordinationDigest:
                 type: string
-              createdAt:
-                format: date-time
+              desiredStateFingerprint:
                 type: string
-              currentVersion:
-                format: int64
-                minimum: 0
-                type: integer
               executionBindingID:
                 pattern: ^v1-[0-9a-f]{32}$
                 type: string
               executorImage:
                 type: string
-              fingerprint:
-                maxLength: 128
-                minLength: 1
+              mutationRequestUID:
                 type: string
-              historyFingerprint:
-                maxLength: 128
-                minLength: 1
+              planFingerprint:
                 type: string
-              migrationRef:
+              planRef:
                 properties:
                   name:
                     type: string
@@ -98,40 +106,6 @@ spec:
                 - name
                 - uid
                 type: object
-              migrations:
-                items:
-                  properties:
-                    checkpoint:
-                      type: boolean
-                    checksum:
-                      maxLength: 128
-                      minLength: 1
-                      type: string
-                    description:
-                      maxLength: 128
-                      type: string
-                    transactionMode:
-                      enum:
-                      - file
-                      - none
-                      type: string
-                    version:
-                      format: int64
-                      minimum: 1
-                      type: integer
-                    versionKey:
-                      maxLength: 128
-                      type: string
-                  required:
-                  - checksum
-                  - version
-                  type: object
-                maxItems: 256
-                minItems: 1
-                type: array
-                x-kubernetes-list-map-keys:
-                - version
-                x-kubernetes-list-type: map
               policyFingerprint:
                 type: string
               ptahVersion:
@@ -140,8 +114,17 @@ spec:
                 type: string
               runnerProtocolVersion:
                 format: int32
-                minimum: 1
                 type: integer
+              schemaRef:
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
               targetIdentityDigest:
                 type: string
               verificationPolicyDigest:
@@ -149,30 +132,27 @@ spec:
               verificationPolicyUID:
                 type: string
             required:
+            - actualStateFingerprint
+            - approvedAt
+            - approver
             - artifactDigest
-            - contractVersion
-            - controllerImage
-            - controllerRevision
-            - controllerStateVersion
             - coordinationDigest
-            - createdAt
-            - currentVersion
-            - executionBindingID
+            - desiredStateFingerprint
             - executorImage
-            - fingerprint
-            - historyFingerprint
-            - migrationRef
-            - migrations
+            - mutationRequestUID
+            - planFingerprint
+            - planRef
             - policyFingerprint
             - ptahVersion
             - runnerImage
             - runnerProtocolVersion
+            - schemaRef
             - targetIdentityDigest
             - verificationPolicyDigest
             - verificationPolicyUID
             type: object
             x-kubernetes-validations:
-            - message: a plan is immutable; generate a new plan instead
+            - message: an approval is immutable; create a new approval instead
               rule: self == oldSelf
           status:
             properties:
@@ -211,11 +191,7 @@ spec:
                   - status
                   - type
                   type: object
-                maxItems: 16
                 type: array
-                x-kubernetes-list-map-keys:
-                - type
-                x-kubernetes-list-type: map
               observedGeneration:
                 format: int64
                 type: integer

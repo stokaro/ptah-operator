@@ -4,7 +4,7 @@ metadata:
   name: ptah-desired-state-author
   namespace: application
 rules:
-  - apiGroups: ["operator.ptah.dev"]
+  - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemas"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---

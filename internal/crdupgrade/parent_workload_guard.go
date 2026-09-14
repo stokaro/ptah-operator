@@ -26,7 +26,7 @@ const (
 	parentOriginReadyComponent  = "parent-workload-guard-readiness"
 	parentOriginReadyManagedBy  = "Helm"
 
-	parentOriginReadyVersionAnnotation = "operator.ptah.dev/parent-origin-ready-version"
+	parentOriginReadyVersionAnnotation = "operator.ptah.run/parent-origin-ready-version"
 	parentOriginReadyVersion           = "2"
 
 	parentReplicaSetPolicyWeight            = "-139"

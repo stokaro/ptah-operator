@@ -38,8 +38,8 @@ import (
 
 const (
 	defaultCandidateDirectory = "config/crd/bases"
-	schemaVersionAnnotation   = "operator.ptah.dev/crd-schema-version"
-	schemaDigestAnnotation    = "operator.ptah.dev/crd-schema-digest"
+	schemaVersionAnnotation   = "operator.ptah.run/crd-schema-version"
+	schemaDigestAnnotation    = "operator.ptah.run/crd-schema-digest"
 )
 
 var (
@@ -65,6 +65,13 @@ type Result struct {
 	SchemaChanged    bool
 	InitialAdoption  bool
 }
+
+// errCRDGroupRenamed reports a CRD set holding exactly the resources this
+// repository generates, published under a different API group. Only a
+// baseline may carry it, and decodeBaselineSet reads it as a restarted
+// history. Any other departure from the generated set stays a plain error,
+// including a baseline that lost a CRD or gained one.
+var errCRDGroupRenamed = errors.New("CRD set names the generated resources under a different API group")
 
 type documentSet struct {
 	byName map[string]document
@@ -366,7 +373,19 @@ func decodeDocumentSet(label string, files map[string][]byte, allowSubset bool) 
 		// A baseline predates whatever this change adds, so a required CRD it
 		// does not carry is a new one rather than a set nobody reviewed. A name
 		// the required set does not carry is still refused: that is a CRD this
-		// change removed, and a removal is its own migration.
+		// change removed, and a removal is its own migration. The exception is
+		// a set holding exactly these resources under one other group, which is
+		// a renamed API rather than a removal -- decodeBaselineSet reads it as
+		// a restarted history.
+		if renamedGroup(set) {
+			return documentSet{}, fmt.Errorf(
+				"%w: %s CRD set is %v, want the complete generated set %v",
+				errCRDGroupRenamed,
+				label,
+				actualNames,
+				expectedNames,
+			)
+		}
 		for _, name := range actualNames {
 			if !slices.Contains(expectedNames, name) {
 				return documentSet{}, fmt.Errorf(
@@ -380,31 +399,91 @@ func decodeDocumentSet(label string, files map[string][]byte, allowSubset bool) 
 		return set, nil
 	}
 	if !equalStrings(actualNames, expectedNames) {
-		return documentSet{}, fmt.Errorf(
+		message := fmt.Errorf(
 			"%s CRD set is %v, want the complete generated set %v; added or removed CRDs require a separately reviewed migration",
 			label,
 			actualNames,
 			expectedNames,
 		)
+		if renamedGroup(set) {
+			return documentSet{}, fmt.Errorf("%w: %s", errCRDGroupRenamed, message)
+		}
+		return documentSet{}, message
 	}
 	return set, nil
+}
+
+// renamedGroup answers whether a set holds exactly the resources generated
+// today, published under one API group that is not theirs. The resources are
+// compared by plural, which is what a CRD name is built from, so the answer
+// does not depend on the group either side happens to use.
+func renamedGroup(set documentSet) bool {
+	plurals := make([]string, 0, len(set.byName))
+	group := ""
+	for _, document := range set.byName {
+		if document.crd.Spec.Group == currentGroup() {
+			return false
+		}
+		if group == "" {
+			group = document.crd.Spec.Group
+		}
+		if document.crd.Spec.Group != group {
+			return false
+		}
+		plurals = append(plurals, document.crd.Spec.Names.Plural)
+	}
+	sort.Strings(plurals)
+	return equalStrings(plurals, generatedPlurals())
+}
+
+// currentGroup is the API group behind the generated CRD names.
+func currentGroup() string {
+	_, group, _ := strings.Cut(requiredCRDNames()[0], ".")
+	return group
+}
+
+// generatedPlurals is the sorted resource list behind those same names.
+func generatedPlurals() []string {
+	plurals := make([]string, 0, len(requiredCRDNames()))
+	for _, name := range requiredCRDNames() {
+		plural, _, _ := strings.Cut(name, ".")
+		plurals = append(plurals, plural)
+	}
+	sort.Strings(plurals)
+	return plurals
 }
 
 func decodeBaselineSet(files map[string][]byte) (documentSet, error) {
 	if len(files) == 0 {
 		return documentSet{byName: map[string]document{}}, nil
 	}
-	return decodeSetAllowingSubset("baseline", files)
+	set, err := decodeSetAllowingSubset("baseline", files)
+	// A baseline publishing these resources under a different API group
+	// describes different cluster objects: nothing in it is a previous version
+	// of what this repository generates today, because a renamed group installs
+	// beside the old one rather than over it. So there is no version line to
+	// continue and the history restarts, which evaluateTransition holds to
+	// candidate version 1 -- a renumber visible in every generated file and in
+	// CurrentCRDSchemaVersion, so the restart cannot reach master unread. A
+	// baseline that lost a CRD is still an error, and so is any candidate that
+	// is not the generated set.
+	if errors.Is(err, errCRDGroupRenamed) {
+		return documentSet{byName: map[string]document{}}, nil
+	}
+	if err != nil {
+		return documentSet{}, err
+	}
+	return set, nil
 }
 
 func requiredCRDNames() []string {
 	return []string{
-		"ptahmigrationapprovals.operator.ptah.dev",
-		"ptahmigrationplans.operator.ptah.dev",
-		"ptahmigrations.operator.ptah.dev",
-		"ptahschemaapprovals.operator.ptah.dev",
-		"ptahschemaplans.operator.ptah.dev",
-		"ptahschemas.operator.ptah.dev",
+		"ptahmigrationapprovals.operator.ptah.run",
+		"ptahmigrationplans.operator.ptah.run",
+		"ptahmigrations.operator.ptah.run",
+		"ptahschemaapprovals.operator.ptah.run",
+		"ptahschemaplans.operator.ptah.run",
+		"ptahschemas.operator.ptah.run",
 	}
 }
 

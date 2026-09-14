@@ -12,12 +12,12 @@ rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     resourceNames:
-      - ptahmigrationapprovals.operator.ptah.dev
-      - ptahmigrationplans.operator.ptah.dev
-      - ptahmigrations.operator.ptah.dev
-      - ptahschemaapprovals.operator.ptah.dev
-      - ptahschemaplans.operator.ptah.dev
-      - ptahschemas.operator.ptah.dev
+      - ptahmigrationapprovals.operator.ptah.run
+      - ptahmigrationplans.operator.ptah.run
+      - ptahmigrations.operator.ptah.run
+      - ptahschemaapprovals.operator.ptah.run
+      - ptahschemaplans.operator.ptah.run
+      - ptahschemas.operator.ptah.run
     verbs: ["get"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
@@ -50,19 +50,19 @@ rules:
       - {{ include "ptah-operator.stagingSecretGuardPolicyName" . }}
       {{- end }}
     verbs: ["get"]
-  - apiGroups: ["operator.ptah.dev"]
+  - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemas"]
     verbs: ["get", "list", "watch", "patch"]
-  - apiGroups: ["operator.ptah.dev"]
+  - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemas/finalizers", "ptahschemaplans/finalizers"]
     verbs: ["update"]
-  - apiGroups: ["operator.ptah.dev"]
+  - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"]
     verbs: ["get", "update", "patch"]
-  - apiGroups: ["operator.ptah.dev"]
+  - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemaplans"]
     verbs: ["get", "list", "watch", "create"]
-  - apiGroups: ["operator.ptah.dev"]
+  - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemaapprovals"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["batch"]
@@ -238,10 +238,10 @@ metadata:
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 rules:
-  - apiGroups: ["operator.ptah.dev"]
+  - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["operator.ptah.dev"]
+  - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemaapprovals"]
     verbs: ["create"]
 {{- end }}

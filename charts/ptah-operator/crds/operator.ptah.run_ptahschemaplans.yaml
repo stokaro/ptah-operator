@@ -3,38 +3,35 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    operator.ptah.dev/controller-state-version: "1"
-    operator.ptah.dev/crd-schema-version: "3"
-    operator.ptah.dev/crd-schema-digest: "sha256:3c2034e1292b0d074341262c06ed511af7a45835d4da98d9ff2a8003475e296a"
+    operator.ptah.run/controller-state-version: "1"
+    operator.ptah.run/crd-schema-version: "2"
+    operator.ptah.run/crd-schema-digest: "sha256:8bd2fc0b658fab6c0421bbedb9024555b9217b29d4db4f40cb2166c04c62d6d2"
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: ptahschemaapprovals.operator.ptah.dev
+  name: ptahschemaplans.operator.ptah.run
 spec:
-  group: operator.ptah.dev
+  group: operator.ptah.run
   names:
-    kind: PtahSchemaApproval
-    listKind: PtahSchemaApprovalList
-    plural: ptahschemaapprovals
+    kind: PtahSchemaPlan
+    listKind: PtahSchemaPlanList
+    plural: ptahschemaplans
     shortNames:
-    - ptahapprove
-    singular: ptahschemaapproval
+    - ptahplan
+    singular: ptahschemaplan
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .spec.schemaRef.name
       name: Schema
       type: string
-    - jsonPath: .spec.planRef.name
-      name: Plan
+    - jsonPath: .spec.fingerprint
+      name: Fingerprint
       type: string
-    - jsonPath: .spec.approver.username
-      name: Approver
-      type: string
-    - jsonPath: .status.conditions[?(@.type=='Accepted')].status
-      name: Accepted
-      type: string
-    - jsonPath: .status.conditions[?(@.type=='Stale')].status
-      name: Stale
-      type: string
+    - jsonPath: .spec.statementCount
+      name: Statements
+      type: integer
+    - jsonPath: .spec.destructive
+      name: Destructive
+      type: boolean
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -52,25 +49,47 @@ spec:
             properties:
               actualStateFingerprint:
                 type: string
-              approvedAt:
-                format: date-time
-                type: string
-              approver:
-                properties:
-                  groups:
-                    items:
-                      type: string
-                    maxItems: 64
-                    type: array
-                  uid:
-                    type: string
-                  username:
-                    type: string
-                required:
-                - username
-                type: object
               artifactDigest:
                 type: string
+              chunks:
+                items:
+                  properties:
+                    digest:
+                      type: string
+                    index:
+                      format: int32
+                      maximum: 15
+                      minimum: 0
+                      type: integer
+                    key:
+                      type: string
+                    name:
+                      type: string
+                    size:
+                      format: int32
+                      maximum: 524288
+                      minimum: 1
+                      type: integer
+                  required:
+                  - digest
+                  - index
+                  - key
+                  - name
+                  - size
+                  type: object
+                maxItems: 16
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - index
+                x-kubernetes-list-type: map
+              contentDigest:
+                type: string
+              contractVersion:
+                format: int32
+                maximum: 3
+                minimum: 1
+                type: integer
               controllerImage:
                 pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
                 type: string
@@ -87,25 +106,17 @@ spec:
                 type: string
               desiredStateFingerprint:
                 type: string
+              destructive:
+                type: boolean
+              dialect:
+                type: string
               executionBindingID:
                 pattern: ^v1-[0-9a-f]{32}$
                 type: string
               executorImage:
                 type: string
-              mutationRequestUID:
+              fingerprint:
                 type: string
-              planFingerprint:
-                type: string
-              planRef:
-                properties:
-                  name:
-                    type: string
-                  uid:
-                    type: string
-                required:
-                - name
-                - uid
-                type: object
               policyFingerprint:
                 type: string
               ptahVersion:
@@ -125,6 +136,14 @@ spec:
                 - name
                 - uid
                 type: object
+              size:
+                format: int64
+                maximum: 8388608
+                minimum: 1
+                type: integer
+              statementCount:
+                format: int32
+                type: integer
               targetIdentityDigest:
                 type: string
               verificationPolicyDigest:
@@ -133,26 +152,29 @@ spec:
                 type: string
             required:
             - actualStateFingerprint
-            - approvedAt
-            - approver
             - artifactDigest
+            - chunks
+            - contentDigest
+            - contractVersion
             - coordinationDigest
             - desiredStateFingerprint
+            - destructive
+            - dialect
             - executorImage
-            - mutationRequestUID
-            - planFingerprint
-            - planRef
+            - fingerprint
             - policyFingerprint
             - ptahVersion
             - runnerImage
             - runnerProtocolVersion
             - schemaRef
+            - size
+            - statementCount
             - targetIdentityDigest
             - verificationPolicyDigest
             - verificationPolicyUID
             type: object
             x-kubernetes-validations:
-            - message: an approval is immutable; create a new approval instead
+            - message: a plan is immutable; generate a new plan instead
               rule: self == oldSelf
           status:
             properties:
@@ -195,6 +217,28 @@ spec:
               observedGeneration:
                 format: int64
                 type: integer
+              publishedChunks:
+                items:
+                  properties:
+                    index:
+                      format: int32
+                      maximum: 15
+                      minimum: 0
+                      type: integer
+                    name:
+                      type: string
+                    uid:
+                      type: string
+                  required:
+                  - index
+                  - name
+                  - uid
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - index
+                x-kubernetes-list-type: map
             type: object
         required:
         - spec

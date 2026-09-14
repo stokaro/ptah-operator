@@ -164,15 +164,15 @@ func TestCertificateE2EParkedWebhookInventory(t *testing.T) {
 				t.Parallel()
 				fixture := newCertificateShellFixture(t)
 				entries := [][3]string{
-					{"mapproval.operator.ptah.dev", "webhook", "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"},
-					{"certificate-rotation-canary-mutate.operator.ptah.dev", "candidate", "/candidate/mutate"},
+					{"mapproval.operator.ptah.run", "webhook", "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"},
+					{"certificate-rotation-canary-mutate.operator.ptah.run", "candidate", "/candidate/mutate"},
 				}
 				if kind == "validatingwebhookconfiguration" {
 					entries = [][3]string{
-						{"vapproval.operator.ptah.dev", "webhook", "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"},
-						{"vpodintent.operator.ptah.dev", "webhook", "/validate-v1-pod-ptah-operation-intent"},
-						{"vcontrollerwrite.operator.ptah.dev", "webhook", "/validate-operator-controller-write"},
-						{"certificate-rotation-canary-validate.operator.ptah.dev", "candidate", "/candidate/validate"},
+						{"vapproval.operator.ptah.run", "webhook", "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"},
+						{"vpodintent.operator.ptah.run", "webhook", "/validate-v1-pod-ptah-operation-intent"},
+						{"vcontrollerwrite.operator.ptah.run", "webhook", "/validate-operator-controller-write"},
+						{"certificate-rotation-canary-validate.operator.ptah.run", "candidate", "/candidate/validate"},
 					}
 				}
 				webhooks := make([]map[string]any, 0, len(entries))
@@ -330,7 +330,7 @@ func certificateSecretFixture() map[string]any {
 		"metadata": map[string]any{
 			"name": "webhook-cert", "namespace": "operator", "uid": "original-uid", "resourceVersion": "original",
 			"labels": map[string]any{
-				"app.kubernetes.io/managed-by": "Helm", "operator.ptah.dev/generated-webhook-certificate": "true",
+				"app.kubernetes.io/managed-by": "Helm", "operator.ptah.run/generated-webhook-certificate": "true",
 			},
 			"annotations": map[string]any{
 				"meta.helm.sh/release-name": "ptah", "meta.helm.sh/release-namespace": "operator",

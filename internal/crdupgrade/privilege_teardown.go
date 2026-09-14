@@ -765,12 +765,12 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 	bootstrap := privilegeHookBindingName(hook, 53, "-bootstrap")
 	probe := privilegeHookBindingName(hook, 57, "-probe")
 	crdNames := []string{
-		"ptahmigrationapprovals.operator.ptah.dev",
-		"ptahmigrationplans.operator.ptah.dev",
-		"ptahmigrations.operator.ptah.dev",
-		"ptahschemaapprovals.operator.ptah.dev",
-		"ptahschemaplans.operator.ptah.dev",
-		"ptahschemas.operator.ptah.dev",
+		"ptahmigrationapprovals.operator.ptah.run",
+		"ptahmigrationplans.operator.ptah.run",
+		"ptahmigrations.operator.ptah.run",
+		"ptahschemaapprovals.operator.ptah.run",
+		"ptahschemaplans.operator.ptah.run",
+		"ptahschemas.operator.ptah.run",
 	}
 	runtimeGuardNames := t.runtimeAdmissionGuardNames()
 	hookServiceAccounts := []string{t.contract.ControllerServiceAccountName, t.contract.CertificateServiceAccountName}
@@ -802,7 +802,7 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 			rules: func() []rbacv1.PolicyRule {
 				rules := []rbacv1.PolicyRule{
 					privilegePolicyRule([]string{"apiextensions.k8s.io"}, []string{"customresourcedefinitions"}, crdNames, []string{"get", "update"}),
-					privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas", "ptahschemaplans", "ptahschemaapprovals"}, nil, []string{"list"}),
+					privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas", "ptahschemaplans", "ptahschemaapprovals"}, nil, []string{"list"}),
 					privilegePolicyRule(
 						[]string{"admissionregistration.k8s.io"},
 						[]string{"mutatingwebhookconfigurations", "validatingwebhookconfigurations"},

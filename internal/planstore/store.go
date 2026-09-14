@@ -31,8 +31,8 @@ const (
 	MaxPlanBytes = int(plancontract.MaxExecutableBytes)
 
 	ChunkDataKey = "chunk"
-	LabelPlan    = "operator.ptah.dev/plan"
-	LabelSchema  = "operator.ptah.dev/schema"
+	LabelPlan    = "operator.ptah.run/plan"
+	LabelSchema  = "operator.ptah.run/schema"
 )
 
 var (

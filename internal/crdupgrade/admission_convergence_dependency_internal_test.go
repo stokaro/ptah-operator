@@ -20,7 +20,7 @@ func TestVerifyAdmissionConvergenceDependencyMetadataAcceptsATypedRead(t *testin
 		TypeMeta: metav1.TypeMeta{APIVersion: "admissionregistration.k8s.io/v1", Kind: "ValidatingAdmissionPolicy"},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "ptah-operator-rollout-guard-v1",
-			Annotations: map[string]string{"operator.ptah.dev/release-name": "ptah"},
+			Annotations: map[string]string{"operator.ptah.run/release-name": "ptah"},
 			Labels:      map[string]string{"app.kubernetes.io/managed-by": "ptah-operator"},
 		},
 	}
@@ -39,7 +39,7 @@ func TestVerifyAdmissionConvergenceDependencyMetadataAcceptsATypedRead(t *testin
 		t.Fatal("a dependency with foreign ownership was accepted")
 	}
 	incomplete := live.DeepCopy()
-	delete(incomplete.Annotations, "operator.ptah.dev/release-name")
+	delete(incomplete.Annotations, "operator.ptah.run/release-name")
 	if err := verifyAdmissionConvergenceDependencyMetadata(incomplete.ObjectMeta, expected); err == nil {
 		t.Fatal("a dependency with incomplete ownership was accepted")
 	}

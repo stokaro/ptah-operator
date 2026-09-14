@@ -159,6 +159,6 @@ def isolated($pod):
     ]));
 
 [.items[] |
-  select(.metadata.labels["operator.ptah.dev/operation"] == "observe" or
-    .metadata.labels["operator.ptah.dev/operation"] == "plan")] as $pods |
+  select(.metadata.labels["operator.ptah.run/operation"] == "observe" or
+    .metadata.labels["operator.ptah.run/operation"] == "plan")] as $pods |
 ($pods | length) == 2 and all($pods[]; isolated(.))

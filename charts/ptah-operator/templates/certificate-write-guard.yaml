@@ -31,9 +31,9 @@
 {{- $annotations := default (dict) .metadata.annotations -}}
 {{- $labels := default (dict) .metadata.labels -}}
 {{- if or
-      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
-      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
-      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
+      (ne (default "" (index $annotations "operator.ptah.run/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.run/release-name")) $.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.run/release-namespace")) $.Release.Namespace)
       (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
       (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
       (ne (default "" (index $labels "app.kubernetes.io/component")) $entry.component) -}}
@@ -50,9 +50,9 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-156"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -88,7 +88,7 @@ spec:
       message: "Ptah certificate mutating write guard rejected an unsafe mutation"
     - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateWebhookNamesValidation" .) | quote }}
       message: "Ptah certificate mutating write guard rejected an unsafe mutation"
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateWebhookEntriesValidation" (dict "includeReinvocation" true "serviceNamespace" .Release.Namespace "serviceName" $serviceName "candidateServiceName" $candidateServiceName "canaryName" "certificate-rotation-canary-mutate.operator.ptah.dev")) | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateWebhookEntriesValidation" (dict "includeReinvocation" true "serviceNamespace" .Release.Namespace "serviceName" $serviceName "candidateServiceName" $candidateServiceName "canaryName" "certificate-rotation-canary-mutate.operator.ptah.run")) | quote }}
       message: "Ptah certificate mutating write guard rejected an unsafe mutation"
     - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
       message: "Ptah admission convergence probe field manager is reserved for dry-run verification"
@@ -105,9 +105,9 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-155"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -142,9 +142,9 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-154"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -180,7 +180,7 @@ spec:
       message: "Ptah certificate validating write guard rejected an unsafe mutation"
     - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateWebhookNamesValidation" .) | quote }}
       message: "Ptah certificate validating write guard rejected an unsafe mutation"
-    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateWebhookEntriesValidation" (dict "includeReinvocation" false "serviceNamespace" .Release.Namespace "serviceName" $serviceName "candidateServiceName" $candidateServiceName "canaryName" "certificate-rotation-canary-validate.operator.ptah.dev")) | quote }}
+    - expression: {{ printf `variables.isAnyAdmissionConvergenceProbe || (%s)` (include "ptah-operator.certificateWebhookEntriesValidation" (dict "includeReinvocation" false "serviceNamespace" .Release.Namespace "serviceName" $serviceName "candidateServiceName" $candidateServiceName "canaryName" "certificate-rotation-canary-validate.operator.ptah.run")) | quote }}
       message: "Ptah certificate validating write guard rejected an unsafe mutation"
     - expression: '!variables.isAnyAdmissionConvergenceProbe || request.dryRun == true'
       message: "Ptah admission convergence probe field manager is reserved for dry-run verification"
@@ -197,9 +197,9 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-153"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}

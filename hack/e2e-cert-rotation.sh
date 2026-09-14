@@ -109,13 +109,13 @@ uniform_service_bundle() {
 		jq -r --arg kind "$kind" --arg service "$SERVICE" \
 			--arg candidate "$CANDIDATE_SERVICE" --arg namespace "$OPERATOR_NAMESPACE" '
           (if $kind == "mutatingwebhookconfiguration" then {
-            "mapproval.operator.ptah.dev": [$service, "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"],
-            "certificate-rotation-canary-mutate.operator.ptah.dev": [$candidate, "/candidate/mutate"]
+            "mapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
+            "certificate-rotation-canary-mutate.operator.ptah.run": [$candidate, "/candidate/mutate"]
           } else {
-            "vapproval.operator.ptah.dev": [$service, "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"],
-            "vpodintent.operator.ptah.dev": [$service, "/validate-v1-pod-ptah-operation-intent"],
-            "vcontrollerwrite.operator.ptah.dev": [$service, "/validate-operator-controller-write"],
-            "certificate-rotation-canary-validate.operator.ptah.dev": [$candidate, "/candidate/validate"]
+            "vapproval.operator.ptah.run": [$service, "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
+            "vpodintent.operator.ptah.run": [$service, "/validate-v1-pod-ptah-operation-intent"],
+            "vcontrollerwrite.operator.ptah.run": [$service, "/validate-operator-controller-write"],
+            "certificate-rotation-canary-validate.operator.ptah.run": [$candidate, "/candidate/validate"]
           } end) as $expected |
           .webhooks as $webhooks | [$webhooks[].clientConfig.caBundle] as $bundles |
           if ([$webhooks[].name] | sort) == ($expected | keys) and
@@ -145,7 +145,7 @@ rotation_transition_complete() {
 			.metadata.namespace == $namespace and
 			.metadata.labels == {
 				"app.kubernetes.io/managed-by": "Helm",
-				"operator.ptah.dev/certificate-rotation-staging": "true"
+				"operator.ptah.run/certificate-rotation-staging": "true"
 			} and
 			.metadata.annotations == {
 				"meta.helm.sh/release-name": $release,
@@ -224,7 +224,7 @@ assert_approval_admission_callable() {
 	stage=$1
 	if ! kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$TEST_NAMESPACE" \
 		patch ptahschemaapproval e2e-approval --type=merge \
-		-p '{"metadata":{"annotations":{"operator.ptah.dev/certificate-upgrade-probe":"true"}}}' \
+		-p '{"metadata":{"annotations":{"operator.ptah.run/certificate-upgrade-probe":"true"}}}' \
 		--dry-run=server -o name >/dev/null; then
 		fail "approval admission was not callable ${stage}"
 	fi
@@ -258,7 +258,7 @@ validate_generated_secret() {
 		(.metadata.resourceVersion | type == "string" and length > 0) and
 		.metadata.labels == {
 			"app.kubernetes.io/managed-by": "Helm",
-			"operator.ptah.dev/generated-webhook-certificate": "true"
+			"operator.ptah.run/generated-webhook-certificate": "true"
 		} and
 		.metadata.annotations == {
 			"meta.helm.sh/release-name": $release,
@@ -419,7 +419,7 @@ MUTATING_CONFIGURATION=$(resource_name mutatingwebhookconfiguration "")
 VALIDATING_CONFIGURATION=$(resource_name validatingwebhookconfiguration "")
 SERVICE=$(kubectl --kubeconfig "$KUBECONFIG_FILE" get \
 	mutatingwebhookconfiguration "$MUTATING_CONFIGURATION" -o json |
-	jq -r '[.webhooks[] | select(.name == "mapproval.operator.ptah.dev") | .clientConfig.service.name] | unique | if length == 1 then .[0] else empty end')
+	jq -r '[.webhooks[] | select(.name == "mapproval.operator.ptah.run") | .clientConfig.service.name] | unique | if length == 1 then .[0] else empty end')
 [ -n "$SERVICE" ] || fail "could not resolve the exact webhook Service"
 
 DEPLOYMENT_JSON=$(kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" get deployment "$DEPLOYMENT" -o json)
@@ -503,7 +503,7 @@ prove_certificate_write_guards() {
 		'Ptah certificate validating write guard rejected an unsafe mutation'
 	expect_certificate_write_denial validatingwebhookconfiguration \
 		'a validating metadata annotation change' \
-		'.metadata.annotations["operator.ptah.dev/certificate-write-e2e"] = "changed"' \
+		'.metadata.annotations["operator.ptah.run/certificate-write-e2e"] = "changed"' \
 		'Ptah certificate validating write guard rejected an unsafe mutation'
 	expect_certificate_write_denial validatingwebhookconfiguration \
 		'an empty validating caBundle' \
@@ -623,26 +623,26 @@ CONTROLLER_WRITE_OVERLAP=$(build_overlap_bundle controller-write-validating "$CO
 kubectl --kubeconfig "$KUBECONFIG_FILE" get \
 	mutatingwebhookconfiguration "$MUTATING_CONFIGURATION" -o json |
 	jq --arg bundle "$MUTATING_OVERLAP" '
-      (.webhooks[] | select(.name == "mapproval.operator.ptah.dev") | .clientConfig.caBundle) = $bundle
+      (.webhooks[] | select(.name == "mapproval.operator.ptah.run") | .clientConfig.caBundle) = $bundle
     ' |
 	kubectl --kubeconfig "$KUBECONFIG_FILE" replace -f - >/dev/null
 kubectl --kubeconfig "$KUBECONFIG_FILE" get \
 	validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" -o json |
 	jq --arg approval "$APPROVAL_OVERLAP" --arg pod "$POD_OVERLAP" --arg controller "$CONTROLLER_WRITE_OVERLAP" '
-	      (.webhooks[] | select(.name == "vapproval.operator.ptah.dev") | .clientConfig.caBundle) = $approval |
-	      (.webhooks[] | select(.name == "vpodintent.operator.ptah.dev") | .clientConfig.caBundle) = $pod |
-	      (.webhooks[] | select(.name == "vcontrollerwrite.operator.ptah.dev") | .clientConfig.caBundle) = $controller
+	      (.webhooks[] | select(.name == "vapproval.operator.ptah.run") | .clientConfig.caBundle) = $approval |
+	      (.webhooks[] | select(.name == "vpodintent.operator.ptah.run") | .clientConfig.caBundle) = $pod |
+	      (.webhooks[] | select(.name == "vcontrollerwrite.operator.ptah.run") | .clientConfig.caBundle) = $controller
     ' |
 	kubectl --kubeconfig "$KUBECONFIG_FILE" replace -f - >/dev/null
 
 assert_entry_bundle mutatingwebhookconfiguration "$MUTATING_CONFIGURATION" \
-	mapproval.operator.ptah.dev "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
+	mapproval.operator.ptah.run "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
 assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
-	vapproval.operator.ptah.dev "$APPROVAL_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
+	vapproval.operator.ptah.run "$APPROVAL_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
 assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
-	vpodintent.operator.ptah.dev "$POD_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
+	vpodintent.operator.ptah.run "$POD_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
 assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
-	vcontrollerwrite.operator.ptah.dev "$CONTROLLER_WRITE_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
+	vcontrollerwrite.operator.ptah.run "$CONTROLLER_WRITE_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
 assert_approval_admission_callable "before the Helm upgrade"
 
 if ! helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAGE" \
@@ -651,13 +651,13 @@ if ! helm --kubeconfig "$KUBECONFIG_FILE" upgrade "$HELM_RELEASE" "$CHART_PACKAG
 fi
 
 assert_entry_bundle mutatingwebhookconfiguration "$MUTATING_CONFIGURATION" \
-	mapproval.operator.ptah.dev "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
+	mapproval.operator.ptah.run "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
 assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
-	vapproval.operator.ptah.dev "$APPROVAL_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
+	vapproval.operator.ptah.run "$APPROVAL_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$POD_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
 assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
-	vpodintent.operator.ptah.dev "$POD_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
+	vpodintent.operator.ptah.run "$POD_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$CONTROLLER_WRITE_UPGRADE_CA"
 assert_entry_bundle validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" \
-	vcontrollerwrite.operator.ptah.dev "$CONTROLLER_WRITE_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
+	vcontrollerwrite.operator.ptah.run "$CONTROLLER_WRITE_UPGRADE_CA" "$MUTATING_UPGRADE_CA" "$APPROVAL_UPGRADE_CA" "$POD_UPGRADE_CA"
 assert_approval_admission_callable "after the Helm upgrade"
 
 # Corrupt ca.crt while leaving the serving leaf and key intact. One malformed
@@ -668,7 +668,7 @@ kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$OPERATOR_NAMESPACE" patch secret "$
 	--type=json -p="[{\"op\":\"replace\",\"path\":\"/data/ca.crt\",\"value\":\"${BROKEN_CA_BUNDLE}\"}]" >/dev/null
 kubectl --kubeconfig "$KUBECONFIG_FILE" get validatingwebhookconfiguration "$VALIDATING_CONFIGURATION" -o json |
 	jq --arg bundle "$BROKEN_CA_BUNDLE" '
-      (.webhooks[] | select(.name == "vapproval.operator.ptah.dev") | .clientConfig.caBundle) = $bundle
+      (.webhooks[] | select(.name == "vapproval.operator.ptah.run") | .clientConfig.caBundle) = $bundle
     ' |
 	kubectl --kubeconfig "$KUBECONFIG_FILE" replace -f - >/dev/null
 
@@ -769,7 +769,7 @@ while [ "$(date +%s)" -lt "$recreate_deadline" ]; do
 			[ -n "$RECREATED_CERT" ] && [ "$RECREATED_CERT" != "$NEW_CERT" ] && \
 			printf '%s' "$RECREATED_SECRET_JSON" |
 			jq -e \
-				--arg label 'operator.ptah.dev/generated-webhook-certificate' \
+				--arg label 'operator.ptah.run/generated-webhook-certificate' \
 				--arg release "$HELM_RELEASE" \
 				--arg namespace "$OPERATOR_NAMESPACE" '
 				.type == "kubernetes.io/tls" and

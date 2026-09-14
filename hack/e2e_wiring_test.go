@@ -804,8 +804,8 @@ func TestLateActivationDrainRequiresExactPendingTuple(t *testing.T) {
 			}
 			fixture, err := json.Marshal(map[string]any{
 				"metadata": map[string]any{"namespace": "operator", "annotations": map[string]string{
-					"operator.ptah.dev/release-name": "ptah", "operator.ptah.dev/release-namespace": "operator",
-					"operator.ptah.dev/release-sequence": "1", "operator.ptah.dev/manager-image": "previous-image",
+					"operator.ptah.run/release-name": "ptah", "operator.ptah.run/release-namespace": "operator",
+					"operator.ptah.run/release-sequence": "1", "operator.ptah.run/manager-image": "previous-image",
 				}},
 				"data": data,
 			})
@@ -2506,10 +2506,10 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name: "daemon-side task claim nonce label omitted",
-			old: "--label 'operator.ptah.dev/e2e-component=task-claim' \\\n\t\t" +
-				`--label "operator.ptah.dev/e2e-claim-token=${TASK_CLAIM_TOKEN}" \`,
-			replacement: "--label 'operator.ptah.dev/e2e-component=task-claim' \\\n\t\t" +
-				`--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \`,
+			old: "--label 'operator.ptah.run/e2e-component=task-claim' \\\n\t\t" +
+				`--label "operator.ptah.run/e2e-claim-token=${TASK_CLAIM_TOKEN}" \`,
+			replacement: "--label 'operator.ptah.run/e2e-component=task-claim' \\\n\t\t" +
+				`--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}" \`,
 			wantError: "atomic daemon-side task claim creation",
 		},
 		{
@@ -3445,7 +3445,7 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 		{
 			name: "durable Job archive exact schema owner UID omitted",
 			old: "([.metadata.ownerReferences[]? | select(\n" +
-				"        .apiVersion == \"operator.ptah.dev/v1alpha1\" and .kind == \"PtahSchema\" and\n" +
+				"        .apiVersion == \"operator.ptah.run/v1alpha1\" and .kind == \"PtahSchema\" and\n" +
 				"        .name == $schema and .uid == $schemaUID and .controller == true)] | length) == 1 and",
 			replacement: `([.metadata.ownerReferences[]? | select(.name == $schema)] | length) == 1 and`,
 			wantError:   "durable Job archive exact schema ownerReference",
@@ -3488,14 +3488,14 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "supplied Job archive operation ID binding omitted",
-			old:         `$job.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and`,
+			old:         `$job.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and`,
 			replacement: `true and`,
 			wantError:   "supplied Job evidence exact Job identity binding",
 		},
 		{
 			name: "supplied Job archive schema owner UID binding omitted",
 			old: "([$job.metadata.ownerReferences[]? | select(\n" +
-				"        .apiVersion == \"operator.ptah.dev/v1alpha1\" and .kind == \"PtahSchema\" and\n" +
+				"        .apiVersion == \"operator.ptah.run/v1alpha1\" and .kind == \"PtahSchema\" and\n" +
 				"        .name == $schema and .uid == $schemaUID and .controller == true)] | length) == 1 and",
 			replacement: `([$job.metadata.ownerReferences[]? | select(.name == $schema)] | length) == 1 and`,
 			wantError:   "supplied Job evidence exact schema ownerReference",
@@ -3749,7 +3749,7 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "automatic Apply drops plan fingerprint annotation binding",
-			old:         `.["operator.ptah.dev/plan-fingerprint"] == $planFingerprint and`,
+			old:         `.["operator.ptah.run/plan-fingerprint"] == $planFingerprint and`,
 			replacement: `true and`,
 			wantError:   "automatic external PostgreSQL Apply annotation bindings",
 		},
@@ -3761,14 +3761,14 @@ func TestVerifyE2EDataPlaneRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "automatic Apply swaps plan content annotation binding",
-			old:         `.["operator.ptah.dev/plan-content-digest"] == $contentDigest and`,
-			replacement: `.["operator.ptah.dev/plan-content-digest"] == $planFingerprint and`,
+			old:         `.["operator.ptah.run/plan-content-digest"] == $contentDigest and`,
+			replacement: `.["operator.ptah.run/plan-content-digest"] == $planFingerprint and`,
 			wantError:   "automatic external PostgreSQL Apply annotation bindings",
 		},
 		{
 			name:        "automatic Apply swaps execution annotation binding",
-			old:         `.["operator.ptah.dev/execution-binding-id"] == $executionBinding;`,
-			replacement: `.["operator.ptah.dev/execution-binding-id"] == $contentDigest;`,
+			old:         `.["operator.ptah.run/execution-binding-id"] == $executionBinding;`,
+			replacement: `.["operator.ptah.run/execution-binding-id"] == $contentDigest;`,
 			wantError:   "automatic external PostgreSQL Apply annotation bindings",
 		},
 		{
@@ -4565,8 +4565,8 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 		{
 			name:        "CRD late activation reconcile diagnostic omits the blocker webhook",
 			child:       "crd-upgrade",
-			old:         `grep -F 'late-activation-blocker.operator.ptah.dev' \`,
-			replacement: `grep -F 'unrelated-webhook.operator.ptah.dev' \`,
+			old:         `grep -F 'late-activation-blocker.operator.ptah.run' \`,
+			replacement: `grep -F 'unrelated-webhook.operator.ptah.run' \`,
 			wantError:   "late activation reconcile exact blocker evidence",
 		},
 		{

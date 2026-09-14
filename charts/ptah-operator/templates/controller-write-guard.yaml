@@ -24,9 +24,9 @@
 {{- $annotations := default (dict) .metadata.annotations -}}
 {{- $labels := default (dict) .metadata.labels -}}
 {{- if or
-      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
-      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
-      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
+      (ne (default "" (index $annotations "operator.ptah.run/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.run/release-name")) $.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.run/release-namespace")) $.Release.Namespace)
       (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
       (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
       (ne (default "" (index $labels "app.kubernetes.io/component")) "controller-write-guard") -}}
@@ -43,9 +43,9 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-158"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -60,7 +60,7 @@ spec:
     namespaceSelector: {}
     objectSelector: {}
     resourceRules:
-      - apiGroups: ["operator.ptah.dev"]
+      - apiGroups: ["operator.ptah.run"]
         apiVersions: ["v1alpha1"]
         operations: ["UPDATE"]
         resources: ["ptahschemas"]
@@ -86,7 +86,7 @@ spec:
     - name: newFinalizers
       expression: 'has(object.metadata.finalizers) ? object.metadata.finalizers : []'
     - name: activeFinalizer
-      expression: '"operator.ptah.dev/active-operation"'
+      expression: '"operator.ptah.run/active-operation"'
     - name: oldActiveCount
       expression: 'variables.oldFinalizers.filter(value, value == variables.activeFinalizer).size()'
     - name: newActiveCount
@@ -119,9 +119,9 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-157"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -133,7 +133,7 @@ spec:
     namespaceSelector: {}
     objectSelector: {}
     resourceRules:
-      - apiGroups: ["operator.ptah.dev"]
+      - apiGroups: ["operator.ptah.run"]
         apiVersions: ["v1alpha1"]
         operations: ["UPDATE"]
         resources: ["ptahschemas"]

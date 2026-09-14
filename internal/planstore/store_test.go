@@ -212,7 +212,7 @@ func TestLoadRejectsInexactChunkOwnerReference(t *testing.T) {
 	falseValue := false
 	tests := map[string]func([]metav1.OwnerReference) []metav1.OwnerReference{
 		"wrong API version": func(owners []metav1.OwnerReference) []metav1.OwnerReference {
-			owners[0].APIVersion = "operator.ptah.dev/v999"
+			owners[0].APIVersion = "operator.ptah.run/v999"
 			return owners
 		},
 		"wrong kind": func(owners []metav1.OwnerReference) []metav1.OwnerReference {

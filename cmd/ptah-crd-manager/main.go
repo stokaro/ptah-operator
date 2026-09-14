@@ -1720,7 +1720,7 @@ func newStoredControllerStateClients(config *rest.Config) (crdupgrade.StoredCont
 func storedControllerStateClients(dynamicClient dynamic.Interface) crdupgrade.StoredControllerStateClients {
 	resource := func(name string) crdupgrade.ControllerStateListClient {
 		return dynamicClient.Resource(schema.GroupVersionResource{
-			Group: "operator.ptah.dev", Version: "v1alpha1", Resource: name,
+			Group: "operator.ptah.run", Version: "v1alpha1", Resource: name,
 		})
 	}
 	return crdupgrade.StoredControllerStateClients{

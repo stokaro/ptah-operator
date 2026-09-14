@@ -4,7 +4,7 @@ metadata:
   name: ptah-diagnostic-reader
   namespace: application
 rules:
-  - apiGroups: ["operator.ptah.dev"]
+  - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["batch"]

@@ -587,7 +587,7 @@ func TestDeletingUntrustedApplySkipsJobCleanupAndPersistsUncertainty(t *testing.
 		{
 			name: "terminal Job envelope is untrusted",
 			configure: func(_ *operatorv1alpha1.PtahSchema, job *batchv1.Job) []client.Object {
-				job.Annotations["operator.ptah.dev/untrusted"] = "true"
+				job.Annotations["operator.ptah.run/untrusted"] = "true"
 				job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
 				pod := &corev1.Pod{
 					ObjectMeta: metav1.ObjectMeta{
@@ -613,7 +613,7 @@ func TestDeletingUntrustedApplySkipsJobCleanupAndPersistsUncertainty(t *testing.
 			name: "continuity-loss Job envelope is untrusted",
 			configure: func(schema *operatorv1alpha1.PtahSchema, job *batchv1.Job) []client.Object {
 				schema.Status.ActiveOperation.LeaseContinuityLost = true
-				job.Annotations["operator.ptah.dev/untrusted"] = "true"
+				job.Annotations["operator.ptah.run/untrusted"] = "true"
 				return nil
 			},
 		},
@@ -737,7 +737,7 @@ func TestDeletingReadOnlyContinuityLossSkipsJobCleanupAndProgresses(t *testing.T
 					Name:      operation.JobName,
 					UID:       operation.JobUID,
 					Annotations: map[string]string{
-						"operator.ptah.dev/untrusted": "true",
+						"operator.ptah.run/untrusted": "true",
 					},
 					OwnerReferences: []metav1.OwnerReference{schemaControllerReference(schema)},
 				},
@@ -2866,8 +2866,8 @@ func TestRetiredReadOnlyJobCleanupDoesNotTouchUnprovenJob(t *testing.T) {
 		{
 			name: "extra current-format annotation",
 			mutate: func(job *batchv1.Job) {
-				job.Annotations["operator.ptah.dev/unbound"] = "unexpected"
-				job.Spec.Template.Annotations["operator.ptah.dev/unbound"] = "unexpected"
+				job.Annotations["operator.ptah.run/unbound"] = "unexpected"
+				job.Spec.Template.Annotations["operator.ptah.run/unbound"] = "unexpected"
 			},
 		},
 		{

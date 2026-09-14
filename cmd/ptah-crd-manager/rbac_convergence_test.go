@@ -205,7 +205,7 @@ func TestNewControllerRBACConvergenceBarrierUsesPredecessorOnlyDirectEndpointPro
 			{
 				Name: "list PtahSchema",
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Verb: "list", Group: "operator.ptah.dev", Version: "v1alpha1", Resource: "ptahschemas",
+					Verb: "list", Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahschemas",
 				},
 			},
 			{
@@ -845,7 +845,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		{subject: "certificate", check: "update mutating admission singleton"},
 		{subject: "certificate", check: "update webhook Secret"},
 		{subject: "certificate", check: "update certificate staging Secret"},
-		{subject: "hook-quiesce", check: "update CRD ptahschemas.operator.ptah.dev"},
+		{subject: "hook-quiesce", check: "update CRD ptahschemas.operator.ptah.run"},
 		{subject: "hook-quiesce", check: "create guarded Deployment"},
 		{subject: "hook-quiesce", check: "patch stable controller ClusterRoleBinding"},
 		{subject: "hook-quiesce", check: "patch stable controller RoleBinding"},
@@ -859,7 +859,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 			t.Errorf("retired subject %q is missing actual rendered grant check %q", test.subject, test.check)
 		}
 	}
-	if _, found := probeChecks["controller"]["update CRD ptahschemas.operator.ptah.dev"]; found {
+	if _, found := probeChecks["controller"]["update CRD ptahschemas.operator.ptah.run"]; found {
 		t.Error("controller probe includes a hook-only CRD update grant")
 	}
 	if _, found := probeChecks["hook-quiesce"]["update PtahSchema"]; found {
@@ -915,7 +915,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 		t.Fatal(err)
 	}
 	wantChecks := []string{
-		"update CRD ptahschemas.operator.ptah.dev",
+		"update CRD ptahschemas.operator.ptah.run",
 		"update controller Deployment",
 		"create guarded Deployment",
 		"delete ClusterRoleBinding ptah-operator",
@@ -997,7 +997,7 @@ func TestTeardownAuthorizationSubjectsAndChecksCoverRetiredPrivileges(t *testing
 			t.Errorf("default discovery RoleBinding check for %q = %#v", name, got)
 		}
 	}
-	if got := byName["update PtahSchema status"]; got.Group != "operator.ptah.dev" || got.Resource != "ptahschemas" || got.Subresource != "status" {
+	if got := byName["update PtahSchema status"]; got.Group != "operator.ptah.run" || got.Resource != "ptahschemas" || got.Subresource != "status" {
 		t.Errorf("PtahSchema status check = %#v", got)
 	}
 	for _, name := range []string{

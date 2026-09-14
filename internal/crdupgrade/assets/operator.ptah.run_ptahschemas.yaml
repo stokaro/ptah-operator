@@ -3,13 +3,13 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    operator.ptah.dev/controller-state-version: "1"
-    operator.ptah.dev/crd-schema-version: "3"
-    operator.ptah.dev/crd-schema-digest: "sha256:114f6204362b65ca912b7ccd1e710d7a4a0050c138123d4c58334f63b9067214"
+    operator.ptah.run/controller-state-version: "1"
+    operator.ptah.run/crd-schema-version: "2"
+    operator.ptah.run/crd-schema-digest: "sha256:c82f4b752f808f7445f0f44065a98f4a1847285564450e0441c2f4afff612d1c"
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: ptahschemas.operator.ptah.dev
+  name: ptahschemas.operator.ptah.run
 spec:
-  group: operator.ptah.dev
+  group: operator.ptah.run
   names:
     kind: PtahSchema
     listKind: PtahSchemaList

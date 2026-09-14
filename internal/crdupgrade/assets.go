@@ -12,30 +12,30 @@ import (
 )
 
 const (
-	PtahSchemaCRDName         = "ptahschemas.operator.ptah.dev"
-	PtahSchemaApprovalCRDName = "ptahschemaapprovals.operator.ptah.dev"
-	PtahSchemaPlanCRDName     = "ptahschemaplans.operator.ptah.dev"
+	PtahSchemaCRDName         = "ptahschemas.operator.ptah.run"
+	PtahSchemaApprovalCRDName = "ptahschemaapprovals.operator.ptah.run"
+	PtahSchemaPlanCRDName     = "ptahschemaplans.operator.ptah.run"
 	// The versioned-migration kinds. They are owned by the same manager as the
 	// schema kinds because they share one release and one rollback fence: a
 	// cluster that has the newer schema CRDs and not these would be running a
 	// controller whose own API is half installed.
-	PtahMigrationCRDName         = "ptahmigrations.operator.ptah.dev"
-	PtahMigrationApprovalCRDName = "ptahmigrationapprovals.operator.ptah.dev"
-	PtahMigrationPlanCRDName     = "ptahmigrationplans.operator.ptah.dev"
+	PtahMigrationCRDName         = "ptahmigrations.operator.ptah.run"
+	PtahMigrationApprovalCRDName = "ptahmigrationapprovals.operator.ptah.run"
+	PtahMigrationPlanCRDName     = "ptahmigrationplans.operator.ptah.run"
 	// SchemaVersionAnnotation is the monotonic rollback fence owned by the CRD
 	// manager. Every generated CRD schema change must increase its value.
-	SchemaVersionAnnotation = "operator.ptah.dev/crd-schema-version"
+	SchemaVersionAnnotation = "operator.ptah.run/crd-schema-version"
 	// SchemaDigestAnnotation binds a schema version to the normalized CRD spec
 	// generated for that version. It prevents two different schemas from using
 	// the same monotonic version.
-	SchemaDigestAnnotation = "operator.ptah.dev/crd-schema-digest"
+	SchemaDigestAnnotation = "operator.ptah.run/crd-schema-digest"
 	// ControllerStateVersionAnnotation is a durable release-level downgrade
 	// fence. A manager may start only after every owned CRD records the newest
 	// controller-state contract installed for the cluster.
-	ControllerStateVersionAnnotation = "operator.ptah.dev/controller-state-version"
+	ControllerStateVersionAnnotation = "operator.ptah.run/controller-state-version"
 	// CurrentCRDSchemaVersion must match CRD_SCHEMA_VERSION in the Makefile and
 	// every generated CRD annotation.
-	CurrentCRDSchemaVersion uint64 = 3
+	CurrentCRDSchemaVersion uint64 = 2
 )
 
 var expectedNames = []string{

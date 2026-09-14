@@ -36,8 +36,8 @@ const (
 	maxAttempts     = 5
 
 	managedByLabel    = "app.kubernetes.io/managed-by"
-	coordinationLabel = "operator.ptah.dev/coordination"
-	epochAnnotation   = "operator.ptah.dev/lease-epoch"
+	coordinationLabel = "operator.ptah.run/coordination"
+	epochAnnotation   = "operator.ptah.run/lease-epoch"
 )
 
 var (

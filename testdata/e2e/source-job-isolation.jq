@@ -210,14 +210,14 @@ def bounded_container($container):
   ($container.tty // false) == false and
   $container.restartPolicy == null;
 def exact_source_literals($job; $container; $operation):
-  ($job.metadata.annotations["operator.ptah.dev/operation-id"] | type) ==
+  ($job.metadata.annotations["operator.ptah.run/operation-id"] | type) ==
     "string" and
-  ($job.metadata.annotations["operator.ptah.dev/operation-id"] |
+  ($job.metadata.annotations["operator.ptah.run/operation-id"] |
     test("^sha256:[0-9a-f]{64}$")) and
   exact_literal_env($container; "HOME"; "/work") and
   exact_literal_env($container; "TMPDIR"; "/work") and
   exact_literal_env($container; "PTAH_OPERATION_ID";
-    $job.metadata.annotations["operator.ptah.dev/operation-id"]) and
+    $job.metadata.annotations["operator.ptah.run/operation-id"]) and
   exact_literal_env($container; "PTAH_REQUESTED_REFERENCE";
     $requestedReference) and
   (if $operation == "verify" then
@@ -247,7 +247,7 @@ def safe_job_contract($job):
   ($job.spec.template.spec.imagePullSecrets // []) == $imagePullSecrets and
   hardened_pod($job.spec.template.spec);
 def source_job_isolated($job):
-  $job.metadata.labels["operator.ptah.dev/operation"] as $operation |
+  $job.metadata.labels["operator.ptah.run/operation"] as $operation |
   ($job.spec.template.spec.containers // []) as $main |
   ($job.spec.template.spec.initContainers // []) as $init |
   ($job.spec.template.spec.ephemeralContainers // []) as $ephemeral |
@@ -294,6 +294,6 @@ def source_job_isolated($job):
   all($init[]; no_source_access(.));
 
 .items as $jobs |
-([$jobs[].metadata.labels["operator.ptah.dev/operation"]] | sort) ==
+([$jobs[].metadata.labels["operator.ptah.run/operation"]] | sort) ==
   ["resolve", "verify"] and
 all($jobs[]; safe_job_contract(.) and source_job_isolated(.))

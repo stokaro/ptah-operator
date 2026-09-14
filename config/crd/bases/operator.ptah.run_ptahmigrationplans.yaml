@@ -3,35 +3,35 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    operator.ptah.dev/controller-state-version: "1"
-    operator.ptah.dev/crd-schema-version: "3"
-    operator.ptah.dev/crd-schema-digest: "sha256:83ee43f4ae970c262e1abd0d619fa7b6761d52ed70a16f97272cd3893d01cd7a"
+    operator.ptah.run/controller-state-version: "1"
+    operator.ptah.run/crd-schema-version: "2"
+    operator.ptah.run/crd-schema-digest: "sha256:a603244cfb165d87f5cad9d13a04c07ffa9d731210d698f5ed3bae3501133f70"
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: ptahschemaplans.operator.ptah.dev
+  name: ptahmigrationplans.operator.ptah.run
 spec:
-  group: operator.ptah.dev
+  group: operator.ptah.run
   names:
-    kind: PtahSchemaPlan
-    listKind: PtahSchemaPlanList
-    plural: ptahschemaplans
+    kind: PtahMigrationPlan
+    listKind: PtahMigrationPlanList
+    plural: ptahmigrationplans
     shortNames:
-    - ptahplan
-    singular: ptahschemaplan
+    - ptahmplan
+    singular: ptahmigrationplan
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.schemaRef.name
-      name: Schema
+    - jsonPath: .spec.migrationRef.name
+      name: Migration
       type: string
-    - jsonPath: .spec.fingerprint
-      name: Fingerprint
-      type: string
-    - jsonPath: .spec.statementCount
-      name: Statements
+    - jsonPath: .spec.currentVersion
+      name: From
       type: integer
-    - jsonPath: .spec.destructive
-      name: Destructive
-      type: boolean
+    - jsonPath: .spec.migrations.length()
+      name: Steps
+      type: integer
+    - jsonPath: .status.conditions[?(@.type=='Current')].status
+      name: Current
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -47,47 +47,11 @@ spec:
             type: object
           spec:
             properties:
-              actualStateFingerprint:
-                type: string
               artifactDigest:
-                type: string
-              chunks:
-                items:
-                  properties:
-                    digest:
-                      type: string
-                    index:
-                      format: int32
-                      maximum: 15
-                      minimum: 0
-                      type: integer
-                    key:
-                      type: string
-                    name:
-                      type: string
-                    size:
-                      format: int32
-                      maximum: 524288
-                      minimum: 1
-                      type: integer
-                  required:
-                  - digest
-                  - index
-                  - key
-                  - name
-                  - size
-                  type: object
-                maxItems: 16
-                minItems: 1
-                type: array
-                x-kubernetes-list-map-keys:
-                - index
-                x-kubernetes-list-type: map
-              contentDigest:
                 type: string
               contractVersion:
                 format: int32
-                maximum: 3
+                maximum: 1
                 minimum: 1
                 type: integer
               controllerImage:
@@ -104,29 +68,27 @@ spec:
                 type: integer
               coordinationDigest:
                 type: string
-              desiredStateFingerprint:
+              createdAt:
+                format: date-time
                 type: string
-              destructive:
-                type: boolean
-              dialect:
-                type: string
+              currentVersion:
+                format: int64
+                minimum: 0
+                type: integer
               executionBindingID:
                 pattern: ^v1-[0-9a-f]{32}$
                 type: string
               executorImage:
                 type: string
               fingerprint:
+                maxLength: 128
+                minLength: 1
                 type: string
-              policyFingerprint:
+              historyFingerprint:
+                maxLength: 128
+                minLength: 1
                 type: string
-              ptahVersion:
-                type: string
-              runnerImage:
-                type: string
-              runnerProtocolVersion:
-                format: int32
-                type: integer
-              schemaRef:
+              migrationRef:
                 properties:
                   name:
                     type: string
@@ -136,13 +98,49 @@ spec:
                 - name
                 - uid
                 type: object
-              size:
-                format: int64
-                maximum: 8388608
-                minimum: 1
-                type: integer
-              statementCount:
+              migrations:
+                items:
+                  properties:
+                    checkpoint:
+                      type: boolean
+                    checksum:
+                      maxLength: 128
+                      minLength: 1
+                      type: string
+                    description:
+                      maxLength: 128
+                      type: string
+                    transactionMode:
+                      enum:
+                      - file
+                      - none
+                      type: string
+                    version:
+                      format: int64
+                      minimum: 1
+                      type: integer
+                    versionKey:
+                      maxLength: 128
+                      type: string
+                  required:
+                  - checksum
+                  - version
+                  type: object
+                maxItems: 256
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - version
+                x-kubernetes-list-type: map
+              policyFingerprint:
+                type: string
+              ptahVersion:
+                type: string
+              runnerImage:
+                type: string
+              runnerProtocolVersion:
                 format: int32
+                minimum: 1
                 type: integer
               targetIdentityDigest:
                 type: string
@@ -151,24 +149,24 @@ spec:
               verificationPolicyUID:
                 type: string
             required:
-            - actualStateFingerprint
             - artifactDigest
-            - chunks
-            - contentDigest
             - contractVersion
+            - controllerImage
+            - controllerRevision
+            - controllerStateVersion
             - coordinationDigest
-            - desiredStateFingerprint
-            - destructive
-            - dialect
+            - createdAt
+            - currentVersion
+            - executionBindingID
             - executorImage
             - fingerprint
+            - historyFingerprint
+            - migrationRef
+            - migrations
             - policyFingerprint
             - ptahVersion
             - runnerImage
             - runnerProtocolVersion
-            - schemaRef
-            - size
-            - statementCount
             - targetIdentityDigest
             - verificationPolicyDigest
             - verificationPolicyUID
@@ -213,32 +211,14 @@ spec:
                   - status
                   - type
                   type: object
-                type: array
-              observedGeneration:
-                format: int64
-                type: integer
-              publishedChunks:
-                items:
-                  properties:
-                    index:
-                      format: int32
-                      maximum: 15
-                      minimum: 0
-                      type: integer
-                    name:
-                      type: string
-                    uid:
-                      type: string
-                  required:
-                  - index
-                  - name
-                  - uid
-                  type: object
                 maxItems: 16
                 type: array
                 x-kubernetes-list-map-keys:
-                - index
+                - type
                 x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
             type: object
         required:
         - spec

@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	StagingSecretLabel      = "operator.ptah.dev/certificate-rotation-staging"
+	StagingSecretLabel      = "operator.ptah.run/certificate-rotation-staging"
 	StagingSecretLabelValue = "true"
 
 	stagingFormat = "v2"

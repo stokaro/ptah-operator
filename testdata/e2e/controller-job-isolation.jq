@@ -1,5 +1,5 @@
 def operation($name):
-  [.items[] | select(.metadata.labels["operator.ptah.dev/operation"] == $name)];
+  [.items[] | select(.metadata.labels["operator.ptah.run/operation"] == $name)];
 def containers($job):
   (($job.spec.template.spec.containers // []) +
     ($job.spec.template.spec.initContainers // []));

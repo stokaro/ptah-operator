@@ -28,7 +28,7 @@
 {{- else if $existing -}}
 {{- $expectedLabels := dict
       "app.kubernetes.io/managed-by" "Helm"
-      "operator.ptah.dev/generated-webhook-certificate" "true" -}}
+      "operator.ptah.run/generated-webhook-certificate" "true" -}}
 {{- $expectedAnnotations := dict
       "meta.helm.sh/release-name" .Release.Name
       "meta.helm.sh/release-namespace" .Release.Namespace -}}
@@ -56,9 +56,9 @@
 {{- if not .Values.webhook.existingSecret -}}
 {{- if $existingMutating -}}
 {{- range $existingMutating.webhooks -}}
-{{- if and (eq .name "mapproval.operator.ptah.dev") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
+{{- if and (eq .name "mapproval.operator.ptah.run") .clientConfig.service (eq .clientConfig.service.name $serviceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
 {{- $_ := set $entryBundles "mutating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
-{{- else if and $certificateRuntimeEnabled (eq .name "certificate-rotation-canary-mutate.operator.ptah.dev") .clientConfig.service (eq .clientConfig.service.name $candidateServiceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
+{{- else if and $certificateRuntimeEnabled (eq .name "certificate-rotation-canary-mutate.operator.ptah.run") .clientConfig.service (eq .clientConfig.service.name $candidateServiceName) (eq .clientConfig.service.namespace $.Release.Namespace) -}}
 {{- $_ := set $entryBundles "mutatingCanary" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- end -}}
 {{- end -}}
@@ -66,13 +66,13 @@
 {{- if $existingValidating -}}
 {{- range $existingValidating.webhooks -}}
 {{- if and .clientConfig.service (eq .clientConfig.service.namespace $.Release.Namespace) -}}
-{{- if and (eq .clientConfig.service.name $serviceName) (eq .name "vapproval.operator.ptah.dev") -}}
+{{- if and (eq .clientConfig.service.name $serviceName) (eq .name "vapproval.operator.ptah.run") -}}
 {{- $_ := set $entryBundles "approvalValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
-{{- else if and (eq .clientConfig.service.name $serviceName) (eq .name "vpodintent.operator.ptah.dev") -}}
+{{- else if and (eq .clientConfig.service.name $serviceName) (eq .name "vpodintent.operator.ptah.run") -}}
 {{- $_ := set $entryBundles "podValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
-{{- else if and (eq .clientConfig.service.name $serviceName) (eq .name "vcontrollerwrite.operator.ptah.dev") -}}
+{{- else if and (eq .clientConfig.service.name $serviceName) (eq .name "vcontrollerwrite.operator.ptah.run") -}}
 {{- $_ := set $entryBundles "controllerWriteValidating" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
-{{- else if and $certificateRuntimeEnabled (eq .name "certificate-rotation-canary-validate.operator.ptah.dev") (eq .clientConfig.service.name $candidateServiceName) -}}
+{{- else if and $certificateRuntimeEnabled (eq .name "certificate-rotation-canary-validate.operator.ptah.run") (eq .clientConfig.service.name $candidateServiceName) -}}
 {{- $_ := set $entryBundles "validatingCanary" (include "ptah-operator.webhookEntryCABundle" (dict "newBundle" $caBundle "existingBundle" .clientConfig.caBundle "secretExists" (not (empty $existing)))) -}}
 {{- end -}}
 {{- end -}}
@@ -90,7 +90,7 @@ metadata:
     meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: Helm
-    operator.ptah.dev/generated-webhook-certificate: "true"
+    operator.ptah.run/generated-webhook-certificate: "true"
 type: kubernetes.io/tls
 data:
   ca.crt: {{ $caBundle }}
@@ -106,23 +106,23 @@ kind: MutatingWebhookConfiguration
 metadata:
   name: {{ $configurationName }}
   annotations:
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/coordination-namespace: {{ include "ptah-operator.coordinationNamespace" . | quote }}
-    operator.ptah.dev/leader-election: {{ printf "%t" .Values.leaderElection | quote }}
-    operator.ptah.dev/leader-election-id: {{ include "ptah-operator.leaderElectionID" . | quote }}
-    operator.ptah.dev/webhook-service-name: {{ include "ptah-operator.webhookServiceName" . | quote }}
-    operator.ptah.dev/hook-service-account-name: {{ include "ptah-operator.crdManagerServiceAccountName" . | quote }}
-    operator.ptah.dev/controller-service-account-name: {{ include "ptah-operator.serviceAccountName" . | quote }}
-    operator.ptah.dev/controller-deployment-name: {{ include "ptah-operator.fullname" . | quote }}
-    operator.ptah.dev/certificate-deployment-name: {{ include "ptah-operator.certRotatorServiceAccountName" . | quote }}
-    operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
-    operator.ptah.dev/admission-contract-version: {{ include "ptah-operator.admissionContractVersion" . | quote }}
-    operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/coordination-namespace: {{ include "ptah-operator.coordinationNamespace" . | quote }}
+    operator.ptah.run/leader-election: {{ printf "%t" .Values.leaderElection | quote }}
+    operator.ptah.run/leader-election-id: {{ include "ptah-operator.leaderElectionID" . | quote }}
+    operator.ptah.run/webhook-service-name: {{ include "ptah-operator.webhookServiceName" . | quote }}
+    operator.ptah.run/hook-service-account-name: {{ include "ptah-operator.crdManagerServiceAccountName" . | quote }}
+    operator.ptah.run/controller-service-account-name: {{ include "ptah-operator.serviceAccountName" . | quote }}
+    operator.ptah.run/controller-deployment-name: {{ include "ptah-operator.fullname" . | quote }}
+    operator.ptah.run/certificate-deployment-name: {{ include "ptah-operator.certRotatorServiceAccountName" . | quote }}
+    operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+    operator.ptah.run/admission-contract-version: {{ include "ptah-operator.admissionContractVersion" . | quote }}
+    operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 webhooks:
-  - name: mapproval.operator.ptah.dev
+  - name: mapproval.operator.ptah.run
     admissionReviewVersions: ["v1"]
     sideEffects: None
     failurePolicy: Fail
@@ -134,16 +134,16 @@ webhooks:
       service:
         namespace: {{ .Release.Namespace }}
         name: {{ $serviceName }}
-        path: /mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval
+        path: /mutate-operator-ptah-run-v1alpha1-ptahschemaapproval
         port: 443
     rules:
-      - apiGroups: ["operator.ptah.dev"]
+      - apiGroups: ["operator.ptah.run"]
         apiVersions: ["v1alpha1"]
         operations: ["CREATE"]
         resources: ["ptahschemaapprovals"]
         scope: Namespaced
   {{- if $certificateRuntimeEnabled }}
-  - name: certificate-rotation-canary-mutate.operator.ptah.dev
+  - name: certificate-rotation-canary-mutate.operator.ptah.run
     admissionReviewVersions: ["v1"]
     sideEffects: None
     failurePolicy: Fail
@@ -155,7 +155,7 @@ webhooks:
         kubernetes.io/metadata.name: {{ .Release.Namespace }}
     objectSelector:
       matchLabels:
-        operator.ptah.dev/certificate-rotation-canary: "v1"
+        operator.ptah.run/certificate-rotation-canary: "v1"
     matchConditions:
       - name: exact-certificate-rotation-mutating-canary
         expression: >-
@@ -193,23 +193,23 @@ kind: ValidatingWebhookConfiguration
 metadata:
   name: {{ $configurationName }}
   annotations:
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/coordination-namespace: {{ include "ptah-operator.coordinationNamespace" . | quote }}
-    operator.ptah.dev/leader-election: {{ printf "%t" .Values.leaderElection | quote }}
-    operator.ptah.dev/leader-election-id: {{ include "ptah-operator.leaderElectionID" . | quote }}
-    operator.ptah.dev/webhook-service-name: {{ include "ptah-operator.webhookServiceName" . | quote }}
-    operator.ptah.dev/hook-service-account-name: {{ include "ptah-operator.crdManagerServiceAccountName" . | quote }}
-    operator.ptah.dev/controller-service-account-name: {{ include "ptah-operator.serviceAccountName" . | quote }}
-    operator.ptah.dev/controller-deployment-name: {{ include "ptah-operator.fullname" . | quote }}
-    operator.ptah.dev/certificate-deployment-name: {{ include "ptah-operator.certRotatorServiceAccountName" . | quote }}
-    operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
-    operator.ptah.dev/admission-contract-version: {{ include "ptah-operator.admissionContractVersion" . | quote }}
-    operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/coordination-namespace: {{ include "ptah-operator.coordinationNamespace" . | quote }}
+    operator.ptah.run/leader-election: {{ printf "%t" .Values.leaderElection | quote }}
+    operator.ptah.run/leader-election-id: {{ include "ptah-operator.leaderElectionID" . | quote }}
+    operator.ptah.run/webhook-service-name: {{ include "ptah-operator.webhookServiceName" . | quote }}
+    operator.ptah.run/hook-service-account-name: {{ include "ptah-operator.crdManagerServiceAccountName" . | quote }}
+    operator.ptah.run/controller-service-account-name: {{ include "ptah-operator.serviceAccountName" . | quote }}
+    operator.ptah.run/controller-deployment-name: {{ include "ptah-operator.fullname" . | quote }}
+    operator.ptah.run/certificate-deployment-name: {{ include "ptah-operator.certRotatorServiceAccountName" . | quote }}
+    operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+    operator.ptah.run/admission-contract-version: {{ include "ptah-operator.admissionContractVersion" . | quote }}
+    operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
 webhooks:
-  - name: vapproval.operator.ptah.dev
+  - name: vapproval.operator.ptah.run
     admissionReviewVersions: ["v1"]
     sideEffects: None
     failurePolicy: Fail
@@ -220,15 +220,15 @@ webhooks:
       service:
         namespace: {{ .Release.Namespace }}
         name: {{ $serviceName }}
-        path: /validate-operator-ptah-dev-v1alpha1-ptahschemaapproval
+        path: /validate-operator-ptah-run-v1alpha1-ptahschemaapproval
         port: 443
     rules:
-      - apiGroups: ["operator.ptah.dev"]
+      - apiGroups: ["operator.ptah.run"]
         apiVersions: ["v1alpha1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["ptahschemaapprovals"]
         scope: Namespaced
-  - name: vpodintent.operator.ptah.dev
+  - name: vpodintent.operator.ptah.run
     admissionReviewVersions: ["v1"]
     sideEffects: None
     failurePolicy: Fail
@@ -267,7 +267,7 @@ webhooks:
         operations: ["CREATE", "UPDATE"]
         resources: ["pods", "pods/ephemeralcontainers", "pods/resize"]
         scope: Namespaced
-  - name: vcontrollerwrite.operator.ptah.dev
+  - name: vcontrollerwrite.operator.ptah.run
     admissionReviewVersions: ["v1"]
     sideEffects: None
     failurePolicy: Fail
@@ -296,13 +296,13 @@ webhooks:
         operations: ["CREATE"]
         resources: ["configmaps"]
         scope: Namespaced
-      - apiGroups: ["operator.ptah.dev"]
+      - apiGroups: ["operator.ptah.run"]
         apiVersions: ["v1alpha1"]
         operations: ["CREATE"]
         resources: ["ptahschemaplans"]
         scope: Namespaced
   {{- if $certificateRuntimeEnabled }}
-  - name: certificate-rotation-canary-validate.operator.ptah.dev
+  - name: certificate-rotation-canary-validate.operator.ptah.run
     admissionReviewVersions: ["v1"]
     sideEffects: None
     failurePolicy: Fail
@@ -313,7 +313,7 @@ webhooks:
         kubernetes.io/metadata.name: {{ .Release.Namespace }}
     objectSelector:
       matchLabels:
-        operator.ptah.dev/certificate-rotation-canary: "v1"
+        operator.ptah.run/certificate-rotation-canary: "v1"
     matchConditions:
       - name: exact-certificate-rotation-validating-canary
         expression: >-

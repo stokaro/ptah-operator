@@ -19,40 +19,40 @@ import (
 
 const (
 	AdmissionConfigurationName                              = "ptah-operator-admission"
-	ReleaseNameAnnotation                                   = "operator.ptah.dev/release-name"
-	ReleaseNamespaceAnnotation                              = "operator.ptah.dev/release-namespace"
-	CoordinationAnnotation                                  = "operator.ptah.dev/coordination-namespace"
-	LeaderElectionAnnotation                                = "operator.ptah.dev/leader-election"
-	LeaderElectionIDAnnotation                              = "operator.ptah.dev/leader-election-id"
-	WebhookServiceAnnotation                                = "operator.ptah.dev/webhook-service-name"
-	HookServiceAccountAnnotation                            = "operator.ptah.dev/hook-service-account-name"
-	ControllerServiceAccountAnnotation                      = "operator.ptah.dev/controller-service-account-name"
-	ControllerServiceAccountManagedAnnotation               = "operator.ptah.dev/controller-service-account-managed"
-	PreviousControllerServiceAccountAnnotation              = "operator.ptah.dev/previous-controller-service-account-name"
-	PreviousControllerServiceAccountUIDAnnotation           = "operator.ptah.dev/previous-controller-service-account-uid"
-	PreviousControllerServiceAccountManagedAnnotation       = "operator.ptah.dev/previous-controller-service-account-managed"
-	PreviousControllerReleaseSequenceAnnotation             = "operator.ptah.dev/previous-controller-release-sequence"
-	PreviousControllerManagerImageAnnotation                = "operator.ptah.dev/previous-controller-manager-image"
-	ControllerDeploymentAnnotation                          = "operator.ptah.dev/controller-deployment-name"
-	CertificateDeploymentAnnotation                         = "operator.ptah.dev/certificate-deployment-name"
-	AdmissionContractVersionAnnotation                      = "operator.ptah.dev/admission-contract-version"
+	ReleaseNameAnnotation                                   = "operator.ptah.run/release-name"
+	ReleaseNamespaceAnnotation                              = "operator.ptah.run/release-namespace"
+	CoordinationAnnotation                                  = "operator.ptah.run/coordination-namespace"
+	LeaderElectionAnnotation                                = "operator.ptah.run/leader-election"
+	LeaderElectionIDAnnotation                              = "operator.ptah.run/leader-election-id"
+	WebhookServiceAnnotation                                = "operator.ptah.run/webhook-service-name"
+	HookServiceAccountAnnotation                            = "operator.ptah.run/hook-service-account-name"
+	ControllerServiceAccountAnnotation                      = "operator.ptah.run/controller-service-account-name"
+	ControllerServiceAccountManagedAnnotation               = "operator.ptah.run/controller-service-account-managed"
+	PreviousControllerServiceAccountAnnotation              = "operator.ptah.run/previous-controller-service-account-name"
+	PreviousControllerServiceAccountUIDAnnotation           = "operator.ptah.run/previous-controller-service-account-uid"
+	PreviousControllerServiceAccountManagedAnnotation       = "operator.ptah.run/previous-controller-service-account-managed"
+	PreviousControllerReleaseSequenceAnnotation             = "operator.ptah.run/previous-controller-release-sequence"
+	PreviousControllerManagerImageAnnotation                = "operator.ptah.run/previous-controller-manager-image"
+	ControllerDeploymentAnnotation                          = "operator.ptah.run/controller-deployment-name"
+	CertificateDeploymentAnnotation                         = "operator.ptah.run/certificate-deployment-name"
+	AdmissionContractVersionAnnotation                      = "operator.ptah.run/admission-contract-version"
 	CurrentAdmissionContractVersion                   int32 = 2
 
-	mutatingApprovalWebhookName                    = "mapproval.operator.ptah.dev"
-	validatingApprovalWebhookName                  = "vapproval.operator.ptah.dev"
-	podIntentWebhookName                           = "vpodintent.operator.ptah.dev"
-	controllerWriteWebhookName                     = "vcontrollerwrite.operator.ptah.dev"
-	mutatingCertificateCanaryWebhookName           = "certificate-rotation-canary-mutate.operator.ptah.dev"
-	validatingCertificateCanaryWebhookName         = "certificate-rotation-canary-validate.operator.ptah.dev"
-	mutatingApprovalPath                           = "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
-	validatingApprovalPath                         = "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
+	mutatingApprovalWebhookName                    = "mapproval.operator.ptah.run"
+	validatingApprovalWebhookName                  = "vapproval.operator.ptah.run"
+	podIntentWebhookName                           = "vpodintent.operator.ptah.run"
+	controllerWriteWebhookName                     = "vcontrollerwrite.operator.ptah.run"
+	mutatingCertificateCanaryWebhookName           = "certificate-rotation-canary-mutate.operator.ptah.run"
+	validatingCertificateCanaryWebhookName         = "certificate-rotation-canary-validate.operator.ptah.run"
+	mutatingApprovalPath                           = "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"
+	validatingApprovalPath                         = "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"
 	podIntentPath                                  = "/validate-v1-pod-ptah-operation-intent"
 	controllerWritePath                            = "/validate-operator-controller-write"
 	mutatingCertificateCanaryPath                  = "/candidate/mutate"
 	validatingCertificateCanaryPath                = "/candidate/validate"
 	mutatingCertificateCanaryConditionName         = "exact-certificate-rotation-mutating-canary"
 	validatingCertificateCanaryConditionName       = "exact-certificate-rotation-validating-canary"
-	certificateCanaryLabel                         = "operator.ptah.dev/certificate-rotation-canary"
+	certificateCanaryLabel                         = "operator.ptah.run/certificate-rotation-canary"
 	certificateCanaryLabelValue                    = "v1"
 	mutatingCertificateCanaryFieldManager          = "ptah-certificate-rotation-canary-mutate-v1"
 	validatingCertificateCanaryFieldManager        = "ptah-certificate-rotation-canary-validate-v1"
@@ -506,7 +506,7 @@ func currentMutatingApprovalWebhookContract(expected RuntimeInvariants) webhookC
 		rules: []admissionregistrationv1.RuleWithOperations{{
 			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
 			Rule: admissionregistrationv1.Rule{
-				APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"},
+				APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"},
 				Resources: []string{"ptahschemaapprovals"}, Scope: &scope,
 			},
 		}},
@@ -527,7 +527,7 @@ func currentValidatingApprovalWebhookContract(expected RuntimeInvariants) webhoo
 		rules: []admissionregistrationv1.RuleWithOperations{{
 			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
 			Rule: admissionregistrationv1.Rule{
-				APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"},
+				APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"},
 				Resources: []string{"ptahschemaapprovals"}, Scope: &scope,
 			},
 		}},
@@ -579,7 +579,7 @@ func currentControllerWriteWebhookContract(expected RuntimeInvariants) webhookCo
 			},
 			{
 				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
-				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahschemaplans"}, Scope: &scope},
+				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahschemaplans"}, Scope: &scope},
 			},
 		},
 		failurePolicy: admissionregistrationv1.Fail, matchPolicy: admissionregistrationv1.Exact,
@@ -712,14 +712,14 @@ func supportedPredecessorMutatingApprovalWebhookContract(expected RuntimeInvaria
 	scope := admissionregistrationv1.NamespacedScope
 	never := admissionregistrationv1.NeverReinvocationPolicy
 	return webhookContract{
-		name: "mapproval.operator.ptah.dev", path: "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval",
+		name: "mapproval.operator.ptah.run", path: "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval",
 		serviceNamespace: expected.ReleaseNamespace, serviceName: expected.WebhookServiceName, servicePort: 443,
 		requireNonemptyCABundle: true,
 		admissionReviewVersions: []string{"v1"},
 		rules: []admissionregistrationv1.RuleWithOperations{{
 			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
 			Rule: admissionregistrationv1.Rule{
-				APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"},
+				APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"},
 				Resources: []string{"ptahschemaapprovals"}, Scope: &scope,
 			},
 		}},
@@ -733,14 +733,14 @@ func supportedPredecessorMutatingApprovalWebhookContract(expected RuntimeInvaria
 func supportedPredecessorValidatingApprovalWebhookContract(expected RuntimeInvariants) webhookContract {
 	scope := admissionregistrationv1.NamespacedScope
 	return webhookContract{
-		name: "vapproval.operator.ptah.dev", path: "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval",
+		name: "vapproval.operator.ptah.run", path: "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval",
 		serviceNamespace: expected.ReleaseNamespace, serviceName: expected.WebhookServiceName, servicePort: 443,
 		requireNonemptyCABundle: true,
 		admissionReviewVersions: []string{"v1"},
 		rules: []admissionregistrationv1.RuleWithOperations{{
 			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
 			Rule: admissionregistrationv1.Rule{
-				APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"},
+				APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"},
 				Resources: []string{"ptahschemaapprovals"}, Scope: &scope,
 			},
 		}},
@@ -754,7 +754,7 @@ func supportedPredecessorValidatingApprovalWebhookContract(expected RuntimeInvar
 func supportedPredecessorPodIntentWebhookContract(expected RuntimeInvariants) webhookContract {
 	scope := admissionregistrationv1.NamespacedScope
 	return webhookContract{
-		name: "vpodintent.operator.ptah.dev", path: "/validate-v1-pod-ptah-operation-intent",
+		name: "vpodintent.operator.ptah.run", path: "/validate-v1-pod-ptah-operation-intent",
 		serviceNamespace: expected.ReleaseNamespace, serviceName: expected.WebhookServiceName, servicePort: 443,
 		requireNonemptyCABundle: true,
 		admissionReviewVersions: []string{"v1"},
