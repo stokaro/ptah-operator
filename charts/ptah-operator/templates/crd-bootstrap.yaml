@@ -1,0 +1,46 @@
+{{/*
+The CRDs this release adds, and no others.
+
+Helm applies crds/ on install and leaves it alone on every upgrade, so a kind a
+later release adds would never exist: the CRD manager would find it missing and
+stop the upgrade in its pre-upgrade hook, before the new controller. Rendering
+the absent ones as hooks is what lets a release add a kind.
+
+Which absent ones is the whole question, because a deleted CRD is absent too,
+and the operator refuses to recreate one -- an upgrade that silently put an
+empty kind back where a populated one was would hide the deletion. The schema
+version separates them: a release that adds a kind necessarily raises it, so a
+CRD missing while the cluster already carries this release's version was
+removed, and this template leaves it to the manager's refusal.
+
+A cluster holding no CRD of ours at all predates everything, which is an
+install whose crds/ were skipped.
+*/}}
+{{- $lowestInstalled := -1 -}}
+{{- range $path, $_ := .Files.Glob "crds/*.yaml" -}}
+{{- $metadata := get ($.Files.Get $path | fromYaml) "metadata" -}}
+{{- $live := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" (get $metadata "name") -}}
+{{- with $live -}}
+{{- $installed := int (default "0" (index (default (dict) .metadata.annotations) "operator.ptah.run/crd-schema-version")) -}}
+{{- if or (lt $lowestInstalled 0) (lt $installed $lowestInstalled) -}}
+{{- $lowestInstalled = $installed -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+{{- range $path, $_ := .Files.Glob "crds/*.yaml" }}
+{{- $document := $.Files.Get $path | fromYaml }}
+{{- $metadata := get $document "metadata" }}
+{{- $annotations := default (dict) (get $metadata "annotations") }}
+{{- $carried := int (default "0" (index $annotations "operator.ptah.run/crd-schema-version")) }}
+{{- if and
+      (not (lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" (get $metadata "name")))
+      (or (lt $lowestInstalled 0) (gt $carried $lowestInstalled)) }}
+{{- $_ := set $annotations "helm.sh/hook" "pre-install,pre-upgrade" }}
+{{- $_ := set $annotations "helm.sh/hook-weight" "-420" }}
+{{- $_ := set $annotations "helm.sh/resource-policy" "keep" }}
+{{- $_ := set $metadata "annotations" $annotations }}
+{{- $_ := set $document "metadata" $metadata }}
+---
+{{ toYaml $document }}
+{{- end }}
+{{- end }}
