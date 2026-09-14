@@ -50,7 +50,7 @@ spec:
       app.kubernetes.io/managed-by: ptah-operator
       app.kubernetes.io/component: schema-operation
     matchExpressions:
-      - key: operator.ptah.dev/operation
+      - key: operator.ptah.run/operation
         operator: In
         values: [resolve, verify, observe, plan]
   policyTypes: [Egress]
@@ -78,7 +78,7 @@ spec:
       app.kubernetes.io/managed-by: ptah-operator
       app.kubernetes.io/component: schema-operation
     matchExpressions:
-      - key: operator.ptah.dev/operation
+      - key: operator.ptah.run/operation
         operator: In
         values: [observe, plan, apply]
   policyTypes: [Egress]

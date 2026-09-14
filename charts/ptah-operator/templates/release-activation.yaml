@@ -11,10 +11,10 @@
 {{- $credentialPhase := default "" (index $data "controller-credentials") -}}
 {{- $drainTarget := default "" (index $data "controller-credentials-target-release-sequence") -}}
 {{- $drainAttempt := default "" (index $data "controller-credentials-attempt") -}}
-{{- $state := default "" (index $annotations "operator.ptah.dev/controller-state-version") -}}
-{{- $admission := default "" (index $annotations "operator.ptah.dev/admission-contract-version") -}}
-{{- $release := default "" (index $annotations "operator.ptah.dev/release-sequence") -}}
-{{- $image := default "" (index $annotations "operator.ptah.dev/manager-image") -}}
+{{- $state := default "" (index $annotations "operator.ptah.run/controller-state-version") -}}
+{{- $admission := default "" (index $annotations "operator.ptah.run/admission-contract-version") -}}
+{{- $release := default "" (index $annotations "operator.ptah.run/release-sequence") -}}
+{{- $image := default "" (index $annotations "operator.ptah.run/manager-image") -}}
 {{- if or
       (ne (len $annotations) 10)
       (ne (default "" .metadata.generateName) "")
@@ -25,9 +25,9 @@
       (ne (default "" (index $annotations "helm.sh/hook")) "pre-install,pre-upgrade")
       (ne (default "" (index $annotations "helm.sh/hook-weight")) "-166")
       (ne (default "" (index $annotations "helm.sh/resource-policy")) "keep")
-      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
-      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
-      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
+      (ne (default "" (index $annotations "operator.ptah.run/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.run/release-name")) $.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.run/release-namespace")) $.Release.Namespace)
       (not (regexMatch `^[1-9][0-9]*$` $state))
       (not (regexMatch `^[1-9][0-9]*$` $admission))
       (not (regexMatch `^[1-9][0-9]*$` $release))
@@ -66,13 +66,13 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-166"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/controller-state-version: {{ $stateVersion | quote }}
-    operator.ptah.dev/admission-contract-version: {{ $admissionVersion | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
-    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/controller-state-version: {{ $stateVersion | quote }}
+    operator.ptah.run/admission-contract-version: {{ $admissionVersion | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/manager-image: {{ $managerImage | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}

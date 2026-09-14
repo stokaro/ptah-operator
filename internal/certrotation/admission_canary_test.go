@@ -217,7 +217,7 @@ func TestAdmissionCanaryRefusesForeignCandidateServiceContracts(t *testing.T) {
 			mutate: func(f *admissionCanaryFixture) {
 				configuration := mustGetAdmissionCanaryValidating(t, f)
 				configuration.Webhooks = append(configuration.Webhooks, admissionregistrationv1.ValidatingWebhook{
-					Name: "foreign.operator.ptah.dev",
+					Name: "foreign.operator.ptah.run",
 					ClientConfig: admissionregistrationv1.WebhookClientConfig{Service: &admissionregistrationv1.ServiceReference{
 						Name: f.config.CandidateServiceName, Namespace: f.config.ServiceNamespace,
 					}},
@@ -319,7 +319,7 @@ func TestAdmissionCanaryDenialClassifierRequiresExactStatusFingerprint(t *testin
 		mutate func(*metav1.Status)
 	}{
 		{name: "wrong webhook", mutate: func(status *metav1.Status) {
-			status.Message = strings.Replace(status.Message, AdmissionCanaryMutatingWebhookName, "foreign.operator.ptah.dev", 1)
+			status.Message = strings.Replace(status.Message, AdmissionCanaryMutatingWebhookName, "foreign.operator.ptah.run", 1)
 		}},
 		{name: "wrong status", mutate: func(status *metav1.Status) { status.Status = metav1.StatusSuccess }},
 		{name: "wrong reason", mutate: func(status *metav1.Status) { status.Reason = metav1.StatusReasonForbidden }},
@@ -384,7 +384,7 @@ func TestAdmissionCanaryEndpointProbeRequiresBothExactDenials(t *testing.T) {
 		}},
 		{name: "validating foreign typed denial", mutate: func(client *scriptedAdmissionCanaryMarkerClient) {
 			client.responses[AdmissionCanaryValidatingFieldManager] = admissionCanaryAPIError(
-				"foreign.operator.ptah.dev",
+				"foreign.operator.ptah.run",
 				AdmissionCanaryValidatingDenialStatus(client.marker.Name, client.marker.UID),
 			)
 		}},

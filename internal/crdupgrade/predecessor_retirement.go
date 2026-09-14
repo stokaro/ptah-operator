@@ -30,7 +30,7 @@ const (
 
 	// PredecessorRetirementInventoryVersionAnnotation is present on both the
 	// unsealed and sealed forms of every sequence-scoped convergence marker.
-	PredecessorRetirementInventoryVersionAnnotation = "operator.ptah.dev/predecessor-retirement-inventory-version"
+	PredecessorRetirementInventoryVersionAnnotation = "operator.ptah.run/predecessor-retirement-inventory-version"
 
 	// PredecessorRetirementInventoryDataKey is absent from the exact unsealed
 	// marker and contains canonical compact JSON in the immutable sealed form.
@@ -612,7 +612,7 @@ func predecessorHookProbeObject(rollout *RolloutGuard) *corev1.ConfigMap {
 				"helm.sh/hook":                           "pre-install,pre-upgrade",
 				"helm.sh/hook-weight":                    hookIdentityProbeMarkerWeight,
 				"helm.sh/resource-policy":                "keep",
-				"operator.ptah.dev/hook-identity-policy": policyName,
+				"operator.ptah.run/hook-identity-policy": policyName,
 			},
 			Labels: map[string]string{
 				managedByLabel:                rolloutGuardManagedBy,

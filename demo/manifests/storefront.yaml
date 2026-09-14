@@ -4,7 +4,7 @@
 # named, and read by the operator from Secrets this namespace holds; what the
 # resource carries is which artifact, which database, and what the operator is
 # allowed to do about the difference.
-apiVersion: operator.ptah.dev/v1alpha1
+apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchema
 metadata:
   name: storefront

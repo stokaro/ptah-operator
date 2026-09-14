@@ -49,7 +49,7 @@ import (
 )
 
 const (
-	activeOperationFinalizer = "operator.ptah.dev/active-operation"
+	activeOperationFinalizer = "operator.ptah.run/active-operation"
 	executorContainerName    = "ptah"
 	approvalSchemaIndex      = "spec.schemaRef.name"
 	schemaPolicyIndex        = "spec.desired.verificationPolicyFrom.name"

@@ -41,7 +41,7 @@ steps:
   - note: Three resources -- the desired state, the plan, and the decision that lets it run.
     run: |
       kubectl get crd -o custom-columns=NAME:.metadata.name,ESTABLISHED:'.status.conditions[?(@.type=="Established")].status' \
-        ptahschemas.operator.ptah.dev ptahschemaplans.operator.ptah.dev ptahschemaapprovals.operator.ptah.dev
+        ptahschemas.operator.ptah.run ptahschemaplans.operator.ptah.run ptahschemaapprovals.operator.ptah.run
     expect:
       exit: 0
       stdout_contains: [ptahschemas, ptahschemaplans, ptahschemaapprovals]

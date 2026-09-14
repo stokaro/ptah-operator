@@ -2,7 +2,7 @@
 {{- include "ptah-operator.validatePtahVersion" . }}
 {{- include "ptah-operator.validateLeaderElection" . }}
 {{- include "ptah-operator.validateAdmissionSingleton" . }}
-{{- range $key := list "operator.ptah.dev/controller-state-version" "operator.ptah.dev/release-sequence" }}
+{{- range $key := list "operator.ptah.run/controller-state-version" "operator.ptah.run/release-sequence" }}
 {{- if hasKey (default (dict) $.Values.podAnnotations) $key }}
 {{- fail (printf "podAnnotations must not override %s" $key) }}
 {{- end }}
@@ -18,8 +18,8 @@ metadata:
   name: {{ include "ptah-operator.fullname" . }}
   namespace: {{ .Release.Namespace }}
   annotations:
-    operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
-    operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
+    operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+    operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: controller
@@ -41,8 +41,8 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       annotations:
-        operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
-        operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
+        operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+        operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

@@ -5,7 +5,7 @@ Repository-local guidance for coding agents working in `ptah-operator`.
 ## What this is
 
 A Kubernetes operator for Ptah, scaffolded with Kubebuilder v4 under the group
-`ptah.dev`. The API is `api/v1alpha1` — `PtahSchema`, `PtahSchemaPlan`,
+`ptah.run`. The API is `api/v1alpha1` — `PtahSchema`, `PtahSchemaPlan`,
 `PtahSchemaApproval` — and the work happens in `internal/`, which holds the
 controllers, admission, certificate rotation, the CRD upgrade path, the plan
 store and the runner. Four programs ship from `cmd/`: the manager, the

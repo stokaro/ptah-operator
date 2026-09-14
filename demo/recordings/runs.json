@@ -156,7 +156,7 @@
         ],
         [
           "out",
-          "ptahschema.operator.ptah.dev/storefront patched"
+          "ptahschema.operator.ptah.run/storefront patched"
         ],
         [
           "sync",
@@ -566,7 +566,7 @@
         ],
         [
           "out",
-          "ptahschema.operator.ptah.dev/storefront created"
+          "ptahschema.operator.ptah.run/storefront created"
         ],
         [
           "sync",
@@ -650,7 +650,7 @@
         ],
         [
           "out",
-          "ptahschema.operator.ptah.dev/storefront patched"
+          "ptahschema.operator.ptah.run/storefront patched"
         ],
         [
           "sync",
@@ -887,7 +887,7 @@
         ],
         [
           "out",
-          "apiVersion: operator.ptah.dev/v1alpha1"
+          "apiVersion: operator.ptah.run/v1alpha1"
         ],
         [
           "out",
@@ -1051,7 +1051,7 @@
         ],
         [
           "out",
-          "ptahschema.operator.ptah.dev/storefront created"
+          "ptahschema.operator.ptah.run/storefront created"
         ],
         [
           "sync",
@@ -1396,7 +1396,7 @@
         ],
         [
           "cont",
-          "  ptahschemas.operator.ptah.dev ptahschemaplans.operator.ptah.dev ptahschemaapprovals.operator.ptah.dev"
+          "  ptahschemas.operator.ptah.run ptahschemaplans.operator.ptah.run ptahschemaapprovals.operator.ptah.run"
         ],
         [
           "out",
@@ -1404,15 +1404,15 @@
         ],
         [
           "out",
-          "ptahschemas.operator.ptah.dev           True"
+          "ptahschemas.operator.ptah.run           True"
         ],
         [
           "out",
-          "ptahschemaplans.operator.ptah.dev       True"
+          "ptahschemaplans.operator.ptah.run       True"
         ],
         [
           "out",
-          "ptahschemaapprovals.operator.ptah.dev   True"
+          "ptahschemaapprovals.operator.ptah.run   True"
         ],
         [
           "note",
@@ -1551,7 +1551,7 @@
         ],
         [
           "out",
-          "apiVersion: operator.ptah.dev/v1alpha1"
+          "apiVersion: operator.ptah.run/v1alpha1"
         ],
         [
           "out",
@@ -1715,7 +1715,7 @@
         ],
         [
           "out",
-          "ptahschema.operator.ptah.dev/storefront created"
+          "ptahschema.operator.ptah.run/storefront created"
         ],
         [
           "sync",
@@ -1811,7 +1811,7 @@
         ],
         [
           "cont",
-          "    apiVersion: \"operator.ptah.dev/v1alpha1\", kind: \"PtahSchemaApproval\","
+          "    apiVersion: \"operator.ptah.run/v1alpha1\", kind: \"PtahSchemaApproval\","
         ],
         [
           "cont",
@@ -1859,7 +1859,7 @@
         ],
         [
           "out",
-          "ptahschemaapproval.operator.ptah.dev/storefront-v1 created"
+          "ptahschemaapproval.operator.ptah.run/storefront-v1 created"
         ],
         [
           "note",
@@ -2222,7 +2222,7 @@
         ],
         [
           "out",
-          "ptahschema.operator.ptah.dev/storefront patched"
+          "ptahschema.operator.ptah.run/storefront patched"
         ],
         [
           "sync",
@@ -2471,7 +2471,7 @@
         ],
         [
           "cont",
-          "    apiVersion: \"operator.ptah.dev/v1alpha1\", kind: \"PtahSchemaApproval\","
+          "    apiVersion: \"operator.ptah.run/v1alpha1\", kind: \"PtahSchemaApproval\","
         ],
         [
           "cont",
@@ -2503,7 +2503,7 @@
         ],
         [
           "out",
-          "ptahschemaapproval.operator.ptah.dev/storefront-v1 created"
+          "ptahschemaapproval.operator.ptah.run/storefront-v1 created"
         ],
         [
           "sync",
@@ -2591,7 +2591,7 @@
         ],
         [
           "out",
-          "ptahschema.operator.ptah.dev/storefront patched"
+          "ptahschema.operator.ptah.run/storefront patched"
         ],
         [
           "sync",
@@ -2772,7 +2772,7 @@
         ],
         [
           "out",
-          "ptahschema.operator.ptah.dev/storefront patched"
+          "ptahschema.operator.ptah.run/storefront patched"
         ],
         [
           "note",
@@ -2820,7 +2820,7 @@
         ],
         [
           "out",
-          "ptahschema.operator.ptah.dev/storefront patched"
+          "ptahschema.operator.ptah.run/storefront patched"
         ],
         [
           "note",
@@ -2864,7 +2864,7 @@
         ],
         [
           "out",
-          "ptahschema.operator.ptah.dev/storefront patched"
+          "ptahschema.operator.ptah.run/storefront patched"
         ],
         [
           "sync",

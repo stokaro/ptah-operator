@@ -1,4 +1,4 @@
-apiVersion: operator.ptah.dev/v1alpha1
+apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchemaApproval
 metadata:
   name: approve-application-plan

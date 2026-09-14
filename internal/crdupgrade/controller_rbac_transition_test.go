@@ -1134,7 +1134,7 @@ func TestControllerRBACPredecessorAuthorizationProbeCoversExactLegacyUnion(t *te
 	if got, want := len(probe.Checks), 47; got != want {
 		t.Fatalf("legacy authorization checks = %d, want complete %d-check union", got, want)
 	}
-	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "list", "operator.ptah.dev", "ptahschemas", "", "")
+	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "list", "operator.ptah.run", "ptahschemas", "", "")
 	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "watch", "batch", "jobs", "", "")
 	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "get", "", "pods", "log", "ptah-controller-rbac-revocation-probe")
 	assertControllerRBACCheck(t, probe.Checks, "ptah-system", "update", "", "events", "", "ptah-controller-rbac-revocation-probe")
@@ -1268,7 +1268,7 @@ func newControllerRBACTransitionFixture(t *testing.T, cursor int) *controllerRBA
 		ReleaseNamespace:                     "ptah-system",
 		CoordinationNamespace:                "ptah-coordination",
 		LeaderElection:                       true,
-		LeaderElectionID:                     "ptah-operator.operator.ptah.dev",
+		LeaderElectionID:                     "ptah-operator.operator.ptah.run",
 		WebhookServiceName:                   "ptah-e2e-webhook",
 		WebhookTimeoutSeconds:                5,
 		WebhookSecretName:                    "ptah-e2e-webhook-cert",

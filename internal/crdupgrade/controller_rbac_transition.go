@@ -953,9 +953,9 @@ func sequence1ControllerRuntimeRoleRules(identity controllerRoleIdentity, contra
 // does not follow currentControllerClusterRoleRules when that changes.
 func sequence1ControllerClusterRoleRules(identity controllerRoleIdentity) []rbacv1.PolicyRule {
 	crdNames := []string{
-		"ptahschemaapprovals.operator.ptah.dev",
-		"ptahschemaplans.operator.ptah.dev",
-		"ptahschemas.operator.ptah.dev",
+		"ptahschemaapprovals.operator.ptah.run",
+		"ptahschemaplans.operator.ptah.run",
+		"ptahschemas.operator.ptah.run",
 	}
 	return []rbacv1.PolicyRule{
 		privilegePolicyRule([]string{"apiextensions.k8s.io"}, []string{"customresourcedefinitions"}, crdNames, []string{"get"}),
@@ -971,11 +971,11 @@ func sequence1ControllerClusterRoleRules(identity controllerRoleIdentity) []rbac
 			retainedAdmissionGuardNames(identity),
 			[]string{"get"},
 		),
-		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas"}, nil, []string{"get", "list", "watch", "patch"}),
-		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, nil, []string{"update"}),
-		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, nil, []string{"get", "update", "patch"}),
-		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemaplans"}, nil, []string{"get", "list", "watch", "create"}),
-		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemaapprovals"}, nil, []string{"get", "list", "watch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas"}, nil, []string{"get", "list", "watch", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, nil, []string{"update"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, nil, []string{"get", "update", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemaplans"}, nil, []string{"get", "list", "watch", "create"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemaapprovals"}, nil, []string{"get", "list", "watch"}),
 		privilegePolicyRule([]string{"batch"}, []string{"jobs"}, nil, []string{"get", "list", "watch", "create", "patch"}),
 		privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"get", "list", "watch"}),
 		privilegePolicyRule([]string{""}, []string{"pods/log"}, nil, []string{"get"}),
@@ -1000,11 +1000,11 @@ func sequence1ControllerCoordinationRoleRules() []rbacv1.PolicyRule {
 
 func legacyControllerClusterRoleRules() []rbacv1.PolicyRule {
 	return []rbacv1.PolicyRule{
-		{APIGroups: []string{"operator.ptah.dev"}, Resources: []string{"ptahschemas"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
-		{APIGroups: []string{"operator.ptah.dev"}, Resources: []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, Verbs: []string{"update"}},
-		{APIGroups: []string{"operator.ptah.dev"}, Resources: []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, Verbs: []string{"get", "update", "patch"}},
-		{APIGroups: []string{"operator.ptah.dev"}, Resources: []string{"ptahschemaplans"}, Verbs: []string{"get", "list", "watch", "create"}},
-		{APIGroups: []string{"operator.ptah.dev"}, Resources: []string{"ptahschemaapprovals"}, Verbs: []string{"get", "list", "watch"}},
+		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemas"}, Verbs: []string{"get", "list", "watch", "update", "patch"}},
+		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, Verbs: []string{"update"}},
+		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, Verbs: []string{"get", "update", "patch"}},
+		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemaplans"}, Verbs: []string{"get", "list", "watch", "create"}},
+		{APIGroups: []string{"operator.ptah.run"}, Resources: []string{"ptahschemaapprovals"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{"batch"}, Resources: []string{"jobs"}, Verbs: []string{"get", "list", "watch", "create", "patch"}},
 		{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
 		{APIGroups: []string{""}, Resources: []string{"pods/log"}, Verbs: []string{"get"}},
@@ -1027,9 +1027,9 @@ func legacyControllerCoordinationRoleRules() []rbacv1.PolicyRule {
 
 func currentControllerClusterRoleRules(rollout *RolloutGuard) []rbacv1.PolicyRule {
 	crdNames := []string{
-		"ptahschemaapprovals.operator.ptah.dev",
-		"ptahschemaplans.operator.ptah.dev",
-		"ptahschemas.operator.ptah.dev",
+		"ptahschemaapprovals.operator.ptah.run",
+		"ptahschemaplans.operator.ptah.run",
+		"ptahschemas.operator.ptah.run",
 	}
 	return []rbacv1.PolicyRule{
 		privilegePolicyRule([]string{"apiextensions.k8s.io"}, []string{"customresourcedefinitions"}, crdNames, []string{"get"}),
@@ -1045,11 +1045,11 @@ func currentControllerClusterRoleRules(rollout *RolloutGuard) []rbacv1.PolicyRul
 			currentControllerRuntimeGuardNames(rollout),
 			[]string{"get"},
 		),
-		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas"}, nil, []string{"get", "list", "watch", "patch"}),
-		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, nil, []string{"update"}),
-		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, nil, []string{"get", "update", "patch"}),
-		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemaplans"}, nil, []string{"get", "list", "watch", "create"}),
-		privilegePolicyRule([]string{"operator.ptah.dev"}, []string{"ptahschemaapprovals"}, nil, []string{"get", "list", "watch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas"}, nil, []string{"get", "list", "watch", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas/finalizers", "ptahschemaplans/finalizers"}, nil, []string{"update"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemas/status", "ptahschemaplans/status", "ptahschemaapprovals/status"}, nil, []string{"get", "update", "patch"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemaplans"}, nil, []string{"get", "list", "watch", "create"}),
+		privilegePolicyRule([]string{"operator.ptah.run"}, []string{"ptahschemaapprovals"}, nil, []string{"get", "list", "watch"}),
 		privilegePolicyRule([]string{"batch"}, []string{"jobs"}, nil, []string{"get", "list", "watch", "create", "patch"}),
 		privilegePolicyRule([]string{""}, []string{"pods"}, nil, []string{"get", "list", "watch"}),
 		privilegePolicyRule([]string{""}, []string{"pods/log"}, nil, []string{"get"}),
@@ -1272,7 +1272,7 @@ func controllerRBACResourceNamespace(group, resource, releaseNamespace string) s
 }
 
 func controllerRBACResourceVersion(group string) string {
-	if group == "operator.ptah.dev" {
+	if group == "operator.ptah.run" {
 		return "v1alpha1"
 	}
 	return "v1"

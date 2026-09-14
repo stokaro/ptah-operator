@@ -93,10 +93,10 @@ metadata:
   name: $ACCOUNT
   namespace: $NAMESPACE
 rules:
-  - apiGroups: [operator.ptah.dev]
+  - apiGroups: [operator.ptah.run]
     resources: [ptahschemas, ptahschemaplans, ptahschemaapprovals]
     verbs: [get, list, watch, create, update, patch, delete]
-  - apiGroups: [operator.ptah.dev]
+  - apiGroups: [operator.ptah.run]
     resources: [ptahschemas/status, ptahschemaplans/status, ptahschemaapprovals/status]
     verbs: [get]
   - apiGroups: [""]
@@ -181,7 +181,7 @@ say 'checking: this account may not create a Job'
 if kubectl -n "$NAMESPACE" auth can-i create jobs >/dev/null; then
 	fail 'the account may create a Job, so the run that follows would prove nothing'
 fi
-kubectl -n "$NAMESPACE" auth can-i create ptahschemas.operator.ptah.dev >/dev/null ||
+kubectl -n "$NAMESPACE" auth can-i create ptahschemas.operator.ptah.run >/dev/null ||
 	fail 'the account may not create a PtahSchema, so it cannot operate a schema at all'
 
 say 'publishing the desired schema as an artifact'

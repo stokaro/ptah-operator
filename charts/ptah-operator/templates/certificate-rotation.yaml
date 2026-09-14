@@ -40,7 +40,7 @@ spec:
         (!has(object.metadata.generateName) || object.metadata.generateName == '') &&
         has(object.metadata.labels) &&
         object.metadata.labels ==
-          {'operator.ptah.dev/generated-webhook-certificate': 'true',
+          {'operator.ptah.run/generated-webhook-certificate': 'true',
            'app.kubernetes.io/managed-by': 'Helm'} &&
         has(object.metadata.annotations) &&
         object.metadata.annotations ==
@@ -104,7 +104,7 @@ metadata:
     meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: Helm
-    operator.ptah.dev/certificate-rotation-staging: "true"
+    operator.ptah.run/certificate-rotation-staging: "true"
 type: Opaque
 ---
 apiVersion: v1
@@ -117,7 +117,7 @@ metadata:
     meta.helm.sh/release-namespace: {{ .Release.Namespace | quote }}
   labels:
     app.kubernetes.io/managed-by: Helm
-    operator.ptah.dev/certificate-rotation-canary: "v1"
+    operator.ptah.run/certificate-rotation-canary: "v1"
 immutable: true
 ---
 apiVersion: v1
@@ -246,9 +246,9 @@ rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     resourceNames:
-      - ptahschemaapprovals.operator.ptah.dev
-      - ptahschemaplans.operator.ptah.dev
-      - ptahschemas.operator.ptah.dev
+      - ptahschemaapprovals.operator.ptah.run
+      - ptahschemaplans.operator.ptah.run
+      - ptahschemas.operator.ptah.run
     verbs: ["get"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
@@ -317,8 +317,8 @@ metadata:
   name: {{ $rotatorName }}
   namespace: {{ .Release.Namespace }}
   annotations:
-    operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
-    operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
+    operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+    operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
   labels:
     {{- include "ptah-operator.labels" . | nindent 4 }}
     app.kubernetes.io/component: certificate-rotation
@@ -335,8 +335,8 @@ spec:
   template:
     metadata:
       annotations:
-        operator.ptah.dev/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
-        operator.ptah.dev/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
+        operator.ptah.run/controller-state-version: {{ include "ptah-operator.controllerStateVersion" . | quote }}
+        operator.ptah.run/release-sequence: {{ include "ptah-operator.releaseSequence" . | quote }}
       labels:
         {{- include "ptah-operator.labels" . | nindent 8 }}
         app.kubernetes.io/component: certificate-rotation

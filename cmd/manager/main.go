@@ -35,11 +35,11 @@ import (
 )
 
 const (
-	mutateApprovalPath          = "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
-	validateApprovalPath        = "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval"
+	mutateApprovalPath          = "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"
+	validateApprovalPath        = "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"
 	validatePodIntentPath       = "/validate-v1-pod-ptah-operation-intent"
 	validateControllerWritePath = "/validate-operator-controller-write"
-	leaderElectionID            = "ptah-operator.operator.ptah.dev"
+	leaderElectionID            = "ptah-operator.operator.ptah.run"
 )
 
 // controllerRevision is injected by the release build. An unversioned manager

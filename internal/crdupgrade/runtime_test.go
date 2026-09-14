@@ -244,13 +244,13 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			name: "validating unknown webhook", want: "unknown webhook",
 			mutate: func(verifier *RuntimeVerifier) {
 				webhooks := verifier.Validating.(*validatingAdmissionClient).object.Webhooks
-				webhooks[1].Name = "foreign.operator.ptah.dev"
+				webhooks[1].Name = "foreign.operator.ptah.run"
 			},
 		},
 		{
 			name: "webhook name", want: "unknown webhook",
 			mutate: func(verifier *RuntimeVerifier) {
-				verifier.Mutating.(*mutatingAdmissionClient).object.Webhooks[0].Name = "foreign.operator.ptah.dev"
+				verifier.Mutating.(*mutatingAdmissionClient).object.Webhooks[0].Name = "foreign.operator.ptah.run"
 			},
 		},
 		{
@@ -325,7 +325,7 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			name: "mutating approval selector", want: "objectSelector",
 			mutate: func(verifier *RuntimeVerifier) {
 				verifier.Mutating.(*mutatingAdmissionClient).object.Webhooks[0].ObjectSelector = &metav1.LabelSelector{
-					MatchLabels: map[string]string{"operator.ptah.dev/foreign": "true"},
+					MatchLabels: map[string]string{"operator.ptah.run/foreign": "true"},
 				}
 			},
 		},
@@ -334,7 +334,7 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			mutate: func(verifier *RuntimeVerifier) {
 				validatingWebhook(t, verifier, validatingApprovalWebhookName).ObjectSelector = &metav1.LabelSelector{
 					MatchExpressions: []metav1.LabelSelectorRequirement{{
-						Key: "operator.ptah.dev/foreign", Operator: metav1.LabelSelectorOpExists,
+						Key: "operator.ptah.run/foreign", Operator: metav1.LabelSelectorOpExists,
 					}},
 				}
 			},
@@ -343,7 +343,7 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			name: "namespace selector", want: "namespaceSelector",
 			mutate: func(verifier *RuntimeVerifier) {
 				validatingWebhook(t, verifier, validatingApprovalWebhookName).NamespaceSelector = &metav1.LabelSelector{
-					MatchLabels: map[string]string{"operator.ptah.dev/foreign": "true"},
+					MatchLabels: map[string]string{"operator.ptah.run/foreign": "true"},
 				}
 			},
 		},
@@ -370,7 +370,7 @@ func TestRuntimeVerifierRejectsAdmissionContractDrift(t *testing.T) {
 			mutate: func(verifier *RuntimeVerifier) {
 				validatingWebhook(t, verifier, controllerWriteWebhookName).ObjectSelector = &metav1.LabelSelector{
 					MatchExpressions: []metav1.LabelSelectorRequirement{{
-						Key: "operator.ptah.dev/foreign", Operator: metav1.LabelSelectorOpExists,
+						Key: "operator.ptah.run/foreign", Operator: metav1.LabelSelectorOpExists,
 					}},
 				}
 			},
@@ -932,7 +932,7 @@ func readyRuntimeVerifier(t *testing.T) *RuntimeVerifier {
 		ReleaseNamespace:             "ptah-system",
 		CoordinationNamespace:        "ptah-locks",
 		LeaderElection:               true,
-		LeaderElectionID:             "ptah-operator.operator.ptah.dev",
+		LeaderElectionID:             "ptah-operator.operator.ptah.run",
 		WebhookServiceName:           "ptah-webhook",
 		WebhookTimeoutSeconds:        5,
 		HookServiceAccountName:       "ptah-crd-manager",
@@ -1057,7 +1057,7 @@ func readyControllerWriteWebhook(expected RuntimeInvariants) admissionregistrati
 			},
 			{
 				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
-				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahschemaplans"}, Scope: &scope},
+				Rule:       admissionregistrationv1.Rule{APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"}, Resources: []string{"ptahschemaplans"}, Scope: &scope},
 			},
 		},
 		MatchConditions: []admissionregistrationv1.MatchCondition{{
@@ -1106,7 +1106,7 @@ func approvalRules(operations []admissionregistrationv1.OperationType) []admissi
 	return []admissionregistrationv1.RuleWithOperations{{
 		Operations: operations,
 		Rule: admissionregistrationv1.Rule{
-			APIGroups: []string{"operator.ptah.dev"}, APIVersions: []string{"v1alpha1"},
+			APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"},
 			Resources: []string{"ptahschemaapprovals"}, Scope: &scope,
 		},
 	}}

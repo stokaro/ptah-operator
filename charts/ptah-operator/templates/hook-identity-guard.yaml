@@ -82,10 +82,10 @@
 {{- $annotations := default (dict) .metadata.annotations -}}
 {{- $labels := default (dict) .metadata.labels -}}
 {{- if or
-      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
-      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
-      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
-      (ne (default "" (index $annotations "operator.ptah.dev/release-sequence")) $sequence)
+      (ne (default "" (index $annotations "operator.ptah.run/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.run/release-name")) $.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.run/release-namespace")) $.Release.Namespace)
+      (ne (default "" (index $annotations "operator.ptah.run/release-sequence")) $sequence)
       (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
       (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
       (ne (default "" (index $labels "app.kubernetes.io/component")) "rollout-guard") -}}
@@ -95,7 +95,7 @@
 {{- end -}}
 {{- with $probeMarker -}}
 {{- if or
-      (ne (default "" (index (default (dict) .metadata.annotations) "operator.ptah.dev/hook-identity-policy")) $probeName)
+      (ne (default "" (index (default (dict) .metadata.annotations) "operator.ptah.run/hook-identity-policy")) $probeName)
       (ne (default "" (index (default (dict) .metadata.labels) "app.kubernetes.io/managed-by")) "ptah-operator")
       (ne (default "" (index (default (dict) .metadata.labels) "app.kubernetes.io/instance")) $.Release.Name)
       (ne (default "" (index (default (dict) .metadata.labels) "app.kubernetes.io/component")) "hook-identity-probe") -}}
@@ -112,7 +112,7 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-125"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/hook-identity-policy: {{ $probeName }}
+    operator.ptah.run/hook-identity-policy: {{ $probeName }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -130,11 +130,11 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-120"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
-    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/manager-image: {{ $managerImage | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -195,11 +195,11 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-120"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
-    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/manager-image: {{ $managerImage | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -248,10 +248,10 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-115"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -270,10 +270,10 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-115"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}

@@ -165,7 +165,7 @@ func TestRenderedRetiredPrivilegeRulesMatchCompiledContract(t *testing.T) {
 			if object.Name == "ptah-e2e-ptah-operator" {
 				managerCanSetPlanOwner = permitsResourceUpdate(
 					object.Rules,
-					"operator.ptah.dev",
+					"operator.ptah.run",
 					"ptahschemaplans/finalizers",
 				)
 			}
@@ -1894,7 +1894,7 @@ func newPrivilegeTeardownFixtureAt(
 		ReleaseNamespace:             "ptah-system",
 		CoordinationNamespace:        coordinationNamespace,
 		LeaderElection:               true,
-		LeaderElectionID:             "ptah-operator.operator.ptah.dev",
+		LeaderElectionID:             "ptah-operator.operator.ptah.run",
 		WebhookServiceName:           "ptah-e2e-webhook",
 		WebhookTimeoutSeconds:        5,
 		WebhookSecretName:            "ptah-e2e-webhook-cert",

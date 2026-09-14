@@ -28,8 +28,8 @@ import (
 )
 
 const (
-	AdmissionCanaryMutatingWebhookName   = "certificate-rotation-canary-mutate.operator.ptah.dev"
-	AdmissionCanaryValidatingWebhookName = "certificate-rotation-canary-validate.operator.ptah.dev"
+	AdmissionCanaryMutatingWebhookName   = "certificate-rotation-canary-mutate.operator.ptah.run"
+	AdmissionCanaryValidatingWebhookName = "certificate-rotation-canary-validate.operator.ptah.run"
 
 	AdmissionCanaryMutatingPath   = "/candidate/mutate"
 	AdmissionCanaryValidatingPath = "/candidate/validate"
@@ -40,7 +40,7 @@ const (
 	AdmissionCanaryMutatingDenialMessage   = "Ptah certificate rotation mutating canary confirmed candidate trust"
 	AdmissionCanaryValidatingDenialMessage = "Ptah certificate rotation validating canary confirmed candidate trust"
 
-	AdmissionCanaryMarkerLabel      = "operator.ptah.dev/certificate-rotation-canary"
+	AdmissionCanaryMarkerLabel      = "operator.ptah.run/certificate-rotation-canary"
 	AdmissionCanaryMarkerLabelValue = "v1"
 
 	admissionCanaryMutatingMatchConditionName   = "exact-certificate-rotation-mutating-canary"

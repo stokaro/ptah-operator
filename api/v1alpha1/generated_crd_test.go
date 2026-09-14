@@ -41,7 +41,7 @@ func TestGeneratedCRDsContainSafetyCriticalFields(t *testing.T) {
 	}{
 		{
 			name: "schema",
-			file: "operator.ptah.dev_ptahschemas.yaml",
+			file: "operator.ptah.run_ptahschemas.yaml",
 			required: []string{
 				"required:\n        - spec",
 				"executionNotAfter:",
@@ -63,7 +63,7 @@ func TestGeneratedCRDsContainSafetyCriticalFields(t *testing.T) {
 		},
 		{
 			name: "plan",
-			file: "operator.ptah.dev_ptahschemaplans.yaml",
+			file: "operator.ptah.run_ptahschemaplans.yaml",
 			required: []string{
 				"required:\n        - spec",
 				"verificationPolicyUID:",
@@ -74,7 +74,7 @@ func TestGeneratedCRDsContainSafetyCriticalFields(t *testing.T) {
 		},
 		{
 			name: "approval",
-			file: "operator.ptah.dev_ptahschemaapprovals.yaml",
+			file: "operator.ptah.run_ptahschemaapprovals.yaml",
 			required: []string{
 				"required:\n        - spec",
 				"mutationRequestUID:",
@@ -118,9 +118,9 @@ func TestGeneratedCRDsPassAPIServerValidation(t *testing.T) {
 
 	repositoryRoot := repositoryRoot(t)
 	for _, name := range []string{
-		"operator.ptah.dev_ptahschemas.yaml",
-		"operator.ptah.dev_ptahschemaplans.yaml",
-		"operator.ptah.dev_ptahschemaapprovals.yaml",
+		"operator.ptah.run_ptahschemas.yaml",
+		"operator.ptah.run_ptahschemaplans.yaml",
+		"operator.ptah.run_ptahschemaapprovals.yaml",
 	} {
 		name := name
 		t.Run(name, func(t *testing.T) {
@@ -139,7 +139,7 @@ func TestGeneratedPtahSchemaCRDAcceptsUntruncatedTargetStatus(t *testing.T) {
 
 	crd := loadGeneratedCRD(t, filepath.Join(
 		repositoryRoot(t),
-		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+		"config", "crd", "bases", "operator.ptah.run_ptahschemas.yaml",
 	))
 	structural, err := structuralschema.NewStructural(storageVersionSchema(t, crd))
 	if err != nil {
@@ -164,7 +164,7 @@ func TestGeneratedPtahSchemaCRDAcceptsUntruncatedTargetStatus(t *testing.T) {
 			t.Parallel()
 
 			object := map[string]interface{}{
-				"apiVersion": "operator.ptah.dev/v1alpha1",
+				"apiVersion": "operator.ptah.run/v1alpha1",
 				"kind":       "PtahSchema",
 				"metadata":   map[string]interface{}{"name": "orders", "namespace": "tenant-a"},
 				"spec": map[string]interface{}{
@@ -200,7 +200,7 @@ func TestGeneratedPtahSchemaCRDUsesTheClosedDriftCategoryVocabulary(t *testing.T
 
 	crd := loadGeneratedCRD(t, filepath.Join(
 		repositoryRoot(t),
-		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+		"config", "crd", "bases", "operator.ptah.run_ptahschemas.yaml",
 	))
 	status := storageVersionSchema(t, crd).Properties["status"]
 	target := status.Properties["target"]
@@ -239,7 +239,7 @@ func TestGeneratedPtahSchemaCRDRejectsDuplicateExclusions(t *testing.T) {
 
 	crd := loadGeneratedCRD(t, filepath.Join(
 		repositoryRoot(t),
-		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+		"config", "crd", "bases", "operator.ptah.run_ptahschemas.yaml",
 	))
 	structural, err := structuralschema.NewStructural(storageVersionSchema(t, crd))
 	if err != nil {
@@ -267,7 +267,7 @@ func TestGeneratedPtahSchemaCRDPersistsNestedSafeDefaults(t *testing.T) {
 
 	crd := loadGeneratedCRD(t, filepath.Join(
 		repositoryRoot(t),
-		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+		"config", "crd", "bases", "operator.ptah.run_ptahschemas.yaml",
 	))
 	structural, err := structuralschema.NewStructural(storageVersionSchema(t, crd))
 	if err != nil {
@@ -305,7 +305,7 @@ func TestGeneratedPtahSchemaCRDPersistsBoundedUnknownEngineNames(t *testing.T) {
 
 	crd := loadGeneratedCRD(t, filepath.Join(
 		repositoryRoot(t),
-		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+		"config", "crd", "bases", "operator.ptah.run_ptahschemas.yaml",
 	))
 	engine := storageVersionSchema(t, crd).
 		Properties["spec"].Properties["target"].Properties["engine"]
@@ -329,7 +329,7 @@ func TestGeneratedPtahSchemaCRDBindsRegistryAccessPolicy(t *testing.T) {
 
 	crd := loadGeneratedCRD(t, filepath.Join(
 		repositoryRoot(t),
-		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+		"config", "crd", "bases", "operator.ptah.run_ptahschemas.yaml",
 	))
 	spec := storageVersionSchema(t, crd).Properties["spec"]
 	desired := spec.Properties["desired"]
@@ -386,7 +386,7 @@ func TestGeneratedPtahSchemaPlanSizeContract(t *testing.T) {
 
 	crd := loadGeneratedCRD(t, filepath.Join(
 		repositoryRoot,
-		"config", "crd", "bases", "operator.ptah.dev_ptahschemaplans.yaml",
+		"config", "crd", "bases", "operator.ptah.run_ptahschemaplans.yaml",
 	))
 	spec := storageVersionSchema(t, crd).Properties["spec"]
 	size := spec.Properties["size"]
@@ -427,7 +427,7 @@ func TestGeneratedPtahSchemaAdmissionSnapshotBounds(t *testing.T) {
 
 	crd := loadGeneratedCRD(t, filepath.Join(
 		repositoryRoot(t),
-		"config", "crd", "bases", "operator.ptah.dev_ptahschemas.yaml",
+		"config", "crd", "bases", "operator.ptah.run_ptahschemas.yaml",
 	))
 	status := storageVersionSchema(t, crd).Properties["status"]
 	activeOperation := status.Properties["activeOperation"]

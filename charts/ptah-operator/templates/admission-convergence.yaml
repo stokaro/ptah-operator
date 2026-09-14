@@ -27,13 +27,13 @@
       (ne (default "" (index $annotations "helm.sh/hook")) "pre-install,pre-upgrade")
       (ne (default "" (index $annotations "helm.sh/hook-weight")) "-165")
       (ne (default "" (index $annotations "helm.sh/resource-policy")) "keep")
-      (ne (default "" (index $annotations "operator.ptah.dev/admission-convergence-version")) "1")
-      (ne (default "" (index $annotations "operator.ptah.dev/predecessor-retirement-inventory-version")) "1")
-      (ne (default "" (index $annotations "operator.ptah.dev/admission-convergence-cleanup-service-account")) $cleanupServiceAccount)
-      (ne (default "" (index $annotations "operator.ptah.dev/manager-image")) $managerImage)
-      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $root.Release.Name)
-      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $root.Release.Namespace)
-      (ne (default "" (index $annotations "operator.ptah.dev/release-sequence")) $sequence)
+      (ne (default "" (index $annotations "operator.ptah.run/admission-convergence-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.run/predecessor-retirement-inventory-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.run/admission-convergence-cleanup-service-account")) $cleanupServiceAccount)
+      (ne (default "" (index $annotations "operator.ptah.run/manager-image")) $managerImage)
+      (ne (default "" (index $annotations "operator.ptah.run/release-name")) $root.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.run/release-namespace")) $root.Release.Namespace)
+      (ne (default "" (index $annotations "operator.ptah.run/release-sequence")) $sequence)
       (ne (len $labels) 3)
       (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
       (ne (default "" (index $labels "app.kubernetes.io/instance")) $root.Release.Name)
@@ -54,7 +54,7 @@
 {{- $name := .name -}}
 {{- $itemSequence := .itemSequence -}}
 {{- $itemAnnotations := default (dict) $marker.metadata.annotations -}}
-{{- $itemManagerImage := default "" (index $itemAnnotations "operator.ptah.dev/manager-image") -}}
+{{- $itemManagerImage := default "" (index $itemAnnotations "operator.ptah.run/manager-image") -}}
 {{- if not (regexMatch `^[^[:space:]@]+@sha256:[0-9a-f]{64}$` $itemManagerImage) -}}
 {{- fail (printf "retained admission convergence marker %s has an invalid manager identity" $name) -}}
 {{- end -}}
@@ -101,13 +101,13 @@
       (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "helm.sh/hook" "pre-install,pre-upgrade")
       (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "helm.sh/hook-weight" "-165")
       (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "helm.sh/resource-policy" "keep")
-      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/admission-convergence-cleanup-service-account" $cleanupServiceAccount)
-      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/admission-convergence-version" "1")
-      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/manager-image" $managerImage)
-      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/predecessor-retirement-inventory-version" "1")
-      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/release-name" .Release.Name)
-      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/release-namespace" .Release.Namespace)
-      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.dev/release-sequence" $sequence) -}}
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.run/admission-convergence-cleanup-service-account" $cleanupServiceAccount)
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.run/admission-convergence-version" "1")
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.run/manager-image" $managerImage)
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.run/predecessor-retirement-inventory-version" "1")
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.run/release-name" .Release.Name)
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.run/release-namespace" .Release.Namespace)
+      (printf `%s.metadata.annotations[%q] == %q` "OBJECT" "operator.ptah.run/release-sequence" $sequence) -}}
 {{- define "ptah-operator.admissionConvergenceMarkerShape" -}}
 {{- $object := .object -}}
 {{- $dataSize := 2 -}}
@@ -236,13 +236,13 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-165"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/admission-convergence-version: "1"
-    operator.ptah.dev/predecessor-retirement-inventory-version: "1"
-    operator.ptah.dev/admission-convergence-cleanup-service-account: {{ $cleanupServiceAccount | quote }}
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
-    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+    operator.ptah.run/admission-convergence-version: "1"
+    operator.ptah.run/predecessor-retirement-inventory-version: "1"
+    operator.ptah.run/admission-convergence-cleanup-service-account: {{ $cleanupServiceAccount | quote }}
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/manager-image: {{ $managerImage | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -260,12 +260,12 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-38"
     helm.sh/hook-delete-policy: before-hook-creation
-    operator.ptah.dev/admission-convergence-version: "1"
-    operator.ptah.dev/admission-convergence-cleanup-service-account: {{ $cleanupServiceAccount | quote }}
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
-    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+    operator.ptah.run/admission-convergence-version: "1"
+    operator.ptah.run/admission-convergence-cleanup-service-account: {{ $cleanupServiceAccount | quote }}
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/manager-image: {{ $managerImage | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -351,12 +351,12 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-37"
     helm.sh/hook-delete-policy: before-hook-creation
-    operator.ptah.dev/admission-convergence-version: "1"
-    operator.ptah.dev/admission-convergence-cleanup-service-account: {{ $cleanupServiceAccount | quote }}
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
-    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+    operator.ptah.run/admission-convergence-version: "1"
+    operator.ptah.run/admission-convergence-cleanup-service-account: {{ $cleanupServiceAccount | quote }}
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/manager-image: {{ $managerImage | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
