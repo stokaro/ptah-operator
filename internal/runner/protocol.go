@@ -47,11 +47,31 @@ const (
 	OperationObserve Operation = "observe"
 	OperationPlan    Operation = "plan"
 	OperationApply   Operation = "apply"
+	// OperationMigrationHistory reads the database's own migration history
+	// against a migration artifact, and changes nothing.
+	OperationMigrationHistory Operation = "migration-history"
+	// OperationMigrationApply runs the pending migrations of a migration
+	// artifact.
+	OperationMigrationApply Operation = "migration-apply"
 )
 
 func (o Operation) Valid() bool {
 	switch o {
-	case OperationResolve, OperationVerify, OperationObserve, OperationPlan, OperationApply:
+	case OperationResolve, OperationVerify, OperationObserve, OperationPlan, OperationApply,
+		OperationMigrationHistory, OperationMigrationApply:
+		return true
+	default:
+		return false
+	}
+}
+
+// Mutating reports whether an operation may change the database.
+//
+// A runner that predates an operation refuses it by name, which is what keeps
+// an old executor from being asked to run migrations it cannot account for.
+func (o Operation) Mutating() bool {
+	switch o {
+	case OperationApply, OperationMigrationApply:
 		return true
 	default:
 		return false
@@ -125,8 +145,15 @@ type Result struct {
 	PlanOutcome              PlanOutcome           `json:"planOutcome,omitempty"`
 	MutationStarted          bool                  `json:"mutationStarted,omitempty"`
 	Uncertain                bool                  `json:"uncertain,omitempty"`
-	Error                    *ResultError          `json:"error,omitempty"`
-	Truncation               *TruncationMetadata   `json:"truncation,omitempty"`
+	// MigrationHistory is the history a migration-history operation read, and
+	// MigrationRun the evidence a migration-apply operation left. Both are the
+	// documents Ptah produced, validated before they were carried here: the
+	// controller decides from the database's own account rather than from this
+	// process's exit status.
+	MigrationHistory *dataplane.MigrationStatusReport `json:"migrationHistory,omitempty"`
+	MigrationRun     *dataplane.MigrationRunReport    `json:"migrationRun,omitempty"`
+	Error            *ResultError                     `json:"error,omitempty"`
+	Truncation       *TruncationMetadata              `json:"truncation,omitempty"`
 }
 
 // ParseOptions optionally binds a parsed frame to the Job contract that
@@ -331,7 +358,8 @@ func validateResult(result Result, options ParseOptions) error {
 		}
 	}
 	if result.Error != nil && result.Error.Code == "invalid_oci_access" {
-		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify
+		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify ||
+			result.Operation == OperationMigrationHistory || result.Operation == OperationMigrationApply
 		expected := Result{
 			ProtocolVersion: result.ProtocolVersion,
 			Operation:       result.Operation,
@@ -357,7 +385,7 @@ func validateResult(result Result, options ParseOptions) error {
 	if result.Uncertain && !result.MutationStarted {
 		return fmt.Errorf("%w: uncertain result without a mutation attempt", ErrMalformedFrame)
 	}
-	if result.Operation != OperationApply && (result.MutationStarted || result.Uncertain) {
+	if !result.Operation.Mutating() && (result.MutationStarted || result.Uncertain) {
 		return fmt.Errorf("%w: mutation metadata on a read-only operation", ErrMalformedFrame)
 	}
 	if result.Operation != OperationPlan && result.Stdout != "" {
@@ -392,6 +420,18 @@ func validateResult(result Result, options ParseOptions) error {
 	}
 	if result.ResolvedDigest != "" && result.Operation != OperationResolve && result.Operation != OperationVerify {
 		return fmt.Errorf("%w: resolved digest on an unrelated operation", ErrMalformedFrame)
+	}
+	if result.MigrationHistory != nil && result.Operation != OperationMigrationHistory {
+		return fmt.Errorf("%w: migration history on an unrelated operation", ErrMalformedFrame)
+	}
+	if result.MigrationRun != nil && result.Operation != OperationMigrationApply {
+		return fmt.Errorf("%w: migration run report on an unrelated operation", ErrMalformedFrame)
+	}
+	if result.Error == nil && result.Operation == OperationMigrationHistory && result.MigrationHistory == nil {
+		return fmt.Errorf("%w: successful migration history lacks its report", ErrMalformedFrame)
+	}
+	if result.Error == nil && result.Operation == OperationMigrationApply && result.MigrationRun == nil {
+		return fmt.Errorf("%w: successful migration run lacks its report", ErrMalformedFrame)
 	}
 	if result.ObservedArtifactType != "" && result.Operation != OperationVerify {
 		return fmt.Errorf("%w: artifact type on a non-verify operation", ErrMalformedFrame)
