@@ -4056,7 +4056,8 @@ run_uninstall_proof() {
 
 	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
-		--wait --timeout 5m >/dev/null
+		--wait --timeout 5m >/dev/null ||
+		fail "the uninstall after the foreign-binding refusal failed; its own error is above"
 	assert_release_runtime_removed
 	assert_inventory_resources_absent \
 		"$next_sequence_inventory" "$next_sequence_marker_name"
@@ -4104,7 +4105,8 @@ run_uninstall_proof() {
 	reinstalled_next_marker_name=$(jq -er '.metadata.name' "$reinstalled_next_marker")
 	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
-		--wait --timeout 5m >/dev/null
+		--wait --timeout 5m >/dev/null ||
+		fail "the uninstall of the release reinstalled over retained CRDs failed; its own error is above"
 	assert_release_runtime_removed
 	assert_inventory_resources_absent \
 		"$reinstalled_next_inventory" "$reinstalled_next_marker_name"
@@ -4163,7 +4165,8 @@ run_uninstall_proof() {
 	done
 	capture_certificate_secret_names
 	helm_e2e uninstall "$E2E_HELM_RELEASE" -n "$E2E_OPERATOR_NAMESPACE" \
-		--wait --timeout 5m >/dev/null
+		--wait --timeout 5m >/dev/null ||
+		fail "the uninstall of the exported current-release chart failed; its own error is above"
 	assert_release_runtime_removed
 	assert_release_sequence_candidate_residue_absent "$E2E_CURRENT_RELEASE_SEQUENCE"
 	assert_inventory_resources_absent \
