@@ -79,29 +79,88 @@ export function reconcile(built, declared) {
   return problems;
 }
 
-function indexHTML(defaultVersion, versions) {
-  const target = `${Origin}/${defaultVersion}/`;
-  const items = versions
-    .map((name) => `      <li><a href="/${name}/">${name}</a></li>`)
-    .join('\n');
+// The stub every redirect at the site root is made of.
+//
+// Three ways to the same address, in the order a browser takes them. The script
+// runs while the head is still being parsed, so the navigation starts before
+// this document has a body to paint -- which is the whole point: a meta refresh
+// alone is honored after the document renders, and the reader watches an
+// unstyled page for as long as the destination takes to arrive. The refresh is
+// the fallback where scripts do not run, and the link is the fallback where
+// neither does.
+//
+// It is styled for the case where it is seen anyway. The site's own stylesheet
+// is under a version directory with a hashed name, so these few declarations
+// are written out: the page's two backgrounds, its ink, and a sans face. A
+// reader who sees this should see the site's colors and not a browser default.
+function redirectPage(target, title, body) {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Ptah Operator documentation</title>
+    <title>${title}</title>
     <link rel="canonical" href="${target}" />
     <meta http-equiv="refresh" content="0; url=${target}" />
+    <script>location.replace(${JSON.stringify(target)});</script>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        margin: 0;
+        min-block-size: 100svh;
+        display: grid;
+        place-content: center;
+        gap: 0.75rem;
+        padding: 2rem;
+        background: #161311;
+        color: #ede7de;
+        font: 15px/1.5 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        text-align: center;
+      }
+      @media (prefers-color-scheme: light) {
+        body {
+          background: #fbfbfa;
+          color: #111417;
+        }
+      }
+      a {
+        color: inherit;
+      }
+      ul {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 0 1rem;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        font-size: 13.5px;
+        opacity: 0.7;
+      }
+    </style>
   </head>
   <body>
-    <h1>Ptah Operator documentation</h1>
-    <p>Redirecting to <a href="${target}">${defaultVersion}</a>.</p>
-    <ul>
-${items}
-    </ul>
+${body}
   </body>
 </html>
 `;
+}
+
+function indexHTML(defaultVersion, versions) {
+  const target = `${Origin}/${defaultVersion}/`;
+  const items = versions
+    .map((name) => `      <li><a href="/${name}/">${name}</a></li>`)
+    .join('\n');
+  return redirectPage(
+    target,
+    'Ptah Operator documentation',
+    `    <p>Opening the Ptah Operator documentation: <a href="${target}">${defaultVersion}</a>.</p>
+    <ul>
+${items}
+    </ul>`,
+  );
 }
 
 // ROOT_ALIASES are addresses other sites link to, kept at the site root so a
@@ -113,20 +172,11 @@ export const ROOT_ALIASES = ['demo'];
 
 function aliasHTML(defaultVersion, route) {
   const target = `${Origin}/${defaultVersion}/${route}/`;
-  return `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Ptah Operator documentation</title>
-    <link rel="canonical" href="${target}" />
-    <meta http-equiv="refresh" content="0; url=${target}" />
-  </head>
-  <body>
-    <p>Redirecting to <a href="${target}">${defaultVersion}/${route}/</a>.</p>
-  </body>
-</html>
-`;
+  return redirectPage(
+    target,
+    'Ptah Operator documentation',
+    `    <p>Opening <a href="${target}">${defaultVersion}/${route}/</a>.</p>`,
+  );
 }
 
 function selftest() {
@@ -147,8 +197,22 @@ function selftest() {
   if (isVersionFolder('v1.2') || isVersionFolder('nightly')) throw new Error('a non-version folder was accepted');
   const alias = aliasHTML('v0.1.0', 'demo');
   if (!alias.includes('/v0.1.0/demo/')) throw new Error('a root alias did not address the default version');
+  // Every redirect at the root leaves before it is drawn. Without the script a
+  // reader watches this page until the destination arrives, which is what the
+  // apex used to do; the refresh and the link are what is left when scripts do
+  // not run, so all three are asserted rather than only the newest.
+  const index = indexHTML(EDGE, [EDGE, 'v0.1.0']);
+  for (const [name, page] of [['the apex', index], ['a root alias', alias]]) {
+    if (!page.includes('<script>location.replace(')) {
+      throw new Error(`${name} redirect does not leave before it is drawn`);
+    }
+    if (!page.includes('http-equiv="refresh"')) throw new Error(`${name} redirect has no refresh fallback`);
+    if (!page.includes('<a href=')) throw new Error(`${name} redirect has no link to follow by hand`);
+    if (!page.includes('background: #161311')) throw new Error(`${name} redirect is unstyled`);
+  }
   console.log(
-    'gen-versions.mjs --selftest: OK (order, default, both reconcile directions, folder shape, root aliases)',
+    'gen-versions.mjs --selftest: OK (order, default, both reconcile directions, folder shape, ' +
+      'root aliases, and a redirect that leaves before it is drawn)',
   );
 }
 
