@@ -50,7 +50,7 @@ const base = import.meta.env.BASE_URL;
 
 	{first && <RunFrame id={first.id} title={first.title} events={first.events} />}
 
-	<ul class="tiles">
+	<ul class="tiles not-content">
 		{Runs.map((run) => (
 			<li class="tile-slot">
 				<button class="tile" type="button" data-demo-tile data-demo-scenario={run.id}>
@@ -71,7 +71,7 @@ const base = import.meta.env.BASE_URL;
 		))}
 	</ul>
 
-	<dialog class="demo-modal" data-demo-modal aria-labelledby="run-title">
+	<dialog class="demo-modal not-content" data-demo-modal aria-labelledby="run-title">
 		<div class="demo-modal-head">
 			<h2 id="run-title" data-demo-title></h2>
 			<p data-demo-caption></p>
