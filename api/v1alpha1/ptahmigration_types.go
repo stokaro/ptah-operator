@@ -370,3 +370,25 @@ type PtahMigrationList struct {
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []PtahMigration `json:"items"`
 }
+
+// Condition reasons a PtahMigration publishes in addition to the shared ones.
+const (
+	// ReasonHistoryMatched means the artifact and the revision table agree and
+	// nothing is pending.
+	ReasonHistoryMatched ConditionReason = "HistoryMatched"
+	// ReasonMigrationsPending means the artifact has migrations the database
+	// does not.
+	ReasonMigrationsPending ConditionReason = "MigrationsPending"
+	// ReasonHistoryDirty means a failed or interrupted run left a revision row
+	// behind. Nothing applies while one exists, and the controller never
+	// removes it: what a half-applied migration did is a question for a person
+	// with the database in front of them.
+	ReasonHistoryDirty ConditionReason = "HistoryDirty"
+	// ReasonHistoryModified means an applied migration's file no longer
+	// accounts for it. This is the refusal a versioned workflow exists to make.
+	ReasonHistoryModified ConditionReason = "HistoryModified"
+)
+
+// ConditionMigrationArtifactVerified reports that the resolved artifact
+// satisfied its verification policy.
+const ConditionMigrationArtifactVerified = "ArtifactVerified"

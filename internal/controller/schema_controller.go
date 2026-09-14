@@ -3529,10 +3529,28 @@ func (r *SchemaReconciler) collectTerminalPodEvidence(
 	schema *operatorv1alpha1.PtahSchema,
 	job *batchv1.Job,
 ) (terminalEvidence, *corev1.Pod, error) {
+	var snapshot *operatorv1alpha1.PodAdmissionSnapshot
+	if schema.Status.ActiveOperation != nil {
+		snapshot = schema.Status.ActiveOperation.AdmissionSnapshot
+	}
+	return collectTerminalPodEvidence(ctx, r.directReader(), schema.Namespace, job, snapshot)
+}
+
+// collectTerminalPodEvidence selects the one Pod a result may be attributed to
+// and records what the Job produced. A second Pod, a Pod outside the persisted
+// admission envelope, or a missing snapshot is refused rather than read: a
+// terminal result belongs to one attempt.
+func collectTerminalPodEvidence(
+	ctx context.Context,
+	reader client.Reader,
+	namespace string,
+	job *batchv1.Job,
+	snapshot *operatorv1alpha1.PodAdmissionSnapshot,
+) (terminalEvidence, *corev1.Pod, error) {
 	if job == nil || job.Name == "" || job.UID == "" {
 		return terminalEvidence{}, nil, fmt.Errorf("terminal Job lacks immutable identity")
 	}
-	pods, err := r.podsOwnedByJob(ctx, schema.Namespace, job.Name, job.UID)
+	pods, err := podsOwnedByJob(ctx, reader, namespace, job.Name, job.UID)
 	if err != nil {
 		return terminalEvidence{}, nil, err
 	}
@@ -3547,10 +3565,10 @@ func (r *SchemaReconciler) collectTerminalPodEvidence(
 	if selected.UID == "" {
 		return evidence, nil, fmt.Errorf("%w: Pod UID is empty", errTerminalPodIntent)
 	}
-	if schema.Status.ActiveOperation == nil {
+	if snapshot == nil {
 		return evidence, nil, fmt.Errorf("%w: active operation admission binding is missing", errTerminalPodIntent)
 	}
-	if err := validatePodIntent(selected, job, schema.Status.ActiveOperation.AdmissionSnapshot); err != nil {
+	if err := validatePodIntent(selected, job, snapshot); err != nil {
 		return evidence, nil, fmt.Errorf("%w: %v", errTerminalPodIntent, err)
 	}
 	for _, status := range selected.Status.ContainerStatuses {
@@ -3568,11 +3586,24 @@ func (r *SchemaReconciler) podsOwnedByJob(
 	jobName string,
 	jobUID types.UID,
 ) ([]*corev1.Pod, error) {
+	return podsOwnedByJob(ctx, r.directReader(), namespace, jobName, jobUID)
+}
+
+// podsOwnedByJob returns the Pods one exact Job owns, in a stable order. Both
+// reconcilers attribute a result to a Pod this way, so it reads through a
+// reader rather than through either of them.
+func podsOwnedByJob(
+	ctx context.Context,
+	reader client.Reader,
+	namespace string,
+	jobName string,
+	jobUID types.UID,
+) ([]*corev1.Pod, error) {
 	if jobName == "" || jobUID == "" {
 		return nil, nil
 	}
 	list := &corev1.PodList{}
-	if err := r.directReader().List(ctx, list, client.InNamespace(namespace)); err != nil {
+	if err := reader.List(ctx, list, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("list exact-owner Job pods: %w", err)
 	}
 	pods := make([]*corev1.Pod, 0, len(list.Items))
