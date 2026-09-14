@@ -5,7 +5,7 @@
 // rendered href: a link that Starlight rewrote, a heading whose slug changed,
 // and a page that moved all look fine in the source and land on a 404.
 
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -79,6 +79,17 @@ export function resolveTarget(root, base, href) {
 
 function selftest() {
   const root = join(scriptDir, '..', '.selftest-links');
+  // The fixture is written, read and removed. Left behind, it is an untracked
+  // directory of HTML inside the site, which the next person to stage
+  // everything commits.
+  try {
+    selftestOver(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function selftestOver(root) {
   mkdirSync(join(root, 'page'), { recursive: true });
   writeFileSync(join(root, 'index.html'), '<a href="/edge/page/">ok</a><a href="/edge/page/#here">ok</a><a href="/edge/gone/">bad</a>');
   writeFileSync(join(root, 'page', 'index.html'), '<h2 id="here">here</h2>');

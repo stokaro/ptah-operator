@@ -1,0 +1,85 @@
+---
+/**
+ * The "On this page · <current heading>" strip, shown wherever the contents
+ * rail is not: a bar under the header with the heading list as a dropdown
+ * beneath it. Registered in astro.config.mjs as the override of Starlight's
+ * MobileTableOfContents.
+ *
+ * The markup keeps Starlight's structure -- `mobile-starlight-toc > nav >
+ * details > summary + .dropdown`, and the `.display-current` span the script
+ * writes the current heading into -- with the strip's own spans, which is what
+ * src/styles/ptah/toc.css ("On this page strip") styles. The list and the
+ * tracking class are Starlight's, reached by file path because the package
+ * exports `components/*` only: a moved file fails the build rather than
+ * quietly losing the current heading.
+ */
+import TableOfContentsList from '../../node_modules/@astrojs/starlight/dist/components-internals/TableOfContents/TableOfContentsList.astro';
+
+const { toc } = Astro.locals.starlightRoute;
+---
+
+{
+	toc && (
+		<mobile-starlight-toc data-min-h={toc.minHeadingLevel} data-max-h={toc.maxHeadingLevel}>
+			<nav aria-labelledby="starlight__on-this-page--mobile">
+				<details id="starlight__mobile-toc">
+					<summary id="starlight__on-this-page--mobile" class="ptah-toc-strip">
+						<span class="ptah-toc-strip-text">
+							<span class="ptah-toc-strip-label">{Astro.locals.t('tableOfContents.onThisPage')}</span>
+							<span class="display-current" />
+						</span>
+						<span class="ptah-toc-strip-caret" aria-hidden="true">▾</span>
+					</summary>
+					<div class="dropdown">
+						<TableOfContentsList toc={toc.items} />
+					</div>
+				</details>
+			</nav>
+		</mobile-starlight-toc>
+	)
+}
+
+<script>
+	/* Starlight's tracking class; see TableOfContents.astro for why the path. */
+	import { StarlightTOC } from '../../node_modules/@astrojs/starlight/dist/components-internals/TableOfContents/starlight-toc.js';
+
+	class MobileStarlightTOC extends StarlightTOC {
+		override set current(link: HTMLAnchorElement) {
+			super.current = link;
+			const display = this.querySelector<HTMLSpanElement>('.display-current');
+			if (display) display.textContent = link.textContent;
+		}
+
+		constructor() {
+			super();
+			const details = this.querySelector('details');
+			if (!details) return;
+			const closeToC = () => {
+				details.open = false;
+			};
+			// Close the table of contents whenever a link is clicked.
+			details.querySelectorAll('a').forEach((a) => {
+				a.addEventListener('click', closeToC);
+			});
+			// Close the table of contents when a user clicks outside of it.
+			window.addEventListener('click', (e) => {
+				if (!details.contains(e.target as Node)) closeToC();
+			});
+			// Or when they press the escape key.
+			window.addEventListener('keydown', (e) => {
+				if (e.key === 'Escape' && details.open) {
+					const hasFocus = details.contains(document.activeElement);
+					closeToC();
+					if (hasFocus) {
+						const summary = details.querySelector('summary');
+						if (summary) summary.focus();
+					}
+				}
+			});
+		}
+	}
+
+	if (!customElements.get('mobile-starlight-toc')) {
+		customElements.define('mobile-starlight-toc', MobileStarlightTOC);
+	}
+</script>

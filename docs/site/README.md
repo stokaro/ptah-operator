@@ -16,6 +16,21 @@ npm run check:values
 page from `charts/ptah-operator/values.yaml`, which is where those values are
 declared.
 
+## The design
+
+`src/styles/ptah/*.css` is Ptah's documentation design, copied rather than
+imported so this site builds from this repository alone. Several of those
+sheets style markup that Starlight does not produce: `sidebar.css` styles the
+rail that `src/components/Sidebar.astro` and `SidebarSublist.astro` render,
+`furniture.css` the meta row and pagination cards of `Footer.astro`, and
+`toc.css` the strip of `MobileTableOfContents.astro`. Each is registered in the
+`components` block of `astro.config.mjs`.
+
+A sheet without its component is the failure to watch for: every rule matches
+nothing, the surface silently keeps Starlight's own look, and no gate sees it.
+When a page here looks unlike docs.ptah.run, compare the two `components`
+blocks before editing CSS.
+
 ## The recorded runs
 
 `/demo/` and a page per run are built from `demo/recordings/runs.json`, which
