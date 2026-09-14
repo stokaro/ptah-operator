@@ -16,7 +16,7 @@ import (
 
 const (
 	runtimePodGuardNamePrefix          = "ptah-operator-runtime-pod-identity-v"
-	runtimePodContractDigestAnnotation = "operator.ptah.dev/runtime-pod-contract-digest"
+	runtimePodContractDigestAnnotation = "operator.ptah.run/runtime-pod-contract-digest"
 	runtimeReplicaSetHashMinLength     = 1
 	runtimeReplicaSetHashMaxLength     = 10
 )

@@ -64,14 +64,14 @@ for crd_file in "$@"; do
 		;;
 	esac
 	if ! awk -v schema_version="$schema_version" -v controller_state_version="$controller_state_version" -v digest="$digest" '
-      /^    operator[.]ptah[.]dev\/crd-schema-version:/ {next}
-	  /^    operator[.]ptah[.]dev\/crd-schema-digest:/ {next}
-	  /^    operator[.]ptah[.]dev\/controller-state-version:/ {next}
+      /^    operator[.]ptah[.]run\/crd-schema-version:/ {next}
+	  /^    operator[.]ptah[.]run\/crd-schema-digest:/ {next}
+	  /^    operator[.]ptah[.]run\/controller-state-version:/ {next}
       /^  annotations:$/ && !stamped {
         print
-		print "    operator.ptah.dev/controller-state-version: \"" controller_state_version "\""
-		print "    operator.ptah.dev/crd-schema-version: \"" schema_version "\""
-		print "    operator.ptah.dev/crd-schema-digest: \"" digest "\""
+		print "    operator.ptah.run/controller-state-version: \"" controller_state_version "\""
+		print "    operator.ptah.run/crd-schema-version: \"" schema_version "\""
+		print "    operator.ptah.run/crd-schema-digest: \"" digest "\""
         stamped = 1
         next
       }

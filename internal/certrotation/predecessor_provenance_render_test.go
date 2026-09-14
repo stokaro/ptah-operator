@@ -125,8 +125,8 @@ func TestControllerPredecessorProvenanceRender(t *testing.T) {
 			name: "same-sequence candidate checkpoint",
 			mutate: func(fixture map[string]any) {
 				deployment := fixtureObject(fixture, "deployment")
-				metadataOf(deployment)["annotations"].(map[string]any)["operator.ptah.dev/release-sequence"] = "1"
-				metadataOf(deployment)["annotations"].(map[string]any)["operator.ptah.dev/controller-state-version"] = "1"
+				metadataOf(deployment)["annotations"].(map[string]any)["operator.ptah.run/release-sequence"] = "1"
+				metadataOf(deployment)["annotations"].(map[string]any)["operator.ptah.run/controller-state-version"] = "1"
 				deployment["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)["serviceAccountName"] = candidateName
 				for _, key := range []string{"clusterRoleBinding", "coordinationRoleBinding"} {
 					subjects := fixtureObject(fixture, key)["subjects"].([]any)
@@ -207,7 +207,7 @@ func TestRetainedControllerPrincipalProvenanceRender(t *testing.T) {
 
 	t.Run("malformed immutable annotations", func(t *testing.T) {
 		malformed := retainedControllerPrincipalObject("ValidatingAdmissionPolicy", "-129", legacyName)
-		metadataOf(malformed)["annotations"].(map[string]any)["operator.ptah.dev/release-sequence"] = "01"
+		metadataOf(malformed)["annotations"].(map[string]any)["operator.ptah.run/release-sequence"] = "01"
 		if _, err := renderPredecessorProvenance(t, map[string]any{"guardPolicy": malformed}); err == nil {
 			t.Fatal("Helm accepted malformed retained principal annotations")
 		}
@@ -216,8 +216,8 @@ func TestRetainedControllerPrincipalProvenanceRender(t *testing.T) {
 	t.Run("same-sequence checkpoint without immutable tuple", func(t *testing.T) {
 		checkpoint := retainedControllerPrincipalObject("ValidatingAdmissionPolicy", "-129", legacyName)
 		annotations := metadataOf(checkpoint)["annotations"].(map[string]any)
-		delete(annotations, "operator.ptah.dev/controller-service-account-name")
-		delete(annotations, "operator.ptah.dev/manager-image")
+		delete(annotations, "operator.ptah.run/controller-service-account-name")
+		delete(annotations, "operator.ptah.run/manager-image")
 		if _, err := renderPredecessorProvenance(t, map[string]any{"guardPolicy": checkpoint}); err == nil {
 			t.Fatal("Helm accepted a retained same-sequence checkpoint without the immutable tuple")
 		}
@@ -238,17 +238,17 @@ func TestRenderedControllerPrincipalGuardCarriesRetryTuple(t *testing.T) {
 	objects := renderChart(t)
 	guardName := "ptah-operator-service-account-origin-guard-v2-" + provenanceHookIdentityDigest()[:12]
 	wantAnnotations := map[string]string{
-		"operator.ptah.dev/controller-state-version":                    "1",
-		"operator.ptah.dev/admission-contract-version":                  "2",
-		"operator.ptah.dev/release-sequence":                            "1",
-		"operator.ptah.dev/manager-image":                               provenanceManagerImage(),
-		"operator.ptah.dev/hook-service-account-name":                   provenanceHookServiceAccount(),
-		"operator.ptah.dev/controller-service-account-name":             provenanceCandidateControllerServiceAccount(),
-		"operator.ptah.dev/controller-service-account-managed":          "true",
-		"operator.ptah.dev/previous-controller-service-account-name":    "",
-		"operator.ptah.dev/previous-controller-service-account-uid":     "",
-		"operator.ptah.dev/previous-controller-service-account-managed": "false",
-		"operator.ptah.dev/previous-controller-release-sequence":        "0",
+		"operator.ptah.run/controller-state-version":                    "1",
+		"operator.ptah.run/admission-contract-version":                  "2",
+		"operator.ptah.run/release-sequence":                            "1",
+		"operator.ptah.run/manager-image":                               provenanceManagerImage(),
+		"operator.ptah.run/hook-service-account-name":                   provenanceHookServiceAccount(),
+		"operator.ptah.run/controller-service-account-name":             provenanceCandidateControllerServiceAccount(),
+		"operator.ptah.run/controller-service-account-managed":          "true",
+		"operator.ptah.run/previous-controller-service-account-name":    "",
+		"operator.ptah.run/previous-controller-service-account-uid":     "",
+		"operator.ptah.run/previous-controller-service-account-managed": "false",
+		"operator.ptah.run/previous-controller-release-sequence":        "0",
 	}
 	for _, kind := range []string{"ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"} {
 		object := mustObject(t, objects, kind, guardName)
@@ -325,21 +325,21 @@ func retainedControllerPrincipalObject(kind, weight, previousName string) map[st
 				"helm.sh/hook":                                                  "pre-install,pre-upgrade",
 				"helm.sh/hook-weight":                                           weight,
 				"helm.sh/resource-policy":                                       "keep",
-				"operator.ptah.dev/rollout-guard-version":                       "1",
-				"operator.ptah.dev/release-name":                                releaseName,
-				"operator.ptah.dev/release-namespace":                           releaseNamespace,
-				"operator.ptah.dev/controller-state-version":                    "1",
-				"operator.ptah.dev/admission-contract-version":                  "2",
-				"operator.ptah.dev/release-sequence":                            "1",
-				"operator.ptah.dev/manager-image":                               provenanceManagerImage(),
-				"operator.ptah.dev/hook-service-account-name":                   provenanceHookServiceAccount(),
-				"operator.ptah.dev/controller-service-account-name":             provenanceCandidateControllerServiceAccount(),
-				"operator.ptah.dev/controller-service-account-managed":          "true",
-				"operator.ptah.dev/previous-controller-service-account-name":    previousName,
-				"operator.ptah.dev/previous-controller-service-account-uid":     previousUID,
-				"operator.ptah.dev/previous-controller-service-account-managed": "false",
-				"operator.ptah.dev/previous-controller-release-sequence":        "0",
-				"operator.ptah.dev/previous-controller-manager-image":           "",
+				"operator.ptah.run/rollout-guard-version":                       "1",
+				"operator.ptah.run/release-name":                                releaseName,
+				"operator.ptah.run/release-namespace":                           releaseNamespace,
+				"operator.ptah.run/controller-state-version":                    "1",
+				"operator.ptah.run/admission-contract-version":                  "2",
+				"operator.ptah.run/release-sequence":                            "1",
+				"operator.ptah.run/manager-image":                               provenanceManagerImage(),
+				"operator.ptah.run/hook-service-account-name":                   provenanceHookServiceAccount(),
+				"operator.ptah.run/controller-service-account-name":             provenanceCandidateControllerServiceAccount(),
+				"operator.ptah.run/controller-service-account-managed":          "true",
+				"operator.ptah.run/previous-controller-service-account-name":    previousName,
+				"operator.ptah.run/previous-controller-service-account-uid":     previousUID,
+				"operator.ptah.run/previous-controller-service-account-managed": "false",
+				"operator.ptah.run/previous-controller-release-sequence":        "0",
+				"operator.ptah.run/previous-controller-manager-image":           "",
 			},
 			"labels": map[string]any{
 				"app.kubernetes.io/managed-by": "ptah-operator",

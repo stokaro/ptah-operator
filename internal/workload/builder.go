@@ -39,35 +39,35 @@ const (
 	// LabelComponent identifies the bounded schema-operation component.
 	LabelComponent = "app.kubernetes.io/component"
 	// LabelSchema associates a Job with its namespaced PtahSchema name.
-	LabelSchema = "operator.ptah.dev/schema"
+	LabelSchema = "operator.ptah.run/schema"
 	// LabelOperation identifies the fixed operation executed by a Job.
-	LabelOperation = "operator.ptah.dev/operation"
+	LabelOperation = "operator.ptah.run/operation"
 	// LabelOperationID carries a label-safe hash of the full operation ID.
-	LabelOperationID = "operator.ptah.dev/operation-id"
+	LabelOperationID = "operator.ptah.run/operation-id"
 
 	// AnnotationOperationID binds Pod logs to the full operation claim.
-	AnnotationOperationID = "operator.ptah.dev/operation-id"
+	AnnotationOperationID = "operator.ptah.run/operation-id"
 	// AnnotationInputFingerprint records the operation's immutable input hash.
-	AnnotationInputFingerprint = "operator.ptah.dev/input-fingerprint"
+	AnnotationInputFingerprint = "operator.ptah.run/input-fingerprint"
 	// AnnotationPtahVersion records the configured data-plane version.
-	AnnotationPtahVersion = "operator.ptah.dev/ptah-version"
+	AnnotationPtahVersion = "operator.ptah.run/ptah-version"
 	// AnnotationExecutionBindingID records the durable evidence epoch.
-	AnnotationExecutionBindingID = "operator.ptah.dev/execution-binding-id"
+	AnnotationExecutionBindingID = "operator.ptah.run/execution-binding-id"
 	// AnnotationControllerImage records the exact manager container content that
 	// authorized the operation.
-	AnnotationControllerImage = "operator.ptah.dev/controller-image"
+	AnnotationControllerImage = "operator.ptah.run/controller-image"
 	// AnnotationControllerRevision records the exact manager build that
 	// authorized the operation.
-	AnnotationControllerRevision = "operator.ptah.dev/controller-revision"
+	AnnotationControllerRevision = "operator.ptah.run/controller-revision"
 	// AnnotationControllerStateVersion records the manager-side state contract.
-	AnnotationControllerStateVersion = "operator.ptah.dev/controller-state-version"
+	AnnotationControllerStateVersion = "operator.ptah.run/controller-state-version"
 	// AnnotationPlanFingerprint records the exact approved plan binding.
-	AnnotationPlanFingerprint = "operator.ptah.dev/plan-fingerprint"
+	AnnotationPlanFingerprint = "operator.ptah.run/plan-fingerprint"
 	// AnnotationPlanContentDigest records the reconstructed plan byte digest.
-	AnnotationPlanContentDigest = "operator.ptah.dev/plan-content-digest"
+	AnnotationPlanContentDigest = "operator.ptah.run/plan-content-digest"
 	// AnnotationAdmissionSnapshotDigest binds the Job and every resulting Pod
 	// to the credential-free admission envelope persisted before dispatch.
-	AnnotationAdmissionSnapshotDigest = "operator.ptah.dev/admission-snapshot-digest"
+	AnnotationAdmissionSnapshotDigest = "operator.ptah.run/admission-snapshot-digest"
 
 	mainContainerName    = "ptah"
 	initContainerName    = "install-runner"

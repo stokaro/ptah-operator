@@ -751,9 +751,9 @@ task_claim_matches_owner() {
 		jq -e \
 			--arg owner "$CLUSTER_NAME" \
 			--arg token "$TASK_CLAIM_TOKEN" '
-        .["operator.ptah.dev/e2e-owner"] == $owner and
-        .["operator.ptah.dev/e2e-component"] == "task-claim" and
-        .["operator.ptah.dev/e2e-claim-token"] == $token
+        .["operator.ptah.run/e2e-owner"] == $owner and
+        .["operator.ptah.run/e2e-component"] == "task-claim" and
+        .["operator.ptah.run/e2e-claim-token"] == $token
       ' >/dev/null
 }
 
@@ -761,9 +761,9 @@ acquire_task_claim() {
 	[ "$TASK_CLAIM_CREATE_STARTED" -eq 0 ] || fail "task identity claim acquisition was attempted more than once"
 	TASK_CLAIM_CREATE_STARTED=1
 	if ! created_claim=$(docker --context "$DOCKER_CONTEXT" volume create \
-		--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \
-		--label 'operator.ptah.dev/e2e-component=task-claim' \
-		--label "operator.ptah.dev/e2e-claim-token=${TASK_CLAIM_TOKEN}" \
+		--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}" \
+		--label 'operator.ptah.run/e2e-component=task-claim' \
+		--label "operator.ptah.run/e2e-claim-token=${TASK_CLAIM_TOKEN}" \
 		"$TASK_CLAIM_VOLUME"); then
 		fail "could not acquire the task identity claim on Docker context $SELECTED_DOCKER_CONTEXT"
 	fi
@@ -786,9 +786,9 @@ image_audit_container_matches_task() {
         length == 1 and
         .[0].Id == $id and
         .[0].Name == $name and
-        .[0].Config.Labels["operator.ptah.dev/e2e-owner"] == $owner and
-        .[0].Config.Labels["operator.ptah.dev/e2e-component"] == "image-audit" and
-        .[0].Config.Labels["operator.ptah.dev/e2e-claim-token"] == $token
+        .[0].Config.Labels["operator.ptah.run/e2e-owner"] == $owner and
+        .[0].Config.Labels["operator.ptah.run/e2e-component"] == "image-audit" and
+        .[0].Config.Labels["operator.ptah.run/e2e-claim-token"] == $token
       ' >/dev/null
 }
 
@@ -800,9 +800,9 @@ create_image_audit_container() {
 	IMAGE_AUDIT_CONTAINER_CREATED=1
 	if ! image_audit_id=$(docker --context "$DOCKER_CONTEXT" create \
 		--name "$IMAGE_AUDIT_CONTAINER" \
-		--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \
-		--label 'operator.ptah.dev/e2e-component=image-audit' \
-		--label "operator.ptah.dev/e2e-claim-token=${TASK_CLAIM_TOKEN}" \
+		--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}" \
+		--label 'operator.ptah.run/e2e-component=image-audit' \
+		--label "operator.ptah.run/e2e-claim-token=${TASK_CLAIM_TOKEN}" \
 		"$image_audit_source"); then
 		fail "could not create the task-owned image-audit container"
 	fi
@@ -874,11 +874,11 @@ assert_external_pg_container_contract() {
 		--format '{{.HostConfig.PublishAllPorts}}' "$external_contract_id")" = false ] ||
 		fail "external PostgreSQL container publishes all ports"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
+		--format '{{index .Config.Labels "operator.ptah.run/e2e-owner"}}' \
 		"$external_contract_id")" = "$CLUSTER_NAME" ] ||
 		fail "external PostgreSQL container lost its task owner label"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
-		--format '{{index .Config.Labels "operator.ptah.dev/e2e-component"}}' \
+		--format '{{index .Config.Labels "operator.ptah.run/e2e-component"}}' \
 		"$external_contract_id")" = external-postgresql ] ||
 		fail "external PostgreSQL container lost its component label"
 	[ "$(docker --context "$DOCKER_CONTEXT" container inspect \
@@ -1366,10 +1366,10 @@ cleanup() {
 		if [ -z "$external_cleanup_id" ] &&
 			docker --context "$DOCKER_CONTEXT" container inspect "$EXTERNAL_PG_CONTAINER" >/dev/null 2>&1; then
 			external_cleanup_owner=$(docker --context "$DOCKER_CONTEXT" container inspect \
-				--format '{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
+				--format '{{index .Config.Labels "operator.ptah.run/e2e-owner"}}' \
 				"$EXTERNAL_PG_CONTAINER" 2>/dev/null)
 			external_cleanup_component=$(docker --context "$DOCKER_CONTEXT" container inspect \
-				--format '{{index .Config.Labels "operator.ptah.dev/e2e-component"}}' \
+				--format '{{index .Config.Labels "operator.ptah.run/e2e-component"}}' \
 				"$EXTERNAL_PG_CONTAINER" 2>/dev/null)
 			if [ "$external_cleanup_owner" = "$CLUSTER_NAME" ] &&
 				[ "$external_cleanup_component" = external-postgresql ]; then
@@ -1397,10 +1397,10 @@ cleanup() {
 		if [ -z "$registry_cleanup_id" ] &&
 			docker --context "$DOCKER_CONTEXT" container inspect "$REGISTRY_CONTAINER" >/dev/null 2>&1; then
 			registry_cleanup_owner=$(docker --context "$DOCKER_CONTEXT" container inspect \
-				--format '{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
+				--format '{{index .Config.Labels "operator.ptah.run/e2e-owner"}}' \
 				"$REGISTRY_CONTAINER" 2>/dev/null)
 			registry_cleanup_component=$(docker --context "$DOCKER_CONTEXT" container inspect \
-				--format '{{index .Config.Labels "operator.ptah.dev/e2e-component"}}' \
+				--format '{{index .Config.Labels "operator.ptah.run/e2e-component"}}' \
 				"$REGISTRY_CONTAINER" 2>/dev/null)
 			if [ "$registry_cleanup_owner" = "$CLUSTER_NAME" ] &&
 				[ "$registry_cleanup_component" = registry ]; then
@@ -2014,8 +2014,8 @@ docker --context "$DOCKER_CONTEXT" create --restart=no \
 	--network kind \
 	--network-alias "$REGISTRY_DNS_NAME" \
 	--publish "127.0.0.1:${E2E_REGISTRY_PORT}:5000" \
-	--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \
-	--label 'operator.ptah.dev/e2e-component=registry' \
+	--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}" \
+	--label 'operator.ptah.run/e2e-component=registry' \
 	--env REGISTRY_AUTH=htpasswd \
 	--env REGISTRY_AUTH_HTPASSWD_REALM=ptah-e2e \
 	--env REGISTRY_AUTH_HTPASSWD_PATH=/registry.htpasswd \
@@ -2095,8 +2095,8 @@ docker --context "$DOCKER_CONTEXT" create --restart=no \
 	--network kind \
 	--env-file "$EXTERNAL_PG_ENV_FILE" \
 	--tmpfs '/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=536870912' \
-	--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}" \
-	--label 'operator.ptah.dev/e2e-component=external-postgresql' \
+	--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}" \
+	--label 'operator.ptah.run/e2e-component=external-postgresql' \
 	"$E2E_POSTGRES_SOURCE_IMAGE" >/dev/null
 # external-postgresql-container-create-end
 EXTERNAL_PG_CONTAINER_ID=$(docker --context "$DOCKER_CONTEXT" container inspect \

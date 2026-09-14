@@ -545,7 +545,7 @@ func TestMissingSecretRejectsBroadenedGuardContractBeforeCreate(t *testing.T) {
 					t.Fatalf("get guard policy: %v", err)
 				}
 				policy.Spec.MatchConstraints.NamespaceSelector = &metav1.LabelSelector{
-					MatchLabels: map[string]string{"guard.ptah.dev/scope": "broadened"},
+					MatchLabels: map[string]string{"guard.ptah.run/scope": "broadened"},
 				}
 				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Update(
 					context.Background(), policy, metav1.UpdateOptions{},
@@ -564,7 +564,7 @@ func TestMissingSecretRejectsBroadenedGuardContractBeforeCreate(t *testing.T) {
 					t.Fatalf("get guard policy: %v", err)
 				}
 				policy.Spec.MatchConstraints.ObjectSelector = &metav1.LabelSelector{
-					MatchLabels: map[string]string{"guard.ptah.dev/scope": "broadened"},
+					MatchLabels: map[string]string{"guard.ptah.run/scope": "broadened"},
 				}
 				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicies().Update(
 					context.Background(), policy, metav1.UpdateOptions{},
@@ -584,7 +584,7 @@ func TestMissingSecretRejectsBroadenedGuardContractBeforeCreate(t *testing.T) {
 				}
 				policy.Spec.MatchConstraints.ObjectSelector = &metav1.LabelSelector{
 					MatchExpressions: []metav1.LabelSelectorRequirement{{
-						Key:      "guard.ptah.dev/scope",
+						Key:      "guard.ptah.run/scope",
 						Operator: metav1.LabelSelectorOpExists,
 					}},
 				}
@@ -605,7 +605,7 @@ func TestMissingSecretRejectsBroadenedGuardContractBeforeCreate(t *testing.T) {
 					t.Fatalf("get guard binding: %v", err)
 				}
 				binding.Spec.MatchResources.ObjectSelector = &metav1.LabelSelector{
-					MatchLabels: map[string]string{"guard.ptah.dev/scope": "broadened"},
+					MatchLabels: map[string]string{"guard.ptah.run/scope": "broadened"},
 				}
 				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Update(
 					context.Background(), binding, metav1.UpdateOptions{},
@@ -624,7 +624,7 @@ func TestMissingSecretRejectsBroadenedGuardContractBeforeCreate(t *testing.T) {
 					t.Fatalf("get guard binding: %v", err)
 				}
 				binding.Spec.MatchResources.NamespaceSelector.MatchExpressions = []metav1.LabelSelectorRequirement{{
-					Key:      "guard.ptah.dev/scope",
+					Key:      "guard.ptah.run/scope",
 					Operator: metav1.LabelSelectorOpExists,
 				}}
 				if _, err := client.AdmissionregistrationV1().ValidatingAdmissionPolicyBindings().Update(
@@ -1134,7 +1134,7 @@ func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 		t.Fatalf("get MutatingWebhookConfiguration: %v", err)
 	}
 	mutating.Webhooks = append(mutating.Webhooks, admissionregistrationv1.MutatingWebhook{
-		Name: "future-mutating.operator.ptah.dev",
+		Name: "future-mutating.operator.ptah.run",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			Service: &admissionregistrationv1.ServiceReference{
@@ -1142,7 +1142,7 @@ func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 			},
 		},
 	}, admissionregistrationv1.MutatingWebhook{
-		Name: "different-port-mutating.operator.ptah.dev",
+		Name: "different-port-mutating.operator.ptah.run",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			Service: &admissionregistrationv1.ServiceReference{
@@ -1150,7 +1150,7 @@ func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 			},
 		},
 	}, admissionregistrationv1.MutatingWebhook{
-		Name: "foreign-mutating.operator.ptah.dev",
+		Name: "foreign-mutating.operator.ptah.run",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			Service: &admissionregistrationv1.ServiceReference{
@@ -1158,7 +1158,7 @@ func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 			},
 		},
 	}, admissionregistrationv1.MutatingWebhook{
-		Name: "url-mutating.operator.ptah.dev",
+		Name: "url-mutating.operator.ptah.run",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			URL:      &foreignURL,
@@ -1176,7 +1176,7 @@ func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 		t.Fatalf("get ValidatingWebhookConfiguration: %v", err)
 	}
 	validating.Webhooks = append(validating.Webhooks, admissionregistrationv1.ValidatingWebhook{
-		Name: "future.operator.ptah.dev",
+		Name: "future.operator.ptah.run",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			Service: &admissionregistrationv1.ServiceReference{
@@ -1184,7 +1184,7 @@ func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 			},
 		},
 	}, admissionregistrationv1.ValidatingWebhook{
-		Name: "different-port.operator.ptah.dev",
+		Name: "different-port.operator.ptah.run",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			Service: &admissionregistrationv1.ServiceReference{
@@ -1192,7 +1192,7 @@ func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 			},
 		},
 	}, admissionregistrationv1.ValidatingWebhook{
-		Name: "foreign-service.operator.ptah.dev",
+		Name: "foreign-service.operator.ptah.run",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			Service: &admissionregistrationv1.ServiceReference{
@@ -1200,7 +1200,7 @@ func TestAdditionalSameServiceWebhooksFollowRotation(t *testing.T) {
 			},
 		},
 	}, admissionregistrationv1.ValidatingWebhook{
-		Name: "url.operator.ptah.dev",
+		Name: "url.operator.ptah.run",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			URL:      &foreignURL,
@@ -1265,7 +1265,7 @@ func TestAdditionalSameServiceWebhooksRetainOverlapUntilEndpointProof(t *testing
 		t.Fatalf("get MutatingWebhookConfiguration: %v", err)
 	}
 	mutating.Webhooks = append(mutating.Webhooks, admissionregistrationv1.MutatingWebhook{
-		Name: "future-mutating.operator.ptah.dev",
+		Name: "future-mutating.operator.ptah.run",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			Service: &admissionregistrationv1.ServiceReference{
@@ -1286,7 +1286,7 @@ func TestAdditionalSameServiceWebhooksRetainOverlapUntilEndpointProof(t *testing
 		t.Fatalf("get ValidatingWebhookConfiguration: %v", err)
 	}
 	validating.Webhooks = append(validating.Webhooks, admissionregistrationv1.ValidatingWebhook{
-		Name: "future-validating.operator.ptah.dev",
+		Name: "future-validating.operator.ptah.run",
 		ClientConfig: admissionregistrationv1.WebhookClientConfig{
 			CABundle: append([]byte(nil), original.caPEM...),
 			Service: &admissionregistrationv1.ServiceReference{
@@ -1660,9 +1660,9 @@ func testConfig() Config {
 		StagingSecretName:              "ptah-webhook-cert-stage",
 		LeaseName:                      "ptah-cert-rotation",
 		MutatingWebhookConfiguration:   "ptah-approval",
-		MutatingWebhookNames:           []string{"mapproval.operator.ptah.dev"},
+		MutatingWebhookNames:           []string{"mapproval.operator.ptah.run"},
 		ValidatingWebhookConfiguration: "ptah-approval",
-		ValidatingWebhookNames:         []string{"vapproval.operator.ptah.dev", "vpodintent.operator.ptah.dev"},
+		ValidatingWebhookNames:         []string{"vapproval.operator.ptah.run", "vpodintent.operator.ptah.run"},
 		ServiceName:                    "ptah-webhook",
 		ServiceNamespace:               "ptah-system",
 		CandidateServiceName:           "ptah-cert-candidate",

@@ -36,18 +36,18 @@ const (
 
 	// ReleaseSequenceAnnotation must increase for every published operator
 	// release, even when its stored-state and admission contracts stay stable.
-	ReleaseSequenceAnnotation = "operator.ptah.dev/release-sequence"
+	ReleaseSequenceAnnotation = "operator.ptah.run/release-sequence"
 	// ManagerImageAnnotation records the exact image accepted by the runtime
 	// guard at the current release sequence.
-	ManagerImageAnnotation = "operator.ptah.dev/manager-image"
+	ManagerImageAnnotation = "operator.ptah.run/manager-image"
 	// CurrentReleaseSequence is mirrored by the Helm helper and release gates.
 	CurrentReleaseSequence int32 = 1
 
-	rolloutGuardVersionAnnotation   = "operator.ptah.dev/rollout-guard-version"
+	rolloutGuardVersionAnnotation   = "operator.ptah.run/rollout-guard-version"
 	rolloutGuardVersion             = "1"
 	rolloutGuardComponent           = "rollout-guard"
 	rolloutGuardManagedBy           = "ptah-operator"
-	guardEnforcementProbeAnnotation = "operator.ptah.dev/guard-enforcement-probe"
+	guardEnforcementProbeAnnotation = "operator.ptah.run/guard-enforcement-probe"
 	kubernetesDNSLabelMaxLength     = 63
 	kubernetesGeneratedSuffixLen    = 5
 
@@ -1212,7 +1212,7 @@ func retryableDeploymentProbeRace(err error) bool {
 }
 
 func (g *RolloutGuard) bootstrapProbeDeployment(name string) *appsv1.Deployment {
-	labels := map[string]string{"operator.ptah.dev/rollout-probe": "true"}
+	labels := map[string]string{"operator.ptah.run/rollout-probe": "true"}
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: g.ReleaseNamespace},
 		Spec: appsv1.DeploymentSpec{

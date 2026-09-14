@@ -706,7 +706,7 @@ jq -n '
   {
     items: [
       {
-        apiVersion: "operator.ptah.dev/v1alpha1",
+        apiVersion: "operator.ptah.run/v1alpha1",
         kind: "PtahSchema",
         metadata: {name: "schema-a", uid: "schema-uid-a", generation: 4},
         spec: {unsafeSentinel: "DO_NOT_PRINT_CREDENTIAL_SENTINEL"},
@@ -729,7 +729,7 @@ jq -n '
         }
       },
       {
-        apiVersion: "operator.ptah.dev/v1alpha1",
+        apiVersion: "operator.ptah.run/v1alpha1",
         kind: "PtahSchema",
         metadata: {name: "schema-b", uid: "schema-uid-b", generation: 2},
         status: {
@@ -752,7 +752,7 @@ jq -n '
     items: [
       {
         involvedObject: {
-          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
           name: "schema-a", uid: "schema-uid-a"
         },
         type: "Warning", reason: "OperationFailed",
@@ -761,7 +761,7 @@ jq -n '
       },
       {
         involvedObject: {
-          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
           name: "schema-a", uid: "schema-uid-a"
         },
         type: "Warning", reason: "PlanStale",
@@ -770,7 +770,7 @@ jq -n '
       },
       {
         involvedObject: {
-          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
           name: "schema-a", uid: "schema-uid-a"
         },
         type: "Warning", reason: "LeaseContinuityLost",
@@ -779,7 +779,7 @@ jq -n '
       },
       {
         involvedObject: {
-          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
           name: "schema-a", uid: "wrong-schema-uid"
         },
         type: "Warning", reason: "ReconciliationFailed",
@@ -787,7 +787,7 @@ jq -n '
       },
       {
         involvedObject: {
-          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
           name: "schema-b", uid: "schema-uid-b"
         },
         type: "Warning", reason: "OperationFailed",
@@ -803,13 +803,13 @@ jq -n '
         metadata: {
           name: "job-a", uid: "job-uid-a", creationTimestamp: "2026-09-01T00:00:00Z",
           ownerReferences: [{
-            apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+            apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
             uid: "schema-uid-a", controller: true
           }],
-          labels: {"operator.ptah.dev/operation": "plan"},
+          labels: {"operator.ptah.run/operation": "plan"},
           annotations: {
-            "operator.ptah.dev/operation-id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "operator.ptah.dev/input-fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "operator.ptah.run/operation-id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "operator.ptah.run/input-fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             unsafe: "DO_NOT_PRINT_CREDENTIAL_SENTINEL"
           }
         },
@@ -823,10 +823,10 @@ jq -n '
         metadata: {
           name: "job-b", uid: "job-uid-b",
           ownerReferences: [{
-            apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+            apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
             uid: "schema-uid-b", controller: true
           }],
-          labels: {"operator.ptah.dev/operation": "DO_NOT_PRINT_CREDENTIAL_SENTINEL"}
+          labels: {"operator.ptah.run/operation": "DO_NOT_PRINT_CREDENTIAL_SENTINEL"}
         },
         status: {}
       }
@@ -841,9 +841,9 @@ jq -n '
           name: "lease-a", uid: "lease-uid-a", resourceVersion: "10",
           labels: {
             "app.kubernetes.io/managed-by": "ptah-operator",
-            "operator.ptah.dev/coordination": "database-target"
+            "operator.ptah.run/coordination": "database-target"
           },
-          annotations: {"operator.ptah.dev/lease-epoch": "v1-cccccccccccccccccccccccccccccccc"}
+          annotations: {"operator.ptah.run/lease-epoch": "v1-cccccccccccccccccccccccccccccccc"}
         },
         spec: {
           holderIdentity: "ptah-h-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -856,9 +856,9 @@ jq -n '
           name: "lease-b", uid: "lease-uid-b", resourceVersion: "11",
           labels: {
             "app.kubernetes.io/managed-by": "ptah-operator",
-            "operator.ptah.dev/coordination": "database-target"
+            "operator.ptah.run/coordination": "database-target"
           },
-          annotations: {"operator.ptah.dev/lease-epoch": "malformed-DO_NOT_PRINT_CREDENTIAL_SENTINEL"}
+          annotations: {"operator.ptah.run/lease-epoch": "malformed-DO_NOT_PRINT_CREDENTIAL_SENTINEL"}
         },
         spec: {holderIdentity: "DO_NOT_PRINT_CREDENTIAL_SENTINEL"}
       },
@@ -1189,14 +1189,14 @@ for deployment_patch_script in \
 	fi
 done
 grep -F 'LeaderElectionNamespace: targetLockNamespace' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
-grep -F 'ptah-operator.operator.ptah.dev' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
+grep -F 'ptah-operator.operator.ptah.run' "$ROOT_DIR/cmd/manager/main.go" >/dev/null
 for ha_marker in \
 	"assert_can_i no \"\$FOREIGN_NAMESPACE\"" \
 	'holder_is_ready_manager_pod' \
 	'manager leader Lease did not move to a ready replica' \
 	'leader Pod failover did not increment leaseTransitions' \
 	'wait_for_admitted_operation_pod' \
-	'operator.ptah.dev/admission-snapshot-digest' \
+	'operator.ptah.run/admission-snapshot-digest' \
 	'validate_custom_operator_metrics' \
 	'ptah_operator_reconciliations_total{result=\"success\"}' \
 	'ptah_operator_failures_total{category=\"operation\",stage=\"resolve\"}' \
@@ -1218,7 +1218,7 @@ for approval_plan_marker in \
 	"policy_uid=\$(k -n \"\$TEST_NAMESPACE\" get configmap" \
 	"verificationPolicyUID: \$verificationPolicyUID" \
 	"publishedChunks: [{name: \$chunkName, uid: \$chunkUID, index: 0}]" \
-	"\"operator.ptah.dev/plan\": \$planName" \
+	"\"operator.ptah.run/plan\": \$planName" \
 	'binaryData: {chunk: "eA=="}'; do
 	grep -F -- "$approval_plan_marker" "$ROOT_DIR/hack/e2e-assert.sh" >/dev/null
 done
@@ -1773,12 +1773,12 @@ for dataplane_applied_identity_marker in \
 done
 # shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
 for dataplane_job_identity_marker in \
-	'.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage' \
-	'.metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision' \
-	'.metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion' \
-	'.spec.template.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage' \
-	'.spec.template.metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision' \
-	'.spec.template.metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion'; do
+	'.metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage' \
+	'.metadata.annotations["operator.ptah.run/controller-revision"] == $controllerRevision' \
+	'.metadata.annotations["operator.ptah.run/controller-state-version"] == $controllerStateVersion' \
+	'.spec.template.metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage' \
+	'.spec.template.metadata.annotations["operator.ptah.run/controller-revision"] == $controllerRevision' \
+	'.spec.template.metadata.annotations["operator.ptah.run/controller-state-version"] == $controllerStateVersion'; do
 	printf '%s\n' "$dataplane_job_audit_identity_section" |
 		grep -F -- "$dataplane_job_identity_marker" >/dev/null
 done
@@ -1791,9 +1791,9 @@ for fault_identity_function in wait_for_plan create_approval capture_exact_job_r
 	fault_controller_revision_marker='.controllerRevision'
 	fault_controller_state_marker='.controllerStateVersion'
 	if [ "$fault_identity_function" = capture_exact_job_result ]; then
-		fault_controller_image_marker='operator.ptah.dev/controller-image'
-		fault_controller_revision_marker='operator.ptah.dev/controller-revision'
-		fault_controller_state_marker='operator.ptah.dev/controller-state-version'
+		fault_controller_image_marker='operator.ptah.run/controller-image'
+		fault_controller_revision_marker='operator.ptah.run/controller-revision'
+		fault_controller_state_marker='operator.ptah.run/controller-state-version'
 	fi
 	printf '%s\n' "$fault_identity_section" |
 		grep -F "$fault_controller_image_marker" >/dev/null || {
@@ -1820,7 +1820,7 @@ fault_runtime_identity_section=$(sed -n '/^audit_fault_runtime()/,/^}/p' \
 for fault_runtime_identity_marker in \
 	'managed fault-test Pod $audit_pod_name lacks its exact controller execution identity' \
 	'managed fault-test Job $audit_job_name lacks its exact controller execution identity' \
-	'.spec.template.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage'; do
+	'.spec.template.metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage'; do
 	printf '%s\n' "$fault_runtime_identity_section" |
 		grep -F -- "$fault_runtime_identity_marker" >/dev/null
 done
@@ -1982,8 +1982,8 @@ if printf '%s\n' "$external_pg_host_contract_section" | grep -F '\"' >/dev/null;
 	exit 1
 fi
 for external_host_contract_marker in \
-	'{{index .Config.Labels "operator.ptah.dev/e2e-owner"}}' \
-	'{{index .Config.Labels "operator.ptah.dev/e2e-component"}}'; do
+	'{{index .Config.Labels "operator.ptah.run/e2e-owner"}}' \
+	'{{index .Config.Labels "operator.ptah.run/e2e-component"}}'; do
 	printf '%s\n' "$external_pg_host_contract_section" |
 		grep -F -- "$external_host_contract_marker" >/dev/null
 done
@@ -2017,8 +2017,8 @@ for external_create_marker in \
 	'--network kind' \
 	'--env-file "$EXTERNAL_PG_ENV_FILE"' \
 	'--tmpfs '\''/var/lib/postgresql/data:rw,noexec,nosuid,nodev,size=536870912'\''' \
-	'--label "operator.ptah.dev/e2e-owner=${CLUSTER_NAME}"' \
-	"--label 'operator.ptah.dev/e2e-component=external-postgresql'" \
+	'--label "operator.ptah.run/e2e-owner=${CLUSTER_NAME}"' \
+	"--label 'operator.ptah.run/e2e-component=external-postgresql'" \
 	'"$E2E_POSTGRES_SOURCE_IMAGE"'; do
 	static_require_count "$external_pg_create_section" "$external_create_marker" 1 \
 		'external PostgreSQL Docker create contract'
@@ -2274,9 +2274,9 @@ assert_automatic_external_pg_source_contract() {
 		'[ "$CAPTURED_JOB_UID" = "$automatic_apply_uid" ]' \
 		'cp "$CAPTURED_JOB_EVIDENCE_DIR/job.json" "$automatic_apply_job_file"' \
 		'cp "$CAPTURED_JOB_EVIDENCE_DIR/pod.json" "$automatic_apply_pod_file"' \
-		'.["operator.ptah.dev/plan-fingerprint"] == $planFingerprint and' \
-		'.["operator.ptah.dev/plan-content-digest"] == $contentDigest and' \
-		'.["operator.ptah.dev/execution-binding-id"] == $executionBinding' \
+		'.["operator.ptah.run/plan-fingerprint"] == $planFingerprint and' \
+		'.["operator.ptah.run/plan-content-digest"] == $contentDigest and' \
+		'.["operator.ptah.run/execution-binding-id"] == $executionBinding' \
 		'select(.name == "install-runner" and .image == $runnerImage)' \
 		'select(.name == "ptah" and .image == $executorImage)' \
 		'.value == "PostgreSQL" and (.valueFrom // null) == null' \
@@ -2877,8 +2877,8 @@ source_job_fixture() {
     def job($operation):
       {
         metadata: {
-          labels: {"operator.ptah.dev/operation": $operation},
-          annotations: {"operator.ptah.dev/operation-id": operationID($operation)}
+          labels: {"operator.ptah.run/operation": $operation},
+          annotations: {"operator.ptah.run/operation-id": operationID($operation)}
         },
         spec: {
           backoffLimit: 0,
@@ -3021,10 +3021,10 @@ assert_source_isolation_mutation_rejected 'extra source Job' \
 	"$source_environment_fixture" Environment '.items += [.items[1]]'
 assert_source_isolation_mutation_rejected 'duplicate Resolve operation' \
 	"$source_environment_fixture" Environment \
-	'.items[1].metadata.labels["operator.ptah.dev/operation"] = "resolve"'
+	'.items[1].metadata.labels["operator.ptah.run/operation"] = "resolve"'
 assert_source_isolation_mutation_rejected 'unknown source operation' \
 	"$source_environment_fixture" Environment \
-	'.items[1].metadata.labels["operator.ptah.dev/operation"] = "fetch"'
+	'.items[1].metadata.labels["operator.ptah.run/operation"] = "fetch"'
 assert_source_isolation_mutation_rejected 'nonzero Job backoff' \
 	"$source_environment_fixture" Environment '.items[0].spec.backoffLimit = 1'
 assert_source_isolation_mutation_rejected 'unsafe Pod replacement policy' \
@@ -3211,7 +3211,7 @@ assert_source_isolation_mutation_rejected 'database URL in operation ID' \
   '
 assert_source_isolation_mutation_rejected 'self-consistent database URL operation ID' \
 	"$source_environment_fixture" Environment '
-    .items[0].metadata.annotations["operator.ptah.dev/operation-id"] =
+    .items[0].metadata.annotations["operator.ptah.run/operation-id"] =
       "postgres://user:password@database.example/orders" |
     (.items[0].spec.template.spec.containers[0].env[] |
       select(.name == "PTAH_OPERATION_ID")).value =
@@ -3219,13 +3219,13 @@ assert_source_isolation_mutation_rejected 'self-consistent database URL operatio
   '
 assert_source_isolation_mutation_rejected 'missing operation-ID binding' \
 	"$source_environment_fixture" Environment '
-    del(.items[0].metadata.annotations["operator.ptah.dev/operation-id"]) |
+    del(.items[0].metadata.annotations["operator.ptah.run/operation-id"]) |
     del(.items[0].spec.template.spec.containers[0].env[] |
       select(.name == "PTAH_OPERATION_ID").value)
   '
 assert_source_isolation_mutation_rejected 'empty operation-ID binding' \
 	"$source_environment_fixture" Environment '
-    .items[0].metadata.annotations["operator.ptah.dev/operation-id"] = "" |
+    .items[0].metadata.annotations["operator.ptah.run/operation-id"] = "" |
     (.items[0].spec.template.spec.containers[0].env[] |
       select(.name == "PTAH_OPERATION_ID")).value = ""
   '
@@ -3448,8 +3448,8 @@ assert_source_isolation_mutation_rejected 'operation labels and env swapped' \
 	"$source_docker_fixture" DockerConfigJSON '
     .items[0].spec.template.spec.containers[0].env as $resolveEnv |
     .items[1].spec.template.spec.containers[0].env as $verifyEnv |
-    .items[0].metadata.labels["operator.ptah.dev/operation"] = "verify" |
-    .items[1].metadata.labels["operator.ptah.dev/operation"] = "resolve" |
+    .items[0].metadata.labels["operator.ptah.run/operation"] = "verify" |
+    .items[1].metadata.labels["operator.ptah.run/operation"] = "resolve" |
     .items[0].spec.template.spec.containers[0].env = $verifyEnv |
     .items[1].spec.template.spec.containers[0].env = $resolveEnv
   '
@@ -3664,7 +3664,7 @@ for cleanup_projection_marker in \
 	'.reason == "PlanStale"' \
 	'.reason == "LeaseContinuityLost"' \
 	'.metadata.ownerReferences // [] | any(' \
-	'operator.ptah.dev/coordination"] == "database-target"' \
+	'operator.ptah.run/coordination"] == "database-target"' \
 	'holderPresent:' \
 	'holderHashShape:'; do
 	printf '%s\n' "$cleanup_projection_section" | grep -F "$cleanup_projection_marker" >/dev/null
@@ -3928,7 +3928,7 @@ for job_evidence_binding_marker in \
 	'.pod.owner.name == .job.name and .pod.owner.uid == .job.uid' \
 	'.digests.jobSHA256 == $jobDigest and .digests.podSHA256 == $podDigest' \
 	'.digests.rawLogSHA256 == $logDigest and .digests.resultSHA256 == $resultDigest' \
-	'.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID' \
+	'.metadata.annotations["operator.ptah.run/operation-id"] == $operationID' \
 	'.name == $schema and .uid == $schemaUID and .controller == true' \
 	'.metadata.uid == $podUID and .metadata.name == $podName' \
 	'.operationId == $operationID and .truncation == null'; do
@@ -3944,9 +3944,9 @@ supplied_job_evidence_section=$(sed -n '/^validate_supplied_job_evidence_identit
 # shellcheck disable=SC2016 # Exact source markers intentionally retain jq variables literally.
 for supplied_job_evidence_marker in \
 	'$job.metadata.uid == $jobUID and $job.metadata.name == $jobName' \
-	'$job.metadata.labels["operator.ptah.dev/schema"] == $schema' \
-	'$job.metadata.labels["operator.ptah.dev/operation"] == $operation' \
-	'$job.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID' \
+	'$job.metadata.labels["operator.ptah.run/schema"] == $schema' \
+	'$job.metadata.labels["operator.ptah.run/operation"] == $operation' \
+	'$job.metadata.annotations["operator.ptah.run/operation-id"] == $operationID' \
 	'$job.metadata.ownerReferences[]? | select(' \
 	'.name == $schema and .uid == $schemaUID and .controller == true' \
 	'$pod.metadata.uid == $podUID and $pod.metadata.name == $podName' \
@@ -4365,7 +4365,7 @@ for fault_marker in \
 	'assert_post_apply_proof_history' \
 	'assert_uncertain_apply_proof_history' \
 	'mysql_schema_fingerprint' \
-	'operator.ptah.dev/lease-epoch' \
+	'operator.ptah.run/lease-epoch' \
 	'ALIAS_B_OPERATION_ID' \
 	'ALIAS_B_LEASE_EPOCH' \
 	'shared-alias consumed approval was not marked stale after recovery' \
@@ -4424,7 +4424,7 @@ jq -n '
     {
       metadata: {
         uid: ("uid-" + $operation),
-        labels: {"operator.ptah.dev/operation": $operation}
+        labels: {"operator.ptah.run/operation": $operation}
       },
       spec: {
         backoffLimit: 0,
@@ -4476,10 +4476,10 @@ for missing_container in resolve:ptah observe:validate-source-authority observe:
 		--arg operation "$negative_operation" \
 		--arg container "$negative_container" '
       (.items[] |
-        select(.metadata.labels["operator.ptah.dev/operation"] == $operation) |
+        select(.metadata.labels["operator.ptah.run/operation"] == $operation) |
         .spec.template.spec.containers) |= map(select(.name != $container)) |
       (.items[] |
-        select(.metadata.labels["operator.ptah.dev/operation"] == $operation) |
+        select(.metadata.labels["operator.ptah.run/operation"] == $operation) |
         .spec.template.spec.initContainers) |= map(select(.name != $container))
     ' "$CONTROLLER_JOB_FIXTURE" >"$NEGATIVE_FIXTURE"
 	if jq -e \
@@ -4498,7 +4498,7 @@ for invalid_ca_boundary in missing-grant selectable-key fetch-source-mount; do
 	missing-grant)
 		jq '
           (.items[] |
-            select(.metadata.labels["operator.ptah.dev/operation"] == "observe") |
+            select(.metadata.labels["operator.ptah.run/operation"] == "observe") |
             .spec.template.spec.initContainers[] |
             select(.name == "validate-source-authority") |
             .env) |= map(select(.name != "PTAH_OPERATOR_OCI_CA_SHA256_GRANT"))
@@ -4507,7 +4507,7 @@ for invalid_ca_boundary in missing-grant selectable-key fetch-source-mount; do
 	selectable-key)
 		jq '
           (.items[] |
-            select(.metadata.labels["operator.ptah.dev/operation"] == "observe") |
+            select(.metadata.labels["operator.ptah.run/operation"] == "observe") |
             .spec.template.spec.initContainers[] |
             select(.name == "validate-source-authority") |
             .env[] |
@@ -4518,7 +4518,7 @@ for invalid_ca_boundary in missing-grant selectable-key fetch-source-mount; do
 	fetch-source-mount)
 		jq '
           (.items[] |
-            select(.metadata.labels["operator.ptah.dev/operation"] == "observe") |
+            select(.metadata.labels["operator.ptah.run/operation"] == "observe") |
             .spec.template.spec.initContainers[] |
             select(.name == "fetch-schema") |
             .volumeMounts) += [{
@@ -4608,14 +4608,14 @@ jq \
     apiVersion: "v1", kind: "List",
     items: [
       .items[] |
-      select(.metadata.labels["operator.ptah.dev/operation"] == "observe" or
-        .metadata.labels["operator.ptah.dev/operation"] == "plan") |
+      select(.metadata.labels["operator.ptah.run/operation"] == "observe" or
+        .metadata.labels["operator.ptah.run/operation"] == "plan") |
       . as $job |
       {
         metadata: {
-          name: ("pod-" + $job.metadata.labels["operator.ptah.dev/operation"]),
-          uid: ("pod-uid-" + $job.metadata.labels["operator.ptah.dev/operation"]),
-          labels: ($job.metadata.labels + {"operator.ptah.dev/schema": "custom-ca"}),
+          name: ("pod-" + $job.metadata.labels["operator.ptah.run/operation"]),
+          uid: ("pod-uid-" + $job.metadata.labels["operator.ptah.run/operation"]),
+          labels: ($job.metadata.labels + {"operator.ptah.run/schema": "custom-ca"}),
           ownerReferences: [{
             apiVersion: "batch/v1", kind: "Job", name: "job", uid: $job.metadata.uid,
             controller: true
@@ -4731,7 +4731,7 @@ for invalid_custom_ca_pod in \
 done
 jq '
   (.items[] |
-    select(.metadata.labels["operator.ptah.dev/operation"] == "observe") |
+    select(.metadata.labels["operator.ptah.run/operation"] == "observe") |
     .spec.template.spec.containers[] |
     select(.name == "ptah") |
     .env) |= map(select(.name != "PTAH_EXPECTED_DATABASE_ENGINE"))
@@ -4747,7 +4747,7 @@ if jq -e \
 fi
 jq '
   (.items[] |
-    select(.metadata.labels["operator.ptah.dev/operation"] == "plan") |
+    select(.metadata.labels["operator.ptah.run/operation"] == "plan") |
     .spec.template.spec.containers[] |
     select(.name == "ptah") |
     .env) |= map(select(.name != "PTAH_EXPECTED_DATABASE_ENGINE"))
@@ -5097,7 +5097,7 @@ for controller_write_live_marker in \
 	'expect_controller_write_denial annotations' \
 	'expect_controller_write_denial ownerReferences' \
 	"expect_controller_write_denial 'a foreign finalizer'" \
-	'operator.ptah.dev/active-operation' \
+	'operator.ptah.run/active-operation' \
 	'controller desired-state and direct-write boundaries passed'; do
 	grep -F -- "$controller_write_live_marker" "$ROOT_DIR/hack/e2e-crd-upgrade.sh" >/dev/null
 done
@@ -5194,7 +5194,7 @@ finalizer_verbs=$(awk '
 [ "$(grep -c '^kind: ValidatingWebhookConfiguration$' "$ADMISSION_RENDER")" -eq 1 ]
 [ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$ADMISSION_RENDER")" -eq 4 ]
 controller_service_account_name=$(awk '
-  $1 == "operator.ptah.dev/controller-service-account-name:" {
+  $1 == "operator.ptah.run/controller-service-account-name:" {
     gsub(/"/, "", $2)
     print $2
     exit
@@ -5203,14 +5203,14 @@ controller_service_account_name=$(awk '
 printf '%s\n' "$controller_service_account_name" |
 	grep -Eq '^ptah-e2e-ptah-operator-v1-[0-9a-f]{12}$'
 [ "$(grep -Fc -- \
-	"operator.ptah.dev/controller-service-account-name: \"$controller_service_account_name\"" \
+	"operator.ptah.run/controller-service-account-name: \"$controller_service_account_name\"" \
 	"$ADMISSION_RENDER")" -eq 2 ]
-grep -F 'name: vpodintent.operator.ptah.dev' "$ADMISSION_RENDER" >/dev/null
+grep -F 'name: vpodintent.operator.ptah.run' "$ADMISSION_RENDER" >/dev/null
 grep -F 'path: /validate-v1-pod-ptah-operation-intent' "$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["pods", "pods/ephemeralcontainers", "pods/resize"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'operations: ["CREATE", "UPDATE"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'name: managed-or-operation-job-pod' "$ADMISSION_RENDER" >/dev/null
-grep -F 'name: vcontrollerwrite.operator.ptah.dev' "$ADMISSION_RENDER" >/dev/null
+grep -F 'name: vcontrollerwrite.operator.ptah.run' "$ADMISSION_RENDER" >/dev/null
 grep -F 'path: /validate-operator-controller-write' "$ADMISSION_RENDER" >/dev/null
 grep -F 'name: controller-service-account' "$ADMISSION_RENDER" >/dev/null
 grep -F 'request.userInfo.username ==' "$ADMISSION_RENDER" >/dev/null
@@ -5232,12 +5232,12 @@ rendered_webhook_block() {
       selected { print }
 	' "$ADMISSION_RENDER"
 }
-controller_write_webhook=$(rendered_webhook_block vcontrollerwrite.operator.ptah.dev)
+controller_write_webhook=$(rendered_webhook_block vcontrollerwrite.operator.ptah.run)
 [ "$(printf '%s\n' "$controller_write_webhook" | sed -n 's/^[[:space:]]*timeoutSeconds: //p')" = 30 ] || {
 	printf '%s\n' 'e2e static: controller-write webhook does not use its dedicated 30-second fail-closed timeout' >&2
 	exit 1
 }
-for approval_webhook_name in mapproval.operator.ptah.dev vapproval.operator.ptah.dev; do
+for approval_webhook_name in mapproval.operator.ptah.run vapproval.operator.ptah.run; do
 	approval_webhook=$(rendered_webhook_block "$approval_webhook_name")
 	[ -n "$approval_webhook" ] || {
 		printf 'e2e static: rendered approval webhook %s is missing\n' "$approval_webhook_name" >&2
@@ -5248,7 +5248,7 @@ for approval_webhook_name in mapproval.operator.ptah.dev vapproval.operator.ptah
 		exit 1
 	fi
 done
-pod_intent_webhook=$(rendered_webhook_block vpodintent.operator.ptah.dev)
+pod_intent_webhook=$(rendered_webhook_block vpodintent.operator.ptah.run)
 [ -n "$pod_intent_webhook" ] || {
 	printf '%s\n' 'e2e static: rendered Pod intent webhook is missing' >&2
 	exit 1
@@ -5371,7 +5371,7 @@ for recreation_marker in \
 		'failurePolicy: Fail' \
 		'validationActions: [Deny]' \
 		'verbs: ["create"]' \
-		'operator.ptah.dev/generated-webhook-certificate' \
+		'operator.ptah.run/generated-webhook-certificate' \
 		'certificate rotator Secret CREATE is outside its exact recovery contract' \
 		'--recreate-missing-secret=true' \
 		'--secret-create-policy-name=' \
@@ -5385,7 +5385,7 @@ for recovery_marker in \
 	'ptah-rotator-unauthorized' \
 	'--dry-run=server' \
 	"delete secret \"\$SECRET_NAME\"" \
-	'operator.ptah.dev/generated-webhook-certificate' \
+	'operator.ptah.run/generated-webhook-certificate' \
 	'did not contract after Secret recreation'; do
 	grep -F -- "$recovery_marker" "$ROOT_DIR/hack/e2e-cert-rotation.sh" >/dev/null
 done
@@ -5489,9 +5489,9 @@ for crd_file in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	crd_basename=${crd_file##*/}
 	cmp "$crd_file" "$ROOT_DIR/charts/ptah-operator/crds/$crd_basename"
 	cmp "$crd_file" "$ROOT_DIR/internal/crdupgrade/assets/$crd_basename"
-	[ "$(grep -Fc "operator.ptah.dev/controller-state-version: \"$EXPECTED_CONTROLLER_STATE_VERSION\"" "$crd_file")" -eq 1 ]
-	[ "$(grep -Fc "operator.ptah.dev/crd-schema-version: \"$EXPECTED_CRD_SCHEMA_VERSION\"" "$crd_file")" -eq 1 ]
-	[ "$(grep -Ec 'operator[.]ptah[.]dev/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
+	[ "$(grep -Fc "operator.ptah.run/controller-state-version: \"$EXPECTED_CONTROLLER_STATE_VERSION\"" "$crd_file")" -eq 1 ]
+	[ "$(grep -Fc "operator.ptah.run/crd-schema-version: \"$EXPECTED_CRD_SCHEMA_VERSION\"" "$crd_file")" -eq 1 ]
+	[ "$(grep -Ec 'operator[.]ptah[.]run/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
 done
 [ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 3 ]
 [ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 3 ]
@@ -5692,9 +5692,9 @@ crd_role_section=$(awk '
   END {emit()}
 ' "$CRD_UPGRADE_RENDER")
 for crd_name in \
-	ptahschemaapprovals.operator.ptah.dev \
-	ptahschemaplans.operator.ptah.dev \
-	ptahschemas.operator.ptah.dev; do
+	ptahschemaapprovals.operator.ptah.run \
+	ptahschemaplans.operator.ptah.run \
+	ptahschemas.operator.ptah.run; do
 	[ "$(printf '%s\n' "$crd_role_section" | grep -Fc -- "- $crd_name")" -eq 1 ]
 done
 printf '%s\n' "$crd_role_section" | grep -F 'verbs: ["get", "update"]' >/dev/null
@@ -5725,7 +5725,7 @@ for crd_runtime_marker in \
 	'- "--release-namespace=ptah-e2e"' \
 	'- "--coordination-namespace=ptah-e2e"' \
 	'- "--leader-election=true"' \
-	'- "--leader-election-id=ptah-operator.operator.ptah.dev"' \
+	'- "--leader-election-id=ptah-operator.operator.ptah.run"' \
 	'- "--webhook-service-name=ptah-e2e-ptah-operator-webhook"' \
 	'- "--webhook-timeout-seconds=5"'; do
 	grep -F -- "$crd_runtime_marker" "$CRD_FULL_RENDER" >/dev/null
@@ -5758,21 +5758,21 @@ if grep -F 'hook-failed' "$TEARDOWN_RENDER" >/dev/null || grep -F '["*"]' "$TEAR
 	exit 1
 fi
 for singleton_annotation in \
-	'operator.ptah.dev/release-name: "ptah-e2e"' \
-	'operator.ptah.dev/release-namespace: "ptah-e2e"' \
-	'operator.ptah.dev/coordination-namespace: "ptah-e2e"' \
-	'operator.ptah.dev/leader-election: "true"' \
-	'operator.ptah.dev/leader-election-id: "ptah-operator.operator.ptah.dev"' \
-	'operator.ptah.dev/webhook-service-name: "ptah-e2e-ptah-operator-webhook"' \
-	'operator.ptah.dev/controller-deployment-name: "ptah-e2e-ptah-operator"' \
-	'operator.ptah.dev/certificate-deployment-name: "ptah-e2e-ptah-operator-cert-rotator"' \
-	'operator.ptah.dev/controller-state-version: "1"' \
-	'operator.ptah.dev/admission-contract-version: "1"' \
-	'operator.ptah.dev/release-sequence: "1"'; do
+	'operator.ptah.run/release-name: "ptah-e2e"' \
+	'operator.ptah.run/release-namespace: "ptah-e2e"' \
+	'operator.ptah.run/coordination-namespace: "ptah-e2e"' \
+	'operator.ptah.run/leader-election: "true"' \
+	'operator.ptah.run/leader-election-id: "ptah-operator.operator.ptah.run"' \
+	'operator.ptah.run/webhook-service-name: "ptah-e2e-ptah-operator-webhook"' \
+	'operator.ptah.run/controller-deployment-name: "ptah-e2e-ptah-operator"' \
+	'operator.ptah.run/certificate-deployment-name: "ptah-e2e-ptah-operator-cert-rotator"' \
+	'operator.ptah.run/controller-state-version: "1"' \
+	'operator.ptah.run/admission-contract-version: "1"' \
+	'operator.ptah.run/release-sequence: "1"'; do
 	[ "$(grep -Fc -- "$singleton_annotation" "$ADMISSION_RENDER")" -eq 2 ]
 done
 hook_service_account_name=$(awk '
-  $1 == "operator.ptah.dev/hook-service-account-name:" {
+  $1 == "operator.ptah.run/hook-service-account-name:" {
     gsub(/"/, "", $2)
     print $2
     exit
@@ -5781,7 +5781,7 @@ hook_service_account_name=$(awk '
 printf '%s\n' "$hook_service_account_name" |
 	grep -Eq '^ptah-e2e-ptah-operator-crd-v1-[0-9a-f]{12}$'
 [ "$(grep -Fc -- \
-	"operator.ptah.dev/hook-service-account-name: \"$hook_service_account_name\"" \
+	"operator.ptah.run/hook-service-account-name: \"$hook_service_account_name\"" \
 	"$ADMISSION_RENDER")" -eq 2 ]
 for hook_identity_marker in \
 	'helm.sh/hook-weight: "-120"' \
@@ -5793,7 +5793,7 @@ for hook_identity_marker in \
 done
 for runtime_pod_guard_marker in \
 	'ptah-operator-runtime-pod-identity-v1' \
-	'operator.ptah.dev/runtime-pod-contract-digest: "sha256:' \
+	'operator.ptah.run/runtime-pod-contract-digest: "sha256:' \
 	'resources: ["pods/ephemeralcontainers", "pods/resize"]' \
 	'resources: ["pods/exec", "pods/attach", "pods/portforward", "pods/proxy"]' \
 	'system:serviceaccount:kube-system:replicaset-controller' \
@@ -5824,7 +5824,7 @@ for controller_write_marker in \
 	'helm.sh/hook-weight: "-157"' \
 	'dyn(object).spec == dyn(oldObject).spec' \
 	'dyn(object).status == dyn(oldObject).status' \
-	'operator.ptah.dev/active-operation' \
+	'operator.ptah.run/active-operation' \
 	'Ptah controller write guard rejected a desired-state mutation'; do
 	grep -F -- "$controller_write_marker" "$ROLLOUT_GUARD_RENDER" >/dev/null
 done
@@ -5926,7 +5926,7 @@ for controller_object_marker in \
 	'variables.activeRelease == variables.previousRelease' \
 	'name: candidateRelease' \
 	'name: previousRelease' \
-	'request.operation == \"UPDATE\" || (request.operation == \"CREATE\" && (object.metadata.annotations[\"operator.ptah.dev/controller-image\"] == variables.activeControllerImage && object.metadata.annotations[\"operator.ptah.dev/controller-state-version\"] == variables.activeControllerStateString))' \
+	'request.operation == \"UPDATE\" || (request.operation == \"CREATE\" && (object.metadata.annotations[\"operator.ptah.run/controller-image\"] == variables.activeControllerImage && object.metadata.annotations[\"operator.ptah.run/controller-state-version\"] == variables.activeControllerStateString))' \
 	'== variables.activeControllerImage' \
 	'== variables.activeControllerStateString' \
 	'== variables.activeControllerState' \
@@ -6136,7 +6136,7 @@ for singleton_guard_marker in \
 	'pre-upgrade hook'; do
 	grep -F -- "$singleton_guard_marker" "$ROOT_DIR/charts/ptah-operator/templates/_helpers.tpl" >/dev/null
 done
-grep -E 'leaderElectionID[[:space:]]*=[[:space:]]*"ptah-operator.operator.ptah.dev"' \
+grep -E 'leaderElectionID[[:space:]]*=[[:space:]]*"ptah-operator.operator.ptah.run"' \
 	"$ROOT_DIR/cmd/manager/main.go" >/dev/null
 for image_file in "$ROOT_DIR/Dockerfile" "$ROOT_DIR/test/e2e/Dockerfile.operator"; do
 	grep -F '/out/ptah-crd-manager ./cmd/ptah-crd-manager' "$image_file" >/dev/null

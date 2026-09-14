@@ -48,7 +48,7 @@ SHARED_OBSERVED_JOBS_FILE=${E2E_OBSERVED_JOBS_FILE:-}
 # subprocesses.
 unset protected_value base_url new_url url_value aliased_url PRINCIPAL_PASSWORD
 
-LEADER_LEASE=ptah-operator.operator.ptah.dev
+LEADER_LEASE=ptah-operator.operator.ptah.run
 PG_SERVICE=e2e-postgresql
 PG_BASE_SECRET=e2e-postgresql-db
 MYSQL_SERVICE=e2e-mysql
@@ -79,7 +79,7 @@ STATUS_RBAC_PAUSED=0
 STATUS_RBAC_RULE_INDEX=
 STATUS_RBAC_ORIGINAL_VERBS=
 READ_WORKLOAD_BARRIER_ACTIVE=0
-READ_WORKLOAD_BARRIER_KEY=operator.ptah.dev/e2e-read-workload-barrier
+READ_WORKLOAD_BARRIER_KEY=operator.ptah.run/e2e-read-workload-barrier
 FOLLOW_LOG_PID=
 FOLLOW_LOG_FILE=
 FOLLOW_LOG_STATUS_FILE=
@@ -366,7 +366,7 @@ wait_for_controller_status_authorization() {
 	authorization_deadline=$(($(date +%s) + 30))
 	while [ "$(date +%s)" -lt "$authorization_deadline" ]; do
 		maybe_audit_fault_runtime
-		rbac_answer=$(k auth can-i patch ptahschemas.operator.ptah.dev \
+		rbac_answer=$(k auth can-i patch ptahschemas.operator.ptah.run \
 			--subresource=status \
 			--as="system:serviceaccount:${OPERATOR_NAMESPACE}:${CONTROLLER_SERVICE_ACCOUNT}" 2>/dev/null || true)
 		[ "$rbac_answer" = "$expected_answer" ] && return 0
@@ -380,7 +380,7 @@ pause_controller_status_writes() {
 	rbac_role=$(k get clusterrole "$CONTROLLER_NAME" -o json)
 	STATUS_RBAC_RULE_INDEX=$(printf '%s\n' "$rbac_role" | jq -r '
     [.rules | to_entries[] |
-      select(.value.apiGroups == ["operator.ptah.dev"] and
+      select(.value.apiGroups == ["operator.ptah.run"] and
         (.value.resources | index("ptahschemas/status")) != null) | .key][0] // empty
   ')
 	printf '%s\n' "$STATUS_RBAC_RULE_INDEX" | grep -Eq '^[0-9]+$' ||
@@ -694,10 +694,10 @@ audit_fault_runtime() {
 				--arg controllerImage "$CONTROLLER_IMAGE" \
 				--arg controllerRevision "$CONTROLLER_REVISION" \
 				--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
-              .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
-              .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
-              .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
-              (.metadata.annotations["operator.ptah.dev/execution-binding-id"] |
+              .metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage and
+              .metadata.annotations["operator.ptah.run/controller-revision"] == $controllerRevision and
+              .metadata.annotations["operator.ptah.run/controller-state-version"] == $controllerStateVersion and
+              (.metadata.annotations["operator.ptah.run/execution-binding-id"] |
                 test("^v1-[0-9a-f]{32}$"))
             ' >/dev/null || fail "managed fault-test Pod $audit_pod_name lacks its exact controller execution identity"
 		fi
@@ -772,16 +772,16 @@ audit_fault_runtime() {
 				--arg controllerImage "$CONTROLLER_IMAGE" \
 				--arg controllerRevision "$CONTROLLER_REVISION" \
 				--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
-              (.metadata.annotations["operator.ptah.dev/execution-binding-id"] |
+              (.metadata.annotations["operator.ptah.run/execution-binding-id"] |
                 test("^v1-[0-9a-f]{32}$")) and
-              .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
-              .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
-              .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
-              .spec.template.metadata.annotations["operator.ptah.dev/execution-binding-id"] ==
-                .metadata.annotations["operator.ptah.dev/execution-binding-id"] and
-              .spec.template.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
-              .spec.template.metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
-              .spec.template.metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion
+              .metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage and
+              .metadata.annotations["operator.ptah.run/controller-revision"] == $controllerRevision and
+              .metadata.annotations["operator.ptah.run/controller-state-version"] == $controllerStateVersion and
+              .spec.template.metadata.annotations["operator.ptah.run/execution-binding-id"] ==
+                .metadata.annotations["operator.ptah.run/execution-binding-id"] and
+              .spec.template.metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage and
+              .spec.template.metadata.annotations["operator.ptah.run/controller-revision"] == $controllerRevision and
+              .spec.template.metadata.annotations["operator.ptah.run/controller-state-version"] == $controllerStateVersion
             ' >/dev/null || fail "managed fault-test Job $audit_job_name lacks its exact controller execution identity"
 		fi
 		audit_job_pods=$(k -n "$TEST_NAMESPACE" get pods -o json | jq \
@@ -946,16 +946,16 @@ audit_blocked_read_job() {
 		--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .metadata.labels["app.kubernetes.io/managed-by"] == "ptah-operator" and
       .metadata.labels["app.kubernetes.io/component"] == "schema-operation" and
-      (.metadata.annotations["operator.ptah.dev/execution-binding-id"] |
+      (.metadata.annotations["operator.ptah.run/execution-binding-id"] |
         test("^v1-[0-9a-f]{32}$")) and
-      .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
-      .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
-      .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
-      .spec.template.metadata.annotations["operator.ptah.dev/execution-binding-id"] ==
-        .metadata.annotations["operator.ptah.dev/execution-binding-id"] and
-      .spec.template.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
-      .spec.template.metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
-      .spec.template.metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion
+      .metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage and
+      .metadata.annotations["operator.ptah.run/controller-revision"] == $controllerRevision and
+      .metadata.annotations["operator.ptah.run/controller-state-version"] == $controllerStateVersion and
+      .spec.template.metadata.annotations["operator.ptah.run/execution-binding-id"] ==
+        .metadata.annotations["operator.ptah.run/execution-binding-id"] and
+      .spec.template.metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage and
+      .spec.template.metadata.annotations["operator.ptah.run/controller-revision"] == $controllerRevision and
+      .spec.template.metadata.annotations["operator.ptah.run/controller-state-version"] == $controllerStateVersion
     ' >/dev/null ||
 		fail "held fault-test Job $blocked_audit_name lacks its exact controller execution identity"
 	# The Job controller creates the Pod at once and the barrier leaves it
@@ -1025,13 +1025,13 @@ record_fault_jobs_for_parent() {
         (.metadata.uid | type == "string" and length > 0 and length <= 128 and
           ((contains("\n") or contains("\r") or contains("\t")) | not)) and
         (.metadata.name | type == "string" and length > 0) and
-        (.metadata.labels["operator.ptah.dev/schema"] // "" | type == "string") and
-        (.metadata.labels["operator.ptah.dev/operation"] // "" | type == "string"))
+        (.metadata.labels["operator.ptah.run/schema"] // "" | type == "string") and
+        (.metadata.labels["operator.ptah.run/operation"] // "" | type == "string"))
       then .[] | {
           uid: .metadata.uid,
           name: .metadata.name,
-          schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
-          operation: (.metadata.labels["operator.ptah.dev/operation"] // "")
+          schema: (.metadata.labels["operator.ptah.run/schema"] // ""),
+          operation: (.metadata.labels["operator.ptah.run/operation"] // "")
         }
       else error("watch contains an invalid Job identity")
       end
@@ -1055,13 +1055,13 @@ record_initial_job_list_for_parent() {
         (.metadata.uid | type == "string" and length > 0 and length <= 128 and
           ((contains("\n") or contains("\r") or contains("\t")) | not)) and
         (.metadata.name | type == "string" and length > 0) and
-        (.metadata.labels["operator.ptah.dev/schema"] // "" | type == "string") and
-        (.metadata.labels["operator.ptah.dev/operation"] // "" | type == "string"))
+        (.metadata.labels["operator.ptah.run/schema"] // "" | type == "string") and
+        (.metadata.labels["operator.ptah.run/operation"] // "" | type == "string"))
       then .items[] | {
           uid: .metadata.uid,
           name: .metadata.name,
-          schema: (.metadata.labels["operator.ptah.dev/schema"] // ""),
-          operation: (.metadata.labels["operator.ptah.dev/operation"] // "")
+          schema: (.metadata.labels["operator.ptah.run/schema"] // ""),
+          operation: (.metadata.labels["operator.ptah.run/operation"] // "")
         }
       else error("initial Job list contains an invalid identity")
       end
@@ -1325,7 +1325,7 @@ create_watch_heartbeat_lease() {
         apiVersion: "coordination.k8s.io/v1", kind: "Lease",
         metadata: {
           namespace: $namespace, name: $name,
-          labels: {"operator.ptah.dev/e2e-purpose": "watch-heartbeat"}
+          labels: {"operator.ptah.run/e2e-purpose": "watch-heartbeat"}
         },
         spec: {}
       }
@@ -1354,19 +1354,19 @@ watch_heartbeat_loop() {
 		: >"$heartbeat_attempt_error"
 		heartbeat_marker="fault-watch-$$-${heartbeat_sequence}-$(date +%s)"
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate job e2e-fault-push-postgresql \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
+			operator.ptah.run/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_job_pid=$!
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate pod "$heartbeat_pod" \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
+			operator.ptah.run/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_pod_pid=$!
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate ptahschema e2e-suspended-schema \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
+			operator.ptah.run/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_schema_pid=$!
 		k --request-timeout=8s -n "$TEST_NAMESPACE" annotate ptahschemaapproval e2e-approval \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
+			operator.ptah.run/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_approval_pid=$!
 		k --request-timeout=8s -n "$OPERATOR_NAMESPACE" annotate lease e2e-fault-watch-heartbeat \
-			operator.ptah.dev/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
+			operator.ptah.run/e2e-watch-heartbeat="$heartbeat_marker" --overwrite >/dev/null 2>>"$heartbeat_attempt_error" &
 		heartbeat_lease_pid=$!
 		heartbeat_update_status=0
 		for heartbeat_update_pid in \
@@ -1533,7 +1533,7 @@ establish_watch_barrier() {
 	barrier_marker="fault-${barrier_stem}-$$-${WATCH_BARRIER_SEQUENCE}-$(date +%s)"
 	WATCH_BARRIER_SEQUENCE=$((WATCH_BARRIER_SEQUENCE + 1))
 	barrier_object=$(k -n "$barrier_namespace" annotate "$barrier_resource" "$barrier_name" \
-		operator.ptah.dev/e2e-watch-barrier="$barrier_marker" --overwrite -o json)
+		operator.ptah.run/e2e-watch-barrier="$barrier_marker" --overwrite -o json)
 	barrier_uid=$(printf '%s\n' "$barrier_object" | jq -er '.metadata.uid')
 	barrier_rv=$(printf '%s\n' "$barrier_object" | jq -er '.metadata.resourceVersion')
 	barrier_deadline=$(deadline_from_now)
@@ -1545,7 +1545,7 @@ establish_watch_barrier() {
 			--arg marker "$barrier_marker" '
           any(.[].object;
             .metadata.uid == $uid and .metadata.resourceVersion == $rv and
-            .metadata.annotations["operator.ptah.dev/e2e-watch-barrier"] == $marker)
+            .metadata.annotations["operator.ptah.run/e2e-watch-barrier"] == $marker)
         ' "$WATCH_SNAPSHOT_FILE" >/dev/null; then
 			return 0
 		fi
@@ -1602,8 +1602,8 @@ start_watch() {
 start_watches() {
 	start_watch "/apis/batch/v1/namespaces/${TEST_NAMESPACE}/jobs" jobs
 	start_watch "/api/v1/namespaces/${TEST_NAMESPACE}/pods" pods
-	start_watch "/apis/operator.ptah.dev/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemas" schemas
-	start_watch "/apis/operator.ptah.dev/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemaapprovals" approvals
+	start_watch "/apis/operator.ptah.run/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemas" schemas
+	start_watch "/apis/operator.ptah.run/v1alpha1/namespaces/${TEST_NAMESPACE}/ptahschemaapprovals" approvals
 	start_watch "/apis/coordination.k8s.io/v1/namespaces/${OPERATOR_NAMESPACE}/leases" leases
 }
 
@@ -1669,8 +1669,8 @@ watch_added_uid_count() {
 		--arg operation "$watch_operation" '
       [.[] |
         select(.type == "ADDED") |
-        select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-        select(.object.metadata.labels["operator.ptah.dev/operation"] == $operation) |
+        select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+        select(.object.metadata.labels["operator.ptah.run/operation"] == $operation) |
         .object.metadata.uid] | unique | length
 	' "$WATCH_SNAPSHOT_FILE"
 }
@@ -1684,8 +1684,8 @@ watch_added_pod_uid_count() {
 		--arg operation "$watch_operation" '
       [.[] |
         select(.type == "ADDED") |
-        select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-        select(.object.metadata.labels["operator.ptah.dev/operation"] == $operation) |
+        select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+        select(.object.metadata.labels["operator.ptah.run/operation"] == $operation) |
         .object.metadata.uid] | unique | length
 	' "$WATCH_SNAPSHOT_FILE"
 }
@@ -1702,8 +1702,8 @@ checkpoint_operation_watch() {
 		--arg operation "$checkpoint_operation" '
       [.[] |
         select(.type == "ADDED") |
-        select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-        select(.object.metadata.labels["operator.ptah.dev/operation"] == $operation) |
+        select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+        select(.object.metadata.labels["operator.ptah.run/operation"] == $operation) |
         .object.metadata.uid] | unique | sort
     ' "$WATCH_SNAPSHOT_FILE")
 	[ "$(printf '%s\n' "$watched_checkpoint_uids" | jq 'length')" -eq "$checkpoint_expected_count" ] ||
@@ -1720,7 +1720,7 @@ checkpoint_schema_job_watch() {
 		--arg schema "$checkpoint_schema" '
       [.[] |
         select(.type == "ADDED") |
-        select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
+        select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
         .object.metadata.uid] | unique | sort
     ' "$WATCH_SNAPSHOT_FILE")
 	[ "$(printf '%s\n' "$watched_checkpoint_uids" | jq 'length')" -gt 0 ] ||
@@ -1739,8 +1739,8 @@ watch_new_uid_count() {
 			--arg operation "$watch_operation" '
           [.[] |
             select(.type == "ADDED") |
-            select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-            select(.object.metadata.labels["operator.ptah.dev/operation"] == $operation) |
+            select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+            select(.object.metadata.labels["operator.ptah.run/operation"] == $operation) |
             .object.metadata.uid as $uid |
             select(($before[0] | index($uid)) == null) |
             $uid] | unique | length
@@ -1762,8 +1762,8 @@ single_new_watched_job_uid() {
 		--arg operation "$new_uid_operation" '
       [.[] |
         select(.type == "ADDED") |
-        select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-        select(.object.metadata.labels["operator.ptah.dev/operation"] == $operation) |
+        select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+        select(.object.metadata.labels["operator.ptah.run/operation"] == $operation) |
         .object.metadata.uid as $uid |
         select(($before[0] | index($uid)) == null) |
         $uid] | unique |
@@ -1792,7 +1792,7 @@ assert_no_overlapping_operation_pods() {
 	jq -s -e '
       reduce .[] as $event (
         {active: {}, valid: true};
-        ($event.object.metadata.labels["operator.ptah.dev/schema"] // "") as $schema |
+        ($event.object.metadata.labels["operator.ptah.run/schema"] // "") as $schema |
         ($event.object.metadata.uid // "") as $uid |
         ($event.object.status.phase // "") as $phase |
         if $schema == "" or $uid == "" then .
@@ -1811,7 +1811,7 @@ assert_no_overlapping_operation_jobs() {
 	jq -s -e '
       reduce .[] as $event (
         {active: {}, valid: true};
-        ($event.object.metadata.labels["operator.ptah.dev/schema"] // "") as $schema |
+        ($event.object.metadata.labels["operator.ptah.run/schema"] // "") as $schema |
         ($event.object.metadata.uid // "") as $uid |
         ($event.object.status.conditions // [] |
           any((.type == "Complete" or .type == "Failed") and .status == "True")) as $terminal |
@@ -1835,8 +1835,8 @@ assert_initial_read_chain_watch_order() {
       def added($operation):
         [to_entries[] | select(
           .value.type == "ADDED" and
-          .value.object.metadata.labels["operator.ptah.dev/schema"] == $schema and
-          .value.object.metadata.labels["operator.ptah.dev/operation"] == $operation)];
+          .value.object.metadata.labels["operator.ptah.run/schema"] == $schema and
+          .value.object.metadata.labels["operator.ptah.run/operation"] == $operation)];
       added("resolve") as $resolves |
       added("verify") as $verifies |
       added("observe") as $observes |
@@ -1853,9 +1853,9 @@ assert_initial_read_chain_watch_order() {
           .type == "Complete" and .status == "True")))) | .[0]) as $verifyComplete |
       $resolveAdded != null and $verifyAdded != null and $observeAdded != null and
       $resolveComplete != null and $verifyComplete != null and
-      ($resolveAdded.value.object.metadata.annotations["operator.ptah.dev/operation-id"] | length) > 0 and
-      ($verifyAdded.value.object.metadata.annotations["operator.ptah.dev/operation-id"] | length) > 0 and
-      ($observeAdded.value.object.metadata.annotations["operator.ptah.dev/operation-id"] | length) > 0 and
+      ($resolveAdded.value.object.metadata.annotations["operator.ptah.run/operation-id"] | length) > 0 and
+      ($verifyAdded.value.object.metadata.annotations["operator.ptah.run/operation-id"] | length) > 0 and
+      ($observeAdded.value.object.metadata.annotations["operator.ptah.run/operation-id"] | length) > 0 and
       $resolveAdded.key < $resolveComplete.key and
       $resolveComplete.key < $verifyAdded.key and
       $verifyAdded.key < $verifyComplete.key and
@@ -2029,7 +2029,7 @@ wait_for_operation_job_terminal() {
 	while [ "$(date +%s)" -lt "$terminal_deadline" ]; do
 		maybe_audit_fault_runtime
 		terminal_jobs=$(k -n "$TEST_NAMESPACE" get jobs \
-			-l "operator.ptah.dev/schema=${terminal_schema},operator.ptah.dev/operation=${terminal_operation}" \
+			-l "operator.ptah.run/schema=${terminal_schema},operator.ptah.run/operation=${terminal_operation}" \
 			-o json)
 		terminal_count=$(printf '%s\n' "$terminal_jobs" | jq '.items | length')
 		[ "$terminal_count" -le 1 ] ||
@@ -2038,7 +2038,7 @@ wait_for_operation_job_terminal() {
         .items[0].status.conditions // [] |
         any((.type == "Complete" or .type == "Failed") and .status == "True")
       ' >/dev/null; then
-			TERMINAL_OPERATION_ID=$(printf '%s\n' "$terminal_jobs" | jq -r '.items[0].metadata.annotations["operator.ptah.dev/operation-id"]')
+			TERMINAL_OPERATION_ID=$(printf '%s\n' "$terminal_jobs" | jq -r '.items[0].metadata.annotations["operator.ptah.run/operation-id"]')
 			TERMINAL_JOB_NAME=$(printf '%s\n' "$terminal_jobs" | jq -er '.items[0].metadata.name')
 			TERMINAL_JOB_UID=$(printf '%s\n' "$terminal_jobs" | jq -er '.items[0].metadata.uid')
 			if [ -z "$TERMINAL_OPERATION_ID" ] || [ "$TERMINAL_OPERATION_ID" = null ]; then
@@ -2094,19 +2094,19 @@ capture_exact_job_result() {
 		--arg controllerRevision "$CONTROLLER_REVISION" \
 		--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .metadata.uid == $uid and
-      .metadata.labels["operator.ptah.dev/operation"] == $operation and
-      (.metadata.annotations["operator.ptah.dev/operation-id"] | length > 0) and
-      .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
-      .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
-      .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
-      .spec.template.metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
-      .spec.template.metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
-      .spec.template.metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
+      .metadata.labels["operator.ptah.run/operation"] == $operation and
+      (.metadata.annotations["operator.ptah.run/operation-id"] | length > 0) and
+      .metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage and
+      .metadata.annotations["operator.ptah.run/controller-revision"] == $controllerRevision and
+      .metadata.annotations["operator.ptah.run/controller-state-version"] == $controllerStateVersion and
+      .spec.template.metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage and
+      .spec.template.metadata.annotations["operator.ptah.run/controller-revision"] == $controllerRevision and
+      .spec.template.metadata.annotations["operator.ptah.run/controller-state-version"] == $controllerStateVersion and
       .spec.podReplacementPolicy == "Failed" and .spec.backoffLimit == 0 and
       (.status.conditions // [] | any(.type == "Complete" and .status == "True"))
     ' >/dev/null || fail "exact $result_operation Job $result_job_name did not transport one result"
 	FAULT_RESULT_OPERATION_ID=$(printf '%s\n' "$result_job_object" |
-		jq -er '.metadata.annotations["operator.ptah.dev/operation-id"]')
+		jq -er '.metadata.annotations["operator.ptah.run/operation-id"]')
 	result_pods=$(k -n "$TEST_NAMESPACE" get pods -l "job-name=${result_job_name}" -o json)
 	FAULT_RESULT_POD=$(printf '%s\n' "$result_pods" | jq -er \
 		--arg uid "$result_job_uid" \
@@ -2114,7 +2114,7 @@ capture_exact_job_result() {
       [.items[] |
         select(.metadata.ownerReferences // [] | any(
           .kind == "Job" and .uid == $uid and .controller == true)) |
-        select(.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID)] |
+        select(.metadata.annotations["operator.ptah.run/operation-id"] == $operationID)] |
       if length == 1 then .[0].metadata.name
       else error("exact Job does not own one operation-bound Pod") end
     ')
@@ -2125,9 +2125,9 @@ capture_exact_job_result() {
 		--arg controllerStateVersion "$CONTROLLER_STATE_VERSION" '
       .items[] | select(.metadata.name == $name) |
       ([.status.initContainerStatuses // [], .status.containerStatuses // []] | add) as $statuses |
-      if .metadata.annotations["operator.ptah.dev/controller-image"] == $controllerImage and
-        .metadata.annotations["operator.ptah.dev/controller-revision"] == $controllerRevision and
-        .metadata.annotations["operator.ptah.dev/controller-state-version"] == $controllerStateVersion and
+      if .metadata.annotations["operator.ptah.run/controller-image"] == $controllerImage and
+        .metadata.annotations["operator.ptah.run/controller-revision"] == $controllerRevision and
+        .metadata.annotations["operator.ptah.run/controller-state-version"] == $controllerStateVersion and
         all($statuses[]; (.restartCount // 0) == 0) and
         ([.status.containerStatuses[] |
           select(.name == "ptah" and .state.terminated.exitCode == 0)] | length) == 1
@@ -2152,7 +2152,7 @@ capture_exact_job_result() {
     ' "$result_output" >/dev/null ||
 		fail "runner result lost its protocol-v5 binding or complete-output guarantee"
 	result_schema=$(printf '%s\n' "$result_job_object" |
-		jq -er '.metadata.labels["operator.ptah.dev/schema"]')
+		jq -er '.metadata.labels["operator.ptah.run/schema"]')
 	result_binding_deadline=$(deadline_from_now)
 	result_binding_proven=false
 	while [ "$(date +%s)" -lt "$result_binding_deadline" ]; do
@@ -2173,9 +2173,9 @@ capture_exact_job_result() {
             .status.activeOperation.jobUID == $jobUID) and
           any($jobs[];
             .type == "ADDED" and .object.metadata.uid == $jobUID and
-            .object.metadata.labels["operator.ptah.dev/schema"] == $schema and
-            .object.metadata.labels["operator.ptah.dev/operation"] == $operation and
-            .object.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID)
+            .object.metadata.labels["operator.ptah.run/schema"] == $schema and
+            .object.metadata.labels["operator.ptah.run/operation"] == $operation and
+            .object.metadata.annotations["operator.ptah.run/operation-id"] == $operationID)
 		        ' "$result_schema_watch" >/dev/null; then
 			result_binding_proven=true
 			break
@@ -2295,7 +2295,7 @@ assert_fault_convergence_result_pair() {
 	pause_controller_status_writes
 	stop_read_workload_barrier
 	converged_observe_job=$(k -n "$TEST_NAMESPACE" get jobs \
-		-l "operator.ptah.dev/schema=${converged_schema},operator.ptah.dev/operation=observe" \
+		-l "operator.ptah.run/schema=${converged_schema},operator.ptah.run/operation=observe" \
 		-o json | jq -er --arg uid "$CONVERGED_OBSERVE_JOB_UID" '
           [.items[] | select(.metadata.uid == $uid)] |
           if length == 1 then .[0].metadata.name
@@ -2349,7 +2349,7 @@ assert_fault_convergence_result_pair() {
 	pause_controller_status_writes
 	stop_read_workload_barrier
 	converged_plan_job=$(k -n "$TEST_NAMESPACE" get jobs \
-		-l "operator.ptah.dev/schema=${converged_schema},operator.ptah.dev/operation=plan" \
+		-l "operator.ptah.run/schema=${converged_schema},operator.ptah.run/operation=plan" \
 		-o json | jq -er --arg uid "$CONVERGED_PLAN_JOB_UID" '
           [.items[] | select(.metadata.uid == $uid)] |
           if length == 1 then .[0].metadata.name
@@ -2487,7 +2487,7 @@ capture_uncertain_read_proof_pair() {
 	pause_controller_status_writes
 	stop_read_workload_barrier
 	uncertain_observe_job=$(k -n "$TEST_NAMESPACE" get jobs \
-		-l "operator.ptah.dev/schema=${uncertain_schema},operator.ptah.dev/operation=observe" \
+		-l "operator.ptah.run/schema=${uncertain_schema},operator.ptah.run/operation=observe" \
 		-o json | jq -er --arg uid "$UNCERTAIN_OBSERVE_JOB_UID" '
           [.items[] | select(.metadata.uid == $uid)] |
           if length == 1 then .[0].metadata.name
@@ -2598,7 +2598,7 @@ capture_uncertain_read_proof_pair() {
 	pause_controller_status_writes
 	stop_read_workload_barrier
 	uncertain_plan_job=$(k -n "$TEST_NAMESPACE" get jobs \
-		-l "operator.ptah.dev/schema=${uncertain_schema},operator.ptah.dev/operation=plan" \
+		-l "operator.ptah.run/schema=${uncertain_schema},operator.ptah.run/operation=plan" \
 		-o json | jq -er --arg uid "$UNCERTAIN_PLAN_JOB_UID" '
           [.items[] | select(.metadata.uid == $uid)] |
           if length == 1 then .[0].metadata.name
@@ -2913,7 +2913,7 @@ create_schema() {
 		--arg lockTimeout "$schema_lock_timeout" \
 		--argjson activeDeadline "$schema_active_deadline" '
       {
-        apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+        apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
         metadata: {namespace: $namespace, name: $name},
         spec: {
           target: {
@@ -3035,7 +3035,7 @@ create_approval() {
 		--arg planUID "$approval_plan_uid" \
 		--arg fingerprint "$approval_fingerprint" '
       {
-        apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchemaApproval",
+        apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchemaApproval",
         metadata: {namespace: $namespace, name: $name},
         spec: {
           schemaRef: {name: $schema, uid: $schemaUID},
@@ -3083,9 +3083,9 @@ wait_for_apply_pod() {
 			--arg schema "$active_schema" \
 			--arg operationID "$ACTIVE_OPERATION_ID" '
       .metadata.uid == $uid and
-      .metadata.labels["operator.ptah.dev/schema"] == $schema and
-      .metadata.labels["operator.ptah.dev/operation"] == "apply" and
-      .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      .metadata.labels["operator.ptah.run/schema"] == $schema and
+      .metadata.labels["operator.ptah.run/operation"] == "apply" and
+      .metadata.annotations["operator.ptah.run/operation-id"] == $operationID and
       .spec.podReplacementPolicy == "Failed" and .spec.backoffLimit == 0
     ' >/dev/null || fail "$active_schema Apply Job does not preserve the single-Pod failure contract"
 	active_deadline=$(deadline_from_now)
@@ -3102,7 +3102,7 @@ wait_for_apply_pod() {
 			ACTIVE_POD_UID=$(printf '%s\n' "$active_pods" | jq -r '.items[0].metadata.uid')
 			printf '%s\n' "$active_pods" | jq -e \
 				--arg operationID "$ACTIVE_OPERATION_ID" '
-          .items[0].metadata.annotations["operator.ptah.dev/operation-id"] == $operationID
+          .items[0].metadata.annotations["operator.ptah.run/operation-id"] == $operationID
         ' >/dev/null || fail "$active_schema executor Pod lost its full operation identity"
 			return 0
 		fi
@@ -3127,9 +3127,9 @@ record_running_deadline_pod_evidence() {
 		--arg operationID "$deadline_operation_id" \
 		--argjson deadline "$deadline_seconds" '
       .metadata.uid == $uid and .metadata.deletionTimestamp == null and
-      .metadata.labels["operator.ptah.dev/schema"] == $schema and
-      .metadata.labels["operator.ptah.dev/operation"] == "apply" and
-      .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      .metadata.labels["operator.ptah.run/schema"] == $schema and
+      .metadata.labels["operator.ptah.run/operation"] == "apply" and
+      .metadata.annotations["operator.ptah.run/operation-id"] == $operationID and
       .spec.activeDeadlineSeconds == $deadline and
       .spec.template.spec.activeDeadlineSeconds == $deadline and
       .spec.parallelism == 1 and .spec.completions == 1 and
@@ -3144,7 +3144,7 @@ record_running_deadline_pod_evidence() {
 		--arg operationID "$deadline_operation_id" \
 		--argjson deadline "$deadline_seconds" '
       .metadata.uid == $podUID and .metadata.deletionTimestamp == null and
-      .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      .metadata.annotations["operator.ptah.run/operation-id"] == $operationID and
       (.metadata.ownerReferences // [] | length == 1 and
         .[0].apiVersion == "batch/v1" and .[0].kind == "Job" and
         .[0].name == $jobName and .[0].uid == $jobUID and .[0].controller == true) and
@@ -3197,15 +3197,15 @@ audit_running_deadline_pod_watch() {
           $running != null and $deleted != null and $running.key < $deleted.key and
           ([.[] | select(
             .type == "ADDED" and
-            .object.metadata.labels["operator.ptah.dev/operation"] == "apply" and
-            .object.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+            .object.metadata.labels["operator.ptah.run/operation"] == "apply" and
+            .object.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and
             (.object.metadata.ownerReferences // [] | any(
               .apiVersion == "batch/v1" and .kind == "Job" and
               .name == $jobName and .uid == $jobUID and .controller == true))) |
             .object.metadata.uid] | unique) == [$podUID] and
           all($events[];
             .value.object.metadata.name == $podName and
-            .value.object.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+            .value.object.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and
             (.value.object.metadata.ownerReferences // [] | length == 1 and
               .[0].apiVersion == "batch/v1" and .[0].kind == "Job" and
               .[0].name == $jobName and .[0].uid == $jobUID and .[0].controller == true) and
@@ -3313,7 +3313,7 @@ assert_active_pod_ephemeral_container_rejected() {
 		--arg jobUID "$ACTIVE_JOB_UID" \
 		--arg operationID "$ACTIVE_OPERATION_ID" '
       .metadata.uid == $podUID and
-      .metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      .metadata.annotations["operator.ptah.run/operation-id"] == $operationID and
       (.metadata.ownerReferences // [] | length == 1 and .[0].apiVersion == "batch/v1" and
         .[0].kind == "Job" and .[0].name == $jobName and .[0].uid == $jobUID and
         .[0].controller == true) and
@@ -3353,7 +3353,7 @@ assert_active_pod_ephemeral_container_rejected() {
 		-f "$RESOURCE_FILE" >"$LOG_FILE" 2>&1; then
 		fail "$active_schema operation Pod admitted an out-of-envelope ephemeral container"
 	fi
-	if ! grep -F 'vpodintent.operator.ptah.dev' "$LOG_FILE" >/dev/null ||
+	if ! grep -F 'vpodintent.operator.ptah.run' "$LOG_FILE" >/dev/null ||
 		! grep -F 'denied the request' "$LOG_FILE" >/dev/null; then
 		fail "$active_schema ephemeral-container request failed outside the Pod-intent webhook"
 	fi
@@ -3373,7 +3373,7 @@ assert_active_pod_ephemeral_container_rejected() {
 checkpoint_leases() {
 	lease_checkpoint=$1
 	k -n "$OPERATOR_NAMESPACE" get leases \
-		-l 'app.kubernetes.io/managed-by=ptah-operator,operator.ptah.dev/coordination=database-target' \
+		-l 'app.kubernetes.io/managed-by=ptah-operator,operator.ptah.run/coordination=database-target' \
 		-o json | jq '[.items[].metadata.uid] | sort' >"$lease_checkpoint"
 }
 
@@ -3384,7 +3384,7 @@ load_single_new_released_lease() {
 	while [ "$(date +%s)" -lt "$lease_deadline" ]; do
 		maybe_audit_fault_runtime
 		lease_object=$(k -n "$OPERATOR_NAMESPACE" get leases \
-			-l 'app.kubernetes.io/managed-by=ptah-operator,operator.ptah.dev/coordination=database-target' \
+			-l 'app.kubernetes.io/managed-by=ptah-operator,operator.ptah.run/coordination=database-target' \
 			-o json)
 		lease_new_count=$(printf '%s\n' "$lease_object" | jq \
 			--slurpfile before "$lease_checkpoint" '
@@ -3405,7 +3405,7 @@ load_single_new_released_lease() {
             ')
 			LEASE_EPOCH=$(printf '%s\n' "$lease_object" | jq -r \
 				--slurpfile before "$lease_checkpoint" '
-              [.items[] | .metadata.uid as $uid | select(($before[0] | index($uid)) == null)][0].metadata.annotations["operator.ptah.dev/lease-epoch"]
+              [.items[] | .metadata.uid as $uid | select(($before[0] | index($uid)) == null)][0].metadata.annotations["operator.ptah.run/lease-epoch"]
             ')
 			[ -z "$LEASE_HOLDER" ] || [ "$LEASE_HOLDER" = null ] ||
 				fail "$lease_description was not released after its initial Plan"
@@ -3434,14 +3434,14 @@ wait_for_lease_reacquisition() {
 				--arg oldEpoch "$reacquire_previous_epoch" '
               .metadata.uid == $uid and
               (.spec.holderIdentity | type == "string" and length > 0) and
-              (.metadata.annotations["operator.ptah.dev/lease-epoch"] |
+              (.metadata.annotations["operator.ptah.run/lease-epoch"] |
                 test("^v1-[0-9a-f]{32}$") and . != $oldEpoch)
             ' >/dev/null; then
 				LEASE_NAME=$reacquire_name
 				LEASE_UID=$reacquire_uid
 				LEASE_HOLDER=$(printf '%s\n' "$reacquire_object" | jq -er '.spec.holderIdentity')
 				LEASE_EPOCH=$(printf '%s\n' "$reacquire_object" |
-					jq -er '.metadata.annotations["operator.ptah.dev/lease-epoch"]')
+					jq -er '.metadata.annotations["operator.ptah.run/lease-epoch"]')
 				return 0
 			fi
 		fi
@@ -3457,12 +3457,12 @@ load_held_lease_for_epoch() {
 	while [ "$(date +%s)" -lt "$held_deadline" ]; do
 		maybe_audit_fault_runtime
 		held_leases=$(k -n "$OPERATOR_NAMESPACE" get leases \
-			-l 'app.kubernetes.io/managed-by=ptah-operator,operator.ptah.dev/coordination=database-target' \
+			-l 'app.kubernetes.io/managed-by=ptah-operator,operator.ptah.run/coordination=database-target' \
 			-o json)
 		held_count=$(printf '%s\n' "$held_leases" | jq \
 			--arg epoch "$held_epoch" '
           [.items[] | select(
-            .metadata.annotations["operator.ptah.dev/lease-epoch"] == $epoch and
+            .metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch and
             (.spec.holderIdentity | type == "string" and length > 0))] | length
         ')
 		case "$held_count" in
@@ -3471,21 +3471,21 @@ load_held_lease_for_epoch() {
 			LEASE_NAME=$(printf '%s\n' "$held_leases" | jq -er \
 				--arg epoch "$held_epoch" '
                   .items[] | select(
-                    .metadata.annotations["operator.ptah.dev/lease-epoch"] == $epoch and
+                    .metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch and
                     (.spec.holderIdentity | type == "string" and length > 0)) |
                   .metadata.name
                 ')
 			LEASE_UID=$(printf '%s\n' "$held_leases" | jq -er \
 				--arg epoch "$held_epoch" '
                   .items[] | select(
-                    .metadata.annotations["operator.ptah.dev/lease-epoch"] == $epoch and
+                    .metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch and
                     (.spec.holderIdentity | type == "string" and length > 0)) |
                   .metadata.uid
                 ')
 			LEASE_HOLDER=$(printf '%s\n' "$held_leases" | jq -er \
 				--arg epoch "$held_epoch" '
                   .items[] | select(
-                    .metadata.annotations["operator.ptah.dev/lease-epoch"] == $epoch and
+                    .metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch and
                     (.spec.holderIdentity | type == "string" and length > 0)) |
                   .spec.holderIdentity
                 ')
@@ -3528,7 +3528,7 @@ assert_same_lease_reacquired_in_watch() {
 	  [$allEvents[] | select(.value.object.metadata.uid == $uid)] as $events |
 	  ($events | map(select(
 	    .value.object.spec.holderIdentity == $firstHolder and
-	    .value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] == $firstEpoch)) |
+	    .value.object.metadata.annotations["operator.ptah.run/lease-epoch"] == $firstEpoch)) |
 	    .[0]) as $first |
 	  $first.value.object.metadata.name as $leaseName |
 	  ($events | map(select(
@@ -3549,17 +3549,17 @@ assert_same_lease_reacquired_in_watch() {
 	      .object.status.target.coordinationDigest)] | .[0]) as $active |
 	  ([$jobs[] | select(
 	    .type == "ADDED" and .object.metadata.uid == $jobUID and
-	    .object.metadata.labels["operator.ptah.dev/schema"] == $schema and
-	    .object.metadata.labels["operator.ptah.dev/operation"] == "apply" and
-	    .object.metadata.annotations["operator.ptah.dev/operation-id"] == $operation)] |
+	    .object.metadata.labels["operator.ptah.run/schema"] == $schema and
+	    .object.metadata.labels["operator.ptah.run/operation"] == "apply" and
+	    .object.metadata.annotations["operator.ptah.run/operation-id"] == $operation)] |
 	    .[0]) as $jobAdded |
 	  $first != null and $released != null and $reacquired != null and
 	  $reacquired.value.type == "MODIFIED" and
 	  $reacquired.value.object.metadata.uid == $uid and
 	  $reacquired.value.object.spec.holderIdentity != $firstHolder and
-	  $reacquired.value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] ==
+	  $reacquired.value.object.metadata.annotations["operator.ptah.run/lease-epoch"] ==
 	    $contenderEpoch and
-	  $reacquired.value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] !=
+	  $reacquired.value.object.metadata.annotations["operator.ptah.run/lease-epoch"] !=
 	    $firstEpoch and
 	  all($allEvents[];
 	    if .key > $released.key and .key < $reacquired.key and
@@ -3583,7 +3583,7 @@ assert_lease_identity() {
 			--arg holder "$identity_holder" \
 			--arg epoch "$identity_epoch" '
       .metadata.uid == $uid and .spec.holderIdentity == $holder and
-      .metadata.annotations["operator.ptah.dev/lease-epoch"] == $epoch
+      .metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch
     ' >/dev/null || fail "target Lease identity or holder changed across a controller restart"
 }
 
@@ -3603,14 +3603,14 @@ assert_lease_held_without_release() {
       [to_entries[] | select(.value.object.metadata.uid == $uid)] as $events |
       ($events | map(select(
         .value.object.spec.holderIdentity == $holder and
-        .value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] == $epoch)) |
+        .value.object.metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch)) |
         .[0]) as $acquired |
       $acquired != null and
       all($events[];
         if .key >= $acquired.key then
           .value.type != "DELETED" and
           .value.object.spec.holderIdentity == $holder and
-          .value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] == $epoch
+          .value.object.metadata.annotations["operator.ptah.run/lease-epoch"] == $epoch
         else true end)
     ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 		fail "target Lease was released or replaced before the controlled proof boundary"
@@ -3713,7 +3713,7 @@ assert_post_apply_proof_history() {
         .value.object.metadata.uid == $leaseUID))) as $leaseEvents |
       ($leaseEvents | map(select(
         .value.object.spec.holderIdentity == $leaseHolder and
-        .value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] == $leaseEpoch)) |
+        .value.object.metadata.annotations["operator.ptah.run/lease-epoch"] == $leaseEpoch)) |
         .[0]) as $held |
       ($leaseEvents | map(select(
         .key > $held.key and
@@ -3768,20 +3768,20 @@ assert_post_apply_proof_history() {
 	      $observeAdded != null and $observeComplete != null and $planAdded != null and
 	      ($observe.status.activeOperation.id | length) > 0 and
 	      ($plan.status.activeOperation.id | length) > 0 and
-	      $observeAdded.value.object.metadata.annotations["operator.ptah.dev/operation-id"] ==
+	      $observeAdded.value.object.metadata.annotations["operator.ptah.run/operation-id"] ==
 	        $observe.status.activeOperation.id and
-	      $planAdded.value.object.metadata.annotations["operator.ptah.dev/operation-id"] ==
+	      $planAdded.value.object.metadata.annotations["operator.ptah.run/operation-id"] ==
 	        $plan.status.activeOperation.id and
 	      $observeComplete.key < $planAdded.key and
 	      $planComplete != null and
       $held != null and $released != null and
       $released.value.type == "MODIFIED" and
-      $released.value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] == $leaseEpoch and
+      $released.value.object.metadata.annotations["operator.ptah.run/lease-epoch"] == $leaseEpoch and
 	      all($leaseEvents[];
 	        if .key >= $held.key and .key < $released.key then
           .value.type != "DELETED" and
           .value.object.spec.holderIdentity == $leaseHolder and
-          .value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] == $leaseEpoch
+          .value.object.metadata.annotations["operator.ptah.run/lease-epoch"] == $leaseEpoch
 	        else true end)
     ' "$proof_schema_watch" >/dev/null ||
 		fail "$proof_schema did not retain one immutable Apply Lease and proof snapshot through Observe and Plan"
@@ -3994,7 +3994,7 @@ assert_uncertain_apply_proof_history() {
         .value.object.metadata.uid == $leaseUID))) as $leaseEvents |
       ($leaseEvents | map(select(
         .value.object.spec.holderIdentity == $leaseHolder and
-        .value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] == $leaseEpoch)) |
+        .value.object.metadata.annotations["operator.ptah.run/lease-epoch"] == $leaseEpoch)) |
         .[0]) as $held |
       ($leaseEvents | map(select(
         .key > $held.key and
@@ -4033,19 +4033,19 @@ assert_uncertain_apply_proof_history() {
       $planAdded != null and $planComplete != null and
       ($observe.value.status.activeOperation.id | length) > 0 and
       ($plan.value.status.activeOperation.id | length) > 0 and
-      $observeAdded.value.object.metadata.annotations["operator.ptah.dev/operation-id"] ==
+      $observeAdded.value.object.metadata.annotations["operator.ptah.run/operation-id"] ==
         $observe.value.status.activeOperation.id and
-      $planAdded.value.object.metadata.annotations["operator.ptah.dev/operation-id"] ==
+      $planAdded.value.object.metadata.annotations["operator.ptah.run/operation-id"] ==
         $plan.value.status.activeOperation.id and
       $observeComplete.key < $planAdded.key and
       $held != null and $released != null and
       $released.value.type == "MODIFIED" and
-      $released.value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] == $leaseEpoch and
+      $released.value.object.metadata.annotations["operator.ptah.run/lease-epoch"] == $leaseEpoch and
 	      all($leaseEvents[];
 	        if .key >= $held.key and .key < $released.key then
           .value.type != "DELETED" and
           .value.object.spec.holderIdentity == $leaseHolder and
-          .value.object.metadata.annotations["operator.ptah.dev/lease-epoch"] == $leaseEpoch
+          .value.object.metadata.annotations["operator.ptah.run/lease-epoch"] == $leaseEpoch
 	        else true end) and
       ($finalSchema[0] as $final | $freshPlan[0] as $fresh |
 	        if $planMode == "no-changes" then
@@ -4284,7 +4284,7 @@ run_credential_principal_refusal() {
 	principal_plan_uid=$(single_new_watched_job_uid \
 		"$principal_schema" plan "$principal_plan_checkpoint")
 	principal_plan_job=$(k -n "$TEST_NAMESPACE" get jobs \
-		-l "operator.ptah.dev/schema=${principal_schema},operator.ptah.dev/operation=plan" \
+		-l "operator.ptah.run/schema=${principal_schema},operator.ptah.run/operation=plan" \
 		-o json | jq -er --arg uid "$principal_plan_uid" '
 		  [.items[] | select(.metadata.uid == $uid)] |
 		  if length == 1 then .[0].metadata.name
@@ -4329,7 +4329,7 @@ run_credential_principal_refusal() {
 		--arg uid "$principal_schema_uid" '[.items[] | select(.spec.schemaRef.uid == $uid)] | length')" -eq 0 ] ||
 		fail "credential-bearing principal refusal published a PtahSchemaPlan"
 	[ "$(k -n "$TEST_NAMESPACE" get configmaps \
-		-l "operator.ptah.dev/schema=${principal_schema}" -o json | jq '.items | length')" -eq 0 ] ||
+		-l "operator.ptah.run/schema=${principal_schema}" -o json | jq '.items | length')" -eq 0 ] ||
 		fail "credential-bearing principal refusal published a plan chunk"
 	[ "$(watch_new_uid_count "$principal_schema" apply "$principal_apply_checkpoint")" -eq 0 ] ||
 		fail "credential-bearing principal refusal dispatched an Apply Job"
@@ -4682,7 +4682,7 @@ assert_read_workload_blocked "$MYSQL_RECOVERY_OBSERVE_UID" \
 pause_controller_status_writes
 stop_read_workload_barrier
 MYSQL_RECOVERY_OBSERVE_JOB=$(k -n "$TEST_NAMESPACE" get jobs \
-	-l "operator.ptah.dev/schema=${MYSQL_UNKNOWN_SCHEMA},operator.ptah.dev/operation=observe" \
+	-l "operator.ptah.run/schema=${MYSQL_UNKNOWN_SCHEMA},operator.ptah.run/operation=observe" \
 	-o json | jq -er --arg uid "$MYSQL_RECOVERY_OBSERVE_UID" '
     [.items[] | select(.metadata.uid == $uid)] |
     if length == 1 then .[0].metadata.name else error("recovery Observe Job UID is not live exactly once") end
@@ -4692,7 +4692,7 @@ printf '%s\n' "$TERMINAL_JOB_OBJECT" |
 	jq -e --arg uid "$MYSQL_RECOVERY_OBSERVE_UID" '
       .metadata.uid == $uid and
       (.status.conditions // [] | any(.type == "Complete" and .status == "True")) and
-      (.metadata.annotations["operator.ptah.dev/operation-id"] | length > 0)
+      (.metadata.annotations["operator.ptah.run/operation-id"] | length > 0)
     ' >/dev/null || fail "the exact recovery Observe Job did not complete successfully"
 MYSQL_RECOVERY_OBSERVE_RESULT=$WORK_DIR/mysql-recovery-observe-result.json
 capture_exact_job_result "$MYSQL_RECOVERY_OBSERVE_JOB" "$MYSQL_RECOVERY_OBSERVE_UID" \
@@ -4734,7 +4734,7 @@ assert_read_workload_blocked "$MYSQL_RECOVERY_PLAN_JOB_UID" \
 pause_controller_status_writes
 stop_read_workload_barrier
 MYSQL_RECOVERY_PLAN_JOB=$(k -n "$TEST_NAMESPACE" get jobs \
-	-l "operator.ptah.dev/schema=${MYSQL_UNKNOWN_SCHEMA},operator.ptah.dev/operation=plan" \
+	-l "operator.ptah.run/schema=${MYSQL_UNKNOWN_SCHEMA},operator.ptah.run/operation=plan" \
 	-o json | jq -er --arg uid "$MYSQL_RECOVERY_PLAN_JOB_UID" '
     [.items[] | select(.metadata.uid == $uid)] |
     if length == 1 then .[0].metadata.name else error("recovery Plan Job UID is not live exactly once") end
@@ -4744,7 +4744,7 @@ printf '%s\n' "$TERMINAL_JOB_OBJECT" |
 	jq -e --arg uid "$MYSQL_RECOVERY_PLAN_JOB_UID" '
       .metadata.uid == $uid and
       (.status.conditions // [] | any(.type == "Complete" and .status == "True")) and
-      (.metadata.annotations["operator.ptah.dev/operation-id"] | length > 0)
+      (.metadata.annotations["operator.ptah.run/operation-id"] | length > 0)
     ' >/dev/null || fail "the exact recovery Plan Job did not complete successfully"
 MYSQL_RECOVERY_PLAN_RESULT=$WORK_DIR/mysql-recovery-plan-result.json
 capture_exact_job_result "$MYSQL_RECOVERY_PLAN_JOB" "$MYSQL_RECOVERY_PLAN_JOB_UID" \
@@ -4994,8 +4994,8 @@ ALIAS_B_JOB_UID=$(jq -er -s \
 	--arg schema "$PG_ALIAS_SCHEMA_B" '
     [.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
       .object.metadata.uid] | unique |
     if length == 1 then .[0] else error("expected exactly one alias contender Apply Job UID") end
   ' "$WATCH_SNAPSHOT_FILE")
@@ -5123,8 +5123,8 @@ jq -s -e \
 	--arg uid "$ALIAS_B_POD_UID" '
     [.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
       .object.metadata.uid] | unique == [$uid]
   ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 	fail "shared-alias stale Apply history does not contain exactly its result Pod UID"
@@ -5309,8 +5309,8 @@ MANUAL_APPLY_JOB_UID=$(jq -er -s \
 	--arg schema "$PG_MANUAL_SCHEMA" '
     [.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
       .object.metadata.uid] | unique |
     if length == 1 then .[0] else error("expected one manual-drift Apply Job UID") end
   ' "$WATCH_SNAPSHOT_FILE")
@@ -5458,7 +5458,7 @@ jq -s -e \
 	--arg schema "$DELETED_SCHEMA_NAME" '
     [.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
       .object.metadata.uid as $uid |
       select(($before[0] | index($uid)) == null)] |
     length == 0
@@ -5525,7 +5525,7 @@ jq -s -e \
 	--arg schema "$DELETED_SCHEMA_NAME" '
     [.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
       .object.metadata.uid as $uid |
       select(($before[0] | index($uid)) == null)] |
     length == 0
@@ -5551,8 +5551,8 @@ jq -s -e \
 	--arg uid "$ALIAS_B_POD_UID" '
     [.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
       .object.metadata.uid] | unique == [$uid]
   ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 	fail "shared-alias stale Apply final history changed its exact Pod UID"
@@ -5566,8 +5566,8 @@ jq -s -e \
 	--arg uid "$MANUAL_APPLY_JOB_UID" '
     [.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
       .object.metadata.uid] | unique == [$uid]
   ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 	fail "manual-drift Apply history does not contain exactly its original Job UID"
@@ -5577,8 +5577,8 @@ jq -s -e \
 	--arg uid "$MANUAL_APPLY_POD_UID" '
     [.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
       .object.metadata.uid] | unique == [$uid]
   ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 	fail "manual-drift Apply history does not contain exactly its original Pod UID"
@@ -5625,8 +5625,8 @@ jq -s -e \
 	--argjson deadline "$FAULT_TIMEOUT_ACTIVE_DEADLINE_SECONDS" '
     ([.[] |
        select(.type == "ADDED") |
-       select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-       select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+       select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+       select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
        .object.metadata.uid] | unique) == [$uid] and
     any(.[];
       .object.metadata.uid == $uid and
@@ -5648,8 +5648,8 @@ jq -s -e \
 	--arg startedAt "$DEADLINE_PTAH_STARTED_AT" '
     ([.[] |
        select(.type == "ADDED") |
-       select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-       select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+       select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+       select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
        .object.metadata.uid] | unique) as $addedUIDs |
     [to_entries[] | select(.value.object.metadata.uid == $uid)] as $events |
     ($events | map(select(
@@ -5663,7 +5663,7 @@ jq -s -e \
     $running.key < $deleted.key and
     all($events[];
       .value.object.metadata.name == $name and
-      .value.object.metadata.annotations["operator.ptah.dev/operation-id"] == $operationID and
+      .value.object.metadata.annotations["operator.ptah.run/operation-id"] == $operationID and
       (.value.object.metadata.ownerReferences // [] | length == 1 and
         .[0].apiVersion == "batch/v1" and .[0].kind == "Job" and
         .[0].name == $jobName and .[0].uid == $jobUID and .[0].controller == true) and
@@ -5684,8 +5684,8 @@ jq -s -e \
 	--arg uid "$MYSQL_JOB_UID" '
     [.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
       .object.metadata.uid] | unique == [$uid]
   ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 	fail "uncertain MySQL Apply history does not contain exactly the original Job UID"
@@ -5695,8 +5695,8 @@ jq -s -e \
 	--arg uid "$MYSQL_POD_UID" '
     [.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
       .object.metadata.uid] | unique == [$uid]
 	' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 	fail "uncertain MySQL Apply history does not contain exactly the original Pod UID"
@@ -5710,13 +5710,13 @@ jq -s -e \
 	--arg planUID "$PRINCIPAL_PLAN_UID" '
     ([.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "plan") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "plan") |
       .object.metadata.uid] | unique) == [$planUID] and
     ([.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
       .object.metadata.uid] | unique | length) == 0
   ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 	fail "credential-bearing principal refusal did not remain one Plan and zero Apply Jobs"
@@ -5726,13 +5726,13 @@ jq -s -e \
 	--arg planUID "$PRINCIPAL_PLAN_POD_UID" '
     ([.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "plan") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "plan") |
       .object.metadata.uid] | unique) == [$planUID] and
     ([.[] |
       select(.type == "ADDED") |
-      select(.object.metadata.labels["operator.ptah.dev/schema"] == $schema) |
-      select(.object.metadata.labels["operator.ptah.dev/operation"] == "apply") |
+      select(.object.metadata.labels["operator.ptah.run/schema"] == $schema) |
+      select(.object.metadata.labels["operator.ptah.run/operation"] == "apply") |
       .object.metadata.uid] | unique | length) == 0
   ' "$WATCH_SNAPSHOT_FILE" >/dev/null ||
 	fail "credential-bearing principal refusal did not remain one Plan and zero Apply Pods"

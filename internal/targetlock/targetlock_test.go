@@ -39,7 +39,7 @@ func TestAcquireCreatesOwnerNeutralLease(t *testing.T) {
 	if len(lease.OwnerReferences) != 0 {
 		t.Fatalf("OwnerReferences = %#v, want owner-neutral Lease", lease.OwnerReferences)
 	}
-	if got := lease.Labels["operator.ptah.dev/coordination"]; got != "database-target" {
+	if got := lease.Labels["operator.ptah.run/coordination"]; got != "database-target" {
 		t.Fatalf("coordination label = %q", got)
 	}
 	if lease.Spec.HolderIdentity == nil || !strings.HasPrefix(*lease.Spec.HolderIdentity, "ptah-h-") {

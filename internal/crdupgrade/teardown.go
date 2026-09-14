@@ -793,7 +793,7 @@ func verifyHookIdentityProbeMarker(object *corev1.ConfigMap, guard *RolloutGuard
 		"helm.sh/hook":                           "pre-install,pre-upgrade",
 		"helm.sh/hook-weight":                    hookIdentityProbeMarkerWeight,
 		"helm.sh/resource-policy":                "keep",
-		"operator.ptah.dev/hook-identity-policy": policyName,
+		"operator.ptah.run/hook-identity-policy": policyName,
 	}
 	wantLabels := map[string]string{
 		managedByLabel:                rolloutGuardManagedBy,

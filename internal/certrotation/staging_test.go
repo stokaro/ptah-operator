@@ -272,7 +272,7 @@ func TestPendingCandidateRejectsPostWriteForeignPrimaryMetadata(t *testing.T) {
 	}
 
 	primary := mustGetSecret(t, client, config)
-	primary.Annotations = map[string]string{"operator.ptah.dev/foreign": "true"}
+	primary.Annotations = map[string]string{"operator.ptah.run/foreign": "true"}
 	if _, err := client.CoreV1().Secrets(config.Namespace).Update(context.Background(), primary, metav1.UpdateOptions{}); err != nil {
 		t.Fatalf("add foreign primary metadata: %v", err)
 	}
@@ -378,13 +378,13 @@ func TestPrimarySourceContractRejectsForeignShapeBeforeStaging(t *testing.T) {
 		{
 			name: "extra label",
 			mutate: func(secret *corev1.Secret) {
-				secret.Labels["operator.ptah.dev/foreign"] = "true"
+				secret.Labels["operator.ptah.run/foreign"] = "true"
 			},
 		},
 		{
 			name: "annotation",
 			mutate: func(secret *corev1.Secret) {
-				secret.Annotations = map[string]string{"operator.ptah.dev/foreign": "true"}
+				secret.Annotations = map[string]string{"operator.ptah.run/foreign": "true"}
 			},
 		},
 		{
@@ -441,7 +441,7 @@ func TestStagingSecretContractFailsClosedBeforeCertificateWrites(t *testing.T) {
 			mutate: func(t *testing.T, client *fake.Clientset, config Config) {
 				t.Helper()
 				updateStagingForTest(t, client, config, func(secret *corev1.Secret) {
-					secret.Labels["operator.ptah.dev/foreign"] = "true"
+					secret.Labels["operator.ptah.run/foreign"] = "true"
 				})
 			},
 		},
@@ -534,7 +534,7 @@ func TestStagingSecretMetadataRequiresExactLiveShape(t *testing.T) {
 		{name: "deleting", mutate: func(secret *corev1.Secret) { secret.DeletionTimestamp = &deletionTime }},
 		{name: "wrong type", mutate: func(secret *corev1.Secret) { secret.Type = corev1.SecretTypeTLS }},
 		{name: "missing label", mutate: func(secret *corev1.Secret) { secret.Labels = nil }},
-		{name: "extra label", mutate: func(secret *corev1.Secret) { secret.Labels["operator.ptah.dev/foreign"] = "true" }},
+		{name: "extra label", mutate: func(secret *corev1.Secret) { secret.Labels["operator.ptah.run/foreign"] = "true" }},
 		{name: "missing Helm managed-by label", mutate: func(secret *corev1.Secret) {
 			delete(secret.Labels, HelmManagedByLabel)
 		}},
@@ -542,7 +542,7 @@ func TestStagingSecretMetadataRequiresExactLiveShape(t *testing.T) {
 			secret.Labels[HelmManagedByLabel] = "foreign"
 		}},
 		{name: "foreign annotation", mutate: func(secret *corev1.Secret) {
-			secret.Annotations = map[string]string{"operator.ptah.dev/foreign": "true"}
+			secret.Annotations = map[string]string{"operator.ptah.run/foreign": "true"}
 		}},
 		{name: "missing release name annotation", mutate: func(secret *corev1.Secret) {
 			delete(secret.Annotations, HelmReleaseNameAnnotation)
@@ -559,7 +559,7 @@ func TestStagingSecretMetadataRequiresExactLiveShape(t *testing.T) {
 		{name: "owner reference", mutate: func(secret *corev1.Secret) {
 			secret.OwnerReferences = []metav1.OwnerReference{{APIVersion: "v1", Kind: "ConfigMap", Name: "foreign", UID: "foreign", Controller: &controller}}
 		}},
-		{name: "finalizer", mutate: func(secret *corev1.Secret) { secret.Finalizers = []string{"operator.ptah.dev/foreign"} }},
+		{name: "finalizer", mutate: func(secret *corev1.Secret) { secret.Finalizers = []string{"operator.ptah.run/foreign"} }},
 		{name: "immutable field", mutate: func(secret *corev1.Secret) { secret.Immutable = &immutable }},
 		{name: "stringData", mutate: func(secret *corev1.Secret) { secret.StringData = map[string]string{"foreign": "value"} }},
 	}
@@ -590,10 +590,10 @@ func TestPrimarySecretMetadataRequiresExactHelmOwnership(t *testing.T) {
 		mutate func(*corev1.Secret)
 	}{
 		{name: "missing labels", mutate: func(secret *corev1.Secret) { secret.Labels = nil }},
-		{name: "extra label", mutate: func(secret *corev1.Secret) { secret.Labels["operator.ptah.dev/foreign"] = "true" }},
+		{name: "extra label", mutate: func(secret *corev1.Secret) { secret.Labels["operator.ptah.run/foreign"] = "true" }},
 		{name: "wrong Helm manager", mutate: func(secret *corev1.Secret) { secret.Labels[HelmManagedByLabel] = "foreign" }},
 		{name: "missing annotations", mutate: func(secret *corev1.Secret) { secret.Annotations = nil }},
-		{name: "extra annotation", mutate: func(secret *corev1.Secret) { secret.Annotations["operator.ptah.dev/foreign"] = "true" }},
+		{name: "extra annotation", mutate: func(secret *corev1.Secret) { secret.Annotations["operator.ptah.run/foreign"] = "true" }},
 		{name: "wrong release name", mutate: func(secret *corev1.Secret) { secret.Annotations[HelmReleaseNameAnnotation] = "foreign" }},
 		{name: "wrong release namespace", mutate: func(secret *corev1.Secret) { secret.Annotations[HelmReleaseNamespaceAnnotation] = "foreign" }},
 	}
@@ -1258,7 +1258,7 @@ func TestPrimarySecretUpdateAcceptsOnlyExactPostWriteObject(t *testing.T) {
 			name:               "successful response has foreign metadata",
 			successfulResponse: true,
 			mutate: func(secret *corev1.Secret) {
-				secret.Annotations = map[string]string{"operator.ptah.dev/foreign": "true"}
+				secret.Annotations = map[string]string{"operator.ptah.run/foreign": "true"}
 			},
 		},
 		{

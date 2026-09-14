@@ -32,14 +32,16 @@ import (
 )
 
 const (
-	fixtureVersionAnnotation = "operator.ptah.dev/crd-schema-version"
-	fixtureDigestAnnotation  = "operator.ptah.dev/crd-schema-digest"
+	fixtureVersionAnnotation = "operator.ptah.run/crd-schema-version"
+	fixtureDigestAnnotation  = "operator.ptah.run/crd-schema-digest"
 )
 
+const fixtureGroup = "operator.ptah.run"
+
 var fixtureNames = []string{
-	"ptahschemaapprovals.operator.ptah.dev",
-	"ptahschemaplans.operator.ptah.dev",
-	"ptahschemas.operator.ptah.dev",
+	"ptahschemaapprovals.operator.ptah.run",
+	"ptahschemaplans.operator.ptah.run",
+	"ptahschemas.operator.ptah.run",
 }
 
 func TestVerifyUsesExplicitAndLocalAutomaticBaselines(t *testing.T) {
@@ -140,6 +142,71 @@ func TestVerifyFailsClosedForMissingOrInvalidExplicitBaseline(t *testing.T) {
 	}
 }
 
+// A renamed group installs beside the old CRDs rather than over them, so the
+// verifier restarts the history: the candidate carries version 1 again, and a
+// continued version line is refused. The candidate itself is never read that
+// way -- generating the resources under another group is a regression.
+func TestVerifyRestartsTheHistoryWhenTheGroupIsRenamed(t *testing.T) {
+	t.Parallel()
+
+	repository := newFixtureRepository(t)
+	writeFixtureSetInGroup(t, repository, "operator.example.test", true, 4, "previous group")
+	commitFixture(t, repository, "previous group")
+	baselineCommit := gitFixtureOutput(t, repository, "rev-parse", "HEAD")
+
+	writeFixtureSet(t, repository, true, 1, "candidate")
+	result, err := crdschemahistory.Verify(t.Context(), crdschemahistory.Config{
+		Root:        repository,
+		BaselineRef: baselineCommit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.InitialAdoption || result.CandidateVersion != 1 || !result.SchemaChanged {
+		t.Fatalf("renamed-group verification result = %+v", result)
+	}
+
+	writeFixtureSet(t, repository, true, 5, "continued candidate")
+	_, err = crdschemahistory.Verify(t.Context(), crdschemahistory.Config{
+		Root:        repository,
+		BaselineRef: baselineCommit,
+	})
+	if err == nil || !strings.Contains(err.Error(), "initial bootstrap from an empty CRD baseline requires candidate") {
+		t.Fatalf("continued version line error = %v, want a bootstrap rejection", err)
+	}
+}
+
+func TestVerifyRefusesACandidateUnderAnotherGroup(t *testing.T) {
+	t.Parallel()
+
+	repository := newFixtureRepository(t)
+	writeFixtureSet(t, repository, true, 1, "baseline")
+	commitFixture(t, repository, "baseline")
+	baselineCommit := gitFixtureOutput(t, repository, "rev-parse", "HEAD")
+
+	writeFixtureSetInGroup(t, repository, "operator.example.test", true, 1, "candidate")
+	_, err := crdschemahistory.Verify(t.Context(), crdschemahistory.Config{
+		Root:        repository,
+		BaselineRef: baselineCommit,
+	})
+	if err == nil || !strings.Contains(err.Error(), "candidate CRD set is") {
+		t.Fatalf("candidate under another group error = %v, want a set rejection", err)
+	}
+}
+
+func removeFixtureCRDs(directory string) error {
+	entries, err := filepath.Glob(filepath.Join(directory, "*.yaml"))
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := os.Remove(entry); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func newFixtureRepository(t *testing.T) string {
 	t.Helper()
 	repository := t.TempDir()
@@ -152,17 +219,35 @@ func newFixtureRepository(t *testing.T) string {
 
 func writeFixtureSet(t *testing.T, repository string, managed bool, version uint64, description string) {
 	t.Helper()
+	writeFixtureSetInGroup(t, repository, fixtureGroup, managed, version, description)
+}
+
+// writeFixtureSetInGroup writes the same three resources under any group, which
+// is how a renamed API is put in front of the verifier.
+func writeFixtureSetInGroup(
+	t *testing.T,
+	repository string,
+	group string,
+	managed bool,
+	version uint64,
+	description string,
+) {
+	t.Helper()
 	directory := filepath.Join(repository, "config", "crd", "bases")
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for index, name := range fixtureNames {
-		plural := strings.Split(name, ".")[0]
+	if err := removeFixtureCRDs(directory); err != nil {
+		t.Fatal(err)
+	}
+	for index, generated := range fixtureNames {
+		plural, _, _ := strings.Cut(generated, ".")
+		name := plural + "." + group
 		kind := map[string]string{
-			"ptahschemas.operator.ptah.dev":         "PtahSchema",
-			"ptahschemaapprovals.operator.ptah.dev": "PtahSchemaApproval",
-			"ptahschemaplans.operator.ptah.dev":     "PtahSchemaPlan",
-		}[name]
+			"ptahschemas":         "PtahSchema",
+			"ptahschemaapprovals": "PtahSchemaApproval",
+			"ptahschemaplans":     "PtahSchemaPlan",
+		}[plural]
 		crd := &apiextensionsv1.CustomResourceDefinition{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: apiextensionsv1.SchemeGroupVersion.String(),
@@ -170,7 +255,7 @@ func writeFixtureSet(t *testing.T, repository string, managed bool, version uint
 			},
 			ObjectMeta: metav1.ObjectMeta{Name: name},
 			Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-				Group: "operator.ptah.dev",
+				Group: group,
 				Names: apiextensionsv1.CustomResourceDefinitionNames{
 					Plural:   plural,
 					Singular: strings.TrimSuffix(plural, "s"),

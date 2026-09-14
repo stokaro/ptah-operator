@@ -28,9 +28,9 @@ const (
 	teardownRetirementGateJobPrefix   = "ptah-teardown-gate-v1-"
 	teardownRetirementProbePrefix     = "ptah-teardown-v1-"
 
-	teardownRetirementVersionAnnotation = "operator.ptah.dev/teardown-retirement-version"
-	teardownRetirementAttemptAnnotation = "operator.ptah.dev/teardown-retirement-attempt"
-	teardownRetirementTargetAnnotation  = "operator.ptah.dev/teardown-retirement-target"
+	teardownRetirementVersionAnnotation = "operator.ptah.run/teardown-retirement-version"
+	teardownRetirementAttemptAnnotation = "operator.ptah.run/teardown-retirement-attempt"
+	teardownRetirementTargetAnnotation  = "operator.ptah.run/teardown-retirement-target"
 
 	teardownRetirementMarkerHookWeight = "-330"
 	teardownFenceAPolicyHookWeight     = "-329"

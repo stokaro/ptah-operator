@@ -77,7 +77,7 @@ func (changedTemplateJobs) Build(
 	if job.Spec.Template.Annotations == nil {
 		job.Spec.Template.Annotations = map[string]string{}
 	}
-	job.Spec.Template.Annotations["operator.ptah.dev/rebuilt-template"] = "changed"
+	job.Spec.Template.Annotations["operator.ptah.run/rebuilt-template"] = "changed"
 	return job, nil
 }
 

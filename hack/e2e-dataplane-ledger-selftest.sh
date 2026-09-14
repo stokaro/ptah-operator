@@ -176,13 +176,13 @@ write_valid_job_evidence() {
           labels: {
             "app.kubernetes.io/managed-by": "ptah-operator",
             "app.kubernetes.io/component": "schema-operation",
-            "operator.ptah.dev/schema": $schema,
-            "operator.ptah.dev/operation": $operation,
-            "operator.ptah.dev/operation-id": $operationLabel
+            "operator.ptah.run/schema": $schema,
+            "operator.ptah.run/operation": $operation,
+            "operator.ptah.run/operation-id": $operationLabel
           },
-          annotations: {"operator.ptah.dev/operation-id": $operationID},
+          annotations: {"operator.ptah.run/operation-id": $operationID},
 		  ownerReferences: [{
-			apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+			apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
 			uid: $schemaUID, name: $schema, controller: true
           }]
         },
@@ -191,11 +191,11 @@ write_valid_job_evidence() {
           podReplacementPolicy: "Failed",
           template: {metadata: {
             labels: {
-              "operator.ptah.dev/schema": $schema,
-              "operator.ptah.dev/operation": $operation,
-              "operator.ptah.dev/operation-id": $operationLabel
+              "operator.ptah.run/schema": $schema,
+              "operator.ptah.run/operation": $operation,
+              "operator.ptah.run/operation-id": $operationLabel
             },
-            annotations: {"operator.ptah.dev/operation-id": $operationID}
+            annotations: {"operator.ptah.run/operation-id": $operationID}
           }}
         },
         status: {
@@ -219,11 +219,11 @@ write_valid_job_evidence() {
         metadata: {
           uid: $uid, name: $name, generateName: ($jobName + "-"),
           labels: {
-            "operator.ptah.dev/schema": $schema,
-            "operator.ptah.dev/operation": $operation,
-            "operator.ptah.dev/operation-id": $operationLabel
+            "operator.ptah.run/schema": $schema,
+            "operator.ptah.run/operation": $operation,
+            "operator.ptah.run/operation-id": $operationLabel
           },
-          annotations: {"operator.ptah.dev/operation-id": $operationID},
+          annotations: {"operator.ptah.run/operation-id": $operationID},
           ownerReferences: [{
             apiVersion: "batch/v1", kind: "Job", uid: $jobUID,
             name: $jobName, controller: true
@@ -280,7 +280,7 @@ write_valid_job_evidence() {
         job: {
           uid: $jobUID, name: $jobName,
           owner: {
-            apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchema",
+            apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
             uid: $schemaUID, name: $schema, controller: true
           }
         },
@@ -324,7 +324,7 @@ emit_live_job() {
         apiVersion: "batch/v1", kind: "Job",
         metadata: {
           uid: $uid, name: $name,
-          annotations: {"operator.ptah.dev/operation-id": $operationID}
+          annotations: {"operator.ptah.run/operation-id": $operationID}
         }
       }
     '
@@ -354,7 +354,7 @@ emit_live_pod() {
 }
 
 emit_one_job_list() {
-	printf '%s\n' '{"apiVersion":"batch/v1","kind":"JobList","items":[{"metadata":{"uid":"uid-1","name":"job-1","creationTimestamp":"2026-01-01T00:00:00Z","labels":{"operator.ptah.dev/schema":"schema-1","operator.ptah.dev/operation":"plan"}}}]}'
+	printf '%s\n' '{"apiVersion":"batch/v1","kind":"JobList","items":[{"metadata":{"uid":"uid-1","name":"job-1","creationTimestamp":"2026-01-01T00:00:00Z","labels":{"operator.ptah.run/schema":"schema-1","operator.ptah.run/operation":"plan"}}}]}'
 }
 
 emit_empty_job_list() {
@@ -949,19 +949,19 @@ existing_archive_identity_collision() (
 	case "$collision_field" in
 	schema)
 		jq '
-          .metadata.labels["operator.ptah.dev/schema"] = "schema-other" |
-          .spec.template.metadata.labels["operator.ptah.dev/schema"] = "schema-other" |
+          .metadata.labels["operator.ptah.run/schema"] = "schema-other" |
+          .spec.template.metadata.labels["operator.ptah.run/schema"] = "schema-other" |
           .metadata.ownerReferences[0].name = "schema-other"
         ' "$PUBLISH_INPUT/job.json" >"$WORK_DIR/mutated-job.json"
-		jq '.metadata.labels["operator.ptah.dev/schema"] = "schema-other"' \
+		jq '.metadata.labels["operator.ptah.run/schema"] = "schema-other"' \
 			"$PUBLISH_INPUT/pod.json" >"$WORK_DIR/mutated-pod.json"
 		;;
 	operation)
 		jq '
-          .metadata.labels["operator.ptah.dev/operation"] = "verify" |
-          .spec.template.metadata.labels["operator.ptah.dev/operation"] = "verify"
+          .metadata.labels["operator.ptah.run/operation"] = "verify" |
+          .spec.template.metadata.labels["operator.ptah.run/operation"] = "verify"
         ' "$PUBLISH_INPUT/job.json" >"$WORK_DIR/mutated-job.json"
-		jq '.metadata.labels["operator.ptah.dev/operation"] = "verify"' \
+		jq '.metadata.labels["operator.ptah.run/operation"] = "verify"' \
 			"$PUBLISH_INPUT/pod.json" >"$WORK_DIR/mutated-pod.json"
 		;;
 	operation-id)
@@ -969,15 +969,15 @@ existing_archive_identity_collision() (
 		collision_operation_label=$(printf '%s' "$collision_operation_id" | sha256 | cut -c1-16)
 		jq --arg operationID "$collision_operation_id" \
 			--arg operationLabel "$collision_operation_label" '
-          .metadata.annotations["operator.ptah.dev/operation-id"] = $operationID |
-          .metadata.labels["operator.ptah.dev/operation-id"] = $operationLabel |
-          .spec.template.metadata.annotations["operator.ptah.dev/operation-id"] = $operationID |
-          .spec.template.metadata.labels["operator.ptah.dev/operation-id"] = $operationLabel
+          .metadata.annotations["operator.ptah.run/operation-id"] = $operationID |
+          .metadata.labels["operator.ptah.run/operation-id"] = $operationLabel |
+          .spec.template.metadata.annotations["operator.ptah.run/operation-id"] = $operationID |
+          .spec.template.metadata.labels["operator.ptah.run/operation-id"] = $operationLabel
         ' "$PUBLISH_INPUT/job.json" >"$WORK_DIR/mutated-job.json"
 		jq --arg operationID "$collision_operation_id" \
 			--arg operationLabel "$collision_operation_label" '
-          .metadata.annotations["operator.ptah.dev/operation-id"] = $operationID |
-          .metadata.labels["operator.ptah.dev/operation-id"] = $operationLabel
+          .metadata.annotations["operator.ptah.run/operation-id"] = $operationID |
+          .metadata.labels["operator.ptah.run/operation-id"] = $operationLabel
         ' "$PUBLISH_INPUT/pod.json" >"$WORK_DIR/mutated-pod.json"
 		;;
 	job-uid)
@@ -1111,7 +1111,7 @@ schema_boundary_with_post_snapshot_historical_uid() (
 fault_successful_paths() (
 	reset_fixture
 	printf '%s\n' \
-		'{"type":"ADDED","object":{"metadata":{"uid":"fault-job-1","name":"job-1","labels":{"operator.ptah.dev/schema":"schema-1","operator.ptah.dev/operation":"observe"}}}}' \
+		'{"type":"ADDED","object":{"metadata":{"uid":"fault-job-1","name":"job-1","labels":{"operator.ptah.run/schema":"schema-1","operator.ptah.run/operation":"observe"}}}}' \
 		>"$WORK_DIR/watch-jobs.jsonl"
 	printf '%s\n' '{"type":"ADDED","object":{"metadata":{"uid":"fault-pod-1"}}}' \
 		>"$WORK_DIR/watch-pods.jsonl"
@@ -1121,7 +1121,7 @@ fault_successful_paths() (
 	record_fault_jobs_for_parent
 	record_fault_jobs_for_parent
 	printf '%s\n' \
-		'{"apiVersion":"batch/v1","kind":"JobList","items":[{"metadata":{"uid":"fault-job-2","name":"job-2","labels":{"operator.ptah.dev/schema":"schema-2","operator.ptah.dev/operation":"plan"}}}]}' \
+		'{"apiVersion":"batch/v1","kind":"JobList","items":[{"metadata":{"uid":"fault-job-2","name":"job-2","labels":{"operator.ptah.run/schema":"schema-2","operator.ptah.run/operation":"plan"}}}]}' \
 		>"$INITIAL_FAULT_JOBS_FILE"
 	record_initial_job_list_for_parent "$INITIAL_FAULT_JOBS_FILE"
 	jq -e -s '
@@ -1146,7 +1146,7 @@ emit_immutable_plan_chunk() {
       "metadata": {
         "name": "plan-1-000", "uid": "chunk-uid-1", "resourceVersion": "102",
         "ownerReferences": [{
-          "apiVersion": "operator.ptah.dev/v1alpha1", "kind": "PtahSchemaPlan",
+          "apiVersion": "operator.ptah.run/v1alpha1", "kind": "PtahSchemaPlan",
           "name": "plan-1", "uid": "plan-uid-1", "controller": true
         }]
       },

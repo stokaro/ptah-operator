@@ -71,7 +71,7 @@ func TestControllerObjectGuardsAreTypedExactAndFailClosed(t *testing.T) {
 	}{
 		"jobs":            {apiGroup: "batch", apiVersion: "v1"},
 		"configmaps":      {apiGroup: "", apiVersion: "v1"},
-		"ptahschemaplans": {apiGroup: "operator.ptah.dev", apiVersion: "v1alpha1"},
+		"ptahschemaplans": {apiGroup: "operator.ptah.run", apiVersion: "v1alpha1"},
 	}
 	seenResources := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
@@ -168,9 +168,9 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`request.operation == "UPDATE"`,
 		`object.metadata.annotations.size() == 5`,
 		`["resolve", "verify", "observe", "plan"]`,
-		`object.metadata.labels["operator.ptah.dev/operation"] == "apply"`,
+		`object.metadata.labels["operator.ptah.run/operation"] == "apply"`,
 		`object.metadata.annotations.size() == 7`,
-		`"operator.ptah.dev/plan-content-digest"`,
+		`"operator.ptah.run/plan-content-digest"`,
 		`dyn(oldObject).status.conditions.exists`,
 		`dyn(object).spec.ttlSecondsAfterFinished == 300`,
 		`dyn(object).spec.template == dyn(oldObject).spec.template`,
@@ -238,13 +238,13 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 	legacyPart := legacyEnvelope[:currentIndex]
 	currentPart := legacyEnvelope[currentIndex:]
 	if !strings.Contains(legacyPart, `request.operation == "UPDATE"`) ||
-		!strings.Contains(legacyPart, `object.metadata.labels["operator.ptah.dev/operation"] == "apply"`) {
+		!strings.Contains(legacyPart, `object.metadata.labels["operator.ptah.run/operation"] == "apply"`) {
 		t.Fatalf("legacy terminal Job update envelopes are incomplete: %s", legacyPart)
 	}
 	for _, forbidden := range []string{
-		`operator.ptah.dev/controller-image`,
-		`operator.ptah.dev/controller-revision`,
-		`operator.ptah.dev/controller-state-version`,
+		`operator.ptah.run/controller-image`,
+		`operator.ptah.run/controller-revision`,
+		`operator.ptah.run/controller-state-version`,
 	} {
 		if strings.Contains(legacyPart, forbidden) {
 			t.Fatalf("legacy Job envelope permits %s", forbidden)
@@ -252,8 +252,8 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 	}
 	for _, required := range []string{
 		`request.operation == "UPDATE" || (request.operation == "CREATE" && (`,
-		`object.metadata.annotations["operator.ptah.dev/controller-image"] == variables.activeControllerImage`,
-		`object.metadata.annotations["operator.ptah.dev/controller-state-version"] == variables.activeControllerStateString`,
+		`object.metadata.annotations["operator.ptah.run/controller-image"] == variables.activeControllerImage`,
+		`object.metadata.annotations["operator.ptah.run/controller-state-version"] == variables.activeControllerStateString`,
 	} {
 		if !strings.Contains(currentPart, required) {
 			t.Fatalf("current Job envelope is not bound to active controller identity: missing %q", required)
@@ -352,11 +352,11 @@ func TestControllerJobPodTemplateContractRefusesAMissingServiceAccount(t *testin
 	labels := map[string]any{
 		"app.kubernetes.io/managed-by":   "ptah-operator",
 		"app.kubernetes.io/component":    "schema-operation",
-		"operator.ptah.dev/schema":       "orders",
-		"operator.ptah.dev/operation":    "resolve",
-		"operator.ptah.dev/operation-id": "0123456789abcdef",
+		"operator.ptah.run/schema":       "orders",
+		"operator.ptah.run/operation":    "resolve",
+		"operator.ptah.run/operation-id": "0123456789abcdef",
 	}
-	annotations := map[string]any{"operator.ptah.dev/operation-id": "0123456789abcdef"}
+	annotations := map[string]any{"operator.ptah.run/operation-id": "0123456789abcdef"}
 	job := func(serviceAccount any) map[string]any {
 		podSpec := map[string]any{
 			"activeDeadlineSeconds":        int64(120),
@@ -528,19 +528,19 @@ func TestControllerObjectActivationContractsEvaluate(t *testing.T) {
 func controllerObjectLegacyJobCELObject(apply bool) map[string]any {
 	operation := "plan"
 	annotations := map[string]any{
-		"operator.ptah.dev/operation-id":              "operation-id",
-		"operator.ptah.dev/input-fingerprint":         "sha256:" + strings.Repeat("1", 64),
-		"operator.ptah.dev/ptah-version":              "v1",
-		"operator.ptah.dev/execution-binding-id":      "v1-" + strings.Repeat("2", 32),
-		"operator.ptah.dev/admission-snapshot-digest": "sha256:" + strings.Repeat("3", 64),
+		"operator.ptah.run/operation-id":              "operation-id",
+		"operator.ptah.run/input-fingerprint":         "sha256:" + strings.Repeat("1", 64),
+		"operator.ptah.run/ptah-version":              "v1",
+		"operator.ptah.run/execution-binding-id":      "v1-" + strings.Repeat("2", 32),
+		"operator.ptah.run/admission-snapshot-digest": "sha256:" + strings.Repeat("3", 64),
 	}
 	if apply {
 		operation = "apply"
-		annotations["operator.ptah.dev/plan-fingerprint"] = "sha256:" + strings.Repeat("4", 64)
-		annotations["operator.ptah.dev/plan-content-digest"] = "sha256:" + strings.Repeat("5", 64)
+		annotations["operator.ptah.run/plan-fingerprint"] = "sha256:" + strings.Repeat("4", 64)
+		annotations["operator.ptah.run/plan-content-digest"] = "sha256:" + strings.Repeat("5", 64)
 	}
 	return map[string]any{"metadata": map[string]any{
-		"labels":      map[string]any{"operator.ptah.dev/operation": operation},
+		"labels":      map[string]any{"operator.ptah.run/operation": operation},
 		"annotations": annotations,
 	}}
 }
@@ -548,9 +548,9 @@ func controllerObjectLegacyJobCELObject(apply bool) map[string]any {
 func controllerObjectCurrentJobCELObject(image string, state int64) map[string]any {
 	object := controllerObjectLegacyJobCELObject(false)
 	annotations := object["metadata"].(map[string]any)["annotations"].(map[string]any)
-	annotations["operator.ptah.dev/controller-image"] = image
-	annotations["operator.ptah.dev/controller-revision"] = "revision"
-	annotations["operator.ptah.dev/controller-state-version"] = strconv.FormatInt(state, 10)
+	annotations["operator.ptah.run/controller-image"] = image
+	annotations["operator.ptah.run/controller-revision"] = "revision"
+	annotations["operator.ptah.run/controller-state-version"] = strconv.FormatInt(state, 10)
 	return object
 }
 

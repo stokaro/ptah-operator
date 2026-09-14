@@ -2472,7 +2472,7 @@ func validManagerArgumentsForMode(mode hookMode) []string {
 		"--release-namespace=" + testNamespace,
 		"--coordination-namespace=" + testNamespace,
 		"--leader-election=true",
-		"--leader-election-id=ptah-operator.operator.ptah.dev",
+		"--leader-election-id=ptah-operator.operator.ptah.run",
 		"--webhook-service-name=ptah-webhook",
 		"--webhook-timeout-seconds=10",
 		"--webhook-secret-name=ptah-webhook-cert",

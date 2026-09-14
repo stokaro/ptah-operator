@@ -675,9 +675,9 @@ func buildTeardownAuthorizationChecks(
 
 	// Privileged schema/admission hook mutations.
 	for _, crdName := range []string{
-		"ptahschemaapprovals.operator.ptah.dev",
-		"ptahschemaplans.operator.ptah.dev",
-		"ptahschemas.operator.ptah.dev",
+		"ptahschemaapprovals.operator.ptah.run",
+		"ptahschemaplans.operator.ptah.run",
+		"ptahschemas.operator.ptah.run",
 	} {
 		appendResource(teardownCheckHook, "update CRD "+crdName, "apiextensions.k8s.io", "v1", "customresourcedefinitions", "", "", "update", crdName)
 	}
@@ -737,12 +737,12 @@ func buildTeardownAuthorizationChecks(
 	// Controller mutations. Every resource/subresource and mutating verb from
 	// the installed controller roles gets a distinct probe; this does not rely
 	// on one cached RBAC rule being observed atomically.
-	appendResource(teardownCheckController, "patch PtahSchema", "operator.ptah.dev", "v1alpha1", "ptahschemas", "", rollout.ReleaseNamespace, "patch", arbitraryObjectName)
+	appendResource(teardownCheckController, "patch PtahSchema", "operator.ptah.run", "v1alpha1", "ptahschemas", "", rollout.ReleaseNamespace, "patch", arbitraryObjectName)
 	if rollout.PreviousControllerServiceAccountName != "" {
-		appendResource(teardownCheckController, "update PtahSchema legacy grant", "operator.ptah.dev", "v1alpha1", "ptahschemas", "", rollout.ReleaseNamespace, "update", arbitraryObjectName)
+		appendResource(teardownCheckController, "update PtahSchema legacy grant", "operator.ptah.run", "v1alpha1", "ptahschemas", "", rollout.ReleaseNamespace, "update", arbitraryObjectName)
 	}
-	appendResource(teardownCheckController, "update PtahSchema finalizer", "operator.ptah.dev", "v1alpha1", "ptahschemas", "finalizers", rollout.ReleaseNamespace, "update", arbitraryObjectName)
-	appendResource(teardownCheckController, "update PtahSchemaPlan finalizer", "operator.ptah.dev", "v1alpha1", "ptahschemaplans", "finalizers", rollout.ReleaseNamespace, "update", arbitraryObjectName)
+	appendResource(teardownCheckController, "update PtahSchema finalizer", "operator.ptah.run", "v1alpha1", "ptahschemas", "finalizers", rollout.ReleaseNamespace, "update", arbitraryObjectName)
+	appendResource(teardownCheckController, "update PtahSchemaPlan finalizer", "operator.ptah.run", "v1alpha1", "ptahschemaplans", "finalizers", rollout.ReleaseNamespace, "update", arbitraryObjectName)
 	for _, target := range []struct {
 		name     string
 		resource string
@@ -752,10 +752,10 @@ func buildTeardownAuthorizationChecks(
 		{name: "PtahSchemaApproval", resource: "ptahschemaapprovals"},
 	} {
 		for _, verb := range []string{"update", "patch"} {
-			appendResource(teardownCheckController, verb+" "+target.name+" status", "operator.ptah.dev", "v1alpha1", target.resource, "status", rollout.ReleaseNamespace, verb, arbitraryObjectName)
+			appendResource(teardownCheckController, verb+" "+target.name+" status", "operator.ptah.run", "v1alpha1", target.resource, "status", rollout.ReleaseNamespace, verb, arbitraryObjectName)
 		}
 	}
-	appendResource(teardownCheckController, "create PtahSchemaPlan", "operator.ptah.dev", "v1alpha1", "ptahschemaplans", "", rollout.ReleaseNamespace, "create", arbitraryObjectName)
+	appendResource(teardownCheckController, "create PtahSchemaPlan", "operator.ptah.run", "v1alpha1", "ptahschemaplans", "", rollout.ReleaseNamespace, "create", arbitraryObjectName)
 	for _, verb := range []string{"create", "patch"} {
 		appendResource(teardownCheckController, verb+" operation Job", "batch", "v1", "jobs", "", rollout.ReleaseNamespace, verb, arbitraryObjectName)
 	}

@@ -124,8 +124,8 @@ update, later schema drift, or admission singleton owned by another release
 therefore cannot start either mutating process.
 
 Every generated CRD carries a schema-identity pair: the positive decimal
-`operator.ptah.dev/crd-schema-version` rollback fence and
-`operator.ptah.dev/crd-schema-digest`, a lowercase SHA-256 digest of its
+`operator.ptah.run/crd-schema-version` rollback fence and
+`operator.ptah.run/crd-schema-digest`, a lowercase SHA-256 digest of its
 normalized `spec`. Every deliberate generated CRD schema change must increase
 `CRD_SCHEMA_VERSION` in the Makefile and regenerate the base, chart, and
 embedded copies together; the generator derives the digest. Before any dry-run
@@ -467,7 +467,7 @@ capacity incident, not as permission to remove the rollout guards.
 
 Both fixed admission configurations record the owning release name and
 namespace, the effective coordination namespace, the leader-election mode, and
-the fixed leader-election ID in `operator.ptah.dev/*` annotations. Connected
+the fixed leader-election ID in `operator.ptah.run/*` annotations. Connected
 Helm rendering uses `lookup` and fails when either singleton is missing its
 peer, lacks an annotation, or disagrees with the requested values. This blocks
 a second release and blocks changes to `coordination.namespace` or

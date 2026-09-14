@@ -344,7 +344,7 @@ func TestValidationHandlerAllowsExactCleanupForDeletingOwner(t *testing.T) {
 	schema, expected, oldJob, job := currentCleanupFixture(t, operatorv1alpha1.OperationApply)
 	deletedAt := metav1.NewTime(time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC))
 	schema.DeletionTimestamp = &deletedAt
-	schema.Finalizers = []string{"operator.ptah.dev/active-operation"}
+	schema.Finalizers = []string{"operator.ptah.run/active-operation"}
 	handler := handlerFixture(t, staticJobBuilder{job: expected}, schema)
 	request := requestFor(t, admissionv1.Update, job)
 	request.OldObject = rawObject(t, oldJob)
@@ -366,7 +366,7 @@ func TestValidationHandlerRejectsCreatesForDeletingOwner(t *testing.T) {
 			fixture: func(t *testing.T) (*controllerwrite.ValidationHandler, client.Object) {
 				schema := schemaFixture(operatorv1alpha1.OperationResolve)
 				schema.DeletionTimestamp = &deletedAt
-				schema.Finalizers = []string{"operator.ptah.dev/active-operation"}
+				schema.Finalizers = []string{"operator.ptah.run/active-operation"}
 				job := expectedJob(schema, schema.Status.ActiveOperation)
 				return handlerFixture(t, staticJobBuilder{job: job}, schema), job
 			},
@@ -375,7 +375,7 @@ func TestValidationHandlerRejectsCreatesForDeletingOwner(t *testing.T) {
 			fixture: func(t *testing.T) (*controllerwrite.ValidationHandler, client.Object) {
 				schema := schemaFixture(operatorv1alpha1.OperationPlan)
 				schema.DeletionTimestamp = &deletedAt
-				schema.Finalizers = []string{"operator.ptah.dev/active-operation"}
+				schema.Finalizers = []string{"operator.ptah.run/active-operation"}
 				plan, _ := preparedPlanFixture(t, schema)
 				return planManifestHandlerFixture(t, schema), plan
 			},
@@ -384,7 +384,7 @@ func TestValidationHandlerRejectsCreatesForDeletingOwner(t *testing.T) {
 			fixture: func(t *testing.T) (*controllerwrite.ValidationHandler, client.Object) {
 				schema := schemaFixture(operatorv1alpha1.OperationPlan)
 				schema.DeletionTimestamp = &deletedAt
-				schema.Finalizers = []string{"operator.ptah.dev/active-operation"}
+				schema.Finalizers = []string{"operator.ptah.run/active-operation"}
 				plan, chunks := preparedPlanFixture(t, schema)
 				plan.UID = "plan-uid"
 				chunk := planChunk(plan, plan.Spec.Chunks[0], chunks[0], "")

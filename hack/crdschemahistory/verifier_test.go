@@ -19,8 +19,10 @@
 package crdschemahistory
 
 import (
+	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -92,7 +94,7 @@ func TestEvaluateTransition(t *testing.T) {
 			name:      "initial unowned baseline rejects later version",
 			baseline:  fixtureOptions{description: "baseline"},
 			candidate: fixtureOptions{managed: true, version: 2, description: "candidate"},
-			wantError: "requires candidate operator.ptah.dev/crd-schema-version=1",
+			wantError: "requires candidate operator.ptah.run/crd-schema-version=1",
 		},
 	}
 
@@ -119,6 +121,55 @@ func TestEvaluateTransition(t *testing.T) {
 				t.Fatalf("SchemaChanged = %t, want %t", result.SchemaChanged, test.wantSchemaChanged)
 			}
 		})
+	}
+}
+
+func TestDecodeBaselineSetRestartsOnADifferentCRDSet(t *testing.T) {
+	t.Parallel()
+
+	baseline := mustDecodeBaselineFixture(t, fixtureOptions{
+		managed: true, version: 4, description: "a set this repository no longer generates", renamedNames: true,
+	})
+	if len(baseline.byName) != 0 {
+		t.Fatalf("baseline decoded %d CRDs, want a restarted history", len(baseline.byName))
+	}
+
+	// The restart is never silent: the candidate has to carry version 1, which
+	// is a renumber in every generated file and in CurrentCRDSchemaVersion.
+	candidate := mustDecodeFixture(t, "candidate", fixtureOptions{
+		managed: true, version: 1, description: "candidate",
+	})
+	result, err := evaluateTransition(baseline, candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.InitialAdoption || result.CandidateVersion != 1 {
+		t.Fatalf("restarted transition result = %+v", result)
+	}
+
+	continued := mustDecodeFixture(t, "candidate", fixtureOptions{
+		managed: true, version: 5, description: "candidate",
+	})
+	if _, err := evaluateTransition(baseline, continued); err == nil ||
+		!strings.Contains(err.Error(), "initial bootstrap from an empty CRD baseline requires candidate") {
+		t.Fatalf("continued version line error = %v, want a bootstrap rejection", err)
+	}
+}
+
+func TestDecodeSetRefusesADifferentCRDSetInTheCandidate(t *testing.T) {
+	t.Parallel()
+
+	// The candidate is what this repository generates, so a set it does not
+	// generate is a regression to read rather than a history to restart.
+	documents := fixtureDocuments(t, fixtureOptions{
+		managed: true, version: 1, description: "candidate", renamedNames: true,
+	})
+	_, err := decodeSet("candidate", documents)
+	if err == nil || !strings.Contains(err.Error(), "complete generated set") {
+		t.Fatalf("candidate with a different CRD set: error = %v, want a set rejection", err)
+	}
+	if !errors.Is(err, errCRDGroupRenamed) {
+		t.Fatalf("candidate rejection = %v, want errCRDGroupRenamed", err)
 	}
 }
 
@@ -226,6 +277,7 @@ func TestParseVersionRejectsNonCanonicalValues(t *testing.T) {
 }
 
 type fixtureOptions struct {
+	renamedNames           bool
 	managed                bool
 	version                uint64
 	description            string
@@ -235,6 +287,27 @@ type fixtureOptions struct {
 	incompleteIdentity     bool
 	omitLast               bool
 	addUnexpected          bool
+}
+
+// renamedFixtureNames stands for any CRD set that is not the one generated
+// today -- a renamed group, a CRD added, a CRD dropped. The verifier reads
+// them all the same way, so the fixture does not have to name a real one.
+func renamedFixtureNames() []string {
+	names := make([]string, 0, len(requiredCRDNames()))
+	for _, name := range requiredCRDNames() {
+		names = append(names, strings.Replace(name, ".operator.ptah.run", ".operator.example.test", 1))
+	}
+	sort.Strings(names)
+	return names
+}
+
+func mustDecodeBaselineFixture(t *testing.T, options fixtureOptions) documentSet {
+	t.Helper()
+	set, err := decodeBaselineSet(fixtureDocuments(t, options))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return set
 }
 
 func mustDecodeFixture(t *testing.T, label string, options fixtureOptions) documentSet {
@@ -249,11 +322,14 @@ func mustDecodeFixture(t *testing.T, label string, options fixtureOptions) docum
 func fixtureDocuments(t *testing.T, options fixtureOptions) map[string][]byte {
 	t.Helper()
 	names := requiredCRDNames()
+	if options.renamedNames {
+		names = renamedFixtureNames()
+	}
 	if options.omitLast {
 		names = names[:len(names)-1]
 	}
 	if options.addUnexpected {
-		names = append(names, "unexpected.operator.ptah.dev")
+		names = append(names, "unexpected.operator.ptah.run")
 	}
 	documents := make(map[string][]byte, len(names))
 	for index, name := range names {
@@ -269,7 +345,7 @@ func fixtureDocuments(t *testing.T, options fixtureOptions) map[string][]byte {
 			if crd.Annotations == nil {
 				crd.Annotations = make(map[string]string)
 			}
-			crd.Annotations["operator.ptah.dev/controller-state-version"] = options.controllerStateVersion
+			crd.Annotations["operator.ptah.run/controller-state-version"] = options.controllerStateVersion
 		}
 		if options.corruptDigest && index == 0 {
 			crd.Annotations[schemaDigestAnnotation] = "sha256:" + strings.Repeat("f", 64)
@@ -283,15 +359,18 @@ func fixtureDocuments(t *testing.T, options fixtureOptions) map[string][]byte {
 }
 
 func fixtureCRD(name, description string) *apiextensionsv1.CustomResourceDefinition {
-	plural := strings.Split(name, ".")[0]
+	// A CRD's name is its plural and its group, and the fixture keeps the two
+	// halves agreeing with it the way a generated CRD does. A verifier that
+	// reads the group out of the spec sees what the name says.
+	plural, group, _ := strings.Cut(name, ".")
 	kind := "Unexpected"
 	singular := strings.TrimSuffix(plural, "s")
-	switch name {
-	case "ptahschemas.operator.ptah.dev":
+	switch plural {
+	case "ptahschemas":
 		kind = "PtahSchema"
-	case "ptahschemaapprovals.operator.ptah.dev":
+	case "ptahschemaapprovals":
 		kind = "PtahSchemaApproval"
-	case "ptahschemaplans.operator.ptah.dev":
+	case "ptahschemaplans":
 		kind = "PtahSchemaPlan"
 	}
 	return &apiextensionsv1.CustomResourceDefinition{
@@ -301,7 +380,7 @@ func fixtureCRD(name, description string) *apiextensionsv1.CustomResourceDefinit
 		},
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-			Group: "operator.ptah.dev",
+			Group: group,
 			Names: apiextensionsv1.CustomResourceDefinitionNames{
 				Plural:   plural,
 				Singular: singular,

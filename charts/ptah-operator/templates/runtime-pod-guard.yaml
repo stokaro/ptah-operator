@@ -44,8 +44,8 @@
 {{- $activationShape := include "ptah-operator.releaseActivationShape" (dict "object" "params" "namespace" .Release.Namespace "releaseName" .Release.Name) -}}
 {{- $activationValid := printf `params != null && (%s)` $activationShape -}}
 {{- $activeReleaseExpression := `params != null && has(params.data) && "active-release-sequence" in params.data && params.data["active-release-sequence"].matches("^(0|[1-9][0-9]*)$") ? int(params.data["active-release-sequence"]) : -1` -}}
-{{- $bootstrapIdentity := `params.data["active-release-sequence"] == "0" && (!has(object.metadata.annotations) || !("operator.ptah.dev/controller-state-version" in object.metadata.annotations)) && (!has(object.metadata.annotations) || !("operator.ptah.dev/release-sequence" in object.metadata.annotations))` -}}
-{{- $activeIdentity := `params.data["active-release-sequence"] != "0" && has(object.metadata.annotations) && "operator.ptah.dev/controller-state-version" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/controller-state-version"] == params.metadata.annotations["operator.ptah.dev/controller-state-version"] && "operator.ptah.dev/release-sequence" in object.metadata.annotations && object.metadata.annotations["operator.ptah.dev/release-sequence"] == params.data["active-release-sequence"]` -}}
+{{- $bootstrapIdentity := `params.data["active-release-sequence"] == "0" && (!has(object.metadata.annotations) || !("operator.ptah.run/controller-state-version" in object.metadata.annotations)) && (!has(object.metadata.annotations) || !("operator.ptah.run/release-sequence" in object.metadata.annotations))` -}}
+{{- $activeIdentity := `params.data["active-release-sequence"] != "0" && has(object.metadata.annotations) && "operator.ptah.run/controller-state-version" in object.metadata.annotations && object.metadata.annotations["operator.ptah.run/controller-state-version"] == params.metadata.annotations["operator.ptah.run/controller-state-version"] && "operator.ptah.run/release-sequence" in object.metadata.annotations && object.metadata.annotations["operator.ptah.run/release-sequence"] == params.data["active-release-sequence"]` -}}
 {{- $predecessorIdentity := printf `(%s) || (%s)` $bootstrapIdentity $activeIdentity -}}
 {{- $activationMatch := printf `!(%s) || (%s) >= %s || ((!has(request.subResource) || request.subResource == "") && !(%s))` $activationValid $activeReleaseExpression $sequence $predecessorIdentity -}}
 {{- $apiVolume := `variables.apiVolumes[0].name == "api-access" && has(variables.apiVolumes[0].projected) && has(variables.apiVolumes[0].projected.defaultMode) && variables.apiVolumes[0].projected.defaultMode == 420 && variables.apiVolumes[0].projected.sources.size() == 3 && variables.apiVolumes[0].projected.sources.exists(s, has(s.serviceAccountToken) && s.serviceAccountToken.path == "token" && has(s.serviceAccountToken.expirationSeconds) && s.serviceAccountToken.expirationSeconds == 3600 && !has(s.serviceAccountToken.audience)) && variables.apiVolumes[0].projected.sources.exists(s, has(s.configMap) && s.configMap.name == "kube-root-ca.crt" && (!has(s.configMap.optional) || !s.configMap.optional) && has(s.configMap.items) && s.configMap.items.size() == 1 && s.configMap.items[0].key == "ca.crt" && s.configMap.items[0].path == "ca.crt" && !has(s.configMap.items[0].mode)) && variables.apiVolumes[0].projected.sources.exists(s, has(s.downwardAPI) && has(s.downwardAPI.items) && s.downwardAPI.items.size() == 1 && s.downwardAPI.items[0].path == "namespace" && !has(s.downwardAPI.items[0].mode) && has(s.downwardAPI.items[0].fieldRef) && s.downwardAPI.items[0].fieldRef.apiVersion == "v1" && s.downwardAPI.items[0].fieldRef.fieldPath == "metadata.namespace") && variables.apiVolumes[0].projected.sources.all(s, has(s.serviceAccountToken) || has(s.configMap) || has(s.downwardAPI))` -}}
@@ -120,11 +120,11 @@
 {{- $annotations := default (dict) .metadata.annotations -}}
 {{- $labels := default (dict) .metadata.labels -}}
 {{- if or
-      (ne (default "" (index $annotations "operator.ptah.dev/rollout-guard-version")) "1")
-      (ne (default "" (index $annotations "operator.ptah.dev/release-name")) $.Release.Name)
-      (ne (default "" (index $annotations "operator.ptah.dev/release-namespace")) $.Release.Namespace)
-      (ne (default "" (index $annotations "operator.ptah.dev/release-sequence")) $sequence)
-      (ne (default "" (index $annotations "operator.ptah.dev/controller-state-version")) $stateVersion)
+      (ne (default "" (index $annotations "operator.ptah.run/rollout-guard-version")) "1")
+      (ne (default "" (index $annotations "operator.ptah.run/release-name")) $.Release.Name)
+      (ne (default "" (index $annotations "operator.ptah.run/release-namespace")) $.Release.Namespace)
+      (ne (default "" (index $annotations "operator.ptah.run/release-sequence")) $sequence)
+      (ne (default "" (index $annotations "operator.ptah.run/controller-state-version")) $stateVersion)
       (ne (default "" (index $labels "app.kubernetes.io/managed-by")) "ptah-operator")
       (ne (default "" (index $labels "app.kubernetes.io/instance")) $.Release.Name)
       (ne (default "" (index $labels "app.kubernetes.io/component")) "rollout-guard") -}}
@@ -139,8 +139,8 @@ created once per release sequence and never rewritten, so changing the manager
 image or the execution binding needs a new sequence.
 */}}
 {{- if or
-      (ne (default "" (index $annotations "operator.ptah.dev/manager-image")) $managerImage)
-      (ne (default "" (index $annotations "operator.ptah.dev/runtime-pod-contract-digest")) $contractDigest) -}}
+      (ne (default "" (index $annotations "operator.ptah.run/manager-image")) $managerImage)
+      (ne (default "" (index $annotations "operator.ptah.run/runtime-pod-contract-digest")) $contractDigest) -}}
 {{- fail (printf "retained %s %s pins the executable contract of release sequence %s; changing the manager image or the execution binding needs a new release sequence" $entry.kind $name $sequence) -}}
 {{- end -}}
 {{- end -}}
@@ -154,13 +154,13 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-50"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
-    operator.ptah.dev/controller-state-version: {{ $stateVersion | quote }}
-    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
-    operator.ptah.dev/runtime-pod-contract-digest: {{ $contractDigest | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/controller-state-version: {{ $stateVersion | quote }}
+    operator.ptah.run/manager-image: {{ $managerImage | quote }}
+    operator.ptah.run/runtime-pod-contract-digest: {{ $contractDigest | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
@@ -213,15 +213,15 @@ spec:
     - name: isCertificate
       expression: {{ printf `(!has(request.subResource) || request.subResource == "") && has(dyn(object).spec.serviceAccountName) && dyn(object).spec.serviceAccountName == %q` $certificateDeployment | quote }}
     - name: newState
-      expression: {{ printf `(!has(request.subResource) || request.subResource == "") && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
+      expression: {{ printf `(!has(request.subResource) || request.subResource == "") && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1` "operator.ptah.run/controller-state-version" "operator.ptah.run/controller-state-version" "operator.ptah.run/controller-state-version" | quote }}
     - name: newRelease
-      expression: {{ printf `(!has(request.subResource) || request.subResource == "") && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1` "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" "operator.ptah.dev/release-sequence" | quote }}
+      expression: {{ printf `(!has(request.subResource) || request.subResource == "") && has(object.metadata.annotations) && %q in object.metadata.annotations && object.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(object.metadata.annotations[%q]) : -1` "operator.ptah.run/release-sequence" "operator.ptah.run/release-sequence" "operator.ptah.run/release-sequence" | quote }}
     - name: activationValid
       expression: {{ $activationValid | quote }}
     - name: activeRelease
       expression: {{ $activeReleaseExpression | quote }}
     - name: activeState
-      expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" "operator.ptah.dev/controller-state-version" | quote }}
+      expression: {{ printf `params != null && has(params.metadata.annotations) && %q in params.metadata.annotations && params.metadata.annotations[%q].matches("^[1-9][0-9]*$") ? int(params.metadata.annotations[%q]) : -1` "operator.ptah.run/controller-state-version" "operator.ptah.run/controller-state-version" "operator.ptah.run/controller-state-version" | quote }}
     - name: apiVolumes
       expression: '(!has(request.subResource) || request.subResource == "") && has(dyn(object).spec.volumes) ? dyn(object).spec.volumes.filter(v, v.name == "api-access") : []'
   validations:
@@ -258,13 +258,13 @@ metadata:
     helm.sh/hook: pre-install,pre-upgrade
     helm.sh/hook-weight: "-40"
     helm.sh/resource-policy: keep
-    operator.ptah.dev/rollout-guard-version: "1"
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
-    operator.ptah.dev/controller-state-version: {{ $stateVersion | quote }}
-    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
-    operator.ptah.dev/runtime-pod-contract-digest: {{ $contractDigest | quote }}
+    operator.ptah.run/rollout-guard-version: "1"
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/controller-state-version: {{ $stateVersion | quote }}
+    operator.ptah.run/manager-image: {{ $managerImage | quote }}
+    operator.ptah.run/runtime-pod-contract-digest: {{ $contractDigest | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}

@@ -79,7 +79,7 @@ steps:
         "$(jq -r .status.plan.name demo/.lab/schema.json)" -o json > demo/.lab/plan.json
       jq -n --slurpfile schema demo/.lab/schema.json --slurpfile plan demo/.lab/plan.json '
         {
-          apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchemaApproval",
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchemaApproval",
           metadata: {name: "storefront-v1"},
           spec: {
             schemaRef: {name: $schema[0].metadata.name, uid: $schema[0].metadata.uid},

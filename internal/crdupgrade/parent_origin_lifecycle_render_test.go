@@ -1,7 +1,6 @@
 package crdupgrade_test
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -21,14 +20,22 @@ import (
 )
 
 const (
-	parentOriginManagedRevision = "3405d26c1003329fe44f019e1eb030a982fc25e5"
-	parentOriginRelease         = "origin-upgrade"
-	parentOriginNamespace       = "ptah-system"
+	parentOriginRelease   = "origin-upgrade"
+	parentOriginNamespace = "ptah-system"
 )
 
 // The chart's live lookup path is exercised through its exact template helpers.
-// A client-only Helm render cannot supply retained objects; real historical
-// chart renders provide those objects instead of recreating their contracts in Go.
+// A client-only Helm render cannot supply retained objects, so the fixture
+// renders the chart and feeds its own objects back in as retained state.
+//
+// What is measured is the recognition: which combinations of retained v1 and v2
+// boundaries the chart accepts, and which it refuses as sparse, corrupt or
+// incomplete. The validator compares each retained object against the spec
+// handed to it in the same state, so the v1 entries are shaped from the
+// rendered boundary under the v1 names rather than taken from a chart render of
+// an older commit -- a fixture that reads a commit outside this branch's
+// history measures whatever that commit happens to be, and stops working when
+// nothing keeps the commit alive.
 func TestParentOriginLifecycleRecognizesIdentityBearingPredecessorsAndExactRetries(t *testing.T) {
 	t.Parallel()
 	helm, err := exec.LookPath("helm")
@@ -144,7 +151,6 @@ func newParentOriginRenderFixture(t *testing.T, helm string) parentOriginRenderF
 	}
 	chart := filepath.Join(repository, "charts", "ptah-operator")
 	candidate := parentOriginRenderObjects(t, helm, chart)
-	managed := parentOriginRenderObjects(t, helm, parentOriginHistoricalChart(t, repository, parentOriginManagedRevision))
 	read := func(path string) string {
 		t.Helper()
 		data, err := os.ReadFile(filepath.Join(chart, path))
@@ -185,7 +191,7 @@ func newParentOriginRenderFixture(t *testing.T, helm string) parentOriginRenderF
 		oldName := strings.Replace(name, "-v2-", "-v1-", 1)
 		for _, kind := range []string{"ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"} {
 			newObject := object(candidate, kind, "", name)
-			oldObject := object(managed, kind, "", oldName)
+			oldObject := parentOriginRename(t, parentOriginClone(t, newObject), oldName)
 			fixture.current = append(fixture.current, newObject)
 			fixture.legacy = append(fixture.legacy, oldObject)
 			weight := fmt.Sprintf("%d", -137+len(current))
@@ -203,6 +209,23 @@ func newParentOriginRenderFixture(t *testing.T, helm string) parentOriginRenderF
 		"marker": map[string]any{}, "markerName": ready["metadata"].(map[string]any)["name"], "markerData": ready["data"],
 	}
 	return fixture
+}
+
+// parentOriginRename renames a rendered boundary object, including the policy
+// name a binding points at, so the pair still refers to itself.
+func parentOriginRename(t *testing.T, object map[string]any, name string) map[string]any {
+	t.Helper()
+	metadata, ok := object["metadata"].(map[string]any)
+	if !ok {
+		t.Fatalf("rendered object has no metadata: %v", object)
+	}
+	metadata["name"] = name
+	if spec, ok := object["spec"].(map[string]any); ok {
+		if _, references := spec["policyName"]; references {
+			spec["policyName"] = name
+		}
+	}
+	return object
 }
 
 func (f parentOriginRenderFixture) retainCurrent(state map[string]any) {
@@ -311,50 +334,6 @@ func parentOriginHelm(t *testing.T, helm, chart string, extra ...string) ([]byte
 	command.Env = append(os.Environ(), "HELM_CACHE_HOME="+filepath.Join(temporaryHome, "cache"),
 		"HELM_CONFIG_HOME="+filepath.Join(temporaryHome, "config"), "HELM_DATA_HOME="+filepath.Join(temporaryHome, "data"))
 	return command.CombinedOutput()
-}
-
-func parentOriginHistoricalChart(t *testing.T, repository, revision string) string {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	t.Cleanup(cancel)
-	archive, err := exec.CommandContext(ctx, "git", "-C", repository, "archive", revision, "charts/ptah-operator").Output()
-	if err != nil {
-		t.Fatalf("archive exact historical chart %s: %v", revision, err)
-	}
-	directory := t.TempDir()
-	reader := tar.NewReader(bytes.NewReader(archive))
-	for {
-		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !filepath.IsLocal(header.Name) {
-			t.Fatalf("historical chart archive contains nonlocal path %q", header.Name)
-		}
-		path := filepath.Join(directory, header.Name)
-		switch header.Typeflag {
-		case tar.TypeXGlobalHeader:
-			// git archive includes the immutable commit ID in a global PAX header.
-		case tar.TypeDir:
-			if err := os.MkdirAll(path, 0o700); err != nil {
-				t.Fatal(err)
-			}
-		case tar.TypeReg:
-			data, err := io.ReadAll(reader)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, data, 0o600); err != nil {
-				t.Fatal(err)
-			}
-		default:
-			t.Fatalf("historical chart archive contains unsupported entry %s", header.Name)
-		}
-	}
-	return filepath.Join(directory, "charts", "ptah-operator")
 }
 
 func parentOriginClone(t *testing.T, object map[string]any) map[string]any {

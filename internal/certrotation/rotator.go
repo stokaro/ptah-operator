@@ -28,7 +28,7 @@ const (
 	CACertificateKey = "ca.crt"
 	CAPrivateKeyKey  = "ca.key"
 
-	GeneratedSecretLabel      = "operator.ptah.dev/generated-webhook-certificate"
+	GeneratedSecretLabel      = "operator.ptah.run/generated-webhook-certificate"
 	GeneratedSecretLabelValue = "true"
 
 	HelmManagedByLabel             = "app.kubernetes.io/managed-by"
@@ -741,7 +741,7 @@ func secretCreateGuardAttacks(desired *corev1.Secret) []secretCreateGuardAttack 
 		differentName.Name = "ptah-rotator-guard-probe-alt"
 	}
 	extraLabel := desired.DeepCopy()
-	extraLabel.Labels["operator.ptah.dev/uncontrolled"] = "true"
+	extraLabel.Labels["operator.ptah.run/uncontrolled"] = "true"
 	wrongManagedBy := desired.DeepCopy()
 	wrongManagedBy.Labels[HelmManagedByLabel] = "foreign"
 	extraData := desired.DeepCopy()
@@ -749,7 +749,7 @@ func secretCreateGuardAttacks(desired *corev1.Secret) []secretCreateGuardAttack 
 	wrongType := desired.DeepCopy()
 	wrongType.Type = corev1.SecretTypeOpaque
 	extraAnnotation := desired.DeepCopy()
-	extraAnnotation.Annotations["operator.ptah.dev/uncontrolled"] = "true"
+	extraAnnotation.Annotations["operator.ptah.run/uncontrolled"] = "true"
 	wrongReleaseName := desired.DeepCopy()
 	wrongReleaseName.Annotations[HelmReleaseNameAnnotation] = "foreign"
 	missingReleaseNamespace := desired.DeepCopy()
@@ -767,7 +767,7 @@ func secretCreateGuardAttacks(desired *corev1.Secret) []secretCreateGuardAttack 
 		APIVersion: "v1", Kind: "ConfigMap", Name: "uncontrolled", UID: "uncontrolled", Controller: &controller,
 	}}
 	finalizer := desired.DeepCopy()
-	finalizer.Finalizers = []string{"operator.ptah.dev/uncontrolled"}
+	finalizer.Finalizers = []string{"operator.ptah.run/uncontrolled"}
 	immutable := desired.DeepCopy()
 	immutableValue := false
 	immutable.Immutable = &immutableValue

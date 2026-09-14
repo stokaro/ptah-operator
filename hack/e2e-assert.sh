@@ -169,7 +169,7 @@ k -n "$OPERATOR_NAMESPACE" rollout status deployment/"$CONTROLLER_NAME" --timeou
 controller_service_account=$(k -n "$OPERATOR_NAMESPACE" get deployment "$CONTROLLER_NAME" -o json |
 	jq -er '.spec.template.spec.serviceAccountName | select(type == "string" and length > 0)')
 admission_service_account=$(k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
-	jq -er '.metadata.annotations["operator.ptah.dev/controller-service-account-name"] | select(type == "string" and length > 0)')
+	jq -er '.metadata.annotations["operator.ptah.run/controller-service-account-name"] | select(type == "string" and length > 0)')
 [ "$controller_service_account" = "$admission_service_account" ] ||
 	fail "controller Deployment and admission singleton disagree on the active ServiceAccount"
 SERVICE_ACCOUNT="system:serviceaccount:${OPERATOR_NAMESPACE}:${controller_service_account}"
@@ -180,22 +180,22 @@ k -n "$OPERATOR_NAMESPACE" get endpointslice \
 
 printf '%s\n' 'e2e assertions: checking CRD discovery'
 for crd in \
-	ptahschemas.operator.ptah.dev \
-	ptahschemaplans.operator.ptah.dev \
-	ptahschemaapprovals.operator.ptah.dev; do
+	ptahschemas.operator.ptah.run \
+	ptahschemaplans.operator.ptah.run \
+	ptahschemaapprovals.operator.ptah.run; do
 	k wait --for=condition=Established crd/"$crd" --timeout=60s
 done
-api_resources=$(k api-resources --api-group=operator.ptah.dev -o name)
+api_resources=$(k api-resources --api-group=operator.ptah.run -o name)
 for resource in \
-	ptahschemas.operator.ptah.dev \
-	ptahschemaplans.operator.ptah.dev \
-	ptahschemaapprovals.operator.ptah.dev; do
+	ptahschemas.operator.ptah.run \
+	ptahschemaplans.operator.ptah.run \
+	ptahschemaapprovals.operator.ptah.run; do
 	printf '%s\n' "$api_resources" | grep -Fx "$resource" >/dev/null ||
 		fail "API discovery is missing $resource"
 done
 
 printf '%s\n' 'e2e assertions: checking owner-reference finalizer authorization'
-for owner_resource in ptahschemas.operator.ptah.dev ptahschemaplans.operator.ptah.dev; do
+for owner_resource in ptahschemas.operator.ptah.run ptahschemaplans.operator.ptah.run; do
 	answer=$(k auth can-i update "$owner_resource" \
 		--subresource=finalizers --as="$SERVICE_ACCOUNT" || true)
 	[ "$answer" = yes ] ||
@@ -207,10 +207,10 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
 	jq -e --arg namespace "$OPERATOR_NAMESPACE" --arg service "$WEBHOOK_SERVICE" '
       .webhooks |
       (map(.name) | sort) == [
-        "certificate-rotation-canary-mutate.operator.ptah.dev",
-        "mapproval.operator.ptah.dev"
+        "certificate-rotation-canary-mutate.operator.ptah.run",
+        "mapproval.operator.ptah.run"
       ] and
-      (map(select(.name == "mapproval.operator.ptah.dev")) | all(.[];
+      (map(select(.name == "mapproval.operator.ptah.run")) | all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and
 	        .matchPolicy == "Equivalent" and
 	        .reinvocationPolicy == "Never" and .timeoutSeconds == 5 and
@@ -223,9 +223,9 @@ k get mutatingwebhookconfiguration/ptah-operator-admission -o json |
         .clientConfig.service.namespace == $namespace and
         .clientConfig.service.name == $service and
         .clientConfig.service.port == 443 and
-        .clientConfig.service.path == "/mutate-operator-ptah-dev-v1alpha1-ptahschemaapproval" and
+        .clientConfig.service.path == "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval" and
         .rules == [{
-          apiGroups: ["operator.ptah.dev"], apiVersions: ["v1alpha1"],
+          apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"],
           operations: ["CREATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"
         }]))
     ' >/dev/null || fail "approval mutating webhook is not exact and fail-closed"
@@ -249,12 +249,12 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
         operation_labels("oldObject") + " || " + operation_owner("oldObject") + "))";
       .webhooks |
       (map(.name) | sort) == [
-        "certificate-rotation-canary-validate.operator.ptah.dev",
-        "vapproval.operator.ptah.dev",
-        "vcontrollerwrite.operator.ptah.dev",
-        "vpodintent.operator.ptah.dev"
+        "certificate-rotation-canary-validate.operator.ptah.run",
+        "vapproval.operator.ptah.run",
+        "vcontrollerwrite.operator.ptah.run",
+        "vpodintent.operator.ptah.run"
       ] and
-      (map(select(.name == "vapproval.operator.ptah.dev")) | length == 1 and all(.[];
+      (map(select(.name == "vapproval.operator.ptah.run")) | length == 1 and all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Equivalent" and
         .timeoutSeconds == 5 and
         ((.namespaceSelector // {}) == {}) and ((.objectSelector // {}) == {}) and
@@ -263,10 +263,10 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
         (.clientConfig.caBundle | type == "string" and length > 0) and
         (.clientConfig | has("url") | not) and .clientConfig.service.port == 443 and
         .clientConfig.service.namespace == $namespace and .clientConfig.service.name == $service and
-        .clientConfig.service.path == "/validate-operator-ptah-dev-v1alpha1-ptahschemaapproval" and
-        .rules == [{apiGroups: ["operator.ptah.dev"], apiVersions: ["v1alpha1"],
+        .clientConfig.service.path == "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval" and
+        .rules == [{apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"],
           operations: ["CREATE", "UPDATE"], resources: ["ptahschemaapprovals"], scope: "Namespaced"}])) and
-      (map(select(.name == "vpodintent.operator.ptah.dev")) | length == 1 and all(.[];
+      (map(select(.name == "vpodintent.operator.ptah.run")) | length == 1 and all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Equivalent" and
         .timeoutSeconds == 5 and
         ((.namespaceSelector // {}) == {}) and ((.objectSelector // {}) == {}) and
@@ -279,7 +279,7 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
         .clientConfig.service.path == "/validate-v1-pod-ptah-operation-intent" and
         .rules == [{apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE", "UPDATE"],
           resources: ["pods", "pods/ephemeralcontainers", "pods/resize"], scope: "Namespaced"}])) and
-      (map(select(.name == "vcontrollerwrite.operator.ptah.dev")) | all(.[];
+      (map(select(.name == "vcontrollerwrite.operator.ptah.run")) | all(.[];
         .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Exact" and
         .timeoutSeconds == 30 and .admissionReviewVersions == ["v1"] and
         ((.namespaceSelector // {}) == {}) and ((.objectSelector // {}) == {}) and
@@ -298,7 +298,7 @@ k get validatingwebhookconfiguration/ptah-operator-admission -o json |
             resources: ["jobs"], scope: "Namespaced"},
           {apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE"],
             resources: ["configmaps"], scope: "Namespaced"},
-          {apiGroups: ["operator.ptah.dev"], apiVersions: ["v1alpha1"], operations: ["CREATE"],
+          {apiGroups: ["operator.ptah.run"], apiVersions: ["v1alpha1"], operations: ["CREATE"],
             resources: ["ptahschemaplans"], scope: "Namespaced"}
         ]))
     ' >/dev/null || fail "validating webhooks are not exact and fail-closed"
@@ -313,7 +313,7 @@ assert_certificate_canary() {
 			--arg marker "$CERT_CANARY_MARKER" \
 			--arg username "$CERT_ROTATOR_USERNAME" \
 			--arg suffix "$canary_suffix" --arg condition "$canary_condition" '
-          [.webhooks[] | select(.name == ("certificate-rotation-canary-" + $suffix + ".operator.ptah.dev"))] |
+          [.webhooks[] | select(.name == ("certificate-rotation-canary-" + $suffix + ".operator.ptah.run"))] |
           length == 1 and all(.[];
             .admissionReviewVersions == ["v1"] and
             .failurePolicy == "Fail" and .sideEffects == "None" and .matchPolicy == "Exact" and
@@ -321,7 +321,7 @@ assert_certificate_canary() {
             (if $suffix == "mutate" then .reinvocationPolicy == "Never"
              else (has("reinvocationPolicy") | not) end) and
             .namespaceSelector == {matchLabels: {"kubernetes.io/metadata.name": $namespace}} and
-            .objectSelector == {matchLabels: {"operator.ptah.dev/certificate-rotation-canary": "v1"}} and
+            .objectSelector == {matchLabels: {"operator.ptah.run/certificate-rotation-canary": "v1"}} and
             .matchConditions == [{
               name: $condition,
               expression: (
@@ -404,7 +404,7 @@ for namespaced_secret in \
 done
 
 printf '%s\n' 'e2e assertions: checking references are namespace-local'
-k get crd ptahschemas.operator.ptah.dev -o json |
+k get crd ptahschemas.operator.ptah.run -o json |
 	jq -e '
       .spec.versions[] | select(.name == "v1alpha1") |
       .schema.openAPIV3Schema.properties.spec.properties as $spec |
@@ -412,7 +412,7 @@ k get crd ptahschemas.operator.ptah.dev -o json |
       (($spec.desired.properties.verificationPolicyFrom.properties | has("namespace")) | not) and
       (($spec.desired.properties.registryAuthFrom.properties | has("namespace")) | not)
     ' >/dev/null || fail "PtahSchema exposes a cross-namespace reference"
-k get crd ptahschemaapprovals.operator.ptah.dev -o json |
+k get crd ptahschemaapprovals.operator.ptah.run -o json |
 	jq -e '
       .spec.versions[] | select(.name == "v1alpha1") |
       .schema.openAPIV3Schema.properties.spec.properties as $spec |
@@ -532,7 +532,7 @@ write_webhook_scope_job() {
       (if $managed then {
         "app.kubernetes.io/managed-by": "ptah-operator",
         "app.kubernetes.io/component": "schema-operation"
-      } else {"operator.ptah.dev/e2e-webhook-scope": "unrelated"} end) as $labels |
+      } else {"operator.ptah.run/e2e-webhook-scope": "unrelated"} end) as $labels |
       {
         apiVersion: "batch/v1",
         kind: "Job",
@@ -606,7 +606,7 @@ wait_for_job_failed_create() {
 			--arg pattern "$scope_failure_pattern" '
               any(.items[];
                 .involvedObject.uid == $uid and .reason == "FailedCreate" and
-                ((.message // "") | contains("vpodintent.operator.ptah.dev")) and
+                ((.message // "") | contains("vpodintent.operator.ptah.run")) and
                 ((.message // "") | test($pattern; "i")))
             ' "$webhook_scope_event_file" >/dev/null; then
 			if k -n "$TEST_NAMESPACE" get pods -l "job-name=${scope_job_name}" -o json |
@@ -686,7 +686,7 @@ jq -n \
 	--arg policy "$POLICY_NAME" \
 	--arg policyKey "$POLICY_KEY" '
   {
-    apiVersion: "operator.ptah.dev/v1alpha1",
+    apiVersion: "operator.ptah.run/v1alpha1",
     kind: "PtahSchema",
     metadata: {namespace: $namespace, name: $name},
     spec: {
@@ -956,14 +956,14 @@ jq -n \
 	--arg executorImage "$EXECUTOR_IMAGE" \
 	--arg runnerImage "$RUNNER_IMAGE" '
   {
-    apiVersion: "operator.ptah.dev/v1alpha1",
+    apiVersion: "operator.ptah.run/v1alpha1",
     kind: "PtahSchemaPlan",
     metadata: {
       namespace: $namespace,
       name: $name,
-      labels: {"operator.ptah.dev/schema": $schemaName},
+      labels: {"operator.ptah.run/schema": $schemaName},
       ownerReferences: [{
-        apiVersion: "operator.ptah.dev/v1alpha1",
+        apiVersion: "operator.ptah.run/v1alpha1",
         kind: "PtahSchema",
         name: $schemaName,
         uid: $schemaUID,
@@ -1022,11 +1022,11 @@ jq -n \
       namespace: $namespace,
       name: $name,
       labels: {
-        "operator.ptah.dev/plan": $planName,
-        "operator.ptah.dev/schema": $schemaName
+        "operator.ptah.run/plan": $planName,
+        "operator.ptah.run/schema": $schemaName
       },
       ownerReferences: [{
-        apiVersion: "operator.ptah.dev/v1alpha1",
+        apiVersion: "operator.ptah.run/v1alpha1",
         kind: "PtahSchemaPlan",
         name: $planName,
         uid: $planUID,
@@ -1153,7 +1153,7 @@ approval_json() {
 		--arg planUID "$plan_uid" \
 		--arg fingerprint "$fingerprint" '
     {
-      apiVersion: "operator.ptah.dev/v1alpha1",
+      apiVersion: "operator.ptah.run/v1alpha1",
       kind: "PtahSchemaApproval",
       metadata: {namespace: $namespace, name: $name},
       spec: {

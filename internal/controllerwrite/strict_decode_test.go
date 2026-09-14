@@ -138,7 +138,7 @@ func TestDecodeObjectRejectsUnknownFieldsForEveryControllerWriteKind(t *testing.
 		},
 		{
 			name:   "plan spec field",
-			raw:    `{"apiVersion":"operator.ptah.dev/v1alpha1","kind":"PtahSchemaPlan","metadata":{"name":"unknown"},"spec":{"future":true}}`,
+			raw:    `{"apiVersion":"operator.ptah.run/v1alpha1","kind":"PtahSchemaPlan","metadata":{"name":"unknown"},"spec":{"future":true}}`,
 			object: &operatorv1alpha1.PtahSchemaPlan{},
 			kind:   planKind,
 		},

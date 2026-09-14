@@ -229,8 +229,8 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		"--candidate-stability-duration=10s",
 		"--candidate-poll-interval=1s",
 		"--candidate-request-timeout=5s",
-		"--mutating-webhook-names=mapproval.operator.ptah.dev",
-		"--validating-webhook-names=vapproval.operator.ptah.dev,vpodintent.operator.ptah.dev,vcontrollerwrite.operator.ptah.dev",
+		"--mutating-webhook-names=mapproval.operator.ptah.run",
+		"--validating-webhook-names=vapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run",
 		"--run-interval=6h",
 		"--operation-timeout=15m",
 		"--retry-initial=5s",
@@ -244,14 +244,14 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 	mutatingConfiguration := mustObject(t, objects, "MutatingWebhookConfiguration", configurationName)
 	validatingConfiguration := mustObject(t, objects, "ValidatingWebhookConfiguration", configurationName)
 	for _, configuration := range []*unstructured.Unstructured{mutatingConfiguration, validatingConfiguration} {
-		if got := configuration.GetAnnotations()["operator.ptah.dev/admission-contract-version"]; got != "2" {
+		if got := configuration.GetAnnotations()["operator.ptah.run/admission-contract-version"]; got != "2" {
 			t.Fatalf("%s admission contract version = %q, want 2", configuration.GetKind(), got)
 		}
 	}
-	if got, want := strings.Split(requiredArgumentValue(t, args, "--mutating-webhook-names="), ","), []string{"mapproval.operator.ptah.dev"}; !slices.Equal(got, want) {
+	if got, want := strings.Split(requiredArgumentValue(t, args, "--mutating-webhook-names="), ","), []string{"mapproval.operator.ptah.run"}; !slices.Equal(got, want) {
 		t.Fatalf("rotator mutating production webhook inventory = %v, want %v", got, want)
 	}
-	if got, want := strings.Split(requiredArgumentValue(t, args, "--validating-webhook-names="), ","), []string{"vapproval.operator.ptah.dev", "vpodintent.operator.ptah.dev", "vcontrollerwrite.operator.ptah.dev"}; !slices.Equal(got, want) {
+	if got, want := strings.Split(requiredArgumentValue(t, args, "--validating-webhook-names="), ","), []string{"vapproval.operator.ptah.run", "vpodintent.operator.ptah.run", "vcontrollerwrite.operator.ptah.run"}; !slices.Equal(got, want) {
 		t.Fatalf("rotator validating production webhook inventory = %v, want %v", got, want)
 	}
 	wantMutatingCanary, wantValidatingCanary := certrotation.AdmissionCanaryStaticContractForTest(
@@ -531,7 +531,7 @@ func TestExistingSecretDisablesBuiltInLifecycle(t *testing.T) {
 	assertObjectAbsent(t, objects, "ValidatingAdmissionPolicyBinding", "ptah-operator-cert-stage-guard-v1-f1e165dcd72a")
 	for _, kind := range []string{"MutatingWebhookConfiguration", "ValidatingWebhookConfiguration"} {
 		configuration := mustObject(t, objects, kind, "ptah-operator-admission")
-		if got := configuration.GetAnnotations()["operator.ptah.dev/admission-contract-version"]; got != "1" {
+		if got := configuration.GetAnnotations()["operator.ptah.run/admission-contract-version"]; got != "1" {
 			t.Fatalf("%s external-certificate admission contract version = %q, want 1", kind, got)
 		}
 	}
@@ -631,7 +631,7 @@ func assertSecretCreateGuard(
 		"object.metadata.namespace == '" + releaseNamespace + "'",
 		"(!has(object.metadata.generateName) || object.metadata.generateName == '')",
 		"object.metadata.labels ==",
-		"operator.ptah.dev/generated-webhook-certificate",
+		"operator.ptah.run/generated-webhook-certificate",
 		"object.metadata.annotations ==",
 		"app.kubernetes.io/managed-by",
 		"meta.helm.sh/release-name",

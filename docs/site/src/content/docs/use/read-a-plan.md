@@ -116,7 +116,7 @@ metadata:
   name: ptah-plan-reader
   namespace: application
 rules:
-  - apiGroups: [operator.ptah.dev]
+  - apiGroups: [operator.ptah.run]
     resources: [ptahschemas, ptahschemaplans]
     verbs: [get]
   - apiGroups: [""]

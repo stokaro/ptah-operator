@@ -97,7 +97,7 @@ MANAGER_IMAGE=$(k -n "$OPERATOR_NAMESPACE" get deployment "$MANAGER" \
 REGISTRY_HOST=${MANAGER_IMAGE%%/*}
 [ "$REGISTRY_HOST" != "$MANAGER_IMAGE" ] ||
 	fail "manager image $MANAGER_IMAGE names no registry to authenticate against"
-LEADER_LEASE=ptah-operator.operator.ptah.dev
+LEADER_LEASE=ptah-operator.operator.ptah.run
 LEADER_TIMEOUT_SECONDS=120
 WORKLOAD_TIMEOUT_SECONDS=120
 METRICS_TIMEOUT_SECONDS=30
@@ -323,17 +323,17 @@ assert_prior_resolve_metric_sources_quiesced() {
 	# produced the Resolve metrics this phase measures a delta against. The
 	# quiescence check below says nothing when there are none, so require the
 	# sources to exist before requiring them to be quiet.
-	k -n "$PROOF_NAMESPACE" get ptahschemas.operator.ptah.dev -o json |
+	k -n "$PROOF_NAMESPACE" get ptahschemas.operator.ptah.run -o json |
 		jq -e '(.items | length) >= 1' >/dev/null ||
 		fail "the upgrade phase left no Resolve metric source to quiesce"
-	k get ptahschemas.operator.ptah.dev -A -o json |
+	k get ptahschemas.operator.ptah.run -A -o json |
 		jq -e '
           all(.items[];
             .spec.suspend == true and
             .status.phase == "Suspended" and
             .status.activeOperation == null)
         ' >/dev/null || fail "an earlier unsuspended PtahSchema can contaminate the HA metric delta"
-	k get jobs.batch -A -l operator.ptah.dev/operation=resolve -o json |
+	k get jobs.batch -A -l operator.ptah.run/operation=resolve -o json |
 		jq -e '
           [.items[] | select(
             ((.status.active // 0) != 0) or
@@ -398,11 +398,11 @@ wait_for_admitted_operation_pod() {
 	workload_deadline=$(($(date +%s) + WORKLOAD_TIMEOUT_SECONDS))
 	while [ "$(date +%s)" -lt "$workload_deadline" ]; do
 		jobs=$(k -n "$HA_TEST_NAMESPACE" get jobs \
-			-l "operator.ptah.dev/schema=${HA_SCHEMA}" -o json)
+			-l "operator.ptah.run/schema=${HA_SCHEMA}" -o json)
 		job_count=$(printf '%s\n' "$jobs" | jq --arg uid "$schema_uid" '
       [.items[] | select(any(.metadata.ownerReferences[]?;
         .controller == true and
-        .apiVersion == "operator.ptah.dev/v1alpha1" and
+        .apiVersion == "operator.ptah.run/v1alpha1" and
         .kind == "PtahSchema" and
         .name == "leader-failover" and
         .uid == $uid))] | length
@@ -418,7 +418,7 @@ wait_for_admitted_operation_pod() {
       ')
 			job_digest=$(printf '%s\n' "$jobs" | jq -r --arg name "$job_name" '
         .items[] | select(.metadata.name == $name) |
-        .metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] // ""
+        .metadata.annotations["operator.ptah.run/admission-snapshot-digest"] // ""
       ')
 			pods=$(k -n "$HA_TEST_NAMESPACE" get pods \
 				-l "batch.kubernetes.io/job-name=${job_name}" -o json)
@@ -427,7 +427,7 @@ wait_for_admitted_operation_pod() {
           ($digest | test("^sha256:[0-9a-f]{64}$")) and
           ([.items[] | select(
             .metadata.deletionTimestamp == null and
-            .metadata.annotations["operator.ptah.dev/admission-snapshot-digest"] == $digest and
+            .metadata.annotations["operator.ptah.run/admission-snapshot-digest"] == $digest and
             any(.metadata.ownerReferences[]?;
               .controller == true and
               .apiVersion == "batch/v1" and
@@ -522,7 +522,7 @@ assert_prior_resolve_metric_sources_quiesced
 resolve_failure_counter_before=$(read_resolve_operation_failure_counter "$second_holder")
 
 printf '%s\n' 'e2e HA: creating a real operation after leader failover'
-k wait --for=condition=Established crd/ptahschemas.operator.ptah.dev --timeout=60s
+k wait --for=condition=Established crd/ptahschemas.operator.ptah.run --timeout=60s
 k create namespace "$HA_TEST_NAMESPACE" >/dev/null
 wait_for_default_service_account
 k -n "$HA_TEST_NAMESPACE" create configmap e2e-ha-verification-policy \
@@ -550,7 +550,7 @@ jq -n --arg namespace "$HA_TEST_NAMESPACE" --arg name "$REGISTRY_PULL_SECRET" \
 jq -n --arg namespace "$HA_TEST_NAMESPACE" --arg name "$HA_SCHEMA" \
 	--arg pullSecret "$REGISTRY_PULL_SECRET" '
   {
-    apiVersion: "operator.ptah.dev/v1alpha1",
+    apiVersion: "operator.ptah.run/v1alpha1",
     kind: "PtahSchema",
     metadata: {namespace: $namespace, name: $name},
     spec: {

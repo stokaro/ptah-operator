@@ -314,7 +314,7 @@ lab_down() {
 	# By owner label, so a container or volume this run created is removed and
 	# one another run created is not. The label is the harness's, and it is on
 	# every resource the harness makes outside the cluster.
-	lab_down_owner="operator.ptah.dev/e2e-owner=$E2E_KIND_CLUSTER_NAME"
+	lab_down_owner="operator.ptah.run/e2e-owner=$E2E_KIND_CLUSTER_NAME"
 	lab_down_remove_labelled container
 	lab_down_remove_labelled volume
 	lab_down_remove_images

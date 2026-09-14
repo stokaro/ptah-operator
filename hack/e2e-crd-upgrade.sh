@@ -131,12 +131,12 @@ HOOK_PROGRESS_AUTHORIZATION_DEADLINE=
 HOOK_PROGRESS_AUTHORIZATION_ENDPOINT=
 KUBERNETES_MAJOR_MINOR=
 CANDIDATE_CRD_SCHEMA_VERSION=$(awk '
-  $1 == "operator.ptah.dev/crd-schema-version:" {
+  $1 == "operator.ptah.run/crd-schema-version:" {
     gsub(/"/, "", $2)
     print $2
     exit
   }
-' "$ROOT_DIR/config/crd/bases/operator.ptah.dev_ptahschemas.yaml")
+' "$ROOT_DIR/config/crd/bases/operator.ptah.run_ptahschemas.yaml")
 
 # A refused parameter expansion (${VAR:?...}) or an unset name under set -u
 # ends the shell without setting $?, so an EXIT trap that reports $? reads the
@@ -1624,7 +1624,7 @@ kind: ValidatingWebhookConfiguration
 metadata:
   name: $LATE_ACTIVATION_BLOCKER_WEBHOOK
 webhooks:
-  - name: late-activation-blocker.operator.ptah.dev
+  - name: late-activation-blocker.operator.ptah.run
     admissionReviewVersions: ["v1"]
     clientConfig:
       service:
@@ -2025,7 +2025,7 @@ emit_late_activation_reconcile_diagnostic() {
 	grep -F 'wait for release activation guard before persistence' \
 		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
 		missing_blocker_evidence="$missing_blocker_evidence activation-phase"
-	grep -F 'late-activation-blocker.operator.ptah.dev' \
+	grep -F 'late-activation-blocker.operator.ptah.run' \
 		"$LATE_ACTIVATION_RECONCILE_LOG_FILE" >/dev/null ||
 		missing_blocker_evidence="$missing_blocker_evidence blocker-webhook"
 	grep -F 'service "ptah-operator-e2e-missing-blocker" not found' \
@@ -2120,10 +2120,10 @@ assert_late_activation_drain() {
 			--arg attempt "$late_candidate_attempt" --arg image "$late_current_image" \
 			--arg namespace "$E2E_OPERATOR_NAMESPACE" --arg release "$E2E_HELM_RELEASE" '
           .metadata.namespace == $namespace and
-          .metadata.annotations["operator.ptah.dev/release-name"] == $release and
-          .metadata.annotations["operator.ptah.dev/release-namespace"] == $namespace and
-          .metadata.annotations["operator.ptah.dev/release-sequence"] == $current and
-          .metadata.annotations["operator.ptah.dev/manager-image"] == $image and
+          .metadata.annotations["operator.ptah.run/release-name"] == $release and
+          .metadata.annotations["operator.ptah.run/release-namespace"] == $namespace and
+          .metadata.annotations["operator.ptah.run/release-sequence"] == $current and
+          .metadata.annotations["operator.ptah.run/manager-image"] == $image and
           (.data | keys | sort) == ["active-release-sequence", "controller-credentials", "controller-credentials-attempt", "controller-credentials-target-release-sequence"] and
           .data["active-release-sequence"] == $current and
           .data["controller-credentials"] == "draining" and
@@ -2155,12 +2155,12 @@ assert_late_activation_cutover() {
 		--arg previous "$current_sequence_service_account" \
 		--arg previous_uid "$(jq -er '.serviceAccountUID' "$current_sequence_identity")" '
           select(
-            .metadata.annotations["operator.ptah.dev/release-sequence"] == $next and
-            .metadata.annotations["operator.ptah.dev/manager-image"] == $image and
-            .metadata.annotations["operator.ptah.dev/previous-controller-service-account-name"] == $previous and
-            .metadata.annotations["operator.ptah.dev/previous-controller-service-account-uid"] == $previous_uid
+            .metadata.annotations["operator.ptah.run/release-sequence"] == $next and
+            .metadata.annotations["operator.ptah.run/manager-image"] == $image and
+            .metadata.annotations["operator.ptah.run/previous-controller-service-account-name"] == $previous and
+            .metadata.annotations["operator.ptah.run/previous-controller-service-account-uid"] == $previous_uid
           ) |
-          .metadata.annotations["operator.ptah.dev/controller-service-account-name"] |
+          .metadata.annotations["operator.ptah.run/controller-service-account-name"] |
           select(type == "string" and length > 0 and . != $previous)
         ' "$WORK_DIR/late-activation-origin.json") ||
 		fail "late failure lost the exact retained predecessor and candidate identity"
@@ -2197,7 +2197,7 @@ assert_late_activation_cutover() {
 	# predecessor authorization denial on every advertised API server.
 	for late_probe in schema runtime coordination discovery; do
 		case "$late_probe" in
-		schema) late_attributes=$(jq -nc '{group: "operator.ptah.dev", resource: "ptahschemas", subresource: "status", verb: "update"}') ;;
+		schema) late_attributes=$(jq -nc '{group: "operator.ptah.run", resource: "ptahschemas", subresource: "status", verb: "update"}') ;;
 		runtime) late_attributes=$(jq -nc --arg ns "$E2E_OPERATOR_NAMESPACE" --arg name "$current_sequence_marker_name" '{namespace: $ns, resource: "configmaps", name: $name, verb: "update"}') ;;
 		coordination) late_attributes=$(jq -nc --arg ns "$late_coordination_namespace" '{namespace: $ns, group: "coordination.k8s.io", resource: "leases", verb: "update"}') ;;
 		discovery) late_attributes=$(jq -nc '{namespace: "default", group: "discovery.k8s.io", resource: "endpointslices", verb: "list"}') ;;
@@ -2328,14 +2328,14 @@ prove_late_activation_failure_recovery() {
 	emit_late_activation_reconcile_diagnostic
 	assert_late_activation_drain
 	controller_state_version=$(jq -er \
-		'.metadata.annotations["operator.ptah.dev/controller-state-version"]' "$controller_snapshot")
+		'.metadata.annotations["operator.ptah.run/controller-state-version"]' "$controller_snapshot")
 	for deployment_name in "$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT"; do
 		kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$deployment_name" -o json |
 			jq -e --arg image "$late_current_image" --arg next "$late_next_sequence" \
 				--arg state "$controller_state_version" '
               .spec.replicas == 0 and
-              .metadata.annotations["operator.ptah.dev/release-sequence"] == $next and
-              .metadata.annotations["operator.ptah.dev/controller-state-version"] == $state and
+              .metadata.annotations["operator.ptah.run/release-sequence"] == $next and
+              .metadata.annotations["operator.ptah.run/controller-state-version"] == $state and
               any(.spec.template.spec.containers[]; .image == $image)
             ' >/dev/null || fail "late failure did not leave $deployment_name at the exact staged boundary"
 	done
@@ -2358,7 +2358,7 @@ prove_late_activation_failure_recovery() {
 dispatch_read_only_job_fixture() {
 	[ -n "$READ_ONLY_JOB_SCHEMA" ] || fail "read-only Job fixture schema name is unset"
 	kube -n "$PROOF_NAMESPACE" apply -f - >/dev/null <<EOF
-apiVersion: operator.ptah.dev/v1alpha1
+apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchema
 metadata:
   name: $READ_ONLY_JOB_SCHEMA
@@ -2377,7 +2377,7 @@ spec:
   execution:
     serviceAccountName: default
     nodeSelector:
-      operator.ptah.dev/read-only-job-proof: blocked
+      operator.ptah.run/read-only-job-proof: blocked
 EOF
 	deadline=$(($(date +%s) + 120))
 	while [ "$(date +%s)" -lt "$deadline" ]; do
@@ -2392,8 +2392,8 @@ EOF
 				--arg schema "$READ_ONLY_JOB_SCHEMA" \
 				--arg uid "$READ_ONLY_JOB_UID" '
               .metadata.uid == $uid and
-              .metadata.labels["operator.ptah.dev/schema"] == $schema and
-              .metadata.labels["operator.ptah.dev/operation"] == "resolve" and
+              .metadata.labels["operator.ptah.run/schema"] == $schema and
+              .metadata.labels["operator.ptah.run/operation"] == "resolve" and
               (.spec | has("ttlSecondsAfterFinished") | not)
             ' "$WORK_DIR/$READ_ONLY_JOB_SCHEMA-read-only-job.json" >/dev/null ||
 				fail "read-only Job does not match the dispatched operation identity"
@@ -2429,7 +2429,7 @@ set_pod_webhook_failure_policy() {
 	esac
 	pod_webhook_index=$(kube get validatingwebhookconfiguration ptah-operator-admission -o json |
 		jq -er '
-		  [.webhooks | to_entries[] | select(.value.name == "vpodintent.operator.ptah.dev")] |
+		  [.webhooks | to_entries[] | select(.value.name == "vpodintent.operator.ptah.run")] |
 		  select(length == 1) | .[0].key
 		')
 	pod_webhook_policy=$(kube get validatingwebhookconfiguration ptah-operator-admission -o json |
@@ -2440,7 +2440,7 @@ set_pod_webhook_failure_policy() {
 		--argjson index "$pod_webhook_index" \
 		--arg expected "$expected_policy" \
 		--arg desired "$desired_policy" '[
-		  {op: "test", path: ("/webhooks/" + ($index | tostring) + "/name"), value: "vpodintent.operator.ptah.dev"},
+		  {op: "test", path: ("/webhooks/" + ($index | tostring) + "/name"), value: "vpodintent.operator.ptah.run"},
 		  {op: "test", path: ("/webhooks/" + ($index | tostring) + "/failurePolicy"), value: $expected},
 		  {op: "replace", path: ("/webhooks/" + ($index | tostring) + "/failurePolicy"), value: $desired}
 		]')
@@ -2450,7 +2450,7 @@ set_pod_webhook_failure_policy() {
 		jq -e \
 			--argjson index "$pod_webhook_index" \
 			--arg desired "$desired_policy" '
-			.webhooks[$index].name == "vpodintent.operator.ptah.dev" and
+			.webhooks[$index].name == "vpodintent.operator.ptah.run" and
 			.webhooks[$index].failurePolicy == $desired
 			' >/dev/null || fail "Pod webhook failurePolicy transition was not persisted"
 }
@@ -2742,13 +2742,13 @@ assert_sealed_release_inventory() {
       .metadata.annotations["helm.sh/hook"] == "pre-install,pre-upgrade" and
       .metadata.annotations["helm.sh/hook-weight"] == "-165" and
       .metadata.annotations["helm.sh/resource-policy"] == "keep" and
-      .metadata.annotations["operator.ptah.dev/admission-convergence-version"] == "1" and
-      .metadata.annotations["operator.ptah.dev/predecessor-retirement-inventory-version"] == "1" and
-      .metadata.annotations["operator.ptah.dev/release-name"] == $release and
-      .metadata.annotations["operator.ptah.dev/release-namespace"] == $namespace and
-      .metadata.annotations["operator.ptah.dev/release-sequence"] == $sequence and
-      .metadata.annotations["operator.ptah.dev/manager-image"] == $image and
-      (.metadata.annotations["operator.ptah.dev/admission-convergence-cleanup-service-account"] |
+      .metadata.annotations["operator.ptah.run/admission-convergence-version"] == "1" and
+      .metadata.annotations["operator.ptah.run/predecessor-retirement-inventory-version"] == "1" and
+      .metadata.annotations["operator.ptah.run/release-name"] == $release and
+      .metadata.annotations["operator.ptah.run/release-namespace"] == $namespace and
+      .metadata.annotations["operator.ptah.run/release-sequence"] == $sequence and
+      .metadata.annotations["operator.ptah.run/manager-image"] == $image and
+      (.metadata.annotations["operator.ptah.run/admission-convergence-cleanup-service-account"] |
         type == "string" and test("^.+-cleanup-v" + $sequence + "-[0-9a-f]{12}$")) and
       .immutable == true and
       ((.binaryData // {}) == {}) and
@@ -2832,7 +2832,7 @@ capture_controller_service_account_identity() {
         # Deployment and on its Pod template, which is where the retained
         # guards read it. It is not a label, so selecting on one matched
         # nothing.
-        .metadata.annotations["operator.ptah.dev/release-sequence"] == $sequence
+        .metadata.annotations["operator.ptah.run/release-sequence"] == $sequence
       )] |
       if length != 1 then error("controller Deployment cardinality differs") else .[0] end |
       select(
@@ -2884,10 +2884,10 @@ assert_release_activation_sequence() {
 			--arg sequence "$release_sequence" \
 			--arg image "$expected_manager_image" '
         .metadata.namespace == $namespace and
-        .metadata.annotations["operator.ptah.dev/release-name"] == $release and
-        .metadata.annotations["operator.ptah.dev/release-namespace"] == $namespace and
-        .metadata.annotations["operator.ptah.dev/release-sequence"] == $sequence and
-        .metadata.annotations["operator.ptah.dev/manager-image"] == $image and
+        .metadata.annotations["operator.ptah.run/release-name"] == $release and
+        .metadata.annotations["operator.ptah.run/release-namespace"] == $namespace and
+        .metadata.annotations["operator.ptah.run/release-sequence"] == $sequence and
+        .metadata.annotations["operator.ptah.run/manager-image"] == $image and
         ((.immutable // false) == false) and
         (.data | keys | sort) == ["active-release-sequence", "controller-credentials"] and
         .data["active-release-sequence"] == $sequence and
@@ -2926,7 +2926,7 @@ assert_release_sequence_candidate_residue_absent() {
 		remaining=$(kube get "$cluster_resource" \
 			-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" -o json |
 			jq -r --arg sequence "$release_sequence" '[.items[] | select(
-              .metadata.annotations["operator.ptah.dev/release-sequence"] == $sequence
+              .metadata.annotations["operator.ptah.run/release-sequence"] == $sequence
             )] | length')
 		[ "$remaining" -eq 0 ] ||
 			fail "$remaining sequence-$release_sequence labeled $cluster_resource objects survived activation"
@@ -2934,7 +2934,7 @@ assert_release_sequence_candidate_residue_absent() {
 	remaining=$(kube -n "$E2E_OPERATOR_NAMESPACE" get configmap \
 		-l "app.kubernetes.io/instance=$E2E_HELM_RELEASE" -o json |
 		jq -r --arg sequence "$release_sequence" '[.items[] | select(
-          .metadata.annotations["operator.ptah.dev/release-sequence"] == $sequence and
+          .metadata.annotations["operator.ptah.run/release-sequence"] == $sequence and
           (.metadata.labels["app.kubernetes.io/component"] == "hook-identity-probe" or
            .metadata.labels["app.kubernetes.io/component"] == "admission-convergence")
         )] | length')
@@ -3227,10 +3227,10 @@ prove_controller_object_supported_window_guard() {
       # The Job write guard requires the name to start with the operation
       # its own label names, so the probe is named after the operation the
       # captured Job carries rather than after a fixed one.
-      .metadata.name = "ptah-" + .metadata.labels["operator.ptah.dev/operation"] + "-vap-probe-0123456789abcdef" |
-      .metadata.annotations["operator.ptah.dev/controller-image"] = $controller_image |
-      .metadata.annotations["operator.ptah.dev/controller-revision"] = "e2e-controller-object-guard" |
-      .metadata.annotations["operator.ptah.dev/controller-state-version"] = "1" |
+      .metadata.name = "ptah-" + .metadata.labels["operator.ptah.run/operation"] + "-vap-probe-0123456789abcdef" |
+      .metadata.annotations["operator.ptah.run/controller-image"] = $controller_image |
+      .metadata.annotations["operator.ptah.run/controller-revision"] = "e2e-controller-object-guard" |
+      .metadata.annotations["operator.ptah.run/controller-state-version"] = "1" |
       del(
         .spec.template.metadata.labels["batch.kubernetes.io/controller-uid"],
         .spec.template.metadata.labels["batch.kubernetes.io/job-name"],
@@ -3327,10 +3327,10 @@ metadata:
   name: ptah-plan-111111111111111111111111-000
   namespace: $PROOF_NAMESPACE
   labels:
-    operator.ptah.dev/plan: ptah-plan-111111111111111111111111
-    operator.ptah.dev/schema: $PROOF_SCHEMA
+    operator.ptah.run/plan: ptah-plan-111111111111111111111111
+    operator.ptah.run/schema: $PROOF_SCHEMA
   ownerReferences:
-    - apiVersion: operator.ptah.dev/v1alpha1
+    - apiVersion: operator.ptah.run/v1alpha1
       kind: PtahSchemaPlan
       name: ptah-plan-111111111111111111111111
       uid: 11111111-1111-1111-1111-111111111111
@@ -3385,9 +3385,9 @@ prove_controller_write_guard() {
 	suspend_patch=$(jq -cn --argjson current "$current_suspend" '{spec: {suspend: ($current | not)}}')
 	expect_controller_write_denial spec merge "$suspend_patch"
 	expect_controller_write_denial labels merge \
-		'{"metadata":{"labels":{"operator.ptah.dev/controller-write-probe":"forbidden"}}}'
+		'{"metadata":{"labels":{"operator.ptah.run/controller-write-probe":"forbidden"}}}'
 	expect_controller_write_denial annotations merge \
-		'{"metadata":{"annotations":{"operator.ptah.dev/controller-write-probe":"forbidden"}}}'
+		'{"metadata":{"annotations":{"operator.ptah.run/controller-write-probe":"forbidden"}}}'
 
 	CONTROLLER_GUARD_OWNER=controller-write-guard-owner
 	kube -n "$PROOF_NAMESPACE" create configmap "$CONTROLLER_GUARD_OWNER" >/dev/null
@@ -3400,7 +3400,7 @@ prove_controller_write_guard() {
     }')
 	expect_controller_write_denial ownerReferences merge "$owner_patch"
 	expect_controller_write_denial 'a foreign finalizer' merge \
-		'{"metadata":{"finalizers":["operator.ptah.dev/foreign-operation"]}}'
+		'{"metadata":{"finalizers":["operator.ptah.run/foreign-operation"]}}'
 
 	status_before=$WORK_DIR/controller-write-status-before.json
 	kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
@@ -3422,16 +3422,16 @@ prove_controller_write_guard() {
 	current_finalizers=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
 		jq -c '(.metadata.finalizers // [])')
 	printf '%s\n' "$current_finalizers" |
-		jq -e 'index("operator.ptah.dev/active-operation") == null' >/dev/null ||
+		jq -e 'index("operator.ptah.run/active-operation") == null' >/dev/null ||
 		fail "proof PtahSchema already has the active-operation finalizer"
 	add_finalizer_patch=$(printf '%s\n' "$current_finalizers" | jq -c '{
-      metadata: {finalizers: (. + ["operator.ptah.dev/active-operation"])}
+      metadata: {finalizers: (. + ["operator.ptah.run/active-operation"])}
     }')
 	controller_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" \
 		--type merge -p "$add_finalizer_patch" >/dev/null
 	kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o json |
 		jq -e --argjson before "$current_finalizers" '
-          (.metadata.finalizers // []) == ($before + ["operator.ptah.dev/active-operation"])
+          (.metadata.finalizers // []) == ($before + ["operator.ptah.run/active-operation"])
         ' >/dev/null || fail "controller identity did not add exactly its active-operation finalizer"
 	remove_finalizer_patch=$(printf '%s\n' "$current_finalizers" | jq -c '{metadata: {finalizers: .}}')
 	controller_kube -n "$PROOF_NAMESPACE" patch ptahschema "$PROOF_SCHEMA" \
@@ -3479,7 +3479,7 @@ prove_runtime_singleton_guard() {
 	# drifted-behavior proofs around this one.
 	printf '%s\n' 'e2e crd: proving the admission singleton refuses a foreign owner'
 	if kube annotate mutatingwebhookconfiguration ptah-operator-admission \
-		operator.ptah.dev/release-name=foreign-release --overwrite \
+		operator.ptah.run/release-name=foreign-release --overwrite \
 		>"$WORK_DIR/foreign-owner.out" 2>"$WORK_DIR/foreign-owner.err"; then
 		fail "the admission singleton accepted a foreign release owner"
 	fi
@@ -3487,7 +3487,7 @@ prove_runtime_singleton_guard() {
 		"$WORK_DIR/foreign-owner.out" "$WORK_DIR/foreign-owner.err" >/dev/null ||
 		fail "the foreign owner was refused without the rollout guard denial"
 	[ "$(kube get mutatingwebhookconfiguration ptah-operator-admission \
-		-o jsonpath='{.metadata.annotations.operator\.ptah\.dev/release-name}')" = "$E2E_HELM_RELEASE" ] ||
+		-o jsonpath='{.metadata.annotations.operator\.ptah\.run/release-name}')" = "$E2E_HELM_RELEASE" ] ||
 		fail "the admission singleton no longer names the installed release"
 
 	printf '%s\n' 'e2e crd: proving runtime rejection of drifted admission behavior'
@@ -3496,7 +3496,7 @@ prove_runtime_singleton_guard() {
 	[ -n "$webhook_service" ] || fail "admission webhook Service name is empty"
 	first_validating_name=$(kube get validatingwebhookconfiguration ptah-operator-admission \
 		-o jsonpath='{.webhooks[0].name}')
-	[ "$first_validating_name" = vapproval.operator.ptah.dev ] ||
+	[ "$first_validating_name" = vapproval.operator.ptah.run ] ||
 		fail "approval validating webhook is not in its rendered position"
 	stop_runtime_deployments
 	kube patch mutatingwebhookconfiguration ptah-operator-admission --type=json \
@@ -3541,7 +3541,7 @@ prove_controller_downgrade_guard() {
 create_proof_objects() {
 	kube get namespace "$PROOF_NAMESPACE" >/dev/null
 	kube -n "$PROOF_NAMESPACE" apply -f - >/dev/null <<EOF
-apiVersion: operator.ptah.dev/v1alpha1
+apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchema
 metadata:
   name: $PROOF_SCHEMA
@@ -3574,7 +3574,7 @@ EOF
 	schema_uid=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" -o jsonpath='{.metadata.uid}')
 
 	kube -n "$PROOF_NAMESPACE" create -f - >/dev/null <<EOF
-apiVersion: operator.ptah.dev/v1alpha1
+apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchemaPlan
 metadata:
   name: $PROOF_PLAN
@@ -3611,7 +3611,7 @@ EOF
 		--type=merge -p '{"status":{"observedGeneration":1,"conditions":[{"type":"Ready","status":"True","reason":"UpgradeProof","message":"proof status","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}' >/dev/null
 
 	kube -n "$PROOF_NAMESPACE" create -f - >/dev/null <<EOF
-apiVersion: operator.ptah.dev/v1alpha1
+apiVersion: operator.ptah.run/v1alpha1
 kind: PtahSchemaApproval
 metadata:
   name: $PROOF_APPROVAL
@@ -3677,67 +3677,67 @@ run_upgrade_proof() {
 	prove_upgrade_hook_progress_guards
 
 	printf '%s\n' 'e2e crd: proving a missing CRD aborts Helm upgrade without recreation'
-	kube delete crd ptahschemaapprovals.operator.ptah.dev >/dev/null
+	kube delete crd ptahschemaapprovals.operator.ptah.run >/dev/null
 	expect_upgrade_failure_without_deployment_change "upgrade with a missing CRD"
-	if kube get crd ptahschemaapprovals.operator.ptah.dev >/dev/null 2>&1; then
+	if kube get crd ptahschemaapprovals.operator.ptah.run >/dev/null 2>&1; then
 		fail "CRD hook recreated a missing CRD"
 	fi
-	kube create -f "$ROOT_DIR/config/crd/bases/operator.ptah.dev_ptahschemaapprovals.yaml" >/dev/null
-	kube wait --for=condition=Established crd/ptahschemaapprovals.operator.ptah.dev --timeout=60s >/dev/null
+	kube create -f "$ROOT_DIR/config/crd/bases/operator.ptah.run_ptahschemaapprovals.yaml" >/dev/null
+	kube wait --for=condition=Established crd/ptahschemaapprovals.operator.ptah.run --timeout=60s >/dev/null
 
 	printf '%s\n' 'e2e crd: proving a newer CRD schema version blocks rollback'
 	future_schema_version=$((CANDIDATE_CRD_SCHEMA_VERSION + 1))
-	kube annotate crd ptahschemaplans.operator.ptah.dev \
-		"operator.ptah.dev/crd-schema-version=$future_schema_version" --overwrite >/dev/null
+	kube annotate crd ptahschemaplans.operator.ptah.run \
+		"operator.ptah.run/crd-schema-version=$future_schema_version" --overwrite >/dev/null
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-schema-rollback.json"
 	done
 	expect_upgrade_failure_without_deployment_change "upgrade with a newer CRD schema version"
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-schema-rollback.json"
 	done
-	kube annotate crd ptahschemaplans.operator.ptah.dev \
-		"operator.ptah.dev/crd-schema-version=$CANDIDATE_CRD_SCHEMA_VERSION" --overwrite >/dev/null
+	kube annotate crd ptahschemaplans.operator.ptah.run \
+		"operator.ptah.run/crd-schema-version=$CANDIDATE_CRD_SCHEMA_VERSION" --overwrite >/dev/null
 
 	printf '%s\n' 'e2e crd: proving a newer durable controller-state marker blocks rollback'
-	kube annotate crd ptahschemaplans.operator.ptah.dev \
-		operator.ptah.dev/controller-state-version=2 --overwrite >/dev/null
+	kube annotate crd ptahschemaplans.operator.ptah.run \
+		operator.ptah.run/controller-state-version=2 --overwrite >/dev/null
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-state-rollback.json"
 	done
 	expect_upgrade_failure_without_deployment_change "upgrade with a newer durable controller-state marker"
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-state-rollback.json"
 	done
-	kube annotate crd ptahschemaplans.operator.ptah.dev \
-		operator.ptah.dev/controller-state-version=1 --overwrite >/dev/null
+	kube annotate crd ptahschemaplans.operator.ptah.run \
+		operator.ptah.run/controller-state-version=1 --overwrite >/dev/null
 
 	printf '%s\n' 'e2e crd: proving an incomplete schema identity and a digest collision are refused'
-	digest_crd=ptahschemaplans.operator.ptah.dev
+	digest_crd=ptahschemaplans.operator.ptah.run
 	candidate_schema_digest=$(kube get crd "$digest_crd" \
-		-o jsonpath='{.metadata.annotations.operator\.ptah\.dev/crd-schema-digest}')
+		-o jsonpath='{.metadata.annotations.operator\.ptah\.run/crd-schema-digest}')
 	printf '%s\n' "$candidate_schema_digest" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
 		fail "$digest_crd does not carry a valid candidate schema digest"
 	# The live spec still matches the candidate exactly; only the digest is
 	# missing. The operator upgrades only from a release that carries the
 	# whole identity tuple, so an exact schema without it is refused too.
-	kube annotate crd "$digest_crd" operator.ptah.dev/crd-schema-digest- >/dev/null
+	kube annotate crd "$digest_crd" operator.ptah.run/crd-schema-digest- >/dev/null
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-missing-digest.json"
 	done
 	# The refusal happens inside the preflight hook's container, so Helm
@@ -3749,13 +3749,13 @@ run_upgrade_proof() {
 	# where it is observable, in the Manager unit tests.
 	expect_upgrade_failure_without_deployment_change "upgrade with a missing schema digest"
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-missing-digest.json"
 	done
 	kube annotate crd "$digest_crd" \
-		"operator.ptah.dev/crd-schema-digest=$candidate_schema_digest" --overwrite >/dev/null
+		"operator.ptah.run/crd-schema-digest=$candidate_schema_digest" --overwrite >/dev/null
 	helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$WORK_DIR/release-values.yaml" \
 		--wait --timeout 5m >/dev/null
@@ -3765,22 +3765,22 @@ run_upgrade_proof() {
 		collision_digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 	fi
 	kube annotate crd "$digest_crd" \
-		"operator.ptah.dev/crd-schema-digest=$collision_digest" --overwrite >/dev/null
+		"operator.ptah.run/crd-schema-digest=$collision_digest" --overwrite >/dev/null
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-digest-collision.json"
 	done
 	expect_upgrade_failure_without_deployment_change "upgrade with a same-version schema digest collision"
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-digest-collision.json"
 	done
 	kube annotate crd "$digest_crd" \
-		"operator.ptah.dev/crd-schema-digest=$candidate_schema_digest" --overwrite >/dev/null
+		"operator.ptah.run/crd-schema-digest=$candidate_schema_digest" --overwrite >/dev/null
 
 	printf '%s\n' 'e2e crd: creating live-object preservation evidence'
 	create_proof_objects
@@ -3789,9 +3789,9 @@ run_upgrade_proof() {
 	object_evidence ptahschemaapproval "$PROOF_APPROVAL" "$WORK_DIR/ptahschemaapproval-before.json"
 
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		kube patch crd "$crd_name" --type=json \
 			-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"outdated e2e schema"}]' >/dev/null
 		crd_evidence "$crd_name" "$WORK_DIR/${crd_name}-before-future-state.json"
@@ -3800,9 +3800,9 @@ run_upgrade_proof() {
 		--type=json -p='[{"op":"replace","path":"/status/executionBinding/controllerStateVersion","value":2}]' >/dev/null
 	expect_upgrade_failure_without_deployment_change "upgrade against future controller state"
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		assert_crd_unchanged "$crd_name" "$WORK_DIR/${crd_name}-before-future-state.json"
 	done
 	stored_version=$(kube -n "$PROOF_NAMESPACE" get ptahschema "$PROOF_SCHEMA" \
@@ -3816,9 +3816,9 @@ run_upgrade_proof() {
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$WORK_DIR/release-values.yaml" \
 		--wait --timeout 5m >/dev/null
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		description=$(kube get crd "$crd_name" -o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.description}')
 		[ "$description" != "outdated e2e schema" ] || fail "$crd_name retained the outdated schema"
 	done
@@ -3849,11 +3849,11 @@ run_upgrade_proof() {
 
 		expect_upgrade_render_failure_without_deployment_change \
 			"coordination namespace mutation" --set-string coordination.namespace=forbidden-coordination
-	grep -F 'operator.ptah.dev/coordination-namespace' "$WORK_DIR/failed-upgrade.err" >/dev/null ||
+	grep -F 'operator.ptah.run/coordination-namespace' "$WORK_DIR/failed-upgrade.err" >/dev/null ||
 		fail "coordination mutation failed without the immutable annotation guard"
 		expect_upgrade_render_failure_without_deployment_change \
 		"leader-election mutation" --set replicaCount=1 --set leaderElection=false
-	grep -F 'operator.ptah.dev/leader-election' "$WORK_DIR/failed-upgrade.err" >/dev/null ||
+	grep -F 'operator.ptah.run/leader-election' "$WORK_DIR/failed-upgrade.err" >/dev/null ||
 		fail "leader-election mutation failed without the immutable annotation guard"
 
 	prove_runtime_singleton_guard
@@ -4061,9 +4061,9 @@ run_uninstall_proof() {
 	assert_inventory_resources_absent \
 		"$next_sequence_inventory" "$next_sequence_marker_name"
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		kube get crd "$crd_name" >/dev/null
 	done
 	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
@@ -4071,7 +4071,7 @@ run_uninstall_proof() {
 	done
 
 	printf '%s\n' 'e2e crd: reinstalling over retained and drifted CRDs'
-	kube patch crd ptahschemas.operator.ptah.dev --type=json \
+	kube patch crd ptahschemas.operator.ptah.run --type=json \
 		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"retained reinstall drift"}]' >/dev/null
 	# The drift above is written by kubectl, which owns the field it added.
 	# Helm 4 applies the chart's CRDs server-side on install and refuses to
@@ -4087,7 +4087,7 @@ run_uninstall_proof() {
 		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$E2E_NEXT_VALUES_FILE" \
 		--force-conflicts \
 		--wait --timeout 5m >/dev/null
-	description=$(kube get crd ptahschemas.operator.ptah.dev \
+	description=$(kube get crd ptahschemas.operator.ptah.run \
 		-o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.description}')
 	[ "$description" != "retained reinstall drift" ] ||
 		fail "the reinstall did not reconcile a retained CRD another manager drifted"
@@ -4109,9 +4109,9 @@ run_uninstall_proof() {
 	assert_inventory_resources_absent \
 		"$reinstalled_next_inventory" "$reinstalled_next_marker_name"
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		kube get crd "$crd_name" >/dev/null
 	done
 	for resource in ptahschema ptahschemaplan ptahschemaapproval; do
@@ -4119,7 +4119,7 @@ run_uninstall_proof() {
 	done
 
 	printf '%s\n' 'e2e crd: fresh-installing the exact exported current-release chart bytes'
-	kube patch crd ptahschemas.operator.ptah.dev --type=json \
+	kube patch crd ptahschemas.operator.ptah.run --type=json \
 		-p='[{"op":"add","path":"/spec/versions/0/schema/openAPIV3Schema/description","value":"exact released-chart install drift"}]' >/dev/null
 	# The drift above is written by kubectl, which owns the field it added, and
 	# Helm 4 refuses to change a field another manager owns. This install carries
@@ -4130,7 +4130,7 @@ run_uninstall_proof() {
 		--force-conflicts \
 		--wait --timeout 5m >/dev/null
 	wait_runtime_ready
-	description=$(kube get crd ptahschemas.operator.ptah.dev \
+	description=$(kube get crd ptahschemas.operator.ptah.run \
 		-o jsonpath='{.spec.versions[0].schema.openAPIV3Schema.description}')
 	[ "$description" != "exact released-chart install drift" ] ||
 		fail "the exact released-chart install did not reconcile a retained CRD another manager drifted"
@@ -4169,9 +4169,9 @@ run_uninstall_proof() {
 	assert_inventory_resources_absent \
 		"$fresh_current_inventory" "$fresh_current_marker_name"
 	for crd_name in \
-		ptahschemas.operator.ptah.dev \
-		ptahschemaplans.operator.ptah.dev \
-		ptahschemaapprovals.operator.ptah.dev; do
+		ptahschemas.operator.ptah.run \
+		ptahschemaplans.operator.ptah.run \
+		ptahschemaapprovals.operator.ptah.run; do
 		kube get crd "$crd_name" >/dev/null
 	done
 	for resource in ptahschema ptahschemaplan ptahschemaapproval; do

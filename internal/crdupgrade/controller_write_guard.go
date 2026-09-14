@@ -18,7 +18,7 @@ const (
 	controllerWritePolicyWeight    = "-158"
 	controllerWriteBindingWeight   = "-157"
 
-	activeOperationFinalizer = "operator.ptah.dev/active-operation"
+	activeOperationFinalizer = "operator.ptah.run/active-operation"
 )
 
 // ControllerWriteGuardPolicyName returns the stable, versioned name of the
@@ -215,7 +215,7 @@ func (g *ControllerWriteGuard) matchResources() *admissionregistrationv1.MatchRe
 			RuleWithOperations: admissionregistrationv1.RuleWithOperations{
 				Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Update},
 				Rule: admissionregistrationv1.Rule{
-					APIGroups:   []string{"operator.ptah.dev"},
+					APIGroups:   []string{"operator.ptah.run"},
 					APIVersions: []string{"v1alpha1"},
 					Resources:   []string{"ptahschemas"},
 					Scope:       scopePtr(admissionregistrationv1.NamespacedScope),

@@ -304,7 +304,7 @@ func TestPersistedSnapshotNormalizesOnlyGeneratedJobIdentity(t *testing.T) {
 
 	template, snapshot := resolvedFixture(t)
 	stored := podTemplate(template)
-	stored.Annotations = map[string]string{"operator.ptah.dev/admission-snapshot-digest": snapshot.Digest}
+	stored.Annotations = map[string]string{"operator.ptah.run/admission-snapshot-digest": snapshot.Digest}
 	stored.Labels = map[string]string{
 		batchv1.ControllerUidLabel: "job-uid",
 		batchv1.JobNameLabel:       "operation-job",

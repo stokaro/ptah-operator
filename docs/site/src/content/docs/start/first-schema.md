@@ -75,7 +75,7 @@ kubectl -n application get ptahschemaplan \
   "$(jq -r .status.plan.name schema.json)" -o json > plan.json
 jq -n --slurpfile schema schema.json --slurpfile plan plan.json '
   {
-    apiVersion: "operator.ptah.dev/v1alpha1", kind: "PtahSchemaApproval",
+    apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchemaApproval",
     metadata: {name: "application-first"},
     spec: {
       schemaRef: {name: $schema[0].metadata.name, uid: $schema[0].metadata.uid},

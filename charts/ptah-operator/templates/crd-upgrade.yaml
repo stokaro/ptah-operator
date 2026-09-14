@@ -321,14 +321,14 @@ rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     resourceNames:
-      - ptahschemaapprovals.operator.ptah.dev
-      - ptahschemaplans.operator.ptah.dev
-      - ptahschemas.operator.ptah.dev
+      - ptahschemaapprovals.operator.ptah.run
+      - ptahschemaplans.operator.ptah.run
+      - ptahschemas.operator.ptah.run
     verbs: ["get", "update"]
   # Kubernetes RBAC cannot scope LIST by resourceName. These read-only grants
   # cover every kind that can persist controller-written state and are required
   # to reject controller downgrades before changing any CRD schema.
-  - apiGroups: ["operator.ptah.dev"]
+  - apiGroups: ["operator.ptah.run"]
     resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]
     verbs: ["list"]
   - apiGroups: ["admissionregistration.k8s.io"]

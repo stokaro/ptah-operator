@@ -16,12 +16,12 @@ patch, or delete ValidatingAdmissionPolicy resources.
       (printf `%s.metadata.annotations[%q] == %q` $object "helm.sh/hook" "pre-delete")
       (printf `%s.metadata.annotations[%q] == %q` $object "helm.sh/hook-delete-policy" "before-hook-creation,hook-succeeded")
       (printf `%s.metadata.annotations[%q] == %q` $object "helm.sh/hook-weight" "-330")
-      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/manager-image" .managerImage)
-      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/release-name" .releaseName)
-      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/release-namespace" .namespace)
-      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/release-sequence" .sequence)
-      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/teardown-retirement-attempt" .attempt)
-      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.dev/teardown-retirement-version" "1")
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.run/manager-image" .managerImage)
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.run/release-name" .releaseName)
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.run/release-namespace" .namespace)
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.run/release-sequence" .sequence)
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.run/teardown-retirement-attempt" .attempt)
+      (printf `%s.metadata.annotations[%q] == %q` $object "operator.ptah.run/teardown-retirement-version" "1")
       (printf `has(%s.metadata.labels) && %s.metadata.labels.size() == 3` $object $object)
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/managed-by" "ptah-operator")
       (printf `%s.metadata.labels[%q] == %q` $object "app.kubernetes.io/instance" .releaseName)
@@ -55,13 +55,13 @@ metadata:
     helm.sh/hook-weight: {{ .weight | quote }}
     helm.sh/hook-delete-policy: {{ .deletePolicy | quote }}
     {{ end }}
-    operator.ptah.dev/teardown-retirement-version: "1"
-    operator.ptah.dev/teardown-retirement-attempt: {{ .attempt | quote }}
-    operator.ptah.dev/teardown-retirement-target: {{ .name | quote }}
-    operator.ptah.dev/release-name: {{ $root.Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ $root.Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ .sequence | quote }}
-    operator.ptah.dev/manager-image: {{ .managerImage | quote }}
+    operator.ptah.run/teardown-retirement-version: "1"
+    operator.ptah.run/teardown-retirement-attempt: {{ .attempt | quote }}
+    operator.ptah.run/teardown-retirement-target: {{ .name | quote }}
+    operator.ptah.run/release-name: {{ $root.Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ $root.Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ .sequence | quote }}
+    operator.ptah.run/manager-image: {{ .managerImage | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ $root.Release.Name }}
@@ -99,13 +99,13 @@ metadata:
     helm.sh/hook-weight: {{ .weight | quote }}
     helm.sh/hook-delete-policy: {{ .deletePolicy | quote }}
     {{ end }}
-    operator.ptah.dev/teardown-retirement-version: "1"
-    operator.ptah.dev/teardown-retirement-attempt: {{ .attempt | quote }}
-    operator.ptah.dev/teardown-retirement-target: {{ .name | quote }}
-    operator.ptah.dev/release-name: {{ .root.Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .root.Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ .sequence | quote }}
-    operator.ptah.dev/manager-image: {{ .managerImage | quote }}
+    operator.ptah.run/teardown-retirement-version: "1"
+    operator.ptah.run/teardown-retirement-attempt: {{ .attempt | quote }}
+    operator.ptah.run/teardown-retirement-target: {{ .name | quote }}
+    operator.ptah.run/release-name: {{ .root.Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .root.Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ .sequence | quote }}
+    operator.ptah.run/manager-image: {{ .managerImage | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .root.Release.Name }}
@@ -420,13 +420,13 @@ metadata:
     helm.sh/hook-weight: {{ .weight | quote }}
     helm.sh/hook-delete-policy: before-hook-creation
     {{ end }}
-    operator.ptah.dev/teardown-retirement-version: "1"
-    operator.ptah.dev/teardown-retirement-attempt: {{ $attempt | quote }}
-    operator.ptah.dev/teardown-retirement-target: {{ .name | quote }}
-    operator.ptah.dev/release-name: {{ $root.Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ $root.Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
-    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+    operator.ptah.run/teardown-retirement-version: "1"
+    operator.ptah.run/teardown-retirement-attempt: {{ $attempt | quote }}
+    operator.ptah.run/teardown-retirement-target: {{ .name | quote }}
+    operator.ptah.run/release-name: {{ $root.Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ $root.Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/manager-image: {{ $managerImage | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ $root.Release.Name }}
@@ -692,12 +692,12 @@ metadata:
     helm.sh/hook: pre-delete
     helm.sh/hook-weight: "-330"
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
-    operator.ptah.dev/teardown-retirement-version: "1"
-    operator.ptah.dev/teardown-retirement-attempt: {{ $attempt | quote }}
-    operator.ptah.dev/release-name: {{ .Release.Name | quote }}
-    operator.ptah.dev/release-namespace: {{ .Release.Namespace | quote }}
-    operator.ptah.dev/release-sequence: {{ $sequence | quote }}
-    operator.ptah.dev/manager-image: {{ $managerImage | quote }}
+    operator.ptah.run/teardown-retirement-version: "1"
+    operator.ptah.run/teardown-retirement-attempt: {{ $attempt | quote }}
+    operator.ptah.run/release-name: {{ .Release.Name | quote }}
+    operator.ptah.run/release-namespace: {{ .Release.Namespace | quote }}
+    operator.ptah.run/release-sequence: {{ $sequence | quote }}
+    operator.ptah.run/manager-image: {{ $managerImage | quote }}
   labels:
     app.kubernetes.io/managed-by: ptah-operator
     app.kubernetes.io/instance: {{ .Release.Name }}
