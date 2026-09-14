@@ -53,6 +53,25 @@ make e2e            # the suite against kind
 `verify-source`, `verify-crd-schema-history` and `verify-kubernetes-support` are
 separate targets under it, so run it after touching `api/` or any marker.
 
+## What a green master says
+
+CI runs on every push to `master`, and its concurrency group is the branch with
+`cancel-in-progress: true`. A batch of merges leaves one CI run standing, the
+newest commit's, and cancels the rest. A commit behind the tip carries no
+verdict at all, and GitHub shows no check against it, which reads exactly like a
+commit nothing objected to.
+
+That is the trade, taken on purpose. One run spends about seven hours of runner
+time (three kind lifecycles near two hours apiece, plus the race detector at
+forty minutes, measured on `75387d4`), and a commit in the middle of a batch
+would spend it re-proving what the tip proves.
+
+So "master is green" is a statement about the tip and about no commit behind it,
+and a bisect cannot assume a commit it lands on was ever built. When one commit
+has to carry its own verdict, a release candidate or a change to the lifecycle
+path itself, put it on a branch and let the pull request run: it fans out over
+the same three minors.
+
 ## What a change to the API owes
 
 - Regenerate. `make generate manifests`, and commit what they wrote — a
