@@ -1,16 +1,17 @@
 ---
 /* The catalog of recorded runs.
  *
- * Every run is printed here as a transcript. Open one and the player types it
- * out; read it and you have the same session. Nothing on this page was written
- * for the page: demo/cmd/record ran each scenario against a kind cluster with
- * the operator installed from its chart, checked the cluster reached the state
- * the scenario claims, and wrote what the commands printed.
+ * Every run has a page of its own, and a tile here is the link to it. The
+ * session below the strip is the first run, playable where it stands. Nothing
+ * on this page was written for the page: demo/cmd/record ran each scenario
+ * against a kind cluster with the operator installed from its chart, checked
+ * the cluster reached the state the scenario claims, and wrote what the
+ * commands printed.
  */
 import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
 import RunFrame from '../../components/RunFrame.astro';
 import { Runs, playerCatalog, labSummary, checkCount } from '../../lib/runs.mjs';
-import { preview, counts, transcript } from '../../../public/demo/transcript.mjs';
+import { preview, counts } from '../../../public/demo/transcript.mjs';
 
 const catalog = playerCatalog();
 const lab = labSummary();
@@ -33,7 +34,8 @@ const base = import.meta.env.BASE_URL;
 	<p class="ptah-demo-lede">
 		{Runs.length} sessions, recorded at the terminal against a four-node kind cluster with the operator
 		installed from its chart. Each one is checked while it runs: a recording is published only if every
-		condition it claims held on the live cluster. Open one to read it; <strong>Play</strong> types it out.
+		condition it claims held on the live cluster. Open one to read the session in full;{' '}
+		<strong>Play</strong> types it out where it stands.
 	</p>
 
 	<ul class="ptah-demo-lab">
@@ -50,10 +52,15 @@ const base = import.meta.env.BASE_URL;
 
 	{first && <RunFrame id={first.id} title={first.title} events={first.events} />}
 
+	{/* A tile is a link to the run's own page, which carries the session in
+		full, what it teaches and what was checked while it ran. It is a link and
+		not a control, so it works without the player, opens in a new tab the way
+		any other link does, and the address it goes to is the one the rail
+		offers. */}
 	<ul class="tiles not-content">
 		{Runs.map((run) => (
 			<li class="tile-slot">
-				<button class="tile" type="button" data-demo-tile data-demo-scenario={run.id}>
+				<a class="tile" href={`./${run.id}/`}>
 					<span class="tile-head">
 						<span class="tile-name">{run.title}</span><span class="tile-tag">{run.tags[0]}</span>
 					</span>
@@ -63,25 +70,11 @@ const base = import.meta.env.BASE_URL;
 						{counts(run.events)} · {run.checks.length}
 						{run.checks.length === 1 ? ' check' : ' checks'}
 					</span>
-				</button>
-				{/* The printed copy of every run, for a reader without the player. */}
-				<pre class="tile-transcript" aria-label={`${run.title} transcript`} set:html={transcript(run.events)} />
-				<p class="tile-more"><a href={`./${run.id}/`}>Read {run.title.toLowerCase()} in full</a></p>
+				</a>
 			</li>
 		))}
 	</ul>
-
-	<dialog class="demo-modal not-content" data-demo-modal aria-labelledby="run-title">
-		<div class="demo-modal-head">
-			<h2 id="run-title" data-demo-title></h2>
-			<p data-demo-caption></p>
-		</div>
-	</dialog>
 </StarlightPage>
 
-{/* The root carries `js` before first paint, so the tiles are controls and
-	the printed transcripts step aside. Without the script neither happens, and
-	the page is every session in full. */}
-<script is:inline>document.documentElement.classList.add('js');</script>
 <script is:inline set:html={`window.PTAH_RUNS = ${JSON.stringify(catalog)};`} />
 <script type="module" src={`${base}demo/player.js`}></script>

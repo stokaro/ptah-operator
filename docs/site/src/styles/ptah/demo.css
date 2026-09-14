@@ -8,8 +8,7 @@
  */
 
 .demo,
-.tiles,
-.demo-modal {
+.tiles {
 	--sans: var(--font-sans);
 	--mono: var(--font-mono);
 	--fg: var(--sl-color-white);
@@ -31,8 +30,7 @@
 }
 
 :root[data-theme='light'] .demo,
-:root[data-theme='light'] .tiles,
-:root[data-theme='light'] .demo-modal {
+:root[data-theme='light'] .tiles {
 	--term: #14181d;
 	--termfg: #e2e6ea;
 	--termmute: #7b858f;
@@ -47,8 +45,7 @@
  * that do nothing. The attribute wins inside the demonstration, which is where
  * these rules apply; the rest of the page keeps Starlight's own behaviour. */
 .demo [hidden],
-.tiles [hidden],
-.demo-modal [hidden] {
+.tiles [hidden] {
 	display: none !important;
 }
 
@@ -153,17 +150,13 @@
   flex: none;
 }
 .demo-btn .i-play,
-.demo-btn .i-close,
-.demo[data-paused="1"] .i-pause,
-.demo.is-open .i-expand {
+.demo[data-paused="1"] .i-pause {
   display: none;
 }
-.demo[data-paused="1"] .i-play,
-.demo.is-open .i-close {
+.demo[data-paused="1"] .i-play {
   display: block;
 }
-.demo[data-paused="1"] span.i-play,
-.demo.is-open span.i-close {
+.demo[data-paused="1"] span.i-play {
   display: inline;
 }
 /* The multiplier is the whole control: a word beside it would say what the
@@ -217,8 +210,7 @@
  * the same way, by scripts/build-runs.mjs, so a session reads identically
  * whether it was played or was already there. */
 .demo-screen .l,
-.demo-transcript .l,
-.tile-transcript .l {
+.demo-transcript .l {
   display: block;
   padding-inline-start: 2ch;
   text-indent: -2ch;
@@ -228,14 +220,12 @@
  * phone made of `oci inspect`. These scroll sideways, the way they would in a
  * terminal that narrow, while the prose around them still wraps. */
 .demo-screen .l-wide,
-.demo-transcript .l-wide,
-.tile-transcript .l-wide {
+.demo-transcript .l-wide {
   white-space: pre;
   overflow-wrap: normal;
 }
 .demo-screen,
-.demo-transcript,
-.tile-transcript {
+.demo-transcript {
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }
@@ -244,18 +234,33 @@
   overflow-wrap: anywhere;
   tab-size: 2;
 }
-/* One height whether or not it is playing, so the block does not jump when the
- * session starts. Scrollable rather than clipped: a reader who looks up from
- * the page mid-session should be able to go back and read what they missed
- * instead of waiting for the loop. */
-@media (min-width: 721px) {
-  .demo-screen {
-    height: 372px;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--termline) transparent;
+/* One box for the session, whichever copy of it is showing.
+ *
+ * At rest the frame shows the transcript that is in the markup; playing, it
+ * shows the screen the player types into. One declaration gives both the same
+ * height, so the frame is the same height at rest, playing and paused, and
+ * pressing Play does not move the page under the reader's hands. The height is
+ * a variable so that the narrower window changes it in one place rather than
+ * in a copy of the rule that would drift.
+ *
+ * Scrollable rather than clipped: a session is longer than the box, and a
+ * reader who looks up mid-run should be able to go back and read what they
+ * missed rather than wait for it to come round again. */
+.demo {
+  --demo-screen-height: 372px;
+}
+@media (max-width: 720px) {
+  .demo {
+    --demo-screen-height: 300px;
   }
+}
+.demo-screen,
+.demo-transcript {
+  block-size: var(--demo-screen-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--termline) transparent;
 }
 .demo-cursor {
   color: var(--termamber);
@@ -294,41 +299,10 @@
   background: var(--termacc);
 }
 
-/* The scenario chooser reads as a caption with a choice in it, not as a tab
- * strip: this page spends its chrome on the terminal, and two words in the
- * page's own type are enough to say which session is playing. */
-.demo-pick {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 18px;
-  margin-top: 2px;
-}
-.demo-pick-btn {
-  border: 0;
-  border-bottom: 1px solid transparent;
-  background: none;
-  padding: 0 0 2px;
-  font: 500 13px var(--sans);
-  color: var(--mute);
-  cursor: pointer;
-}
-.demo-pick-btn:hover {
-  color: var(--fg2);
-}
-.demo-pick-btn[aria-pressed="true"] {
-  color: var(--fg);
-  border-bottom-color: var(--fg);
-}
-.demo-pick-btn:focus-visible {
-  outline: 2px solid var(--acc);
-  outline-offset: 3px;
-}
-
-/* The sessions page. Twenty-four transcripts stacked down a column was a page
- * nobody reached the bottom of; a grid is a thing you scan. A tile says what
- * the session is and what it starts with, and opening one puts the whole
- * transcript in front of the reader at once -- readable immediately, playable
- * if they would rather watch. */
+/* The catalog. Every session stacked down a column was a page nobody reached
+ * the bottom of; a grid is a thing you scan. A tile says what the session is
+ * and what it starts with, and it is the link to the run's own page, where the
+ * transcript is there to read and the frame plays it on request. */
 .tiles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -341,11 +315,15 @@
   display: flex;
   min-width: 0;
 }
+/* A link, drawn as a card: the page's ink rather than a browser's blue, and no
+ * underline on four stacked lines of it. */
 .tile {
   display: flex;
   flex-direction: column;
   gap: 8px;
   width: 100%;
+  color: inherit;
+  text-decoration: none;
   /* A grid item is as wide as its content unless told otherwise, and the first
    * command a tile shows is one long line. Without this the widest tile pushed
    * the page sideways. */
@@ -360,6 +338,10 @@
 }
 .tile:hover {
   border-color: var(--fg2);
+  text-decoration: none;
+}
+.tile:hover .tile-name {
+  color: var(--acc);
 }
 .tile:focus-visible {
   outline: 2px solid var(--acc);
@@ -408,94 +390,6 @@
   font: 11.5px var(--sans);
   color: var(--mute);
 }
-/* Without the script the tiles do nothing, so the transcripts they stand for
- * are the page instead. With it, the overlay is where a session is read and
- * twenty-four transcripts in the tab order would be twenty-four detours. */
-.tile-transcript {
-  margin-top: 10px;
-  padding: 14px 16px;
-  border: 1px solid var(--line);
-  border-radius: 2px;
-  background: var(--term);
-  color: var(--termfg);
-  font: 13px/1.55 var(--mono);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  tab-size: 2;
-}
-.tile-transcript .l {
-  display: block;
-  padding-inline-start: 2ch;
-  text-indent: -2ch;
-}
-/* A tile is a control, so it exists only where something can act on it. The
- * `js` class is set on the root before first paint; without it the page is the
- * transcripts, which is the whole of every session. */
-.js .tile-transcript {
-  display: none;
-}
-html:not(.js) .tile {
-  display: none;
-}
-html:not(.js) .tile-slot {
-  display: block;
-}
-
-/* The overlay names what it is showing, above the frame rather than inside it:
- * the terminal bar is the session's own chrome and has no room for a title. */
-.demo-modal-head {
-  margin-bottom: 12px;
-  /* It arrives with the page dimming rather than landing on top of it. The
-   * frame is already moving by then, so the words settle a moment behind it
-   * instead of competing for the same instant. `@starting-style` is what makes
-   * the entry animate at all: the dialog goes from `display: none`, and a
-   * transition has nothing to start from without it. */
-  opacity: 0;
-  transition: opacity 260ms ease 80ms;
-}
-.demo-modal[open] .demo-modal-head {
-  opacity: 1;
-}
-@starting-style {
-  .demo-modal[open] .demo-modal-head {
-    opacity: 0;
-  }
-}
-.demo-modal-head h2 {
-  font: 500 19px/1.3 var(--sans);
-  letter-spacing: -0.01em;
-  color: var(--fg);
-}
-.demo-modal-head p {
-  margin-top: 4px;
-  max-width: 70ch;
-  font: 14px/1.5 var(--sans);
-  color: var(--fg2);
-  text-wrap: pretty;
-}
-/* Leaving is not entering in reverse. Arriving is a reveal and can take its
- * time; dismissing should get out of the way, so the page is back long before
- * the frame has finished shrinking into the tile it came from.
- *
- * The head goes with it. It does not fly anywhere -- only the frame does -- so
- * left alone it hangs at full strength over a page that is already coming
- * back, which is the part that looked broken. */
-/* [open] is still on the dialog while it leaves, and `.demo-modal[open]` is
- * the same specificity as `.demo-modal.is-leaving` but sits later in the file,
- * so the backdrop held at full strength until the dialog closed and then
- * vanished in one frame. This has to outrank it, not merely follow it. */
-.demo-modal.is-leaving[open]::backdrop {
-  opacity: 0;
-  transition-duration: 160ms;
-}
-/* `[open]` again: the head's own open rule is the same specificity as a bare
- * `.is-leaving`, so the leaving one has to carry it or the head would sit at
- * full strength on the way out, which is where this started. */
-.demo-modal.is-leaving[open] .demo-modal-head {
-  opacity: 0;
-  transition: opacity 120ms ease;
-}
-
 .demo.is-live .demo-transcript {
   position: absolute;
   width: 1px;
@@ -598,16 +492,11 @@ html:not(.js) .tile-slot {
 	white-space: nowrap;
 }
 
-.tile-more {
-	margin: 0.5rem 0 0;
-	font-size: 0.8125rem;
-}
-
 /* What is left of the documentation body inside the demonstration.
  *
- * The frame, the catalog and the overlay carry `not-content`, which is
- * Starlight's own way of saying a subtree is not prose: without it the body's
- * rules reach in, and they did. Every button after the first in the terminal
+ * The frame and the catalog carry `not-content`, which is Starlight's own way
+ * of saying a subtree is not prose: without it the body's rules reach in, and
+ * they did. Every button after the first in the terminal
  * bar took the 18px the body puts between siblings, so the speed control stood
  * higher than the three beside it and the play triangle hung below its own
  * word; `pre` took the body's code background, which in the light theme
@@ -615,8 +504,7 @@ html:not(.js) .tile-slot {
  *
  * These are the rules that are still this sheet's own work: the catalog is a
  * list, and a list in a page has markers, an indent and space between items
- * that a grid of controls does not want, and the ink of the link under a tile
- * is the page's rather than a browser's blue. */
+ * that a grid of cards does not want. */
 .sl-markdown-content .tiles {
 	margin-block: 1.5rem;
 	padding-inline-start: 0;
@@ -630,27 +518,9 @@ html:not(.js) .tile-slot {
 	content: none;
 }
 
-/* A slot is the tile, the link under it, and -- where the player is absent --
- * the whole transcript. They stack; ptah.run's slot holds only the tile.
- *
- * The card takes the row's height rather than its own, because a tile whose
- * tagline wraps to a third line used to stand taller than the two beside it
- * and push its own "Read in full" below theirs. Grid rows, not flex, so the
- * card grows and the link stays its own height at the bottom.
- */
+/* The card takes the row's height rather than its own, so a tile whose tagline
+ * wraps to a third line does not stand taller than the two beside it. */
 .tile-slot {
 	display: grid;
-	grid-template-rows: 1fr auto;
 	min-width: 0;
-}
-
-.sl-markdown-content .tile-more {
-	margin: 0.4rem 0 0;
-	font-size: 0.8125rem;
-}
-.sl-markdown-content .tile-more a {
-	color: var(--sl-color-gray-2);
-}
-.sl-markdown-content .tile-more a:hover {
-	color: var(--sl-color-text-accent);
 }

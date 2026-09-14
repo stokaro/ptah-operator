@@ -2,9 +2,10 @@
 // Drives the recorded-run pages in a browser.
 //
 // What it checks is what a reader would notice and a build log would not: the
-// transcript is in the markup without the player, the player takes over and
-// types, the controls are reachable from the keyboard, and a reader who asked
-// for reduced motion is given the session at rest instead of a typewriter.
+// transcript is in the markup without the player, a tile is a link to the run's
+// own page, the player takes over and types without the frame changing size,
+// the controls are reachable from the keyboard, and a reader who asked for
+// reduced motion is given the session at rest instead of a typewriter.
 //
 //   node scripts/check-demo-page.mjs [--dist <dir>] [--selftest]
 //
@@ -65,8 +66,10 @@ function startServer(distRoot, base) {
 // rather than only that something was.
 export function countsIn(document) {
   return {
-    tiles: document.querySelectorAll('[data-demo-tile]').length,
-    transcripts: document.querySelectorAll('.tile-transcript').length,
+    tiles: document.querySelectorAll('.tiles a.tile').length,
+    hrefs: Array.prototype.map.call(document.querySelectorAll('.tiles a.tile'), (tile) =>
+      tile.getAttribute('href'),
+    ),
     frames: document.querySelectorAll('[data-demo]').length,
     lines: document.querySelectorAll('[data-demo-transcript] .l').length,
   };
@@ -99,8 +102,10 @@ function selftest() {
   const stub = {
     querySelectorAll(selector) {
       const table = {
-        '[data-demo-tile]': [1, 2],
-        '.tile-transcript': [1, 2],
+        '.tiles a.tile': [
+          { getAttribute: () => './first-apply/' },
+          { getAttribute: () => './drift/' },
+        ],
         '[data-demo]': [1],
         '[data-demo-transcript] .l': [1, 2, 3],
       };
@@ -108,8 +113,11 @@ function selftest() {
     },
   };
   const counts = countsIn(stub);
-  if (counts.tiles !== 2 || counts.transcripts !== 2 || counts.frames !== 1 || counts.lines !== 3) {
+  if (counts.tiles !== 2 || counts.frames !== 1 || counts.lines !== 3) {
     throw new Error(`countsIn read ${JSON.stringify(counts)}`);
+  }
+  if (counts.hrefs.join(',') !== './first-apply/,./drift/') {
+    throw new Error(`countsIn read the tiles' addresses as ${counts.hrefs.join(',')}`);
   }
   const beat = pausePoint([
     ['sync', 'ready'],
@@ -198,6 +206,66 @@ async function measurePause(browser, origin, beat) {
   return problems;
 }
 
+// measureFrame drives one run's own page through rest, playing and paused, and
+// reports every state whose box is not the box the page started with.
+//
+// This is the defect a reader meets first: a frame that grows when the session
+// starts takes the page out from under the hands of whoever pressed Play, and
+// nothing in a build log can see it. The page's own scroll height is measured
+// with it, because a frame that keeps its size while the page around it moves
+// is the same complaint one step out.
+async function measureFrame(browser, origin, runId) {
+  const problems = [];
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const boxOf = () =>
+    page.evaluate(() => {
+      const frame = document.querySelector('[data-demo]');
+      if (!frame) return null;
+      const rect = frame.getBoundingClientRect();
+      return {
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        page: document.documentElement.scrollHeight,
+      };
+    });
+  try {
+    await page.goto(`${origin}demo/${runId}/`, { waitUntil: 'load' });
+    await page.waitForSelector('[data-demo-controls]:not([hidden])', { timeout: 10_000 });
+    const states = [{ state: 'at rest', box: await boxOf() }];
+    const toggle = page.locator('[data-demo-toggle]').first();
+    await toggle.click();
+    await page.waitForTimeout(2500);
+    states.push({ state: 'playing', box: await boxOf() });
+    await page.waitForTimeout(5000);
+    states.push({ state: 'further into the run', box: await boxOf() });
+    await toggle.click();
+    await page.waitForTimeout(400);
+    states.push({ state: 'paused', box: await boxOf() });
+
+    const rest = states[0].box;
+    if (!rest) return [`demo/${runId}/ carries no frame`];
+    for (const { state, box } of states.slice(1)) {
+      if (!box) {
+        problems.push(`demo/${runId}/ lost its frame ${state}`);
+        continue;
+      }
+      if (box.width !== rest.width || box.height !== rest.height) {
+        problems.push(
+          `demo/${runId}/ has a frame of ${rest.width}x${rest.height} at rest and ` +
+            `${box.width}x${box.height} ${state}`,
+        );
+      }
+      if (box.page !== rest.page) {
+        problems.push(`demo/${runId}/ is ${rest.page}px tall at rest and ${box.page}px ${state}`);
+      }
+    }
+  } finally {
+    await context.close();
+  }
+  return problems;
+}
+
 async function main() {
   if (process.argv.includes('--selftest')) {
     selftest();
@@ -230,14 +298,18 @@ async function main() {
   const ordered = [...record.scenarios].sort((left, right) => rank(left.tags?.[0]) - rank(right.tags?.[0]));
   const base = detectBase(distRoot);
   const { server, port } = await startServer(distRoot, base);
-  const origin = `http://127.0.0.1:${port}${base}`;
+  // The trailing slash is the site's own: `base` is read off a built asset's
+  // address and comes back without one, and an origin that ends inside the
+  // version segment turns every relative link on the page into a different
+  // address from the one a reader would follow.
+  const origin = `http://127.0.0.1:${port}${base}/`;
   const browser = await chromium.launch();
   const problems = [];
 
   try {
-    // Without JavaScript the page is the transcripts. This is what a crawler,
-    // a screen reader and a reader on a slow connection get, and it has to be
-    // the whole session rather than an empty frame.
+    // Without JavaScript the catalog is still a catalog: every tile is a link
+    // to the run's own page, which carries that session in full. This is what a
+    // crawler, a screen reader and a reader on a slow connection get.
     const quiet = await browser.newContext({ javaScriptEnabled: false });
     const still = await quiet.newPage();
     await still.goto(`${origin}demo/`, { waitUntil: 'load' });
@@ -250,8 +322,14 @@ async function main() {
     if (withoutScript.tiles !== record.scenarios.length) {
       problems.push(`without JavaScript the catalog shows ${withoutScript.tiles} of ${record.scenarios.length} runs`);
     }
-    if (withoutScript.transcripts !== record.scenarios.length) {
-      problems.push(`without JavaScript ${withoutScript.transcripts} transcripts are in the markup`);
+    // A tile is a link, and the address it carries is the run's own page. A
+    // tile that opened something with a script behind it would leave a reader
+    // without one holding a card that does nothing.
+    const addressed = new Set(withoutScript.hrefs);
+    for (const run of record.scenarios) {
+      if (!addressed.has(`./${run.id}/`)) {
+        problems.push(`no tile links to ./${run.id}/ (the catalog offers ${withoutScript.hrefs.join(', ')})`);
+      }
     }
     // The frame carries the first run in full. Counted from the recording
     // rather than against a figure written here, which would pass whatever the
@@ -283,19 +361,21 @@ async function main() {
     const typed = await page.evaluate(() => document.querySelector('[data-demo-screen]')?.textContent?.trim() ?? '');
     if (typed.length === 0) problems.push('pressing Play typed nothing into the screen');
 
-    // A tile opens the run it names. With one run there is no switch to make,
-    // and the assertion would pass by comparing a value with itself.
+    // A tile opens the run's own page, and the frame there is that run. With one
+    // run the assertion would pass by comparing a value with itself.
     const second = ordered[1];
     if (!second) {
-      console.warn('check-demo-page.mjs: one run recorded, so switching between tiles was not measured');
+      console.warn('check-demo-page.mjs: one run recorded, so opening a tile was not measured');
     }
     if (second) {
-      await page.locator(`[data-demo-tile][data-demo-scenario="${second.id}"]`).first().click();
-      await page.waitForTimeout(500);
+      await page.locator(`.tiles a.tile[href="./${second.id}/"]`).first().click();
+      await page.waitForURL(`**/demo/${second.id}/`, { timeout: 10_000 }).catch(() => {
+        problems.push(`a tile for ${second.id} left the reader on ${page.url()}`);
+      });
       const showing = await page.evaluate(() =>
         document.querySelector('[data-demo]')?.getAttribute('data-demo-scenario'),
       );
-      if (showing !== second.id) problems.push(`a tile for ${second.id} left the frame on ${showing}`);
+      if (showing !== second.id) problems.push(`demo/${second.id}/ shows the frame on ${showing}`);
     }
     if (failures.length > 0) problems.push(`the player threw: ${failures.join('; ')}`);
     await live.close();
@@ -307,6 +387,10 @@ async function main() {
     } else {
       problems.push(...(await measurePause(browser, origin, beat)));
     }
+
+    // The frame is one box: the same width and the same height at rest, while
+    // it types, and while it is paused.
+    problems.push(...(await measureFrame(browser, origin, ordered[0].id)));
 
     // A reader who asked for reduced motion gets the session, not a
     // typewriter: the transcript stays and nothing types on its own.
