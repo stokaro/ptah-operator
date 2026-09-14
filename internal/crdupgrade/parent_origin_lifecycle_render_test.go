@@ -53,7 +53,7 @@ func TestParentOriginLifecycleRecognizesIdentityBearingPredecessorsAndExactRetri
 			wantError: "upgrade requires a predecessor release that carries Ptah identity metadata",
 		},
 		{
-			name: "v2-aware upgrade with readiness marker and complete boundary",
+			name: "upgrade with readiness marker and complete boundary",
 			change: func(state map[string]any) {
 				fixture.retainCurrent(state)
 				fixture.publishMarker(state)
@@ -62,7 +62,7 @@ func TestParentOriginLifecycleRecognizesIdentityBearingPredecessorsAndExactRetri
 		{
 			name:      "readiness marker without complete boundary",
 			change:    fixture.publishMarker,
-			wantError: "v2-aware upgrade is missing its complete exact parent-origin boundary",
+			wantError: "upgrade is missing its complete exact parent-origin boundary",
 		},
 		{
 			name: "sparse v2 boundary",
@@ -82,37 +82,9 @@ func TestParentOriginLifecycleRecognizesIdentityBearingPredecessorsAndExactRetri
 			wantError: "differs from the exact parent-origin contract",
 		},
 		{
-			name:      "retained v2 boundary without readiness marker or v1 predecessor",
+			name:      "retained boundary without its readiness marker",
 			change:    fixture.retainCurrent,
 			wantError: "upgrade requires a predecessor release that carries Ptah identity metadata",
-		},
-		{
-			name:   "complete actual v1 predecessor",
-			change: fixture.retainLegacy,
-		},
-		{
-			name: "v1 predecessor with complete v2 boundary retry",
-			change: func(state map[string]any) {
-				fixture.retainLegacy(state)
-				fixture.retainCurrent(state)
-			},
-		},
-		{
-			name: "v1 predecessor with sparse v2 repair",
-			change: func(state map[string]any) {
-				fixture.retainLegacy(state)
-				fixture.retainCurrent(state)
-				state["current"].([]any)[0].(map[string]any)["object"] = map[string]any{}
-			},
-			wantError: "retained v2 parent-origin boundary is sparse",
-		},
-		{
-			name: "sparse v1 predecessor",
-			change: func(state map[string]any) {
-				fixture.retainLegacy(state)
-				state["legacy"].([]any)[0].(map[string]any)["object"] = map[string]any{}
-			},
-			wantError: "first v2 upgrade requires the complete exact v1 predecessor",
 		},
 	}
 	for _, test := range tests {
@@ -139,7 +111,7 @@ func TestParentOriginLifecycleRecognizesIdentityBearingPredecessorsAndExactRetri
 type parentOriginRenderFixture struct {
 	helm, helpers, values string
 	state                 map[string]any
-	current, legacy       []map[string]any
+	current               []map[string]any
 	ready                 map[string]any
 }
 
@@ -186,57 +158,27 @@ func newParentOriginRenderFixture(t *testing.T, helm string) parentOriginRenderF
 		crdupgrade.ParentHookJobOriginGuardPolicyName(parentOriginNamespace, parentOriginRelease),
 		crdupgrade.ParentHookPodOriginGuardPolicyName(parentOriginNamespace, parentOriginRelease),
 	}
-	current, old := []any{}, []any{}
-	for index, name := range currentNames {
-		oldName := strings.Replace(name, "-v2-", "-v1-", 1)
+	current := []any{}
+	for _, name := range currentNames {
 		for _, kind := range []string{"ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"} {
 			newObject := object(candidate, kind, "", name)
-			oldObject := parentOriginRename(t, parentOriginClone(t, newObject), oldName)
 			fixture.current = append(fixture.current, newObject)
-			fixture.legacy = append(fixture.legacy, oldObject)
 			weight := fmt.Sprintf("%d", -137+len(current))
 			current = append(current, map[string]any{"kind": kind, "name": name, "weight": weight, "spec": newObject["spec"], "object": map[string]any{}})
-			old = append(old, map[string]any{
-				"kind": kind, "name": oldName, "weight": weight, "spec": oldObject["spec"], "object": map[string]any{},
-				"retiredWeight": fmt.Sprintf("%d", 9+index*2), "retiredSpec": map[string]any{},
-			})
 		}
 	}
 	ready := object(candidate, "ConfigMap", parentOriginNamespace, crdupgrade.ParentOriginReadyMarkerName(parentOriginNamespace, parentOriginRelease))
 	fixture.ready = ready
 	fixture.state = map[string]any{
-		"live": true, "activationBootstrap": false, "current": current, "legacy": old,
+		"live": true, "activationBootstrap": false, "current": current,
 		"marker": map[string]any{}, "markerName": ready["metadata"].(map[string]any)["name"], "markerData": ready["data"],
 	}
 	return fixture
 }
 
-// parentOriginRename renames a rendered boundary object, including the policy
-// name a binding points at, so the pair still refers to itself.
-func parentOriginRename(t *testing.T, object map[string]any, name string) map[string]any {
-	t.Helper()
-	metadata, ok := object["metadata"].(map[string]any)
-	if !ok {
-		t.Fatalf("rendered object has no metadata: %v", object)
-	}
-	metadata["name"] = name
-	if spec, ok := object["spec"].(map[string]any); ok {
-		if _, references := spec["policyName"]; references {
-			spec["policyName"] = name
-		}
-	}
-	return object
-}
-
 func (f parentOriginRenderFixture) retainCurrent(state map[string]any) {
 	for index, object := range f.current {
 		state["current"].([]any)[index].(map[string]any)["object"] = parentOriginCopy(object)
-	}
-}
-
-func (f parentOriginRenderFixture) retainLegacy(state map[string]any) {
-	for index, object := range f.legacy {
-		state["legacy"].([]any)[index].(map[string]any)["object"] = parentOriginCopy(object)
 	}
 }
 

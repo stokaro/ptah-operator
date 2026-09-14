@@ -184,8 +184,6 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		"ptah-operator-hook-pod-origin-guard-v2-f1e165dcd72a",
 		"ptah-operator-hook-parent-origin-guard-v2-f1e165dcd72a",
 		"ptah-operator-cert-stage-guard-v1-f1e165dcd72a",
-		"ptah-operator-hook-pod-origin-guard-v1-f1e165dcd72a",
-		"ptah-operator-hook-parent-origin-guard-v1-f1e165dcd72a",
 		"ptah-operator-hook-parent-contract-v1-90a0385b562b",
 	}
 	assertExactRule(t, clusterRole, "admissionregistration.k8s.io", "validatingadmissionpolicies", runtimeGuardNames, []string{"get"})

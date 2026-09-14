@@ -402,8 +402,8 @@ func TestTeardownRetirementInventoryIsSortedDeduplicatedAndBounded(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pairs) < 26 {
-		t.Fatalf("retirement inventory has %d pairs; want all current, stable, legacy, and optional pairs", len(pairs))
+	if len(pairs) < 21 {
+		t.Fatalf("retirement inventory has %d pairs; want all current, stable and optional pairs", len(pairs))
 	}
 	names := make([]string, len(pairs))
 	for index, pair := range pairs {

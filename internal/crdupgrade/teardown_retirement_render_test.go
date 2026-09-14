@@ -88,7 +88,7 @@ func TestRenderedTeardownRetirementMatchesCompiledContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			wantCount := 29
+			wantCount := 21
 			if test.certificateRecovery {
 				wantCount++
 			}
