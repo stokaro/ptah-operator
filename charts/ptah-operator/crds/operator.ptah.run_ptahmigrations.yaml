@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "3"
-    operator.ptah.run/crd-schema-digest: "sha256:e811a8ff1f81fed0b2a166bb239e1204b215fa6ab313a7b746619c12fff815bb"
+    operator.ptah.run/crd-schema-version: "4"
+    operator.ptah.run/crd-schema-digest: "sha256:546a30484dd2b27266bfef45bc6c749bdef4f1b06c13ed743c7f0f9f66ff6aca"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -766,6 +766,173 @@ spec:
                 > 0 && (!has(self.artifact.transport.caFrom.optional) || !self.artifact.transport.caFrom.optional))'
           status:
             properties:
+              activeOperation:
+                properties:
+                  attempt:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  coordinationDigest:
+                    type: string
+                  dispatchNotAfter:
+                    format: date-time
+                    type: string
+                  dispatchStarted:
+                    type: boolean
+                  executionBindingID:
+                    pattern: ^v1-[0-9a-f]{32}$
+                    type: string
+                  executionNotAfter:
+                    format: date-time
+                    type: string
+                  id:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  inputFingerprint:
+                    pattern: ^sha256:[0-9a-f]{64}$
+                    type: string
+                  jobName:
+                    maxLength: 63
+                    minLength: 1
+                    type: string
+                  jobUID:
+                    type: string
+                  planRef:
+                    properties:
+                      name:
+                        type: string
+                      uid:
+                        type: string
+                    required:
+                    - name
+                    - uid
+                    type: object
+                  source:
+                    properties:
+                      digest:
+                        type: string
+                      registryAuthFrom:
+                        properties:
+                          dockerConfigJSONKey:
+                            default: .dockerconfigjson
+                            type: string
+                          mode:
+                            default: Environment
+                            enum:
+                            - Environment
+                            - DockerConfigJSON
+                            type: string
+                          name:
+                            type: string
+                          passwordKey:
+                            default: password
+                            type: string
+                          registryKey:
+                            default: registry
+                            enum:
+                            - registry
+                            type: string
+                          tokenKey:
+                            default: token
+                            type: string
+                          usernameKey:
+                            default: username
+                            type: string
+                        required:
+                        - name
+                        type: object
+                        x-kubernetes-validations:
+                        - message: dockerConfigJSONKey is required in DockerConfigJSON
+                            mode
+                          rule: self.mode != 'DockerConfigJSON' || has(self.dockerConfigJSONKey)
+                      resolvedReference:
+                        type: string
+                      transport:
+                        properties:
+                          caFrom:
+                            properties:
+                              key:
+                                type: string
+                              name:
+                                default: ""
+                                type: string
+                              optional:
+                                type: boolean
+                            required:
+                            - key
+                            type: object
+                            x-kubernetes-map-type: atomic
+                          clientCertificateFrom:
+                            properties:
+                              certificateKey:
+                                default: tls.crt
+                                type: string
+                              name:
+                                type: string
+                              privateKeyKey:
+                                default: tls.key
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          plainHTTP:
+                            default: false
+                            type: boolean
+                        type: object
+                        x-kubernetes-validations:
+                        - message: caFrom cannot be used with plainHTTP
+                          rule: '!self.plainHTTP || !has(self.caFrom)'
+                        - message: clientCertificateFrom cannot be used with plainHTTP
+                          rule: '!self.plainHTTP || !has(self.clientCertificateFrom)'
+                        - message: clientCertificateFrom is not supported until the
+                            executor can scope client certificates across redirects
+                          rule: '!has(self.clientCertificateFrom)'
+                    required:
+                    - digest
+                    - resolvedReference
+                    type: object
+                  startedAt:
+                    format: date-time
+                    type: string
+                  target:
+                    properties:
+                      engine:
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[A-Za-z][A-Za-z0-9._-]*$
+                        type: string
+                      urlFrom:
+                        properties:
+                          key:
+                            type: string
+                          name:
+                            default: ""
+                            type: string
+                          optional:
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - engine
+                    - urlFrom
+                    type: object
+                  type:
+                    enum:
+                    - Resolve
+                    - Verify
+                    - History
+                    - Apply
+                    type: string
+                required:
+                - attempt
+                - id
+                - inputFingerprint
+                - jobName
+                - startedAt
+                - type
+                type: object
               artifact:
                 properties:
                   digest:

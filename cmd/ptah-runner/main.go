@@ -20,7 +20,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 	ptahBinary := flags.String("ptah-binary", "ptah", "path to the Ptah executable")
 	maxResultBytes := flags.Int64("max-result-bytes", runner.DefaultMaxResultBytes, "maximum retained bytes for each child output stream")
 	maxPlanBytes := flags.Int64("max-plan-bytes", runner.DefaultMaxPlanBytes, "maximum complete executable plan bytes")
-	operationFlag := flags.String("operation", "", "operation: resolve, verify, observe, plan, or apply")
+	operationFlag := flags.String("operation", "", "operation: resolve, verify, observe, plan, apply, migration-history, or migration-apply")
 	installTo := flags.String("install-to", "", "copy this executable to the fixed Job runner path")
 	validateOCISource := flags.String("validate-oci-source", "", "validate OCI source authority grants without network access")
 	snapshotOCICATo := flags.String("snapshot-oci-ca-to", "", "copy a validated OCI CA to an exclusive snapshot path")
@@ -91,7 +91,7 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer, envi
 		return 2
 	}
 	if !operation.Valid() {
-		_, _ = fmt.Fprintln(stderr, "ptah-runner: operation must be resolve, verify, observe, plan, or apply")
+		_, _ = fmt.Fprintln(stderr, "ptah-runner: operation must be resolve, verify, observe, plan, apply, migration-history, or migration-apply")
 		return 2
 	}
 	if *maxResultBytes <= 0 {

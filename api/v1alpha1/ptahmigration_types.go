@@ -70,6 +70,89 @@ const (
 	MigrationRunOutcomeUnknown MigrationRunOutcome = "Unknown"
 )
 
+// MigrationOperationType is one step of a migration lifecycle. Each one is a
+// Job, and each Job belongs to exactly one claim.
+// +kubebuilder:validation:Enum=Resolve;Verify;History;Apply
+type MigrationOperationType string
+
+const (
+	// MigrationOperationResolve turns the artifact reference into a digest.
+	MigrationOperationResolve MigrationOperationType = "Resolve"
+	// MigrationOperationVerify checks the resolved artifact against its policy.
+	MigrationOperationVerify MigrationOperationType = "Verify"
+	// MigrationOperationHistory reads the database's own revision table against
+	// the artifact and changes nothing.
+	MigrationOperationHistory MigrationOperationType = "History"
+	// MigrationOperationApply runs the planned sequence.
+	MigrationOperationApply MigrationOperationType = "Apply"
+)
+
+// MigrationOperationStatus is one durable claim: the work the controller
+// decided on, before the Job that carries it exists.
+//
+// It is durable because the Job is not the record. A claim written first, with
+// the Job's deterministic name in it, is what lets a controller that restarts
+// mid-dispatch tell the Job it created from one it has not created yet -- and
+// what lets admission refuse a Job that no claim asked for.
+type MigrationOperationStatus struct {
+	Type MigrationOperationType `json:"type"`
+
+	// ID is this attempt's identity, distinct from every other attempt of the
+	// same operation.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	ID string `json:"id"`
+
+	// InputFingerprint is what the operation was decided from. An input that
+	// changed while the Job ran is what makes its result stale rather than
+	// wrong.
+	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
+	InputFingerprint string `json:"inputFingerprint"`
+
+	// JobName is the deterministic name this claim's Job takes. It is written
+	// before the Job is created.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	JobName string `json:"jobName"`
+
+	// JobUID is the exact Job the claim is bound to, once one exists. A Job
+	// with the right name and another UID is a different Job.
+	JobUID types.UID `json:"jobUID,omitempty"`
+
+	StartedAt metav1.Time `json:"startedAt"`
+
+	// +kubebuilder:validation:Minimum=1
+	Attempt int32 `json:"attempt"`
+
+	// ExecutionBindingID is the epoch this claim was authorized under. A
+	// rollout that changes any execution component retires the claim rather
+	// than letting its Job finish under new bytes.
+	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
+	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+
+	// Source is the credential-free artifact binding this operation uses:
+	// the resolved digest and the selectors needed to fetch it. Every operation
+	// after Resolve carries one, so a newer generation cannot send newly
+	// selected credentials to the old artifact's registry.
+	Source *OCIArtifactAccessBinding `json:"source,omitempty"`
+
+	// Target is the key-free database binding, and CoordinationDigest the realm
+	// the operation serializes against.
+	Target             *DatabaseTargetBinding `json:"target,omitempty"`
+	CoordinationDigest string                 `json:"coordinationDigest,omitempty"`
+
+	// PlanRef is the immutable plan an Apply carries out.
+	PlanRef *ImmutableObjectReference `json:"planRef,omitempty"`
+
+	// DispatchStarted records that the one permitted Job create attempt was
+	// made. An Apply that crossed this boundary is never recreated, because
+	// whether it ran is a question for the database rather than for a retry.
+	DispatchStarted bool `json:"dispatchStarted,omitempty"`
+
+	// DispatchNotAfter and ExecutionNotAfter bound the claim in time.
+	DispatchNotAfter  *metav1.Time `json:"dispatchNotAfter,omitempty"`
+	ExecutionNotAfter *metav1.Time `json:"executionNotAfter,omitempty"`
+}
+
 // MigrationPolicy decides when a planned sequence may execute.
 type MigrationPolicy struct {
 	// Apply defaults to OnApproval. A migration artifact carries arbitrary SQL,
@@ -222,6 +305,10 @@ type PtahMigrationStatus struct {
 	// the question it answers is the same one: a rollout that changed any of
 	// them has to invalidate a plan rather than execute it under new bytes.
 	ExecutionBinding *ExecutionBindingStatus `json:"executionBinding,omitempty"`
+
+	// ActiveOperation is the claim the controller is currently carrying out,
+	// and nil when nothing is in flight.
+	ActiveOperation *MigrationOperationStatus `json:"activeOperation,omitempty"`
 
 	// History is the last reading of the database's own revision table.
 	History *MigrationHistoryStatus `json:"history,omitempty"`
