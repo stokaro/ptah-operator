@@ -37,6 +37,9 @@ const (
 )
 
 var fixtureNames = []string{
+	"ptahmigrationapprovals.operator.ptah.dev",
+	"ptahmigrationplans.operator.ptah.dev",
+	"ptahmigrations.operator.ptah.dev",
 	"ptahschemaapprovals.operator.ptah.dev",
 	"ptahschemaplans.operator.ptah.dev",
 	"ptahschemas.operator.ptah.dev",
@@ -159,9 +162,12 @@ func writeFixtureSet(t *testing.T, repository string, managed bool, version uint
 	for index, name := range fixtureNames {
 		plural := strings.Split(name, ".")[0]
 		kind := map[string]string{
-			"ptahschemas.operator.ptah.dev":         "PtahSchema",
-			"ptahschemaapprovals.operator.ptah.dev": "PtahSchemaApproval",
-			"ptahschemaplans.operator.ptah.dev":     "PtahSchemaPlan",
+			"ptahschemas.operator.ptah.dev":            "PtahSchema",
+			"ptahschemaapprovals.operator.ptah.dev":    "PtahSchemaApproval",
+			"ptahschemaplans.operator.ptah.dev":        "PtahSchemaPlan",
+			"ptahmigrations.operator.ptah.dev":         "PtahMigration",
+			"ptahmigrationapprovals.operator.ptah.dev": "PtahMigrationApproval",
+			"ptahmigrationplans.operator.ptah.dev":     "PtahMigrationPlan",
 		}[name]
 		crd := &apiextensionsv1.CustomResourceDefinition{
 			TypeMeta: metav1.TypeMeta{

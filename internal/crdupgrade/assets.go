@@ -15,6 +15,13 @@ const (
 	PtahSchemaCRDName         = "ptahschemas.operator.ptah.dev"
 	PtahSchemaApprovalCRDName = "ptahschemaapprovals.operator.ptah.dev"
 	PtahSchemaPlanCRDName     = "ptahschemaplans.operator.ptah.dev"
+	// The versioned-migration kinds. They are owned by the same manager as the
+	// schema kinds because they share one release and one rollback fence: a
+	// cluster that has the newer schema CRDs and not these would be running a
+	// controller whose own API is half installed.
+	PtahMigrationCRDName         = "ptahmigrations.operator.ptah.dev"
+	PtahMigrationApprovalCRDName = "ptahmigrationapprovals.operator.ptah.dev"
+	PtahMigrationPlanCRDName     = "ptahmigrationplans.operator.ptah.dev"
 	// SchemaVersionAnnotation is the monotonic rollback fence owned by the CRD
 	// manager. Every generated CRD schema change must increase its value.
 	SchemaVersionAnnotation = "operator.ptah.dev/crd-schema-version"
@@ -28,10 +35,13 @@ const (
 	ControllerStateVersionAnnotation = "operator.ptah.dev/controller-state-version"
 	// CurrentCRDSchemaVersion must match CRD_SCHEMA_VERSION in the Makefile and
 	// every generated CRD annotation.
-	CurrentCRDSchemaVersion uint64 = 2
+	CurrentCRDSchemaVersion uint64 = 3
 )
 
 var expectedNames = []string{
+	PtahMigrationApprovalCRDName,
+	PtahMigrationPlanCRDName,
+	PtahMigrationCRDName,
 	PtahSchemaApprovalCRDName,
 	PtahSchemaPlanCRDName,
 	PtahSchemaCRDName,

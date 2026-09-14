@@ -5493,8 +5493,8 @@ for crd_file in "$ROOT_DIR"/config/crd/bases/*.yaml; do
 	[ "$(grep -Fc "operator.ptah.dev/crd-schema-version: \"$EXPECTED_CRD_SCHEMA_VERSION\"" "$crd_file")" -eq 1 ]
 	[ "$(grep -Ec 'operator[.]ptah[.]dev/crd-schema-digest: "sha256:[0-9a-f]{64}"' "$crd_file")" -eq 1 ]
 done
-[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 3 ]
-[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 3 ]
+[ "$(find "$ROOT_DIR/config/crd/bases" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 6 ]
+[ "$(find "$ROOT_DIR/internal/crdupgrade/assets" -type f -name '*.yaml' | wc -l | tr -d '[:space:]')" = 6 ]
 for crd_directory in \
 	"$ROOT_DIR/config/crd/bases" \
 	"$ROOT_DIR/charts/ptah-operator/crds" \

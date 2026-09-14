@@ -12,6 +12,9 @@ rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     resourceNames:
+      - ptahmigrationapprovals.operator.ptah.dev
+      - ptahmigrationplans.operator.ptah.dev
+      - ptahmigrations.operator.ptah.dev
       - ptahschemaapprovals.operator.ptah.dev
       - ptahschemaplans.operator.ptah.dev
       - ptahschemas.operator.ptah.dev

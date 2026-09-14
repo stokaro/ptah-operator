@@ -186,11 +186,27 @@ func TestDecodeBaselineSetAllowsOnlyAnActuallyEmptySet(t *testing.T) {
 		t.Fatalf("empty baseline decoded %d CRDs", len(set.byName))
 	}
 
+	// A baseline missing one of the generated CRDs is a baseline taken before
+	// that CRD existed, which is what every commit before an API is added looks
+	// like. It is read rather than refused; what is refused is a baseline
+	// carrying a CRD the generation no longer produces, because that is a
+	// removal and a removal is its own migration.
 	partial := fixtureDocuments(t, fixtureOptions{
 		managed: true, version: 1, description: "partial", omitLast: true,
 	})
-	if _, err := decodeBaselineSet(partial); err == nil || !strings.Contains(err.Error(), "complete generated set") {
-		t.Fatalf("partial baseline error = %v, want complete-set rejection", err)
+	set, err = decodeBaselineSet(partial)
+	if err != nil {
+		t.Fatalf("partial baseline error = %v, want it read as a baseline predating the new CRD", err)
+	}
+	if len(set.byName) != len(requiredCRDNames())-1 {
+		t.Fatalf("partial baseline decoded %d CRDs, want %d", len(set.byName), len(requiredCRDNames())-1)
+	}
+
+	unknown := fixtureDocuments(t, fixtureOptions{
+		managed: true, version: 1, description: "unknown", addUnexpected: true,
+	})
+	if _, err := decodeBaselineSet(unknown); err == nil || !strings.Contains(err.Error(), "separately reviewed migration") {
+		t.Fatalf("removed-CRD baseline error = %v, want a removal rejection", err)
 	}
 }
 
@@ -293,6 +309,12 @@ func fixtureCRD(name, description string) *apiextensionsv1.CustomResourceDefinit
 		kind = "PtahSchemaApproval"
 	case "ptahschemaplans.operator.ptah.dev":
 		kind = "PtahSchemaPlan"
+	case "ptahmigrations.operator.ptah.dev":
+		kind = "PtahMigration"
+	case "ptahmigrationapprovals.operator.ptah.dev":
+		kind = "PtahMigrationApproval"
+	case "ptahmigrationplans.operator.ptah.dev":
+		kind = "PtahMigrationPlan"
 	}
 	return &apiextensionsv1.CustomResourceDefinition{
 		TypeMeta: metav1.TypeMeta{

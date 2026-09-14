@@ -1027,6 +1027,9 @@ func legacyControllerCoordinationRoleRules() []rbacv1.PolicyRule {
 
 func currentControllerClusterRoleRules(rollout *RolloutGuard) []rbacv1.PolicyRule {
 	crdNames := []string{
+		"ptahmigrationapprovals.operator.ptah.dev",
+		"ptahmigrationplans.operator.ptah.dev",
+		"ptahmigrations.operator.ptah.dev",
 		"ptahschemaapprovals.operator.ptah.dev",
 		"ptahschemaplans.operator.ptah.dev",
 		"ptahschemas.operator.ptah.dev",

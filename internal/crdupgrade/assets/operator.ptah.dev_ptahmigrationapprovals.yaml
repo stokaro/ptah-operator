@@ -5,33 +5,36 @@ metadata:
   annotations:
     operator.ptah.dev/controller-state-version: "1"
     operator.ptah.dev/crd-schema-version: "3"
-    operator.ptah.dev/crd-schema-digest: "sha256:83ee43f4ae970c262e1abd0d619fa7b6761d52ed70a16f97272cd3893d01cd7a"
+    operator.ptah.dev/crd-schema-digest: "sha256:ae36ee7247372ecb5980bb0633e426155a10bfcdb089feaf0d0870e58277468c"
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: ptahschemaplans.operator.ptah.dev
+  name: ptahmigrationapprovals.operator.ptah.dev
 spec:
   group: operator.ptah.dev
   names:
-    kind: PtahSchemaPlan
-    listKind: PtahSchemaPlanList
-    plural: ptahschemaplans
+    kind: PtahMigrationApproval
+    listKind: PtahMigrationApprovalList
+    plural: ptahmigrationapprovals
     shortNames:
-    - ptahplan
-    singular: ptahschemaplan
+    - ptahmapprove
+    singular: ptahmigrationapproval
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.schemaRef.name
-      name: Schema
+    - jsonPath: .spec.migrationRef.name
+      name: Migration
       type: string
-    - jsonPath: .spec.fingerprint
-      name: Fingerprint
+    - jsonPath: .spec.planRef.name
+      name: Plan
       type: string
-    - jsonPath: .spec.statementCount
-      name: Statements
-      type: integer
-    - jsonPath: .spec.destructive
-      name: Destructive
-      type: boolean
+    - jsonPath: .spec.approver.username
+      name: Approver
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Accepted')].status
+      name: Accepted
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Stale')].status
+      name: Stale
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -47,49 +50,25 @@ spec:
             type: object
           spec:
             properties:
-              actualStateFingerprint:
+              approvedAt:
+                format: date-time
                 type: string
+              approver:
+                properties:
+                  groups:
+                    items:
+                      type: string
+                    maxItems: 64
+                    type: array
+                  uid:
+                    type: string
+                  username:
+                    type: string
+                required:
+                - username
+                type: object
               artifactDigest:
                 type: string
-              chunks:
-                items:
-                  properties:
-                    digest:
-                      type: string
-                    index:
-                      format: int32
-                      maximum: 15
-                      minimum: 0
-                      type: integer
-                    key:
-                      type: string
-                    name:
-                      type: string
-                    size:
-                      format: int32
-                      maximum: 524288
-                      minimum: 1
-                      type: integer
-                  required:
-                  - digest
-                  - index
-                  - key
-                  - name
-                  - size
-                  type: object
-                maxItems: 16
-                minItems: 1
-                type: array
-                x-kubernetes-list-map-keys:
-                - index
-                x-kubernetes-list-type: map
-              contentDigest:
-                type: string
-              contractVersion:
-                format: int32
-                maximum: 3
-                minimum: 1
-                type: integer
               controllerImage:
                 pattern: ^[^[:space:]@]+@sha256:[0-9a-f]{64}$
                 type: string
@@ -104,29 +83,14 @@ spec:
                 type: integer
               coordinationDigest:
                 type: string
-              desiredStateFingerprint:
-                type: string
-              destructive:
-                type: boolean
-              dialect:
-                type: string
               executionBindingID:
                 pattern: ^v1-[0-9a-f]{32}$
                 type: string
               executorImage:
                 type: string
-              fingerprint:
+              historyFingerprint:
                 type: string
-              policyFingerprint:
-                type: string
-              ptahVersion:
-                type: string
-              runnerImage:
-                type: string
-              runnerProtocolVersion:
-                format: int32
-                type: integer
-              schemaRef:
+              migrationRef:
                 properties:
                   name:
                     type: string
@@ -136,13 +100,29 @@ spec:
                 - name
                 - uid
                 type: object
-              size:
-                format: int64
-                maximum: 8388608
-                minimum: 1
-                type: integer
-              statementCount:
+              mutationRequestUID:
+                type: string
+              planFingerprint:
+                type: string
+              planRef:
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
+              policyFingerprint:
+                type: string
+              ptahVersion:
+                type: string
+              runnerImage:
+                type: string
+              runnerProtocolVersion:
                 format: int32
+                minimum: 1
                 type: integer
               targetIdentityDigest:
                 type: string
@@ -151,30 +131,30 @@ spec:
               verificationPolicyUID:
                 type: string
             required:
-            - actualStateFingerprint
+            - approvedAt
+            - approver
             - artifactDigest
-            - chunks
-            - contentDigest
-            - contractVersion
+            - controllerImage
+            - controllerRevision
+            - controllerStateVersion
             - coordinationDigest
-            - desiredStateFingerprint
-            - destructive
-            - dialect
+            - executionBindingID
             - executorImage
-            - fingerprint
+            - historyFingerprint
+            - migrationRef
+            - mutationRequestUID
+            - planFingerprint
+            - planRef
             - policyFingerprint
             - ptahVersion
             - runnerImage
             - runnerProtocolVersion
-            - schemaRef
-            - size
-            - statementCount
             - targetIdentityDigest
             - verificationPolicyDigest
             - verificationPolicyUID
             type: object
             x-kubernetes-validations:
-            - message: a plan is immutable; generate a new plan instead
+            - message: an approval is immutable; create a new approval instead
               rule: self == oldSelf
           status:
             properties:
@@ -213,32 +193,14 @@ spec:
                   - status
                   - type
                   type: object
-                type: array
-              observedGeneration:
-                format: int64
-                type: integer
-              publishedChunks:
-                items:
-                  properties:
-                    index:
-                      format: int32
-                      maximum: 15
-                      minimum: 0
-                      type: integer
-                    name:
-                      type: string
-                    uid:
-                      type: string
-                  required:
-                  - index
-                  - name
-                  - uid
-                  type: object
                 maxItems: 16
                 type: array
                 x-kubernetes-list-map-keys:
-                - index
+                - type
                 x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
             type: object
         required:
         - spec
