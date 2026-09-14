@@ -80,7 +80,9 @@ credentials`, which prints the generated registry's. Both are the environment
 handing a reader what it generated.
 
 A step also expects three commands on `PATH`: `kubectl`, `ptah` and
-`kubectl-ptah`. A reader installs all three; the lab builds the last two into
+`kubectl-ptah`. A reader installs all three -- the last from
+[operator.ptah.run](https://operator.ptah.run/edge/use/read-a-plan/#install) --
+and the lab builds the last two into
 `demo/.lab/bin` when it comes up (`demo/bin/lab tools` builds them on demand and
 prints that directory) and the recorder puts it first on `PATH`. What a step
 shows is therefore the command, not the installing of what runs it. Nothing else crosses into a step: the `E2E_` names the harness

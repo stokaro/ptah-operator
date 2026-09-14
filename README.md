@@ -64,8 +64,8 @@ kubectl ptah plan storefront --applied -n application -o sql
 
 It is a read-only client, published with each release as a `kubectl` plugin for
 the supported client platforms. [Read a
-plan](https://operator.ptah.run/edge/use/read-a-plan/) carries the installation
-and the namespace-scoped RBAC it needs.
+plan](https://operator.ptah.run/edge/use/read-a-plan/#install) carries the
+installation and the namespace-scoped RBAC it needs.
 
 ## Install and first schema
 

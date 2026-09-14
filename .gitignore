@@ -13,3 +13,6 @@
 
 # The demonstration lab writes its kubeconfig, environment and logs here.
 /demo/.lab/
+
+# The link checker writes its self-test fixture here.
+/docs/site/.selftest-links/

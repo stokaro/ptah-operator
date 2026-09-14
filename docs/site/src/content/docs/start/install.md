@@ -29,16 +29,23 @@ let an in-chart Job prove its own status and deletion integrity against an
 already-authorized concurrent namespace writer. Later upgrades and uninstalls
 between v2-aware releases do not rely on that bootstrap assumption. The exact
 trust boundary is documented in
-[Operations](../use/operations.md#installation-and-upgrades).
+[Operations](../../use/operations/#installation-and-upgrades).
 
 The supplied version is recorded in plans, approvals, Jobs, and applied status
 alongside the executor digest. Verify both values from the executor's release
 provenance before installation; changing the digest requires verifying and
 supplying its version again. Which Ptah builds have been run against this
-operator is [Ptah compatibility](../support/ptah.md).
+operator is [Ptah compatibility](../../support/ptah/).
 
 The chart supports the Kubernetes window documented in
-[Kubernetes support](../support/kubernetes.md). It intentionally does not
+[Kubernetes support](../../support/kubernetes/). It intentionally does not
 bind the optional approver ClusterRole to any identity.
 
-Every value the chart takes is in [configuration](../use/configuration.md).
+Every value the chart takes is in [configuration](../../use/configuration/).
+
+## The client
+
+The chart installs the operator. Reading what it planned or applied is a
+separate install on your own machine: `kubectl ptah`, a read-only plugin
+published with each release. [Read a plan](../../use/read-a-plan/#install)
+carries the download, the checksum check and the RBAC it needs.

@@ -15,7 +15,7 @@ nothing, changes nothing, starts no Job, and never connects to your database.
 kubectl ptah plan storefront -n application
 ```
 
-## Install it
+## Install it {#install}
 
 `kubectl` runs any executable named `kubectl-<verb>` on your `PATH` as
 `kubectl <verb>`, so installing the plugin is putting one file there.

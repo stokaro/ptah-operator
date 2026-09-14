@@ -18,7 +18,7 @@ accepted, and a Docker image ID is not a registry manifest digest.
 `execution.ptahVersion` is the identity of the build inside that executor
 digest. It is verified from the image's own provenance and never inferred from
 a tag, so the chart has no default to fall back on. Which build has actually
-been run against this operator is [Ptah compatibility](../support/ptah.md).
+been run against this operator is [Ptah compatibility](../../support/ptah/).
 
 All three are recorded in every plan, approval, Job and applied status, so a
 reader of a converged schema can see exactly what produced it.

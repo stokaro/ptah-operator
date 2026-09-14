@@ -8,7 +8,7 @@ database and a schema, and takes you from nothing to a table the operator
 created. It touches nothing you already run.
 
 Read it first if you want to know whether this operator fits before deciding
-how to run it against your own database. [Install](install.md) is the other
+how to run it against your own database. [Install](../install/) is the other
 direction: your cluster, your database, your registry.
 
 ## What you need
@@ -36,7 +36,7 @@ operator supports, an isolated OCI registry, a PostgreSQL of its own, and
 installs the chart with the manager, runner and executor images pinned by
 digest and the verified Ptah version supplied. You choose none of those: they
 come from what this repository declares, which is the same pairing
-[Ptah compatibility](../support/ptah.md) publishes.
+[Ptah compatibility](../../support/ptah/) publishes.
 
 Nothing here reaches your own clusters or databases. `make demo-down` removes
 the cluster and the containers it created, and nothing else.
@@ -71,7 +71,8 @@ export PATH="$(demo/bin/lab tools):$PATH"
 kubectl ptah plan storefront --applied -n "$NAMESPACE" -o sql
 ```
 
-The lab builds that binary for you; outside it you install one from a release.
+The lab builds that binary for you; outside it you
+[install one from a release](../../use/read-a-plan/#install).
 `--applied` is the plan the last confirmed apply ran, which is what this
 scenario is about: a converged schema carries no current plan, because there is
 nothing left to do.
@@ -125,8 +126,8 @@ claims held.
 make demo-down
 ```
 
-Then [Install](install.md) for your own cluster, [First schema](first-schema.md)
-for the resource and the approval, and [Security model](../use/security.md) for
+Then [Install](../install/) for your own cluster, [First schema](../first-schema/)
+for the resource and the approval, and [Security model](../../use/security/) for
 what the operator is and is not allowed to read.
 
 The lab installs a verified combination because this repository declares one.
