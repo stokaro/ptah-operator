@@ -41,6 +41,17 @@
 	--termamber: oklch(0.8 0.15 70);
 }
 
+/* An author `display` beats the hidden attribute's UA rule, so a control the
+ * script has not shown yet is drawn anyway: Replay stood beside Play before
+ * anything had played, and with JavaScript off every session offered controls
+ * that do nothing. The attribute wins inside the demonstration, which is where
+ * these rules apply; the rest of the page keeps Starlight's own behaviour. */
+.demo [hidden],
+.tiles [hidden],
+.demo-modal [hidden] {
+	display: none !important;
+}
+
 /* ---------- The terminal frame ---------- */
 
 .term {
@@ -108,6 +119,7 @@
 }
 .demo-controls {
   display: flex;
+  align-items: center;
   gap: 6px;
 }
 /* A shape and a word. The shape is what the eye finds on a second visit; the
@@ -116,14 +128,22 @@
 .demo-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   border: 1px solid var(--termline);
   border-radius: 2px;
   background: none;
   color: var(--termfg);
   font: 500 12px var(--sans);
-  padding: 3px 8px 3px 6px;
-  min-height: 24px;
+  /* One row, stated rather than inferred. These buttons sit inside a
+   * documentation page whose host stylesheet has its own ideas about what a
+   * button is: left to line-height and padding, the speed control came out
+   * eighteen pixels taller than the three beside it and the icons drifted off
+   * the words they belong to. */
+  block-size: 1.75rem;
+  padding-block: 0;
+  padding-inline: 0.5rem;
+  line-height: 1;
   cursor: pointer;
 }
 .demo-btn svg {
@@ -151,8 +171,13 @@
  * changes, so it also reserves the width of the widest of the four values --
  * a control that grows as you press it moves the buttons beside it. */
 .demo-btn-speed {
-  justify-content: center;
-  padding: 3px 6px;
+  padding-inline: 0.375rem;
+}
+/* The one button whose word changes reserves the width of the longer of the
+ * two, so pressing it does not shuffle the buttons beside it. The speed
+ * control does the same with its label below. */
+[data-demo-toggle] {
+  min-inline-size: 4.75rem;
 }
 [data-demo-speed-label] {
   min-width: 2.3em;
@@ -321,6 +346,10 @@
   flex-direction: column;
   gap: 8px;
   width: 100%;
+  /* A grid item is as wide as its content unless told otherwise, and the first
+   * command a tile shows is one long line. Without this the widest tile pushed
+   * the page sideways. */
+  min-width: 0;
   padding: 14px 15px 13px;
   border: 1px solid var(--line);
   border-radius: 2px;
@@ -488,14 +517,23 @@ html:not(.js) .tile-slot {
  * replay is a replay.
  */
 
+/* The page's blocks share one measure: the site's, which every other page uses
+ * and which the strip of versions and the tiles already had. The prose here
+ * used to stop at 42rem and the terminal frame ran past both -- it is a div,
+ * so the rule that holds content to the reading column never applied to it --
+ * and the page ended on three different vertical lines.
+ */
+.sl-markdown-content > :where(.term, .ptah-demo-checks) {
+	max-inline-size: var(--ptah-prose-width);
+	margin-inline: 0 auto;
+}
+
 .ptah-demo-lede {
 	font-size: 1.0625rem;
 	color: var(--sl-color-gray-2);
-	max-width: 42rem;
 }
 
 .ptah-demo-learn {
-	max-width: 42rem;
 	color: var(--sl-color-gray-2);
 }
 
@@ -565,52 +603,20 @@ html:not(.js) .tile-slot {
 	font-size: 0.8125rem;
 }
 
-/* Starlight styles every `pre` inside content: its own background, its own
- * size. A terminal frame and a printed transcript are not prose code blocks, so
- * these take their own back. The rules are repeated under `.sl-markdown-content`
- * rather than moved there, because the sheet is also what the design is, and a
- * reader of it should see the terminal's values where the terminal is defined.
+/* What is left of the documentation body inside the demonstration.
  *
- * This was invisible in the dark theme: Starlight's code background there is
- * within a shade of the terminal's, so the transcripts looked right while the
- * light theme rendered them light-on-light -- and the printed transcript is the
- * whole of the page for a reader without the player. */
-.sl-markdown-content .tile-transcript {
-	background: var(--term);
-	color: var(--termfg);
-	font: 13px/1.55 var(--mono);
-	padding: 14px 16px;
-	border: 1px solid var(--line);
-	border-radius: 2px;
-}
-.sl-markdown-content .demo-screen,
-.sl-markdown-content .demo-transcript {
-	background: none;
-	color: var(--termfg);
-	font: 13.5px/1.7 var(--mono);
-	padding: 20px 22px;
-	border: 0;
-	border-radius: 0;
-}
-.sl-markdown-content .term pre {
-	margin: 0;
-}
-/* The tile and the frame are the design's, not the documentation body's: 16px
- * at 1.5, and the tile's own ink rather than a button's user-agent black. */
-.sl-markdown-content .tile {
-	font-size: 1rem;
-	line-height: 1.5;
-	color: var(--fg);
-}
-.sl-markdown-content .term {
-	font-size: 1rem;
-	line-height: 1.5;
-}
-
-/* The tiles sit inside a documentation page, where an unordered list is styled
- * for prose: markers, an indent, and space between items. A catalog is a grid
- * of controls, so those are taken off again here rather than by writing the
- * markup as something other than the list it is. */
+ * The frame, the catalog and the overlay carry `not-content`, which is
+ * Starlight's own way of saying a subtree is not prose: without it the body's
+ * rules reach in, and they did. Every button after the first in the terminal
+ * bar took the 18px the body puts between siblings, so the speed control stood
+ * higher than the three beside it and the play triangle hung below its own
+ * word; `pre` took the body's code background, which in the light theme
+ * rendered the printed transcript light on light.
+ *
+ * These are the rules that are still this sheet's own work: the catalog is a
+ * list, and a list in a page has markers, an indent and space between items
+ * that a grid of controls does not want, and the ink of the link under a tile
+ * is the page's rather than a browser's blue. */
 .sl-markdown-content .tiles {
 	margin-block: 1.5rem;
 	padding-inline-start: 0;
@@ -625,10 +631,16 @@ html:not(.js) .tile-slot {
 }
 
 /* A slot is the tile, the link under it, and -- where the player is absent --
- * the whole transcript. They stack; ptah.run's slot holds only the tile. */
+ * the whole transcript. They stack; ptah.run's slot holds only the tile.
+ *
+ * The card takes the row's height rather than its own, because a tile whose
+ * tagline wraps to a third line used to stand taller than the two beside it
+ * and push its own "Read in full" below theirs. Grid rows, not flex, so the
+ * card grows and the link stays its own height at the bottom.
+ */
 .tile-slot {
-	display: flex;
-	flex-direction: column;
+	display: grid;
+	grid-template-rows: 1fr auto;
 	min-width: 0;
 }
 
