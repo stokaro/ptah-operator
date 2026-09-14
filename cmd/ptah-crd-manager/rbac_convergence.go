@@ -675,6 +675,9 @@ func buildTeardownAuthorizationChecks(
 
 	// Privileged schema/admission hook mutations.
 	for _, crdName := range []string{
+		"ptahmigrationapprovals.operator.ptah.run",
+		"ptahmigrationplans.operator.ptah.run",
+		"ptahmigrations.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",
 		"ptahschemaplans.operator.ptah.run",
 		"ptahschemas.operator.ptah.run",

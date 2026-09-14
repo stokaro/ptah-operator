@@ -5,23 +5,23 @@ metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
     operator.ptah.run/crd-schema-version: "3"
-    operator.ptah.run/crd-schema-digest: "sha256:f38673e18b068f7c08c50fa5da5aebc642558f2e4b7bfe27f284474364731ba0"
+    operator.ptah.run/crd-schema-digest: "sha256:f44a37884970e4fbbb374f2f2202b70c7140f095fd9ec2aa34e972b82df70c1c"
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: ptahschemaapprovals.operator.ptah.run
+  name: ptahmigrationapprovals.operator.ptah.run
 spec:
   group: operator.ptah.run
   names:
-    kind: PtahSchemaApproval
-    listKind: PtahSchemaApprovalList
-    plural: ptahschemaapprovals
+    kind: PtahMigrationApproval
+    listKind: PtahMigrationApprovalList
+    plural: ptahmigrationapprovals
     shortNames:
-    - ptahapprove
-    singular: ptahschemaapproval
+    - ptahmapprove
+    singular: ptahmigrationapproval
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.schemaRef.name
-      name: Schema
+    - jsonPath: .spec.migrationRef.name
+      name: Migration
       type: string
     - jsonPath: .spec.planRef.name
       name: Plan
@@ -50,8 +50,6 @@ spec:
             type: object
           spec:
             properties:
-              actualStateFingerprint:
-                type: string
               approvedAt:
                 format: date-time
                 type: string
@@ -85,13 +83,23 @@ spec:
                 type: integer
               coordinationDigest:
                 type: string
-              desiredStateFingerprint:
-                type: string
               executionBindingID:
                 pattern: ^v1-[0-9a-f]{32}$
                 type: string
               executorImage:
                 type: string
+              historyFingerprint:
+                type: string
+              migrationRef:
+                properties:
+                  name:
+                    type: string
+                  uid:
+                    type: string
+                required:
+                - name
+                - uid
+                type: object
               mutationRequestUID:
                 type: string
               planFingerprint:
@@ -114,17 +122,8 @@ spec:
                 type: string
               runnerProtocolVersion:
                 format: int32
+                minimum: 1
                 type: integer
-              schemaRef:
-                properties:
-                  name:
-                    type: string
-                  uid:
-                    type: string
-                required:
-                - name
-                - uid
-                type: object
               targetIdentityDigest:
                 type: string
               verificationPolicyDigest:
@@ -132,13 +131,17 @@ spec:
               verificationPolicyUID:
                 type: string
             required:
-            - actualStateFingerprint
             - approvedAt
             - approver
             - artifactDigest
+            - controllerImage
+            - controllerRevision
+            - controllerStateVersion
             - coordinationDigest
-            - desiredStateFingerprint
+            - executionBindingID
             - executorImage
+            - historyFingerprint
+            - migrationRef
             - mutationRequestUID
             - planFingerprint
             - planRef
@@ -146,7 +149,6 @@ spec:
             - ptahVersion
             - runnerImage
             - runnerProtocolVersion
-            - schemaRef
             - targetIdentityDigest
             - verificationPolicyDigest
             - verificationPolicyUID
@@ -191,7 +193,11 @@ spec:
                   - status
                   - type
                   type: object
+                maxItems: 16
                 type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
               observedGeneration:
                 format: int64
                 type: integer

@@ -39,6 +39,9 @@ const (
 const fixtureGroup = "operator.ptah.run"
 
 var fixtureNames = []string{
+	"ptahmigrationapprovals.operator.ptah.run",
+	"ptahmigrationplans.operator.ptah.run",
+	"ptahmigrations.operator.ptah.run",
 	"ptahschemaapprovals.operator.ptah.run",
 	"ptahschemaplans.operator.ptah.run",
 	"ptahschemas.operator.ptah.run",
@@ -244,9 +247,12 @@ func writeFixtureSetInGroup(
 		plural, _, _ := strings.Cut(generated, ".")
 		name := plural + "." + group
 		kind := map[string]string{
-			"ptahschemas":         "PtahSchema",
-			"ptahschemaapprovals": "PtahSchemaApproval",
-			"ptahschemaplans":     "PtahSchemaPlan",
+			"ptahschemas":            "PtahSchema",
+			"ptahschemaapprovals":    "PtahSchemaApproval",
+			"ptahschemaplans":        "PtahSchemaPlan",
+			"ptahmigrations":         "PtahMigration",
+			"ptahmigrationapprovals": "PtahMigrationApproval",
+			"ptahmigrationplans":     "PtahMigrationPlan",
 		}[plural]
 		crd := &apiextensionsv1.CustomResourceDefinition{
 			TypeMeta: metav1.TypeMeta{

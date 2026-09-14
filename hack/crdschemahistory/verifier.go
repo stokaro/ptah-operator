@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -320,6 +321,17 @@ func gitOutput(ctx context.Context, root string, arguments ...string) ([]byte, e
 }
 
 func decodeSet(label string, files map[string][]byte) (documentSet, error) {
+	return decodeDocumentSet(label, files, false)
+}
+
+// decodeSetAllowingSubset reads a set that may be missing a CRD the current
+// generation produces, which is what a baseline taken before that CRD existed
+// looks like.
+func decodeSetAllowingSubset(label string, files map[string][]byte) (documentSet, error) {
+	return decodeDocumentSet(label, files, true)
+}
+
+func decodeDocumentSet(label string, files map[string][]byte, allowSubset bool) (documentSet, error) {
 	set := documentSet{byName: make(map[string]document, len(files))}
 	fileNames := make([]string, 0, len(files))
 	for name := range files {
@@ -357,6 +369,35 @@ func decodeSet(label string, files map[string][]byte) (documentSet, error) {
 		actualNames = append(actualNames, name)
 	}
 	sort.Strings(actualNames)
+	if allowSubset {
+		// A baseline predates whatever this change adds, so a required CRD it
+		// does not carry is a new one rather than a set nobody reviewed. A name
+		// the required set does not carry is still refused: that is a CRD this
+		// change removed, and a removal is its own migration. The exception is
+		// a set holding exactly these resources under one other group, which is
+		// a renamed API rather than a removal -- decodeBaselineSet reads it as
+		// a restarted history.
+		if renamedGroup(set) {
+			return documentSet{}, fmt.Errorf(
+				"%w: %s CRD set is %v, want the complete generated set %v",
+				errCRDGroupRenamed,
+				label,
+				actualNames,
+				expectedNames,
+			)
+		}
+		for _, name := range actualNames {
+			if !slices.Contains(expectedNames, name) {
+				return documentSet{}, fmt.Errorf(
+					"%s CRD set carries %s, which the generated set %v does not; a removed CRD requires a separately reviewed migration",
+					label,
+					name,
+					expectedNames,
+				)
+			}
+		}
+		return set, nil
+	}
 	if !equalStrings(actualNames, expectedNames) {
 		message := fmt.Errorf(
 			"%s CRD set is %v, want the complete generated set %v; added or removed CRDs require a separately reviewed migration",
@@ -416,7 +457,7 @@ func decodeBaselineSet(files map[string][]byte) (documentSet, error) {
 	if len(files) == 0 {
 		return documentSet{byName: map[string]document{}}, nil
 	}
-	set, err := decodeSet("baseline", files)
+	set, err := decodeSetAllowingSubset("baseline", files)
 	// A baseline publishing these resources under a different API group
 	// describes different cluster objects: nothing in it is a previous version
 	// of what this repository generates today, because a renamed group installs
@@ -424,8 +465,8 @@ func decodeBaselineSet(files map[string][]byte) (documentSet, error) {
 	// continue and the history restarts, which evaluateTransition holds to
 	// candidate version 1 -- a renumber visible in every generated file and in
 	// CurrentCRDSchemaVersion, so the restart cannot reach master unread. A
-	// baseline that lost or gained a CRD is still an error, and so is any
-	// candidate that is not the generated set.
+	// baseline that lost a CRD is still an error, and so is any candidate that
+	// is not the generated set.
 	if errors.Is(err, errCRDGroupRenamed) {
 		return documentSet{byName: map[string]document{}}, nil
 	}
@@ -437,6 +478,9 @@ func decodeBaselineSet(files map[string][]byte) (documentSet, error) {
 
 func requiredCRDNames() []string {
 	return []string{
+		"ptahmigrationapprovals.operator.ptah.run",
+		"ptahmigrationplans.operator.ptah.run",
+		"ptahmigrations.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",
 		"ptahschemaplans.operator.ptah.run",
 		"ptahschemas.operator.ptah.run",
@@ -637,9 +681,6 @@ func digestSpec(normalized []byte) string {
 }
 
 func specsChanged(baseline, candidate documentSet) (bool, error) {
-	if len(baseline.byName) != len(candidate.byName) {
-		return false, errors.New("baseline and candidate CRD sets differ")
-	}
 	for name, baselineDocument := range baseline.byName {
 		candidateDocument, found := candidate.byName[name]
 		if !found {
@@ -649,7 +690,10 @@ func specsChanged(baseline, candidate documentSet) (bool, error) {
 			return true, nil
 		}
 	}
-	return false, nil
+	// A CRD the candidate carries and the baseline does not is a schema change
+	// in its own right: the release ships an API it did not ship before, and
+	// the stamped version has to move for the upgrade path to see it.
+	return len(candidate.byName) != len(baseline.byName), nil
 }
 
 func equalStrings(left, right []string) bool {

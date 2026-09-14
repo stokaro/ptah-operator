@@ -765,6 +765,9 @@ func (t *PrivilegeTeardown) retiredAuthorizationContracts() []privilegeAuthoriza
 	bootstrap := privilegeHookBindingName(hook, 53, "-bootstrap")
 	probe := privilegeHookBindingName(hook, 57, "-probe")
 	crdNames := []string{
+		"ptahmigrationapprovals.operator.ptah.run",
+		"ptahmigrationplans.operator.ptah.run",
+		"ptahmigrations.operator.ptah.run",
 		"ptahschemaapprovals.operator.ptah.run",
 		"ptahschemaplans.operator.ptah.run",
 		"ptahschemas.operator.ptah.run",
