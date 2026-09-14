@@ -5218,7 +5218,7 @@ grep -F "'system:serviceaccount:ptah-e2e:$controller_service_account_name'" \
 	"$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["jobs"]' "$ADMISSION_RENDER" >/dev/null
 grep -F 'resources: ["configmaps"]' "$ADMISSION_RENDER" >/dev/null
-grep -F 'resources: ["ptahschemaplans"]' "$ADMISSION_RENDER" >/dev/null
+grep -F 'resources: ["ptahschemaplans", "ptahmigrationplans"]' "$ADMISSION_RENDER" >/dev/null
 if grep -Eq '^[[:space:]]*objectSelector:' "$ADMISSION_RENDER"; then
 	printf '%s\n' 'e2e static: admission webhooks must not trust user-controlled object selectors' >&2
 	exit 1

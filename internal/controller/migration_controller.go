@@ -28,6 +28,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
+	"github.com/stokaro/ptah-operator/internal/migrationplan"
 	"github.com/stokaro/ptah-operator/internal/ocireference"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/policy"
@@ -521,7 +522,19 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		if result.MigrationHistory == nil {
 			return r.retryMigrationOperation(ctx, migration, job, errors.New("the history result carries no status document"))
 		}
-		r.recordMigrationHistory(migration, *result.MigrationHistory)
+		if !sha256DigestPattern.MatchString(result.TargetIdentityDigest) {
+			return r.retryMigrationOperation(ctx, migration, job, errors.New("the history result carries no target identity"))
+		}
+		if err := r.recordMigrationHistory(migration, *result.MigrationHistory, result.TargetIdentityDigest); err != nil {
+			return r.retryMigrationOperation(ctx, migration, job, err)
+		}
+		if migration.Status.Phase == operatorv1alpha1.MigrationPhasePlanning {
+			if err := r.publishMigrationPlan(ctx, migration, *result.MigrationHistory); err != nil {
+				return r.migrationOperationFailure(ctx, migration, err)
+			}
+		} else {
+			migration.Status.Plan = nil
+		}
 	default:
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("unsupported migration operation %q", operation.Type))
 	}
@@ -547,16 +560,23 @@ func (r *MigrationReconciler) consumeMigrationResult(
 func (r *MigrationReconciler) recordMigrationHistory(
 	migration *operatorv1alpha1.PtahMigration,
 	report dataplane.MigrationStatusReport,
-) {
+	targetIdentityDigest string,
+) error {
+	historyFingerprint, err := migrationplan.HistoryFingerprint(report)
+	if err != nil {
+		return err
+	}
 	pending := report.Pending()
 	modified := report.Modified()
 	history := &operatorv1alpha1.MigrationHistoryStatus{
-		ObservedAt:        metav1.NewTime(r.now()),
-		ContractVersion:   int32(report.ContractVersion),
-		CurrentVersion:    report.CurrentVersion,
-		CheckpointVersion: report.CheckpointVersion,
-		PendingCount:      int32(len(pending)),
-		Dirty:             report.DirtyRevision != nil,
+		ObservedAt:           metav1.NewTime(r.now()),
+		ContractVersion:      int32(report.ContractVersion),
+		CurrentVersion:       report.CurrentVersion,
+		CheckpointVersion:    report.CheckpointVersion,
+		Fingerprint:          historyFingerprint,
+		TargetIdentityDigest: targetIdentityDigest,
+		PendingCount:         int32(len(pending)),
+		Dirty:                report.DirtyRevision != nil,
 	}
 	for _, record := range report.Migrations {
 		if record.State == dataplane.MigrationStateApplied || record.State == dataplane.MigrationStateCheckpointCovered {
@@ -599,6 +619,151 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			operatorv1alpha1.ReasonMigrationsPending,
 			fmt.Sprintf("%d migrations are pending", len(pending)))
 	}
+	return nil
+}
+
+// publishMigrationPlan writes the immutable manifest of the pending sequence
+// and records it. The plan's name is derived from its fingerprint, so
+// publishing the same decision twice is the same object rather than a second
+// copy of one decision.
+func (r *MigrationReconciler) publishMigrationPlan(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	report dataplane.MigrationStatusReport,
+) error {
+	binding := migration.Status.ExecutionBinding
+	history := migration.Status.History
+	if binding == nil || history == nil || migration.Status.Artifact == nil {
+		return errors.New("a plan needs a resolved artifact, a read history, and an execution binding")
+	}
+	planned, err := migrationplan.Sequence(report)
+	if err != nil {
+		return fmt.Errorf("select the pending sequence: %w", err)
+	}
+	sequenceDigest, err := migrationplan.SequenceDigest(planned)
+	if err != nil {
+		return err
+	}
+	policyBinding, err := policy.ConfigMapBinding(
+		ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom,
+	)
+	if err != nil {
+		return err
+	}
+	coordinationDigest, err := fingerprint.DatabaseCoordinationDigest(
+		string(migration.Spec.Target.Engine), migration.Spec.Target.CoordinationKey,
+	)
+	if err != nil {
+		return fmt.Errorf("derive coordination digest: %w", err)
+	}
+	policyFingerprint, err := migrationPolicyFingerprint(migration)
+	if err != nil {
+		return err
+	}
+	planBinding := migrationplan.Binding{
+		MigrationUID:             migration.UID,
+		HistoryFingerprint:       history.Fingerprint,
+		SequenceDigest:           sequenceDigest,
+		ArtifactDigest:           migration.Status.Artifact.Digest,
+		CoordinationDigest:       coordinationDigest,
+		TargetIdentityDigest:     history.TargetIdentityDigest,
+		PolicyFingerprint:        policyFingerprint,
+		VerificationPolicyUID:    policyBinding.UID,
+		VerificationPolicyDigest: policyBinding.Digest,
+		ExecutionBindingID:       binding.Epoch,
+		ControllerImage:          binding.ControllerImage,
+		ControllerRevision:       binding.ControllerRevision,
+		ControllerStateVersion:   binding.ControllerStateVersion,
+		PtahVersion:              binding.PtahVersion,
+		ExecutorImage:            binding.ExecutorImage,
+		RunnerImage:              binding.RunnerImage,
+		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
+	}
+	planFingerprint, err := planBinding.Fingerprint()
+	if err != nil {
+		return fmt.Errorf("derive the plan fingerprint: %w", err)
+	}
+	desired, err := migrationplan.Desired(migration, operatorv1alpha1.PtahMigrationPlanSpec{
+		ContractVersion:          migrationplan.ContractVersion,
+		MigrationRef:             operatorv1alpha1.ImmutableObjectReference{Name: migration.Name, UID: migration.UID},
+		Fingerprint:              planFingerprint,
+		Migrations:               planned,
+		HistoryFingerprint:       history.Fingerprint,
+		CurrentVersion:           history.CurrentVersion,
+		ArtifactDigest:           planBinding.ArtifactDigest,
+		CoordinationDigest:       planBinding.CoordinationDigest,
+		TargetIdentityDigest:     planBinding.TargetIdentityDigest,
+		PolicyFingerprint:        policyFingerprint,
+		VerificationPolicyUID:    policyBinding.UID,
+		VerificationPolicyDigest: policyBinding.Digest,
+		ExecutionBindingID:       binding.Epoch,
+		ControllerImage:          binding.ControllerImage,
+		ControllerRevision:       binding.ControllerRevision,
+		ControllerStateVersion:   binding.ControllerStateVersion,
+		PtahVersion:              binding.PtahVersion,
+		ExecutorImage:            binding.ExecutorImage,
+		RunnerImage:              binding.RunnerImage,
+		RunnerProtocolVersion:    binding.RunnerProtocolVersion,
+		CreatedAt:                metav1.NewTime(r.now()),
+	})
+	if err != nil {
+		return err
+	}
+	published := desired.DeepCopy()
+	if err := r.Client.Create(ctx, published); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("publish the migration plan: %w", err)
+		}
+		existing := &operatorv1alpha1.PtahMigrationPlan{}
+		key := types.NamespacedName{Namespace: desired.Namespace, Name: desired.Name}
+		if err := r.directReader().Get(ctx, key, existing); err != nil {
+			return fmt.Errorf("read the already published migration plan: %w", err)
+		}
+		if existing.Spec.Fingerprint != planFingerprint || existing.Spec.MigrationRef.UID != migration.UID {
+			return errors.New("a different plan already holds this plan's deterministic name")
+		}
+		published = existing
+	}
+	migration.Status.Plan = &operatorv1alpha1.ImmutableObjectReference{Name: published.Name, UID: published.UID}
+	r.applyMigrationPolicyPhase(migration, len(planned))
+	return nil
+}
+
+// applyMigrationPolicyPhase reports what the policy says happens next. Nothing
+// here executes: the phase and the conditions are what an operator reads, and
+// what the approval an operator writes is judged against.
+func (r *MigrationReconciler) applyMigrationPolicyPhase(migration *operatorv1alpha1.PtahMigration, planned int) {
+	switch migration.Spec.Policy.Apply {
+	case operatorv1alpha1.ApplyPolicyNever:
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonNotRequired, "The apply policy is Never, so no approval is consulted")
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonApplyDisabled,
+			fmt.Sprintf("%d migrations are pending and the apply policy is Never", planned))
+	case operatorv1alpha1.ApplyPolicyAlways:
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonNotRequired, "The apply policy is Always, so no approval is required")
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonApplyPending,
+			fmt.Sprintf("%d migrations are planned", planned))
+	default:
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseAwaitingApproval
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionTrue,
+			operatorv1alpha1.ReasonAwaitingApproval,
+			fmt.Sprintf("%d planned migrations need an approval naming this plan", planned))
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonAwaitingApproval, "The plan is waiting for the approval its policy requires")
+	}
+}
+
+// migrationPolicyFingerprint binds a plan to the terms it was planned under. A
+// policy that changed after the plan was made invalidates it rather than
+// executing under terms nobody approved.
+func migrationPolicyFingerprint(migration *operatorv1alpha1.PtahMigration) (string, error) {
+	return fingerprint.DigestCanonicalJSON(map[string]string{
+		"apply":        string(migration.Spec.Policy.Apply),
+		"lock_timeout": migration.Spec.Policy.LockTimeout.Duration.String(),
+	})
 }
 
 // migrationInputFingerprint is what the operation was decided from. An input
