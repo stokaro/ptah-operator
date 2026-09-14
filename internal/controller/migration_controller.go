@@ -223,6 +223,19 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 		result, failureErr := r.migrationOperationFailure(ctx, migration, err)
 		return result, true, failureErr
 	}
+	if operation := migration.Status.ActiveOperation; operation != nil &&
+		operation.Type == operatorv1alpha1.MigrationOperationApply &&
+		(operation.DispatchStarted || operation.JobUID != "") {
+		// A dispatched Apply is not retired by a rollout. Its Job may already
+		// have changed the database, and dropping the claim would drop the only
+		// record that it might have.
+		//
+		// The evidence is written first, under the binding that authorized the
+		// run, and the binding moves on the next pass once no claim is in
+		// flight. Two writes in that order, rather than one that would report a
+		// run against components it never had.
+		return r.applyUncertainUnderBindingChange(ctx, migration)
+	}
 	before := migration.DeepCopy()
 	migration.Status.ExecutionBinding = binding
 	if migration.Status.ActiveOperation != nil {
@@ -237,6 +250,30 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 		return ctrl.Result{}, true, err
 	}
 	return ctrl.Result{Requeue: true}, true, nil
+}
+
+// applyUncertainUnderBindingChange records that a dispatched Apply outlived the
+// components that authorized it. It is the same answer as any other Apply the
+// controller cannot read: the run's evidence is unknown, the resource is
+// blocked, and nothing dispatches again until a person has looked.
+func (r *MigrationReconciler) applyUncertainUnderBindingChange(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) (ctrl.Result, bool, error) {
+	operation := migration.Status.ActiveOperation
+	var job *batchv1.Job
+	if operation.JobUID != "" {
+		candidate := &batchv1.Job{}
+		key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
+		if err := r.directReader().Get(ctx, key, candidate); err == nil && candidate.UID == operation.JobUID {
+			job = candidate
+		} else if err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, true, fmt.Errorf("read the dispatched Apply Job: %w", err)
+		}
+	}
+	result, err := r.finishUncertainMigrationApply(ctx, migration, job,
+		errors.New("an execution component changed while the Apply was dispatched"))
+	return result, true, err
 }
 
 func (r *MigrationReconciler) configuredMigrationBinding() (*operatorv1alpha1.ExecutionBindingStatus, error) {

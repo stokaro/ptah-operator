@@ -514,3 +514,45 @@ func migrationPolicyReader(t *testing.T) client.Reader {
 	}
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(verificationPolicyConfigMap()).Build()
 }
+
+func TestMigrationApplyOutlivingItsComponentsIsUncertainNotDiscarded(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = true
+	// The executor rolled out while the Apply was in flight.
+	migration.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.ActiveOperation != nil {
+		t.Fatal("a dispatched Apply claim survived the rollout that retired its components")
+	}
+	if actual.Status.LastRun == nil ||
+		actual.Status.LastRun.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
+		t.Fatalf("last run = %#v, want an unknown outcome rather than no record at all", actual.Status.LastRun)
+	}
+	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("phase = %q, want Blocked", actual.Status.Phase)
+	}
+	if !meta.IsStatusConditionTrue(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked) {
+		t.Fatal("the resource was not blocked after a run nobody can account for")
+	}
+	// The evidence is written under the binding that authorized the run; the
+	// binding moves on the next pass, when no claim is in flight.
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual = readMigration(t, api, migration)
+	if binding := actual.Status.ExecutionBinding; binding == nil ||
+		binding.ExecutorImage != "example.invalid/ptah@"+testDigest {
+		t.Fatalf("execution binding = %#v, want the current components", binding)
+	}
+	if actual.Status.ActiveOperation != nil {
+		t.Fatal("a claim was taken while the resource is blocked on an unknown run")
+	}
+}
