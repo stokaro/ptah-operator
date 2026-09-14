@@ -52,6 +52,16 @@ const (
 	// EnvExpectedDatabaseEngine selects the supported fingerprint-probe dialect
 	// without deriving it from a credential-bearing database URL.
 	EnvExpectedDatabaseEngine = "PTAH_EXPECTED_DATABASE_ENGINE"
+	// EnvMigrationsDir is the already-materialized migration directory a
+	// migration operation reads.
+	//
+	// It is a local path rather than an OCI reference on purpose. Ptah accepts
+	// `--migrations-dir oci://...` and fetches the artifact itself, which would
+	// put the registry credentials in the same process as the database ones.
+	// The schema path solved this years earlier with a fetch container that
+	// holds the registry credentials and writes what it fetched into a shared
+	// volume; a migration reads that volume.
+	EnvMigrationsDir = "PTAH_MIGRATIONS_DIR"
 
 	envOperationID            = EnvOperationID
 	envRequestedReference     = EnvRequestedReference
@@ -68,6 +78,7 @@ const (
 	envDatabaseURL            = EnvDatabaseURL
 	envSchemaFile             = EnvSchemaFile
 	envExpectedDatabaseEngine = EnvExpectedDatabaseEngine
+	envMigrationsDir          = EnvMigrationsDir
 )
 
 // Inputs are the runner-specific environment values used to construct one of
@@ -87,6 +98,7 @@ type Inputs struct {
 	ExecutionNotAfter          string
 	ExpectedDatabaseEngine     string
 	PlanPath                   string
+	MigrationsDir              string
 }
 
 func InputsFromEnvironment(environment []string) Inputs {
@@ -105,6 +117,7 @@ func InputsFromEnvironment(environment []string) Inputs {
 		DispatchNotAfter:           values[envDispatchNotAfter],
 		ExecutionNotAfter:          values[envExecutionNotAfter],
 		ExpectedDatabaseEngine:     values[envExpectedDatabaseEngine],
+		MigrationsDir:              values[envMigrationsDir],
 	}
 }
 
@@ -200,32 +213,39 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 		}
 		spec.Args = []string{"schema", "apply", "--plan", inputs.PlanPath, "--auto-approve"}
 	case OperationMigrationHistory, OperationMigrationApply:
-		// The migration directory is the artifact itself, by digest: the same
-		// bytes the controller resolved and verified, never a tag re-resolved
-		// inside the Job.
-		if err := validateReference(inputs.ResolvedReference, "resolved reference"); err != nil {
-			return CommandSpec{}, err
-		}
-		if err := requirePinnedReference(inputs.ResolvedReference); err != nil {
+		// The directory is already on disk, put there by a fetch container that
+		// held the registry credentials this process does not. Ptah would
+		// happily take an oci:// reference here and fetch the artifact itself,
+		// which is exactly the isolation the schema path exists to keep: the
+		// process that runs SQL holds database credentials and nothing else.
+		if err := validateMigrationsDir(inputs.MigrationsDir); err != nil {
 			return CommandSpec{}, err
 		}
 		verb := "status"
 		if operation == OperationMigrationApply {
 			verb = "up"
 		}
-		spec.Args = []string{"migrations", verb, "--migrations-dir", inputs.ResolvedReference, "--json"}
+		spec.Args = []string{"migrations", verb, "--migrations-dir", inputs.MigrationsDir, "--json"}
 	default:
 		return CommandSpec{}, fmt.Errorf("unsupported operation %q", operation)
 	}
 	return spec, nil
 }
 
-// requirePinnedReference refuses a reference that is not digest-pinned. A Job
-// told to run migrations from a tag would resolve it again, inside the Job,
-// against whatever the registry answers then.
-func requirePinnedReference(reference string) error {
-	if _, err := digestFromReference(reference); err != nil {
-		return errors.New("migration artifact reference is not pinned to a digest")
+// validateMigrationsDir refuses anything but an absolute local path.
+//
+// A reference is refused by name rather than passed through: Ptah accepts one,
+// and accepting it here would hand the registry to the process holding the
+// database credentials.
+func validateMigrationsDir(directory string) error {
+	if strings.TrimSpace(directory) == "" {
+		return errors.New("migration directory is empty")
+	}
+	if strings.Contains(directory, "://") {
+		return errors.New("migration directory must be a materialized local path, not a reference")
+	}
+	if !strings.HasPrefix(directory, "/") {
+		return errors.New("migration directory must be an absolute path")
 	}
 	return nil
 }

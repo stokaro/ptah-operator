@@ -174,8 +174,7 @@ func Run(ctx context.Context, config Config) Result {
 	}
 	// Every operation that reaches the registry prepares its access first: the
 	// authority check, the authenticated-plain-HTTP refusal and the verified CA
-	// snapshot the child reads. The migration operations reach it by the
-	// resolved digest rather than by the requested reference.
+	// snapshot the child reads.
 	if ociReference, reachesRegistry := operationOCIReference(config.Operation, inputs); reachesRegistry {
 		preparedEnvironment, cleanupCA, err := PrepareOCISourceAccess(
 			ociReference,
@@ -406,12 +405,16 @@ func decodeMigrationReport(result *Result, config Config, outcome commandOutcome
 // and read that artifact as their migration directory. An empty reference is
 // still handed over, so the refusal stays the registry access one rather than
 // becoming a different error depending on which field was blank.
+// operationOCIReference names the operations that reach a registry at all.
+//
+// The migration operations are deliberately absent. They read a directory a
+// fetch container already materialized, so the process that holds the database
+// credentials holds no registry credentials -- the same separation the schema
+// path keeps, for the same reason.
 func operationOCIReference(operation Operation, inputs Inputs) (string, bool) {
 	switch operation {
 	case OperationResolve, OperationVerify:
 		return inputs.RequestedReference, true
-	case OperationMigrationHistory, OperationMigrationApply:
-		return inputs.ResolvedReference, true
 	default:
 		return "", false
 	}
