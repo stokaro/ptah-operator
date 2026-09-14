@@ -18,6 +18,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -471,6 +472,22 @@ func fakeMigrationReconciler(
 		Namespace: "team-a", Name: "default", UID: "default-service-account-uid", ResourceVersion: "1",
 	}})
 	api := fake.NewClientBuilder().WithScheme(scheme).
+		// A real API server stamps a UID on every object it accepts, and the
+		// controller refuses a Job without one. The fake client does not, so a
+		// Job it created would be refused by its own creator.
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(
+				ctx context.Context,
+				writer client.WithWatch,
+				object client.Object,
+				options ...client.CreateOption,
+			) error {
+				if object.GetUID() == "" {
+					object.SetUID(types.UID("created-" + object.GetName()))
+				}
+				return writer.Create(ctx, object, options...)
+			},
+		}).
 		WithStatusSubresource(
 			&operatorv1alpha1.PtahMigration{}, &operatorv1alpha1.PtahMigrationPlan{},
 			&operatorv1alpha1.PtahMigrationApproval{}, &batchv1.Job{},

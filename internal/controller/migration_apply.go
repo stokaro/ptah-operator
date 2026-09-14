@@ -268,13 +268,18 @@ func (r *MigrationReconciler) acquireMigrationApplyLock(
 	if result.Epoch == operation.LeaseEpoch && !result.ContinuityLost {
 		return true, 0, nil
 	}
-	// The claim persisted its expected epoch before any dispatch, so adopting
-	// the epoch the first acquisition assigned cannot validate stale work.
-	adoptable := !result.ContinuityLost && !operation.DispatchStarted && operation.JobUID == ""
+	continuityLost := operation.LeaseEpoch == "" || result.ContinuityLost || result.Epoch != operation.LeaseEpoch
+	if continuityLost && operation.LeaseEpoch != "" && !operation.DispatchStarted && operation.JobUID == "" {
+		// The first acquisition necessarily assigns an epoch the claim could not
+		// have known, and reports the loss for that reason. The claim persisted
+		// its expected token before any dispatch, so adopting the assigned epoch
+		// here cannot validate work that already ran.
+		continuityLost = false
+	}
 	before := migration.DeepCopy()
 	migration.Status.ActiveOperation.LeaseEpoch = result.Epoch
-	migration.Status.ActiveOperation.LeaseContinuityLost = !adoptable
-	if !adoptable {
+	migration.Status.ActiveOperation.LeaseContinuityLost = continuityLost
+	if continuityLost {
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonLeaseContinuityLost, "The database lock epoch changed under the running operation")
 	}
