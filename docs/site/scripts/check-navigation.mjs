@@ -49,10 +49,9 @@ export function builtRoutes(root) {
 // EXEMPT are pages a reader reaches without navigating to them.
 const EXEMPT = new Set(['/404/']);
 
-// A recorded run has a page of its own, reached from the catalog the sidebar
-// offers rather than from the sidebar. The set is derived from the recording,
-// so a page with no run behind it and a run with no page are both still
-// findings -- which is the whole of what this check is for.
+// Every recorded run is a page, and the rail offers each one. The set is
+// derived from the recording rather than written here, so a scenario recorded
+// after this was written is still checked.
 function runRoutes() {
   return runs.scenarios.map((one) => `/demo/${one.id}/`);
 }
@@ -75,7 +74,7 @@ function main() {
     console.error('check-navigation.mjs: dist/ is missing; build the site first');
     process.exit(1);
   }
-  const declared = routes(sidebar).concat(runRoutes());
+  const declared = routes(sidebar);
   const built = builtRoutes(root).filter((route) => !EXEMPT.has(route));
   if (declared.length === 0 || built.length === 0) {
     console.error('check-navigation.mjs: the sidebar or the build is empty, so this check would pass by comparing nothing');
@@ -83,6 +82,9 @@ function main() {
   }
 
   const problems = [];
+  for (const route of runRoutes()) {
+    if (!declared.includes(route)) problems.push(`${route} is a recorded run and the sidebar does not offer it`);
+  }
   for (const route of declared) {
     if (!built.includes(route)) problems.push(`the sidebar offers ${route}, which this build does not publish`);
   }

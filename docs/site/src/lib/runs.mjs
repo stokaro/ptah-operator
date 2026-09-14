@@ -4,7 +4,10 @@
  * cluster. This module is the only place the site reads it, so a page that
  * shows a run and a page that lists them cannot disagree about what is in it.
  */
-import runs from '../../../../demo/recordings/runs.json';
+// The import attribute is what lets a plain Node script read this module, and
+// through it the sidebar: without it Node refuses the JSON and only the bundler
+// can follow the import.
+import runs from '../../../../demo/recordings/runs.json' with { type: 'json' };
 
 import { rank } from './run-order.mjs';
 

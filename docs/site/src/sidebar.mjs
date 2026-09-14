@@ -7,6 +7,8 @@
 // The order is a reader's path through the operator: what it is, how to install
 // it, one worked example, then how to configure it, what it does with a change,
 // and finally the reference a reader returns to.
+import { Runs } from './lib/runs.mjs';
+
 export const sidebar = [
   {
     label: 'Start',
@@ -19,7 +21,18 @@ export const sidebar = [
   },
   {
     label: 'See it run',
-    items: [{ label: 'Recorded runs', link: '/demo/' }],
+    items: [
+      { label: 'Recorded runs', link: '/demo/' },
+      // Every run has a page, so every run is in the rail: a reader who is
+      // reading one session should be able to see the others without going
+      // back to the catalog first. The list is the recording's, in the order
+      // the catalog puts them in, so a scenario recorded tomorrow appears here
+      // without anybody remembering to add it.
+      {
+        label: 'Sessions',
+        items: Runs.map((run) => ({ label: run.title, link: `/demo/${run.id}/` })),
+      },
+    ],
   },
   {
     label: 'Use',
