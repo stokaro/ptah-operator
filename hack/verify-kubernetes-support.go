@@ -71,7 +71,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "1a33fbb38cc51f4a885587878d2ba906a501294b4c9aa8537b2c76b28bbf7417"
+	ciWorkflowSHA256                = "5308860bb4b52a7d91e34f82d150970560cab94e4ce9136e552f92ab1f85c044"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -81,6 +81,11 @@ const (
 	raceBaseRuleSHA256              = "53a29b937246901f0b2f285964ea3a2b7580e016ab447ff2b9cb10189df83b49"
 	raceMutationRuleSHA256          = "1b9d7a915e91728ce653c78534382d5d59935bdf09ceec8cba3470900c3fc2dc"
 	raceAggregateSHA256             = "c4ebaf33f633432020b25919b04b70b8715ab64ef63118fbe47dee45553915f1"
+
+	// The Helm the chart-rendering jobs install. One pin, so what CI renders
+	// and what a release renders are the same program.
+	helmSetupAction = "azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4"
+	helmVersion     = "v4.2.4"
 
 	ciSupportMatrixTimeoutMinutes     = 10
 	ciVerifyTimeoutMinutes            = 20
@@ -682,8 +687,8 @@ echo "commit=$commit" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: verify must run unconditionally with a %d-minute timeout", path, ciVerifyTimeoutMinutes)
 	}
 	verifySteps, err := requireWorkflowStepOrder(path, "verify", verifyJob, []string{
-		"checkout", "setup-go", "verify-build-cache", "verify-support", "crd-baseline", "shellcheck",
-		"client-build-config", "project-verify",
+		"checkout", "setup-go", "verify-build-cache", "verify-support", "crd-baseline", "verify-helm",
+		"shellcheck", "client-build-config", "project-verify",
 	})
 	if err != nil {
 		return err
@@ -776,14 +781,20 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: crd-baseline must select the exact audited event-specific Git commit", path)
 	}
 	// ShellCheck findings are version-dependent, and the runner image ships
+	// The chart-render tests shell out to Helm, and a job without it fails on
+	// tests nothing changed. Pinning the version here keeps what CI renders the
+	// same across runs; the lifecycle job pins the same one.
+	if err := verifyHelmSetupStep(path, "verify", verifySteps[5]); err != nil {
+		return err
+	}
 	// whatever it ships. The static gate refuses a version other than the one
 	// support/tools.json declares, so this step has to install that one before
 	// verification runs, and it has to read the version, the URL and the digest
 	// from that same file rather than repeating them here.
-	if verifySteps[5].Name != "Install the pinned ShellCheck" ||
-		verifySteps[5].If != "" || verifySteps[5].Uses != "" ||
-		verifySteps[5].Shell != "bash" || verifySteps[5].WorkingDirectory != "" ||
-		len(verifySteps[5].With) != 0 || len(verifySteps[5].Env) != 0 {
+	if verifySteps[6].Name != "Install the pinned ShellCheck" ||
+		verifySteps[6].If != "" || verifySteps[6].Uses != "" ||
+		verifySteps[6].Shell != "bash" || verifySteps[6].WorkingDirectory != "" ||
+		len(verifySteps[6].With) != 0 || len(verifySteps[6].Env) != 0 {
 		return fmt.Errorf("%s: the pinned ShellCheck install must be an unconditional bash step with no inputs", path)
 	}
 	for _, required := range []string{
@@ -793,22 +804,22 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		".shellcheck.linuxAmd64Url",
 		".shellcheck.linuxAmd64Sha256",
 	} {
-		if !strings.Contains(verifySteps[5].Run, required) {
+		if !strings.Contains(verifySteps[6].Run, required) {
 			return fmt.Errorf("%s: the pinned ShellCheck install does not read %q", path, required)
 		}
 	}
 	// The client build configuration is checked where a pull request sees it:
 	// a release reads its platforms out of that file, so one goreleaser refuses
 	// is a release that cannot be cut.
-	if verifySteps[6].Name != "Check the client build configuration" ||
-		!strings.HasPrefix(verifySteps[6].Uses, "goreleaser/goreleaser-action@") ||
-		verifySteps[6].Run != "" || verifySteps[6].With["args"] != "check" {
+	if verifySteps[7].Name != "Check the client build configuration" ||
+		!strings.HasPrefix(verifySteps[7].Uses, "goreleaser/goreleaser-action@") ||
+		verifySteps[7].Run != "" || verifySteps[7].With["args"] != "check" {
 		return fmt.Errorf("%s: the client build configuration is not checked with goreleaser", path)
 	}
-	if verifySteps[7].Name != "Run project verification" ||
-		verifySteps[7].If != "" || verifySteps[7].Uses != "" || verifySteps[7].Run != "make verify-source" ||
-		verifySteps[7].Shell != "bash" || verifySteps[7].WorkingDirectory != "" ||
-		len(verifySteps[7].With) != 0 || !equalStringMap(verifySteps[7].Env, map[string]string{
+	if verifySteps[8].Name != "Run project verification" ||
+		verifySteps[8].If != "" || verifySteps[8].Uses != "" || verifySteps[8].Run != "make verify-source" ||
+		verifySteps[8].Shell != "bash" || verifySteps[8].WorkingDirectory != "" ||
+		len(verifySteps[8].With) != 0 || !equalStringMap(verifySteps[8].Env, map[string]string{
 		"CRD_SCHEMA_BASELINE_REF":              "${{ steps.crd-baseline.outputs.baseline }}",
 		"CRD_SCHEMA_REQUIRE_EXPLICIT_BASELINE": "true",
 	}) {
@@ -823,7 +834,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: race must be an unconditional isolated ubuntu-latest job with a %d-minute timeout", path, ciRaceTimeoutMinutes)
 	}
 	raceSteps, err := requireWorkflowStepOrder(path, "race", race, []string{
-		"race-checkout", "race-setup-go", "race-build-cache", "project-race-base", "project-race",
+		"race-checkout", "race-setup-go", "race-helm", "race-build-cache", "project-race-base", "project-race",
 	})
 	if err != nil {
 		return err
@@ -855,21 +866,24 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	// A pull request runs the package race suite; every other event runs it
 	// with the shell mutation shards. The two steps are mutually exclusive, so
 	// exactly one of them runs and neither can be skipped by accident.
-	if err := verifyGoBuildCacheStep(path, "race", raceSteps[2], "race"); err != nil {
+	if err := verifyHelmSetupStep(path, "race", raceSteps[2]); err != nil {
 		return err
 	}
-	if raceSteps[3].Name != "Run race coverage without the shell mutation suites" ||
-		raceSteps[3].If != "github.event_name == 'pull_request'" ||
-		raceSteps[3].Uses != "" || raceSteps[3].Run != "make test-race-base" ||
-		raceSteps[3].Shell != "bash" || raceSteps[3].WorkingDirectory != "" ||
-		len(raceSteps[3].With) != 0 || len(raceSteps[3].Env) != 0 {
-		return fmt.Errorf("%s: pull-request race coverage must be the audited make test-race-base invocation", path)
+	if err := verifyGoBuildCacheStep(path, "race", raceSteps[3], "race"); err != nil {
+		return err
 	}
-	if raceSteps[4].Name != "Run complete race coverage" ||
-		raceSteps[4].If != "github.event_name != 'pull_request'" ||
-		raceSteps[4].Uses != "" || raceSteps[4].Run != "make test-race" ||
+	if raceSteps[4].Name != "Run race coverage without the shell mutation suites" ||
+		raceSteps[4].If != "github.event_name == 'pull_request'" ||
+		raceSteps[4].Uses != "" || raceSteps[4].Run != "make test-race-base" ||
 		raceSteps[4].Shell != "bash" || raceSteps[4].WorkingDirectory != "" ||
 		len(raceSteps[4].With) != 0 || len(raceSteps[4].Env) != 0 {
+		return fmt.Errorf("%s: pull-request race coverage must be the audited make test-race-base invocation", path)
+	}
+	if raceSteps[5].Name != "Run complete race coverage" ||
+		raceSteps[5].If != "github.event_name != 'pull_request'" ||
+		raceSteps[5].Uses != "" || raceSteps[5].Run != "make test-race" ||
+		raceSteps[5].Shell != "bash" || raceSteps[5].WorkingDirectory != "" ||
+		len(raceSteps[5].With) != 0 || len(raceSteps[5].Env) != 0 {
 		return fmt.Errorf("%s: complete race coverage must be the audited make test-race invocation", path)
 	}
 
@@ -1536,6 +1550,24 @@ func requireWorkflowStepOrder(
 //
 // The scope is per job, because -race objects and plain ones are different
 // caches: one shared key would have each run evict the other's entries.
+// verifyHelmSetupStep holds a job's Helm installation to the pinned action and
+// version. The unit suite renders the chart, so a job that runs it needs Helm;
+// the runner image carried one until it stopped, and an unpinned install would
+// let the rendering CI checks drift from the rendering a release does.
+func verifyHelmSetupStep(path, jobName string, step workflowStep) error {
+	if step.Name != "Set up Helm" || step.If != "" || step.Run != "" ||
+		step.Shell != "" || step.WorkingDirectory != "" || len(step.Env) != 0 {
+		return fmt.Errorf("%s: job %q Helm setup must be an unconditional action step", path, jobName)
+	}
+	if step.Uses != helmSetupAction {
+		return fmt.Errorf("%s: job %q Helm setup must use the pinned %s", path, jobName, helmSetupAction)
+	}
+	if len(step.With) != 1 || step.With["version"] != helmVersion {
+		return fmt.Errorf("%s: job %q Helm setup must pin version %s and nothing else", path, jobName, helmVersion)
+	}
+	return nil
+}
+
 func verifyGoBuildCacheStep(path, jobName string, step workflowStep, scope string) error {
 	key := fmt.Sprintf(
 		"go-build-${{ runner.os }}-%s-${{ hashFiles('go.sum') }}-${{ github.sha }}",
