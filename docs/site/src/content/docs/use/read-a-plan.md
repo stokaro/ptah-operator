@@ -104,6 +104,54 @@ rather than half its SQL.
 Exit status: `0` printed, `1` could not read or verify, `2` the command line,
 `3` nothing stored to print.
 
+## A migration, not a plan {#migration}
+
+A `PtahMigration` runs SQL that is already written. There is no generated plan
+to print: the statements live in the artifact, and what the operator publishes
+is which versions it would run, against which reading of the database's own
+history.
+
+```sh
+kubectl ptah migration orders -n application
+```
+
+```text
+Migration:      application/orders
+Phase:          AwaitingApproval
+Artifact:       oci://registry.example/acme/orders-migrations@sha256:...
+History read:   2026-08-30T12:00:00Z
+Current version:2
+Applied:        2
+Pending:        1
+ApprovalRequired: True (AwaitingApproval)
+
+Plan ptah-mplan-0123456789abcdef01234567, 1 migration from version 2:
+  3                    add the orders index
+```
+
+`-o json` prints the same view as a document, for a script that wants the
+pending count or the last run's outcome without parsing text.
+
+What it never prints is SQL or a table row. A migration plan records versions,
+descriptions and checksums; reading the statements means reading the artifact,
+which this command does not fetch. The same is true of reference data: a row
+this operator writes is never printed back to you here, in the status, or in an
+Event.
+
+Three states are worth recognizing in the output:
+
+- **Dirty** -- a failed or interrupted run left a revision row behind. Nothing
+  applies while one exists, and the operator never removes it.
+- **Modified** -- an applied migration's file no longer accounts for it, and the
+  versions are listed. This is the refusal a versioned workflow exists to make.
+- **Last run: Partial** -- a migration committed some of its statements and not
+  the rest. Retrying the file would run them twice, so the operator stops and
+  the recovery is yours to choose.
+
+Reading a migration needs `get` on `ptahmigrations` and `ptahmigrationplans` in
+the namespace, and nothing else -- no ConfigMap, because there is no chunk
+store behind it.
+
 ## What it needs to be allowed to do
 
 Reading a plan is reading three kinds of object in one namespace. No Secret, no

@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
+	"github.com/stokaro/ptah-operator/internal/migrationview"
 	"github.com/stokaro/ptah-operator/internal/planview"
 )
 
@@ -55,12 +56,16 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer) int 
 		}
 		return exitOK
 	}
-	if arguments[0] != "plan" {
+	switch arguments[0] {
+	case "plan":
+		return plan(ctx, arguments[1:], stdout, stderr)
+	case "migration":
+		return migration(ctx, arguments[1:], stdout, stderr)
+	default:
 		fmt.Fprintf(stderr, "kubectl-ptah: unknown command %q\n\n", arguments[0])
 		usage(stderr)
 		return exitUsage
 	}
-	return plan(ctx, arguments[1:], stdout, stderr)
 }
 
 func plan(ctx context.Context, arguments []string, stdout, stderr io.Writer) int {
@@ -134,6 +139,71 @@ func plan(ctx context.Context, arguments []string, stdout, stderr io.Writer) int
 	return exitOK
 }
 
+// migration prints what the operator stored about one PtahMigration: where it
+// stands, what the database's own history said, which sequence it would run
+// next, and what the last run did.
+func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer) int {
+	flags := pflag.NewFlagSet("kubectl ptah migration", pflag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.Usage = func() { usage(stderr) }
+
+	var (
+		output      = flags.StringP("output", "o", string(migrationview.Text), "output format: text or json")
+		namespace   = flags.StringP("namespace", "n", "", "namespace of the migration (default: the kubeconfig context's)")
+		kubeconfig  = flags.String("kubeconfig", "", "path to a kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
+		kubeContext = flags.String("context", "", "kubeconfig context to use (default: the current one)")
+		timeout     = flags.Duration("timeout", 30*time.Second, "how long to wait for the API server")
+	)
+	if err := flags.Parse(arguments); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return exitOK
+		}
+		return exitUsage
+	}
+	if flags.NArg() != 1 {
+		fmt.Fprintf(stderr, "kubectl-ptah: name one PtahMigration\n\n")
+		usage(stderr)
+		return exitUsage
+	}
+	format := migrationview.Format(*output)
+	if !knownMigrationFormat(format) {
+		fmt.Fprintf(stderr, "kubectl-ptah: unknown output format %q; it is one of %v\n", *output, migrationview.Formats)
+		return exitUsage
+	}
+
+	reader, resolved, err := connect(*kubeconfig, *kubeContext, *namespace, *timeout)
+	if err != nil {
+		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
+		return exitFailed
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, *timeout)
+	defer cancel()
+
+	view, err := migrationview.Load(ctx, reader, resolved, flags.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
+		if errors.Is(err, migrationview.ErrMigrationNotFound) {
+			return exitAbsent
+		}
+		return exitFailed
+	}
+	if err := migrationview.Render(stdout, view, format); err != nil {
+		fmt.Fprintf(stderr, "kubectl-ptah: write the migration: %v\n", err)
+		return exitFailed
+	}
+	return exitOK
+}
+
+func knownMigrationFormat(format migrationview.Format) bool {
+	for _, candidate := range migrationview.Formats {
+		if candidate == format {
+			return true
+		}
+	}
+	return false
+}
+
 // connect builds a read-only client from the reader's own kubeconfig, and
 // returns the namespace the command will use.
 func connect(kubeconfig, contextName, namespace string, timeout time.Duration) (client.Reader, string, error) {
@@ -187,9 +257,12 @@ func known(format planview.Format) bool {
 
 func usage(out io.Writer) {
 	fmt.Fprint(out, `usage: kubectl ptah plan <schema> [flags]
+       kubectl ptah migration <migration> [flags]
 
-Prints the SQL of a plan the Ptah operator stored, after the operator's own
-checks on it have held.
+plan prints the SQL of a plan the Ptah operator stored, after the operator's
+own checks on it have held. migration prints where one PtahMigration stands:
+what the database's own history said, which sequence would run next, and what
+the last run did.
 
   --current              the plan the operator would run next (the default)
   --applied              the plan the last confirmed apply ran
@@ -207,6 +280,13 @@ log of what each statement did, and not a fresh reading of the database.
   kubectl ptah plan storefront -n application
   kubectl ptah plan storefront --applied -n application -o sql
   kubectl ptah plan storefront --applied -n application -o json > plan.json
+
+migration takes -o text (the default) or json, plus the same -n, --kubeconfig,
+--context and --timeout flags. It prints no SQL and no table row: a migration
+plan records versions and checksums, and the statements live in the artifact.
+
+  kubectl ptah migration orders -n application
+  kubectl ptah migration orders -n application -o json
 
 Exit status: 0 printed, 1 could not read or verify, 2 usage, 3 nothing stored
 to print.
