@@ -64,7 +64,6 @@ const (
 	TeardownPairPolicyReplaced   TeardownPairForm = "policy-replaced"
 	TeardownPairReplacingBinding TeardownPairForm = "replacing-binding"
 	TeardownPairReplayingPolicy  TeardownPairForm = "replaying-policy"
-	TeardownPairLegacyRecovery   TeardownPairForm = "legacy-recovery"
 	TeardownPairRetirement       TeardownPairForm = "retirement"
 	TeardownPairAbsent           TeardownPairForm = "absent"
 )
@@ -94,7 +93,6 @@ type TeardownRetirementProbe struct {
 // list comes from the compiled ReleaseTeardown inventory.
 type TeardownOriginalPairVerifier struct {
 	Name          string
-	OptionalGroup string
 	VerifyPolicy  func(*admissionregistrationv1.ValidatingAdmissionPolicy) error
 	VerifyBinding func(*admissionregistrationv1.ValidatingAdmissionPolicyBinding) error
 }
@@ -1496,11 +1494,6 @@ func classifyTeardownRetirementBinding(pair TeardownRetirementPair, actual *admi
 }
 
 func (s teardownRetirementPairState) form() (TeardownPairForm, error) {
-	if s.pair.Original.OptionalGroup == legacyParentWorkloadOriginTeardownGroup &&
-		((s.policy == teardownRetirementObjectOriginal && s.binding == teardownRetirementObjectAbsent) ||
-			(s.policy == teardownRetirementObjectOriginal && s.binding == teardownRetirementObjectRetired)) {
-		return TeardownPairLegacyRecovery, nil
-	}
 	switch {
 	case s.policy == teardownRetirementObjectOriginal && s.binding == teardownRetirementObjectOriginal:
 		return TeardownPairOriginal, nil
@@ -1539,53 +1532,8 @@ func (g *TeardownRetirementGuard) RetirementPairs() ([]TeardownRetirementPair, e
 		}
 		byName[contract.name] = TeardownOriginalPairVerifier{
 			Name:          contract.name,
-			OptionalGroup: contract.optionalGroup,
 			VerifyPolicy:  contract.verifyPolicy,
 			VerifyBinding: contract.verifyBinding,
-		}
-	}
-	// The retained v1 parent-origin guards are a bounded optional predecessor
-	// generation. Fresh installs never create them, but an upgrade from v1 must
-	// prove both exact objects before uninstall may replace either one. Keeping
-	// the pair in one optional group rejects sparse or partially foreign legacy
-	// state without discovering deletion targets from cluster labels.
-	parentGuard := NewParentWorkloadGuard(g.rollout)
-	retirementEntries := parentGuard.legacyOriginRetirementEntries()
-	retirementByName := make(map[string]parentGuardEntry, len(retirementEntries))
-	for _, entry := range retirementEntries {
-		retirementByName[entry.name] = entry
-	}
-	for _, entry := range parentGuard.legacyOriginEntries() {
-		if _, exists := byName[entry.name]; exists {
-			return nil, fmt.Errorf("teardown retirement legacy pair %s collides with the current inventory", entry.name)
-		}
-		retirement, found := retirementByName[entry.name]
-		if !found {
-			return nil, fmt.Errorf("teardown retirement legacy pair %s has no exact post-upgrade retirement contract", entry.name)
-		}
-		verifyOriginalPolicy := entry.verifyPolicy
-		verifyOriginalBinding := entry.verifyBinding
-		byName[entry.name] = TeardownOriginalPairVerifier{
-			Name:          entry.name,
-			OptionalGroup: legacyParentWorkloadOriginTeardownGroup,
-			VerifyPolicy: func(actual *admissionregistrationv1.ValidatingAdmissionPolicy) error {
-				if verifyOriginalPolicy(actual) == nil {
-					return nil
-				}
-				if actual != nil && exactParentGuardObjectMetadata(actual.ObjectMeta, retirement.policy.ObjectMeta) && reflect.DeepEqual(actual.Spec, retirement.policy.Spec) {
-					return nil
-				}
-				return fmt.Errorf("legacy parent-origin policy %s differs from the original and post-upgrade retirement contracts", entry.name)
-			},
-			VerifyBinding: func(actual *admissionregistrationv1.ValidatingAdmissionPolicyBinding) error {
-				if verifyOriginalBinding(actual) == nil {
-					return nil
-				}
-				if actual != nil && exactParentGuardObjectMetadata(actual.ObjectMeta, retirement.binding.ObjectMeta) && reflect.DeepEqual(actual.Spec, retirement.binding.Spec) {
-					return nil
-				}
-				return fmt.Errorf("legacy parent-origin binding %s differs from the original and post-upgrade retirement contracts", entry.name)
-			},
 		}
 	}
 	for _, pair := range g.additionalPairs {
@@ -1725,32 +1673,12 @@ const (
 
 func hasTeardownRetirementActiveFrontier(states []teardownRetirementPairState) bool {
 	for frontier := 0; frontier <= len(states); frontier++ {
-		groupOrigins := make(map[string]uint8)
 		valid := true
 		for index, state := range states {
-			origins := teardownRetirementAllowedOrigins(state, index, frontier)
-			if origins == 0 {
+			if teardownRetirementAllowedOrigins(state, index, frontier)&teardownRetirementOriginPresent == 0 {
 				valid = false
 				break
 			}
-			group := state.pair.Original.OptionalGroup
-			if group == "" {
-				if origins&teardownRetirementOriginPresent == 0 {
-					valid = false
-					break
-				}
-				continue
-			}
-			allowed, found := groupOrigins[group]
-			if !found {
-				allowed = teardownRetirementOriginEither
-			}
-			allowed &= origins
-			if allowed == 0 {
-				valid = false
-				break
-			}
-			groupOrigins[group] = allowed
 		}
 		if valid {
 			return true
@@ -1760,9 +1688,6 @@ func hasTeardownRetirementActiveFrontier(states []teardownRetirementPairState) b
 }
 
 func teardownRetirementAllowedOrigins(state teardownRetirementPairState, index, frontier int) uint8 {
-	if state.pair.Original.OptionalGroup == legacyParentWorkloadOriginTeardownGroup {
-		return teardownRetirementOriginEither
-	}
 	if index < frontier {
 		if state.policy != teardownRetirementObjectOriginal && state.binding != teardownRetirementObjectOriginal {
 			return teardownRetirementOriginEither

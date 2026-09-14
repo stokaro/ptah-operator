@@ -48,23 +48,15 @@
 {{- $parentHookPodOriginGuardName := include "ptah-operator.parentHookPodOriginGuardPolicyName" . -}}
 {{- $parentHookJobOriginGuardName := include "ptah-operator.parentHookJobOriginGuardPolicyName" . -}}
 {{- $parentHookJobContractGuardName := include "ptah-operator.parentHookJobContractPolicyName" . -}}
-{{- $legacyControllerGuardDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
-{{- $parentOriginReadyName := printf "ptah-operator-parent-origin-ready-v2-%s" $legacyControllerGuardDigest -}}
-{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $legacyControllerGuardDigest -}}
-{{- $legacyControllerWriteGuardName := printf "ptah-operator-controller-write-guard-v1-%s" $legacyControllerGuardDigest -}}
-{{- $legacyControllerJobWriteGuardName := printf "ptah-operator-job-write-guard-v1-%s" $legacyControllerGuardDigest -}}
-{{- $legacyControllerChunkWriteGuardName := printf "ptah-operator-chunk-write-guard-v1-%s" $legacyControllerGuardDigest -}}
-{{- $legacyControllerPlanWriteGuardName := printf "ptah-operator-plan-write-guard-v1-%s" $legacyControllerGuardDigest -}}
-{{- $legacyServiceAccountOriginGuardName := printf "ptah-operator-service-account-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
-{{- $legacyRuntimeParentGuardName := printf "ptah-operator-runtime-parent-guard-v1-%s" $legacyControllerGuardDigest -}}
+{{- $releaseDigest := printf "%s\n%s" .Release.Namespace .Release.Name | sha256sum | trunc 12 -}}
+{{- $parentOriginReadyName := printf "ptah-operator-parent-origin-ready-v2-%s" $releaseDigest -}}
+{{- $serviceAccountObjectGuardName := printf "ptah-operator-service-account-object-guard-v1-%s" $releaseDigest -}}
 {{/*
 The teardown retirement inventory still names the parent-origin guards a
 release installed by an older chart left behind. Quiescence reads every
 target in that inventory before it stops anything, and a name it may not
 read is refused before it can be found absent.
 */}}
-{{- $legacyParentHookPodOriginGuardName := printf "ptah-operator-hook-pod-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
-{{- $legacyParentHookJobOriginGuardName := printf "ptah-operator-hook-parent-origin-guard-v1-%s" $legacyControllerGuardDigest -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -143,14 +135,6 @@ rules:
       {{- if $certificateRuntimeEnabled }}
       - {{ $stagingSecretGuardName }}
       {{- end }}
-      - {{ $legacyControllerWriteGuardName }}
-      - {{ $legacyControllerJobWriteGuardName }}
-      - {{ $legacyControllerChunkWriteGuardName }}
-      - {{ $legacyControllerPlanWriteGuardName }}
-      - {{ $legacyServiceAccountOriginGuardName }}
-      - {{ $legacyRuntimeParentGuardName }}
-      - {{ $legacyParentHookPodOriginGuardName }}
-      - {{ $legacyParentHookJobOriginGuardName }}
       - {{ $retirementFenceAName }}
       - {{ $retirementFenceBName }}
       {{- if $certificateRecoveryEnabled }}
@@ -672,14 +656,6 @@ rules:
       {{- if $certificateRuntimeEnabled }}
       - {{ $stagingSecretGuardName }}
       {{- end }}
-      - {{ $legacyControllerWriteGuardName }}
-      - {{ $legacyControllerJobWriteGuardName }}
-      - {{ $legacyControllerChunkWriteGuardName }}
-      - {{ $legacyControllerPlanWriteGuardName }}
-      - {{ $legacyServiceAccountOriginGuardName }}
-      - {{ $legacyRuntimeParentGuardName }}
-      - {{ $legacyParentHookPodOriginGuardName }}
-      - {{ $legacyParentHookJobOriginGuardName }}
       - {{ $retirementFenceAName }}
       - {{ $retirementFenceBName }}
       {{- if $certificateRecoveryEnabled }}

@@ -99,19 +99,6 @@ func TestRenderedTeardownRetirementMatchesCompiledContract(t *testing.T) {
 				assertRenderedTeardownRetirementPolicy(t, objects, pair.Policy)
 				assertRenderedTeardownRetirementBinding(t, objects, pair.Binding)
 			}
-			legacyParentNames := []string{
-				legacyParentHookJobOriginGuardPolicyName(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName),
-				legacyParentHookPodOriginGuardPolicyName(guard.rollout.ReleaseNamespace, guard.rollout.ReleaseName),
-			}
-			for _, name := range legacyParentNames {
-				pairIndex := slices.IndexFunc(pairs, func(pair TeardownRetirementPair) bool {
-					return pair.Original.Name == name
-				})
-				if pairIndex < 0 || pairs[pairIndex].Original.OptionalGroup != legacyParentWorkloadOriginTeardownGroup {
-					t.Fatalf("rendered retirement inventory does not classify parent v1 pair %s as exact optional legacy", name)
-				}
-			}
-
 			certificateName := guard.rollout.CertificateDeploymentName
 			certificatePairRendered := countTeardownRetirementObjects(objects, "ValidatingAdmissionPolicy", certificateName, "") != 0
 			if certificatePairRendered != test.certificateRecovery {
