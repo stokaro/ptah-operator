@@ -8,9 +8,9 @@ import (
 )
 
 // TestBuildCommand_MigrationOperations pins what a migration Job runs: the
-// artifact by digest, and the machine-readable document.
+// materialized directory, and the machine-readable document.
 func TestBuildCommand_MigrationOperations(t *testing.T) {
-	pinned := "oci://registry.example/team/app-migrations@sha256:" + strings.Repeat("a", 64)
+	const directory = "/source/migrations"
 	tests := []struct {
 		name      string
 		operation runner.Operation
@@ -19,19 +19,19 @@ func TestBuildCommand_MigrationOperations(t *testing.T) {
 		{
 			name:      "history reads and changes nothing",
 			operation: runner.OperationMigrationHistory,
-			want:      []string{"migrations", "status", "--migrations-dir", pinned, "--json"},
+			want:      []string{"migrations", "status", "--migrations-dir", directory, "--json"},
 		},
 		{
 			name:      "apply runs the pending migrations",
 			operation: runner.OperationMigrationApply,
-			want:      []string{"migrations", "up", "--migrations-dir", pinned, "--json"},
+			want:      []string{"migrations", "up", "--migrations-dir", directory, "--json"},
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			spec, err := runner.BuildCommand("/usr/local/bin/ptah", test.operation, runner.Inputs{
-				ResolvedReference: pinned,
+				MigrationsDir: directory,
 			})
 			if err != nil {
 				t.Fatalf("BuildCommand() error = %v", err)
@@ -43,20 +43,48 @@ func TestBuildCommand_MigrationOperations(t *testing.T) {
 	}
 }
 
-// TestBuildCommand_MigrationRefusesAnUnpinnedArtifact is the boundary that
-// keeps a Job from resolving a tag of its own: the controller resolved and
-// verified exact bytes, and those are the bytes the Job must run.
-func TestBuildCommand_MigrationRefusesAnUnpinnedArtifact(t *testing.T) {
-	for _, operation := range []runner.Operation{
-		runner.OperationMigrationHistory,
-		runner.OperationMigrationApply,
-	} {
-		_, err := runner.BuildCommand("/usr/local/bin/ptah", operation, runner.Inputs{
-			ResolvedReference: "oci://registry.example/team/app-migrations:stable",
+// TestBuildCommand_MigrationRefusesAReference is the credential boundary. Ptah
+// accepts `--migrations-dir oci://...` and fetches the artifact itself, which
+// would put the registry in the same process as the database; the artifact is
+// materialized by a fetch container that holds the registry credentials this
+// one does not.
+func TestBuildCommand_MigrationRefusesAReference(t *testing.T) {
+	tests := []struct {
+		name      string
+		directory string
+		message   string
+	}{
+		{
+			name:      "an OCI reference",
+			directory: "oci://registry.example/team/app-migrations@sha256:" + strings.Repeat("a", 64),
+			message:   "must be a materialized local path, not a reference",
+		},
+		{
+			name:      "a relative path",
+			directory: "migrations",
+			message:   "must be an absolute path",
+		},
+		{
+			name:      "nothing at all",
+			directory: "",
+			message:   "migration directory is empty",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, operation := range []runner.Operation{
+				runner.OperationMigrationHistory,
+				runner.OperationMigrationApply,
+			} {
+				_, err := runner.BuildCommand("/usr/local/bin/ptah", operation, runner.Inputs{
+					MigrationsDir: test.directory,
+				})
+				if err == nil || !strings.Contains(err.Error(), test.message) {
+					t.Fatalf("BuildCommand(%s) error = %v, want %q", operation, err, test.message)
+				}
+			}
 		})
-		if err == nil || !strings.Contains(err.Error(), "not pinned to a digest") {
-			t.Fatalf("BuildCommand(%s) error = %v, want a refusal of the unpinned reference", operation, err)
-		}
 	}
 }
 

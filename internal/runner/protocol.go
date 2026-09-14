@@ -358,8 +358,7 @@ func validateResult(result Result, options ParseOptions) error {
 		}
 	}
 	if result.Error != nil && result.Error.Code == "invalid_oci_access" {
-		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify ||
-			result.Operation == OperationMigrationHistory || result.Operation == OperationMigrationApply
+		preChildOperation := result.Operation == OperationResolve || result.Operation == OperationVerify
 		expected := Result{
 			ProtocolVersion: result.ProtocolVersion,
 			Operation:       result.Operation,

@@ -2279,9 +2279,9 @@ func migrationRunDocument(outcome string) string {
 }
 
 func migrationEnvironment(operationID string) []string {
-	return append(databaseEnvironment(operationID),
-		envResolvedReference+"=oci://registry.example/team/app-migrations@sha256:"+strings.Repeat("a", 64),
-	)
+	// A materialized directory rather than a reference: the fetch container
+	// holds the registry credentials, and this process holds the database ones.
+	return append(databaseEnvironment(operationID), envMigrationsDir+"=/source/migrations")
 }
 
 // A migration that stopped is the run whose report matters most: the exit
@@ -2343,25 +2343,30 @@ func TestMigrationApplyClaimsTheMutationWhenTheChildCannotBeRead(t *testing.T) {
 	}
 }
 
-// The migration operations read the artifact from the registry, so they get the
-// same access preparation as the operations that resolve and verify it: the
-// authority check and the verified CA snapshot, before any child runs.
-func TestMigrationOperationsPrepareRegistryAccessBeforeTheChild(t *testing.T) {
+// The migration operations never reach a registry. They read a directory a
+// fetch container already materialized, so the process holding the database
+// credentials holds no registry credentials -- and a reference offered to one
+// of them is refused rather than fetched.
+func TestMigrationOperationsNeverReachTheRegistry(t *testing.T) {
 	t.Parallel()
 
 	for _, operation := range []Operation{OperationMigrationHistory, OperationMigrationApply} {
-		operation := operation
 		t.Run(string(operation), func(t *testing.T) {
 			t.Parallel()
 			executor := &scriptedExecutor{t: t}
+			// A credential-bearing reference in the environment would have made
+			// the old shape prepare registry access. Nothing reads it now.
 			environment := append(databaseEnvironment("migration-registry-access"),
 				envResolvedReference+"=oci://user:password@registry.example/team/app-migrations@sha256:"+strings.Repeat("a", 64),
 			)
 			result := Run(context.Background(), Config{
 				Operation: operation, Environment: environment, Executor: executor,
 			})
-			if result.Error == nil || result.Error.Code != "invalid_oci_access" || len(executor.calls) != 0 {
+			if result.Error == nil || result.Error.Code != "invalid_input" || len(executor.calls) != 0 {
 				t.Fatalf("Run() = %#v, commands = %d", result, len(executor.calls))
+			}
+			if !strings.Contains(result.Error.Message, "migration directory is empty") {
+				t.Fatalf("error message = %q, want the missing materialized directory", result.Error.Message)
 			}
 		})
 	}
