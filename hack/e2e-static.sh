@@ -1263,6 +1263,15 @@ for migration_marker in \
 	'assert_kubectl_ptah_migration InSync' \
 	'does not publish the plan a reader has to approve' \
 	'printed the order as' \
+	'run_existing_schema_adoption_proof' \
+	'build_adopt_schema_without_the_operator' \
+	'the operator wrote a revision table into a database it was never approved to migrate' \
+	'the operator ran an Apply against a database that already carries the schema' \
+	'"migrations", "baseline", "--migrations-dir", "/migrations",' \
+	'"--shadow-db", "$(PTAH_E2E_SHADOW_URL)"' \
+	'the adoption Job did not keep registry access out of the process that runs SQL' \
+	'did not settle on the history a person recorded' \
+	'the operator ran an Apply after a person adopted the database' \
 	'e2e migrations: PASS approval gate, applied sequence, matching history, and credential isolation'; do
 	grep -F -- "$migration_marker" "$ROOT_DIR/hack/e2e-migrations.sh" >/dev/null || {
 		printf 'e2e static: live migration proof marker is missing: %s\n' "$migration_marker" >&2
