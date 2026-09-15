@@ -1228,14 +1228,17 @@ for migration_marker in \
 	'"migrations", "push", $reference, "--migrations-dir", "/migrations",' \
 	'the migration publisher Job did not preserve the no-database-credential boundary' \
 	'wait_for_migration_phase AwaitingApproval' \
-	'did not reach an exact two-migration approval gate' \
-	'[$spec.migrations[].version] == [1, 2]' \
+	'did not reach an exact three-migration approval gate' \
+	'[$spec.migrations[].version] == [1, 2, 3]' \
 	'carries SQL text' \
 	'approve_migration "$MIGRATION_APPROVAL"' \
 	'was not hydrated and bound to the exact plan' \
 	'wait_for_migration_phase InSync' \
 	'did not settle on a history that matches the artifact' \
 	'assert_database_migrated' \
+	'did not apply its data-only change' \
+	'seeded rows, not the three migration 1 inserted once' \
+	'left its column nullable' \
 	'migration Jobs did not keep registry access out of the process that runs SQL' \
 	'an approval naming the consumed plan was accepted' \
 	'kubectl ptah migration printed SQL' \
@@ -1264,8 +1267,8 @@ if grep -F 'application/vnd.stokaro.ptah.schema.v1' \
 fi
 for migration_engine in postgresql mysql; do
 	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
-	[ "$migration_fixture_count" -eq 4 ] || {
-		printf 'e2e static: the %s migration fixtures are %s files, and the proof applies two migrations in both directions\n' \
+	[ "$migration_fixture_count" -eq 6 ] || {
+		printf 'e2e static: the %s migration fixtures are %s files, and the proof applies three migrations in both directions\n' \
 			"$migration_engine" "$migration_fixture_count" >&2
 		exit 1
 	}

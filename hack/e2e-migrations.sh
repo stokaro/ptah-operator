@@ -559,7 +559,7 @@ assert_awaiting_approval() {
       $status.history.contractVersion == 1 and
       $status.history.currentVersion == 0 and
       $status.history.appliedCount == 0 and
-      $status.history.pendingCount == 2 and
+      $status.history.pendingCount == 3 and
       ($status.history.dirty // false) == false and
       ($status.history.modifiedVersions // []) == [] and
       ($status.history.fingerprint | test("^sha256:[0-9a-f]{64}$")) and
@@ -578,7 +578,7 @@ assert_awaiting_approval() {
       ([$status | .. | scalars | select(. == $coordinationKey)] | length) == 0 and
       ([$status | .. | scalars | select(. == $coordinationDigest)] | length) > 0
     ' "$STATUS_FILE" >/dev/null ||
-		fail "$MIGRATION_NAME did not reach an exact two-migration approval gate"
+		fail "$MIGRATION_NAME did not reach an exact three-migration approval gate"
 	MIGRATION_PLAN=$(jq -er '.status.plan.name' "$STATUS_FILE")
 	printf 'e2e migrations: plan %s awaits approval\n' "$MIGRATION_PLAN" >&2
 }
@@ -602,7 +602,7 @@ assert_plan_sequence() {
       $spec.currentVersion == 0 and
       ($spec.fingerprint | test("^sha256:[0-9a-f]{64}$")) and
       ($spec.historyFingerprint | test("^sha256:[0-9a-f]{64}$")) and
-      [$spec.migrations[].version] == [1, 2] and
+      [$spec.migrations[].version] == [1, 2, 3] and
       all($spec.migrations[]; .checksum != "" and (.checkpoint // false) == false) and
       $spec.controllerImage == $controllerImage and
       $spec.controllerStateVersion == $controllerStateVersion
@@ -685,13 +685,13 @@ assert_in_sync() {
       .status as $status |
       $status.phase == "InSync" and
       $status.artifact.digest == $digest and
-      $status.history.currentVersion == 2 and
-      $status.history.appliedCount == 2 and
+      $status.history.currentVersion == 3 and
+      $status.history.appliedCount == 3 and
       $status.history.pendingCount == 0 and
       ($status.history.dirty // false) == false and
       ($status.history.modifiedVersions // []) == [] and
       $status.lastRun.outcome == "Applied" and
-      ($status.lastRun.appliedVersions | sort) == [1, 2] and
+      ($status.lastRun.appliedVersions | sort) == [1, 2, 3] and
       $status.lastRun.jobName != "" and $status.lastRun.jobUID != "" and
       $status.lastRun.finishedAt != null and
       ($status.plan // null) == null and
@@ -723,9 +723,28 @@ assert_database_migrated() {
 	table_count=$(migration_query "SELECT count(*) FROM information_schema.tables WHERE ${migrated_schema} AND table_name='e2e_migration_widgets'")
 	[ "$table_count" = 1 ] ||
 		fail "$ENGINE migration 1 did not create its table; information_schema reports $table_count"
+	# Migration 1 seeds three rows. A run the history already recorded must not
+	# execute again, and a repeated INSERT is the one kind of DML that says so
+	# without an observer: the count is what proves it did not.
+	row_count=$(migration_query "SELECT count(*) FROM e2e_migration_widgets")
+	[ "$row_count" = 3 ] ||
+		fail "$ENGINE has $row_count seeded rows, not the three migration 1 inserted once"
 	column_count=$(migration_query "SELECT count(*) FROM information_schema.columns WHERE ${migrated_schema} AND table_name='e2e_migration_widgets' AND column_name='color'")
 	[ "$column_count" = 1 ] ||
 		fail "$ENGINE migration 2 did not add its column; information_schema reports $column_count"
+	# Migration 2 adds the column, fills it, and only then constrains it. A
+	# reordered run leaves the constraint refused or the column nullable.
+	nullable=$(migration_query "SELECT is_nullable FROM information_schema.columns WHERE ${migrated_schema} AND table_name='e2e_migration_widgets' AND column_name='color'")
+	[ "$nullable" = NO ] ||
+		fail "$ENGINE migration 2 left its column nullable: is_nullable=$nullable"
+	# Migration 3 is DML with an empty schema diff. It has to run and be
+	# recorded like any other version.
+	recolored=$(migration_query "SELECT color FROM e2e_migration_widgets WHERE id = 1")
+	[ "$recolored" = blue ] ||
+		fail "$ENGINE migration 3 did not apply its data-only change: color=$recolored"
+	untouched=$(migration_query "SELECT count(*) FROM e2e_migration_widgets WHERE color = 'unset'")
+	[ "$untouched" = 2 ] ||
+		fail "$ENGINE migration 3 changed $((3 - untouched)) rows instead of the one it names"
 }
 
 # The isolation row of the matrix, read from the Jobs the controller created
