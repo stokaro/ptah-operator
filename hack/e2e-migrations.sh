@@ -333,7 +333,7 @@ create_migration_database() {
 		;;
 	esac
 	[ "$existing" = 0 ] ||
-		fail "database $MIGRATION_DATABASE already exists on $ENGINE; the migration proof needs a database nothing has migrated"
+		fail "database $MIGRATION_DATABASE already exists on $ENGINE; the migration proof needs a database nothing has migrated, so drop it before running this phase again"
 	case "$ENGINE" in
 	postgresql)
 		# shellcheck disable=SC2016 # Variables expand inside the database container.
@@ -397,9 +397,12 @@ migration_query() {
 # The schema path's policy names the schema type, and a policy that accepted
 # both would let a schema artifact stand in for a migration directory.
 create_migration_policy() {
+	# Applied rather than created so a rerun of this phase against a retained
+	# cluster reaches its own proof instead of failing on the fixture. The
+	# object is immutable, so an apply either writes it once or changes nothing.
 	k -n "$TEST_NAMESPACE" create configmap "$MIGRATION_POLICY" \
 		--from-file="${MIGRATION_POLICY_KEY}=${MIGRATION_POLICY_FILE}" \
-		--dry-run=client -o json | jq '.immutable = true' | k create -f - >/dev/null
+		--dry-run=client -o json | jq '.immutable = true' | k apply -f - >/dev/null
 	grep -F 'application/vnd.stokaro.ptah.migrations.v1' "$MIGRATION_POLICY_FILE" >/dev/null ||
 		fail "the migration verification policy does not pin the migration artifact type"
 }
