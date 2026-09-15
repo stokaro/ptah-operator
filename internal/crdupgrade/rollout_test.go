@@ -444,17 +444,99 @@ func TestRolloutGuardEnforcementProbeUsesBootstrapCreateOnlyWithNoActiveRelease(
 		t.Fatalf("bootstrap enforcement token = %q, want %q", got, policyName)
 	}
 
+	// A bootstrap probe may never stand in for a Deployment of an active
+	// release: it carries no identity, and admitting one would mean the token
+	// probe proved a guard against an object the guard should refuse. The token
+	// path reports that it has no baseline instead, and the caller answers it
+	// with the refusal proof.
 	guard, _, _, deployments = readyRolloutGuard()
 	activation := guard.releaseActivationGuard()
 	guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activationObject(activation, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
-	t.Cleanup(cancel)
-	err := guard.waitEnforced(ctx, policyName, runtimeGuardProbeDenialMessage(guard.ReleaseSequence))
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("active-release probe error = %v, want retry until deadline", err)
+	err := guard.waitEnforced(context.Background(), policyName, runtimeGuardProbeDenialMessage(guard.ReleaseSequence))
+	if !errors.Is(err, errRuntimeIdentityUnavailable) {
+		t.Fatalf("active-release probe error = %v, want errRuntimeIdentityUnavailable", err)
 	}
 	if deployments.dryCreates != 0 || deployments.dryUpdates != 0 {
 		t.Fatal("active release with missing Deployments reached a dry-run mutation")
+	}
+}
+
+// TestRolloutGuardRefusalProofAcceptsOnlyTheGuardsOwnDenial drives the recovery
+// path stokaro/ptah-operator#10 and #22 need: both runtime Deployments are gone
+// while a release is active, so no baseline the runtime guard accepts can be
+// built, and the guard is proven by the refusal that protects the release. A
+// denial from another policy, or another message from this one, is not that
+// proof and must not pass.
+func TestRolloutGuardRefusalProofAcceptsOnlyTheGuardsOwnDenial(t *testing.T) {
+	policyName := RuntimeGuardPolicyName(1)
+	for _, test := range []struct {
+		name    string
+		denial  error
+		wantErr bool
+	}{
+		{
+			name:   "the runtime guard refuses the identity",
+			denial: exactPolicyDenialError(policyName, policyName, runtimeGuardDenialMessage(1)),
+		},
+		{
+			name:    "another policy answered",
+			denial:  exactPolicyDenialError(RolloutGuardPolicyName(1), RolloutGuardPolicyName(1), rolloutGuardDenialMessage(1)),
+			wantErr: true,
+		},
+		{
+			name:    "the same policy answered about something else",
+			denial:  exactPolicyDenialError(policyName, policyName, runtimeGuardProbeDenialMessage(1)),
+			wantErr: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			guard, _, _, deployments := readyRolloutGuard()
+			activation := guard.releaseActivationGuard()
+			guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activationObject(activation, 1)
+			deployments.dryCreateResults = []error{test.denial}
+
+			err := guard.waitRuntimeIdentityRefusalEnforced(context.Background())
+			if test.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "identity refusal") {
+					t.Fatalf("refusal proof error = %v, want the foreign denial refused", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("refusal proof error = %v, want the guard's own denial to prove enforcement", err)
+			}
+			if deployments.dryCreates != 1 {
+				t.Fatalf("dry-run creates = %d, want exactly the one refusal probe", deployments.dryCreates)
+			}
+		})
+	}
+}
+
+// TestRolloutGuardRefusalProofNeedsTheGuardToRefuse measures what the recovery
+// path accepts as evidence. The fake API server admits everything, so a guard
+// that refused nothing must fail the proof rather than pass it: an admitted
+// probe means the runtime guard took a Deployment whose identity it cannot
+// account for, which is the thing it exists to stop.
+func TestRolloutGuardRefusalProofNeedsTheGuardToRefuse(t *testing.T) {
+	guard, _, _, deployments := readyRolloutGuard()
+	activation := guard.releaseActivationGuard()
+	guard.ConfigMaps.(*rolloutConfigMapClient).objects[ReleaseActivationName] = activationObject(activation, 1)
+	err := guard.waitRuntimeIdentityRefusalEnforced(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "admitted a Deployment without the active runtime identity") {
+		t.Fatalf("refusal proof error = %v, want the admitted probe to fail the proof", err)
+	}
+	if deployments.dryCreates == 0 {
+		t.Fatal("the refusal proof never sent a probe")
+	}
+	probe := deployments.dryCreateObjects[0]
+	if probe.Name != guard.ControllerDeploymentName {
+		t.Fatalf("refusal probe name = %q, want %q", probe.Name, guard.ControllerDeploymentName)
+	}
+	if probe.Annotations[ReleaseSequenceAnnotation] != "1" {
+		t.Fatalf("refusal probe release sequence = %q, want the active release", probe.Annotations[ReleaseSequenceAnnotation])
+	}
+	if _, found := probe.Annotations[guardEnforcementProbeAnnotation]; found {
+		t.Fatal("the refusal probe carries the reserved enforcement token")
 	}
 }
 

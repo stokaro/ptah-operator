@@ -3648,6 +3648,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				}),
 				exactSourceLine("controller guarded-field proof implementation", `prove_controller_object_supported_window_guard() {`),
 				exactSourceLine("controller guarded-field proof call", `prove_controller_object_supported_window_guard`),
+				exactSourceLine("runtime deployment recovery proof implementation", `prove_runtime_deployment_recovery() {`),
 				exactSourceLine("upgrade proof implementation", `run_upgrade_proof() {`),
 				exactSourceLineSequence("current-release read-only Job cleanup staging", []string{
 					`dispatch_read_only_job_fixture`,
@@ -3660,6 +3661,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`wait_for_read_only_job_cleanup`,
 					`quiesce_read_only_job_schema`,
 				}),
+				exactSourceLine("runtime deployment recovery proof call", `prove_runtime_deployment_recovery`),
 				exactSourceLine("runtime singleton proof call", `prove_runtime_singleton_guard`),
 				exactSourceLine("controller downgrade proof call", `prove_controller_downgrade_guard`),
 				exactSourceLine("next-release upgrade proof implementation", `run_next_release_upgrade_proof() {`),

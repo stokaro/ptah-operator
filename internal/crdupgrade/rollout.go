@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"reflect"
@@ -251,17 +252,29 @@ func (g *RolloutGuard) Prepare(ctx context.Context) error {
 		return err
 	}
 	rolloutName := RolloutGuardPolicyName(g.ReleaseSequence)
-	if err := g.waitEnforced(ctx, rolloutName, rolloutGuardProbeDenialMessage(g.ReleaseSequence)); err != nil {
+	runtimeName := RuntimeGuardPolicyName(g.ReleaseSequence)
+	runtimeIdentityAvailable := true
+	err := g.waitEnforced(ctx, rolloutName, rolloutGuardProbeDenialMessage(g.ReleaseSequence))
+	switch {
+	case errors.Is(err, errRuntimeIdentityUnavailable):
+		// Nothing carries the active runtime identity, so no baseline exists
+		// that every retained guard accepts, and a token denial would come back
+		// as the runtime guard's refusal instead. Both guards are still proven,
+		// each by a denial only it can produce: the rollout guard by the
+		// arbitrary-name CREATE boundary below, which the runtime guard's match
+		// condition does not see, and the runtime guard by its own identity
+		// refusal.
+		runtimeIdentityAvailable = false
+	case err != nil:
 		return err
 	}
 	if err := g.waitRolloutCreateBoundaryEnforced(ctx); err != nil {
 		return err
 	}
-	runtimeName := RuntimeGuardPolicyName(g.ReleaseSequence)
-	if err := g.waitEnforced(ctx, runtimeName, runtimeGuardProbeDenialMessage(g.ReleaseSequence)); err != nil {
-		return err
+	if runtimeIdentityAvailable {
+		return g.waitEnforced(ctx, runtimeName, runtimeGuardProbeDenialMessage(g.ReleaseSequence))
 	}
-	return nil
+	return g.waitRuntimeIdentityRefusalEnforced(ctx)
 }
 
 // Verify requires both persistent policies and bindings to match this exact
@@ -958,23 +971,48 @@ func (g *RolloutGuard) waitPolicyReady(ctx context.Context, name string) error {
 	})
 }
 
+// errRuntimeIdentityUnavailable reports that no Deployment carrying the active
+// runtime identity exists, so the token probe has no accepted baseline. The API
+// server reports only the first denied decision, so a baseline the runtime
+// guard refuses makes every token denial unreadable: the cause that comes back
+// is the refusal, not the probe. The caller answers it by proving the runtime
+// guard through that refusal instead.
+var errRuntimeIdentityUnavailable = errors.New("no Deployment carries the active runtime identity")
+
+// errRuntimeDeploymentsMissing reports that neither runtime Deployment answered
+// a read while a release is active. It wraps the API server's own NotFound, so
+// a caller that treats a read race as retryable keeps doing so.
+var errRuntimeDeploymentsMissing = errors.New("both runtime Deployments are missing")
+
 // waitEnforced first proves that a Deployment baseline is accepted, then
 // adds only the target policy's reserved token. A stopped predecessor may
 // need a dry-run-only active-identity baseline; no probe is persisted.
 // The resulting single-cause denial is attributable to one policy while guards
 // overlap during an upgrade.
 func (g *RolloutGuard) waitEnforced(ctx context.Context, policyName, denialMessage string) error {
+	missingReads := 0
 	return wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
 		deployment, create, err := g.enforcementProbeDeployment(pollCtx)
 		if err != nil {
+			if errors.Is(err, errRuntimeDeploymentsMissing) {
+				missingReads++
+				if missingReads > 1 {
+					return false, errRuntimeIdentityUnavailable
+				}
+				return false, nil
+			}
 			if retryableDeploymentProbeRace(err) {
 				return false, nil
 			}
 			return false, err
 		}
+		missingReads = 0
 		if err := g.dryRunDeployment(pollCtx, deployment, create); err != nil {
 			if retryableDeploymentProbeRace(err) {
 				return false, nil
+			}
+			if g.isRuntimeIdentityRefusal(err) {
+				return false, errRuntimeIdentityUnavailable
 			}
 			return false, fmt.Errorf("prove baseline Deployment is accepted before probing %s: %w", policyName, err)
 		}
@@ -1025,6 +1063,56 @@ func (g *RolloutGuard) waitRolloutCreateBoundaryEnforced(ctx context.Context) er
 	})
 }
 
+// isRuntimeIdentityRefusal recognizes the runtime guard refusing a Deployment
+// that does not carry the active runtime identity. It is the guard's own
+// denial, not the probe's, and it is the exact single cause the API server
+// returns for the first failed validation.
+func (g *RolloutGuard) isRuntimeIdentityRefusal(err error) bool {
+	name := RuntimeGuardPolicyName(g.ReleaseSequence)
+	return hasExactValidatingAdmissionPolicyDenial(err, name, name, runtimeGuardDenialMessage(g.ReleaseSequence))
+}
+
+// waitRuntimeIdentityRefusalEnforced proves the runtime guard is enforcing when
+// nothing in the cluster carries the active runtime identity: both runtime
+// Deployments were deleted while a release is active, or a retry arrived after
+// activation persisted but before Helm replaced the stopped predecessor's Pod
+// template. No baseline this guard accepts can be built from the activation
+// parameter, which holds an image and two versions rather than a Pod spec, so
+// the proof is the refusal that protects the release: the guard evaluates the
+// request and denies it by identity. The denial is a single cause naming this
+// policy and its binding, exactly as the token probe requires of its own.
+//
+// An accepted probe is a failure. It would mean the guard admits a runtime
+// whose identity it cannot account for, which is the thing it exists to stop.
+func (g *RolloutGuard) waitRuntimeIdentityRefusalEnforced(ctx context.Context) error {
+	policyName := RuntimeGuardPolicyName(g.ReleaseSequence)
+	return wait.PollUntilContextCancel(ctx, g.PollEvery, true, func(pollCtx context.Context) (bool, error) {
+		deployment, create, err := g.enforcementProbeDeployment(pollCtx)
+		switch {
+		case errors.Is(err, errRuntimeDeploymentsMissing):
+			deployment, create, err = nil, true, nil
+			if deployment, err = g.activeIdentityProbeDeployment(pollCtx); err != nil {
+				return false, err
+			}
+		case retryableDeploymentProbeRace(err):
+			return false, nil
+		case err != nil:
+			return false, err
+		}
+		err = g.dryRunDeployment(pollCtx, deployment, create)
+		if err == nil {
+			return false, fmt.Errorf("%s admitted a Deployment without the active runtime identity", policyName)
+		}
+		if retryableDeploymentProbeRace(err) {
+			return false, nil
+		}
+		if g.isRuntimeIdentityRefusal(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("probe %s identity refusal: %w", policyName, err)
+	})
+}
+
 func (g *RolloutGuard) enforcementProbeDeployment(ctx context.Context) (*appsv1.Deployment, bool, error) {
 	var lastNotFound error
 	for _, name := range []string{g.ControllerDeploymentName, g.CertificateDeploymentName} {
@@ -1045,9 +1133,35 @@ func (g *RolloutGuard) enforcementProbeDeployment(ctx context.Context) (*appsv1.
 		return nil, false, err
 	}
 	if identity.active != 0 {
-		return nil, false, fmt.Errorf("cannot safely create a bootstrap enforcement probe while release sequence %d is active and both runtime Deployments are missing: %w", identity.active, lastNotFound)
+		// One absent Deployment is a read race far more often than it is a
+		// deleted runtime, so the absence is reported rather than answered
+		// here. The caller decides once the state has held across two reads.
+		return nil, false, fmt.Errorf("%w while release sequence %d is active: %w",
+			errRuntimeDeploymentsMissing, identity.active, lastNotFound)
 	}
 	return g.bootstrapProbeDeployment(g.ControllerDeploymentName), true, nil
+}
+
+// activeIdentityProbeDeployment builds the dry-run-only stand-in for a runtime
+// Deployment that no longer exists. It carries the active release's top-level
+// identity, which is what the rollout guard reads, and cannot carry the Pod
+// template the runtime guard also pins: the activation parameter holds an image
+// and two versions, not a Pod spec. So the runtime guard refuses it, and that
+// refusal is what proves the guard enforces.
+func (g *RolloutGuard) activeIdentityProbeDeployment(ctx context.Context) (*appsv1.Deployment, error) {
+	identity, err := g.releaseActivationIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if identity.active == 0 {
+		return nil, fmt.Errorf("no release is active, so no runtime identity probe is needed")
+	}
+	probe := g.bootstrapProbeDeployment(g.ControllerDeploymentName)
+	probe.Annotations = map[string]string{
+		ControllerStateVersionAnnotation: strconv.FormatUint(identity.state, 10),
+		ReleaseSequenceAnnotation:        strconv.FormatUint(identity.active, 10),
+	}
+	return probe, nil
 }
 
 // drainingEnforcementProbeBaseline handles only the interrupted pre-activation

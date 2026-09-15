@@ -3449,6 +3449,33 @@ prove_controller_write_guard() {
 	printf '%s\n' 'e2e crd: controller desired-state and direct-write boundaries passed'
 }
 
+# An active release whose two runtime Deployments were both deleted -- a GitOps
+# prune, a namespace-wide delete that spared the release's other objects -- can
+# only be restored by an upgrade, so the upgrade has to run in that state
+# (stokaro/ptah-operator#10). The reconcile hook still proves both retained
+# guards before Helm applies anything: with nothing carrying the active runtime
+# identity, the rollout guard is proven by its arbitrary-name CREATE boundary
+# and the runtime guard by refusing an identity it cannot account for.
+prove_runtime_deployment_recovery() {
+	printf '%s\n' 'e2e crd: proving an active release survives losing both runtime Deployments'
+	stop_runtime_deployments
+	for missing_deployment in "$CONTROLLER_DEPLOYMENT" "$ROTATOR_DEPLOYMENT"; do
+		if kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$missing_deployment" >/dev/null 2>&1; then
+			fail "$missing_deployment survived the delete this proof depends on"
+		fi
+	done
+	if ! helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
+		--namespace "$E2E_OPERATOR_NAMESPACE" --values "$WORK_DIR/release-values.yaml" \
+		--wait --timeout 5m >"$WORK_DIR/recovery-upgrade.out" 2>"$WORK_DIR/recovery-upgrade.err"; then
+		if [ "${E2E_DEBUG_LOGS:-0}" -eq 1 ]; then
+			cat "$WORK_DIR/recovery-upgrade.err" >&2 || true
+		fi
+		fail "the upgrade that restores both deleted runtime Deployments was refused"
+	fi
+	wait_runtime_ready
+	printf '%s\n' 'e2e crd: both runtime Deployments were restored by the upgrade'
+}
+
 assert_controller_downgrade_blocked() {
 	assert_explicit_runtime_guard "future stored controller state" controller 2
 	rotator_ready=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$ROTATOR_DEPLOYMENT" \
@@ -3562,11 +3589,9 @@ EOF
 	wait_for_suspended
 
 	# Only the controller reconciles PtahSchemas, and only its rollout is what
-	# the drifted-CRD proof watches, so only the controller is stopped. The
-	# certificate rotator's Deployment stays: the release is active, and the
-	# reconcile hook's admission enforcement probe needs one runtime Deployment
-	# as the baseline it proves the guards accept. With both gone the hook
-	# refuses the upgrade outright (stokaro/ptah-operator#10).
+	# the drifted-CRD proof watches, so only the controller is stopped. Losing
+	# both is its own recovery path, proven separately by
+	# prove_runtime_deployment_recovery.
 	stop_controller_deployment
 
 	kube delete mutatingwebhookconfiguration ptah-operator-admission >/dev/null
@@ -3826,6 +3851,7 @@ run_upgrade_proof() {
 	assert_object_unchanged ptahschemaplan "$PROOF_PLAN" "$WORK_DIR/ptahschemaplan-before.json"
 	assert_object_unchanged ptahschemaapproval "$PROOF_APPROVAL" "$WORK_DIR/ptahschemaapproval-before.json"
 	prove_controller_write_guard
+	prove_runtime_deployment_recovery
 
 	printf '%s\n' 'e2e crd: proving immutable singleton coordination'
 	second_release=${E2E_HELM_RELEASE}-second
