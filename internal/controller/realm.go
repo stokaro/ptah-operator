@@ -56,9 +56,11 @@ func (c realmCensus) message() string {
 // a resource the controller has not reconciled yet has no status target, and a
 // realm it will claim on its first pass is one this census has to see now.
 //
-// A resource being deleted is not counted. Deleting is how a resource leaves a
-// realm; suspending is not, because suspension is a pause and the resource
-// still means to manage the database when it ends.
+// A resource that runs nothing claims nothing. Deleting one leaves the realm,
+// and so does suspending it: suspension is how a resource steps aside without
+// being deleted, and a resource that cannot dispatch cannot take a turn at the
+// database. Resuming it puts it back in the census, and the conflict is refused
+// then -- before any Job, because the census runs before the first claim.
 //
 // The reader is the controller's cache. A peer created moments ago may not be
 // in it yet, which is the one window where both resources see themselves alone.
@@ -85,7 +87,7 @@ func takeRealmCensus(
 	}
 	for index := range schemas.Items {
 		schema := &schemas.Items[index]
-		if !claimsRealm(schema.DeletionTimestamp != nil, schema.Spec.Target, digest) {
+		if !claimsRealm(schema.DeletionTimestamp != nil || schema.Spec.Suspend, schema.Spec.Target, digest) {
 			continue
 		}
 		census.Schemas++
@@ -100,7 +102,7 @@ func takeRealmCensus(
 	}
 	for index := range migrations.Items {
 		migration := &migrations.Items[index]
-		if !claimsRealm(migration.DeletionTimestamp != nil, migration.Spec.Target, digest) {
+		if !claimsRealm(migration.DeletionTimestamp != nil || migration.Spec.Suspend, migration.Spec.Target, digest) {
 			continue
 		}
 		census.Migrations++
@@ -112,12 +114,13 @@ func takeRealmCensus(
 }
 
 // claimsRealm reports whether one resource claims the realm the digest names.
+// A dormant resource -- deleting, or suspended -- claims nothing.
 //
 // A target whose own digest cannot be derived claims nothing: the key it holds
 // is one the API validation refuses, so no admitted resource can reach the same
 // database through it.
-func claimsRealm(deleting bool, target operatorv1alpha1.DatabaseTargetSpec, digest string) bool {
-	if deleting {
+func claimsRealm(dormant bool, target operatorv1alpha1.DatabaseTargetSpec, digest string) bool {
+	if dormant {
 		return false
 	}
 	candidate, err := fingerprint.DatabaseCoordinationDigest(string(target.Engine), target.CoordinationKey)

@@ -53,8 +53,12 @@ func TestRealmCensusCountsEveryClaimantOfOneDatabase(t *testing.T) {
 	removal := metav1.NewTime(time.Now())
 	deleting.DeletionTimestamp = &removal
 	deleting.Finalizers = []string{"example.invalid/retain"}
+	// Suspension is how a resource steps aside without being deleted, so a
+	// suspended claimant is not one.
+	suspended := realmSchemaFixture("paused", migration.Spec.Target.CoordinationKey, false)
+	suspended.Spec.Suspend = true
 
-	_, api := fakeMigrationReconciler(t, nil, migration, sameRealm, otherRealm, deleting)
+	_, api := fakeMigrationReconciler(t, nil, migration, sameRealm, otherRealm, deleting, suspended)
 
 	census, err := takeRealmCensus(
 		context.Background(), api,
@@ -75,7 +79,7 @@ func TestRealmCensusCountsEveryClaimantOfOneDatabase(t *testing.T) {
 	// The key is the reader's own, but another namespace's object names are
 	// not: the message carries counts and kinds and nothing else.
 	message := census.message()
-	for _, leaked := range []string{"orders", "billing", "team-b", migration.Spec.Target.CoordinationKey} {
+	for _, leaked := range []string{"orders", "billing", "paused", "team-b", migration.Spec.Target.CoordinationKey} {
 		if strings.Contains(message, leaked) {
 			t.Fatalf("realm conflict message named %q: %s", leaked, message)
 		}
@@ -315,5 +319,46 @@ func TestAStandingRealmRefusalStopsWritingStatus(t *testing.T) {
 			t.Fatalf("pass %d wrote status again: resourceVersion %s -> %s",
 				pass, settled, again.ResourceVersion)
 		}
+	}
+}
+
+// Suspending one of two claimants is the way to hand a database to the other
+// without declaring anything shared: it runs nothing, so it claims nothing.
+func TestSuspendingAClaimantEndsTheConflict(t *testing.T) {
+	t.Parallel()
+
+	migration := migrationFixture()
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	peer := realmSchemaFixture("orders", migration.Spec.Target.CoordinationKey, false)
+	reconciler, api := fakeMigrationReconciler(t, nil, migration, peer, verificationPolicyConfigMap())
+
+	key := client.ObjectKeyFromObject(migration)
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatal(err)
+	}
+	persisted := &operatorv1alpha1.PtahMigration{}
+	if err := api.Get(context.Background(), key, persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("phase = %q, want Blocked", persisted.Status.Phase)
+	}
+
+	if err := api.Get(context.Background(), client.ObjectKeyFromObject(peer), peer); err != nil {
+		t.Fatal(err)
+	}
+	peer.Spec.Suspend = true
+	if err := api.Update(context.Background(), peer); err != nil {
+		t.Fatal(err)
+	}
+	census, err := takeRealmCensus(
+		context.Background(), api,
+		migration.Spec.Target.Engine, migration.Spec.Target.CoordinationKey,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if census.total() != 1 || census.conflict() {
+		t.Fatalf("a suspended claimant still contested the realm: %+v", census)
 	}
 }

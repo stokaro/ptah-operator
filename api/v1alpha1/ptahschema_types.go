@@ -141,9 +141,12 @@ type DatabaseTargetSpec struct {
 	// refused while any claimant leaves it false. Serialization is not
 	// ownership: two resources that never run at the same time still undo each
 	// other's work by taking turns, so the operator blocks them rather than
-	// letting them alternate. A resource being deleted no longer claims the
-	// realm; a suspended one still does, because suspension is a pause and not
-	// a handover.
+	// letting them alternate.
+	//
+	// A resource that runs nothing claims nothing. Deleting one leaves the
+	// realm, and so does suspending it: suspension is how a resource steps
+	// aside without being deleted. Resuming it puts it back in the census, and
+	// the conflict is refused then, before any Job.
 	//
 	// The declaration is what is verified, not the disjointness. No analyzer
 	// can tell whether two sets of arbitrary SQL touch the same rows, and a

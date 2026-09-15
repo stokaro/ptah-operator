@@ -557,9 +557,11 @@ The operator verifies the declaration, not the disjointness. Nothing can tell
 whether two sets of arbitrary SQL touch the same rows, so `sharedRealm: true`
 means a person decided the areas do not overlap.
 
-A resource being deleted stops claiming the realm. A suspended one does not:
-suspension is a pause, and the resource still means to manage the database when
-it ends.
+A resource that runs nothing claims nothing. Deleting one leaves the realm, and
+so does `spec.suspend: true`, which is how a resource steps aside without being
+deleted — the usual way to hand one database to the other claimant without
+declaring anything shared. Resuming it puts it back, and the refusal returns
+before any Job runs.
 
 A declaration on one claimant does not wake the others, so a contested realm is
 re-examined on a bounded cadence: the shorter of the resource's `spec.interval`
