@@ -893,6 +893,16 @@ observation summary: the `DriftDetected` condition describes the authoritative
 managed scope, while `status.target` remains evidence for the observation
 identified by `driftReportDigest` and `lastObservedAt`.
 
+Those categories describe structure. A reference row that someone changed in
+the database is real drift and is reconciled like any other, but it appears in
+the plan rather than in `driftFindings`: the drift report has no managed-data
+section to read, and the operator will not infer one by matching SQL, because a
+component that must never read row values may not start reading them to
+classify them. So for managed rows the plan is the authority — an unconverged
+row keeps `InSync` off and produces a non-empty plan even when no DDL changed.
+stokaro/ptah#3250 tracks the drift report growing a section the operator can
+publish instead.
+
 `EngineSupported=False` with reason `UnsupportedEngine` is an explicit
 non-authorizing state, not a reconciliation crash. It creates no operation Job,
 plan, or approval and does not read the database credential. The controller
