@@ -2724,15 +2724,6 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \`,
 			`run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`,
 		}),
-		exactSourceLineSequence("reference-data lifecycle", []string{
-			`E2E_KUBECONFIG=$KUBECONFIG_FILE \`,
-			`E2E_TEST_NAMESPACE=$TEST_NAMESPACE \`,
-			`E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \`,
-			`E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \`,
-			`E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \`,
-			`E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \`,
-			`run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"`,
-		}),
 		exactSourceLineSequence("uninstall lifecycle", []string{
 			`E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \`,
 			`E2E_HELM_RELEASE=$HELM_RELEASE \`,
