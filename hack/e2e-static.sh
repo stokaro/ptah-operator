@@ -1247,11 +1247,12 @@ for migration_marker in \
 	'assert_older_artifact_blocks_everything' \
 	'called an artifact older than its database InSync' \
 	'did not report the reading that disagrees with itself' \
-	'dispatched a run for an artifact older than its database' \
+	'for an artifact older than its database' \
 	'assert_partial_run_blocks_and_recovers' \
 	'did not stop on a migration that committed half of itself' \
 	'did not keep the statement the partial migration committed' \
-	'dispatched another run after a partial one' \
+	'assert_no_new_apply_job' \
+	'after a partial one' \
 	'did not recover on its own reading of a database somebody fixed' \
 	'assert_modified_file_blocks_everything' \
 	'$status.history.modifiedVersions == [1] and' \

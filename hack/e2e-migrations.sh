@@ -447,13 +447,31 @@ migration_widget_column_count() {
 	esac
 }
 
-# The Apply Jobs this migration has dispatched. A Blocked resource keeps
+# The Apply Jobs this migration has dispatched, by UID. A Blocked resource keeps
 # reading, so its read-only Jobs go on appearing; what must not appear is
 # another run.
-migration_apply_job_count() {
+#
+# Identities rather than a count, because a finished Job carries a five-minute
+# TTL and the ones from earlier in the lifecycle disappear while later rows are
+# still running. A count that fell by one deletion and rose by one dispatch is
+# the same count, and a count compared across a deletion accuses the wrong
+# thing.
+migration_apply_job_uids() {
 	k -n "$TEST_NAMESPACE" get jobs \
 		-l "operator.ptah.run/migration=${MIGRATION_NAME},operator.ptah.run/operation=apply" \
-		-o json | jq '.items | length'
+		-o json | jq -r '.items[]?.metadata.uid' | LC_ALL=C sort
+}
+
+# assert_no_new_apply_job fails when an Apply Job appears that the recorded file
+# does not name. A Job that went away in the meantime is not a finding: the TTL
+# removes them, and nothing this proves depends on one staying.
+assert_no_new_apply_job() {
+	recorded_applies=$1
+	dispatch_description=$2
+	migration_apply_job_uids >"$WORK_DIR/applies-now.txt"
+	if grep -vxF -f "$recorded_applies" "$WORK_DIR/applies-now.txt" | grep -q .; then
+		fail "$MIGRATION_NAME dispatched another run $dispatch_description"
+	fi
 }
 
 # The verification policy this phase applies names the migration artifact type.
@@ -1046,7 +1064,6 @@ assert_second_claimant_blocks_the_realm() {
 assert_partial_run_blocks_and_recovers() {
 	printf 'e2e migrations: moving the %s tag to an artifact whose fourth migration commits half of itself\n' \
 		"$ENGINE_KIND" >&2
-	partial_applies_before=$(migration_apply_job_count)
 	publish_migrations v3 "$MIGRATION_PARTIAL_FIXTURE_DIR"
 	wait_for_migration_phase AwaitingApproval
 	migration_status
@@ -1121,18 +1138,17 @@ assert_partial_run_blocks_and_recovers() {
 		fail "the dirty refusal does not name the revision a person has to decide about"
 
 	# A resource that stopped keeps reading and never runs again. The read-only
-	# Jobs go on appearing, so the count that has to stand still is the Apply
-	# one.
+	# Jobs go on appearing, so what has to stand still is the set of Apply ones,
+	# recorded here with the partial run's own Job already in it.
+	migration_apply_job_uids >"$WORK_DIR/partial-applies.txt"
 	partial_hold_deadline=$(($(date +%s) + 90))
 	while [ "$(date +%s)" -lt "$partial_hold_deadline" ]; do
 		record_migration_jobs
 		[ "$(migration_phase)" = Blocked ] ||
 			fail "$MIGRATION_NAME left Blocked while a partial migration stood unresolved"
+		assert_no_new_apply_job "$WORK_DIR/partial-applies.txt" "after a partial one"
 		sleep 10
 	done
-	partial_applies_after=$(migration_apply_job_count)
-	[ "$partial_applies_after" -eq "$((partial_applies_before + 1))" ] ||
-		fail "$MIGRATION_NAME dispatched another run after a partial one: ${partial_applies_before} became ${partial_applies_after}"
 
 	# The person's decision: the half is undone, the revision row goes with it,
 	# and the sequence loses the migration that should not have run.
@@ -1183,7 +1199,7 @@ assert_partial_run_blocks_and_recovers() {
 assert_older_artifact_blocks_everything() {
 	printf 'e2e migrations: moving the %s tag back to an artifact that ends before the database does\n' \
 		"$ENGINE_KIND" >&2
-	older_applies_before=$(migration_apply_job_count)
+	migration_apply_job_uids >"$WORK_DIR/older-applies.txt"
 	publish_migrations v5 "$MIGRATION_OLDER_FIXTURE_DIR"
 
 	older_deadline=$(deadline_from_now)
@@ -1199,9 +1215,15 @@ assert_older_artifact_blocks_everything() {
 			older_blocked=yes
 			break
 		fi
+		# InSync is the answer being refused here, but only once the status
+		# names the artifact that is older. Until the moved tag is resolved the
+		# resource is still settled on the one it was settled on, and failing
+		# on that would be failing on the poll landing early.
 		older_phase=$(jq -er '.status.phase' "$STATUS_FILE")
-		[ "$older_phase" != InSync ] ||
+		older_digest=$(jq -r '.status.artifact.digest // ""' "$STATUS_FILE")
+		if [ "$older_digest" = "$PUBLISHED_DIGEST" ] && [ "$older_phase" = InSync ]; then
 			fail "$MIGRATION_NAME called an artifact older than its database InSync"
+		fi
 		sleep 5
 	done
 	[ "${older_blocked:-no}" = yes ] ||
@@ -1228,8 +1250,8 @@ assert_older_artifact_blocks_everything() {
 	scan_for_credentials "$STATUS_FILE" "the older-artifact refusal"
 
 	# Nothing ran, and above all nothing ran backwards.
-	[ "$(migration_apply_job_count)" -eq "$older_applies_before" ] ||
-		fail "$MIGRATION_NAME dispatched a run for an artifact older than its database"
+	assert_no_new_apply_job "$WORK_DIR/older-applies.txt" \
+		"for an artifact older than its database"
 	assert_database_migrated
 
 	printf 'e2e migrations: putting the %s tag back on the artifact the database was migrated with\n' \
