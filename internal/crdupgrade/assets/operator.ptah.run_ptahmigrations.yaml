@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "7"
-    operator.ptah.run/crd-schema-digest: "sha256:ed07526cd49ada0bebbc75e2c314e6ad16916d05b51e52dbe55275f61cf3f3ed"
+    operator.ptah.run/crd-schema-version: "8"
+    operator.ptah.run/crd-schema-digest: "sha256:4e0bdf64248c6a820db87ed5b8163bc5a26e50bed1a02b5788f1b46064d1077f"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahmigrations.operator.ptah.run
 spec:
@@ -722,6 +722,9 @@ spec:
                     minLength: 1
                     pattern: ^[A-Za-z][A-Za-z0-9._-]*$
                     type: string
+                  sharedRealm:
+                    default: false
+                    type: boolean
                   urlFrom:
                     properties:
                       key:

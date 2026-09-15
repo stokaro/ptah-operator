@@ -9,6 +9,10 @@ spec:
     # Every resource that can mutate this physical database, including through
     # another DNS alias, proxy, or credential, must use this exact non-secret key.
     coordinationKey: production/application-primary
+    # This database is also managed by the PtahMigration beside this file, so
+    # both say so. Taking turns is not sharing: with either one left false, both
+    # are refused rather than allowed to undo each other's work.
+    sharedRealm: true
     urlFrom:
       name: application-database
       key: url

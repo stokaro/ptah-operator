@@ -11,6 +11,11 @@ spec:
     # key. It is what makes a schema and a migration take turns rather than run
     # at once.
     coordinationKey: production/application-primary
+    # The PtahSchema beside this file manages the same database, and both have
+    # to declare it. A claimant that has not blocks every claimant, itself
+    # included: the operator verifies that a person decided to share, not that
+    # the areas really are disjoint.
+    sharedRealm: true
     urlFrom:
       name: application-database
       key: url

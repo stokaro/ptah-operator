@@ -527,6 +527,40 @@ namespace, every resource that can mutate one physical database must share the
 exact `spec.target.coordinationKey`, even when connection URLs use different
 aliases, proxies, or credentials.
 
+### One database, one manager
+
+Serialization is not ownership. Two resources that share a coordination key
+never run at the same time, and they can still undo each other's work by taking
+turns: one converges the database to a declared schema, the other applies a
+migration that changes it back, and each reports success.
+
+So a database more than one resource claims is refused rather than queued.
+Every claimant goes `Blocked` with reason `RealmConflict`, no Job runs, and the
+status says how many resources claim the database and how many of them have not
+declared the claim shared.
+
+Sharing one database between a `PtahSchema` and a `PtahMigration`, or between
+two of either, is a statement each of them makes for itself:
+
+```yaml
+spec:
+  target:
+    coordinationKey: prod/application/orders-primary
+    sharedRealm: true
+```
+
+One claimant that leaves it `false` blocks all of them, itself included. That
+is what makes the declaration mutual without any resource naming another: no
+resource can widen its own permission alone.
+
+The operator verifies the declaration, not the disjointness. Nothing can tell
+whether two sets of arbitrary SQL touch the same rows, so `sharedRealm: true`
+means a person decided the areas do not overlap.
+
+A resource being deleted stops claiming the realm. A suspended one does not:
+suspension is a pause, and the resource still means to manage the database when
+it ends.
+
 The manager has exact `get`, `create`, and `update` access to Leases through
 one namespace Role in `coordination.namespace`. When that namespace differs
 from the release namespace, its RoleBinding names the manager ServiceAccount

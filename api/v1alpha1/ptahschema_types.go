@@ -133,6 +133,26 @@ type DatabaseTargetSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9](?:[a-z0-9._:/-]{0,251}[a-z0-9])?$`
 	CoordinationKey string `json:"coordinationKey"`
 
+	// SharedRealm declares that this resource manages only part of the database
+	// its coordination key names, and that every other resource managing that
+	// database has declared the same.
+	//
+	// It defaults to false, and a realm that more than one resource claims is
+	// refused while any claimant leaves it false. Serialization is not
+	// ownership: two resources that never run at the same time still undo each
+	// other's work by taking turns, so the operator blocks them rather than
+	// letting them alternate. A resource being deleted no longer claims the
+	// realm; a suspended one still does, because suspension is a pause and not
+	// a handover.
+	//
+	// The declaration is what is verified, not the disjointness. No analyzer
+	// can tell whether two sets of arbitrary SQL touch the same rows, and a
+	// field that claimed otherwise would be the wrong kind of assurance. What
+	// it buys is that sharing is deliberate on every side: one resource that
+	// has not declared it blocks all of them, itself included.
+	// +kubebuilder:default=false
+	SharedRealm bool `json:"sharedRealm,omitempty"`
+
 	URLFrom corev1.SecretKeySelector `json:"urlFrom"`
 }
 
@@ -807,6 +827,7 @@ const (
 	ReasonPolicySatisfied              ConditionReason = "PolicySatisfied"
 	ReasonProofInputsChanged           ConditionReason = "ProofInputsChanged"
 	ReasonPublished                    ConditionReason = "Published"
+	ReasonRealmConflict                ConditionReason = "RealmConflict"
 	ReasonRefreshFailed                ConditionReason = "RefreshFailed"
 	ReasonRefreshing                   ConditionReason = "Refreshing"
 	ReasonRefreshSuspended             ConditionReason = "RefreshSuspended"
