@@ -619,7 +619,10 @@ func newReleaseTeardownFixture(t *testing.T) *releaseTeardownFixture {
 			Name: AdmissionConfigurationName, Annotations: copyStrings(webhookAnnotations),
 			Labels: copyStrings(webhookLabels),
 		},
-		Webhooks: []admissionregistrationv1.MutatingWebhook{readyMutatingApprovalWebhook(expected)},
+		Webhooks: []admissionregistrationv1.MutatingWebhook{
+			readyMutatingApprovalWebhook(expected),
+			readyMutatingMigrationApprovalWebhook(expected),
+		},
 	}
 	setTeardownObjectIdentity(mutatingObject, "mutating-webhook")
 	validatingObject := &admissionregistrationv1.ValidatingWebhookConfiguration{
@@ -629,6 +632,7 @@ func newReleaseTeardownFixture(t *testing.T) *releaseTeardownFixture {
 		},
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{
 			readyValidatingApprovalWebhook(expected),
+			readyValidatingMigrationApprovalWebhook(expected),
 			readyPodIntentWebhook(expected),
 			readyControllerWriteWebhook(expected),
 		},

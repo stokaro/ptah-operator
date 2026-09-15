@@ -53,7 +53,11 @@ func certificateValidatingWriteGuardDenialMessage() string {
 }
 
 func certificateMutatingWebhookNames() []string {
-	return []string{mutatingApprovalWebhookName, mutatingCertificateCanaryWebhookName}
+	return []string{
+		mutatingApprovalWebhookName,
+		mutatingMigrationApprovalWebhookName,
+		mutatingCertificateCanaryWebhookName,
+	}
 }
 
 // certificateValidatingWebhookNames is the single ordered admission-entry
@@ -63,6 +67,7 @@ func certificateMutatingWebhookNames() []string {
 func certificateValidatingWebhookNames() []string {
 	return []string{
 		validatingApprovalWebhookName,
+		validatingMigrationApprovalWebhookName,
 		podIntentWebhookName,
 		controllerWriteWebhookName,
 		validatingCertificateCanaryWebhookName,

@@ -110,9 +110,11 @@ uniform_service_bundle() {
 			--arg candidate "$CANDIDATE_SERVICE" --arg namespace "$OPERATOR_NAMESPACE" '
           (if $kind == "mutatingwebhookconfiguration" then {
             "mapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
+            "mmigrationapproval.operator.ptah.run": [$service, "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"],
             "certificate-rotation-canary-mutate.operator.ptah.run": [$candidate, "/candidate/mutate"]
           } else {
             "vapproval.operator.ptah.run": [$service, "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"],
+            "vmigrationapproval.operator.ptah.run": [$service, "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"],
             "vpodintent.operator.ptah.run": [$service, "/validate-v1-pod-ptah-operation-intent"],
             "vcontrollerwrite.operator.ptah.run": [$service, "/validate-operator-controller-write"],
             "certificate-rotation-canary-validate.operator.ptah.run": [$candidate, "/candidate/validate"]

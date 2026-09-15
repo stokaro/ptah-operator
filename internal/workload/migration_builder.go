@@ -335,7 +335,12 @@ func migrationDataPlane(
 			literalEnv(runner.EnvCoordinationDigest, operation.CoordinationDigest),
 			literalEnv(runner.EnvMigrationsDir, migrationsPath),
 			literalEnv("PTAH_CONNECT_TIMEOUT", durationOrDefault(migration.Spec.Execution.ConnectTimeout.Duration, 10*time.Second)),
-			literalEnv("PTAH_LOCK_TIMEOUT", durationOrDefault(migration.Spec.Policy.LockTimeout.Duration, 30*time.Second)),
+			// The advisory lock the engine takes for the whole run, which is
+			// what policy.lockTimeout is about. Ptah's PTAH_LOCK_TIMEOUT is a
+			// different bound -- the per-migration lock wait -- and setting
+			// that one here would leave the documented field doing something
+			// else than it says.
+			literalEnv("PTAH_MIGRATION_LOCK_TIMEOUT", durationOrDefault(migration.Spec.Policy.LockTimeout.Duration, 5*time.Minute)),
 		)
 		if operation.Type == operatorv1alpha1.MigrationOperationApply {
 			if operation.PlanRef == nil {

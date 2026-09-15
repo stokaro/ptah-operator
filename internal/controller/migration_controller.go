@@ -33,6 +33,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/telemetry"
 )
 
@@ -71,11 +72,16 @@ type MigrationJobBuilder interface {
 // controller collects is what that decision is made from.
 type MigrationReconciler struct {
 	client.Client
-	APIReader        client.Reader
-	Scheme           *runtime.Scheme
-	Recorder         record.EventRecorder
-	Logs             PodLogReader
-	Jobs             MigrationJobBuilder
+	APIReader client.Reader
+	Scheme    *runtime.Scheme
+	Recorder  record.EventRecorder
+	Logs      PodLogReader
+	Jobs      MigrationJobBuilder
+	Locks     *targetlock.Locker
+	// LockNamespace is one shared coordination namespace for every managed
+	// resource, including resources that live in different namespaces: two
+	// namespaces that address the same database must not run at the same time.
+	LockNamespace    string
 	Clock            func() time.Time
 	Telemetry        telemetry.Observer
 	AdmissionOptions podintent.Options
@@ -147,10 +153,22 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 	switch migration.Status.Phase {
 	case operatorv1alpha1.MigrationPhaseVerifying:
 		return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationVerify)
-	case operatorv1alpha1.MigrationPhaseReading:
+	case operatorv1alpha1.MigrationPhaseReading, operatorv1alpha1.MigrationPhaseVerifyingHistory:
 		return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationHistory)
+	case operatorv1alpha1.MigrationPhaseAwaitingApproval:
+		if due(migration.Status.NextReconciliationTime, now) {
+			// Refresh the whole evidence chain before consulting even an exact
+			// approval: a moved tag or a history somebody else advanced is what
+			// makes an approval stale, and only a fresh reading shows it.
+			return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
+		}
+		return r.reconcileMigrationApplyDecision(ctx, migration)
+	case operatorv1alpha1.MigrationPhasePlanning:
+		if due(migration.Status.NextReconciliationTime, now) {
+			return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
+		}
+		return r.reconcileMigrationApplyDecision(ctx, migration)
 	case operatorv1alpha1.MigrationPhaseInSync,
-		operatorv1alpha1.MigrationPhasePlanning,
 		operatorv1alpha1.MigrationPhaseBlocked,
 		operatorv1alpha1.MigrationPhaseFailed:
 		if !due(migration.Status.NextReconciliationTime, now) {
@@ -205,6 +223,19 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 		result, failureErr := r.migrationOperationFailure(ctx, migration, err)
 		return result, true, failureErr
 	}
+	if operation := migration.Status.ActiveOperation; operation != nil &&
+		operation.Type == operatorv1alpha1.MigrationOperationApply &&
+		(operation.DispatchStarted || operation.JobUID != "") {
+		// A dispatched Apply is not retired by a rollout. Its Job may already
+		// have changed the database, and dropping the claim would drop the only
+		// record that it might have.
+		//
+		// The evidence is written first, under the binding that authorized the
+		// run, and the binding moves on the next pass once no claim is in
+		// flight. Two writes in that order, rather than one that would report a
+		// run against components it never had.
+		return r.applyUncertainUnderBindingChange(ctx, migration)
+	}
 	before := migration.DeepCopy()
 	migration.Status.ExecutionBinding = binding
 	if migration.Status.ActiveOperation != nil {
@@ -219,6 +250,30 @@ func (r *MigrationReconciler) reconcileMigrationExecutionBinding(
 		return ctrl.Result{}, true, err
 	}
 	return ctrl.Result{Requeue: true}, true, nil
+}
+
+// applyUncertainUnderBindingChange records that a dispatched Apply outlived the
+// components that authorized it. It is the same answer as any other Apply the
+// controller cannot read: the run's evidence is unknown, the resource is
+// blocked, and nothing dispatches again until a person has looked.
+func (r *MigrationReconciler) applyUncertainUnderBindingChange(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) (ctrl.Result, bool, error) {
+	operation := migration.Status.ActiveOperation
+	var job *batchv1.Job
+	if operation.JobUID != "" {
+		candidate := &batchv1.Job{}
+		key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
+		if err := r.directReader().Get(ctx, key, candidate); err == nil && candidate.UID == operation.JobUID {
+			job = candidate
+		} else if err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, true, fmt.Errorf("read the dispatched Apply Job: %w", err)
+		}
+	}
+	result, err := r.finishUncertainMigrationApply(ctx, migration, job,
+		errors.New("an execution component changed while the Apply was dispatched"))
+	return result, true, err
 }
 
 func (r *MigrationReconciler) configuredMigrationBinding() (*operatorv1alpha1.ExecutionBindingStatus, error) {
@@ -256,13 +311,7 @@ func (r *MigrationReconciler) claimMigration(
 	if err != nil {
 		return r.migrationOperationFailure(ctx, migration, err)
 	}
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return ctrl.Result{}, fmt.Errorf("create migration operation nonce: %w", err)
-	}
-	id, err := fingerprint.DigestCanonicalJSON(map[string]string{
-		"input": inputFingerprint, "nonce": hex.EncodeToString(nonce),
-	})
+	id, err := r.newMigrationOperationID(inputFingerprint)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -300,12 +349,8 @@ func (r *MigrationReconciler) claimMigration(
 	if err != nil {
 		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("name %s Job: %w", operationType, err))
 	}
-	if !controllerutil.ContainsFinalizer(migration, migrationOperationFinalizer) {
-		beforeMeta := migration.DeepCopy()
-		controllerutil.AddFinalizer(migration, migrationOperationFinalizer)
-		if err := r.Client.Patch(ctx, migration, client.MergeFromWithOptions(beforeMeta, client.MergeFromWithOptimisticLock{})); err != nil {
-			return ctrl.Result{}, fmt.Errorf("add migration operation finalizer: %w", err)
-		}
+	if err := r.ensureMigrationFinalizer(ctx, migration); err != nil {
+		return ctrl.Result{}, err
 	}
 	before := migration.DeepCopy()
 	migration.Status.ActiveOperation = operation
@@ -326,27 +371,57 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 	migration *operatorv1alpha1.PtahMigration,
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
+	if operation.LeaseContinuityLost {
+		return r.finishUncertainMigrationApply(ctx, migration, nil,
+			errors.New("the database lock epoch changed under the dispatched run"))
+	}
+	applying := operation.Type == operatorv1alpha1.MigrationOperationApply
+	if applying {
+		acquired, requeue, lockErr := r.acquireMigrationApplyLock(ctx, migration)
+		if lockErr != nil {
+			return ctrl.Result{}, lockErr
+		}
+		if !acquired {
+			return ctrl.Result{RequeueAfter: requeue}, nil
+		}
+		operation = migration.Status.ActiveOperation
+	}
 	job := &batchv1.Job{}
 	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
 	err := r.directReader().Get(ctx, key, job)
 	if apierrors.IsNotFound(err) {
+		if applying && (operation.DispatchStarted || operation.JobUID != "") {
+			// A dispatched Apply is never recreated. Whether it ran is a question
+			// for the database, not for a retry.
+			return r.finishUncertainMigrationApply(ctx, migration, nil,
+				errors.New("the dispatched Apply Job is missing and will not be recreated"))
+		}
 		return r.dispatchMigrationJob(ctx, migration, key)
 	}
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("read active migration Job: %w", err)
 	}
-	if migration.Spec.Suspend {
+	if migration.Spec.Suspend && !applying {
 		return r.discardMigrationOperation(ctx, migration, errors.New("reconciliation was suspended while the operation ran"))
 	}
 	if operation.JobUID != "" && operation.JobUID != job.UID {
+		if applying {
+			return r.finishUncertainMigrationApply(ctx, migration, job, errors.New("the dispatched Apply Job was replaced"))
+		}
 		return r.retryMigrationOperation(ctx, migration, job, errors.New("the active Job was replaced"))
 	}
 	if !exactControllerOwner(job.OwnerReferences, operatorv1alpha1.GroupVersion.String(), "PtahMigration", migration.Name, migration.UID) {
+		if applying {
+			return r.finishUncertainMigrationApply(ctx, migration, job, errors.New("the dispatched Apply Job lost its owner"))
+		}
 		return r.retryMigrationOperation(ctx, migration, job, errors.New("the active Job is not owned by this migration"))
 	}
 	if operation.JobUID == "" {
 		before := migration.DeepCopy()
 		migration.Status.ActiveOperation.JobUID = job.UID
+		if applying {
+			migration.Status.ActiveOperation.DispatchStarted = true
+		}
 		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -360,6 +435,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		if currentErr == nil {
 			currentErr = errors.New("the operation inputs changed while the Job was running")
 		}
+		if applying {
+			// An Apply Job that exists may already have changed the database,
+			// whatever its formerly exact inputs now say.
+			return r.finishUncertainMigrationApply(ctx, migration, job, currentErr)
+		}
 		if err := r.markJobHarvested(ctx, job); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -371,11 +451,39 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
 		if errors.Is(err, errTerminalPodMultiplicity) || errors.Is(err, errTerminalPodIntent) {
+			if applying {
+				return r.finishUncertainMigrationApply(ctx, migration, job, err)
+			}
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
 		return ctrl.Result{}, err
 	}
 	result, parseErr := runner.ParseResultFor(evidence.Logs, migrationRunnerOperation(operation.Type), operation.ID)
+	if applying {
+		// The run's own evidence settles an Apply, whatever the Job's exit
+		// status said: a run that stopped is exactly the run whose controller
+		// has to be told what the database now holds.
+		if parseErr != nil {
+			return r.finishUncertainMigrationApply(ctx, migration, job,
+				fmt.Errorf("read the Apply result: %w", parseErr))
+		}
+		if result.MigrationRun == nil || result.Uncertain {
+			failure := errors.New("the Apply produced no readable account of what the database now holds")
+			if result.Error != nil {
+				failure = fmt.Errorf("%s: %s", result.Error.Code, bounded(result.Error.Message, 512))
+			}
+			if result.MigrationRun != nil {
+				return r.consumeMigrationRun(ctx, migration, job, result)
+			}
+			return r.finishUncertainMigrationApply(ctx, migration, job, failure)
+		}
+		if result.CoordinationDigest != operation.CoordinationDigest ||
+			operation.Target != nil && result.TargetIdentityDigest != migration.Status.History.TargetIdentityDigest {
+			return r.finishUncertainMigrationApply(ctx, migration, job,
+				errors.New("the Apply ran against a database other than the one it was planned for"))
+		}
+		return r.consumeMigrationRun(ctx, migration, job, result)
+	}
 	if parseErr != nil {
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("read %s result: %w", operation.Type, parseErr))
 	}
@@ -463,8 +571,23 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		return r.discardMigrationOperation(ctx, migration,
 			errors.New("the rebuilt Job Pod template differs from the persisted admission snapshot"))
 	}
+	if operation.Type == operatorv1alpha1.MigrationOperationApply && !operation.DispatchStarted {
+		if err := r.consumeMigrationApproval(ctx, migration, operation.ApprovalRef); err != nil {
+			return ctrl.Result{}, err
+		}
+		before := migration.DeepCopy()
+		migration.Status.ActiveOperation.DispatchStarted = true
+		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+			return ctrl.Result{}, err
+		}
+		operation = migration.Status.ActiveOperation
+	}
 	expected := job.DeepCopy()
 	if err := r.Client.Create(ctx, job); err != nil {
+		if operation.Type == operatorv1alpha1.MigrationOperationApply && !apierrors.IsAlreadyExists(err) {
+			return r.finishUncertainMigrationApply(ctx, migration, nil,
+				fmt.Errorf("the Apply Job create result is uncertain: %w", err))
+		}
 		if apierrors.IsAlreadyExists(err) {
 			return r.retryMigrationOperation(ctx, migration, nil, errors.New("the claimed Job name was occupied during dispatch"))
 		}
@@ -942,6 +1065,34 @@ func (r *MigrationReconciler) migrationTerminalLogs(
 	}
 	evidence.Logs = logs
 	return evidence, nil
+}
+
+// ensureMigrationFinalizer keeps the resource around while a claim is in
+// flight, so a deletion cannot strand a Job nothing will account for.
+func (r *MigrationReconciler) ensureMigrationFinalizer(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+) error {
+	if controllerutil.ContainsFinalizer(migration, migrationOperationFinalizer) {
+		return nil
+	}
+	before := migration.DeepCopy()
+	controllerutil.AddFinalizer(migration, migrationOperationFinalizer)
+	if err := r.Client.Patch(ctx, migration, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+		return fmt.Errorf("add migration operation finalizer: %w", err)
+	}
+	return nil
+}
+
+// randomNonce makes one operation attempt distinct from every other attempt of
+// the same operation, so a retry is a new claim rather than a second result for
+// the old one.
+func randomNonce() (string, error) {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", fmt.Errorf("create operation nonce: %w", err)
+	}
+	return hex.EncodeToString(nonce), nil
 }
 
 func (r *MigrationReconciler) removeMigrationFinalizer(

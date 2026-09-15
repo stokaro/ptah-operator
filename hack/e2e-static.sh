@@ -5192,7 +5192,10 @@ finalizer_verbs=$(awk '
 }
 [ "$(grep -c '^kind: MutatingWebhookConfiguration$' "$ADMISSION_RENDER")" -eq 1 ]
 [ "$(grep -c '^kind: ValidatingWebhookConfiguration$' "$ADMISSION_RENDER")" -eq 1 ]
-[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$ADMISSION_RENDER")" -eq 4 ]
+[ "$(grep -c '^[[:space:]]*failurePolicy: Fail$' "$ADMISSION_RENDER")" -eq 6 ]
+grep -F 'name: mmigrationapproval.operator.ptah.run' "$ADMISSION_RENDER" >/dev/null
+grep -F 'name: vmigrationapproval.operator.ptah.run' "$ADMISSION_RENDER" >/dev/null
+grep -F 'resources: ["ptahmigrationapprovals"]' "$ADMISSION_RENDER" >/dev/null
 controller_service_account_name=$(awk '
   $1 == "operator.ptah.run/controller-service-account-name:" {
     gsub(/"/, "", $2)

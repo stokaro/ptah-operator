@@ -7,6 +7,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	nodev1 "k8s.io/api/node/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -17,12 +18,14 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/podintent"
 	"github.com/stokaro/ptah-operator/internal/runner"
+	"github.com/stokaro/ptah-operator/internal/targetlock"
 	"github.com/stokaro/ptah-operator/internal/workload"
 )
 
@@ -419,6 +422,12 @@ func TestMigrationDispatchPersistsTheSnapshotBeforeTheJob(t *testing.T) {
 	}
 }
 
+// fixedClock is the test clock the reconciler and its Lease share, so a Lease
+// acquired in one reconciliation is still held in the next.
+type fixedClock struct{ now time.Time }
+
+func (c fixedClock) Now() time.Time { return c.now }
+
 func migrationRequest(migration *operatorv1alpha1.PtahMigration) ctrl.Request {
 	return ctrl.Request{NamespacedName: client.ObjectKeyFromObject(migration)}
 }
@@ -453,7 +462,7 @@ func fakeMigrationReconciler(
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
 		operatorv1alpha1.AddToScheme, batchv1.AddToScheme, corev1.AddToScheme,
-		nodev1.AddToScheme, schedulingv1.AddToScheme,
+		nodev1.AddToScheme, schedulingv1.AddToScheme, coordinationv1.AddToScheme,
 	} {
 		if err := add(scheme); err != nil {
 			t.Fatal(err)
@@ -463,14 +472,37 @@ func fakeMigrationReconciler(
 		Namespace: "team-a", Name: "default", UID: "default-service-account-uid", ResourceVersion: "1",
 	}})
 	api := fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&operatorv1alpha1.PtahMigration{}, &batchv1.Job{}).
+		// A real API server stamps a UID on every object it accepts, and the
+		// controller refuses a Job without one. The fake client does not, so a
+		// Job it created would be refused by its own creator.
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(
+				ctx context.Context,
+				writer client.WithWatch,
+				object client.Object,
+				options ...client.CreateOption,
+			) error {
+				if object.GetUID() == "" {
+					object.SetUID(types.UID("created-" + object.GetName()))
+				}
+				return writer.Create(ctx, object, options...)
+			},
+		}).
+		WithStatusSubresource(
+			&operatorv1alpha1.PtahMigration{}, &operatorv1alpha1.PtahMigrationPlan{},
+			&operatorv1alpha1.PtahMigrationApproval{}, &batchv1.Job{},
+		).
 		WithObjects(objects...).Build()
 	clock := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
-	return &MigrationReconciler{
+	testClock := fixedClock{now: clock}
+	reconciler := &MigrationReconciler{
 		Client: api, APIReader: api, Scheme: scheme, Logs: logs, Jobs: fakeJobs{},
-		Clock:            func() time.Time { return clock },
+		LockNamespace:    "ptah-system",
+		Clock:            testClock.Now,
 		AdmissionOptions: podintent.DefaultOptions(),
-	}, api
+	}
+	reconciler.Locks = targetlock.New(api, api, testClock)
+	return reconciler, api
 }
 
 func workloadBuilderForMigrations() workload.Builder {

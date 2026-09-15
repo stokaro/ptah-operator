@@ -37,9 +37,12 @@ import (
 const (
 	mutateApprovalPath          = "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval"
 	validateApprovalPath        = "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval"
-	validatePodIntentPath       = "/validate-v1-pod-ptah-operation-intent"
-	validateControllerWritePath = "/validate-operator-controller-write"
-	leaderElectionID            = "ptah-operator.operator.ptah.run"
+	mutateMigrationApprovalPath = "/mutate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+
+	validateMigrationApprovalPath = "/validate-operator-ptah-run-v1alpha1-ptahmigrationapproval"
+	validatePodIntentPath         = "/validate-v1-pod-ptah-operation-intent"
+	validateControllerWritePath   = "/validate-operator-controller-write"
+	leaderElectionID              = "ptah-operator.operator.ptah.run"
 )
 
 // controllerRevision is injected by the release build. An unversioned manager
@@ -171,6 +174,8 @@ func main() {
 		Recorder:         manager.GetEventRecorderFor("ptah-migration-controller"),
 		Logs:             controller.ClientsetPodLogs{Client: clientset},
 		Jobs:             builder,
+		Locks:            targetlock.New(manager.GetAPIReader(), manager.GetClient(), nil),
+		LockNamespace:    targetLockNamespace,
 		Telemetry:        operatorMetrics,
 		AdmissionOptions: admissionOptions,
 	}
@@ -186,6 +191,16 @@ func main() {
 		ControllerStateVersion: controllerstate.CurrentVersion,
 	}})
 	manager.GetWebhookServer().Register(validateApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.ApprovalHandler{
+		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false,
+		ControllerImage: controllerImage, ControllerRevision: controllerRevision,
+		ControllerStateVersion: controllerstate.CurrentVersion,
+	}})
+	manager.GetWebhookServer().Register(mutateMigrationApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.MigrationApprovalHandler{
+		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: true,
+		ControllerImage: controllerImage, ControllerRevision: controllerRevision,
+		ControllerStateVersion: controllerstate.CurrentVersion,
+	}})
+	manager.GetWebhookServer().Register(validateMigrationApprovalPath, &cradmission.Webhook{Handler: &approvaladmission.MigrationApprovalHandler{
 		Reader: manager.GetAPIReader(), Decoder: decoder, Mutate: false,
 		ControllerImage: controllerImage, ControllerRevision: controllerRevision,
 		ControllerStateVersion: controllerstate.CurrentVersion,

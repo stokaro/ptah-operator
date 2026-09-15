@@ -227,8 +227,8 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		"--candidate-stability-duration=10s",
 		"--candidate-poll-interval=1s",
 		"--candidate-request-timeout=5s",
-		"--mutating-webhook-names=mapproval.operator.ptah.run",
-		"--validating-webhook-names=vapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run",
+		"--mutating-webhook-names=mapproval.operator.ptah.run,mmigrationapproval.operator.ptah.run",
+		"--validating-webhook-names=vapproval.operator.ptah.run,vmigrationapproval.operator.ptah.run,vpodintent.operator.ptah.run,vcontrollerwrite.operator.ptah.run",
 		"--run-interval=6h",
 		"--operation-timeout=15m",
 		"--retry-initial=5s",
@@ -246,10 +246,13 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 			t.Fatalf("%s admission contract version = %q, want 2", configuration.GetKind(), got)
 		}
 	}
-	if got, want := strings.Split(requiredArgumentValue(t, args, "--mutating-webhook-names="), ","), []string{"mapproval.operator.ptah.run"}; !slices.Equal(got, want) {
+	if got, want := strings.Split(requiredArgumentValue(t, args, "--mutating-webhook-names="), ","), []string{"mapproval.operator.ptah.run", "mmigrationapproval.operator.ptah.run"}; !slices.Equal(got, want) {
 		t.Fatalf("rotator mutating production webhook inventory = %v, want %v", got, want)
 	}
-	if got, want := strings.Split(requiredArgumentValue(t, args, "--validating-webhook-names="), ","), []string{"vapproval.operator.ptah.run", "vpodintent.operator.ptah.run", "vcontrollerwrite.operator.ptah.run"}; !slices.Equal(got, want) {
+	if got, want := strings.Split(requiredArgumentValue(t, args, "--validating-webhook-names="), ","), []string{
+		"vapproval.operator.ptah.run", "vmigrationapproval.operator.ptah.run",
+		"vpodintent.operator.ptah.run", "vcontrollerwrite.operator.ptah.run",
+	}; !slices.Equal(got, want) {
 		t.Fatalf("rotator validating production webhook inventory = %v, want %v", got, want)
 	}
 	wantMutatingCanary, wantValidatingCanary := certrotation.AdmissionCanaryStaticContractForTest(
