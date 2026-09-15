@@ -30,7 +30,7 @@ EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 OPERATOR_NAMESPACE=${E2E_OPERATOR_NAMESPACE:-}
 REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
-INTERVAL=${E2E_REFERENCE_DATA_INTERVAL:-5m}
+INTERVAL=${E2E_REFERENCE_DATA_INTERVAL:-45s}
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
 
 # Imported variables retain their export attribute across reassignment in POSIX
@@ -593,7 +593,10 @@ wait_for_reference_plan() {
 assert_declared_rows() {
 	expected_regions=$1
 	expected_countries=$2
-	expected_czechia=$3
+	# reference_query strips whitespace, because the two clients print a value
+	# with different padding. The expectation is folded the same way rather than
+	# written pre-folded: a caller should be able to write the name it declared.
+	expected_czechia=$(printf '%s' "$3" | tr -d '[:space:]')
 	observed_regions=$(reference_query "SELECT count(*) FROM regions")
 	observed_countries=$(reference_query "SELECT count(*) FROM countries")
 	observed_czechia=$(reference_query "SELECT name FROM countries WHERE code = 'CZ'")
@@ -681,7 +684,8 @@ assert_external_edit_refuses_a_stale_approval() {
 		fail "the current plan could not be approved: $(cat "$ADMISSION_ERROR_FILE")"
 	wait_for_reference_phase InSync
 	restored=$(reference_query "SELECT name FROM countries WHERE code = 'US'")
-	[ "$restored" = "UnitedStates" ] || [ "$restored" = "United States" ] ||
+	expected_restored=$(printf '%s' "United States" | tr -d '[:space:]')
+	[ "$restored" = "$expected_restored" ] ||
 		fail "the declared value was not restored after the external edit: $restored"
 }
 
