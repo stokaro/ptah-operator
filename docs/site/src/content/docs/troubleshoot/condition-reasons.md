@@ -51,6 +51,7 @@ decision.
 | `PolicySatisfied` | Artifact type and verification policy checks succeeded. |
 | `ProofInputsChanged` | Post-Apply proof will restart from its durable immutable binding. |
 | `Published` | Exact plan bytes were committed to immutable storage. |
+| `RealmConflict` | More than one resource claims this database and at least one has not set `spec.target.sharedRealm`. |
 | `RefreshFailed` | A previously resolved source could not be refreshed. |
 | `Refreshing` | The requested source is being resolved again. |
 | `RefreshSuspended` | Source refresh stopped before dispatch because reconciliation was suspended. |

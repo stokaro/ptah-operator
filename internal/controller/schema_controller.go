@@ -206,6 +206,18 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonSuspended, "Reconciliation is suspended")
 		return ctrl.Result{}, r.patchStatus(ctx, before, schema)
 	}
+	// After suspension and before any claim: a suspended resource runs nothing
+	// and needs no verdict about the realm, and the durable mutation-safety
+	// boundaries above have already returned for anything in flight.
+	census, censusErr := takeRealmCensus(
+		ctx, r.Client, schema.Spec.Target.Engine, schema.Spec.Target.CoordinationKey,
+	)
+	if censusErr != nil {
+		return ctrl.Result{}, censusErr
+	}
+	if census.conflict() {
+		return r.schemaRealmBlocked(ctx, schema, census)
+	}
 	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionFalse, operatorv1alpha1.ReasonActive, "Reconciliation is active")
 	if schema.Status.ObservedGeneration != schema.Generation {
 		return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
@@ -248,6 +260,35 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 	// A changed desired reference or a regular interval always starts with a
 	// fresh resolution. This is what makes mutable tags observable.
 	return r.claim(ctx, schema, operatorv1alpha1.OperationResolve)
+}
+
+// schemaRealmBlocked refuses a database more than one resource claims.
+//
+// Blocked with ApprovalRequired false is the fence the approval webhook reads,
+// so no request beginning after this patch can authorize a plan. What ends the
+// refusal is another resource's spec change, and that resource's events do not
+// reach this one, so the verdict is re-taken on a bounded cadence rather than
+// waited on: the shorter of this resource's interval and a minute.
+func (r *SchemaReconciler) schemaRealmBlocked(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	census realmCensus,
+) (ctrl.Result, error) {
+	now := r.now()
+	next := realmBlockDeadline(schema.Status.NextReconciliationTime, now, schema.Spec.Interval.Duration)
+	before := schema.DeepCopy()
+	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
+	schema.Status.ObservedGeneration = schema.Generation
+	schema.Status.NextReconciliationTime = &next
+	message := census.message()
+	setCondition(schema, operatorv1alpha1.ConditionSuspended, metav1.ConditionFalse, operatorv1alpha1.ReasonActive, "Reconciliation is active")
+	setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, "No plan is approvable while the database realm is contested")
+	setCondition(schema, operatorv1alpha1.ConditionApplying, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, "No Apply operation is authorized while the database realm is contested")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, message)
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return ctrl.Result{}, err
+	}
+	return requeueAtDeadline(&next, r.now()), nil
 }
 
 // reconcileEngineSupport is deliberately after every durable mutation-safety
