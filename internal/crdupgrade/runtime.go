@@ -82,11 +82,6 @@ const (
   (has(oldObject.metadata.ownerReferences) && oldObject.metadata.ownerReferences.exists(ref,
     ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true &&
     ref.name.matches('^ptah-(m-)?(resolve|verify|observe|plan|history|apply)-')))))`
-	supportedPredecessorPodIntentMatchExpression = `object.metadata.ownerReferences.exists(ref,
-  ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true) ||
-(request.operation == 'UPDATE' && oldObject != null &&
-  oldObject.metadata.ownerReferences.exists(ref,
-    ref.apiVersion == 'batch/v1' && ref.kind == 'Job' && ref.controller == true))`
 	controllerWriteMatchConditionName          = "controller-service-account"
 	controllerWriteWebhookTimeoutSeconds       = int32(30)
 	storedControllerStatePageSize        int64 = 500
@@ -374,13 +369,6 @@ func verifyMutatingWebhookContract(configuration *admissionregistrationv1.Mutati
 	return verifyMutatingWebhookContracts(configuration, contracts)
 }
 
-func verifySupportedPredecessorMutatingWebhookContract(
-	configuration *admissionregistrationv1.MutatingWebhookConfiguration,
-	expected RuntimeInvariants,
-) error {
-	return verifyMutatingWebhookContracts(configuration, []webhookContract{supportedPredecessorMutatingApprovalWebhookContract(expected)})
-}
-
 func verifyMutatingWebhookContracts(
 	configuration *admissionregistrationv1.MutatingWebhookConfiguration,
 	want []webhookContract,
@@ -433,16 +421,6 @@ func verifyValidatingWebhookContract(configuration *admissionregistrationv1.Vali
 		contracts = append(contracts, currentValidatingCertificateCanaryWebhookContract(expected))
 	}
 	return verifyValidatingWebhookContracts(configuration, contracts)
-}
-
-func verifySupportedPredecessorValidatingWebhookContract(
-	configuration *admissionregistrationv1.ValidatingWebhookConfiguration,
-	expected RuntimeInvariants,
-) error {
-	return verifyValidatingWebhookContracts(configuration, []webhookContract{
-		supportedPredecessorValidatingApprovalWebhookContract(expected),
-		supportedPredecessorPodIntentWebhookContract(expected),
-	})
 }
 
 func verifyValidatingWebhookContracts(
@@ -730,79 +708,6 @@ func deriveCertificateCanaryNames(certificateRuntimeName, webhookServiceName str
 		return "", "", fmt.Errorf("derived certificate canary identities are invalid or collide with the primary webhook Service")
 	}
 	return candidateServiceName, markerName, nil
-}
-
-// The supported predecessor constructors deliberately duplicate its complete
-// admission snapshot. They must remain independent of every current contract
-// and constant so a later expansion cannot silently widen one-time adoption.
-func supportedPredecessorMutatingApprovalWebhookContract(expected RuntimeInvariants) webhookContract {
-	scope := admissionregistrationv1.NamespacedScope
-	never := admissionregistrationv1.NeverReinvocationPolicy
-	return webhookContract{
-		name: "mapproval.operator.ptah.run", path: "/mutate-operator-ptah-run-v1alpha1-ptahschemaapproval",
-		serviceNamespace: expected.ReleaseNamespace, serviceName: expected.WebhookServiceName, servicePort: 443,
-		requireNonemptyCABundle: true,
-		admissionReviewVersions: []string{"v1"},
-		rules: []admissionregistrationv1.RuleWithOperations{{
-			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
-			Rule: admissionregistrationv1.Rule{
-				APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"},
-				Resources: []string{"ptahschemaapprovals"}, Scope: &scope,
-			},
-		}},
-		failurePolicy: admissionregistrationv1.Fail, matchPolicy: admissionregistrationv1.Equivalent,
-		namespaceSelector: &metav1.LabelSelector{}, objectSelector: &metav1.LabelSelector{},
-		sideEffects: admissionregistrationv1.SideEffectClassNone, timeoutSeconds: expected.WebhookTimeoutSeconds,
-		matchConditions: []admissionregistrationv1.MatchCondition{}, reinvocationPolicy: &never,
-	}
-}
-
-func supportedPredecessorValidatingApprovalWebhookContract(expected RuntimeInvariants) webhookContract {
-	scope := admissionregistrationv1.NamespacedScope
-	return webhookContract{
-		name: "vapproval.operator.ptah.run", path: "/validate-operator-ptah-run-v1alpha1-ptahschemaapproval",
-		serviceNamespace: expected.ReleaseNamespace, serviceName: expected.WebhookServiceName, servicePort: 443,
-		requireNonemptyCABundle: true,
-		admissionReviewVersions: []string{"v1"},
-		rules: []admissionregistrationv1.RuleWithOperations{{
-			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
-			Rule: admissionregistrationv1.Rule{
-				APIGroups: []string{"operator.ptah.run"}, APIVersions: []string{"v1alpha1"},
-				Resources: []string{"ptahschemaapprovals"}, Scope: &scope,
-			},
-		}},
-		failurePolicy: admissionregistrationv1.Fail, matchPolicy: admissionregistrationv1.Equivalent,
-		namespaceSelector: &metav1.LabelSelector{}, objectSelector: &metav1.LabelSelector{},
-		sideEffects: admissionregistrationv1.SideEffectClassNone, timeoutSeconds: expected.WebhookTimeoutSeconds,
-		matchConditions: []admissionregistrationv1.MatchCondition{},
-	}
-}
-
-func supportedPredecessorPodIntentWebhookContract(expected RuntimeInvariants) webhookContract {
-	scope := admissionregistrationv1.NamespacedScope
-	return webhookContract{
-		name: "vpodintent.operator.ptah.run", path: "/validate-v1-pod-ptah-operation-intent",
-		serviceNamespace: expected.ReleaseNamespace, serviceName: expected.WebhookServiceName, servicePort: 443,
-		requireNonemptyCABundle: true,
-		admissionReviewVersions: []string{"v1"},
-		rules: []admissionregistrationv1.RuleWithOperations{{
-			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create, admissionregistrationv1.Update},
-			Rule: admissionregistrationv1.Rule{
-				APIGroups: []string{""}, APIVersions: []string{"v1"},
-				Resources: []string{"pods", "pods/ephemeralcontainers", "pods/resize"}, Scope: &scope,
-			},
-		}},
-		failurePolicy: admissionregistrationv1.Fail, matchPolicy: admissionregistrationv1.Equivalent,
-		namespaceSelector: &metav1.LabelSelector{},
-		objectSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-			"app.kubernetes.io/managed-by": "ptah-operator",
-			"app.kubernetes.io/component":  "schema-operation",
-		}},
-		sideEffects: admissionregistrationv1.SideEffectClassNone, timeoutSeconds: expected.WebhookTimeoutSeconds,
-		matchConditions: []admissionregistrationv1.MatchCondition{{
-			Name: "job-owned-pod", Expression: supportedPredecessorPodIntentMatchExpression,
-		}},
-	}
 }
 
 func verifyWebhookContract(kind, configurationName string, actual webhookView, want webhookContract) error {
