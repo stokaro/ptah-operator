@@ -1221,6 +1221,8 @@ done
 # asserts less than it did.
 # shellcheck disable=SC2016 # These markers match literal script and jq text.
 for migration_marker in \
+	'run_engine_migrations postgresql' \
+	'run_engine_migrations mysql' \
 	'create_migration_database' \
 	'the migration proof must own a database the schema path never touched' \
 	'"migrations", "push", $reference, "--migrations-dir", "/migrations",' \
@@ -1260,12 +1262,14 @@ if grep -F 'application/vnd.stokaro.ptah.schema.v1' \
 	printf '%s\n' 'e2e static: the migration verification policy also accepts a schema artifact' >&2
 	exit 1
 fi
-migration_fixture_count=$(git -C "$ROOT_DIR" ls-files 'testdata/e2e/migrations/postgresql/*.sql' | grep -c . || true)
-[ "$migration_fixture_count" -eq 4 ] || {
-	printf 'e2e static: the migration fixtures are %s files, and the proof applies two migrations in both directions\n' \
-		"$migration_fixture_count" >&2
-	exit 1
-}
+for migration_engine in postgresql mysql; do
+	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
+	[ "$migration_fixture_count" -eq 4 ] || {
+		printf 'e2e static: the %s migration fixtures are %s files, and the proof applies two migrations in both directions\n' \
+			"$migration_engine" "$migration_fixture_count" >&2
+		exit 1
+	}
+done
 for approval_plan_marker in \
 	"policy_uid=\$(k -n \"\$TEST_NAMESPACE\" get configmap" \
 	"verificationPolicyUID: \$verificationPolicyUID" \
@@ -1280,7 +1284,7 @@ if grep -F 'E2E_REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" \
 	printf '%s\n' 'e2e static: registry password is handed off through the host environment' >&2
 	exit 1
 fi
-for secret_script in e2e-dataplane.sh e2e-faults.sh; do
+for secret_script in e2e-dataplane.sh e2e-faults.sh e2e-migrations.sh; do
 	grep -F 'grep -F -f' "$ROOT_DIR/hack/$secret_script" >/dev/null
 	grep -F -- '--rawfile' "$ROOT_DIR/hack/$secret_script" >/dev/null
 done

@@ -147,49 +147,24 @@ deadline_from_now() {
 }
 
 # The fixtures the data plane already stood up in this namespace are reused
-# rather than rebuilt: a second PostgreSQL and a second registry credential
-# would be a second answer to questions the earlier phase already answered, and
-# the first one to drift would do so silently. What this phase adds is its own
-# database on that server, so a migration history starts from nothing.
-PG_SERVICE=e2e-postgresql
-PG_USER=ptah_e2e
-PG_SOURCE_SECRET=e2e-postgresql-db
+# rather than rebuilt: a second PostgreSQL, a second MySQL and a second registry
+# credential would be a second answer to questions the earlier phase already
+# answered, and the first one to drift would do so silently. What this phase
+# adds per engine is a database of its own, so a migration history starts from
+# nothing.
 REGISTRY_AUTH_SECRET=e2e-registry-auth
 REGISTRY_PULL_SECRET=e2e-registry-pull
 REGISTRY_HOST="${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000"
 MIGRATION_DATABASE=ptah_e2e_migrations
-MIGRATION_DB_SECRET=e2e-postgresql-migrations-db
 MIGRATION_POLICY=e2e-migrations-verification-policy
 MIGRATION_POLICY_KEY=policy.yaml
-MIGRATION_NAME=e2e-migrations-postgresql
-MIGRATION_APPROVAL=e2e-migrations-approval
-MIGRATION_STALE_APPROVAL=e2e-migrations-stale-approval
-MIGRATION_COORDINATION_KEY=e2e/migrations/app
-MIGRATION_CONFIGMAP=e2e-migrations-postgresql-v1
-MIGRATION_PUBLISH_JOB=e2e-push-migrations-postgresql-v1
-MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/migrations/postgresql:stable"
-MIGRATION_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/postgresql"
 MIGRATION_POLICY_FILE="$ROOT_DIR/testdata/e2e/verification-policy-migrations.yaml"
-[ -d "$MIGRATION_FIXTURE_DIR" ] || fail "migration fixtures are missing: $MIGRATION_FIXTURE_DIR"
+DATABASE_USER=ptah_e2e
 [ -f "$MIGRATION_POLICY_FILE" ] || fail "migration verification policy fixture is missing"
 [ "$MIGRATION_DATABASE" != ptah_e2e ] ||
 	fail "the migration proof must own a database the schema path never touched"
-
-# The password is read back from the Secret the data plane created rather than
-# derived a second time here. A second derivation is a second definition, and
-# the two would part company the moment either moved.
-k -n "$TEST_NAMESPACE" get secret "$PG_SOURCE_SECRET" -o jsonpath='{.data.password}' |
-	tr -d '\n' | base64 -d >"$MIGRATION_DB_PASSWORD_FILE" ||
-	fail "the data plane PostgreSQL Secret $PG_SOURCE_SECRET could not be read"
-chmod 600 "$MIGRATION_DB_PASSWORD_FILE"
-[ -s "$MIGRATION_DB_PASSWORD_FILE" ] || fail "the data plane PostgreSQL Secret carries no password"
-PG_PASSWORD=$(cat "$MIGRATION_DB_PASSWORD_FILE")
-MIGRATION_DB_URL="postgres://${PG_USER}:${PG_PASSWORD}@${PG_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5432/${MIGRATION_DATABASE}?sslmode=disable"
-printf '%s' "$MIGRATION_DB_URL" >"$MIGRATION_DB_URL_FILE"
-chmod 600 "$MIGRATION_DB_URL_FILE"
-printf '%s\n' "$PG_PASSWORD" "$MIGRATION_DB_URL" >"$CREDENTIAL_PATTERNS_FILE"
+: >"$CREDENTIAL_PATTERNS_FILE"
 chmod 600 "$CREDENTIAL_PATTERNS_FILE"
-unset PG_PASSWORD MIGRATION_DB_URL
 
 coordination_digest() {
 	coordination_canonical=$(jq -cn \
@@ -199,7 +174,63 @@ coordination_digest() {
     ')
 	printf 'sha256:%s\n' "$(printf '%s' "$coordination_canonical" | sha256)"
 }
-MIGRATION_COORDINATION_DIGEST=$(coordination_digest postgresql "$MIGRATION_COORDINATION_KEY")
+
+# select_engine names everything one engine's lifecycle needs. The two run the
+# same proof against different servers, and naming the differences in one place
+# is what keeps the second engine from becoming a second proof.
+select_engine() {
+	ENGINE=$1
+	case "$ENGINE" in
+	postgresql)
+		ENGINE_KIND=PostgreSQL
+		DATABASE_SERVICE=e2e-postgresql
+		DATABASE_SOURCE_SECRET=e2e-postgresql-db
+		;;
+	mysql)
+		ENGINE_KIND=MySQL
+		DATABASE_SERVICE=e2e-mysql
+		DATABASE_SOURCE_SECRET=e2e-mysql-db
+		;;
+	*) fail "unsupported migration engine $ENGINE" ;;
+	esac
+	MIGRATION_DB_SECRET="e2e-${ENGINE}-migrations-db"
+	MIGRATION_NAME="e2e-migrations-${ENGINE}"
+	MIGRATION_APPROVAL="e2e-migrations-${ENGINE}-approval"
+	MIGRATION_STALE_APPROVAL="e2e-migrations-${ENGINE}-stale-approval"
+	MIGRATION_COORDINATION_KEY="e2e/migrations/${ENGINE}"
+	MIGRATION_CONFIGMAP="e2e-migrations-${ENGINE}-v1"
+	MIGRATION_PUBLISH_JOB="e2e-push-migrations-${ENGINE}-v1"
+	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}:stable"
+	MIGRATION_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}"
+	MIGRATION_COORDINATION_DIGEST=$(coordination_digest "$ENGINE" "$MIGRATION_COORDINATION_KEY")
+	[ -d "$MIGRATION_FIXTURE_DIR" ] || fail "migration fixtures are missing: $MIGRATION_FIXTURE_DIR"
+
+	# The password is read back from the Secret the data plane created rather
+	# than derived a second time here. A second derivation is a second
+	# definition, and the two would part company the moment either moved.
+	k -n "$TEST_NAMESPACE" get secret "$DATABASE_SOURCE_SECRET" \
+		-o jsonpath='{.data.password}' |
+		tr -d '\n' | base64 -d >"$MIGRATION_DB_PASSWORD_FILE" ||
+		fail "the data plane $ENGINE Secret $DATABASE_SOURCE_SECRET could not be read"
+	chmod 600 "$MIGRATION_DB_PASSWORD_FILE"
+	[ -s "$MIGRATION_DB_PASSWORD_FILE" ] ||
+		fail "the data plane $ENGINE Secret carries no password"
+	engine_password=$(cat "$MIGRATION_DB_PASSWORD_FILE")
+	engine_authority="${DATABASE_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
+	case "$ENGINE" in
+	postgresql)
+		engine_url="postgres://${DATABASE_USER}:${engine_password}@${engine_authority}:5432/${MIGRATION_DATABASE}?sslmode=disable"
+		;;
+	mysql)
+		engine_url="mysql://${DATABASE_USER}:${engine_password}@tcp(${engine_authority}:3306)/${MIGRATION_DATABASE}"
+		;;
+	esac
+	printf '%s' "$engine_url" >"$MIGRATION_DB_URL_FILE"
+	chmod 600 "$MIGRATION_DB_URL_FILE"
+	printf '%s\n' "$engine_password" "$engine_url" >>"$CREDENTIAL_PATTERNS_FILE"
+	engine_password=
+	engine_url=
+}
 
 # The plan-inspection surface is proved from the same build a user installs,
 # against the live resource, rather than from a golden file.
@@ -213,9 +244,20 @@ env GOCACHE="$WORK_DIR/go-cache" go build -trimpath \
 scan_for_credentials() {
 	scan_file=$1
 	scan_description=$2
+	[ -s "$CREDENTIAL_PATTERNS_FILE" ] ||
+		fail "credential scanner has no non-empty protected patterns"
+	# An empty pattern line matches every line, which would turn this scanner
+	# into one that always fires, and a scanner that always fires is one
+	# somebody removes.
+	grep -c '^$' "$CREDENTIAL_PATTERNS_FILE" | grep -qx 0 ||
+		fail "credential scanner has an empty protected pattern"
 	[ -s "$scan_file" ] || return 0
-	if grep -F -f "$CREDENTIAL_PATTERNS_FILE" "$scan_file" >/dev/null 2>&1; then
+	if grep -F -f "$CREDENTIAL_PATTERNS_FILE" "$scan_file" >/dev/null; then
 		fail "$scan_description carries a database credential"
+	else
+		scan_status=$?
+		[ "$scan_status" -eq 1 ] ||
+			fail "credential scanner failed closed while checking $scan_description"
 	fi
 }
 
@@ -274,23 +316,48 @@ wait_for_migration_phase() {
 # history has to start from nothing for "current version 0, two pending" to
 # mean anything.
 create_migration_database() {
-	# shellcheck disable=SC2016 # Variables expand inside the database container.
-	existing=$(k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
-		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
-		sh "SELECT count(*) FROM pg_database WHERE datname='${MIGRATION_DATABASE}'" |
-		tr -d '[:space:]')
+	case "$ENGINE" in
+	postgresql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		existing=$(k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
+			sh "SELECT count(*) FROM pg_database WHERE datname='${MIGRATION_DATABASE}'" |
+			tr -d '[:space:]')
+		;;
+	mysql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		existing=$(k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"' \
+			sh "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='${MIGRATION_DATABASE}'" |
+			tr -d '[:space:]')
+		;;
+	esac
 	[ "$existing" = 0 ] ||
-		fail "database $MIGRATION_DATABASE already exists; the migration proof needs a database nothing has migrated"
-	# shellcheck disable=SC2016 # Variables expand inside the database container.
-	k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
-		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "$1"' \
-		sh "CREATE DATABASE ${MIGRATION_DATABASE}" >/dev/null ||
-		fail "database $MIGRATION_DATABASE could not be created"
+		fail "database $MIGRATION_DATABASE already exists on $ENGINE; the migration proof needs a database nothing has migrated"
+	case "$ENGINE" in
+	postgresql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "$1"' \
+			sh "CREATE DATABASE ${MIGRATION_DATABASE}" >/dev/null ||
+			fail "database $MIGRATION_DATABASE could not be created"
+		;;
+	mysql)
+		# The unprivileged user the operation Pod connects as owns nothing by
+		# default, and MySQL grants are per schema: the grant is part of
+		# creating the database rather than a separate setup step.
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "$1"' \
+			sh "CREATE DATABASE ${MIGRATION_DATABASE}; GRANT ALL PRIVILEGES ON ${MIGRATION_DATABASE}.* TO '${DATABASE_USER}'@'%'; FLUSH PRIVILEGES" >/dev/null ||
+			fail "database $MIGRATION_DATABASE could not be created"
+		;;
+	esac
 
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
 		--arg name "$MIGRATION_DB_SECRET" \
-		--arg username "$PG_USER" \
+		--arg username "$DATABASE_USER" \
 		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
 		--arg database "$MIGRATION_DATABASE" \
 		--rawfile url "$MIGRATION_DB_URL_FILE" '
@@ -310,10 +377,20 @@ create_migration_database() {
 }
 
 migration_query() {
-	# shellcheck disable=SC2016 # Variables expand inside the database container.
-	k -n "$TEST_NAMESPACE" exec deployment/"$PG_SERVICE" -- \
-		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -Atqc "$2"' \
-		sh "$MIGRATION_DATABASE" "$1" | tr -d '[:space:]'
+	case "$ENGINE" in
+	postgresql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -Atqc "$2"' \
+			sh "$MIGRATION_DATABASE" "$1" | tr -d '[:space:]'
+		;;
+	mysql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"' \
+			sh "$MIGRATION_DATABASE" "$1" | tr -d '[:space:]'
+		;;
+	esac
 }
 
 # The verification policy this phase applies names the migration artifact type.
@@ -331,7 +408,7 @@ create_migration_policy() {
 # a person would use. The harness owns no migration-directory format of its own:
 # a second implementation of the layout is a second thing to keep in step.
 publish_migrations() {
-	printf 'e2e migrations: publishing the PostgreSQL migration directory\n' >&2
+	printf 'e2e migrations: publishing the %s migration directory\n' "$ENGINE_KIND" >&2
 	k -n "$TEST_NAMESPACE" create configmap "$MIGRATION_CONFIGMAP" \
 		--from-file="$MIGRATION_FIXTURE_DIR" >/dev/null
 	jq -n \
@@ -429,13 +506,14 @@ create_migration_resource() {
 		--arg coordinationKey "$MIGRATION_COORDINATION_KEY" \
 		--arg policy "$MIGRATION_POLICY" \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
-		--arg interval "$INTERVAL" '
+		--arg interval "$INTERVAL" \
+		--arg engine "$ENGINE_KIND" '
     {
       apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
       metadata: {namespace: $namespace, name: $name},
       spec: {
         target: {
-          engine: "PostgreSQL",
+          engine: $engine,
           coordinationKey: $coordinationKey,
           urlFrom: {name: $secret, key: "url"}
         },
@@ -638,12 +716,16 @@ assert_in_sync() {
 # What the migrations claim to have done, checked in the database rather than in
 # the status that reports it.
 assert_database_migrated() {
-	table_count=$(migration_query "SELECT count(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='e2e_migration_widgets'")
+	case "$ENGINE" in
+	postgresql) migrated_schema="table_schema='public'" ;;
+	mysql) migrated_schema="table_schema=DATABASE()" ;;
+	esac
+	table_count=$(migration_query "SELECT count(*) FROM information_schema.tables WHERE ${migrated_schema} AND table_name='e2e_migration_widgets'")
 	[ "$table_count" = 1 ] ||
-		fail "migration 1 did not create its table; information_schema reports $table_count"
-	column_count=$(migration_query "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='e2e_migration_widgets' AND column_name='color'")
+		fail "$ENGINE migration 1 did not create its table; information_schema reports $table_count"
+	column_count=$(migration_query "SELECT count(*) FROM information_schema.columns WHERE ${migrated_schema} AND table_name='e2e_migration_widgets' AND column_name='color'")
 	[ "$column_count" = 1 ] ||
-		fail "migration 2 did not add its column; information_schema reports $column_count"
+		fail "$ENGINE migration 2 did not add its column; information_schema reports $column_count"
 }
 
 # The isolation row of the matrix, read from the Jobs the controller created
@@ -693,32 +775,43 @@ assert_kubectl_ptah_migration() {
 	fi
 }
 
-printf 'e2e migrations: preparing a database nothing has migrated\n' >&2
-create_migration_database
+# run_engine_migrations drives one engine from an empty database to a history
+# that matches the artifact, and proves each step on the way.
+run_engine_migrations() {
+	select_engine "$1"
+	printf 'e2e migrations: starting the %s lifecycle on a database nothing has migrated\n' \
+		"$ENGINE_KIND" >&2
+	: >"$JOB_RECORDS_FILE"
+	create_migration_database
+	publish_migrations
+
+	create_migration_resource
+	wait_for_migration_phase AwaitingApproval
+	assert_awaiting_approval
+	assert_plan_sequence
+	MIGRATION_PLAN_UID=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$MIGRATION_PLAN" \
+		-o jsonpath='{.metadata.uid}')
+	MIGRATION_PLAN_FINGERPRINT=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$MIGRATION_PLAN" \
+		-o jsonpath='{.spec.fingerprint}')
+	[ -n "$MIGRATION_PLAN_UID" ] && [ -n "$MIGRATION_PLAN_FINGERPRINT" ] ||
+		fail "migration plan $MIGRATION_PLAN has no UID or fingerprint"
+
+	approve_migration "$MIGRATION_APPROVAL" "$MIGRATION_PLAN" \
+		"$MIGRATION_PLAN_UID" "$MIGRATION_PLAN_FINGERPRINT" >/dev/null
+	assert_approval_hydrated
+	wait_for_migration_phase InSync
+	assert_in_sync
+	assert_database_migrated
+	assert_migration_job_isolation
+	assert_replaced_plan_approval_refused
+	assert_kubectl_ptah_migration
+	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
+		"$ENGINE_KIND" >&2
+}
+
 create_migration_policy
-publish_migrations
-
-printf 'e2e migrations: driving %s from nothing to a matching history\n' "$MIGRATION_NAME" >&2
-create_migration_resource
-wait_for_migration_phase AwaitingApproval
-assert_awaiting_approval
-assert_plan_sequence
-MIGRATION_PLAN_UID=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$MIGRATION_PLAN" \
-	-o jsonpath='{.metadata.uid}')
-MIGRATION_PLAN_FINGERPRINT=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$MIGRATION_PLAN" \
-	-o jsonpath='{.spec.fingerprint}')
-[ -n "$MIGRATION_PLAN_UID" ] && [ -n "$MIGRATION_PLAN_FINGERPRINT" ] ||
-	fail "migration plan $MIGRATION_PLAN has no UID or fingerprint"
-
-approve_migration "$MIGRATION_APPROVAL" "$MIGRATION_PLAN" \
-	"$MIGRATION_PLAN_UID" "$MIGRATION_PLAN_FINGERPRINT" >/dev/null
-assert_approval_hydrated
-wait_for_migration_phase InSync
-assert_in_sync
-assert_database_migrated
-assert_migration_job_isolation
-assert_replaced_plan_approval_refused
-assert_kubectl_ptah_migration
+run_engine_migrations postgresql
+run_engine_migrations mysql
 
 PHASE_COMPLETED=1
 printf '%s\n' 'e2e migrations: PASS approval gate, applied sequence, matching history, and credential isolation'
