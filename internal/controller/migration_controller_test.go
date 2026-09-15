@@ -900,6 +900,52 @@ func terminalMigrationWorkload(
 	return job, pod
 }
 
+// A Pod whose init container ended it never reaches the runner, so there is no
+// frame to read. Saying only that is saying what a crashed runner, an evicted
+// node and a truncated log also say; the boundary that failed is the part a
+// reader can act on.
+func TestAMigrationJobThatFailedBeforeTheRunnerNamesTheBoundary(t *testing.T) {
+	t.Parallel()
+
+	migration := migrationFixture()
+	migration.Status.ExecutionBinding = migrationExecutionBinding()
+	migration.Status.Artifact = resolvedMigrationArtifact()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	migration.Finalizers = []string{migrationOperationFinalizer}
+	operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobFailed)
+	// The fetch step refused the artifact, so the container that would have
+	// spoken never ran.
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{
+		{Name: "install-runner", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
+		{Name: "validate-source-authority", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
+		{Name: "fetch-migrations", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}}},
+	}
+	pod.Status.ContainerStatuses = nil
+
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, job, pod, verificationPolicyConfigMap())
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	actual := readMigration(t, api, migration)
+	progressing := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+	if progressing == nil {
+		t.Fatal("the failed attempt left no Progressing condition")
+	}
+	if !strings.Contains(progressing.Message, "fetch-migrations") {
+		t.Fatalf("message = %q, want the step that failed", progressing.Message)
+	}
+	if strings.Contains(progressing.Message, "frame not found") {
+		t.Fatalf("message = %q, still reports a missing frame rather than the boundary", progressing.Message)
+	}
+	// The container's own output is never carried: it holds registry
+	// credentials, so the name and the exit code are all this says.
+	if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.Attempt != operation.Attempt+1 {
+		t.Fatalf("active operation = %#v, want a fresh attempt", actual.Status.ActiveOperation)
+	}
+}
+
 func ensureMigrationAdmissionSnapshot(migration *operatorv1alpha1.PtahMigration) {
 	operation := migration.Status.ActiveOperation
 	if operation.AdmissionSnapshot != nil {
