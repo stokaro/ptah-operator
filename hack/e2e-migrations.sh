@@ -107,6 +107,7 @@ JOB_INVENTORY_FILE=$WORK_DIR/migration-job-inventory.json
 CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
 MIGRATION_DB_PASSWORD_FILE=$WORK_DIR/migration-database.password
 MIGRATION_DB_URL_FILE=$WORK_DIR/migration-database.url
+BRANCH_DB_URL_FILE=$WORK_DIR/branch-database.url
 ADMISSION_ERROR_FILE=$WORK_DIR/admission-error.txt
 STATUS_FILE=$WORK_DIR/migration-status.json
 : >"$JOB_RECORDS_FILE"
@@ -202,6 +203,15 @@ select_engine() {
 	MIGRATION_COORDINATION_KEY="e2e/migrations/${ENGINE}"
 	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}:stable"
 	MIGRATION_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}"
+	BRANCH_DATABASE=ptah_e2e_branch
+	BRANCH_DB_SECRET="e2e-${ENGINE}-branch-db"
+	BRANCH_MIGRATION="e2e-branch-${ENGINE}"
+	BRANCH_APPROVAL="e2e-branch-${ENGINE}-approval"
+	BRANCH_COORDINATION_KEY="e2e/branch/${ENGINE}"
+	BRANCH_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-branch:stable"
+	BRANCH_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-branch"
+	BRANCH_LATE_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-branch-late"
+	[ -d "$BRANCH_FIXTURE_DIR" ] || fail "branch migration fixtures are missing: $BRANCH_FIXTURE_DIR"
 	MIGRATION_EDITED_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-modified"
 	MIGRATION_PARTIAL_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-partial"
 	MIGRATION_COORDINATION_DIGEST=$(coordination_digest "$ENGINE" "$MIGRATION_COORDINATION_KEY")
@@ -381,18 +391,19 @@ create_migration_database() {
 }
 
 migration_query() {
+	query_database=${2:-$MIGRATION_DATABASE}
 	case "$ENGINE" in
 	postgresql)
 		# shellcheck disable=SC2016 # Variables expand inside the database container.
 		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
 			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -Atqc "$2"' \
-			sh "$MIGRATION_DATABASE" "$1" | tr -d '[:space:]'
+			sh "$query_database" "$1" | tr -d '[:space:]'
 		;;
 	mysql)
 		# shellcheck disable=SC2016 # Variables expand inside the database container.
 		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
 			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"' \
-			sh "$MIGRATION_DATABASE" "$1" | tr -d '[:space:]'
+			sh "$query_database" "$1" | tr -d '[:space:]'
 		;;
 	esac
 }
@@ -448,6 +459,7 @@ create_migration_policy() {
 publish_migrations() {
 	publish_version=${1:-v1}
 	publish_directory=${2:-$MIGRATION_FIXTURE_DIR}
+	publish_reference=${3:-$MIGRATION_REFERENCE}
 	publish_configmap="e2e-migrations-${ENGINE}-${publish_version}"
 	publish_job="e2e-push-migrations-${ENGINE}-${publish_version}"
 	[ -d "$publish_directory" ] || fail "migration fixtures are missing: $publish_directory"
@@ -475,7 +487,7 @@ publish_migrations() {
 		--arg name "$publish_job" \
 		--arg image "$EXECUTOR_IMAGE" \
 		--arg configMap "$publish_configmap" \
-		--arg reference "$MIGRATION_REFERENCE" \
+		--arg reference "$publish_reference" \
 		--arg version "$publish_version" \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
 		--arg registryPullSecret "$REGISTRY_PULL_SECRET" '
@@ -1213,6 +1225,242 @@ assert_kubectl_ptah_migration() {
 	fi
 }
 
+# The incompatible-history row of the matrix: a migration that arrives below the
+# version the database has already applied.
+#
+# It happens when two branches number migrations independently and the lower
+# number lands second. Ptah executes in linear order and refuses the whole run
+# while such a file is pending, so the operator refuses before it publishes a
+# plan: a plan for it would ask a person to approve a sequence the executor
+# cannot run, and the refusal would arrive as a failed Job instead of as the
+# answer it is.
+#
+# The proof needs versions with room between them, which the main fixture does
+# not have -- 1, 2 and 3 are all applied, and no integer sits between them. So
+# it runs on a database and an artifact of its own, numbered 10 and 30, and the
+# late arrival is 20.
+branch_database_exists() {
+	case "$ENGINE" in
+	postgresql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
+			sh "SELECT count(*) FROM pg_database WHERE datname='${BRANCH_DATABASE}'" |
+			tr -d '[:space:]'
+		;;
+	mysql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"' \
+			sh "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='${BRANCH_DATABASE}'" |
+			tr -d '[:space:]'
+		;;
+	esac
+}
+
+create_branch_database() {
+	[ "$(branch_database_exists)" = 0 ] ||
+		fail "database $BRANCH_DATABASE already exists on $ENGINE; the out-of-order proof needs a history that starts from nothing"
+	case "$ENGINE" in
+	postgresql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "$1"' \
+			sh "CREATE DATABASE ${BRANCH_DATABASE}" >/dev/null ||
+			fail "database $BRANCH_DATABASE could not be created"
+		;;
+	mysql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "$1"' \
+			sh "CREATE DATABASE ${BRANCH_DATABASE}; GRANT ALL PRIVILEGES ON ${BRANCH_DATABASE}.* TO '${DATABASE_USER}'@'%'; FLUSH PRIVILEGES" >/dev/null ||
+			fail "database $BRANCH_DATABASE could not be created"
+		;;
+	esac
+
+	branch_password=$(cat "$MIGRATION_DB_PASSWORD_FILE")
+	branch_authority="${DATABASE_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
+	case "$ENGINE" in
+	postgresql)
+		branch_url="postgres://${DATABASE_USER}:${branch_password}@${branch_authority}:5432/${BRANCH_DATABASE}?sslmode=disable"
+		;;
+	mysql)
+		branch_url="mysql://${DATABASE_USER}:${branch_password}@tcp(${branch_authority}:3306)/${BRANCH_DATABASE}"
+		;;
+	esac
+	printf '%s' "$branch_url" >"$BRANCH_DB_URL_FILE"
+	chmod 600 "$BRANCH_DB_URL_FILE"
+	printf '%s\n' "$branch_url" >>"$CREDENTIAL_PATTERNS_FILE"
+	branch_password=
+	branch_url=
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$BRANCH_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$BRANCH_DATABASE" \
+		--rawfile url "$BRANCH_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {
+        username: $username, password: $password,
+        database: $database, url: $url
+      }
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+create_branch_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$BRANCH_MIGRATION" \
+		--arg secret "$BRANCH_DB_SECRET" \
+		--arg reference "$BRANCH_REFERENCE" \
+		--arg coordinationKey "$BRANCH_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg interval "$INTERVAL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {lockTimeout: "30s"},
+        interval: $interval,
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+wait_for_branch_phase() {
+	branch_phase=$1
+	branch_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$branch_deadline" ]; do
+		branch_observed=$(k -n "$TEST_NAMESPACE" get ptahmigration "$BRANCH_MIGRATION" \
+			-o jsonpath='{.status.phase}' 2>/dev/null || true)
+		[ "$branch_observed" != "$branch_phase" ] || return 0
+		sleep 5
+	done
+	fail "$BRANCH_MIGRATION did not reach $branch_phase within ${TIMEOUT_SECONDS}s; it is in ${branch_observed:-<none>}"
+}
+
+approve_branch_plan() {
+	branch_plan=$(k -n "$TEST_NAMESPACE" get ptahmigration "$BRANCH_MIGRATION" \
+		-o jsonpath='{.status.plan.name}')
+	[ -n "$branch_plan" ] || fail "$BRANCH_MIGRATION published no plan to approve"
+	branch_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$branch_plan" \
+		-o jsonpath='{.metadata.uid}')
+	branch_plan_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$branch_plan" \
+		-o jsonpath='{.spec.fingerprint}')
+	branch_migration_uid=$(k -n "$TEST_NAMESPACE" get ptahmigration "$BRANCH_MIGRATION" \
+		-o jsonpath='{.metadata.uid}')
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$BRANCH_APPROVAL" \
+		--arg migration "$BRANCH_MIGRATION" \
+		--arg migrationUID "$branch_migration_uid" \
+		--arg plan "$branch_plan" \
+		--arg planUID "$branch_plan_uid" \
+		--arg fingerprint "$branch_plan_fingerprint" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        migrationRef: {name: $migration, uid: $migrationUID},
+        planRef: {name: $plan, uid: $planUID},
+        planFingerprint: $fingerprint
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+# assert_late_branch_migration_blocks is the row itself: the artifact gains a
+# migration numbered below what the database has applied, and the operator
+# refuses before planning rather than after a Job fails.
+assert_late_branch_migration_blocks() {
+	printf 'e2e migrations: publishing a %s migration numbered below the applied version\n' \
+		"$ENGINE_KIND" >&2
+	branch_jobs_before=$(k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.run/migration=${BRANCH_MIGRATION}" -o json | jq '.items | length')
+	publish_migrations "branch-late" "$BRANCH_LATE_FIXTURE_DIR" "$BRANCH_REFERENCE"
+
+	branch_blocked_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$branch_blocked_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get ptahmigration "$BRANCH_MIGRATION" -o json >"$STATUS_FILE"
+		scan_for_credentials "$STATUS_FILE" "$BRANCH_MIGRATION status"
+		if jq -e '
+          .status.phase == "Blocked" and
+          (.status.conditions | any(
+            .type == "Blocked" and .status == "True" and .reason == "HistoryOutOfOrder"))
+        ' "$STATUS_FILE" >/dev/null; then
+			break
+		fi
+		sleep 5
+	done
+	jq -e '
+      .status.phase == "Blocked" and
+      .status.activeOperation == null and
+      (.status.history.outOfOrderVersions // []) == [20] and
+      .status.history.currentVersion == 30 and
+      (.status.conditions | any(
+        .type == "Blocked" and .status == "True" and .reason == "HistoryOutOfOrder")) and
+      (.status.conditions | any(
+        .type == "Ready" and .status == "False" and .reason == "HistoryOutOfOrder")) and
+      (.status | has("plan") | not)
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$BRANCH_MIGRATION did not refuse the out-of-order migration before planning"
+	# No plan means no approval to give and no Job to run: the refusal has to
+	# stop the work rather than describe it.
+	[ "$(k -n "$TEST_NAMESPACE" get ptahmigrationplan \
+		-l "operator.ptah.run/migration=${BRANCH_MIGRATION}" -o json | jq '.items | length')" -eq 1 ] ||
+		fail "$BRANCH_MIGRATION published a plan for a sequence the executor refuses"
+	branch_jobs_after=$(k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.run/migration=${BRANCH_MIGRATION}" -o json | jq '.items | length')
+	[ "$branch_jobs_after" -ge "$branch_jobs_before" ] ||
+		fail "$BRANCH_MIGRATION lost Jobs while refusing"
+	[ "$(migration_query "SELECT count(*) FROM information_schema.columns WHERE table_name = 'e2e_branch_widgets' AND column_name = 'label'" "$BRANCH_DATABASE")" = 0 ] ||
+		fail "the out-of-order migration reached the database"
+	printf 'e2e migrations: PASS %s refuses a migration numbered below the applied version\n' \
+		"$ENGINE_KIND" >&2
+}
+
+# run_branch_out_of_order_proof applies a history with room between its versions
+# and then hands the artifact a migration that lands in that room.
+run_branch_out_of_order_proof() {
+	create_branch_database
+	publish_migrations "branch" "$BRANCH_FIXTURE_DIR" "$BRANCH_REFERENCE"
+	create_branch_migration_resource
+	wait_for_branch_phase AwaitingApproval
+	approve_branch_plan
+	wait_for_branch_phase InSync
+	[ "$(k -n "$TEST_NAMESPACE" get ptahmigration "$BRANCH_MIGRATION" \
+		-o jsonpath='{.status.history.currentVersion}')" = 30 ] ||
+		fail "$BRANCH_MIGRATION did not apply its spaced history"
+	assert_late_branch_migration_blocks
+}
+
 # run_engine_migrations drives one engine from an empty database to a history
 # that matches the artifact, and proves each step on the way.
 run_engine_migrations() {
@@ -1251,6 +1499,7 @@ run_engine_migrations() {
 	assert_second_claimant_blocks_the_realm
 	assert_partial_run_blocks_and_recovers
 	assert_modified_file_blocks_everything
+	run_branch_out_of_order_proof
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
 }
