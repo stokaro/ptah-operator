@@ -1244,6 +1244,10 @@ for migration_marker in \
 	'kept managing a database a PtahSchema also claims' \
 	'was allowed to manage a database a PtahMigration also claims' \
 	'a resource that runs nothing claims nothing' \
+	'assert_older_artifact_blocks_everything' \
+	'called an artifact older than its database InSync' \
+	'did not report the reading that disagrees with itself' \
+	'dispatched a run for an artifact older than its database' \
 	'assert_partial_run_blocks_and_recovers' \
 	'did not stop on a migration that committed half of itself' \
 	'did not keep the statement the partial migration committed' \
@@ -1308,6 +1312,18 @@ done
 # partial rather than a rollback. A fixture that lost the directive would still
 # fail, the transaction would put the database back, and the row would prove a
 # clean failure while claiming to prove a partial one.
+# The older fixtures end at version 2 while the lifecycle's database reaches 3.
+# A fourth file here, or a third, and the row would prove nothing: the artifact
+# has to end before the database does.
+for migration_engine in postgresql-older mysql-older; do
+	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
+	[ "$migration_fixture_count" -eq 4 ] || {
+		printf 'e2e static: the %s migration fixtures are %s files, and the proof needs an artifact that ends at two migrations\n' \
+			"$migration_engine" "$migration_fixture_count" >&2
+		exit 1
+	}
+done
+
 for migration_engine in postgresql-partial mysql-partial; do
 	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
 	[ "$migration_fixture_count" -eq 8 ] || {

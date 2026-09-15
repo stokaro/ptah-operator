@@ -32,9 +32,11 @@ decision.
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
 | `ExecutionBindingChanged` | Evidence or approval belongs to a retired runtime identity. |
+| `HistoryAhead` | The database records a migration the artifact does not carry. |
 | `HistoryDirty` | A failed or interrupted migration run left a revision row behind. |
 | `HistoryMatched` | The revision table and the migration artifact agree, and nothing is pending. |
 | `HistoryModified` | An applied migration no longer matches the file that recorded it. |
+| `HistoryOutOfOrder` | The artifact carries a migration below a version the database has applied. |
 | `InputsChanged` | An operation result was discarded because its desired inputs changed. |
 | `InSync` | Independent read-only planning proved convergence. |
 | `JobCompleted` | Apply exited and independent convergence proof remains pending. |
