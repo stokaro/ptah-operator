@@ -3856,6 +3856,21 @@ run_upgrade_proof() {
 	grep -F 'operator.ptah.run/leader-election' "$WORK_DIR/failed-upgrade.err" >/dev/null ||
 		fail "leader-election mutation failed without the immutable annotation guard"
 
+	# The retained runtime Pod guard is created once per release sequence and
+	# never rewritten, and its contract digest covers the manager arguments that
+	# carry the execution binding. So an installed release refuses a binding
+	# change, and the refusal is clean: no Helm revision, no Deployment change,
+	# and the pending plan and its approval still stand (stokaro/ptah-operator#14).
+	# Shipping a new binding means shipping a chart version, which advances the
+	# sequence and creates guards for the new contract.
+		expect_upgrade_render_failure_without_deployment_change \
+		"execution binding mutation" --set-string execution.ptahVersion=e2e-rebound
+	grep -F 'pins the executable contract of release sequence' "$WORK_DIR/failed-upgrade.err" >/dev/null ||
+		fail "execution-binding mutation failed without the retained runtime Pod guard refusal"
+	assert_object_unchanged ptahschema "$PROOF_SCHEMA" "$WORK_DIR/ptahschema-before.json"
+	assert_object_unchanged ptahschemaplan "$PROOF_PLAN" "$WORK_DIR/ptahschemaplan-before.json"
+	assert_object_unchanged ptahschemaapproval "$PROOF_APPROVAL" "$WORK_DIR/ptahschemaapproval-before.json"
+
 	prove_runtime_singleton_guard
 	prove_controller_downgrade_guard
 	helm_e2e upgrade "$E2E_HELM_RELEASE" "$E2E_CHART_PACKAGE" \
