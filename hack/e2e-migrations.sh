@@ -110,6 +110,8 @@ MIGRATION_DB_URL_FILE=$WORK_DIR/migration-database.url
 BRANCH_DB_URL_FILE=$WORK_DIR/branch-database.url
 ADOPT_DB_URL_FILE=$WORK_DIR/adopt-database.url
 ADOPT_SHADOW_DB_URL_FILE=$WORK_DIR/adopt-shadow-database.url
+CHECKPOINT_DB_URL_FILE=$WORK_DIR/checkpoint-database.url
+CHECKPOINT_PLAN_FILE=$WORK_DIR/checkpoint-plan.json
 ADMISSION_ERROR_FILE=$WORK_DIR/admission-error.txt
 STATUS_FILE=$WORK_DIR/migration-status.json
 : >"$JOB_RECORDS_FILE"
@@ -221,6 +223,13 @@ select_engine() {
 	ADOPT_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-adopt:stable"
 	ADOPT_CONFIGMAP="e2e-migrations-${ENGINE}-adopt"
 	ADOPT_BASELINE_JOB="e2e-adopt-baseline-${ENGINE}"
+	CHECKPOINT_DATABASE=ptah_e2e_checkpoint
+	CHECKPOINT_DB_SECRET="e2e-${ENGINE}-checkpoint-db"
+	CHECKPOINT_MIGRATION="e2e-checkpoint-${ENGINE}"
+	CHECKPOINT_APPROVAL="e2e-checkpoint-${ENGINE}-approval"
+	CHECKPOINT_COORDINATION_KEY="e2e/checkpoint/${ENGINE}"
+	CHECKPOINT_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-checkpoint:stable"
+	CHECKPOINT_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-checkpoint"
 	# The adoption row reads the artifact this engine already publishes. A
 	# second copy of the same three migrations would be a second thing to keep
 	# in step with the schema the proof builds out of them by hand.
@@ -235,6 +244,8 @@ select_engine() {
 		fail "migration fixtures are missing: $MIGRATION_PARTIAL_FIXTURE_DIR"
 	[ -d "$MIGRATION_OLDER_FIXTURE_DIR" ] ||
 		fail "migration fixtures are missing: $MIGRATION_OLDER_FIXTURE_DIR"
+	[ -d "$CHECKPOINT_FIXTURE_DIR" ] ||
+		fail "migration fixtures are missing: $CHECKPOINT_FIXTURE_DIR"
 
 	# The password is read back from the Secret the data plane created rather
 	# than derived a second time here. A second derivation is a second
@@ -1979,6 +1990,273 @@ run_existing_schema_adoption_proof() {
 
 # run_engine_migrations drives one engine from an empty database to a history
 # that matches the artifact, and proves each step on the way.
+# The checkpoint rows of the matrix. A checkpoint carries the schema and the
+# rows its predecessors produce, so a database that has run nothing starts from
+# it instead of replaying them -- and has to end up indistinguishable from one
+# that did replay them. That equivalence is the claim, and the only honest way
+# to check it is against a database that took the long way, which this phase
+# already has.
+#
+# The comparison is made on this engine's own catalog rather than on a schema
+# dump, because a dump is a third opinion about what the two databases hold.
+checkpoint_column_shape() {
+	shape_database=$1
+	case "$ENGINE" in
+	postgresql)
+		migration_query "SELECT string_agg(column_name || '/' || data_type || '/' || is_nullable, ','
+                       ORDER BY column_name)
+                     FROM information_schema.columns
+                     WHERE table_schema = current_schema()
+                       AND table_name = 'e2e_migration_widgets'" \
+			"$shape_database"
+		;;
+	mysql)
+		migration_query "SELECT GROUP_CONCAT(CONCAT(column_name, '/', data_type, '/', is_nullable)
+                       ORDER BY column_name SEPARATOR ',')
+                     FROM information_schema.columns
+                     WHERE table_schema = database()
+                       AND table_name = 'e2e_migration_widgets'" \
+			"$shape_database"
+		;;
+	esac
+}
+
+checkpoint_row_shape() {
+	shape_database=$1
+	case "$ENGINE" in
+	postgresql)
+		migration_query "SELECT string_agg(id || '/' || name || '/' || color, ',' ORDER BY id)
+                     FROM e2e_migration_widgets" \
+			"$shape_database"
+		;;
+	mysql)
+		migration_query "SELECT GROUP_CONCAT(CONCAT(id, '/', name, '/', color)
+                       ORDER BY id SEPARATOR ',')
+                     FROM e2e_migration_widgets" \
+			"$shape_database"
+		;;
+	esac
+}
+
+create_checkpoint_database() {
+	create_database "$CHECKPOINT_DATABASE"
+	database_url "$CHECKPOINT_DATABASE" >"$CHECKPOINT_DB_URL_FILE"
+	chmod 600 "$CHECKPOINT_DB_URL_FILE"
+	{
+		cat "$CHECKPOINT_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$CHECKPOINT_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$CHECKPOINT_DATABASE" \
+		--rawfile url "$CHECKPOINT_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+create_checkpoint_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$CHECKPOINT_MIGRATION" \
+		--arg secret "$CHECKPOINT_DB_SECRET" \
+		--arg reference "$CHECKPOINT_REFERENCE" \
+		--arg coordinationKey "$CHECKPOINT_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg interval "$INTERVAL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {lockTimeout: "30s"},
+        interval: $interval,
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+wait_for_checkpoint_phase() {
+	checkpoint_phase=$1
+	checkpoint_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$checkpoint_deadline" ]; do
+		checkpoint_observed=$(k -n "$TEST_NAMESPACE" get ptahmigration "$CHECKPOINT_MIGRATION" \
+			-o jsonpath='{.status.phase}' 2>/dev/null || true)
+		[ "$checkpoint_observed" != "$checkpoint_phase" ] || return 0
+		sleep 5
+	done
+	fail "$CHECKPOINT_MIGRATION did not reach $checkpoint_phase within ${TIMEOUT_SECONDS}s; it is in ${checkpoint_observed:-<none>}"
+}
+
+checkpoint_status() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$CHECKPOINT_MIGRATION" -o json >"$STATUS_FILE" ||
+		fail "$CHECKPOINT_MIGRATION could not be read"
+	scan_for_credentials "$STATUS_FILE" "$CHECKPOINT_MIGRATION status"
+}
+
+# The gate says what the checkpoint changed: the two migrations it carries are
+# reported as accounted for rather than pending, and what a person is asked to
+# approve is the checkpoint and the migration after it.
+assert_checkpoint_gate() {
+	checkpoint_status
+	jq -e '
+      .status as $status |
+      $status.phase == "AwaitingApproval" and
+      ($status.history.currentVersion // 0) == 0 and
+      $status.history.checkpointVersion == 3 and
+      $status.history.appliedCount == 2 and
+      $status.history.pendingCount == 2 and
+      ($status.history.dirty // false) == false and
+      ($status.history.modifiedVersions // []) == [] and
+      ($status.history.outOfOrderVersions // []) == [] and
+      (any($status.conditions[];
+        .type == "ApprovalRequired" and .status == "True" and .reason == "AwaitingApproval"))
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$CHECKPOINT_MIGRATION did not hold a checkpoint bootstrap at the approval gate"
+	checkpoint_plan=$(jq -er '.status.plan.name' "$STATUS_FILE")
+	k -n "$TEST_NAMESPACE" get ptahmigrationplan "$checkpoint_plan" -o json >"$CHECKPOINT_PLAN_FILE"
+	jq -e '[.spec.migrations[].version] == [3, 4]' "$CHECKPOINT_PLAN_FILE" >/dev/null ||
+		fail "the $ENGINE checkpoint plan is not the checkpoint and the migration after it"
+	printf 'e2e migrations: %s starts a fresh database at checkpoint 3, with 1 and 2 accounted for\n' \
+		"$ENGINE_KIND" >&2
+}
+
+approve_checkpoint_plan() {
+	checkpoint_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$checkpoint_plan" \
+		-o jsonpath='{.metadata.uid}')
+	checkpoint_plan_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$checkpoint_plan" \
+		-o jsonpath='{.spec.fingerprint}')
+	checkpoint_migration_uid=$(k -n "$TEST_NAMESPACE" get ptahmigration "$CHECKPOINT_MIGRATION" \
+		-o jsonpath='{.metadata.uid}')
+	[ -n "$checkpoint_plan_uid" ] && [ -n "$checkpoint_plan_fingerprint" ] ||
+		fail "checkpoint plan $checkpoint_plan has no UID or fingerprint"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$CHECKPOINT_APPROVAL" \
+		--arg migration "$CHECKPOINT_MIGRATION" \
+		--arg migrationUID "$checkpoint_migration_uid" \
+		--arg plan "$checkpoint_plan" \
+		--arg planUID "$checkpoint_plan_uid" \
+		--arg fingerprint "$checkpoint_plan_fingerprint" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        migrationRef: {name: $migration, uid: $migrationUID},
+        planRef: {name: $plan, uid: $planUID},
+        planFingerprint: $fingerprint
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+# The row itself: what the bootstrapped database holds is what the replayed one
+# holds. The checkpoint version is gone from the reading afterwards, because it
+# describes a bootstrap that has happened rather than one that is about to, and
+# the resource settles instead of publishing the covered migrations again.
+assert_checkpoint_equals_the_long_way() {
+	checkpoint_status
+	jq -e '
+      .status as $status |
+      $status.phase == "InSync" and
+      $status.history.currentVersion == 4 and
+      $status.history.pendingCount == 0 and
+      ($status.history.dirty // false) == false and
+      ($status.plan // null) == null and
+      ($status.history.checkpointVersion // 0) == 0 and
+      $status.lastRun.outcome == "Applied" and
+      ($status.lastRun.appliedVersions // []) == [3, 4] and
+      (any($status.conditions[];
+        .type == "Ready" and .status == "True" and .reason == "HistoryMatched"))
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$CHECKPOINT_MIGRATION did not settle on the history its bootstrap produced"
+
+	checkpoint_columns=$(checkpoint_column_shape "$CHECKPOINT_DATABASE")
+	replayed_columns=$(checkpoint_column_shape "$MIGRATION_DATABASE")
+	[ -n "$checkpoint_columns" ] ||
+		fail "the bootstrapped $ENGINE database has no table to compare"
+	[ "$checkpoint_columns" = "$replayed_columns" ] ||
+		fail "the bootstrapped $ENGINE schema is [$checkpoint_columns], and the replayed one is [$replayed_columns]"
+
+	checkpoint_rows=$(checkpoint_row_shape "$CHECKPOINT_DATABASE")
+	replayed_rows=$(checkpoint_row_shape "$MIGRATION_DATABASE")
+	[ -n "$checkpoint_rows" ] ||
+		fail "the bootstrapped $ENGINE database carries none of the rows its checkpoint seeds"
+	[ "$checkpoint_rows" = "$replayed_rows" ] ||
+		fail "the bootstrapped $ENGINE rows are [$checkpoint_rows], and the replayed ones are [$replayed_rows]"
+
+	# The migration after the checkpoint depends on the data the checkpoint
+	# seeded, so a bootstrap that skipped the seeding would leave this row
+	# unrecolored rather than fail outright.
+	[ "$(migration_query "SELECT color FROM e2e_migration_widgets WHERE id = 1" "$CHECKPOINT_DATABASE")" = blue ] ||
+		fail "the $ENGINE migration after the checkpoint did not run against the rows the checkpoint seeded"
+}
+
+# A second reading changes nothing. The covered migrations report themselves
+# pending once the bootstrap is behind the database, and a resource that
+# recounted them would publish a plan for migrations the checkpoint replaced and
+# ask for an approval to run them, on every pass, forever.
+assert_checkpoint_bootstrap_stays_settled() {
+	checkpoint_settled_deadline=$(($(date +%s) + 90))
+	while [ "$(date +%s)" -lt "$checkpoint_settled_deadline" ]; do
+		checkpoint_status
+		jq -e '
+          .status as $status |
+          $status.phase == "InSync" and
+          $status.history.pendingCount == 0 and
+          ($status.plan // null) == null and
+          (any($status.conditions[];
+            .type == "ApprovalRequired" and .status == "True") | not)
+        ' "$STATUS_FILE" >/dev/null ||
+			fail "$CHECKPOINT_MIGRATION asked for another approval after its bootstrap settled"
+		sleep 10
+	done
+}
+
+run_checkpoint_bootstrap_proof() {
+	create_checkpoint_database
+	publish_migrations "checkpoint" "$CHECKPOINT_FIXTURE_DIR" "$CHECKPOINT_REFERENCE"
+	create_checkpoint_migration_resource
+	wait_for_checkpoint_phase AwaitingApproval
+	assert_checkpoint_gate
+	approve_checkpoint_plan
+	wait_for_checkpoint_phase InSync
+	assert_checkpoint_equals_the_long_way
+	k -n "$TEST_NAMESPACE" patch ptahmigration "$CHECKPOINT_MIGRATION" --type=merge \
+		--patch '{"spec":{"interval":"30s"}}' >/dev/null
+	assert_checkpoint_bootstrap_stays_settled
+	printf 'e2e migrations: PASS %s bootstrapped from a checkpoint and matches the database that replayed everything\n' \
+		"$ENGINE_KIND" >&2
+}
+
 run_engine_migrations() {
 	select_engine "$1"
 	printf 'e2e migrations: starting the %s lifecycle on a database nothing has migrated\n' \
@@ -2018,6 +2296,7 @@ run_engine_migrations() {
 	assert_modified_file_blocks_everything
 	run_branch_out_of_order_proof
 	run_existing_schema_adoption_proof
+	run_checkpoint_bootstrap_proof
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
 }
