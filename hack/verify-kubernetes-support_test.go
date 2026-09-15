@@ -341,6 +341,22 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			old: "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
 			new: "  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}\n",
 		},
+		// The group decides whether a master run can be superseded at all.
+		// One group per ref is the shape that let every merge cancel the
+		// verdict of the commit before it, and it is the spelling most likely
+		// to come back, because it reads as the obvious one.
+		"master pushes share one concurrency group": {
+			old: "  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.event_name, github.sha) }}\n",
+			new: "  group: ci-${{ github.workflow }}-${{ github.ref }}\n",
+		},
+		// Keyed on the commit alone, the weekly scheduled run starts on the tip
+		// of master and joins the group of that commit's push run, cancelling
+		// the verdict this key exists to protect. Three of the four triggers
+		// share a sha, so the event has to be part of the key.
+		"scheduled run shares a group with the push it would cancel": {
+			old: "  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.event_name, github.sha) }}\n",
+			new: "  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}\n",
+		},
 		"workflow default shell": {
 			old: "env:\n  GOFLAGS: -mod=readonly\n\njobs:\n",
 			new: "env:\n  GOFLAGS: -mod=readonly\n\ndefaults:\n  run:\n    shell: 'true {0}'\n\njobs:\n",

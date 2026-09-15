@@ -12,12 +12,27 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  # A superseded pull-request run is cancelled: only the newest push is worth
-  # three kind clusters. A push to master is not, because the run a later merge
-  # cancels is the run nobody ever reads, and its commit then sits unverified
-  # while looking fine. Five consecutive master commits went without a verdict
-  # that way, which is how the port race in #37 stayed hidden.
+  # A pull request groups by ref, so its newest push supersedes the older one:
+  # only the newest is worth three kind clusters. A push to master groups by
+  # commit, so nothing supersedes it. Sharing one group per ref is not enough
+  # to protect a master run, because GitHub cancels an earlier *pending* run
+  # when a new one joins its group whatever cancel-in-progress says, and a run
+  # that never starts is always pending. With the account's job limit shared
+  # across repositories, master runs queue rather than start, so every merge
+  # cancelled the verdict of the one before it: fourteen consecutive master
+  # commits went unverified that way, which is how the port race in #37 stayed
+  # hidden (#106).
+  #
+  # The key carries the event as well as the commit because this workflow has
+  # four triggers and three of them run on the same sha. A weekly scheduled run
+  # starts on the tip of master, so keyed on the commit alone it joins the group
+  # of that commit's push run and cancels it while it waits -- the failure above,
+  # once a week, where nobody would connect the two. A manual dispatch is in the
+  # same position; keyed on the event it supersedes only another dispatch of
+  # itself, which is what re-running by hand means.
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || format('{0}-{1}', github.event_name, github.sha) }}
+  # A superseded pull-request run is cancelled once it is running. A push to
+  # master is not, and now has no group-mate that could supersede it either.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
