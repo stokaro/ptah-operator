@@ -104,6 +104,37 @@ func TestRenderTextCarriesNoSQLAndNoRow(t *testing.T) {
 	}
 }
 
+// TestRenderNamesTheOutOfOrderVersions proves the view carries the versions a
+// blocked history was blocked by. A phase alone says the history stopped; which
+// migration arrived late is what the person reading this has to decide about.
+func TestRenderNamesTheOutOfOrderVersions(t *testing.T) {
+	t.Parallel()
+
+	migration, _ := fixture()
+	migration.Status.Plan = nil
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+	migration.Status.History.OutOfOrderVersions = []int64{2, 4}
+	view, err := migrationview.Load(context.Background(), readerWith(t, migration), "team-a", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range []struct {
+		format migrationview.Format
+		want   string
+	}{
+		{format: migrationview.Text, want: "Out of order:   2, 4"},
+		{format: migrationview.JSON, want: `"outOfOrderVersions": [`},
+	} {
+		var out strings.Builder
+		if err := migrationview.Render(&out, view, format.format); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), format.want) {
+			t.Fatalf("%v output does not name the out-of-order versions:\n%s", format.format, out.String())
+		}
+	}
+}
+
 func TestRenderSaysWhenNothingIsPlanned(t *testing.T) {
 	t.Parallel()
 

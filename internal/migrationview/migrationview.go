@@ -49,7 +49,11 @@ type HistoryView struct {
 	PendingCount      int32       `json:"pendingCount"`
 	Dirty             bool        `json:"dirty,omitempty"`
 	ModifiedVersions  []int64     `json:"modifiedVersions,omitempty"`
-	Fingerprint       string      `json:"fingerprint,omitempty"`
+	// OutOfOrderVersions names migrations that sort below the current version.
+	// Linear execution refuses them, so a reader of this view has to see which
+	// ones rather than a phase that says the history is blocked.
+	OutOfOrderVersions []int64 `json:"outOfOrderVersions,omitempty"`
+	Fingerprint        string  `json:"fingerprint,omitempty"`
 }
 
 // PlanView is the sequence the operator would run next. A migration plan holds
@@ -125,14 +129,15 @@ func Load(
 	}
 	if history := migration.Status.History; history != nil {
 		view.History = &HistoryView{
-			ObservedAt:        history.ObservedAt,
-			CurrentVersion:    history.CurrentVersion,
-			CheckpointVersion: history.CheckpointVersion,
-			AppliedCount:      history.AppliedCount,
-			PendingCount:      history.PendingCount,
-			Dirty:             history.Dirty,
-			ModifiedVersions:  append([]int64(nil), history.ModifiedVersions...),
-			Fingerprint:       history.Fingerprint,
+			ObservedAt:         history.ObservedAt,
+			CurrentVersion:     history.CurrentVersion,
+			CheckpointVersion:  history.CheckpointVersion,
+			AppliedCount:       history.AppliedCount,
+			PendingCount:       history.PendingCount,
+			Dirty:              history.Dirty,
+			ModifiedVersions:   append([]int64(nil), history.ModifiedVersions...),
+			OutOfOrderVersions: append([]int64(nil), history.OutOfOrderVersions...),
+			Fingerprint:        history.Fingerprint,
 		}
 	}
 	if run := migration.Status.LastRun; run != nil {

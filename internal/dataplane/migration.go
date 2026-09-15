@@ -125,6 +125,20 @@ func (r MigrationStatusReport) Modified() []int64 {
 	return versions
 }
 
+// OutOfOrder names the pending migrations that sort below a version the
+// database has already applied. Ptah's linear execution order refuses a run
+// while one exists, so a plan that carried them would be a decision nobody
+// could execute.
+func (r MigrationStatusReport) OutOfOrder() []int64 {
+	versions := make([]int64, 0)
+	for _, record := range r.Migrations {
+		if record.State == MigrationStateOutOfOrder {
+			versions = append(versions, record.Version)
+		}
+	}
+	return versions
+}
+
 // DecodeMigrationStatus reads a status document and refuses everything it
 // cannot fully account for.
 func DecodeMigrationStatus(data []byte) (MigrationStatusReport, error) {

@@ -87,7 +87,7 @@ kubectl ptah migration orders -n application
 
 `status.history` is the operator's record of one reading of the revision table:
 the current version, how many migrations are applied, how many are pending, and
-two states that stop everything.
+three states that stop everything.
 
 **Dirty.** A failed or interrupted run left a revision row behind. Nothing
 applies while one exists, and the operator never removes it: what a
@@ -100,9 +100,19 @@ recorded for it. This is the refusal the whole versioned workflow exists to
 make — the file you are shipping is not the file that ran — and the versions
 are published so you can find them.
 
-Neither resolves by waiting. The operator keeps reading the history at
-`spec.interval`, so fixing the database is enough to unblock it; nothing else
-is required.
+**Out of order.** The artifact carries a migration whose version sorts below
+one the database has already applied, which happens when a migration written on
+one branch lands after a later one has run. Ptah executes in linear order and
+refuses the whole run while such a file is pending, so the operator refuses
+first: publishing a plan for it would ask you to approve a sequence the
+executor could never run. `status.history.outOfOrderVersions` names the files,
+because which one arrived late is what the decision depends on. Renumbering it
+above the current version, or applying it deliberately with Ptah's own
+non-linear execution order, are both decisions a person makes.
+
+None of the three resolves by waiting. The operator keeps reading the history at
+`spec.interval`, so fixing the database or the artifact is enough to unblock it;
+nothing else is required.
 
 **Checkpoints.** A migration file marked as a checkpoint carries the whole
 schema up to its version, so a database created after it bootstraps from that

@@ -723,6 +723,7 @@ func (r *MigrationReconciler) recordMigrationHistory(
 	}
 	pending := report.Pending()
 	modified := report.Modified()
+	outOfOrder := report.OutOfOrder()
 	history := &operatorv1alpha1.MigrationHistoryStatus{
 		ObservedAt:           metav1.NewTime(r.now()),
 		ContractVersion:      int32(report.ContractVersion),
@@ -741,6 +742,9 @@ func (r *MigrationReconciler) recordMigrationHistory(
 	if len(modified) > 0 {
 		history.ModifiedVersions = boundedVersions(modified, 64)
 	}
+	if len(outOfOrder) > 0 {
+		history.OutOfOrderVersions = boundedVersions(outOfOrder, 64)
+	}
 	migration.Status.History = history
 
 	switch {
@@ -758,6 +762,18 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			fmt.Sprintf("%d applied migrations no longer match their files", len(modified)))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryModified, "An applied migration was modified after it ran")
+	case len(outOfOrder) > 0:
+		// Ptah executes in linear order and refuses the whole run while a
+		// pending migration sorts below the current version. Publishing a plan
+		// for it would ask a person to approve a sequence the executor cannot
+		// run, and the refusal would arrive as a failed Job instead of as the
+		// answer it is.
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
+			operatorv1alpha1.ReasonHistoryOutOfOrder,
+			fmt.Sprintf("%d migrations sort below applied version %d; linear execution refuses them", len(outOfOrder), report.CurrentVersion))
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonHistoryOutOfOrder, "A migration arrived below the version the database has applied")
 	case len(pending) == 0:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseInSync
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse,

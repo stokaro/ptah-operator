@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -147,6 +148,9 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 		wantReady  metav1.ConditionStatus
 		wantReason operatorv1alpha1.ConditionReason
 		wantPlan   bool
+		// wantOutOfOrder is the exact set the history publishes, because which
+		// migration arrived late is what a person decides from.
+		wantOutOfOrder []int64
 	}{
 		{
 			name: "every migration is applied",
@@ -211,6 +215,26 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			wantReady:  metav1.ConditionFalse,
 			wantReason: operatorv1alpha1.ReasonHistoryModified,
 		},
+		{
+			// Ptah executes in linear order and refuses the whole run while a
+			// pending migration sorts below the current version, so a plan for
+			// this history would be a sequence nobody could execute.
+			name: "a migration arrived below the version the database applied",
+			report: dataplane.MigrationStatusReport{
+				ContractVersion:   dataplane.SupportedMigrationStatusContract,
+				CurrentVersion:    3,
+				TotalMigrations:   3,
+				HasPendingChanges: true,
+				Migrations: []dataplane.MigrationRecord{
+					{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateOutOfOrder},
+					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
+				},
+			},
+			wantPhase:      operatorv1alpha1.MigrationPhaseBlocked,
+			wantReady:      metav1.ConditionFalse,
+			wantReason:     operatorv1alpha1.ReasonHistoryOutOfOrder,
+			wantOutOfOrder: []int64{2},
+		},
 	}
 
 	for _, test := range tests {
@@ -247,6 +271,10 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			}
 			if actual.Status.History.CurrentVersion != test.report.CurrentVersion {
 				t.Fatalf("current version = %d, want %d", actual.Status.History.CurrentVersion, test.report.CurrentVersion)
+			}
+			if !slices.Equal(actual.Status.History.OutOfOrderVersions, test.wantOutOfOrder) {
+				t.Fatalf("out-of-order versions = %v, want %v",
+					actual.Status.History.OutOfOrderVersions, test.wantOutOfOrder)
 			}
 			ready := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationReady)
 			if ready == nil || ready.Status != test.wantReady || ready.Reason != string(test.wantReason) {
