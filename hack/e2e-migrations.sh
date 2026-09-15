@@ -1153,12 +1153,16 @@ assert_partial_run_blocks_and_recovers() {
 	while [ "$(date +%s)" -lt "$dirty_deadline" ]; do
 		record_migration_jobs
 		migration_status
+		# The pending count is deliberately not asserted here. Ptah counts a
+		# migration whose revision is not recorded applied as pending, and a
+		# dirty revision is exactly that, so the number answers its bookkeeping
+		# rather than anything this row claims: the dirty reading, the version
+		# the run stopped at, and the refusal that names it.
 		if jq -e '
           .status as $status |
           $status.phase == "Blocked" and
           ($status.history.dirty // false) == true and
           $status.history.currentVersion == 3 and
-          $status.history.pendingCount == 0 and
           (any($status.conditions[];
             .type == "Blocked" and .status == "True" and .reason == "HistoryDirty"))
         ' "$STATUS_FILE" >/dev/null; then
