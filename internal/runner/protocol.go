@@ -234,7 +234,6 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 	}
 
 	marker := []byte(frameHeader)
-	footer := []byte(frameFooter)
 	searchAt := 0
 	sawMarker := false
 	sawOversized := false
@@ -282,7 +281,8 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 			continue
 		}
 		payloadEnd := payloadStart + int(payloadLength)
-		if !bytes.HasPrefix(logs[payloadEnd:], footer) {
+		footerEnd, ok := frameFooterEnd(logs, payloadEnd)
+		if !ok {
 			searchAt = start + len(marker)
 			continue
 		}
@@ -304,7 +304,7 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 		}
 		copyOfResult := result
 		last = &copyOfResult
-		searchAt = payloadEnd + len(footer)
+		searchAt = footerEnd
 	}
 
 	if last != nil {
@@ -317,6 +317,56 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 		return Result{}, ErrMalformedFrame
 	}
 	return Result{}, ErrFrameNotFound
+}
+
+// maxInterleavedFrameBytes bounds how far past a payload the footer may sit.
+// Something has to bound it, or a frame whose footer never arrives would scan
+// the whole log for every marker-like line in it.
+const maxInterleavedFrameBytes = 64 << 10
+
+// frameFooterEnd finds the end of the footer that closes a payload, and reports
+// whether the frame is closed at all.
+//
+// The footer is not required to sit against the payload. A container log is
+// line-oriented and carries two streams: the runner writes the whole frame in
+// one call to standard output, and the kubelet still stores it as one entry per
+// line, merged with standard error by the time each line was read. A
+// diagnostic the runner wrote microseconds earlier therefore lands between the
+// payload and the footer often enough to matter -- measured twice on Kubernetes
+// 1.37, and reproduced in a retained lab, where the refusal text of a custom-CA
+// rejection sat inside the frame it was explaining.
+//
+// Skipping those lines costs no integrity. The payload is taken by the length
+// the header declares and checked against the digest the header carries, so
+// what the footer adds is proof that the writer finished rather than proof of
+// what it wrote. Only complete lines may be skipped: a partial line means the
+// log was cut, which is exactly what the footer exists to catch.
+func frameFooterEnd(logs []byte, payloadEnd int) (int, bool) {
+	footer := []byte(frameFooter)
+	if bytes.HasPrefix(logs[payloadEnd:], footer) {
+		return payloadEnd + len(footer), true
+	}
+	if payloadEnd >= len(logs) || logs[payloadEnd] != '\n' {
+		return 0, false
+	}
+	limit := payloadEnd + maxInterleavedFrameBytes
+	if limit > len(logs) {
+		limit = len(logs)
+	}
+	// Every skipped line ends in a newline, and the footer is recognized at the
+	// newline that begins it, so the scan walks line starts rather than bytes.
+	for lineStart := payloadEnd + 1; lineStart < limit; {
+		lineEndRelative := bytes.IndexByte(logs[lineStart:limit], '\n')
+		if lineEndRelative < 0 {
+			return 0, false
+		}
+		lineEnd := lineStart + lineEndRelative
+		if bytes.HasPrefix(logs[lineEnd:], footer) {
+			return lineEnd + len(footer), true
+		}
+		lineStart = lineEnd + 1
+	}
+	return 0, false
 }
 
 func validateResult(result Result, options ParseOptions) error {
