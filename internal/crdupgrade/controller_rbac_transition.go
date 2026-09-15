@@ -1200,6 +1200,7 @@ func retainedAdmissionGuardNames(identity controllerRoleIdentity) []string {
 		ControllerJobWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
 		ControllerChunkWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
 		ControllerPlanWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerMigrationPlanWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
 		CertificateMutatingWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName),
 		CertificateValidatingWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName),
 		NamespaceDeletionGuardPolicyName(identity.releaseNamespace, identity.releaseName),
@@ -1515,5 +1516,6 @@ func PredecessorRetiredAdmissionGuardNames(rollout *RolloutGuard) []string {
 		ControllerJobWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
 		ControllerChunkWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
 		ControllerPlanWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
+		ControllerMigrationPlanWriteGuardPolicyName(identity.releaseNamespace, identity.releaseName, identity.releaseSequence, identity.managerImage),
 	}
 }

@@ -176,6 +176,7 @@ func TestGeneratedCertificateLifecycleRender(t *testing.T) {
 		"ptah-operator-controller-write-guard-v2-90a0385b562b",
 		"ptah-operator-job-write-guard-v2-90a0385b562b",
 		"ptah-operator-chunk-write-guard-v2-90a0385b562b",
+		"ptah-operator-migration-plan-write-guard-v1-90a0385b562b",
 		"ptah-operator-plan-write-guard-v2-90a0385b562b",
 		"ptah-operator-certificate-mutate-guard-v1-f1e165dcd72a",
 		"ptah-operator-certificate-validate-guard-v1-f1e165dcd72a",

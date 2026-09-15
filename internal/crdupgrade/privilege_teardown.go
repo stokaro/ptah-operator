@@ -1454,6 +1454,7 @@ func (t *PrivilegeTeardown) bootstrapAdmissionGuardNames() []string {
 		ControllerJobWriteGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
 		ControllerChunkWriteGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
 		ControllerPlanWriteGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
+		ControllerMigrationPlanWriteGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName, t.rollout.ReleaseSequence, t.rollout.ManagerImage),
 		CertificateMutatingWriteGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName),
 		CertificateValidatingWriteGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName),
 		NamespaceDeletionGuardPolicyName(t.rollout.ReleaseNamespace, t.rollout.ReleaseName),

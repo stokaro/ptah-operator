@@ -114,6 +114,7 @@ rules:
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerPlanWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateMutatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateValidatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
@@ -136,6 +137,7 @@ rules:
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerPlanWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateMutatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateValidatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
@@ -354,6 +356,7 @@ rules:
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerPlanWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateMutatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateValidatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}
@@ -381,6 +384,7 @@ rules:
       - {{ include "ptah-operator.controllerJobWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerChunkWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.controllerPlanWriteGuardPolicyName" . }}
+      - {{ include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateMutatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.certificateValidatingWriteGuardPolicyName" . }}
       - {{ include "ptah-operator.namespaceDeletionGuardPolicyName" . }}

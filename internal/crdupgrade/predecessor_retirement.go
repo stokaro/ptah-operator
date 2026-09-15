@@ -548,6 +548,7 @@ func predecessorRetirementPairBlueprints(rollout *RolloutGuard) ([]predecessorRe
 		ControllerJobWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
 		ControllerChunkWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
 		ControllerPlanWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
+		ControllerMigrationPlanWriteGuardPolicyName(rollout.ReleaseNamespace, rollout.ReleaseName, rollout.ReleaseSequence, rollout.ManagerImage),
 	} {
 		entry, found := controllerObjectByName[name]
 		if !found {
@@ -566,8 +567,11 @@ func predecessorRetirementPairBlueprints(rollout *RolloutGuard) ([]predecessorRe
 		})
 	}
 
-	if len(blueprints) != 12 {
-		return nil, fmt.Errorf("predecessor retirement candidate pair inventory has %d entries, want 12", len(blueprints))
+	if len(blueprints) != predecessorRetirementPairCount {
+		return nil, fmt.Errorf(
+			"predecessor retirement candidate pair inventory has %d entries, want %d",
+			len(blueprints), predecessorRetirementPairCount,
+		)
 	}
 	return blueprints, nil
 }
@@ -586,6 +590,7 @@ func predecessorRetirementExpectedEntries(releaseNamespace, releaseName string, 
 		ControllerJobWriteGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 		ControllerChunkWriteGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 		ControllerPlanWriteGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
+		ControllerMigrationPlanWriteGuardPolicyName(releaseNamespace, releaseName, sequence, managerImage),
 	}
 	entries := make([]predecessorRetirementInventoryEntry, 0, len(pairNames)*2+1)
 	for _, name := range pairNames {
@@ -1061,8 +1066,13 @@ func (r *PredecessorRetirement) preflightPredecessor(ctx context.Context) (*pred
 	return snapshot, nil
 }
 
+// predecessorRetirementPairCount is how many policy and binding pairs a
+// predecessor retires. It is named rather than repeated so a new guard changes
+// the number in one place and every check that reads it moves together.
+const predecessorRetirementPairCount = 13
+
 func validatePredecessorRetirementState(snapshot *predecessorRetirementSnapshot) error {
-	if snapshot == nil || snapshot.marker == nil || len(snapshot.pairs) != 12 {
+	if snapshot == nil || snapshot.marker == nil || len(snapshot.pairs) != predecessorRetirementPairCount {
 		return errors.New("predecessor retirement snapshot is incomplete")
 	}
 	seenPresentBinding := false

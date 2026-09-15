@@ -41,6 +41,7 @@
 {{- $controllerJobWriteGuardName := include "ptah-operator.controllerJobWriteGuardPolicyName" . -}}
 {{- $controllerChunkWriteGuardName := include "ptah-operator.controllerChunkWriteGuardPolicyName" . -}}
 {{- $controllerPlanWriteGuardName := include "ptah-operator.controllerPlanWriteGuardPolicyName" . -}}
+{{- $controllerMigrationPlanWriteGuardName := include "ptah-operator.controllerMigrationPlanWriteGuardPolicyName" . -}}
 {{- $certificateMutatingWriteGuardName := include "ptah-operator.certificateMutatingWriteGuardPolicyName" . -}}
 {{- $certificateValidatingWriteGuardName := include "ptah-operator.certificateValidatingWriteGuardPolicyName" . -}}
 {{- $namespaceGuardName := include "ptah-operator.namespaceDeletionGuardPolicyName" . -}}
@@ -125,6 +126,7 @@ rules:
       - {{ $controllerJobWriteGuardName }}
       - {{ $controllerChunkWriteGuardName }}
       - {{ $controllerPlanWriteGuardName }}
+      - {{ $controllerMigrationPlanWriteGuardName }}
       - {{ $certificateMutatingWriteGuardName }}
       - {{ $certificateValidatingWriteGuardName }}
       - {{ $namespaceGuardName }}
@@ -646,6 +648,7 @@ rules:
       - {{ $controllerJobWriteGuardName }}
       - {{ $controllerChunkWriteGuardName }}
       - {{ $controllerPlanWriteGuardName }}
+      - {{ $controllerMigrationPlanWriteGuardName }}
       - {{ $certificateMutatingWriteGuardName }}
       - {{ $certificateValidatingWriteGuardName }}
       - {{ $namespaceGuardName }}

@@ -2768,7 +2768,7 @@ assert_sealed_release_inventory() {
       type == "object" and
       (keys | sort) == ["entries", "version"] and
       .version == "1" and
-      (.entries | type == "array" and length == 25) and
+      (.entries | type == "array" and length == 27) and
       all(.entries[];
         type == "object" and
         (keys | sort) == ["digest", "kind", "name", "uid"] and
@@ -2776,16 +2776,16 @@ assert_sealed_release_inventory() {
         (.uid | type == "string" and length > 0 and length <= 128) and
         (.digest | type == "string" and test("^[0-9a-f]{64}$"))
       ) and
-      ([range(0; 24; 2) as $index |
+      ([range(0; 26; 2) as $index |
         .entries[$index].kind == "ValidatingAdmissionPolicy" and
         .entries[$index + 1].kind == "ValidatingAdmissionPolicyBinding" and
         .entries[$index].name == .entries[$index + 1].name
       ] | all) and
-      .entries[24].kind == "ConfigMap" and
-      (.entries[24].name | test($probe_pattern)) and
-      ([.entries[] | .kind + "\u0000" + .name] | unique | length) == 25
+      .entries[26].kind == "ConfigMap" and
+      (.entries[26].name | test($probe_pattern)) and
+      ([.entries[] | .kind + "\u0000" + .name] | unique | length) == 27
     ' "$inventory_destination" >/dev/null ||
-		fail "sequence-$release_sequence sealed inventory is not 12 exact policy/binding pairs plus one hook probe"
+		fail "sequence-$release_sequence sealed inventory is not 13 exact policy/binding pairs plus one hook probe"
 	canonical_inventory=${inventory_destination}.canonical
 	jq -c '{
       version: .version,
