@@ -73,11 +73,18 @@ type MigrationRecord struct {
 
 // MigrationStatusReport is Ptah's `migrations status --json` document.
 type MigrationStatusReport struct {
-	ContractVersion   int               `json:"contract_version"`
-	CurrentVersion    int64             `json:"current_version"`
-	CheckpointVersion int64             `json:"checkpoint_version,omitempty"`
-	TotalMigrations   int               `json:"total_migrations"`
-	HasPendingChanges bool              `json:"has_pending_changes"`
+	ContractVersion   int   `json:"contract_version"`
+	CurrentVersion    int64 `json:"current_version"`
+	CheckpointVersion int64 `json:"checkpoint_version,omitempty"`
+	TotalMigrations   int   `json:"total_migrations"`
+	HasPendingChanges bool  `json:"has_pending_changes"`
+	// PendingMigrations is the selection Ptah itself made: the versions its
+	// next run would execute, in the order it would execute them. It is not
+	// the same question the per-migration states answer, and after a
+	// checkpoint bootstrap the two disagree on purpose -- a version the
+	// checkpoint replaced is reported pending once the bootstrap is no longer
+	// what the database is doing, and Ptah's own floor still skips it.
+	PendingMigrations []int64           `json:"pending_migrations,omitempty"`
 	Migrations        []MigrationRecord `json:"migrations,omitempty"`
 	DirtyRevision     *MigrationDirty   `json:"dirty_revision,omitempty"`
 }
@@ -101,9 +108,22 @@ type MigrationRunReport struct {
 	Status          *MigrationStatusReport `json:"status,omitempty"`
 }
 
-// Pending names the versions the artifact has and the database does not, in the
-// order the document lists them.
+// Pending names the versions the next run would execute, in the order Ptah
+// would execute them.
+//
+// The list is Ptah's, because deriving a second one from the per-migration
+// states gets a database that bootstrapped from a checkpoint wrong: the
+// versions the checkpoint replaced report themselves pending afterwards, while
+// Ptah's own floor skips them and its selection is empty. A controller that
+// recounted would publish a plan for migrations that cannot run, and publish it
+// again after every run that correctly did nothing.
+//
+// A document that carries no selection at all is read the old way, so a build
+// that reports only states still resolves to a list rather than to silence.
 func (r MigrationStatusReport) Pending() []int64 {
+	if r.PendingMigrations != nil {
+		return append([]int64(nil), r.PendingMigrations...)
+	}
 	versions := make([]int64, 0, len(r.Migrations))
 	for _, record := range r.Migrations {
 		if record.State == MigrationStatePending || record.State == MigrationStateOutOfOrder {

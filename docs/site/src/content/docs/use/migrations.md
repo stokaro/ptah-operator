@@ -126,11 +126,14 @@ all.
 **Checkpoints.** A migration file marked as a checkpoint carries the whole
 schema up to its version, so a database created after it bootstraps from that
 file instead of replaying everything before it.
-`status.history.checkpointVersion` names the checkpoint a fresh database
-started from, and the migrations it covers are reported as applied rather than
-pending. A database that was already past the checkpoint ignores it: a
-checkpoint changes where a new database starts, never what an existing one has
-run.
+`status.history.checkpointVersion` names the checkpoint a fresh database is
+about to start from, and the migrations it covers are reported as applied
+rather than pending. It is a statement about a bootstrap that has not happened
+yet, so it is gone once the bootstrap has: a database past the checkpoint is an
+ordinary database, and `status.history.pendingCount` is 0 because nothing is
+left to run, not because a checkpoint is still covering anything. A database
+that was already past the checkpoint when it arrived ignores it: a checkpoint
+changes where a new database starts, never what an existing one has run.
 
 **An existing schema with no history.** An empty revision table is not the same
 thing as an empty database, and the operator cannot tell the two apart: Ptah

@@ -57,6 +57,52 @@ func TestDecodeMigrationStatus_NamesAModifiedMigration(t *testing.T) {
 	}
 }
 
+// A database that bootstrapped from a checkpoint reports the versions the
+// checkpoint replaced as pending, and reports at the same time that its next
+// run would execute nothing. Both are true: the records say what happened to
+// each file, and the selection says what runs next, and only the second is the
+// question a plan asks. This document is what the pinned Ptah printed after a
+// checkpoint bootstrap against PostgreSQL.
+func TestDecodeMigrationStatus_ReadsTheSelectionRatherThanRecountingIt(t *testing.T) {
+	document := `{"contract_version":1,"current_version":4,"total_migrations":4,
+	  "applied_migrations":[3,4],"pending_migrations":[],"has_pending_changes":false,
+	  "migrations":[
+	    {"version":1,"checksum":"h1:one","state":"pending"},
+	    {"version":2,"checksum":"h1:two","state":"pending"},
+	    {"version":3,"checksum":"h1:three","applied_checksum":"h1:three","checkpoint":true,"state":"applied"},
+	    {"version":4,"checksum":"h1:four","applied_checksum":"h1:four","state":"applied"}
+	  ]}`
+
+	report, err := dataplane.DecodeMigrationStatus([]byte(document))
+
+	if err != nil {
+		t.Fatalf("DecodeMigrationStatus() error = %v", err)
+	}
+	if pending := report.Pending(); len(pending) != 0 {
+		t.Fatalf("pending = %v, want none: the checkpoint covers 1 and 2 and Ptah selected nothing", pending)
+	}
+}
+
+// A document that carries no selection is read the old way rather than as an
+// empty one, so a build that reports only states still produces a plan.
+func TestDecodeMigrationStatus_FallsBackToTheStatesWhenNoSelectionIsPublished(t *testing.T) {
+	document := `{"contract_version":1,"current_version":1,"total_migrations":2,"has_pending_changes":true,
+	  "migrations":[
+	    {"version":1,"checksum":"h1:one","applied_checksum":"h1:one","state":"applied"},
+	    {"version":2,"checksum":"h1:two","state":"pending"}
+	  ]}`
+
+	report, err := dataplane.DecodeMigrationStatus([]byte(document))
+
+	if err != nil {
+		t.Fatalf("DecodeMigrationStatus() error = %v", err)
+	}
+	pending := report.Pending()
+	if len(pending) != 1 || pending[0] != 2 {
+		t.Fatalf("pending = %v, want [2]", pending)
+	}
+}
+
 func TestDecodeMigrationStatus_FailurePath(t *testing.T) {
 	tests := []struct {
 		name     string
