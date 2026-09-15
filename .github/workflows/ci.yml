@@ -282,6 +282,18 @@ jobs:
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with:
           version: v4.2.4
+      # Per minor, because the three lifecycle jobs run at once: one shared key
+      # would have them race to save the same entry, and the last one to finish
+      # would be the only one whose work survived.
+      - name: Cache the Go build output
+        id: e2e-build-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-e2e-${{ matrix.minor_slug }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-build-${{ runner.os }}-e2e-${{ matrix.minor_slug }}-${{ hashFiles('go.sum') }}-
+            go-build-${{ runner.os }}-e2e-${{ matrix.minor_slug }}-
       - name: Check out pinned Ptah executor source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
