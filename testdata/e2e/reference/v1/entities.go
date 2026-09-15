@@ -17,8 +17,14 @@ type Region struct {
 	Name string
 }
 
+// The countries rows arrive in the next revision rather than here. Ptah emits
+// declared rows grouped by table in an order that ignores the dependency order
+// it uses for the tables themselves, so a child row can be inserted before the
+// parent row it references and the foreign key refuses it (stokaro/ptah#3252).
+// Declaring the parent first, and the child once the parent rows exist, is the
+// sequence that works today and it still crosses the constraint.
+//
 //ptah:schema:table name="countries"
-//ptah:schema:data table="countries" key="code" file="countries.yaml"
 type Country struct {
 	//ptah:schema:field name="code" type="VARCHAR(2)" primary="true"
 	Code string

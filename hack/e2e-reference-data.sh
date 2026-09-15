@@ -588,8 +588,9 @@ wait_for_reference_plan() {
 }
 
 # assert_declared_rows reads the managed tables back through the database rather
-# than through the operator, which is the only reading that can say the rows
-# were applied rather than reported.
+# than through the operator, which is the only reading that can say the rows were
+# applied rather than reported. An empty expected name means the child table has
+# no declared rows yet.
 assert_declared_rows() {
 	expected_regions=$1
 	expected_countries=$2
@@ -637,6 +638,13 @@ assert_repeated_reconciliation_changes_nothing() {
 
 # A change to reference rows alone triggers planning: no DDL change is not a
 # reason to skip data reconciliation.
+#
+# The second revision declares the child table's rows, which the first revision
+# deliberately left undeclared: Ptah emits declared rows in an order that can
+# put a child row before the parent it references (stokaro/ptah#3252), so the
+# parent rows arrive first and the child rows meet a foreign key they satisfy.
+# The tables themselves are unchanged, so this is still a plan with no DDL in
+# it, which is the row of the matrix this proves.
 assert_data_only_change_reconciles() {
 	publish_reference_schema v2
 	wait_for_reference_phase AwaitingApproval
@@ -741,7 +749,7 @@ run_engine_reference_data() {
 	approve_reference_plan "$REFERENCE_APPROVAL" "$REFERENCE_PLAN" ||
 		fail "the first plan could not be approved: $(cat "$ADMISSION_ERROR_FILE")"
 	wait_for_reference_phase InSync
-	assert_declared_rows 2 2 "Czechia"
+	assert_declared_rows 2 0 ""
 	assert_repeated_reconciliation_changes_nothing
 	assert_data_only_change_reconciles
 	assert_external_edit_refuses_a_stale_approval

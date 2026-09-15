@@ -1316,7 +1316,8 @@ for reference_marker in \
 	'e2e reference data: starting the %s lifecycle on a database with no tables' \
 	'scan_for_rows' \
 	'collect_declared_row_values' \
-	'assert_declared_rows 2 2 "Czechia"' \
+	'assert_declared_rows 2 0 ""' \
+	'assert_declared_rows 2 3 "Czech Republic"' \
 	'assert_repeated_reconciliation_changes_nothing' \
 	'assert_data_only_change_reconciles' \
 	'assert_external_edit_refuses_a_stale_approval' \
