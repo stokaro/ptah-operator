@@ -1244,6 +1244,15 @@ for migration_marker in \
 	'kept managing a database a PtahSchema also claims' \
 	'was allowed to manage a database a PtahMigration also claims' \
 	'a resource that runs nothing claims nothing' \
+	'run_checkpoint_bootstrap_proof' \
+	'assert_checkpoint_gate' \
+	'did not hold a checkpoint bootstrap at the approval gate' \
+	'[.spec.migrations[].version] == [3, 4]' \
+	'assert_checkpoint_equals_the_long_way' \
+	'and the replayed one is' \
+	'did not run against the rows the checkpoint seeded' \
+	'assert_checkpoint_bootstrap_stays_settled' \
+	'asked for another approval after its bootstrap settled' \
 	'assert_older_artifact_blocks_everything' \
 	'called an artifact older than its database InSync' \
 	'did not report the reading that disagrees with itself' \
@@ -1316,6 +1325,27 @@ done
 # The older fixtures end at version 2 while the lifecycle's database reaches 3.
 # A fourth file here, or a third, and the row would prove nothing: the artifact
 # has to end before the database does.
+# The checkpoint fixtures are the two the checkpoint covers, the checkpoint
+# itself, and the migration after it, in both directions. The checkpoint is
+# recognized by its file name and by nothing else, so the name is pinned here:
+# a rename turns the row into an ordinary four-migration replay that would pass
+# every assertion below while proving nothing about checkpoints.
+for migration_engine in postgresql-checkpoint mysql-checkpoint; do
+	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
+	[ "$migration_fixture_count" -eq 8 ] || {
+		printf 'e2e static: the %s migration fixtures are %s files, and the proof needs two covered migrations, a checkpoint, and one after it\n' \
+			"$migration_engine" "$migration_fixture_count" >&2
+		exit 1
+	}
+	for checkpoint_direction in up down; do
+		[ -f "$ROOT_DIR/testdata/e2e/migrations/${migration_engine}/0000000003_snapshot.checkpoint.${checkpoint_direction}.sql" ] || {
+			printf 'e2e static: the %s checkpoint is not named as one, so Ptah would read it as an ordinary migration\n' \
+				"$migration_engine" >&2
+			exit 1
+		}
+	done
+done
+
 for migration_engine in postgresql-older mysql-older; do
 	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
 	[ "$migration_fixture_count" -eq 4 ] || {
