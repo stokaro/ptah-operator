@@ -1214,6 +1214,81 @@ for ha_marker in \
 		exit 1
 	}
 done
+# The migration phase proves the rows a unit test cannot: a real history read
+# from a real revision table, an approval that authorizes one run, and the
+# credential boundary the Jobs keep. Each marker names one of them, so a proof
+# that quietly stopped running is a failure here rather than a green phase that
+# asserts less than it did.
+# shellcheck disable=SC2016 # These markers match literal script and jq text.
+for migration_marker in \
+	'run_engine_migrations postgresql' \
+	'run_engine_migrations mysql' \
+	'create_migration_database' \
+	'the migration proof must own a database the schema path never touched' \
+	'"migrations", "push", $reference, "--migrations-dir", "/migrations",' \
+	'"--dir-format", "ptah", "--version", $version, "--plain-http"' \
+	'subPath: ., readOnly: true' \
+	'the publisher said:' \
+	'the migration publisher Job did not preserve the no-database-credential boundary' \
+	'wait_for_migration_phase AwaitingApproval' \
+	'did not reach an exact three-migration approval gate' \
+	'[$spec.migrations[].version] == [1, 2, 3]' \
+	'carries SQL text' \
+	'approve_migration "$MIGRATION_APPROVAL"' \
+	'was not hydrated and bound to the exact plan' \
+	'wait_for_migration_phase InSync' \
+	'did not settle on a history that matches the artifact' \
+	'assert_database_migrated' \
+	'assert_repeated_reconciliation_runs_nothing' \
+	'assert_second_claimant_blocks_the_realm' \
+	'kept managing a database a PtahSchema also claims' \
+	'was allowed to manage a database a PtahMigration also claims' \
+	'a resource that runs nothing claims nothing' \
+	'assert_modified_file_blocks_everything' \
+	'$status.history.modifiedVersions == [1] and' \
+	're-ran an applied migration' \
+	'started new work for a history it already matched' \
+	'did not apply its data-only change' \
+	'seeded rows, not the three migration 1 inserted once' \
+	'left its column nullable' \
+	'migration Jobs did not keep registry access out of the process that runs SQL' \
+	'an approval naming the consumed plan was accepted' \
+	'kubectl ptah migration printed SQL' \
+	'assert_kubectl_ptah_migration AwaitingApproval' \
+	'assert_kubectl_ptah_migration InSync' \
+	'does not publish the plan a reader has to approve' \
+	'printed the order as' \
+	'e2e migrations: PASS approval gate, applied sequence, matching history, and credential isolation'; do
+	grep -F -- "$migration_marker" "$ROOT_DIR/hack/e2e-migrations.sh" >/dev/null || {
+		printf 'e2e static: live migration proof marker is missing: %s\n' "$migration_marker" >&2
+		exit 1
+	}
+done
+# The archived Job inventory is what makes the isolation row provable at all:
+# the controller stamps a TTL on every Job it finished reading, and a lifecycle
+# outlasts it.
+grep -F 'record_migration_jobs' "$ROOT_DIR/hack/e2e-migrations.sh" >/dev/null || {
+	printf '%s\n' 'e2e static: the migration phase does not archive Jobs before their TTL removes them' >&2
+	exit 1
+}
+grep -F 'application/vnd.stokaro.ptah.migrations.v1' \
+	"$ROOT_DIR/testdata/e2e/verification-policy-migrations.yaml" >/dev/null || {
+	printf '%s\n' 'e2e static: the migration verification policy does not pin the migration artifact type' >&2
+	exit 1
+}
+if grep -F 'application/vnd.stokaro.ptah.schema.v1' \
+	"$ROOT_DIR/testdata/e2e/verification-policy-migrations.yaml" >/dev/null; then
+	printf '%s\n' 'e2e static: the migration verification policy also accepts a schema artifact' >&2
+	exit 1
+fi
+for migration_engine in postgresql mysql postgresql-modified mysql-modified; do
+	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
+	[ "$migration_fixture_count" -eq 6 ] || {
+		printf 'e2e static: the %s migration fixtures are %s files, and the proof applies three migrations in both directions\n' \
+			"$migration_engine" "$migration_fixture_count" >&2
+		exit 1
+	}
+done
 for approval_plan_marker in \
 	"policy_uid=\$(k -n \"\$TEST_NAMESPACE\" get configmap" \
 	"verificationPolicyUID: \$verificationPolicyUID" \
@@ -1228,7 +1303,7 @@ if grep -F 'E2E_REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" \
 	printf '%s\n' 'e2e static: registry password is handed off through the host environment' >&2
 	exit 1
 fi
-for secret_script in e2e-dataplane.sh e2e-faults.sh; do
+for secret_script in e2e-dataplane.sh e2e-faults.sh e2e-migrations.sh; do
 	grep -F 'grep -F -f' "$ROOT_DIR/hack/$secret_script" >/dev/null
 	grep -F -- '--rawfile' "$ROOT_DIR/hack/$secret_script" >/dev/null
 done
@@ -6618,12 +6693,17 @@ grep -F '| kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null' \
 	printf '%s\n' 'e2e static: registry pull Secret creation is missing' >&2
 	exit 1
 }
+# Each phase that dispatches operations is handed the controller identity in
+# full, spelled the same way: the data plane, the migration path, and the
+# uninstall proof. The count is exact so a phase that stopped receiving one of
+# the three is a failure here rather than a Job the admission guards refuse in
+# a cluster an hour later.
 # shellcheck disable=SC2016 # Match literal runtime controller identity expressions.
 for controller_identity_assignment in \
 	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE' \
 	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION' \
 	'E2E_CONTROLLER_STATE_VERSION=1'; do
-	[ "$(grep -Fc -- "$controller_identity_assignment" "$ROOT_DIR/hack/e2e-kind.sh")" -eq 2 ]
+	[ "$(grep -Fc -- "$controller_identity_assignment" "$ROOT_DIR/hack/e2e-kind.sh")" -eq 3 ]
 done
 
 if make -s -C "$ROOT_DIR" docker-build REVISION=not-a-git-commit \

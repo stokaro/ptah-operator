@@ -20,6 +20,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
 // The fixtures name commits of their own. Reusing the catalog's real pin
@@ -54,10 +56,11 @@ func validCatalog() catalog {
 				Declared:      declared{Range: nil, Statement: "no range is claimed"},
 				Verified: []verified{
 					{
-						PtahCommit:   testCommit,
-						PtahDescribe: "v0.3.0-201-gabcdef012",
-						Evidence:     "kubernetes-e2e",
-						Scope:        "the full lifecycle",
+						PtahCommit:            testCommit,
+						PtahDescribe:          "v0.3.0-201-gabcdef012",
+						RunnerProtocolVersion: runner.ProtocolVersion,
+						Evidence:              "kubernetes-e2e",
+						Scope:                 "the full lifecycle",
 					},
 				},
 			},
@@ -300,6 +303,20 @@ func TestValidateRefusesTheShapesThatBlurAClaim(t *testing.T) {
 				c.Releases[0].Verified[0].Scope = ""
 			},
 			wantErr: "does not say what ran",
+		},
+		{
+			name: "a runner protocol version the operator does not speak",
+			mutate: func(c *catalog) {
+				c.Releases[0].Verified[0].RunnerProtocolVersion = runner.ProtocolVersion + 1
+			},
+			wantErr: "and this operator speaks",
+		},
+		{
+			name: "a measurement that publishes no runner protocol version",
+			mutate: func(c *catalog) {
+				c.Releases[0].Verified[0].RunnerProtocolVersion = 0
+			},
+			wantErr: "and this operator speaks",
 		},
 		{
 			name: "evidence the catalog does not describe",

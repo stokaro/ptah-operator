@@ -154,7 +154,7 @@ fail() {
 
 for requested_phase in $E2E_DIAGNOSIS_SKIP_PHASES; do
 	case $requested_phase in
-		upgrade | ha | assert | cert-rotation | dataplane | uninstall) ;;
+		upgrade | ha | assert | cert-rotation | dataplane | migrations | uninstall) ;;
 		*) fail "E2E_DIAGNOSIS_SKIP_PHASES names $requested_phase, which is not a lifecycle phase" ;;
 	esac
 done
@@ -2400,6 +2400,21 @@ E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE \
 E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \
 E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
 	run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"
+
+# The migration path runs after the data plane and inside its namespace, on a
+# database of its own. The PostgreSQL, the registry credentials, and the
+# admission fixtures the earlier phase stood up are what a migration needs too,
+# and standing them up a second time would be a second answer to every one of
+# them.
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
+E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
+E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_STATE_VERSION=1 \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+	run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \

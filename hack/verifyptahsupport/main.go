@@ -36,6 +36,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/stokaro/ptah-operator/internal/runner"
 )
 
 const (
@@ -124,8 +126,17 @@ type verified struct {
 	PtahRelease  *string `json:"ptahRelease"`
 	PtahCommit   string  `json:"ptahCommit"`
 	PtahDescribe string  `json:"ptahDescribe"`
-	Evidence     string  `json:"evidence"`
-	Scope        string  `json:"scope"`
+
+	// RunnerProtocolVersion is the frame version the executor and the operator
+	// spoke in the run this row reports. It is not a third compatibility axis:
+	// the runner is built from the operator source the row already names. It is
+	// published because a reader of the table cannot see it anywhere else, and
+	// it is checked against the constant rather than trusted, so the claim
+	// cannot drift from the code the way a second copy of a number does.
+	RunnerProtocolVersion int `json:"runnerProtocolVersion"`
+
+	Evidence string `json:"evidence"`
+	Scope    string `json:"scope"`
 }
 
 // evidence is what stands behind a verified row.
@@ -417,6 +428,11 @@ func validateMeasurement(name string, measurement verified, claim declared, evid
 
 	if strings.TrimSpace(measurement.Scope) == "" {
 		problems = append(problems, fmt.Errorf("%s verifies %s and does not say what ran", name, measurement.PtahCommit))
+	}
+	if measurement.RunnerProtocolVersion != runner.ProtocolVersion {
+		problems = append(problems, fmt.Errorf(
+			"%s publishes runner protocol version %d, and this operator speaks %d",
+			name, measurement.RunnerProtocolVersion, runner.ProtocolVersion))
 	}
 	if _, found := evidenceByName[measurement.Evidence]; !found {
 		problems = append(problems, fmt.Errorf(

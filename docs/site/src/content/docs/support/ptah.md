@@ -51,6 +51,7 @@ everything".
 | `verified[].ptahRelease` | The released Ptah version, or `null` when the verified build is not a release. |
 | `verified[].ptahCommit` | The exact Ptah commit the suite built its executor from. |
 | `verified[].ptahDescribe` | What `git describe --tags --always` calls that commit in a complete checkout, so a reader sees something other than forty hex characters. |
+| `verified[].runnerProtocolVersion` | The frame version the executor and the operator spoke in that run. Not a third axis — the runner is built from the operator source the row names — and checked against the constant rather than trusted. |
 | `verified[].evidence` | A key into `evidence`, which says what ran and how the tested build and this claim stay one declaration. |
 | `verified[].scope` | What the run covered. |
 | `limitations` | Known constraints on the rows above. |

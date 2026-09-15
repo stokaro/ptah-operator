@@ -50,6 +50,7 @@ case $RERUN_PHASE in
 	assert) RERUN_SCRIPT=hack/e2e-assert.sh ;;
 	cert-rotation) RERUN_SCRIPT=hack/e2e-cert-rotation.sh ;;
 	dataplane) RERUN_SCRIPT=hack/e2e-dataplane.sh ;;
+	migrations) RERUN_SCRIPT=hack/e2e-migrations.sh ;;
 	*) fail "unsupported phase $RERUN_PHASE" ;;
 esac
 [ -x "$ROOT_DIR/$RERUN_SCRIPT" ] || fail "phase script is not executable: $RERUN_SCRIPT"

@@ -2701,6 +2701,17 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`),
 		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`),
 		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"`),
+		exactSourceLineSequence("migration lifecycle", []string{
+			`E2E_KUBECONFIG=$KUBECONFIG_FILE \`,
+			`E2E_TEST_NAMESPACE=$TEST_NAMESPACE \`,
+			`E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \`,
+			`E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \`,
+			`E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \`,
+			`E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \`,
+			`E2E_CONTROLLER_STATE_VERSION=1 \`,
+			`E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \`,
+			`run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`,
+		}),
 		exactSourceLineSequence("uninstall lifecycle", []string{
 			`E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \`,
 			`E2E_HELM_RELEASE=$HELM_RELEASE \`,

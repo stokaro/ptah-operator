@@ -66,6 +66,19 @@ not pretend otherwise. A database claimed by more than one resource is refused
 `spec.target.sharedRealm: true`. One that has not blocks all of them. See
 [One database, one manager](../operations/#one-database-one-manager).
 
+The verification policy names the artifact type it accepts, and a migration
+directory is not a schema:
+
+```yaml
+version: 1
+artifact_types:
+  - application/vnd.stokaro.ptah.migrations.v1
+```
+
+A policy that also listed `application/vnd.stokaro.ptah.schema.v1` would let a
+schema artifact stand in for a migration directory at the same reference, so
+give a migration its own policy rather than reusing the schema one.
+
 ## What the history says
 
 ```sh
@@ -90,6 +103,15 @@ are published so you can find them.
 Neither resolves by waiting. The operator keeps reading the history at
 `spec.interval`, so fixing the database is enough to unblock it; nothing else
 is required.
+
+**Checkpoints.** A migration file marked as a checkpoint carries the whole
+schema up to its version, so a database created after it bootstraps from that
+file instead of replaying everything before it.
+`status.history.checkpointVersion` names the checkpoint a fresh database
+started from, and the migrations it covers are reported as applied rather than
+pending. A database that was already past the checkpoint ignores it: a
+checkpoint changes where a new database starts, never what an existing one has
+run.
 
 ## Approving a run
 
