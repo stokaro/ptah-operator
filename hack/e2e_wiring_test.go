@@ -3213,6 +3213,18 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "migration lifecycle",
 		},
 		{
+			name:        "reference-data lifecycle omitted",
+			old:         `run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"`,
+			replacement: `true # reference-data lifecycle omitted`,
+			wantError:   "reference-data lifecycle",
+		},
+		{
+			name:        "reference-data lifecycle call separated from its environment",
+			old:         `run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"`,
+			replacement: "true\n\trun_recorded_phase reference-data \"$ROOT_DIR/hack/e2e-reference-data.sh\"",
+			wantError:   "reference-data lifecycle",
+		},
+		{
 			name: "migration lifecycle hidden in false branch",
 			old: "E2E_KUBECONFIG=$KUBECONFIG_FILE \\\nE2E_TEST_NAMESPACE=$TEST_NAMESPACE \\\n" +
 				"E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \\\n",

@@ -1303,10 +1303,57 @@ if grep -F 'E2E_REGISTRY_PASSWORD' "$ROOT_DIR/hack/e2e-kind.sh" \
 	printf '%s\n' 'e2e static: registry password is handed off through the host environment' >&2
 	exit 1
 fi
-for secret_script in e2e-dataplane.sh e2e-faults.sh e2e-migrations.sh; do
+for secret_script in e2e-dataplane.sh e2e-faults.sh e2e-migrations.sh e2e-reference-data.sh; do
 	grep -F 'grep -F -f' "$ROOT_DIR/hack/$secret_script" >/dev/null
 	grep -F -- '--rawfile' "$ROOT_DIR/hack/$secret_script" >/dev/null
 done
+
+# The reference-data phase measures a refusal -- no declared row value in
+# status, an Event, or a log -- so the proofs that read for one are pinned here.
+# A phase that kept the scanner and stopped calling it would still pass its own
+# assertions.
+for reference_marker in \
+	'e2e reference data: starting the %s lifecycle on a database with no tables' \
+	'scan_for_rows' \
+	'collect_declared_row_values' \
+	'assert_declared_rows 2 2 "Czechia"' \
+	'assert_repeated_reconciliation_changes_nothing' \
+	'assert_data_only_change_reconciles' \
+	'assert_external_edit_refuses_a_stale_approval' \
+	'assert_removed_declaration_keeps_rows' \
+	'assert_rows_never_left_the_database' \
+	'a reconciliation with no declared change rewrote the managed rows' \
+	'an approval naming the replaced plan was accepted' \
+	'removing the declaration changed the managed rows' \
+	'carries a declared row value'; do
+	grep -F -- "$reference_marker" "$ROOT_DIR/hack/e2e-reference-data.sh" >/dev/null || {
+		printf 'e2e static: live reference-data proof marker is missing: %s\n' "$reference_marker" >&2
+		exit 1
+	}
+done
+# Three revisions, because the proof is a sequence: declared, changed, and no
+# longer declared. Each carries the Go source Ptah reads and the rows it
+# declares.
+for reference_revision in v1 v2 v3; do
+	reference_entities=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/reference/${reference_revision}/entities.go" | grep -c . || true)
+	[ "$reference_entities" -eq 1 ] || {
+		printf 'e2e static: reference-data revision %s has no entities.go\n' "$reference_revision" >&2
+		exit 1
+	}
+	reference_rows=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/reference/${reference_revision}/*.yaml" | grep -c . || true)
+	[ "$reference_rows" -ge 1 ] || {
+		printf 'e2e static: reference-data revision %s declares no rows\n' "$reference_revision" >&2
+		exit 1
+	}
+done
+grep -F 'ptah:schema:data' "$ROOT_DIR/testdata/e2e/reference/v1/entities.go" >/dev/null || {
+	printf '%s\n' 'e2e static: the reference-data fixture declares no managed rows' >&2
+	exit 1
+}
+if grep -F 'file="countries.yaml"' "$ROOT_DIR/testdata/e2e/reference/v3/entities.go" >/dev/null; then
+	printf '%s\n' 'e2e static: the ended-management fixture still declares the countries rows' >&2
+	exit 1
+fi
 for pinned_input in E2E_REGISTRY_IMAGE E2E_POSTGRES_SOURCE_IMAGE E2E_MYSQL_SOURCE_IMAGE; do
 	grep -E "^${pinned_input}=.*@sha256:[0-9a-f]{64}" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null
 done
