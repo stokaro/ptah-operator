@@ -68,6 +68,9 @@ func renderText(out io.Writer, view View) error {
 		if len(history.ModifiedVersions) > 0 {
 			field("Modified", joinVersions(history.ModifiedVersions))
 		}
+		if len(history.OutOfOrderVersions) > 0 {
+			field("Out of order", joinVersions(history.OutOfOrderVersions))
+		}
 	}
 	if run := view.LastRun; run != nil {
 		finished := ""

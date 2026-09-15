@@ -287,6 +287,14 @@ type MigrationHistoryStatus struct {
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=64
 	ModifiedVersions []int64 `json:"modifiedVersions,omitempty"`
+
+	// OutOfOrderVersions names migrations the artifact carries below a version
+	// the database has already applied. Linear execution refuses them, so the
+	// versions are published rather than counted: what a person decides here
+	// depends on which migration arrived late.
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	OutOfOrderVersions []int64 `json:"outOfOrderVersions,omitempty"`
 }
 
 // MigrationRunStatus is the evidence of the last execution, as the database
@@ -414,6 +422,11 @@ const (
 	// ReasonHistoryModified means an applied migration's file no longer
 	// accounts for it. This is the refusal a versioned workflow exists to make.
 	ReasonHistoryModified ConditionReason = "HistoryModified"
+	// ReasonHistoryOutOfOrder means the artifact carries a migration below a
+	// version the database has already applied. Linear execution refuses the
+	// whole run, so the operator refuses before it publishes a plan nobody
+	// could execute.
+	ReasonHistoryOutOfOrder ConditionReason = "HistoryOutOfOrder"
 )
 
 // ConditionMigrationArtifactVerified reports that the resolved artifact
