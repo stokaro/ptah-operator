@@ -1237,6 +1237,9 @@ for migration_marker in \
 	'did not settle on a history that matches the artifact' \
 	'assert_database_migrated' \
 	'assert_repeated_reconciliation_runs_nothing' \
+	'assert_modified_file_blocks_everything' \
+	'$status.history.modifiedVersions == [1] and' \
+	're-ran an applied migration' \
 	'started new work for a history it already matched' \
 	'did not apply its data-only change' \
 	'seeded rows, not the three migration 1 inserted once' \
@@ -1271,7 +1274,7 @@ if grep -F 'application/vnd.stokaro.ptah.schema.v1' \
 	printf '%s\n' 'e2e static: the migration verification policy also accepts a schema artifact' >&2
 	exit 1
 fi
-for migration_engine in postgresql mysql; do
+for migration_engine in postgresql mysql postgresql-modified mysql-modified; do
 	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
 	[ "$migration_fixture_count" -eq 6 ] || {
 		printf 'e2e static: the %s migration fixtures are %s files, and the proof applies three migrations in both directions\n' \

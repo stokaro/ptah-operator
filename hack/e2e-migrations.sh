@@ -198,10 +198,9 @@ select_engine() {
 	MIGRATION_APPROVAL="e2e-migrations-${ENGINE}-approval"
 	MIGRATION_STALE_APPROVAL="e2e-migrations-${ENGINE}-stale-approval"
 	MIGRATION_COORDINATION_KEY="e2e/migrations/${ENGINE}"
-	MIGRATION_CONFIGMAP="e2e-migrations-${ENGINE}-v1"
-	MIGRATION_PUBLISH_JOB="e2e-push-migrations-${ENGINE}-v1"
 	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}:stable"
 	MIGRATION_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}"
+	MIGRATION_EDITED_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-modified"
 	MIGRATION_COORDINATION_DIGEST=$(coordination_digest "$ENGINE" "$MIGRATION_COORDINATION_KEY")
 	[ -d "$MIGRATION_FIXTURE_DIR" ] || fail "migration fixtures are missing: $MIGRATION_FIXTURE_DIR"
 
@@ -411,15 +410,22 @@ create_migration_policy() {
 # a person would use. The harness owns no migration-directory format of its own:
 # a second implementation of the layout is a second thing to keep in step.
 publish_migrations() {
-	printf 'e2e migrations: publishing the %s migration directory\n' "$ENGINE_KIND" >&2
-	k -n "$TEST_NAMESPACE" create configmap "$MIGRATION_CONFIGMAP" \
-		--from-file="$MIGRATION_FIXTURE_DIR" >/dev/null
+	publish_version=${1:-v1}
+	publish_directory=${2:-$MIGRATION_FIXTURE_DIR}
+	publish_configmap="e2e-migrations-${ENGINE}-${publish_version}"
+	publish_job="e2e-push-migrations-${ENGINE}-${publish_version}"
+	[ -d "$publish_directory" ] || fail "migration fixtures are missing: $publish_directory"
+	printf 'e2e migrations: publishing the %s migration directory as %s\n' \
+		"$ENGINE_KIND" "$publish_version" >&2
+	k -n "$TEST_NAMESPACE" create configmap "$publish_configmap" \
+		--from-file="$publish_directory" >/dev/null
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
-		--arg name "$MIGRATION_PUBLISH_JOB" \
+		--arg name "$publish_job" \
 		--arg image "$EXECUTOR_IMAGE" \
-		--arg configMap "$MIGRATION_CONFIGMAP" \
+		--arg configMap "$publish_configmap" \
 		--arg reference "$MIGRATION_REFERENCE" \
+		--arg version "$publish_version" \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
 		--arg registryPullSecret "$REGISTRY_PULL_SECRET" '
     def registrySecretEnv($name; $key):
@@ -446,7 +452,7 @@ publish_migrations() {
               command: ["/usr/local/bin/ptah"],
               args: [
                 "migrations", "push", $reference, "--migrations-dir", "/migrations",
-                "--version", "v1", "--plain-http"
+                "--version", $version, "--plain-http"
               ],
               env: [
                 {name: "HOME", value: "/work"},
@@ -475,7 +481,7 @@ publish_migrations() {
 	k create -f "$RESOURCE_FILE" >/dev/null
 	publish_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$publish_deadline" ]; do
-		publish_state=$(k -n "$TEST_NAMESPACE" get job "$MIGRATION_PUBLISH_JOB" -o json |
+		publish_state=$(k -n "$TEST_NAMESPACE" get job "$publish_job" -o json |
 			jq -r 'if (.status.succeeded // 0) > 0 then "succeeded"
                    elif (.status.failed // 0) > 0 then "failed" else "running" end')
 		case "$publish_state" in
@@ -488,16 +494,16 @@ publish_migrations() {
 		fail "the migration publisher Job did not finish within ${TIMEOUT_SECONDS}s"
 	# The publisher holds registry credentials and must hold no database
 	# credential: it is the same boundary the schema publisher keeps.
-	k -n "$TEST_NAMESPACE" get job "$MIGRATION_PUBLISH_JOB" -o json |
+	k -n "$TEST_NAMESPACE" get job "$publish_job" -o json |
 		jq -e \
 			--arg image "$EXECUTOR_IMAGE" \
 			--arg registrySecret "$REGISTRY_AUTH_SECRET" \
 			-f "$ROOT_DIR/testdata/e2e/publisher-job-isolation.jq" >/dev/null ||
 		fail "the migration publisher Job did not preserve the no-database-credential boundary"
-	k -n "$TEST_NAMESPACE" logs job/"$MIGRATION_PUBLISH_JOB" >"$LOG_FILE"
+	k -n "$TEST_NAMESPACE" logs job/"$publish_job" >"$LOG_FILE"
 	PUBLISHED_DIGEST=$(sed -n 's/^Digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p' "$LOG_FILE" | tail -n 1)
 	printf '%s\n' "$PUBLISHED_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
-		fail "could not read the published migration digest from Job $MIGRATION_PUBLISH_JOB"
+		fail "could not read the published migration digest from Job $publish_job"
 }
 
 create_migration_resource() {
@@ -828,6 +834,55 @@ assert_replaced_plan_approval_refused() {
 # The plan-inspection row of the matrix: a reader reviews the migration order
 # through the plugin rather than by extracting a ConfigMap by hand, and never
 # sees a statement while doing it.
+# The modified-file row of the matrix: an applied migration whose file changed
+# afterwards is the refusal a versioned workflow exists to make.
+#
+# The tag moves to an artifact whose first migration is edited. Nothing about
+# the database changed, so the refusal has to come from comparing the artifact
+# against what the revision table recorded, and it has to leave the database
+# exactly as the run left it.
+assert_modified_file_blocks_everything() {
+	printf 'e2e migrations: moving the %s tag to an artifact whose applied file changed\n' \
+		"$ENGINE_KIND" >&2
+	blocked_before_digest=$PUBLISHED_DIGEST
+	publish_migrations v2 "$MIGRATION_EDITED_FIXTURE_DIR"
+	[ "$PUBLISHED_DIGEST" != "$blocked_before_digest" ] ||
+		fail "the edited $ENGINE artifact resolved to the digest the unedited one had"
+
+	blocked_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$blocked_deadline" ]; do
+		record_migration_jobs
+		migration_status
+		blocked_phase=$(jq -er '.status.phase' "$STATUS_FILE")
+		[ "$blocked_phase" != Blocked ] || break
+		[ "$blocked_phase" != Failed ] ||
+			fail "$MIGRATION_NAME failed instead of refusing an edited applied migration"
+		sleep 5
+	done
+	[ "${blocked_phase:-}" = Blocked ] ||
+		fail "$MIGRATION_NAME did not refuse an edited applied migration within ${TIMEOUT_SECONDS}s; it is in ${blocked_phase:-<none>}"
+
+	jq -e \
+		--arg digest "$PUBLISHED_DIGEST" '
+      .status as $status |
+      $status.artifact.digest == $digest and
+      $status.history.modifiedVersions == [1] and
+      $status.history.currentVersion == 3 and
+      ($status.plan // null) == null and
+      ($status.activeOperation // null) == null and
+      (any($status.conditions[];
+        .type == "Blocked" and .status == "True" and .reason == "HistoryModified")) and
+      (any($status.conditions[];
+        .type == "Ready" and .status == "True") | not)
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$MIGRATION_NAME did not report the exact modified version and stay out of Ready"
+	# Nothing ran, so nothing moved.
+	assert_database_migrated
+	first_name=$(migration_query "SELECT name FROM e2e_migration_widgets WHERE id = 1")
+	[ "$first_name" = first ] ||
+		fail "$ENGINE re-ran an applied migration: row 1 now reads $first_name"
+}
+
 assert_kubectl_ptah_migration() {
 	view_phase=$1
 	view_file=$WORK_DIR/kubectl-ptah-migration-${ENGINE}-${view_phase}.txt
@@ -893,6 +948,7 @@ run_engine_migrations() {
 	assert_migration_job_isolation
 	assert_replaced_plan_approval_refused
 	assert_kubectl_ptah_migration InSync
+	assert_modified_file_blocks_everything
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
 }
