@@ -132,7 +132,18 @@ func claimsRealm(deleting bool, target operatorv1alpha1.DatabaseTargetSpec, dige
 // an object whose interval is absent from turning a refusal into a hot loop.
 const realmRecheckInterval = time.Minute
 
-func realmRecheckDeadline(now time.Time, interval time.Duration) metav1.Time {
+// realmBlockDeadline keeps the deadline a standing refusal already carries.
+//
+// A controller watches its own resource, so a status write it makes wakes it
+// again. A refusal that stamped a new next-reconciliation time on every pass
+// would differ from the stored status every time, patch every time, and wake
+// itself every time: a hot loop that never sleeps and never says why. Reusing
+// a deadline that has not passed makes the second pass a no-op write, which is
+// no write at all.
+func realmBlockDeadline(current *metav1.Time, now time.Time, interval time.Duration) metav1.Time {
+	if current != nil && current.After(now) {
+		return *current
+	}
 	if interval < realmRecheckInterval {
 		interval = realmRecheckInterval
 	}

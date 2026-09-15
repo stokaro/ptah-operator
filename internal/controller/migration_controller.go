@@ -1041,7 +1041,7 @@ func (r *MigrationReconciler) migrationRealmBlocked(
 	census realmCensus,
 ) (ctrl.Result, error) {
 	now := r.now()
-	next := realmRecheckDeadline(now, migration.Spec.Interval.Duration)
+	next := realmBlockDeadline(migration.Status.NextReconciliationTime, now, migration.Spec.Interval.Duration)
 	before := migration.DeepCopy()
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 	migration.Status.ObservedGeneration = migration.Generation
