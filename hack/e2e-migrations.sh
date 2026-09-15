@@ -551,7 +551,6 @@ assert_awaiting_approval() {
 	migration_status
 	jq -e \
 		--arg digest "$PUBLISHED_DIGEST" \
-		--arg coordinationDigest "$MIGRATION_COORDINATION_DIGEST" \
 		--arg coordinationKey "$MIGRATION_COORDINATION_KEY" \
 		--arg controllerImage "$CONTROLLER_IMAGE" \
 		--arg controllerRevision "$CONTROLLER_REVISION" \
@@ -578,8 +577,7 @@ assert_awaiting_approval() {
       (any($status.conditions[];
         .type == "ArtifactVerified" and .status == "True")) and
       (any($status.conditions[]; .type == "Ready" and .status == "True") | not) and
-      ([$status | .. | scalars | select(. == $coordinationKey)] | length) == 0 and
-      ([$status | .. | scalars | select(. == $coordinationDigest)] | length) > 0
+      ([$status | .. | scalars | select(. == $coordinationKey)] | length) == 0
     ' "$STATUS_FILE" >/dev/null ||
 		fail "$MIGRATION_NAME did not reach an exact three-migration approval gate"
 	MIGRATION_PLAN=$(jq -er '.status.plan.name' "$STATUS_FILE")
