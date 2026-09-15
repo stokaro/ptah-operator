@@ -1242,6 +1242,10 @@ for migration_marker in \
 	'migration Jobs did not keep registry access out of the process that runs SQL' \
 	'an approval naming the consumed plan was accepted' \
 	'kubectl ptah migration printed SQL' \
+	'assert_kubectl_ptah_migration AwaitingApproval' \
+	'assert_kubectl_ptah_migration InSync' \
+	'does not publish the plan a reader has to approve' \
+	'printed the order as' \
 	'e2e migrations: PASS approval gate, applied sequence, matching history, and credential isolation'; do
 	grep -F -- "$migration_marker" "$ROOT_DIR/hack/e2e-migrations.sh" >/dev/null || {
 		printf 'e2e static: live migration proof marker is missing: %s\n' "$migration_marker" >&2

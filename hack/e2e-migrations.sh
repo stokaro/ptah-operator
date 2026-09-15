@@ -781,17 +781,39 @@ assert_replaced_plan_approval_refused() {
 	scan_for_credentials "$ADMISSION_ERROR_FILE" "the consumed-plan approval refusal"
 }
 
+# The plan-inspection row of the matrix: a reader reviews the migration order
+# through the plugin rather than by extracting a ConfigMap by hand, and never
+# sees a statement while doing it.
 assert_kubectl_ptah_migration() {
-	view_file=$WORK_DIR/kubectl-ptah-migration.txt
+	view_phase=$1
+	view_file=$WORK_DIR/kubectl-ptah-migration-${ENGINE}-${view_phase}.txt
 	"$KUBECTL_PTAH_BINARY" migration "$MIGRATION_NAME" \
 		--kubeconfig "$KUBECONFIG_FILE" -n "$TEST_NAMESPACE" >"$view_file" ||
 		fail "kubectl ptah migration could not read $MIGRATION_NAME"
 	scan_for_credentials "$view_file" "the kubectl ptah migration view"
-	grep -F 'InSync' "$view_file" >/dev/null ||
-		fail "kubectl ptah migration does not report the phase"
-	if grep -Ei 'create[[:space:]]+table|alter[[:space:]]+table|insert[[:space:]]+into' \
+	grep -Fx "Phase:          ${view_phase}" "$view_file" >/dev/null ||
+		fail "kubectl ptah migration does not report phase $view_phase"
+	grep -F "Migration:      ${TEST_NAMESPACE}/${MIGRATION_NAME}" "$view_file" >/dev/null ||
+		fail "kubectl ptah migration does not name the resource it read"
+	if grep -Ei 'create[[:space:]]+table|alter[[:space:]]+table|insert[[:space:]]+into|update[[:space:]]+e2e' \
 		"$view_file" >/dev/null; then
 		fail "kubectl ptah migration printed SQL"
+	fi
+	if [ "$view_phase" = AwaitingApproval ]; then
+		grep -F "Plan ${MIGRATION_PLAN}, 3 migrations from version 0:" "$view_file" >/dev/null ||
+			fail "kubectl ptah migration does not publish the plan a reader has to approve"
+		view_order=$(sed -n 's/^  \([0-9][0-9]*\) .*/\1/p' "$view_file" | tr '\n' ' ')
+		[ "$view_order" = "1 2 3 " ] ||
+			fail "kubectl ptah migration printed the order as [$view_order], not the planned sequence"
+		grep -Fx "Pending:        3" "$view_file" >/dev/null ||
+			fail "kubectl ptah migration does not report the pending count"
+	else
+		grep -Fx "No plan is published." "$view_file" >/dev/null ||
+			fail "kubectl ptah migration still shows a plan after the run that consumed it"
+		view_applied=$(sed -n 's/^Run applied: *//p' "$view_file" |
+			tr ',' '\n' | tr -d ' ' | sort -n | tr '\n' ' ')
+		[ "$view_applied" = "1 2 3 " ] ||
+			fail "kubectl ptah migration reports [$view_applied] applied, not the three versions the run recorded"
 	fi
 }
 
@@ -809,6 +831,7 @@ run_engine_migrations() {
 	wait_for_migration_phase AwaitingApproval
 	assert_awaiting_approval
 	assert_plan_sequence
+	assert_kubectl_ptah_migration AwaitingApproval
 	MIGRATION_PLAN_UID=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$MIGRATION_PLAN" \
 		-o jsonpath='{.metadata.uid}')
 	MIGRATION_PLAN_FINGERPRINT=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$MIGRATION_PLAN" \
@@ -824,7 +847,7 @@ run_engine_migrations() {
 	assert_database_migrated
 	assert_migration_job_isolation
 	assert_replaced_plan_approval_refused
-	assert_kubectl_ptah_migration
+	assert_kubectl_ptah_migration InSync
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
 }
