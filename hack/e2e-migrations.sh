@@ -2224,21 +2224,46 @@ assert_checkpoint_equals_the_long_way() {
 # pending once the bootstrap is behind the database, and a resource that
 # recounted them would publish a plan for migrations the checkpoint replaced and
 # ask for an approval to run them, on every pass, forever.
+#
+# What is watched is the plan and the approval, not the phase. A settled
+# resource still resolves, verifies and reads at its interval, so it is
+# legitimately out of InSync for part of every cycle; requiring InSync on each
+# poll would fail on the poll that landed mid-cycle. The proof is that the
+# history was read again -- a new observedAt -- with no plan published on the
+# way, and that it is InSync at the end.
 assert_checkpoint_bootstrap_stays_settled() {
-	checkpoint_settled_deadline=$(($(date +%s) + 90))
+	checkpoint_status
+	checkpoint_observed_before=$(jq -er '.status.history.observedAt' "$STATUS_FILE")
+	checkpoint_settled_deadline=$(deadline_from_now)
 	while [ "$(date +%s)" -lt "$checkpoint_settled_deadline" ]; do
 		checkpoint_status
 		jq -e '
           .status as $status |
-          $status.phase == "InSync" and
-          $status.history.pendingCount == 0 and
           ($status.plan // null) == null and
+          $status.phase != "AwaitingApproval" and
+          $status.phase != "Blocked" and
           (any($status.conditions[];
             .type == "ApprovalRequired" and .status == "True") | not)
         ' "$STATUS_FILE" >/dev/null ||
 			fail "$CHECKPOINT_MIGRATION asked for another approval after its bootstrap settled"
-		sleep 10
+		checkpoint_observed_now=$(jq -er '.status.history.observedAt' "$STATUS_FILE")
+		if [ "$checkpoint_observed_now" != "$checkpoint_observed_before" ] &&
+			[ "$(jq -er '.status.phase' "$STATUS_FILE")" = InSync ]; then
+			checkpoint_reread=yes
+			break
+		fi
+		sleep 5
 	done
+	[ "${checkpoint_reread:-no}" = yes ] ||
+		fail "$CHECKPOINT_MIGRATION did not read its history again within ${TIMEOUT_SECONDS}s"
+	jq -e '
+      .status as $status |
+      $status.phase == "InSync" and
+      $status.history.pendingCount == 0 and
+      $status.history.currentVersion == 4 and
+      ($status.plan // null) == null
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$CHECKPOINT_MIGRATION did not settle again on the history its bootstrap produced"
 }
 
 run_checkpoint_bootstrap_proof() {
