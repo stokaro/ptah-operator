@@ -6315,6 +6315,8 @@ for crd_live_marker in \
 	'changed despite failed CRD preflight' \
 	'failed CRD preflight rewrote future controller state' \
 	'a second operator release was installed' \
+	'proving an active release survives losing both runtime Deployments' \
+	'the upgrade that restores both deleted runtime Deployments was refused' \
 	'coordination namespace mutation' \
 	'leader-election mutation' \
 	'execution binding mutation' \

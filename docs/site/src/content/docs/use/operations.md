@@ -499,6 +499,18 @@ retry of an interrupted transition is different: its Deployments are still
 stopped or still stamped with the older release, and the hooks resume that
 transition.
 
+A release that lost both runtime Deployments — a GitOps prune, a namespace-wide
+delete that spared the release's other objects — is repaired the same way: run
+`helm upgrade` with the chart version that is installed, and Helm recreates
+them. The hooks still prove both retained guards before anything is applied.
+With nothing in the cluster carrying the active runtime identity there is no
+object those guards would accept, so each is proven by a denial only it can
+produce: the rollout guard refuses a Deployment created outside the two fixed
+names, and the runtime guard refuses an identity it cannot account for. Neither
+probe is ever persisted. Restore the release at its installed version first and
+upgrade afterwards: a newer chart pins a contract the retained guards were not
+created for.
+
 ### Offline singleton migration
 
 Do not change singleton annotations merely to make an online upgrade pass. An

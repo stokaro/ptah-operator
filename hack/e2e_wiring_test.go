@@ -4948,6 +4948,13 @@ func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 			wantError:   "runtime singleton proof call",
 		},
 		{
+			name:        "CRD runtime Deployment recovery proof call removed",
+			child:       "crd-upgrade",
+			old:         "\tprove_runtime_deployment_recovery\n",
+			replacement: "\ttrue # recovery proof removed\n",
+			wantError:   "runtime deployment recovery proof call",
+		},
+		{
 			name:        "CRD controller guarded-field proof removed",
 			child:       "crd-upgrade",
 			old:         "prove_controller_object_supported_window_guard\n",
