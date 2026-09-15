@@ -71,7 +71,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "92c55397d588131279e40a8a4c01afcac344f7d03b38637866a185ffd9f61f66"
+	ciWorkflowSHA256                = "a8fc7424000d3c63c2788f2d8f8be41c3db244978ec44c025512dd849b3f61fd"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -575,23 +575,6 @@ func verifyWorkflow(path string) error {
 // unreviewed rule about which commits get a verdict.
 const ciCancelInProgressExpression = "${{ github.event_name == 'pull_request' }}"
 
-// ciConcurrencyGroup puts a pull request in one group per ref, so its newest
-// push supersedes the older one, and every other event in one group per event
-// and commit, so nothing supersedes it.
-//
-// The second half is what cancel-in-progress cannot do on its own. GitHub
-// cancels an earlier pending run when a new one joins its group whatever that
-// setting says, and a run waiting for a job slot is always pending, so a shared
-// per-ref group let every merge cancel the verdict of the one before it (#106).
-//
-// The event belongs in the key because three of this workflow's four triggers
-// run on the same sha: a scheduled run starts on the tip of master, so keyed on
-// the commit alone it would cancel that commit's waiting push run once a week.
-// Matched exactly, for the same reason the expression above is.
-const ciConcurrencyGroup = "ci-${{ github.workflow }}-" +
-	"${{ github.event_name == 'pull_request' && github.ref || " +
-	"format('{0}-{1}', github.event_name, github.sha) }}"
-
 // ciCancelsSupersededPullRequests accepts the two spellings that cancel a
 // superseded pull-request run: the literal true, which cancels on every ref,
 // and the audited expression, which cancels only on a pull request. Everything
@@ -612,7 +595,7 @@ func ciCancelsSupersededPullRequests(node yaml.Node) bool {
 }
 
 func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents []byte) error {
-	if workflow.Concurrency.Group != ciConcurrencyGroup ||
+	if workflow.Concurrency.Group != "ci-${{ github.workflow }}-${{ github.ref }}" ||
 		!ciCancelsSupersededPullRequests(workflow.Concurrency.CancelInProgress) {
 		return fmt.Errorf(
 			"%s: CI must cancel a superseded pull-request run, and must not let a later merge cancel a master commit's verdict",
