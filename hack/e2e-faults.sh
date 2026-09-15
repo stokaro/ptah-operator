@@ -4926,12 +4926,26 @@ done
 	fail "a contested database realm dispatched a Job"
 # One declaration is not a contract. The realm stays refused until every
 # claimant has made the same statement.
+#
+# A contested realm is re-examined at most a minute later whatever interval the
+# resource runs on, so ninety seconds is long enough for both claimants to look
+# again and still refuse. Waiting it out is the assertion: a realm that opened
+# for one declaration would open inside this window.
 k -n "$TEST_NAMESPACE" patch ptahschema "$PG_ALIAS_SCHEMA_A" --type=merge \
 	--patch '{"spec":{"target":{"sharedRealm":true}}}' >/dev/null
-wait_for_schema "$PG_ALIAS_SCHEMA_B" '
-  .status.phase == "Blocked" and
-  (.status.conditions | any(.type == "Ready" and .status == "False" and .reason == "RealmConflict"))
-' "a realm still refused while one claimant has not declared it shared"
+alias_one_sided_deadline=$(($(date +%s) + 90))
+while [ "$(date +%s)" -lt "$alias_one_sided_deadline" ]; do
+	for alias_one_sided in "$PG_ALIAS_SCHEMA_A" "$PG_ALIAS_SCHEMA_B"; do
+		k -n "$TEST_NAMESPACE" get ptahschema "$alias_one_sided" -o json |
+			jq -e '
+              .status.phase == "Blocked" and
+              .status.activeOperation == null and
+              (.status.conditions | any(.type == "Ready" and .status == "False" and .reason == "RealmConflict"))
+            ' >/dev/null ||
+			fail "$alias_one_sided left the refusal while one claimant had not declared the realm shared"
+	done
+	sleep 10
+done
 k -n "$TEST_NAMESPACE" patch ptahschema "$PG_ALIAS_SCHEMA_B" --type=merge \
 	--patch '{"spec":{"target":{"sharedRealm":true}}}' >/dev/null
 wait_for_plan "$PG_ALIAS_SCHEMA_A"

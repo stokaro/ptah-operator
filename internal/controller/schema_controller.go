@@ -267,8 +267,8 @@ func (r *SchemaReconciler) reconcile(ctx context.Context, request ctrl.Request) 
 // Blocked with ApprovalRequired false is the fence the approval webhook reads,
 // so no request beginning after this patch can authorize a plan. What ends the
 // refusal is another resource's spec change, and that resource's events do not
-// reach this one, so the verdict is re-taken on this resource's own interval
-// rather than waited on.
+// reach this one, so the verdict is re-taken on a bounded cadence rather than
+// waited on: the shorter of this resource's interval and a minute.
 func (r *SchemaReconciler) schemaRealmBlocked(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
