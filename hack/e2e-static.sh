@@ -6269,6 +6269,8 @@ for crd_live_marker in \
 	'a second operator release was installed' \
 	'coordination namespace mutation' \
 	'leader-election mutation' \
+	'execution binding mutation' \
+	'pins the executable contract of release sequence' \
 	'runtime rejection of an incomplete singleton' \
 	'incomplete admission singleton' \
 	'proving the admission singleton refuses a foreign owner' \
