@@ -768,6 +768,50 @@ assert_migration_job_isolation() {
 		fail "the archived migration Jobs cover $observed_operations, not the whole lifecycle"
 }
 
+# The repeated-reconciliation row of the matrix: a history the database already
+# holds produces no second run, and the DML a migration carried is not executed
+# again.
+#
+# The interval is shortened rather than waited out, which also makes this a new
+# generation: the whole read-only chain runs again from resolution, which is the
+# strongest form of "reconciled again" the resource has.
+assert_repeated_reconciliation_runs_nothing() {
+	settled_run_uid=$(jq -er '.status.lastRun.jobUID' "$STATUS_FILE")
+	settled_observed=$(jq -er '.status.history.observedAt' "$STATUS_FILE")
+	[ -n "$settled_run_uid" ] && [ -n "$settled_observed" ] ||
+		fail "$MIGRATION_NAME settled without run and history evidence to compare against"
+	k -n "$TEST_NAMESPACE" patch ptahmigration "$MIGRATION_NAME" --type=merge \
+		--patch '{"spec":{"interval":"30s"}}' >/dev/null
+
+	repeat_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$repeat_deadline" ]; do
+		record_migration_jobs
+		migration_status
+		repeat_observed=$(jq -er '.status.history.observedAt' "$STATUS_FILE")
+		repeat_phase=$(jq -er '.status.phase' "$STATUS_FILE")
+		if [ "$repeat_phase" = InSync ] && [ "$repeat_observed" != "$settled_observed" ]; then
+			break
+		fi
+		[ "$repeat_phase" != Failed ] && [ "$repeat_phase" != Blocked ] ||
+			fail "$MIGRATION_NAME left InSync on a repeated reconciliation: $repeat_phase"
+		sleep 5
+	done
+	[ "${repeat_observed:-}" != "$settled_observed" ] ||
+		fail "$MIGRATION_NAME did not read its history again within ${TIMEOUT_SECONDS}s"
+
+	jq -e \
+		--arg runUID "$settled_run_uid" '
+      .status as $status |
+      $status.phase == "InSync" and
+      $status.history.currentVersion == 3 and
+      $status.history.pendingCount == 0 and
+      $status.lastRun.jobUID == $runUID and
+      ($status.plan // null) == null
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$MIGRATION_NAME started new work for a history it already matched"
+	assert_database_migrated
+}
+
 # A decision authorizes one run. The plan it named is gone once that run
 # finished, and admission refuses a second approval that still names it.
 assert_replaced_plan_approval_refused() {
@@ -845,6 +889,7 @@ run_engine_migrations() {
 	wait_for_migration_phase InSync
 	assert_in_sync
 	assert_database_migrated
+	assert_repeated_reconciliation_runs_nothing
 	assert_migration_job_isolation
 	assert_replaced_plan_approval_refused
 	assert_kubectl_ptah_migration InSync

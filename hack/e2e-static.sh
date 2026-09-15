@@ -1236,6 +1236,8 @@ for migration_marker in \
 	'wait_for_migration_phase InSync' \
 	'did not settle on a history that matches the artifact' \
 	'assert_database_migrated' \
+	'assert_repeated_reconciliation_runs_nothing' \
+	'started new work for a history it already matched' \
 	'did not apply its data-only change' \
 	'seeded rows, not the three migration 1 inserted once' \
 	'left its column nullable' \
