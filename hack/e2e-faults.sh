@@ -4918,12 +4918,18 @@ for alias_contested in "$PG_ALIAS_SCHEMA_A" "$PG_ALIAS_SCHEMA_B"; do
       (.status.conditions | any(.type == "ApprovalRequired" and .status == "False" and .reason == "RealmConflict"))
     ' "a refusal to manage a database another resource also claims"
 done
-[ "$(k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/schema=${PG_ALIAS_SCHEMA_A}" \
-	-o json | jq '.items | length')" -eq 0 ] ||
-	fail "a contested database realm dispatched a Job"
-[ "$(k -n "$TEST_NAMESPACE" get jobs -l "operator.ptah.run/schema=${PG_ALIAS_SCHEMA_B}" \
-	-o json | jq '.items | length')" -eq 0 ] ||
-	fail "a contested database realm dispatched a Job"
+# The count, not zero. Whichever resource is created first is briefly the only
+# claimant of the realm, and the operator starts its read-only chain there and
+# then: a Job dispatched before the second claimant existed is not a contested
+# realm dispatching one, and the refusal cannot un-dispatch it. What a refusal
+# owes is that no NEW work starts while it stands, so the counts are taken once
+# both are refused and compared after the window below.
+alias_jobs_while_contested() {
+	k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.run/schema=${1}" -o json | jq '.items | length'
+}
+ALIAS_A_JOBS_CONTESTED=$(alias_jobs_while_contested "$PG_ALIAS_SCHEMA_A")
+ALIAS_B_JOBS_CONTESTED=$(alias_jobs_while_contested "$PG_ALIAS_SCHEMA_B")
 # One declaration is not a contract. The realm stays refused until every
 # claimant has made the same statement.
 #
@@ -4946,6 +4952,13 @@ while [ "$(date +%s)" -lt "$alias_one_sided_deadline" ]; do
 	done
 	sleep 10
 done
+# A minute of re-checks is more than the bounded cadence a contested realm is
+# re-examined on, so a refusal that let work through would have let it through
+# by now.
+[ "$(alias_jobs_while_contested "$PG_ALIAS_SCHEMA_A")" -eq "$ALIAS_A_JOBS_CONTESTED" ] ||
+	fail "$PG_ALIAS_SCHEMA_A started new work while the database realm was contested"
+[ "$(alias_jobs_while_contested "$PG_ALIAS_SCHEMA_B")" -eq "$ALIAS_B_JOBS_CONTESTED" ] ||
+	fail "$PG_ALIAS_SCHEMA_B started new work while the database realm was contested"
 k -n "$TEST_NAMESPACE" patch ptahschema "$PG_ALIAS_SCHEMA_B" --type=merge \
 	--patch '{"spec":{"target":{"sharedRealm":true}}}' >/dev/null
 wait_for_plan "$PG_ALIAS_SCHEMA_A"
