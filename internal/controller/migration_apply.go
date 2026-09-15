@@ -356,6 +356,12 @@ func (r *MigrationReconciler) consumeMigrationRun(
 // releaseMigrationApplyLock hands the database back. A failure to release is
 // not a failure of the run: the Lease expires on its own, and reporting the
 // run's evidence matters more than the tidy release.
+//
+// The epoch the claim persisted travels with the request, because releasing
+// without one is not a weaker release -- it is no release at all. Release
+// refuses a request that names no epoch, so the Lease kept its holder until it
+// expired, and every other claimant on that database waited out the full lease
+// duration for a run that had already finished.
 func (r *MigrationReconciler) releaseMigrationApplyLock(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
@@ -369,8 +375,9 @@ func (r *MigrationReconciler) releaseMigrationApplyLock(
 		CoordinationDigest:    operation.CoordinationDigest,
 		Holder:                targetlock.Holder{SchemaUID: migration.UID, OperationID: operation.ID},
 		Duration:              time.Duration(operation.LeaseDurationSeconds) * time.Second,
+		ExpectedEpoch:         operation.LeaseEpoch,
 	}); err != nil {
-		ctrl.LoggerFrom(ctx).V(1).Info("could not release the database lock", "error", err.Error())
+		ctrl.LoggerFrom(ctx).Info("could not release the database lock", "error", err.Error())
 	}
 }
 

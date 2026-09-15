@@ -7,6 +7,7 @@ import (
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -233,6 +234,11 @@ func TestMigrationApplyEvidenceDecidesWhatHappensNext(t *testing.T) {
 				!meta.IsStatusConditionTrue(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked) {
 				t.Fatal("an unrecoverable outcome did not block the resource")
 			}
+			// Every terminal outcome hands the database back, including the two
+			// that stop the resource: a run that is over holds nothing, and the
+			// next claimant is whoever asks first rather than whoever waits
+			// longest.
+			assertDatabaseHandedBack(t, reconciler, api)
 		})
 	}
 }
@@ -469,6 +475,31 @@ func applyClaimFor(
 	migration.Status.ActiveOperation = operation
 	migration.Status.Phase = operatorv1alpha1.MigrationPhaseApplying
 	return operation
+}
+
+// assertDatabaseHandedBack fails while any database Lease the reconciler
+// coordinates through still names a holder.
+//
+// A release that does not clear the holder is invisible: the run reports its
+// evidence, the resource settles, and nothing in status says the database is
+// still marked busy. What it costs is paid by the next claimant, which waits
+// out the whole lease duration for a run that finished minutes ago.
+func assertDatabaseHandedBack(t *testing.T, reconciler *MigrationReconciler, api client.Client) {
+	t.Helper()
+
+	leases := &coordinationv1.LeaseList{}
+	if err := api.List(context.Background(), leases, client.InNamespace(reconciler.LockNamespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases.Items) == 0 {
+		t.Fatal("no database Lease exists, so this proved nothing about handing one back")
+	}
+	for _, lease := range leases.Items {
+		if lease.Spec.HolderIdentity != nil && *lease.Spec.HolderIdentity != "" {
+			t.Fatalf("Lease %s is still held by %q after the run finished",
+				lease.Name, *lease.Spec.HolderIdentity)
+		}
+	}
 }
 
 // holdMigrationApplyLease puts the database lock in the state a dispatched

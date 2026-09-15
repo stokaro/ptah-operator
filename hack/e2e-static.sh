@@ -1244,6 +1244,11 @@ for migration_marker in \
 	'kept managing a database a PtahSchema also claims' \
 	'was allowed to manage a database a PtahMigration also claims' \
 	'a resource that runs nothing claims nothing' \
+	'assert_partial_run_blocks_and_recovers' \
+	'did not stop on a migration that committed half of itself' \
+	'did not keep the statement the partial migration committed' \
+	'dispatched another run after a partial one' \
+	'did not recover on its own reading of a database somebody fixed' \
 	'assert_modified_file_blocks_everything' \
 	'$status.history.modifiedVersions == [1] and' \
 	're-ran an applied migration' \
@@ -1289,6 +1294,26 @@ for migration_engine in postgresql mysql postgresql-modified mysql-modified; do
 		exit 1
 	}
 done
+# The partial fixtures are the three the lifecycle applies plus the one that
+# commits half of itself, and the directive is what makes that fourth file a
+# partial rather than a rollback. A fixture that lost the directive would still
+# fail, the transaction would put the database back, and the row would prove a
+# clean failure while claiming to prove a partial one.
+for migration_engine in postgresql-partial mysql-partial; do
+	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
+	[ "$migration_fixture_count" -eq 8 ] || {
+		printf 'e2e static: the %s migration fixtures are %s files, and the proof applies four migrations in both directions\n' \
+			"$migration_engine" "$migration_fixture_count" >&2
+		exit 1
+	}
+	grep -F -- '-- +ptah no_transaction' \
+		"$ROOT_DIR/testdata/e2e/migrations/${migration_engine}/0000000004_partial_backfill.up.sql" >/dev/null || {
+		printf 'e2e static: the %s partial migration runs inside a transaction, so it would roll back rather than stop halfway\n' \
+			"$migration_engine" >&2
+		exit 1
+	}
+done
+
 for approval_plan_marker in \
 	"policy_uid=\$(k -n \"\$TEST_NAMESPACE\" get configmap" \
 	"verificationPolicyUID: \$verificationPolicyUID" \
