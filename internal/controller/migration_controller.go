@@ -713,6 +713,32 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	return ctrl.Result{Requeue: true}, nil
 }
 
+// migrationRunIsUnresolved reports that the last run ended without an account
+// of what it did, and that nothing has settled it since.
+//
+// The two outcomes are the ones the documentation says are never retried: a
+// Partial committed some of its statements and not the rest, and an Unknown
+// could not be read at all. Both leave a pending migration that may or may not
+// have run.
+//
+// The latch is the refusal itself rather than a second field. While the Blocked
+// condition still carries that reason, nothing has cleared it; the branch that
+// finds nothing pending sets it false, so a database somebody put right
+// releases it without an API of its own.
+func migrationRunIsUnresolved(migration *operatorv1alpha1.PtahMigration) bool {
+	run := migration.Status.LastRun
+	if run == nil {
+		return false
+	}
+	if run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown &&
+		run.Outcome != operatorv1alpha1.MigrationRunOutcomePartial {
+		return false
+	}
+	blocked := meta.FindStatusCondition(migration.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+	return blocked != nil && blocked.Status == metav1.ConditionTrue &&
+		blocked.Reason == string(operatorv1alpha1.ReasonApplyOutcomeUnknown)
+}
+
 // recordMigrationHistory turns the database's own account into status. The
 // classification is the database's, not this controller's: a dirty row and a
 // modified applied migration are refusals Ptah reported, and neither is ever
@@ -730,6 +756,10 @@ func (r *MigrationReconciler) recordMigrationHistory(
 	modified := report.Modified()
 	outOfOrder := report.OutOfOrder()
 	artifactVersion := report.LastVersion()
+	// Read before the conditions below rewrite it: this is the refusal a
+	// previous run left, and it decides whether a pending migration may be
+	// planned at all.
+	unresolvedRun := migrationRunIsUnresolved(migration)
 	history := &operatorv1alpha1.MigrationHistoryStatus{
 		ObservedAt:           metav1.NewTime(r.now()),
 		ContractVersion:      int32(report.ContractVersion),
@@ -792,6 +822,24 @@ func (r *MigrationReconciler) recordMigrationHistory(
 	// all -- which is exactly how this used to read as success. The operator
 	// will not roll a database back to match an older artifact, and which of
 	// the two is wrong is a question for whoever moved the tag.
+	// A run whose outcome nobody could read may have executed the migration
+	// that is pending now. Planning it again is the blind replay the versioned
+	// workflow exists to refuse: re-running a file that may have committed
+	// would run it twice, and the history cannot say which.
+	//
+	// A history with nothing pending is the read-only proof that settles it,
+	// and it takes the branch below, which clears this refusal. Anything else
+	// waits for a person, exactly as the run's own condition said it would.
+	case len(pending) > 0 && unresolvedRun:
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
+			operatorv1alpha1.ReasonApplyOutcomeUnknown,
+			fmt.Sprintf("%d migrations are pending and the last run's outcome was %s, so none may run again",
+				len(pending), migration.Status.LastRun.Outcome))
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonApplyOutcomeUnknown, "What the last run did is unknown until the database is read by a person")
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonApplyOutcomeUnknown, "The dispatched run is over and may not be retried")
 	case report.CurrentVersion > artifactVersion:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,

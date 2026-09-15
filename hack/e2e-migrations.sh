@@ -2373,7 +2373,6 @@ create_uncertain_migration_resource() {
 		--arg coordinationKey "$UNCERTAIN_COORDINATION_KEY" \
 		--arg policy "$MIGRATION_POLICY" \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
-		--arg interval "$INTERVAL" \
 		--arg engine "$ENGINE_KIND" '
     {
       apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
@@ -2394,7 +2393,7 @@ create_uncertain_migration_resource() {
           transport: {plainHTTP: true}
         },
         policy: {apply: "Always", lockTimeout: "30s"},
-        interval: $interval,
+        interval: "30s",
         execution: {
           activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
         }
@@ -2479,7 +2478,12 @@ assert_uncertain_apply_blocks_without_replaying() {
 	# The refusal is what has to hold, not the phase: this resource also keeps
 	# reading at its interval, and a poll that lands mid-cycle finds it
 	# Resolving with Blocked still true.
-	uncertain_hold_deadline=$(($(date +%s) + 90))
+	# The window has to outlast the resource's interval, which is why it is
+	# created with a thirty-second one. The claim is about what the operator
+	# does once it has read the history again: a window shorter than a cycle
+	# passes while the resource has not yet had the chance to replay, and says
+	# nothing about whether it would.
+	uncertain_hold_deadline=$(($(date +%s) + 120))
 	while [ "$(date +%s)" -lt "$uncertain_hold_deadline" ]; do
 		uncertain_status
 		jq -e '
