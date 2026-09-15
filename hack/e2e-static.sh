@@ -6269,6 +6269,10 @@ for crd_live_marker in \
 	'a second operator release was installed' \
 	'proving an active release survives losing both runtime Deployments' \
 	'the upgrade that restores both deleted runtime Deployments was refused' \
+	'holding one Apply open across the next-release upgrade' \
+	'the successor did not durably fence and adopt the running Apply' \
+	'the successor replaced, completed, or cleaned the running Apply Job' \
+	'the successor did not adopt and retire the quiesced Apply Job' \
 	'coordination namespace mutation' \
 	'leader-election mutation' \
 	'execution binding mutation' \

@@ -85,6 +85,22 @@ SUCCESSOR_READ_ONLY_JOB_SCHEMA=read-only-job-successor
 READ_ONLY_JOB_SCHEMA=
 READ_ONLY_JOB_NAME=
 READ_ONLY_JOB_UID=
+RUNNING_APPLY_SCHEMA=running-apply-across-upgrade
+RUNNING_APPLY_DATABASE=running-apply-database
+RUNNING_APPLY_POLICY=running-apply-verification-policy
+RUNNING_APPLY_PULL_SECRET=running-apply-registry
+RUNNING_APPLY_PLAN_NAME=
+RUNNING_APPLY_PLAN_UID=
+RUNNING_APPLY_JOB_NAME=
+RUNNING_APPLY_JOB_UID=
+RUNNING_APPLY_POD_NAME=
+RUNNING_APPLY_POD_UID=
+RUNNING_APPLY_BARRIER_PID=
+RUNNING_APPLY_BARRIER_ACTIVE=0
+# The advisory key the barrier holds and the Apply's one statement asks for.
+# Both spellings are here so a reader sees the whole contention in one place.
+RUNNING_APPLY_BARRIER_KEY=742019370001
+RUNNING_APPLY_BARRIER_APPLICATION=ptah-operator-running-apply-barrier
 BLOCKED_STABILITY_SECONDS=10
 BLOCKED_FAILURE_TIMEOUT_SECONDS=150
 FOREIGN_TEARDOWN_BINDING=
@@ -161,6 +177,21 @@ cleanup() {
 	retain=0
 	if [ "$status" -ne 0 ] && [ "${E2E_KEEP_ON_FAILURE:-0}" = 1 ]; then
 		retain=1
+	fi
+	# A barrier left holding an advisory lock keeps the Apply it blocks alive
+	# past the phase, and the next phase meets a database nobody can change.
+	if [ "$RUNNING_APPLY_BARRIER_ACTIVE" -eq 1 ]; then
+		if ! docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = '"'"'$1'"'"' AND pid <> pg_backend_pid()"' \
+			sh "$RUNNING_APPLY_BARRIER_APPLICATION" >/dev/null 2>&1; then
+			printf 'e2e crd: could not release the running Apply database barrier\n' >&2
+		fi
+		RUNNING_APPLY_BARRIER_ACTIVE=0
+	fi
+	if [ -n "$RUNNING_APPLY_BARRIER_PID" ]; then
+		kill "$RUNNING_APPLY_BARRIER_PID" >/dev/null 2>&1 || true
+		wait "$RUNNING_APPLY_BARRIER_PID" >/dev/null 2>&1 || true
+		RUNNING_APPLY_BARRIER_PID=
 	fi
 	if [ "$HOOK_PROGRESS_HELM_ACTIVE" -eq 1 ] && [ -n "$HOOK_PROGRESS_HELM_PID" ]; then
 		[ "$status" -ne 0 ] || status=1
@@ -3476,6 +3507,674 @@ prove_runtime_deployment_recovery() {
 	printf '%s\n' 'e2e crd: both runtime Deployments were restored by the upgrade'
 }
 
+# A running Apply is the one kind of work an upgrade may not interrupt: only
+# the database knows what its SQL did, so the successor adopts it rather than
+# replacing, completing, or cleaning it. Proving that needs an Apply that is
+# genuinely running at the moment the upgrade starts, which is what the
+# database barrier below provides: it holds an advisory lock, the Apply's one
+# statement asks for the same lock, and the Apply blocks inside the engine
+# until the barrier is released (stokaro/ptah-operator#7).
+running_apply_postgres_query() {
+	docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
+		sh "$1"
+}
+
+running_apply_barrier_contention_query() {
+	printf '%s' "SELECT count(*) FROM pg_locks AS waiting JOIN pg_locks AS held USING (locktype, database, classid, objid, objsubid) JOIN pg_stat_activity AS holder ON holder.pid = held.pid WHERE held.locktype = 'advisory' AND held.granted AND NOT waiting.granted AND waiting.pid <> held.pid AND holder.application_name = '$RUNNING_APPLY_BARRIER_APPLICATION'"
+}
+
+start_running_apply_barrier() {
+	[ "$RUNNING_APPLY_BARRIER_ACTIVE" -eq 0 ] ||
+		fail "running Apply database barrier is already active"
+	docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; PGAPPNAME="$1"; export PGAPPNAME; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc "SELECT pg_advisory_lock($2); SELECT pg_sleep(900)"' \
+		sh "$RUNNING_APPLY_BARRIER_APPLICATION" "$RUNNING_APPLY_BARRIER_KEY" \
+		>"$WORK_DIR/running-apply-barrier.out" \
+		2>"$WORK_DIR/running-apply-barrier.err" &
+	RUNNING_APPLY_BARRIER_PID=$!
+	RUNNING_APPLY_BARRIER_ACTIVE=1
+
+	barrier_deadline=$(($(date +%s) + 30))
+	while [ "$(date +%s)" -lt "$barrier_deadline" ]; do
+		held=$(running_apply_postgres_query \
+			"SELECT count(*) FROM pg_locks AS lock JOIN pg_stat_activity AS activity USING (pid) WHERE lock.locktype = 'advisory' AND lock.granted AND activity.application_name = '$RUNNING_APPLY_BARRIER_APPLICATION'") ||
+			fail "could not inspect the running Apply database barrier"
+		if [ "$held" -eq 1 ]; then
+			return
+		fi
+		if ! kill -0 "$RUNNING_APPLY_BARRIER_PID" 2>/dev/null; then
+			cat "$WORK_DIR/running-apply-barrier.err" >&2
+			fail "running Apply database barrier exited before acquiring its lock"
+		fi
+		sleep 1
+	done
+	fail "running Apply database barrier did not acquire its lock"
+}
+
+wait_for_running_apply_barrier_contention() {
+	contention_deadline=$(($(date +%s) + 120))
+	while [ "$(date +%s)" -lt "$contention_deadline" ]; do
+		waiting=$(running_apply_postgres_query "$(running_apply_barrier_contention_query)") ||
+			fail "could not inspect running Apply barrier contention"
+		if [ "$waiting" -eq 1 ]; then
+			return
+		fi
+		sleep 1
+	done
+	fail "the Apply did not block on the controlled database barrier"
+}
+
+assert_running_apply_barrier_contended() {
+	waiting=$(running_apply_postgres_query "$(running_apply_barrier_contention_query)") ||
+		fail "could not recheck running Apply barrier contention"
+	[ "$waiting" -eq 1 ] ||
+		fail "the Apply left the controlled database barrier before it was released"
+}
+
+release_running_apply_barrier() {
+	[ "$RUNNING_APPLY_BARRIER_ACTIVE" -eq 1 ] ||
+		fail "running Apply database barrier is not active"
+	released=$(running_apply_postgres_query \
+		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = '$RUNNING_APPLY_BARRIER_APPLICATION' AND pid <> pg_backend_pid()") ||
+		fail "could not release the running Apply database barrier"
+	[ "$released" = t ] ||
+		fail "running Apply database barrier release did not terminate exactly one holder"
+	RUNNING_APPLY_BARRIER_ACTIVE=0
+	if wait "$RUNNING_APPLY_BARRIER_PID"; then
+		fail "running Apply database barrier exited successfully instead of being explicitly released"
+	fi
+	RUNNING_APPLY_BARRIER_PID=
+}
+
+wait_for_successful_fixture_job() {
+	fixture_job_name=$1
+	fixture_job_deadline=$(($(date +%s) + 300))
+	while [ "$(date +%s)" -lt "$fixture_job_deadline" ]; do
+		if kube -n "$PROOF_NAMESPACE" get job "$fixture_job_name" -o json \
+			>"$WORK_DIR/fixture-job.json" 2>/dev/null; then
+			if jq -e '(.status.conditions // []) | any(.type == "Complete" and .status == "True")' \
+				"$WORK_DIR/fixture-job.json" >/dev/null; then
+				return
+			fi
+			if jq -e '(.status.conditions // []) | any(.type == "Failed" and .status == "True")' \
+				"$WORK_DIR/fixture-job.json" >/dev/null; then
+				kube -n "$PROOF_NAMESPACE" logs "job/$fixture_job_name" >&2 2>/dev/null || true
+				fail "fixture Job $fixture_job_name failed"
+			fi
+		fi
+		sleep 1
+	done
+	fail "fixture Job $fixture_job_name did not complete"
+}
+
+# prepare_running_apply_fixture builds everything the release under test needs
+# to decide, on its own, to apply one long-running statement: a database it can
+# reach, an immutable verification policy, a suspended PtahSchema, and a plan
+# whose every binding the manager re-derives. The plan's state fingerprints come
+# from a real `ptah schema plan` against that database rather than from
+# literals, because the Apply refuses a plan recorded against a state it does
+# not observe.
+prepare_running_apply_fixture() {
+	E2E_REGISTRY_CREDENTIALS_FILE=${E2E_REGISTRY_CREDENTIALS_FILE:?E2E_REGISTRY_CREDENTIALS_FILE is required for the running Apply proof}
+	E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=${E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE:?E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE is required for the running Apply proof}
+	E2E_EXTERNAL_POSTGRES_IP=${E2E_EXTERNAL_POSTGRES_IP:?E2E_EXTERNAL_POSTGRES_IP is required for the running Apply proof}
+	E2E_DOCKER_CONTEXT=${E2E_DOCKER_CONTEXT:?E2E_DOCKER_CONTEXT is required for the running Apply proof}
+	E2E_EXTERNAL_POSTGRES_CONTAINER_ID=${E2E_EXTERNAL_POSTGRES_CONTAINER_ID:?E2E_EXTERNAL_POSTGRES_CONTAINER_ID is required for the running Apply proof}
+	require_mode_0600_regular_file "$E2E_REGISTRY_CREDENTIALS_FILE" E2E_REGISTRY_CREDENTIALS_FILE
+	require_mode_0600_regular_file "$E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE" \
+		E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE
+	printf '%s\n' "$E2E_EXTERNAL_POSTGRES_IP" | grep -Eq '^[0-9]+(\.[0-9]+){3}$' ||
+		fail "E2E_EXTERNAL_POSTGRES_IP must be an IPv4 address"
+	case "$E2E_DOCKER_CONTEXT" in
+	'' | default | orbstack) fail "E2E_DOCKER_CONTEXT must name an explicit allowed remote context" ;;
+	esac
+	printf '%s\n' "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" | grep -Eq '^[0-9a-f]{64}$' ||
+		fail "E2E_EXTERNAL_POSTGRES_CONTAINER_ID must be an exact Docker container ID"
+	running_apply_container_id=$(docker --context "$E2E_DOCKER_CONTEXT" container inspect \
+		--format '{{.Id}}' "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID") ||
+		fail "could not inspect the external PostgreSQL barrier container"
+	[ "$running_apply_container_id" = "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" ] ||
+		fail "external PostgreSQL barrier container identity changed"
+
+	# The executor the Apply will run is the one the live release configured,
+	# read from the controller it dispatched with rather than from a value file
+	# the proof could get wrong.
+	runtime_deployment_names
+	running_apply_executor_image=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment \
+		"$CONTROLLER_DEPLOYMENT" -o json | jq -er '
+          [.spec.template.spec.containers[] | select(.name == "manager") |
+            (.args // [])[] | select(startswith("--executor-image=")) |
+            ltrimstr("--executor-image=")] as $images |
+          if ($images | length) == 1 and ($images[0] | length) > 0
+          then $images[0]
+          else error("the controller must carry one executor image")
+          end
+        ') || fail "could not read the live executor image"
+	printf '%s\n' "$running_apply_executor_image" |
+		grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$' ||
+		fail "the live executor image is not digest-pinned"
+	running_apply_registry=${running_apply_executor_image%%/*}
+
+	jq -n \
+		--arg namespace "$PROOF_NAMESPACE" \
+		--arg name "$RUNNING_APPLY_PULL_SECRET" \
+		--arg registry "$running_apply_registry" \
+		--slurpfile credentials "$E2E_REGISTRY_CREDENTIALS_FILE" '
+      {
+        apiVersion: "v1", kind: "Secret", immutable: true,
+        metadata: {namespace: $namespace, name: $name},
+        type: "kubernetes.io/dockerconfigjson",
+        data: {
+          ".dockerconfigjson": ({auths: {($registry): {
+            username: $credentials[0].username,
+            password: $credentials[0].password,
+            auth: (($credentials[0].username + ":" + $credentials[0].password) | @base64)
+          }}} | tojson | @base64)
+        }
+      }
+    ' | kube create -f - >/dev/null
+
+	jq -n \
+		--arg namespace "$PROOF_NAMESPACE" \
+		--arg name "$RUNNING_APPLY_DATABASE" \
+		--arg authority "$RUNNING_APPLY_DATABASE:5432" \
+		--slurpfile credentials "$E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE" '
+      {
+        apiVersion: "v1", kind: "Secret", immutable: true,
+        metadata: {namespace: $namespace, name: $name},
+        stringData: {
+          url: ("postgres://" + $credentials[0].username + ":" + $credentials[0].password +
+            "@" + $authority + "/" + $credentials[0].database + "?sslmode=disable")
+        }
+      }
+    ' | kube create -f - >/dev/null
+	jq -n \
+		--arg namespace "$PROOF_NAMESPACE" \
+		--arg name "$RUNNING_APPLY_DATABASE" '
+      {
+        apiVersion: "v1", kind: "Service",
+        metadata: {namespace: $namespace, name: $name},
+        spec: {ports: [{name: "postgresql", port: 5432, protocol: "TCP", targetPort: 5432}]}
+      }
+    ' | kube create -f - >/dev/null
+	running_apply_service_uid=$(kube -n "$PROOF_NAMESPACE" get service \
+		"$RUNNING_APPLY_DATABASE" -o jsonpath='{.metadata.uid}')
+	jq -n \
+		--arg namespace "$PROOF_NAMESPACE" \
+		--arg name "${RUNNING_APPLY_DATABASE}-docker" \
+		--arg service "$RUNNING_APPLY_DATABASE" \
+		--arg serviceUID "$running_apply_service_uid" \
+		--arg address "$E2E_EXTERNAL_POSTGRES_IP" '
+      {
+        apiVersion: "discovery.k8s.io/v1", kind: "EndpointSlice",
+        metadata: {
+          namespace: $namespace, name: $name,
+          labels: {
+            "kubernetes.io/service-name": $service,
+            "endpointslice.kubernetes.io/managed-by": "ptah-operator-e2e"
+          },
+          ownerReferences: [{
+            apiVersion: "v1", kind: "Service", name: $service, uid: $serviceUID,
+            controller: true, blockOwnerDeletion: false
+          }]
+        },
+        addressType: "IPv4",
+        endpoints: [{addresses: [$address], conditions: {ready: true}}],
+        ports: [{name: "postgresql", port: 5432, protocol: "TCP"}]
+      }
+    ' | kube create -f - >/dev/null
+
+	running_apply_policy_file=$WORK_DIR/running-apply-policy.yaml
+	printf '%s\n' 'version: 1' >"$running_apply_policy_file"
+	kube -n "$PROOF_NAMESPACE" create configmap "$RUNNING_APPLY_POLICY" \
+		--from-file="policy.yaml=$running_apply_policy_file" >/dev/null
+	kube -n "$PROOF_NAMESPACE" patch configmap "$RUNNING_APPLY_POLICY" --type=merge \
+		-p='{"immutable":true}' >/dev/null
+	running_apply_policy_uid=$(kube -n "$PROOF_NAMESPACE" get configmap "$RUNNING_APPLY_POLICY" \
+		-o jsonpath='{.metadata.uid}')
+
+	running_apply_artifact_digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+	kube -n "$PROOF_NAMESPACE" apply -f - >/dev/null <<EOF
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: $RUNNING_APPLY_SCHEMA
+spec:
+  suspend: true
+  interval: 24h
+  target:
+    engine: PostgreSQL
+    coordinationKey: $RUNNING_APPLY_SCHEMA
+    urlFrom: {name: $RUNNING_APPLY_DATABASE, key: url}
+  desired:
+    ociRef: oci://example.invalid/schema@$running_apply_artifact_digest
+    verificationPolicyFrom: {name: $RUNNING_APPLY_POLICY, key: policy.yaml}
+  policy:
+    apply: Always
+    allowDestructive: false
+    driftSeverity: all
+    lockTimeout: 30s
+    transactionMode: file
+  execution:
+    activeDeadlineSeconds: 600
+    failureRetryInterval: 30s
+    connectTimeout: 10s
+    serviceAccountName: default
+    imagePullSecrets: [{name: $RUNNING_APPLY_PULL_SECRET}]
+EOF
+	wait_for_suspended "$RUNNING_APPLY_SCHEMA"
+
+	running_apply_plan_source=$WORK_DIR/running-apply-schema.sql
+	cp "$ROOT_DIR/testdata/e2e/postgresql-v1.sql" "$running_apply_plan_source"
+	kube -n "$PROOF_NAMESPACE" create configmap running-apply-plan-source \
+		--from-file="schema.sql=$running_apply_plan_source" >/dev/null
+	jq -n \
+		--arg namespace "$PROOF_NAMESPACE" \
+		--arg image "$running_apply_executor_image" \
+		--arg pullSecret "$RUNNING_APPLY_PULL_SECRET" \
+		--arg databaseSecret "$RUNNING_APPLY_DATABASE" '
+      {
+        apiVersion: "batch/v1", kind: "Job",
+        metadata: {namespace: $namespace, name: "running-apply-plan-source"},
+        spec: {
+          backoffLimit: 0, activeDeadlineSeconds: 180, ttlSecondsAfterFinished: 300,
+          template: {
+            metadata: {labels: {"app.kubernetes.io/component": "running-apply-plan-source"}},
+            spec: {
+              restartPolicy: "Never", automountServiceAccountToken: false,
+              imagePullSecrets: [{name: $pullSecret}],
+              securityContext: {
+                runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532,
+                seccompProfile: {type: "RuntimeDefault"}
+              },
+              containers: [{
+                name: "planner", image: $image, imagePullPolicy: "IfNotPresent",
+                command: ["/usr/local/bin/ptah"], args: ["schema", "plan", "--dry-run"],
+                env: [
+                  {name: "HOME", value: "/work"}, {name: "TMPDIR", value: "/work"},
+                  {name: "PTAH_SCHEMA_FILE", value: "/schema/schema.sql"},
+                  {name: "PTAH_CONNECT_TIMEOUT", value: "10s"},
+                  {name: "PTAH_LOCK_TIMEOUT", value: "30s"},
+                  {name: "PTAH_DB_URL", valueFrom: {secretKeyRef: {name: $databaseSecret, key: "url"}}}
+                ],
+                securityContext: {
+                  allowPrivilegeEscalation: false, readOnlyRootFilesystem: true,
+                  capabilities: {drop: ["ALL"]}
+                },
+                volumeMounts: [
+                  {name: "schema", mountPath: "/schema", readOnly: true},
+                  {name: "work", mountPath: "/work"}
+                ]
+              }],
+              volumes: [
+                {name: "schema", configMap: {name: "running-apply-plan-source"}},
+                {name: "work", emptyDir: {sizeLimit: "64Mi"}}
+              ]
+            }
+          }
+        }
+      }
+    ' | kube create -f - >/dev/null
+	wait_for_successful_fixture_job running-apply-plan-source
+	kube -n "$PROOF_NAMESPACE" logs job/running-apply-plan-source \
+		>"$WORK_DIR/running-apply-native-plan.json"
+	jq -ce \
+		--arg plan_name "$RUNNING_APPLY_SCHEMA" \
+		--argjson key "$RUNNING_APPLY_BARRIER_KEY" '
+      if .format_version == 1 and
+        (.from_fingerprint | test("^sha256:[0-9a-f]{64}$")) and
+        (.to_fingerprint | test("^sha256:[0-9a-f]{64}$"))
+      then
+        .name = $plan_name |
+        .destructive = false |
+        .statements = [{
+          sql: ("SELECT pg_advisory_lock(" + ($key | tostring) + ")"), severity: "safe",
+          reason: "upgrade quiescence proof"
+        }]
+      else error("native plan lacks exact state fingerprints")
+      end
+    ' "$WORK_DIR/running-apply-native-plan.json" >"$WORK_DIR/running-apply-plan.json" ||
+		fail "could not derive an exact long-running Apply plan"
+
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json \
+		>"$WORK_DIR/running-apply-schema.json"
+	running_apply_database_url=$(kube -n "$PROOF_NAMESPACE" get secret \
+		"$RUNNING_APPLY_DATABASE" -o jsonpath='{.data.url}' | base64 -d)
+	printf '%s\n' "$running_apply_database_url" | grep -Eq '^postgres://' ||
+		fail "running Apply database secret does not carry a postgres URL"
+	# The exact URL the Apply Job resolves. The runner derives the target
+	# identity from it and refuses a plan recorded against a different one, so
+	# the fixture binds this value rather than a placeholder.
+	go -C "$ROOT_DIR" run ./hack/predecessorapplyfixture \
+		-schema "$WORK_DIR/running-apply-schema.json" \
+		-plan "$WORK_DIR/running-apply-plan.json" \
+		-policy-uid "$running_apply_policy_uid" \
+		-policy "$running_apply_policy_file" \
+		-database-url "$running_apply_database_url" \
+		>"$WORK_DIR/running-apply-bundle.json"
+	jq -e '
+      .plan.spec.contractVersion == 3 and
+      (.plan.spec.controllerImage | test("^[^[:space:]@]+@sha256:[0-9a-f]{64}$")) and
+      (.plan.spec.controllerRevision | length) > 0 and
+      .plan.spec.controllerStateVersion >= 1 and
+      (.plan.spec.chunks | length) == 1
+    ' "$WORK_DIR/running-apply-bundle.json" >/dev/null ||
+		fail "the generated Apply plan does not carry the current manager contract"
+	jq '.plan' "$WORK_DIR/running-apply-bundle.json" | kube create -f - >/dev/null
+	RUNNING_APPLY_PLAN_NAME=$(jq -er '.plan.metadata.name' "$WORK_DIR/running-apply-bundle.json")
+	RUNNING_APPLY_PLAN_UID=$(kube -n "$PROOF_NAMESPACE" get ptahschemaplan \
+		"$RUNNING_APPLY_PLAN_NAME" -o jsonpath='{.metadata.uid}')
+	running_apply_plan_generation=$(kube -n "$PROOF_NAMESPACE" get ptahschemaplan \
+		"$RUNNING_APPLY_PLAN_NAME" -o jsonpath='{.metadata.generation}')
+	running_apply_chunk_name=$(jq -er '.plan.spec.chunks[0].name' "$WORK_DIR/running-apply-bundle.json")
+	jq -n \
+		--arg namespace "$PROOF_NAMESPACE" \
+		--arg name "$running_apply_chunk_name" \
+		--arg plan "$RUNNING_APPLY_PLAN_NAME" \
+		--arg planUID "$RUNNING_APPLY_PLAN_UID" \
+		--arg schema "$RUNNING_APPLY_SCHEMA" \
+		--rawfile content "$WORK_DIR/running-apply-plan.json" '
+      {
+        apiVersion: "v1", kind: "ConfigMap", immutable: true,
+        metadata: {
+          namespace: $namespace, name: $name,
+          labels: {"operator.ptah.run/plan": $plan, "operator.ptah.run/schema": $schema},
+          ownerReferences: [{
+            apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchemaPlan",
+            name: $plan, uid: $planUID, controller: true, blockOwnerDeletion: true
+          }]
+        },
+        binaryData: {chunk: ($content | @base64)}
+      }
+    ' | kube create -f - >/dev/null
+	running_apply_chunk_uid=$(kube -n "$PROOF_NAMESPACE" get configmap "$running_apply_chunk_name" \
+		-o jsonpath='{.metadata.uid}')
+	running_apply_plan_ready_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	kube -n "$PROOF_NAMESPACE" patch ptahschemaplan "$RUNNING_APPLY_PLAN_NAME" \
+		--subresource=status --type=merge \
+		-p "{\"status\":{\"observedGeneration\":$running_apply_plan_generation,\"publishedChunks\":[{\"name\":\"$running_apply_chunk_name\",\"uid\":\"$running_apply_chunk_uid\",\"index\":0}],\"conditions\":[{\"type\":\"Ready\",\"status\":\"True\",\"reason\":\"Published\",\"message\":\"Verified 1 immutable plan chunks\",\"observedGeneration\":$running_apply_plan_generation,\"lastTransitionTime\":\"$running_apply_plan_ready_at\"}]}}" >/dev/null
+}
+
+# start_running_apply_fixture hands the manager the status that makes the Apply
+# its own decision, and waits until the Apply Pod is actually running. The
+# controller is stopped while the status is written so that nothing reconciles a
+# half-written state, which is the same fence the read-only fixture uses.
+start_running_apply_fixture() {
+	[ -n "$RUNNING_APPLY_PLAN_NAME" ] || fail "running Apply plan name is missing"
+	[ -n "$RUNNING_APPLY_PLAN_UID" ] || fail "running Apply plan UID is missing"
+	stop_controller_deployment
+	kube -n "$PROOF_NAMESPACE" patch ptahschema "$RUNNING_APPLY_SCHEMA" --type=merge \
+		-p='{"spec":{"suspend":false}}' >/dev/null
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json \
+		>"$WORK_DIR/running-apply-schema-enabled.json"
+	running_apply_generation=$(jq -er '.metadata.generation' \
+		"$WORK_DIR/running-apply-schema-enabled.json")
+	jq \
+		--slurpfile bundle "$WORK_DIR/running-apply-bundle.json" \
+		--arg planUID "$RUNNING_APPLY_PLAN_UID" \
+		--argjson generation "$running_apply_generation" '
+      .status = $bundle[0].schemaStatus |
+      .status.observedGeneration = $generation |
+      .status.plan.uid = $planUID |
+      (.status.conditions[].observedGeneration) = $generation
+    ' "$WORK_DIR/running-apply-schema-enabled.json" \
+		>"$WORK_DIR/running-apply-schema-ready.json"
+	kube replace --subresource=status -f "$WORK_DIR/running-apply-schema-ready.json" >/dev/null
+	start_controller_deployment
+	kube -n "$E2E_OPERATOR_NAMESPACE" rollout status deployment "$CONTROLLER_DEPLOYMENT" \
+		--timeout=3m >/dev/null
+
+	running_apply_deadline=$(($(date +%s) + 300))
+	while [ "$(date +%s)" -lt "$running_apply_deadline" ]; do
+		kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json \
+			>"$WORK_DIR/running-apply-live-schema.json"
+		if jq -e '
+          .status.pendingObservation.outcome == "OutcomeUnknown" or
+          ((.status.conditions // []) | any(
+            .type == "ReconciliationFailed" and .status == "True"
+          ))
+        ' "$WORK_DIR/running-apply-live-schema.json" >/dev/null; then
+			emit_running_apply_diagnostic
+			fail "the Apply reached a terminal failure before its Pod was observed running"
+		fi
+		RUNNING_APPLY_JOB_NAME=$(jq -r \
+			'.status.activeOperation | select(.type == "Apply" and .dispatchStarted == true) | .jobName // empty' \
+			"$WORK_DIR/running-apply-live-schema.json")
+		running_apply_committed_uid=$(jq -r '.status.activeOperation.jobUID // empty' \
+			"$WORK_DIR/running-apply-live-schema.json")
+		if [ -n "$RUNNING_APPLY_JOB_NAME" ] && [ -n "$running_apply_committed_uid" ] &&
+			kube -n "$PROOF_NAMESPACE" get job "$RUNNING_APPLY_JOB_NAME" -o json \
+				>"$WORK_DIR/running-apply-job.json" 2>/dev/null; then
+			RUNNING_APPLY_JOB_UID=$(jq -r '.metadata.uid' "$WORK_DIR/running-apply-job.json")
+			if [ "$running_apply_committed_uid" = "$RUNNING_APPLY_JOB_UID" ]; then
+				kube -n "$PROOF_NAMESPACE" get pods -o json |
+					jq -e --arg uid "$RUNNING_APPLY_JOB_UID" '
+                      [.items[] | select(
+                        .status.phase == "Running" and
+                        any(.metadata.ownerReferences[]?;
+                          .apiVersion == "batch/v1" and .kind == "Job" and .uid == $uid and
+                          .controller == true
+                        )
+                      )] | if length == 1 then .[0] else empty end
+                    ' >"$WORK_DIR/running-apply-pod.json" 2>/dev/null || true
+				if [ -s "$WORK_DIR/running-apply-pod.json" ]; then
+					RUNNING_APPLY_POD_NAME=$(jq -er '.metadata.name' "$WORK_DIR/running-apply-pod.json")
+					RUNNING_APPLY_POD_UID=$(jq -er '.metadata.uid' "$WORK_DIR/running-apply-pod.json")
+					break
+				fi
+			fi
+		fi
+		sleep 1
+	done
+	if [ -z "$RUNNING_APPLY_POD_UID" ]; then
+		emit_running_apply_diagnostic
+		fail "the Apply Job did not reach a running Pod"
+	fi
+	jq -e --arg schema "$RUNNING_APPLY_SCHEMA" '
+      .metadata.labels["operator.ptah.run/schema"] == $schema and
+      .metadata.labels["operator.ptah.run/operation"] == "apply" and
+      (.metadata.annotations["operator.ptah.run/plan-fingerprint"] |
+        test("^sha256:[0-9a-f]{64}$")) and
+      (.metadata.annotations["operator.ptah.run/admission-snapshot-digest"] |
+        test("^sha256:[0-9a-f]{64}$")) and
+      .spec.template.metadata.annotations == .metadata.annotations and
+      (.spec | has("ttlSecondsAfterFinished") | not)
+    ' "$WORK_DIR/running-apply-job.json" >/dev/null ||
+		fail "the running Apply Job does not carry its dispatched operation identity"
+	wait_for_running_apply_barrier_contention
+}
+
+emit_running_apply_diagnostic() {
+	running_apply_diagnostic=$WORK_DIR/running-apply-diagnostic.json
+	(umask 077 && : >"$running_apply_diagnostic")
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json 2>/dev/null |
+		jq -c '{
+          phase: .status.phase,
+          activeOperation: .status.activeOperation,
+          pendingObservation: .status.pendingObservation,
+          conditions: [(.status.conditions // [])[] | {type, status, reason}]
+        }' >>"$running_apply_diagnostic" 2>/dev/null || true
+	kube -n "$PROOF_NAMESPACE" get jobs -l "operator.ptah.run/schema=$RUNNING_APPLY_SCHEMA" -o json 2>/dev/null |
+		jq -c '[.items[] | {name: .metadata.name, uid: .metadata.uid, conditions: [(.status.conditions // [])[] | {type, status}]}]' \
+			>>"$running_apply_diagnostic" 2>/dev/null || true
+	printf 'e2e crd: running Apply diagnostic written to %s\n' "$running_apply_diagnostic" >&2
+	cat "$running_apply_diagnostic" >&2 || true
+}
+
+# The UID-adoption boundary: a Job the manager created but whose UID it had not
+# yet recorded is still that manager's work. The successor has to adopt it by
+# name and then by UID, before any Pod discovery.
+stage_predecessor_apply_job_uid_gap_while_running() {
+	[ -n "$RUNNING_APPLY_JOB_NAME" ] || fail "running Apply Job name is missing"
+	[ -n "$RUNNING_APPLY_JOB_UID" ] || fail "running Apply Job UID is missing"
+	[ -n "$RUNNING_APPLY_POD_UID" ] || fail "running Apply Pod UID is missing"
+	kube -n "$PROOF_NAMESPACE" get job "$RUNNING_APPLY_JOB_NAME" -o json \
+		>"$WORK_DIR/running-apply-before-upgrade.json"
+	jq -e --arg uid "$RUNNING_APPLY_JOB_UID" '
+      .metadata.uid == $uid and
+      ((.status.conditions // []) |
+        any((.type == "Complete" or .type == "Failed") and .status == "True") | not) and
+      (.spec | has("ttlSecondsAfterFinished") | not)
+    ' "$WORK_DIR/running-apply-before-upgrade.json" >/dev/null ||
+		fail "the Apply Job is not running at the upgrade boundary"
+	kube -n "$PROOF_NAMESPACE" get pod "$RUNNING_APPLY_POD_NAME" -o json |
+		jq -e --arg uid "$RUNNING_APPLY_POD_UID" '
+          .metadata.uid == $uid and .status.phase == "Running"
+        ' >/dev/null || fail "the Apply Pod is not running at the upgrade boundary"
+	jq -S '{
+      uid: .metadata.uid,
+      name: .metadata.name,
+      namespace: .metadata.namespace,
+      labels: .metadata.labels,
+      annotations: .metadata.annotations,
+      ownerReferences: .metadata.ownerReferences,
+      finalizers: (.metadata.finalizers // []),
+      spec: (.spec | del(.ttlSecondsAfterFinished))
+    }' "$WORK_DIR/running-apply-before-upgrade.json" \
+		>"$WORK_DIR/running-apply-job-before-cleanup.json"
+	kube -n "$PROOF_NAMESPACE" patch ptahschema "$RUNNING_APPLY_SCHEMA" --subresource=status \
+		--type=json -p='[{"op":"remove","path":"/status/activeOperation/jobUID"}]' >/dev/null
+	kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json |
+		jq -e --arg name "$RUNNING_APPLY_JOB_NAME" '
+          .status.activeOperation.type == "Apply" and
+          .status.activeOperation.dispatchStarted == true and
+          .status.activeOperation.jobName == $name and
+          (.status.activeOperation | has("jobUID") | not) and
+          (.status | has("pendingObservation") | not)
+        ' >/dev/null || fail "the Apply fixture did not retain the running late-create UID gap"
+}
+
+assert_predecessor_apply_remains_exclusive_while_running() {
+	exclusive_deadline=$(($(date +%s) + 180))
+	while [ "$(date +%s)" -lt "$exclusive_deadline" ]; do
+		if kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json \
+			>"$WORK_DIR/running-apply-fenced-schema.json" 2>/dev/null &&
+			jq -e \
+				--arg job "$RUNNING_APPLY_JOB_NAME" \
+				--arg uid "$RUNNING_APPLY_JOB_UID" \
+				--arg pod_uid "$RUNNING_APPLY_POD_UID" '
+              .status.phase == "Pending" and
+              (.status | has("activeOperation") | not) and
+              .status.pendingObservation.outcome == "OutcomeUnknown" and
+              .status.pendingObservation.applyJobName == $job and
+              .status.pendingObservation.applyJobUID == $uid and
+              (.status.pendingObservation.applyPodUIDs | index($pod_uid) != null) and
+              .status.pendingObservation.applyPodCount == 1 and
+              .status.pendingObservation.planRequired != true and
+              .status.pendingObservation.plan.executionBindingID != .status.executionBinding.epoch
+            ' "$WORK_DIR/running-apply-fenced-schema.json" >/dev/null; then
+			break
+		fi
+		sleep 1
+	done
+	jq -e \
+		--arg job "$RUNNING_APPLY_JOB_NAME" \
+		--arg uid "$RUNNING_APPLY_JOB_UID" \
+		--arg pod_uid "$RUNNING_APPLY_POD_UID" '
+      .status.phase == "Pending" and
+      (.status | has("activeOperation") | not) and
+      .status.pendingObservation.outcome == "OutcomeUnknown" and
+      .status.pendingObservation.applyJobName == $job and
+      .status.pendingObservation.applyJobUID == $uid and
+      (.status.pendingObservation.applyPodUIDs | index($pod_uid) != null) and
+      .status.pendingObservation.applyPodCount == 1 and
+      .status.pendingObservation.planRequired != true and
+      .status.pendingObservation.plan.executionBindingID != .status.executionBinding.epoch
+    ' "$WORK_DIR/running-apply-fenced-schema.json" >/dev/null ||
+		fail "the successor did not durably fence and adopt the running Apply"
+
+	kube -n "$PROOF_NAMESPACE" get job "$RUNNING_APPLY_JOB_NAME" -o json \
+		>"$WORK_DIR/running-apply-after-upgrade.json"
+	jq -e --arg uid "$RUNNING_APPLY_JOB_UID" '
+      .metadata.uid == $uid and
+      ((.status.conditions // []) |
+        any((.type == "Complete" or .type == "Failed") and .status == "True") | not) and
+      (.spec | has("ttlSecondsAfterFinished") | not)
+    ' "$WORK_DIR/running-apply-after-upgrade.json" >/dev/null ||
+		fail "the successor replaced, completed, or cleaned the running Apply Job"
+	kube -n "$PROOF_NAMESPACE" get pod "$RUNNING_APPLY_POD_NAME" -o json |
+		jq -e --arg uid "$RUNNING_APPLY_POD_UID" '
+          .metadata.uid == $uid and .status.phase == "Running"
+        ' >/dev/null || fail "the upgrade did not retain the running Apply Pod UID"
+	kube -n "$PROOF_NAMESPACE" get jobs \
+		-l "operator.ptah.run/schema=$RUNNING_APPLY_SCHEMA" -o json |
+		jq -e --arg name "$RUNNING_APPLY_JOB_NAME" --arg uid "$RUNNING_APPLY_JOB_UID" '
+          .items | length == 1 and .[0].metadata.name == $name and .[0].metadata.uid == $uid
+        ' >/dev/null || fail "the successor launched new work over the running Apply"
+	# The Apply is still inside the engine, waiting on the barrier: exclusivity
+	# that held because the Apply had already finished would prove nothing.
+	assert_running_apply_barrier_contended
+}
+
+wait_for_predecessor_apply_job_terminal() {
+	terminal_deadline=$(($(date +%s) + 300))
+	while [ "$(date +%s)" -lt "$terminal_deadline" ]; do
+		if kube -n "$PROOF_NAMESPACE" get job "$RUNNING_APPLY_JOB_NAME" -o json \
+			>"$WORK_DIR/running-apply-terminal-job.json" 2>/dev/null &&
+			jq -e '(.status.conditions // []) | any((.type == "Complete" or .type == "Failed") and .status == "True")' \
+				"$WORK_DIR/running-apply-terminal-job.json" >/dev/null; then
+			break
+		fi
+		sleep 1
+	done
+	jq -e --arg uid "$RUNNING_APPLY_JOB_UID" '
+      .metadata.uid == $uid and
+      ((.status.conditions // []) | any((.type == "Complete" or .type == "Failed") and .status == "True"))
+    ' "$WORK_DIR/running-apply-terminal-job.json" >/dev/null ||
+		fail "the Apply Job did not finish after the successor fenced it"
+	kube -n "$PROOF_NAMESPACE" get pod "$RUNNING_APPLY_POD_NAME" -o json |
+		jq -e --arg uid "$RUNNING_APPLY_POD_UID" '
+          .metadata.uid == $uid and (.status.phase == "Succeeded" or .status.phase == "Failed")
+        ' >/dev/null || fail "the Apply Pod is not terminal after the successor fence"
+}
+
+wait_for_predecessor_apply_job_cleanup() {
+	cleanup_deadline=$(($(date +%s) + 240))
+	while [ "$(date +%s)" -lt "$cleanup_deadline" ]; do
+		if kube -n "$PROOF_NAMESPACE" get job "$RUNNING_APPLY_JOB_NAME" -o json \
+			>"$WORK_DIR/running-apply-job-after.json" 2>/dev/null &&
+			[ "$(jq -r '.spec.ttlSecondsAfterFinished // 0' "$WORK_DIR/running-apply-job-after.json")" -eq 300 ] &&
+			kube -n "$PROOF_NAMESPACE" get ptahschema "$RUNNING_APPLY_SCHEMA" -o json \
+				>"$WORK_DIR/running-apply-schema-after.json"; then
+			if jq -e \
+				--arg job "$RUNNING_APPLY_JOB_NAME" \
+				--arg uid "$RUNNING_APPLY_JOB_UID" '
+                  .status.phase == "Pending" and
+                  (.status | has("activeOperation") | not) and
+                  (.status | has("applied") | not) and
+                  .status.pendingObservation.outcome == "OutcomeUnknown" and
+                  .status.pendingObservation.applyJobName == $job and
+                  .status.pendingObservation.applyJobUID == $uid and
+                  .status.pendingObservation.planRequired != true and
+                  .status.pendingObservation.plan.executionBindingID != .status.executionBinding.epoch and
+                  any(.status.conditions[];
+                    .type == "PlanReady" and .status == "False" and .reason == "ExecutionBindingChanged") and
+                  any(.status.conditions[];
+                    .type == "ApprovalRequired" and .status == "False" and .reason == "ExecutionBindingChanged")
+                ' "$WORK_DIR/running-apply-schema-after.json" >/dev/null; then
+				jq -S '{
+                  uid: .metadata.uid,
+                  name: .metadata.name,
+                  namespace: .metadata.namespace,
+                  labels: .metadata.labels,
+                  annotations: .metadata.annotations,
+                  ownerReferences: .metadata.ownerReferences,
+                  finalizers: (.metadata.finalizers // []),
+                  spec: (.spec | del(.ttlSecondsAfterFinished))
+                }' "$WORK_DIR/running-apply-job-after.json" \
+					>"$WORK_DIR/running-apply-job-after-cleanup.json"
+				cmp "$WORK_DIR/running-apply-job-before-cleanup.json" \
+					"$WORK_DIR/running-apply-job-after-cleanup.json" ||
+					fail "the successor changed the adopted Apply Job outside ttlSecondsAfterFinished"
+				return
+			fi
+		fi
+		sleep 1
+	done
+	fail "the successor did not adopt and retire the quiesced Apply Job"
+}
+
 assert_controller_downgrade_blocked() {
 	assert_explicit_runtime_guard "future stored controller state" controller 2
 	rotator_ready=$(kube -n "$E2E_OPERATOR_NAMESPACE" get deployment "$ROTATOR_DEPLOYMENT" \
@@ -3956,7 +4655,15 @@ run_next_release_upgrade_proof() {
 	# Do not delete or resurrect Deployments across that recovery boundary.
 	printf '%s\n' 'e2e crd: dispatching a read-only Job the successor must retire'
 	READ_ONLY_JOB_SCHEMA=$SUCCESSOR_READ_ONLY_JOB_SCHEMA
+	# A running Apply is the work an upgrade may not interrupt. The barrier holds
+	# the statement inside the engine, so the Apply is genuinely running across
+	# the activation rather than finished before it (stokaro/ptah-operator#7).
+	printf '%s\n' 'e2e crd: holding one Apply open across the next-release upgrade'
 	dispatch_read_only_job_fixture
+	start_running_apply_barrier
+	prepare_running_apply_fixture
+	start_running_apply_fixture
+	stage_predecessor_apply_job_uid_gap_while_running
 	prove_late_activation_failure_recovery \
 		"$current_release_sequence" "$next_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"
 	set_pod_webhook_failure_policy Fail Ignore
@@ -3979,6 +4686,10 @@ run_next_release_upgrade_proof() {
 	wait_runtime_ready
 	wait_for_read_only_job_cleanup
 	quiesce_read_only_job_schema
+	assert_predecessor_apply_remains_exclusive_while_running
+	release_running_apply_barrier
+	wait_for_predecessor_apply_job_terminal
+	wait_for_predecessor_apply_job_cleanup
 	after_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \
 		--namespace "$E2E_OPERATOR_NAMESPACE" -o json |
 		jq -er 'select(.info.status == "deployed") | .version | select(type == "number" and . >= 1)')
