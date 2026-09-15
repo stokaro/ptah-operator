@@ -1271,6 +1271,7 @@ for migration_marker in \
 	'for an artifact older than its database' \
 	'assert_partial_run_blocks_and_recovers' \
 	'did not stop on a migration that committed half of itself' \
+	'stopped refusing while a partial migration stood unresolved' \
 	'did not keep the statement the partial migration committed' \
 	'assert_no_new_apply_job' \
 	'after a partial one' \

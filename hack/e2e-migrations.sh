@@ -1153,12 +1153,16 @@ assert_partial_run_blocks_and_recovers() {
 	while [ "$(date +%s)" -lt "$dirty_deadline" ]; do
 		record_migration_jobs
 		migration_status
+		# The pending count is deliberately not asserted here. Ptah counts a
+		# migration whose revision is not recorded applied as pending, and a
+		# dirty revision is exactly that, so the number answers its bookkeeping
+		# rather than anything this row claims: the dirty reading, the version
+		# the run stopped at, and the refusal that names it.
 		if jq -e '
           .status as $status |
           $status.phase == "Blocked" and
           ($status.history.dirty // false) == true and
           $status.history.currentVersion == 3 and
-          $status.history.pendingCount == 0 and
           (any($status.conditions[];
             .type == "Blocked" and .status == "True" and .reason == "HistoryDirty"))
         ' "$STATUS_FILE" >/dev/null; then
@@ -1176,12 +1180,24 @@ assert_partial_run_blocks_and_recovers() {
 	# A resource that stopped keeps reading and never runs again. The read-only
 	# Jobs go on appearing, so what has to stand still is the set of Apply ones,
 	# recorded here with the partial run's own Job already in it.
+	#
+	# What is held is the refusal, not the phase. A stopped resource still
+	# resolves, verifies and reads at its interval, so it is legitimately in
+	# Resolving for part of every cycle while Blocked stays true throughout;
+	# demanding the phase on every poll fails on the poll that landed mid-cycle,
+	# which is a statement about the harness rather than about the operator.
 	migration_apply_job_uids >"$WORK_DIR/partial-applies.txt"
 	partial_hold_deadline=$(($(date +%s) + 90))
 	while [ "$(date +%s)" -lt "$partial_hold_deadline" ]; do
 		record_migration_jobs
-		[ "$(migration_phase)" = Blocked ] ||
-			fail "$MIGRATION_NAME left Blocked while a partial migration stood unresolved"
+		migration_status
+		jq -e '
+          .status as $status |
+          (any($status.conditions[]; .type == "Blocked" and .status == "True")) and
+          ($status.plan // null) == null and
+          (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
+        ' "$STATUS_FILE" >/dev/null ||
+			fail "$MIGRATION_NAME stopped refusing while a partial migration stood unresolved"
 		assert_no_new_apply_job "$WORK_DIR/partial-applies.txt" "after a partial one"
 		sleep 10
 	done
@@ -2460,11 +2476,19 @@ assert_uncertain_apply_blocks_without_replaying() {
 	# Nothing dispatches again. A replay would re-run the first migration, whose
 	# insert is not idempotent, so this is the assertion the row exists for.
 	migration_apply_job_uids "$UNCERTAIN_MIGRATION" >"$WORK_DIR/uncertain-applies.txt"
+	# The refusal is what has to hold, not the phase: this resource also keeps
+	# reading at its interval, and a poll that lands mid-cycle finds it
+	# Resolving with Blocked still true.
 	uncertain_hold_deadline=$(($(date +%s) + 90))
 	while [ "$(date +%s)" -lt "$uncertain_hold_deadline" ]; do
-		[ "$(k -n "$TEST_NAMESPACE" get ptahmigration "$UNCERTAIN_MIGRATION" \
-			-o jsonpath='{.status.phase}')" = Blocked ] ||
-			fail "$UNCERTAIN_MIGRATION left Blocked while its run stood unaccounted for"
+		uncertain_status
+		jq -e '
+          .status as $status |
+          (any($status.conditions[]; .type == "Blocked" and .status == "True")) and
+          ($status.plan // null) == null and
+          (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
+        ' "$STATUS_FILE" >/dev/null ||
+			fail "$UNCERTAIN_MIGRATION stopped refusing while its run stood unaccounted for"
 		assert_no_new_apply_job "$WORK_DIR/uncertain-applies.txt" \
 			"after one whose evidence it could not read" "$UNCERTAIN_MIGRATION"
 		sleep 10
