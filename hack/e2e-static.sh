@@ -1599,7 +1599,6 @@ for next_release_crd_marker in \
 	'validate_release_sequence_transition() {' \
 	'[ "$E2E_NEXT_RELEASE_SEQUENCE" -eq $((E2E_CURRENT_RELEASE_SEQUENCE + 1)) ]' \
 	'assert_sealed_release_inventory() {' \
-	'(.entries | type == "array" and length == 25)' \
 	'assert_inventory_resources_absent() {' \
 	'assert_release_sequence_candidate_residue_absent() {' \
 	'run_next_release_upgrade_proof() {' \
@@ -1609,6 +1608,29 @@ for next_release_crd_marker in \
 	'e2e crd: exact exported current-release chart passed fresh install and zero-residue uninstall'; do
 	static_require_count "$next_release_crd_source" "$next_release_crd_marker" 1 \
 		'synthetic next-release CRD lifecycle'
+done
+
+# The sealed inventory is one policy/binding pair per retired guard plus the
+# hook probe, and the uninstall proof pins its exact length. Pinning it twice
+# is how the two parted company: adding a guard moved the Go count and left the
+# shell literal behind, and only a two-hour lifecycle said so. So the literal is
+# derived from the Go constant here, where a `make verify` finds it.
+retirement_pair_count=$(sed -n 's/^const predecessorRetirementPairCount = \([0-9][0-9]*\)$/\1/p' \
+	"$ROOT_DIR/internal/crdupgrade/predecessor_retirement.go")
+printf '%s\n' "$retirement_pair_count" | grep -Eq '^[1-9][0-9]*$' || {
+	printf '%s\n' 'e2e static: predecessorRetirementPairCount could not be read' >&2
+	exit 1
+}
+sealed_inventory_length=$((retirement_pair_count * 2 + 1))
+sealed_inventory_last=$((sealed_inventory_length - 1))
+for sealed_inventory_marker in \
+	"(.entries | type == \"array\" and length == ${sealed_inventory_length})" \
+	"([range(0; ${sealed_inventory_last}; 2) as \$index |" \
+	".entries[${sealed_inventory_last}].kind == \"ConfigMap\"" \
+	"| unique | length) == ${sealed_inventory_length}" \
+	"sealed inventory is not ${retirement_pair_count} exact policy/binding pairs plus one hook probe"; do
+	static_require_count "$next_release_crd_source" "$sealed_inventory_marker" 1 \
+		'sealed release inventory'
 done
 # The synthetic next release is applied twice: once behind the late-activation
 # blocker, where it must fail at the reconcile hook, and once for real.
