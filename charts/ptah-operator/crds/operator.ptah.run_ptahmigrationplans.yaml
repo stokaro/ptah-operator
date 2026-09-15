@@ -4,7 +4,7 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "7"
+    operator.ptah.run/crd-schema-version: "8"
     operator.ptah.run/crd-schema-digest: "sha256:d683872411fbe357fe9b06903fea7cdeaaed1efcbb638aea3c0978f20133157e"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahmigrationplans.operator.ptah.run

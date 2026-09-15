@@ -146,6 +146,19 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 		return ctrl.Result{}, r.patchMigrationStatus(ctx, before, migration)
 	}
 
+	// After suspension and before any claim: a suspended resource runs nothing
+	// and needs no verdict about the realm, and a resource already carrying an
+	// operation returned above. A dispatched Apply is never abandoned for this.
+	census, censusErr := takeRealmCensus(
+		ctx, r.Client, migration.Spec.Target.Engine, migration.Spec.Target.CoordinationKey,
+	)
+	if censusErr != nil {
+		return ctrl.Result{}, censusErr
+	}
+	if census.conflict() {
+		return r.migrationRealmBlocked(ctx, migration, census)
+	}
+
 	now := r.now()
 	if migration.Status.ObservedGeneration != migration.Generation {
 		return r.claimMigration(ctx, migration, operatorv1alpha1.MigrationOperationResolve)
@@ -1017,6 +1030,33 @@ func (r *MigrationReconciler) migrationOperationFailure(
 }
 
 // migrationBlocked reports a state reconciliation cannot leave on its own.
+// migrationRealmBlocked refuses a database more than one resource claims.
+//
+// What ends this is another resource's spec change, and that resource's events
+// do not reach this one, so the verdict is re-taken on this resource's own
+// interval rather than waited on.
+func (r *MigrationReconciler) migrationRealmBlocked(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	census realmCensus,
+) (ctrl.Result, error) {
+	now := r.now()
+	next := realmRecheckDeadline(now, migration.Spec.Interval.Duration)
+	before := migration.DeepCopy()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+	migration.Status.ObservedGeneration = migration.Generation
+	migration.Status.NextReconciliationTime = &next
+	message := census.message()
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue, operatorv1alpha1.ReasonRealmConflict, message)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, message)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, message)
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonRealmConflict, "No plan is approvable while the database realm is contested")
+	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
+		return ctrl.Result{}, err
+	}
+	return requeueAtDeadline(&next, r.now()), nil
+}
+
 func (r *MigrationReconciler) migrationBlocked(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
