@@ -1244,6 +1244,12 @@ for migration_marker in \
 	'kept managing a database a PtahSchema also claims' \
 	'was allowed to manage a database a PtahMigration also claims' \
 	'a resource that runs nothing claims nothing' \
+	'run_unknown_layer_proof' \
+	'./hack/unknownlayerfixture' \
+	'acted on an artifact carrying a layer its executor cannot read' \
+	'assert_unknown_layer_refusal_is_named' \
+	'never named the step that refused the artifact within' \
+	'was opened for an artifact whose layers were refused' \
 	'run_uncertain_apply_proof' \
 	'wait_for_uncertain_commit' \
 	'did not stop on a run whose evidence it could not read' \
@@ -1340,6 +1346,22 @@ done
 # The uncertain fixtures are two migrations and a third that sleeps. The sleep
 # is the window the row needs: without it the run finishes before its evidence
 # can be taken away, and the proof becomes a race that passes by luck.
+# The fixture that publishes an artifact no product command can produce must
+# keep publishing one this executor refuses. A layer media type it accepts would
+# turn the row into an ordinary successful pull that asserts nothing, so the
+# refusal the fixture is built to trigger is pinned to the two constants it
+# stands on.
+for unknown_layer_marker in \
+	'application/vnd.stokaro.ptah.migration.file.v1' \
+	'application/vnd.stokaro.ptah.migrations.v1' \
+	'the extra layer must not be'; do
+	grep -F -- "$unknown_layer_marker" "$ROOT_DIR/hack/unknownlayerfixture/main.go" >/dev/null || {
+		printf 'e2e static: the unknown-layer fixture lost the constant it stands on: %s\n' \
+			"$unknown_layer_marker" >&2
+		exit 1
+	}
+done
+
 for migration_engine in postgresql-uncertain mysql-uncertain; do
 	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
 	[ "$migration_fixture_count" -eq 6 ] || {
