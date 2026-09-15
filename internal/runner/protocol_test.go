@@ -56,6 +56,103 @@ func TestFrameRoundTripFromMixedLogs(t *testing.T) {
 	}
 }
 
+// TestFrameToleratesStderrInterleavedBeforeItsFooter is the shape a container
+// log actually produced, twice on Kubernetes 1.37 and again in a retained lab:
+// the runner writes the whole frame in one call to standard output, the kubelet
+// stores it one line per entry merged with standard error by read time, and the
+// refusal text the runner had just written landed between the payload and the
+// footer. The payload is bounded by the length the header declares and checked
+// against its digest, so the line costs no integrity -- but the parser used to
+// require the footer against the payload and refused the frame it could verify.
+func TestFrameToleratesStderrInterleavedBeforeItsFooter(t *testing.T) {
+	t.Parallel()
+
+	wanted := Result{
+		ProtocolVersion: ProtocolVersion,
+		Operation:       OperationResolve,
+		OperationID:     "sha256:" + strings.Repeat("b", 64),
+		ChildExitCode:   -1,
+		Error: &ResultError{
+			Code:    "invalid_oci_access",
+			Message: "registry certificate authority bytes do not match the credential-owner grant",
+		},
+	}
+	frame, err := MarshalFrame(wanted)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	footer := []byte(frameFooter)
+	split := bytes.Index(frame, footer)
+	if split < 0 {
+		t.Fatal("marshalled frame carries no footer")
+	}
+	diagnostic := []byte("\nptah-runner: registry certificate authority bytes do not match the credential-owner grant")
+	interleaved := append(append(append([]byte{}, frame[:split]...), diagnostic...), frame[split:]...)
+
+	got, err := ParseResultFor(interleaved, OperationResolve, wanted.OperationID)
+	if err != nil {
+		t.Fatalf("ParseResultFor() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, wanted) {
+		t.Fatalf("ParseResultFor() = %#v, want %#v", got, wanted)
+	}
+}
+
+// TestFrameRejectsAnUnclosedPayloadAndAPartialInterleavedLine keeps what the
+// footer is for. A payload the writer never closed, and one whose trailing text
+// stops mid-line, are both logs that were cut, which is the case the footer
+// exists to catch.
+func TestFrameRejectsAnUnclosedPayloadAndAPartialInterleavedLine(t *testing.T) {
+	t.Parallel()
+
+	wanted := Result{
+		ProtocolVersion: ProtocolVersion,
+		Operation:       OperationResolve,
+		OperationID:     "sha256:" + strings.Repeat("c", 64),
+		ChildExitCode:   -1,
+		Error: &ResultError{
+			Code:    "invalid_oci_access",
+			Message: "registry certificate authority bytes do not match the credential-owner grant",
+		},
+	}
+	frame, err := MarshalFrame(wanted)
+	if err != nil {
+		t.Fatalf("MarshalFrame() error = %v", err)
+	}
+	footer := []byte(frameFooter)
+	split := bytes.Index(frame, footer)
+	if split < 0 {
+		t.Fatal("marshalled frame carries no footer")
+	}
+	for _, test := range []struct {
+		name string
+		logs []byte
+	}{
+		{
+			name: "the writer never closed the frame",
+			logs: append([]byte{}, frame[:split]...),
+		},
+		{
+			name: "the log stops inside an interleaved line",
+			logs: append(append([]byte{}, frame[:split]...), []byte("\nptah-runner: cut here")...),
+		},
+		{
+			// The line that follows the payload is complete and is not the
+			// footer. Recognizing the footer by position rather than by content
+			// would accept this, which is a frame nobody closed.
+			name: "a complete line follows the payload and no footer does",
+			logs: append(append([]byte{}, frame[:split]...), []byte("\nptah-runner: cut here\n")...),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ParseResultFor(test.logs, OperationResolve, wanted.OperationID)
+			if !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("ParseResultFor() error = %v, want ErrMalformedFrame", err)
+			}
+		})
+	}
+}
+
 func TestLegacyProtocolFourRequiresExplicitVersionBinding(t *testing.T) {
 	t.Parallel()
 
