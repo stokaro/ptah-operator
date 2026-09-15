@@ -498,6 +498,11 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		return r.consumeMigrationRun(ctx, migration, job, result)
 	}
 	if parseErr != nil {
+		if boundary, boundaryErr := r.failedInitBoundary(ctx, migration, job); boundaryErr != nil {
+			return ctrl.Result{}, boundaryErr
+		} else if boundary != "" {
+			return r.retryMigrationOperation(ctx, migration, job, errors.New(boundary))
+		}
 		return r.retryMigrationOperation(ctx, migration, job, fmt.Errorf("read %s result: %w", operation.Type, parseErr))
 	}
 	if !jobSucceeded(job) {
@@ -1010,6 +1015,48 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 		inputs["policy_digest"] = binding.Digest
 	}
 	return fingerprint.DigestCanonicalJSON(inputs)
+}
+
+// failedInitBoundary names the init container that ended the Pod before the
+// runner could speak, and returns an empty string when none did.
+//
+// Without it every such failure reads as "result frame not found", which is
+// also what a crashed runner, an evicted node and a truncated log produce. The
+// one distinction a reader needs is whether the run failed before it began,
+// and at which boundary: the runner was never installed, the source authority
+// was refused, or the artifact never arrived. Each of those has a different
+// answer, and none of them is a retry.
+//
+// The container's own words are deliberately not carried. The container that
+// fetches an artifact holds registry credentials, so its output is not
+// evidence this controller puts in a status; the name and the exit code are
+// structured fields Kubernetes sets, and they are enough to say which boundary
+// failed.
+func (r *MigrationReconciler) failedInitBoundary(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	job *batchv1.Job,
+) (string, error) {
+	if job == nil {
+		return "", nil
+	}
+	pods, err := podsOwnedByJob(ctx, r.directReader(), migration.Namespace, job.Name, job.UID)
+	if err != nil {
+		return "", err
+	}
+	for _, pod := range pods {
+		for _, status := range pod.Status.InitContainerStatuses {
+			terminated := status.State.Terminated
+			if terminated == nil || terminated.ExitCode == 0 {
+				continue
+			}
+			return fmt.Sprintf(
+				"the %s step exited %d, so the run never started",
+				status.Name, terminated.ExitCode,
+			), nil
+		}
+	}
+	return "", nil
 }
 
 // retryMigrationOperation advances to a fresh attempt with a fresh
