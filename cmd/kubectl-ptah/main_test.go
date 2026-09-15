@@ -135,3 +135,44 @@ func TestRunAnswersTheHelpUnderThePlanCommand(t *testing.T) {
 		t.Fatalf("run(plan --help) printed no usage:\n%s%s", stdout.String(), stderr.String())
 	}
 }
+
+func TestMigrationRefusesAnAmbiguousCommandLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		arguments []string
+		want      int
+	}{
+		{name: "no migration named", arguments: []string{"migration"}, want: exitUsage},
+		{name: "two migrations named", arguments: []string{"migration", "orders", "invoices"}, want: exitUsage},
+		{name: "unknown format", arguments: []string{"migration", "orders", "-o", "yaml"}, want: exitUsage},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+			if status := run(context.Background(), test.arguments, &stdout, &stderr); status != test.want {
+				t.Fatalf("status = %d, want %d (%s)", status, test.want, stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("a refused command line printed %q", stdout.String())
+			}
+		})
+	}
+}
+
+func TestUsageNamesBothCommands(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	if status := run(context.Background(), []string{"help"}, &stdout, &stderr); status != exitOK {
+		t.Fatalf("status = %d", status)
+	}
+	for _, want := range []string{"kubectl ptah plan", "kubectl ptah migration"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("usage does not name %q:\n%s", want, stdout.String())
+		}
+	}
+}
