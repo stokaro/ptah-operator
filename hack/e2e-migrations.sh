@@ -419,7 +419,22 @@ publish_migrations() {
 		"$ENGINE_KIND" "$publish_version" >&2
 	k -n "$TEST_NAMESPACE" create configmap "$publish_configmap" \
 		--from-file="$publish_directory" >/dev/null
+	# A ConfigMap volume is not a directory of files. The kubelet writes the
+	# keys into a timestamped directory, points `..data` at it, and leaves one
+	# symlink per key beside it, so a walker that descends into directories
+	# finds every migration twice -- once as the top-level symlink and once
+	# inside the timestamped directory. Ptah's Discover does exactly that.
+	#
+	# A subPath mount per file is the documented way to get a plain directory:
+	# the kubelet bind-mounts each file at its own path, and `/migrations` then
+	# holds the six files and nothing else. The list comes from the fixtures so
+	# it cannot fall behind them.
+	publish_mounts=$(find "$publish_directory" -maxdepth 1 -type f -name '*.sql' \
+		-exec basename {} \; | LC_ALL=C sort | jq -R . | jq -s .)
+	[ "$(printf '%s' "$publish_mounts" | jq 'length')" -gt 0 ] ||
+		fail "no migration files to publish from $publish_directory"
 	jq -n \
+		--argjson mounts "$publish_mounts" \
 		--arg namespace "$TEST_NAMESPACE" \
 		--arg name "$publish_job" \
 		--arg image "$EXECUTOR_IMAGE" \
@@ -452,7 +467,7 @@ publish_migrations() {
               command: ["/usr/local/bin/ptah"],
               args: [
                 "migrations", "push", $reference, "--migrations-dir", "/migrations",
-                "--version", $version, "--plain-http"
+                "--dir-format", "ptah", "--version", $version, "--plain-http"
               ],
               env: [
                 {name: "HOME", value: "/work"},
@@ -465,10 +480,10 @@ publish_migrations() {
                 allowPrivilegeEscalation: false, readOnlyRootFilesystem: true,
                 capabilities: {drop: ["ALL"]}
               },
-              volumeMounts: [
-                {name: "migrations", mountPath: "/migrations", readOnly: true},
-                {name: "work", mountPath: "/work"}
-              ]
+              volumeMounts: ([$mounts[] | {
+                name: "migrations", mountPath: ("/migrations/" + .),
+                subPath: ., readOnly: true
+              }] + [{name: "work", mountPath: "/work"}])
             }],
             volumes: [
               {name: "migrations", configMap: {name: $configMap}},
@@ -486,7 +501,16 @@ publish_migrations() {
                    elif (.status.failed // 0) > 0 then "failed" else "running" end')
 		case "$publish_state" in
 		succeeded) break ;;
-		failed) fail "the migration publisher Job failed" ;;
+		failed)
+			# The publisher reaches the registry and never the database, so its
+			# own words are safe to print once scanned. A publisher that fails
+			# silently costs a whole lifecycle to ask again.
+			k -n "$TEST_NAMESPACE" logs job/"$publish_job" >"$LOG_FILE" 2>&1 || true
+			scan_for_credentials "$LOG_FILE" "the migration publisher log"
+			printf 'e2e migrations: the publisher said:\n' >&2
+			sed 's/^/e2e migrations:   /' "$LOG_FILE" >&2
+			fail "the migration publisher Job failed"
+			;;
 		esac
 		sleep 3
 	done

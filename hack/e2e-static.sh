@@ -1226,6 +1226,9 @@ for migration_marker in \
 	'create_migration_database' \
 	'the migration proof must own a database the schema path never touched' \
 	'"migrations", "push", $reference, "--migrations-dir", "/migrations",' \
+	'"--dir-format", "ptah", "--version", $version, "--plain-http"' \
+	'subPath: ., readOnly: true' \
+	'the publisher said:' \
 	'the migration publisher Job did not preserve the no-database-credential boundary' \
 	'wait_for_migration_phase AwaitingApproval' \
 	'did not reach an exact three-migration approval gate' \
