@@ -71,7 +71,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "5308860bb4b52a7d91e34f82d150970560cab94e4ce9136e552f92ab1f85c044"
+	ciWorkflowSHA256                = "a8fc7424000d3c63c2788f2d8f8be41c3db244978ec44c025512dd849b3f61fd"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -927,6 +927,18 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	}
 	if !equalStringMap(lifecycle.Env, wantMatrixEnv) {
 		return fmt.Errorf("%s: run: make e2e must use exactly the audited lifecycle environment bindings", path)
+	}
+	// The three lifecycle jobs run at once, so their cache is scoped by minor:
+	// one shared key would have them race to save the same entry and only the
+	// last writer's work would survive.
+	e2eCache, err := requireWorkflowStep(path, "kubernetes-e2e", e2e, "e2e-build-cache")
+	if err != nil {
+		return err
+	}
+	if err := verifyGoBuildCacheStep(
+		path, "kubernetes-e2e", e2eCache, "e2e-${{ matrix.minor_slug }}",
+	); err != nil {
+		return err
 	}
 	upload, err := requireWorkflowStep(path, "kubernetes-e2e", e2e, "release-chart-evidence")
 	if err != nil {

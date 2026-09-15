@@ -55,22 +55,25 @@ separate targets under it, so run it after touching `api/` or any marker.
 
 ## What a green master says
 
-CI runs on every push to `master`, and its concurrency group is the branch with
-`cancel-in-progress: true`. A batch of merges leaves one CI run standing, the
-newest commit's, and cancels the rest. A commit behind the tip carries no
-verdict at all, and GitHub shows no check against it, which reads exactly like a
-commit nothing objected to.
+CI runs on every push to `master`, and `cancel-in-progress` is true only for a
+pull request: a master run that has started is never cancelled. What a batch of
+merges loses is the run that had not started yet. The concurrency group holds
+one pending run, so while one commit's lifecycle occupies the group, the next
+merge queues and the merge after that cancels the queued one. Measured on
+`43534c4`: its run was created at 05:56:15 and cancelled fifteen seconds later,
+when `17565ba` arrived. The commit then carries no check at all, which reads
+exactly like a commit nothing objected to.
 
 That is the trade, taken on purpose. One run spends about seven hours of runner
 time (three kind lifecycles near two hours apiece, plus the race detector at
 forty minutes, measured on `75387d4`), and a commit in the middle of a batch
 would spend it re-proving what the tip proves.
 
-So "master is green" is a statement about the tip and about no commit behind it,
-and a bisect cannot assume a commit it lands on was ever built. When one commit
-has to carry its own verdict, a release candidate or a change to the lifecycle
-path itself, put it on a branch and let the pull request run: it fans out over
-the same three minors.
+So "master is green" is a statement about the commits whose runs survived, not
+about every commit, and a bisect cannot assume a commit it lands on was ever
+built. When one commit has to carry its own verdict, a release candidate or a
+change to the lifecycle path itself, put it on a branch and let the pull request
+run: it fans out over the same three minors.
 
 ## What a change to the API owes
 
