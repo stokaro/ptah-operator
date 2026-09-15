@@ -826,7 +826,10 @@ assert_replaced_plan_approval_refused() {
 		>"$ADMISSION_ERROR_FILE" 2>&1; then
 		fail "an approval naming the consumed plan was accepted"
 	fi
-	grep -Ei 'plan|approval' "$ADMISSION_ERROR_FILE" >/dev/null ||
+	# Which refusal fires depends on where the resource is in its cycle: the
+	# plan is no longer current, the migration is not awaiting approval, or it
+	# has an operation in flight. Every one of them names what it read.
+	grep -Ei 'plan|approval|migration' "$ADMISSION_ERROR_FILE" >/dev/null ||
 		fail "the refusal of a consumed-plan approval did not say what it refused"
 	scan_for_credentials "$ADMISSION_ERROR_FILE" "the consumed-plan approval refusal"
 }
@@ -947,6 +950,9 @@ run_engine_migrations() {
 	assert_repeated_reconciliation_runs_nothing
 	assert_migration_job_isolation
 	assert_replaced_plan_approval_refused
+	# The shortened interval means the resource may be mid-cycle by now; the
+	# settled view is a statement about the settled state.
+	wait_for_migration_phase InSync
 	assert_kubectl_ptah_migration InSync
 	assert_modified_file_blocks_everything
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
