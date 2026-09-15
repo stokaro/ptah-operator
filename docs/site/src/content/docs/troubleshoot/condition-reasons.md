@@ -32,10 +32,14 @@ decision.
 | `DigestPinned` | A requested OCI reference resolved to immutable content. |
 | `DispatchCommitted` | One exact approval was consumed by an Apply dispatch boundary. |
 | `ExecutionBindingChanged` | Evidence or approval belongs to a retired runtime identity. |
+| `HistoryDirty` | A failed or interrupted migration run left a revision row behind. |
+| `HistoryMatched` | The revision table and the migration artifact agree, and nothing is pending. |
+| `HistoryModified` | An applied migration no longer matches the file that recorded it. |
 | `InputsChanged` | An operation result was discarded because its desired inputs changed. |
 | `InSync` | Independent read-only planning proved convergence. |
 | `JobCompleted` | Apply exited and independent convergence proof remains pending. |
 | `LeaseContinuityLost` | Database lock ownership was not continuous, so evidence was discarded. |
+| `MigrationsPending` | The migration artifact carries versions the database has not applied. |
 | `NoChanges` | Scoped planning produced no executable statements. |
 | `NotRequired` | Policy allows this non-destructive plan without separate approval. |
 | `Observed` | A database observation completed successfully. |
@@ -75,6 +79,22 @@ decision.
 | `UnsupportedEngine` | The selected engine has no implemented operator lifecycle. |
 | `VerifyingConvergence` | Apply completed but independent read-only proof has not. |
 | `Waiting` | The controller is waiting for an approval bound to the current plan. |
+
+## A migration history that stops everything
+
+`HistoryDirty` and `HistoryModified` are the two readings of a revision table
+that a `PtahMigration` will not act on. Both set `Blocked=True`, leave `Ready`
+false, publish no plan, and dispatch nothing.
+
+The operator never writes to the revision table to clear either one. A dirty
+row says a run stopped without recording what it did, and a modified version
+says an applied migration's file no longer matches what the database recorded
+for it; in both cases the answer is in the database, not in the resource. The
+operator keeps reading the history at `spec.interval`, so a database somebody
+fixed converges on its own, and a spec edit is not part of the recovery.
+
+[Run versioned migrations](../../use/migrations/#what-the-history-says) carries
+what each state means and which Ptah commands end it.
 
 ## Unsupported engines
 
