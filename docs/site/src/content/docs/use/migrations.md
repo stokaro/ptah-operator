@@ -110,9 +110,18 @@ because which one arrived late is what the decision depends on. Renumbering it
 above the current version, or applying it deliberately with Ptah's own
 non-linear execution order, are both decisions a person makes.
 
-None of the three resolves by waiting. The operator keeps reading the history at
+**Ahead.** The database records a migration this artifact does not carry:
+`status.history.currentVersion` is past everything the artifact accounts for.
+A rolled-back deployment, a tag moved to yesterday's build, a branch whose
+migrations were never merged, all arrive here. The operator will not roll a
+database back to match an older artifact, and which of the two is wrong is not
+a question it can answer, so it stops and names both versions.
+
+None of the four resolves by waiting. The operator keeps reading the history at
 `spec.interval`, so fixing the database or the artifact is enough to unblock it;
-nothing else is required.
+nothing else is required. For the last of them that usually means restoring the
+artifact the database was migrated with, rather than touching the database at
+all.
 
 **Checkpoints.** A migration file marked as a checkpoint carries the whole
 schema up to its version, so a database created after it bootstraps from that

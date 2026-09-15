@@ -724,6 +724,7 @@ func (r *MigrationReconciler) recordMigrationHistory(
 	pending := report.Pending()
 	modified := report.Modified()
 	outOfOrder := report.OutOfOrder()
+	artifactVersion := report.LastVersion()
 	history := &operatorv1alpha1.MigrationHistoryStatus{
 		ObservedAt:           metav1.NewTime(r.now()),
 		ContractVersion:      int32(report.ContractVersion),
@@ -774,6 +775,20 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			fmt.Sprintf("%d migrations sort below applied version %d; linear execution refuses them", len(outOfOrder), report.CurrentVersion))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryOutOfOrder, "A migration arrived below the version the database has applied")
+	// The database records work this artifact has never heard of. Nothing is
+	// pending, because pending is a statement about the artifact's own
+	// migrations, and a revision the artifact does not carry is in no state at
+	// all -- which is exactly how this used to read as success. The operator
+	// will not roll a database back to match an older artifact, and which of
+	// the two is wrong is a question for whoever moved the tag.
+	case report.CurrentVersion > artifactVersion:
+		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
+			operatorv1alpha1.ReasonHistoryAhead,
+			fmt.Sprintf("The database is at version %d and this artifact ends at version %d",
+				report.CurrentVersion, artifactVersion))
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonHistoryAhead, "The database records a migration this artifact does not carry")
 	case len(pending) == 0:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseInSync
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse,

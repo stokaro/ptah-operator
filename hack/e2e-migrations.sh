@@ -228,10 +228,13 @@ select_engine() {
 	[ -d "$BRANCH_FIXTURE_DIR" ] || fail "branch migration fixtures are missing: $BRANCH_FIXTURE_DIR"
 	MIGRATION_EDITED_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-modified"
 	MIGRATION_PARTIAL_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-partial"
+	MIGRATION_OLDER_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-older"
 	MIGRATION_COORDINATION_DIGEST=$(coordination_digest "$ENGINE" "$MIGRATION_COORDINATION_KEY")
 	[ -d "$MIGRATION_FIXTURE_DIR" ] || fail "migration fixtures are missing: $MIGRATION_FIXTURE_DIR"
 	[ -d "$MIGRATION_PARTIAL_FIXTURE_DIR" ] ||
 		fail "migration fixtures are missing: $MIGRATION_PARTIAL_FIXTURE_DIR"
+	[ -d "$MIGRATION_OLDER_FIXTURE_DIR" ] ||
+		fail "migration fixtures are missing: $MIGRATION_OLDER_FIXTURE_DIR"
 
 	# The password is read back from the Secret the data plane created rather
 	# than derived a second time here. A second derivation is a second
@@ -444,13 +447,31 @@ migration_widget_column_count() {
 	esac
 }
 
-# The Apply Jobs this migration has dispatched. A Blocked resource keeps
+# The Apply Jobs this migration has dispatched, by UID. A Blocked resource keeps
 # reading, so its read-only Jobs go on appearing; what must not appear is
 # another run.
-migration_apply_job_count() {
+#
+# Identities rather than a count, because a finished Job carries a five-minute
+# TTL and the ones from earlier in the lifecycle disappear while later rows are
+# still running. A count that fell by one deletion and rose by one dispatch is
+# the same count, and a count compared across a deletion accuses the wrong
+# thing.
+migration_apply_job_uids() {
 	k -n "$TEST_NAMESPACE" get jobs \
 		-l "operator.ptah.run/migration=${MIGRATION_NAME},operator.ptah.run/operation=apply" \
-		-o json | jq '.items | length'
+		-o json | jq -r '.items[]?.metadata.uid' | LC_ALL=C sort
+}
+
+# assert_no_new_apply_job fails when an Apply Job appears that the recorded file
+# does not name. A Job that went away in the meantime is not a finding: the TTL
+# removes them, and nothing this proves depends on one staying.
+assert_no_new_apply_job() {
+	recorded_applies=$1
+	dispatch_description=$2
+	migration_apply_job_uids >"$WORK_DIR/applies-now.txt"
+	if grep -vxF -f "$recorded_applies" "$WORK_DIR/applies-now.txt" | grep -q .; then
+		fail "$MIGRATION_NAME dispatched another run $dispatch_description"
+	fi
 }
 
 # The verification policy this phase applies names the migration artifact type.
@@ -1043,7 +1064,6 @@ assert_second_claimant_blocks_the_realm() {
 assert_partial_run_blocks_and_recovers() {
 	printf 'e2e migrations: moving the %s tag to an artifact whose fourth migration commits half of itself\n' \
 		"$ENGINE_KIND" >&2
-	partial_applies_before=$(migration_apply_job_count)
 	publish_migrations v3 "$MIGRATION_PARTIAL_FIXTURE_DIR"
 	wait_for_migration_phase AwaitingApproval
 	migration_status
@@ -1118,18 +1138,17 @@ assert_partial_run_blocks_and_recovers() {
 		fail "the dirty refusal does not name the revision a person has to decide about"
 
 	# A resource that stopped keeps reading and never runs again. The read-only
-	# Jobs go on appearing, so the count that has to stand still is the Apply
-	# one.
+	# Jobs go on appearing, so what has to stand still is the set of Apply ones,
+	# recorded here with the partial run's own Job already in it.
+	migration_apply_job_uids >"$WORK_DIR/partial-applies.txt"
 	partial_hold_deadline=$(($(date +%s) + 90))
 	while [ "$(date +%s)" -lt "$partial_hold_deadline" ]; do
 		record_migration_jobs
 		[ "$(migration_phase)" = Blocked ] ||
 			fail "$MIGRATION_NAME left Blocked while a partial migration stood unresolved"
+		assert_no_new_apply_job "$WORK_DIR/partial-applies.txt" "after a partial one"
 		sleep 10
 	done
-	partial_applies_after=$(migration_apply_job_count)
-	[ "$partial_applies_after" -eq "$((partial_applies_before + 1))" ] ||
-		fail "$MIGRATION_NAME dispatched another run after a partial one: ${partial_applies_before} became ${partial_applies_after}"
 
 	# The person's decision: the half is undone, the revision row goes with it,
 	# and the sequence loses the migration that should not have run.
@@ -1161,6 +1180,95 @@ assert_partial_run_blocks_and_recovers() {
 	[ "$(migration_widget_column_count weight)" = 0 ] ||
 		fail "$ENGINE kept the column the partial migration added after it was dropped"
 	printf 'e2e migrations: PASS %s partial run blocked, and recovered without a spec edit\n' \
+		"$ENGINE_KIND" >&2
+}
+
+# The older-artifact row of the matrix: a tag moved back to an artifact that
+# ends before the database does.
+#
+# Nothing is pending here, and that is the trap. Pending is a statement about
+# the artifact's own migrations, so a revision the artifact does not carry is
+# in no state at all, and a controller that only counts pending work reads this
+# as success -- every sentence true, the verdict wrong. The database is asked
+# what it holds and the artifact is asked what it ends at, and when the first
+# is past the second the resource stops.
+#
+# There is no automatic recovery and there must not be one: rolling a database
+# back to match an older artifact is a data-loss decision. Putting the tag back
+# is a person's, and the operator converges on its own reading once it lands.
+assert_older_artifact_blocks_everything() {
+	printf 'e2e migrations: moving the %s tag back to an artifact that ends before the database does\n' \
+		"$ENGINE_KIND" >&2
+	migration_apply_job_uids >"$WORK_DIR/older-applies.txt"
+	publish_migrations v5 "$MIGRATION_OLDER_FIXTURE_DIR"
+
+	older_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$older_deadline" ]; do
+		record_migration_jobs
+		migration_status
+		if jq -e '
+          .status as $status |
+          $status.phase == "Blocked" and
+          (any($status.conditions[];
+            .type == "Blocked" and .status == "True" and .reason == "HistoryAhead"))
+        ' "$STATUS_FILE" >/dev/null; then
+			older_blocked=yes
+			break
+		fi
+		# InSync is the answer being refused here, but only once the status
+		# names the artifact that is older. Until the moved tag is resolved the
+		# resource is still settled on the one it was settled on, and failing
+		# on that would be failing on the poll landing early.
+		older_phase=$(jq -er '.status.phase' "$STATUS_FILE")
+		older_digest=$(jq -r '.status.artifact.digest // ""' "$STATUS_FILE")
+		if [ "$older_digest" = "$PUBLISHED_DIGEST" ] && [ "$older_phase" = InSync ]; then
+			fail "$MIGRATION_NAME called an artifact older than its database InSync"
+		fi
+		sleep 5
+	done
+	[ "${older_blocked:-no}" = yes ] ||
+		fail "$MIGRATION_NAME did not refuse an artifact that ends before its database within ${TIMEOUT_SECONDS}s"
+
+	jq -e \
+		--arg digest "$PUBLISHED_DIGEST" '
+      .status as $status |
+      $status.artifact.digest == $digest and
+      $status.history.currentVersion == 3 and
+      $status.history.appliedCount == 2 and
+      $status.history.pendingCount == 0 and
+      ($status.history.dirty // false) == false and
+      ($status.history.modifiedVersions // []) == [] and
+      ($status.plan // null) == null and
+      ($status.activeOperation // null) == null and
+      (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$MIGRATION_NAME did not report the reading that disagrees with itself"
+	# The refusal names both numbers, because only one of them is a field.
+	jq -e '[.status.conditions[] | select(.type == "Blocked") | .message]
+           | any(test("3") and test("2"))' "$STATUS_FILE" >/dev/null ||
+		fail "the older-artifact refusal does not name the two versions that disagree"
+	scan_for_credentials "$STATUS_FILE" "the older-artifact refusal"
+
+	# Nothing ran, and above all nothing ran backwards.
+	assert_no_new_apply_job "$WORK_DIR/older-applies.txt" \
+		"for an artifact older than its database"
+	assert_database_migrated
+
+	printf 'e2e migrations: putting the %s tag back on the artifact the database was migrated with\n' \
+		"$ENGINE_KIND" >&2
+	publish_migrations v6 "$MIGRATION_FIXTURE_DIR"
+	wait_for_migration_phase InSync
+	migration_status
+	jq -e '
+      .status as $status |
+      $status.history.currentVersion == 3 and
+      $status.history.appliedCount == 3 and
+      $status.history.pendingCount == 0 and
+      (any($status.conditions[];
+        .type == "Ready" and .status == "True" and .reason == "HistoryMatched"))
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$MIGRATION_NAME did not settle again once the artifact matched its database"
+	printf 'e2e migrations: PASS %s refused an artifact older than its database, and settled when it was restored\n' \
 		"$ENGINE_KIND" >&2
 }
 
@@ -1906,6 +2014,7 @@ run_engine_migrations() {
 	assert_kubectl_ptah_migration InSync
 	assert_second_claimant_blocks_the_realm
 	assert_partial_run_blocks_and_recovers
+	assert_older_artifact_blocks_everything
 	assert_modified_file_blocks_everything
 	run_branch_out_of_order_proof
 	run_existing_schema_adoption_proof

@@ -235,6 +235,23 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			wantReason:     operatorv1alpha1.ReasonHistoryOutOfOrder,
 			wantOutOfOrder: []int64{2},
 		},
+		{
+			// Nothing here is pending, modified or dirty, because every one of
+			// those is a state of a migration the artifact carries. Version 3
+			// is not in the artifact at all.
+			name: "the database ran a migration the artifact does not carry",
+			report: dataplane.MigrationStatusReport{
+				ContractVersion: dataplane.SupportedMigrationStatusContract,
+				CurrentVersion:  3,
+				TotalMigrations: 1,
+				Migrations: []dataplane.MigrationRecord{
+					{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+				},
+			},
+			wantPhase:  operatorv1alpha1.MigrationPhaseBlocked,
+			wantReady:  metav1.ConditionFalse,
+			wantReason: operatorv1alpha1.ReasonHistoryAhead,
+		},
 	}
 
 	for _, test := range tests {

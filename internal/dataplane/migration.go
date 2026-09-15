@@ -113,6 +113,20 @@ func (r MigrationStatusReport) Pending() []int64 {
 	return versions
 }
 
+// LastVersion is the highest version the artifact carries, and zero for an
+// artifact that carries none. It is the artifact's own extent: the document
+// lists the artifact's migrations with what the database did about each, so a
+// revision beyond this number is one the artifact cannot account for at all.
+func (r MigrationStatusReport) LastVersion() int64 {
+	var last int64
+	for _, record := range r.Migrations {
+		if record.Version > last {
+			last = record.Version
+		}
+	}
+	return last
+}
+
 // Modified names the applied migrations whose files no longer account for them.
 // Nothing may execute while one exists, and the controller never resolves it.
 func (r MigrationStatusReport) Modified() []int64 {

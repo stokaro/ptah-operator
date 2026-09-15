@@ -2,10 +2,12 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -115,6 +117,70 @@ func TestMigrationLifecycleReachesInSyncThroughEveryStage(t *testing.T) {
 	}
 	if contains(actual.Finalizers, migrationOperationFinalizer) {
 		t.Fatal("the resource kept the operation finalizer with nothing in flight")
+	}
+}
+
+// A database that has run more than the artifact carries is the rolled-back
+// deployment, the tag moved to yesterday's build, the branch whose migrations
+// were never merged. Nothing is pending there, because pending is a statement
+// about the artifact's own migrations, and that is exactly how this read as
+// success before: every sentence true, the verdict wrong.
+func TestAHistoryPastTheArtifactIsRefusedRatherThanCalledInSync(t *testing.T) {
+	t.Parallel()
+
+	harness := newMigrationLifecycle(t, migrationFixture())
+	harness.claimed(operatorv1alpha1.MigrationOperationResolve)
+	harness.answer(runner.Result{
+		Operation: runner.OperationResolve, ChildExitCode: 0,
+		ResolvedDigest:    testDigest,
+		ResolvedReference: "oci://registry.example/team/migrations@" + testDigest,
+		ResolvedMediaType: "application/vnd.oci.image.manifest.v1+json", ResolvedSize: 321,
+	})
+	harness.claimed(operatorv1alpha1.MigrationOperationVerify)
+	harness.answer(runner.Result{
+		Operation: runner.OperationVerify, ChildExitCode: 0,
+		ObservedArtifactType: dataplane.MigrationArtifactType, ResolvedDigest: testDigest,
+	})
+
+	harness.claimed(operatorv1alpha1.MigrationOperationHistory)
+	harness.answer(runner.Result{
+		Operation: runner.OperationMigrationHistory, ChildExitCode: 0,
+		CoordinationDigest:   harness.coordinationDigest(),
+		TargetIdentityDigest: testDigest,
+		MigrationHistory: &dataplane.MigrationStatusReport{
+			ContractVersion: dataplane.SupportedMigrationStatusContract,
+			CurrentVersion:  2, TotalMigrations: 1,
+			Migrations: []dataplane.MigrationRecord{
+				{Version: 1, Checksum: "checksum-1", State: dataplane.MigrationStateApplied},
+			},
+		},
+	})
+
+	actual := harness.migration()
+	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("phase = %q, want Blocked for a database the artifact cannot account for",
+			actual.Status.Phase)
+	}
+	blocked := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+	if blocked == nil || blocked.Status != metav1.ConditionTrue ||
+		blocked.Reason != string(operatorv1alpha1.ReasonHistoryAhead) {
+		t.Fatalf("blocked condition = %#v, want True with HistoryAhead", blocked)
+	}
+	// Both numbers a reader has to compare are in the message, because only one
+	// of them is a field.
+	if !strings.Contains(blocked.Message, "version 2") || !strings.Contains(blocked.Message, "version 1") {
+		t.Fatalf("blocked message = %q, want the two versions that disagree", blocked.Message)
+	}
+	if meta.IsStatusConditionTrue(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationReady) {
+		t.Fatal("a database the artifact cannot account for was reported ready")
+	}
+	if actual.Status.Plan != nil {
+		t.Fatal("a plan was published for a history this artifact cannot continue")
+	}
+	if actual.Status.History == nil || actual.Status.History.CurrentVersion != 2 ||
+		actual.Status.History.AppliedCount != 1 {
+		t.Fatalf("history = %#v, want the reading that disagrees with itself kept as read",
+			actual.Status.History)
 	}
 }
 

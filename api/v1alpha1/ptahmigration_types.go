@@ -427,6 +427,11 @@ const (
 	// whole run, so the operator refuses before it publishes a plan nobody
 	// could execute.
 	ReasonHistoryOutOfOrder ConditionReason = "HistoryOutOfOrder"
+	// ReasonHistoryAhead means the database records a migration this artifact
+	// does not carry. Nothing about it is repairable from here: the operator
+	// never rolls a database back to match an older artifact, and which of the
+	// two is wrong is not a question a controller can answer.
+	ReasonHistoryAhead ConditionReason = "HistoryAhead"
 )
 
 // ConditionMigrationArtifactVerified reports that the resolved artifact
