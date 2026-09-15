@@ -561,6 +561,11 @@ A resource being deleted stops claiming the realm. A suspended one does not:
 suspension is a pause, and the resource still means to manage the database when
 it ends.
 
+A declaration on one claimant does not wake the others, so a contested realm is
+re-examined on a bounded cadence: the shorter of the resource's `spec.interval`
+and one minute. Every claimant leaves `Blocked` within a minute of the last one
+declaring, whatever interval it runs on.
+
 The manager has exact `get`, `create`, and `update` access to Leases through
 one namespace Role in `coordination.namespace`. When that namespace differs
 from the release namespace, its RoleBinding names the manager ServiceAccount

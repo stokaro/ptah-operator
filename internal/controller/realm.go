@@ -127,10 +127,15 @@ func claimsRealm(deleting bool, target operatorv1alpha1.DatabaseTargetSpec, dige
 	return candidate == digest
 }
 
-// realmRecheckInterval is the floor between two verdicts about a contested
-// realm. The resource's own interval decides the cadence; the floor only keeps
-// an object whose interval is absent from turning a refusal into a hot loop.
-const realmRecheckInterval = time.Minute
+// realmRecheckCeiling bounds how long a contested realm waits for another look.
+//
+// What ends a conflict is another resource's spec change, and that resource's
+// events do not reach this one. A refusal that waited out this resource's own
+// interval would keep a ten-minute resource blocked for ten minutes after the
+// declaration that resolved it, and an hourly one for an hour. Two cached
+// lists are cheap enough to repeat every minute for as long as the refusal
+// stands, so the deadline is the shorter of the two.
+const realmRecheckCeiling = time.Minute
 
 // realmBlockDeadline keeps the deadline a standing refusal already carries.
 //
@@ -139,13 +144,14 @@ const realmRecheckInterval = time.Minute
 // would differ from the stored status every time, patch every time, and wake
 // itself every time: a hot loop that never sleeps and never says why. Reusing
 // a deadline that has not passed makes the second pass a no-op write, which is
-// no write at all.
+// no write at all, and the ceiling keeps the interval between two writes at a
+// minute rather than at nothing.
 func realmBlockDeadline(current *metav1.Time, now time.Time, interval time.Duration) metav1.Time {
 	if current != nil && current.After(now) {
 		return *current
 	}
-	if interval < realmRecheckInterval {
-		interval = realmRecheckInterval
+	if interval <= 0 || interval > realmRecheckCeiling {
+		interval = realmRecheckCeiling
 	}
 	return metav1.NewTime(now.Add(interval))
 }

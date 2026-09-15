@@ -1033,8 +1033,8 @@ func (r *MigrationReconciler) migrationOperationFailure(
 // migrationRealmBlocked refuses a database more than one resource claims.
 //
 // What ends this is another resource's spec change, and that resource's events
-// do not reach this one, so the verdict is re-taken on this resource's own
-// interval rather than waited on.
+// do not reach this one, so the verdict is re-taken on a bounded cadence rather
+// than waited on: the shorter of this resource's interval and a minute.
 func (r *MigrationReconciler) migrationRealmBlocked(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
