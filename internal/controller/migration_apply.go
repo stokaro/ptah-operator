@@ -332,6 +332,8 @@ func (r *MigrationReconciler) consumeMigrationRun(
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, bounded(message, 1024))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonApplyOutcomeUnknown, "The database has to be read by a person before anything else runs")
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonApplyOutcomeUnknown, "The run stopped and may not be retried")
 		next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
 		migration.Status.NextReconciliationTime = &next
 	default:
@@ -412,6 +414,8 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		operatorv1alpha1.ReasonApplyOutcomeUnknown, bounded(failure.Error(), 1024))
 	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 		operatorv1alpha1.ReasonApplyOutcomeUnknown, "What the dispatched run did is unknown until the database is read")
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonApplyOutcomeUnknown, "The dispatched run is over and may not be retried")
 	next := metav1.NewTime(r.now().Add(migrationInterval(migration)))
 	migration.Status.NextReconciliationTime = &next
 	if job != nil {

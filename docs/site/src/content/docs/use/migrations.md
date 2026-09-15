@@ -219,6 +219,15 @@ Every other outcome is confirmed by reading the history back. What a run claims
 and what the revision table holds are two statements, and only the second one
 settles the resource.
 
+`Progressing` is the condition a dashboard watches to decide whether the
+resource is still moving on its own. It is true only while something is coming:
+an operation is running, a plan is being published, an Apply is next under the
+`Always` policy, or a finished run is being confirmed against the history. It is
+false wherever the resource has stopped or is waiting for a person, and its
+reason says which: `AwaitingApproval`, `ApplyDisabled`, `HistoryDirty`,
+`HistoryModified`, `HistoryOutOfOrder`, `HistoryAhead`, `ApplyOutcomeUnknown`,
+`HistoryMatched`.
+
 ## What never appears
 
 No row of any table reaches the status, an Event, or `kubectl ptah migration`.

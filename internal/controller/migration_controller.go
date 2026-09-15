@@ -756,6 +756,8 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			fmt.Sprintf("Revision %d is recorded dirty; a person has to decide what the interrupted run did", report.DirtyRevision.Version))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryDirty, "The revision table holds a dirty row")
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonHistoryDirty, "Nothing runs while a revision is recorded dirty")
 	case len(modified) > 0:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
@@ -763,6 +765,8 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			fmt.Sprintf("%d applied migrations no longer match their files", len(modified)))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryModified, "An applied migration was modified after it ran")
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonHistoryModified, "Nothing runs while an applied migration no longer matches its file")
 	case len(outOfOrder) > 0:
 		// Ptah executes in linear order and refuses the whole run while a
 		// pending migration sorts below the current version. Publishing a plan
@@ -775,6 +779,8 @@ func (r *MigrationReconciler) recordMigrationHistory(
 			fmt.Sprintf("%d migrations sort below applied version %d; linear execution refuses them", len(outOfOrder), report.CurrentVersion))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryOutOfOrder, "A migration arrived below the version the database has applied")
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonHistoryOutOfOrder, "Nothing runs while a migration sorts below the applied version")
 	// The database records work this artifact has never heard of. Nothing is
 	// pending, because pending is a statement about the artifact's own
 	// migrations, and a revision the artifact does not carry is in no state at
@@ -789,6 +795,8 @@ func (r *MigrationReconciler) recordMigrationHistory(
 				report.CurrentVersion, artifactVersion))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryAhead, "The database records a migration this artifact does not carry")
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonHistoryAhead, "Nothing runs while the database is ahead of the artifact")
 	case len(pending) == 0:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseInSync
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionFalse,
@@ -804,6 +812,9 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonMigrationsPending,
 			fmt.Sprintf("%d migrations are pending", len(pending)))
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+			operatorv1alpha1.ReasonMigrationsPending,
+			fmt.Sprintf("A plan for %d pending migrations is being published", len(pending)))
 	}
 	return nil
 }
@@ -926,12 +937,17 @@ func (r *MigrationReconciler) applyMigrationPolicyPhase(migration *operatorv1alp
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonApplyDisabled,
 			fmt.Sprintf("%d migrations are pending and the apply policy is Never", planned))
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonApplyDisabled, "The apply policy is Never, so nothing runs from here")
 	case operatorv1alpha1.ApplyPolicyAlways:
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonNotRequired, "The apply policy is Always, so no approval is required")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonApplyPending,
 			fmt.Sprintf("%d migrations are planned", planned))
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+			operatorv1alpha1.ReasonApplyPending,
+			fmt.Sprintf("An Apply of %d planned migrations is what happens next", planned))
 	default:
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseAwaitingApproval
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationApprovalRequired, metav1.ConditionTrue,
@@ -939,6 +955,8 @@ func (r *MigrationReconciler) applyMigrationPolicyPhase(migration *operatorv1alp
 			fmt.Sprintf("%d planned migrations need an approval naming this plan", planned))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonAwaitingApproval, "The plan is waiting for the approval its policy requires")
+		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
+			operatorv1alpha1.ReasonAwaitingApproval, "Nothing runs until a person writes the approval")
 	}
 }
 
