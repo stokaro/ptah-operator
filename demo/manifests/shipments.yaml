@@ -1,0 +1,52 @@
+# A prepared sequence of migrations, as a Kubernetes resource.
+#
+# The other manifest in this directory declares what a database should look
+# like and lets the operator work out the statements. This one names a sequence
+# somebody already wrote and matches it against the database's own record of
+# what has run. Neither is a mode of the other: they have different state
+# models, and the field that says so is `kind`.
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahMigration
+metadata:
+  name: shipments
+  namespace: ${NAMESPACE}
+spec:
+  target:
+    engine: PostgreSQL
+    # The same key the schema resource uses, because it is the same physical
+    # database. Two resources that name it are refused rather than serialized,
+    # unless each of them declares the realm shared -- so this demonstration
+    # resets the schema away first, and manages the database alone.
+    coordinationKey: demo/storefront/primary
+    urlFrom:
+      name: demo-database
+      key: url
+  artifact:
+    # A digest, not a tag: what was reviewed is what runs.
+    ociRef: oci://${REGISTRY}/migrations/demo@${DIGEST}
+    registryAuthFrom:
+      name: demo-registry
+      mode: Environment
+      usernameKey: username
+      passwordKey: password
+      registryKey: registry
+    # A migration's own policy. One that also accepted the schema artifact type
+    # would let a declared schema stand in for a prepared sequence.
+    verificationPolicyFrom:
+      name: demo-migration-verification-policy
+      key: policy.yaml
+    transport:
+      plainHTTP: true
+  policy:
+    # A migration artifact carries arbitrary SQL, and no analyzer classifies
+    # arbitrary SQL as safe, so the conservative setting is the default one.
+    apply: ${APPLY}
+    # The wait for the database's own migration lock, which is not the
+    # Kubernetes Lease.
+    lockTimeout: 30s
+  interval: ${INTERVAL}
+  suspend: ${SUSPEND}
+  execution:
+    activeDeadlineSeconds: 300
+    failureRetryInterval: 10s
+    connectTimeout: 30s

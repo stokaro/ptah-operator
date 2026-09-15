@@ -1,0 +1,148 @@
+id: versioned-migration
+title: Run a prepared migration sequence
+tagline: Numbered SQL files in an artifact, matched against the database's own record of what has run.
+learn: How the versioned workflow differs from the declarative one, and what the database is asked before anything executes.
+tags: [Lifecycle]
+
+reset:
+  - demo/bin/lab reset
+  # `ptah migrations push` is the product's own command, run the way a reader
+  # or a CI job runs it. The harness owns no migration-directory format: what
+  # publishes the artifact is the same Ptah the operator executes.
+  - |
+    eval "$(demo/bin/lab credentials)"
+    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+    ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:v1-$$" \
+      --migrations-dir demo/migrations --dir-format ptah --version "v1-$$" --plain-http \
+      | sed -n 's/^Digest: //p' > demo/.lab/migration-digest
+
+steps:
+  - note: The sequence is files. Numbered, with a direction, and written by a person.
+    run: ls demo/migrations
+    expect:
+      exit: 0
+      stdout_contains: [0000000001_create_shipments.up.sql, 0000000002_add_carrier.up.sql]
+
+  - note: The second one adds a column, fills it, and only then constrains it. Order is the point.
+    run: cat demo/migrations/0000000002_add_carrier.up.sql
+    expect:
+      exit: 0
+      stdout_contains: [ADD COLUMN carrier, "UPDATE shipments", SET NOT NULL]
+
+  - note: The resource names the sequence, the database, and what may be done about the difference.
+    run: APPLY=OnApproval demo/bin/lab manifest shipments "$(cat demo/.lab/migration-digest)" | tee demo/.lab/shipments.yaml
+    sync: publishing
+    expect:
+      exit: 0
+      stdout_contains: ["kind: PtahMigration", "apply: OnApproval"]
+
+  - note: Apply it. The operator resolves the artifact, verifies it, and reads the database's history.
+    run: kubectl apply -f demo/.lab/shipments.yaml
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: Two migrations pending against an empty history, and a plan waiting for a decision.
+    await:
+      kind: ptahmigration
+      name: shipments
+      timeout: 6m
+      condition:
+        type: ApprovalRequired
+        status: "True"
+        reason: AwaitingApproval
+    run: kubectl ptah migration shipments -n "$NAMESPACE"
+    sync: awaiting approval
+    expect:
+      exit: 0
+      # The order and the descriptions, and no statement anywhere: a published
+      # plan records versions and checksums, and the SQL stays in the artifact.
+      stdout_contains: [AwaitingApproval, "Current version:0", "Pending:        2", Create Shipments, Add Carrier]
+      stdout_absent: ["CREATE TABLE", "ALTER TABLE"]
+
+  - note: No migration has run. The revision table is there because reading a history needs it.
+    # Not an empty database: the read creates Ptah's bookkeeping table if it is
+    # absent, which is why the history of a database nobody has migrated is a
+    # readable fact rather than an error. What is absent is the table a
+    # migration would create.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\dt"
+    expect:
+      exit: 0
+      stdout_contains: [schema_migrations]
+      stdout_absent: [shipments]
+
+  - note: An approval names the migration, the plan and its fingerprint. The rest is read off the plan.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahmigration shipments -o json > demo/.lab/migration.json
+      kubectl -n "$NAMESPACE" get ptahmigrationplan \
+        "$(jq -r .status.plan.name demo/.lab/migration.json)" -o json > demo/.lab/migration-plan.json
+      jq -n --slurpfile migration demo/.lab/migration.json --slurpfile plan demo/.lab/migration-plan.json '
+        {
+          apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+          metadata: {name: "shipments-v1"},
+          spec: {
+            migrationRef: {name: $migration[0].metadata.name, uid: $migration[0].metadata.uid},
+            planRef:      {name: $plan[0].metadata.name,      uid: $plan[0].metadata.uid},
+            planFingerprint: $plan[0].spec.fingerprint
+          }
+        }' | tee demo/.lab/migration-approval.json | jq -c .spec
+    expect:
+      exit: 0
+      stdout_contains: ['"planFingerprint":"sha256:']
+
+  - note: Create it. The webhook stamps who you are and binds the history the plan was computed against.
+    run: kubectl -n "$NAMESPACE" create -f demo/.lab/migration-approval.json
+    sync: approved
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: The binding covers the history too, so an approval cannot outlive another run.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahmigrationapproval shipments-v1 -o json \
+        | jq -r '.spec | {approver: .approver.username, historyFingerprint, artifactDigest, ptahVersion}'
+    expect:
+      exit: 0
+      stdout_contains: [approver, historyFingerprint, artifactDigest]
+      resource:
+        kind: ptahmigrationapproval
+        name: shipments-v1
+        fields:
+          - path: spec.approver.username
+            notEmpty: true
+          - path: spec.historyFingerprint
+            notEmpty: true
+          - path: spec.artifactDigest
+            notEmpty: true
+          - path: spec.mutationRequestUID
+            notEmpty: true
+
+  - note: With the decision recorded, the sequence runs and the history is read back to confirm it.
+    await:
+      kind: ptahmigration
+      name: shipments
+      timeout: 6m
+      condition:
+        type: Ready
+        status: "True"
+        reason: HistoryMatched
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\d shipments"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [carrier, "not null"]
+
+  - note: The verdict is the database's, read from the revision table and not from the Job's exit code.
+    run: kubectl ptah migration shipments -n "$NAMESPACE"
+    expect:
+      exit: 0
+      stdout_contains: [InSync, "Current version:2", "Last run:       Applied", "Run applied:    1, 2"]
+      stdout_absent: ["CREATE TABLE", "ALTER TABLE"]
+
+  - note: Reconciling again runs nothing. The history already holds both, so there is nothing pending.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahmigration shipments -o json \
+        | jq -r '"pending: \(.status.history.pendingCount)", "applied: \(.status.history.appliedCount)", "plan: \(.status.plan // "none")"'
+    expect:
+      exit: 0
+      stdout_contains: ["pending: 0", "applied: 2", "plan: none"]

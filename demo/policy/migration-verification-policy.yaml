@@ -1,0 +1,9 @@
+# What the operator will accept as a migration directory.
+#
+# A migration needs a policy of its own. One that also listed the schema type
+# would let a declared schema stand in for a prepared sequence at the same
+# reference, and the two are not interchangeable: a schema says what the
+# database should look like, a migration says what to run and in what order.
+version: 1
+artifact_types:
+  - application/vnd.stokaro.ptah.migrations.v1

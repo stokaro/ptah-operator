@@ -151,19 +151,32 @@ lab_prepare() {
 	# not: a policy that could be edited after an artifact was verified against
 	# it is a policy that decided nothing. Immutable also means it cannot be
 	# applied over, so a changed policy is replaced rather than patched.
+	lab_apply_policy demo-verification-policy verification-policy.yaml
+	lab_apply_policy demo-migration-verification-policy migration-verification-policy.yaml
+}
+
+# lab_apply_policy writes one immutable verification policy ConfigMap.
+#
+# Two of them, because a migration directory and a declared schema are
+# different artifact types and a policy that accepted both would let either
+# stand in for the other at the same reference.
+lab_apply_policy() {
+	lab_policy_name=$1
+	lab_policy_file=$2
 	jq -n \
 		--arg namespace "$E2E_TEST_NAMESPACE" \
-		--rawfile policy "$LAB_ROOT/demo/policy/verification-policy.yaml" '
+		--arg name "$lab_policy_name" \
+		--rawfile policy "$LAB_ROOT/demo/policy/$lab_policy_file" '
     {
       apiVersion: "v1", kind: "ConfigMap",
-      metadata: {namespace: $namespace, name: "demo-verification-policy"},
+      metadata: {namespace: $namespace, name: $name},
       immutable: true,
       data: {"policy.yaml": $policy}
-    }' >"$LAB_WORK/verification-policy.json"
-	if ! k apply -f "$LAB_WORK/verification-policy.json" >/dev/null 2>&1; then
-		k -n "$E2E_TEST_NAMESPACE" delete configmap demo-verification-policy \
+    }' >"$LAB_WORK/$lab_policy_name.json"
+	if ! k apply -f "$LAB_WORK/$lab_policy_name.json" >/dev/null 2>&1; then
+		k -n "$E2E_TEST_NAMESPACE" delete configmap "$lab_policy_name" \
 			--ignore-not-found >/dev/null
-		k apply -f "$LAB_WORK/verification-policy.json" >/dev/null
+		k apply -f "$LAB_WORK/$lab_policy_name.json" >/dev/null
 	fi
 }
 
@@ -193,12 +206,27 @@ lab_reset() {
 		--timeout=60s >/dev/null
 	k -n "$E2E_TEST_NAMESPACE" delete ptahschemaplan --all --ignore-not-found \
 		--timeout=60s >/dev/null
+	# The migration kinds go with them. A PtahMigration left behind claims the
+	# same database the next scenario's PtahSchema does, and the operator
+	# refuses a database more than one resource claims -- so a leftover would
+	# not corrupt the next scenario, it would block it.
+	k -n "$E2E_TEST_NAMESPACE" delete ptahmigration --all --ignore-not-found \
+		--timeout=120s >/dev/null
+	k -n "$E2E_TEST_NAMESPACE" delete ptahmigrationapproval --all --ignore-not-found \
+		--timeout=60s >/dev/null
+	k -n "$E2E_TEST_NAMESPACE" delete ptahmigrationplan --all --ignore-not-found \
+		--timeout=60s >/dev/null
 	# Every scenario starts from an empty database, so a drop that did not run
 	# is not a detail to carry on from: the next scenario would be recorded
 	# against whatever the last one left, and the failure would surface as a
 	# plan nobody can explain several steps later.
+	# The revision table goes too. A migration history the next scenario did not
+	# create is a history it would continue from, and the versioned workflow
+	# reads that table before it reads anything else.
 	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-psql -- \
-		psql -qAt -c "DROP TABLE IF EXISTS orders, customers CASCADE" >/dev/null ||
+		psql -qAt -c "DROP TABLE IF EXISTS orders, customers, shipments CASCADE;
+		              DROP TABLE IF EXISTS schema_migrations CASCADE;
+		              DROP SCHEMA IF EXISTS atlas_schema_revisions CASCADE" >/dev/null ||
 		lab_fail "could not empty the demonstration database"
 }
 
