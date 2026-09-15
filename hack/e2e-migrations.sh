@@ -468,8 +468,9 @@ migration_widget_column_count() {
 # the same count, and a count compared across a deletion accuses the wrong
 # thing.
 migration_apply_job_uids() {
+	apply_job_resource=${1:-$MIGRATION_NAME}
 	k -n "$TEST_NAMESPACE" get jobs \
-		-l "operator.ptah.run/migration=${MIGRATION_NAME},operator.ptah.run/operation=apply" \
+		-l "operator.ptah.run/migration=${apply_job_resource},operator.ptah.run/operation=apply" \
 		-o json | jq -r '.items[]?.metadata.uid' | LC_ALL=C sort
 }
 
@@ -479,9 +480,10 @@ migration_apply_job_uids() {
 assert_no_new_apply_job() {
 	recorded_applies=$1
 	dispatch_description=$2
-	migration_apply_job_uids >"$WORK_DIR/applies-now.txt"
+	dispatch_resource=${3:-$MIGRATION_NAME}
+	migration_apply_job_uids "$dispatch_resource" >"$WORK_DIR/applies-now.txt"
 	if grep -vxF -f "$recorded_applies" "$WORK_DIR/applies-now.txt" | grep -q .; then
-		fail "$MIGRATION_NAME dispatched another run $dispatch_description"
+		fail "$dispatch_resource dispatched another run $dispatch_description"
 	fi
 }
 
@@ -1535,8 +1537,7 @@ approve_branch_plan() {
 assert_late_branch_migration_blocks() {
 	printf 'e2e migrations: publishing a %s migration numbered below the applied version\n' \
 		"$ENGINE_KIND" >&2
-	branch_jobs_before=$(k -n "$TEST_NAMESPACE" get jobs \
-		-l "operator.ptah.run/migration=${BRANCH_MIGRATION}" -o json | jq '.items | length')
+	migration_apply_job_uids "$BRANCH_MIGRATION" >"$WORK_DIR/branch-applies.txt"
 	publish_migrations "branch-late" "$BRANCH_LATE_FIXTURE_DIR" "$BRANCH_REFERENCE"
 
 	branch_blocked_deadline=$(deadline_from_now)
@@ -1569,10 +1570,8 @@ assert_late_branch_migration_blocks() {
 	[ "$(k -n "$TEST_NAMESPACE" get ptahmigrationplan \
 		-l "operator.ptah.run/migration=${BRANCH_MIGRATION}" -o json | jq '.items | length')" -eq 1 ] ||
 		fail "$BRANCH_MIGRATION published a plan for a sequence the executor refuses"
-	branch_jobs_after=$(k -n "$TEST_NAMESPACE" get jobs \
-		-l "operator.ptah.run/migration=${BRANCH_MIGRATION}" -o json | jq '.items | length')
-	[ "$branch_jobs_after" -ge "$branch_jobs_before" ] ||
-		fail "$BRANCH_MIGRATION lost Jobs while refusing"
+	assert_no_new_apply_job "$WORK_DIR/branch-applies.txt" \
+		"for a migration it refuses to plan" "$BRANCH_MIGRATION"
 	[ "$(migration_query "SELECT count(*) FROM information_schema.columns WHERE table_name = 'e2e_branch_widgets' AND column_name = 'label'" "$BRANCH_DATABASE")" = 0 ] ||
 		fail "the out-of-order migration reached the database"
 	printf 'e2e migrations: PASS %s refuses a migration numbered below the applied version\n' \
@@ -1758,12 +1757,6 @@ adopt_revision_tables() {
 	esac
 }
 
-adopt_apply_jobs() {
-	k -n "$TEST_NAMESPACE" get jobs \
-		-l "operator.ptah.run/migration=${ADOPT_MIGRATION},operator.ptah.run/operation=apply" \
-		-o json | jq '.items | length'
-}
-
 create_adopt_migration_resource() {
 	jq -n \
 		--arg namespace "$TEST_NAMESPACE" \
@@ -1830,13 +1823,14 @@ assert_existing_schema_is_not_adopted() {
       (.status.history.dirty // false) == false and
       (.status.conditions | any(
         .type == "ApprovalRequired" and .status == "True" and .reason == "AwaitingApproval")) and
-      (.status.conditions | any(.type == "Ready" and .status == "False"))
+      (.status.conditions | any(.type == "Ready" and .status == "False")) and
+      (.status | has("lastRun") | not)
     ' "$STATUS_FILE" >/dev/null ||
 		fail "$ADOPT_MIGRATION did not hold the whole sequence at the approval gate"
 	[ "$(adopt_revision_tables)" = 0 ] ||
 		fail "the operator wrote a revision table into a database it was never approved to migrate"
-	[ "$(adopt_apply_jobs)" = 0 ] ||
-		fail "the operator ran an Apply against a database that already carries the schema"
+	assert_no_new_apply_job "$WORK_DIR/adopt-applies.txt" \
+		"against a database that already carries the schema" "$ADOPT_MIGRATION"
 	printf 'e2e migrations: %s held an existing schema at the approval gate and recorded nothing\n' \
 		"$ENGINE_KIND" >&2
 }
@@ -1963,11 +1957,12 @@ assert_adopted_history_matches() {
       (.status.conditions | any(
         .type == "Ready" and .status == "True" and .reason == "HistoryMatched")) and
       (.status.conditions | any(
-        .type == "Blocked" and .status == "False" and .reason == "HistoryMatched"))
+        .type == "Blocked" and .status == "False" and .reason == "HistoryMatched")) and
+      (.status | has("lastRun") | not)
     ' "$STATUS_FILE" >/dev/null ||
 		fail "$ADOPT_MIGRATION did not settle on the history a person recorded"
-	[ "$(adopt_apply_jobs)" = 0 ] ||
-		fail "the operator ran an Apply after a person adopted the database"
+	assert_no_new_apply_job "$WORK_DIR/adopt-applies.txt" \
+		"after a person adopted the database" "$ADOPT_MIGRATION"
 	[ "$(migration_query "SELECT color FROM e2e_migration_widgets WHERE id = 1" "$ADOPT_DATABASE")" = blue ] ||
 		fail "the adopted database lost the rows its hand-built schema carried"
 }
@@ -1976,6 +1971,11 @@ assert_adopted_history_matches() {
 # empty revision table": no implicit bootstrap or baseline, and an adoption path
 # a person can take.
 run_existing_schema_adoption_proof() {
+	# Recorded before the resource exists, so the set it is compared against is
+	# the empty one. `status.lastRun` is the durable half of the same statement:
+	# a Job carries a five-minute TTL and an Apply that ran and was collected
+	# would leave no Job to find, where the run it recorded never expires.
+	: >"$WORK_DIR/adopt-applies.txt"
 	create_adopt_databases
 	build_adopt_schema_without_the_operator
 	publish_migrations "adopt" "$ADOPT_FIXTURE_DIR" "$ADOPT_REFERENCE"
