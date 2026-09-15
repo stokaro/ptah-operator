@@ -4553,6 +4553,13 @@ func setPlanPolicyStatus(schema *operatorv1alpha1.PtahSchema, plan *operatorv1al
 	}
 }
 
+// PolicyFingerprint is the policy binding a plan records, exported for the
+// end-to-end fixture that stands up a plan this controller must accept. A
+// second spelling of it there would be a fixture that agrees with nothing.
+func PolicyFingerprint(schema *operatorv1alpha1.PtahSchema) (string, error) {
+	return policyFingerprint(schema)
+}
+
 func policyFingerprint(schema *operatorv1alpha1.PtahSchema) (string, error) {
 	return fingerprint.DigestCanonicalJSON(struct {
 		Engine           operatorv1alpha1.DatabaseEngine `json:"engine"`

@@ -3658,6 +3658,10 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 				exactSourceLine("next-release upgrade proof implementation", `run_next_release_upgrade_proof() {`),
 				exactSourceLineSequence("successor read-only Job dispatch before the late activation failure", []string{
 					`dispatch_read_only_job_fixture`,
+					`start_running_apply_barrier`,
+					`prepare_running_apply_fixture`,
+					`start_running_apply_fixture`,
+					`stage_predecessor_apply_job_uid_gap_while_running`,
 					`prove_late_activation_failure_recovery \`,
 					`"$current_release_sequence" "$next_release_sequence" "$CURRENT_RELEASE_CONTROLLER_IMAGE"`,
 					`set_pod_webhook_failure_policy Fail Ignore`,
@@ -3673,10 +3677,18 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 					`fail "late activation recovery did not resume the exact failed Helm revision"`,
 				}),
 				exactSourceLine("same-candidate recovery exact Helm retry", `retry_same_candidate_with_diagnostics`),
-				exactSourceLineSequence("successor read-only Job cleanup after activation", []string{
+				// The running Apply is read after the upgrade completed, and the
+				// barrier is released only once exclusivity has been proven: an
+				// Apply released earlier would have finished on its own, and the
+				// proof would be about an Apply that was never interrupted.
+				exactSourceLineSequence("successor read-only Job cleanup and running Apply retirement after activation", []string{
 					`wait_runtime_ready`,
 					`wait_for_read_only_job_cleanup`,
 					`quiesce_read_only_job_schema`,
+					`assert_predecessor_apply_remains_exclusive_while_running`,
+					`release_running_apply_barrier`,
+					`wait_for_predecessor_apply_job_terminal`,
+					`wait_for_predecessor_apply_job_cleanup`,
 					`after_revision=$(helm_e2e status "$E2E_HELM_RELEASE" \`,
 				}),
 				exactSourceLineSequence("same-candidate recovery exactly one retry revision", []string{
