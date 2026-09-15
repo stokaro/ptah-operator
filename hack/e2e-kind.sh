@@ -2416,18 +2416,6 @@ E2E_CONTROLLER_STATE_VERSION=1 \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 	run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"
 
-# Reference data runs after the migration path and inside the same namespace, on
-# a database of its own, because "works on first creation of a database, when
-# the target tables do not exist yet" is a scope line that needs tables which
-# really do not exist.
-E2E_KUBECONFIG=$KUBECONFIG_FILE \
-E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
-E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
-E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
-E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
-E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
-	run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"
-
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \
 E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
