@@ -139,6 +139,12 @@ func TestMigrationApplyEvidenceDecidesWhatHappensNext(t *testing.T) {
 		report      *dataplane.MigrationRunReport
 		wantOutcome operatorv1alpha1.MigrationRunOutcome
 		wantPhase   operatorv1alpha1.MigrationPhase
+		// wantProgressing separates a run that is still being confirmed from one
+		// that has stopped and may not be retried. Reporting progress on the
+		// second says the opposite of what Blocked says on the same object
+		// (stokaro/ptah-operator#94).
+		wantProgressing       metav1.ConditionStatus
+		wantProgressingReason operatorv1alpha1.ConditionReason
 	}{
 		{
 			name: "the database recorded every planned migration",
@@ -149,8 +155,10 @@ func TestMigrationApplyEvidenceDecidesWhatHappensNext(t *testing.T) {
 				Planned:         []int64{3},
 				Applied:         []int64{3},
 			},
-			wantOutcome: operatorv1alpha1.MigrationRunOutcomeApplied,
-			wantPhase:   operatorv1alpha1.MigrationPhaseVerifyingHistory,
+			wantOutcome:           operatorv1alpha1.MigrationRunOutcomeApplied,
+			wantPhase:             operatorv1alpha1.MigrationPhaseVerifyingHistory,
+			wantProgressing:       metav1.ConditionTrue,
+			wantProgressingReason: operatorv1alpha1.ReasonVerifyingConvergence,
 		},
 		{
 			name: "a migration failed and committed nothing",
@@ -160,8 +168,10 @@ func TestMigrationApplyEvidenceDecidesWhatHappensNext(t *testing.T) {
 				Outcome:         dataplane.MigrationOutcomeFailed,
 				Planned:         []int64{3},
 			},
-			wantOutcome: operatorv1alpha1.MigrationRunOutcomeFailed,
-			wantPhase:   operatorv1alpha1.MigrationPhaseVerifyingHistory,
+			wantOutcome:           operatorv1alpha1.MigrationRunOutcomeFailed,
+			wantPhase:             operatorv1alpha1.MigrationPhaseVerifyingHistory,
+			wantProgressing:       metav1.ConditionTrue,
+			wantProgressingReason: operatorv1alpha1.ReasonVerifyingConvergence,
 		},
 		{
 			name: "a migration committed some of its statements",
@@ -171,14 +181,18 @@ func TestMigrationApplyEvidenceDecidesWhatHappensNext(t *testing.T) {
 				Outcome:         dataplane.MigrationOutcomePartial,
 				Planned:         []int64{3},
 			},
-			wantOutcome: operatorv1alpha1.MigrationRunOutcomePartial,
-			wantPhase:   operatorv1alpha1.MigrationPhaseBlocked,
+			wantOutcome:           operatorv1alpha1.MigrationRunOutcomePartial,
+			wantPhase:             operatorv1alpha1.MigrationPhaseBlocked,
+			wantProgressing:       metav1.ConditionFalse,
+			wantProgressingReason: operatorv1alpha1.ReasonApplyOutcomeUnknown,
 		},
 		{
-			name:        "the run left no readable account",
-			report:      nil,
-			wantOutcome: operatorv1alpha1.MigrationRunOutcomeUnknown,
-			wantPhase:   operatorv1alpha1.MigrationPhaseBlocked,
+			name:                  "the run left no readable account",
+			report:                nil,
+			wantOutcome:           operatorv1alpha1.MigrationRunOutcomeUnknown,
+			wantPhase:             operatorv1alpha1.MigrationPhaseBlocked,
+			wantProgressing:       metav1.ConditionFalse,
+			wantProgressingReason: operatorv1alpha1.ReasonApplyOutcomeUnknown,
 		},
 	}
 
@@ -233,6 +247,13 @@ func TestMigrationApplyEvidenceDecidesWhatHappensNext(t *testing.T) {
 			if test.wantPhase == operatorv1alpha1.MigrationPhaseBlocked &&
 				!meta.IsStatusConditionTrue(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked) {
 				t.Fatal("an unrecoverable outcome did not block the resource")
+			}
+			progressing := meta.FindStatusCondition(
+				actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+			if progressing == nil || progressing.Status != test.wantProgressing ||
+				progressing.Reason != string(test.wantProgressingReason) {
+				t.Fatalf("Progressing condition = %#v, want %s/%s",
+					progressing, test.wantProgressing, test.wantProgressingReason)
 			}
 			// Every terminal outcome hands the database back, including the two
 			// that stop the resource: a run that is over holds nothing, and the

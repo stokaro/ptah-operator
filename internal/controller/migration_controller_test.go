@@ -151,6 +151,12 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 		// wantOutOfOrder is the exact set the history publishes, because which
 		// migration arrived late is what a person decides from.
 		wantOutOfOrder []int64
+		// wantProgressing is what a dashboard reads to decide whether the
+		// resource is still moving. Every row states it, because the defect
+		// this covers was a branch that simply left the condition alone
+		// (stokaro/ptah-operator#94).
+		wantProgressing       metav1.ConditionStatus
+		wantProgressingReason operatorv1alpha1.ConditionReason
 	}{
 		{
 			name: "every migration is applied",
@@ -163,9 +169,11 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
 				},
 			},
-			wantPhase:  operatorv1alpha1.MigrationPhaseInSync,
-			wantReady:  metav1.ConditionTrue,
-			wantReason: operatorv1alpha1.ReasonHistoryMatched,
+			wantPhase:             operatorv1alpha1.MigrationPhaseInSync,
+			wantReady:             metav1.ConditionTrue,
+			wantReason:            operatorv1alpha1.ReasonHistoryMatched,
+			wantProgressing:       metav1.ConditionFalse,
+			wantProgressingReason: operatorv1alpha1.ReasonHistoryMatched,
 		},
 		{
 			name: "the artifact carries migrations the database does not",
@@ -179,10 +187,12 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStatePending},
 				},
 			},
-			wantPhase:  operatorv1alpha1.MigrationPhaseAwaitingApproval,
-			wantReady:  metav1.ConditionFalse,
-			wantReason: operatorv1alpha1.ReasonAwaitingApproval,
-			wantPlan:   true,
+			wantPhase:             operatorv1alpha1.MigrationPhaseAwaitingApproval,
+			wantReady:             metav1.ConditionFalse,
+			wantReason:            operatorv1alpha1.ReasonAwaitingApproval,
+			wantPlan:              true,
+			wantProgressing:       metav1.ConditionFalse,
+			wantProgressingReason: operatorv1alpha1.ReasonAwaitingApproval,
 		},
 		{
 			name: "an interrupted run left a dirty row",
@@ -196,9 +206,11 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 				},
 				DirtyRevision: &dataplane.MigrationDirty{Version: 3, Applied: 2, Total: 5},
 			},
-			wantPhase:  operatorv1alpha1.MigrationPhaseBlocked,
-			wantReady:  metav1.ConditionFalse,
-			wantReason: operatorv1alpha1.ReasonHistoryDirty,
+			wantPhase:             operatorv1alpha1.MigrationPhaseBlocked,
+			wantReady:             metav1.ConditionFalse,
+			wantReason:            operatorv1alpha1.ReasonHistoryDirty,
+			wantProgressing:       metav1.ConditionFalse,
+			wantProgressingReason: operatorv1alpha1.ReasonHistoryDirty,
 		},
 		{
 			name: "an applied migration was modified after it ran",
@@ -211,9 +223,11 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
 				},
 			},
-			wantPhase:  operatorv1alpha1.MigrationPhaseBlocked,
-			wantReady:  metav1.ConditionFalse,
-			wantReason: operatorv1alpha1.ReasonHistoryModified,
+			wantPhase:             operatorv1alpha1.MigrationPhaseBlocked,
+			wantReady:             metav1.ConditionFalse,
+			wantReason:            operatorv1alpha1.ReasonHistoryModified,
+			wantProgressing:       metav1.ConditionFalse,
+			wantProgressingReason: operatorv1alpha1.ReasonHistoryModified,
 		},
 		{
 			// Ptah executes in linear order and refuses the whole run while a
@@ -230,10 +244,12 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStateApplied},
 				},
 			},
-			wantPhase:      operatorv1alpha1.MigrationPhaseBlocked,
-			wantReady:      metav1.ConditionFalse,
-			wantReason:     operatorv1alpha1.ReasonHistoryOutOfOrder,
-			wantOutOfOrder: []int64{2},
+			wantPhase:             operatorv1alpha1.MigrationPhaseBlocked,
+			wantReady:             metav1.ConditionFalse,
+			wantReason:            operatorv1alpha1.ReasonHistoryOutOfOrder,
+			wantOutOfOrder:        []int64{2},
+			wantProgressing:       metav1.ConditionFalse,
+			wantProgressingReason: operatorv1alpha1.ReasonHistoryOutOfOrder,
 		},
 		{
 			// Nothing here is pending, modified or dirty, because every one of
@@ -248,9 +264,11 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 					{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
 				},
 			},
-			wantPhase:  operatorv1alpha1.MigrationPhaseBlocked,
-			wantReady:  metav1.ConditionFalse,
-			wantReason: operatorv1alpha1.ReasonHistoryAhead,
+			wantPhase:             operatorv1alpha1.MigrationPhaseBlocked,
+			wantReady:             metav1.ConditionFalse,
+			wantReason:            operatorv1alpha1.ReasonHistoryAhead,
+			wantProgressing:       metav1.ConditionFalse,
+			wantProgressingReason: operatorv1alpha1.ReasonHistoryAhead,
 		},
 	}
 
@@ -297,6 +315,13 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			if ready == nil || ready.Status != test.wantReady || ready.Reason != string(test.wantReason) {
 				t.Fatalf("Ready condition = %#v, want %s/%s", ready, test.wantReady, test.wantReason)
 			}
+			progressing := meta.FindStatusCondition(
+				actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+			if progressing == nil || progressing.Status != test.wantProgressing ||
+				progressing.Reason != string(test.wantProgressingReason) {
+				t.Fatalf("Progressing condition = %#v, want %s/%s",
+					progressing, test.wantProgressing, test.wantProgressingReason)
+			}
 			if actual.Status.NextReconciliationTime == nil {
 				t.Fatal("a settled migration scheduled no next reconciliation")
 			}
@@ -328,6 +353,140 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			}
 			if plan.Spec.TargetIdentityDigest != testDigest || plan.Spec.ArtifactDigest != testDigest {
 				t.Fatalf("plan bindings = %#v", plan.Spec)
+			}
+		})
+	}
+}
+
+// TestMigrationPlanningReportsWorkBeforeThePlanIsPublished covers the state
+// between the two status writes a history result produces. The resource is
+// Planning, it carries no plan yet, and the operator is about to publish one:
+// the condition has to say that rather than keep naming the history read that
+// already finished (stokaro/ptah-operator#94).
+func TestMigrationPlanningReportsWorkBeforeThePlanIsPublished(t *testing.T) {
+	t.Parallel()
+
+	migration := migrationFixture()
+	migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+	setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionTrue,
+		operatorv1alpha1.ReasonOperationInProgress, "History operation is in progress")
+	report := dataplane.MigrationStatusReport{
+		ContractVersion:   dataplane.SupportedMigrationStatusContract,
+		CurrentVersion:    2,
+		TotalMigrations:   3,
+		HasPendingChanges: true,
+		Migrations: []dataplane.MigrationRecord{
+			{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+			{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStatePending},
+		},
+	}
+
+	reconciler := &MigrationReconciler{}
+	if err := reconciler.recordMigrationHistory(migration, report, testDigest); err != nil {
+		t.Fatalf("recordMigrationHistory() error = %v", err)
+	}
+
+	if migration.Status.Phase != operatorv1alpha1.MigrationPhasePlanning {
+		t.Fatalf("phase = %q, want %q", migration.Status.Phase, operatorv1alpha1.MigrationPhasePlanning)
+	}
+	if migration.Status.Plan != nil {
+		t.Fatalf("a plan was recorded before one was published: %#v", migration.Status.Plan)
+	}
+	progressing := meta.FindStatusCondition(
+		migration.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+	if progressing == nil || progressing.Status != metav1.ConditionTrue ||
+		progressing.Reason != string(operatorv1alpha1.ReasonMigrationsPending) {
+		t.Fatalf("Progressing condition = %#v, want True/%s",
+			progressing, operatorv1alpha1.ReasonMigrationsPending)
+	}
+}
+
+// TestMigrationApplyPolicySaysWhetherAnythingIsComing measures what a dashboard
+// reads once a plan is published. Only one of the three policies means an Apply
+// is next; under the other two the resource has stopped where a person has to
+// act, and reporting progress there says the opposite of what Ready says on the
+// same object (stokaro/ptah-operator#94).
+func TestMigrationApplyPolicySaysWhetherAnythingIsComing(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name                  string
+		policy                operatorv1alpha1.ApplyPolicy
+		wantPhase             operatorv1alpha1.MigrationPhase
+		wantProgressing       metav1.ConditionStatus
+		wantProgressingReason operatorv1alpha1.ConditionReason
+	}{
+		{
+			name:                  "an approval a person has to write",
+			policy:                operatorv1alpha1.ApplyPolicyOnApproval,
+			wantPhase:             operatorv1alpha1.MigrationPhaseAwaitingApproval,
+			wantProgressing:       metav1.ConditionFalse,
+			wantProgressingReason: operatorv1alpha1.ReasonAwaitingApproval,
+		},
+		{
+			name:                  "applying is disabled",
+			policy:                operatorv1alpha1.ApplyPolicyNever,
+			wantPhase:             operatorv1alpha1.MigrationPhasePlanning,
+			wantProgressing:       metav1.ConditionFalse,
+			wantProgressingReason: operatorv1alpha1.ReasonApplyDisabled,
+		},
+		{
+			name:                  "an apply is what happens next",
+			policy:                operatorv1alpha1.ApplyPolicyAlways,
+			wantPhase:             operatorv1alpha1.MigrationPhasePlanning,
+			wantProgressing:       metav1.ConditionTrue,
+			wantProgressingReason: operatorv1alpha1.ReasonApplyPending,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			migration := migrationFixture()
+			migration.Spec.Policy.Apply = test.policy
+			migration.Status.ExecutionBinding = migrationExecutionBinding()
+			migration.Status.Artifact = resolvedMigrationArtifact()
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			migration.Finalizers = []string{migrationOperationFinalizer}
+			operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			report := dataplane.MigrationStatusReport{
+				ContractVersion:   dataplane.SupportedMigrationStatusContract,
+				CurrentVersion:    2,
+				TotalMigrations:   3,
+				HasPendingChanges: true,
+				Migrations: []dataplane.MigrationRecord{
+					{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStatePending},
+				},
+			}
+			frame := migrationFrame(t, runner.Result{
+				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
+				OperationID: operation.ID, ChildExitCode: 0,
+				CoordinationDigest:   operation.CoordinationDigest,
+				TargetIdentityDigest: testDigest,
+				MigrationHistory:     &report,
+			})
+			reconciler, api := fakeMigrationReconciler(
+				t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap(),
+			)
+
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			actual := readMigration(t, api, migration)
+			if actual.Status.Phase != test.wantPhase {
+				t.Fatalf("phase = %q, want %q (conditions %#v)", actual.Status.Phase, test.wantPhase, actual.Status.Conditions)
+			}
+			if actual.Status.Plan == nil {
+				t.Fatal("a pending sequence published no plan to decide about")
+			}
+			progressing := meta.FindStatusCondition(
+				actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
+			if progressing == nil || progressing.Status != test.wantProgressing ||
+				progressing.Reason != string(test.wantProgressingReason) {
+				t.Fatalf("Progressing condition = %#v, want %s/%s",
+					progressing, test.wantProgressing, test.wantProgressingReason)
 			}
 		})
 	}
