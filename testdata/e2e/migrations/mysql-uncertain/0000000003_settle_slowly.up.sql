@@ -1,0 +1,11 @@
+-- A third migration that takes long enough to be interrupted on purpose.
+--
+-- The row this fixture serves is the one where a run commits SQL and the
+-- controller never gets to say so, and the only honest way to produce it is to
+-- remove the run's evidence while the run is still going. A sequence that
+-- finishes in a second leaves no window: the controller would read the result
+-- before anything could take it away, and the proof would be a race.
+--
+-- Migrations 1 and 2 are committed by the time this one starts, which is what
+-- makes the interruption a failure after the SQL rather than before it.
+SELECT SLEEP(45);

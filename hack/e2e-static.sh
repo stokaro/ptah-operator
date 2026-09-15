@@ -1244,6 +1244,12 @@ for migration_marker in \
 	'kept managing a database a PtahSchema also claims' \
 	'was allowed to manage a database a PtahMigration also claims' \
 	'a resource that runs nothing claims nothing' \
+	'run_uncertain_apply_proof' \
+	'wait_for_uncertain_commit' \
+	'did not stop on a run whose evidence it could not read' \
+	'did not leave the rows its first migration inserted' \
+	'after one whose evidence it could not read' \
+	'were doubled, so a run was replayed over what it had already committed' \
 	'run_checkpoint_bootstrap_proof' \
 	'assert_checkpoint_gate' \
 	'did not hold a checkpoint bootstrap at the approval gate' \
@@ -1331,6 +1337,24 @@ done
 # recognized by its file name and by nothing else, so the name is pinned here:
 # a rename turns the row into an ordinary four-migration replay that would pass
 # every assertion below while proving nothing about checkpoints.
+# The uncertain fixtures are two migrations and a third that sleeps. The sleep
+# is the window the row needs: without it the run finishes before its evidence
+# can be taken away, and the proof becomes a race that passes by luck.
+for migration_engine in postgresql-uncertain mysql-uncertain; do
+	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
+	[ "$migration_fixture_count" -eq 6 ] || {
+		printf 'e2e static: the %s migration fixtures are %s files, and the proof needs two committed migrations and one that is still running\n' \
+			"$migration_engine" "$migration_fixture_count" >&2
+		exit 1
+	}
+	grep -Eq 'pg_sleep|SLEEP' \
+		"$ROOT_DIR/testdata/e2e/migrations/${migration_engine}/0000000003_settle_slowly.up.sql" || {
+		printf 'e2e static: the %s interrupted migration does not wait, so the run would finish before its evidence could be removed\n' \
+			"$migration_engine" >&2
+		exit 1
+	}
+done
+
 for migration_engine in postgresql-checkpoint mysql-checkpoint; do
 	migration_fixture_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${migration_engine}/*.sql" | grep -c . || true)
 	[ "$migration_fixture_count" -eq 8 ] || {

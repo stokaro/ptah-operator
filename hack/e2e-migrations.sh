@@ -112,6 +112,7 @@ ADOPT_DB_URL_FILE=$WORK_DIR/adopt-database.url
 ADOPT_SHADOW_DB_URL_FILE=$WORK_DIR/adopt-shadow-database.url
 CHECKPOINT_DB_URL_FILE=$WORK_DIR/checkpoint-database.url
 CHECKPOINT_PLAN_FILE=$WORK_DIR/checkpoint-plan.json
+UNCERTAIN_DB_URL_FILE=$WORK_DIR/uncertain-database.url
 ADMISSION_ERROR_FILE=$WORK_DIR/admission-error.txt
 STATUS_FILE=$WORK_DIR/migration-status.json
 : >"$JOB_RECORDS_FILE"
@@ -230,6 +231,12 @@ select_engine() {
 	CHECKPOINT_COORDINATION_KEY="e2e/checkpoint/${ENGINE}"
 	CHECKPOINT_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-checkpoint:stable"
 	CHECKPOINT_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-checkpoint"
+	UNCERTAIN_DATABASE=ptah_e2e_uncertain
+	UNCERTAIN_DB_SECRET="e2e-${ENGINE}-uncertain-db"
+	UNCERTAIN_MIGRATION="e2e-uncertain-${ENGINE}"
+	UNCERTAIN_COORDINATION_KEY="e2e/uncertain/${ENGINE}"
+	UNCERTAIN_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-uncertain:stable"
+	UNCERTAIN_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-uncertain"
 	# The adoption row reads the artifact this engine already publishes. A
 	# second copy of the same three migrations would be a second thing to keep
 	# in step with the schema the proof builds out of them by hand.
@@ -246,6 +253,8 @@ select_engine() {
 		fail "migration fixtures are missing: $MIGRATION_OLDER_FIXTURE_DIR"
 	[ -d "$CHECKPOINT_FIXTURE_DIR" ] ||
 		fail "migration fixtures are missing: $CHECKPOINT_FIXTURE_DIR"
+	[ -d "$UNCERTAIN_FIXTURE_DIR" ] ||
+		fail "migration fixtures are missing: $UNCERTAIN_FIXTURE_DIR"
 
 	# The password is read back from the Secret the data plane created rather
 	# than derived a second time here. A second derivation is a second
@@ -2282,6 +2291,207 @@ run_checkpoint_bootstrap_proof() {
 		"$ENGINE_KIND" >&2
 }
 
+# The row the matrix calls "failure after the SQL and before the status update".
+#
+# A run that committed and a controller that never got to say so. The evidence
+# is removed while the run is still going, because a sequence that finishes in a
+# second leaves no window: the controller would read the result before anything
+# could take it away, and the proof would be a race. The third migration of this
+# artifact sleeps for that reason, and the first two are committed by the time
+# it starts, which is what makes the interruption a failure after the SQL.
+#
+# What the operator owes here is not a retry. Re-running the file would run its
+# statements twice, and the first migration inserts rows, so a blind replay is
+# visible as duplicate-key failure or as doubled data. The answer is to stop and
+# say the outcome is unknown.
+create_uncertain_database() {
+	create_database "$UNCERTAIN_DATABASE"
+	database_url "$UNCERTAIN_DATABASE" >"$UNCERTAIN_DB_URL_FILE"
+	chmod 600 "$UNCERTAIN_DB_URL_FILE"
+	{
+		cat "$UNCERTAIN_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$UNCERTAIN_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$UNCERTAIN_DATABASE" \
+		--rawfile url "$UNCERTAIN_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# Always, because the row is about a run that started and not about the gate
+# that authorizes one. An approval here would only add a step between the
+# publish and the interruption.
+create_uncertain_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$UNCERTAIN_MIGRATION" \
+		--arg secret "$UNCERTAIN_DB_SECRET" \
+		--arg reference "$UNCERTAIN_REFERENCE" \
+		--arg coordinationKey "$UNCERTAIN_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg interval "$INTERVAL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Always", lockTimeout: "30s"},
+        interval: $interval,
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+uncertain_status() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$UNCERTAIN_MIGRATION" -o json >"$STATUS_FILE" ||
+		fail "$UNCERTAIN_MIGRATION could not be read"
+	scan_for_credentials "$STATUS_FILE" "$UNCERTAIN_MIGRATION status"
+}
+
+# The Job to remove is the one the resource says it dispatched, by name and by
+# UID. A Job found by label could be a later one, and removing that would prove
+# something about a run nobody was waiting on.
+wait_for_uncertain_apply_dispatch() {
+	dispatch_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$dispatch_deadline" ]; do
+		uncertain_status
+		if jq -e '
+          .status.activeOperation.type == "Apply" and
+          ((.status.activeOperation.jobName // "") | length) > 0 and
+          ((.status.activeOperation.jobUID // "") | length) > 0
+        ' "$STATUS_FILE" >/dev/null; then
+			UNCERTAIN_APPLY_JOB=$(jq -er '.status.activeOperation.jobName' "$STATUS_FILE")
+			UNCERTAIN_APPLY_JOB_UID=$(jq -er '.status.activeOperation.jobUID' "$STATUS_FILE")
+			return 0
+		fi
+		sleep 2
+	done
+	fail "$UNCERTAIN_MIGRATION did not dispatch an Apply bound to its own Job within ${TIMEOUT_SECONDS}s"
+}
+
+# The database is what says the SQL committed, not the Job and not the status.
+# Waiting for the second migration to be recorded is waiting for the part of the
+# run that must survive the interruption.
+wait_for_uncertain_commit() {
+	commit_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$commit_deadline" ]; do
+		if [ "$(migration_query "SELECT count(*) FROM schema_migrations WHERE version <= 2 AND state = 'applied'" \
+			"$UNCERTAIN_DATABASE")" = 2 ]; then
+			return 0
+		fi
+		sleep 2
+	done
+	fail "the $ENGINE uncertain run did not commit its first two migrations within ${TIMEOUT_SECONDS}s"
+}
+
+assert_uncertain_apply_blocks_without_replaying() {
+	wait_for_uncertain_phase Blocked
+	uncertain_status
+	jq -e '
+      .status as $status |
+      $status.phase == "Blocked" and
+      $status.lastRun.outcome == "Unknown" and
+      ($status.activeOperation // null) == null and
+      ($status.plan // null) == null and
+      (any($status.conditions[];
+        .type == "Blocked" and .status == "True" and .reason == "ApplyOutcomeUnknown")) and
+      (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$UNCERTAIN_MIGRATION did not stop on a run whose evidence it could not read"
+	scan_for_credentials "$STATUS_FILE" "the uncertain-run refusal"
+
+	# The run is over and the database keeps what it committed. Both halves
+	# matter: without the first the refusal is about nothing, and without the
+	# second there would be nothing a replay could double.
+	[ "$(migration_query "SELECT count(*) FROM e2e_migration_widgets" "$UNCERTAIN_DATABASE")" = 3 ] ||
+		fail "the $ENGINE uncertain run did not leave the rows its first migration inserted"
+	# Not the absence of a row: a run that was cut off may leave a revision
+	# behind, and whether it does is Ptah's business. What may not have happened
+	# is the migration recording itself finished.
+	[ "$(migration_query "SELECT count(*) FROM schema_migrations WHERE version = 3 AND state = 'applied'" \
+		"$UNCERTAIN_DATABASE")" = 0 ] ||
+		fail "the $ENGINE migration that was interrupted recorded itself applied"
+
+	# Nothing dispatches again. A replay would re-run the first migration, whose
+	# insert is not idempotent, so this is the assertion the row exists for.
+	migration_apply_job_uids "$UNCERTAIN_MIGRATION" >"$WORK_DIR/uncertain-applies.txt"
+	uncertain_hold_deadline=$(($(date +%s) + 90))
+	while [ "$(date +%s)" -lt "$uncertain_hold_deadline" ]; do
+		[ "$(k -n "$TEST_NAMESPACE" get ptahmigration "$UNCERTAIN_MIGRATION" \
+			-o jsonpath='{.status.phase}')" = Blocked ] ||
+			fail "$UNCERTAIN_MIGRATION left Blocked while its run stood unaccounted for"
+		assert_no_new_apply_job "$WORK_DIR/uncertain-applies.txt" \
+			"after one whose evidence it could not read" "$UNCERTAIN_MIGRATION"
+		sleep 10
+	done
+	[ "$(migration_query "SELECT count(*) FROM e2e_migration_widgets" "$UNCERTAIN_DATABASE")" = 3 ] ||
+		fail "the $ENGINE rows were doubled, so a run was replayed over what it had already committed"
+}
+
+wait_for_uncertain_phase() {
+	uncertain_phase=$1
+	uncertain_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$uncertain_deadline" ]; do
+		uncertain_observed=$(k -n "$TEST_NAMESPACE" get ptahmigration "$UNCERTAIN_MIGRATION" \
+			-o jsonpath='{.status.phase}' 2>/dev/null || true)
+		[ "$uncertain_observed" != "$uncertain_phase" ] || return 0
+		sleep 5
+	done
+	fail "$UNCERTAIN_MIGRATION did not reach $uncertain_phase within ${TIMEOUT_SECONDS}s; it is in ${uncertain_observed:-<none>}"
+}
+
+run_uncertain_apply_proof() {
+	create_uncertain_database
+	publish_migrations "uncertain" "$UNCERTAIN_FIXTURE_DIR" "$UNCERTAIN_REFERENCE"
+	create_uncertain_migration_resource
+	wait_for_uncertain_apply_dispatch
+	wait_for_uncertain_commit
+	printf 'e2e migrations: removing the %s Apply Job while its run is still going\n' \
+		"$ENGINE_KIND" >&2
+	# The name is reused across attempts, so the UID is what says this is the
+	# Job the resource is waiting on rather than a later one under the same name.
+	uncertain_live_uid=$(k -n "$TEST_NAMESPACE" get job "$UNCERTAIN_APPLY_JOB" \
+		-o jsonpath='{.metadata.uid}' 2>/dev/null || true)
+	[ "$uncertain_live_uid" = "$UNCERTAIN_APPLY_JOB_UID" ] ||
+		fail "the $ENGINE Apply Job under that name is not the one the resource dispatched"
+	k -n "$TEST_NAMESPACE" delete job "$UNCERTAIN_APPLY_JOB" --wait=true >/dev/null ||
+		fail "the $ENGINE Apply Job could not be removed"
+	assert_uncertain_apply_blocks_without_replaying
+	printf 'e2e migrations: PASS %s stopped on a run it could not read, and replayed nothing\n' \
+		"$ENGINE_KIND" >&2
+}
+
 run_engine_migrations() {
 	select_engine "$1"
 	printf 'e2e migrations: starting the %s lifecycle on a database nothing has migrated\n' \
@@ -2322,6 +2532,7 @@ run_engine_migrations() {
 	run_branch_out_of_order_proof
 	run_existing_schema_adoption_proof
 	run_checkpoint_bootstrap_proof
+	run_uncertain_apply_proof
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
 }
