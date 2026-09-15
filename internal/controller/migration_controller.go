@@ -629,6 +629,9 @@ func (r *MigrationReconciler) consumeMigrationResult(
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
 	before := migration.DeepCopy()
+	// The history document a plan is computed from, held until the status it
+	// was read into has been persisted. Nothing else may set it.
+	var pendingPlanReport *dataplane.MigrationStatusReport
 	switch operation.Type {
 	case operatorv1alpha1.MigrationOperationResolve:
 		if !sha256DigestPattern.MatchString(result.ResolvedDigest) || result.ResolvedReference == "" {
@@ -664,10 +667,14 @@ func (r *MigrationReconciler) consumeMigrationResult(
 		if err := r.recordMigrationHistory(migration, *result.MigrationHistory, result.TargetIdentityDigest); err != nil {
 			return r.retryMigrationOperation(ctx, migration, job, err)
 		}
+		// The plan is published after this status is persisted, not here. A
+		// plan names the evidence it was computed from, and the admission
+		// guard re-derives it from the migration's own stored status: a plan
+		// created from a status that exists only in this process references
+		// evidence nobody else can see, and the guard refuses it -- which is
+		// the guard being right.
 		if migration.Status.Phase == operatorv1alpha1.MigrationPhasePlanning {
-			if err := r.publishMigrationPlan(ctx, migration, *result.MigrationHistory); err != nil {
-				return r.migrationOperationFailure(ctx, migration, err)
-			}
+			pendingPlanReport = result.MigrationHistory
 		} else {
 			migration.Status.Plan = nil
 		}
@@ -685,6 +692,18 @@ func (r *MigrationReconciler) consumeMigrationResult(
 	}
 	if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
 		return ctrl.Result{}, err
+	}
+	if pendingPlanReport != nil {
+		// A second write, deliberately. Between the two the resource is
+		// Planning with no plan, and a controller that stopped there resolves
+		// again on the next pass rather than acting on a plan nobody published.
+		planned := migration.DeepCopy()
+		if err := r.publishMigrationPlan(ctx, migration, *pendingPlanReport); err != nil {
+			return r.migrationOperationFailure(ctx, migration, err)
+		}
+		if err := r.patchMigrationStatus(ctx, planned, migration); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	return ctrl.Result{Requeue: true}, nil
 }

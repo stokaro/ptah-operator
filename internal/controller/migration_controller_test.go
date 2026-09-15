@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -484,6 +485,25 @@ func fakeMigrationReconciler(
 			) error {
 				if object.GetUID() == "" {
 					object.SetUID(types.UID("created-" + object.GetName()))
+				}
+				// The controller-write guard re-derives a migration plan from
+				// the migration's own STORED status and refuses one it cannot
+				// reproduce. A fake client that accepted a plan built from a
+				// status this process had not written yet would let every test
+				// pass against a sequence a cluster refuses, which is exactly
+				// what happened: the plan was created before the history that
+				// justifies it was persisted, and only a live cluster said so.
+				if plan, ok := object.(*operatorv1alpha1.PtahMigrationPlan); ok {
+					stored := &operatorv1alpha1.PtahMigration{}
+					key := client.ObjectKey{Namespace: plan.Namespace, Name: plan.Spec.MigrationRef.Name}
+					if err := writer.Get(ctx, key, stored); err != nil {
+						return fmt.Errorf("guard: read the migration a plan names: %w", err)
+					}
+					if stored.Status.Artifact == nil || stored.Status.History == nil ||
+						stored.Status.ExecutionBinding == nil {
+						return fmt.Errorf(
+							"guard: the stored migration has no resolved artifact, history, and execution binding to plan from")
+					}
 				}
 				return writer.Create(ctx, object, options...)
 			},
