@@ -64,7 +64,7 @@ Taking turns is not enough to share a database, though, and the operator does
 not pretend otherwise. A database claimed by more than one resource is refused
 — every claimant `Blocked`, no Job — unless each of them sets
 `spec.target.sharedRealm: true`. One that has not blocks all of them. See
-[One database, one manager](/use/operations/#one-database-one-manager).
+[One database, one manager](../operations/#one-database-one-manager).
 
 ## What the history says
 
