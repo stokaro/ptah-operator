@@ -198,12 +198,16 @@ select_engine() {
 	MIGRATION_APPROVAL="e2e-migrations-${ENGINE}-approval"
 	MIGRATION_STALE_APPROVAL="e2e-migrations-${ENGINE}-stale-approval"
 	MIGRATION_RIVAL_SCHEMA="e2e-migrations-${ENGINE}-rival"
+	MIGRATION_PARTIAL_APPROVAL="e2e-migrations-${ENGINE}-partial-approval"
 	MIGRATION_COORDINATION_KEY="e2e/migrations/${ENGINE}"
 	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}:stable"
 	MIGRATION_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}"
 	MIGRATION_EDITED_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-modified"
+	MIGRATION_PARTIAL_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-partial"
 	MIGRATION_COORDINATION_DIGEST=$(coordination_digest "$ENGINE" "$MIGRATION_COORDINATION_KEY")
 	[ -d "$MIGRATION_FIXTURE_DIR" ] || fail "migration fixtures are missing: $MIGRATION_FIXTURE_DIR"
+	[ -d "$MIGRATION_PARTIAL_FIXTURE_DIR" ] ||
+		fail "migration fixtures are missing: $MIGRATION_PARTIAL_FIXTURE_DIR"
 
 	# The password is read back from the Secret the data plane created rather
 	# than derived a second time here. A second derivation is a second
@@ -391,6 +395,37 @@ migration_query() {
 			sh "$MIGRATION_DATABASE" "$1" | tr -d '[:space:]'
 		;;
 	esac
+}
+
+# Whether the table a migration would change carries a column, asked of the
+# catalog rather than of the migration that was supposed to add it. The two
+# engines spell the current database differently in information_schema, and
+# MySQL's spans the whole server, so an unfiltered count there would answer for
+# another phase's database.
+migration_widget_column_count() {
+	case "$ENGINE" in
+	postgresql)
+		migration_query "SELECT count(*) FROM information_schema.columns
+                     WHERE table_schema = current_schema()
+                       AND table_name = 'e2e_migration_widgets'
+                       AND column_name = '$1'"
+		;;
+	mysql)
+		migration_query "SELECT count(*) FROM information_schema.columns
+                     WHERE table_schema = database()
+                       AND table_name = 'e2e_migration_widgets'
+                       AND column_name = '$1'"
+		;;
+	esac
+}
+
+# The Apply Jobs this migration has dispatched. A Blocked resource keeps
+# reading, so its read-only Jobs go on appearing; what must not appear is
+# another run.
+migration_apply_job_count() {
+	k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.run/migration=${MIGRATION_NAME},operator.ptah.run/operation=apply" \
+		-o json | jq '.items | length'
 }
 
 # The verification policy this phase applies names the migration artifact type.
@@ -963,6 +998,146 @@ assert_second_claimant_blocks_the_realm() {
 # the database changed, so the refusal has to come from comparing the artifact
 # against what the revision table recorded, and it has to leave the database
 # exactly as the run left it.
+# The partial-migration row of the matrix: a migration that committed some of
+# its statements and not the rest.
+#
+# The fourth file opts out of the per-migration transaction, which is what
+# makes the case real rather than arranged. A file that rolls back leaves the
+# database as it was and needs no recovery at all; this one adds a column, then
+# fails, and the column stays. Ptah records the revision as not applied with
+# the statement count it reached, and the operator stops there: re-running a
+# file that committed half of itself would run that half twice, and nothing
+# reading the revision row can know which half.
+#
+# The recovery is a person's, because only a person can say what the half did.
+# Here the decision is to undo it and take the migration out of the sequence.
+# Nothing about the resource is edited to make that land -- the operator is
+# reading the database at its interval, and a database somebody fixed is the
+# whole recovery.
+assert_partial_run_blocks_and_recovers() {
+	printf 'e2e migrations: moving the %s tag to an artifact whose fourth migration commits half of itself\n' \
+		"$ENGINE_KIND" >&2
+	partial_applies_before=$(migration_apply_job_count)
+	publish_migrations v3 "$MIGRATION_PARTIAL_FIXTURE_DIR"
+	wait_for_migration_phase AwaitingApproval
+	migration_status
+	partial_plan=$(jq -er '.status.plan.name' "$STATUS_FILE") ||
+		fail "$MIGRATION_NAME published no plan for the partial migration"
+	jq -e '.status.history.pendingCount == 1 and .status.history.currentVersion == 3' \
+		"$STATUS_FILE" >/dev/null ||
+		fail "$MIGRATION_NAME did not plan the fourth migration alone"
+	partial_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$partial_plan" \
+		-o jsonpath='{.metadata.uid}')
+	partial_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$partial_plan" \
+		-o jsonpath='{.spec.fingerprint}')
+	[ -n "$partial_plan_uid" ] && [ -n "$partial_fingerprint" ] ||
+		fail "migration plan $partial_plan has no UID or fingerprint"
+	approve_migration "$MIGRATION_PARTIAL_APPROVAL" "$partial_plan" \
+		"$partial_plan_uid" "$partial_fingerprint" >/dev/null
+
+	wait_for_migration_phase Blocked
+	migration_status
+	# The run's own account stops the resource, and the reason it carries
+	# depends on whether the next history read has landed yet: the run says the
+	# outcome is unattributable, and the database then says a revision is
+	# dirty. Both are the same refusal, so neither is worth racing.
+	jq -e '
+      .status as $status |
+      $status.phase == "Blocked" and
+      $status.lastRun.outcome == "Partial" and
+      ($status.lastRun.appliedVersions // []) == [] and
+      ($status.plan // null) == null and
+      ($status.activeOperation // null) == null and
+      (any($status.conditions[];
+        .type == "Blocked" and .status == "True" and
+        (.reason == "ApplyOutcomeUnknown" or .reason == "HistoryDirty"))) and
+      (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$MIGRATION_NAME did not stop on a migration that committed half of itself"
+	scan_for_credentials "$STATUS_FILE" "the partial-run refusal"
+
+	# Partial is a fact about the database, not a label the run chose: the
+	# first statement is committed and the revision says the file never
+	# finished.
+	[ "$(migration_widget_column_count weight)" = 1 ] ||
+		fail "$ENGINE did not keep the statement the partial migration committed"
+	[ "$(migration_query "SELECT count(*) FROM schema_migrations WHERE state <> 'applied'")" = 1 ] ||
+		fail "$ENGINE recorded no unfinished revision for the migration that stopped halfway"
+
+	# The reading that settles it is the database's. Once the history has been
+	# read again the refusal names the dirty revision, and the pending count is
+	# gone: nothing is pending behind a revision nobody has accounted for.
+	dirty_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$dirty_deadline" ]; do
+		record_migration_jobs
+		migration_status
+		if jq -e '
+          .status as $status |
+          $status.phase == "Blocked" and
+          ($status.history.dirty // false) == true and
+          $status.history.currentVersion == 3 and
+          $status.history.pendingCount == 0 and
+          (any($status.conditions[];
+            .type == "Blocked" and .status == "True" and .reason == "HistoryDirty"))
+        ' "$STATUS_FILE" >/dev/null; then
+			dirty_settled=yes
+			break
+		fi
+		sleep 5
+	done
+	[ "${dirty_settled:-no}" = yes ] ||
+		fail "$MIGRATION_NAME never reported the dirty revision the partial run left"
+	jq -e '[.status.conditions[] | select(.type == "Blocked") | .message]
+           | any(test("[0-9]"))' "$STATUS_FILE" >/dev/null ||
+		fail "the dirty refusal does not name the revision a person has to decide about"
+
+	# A resource that stopped keeps reading and never runs again. The read-only
+	# Jobs go on appearing, so the count that has to stand still is the Apply
+	# one.
+	partial_hold_deadline=$(($(date +%s) + 90))
+	while [ "$(date +%s)" -lt "$partial_hold_deadline" ]; do
+		record_migration_jobs
+		[ "$(migration_phase)" = Blocked ] ||
+			fail "$MIGRATION_NAME left Blocked while a partial migration stood unresolved"
+		sleep 10
+	done
+	partial_applies_after=$(migration_apply_job_count)
+	[ "$partial_applies_after" -eq "$((partial_applies_before + 1))" ] ||
+		fail "$MIGRATION_NAME dispatched another run after a partial one: ${partial_applies_before} became ${partial_applies_after}"
+
+	# The person's decision: the half is undone, the revision row goes with it,
+	# and the sequence loses the migration that should not have run.
+	printf 'e2e migrations: undoing the %s partial migration by hand and putting the sequence back\n' \
+		"$ENGINE_KIND" >&2
+	migration_query "ALTER TABLE e2e_migration_widgets DROP COLUMN weight" >/dev/null ||
+		fail "could not undo the column the $ENGINE partial migration committed"
+	migration_query "DELETE FROM schema_migrations WHERE state <> 'applied'" >/dev/null ||
+		fail "could not take the unfinished $ENGINE revision out of the history"
+	publish_migrations v4 "$MIGRATION_FIXTURE_DIR"
+
+	wait_for_migration_phase InSync
+	migration_status
+	jq -e '
+      .status as $status |
+      $status.phase == "InSync" and
+      $status.history.currentVersion == 3 and
+      $status.history.appliedCount == 3 and
+      $status.history.pendingCount == 0 and
+      ($status.history.dirty // false) == false and
+      ($status.plan // null) == null and
+      $status.lastRun.outcome == "Partial" and
+      (any($status.conditions[];
+        .type == "Ready" and .status == "True" and .reason == "HistoryMatched")) and
+      (any($status.conditions[]; .type == "Blocked" and .status == "True") | not)
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$MIGRATION_NAME did not recover on its own reading of a database somebody fixed"
+	assert_database_migrated
+	[ "$(migration_widget_column_count weight)" = 0 ] ||
+		fail "$ENGINE kept the column the partial migration added after it was dropped"
+	printf 'e2e migrations: PASS %s partial run blocked, and recovered without a spec edit\n' \
+		"$ENGINE_KIND" >&2
+}
+
 assert_modified_file_blocks_everything() {
 	printf 'e2e migrations: moving the %s tag to an artifact whose applied file changed\n' \
 		"$ENGINE_KIND" >&2
@@ -1074,6 +1249,7 @@ run_engine_migrations() {
 	wait_for_migration_phase InSync
 	assert_kubectl_ptah_migration InSync
 	assert_second_claimant_blocks_the_realm
+	assert_partial_run_blocks_and_recovers
 	assert_modified_file_blocks_everything
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
