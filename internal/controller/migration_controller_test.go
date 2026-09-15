@@ -946,6 +946,102 @@ func TestAMigrationJobThatFailedBeforeTheRunnerNamesTheBoundary(t *testing.T) {
 	}
 }
 
+// A run nobody could read may have executed the migration that is pending now.
+// One interval later the controller used to plan it again, which is the blind
+// replay the versioned workflow exists to refuse, and which the run's own
+// condition had already promised would not happen.
+func TestAPendingMigrationIsNotReplayedAfterAnUnreadableRun(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		outcome   operatorv1alpha1.MigrationRunOutcome
+		blocked   bool
+		wantPhase operatorv1alpha1.MigrationPhase
+	}{
+		{
+			name:      "a run whose evidence could not be read",
+			outcome:   operatorv1alpha1.MigrationRunOutcomeUnknown,
+			blocked:   true,
+			wantPhase: operatorv1alpha1.MigrationPhaseBlocked,
+		},
+		{
+			name:      "a run that committed some of its statements",
+			outcome:   operatorv1alpha1.MigrationRunOutcomePartial,
+			blocked:   true,
+			wantPhase: operatorv1alpha1.MigrationPhaseBlocked,
+		},
+		{
+			// The refusal is the latch. A resource somebody put right settles
+			// through the history, and the next pending migration plans as
+			// usual rather than inheriting a refusal nothing renewed.
+			name:      "a run whose refusal was already cleared",
+			outcome:   operatorv1alpha1.MigrationRunOutcomeUnknown,
+			blocked:   false,
+			wantPhase: operatorv1alpha1.MigrationPhaseAwaitingApproval,
+		},
+		{
+			name:      "a run that failed and committed nothing",
+			outcome:   operatorv1alpha1.MigrationRunOutcomeFailed,
+			blocked:   true,
+			wantPhase: operatorv1alpha1.MigrationPhaseAwaitingApproval,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			migration := migrationFixture()
+			migration.Status.ExecutionBinding = migrationExecutionBinding()
+			migration.Status.Artifact = resolvedMigrationArtifact()
+			migration.Status.Phase = operatorv1alpha1.MigrationPhaseReading
+			migration.Finalizers = []string{migrationOperationFinalizer}
+			finished := metav1.NewTime(time.Date(2026, 8, 30, 11, 0, 0, 0, time.UTC))
+			migration.Status.LastRun = &operatorv1alpha1.MigrationRunStatus{
+				Outcome: test.outcome, StartedAt: finished, FinishedAt: &finished,
+			}
+			if test.blocked {
+				meta.SetStatusCondition(&migration.Status.Conditions, metav1.Condition{
+					Type: operatorv1alpha1.ConditionMigrationBlocked, Status: metav1.ConditionTrue,
+					Reason: string(operatorv1alpha1.ReasonApplyOutcomeUnknown), Message: "the run is over",
+					ObservedGeneration: migration.Generation,
+				})
+			}
+			operation := migrationClaim(t, migration, operatorv1alpha1.MigrationOperationHistory)
+			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			report := dataplane.MigrationStatusReport{
+				ContractVersion: dataplane.SupportedMigrationStatusContract,
+				CurrentVersion:  2, TotalMigrations: 2, HasPendingChanges: true,
+				PendingMigrations: []int64{3},
+				Migrations: []dataplane.MigrationRecord{
+					{Version: 2, Checksum: "checksum-2", State: dataplane.MigrationStateApplied},
+					{Version: 3, Checksum: "checksum-3", State: dataplane.MigrationStatePending},
+				},
+			}
+			frame := migrationFrame(t, runner.Result{
+				ProtocolVersion: runner.ProtocolVersion, Operation: runner.OperationMigrationHistory,
+				OperationID: operation.ID, ChildExitCode: 0,
+				CoordinationDigest:   operation.CoordinationDigest,
+				TargetIdentityDigest: testDigest,
+				MigrationHistory:     &report,
+			})
+			reconciler, api := fakeMigrationReconciler(
+				t, staticLogs{content: frame}, migration, job, pod, verificationPolicyConfigMap(),
+			)
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			actual := readMigration(t, api, migration)
+			if actual.Status.Phase != test.wantPhase {
+				t.Fatalf("phase = %q, want %q", actual.Status.Phase, test.wantPhase)
+			}
+			if test.wantPhase == operatorv1alpha1.MigrationPhaseBlocked && actual.Status.Plan != nil {
+				t.Fatal("a plan was published for a migration a previous run may already have executed")
+			}
+		})
+	}
+}
+
 func ensureMigrationAdmissionSnapshot(migration *operatorv1alpha1.PtahMigration) {
 	operation := migration.Status.ActiveOperation
 	if operation.AdmissionSnapshot != nil {
