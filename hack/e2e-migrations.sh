@@ -197,6 +197,7 @@ select_engine() {
 	MIGRATION_NAME="e2e-migrations-${ENGINE}"
 	MIGRATION_APPROVAL="e2e-migrations-${ENGINE}-approval"
 	MIGRATION_STALE_APPROVAL="e2e-migrations-${ENGINE}-stale-approval"
+	MIGRATION_RIVAL_SCHEMA="e2e-migrations-${ENGINE}-rival"
 	MIGRATION_COORDINATION_KEY="e2e/migrations/${ENGINE}"
 	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}:stable"
 	MIGRATION_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}"
@@ -861,6 +862,100 @@ assert_replaced_plan_approval_refused() {
 # The plan-inspection row of the matrix: a reader reviews the migration order
 # through the plugin rather than by extracting a ConfigMap by hand, and never
 # sees a statement while doing it.
+# The ownership row of the matrix, and the combination #45 names outright: a
+# PtahSchema and a PtahMigration claiming one database.
+#
+# Serialization is not ownership. These two would take turns through the Lease
+# and the database's own lock, and undo each other while doing it, so the
+# operator refuses both until each declares the realm shared. Here neither
+# does, and what the proof wants is the refusal and the recovery: removing the
+# second claimant ends it without anybody editing the first.
+assert_second_claimant_blocks_the_realm() {
+	printf 'e2e migrations: claiming the %s migration database with a PtahSchema as well\n' \
+		"$ENGINE_KIND" >&2
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$MIGRATION_RIVAL_SCHEMA" \
+		--arg engine "$ENGINE_KIND" \
+		--arg secret "$MIGRATION_DB_SECRET" \
+		--arg coordinationKey "$MIGRATION_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahSchema",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        desired: {
+          ociRef: "oci://example.invalid/schema:v1",
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        interval: "1h",
+        execution: {activeDeadlineSeconds: 300}
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+
+	# Both claimants, not only the newcomer: a refusal that blocked one side
+	# would leave the other free to keep changing the database.
+	rival_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$rival_deadline" ]; do
+		migration_status
+		rival_phase=$(jq -er '.status.phase' "$STATUS_FILE")
+		schema_refused=$(k -n "$TEST_NAMESPACE" get ptahschema "$MIGRATION_RIVAL_SCHEMA" -o json |
+			jq -r 'if (.status.conditions // []) | any(.type == "Ready" and .reason == "RealmConflict")
+                   then "yes" else "no" end')
+		if [ "$rival_phase" = Blocked ] && [ "$schema_refused" = yes ]; then
+			break
+		fi
+		sleep 5
+	done
+	jq -e '
+      .status as $status |
+      $status.phase == "Blocked" and
+      ($status.activeOperation // null) == null and
+      (any($status.conditions[];
+        .type == "Blocked" and .status == "True" and .reason == "RealmConflict")) and
+      (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$MIGRATION_NAME kept managing a database a PtahSchema also claims"
+	[ "${schema_refused:-no}" = yes ] ||
+		fail "$MIGRATION_RIVAL_SCHEMA was allowed to manage a database a PtahMigration also claims"
+	# The refusal names counts and kinds and no other namespace's objects.
+	scan_for_credentials "$STATUS_FILE" "the realm refusal"
+	jq -e --arg key "$MIGRATION_COORDINATION_KEY" '
+      [.status | .. | scalars | select(. == $key)] | length == 0
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "the realm refusal published the coordination key"
+
+	# The refusal precedes the first claim, so the newcomer never resolved its
+	# reference and never created a Job.
+	[ "$(k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.run/schema=${MIGRATION_RIVAL_SCHEMA}" -o json |
+		jq '.items | length')" -eq 0 ] ||
+		fail "$MIGRATION_RIVAL_SCHEMA dispatched a Job for a database it may not manage"
+
+	# Suspending a claimant ends the conflict, and the survivor is not edited to
+	# make that happen: a resource that runs nothing claims nothing, which is
+	# how one database is handed to one manager without declaring anything
+	# shared.
+	k -n "$TEST_NAMESPACE" patch ptahschema "$MIGRATION_RIVAL_SCHEMA" --type=merge \
+		--patch '{"spec":{"suspend":true}}' >/dev/null
+	wait_for_migration_phase InSync
+	k -n "$TEST_NAMESPACE" delete ptahschema "$MIGRATION_RIVAL_SCHEMA" \
+		--wait=true >/dev/null
+	printf 'e2e migrations: PASS %s realm refusal and recovery\n' "$ENGINE_KIND" >&2
+}
+
 # The modified-file row of the matrix: an applied migration whose file changed
 # afterwards is the refusal a versioned workflow exists to make.
 #
@@ -978,6 +1073,7 @@ run_engine_migrations() {
 	# settled view is a statement about the settled state.
 	wait_for_migration_phase InSync
 	assert_kubectl_ptah_migration InSync
+	assert_second_claimant_blocks_the_realm
 	assert_modified_file_blocks_everything
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2

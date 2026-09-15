@@ -1240,6 +1240,10 @@ for migration_marker in \
 	'did not settle on a history that matches the artifact' \
 	'assert_database_migrated' \
 	'assert_repeated_reconciliation_runs_nothing' \
+	'assert_second_claimant_blocks_the_realm' \
+	'kept managing a database a PtahSchema also claims' \
+	'was allowed to manage a database a PtahMigration also claims' \
+	'a resource that runs nothing claims nothing' \
 	'assert_modified_file_blocks_everything' \
 	'$status.history.modifiedVersions == [1] and' \
 	're-ran an applied migration' \
