@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "lastVerified": "2026-09-15",
-  "axis": "Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact.",
+  "axis": "Operator version to the Ptah build the operator executes, identified by the digest-pinned executorImage and the ptahVersion bound beside it. It is not the Ptah CLI a person used to build the OCI artifact. The runner is not a third axis: it is built from the operator source this row names, and the exact protocol both halves speak is in runnerProtocolVersion.",
   "releases": [
     {
       "operator": "edge",
@@ -19,6 +19,7 @@
           "ptahRelease": null,
           "ptahCommit": "00fc362c943bfb9d0363d5890bf449a2a9b5e7cf",
           "ptahDescribe": "v0.3.0-201-g00fc362c9",
+          "runnerProtocolVersion": 5,
           "evidence": "kubernetes-e2e",
           "scope": "The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against both engines."
         }
