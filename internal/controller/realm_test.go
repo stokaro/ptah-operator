@@ -276,3 +276,44 @@ func TestSchemaBlocksOnAContestedRealmWithoutDispatchingAJob(t *testing.T) {
 		t.Fatalf("a contested realm created %d Jobs", len(jobs.Items))
 	}
 }
+
+// A controller watches its own resource, so a status write it makes wakes it
+// again. A standing refusal that restamped its next-reconciliation time every
+// pass would patch every pass and wake itself every pass.
+func TestAStandingRealmRefusalStopsWritingStatus(t *testing.T) {
+	t.Parallel()
+
+	schema := schemaFixture()
+	peer := schemaFixture()
+	peer.Name = "app-second"
+	peer.UID = types.UID("schema-second")
+	reconciler, api := fakeReconciler(t, nil, schema, peer)
+
+	key := client.ObjectKeyFromObject(schema)
+	request := ctrl.Request{NamespacedName: key}
+	if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	blocked := &operatorv1alpha1.PtahSchema{}
+	if err := api.Get(context.Background(), key, blocked); err != nil {
+		t.Fatal(err)
+	}
+	if blocked.Status.Phase != operatorv1alpha1.PhaseBlocked {
+		t.Fatalf("phase = %q, want Blocked", blocked.Status.Phase)
+	}
+	settled := blocked.ResourceVersion
+
+	for pass := range 3 {
+		if _, err := reconciler.Reconcile(context.Background(), request); err != nil {
+			t.Fatalf("pass %d: %v", pass, err)
+		}
+		again := &operatorv1alpha1.PtahSchema{}
+		if err := api.Get(context.Background(), key, again); err != nil {
+			t.Fatal(err)
+		}
+		if again.ResourceVersion != settled {
+			t.Fatalf("pass %d wrote status again: resourceVersion %s -> %s",
+				pass, settled, again.ResourceVersion)
+		}
+	}
+}

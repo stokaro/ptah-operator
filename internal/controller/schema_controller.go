@@ -275,7 +275,7 @@ func (r *SchemaReconciler) schemaRealmBlocked(
 	census realmCensus,
 ) (ctrl.Result, error) {
 	now := r.now()
-	next := realmRecheckDeadline(now, schema.Spec.Interval.Duration)
+	next := realmBlockDeadline(schema.Status.NextReconciliationTime, now, schema.Spec.Interval.Duration)
 	before := schema.DeepCopy()
 	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
 	schema.Status.ObservedGeneration = schema.Generation
