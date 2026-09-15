@@ -3201,6 +3201,32 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "always-false wrapper",
 		},
 		{
+			name:        "migration lifecycle omitted",
+			old:         `run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`,
+			replacement: `true # migration lifecycle omitted`,
+			wantError:   "migration lifecycle",
+		},
+		{
+			name:        "migration lifecycle call separated from its environment",
+			old:         `run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`,
+			replacement: "true\n\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"",
+			wantError:   "migration lifecycle",
+		},
+		{
+			name: "migration lifecycle hidden in false branch",
+			old: "E2E_KUBECONFIG=$KUBECONFIG_FILE \\\nE2E_TEST_NAMESPACE=$TEST_NAMESPACE \\\n" +
+				"E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \\\n",
+			replacement: "if false; then\nE2E_KUBECONFIG=$KUBECONFIG_FILE \\\nE2E_TEST_NAMESPACE=$TEST_NAMESPACE \\\n" +
+				"E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \\\n",
+			wantError: "always-false wrapper",
+		},
+		{
+			name:        "migration lifecycle loses the controller identity",
+			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=1 \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n",
+			replacement: "E2E_CONTROLLER_STATE_VERSION=1 \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n",
+			wantError:   "migration lifecycle",
+		},
+		{
 			name:        "uninstall lifecycle omitted",
 			old:         "E2E_PHASE=uninstall \\\n",
 			replacement: "E2E_PHASE=uninstall-omitted \\\n",
