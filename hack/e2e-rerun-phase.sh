@@ -51,6 +51,7 @@ case $RERUN_PHASE in
 	cert-rotation) RERUN_SCRIPT=hack/e2e-cert-rotation.sh ;;
 	dataplane) RERUN_SCRIPT=hack/e2e-dataplane.sh ;;
 	migrations) RERUN_SCRIPT=hack/e2e-migrations.sh ;;
+	reference-data) RERUN_SCRIPT=hack/e2e-reference-data.sh ;;
 	*) fail "unsupported phase $RERUN_PHASE" ;;
 esac
 [ -x "$ROOT_DIR/$RERUN_SCRIPT" ] || fail "phase script is not executable: $RERUN_SCRIPT"

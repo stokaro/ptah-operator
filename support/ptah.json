@@ -17,11 +17,11 @@
       "verified": [
         {
           "ptahRelease": null,
-          "ptahCommit": "eedb296afb4eed11dd4b995c9103b49e31b84096",
-          "ptahDescribe": "v0.5.0-118-geedb296a",
+          "ptahCommit": "939c2fb463e7ce56b5e4d6f08e5807647c6f5b97",
+          "ptahDescribe": "v0.5.0-131-g939c2fb46",
           "runnerProtocolVersion": 5,
           "evidence": "kubernetes-e2e",
-          "scope": "The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against both engines."
+          "scope": "The complete OCI resolution and verification, observation, planning, approval, apply, failure-recovery and convergence lifecycle against PostgreSQL and MySQL, on every supported Kubernetes minor, for both artifact formats this operator reads: application/vnd.stokaro.ptah.schema.v1 for a declared schema, and application/vnd.stokaro.ptah.migrations.v1 for a versioned migration directory, whose history read, approval gate and applied sequence run against both engines. A declared row set travels with the schema artifact and is reconciled through the same gate: the rows the annotation owns reach the database, a changed row is planned and applied, and a row edited outside the declaration is returned to what the declaration says."
         }
       ],
       "limitations": [
