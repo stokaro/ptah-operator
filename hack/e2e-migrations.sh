@@ -112,6 +112,7 @@ ADOPT_DB_URL_FILE=$WORK_DIR/adopt-database.url
 ADOPT_SHADOW_DB_URL_FILE=$WORK_DIR/adopt-shadow-database.url
 CHECKPOINT_DB_URL_FILE=$WORK_DIR/checkpoint-database.url
 CHECKPOINT_PLAN_FILE=$WORK_DIR/checkpoint-plan.json
+UNKNOWN_LAYER_DB_URL_FILE=$WORK_DIR/unknown-layer-database.url
 UNCERTAIN_DB_URL_FILE=$WORK_DIR/uncertain-database.url
 ADMISSION_ERROR_FILE=$WORK_DIR/admission-error.txt
 STATUS_FILE=$WORK_DIR/migration-status.json
@@ -161,6 +162,13 @@ deadline_from_now() {
 REGISTRY_AUTH_SECRET=e2e-registry-auth
 REGISTRY_PULL_SECRET=e2e-registry-pull
 REGISTRY_HOST="${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000"
+# The address the harness itself publishes through, which is the same registry
+# under a different name: the cluster reaches it by Service, the host by the
+# port the registry container publishes. One fixture below has to publish an
+# artifact no product command can produce, and it runs here rather than in a
+# Job, so it needs the second name.
+REGISTRY_HOST_ADDRESS=${E2E_REGISTRY_HOST_ADDRESS:-}
+REGISTRY_CREDENTIALS_FILE=${E2E_REGISTRY_CREDENTIALS_FILE:-}
 MIGRATION_DATABASE=ptah_e2e_migrations
 MIGRATION_POLICY=e2e-migrations-verification-policy
 MIGRATION_POLICY_KEY=policy.yaml
@@ -237,6 +245,12 @@ select_engine() {
 	UNCERTAIN_COORDINATION_KEY="e2e/uncertain/${ENGINE}"
 	UNCERTAIN_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-uncertain:stable"
 	UNCERTAIN_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-uncertain"
+	UNKNOWN_LAYER_DATABASE=ptah_e2e_unknown_layer
+	UNKNOWN_LAYER_DB_SECRET="e2e-${ENGINE}-unknown-layer-db"
+	UNKNOWN_LAYER_MIGRATION="e2e-unknown-layer-${ENGINE}"
+	UNKNOWN_LAYER_COORDINATION_KEY="e2e/unknown-layer/${ENGINE}"
+	UNKNOWN_LAYER_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-unknown:stable"
+	UNKNOWN_LAYER_PUBLISH_REFERENCE="${REGISTRY_HOST_ADDRESS}/migrations/${ENGINE}-unknown:stable"
 	# The adoption row reads the artifact this engine already publishes. A
 	# second copy of the same three migrations would be a second thing to keep
 	# in step with the schema the proof builds out of them by hand.
@@ -2492,6 +2506,187 @@ run_uncertain_apply_proof() {
 		"$ENGINE_KIND" >&2
 }
 
+# The capability row of the matrix: an executor meets an artifact built by
+# something newer than itself.
+#
+# A reader that finds a layer outside the set it accepts refuses the whole
+# artifact on the layer descriptor, before the bytes are fetched. That is how it
+# fails closed instead of reading around what it cannot understand, and it is
+# the refusal ADR 0019 assigns: the media type suffix is the version, and the
+# refusal lands before a database connection exists.
+#
+# No product command builds this artifact, and that is the point of the fixture:
+# `ptah migrations push` writes the layers it knows. What is imitated is not
+# corruption but the next version of the format.
+publish_unknown_layer_artifact() {
+	[ -n "$REGISTRY_HOST_ADDRESS" ] ||
+		fail "the harness published no registry address, so the unknown-layer artifact cannot be built"
+	[ -s "$REGISTRY_CREDENTIALS_FILE" ] ||
+		fail "the harness published no registry credentials file"
+	printf 'e2e migrations: publishing a %s artifact carrying a layer this executor cannot accept\n' \
+		"$ENGINE_KIND" >&2
+	unknown_username=$(jq -er '.username' "$REGISTRY_CREDENTIALS_FILE")
+	unknown_password=$(jq -er '.password' "$REGISTRY_CREDENTIALS_FILE")
+	go -C "$ROOT_DIR" run ./hack/unknownlayerfixture \
+		--reference "$UNKNOWN_LAYER_PUBLISH_REFERENCE" \
+		--dir "$MIGRATION_FIXTURE_DIR" \
+		--unknown-media-type "application/vnd.stokaro.ptah.migration.capability.v1" \
+		--username "$unknown_username" \
+		--password "$unknown_password" \
+		--plain-http >"$LOG_FILE" 2>&1 ||
+		{
+			scan_for_credentials "$LOG_FILE" "the unknown-layer publisher"
+			sed 's/^/e2e migrations:   /' "$LOG_FILE" >&2
+			fail "the unknown-layer artifact could not be published"
+		}
+	unknown_username=
+	unknown_password=
+	scan_for_credentials "$LOG_FILE" "the unknown-layer publisher"
+}
+
+create_unknown_layer_database() {
+	create_database "$UNKNOWN_LAYER_DATABASE"
+	database_url "$UNKNOWN_LAYER_DATABASE" >"$UNKNOWN_LAYER_DB_URL_FILE"
+	chmod 600 "$UNKNOWN_LAYER_DB_URL_FILE"
+	{
+		cat "$UNKNOWN_LAYER_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$UNKNOWN_LAYER_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$UNKNOWN_LAYER_DATABASE" \
+		--rawfile url "$UNKNOWN_LAYER_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {username: $username, password: $password, database: $database, url: $url}
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+create_unknown_layer_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$UNKNOWN_LAYER_MIGRATION" \
+		--arg secret "$UNKNOWN_LAYER_DB_SECRET" \
+		--arg reference "$UNKNOWN_LAYER_REFERENCE" \
+		--arg coordinationKey "$UNKNOWN_LAYER_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {apply: "Always", lockTimeout: "30s"},
+        interval: "30s",
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+unknown_layer_revision_tables() {
+	case "$ENGINE" in
+	postgresql)
+		migration_query \
+			"SELECT count(*) FROM information_schema.tables WHERE table_name = 'schema_migrations'" \
+			"$UNKNOWN_LAYER_DATABASE"
+		;;
+	mysql)
+		migration_query \
+			"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${UNKNOWN_LAYER_DATABASE}' AND table_name = 'schema_migrations'" \
+			"$UNKNOWN_LAYER_DATABASE"
+		;;
+	esac
+}
+
+# Two statements, and the order between them is the point. First the refusal has
+# to arrive, which takes as long as resolving and verifying take -- only the
+# history read fetches artifact bytes, so that is the operation whose fetch step
+# fails, and it is also the one that would have opened the database. Then the
+# window is held open to say that nothing follows it.
+#
+# Holding a window without waiting for the refusal first would fail on the poll
+# that landed before the operator had got that far, which is a statement about
+# the harness rather than about the operator.
+assert_unknown_layer_refusal_is_named() {
+	named_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$named_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get ptahmigration "$UNKNOWN_LAYER_MIGRATION" -o json >"$STATUS_FILE" ||
+			fail "$UNKNOWN_LAYER_MIGRATION could not be read"
+		scan_for_credentials "$STATUS_FILE" "$UNKNOWN_LAYER_MIGRATION status"
+		if jq -e '[.status.conditions[]? | select(.type == "Progressing") | .message]
+              | any(test("fetch-migrations"))' "$STATUS_FILE" >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	fail "$UNKNOWN_LAYER_MIGRATION never named the step that refused the artifact within ${TIMEOUT_SECONDS}s"
+}
+
+assert_unknown_layer_never_reaches_the_database() {
+	assert_unknown_layer_refusal_is_named
+	unknown_deadline=$(($(date +%s) + 90))
+	while [ "$(date +%s)" -lt "$unknown_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get ptahmigration "$UNKNOWN_LAYER_MIGRATION" -o json >"$STATUS_FILE" ||
+			fail "$UNKNOWN_LAYER_MIGRATION could not be read"
+		scan_for_credentials "$STATUS_FILE" "$UNKNOWN_LAYER_MIGRATION status"
+		jq -e '
+          .status as $status |
+          ($status.plan // null) == null and
+          ($status.lastRun // null) == null and
+          ($status.phase != "AwaitingApproval") and
+          ($status.phase != "InSync") and
+          (($status.history.appliedCount // 0) == 0)
+        ' "$STATUS_FILE" >/dev/null ||
+			fail "$UNKNOWN_LAYER_MIGRATION acted on an artifact carrying a layer its executor cannot read"
+		[ "$(k -n "$TEST_NAMESPACE" get jobs \
+			-l "operator.ptah.run/migration=${UNKNOWN_LAYER_MIGRATION},operator.ptah.run/operation=apply" \
+			-o json | jq '.items | length')" -eq 0 ] ||
+			fail "$UNKNOWN_LAYER_MIGRATION dispatched a run for an artifact its executor refused"
+		sleep 10
+	done
+
+	# Nothing connected. Ptah creates its revision table on the first history
+	# read, so a database that has none was never opened, which is the half of
+	# this row that the refusal's own message cannot prove.
+	[ "$(unknown_layer_revision_tables)" = 0 ] ||
+		fail "the $ENGINE database was opened for an artifact whose layers were refused"
+}
+
+run_unknown_layer_proof() {
+	create_unknown_layer_database
+	publish_unknown_layer_artifact
+	create_unknown_layer_migration_resource
+	assert_unknown_layer_never_reaches_the_database
+	printf 'e2e migrations: PASS %s refused an artifact built newer than its executor, before opening the database\n' \
+		"$ENGINE_KIND" >&2
+}
+
 run_engine_migrations() {
 	select_engine "$1"
 	printf 'e2e migrations: starting the %s lifecycle on a database nothing has migrated\n' \
@@ -2533,6 +2728,7 @@ run_engine_migrations() {
 	run_existing_schema_adoption_proof
 	run_checkpoint_bootstrap_proof
 	run_uncertain_apply_proof
+	run_unknown_layer_proof
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
 }
