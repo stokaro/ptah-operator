@@ -107,6 +107,9 @@ JOB_INVENTORY_FILE=$WORK_DIR/migration-job-inventory.json
 CREDENTIAL_PATTERNS_FILE=$WORK_DIR/credential-patterns.txt
 MIGRATION_DB_PASSWORD_FILE=$WORK_DIR/migration-database.password
 MIGRATION_DB_URL_FILE=$WORK_DIR/migration-database.url
+BRANCH_DB_URL_FILE=$WORK_DIR/branch-database.url
+ADOPT_DB_URL_FILE=$WORK_DIR/adopt-database.url
+ADOPT_SHADOW_DB_URL_FILE=$WORK_DIR/adopt-shadow-database.url
 ADMISSION_ERROR_FILE=$WORK_DIR/admission-error.txt
 STATUS_FILE=$WORK_DIR/migration-status.json
 : >"$JOB_RECORDS_FILE"
@@ -202,6 +205,27 @@ select_engine() {
 	MIGRATION_COORDINATION_KEY="e2e/migrations/${ENGINE}"
 	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}:stable"
 	MIGRATION_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}"
+	BRANCH_DATABASE=ptah_e2e_branch
+	BRANCH_DB_SECRET="e2e-${ENGINE}-branch-db"
+	BRANCH_MIGRATION="e2e-branch-${ENGINE}"
+	BRANCH_APPROVAL="e2e-branch-${ENGINE}-approval"
+	BRANCH_COORDINATION_KEY="e2e/branch/${ENGINE}"
+	BRANCH_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-branch:stable"
+	BRANCH_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-branch"
+	BRANCH_LATE_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-branch-late"
+	ADOPT_DATABASE=ptah_e2e_adopt
+	ADOPT_SHADOW_DATABASE=ptah_e2e_adopt_shadow
+	ADOPT_DB_SECRET="e2e-${ENGINE}-adopt-db"
+	ADOPT_MIGRATION="e2e-adopt-${ENGINE}"
+	ADOPT_COORDINATION_KEY="e2e/adopt/${ENGINE}"
+	ADOPT_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-adopt:stable"
+	ADOPT_CONFIGMAP="e2e-migrations-${ENGINE}-adopt"
+	ADOPT_BASELINE_JOB="e2e-adopt-baseline-${ENGINE}"
+	# The adoption row reads the artifact this engine already publishes. A
+	# second copy of the same three migrations would be a second thing to keep
+	# in step with the schema the proof builds out of them by hand.
+	ADOPT_FIXTURE_DIR="$MIGRATION_FIXTURE_DIR"
+	[ -d "$BRANCH_FIXTURE_DIR" ] || fail "branch migration fixtures are missing: $BRANCH_FIXTURE_DIR"
 	MIGRATION_EDITED_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-modified"
 	MIGRATION_PARTIAL_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-partial"
 	MIGRATION_COORDINATION_DIGEST=$(coordination_digest "$ENGINE" "$MIGRATION_COORDINATION_KEY")
@@ -381,18 +405,19 @@ create_migration_database() {
 }
 
 migration_query() {
+	query_database=${2:-$MIGRATION_DATABASE}
 	case "$ENGINE" in
 	postgresql)
 		# shellcheck disable=SC2016 # Variables expand inside the database container.
 		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
 			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -Atqc "$2"' \
-			sh "$MIGRATION_DATABASE" "$1" | tr -d '[:space:]'
+			sh "$query_database" "$1" | tr -d '[:space:]'
 		;;
 	mysql)
 		# shellcheck disable=SC2016 # Variables expand inside the database container.
 		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
 			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -Nse "$2"' \
-			sh "$MIGRATION_DATABASE" "$1" | tr -d '[:space:]'
+			sh "$query_database" "$1" | tr -d '[:space:]'
 		;;
 	esac
 }
@@ -448,6 +473,7 @@ create_migration_policy() {
 publish_migrations() {
 	publish_version=${1:-v1}
 	publish_directory=${2:-$MIGRATION_FIXTURE_DIR}
+	publish_reference=${3:-$MIGRATION_REFERENCE}
 	publish_configmap="e2e-migrations-${ENGINE}-${publish_version}"
 	publish_job="e2e-push-migrations-${ENGINE}-${publish_version}"
 	[ -d "$publish_directory" ] || fail "migration fixtures are missing: $publish_directory"
@@ -475,7 +501,7 @@ publish_migrations() {
 		--arg name "$publish_job" \
 		--arg image "$EXECUTOR_IMAGE" \
 		--arg configMap "$publish_configmap" \
-		--arg reference "$MIGRATION_REFERENCE" \
+		--arg reference "$publish_reference" \
 		--arg version "$publish_version" \
 		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
 		--arg registryPullSecret "$REGISTRY_PULL_SECRET" '
@@ -1213,6 +1239,636 @@ assert_kubectl_ptah_migration() {
 	fi
 }
 
+# The incompatible-history row of the matrix: a migration that arrives below the
+# version the database has already applied.
+#
+# It happens when two branches number migrations independently and the lower
+# number lands second. Ptah executes in linear order and refuses the whole run
+# while such a file is pending, so the operator refuses before it publishes a
+# plan: a plan for it would ask a person to approve a sequence the executor
+# cannot run, and the refusal would arrive as a failed Job instead of as the
+# answer it is.
+#
+# The proof needs versions with room between them, which the main fixture does
+# not have -- 1, 2 and 3 are all applied, and no integer sits between them. So
+# it runs on a database and an artifact of its own, numbered 10 and 30, and the
+# late arrival is 20.
+branch_database_exists() {
+	case "$ENGINE" in
+	postgresql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
+			sh "SELECT count(*) FROM pg_database WHERE datname='${BRANCH_DATABASE}'" |
+			tr -d '[:space:]'
+		;;
+	mysql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"' \
+			sh "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='${BRANCH_DATABASE}'" |
+			tr -d '[:space:]'
+		;;
+	esac
+}
+
+create_branch_database() {
+	[ "$(branch_database_exists)" = 0 ] ||
+		fail "database $BRANCH_DATABASE already exists on $ENGINE; the out-of-order proof needs a history that starts from nothing"
+	case "$ENGINE" in
+	postgresql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "$1"' \
+			sh "CREATE DATABASE ${BRANCH_DATABASE}" >/dev/null ||
+			fail "database $BRANCH_DATABASE could not be created"
+		;;
+	mysql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "$1"' \
+			sh "CREATE DATABASE ${BRANCH_DATABASE}; GRANT ALL PRIVILEGES ON ${BRANCH_DATABASE}.* TO '${DATABASE_USER}'@'%'; FLUSH PRIVILEGES" >/dev/null ||
+			fail "database $BRANCH_DATABASE could not be created"
+		;;
+	esac
+
+	branch_password=$(cat "$MIGRATION_DB_PASSWORD_FILE")
+	branch_authority="${DATABASE_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
+	case "$ENGINE" in
+	postgresql)
+		branch_url="postgres://${DATABASE_USER}:${branch_password}@${branch_authority}:5432/${BRANCH_DATABASE}?sslmode=disable"
+		;;
+	mysql)
+		branch_url="mysql://${DATABASE_USER}:${branch_password}@tcp(${branch_authority}:3306)/${BRANCH_DATABASE}"
+		;;
+	esac
+	printf '%s' "$branch_url" >"$BRANCH_DB_URL_FILE"
+	chmod 600 "$BRANCH_DB_URL_FILE"
+	printf '%s\n' "$branch_url" >>"$CREDENTIAL_PATTERNS_FILE"
+	branch_password=
+	branch_url=
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$BRANCH_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$BRANCH_DATABASE" \
+		--rawfile url "$BRANCH_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {
+        username: $username, password: $password,
+        database: $database, url: $url
+      }
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+create_branch_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$BRANCH_MIGRATION" \
+		--arg secret "$BRANCH_DB_SECRET" \
+		--arg reference "$BRANCH_REFERENCE" \
+		--arg coordinationKey "$BRANCH_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg interval "$INTERVAL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {lockTimeout: "30s"},
+        interval: $interval,
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+wait_for_branch_phase() {
+	branch_phase=$1
+	branch_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$branch_deadline" ]; do
+		branch_observed=$(k -n "$TEST_NAMESPACE" get ptahmigration "$BRANCH_MIGRATION" \
+			-o jsonpath='{.status.phase}' 2>/dev/null || true)
+		[ "$branch_observed" != "$branch_phase" ] || return 0
+		sleep 5
+	done
+	fail "$BRANCH_MIGRATION did not reach $branch_phase within ${TIMEOUT_SECONDS}s; it is in ${branch_observed:-<none>}"
+}
+
+approve_branch_plan() {
+	branch_plan=$(k -n "$TEST_NAMESPACE" get ptahmigration "$BRANCH_MIGRATION" \
+		-o jsonpath='{.status.plan.name}')
+	[ -n "$branch_plan" ] || fail "$BRANCH_MIGRATION published no plan to approve"
+	branch_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$branch_plan" \
+		-o jsonpath='{.metadata.uid}')
+	branch_plan_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$branch_plan" \
+		-o jsonpath='{.spec.fingerprint}')
+	branch_migration_uid=$(k -n "$TEST_NAMESPACE" get ptahmigration "$BRANCH_MIGRATION" \
+		-o jsonpath='{.metadata.uid}')
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$BRANCH_APPROVAL" \
+		--arg migration "$BRANCH_MIGRATION" \
+		--arg migrationUID "$branch_migration_uid" \
+		--arg plan "$branch_plan" \
+		--arg planUID "$branch_plan_uid" \
+		--arg fingerprint "$branch_plan_fingerprint" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        migrationRef: {name: $migration, uid: $migrationUID},
+        planRef: {name: $plan, uid: $planUID},
+        planFingerprint: $fingerprint
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+# assert_late_branch_migration_blocks is the row itself: the artifact gains a
+# migration numbered below what the database has applied, and the operator
+# refuses before planning rather than after a Job fails.
+assert_late_branch_migration_blocks() {
+	printf 'e2e migrations: publishing a %s migration numbered below the applied version\n' \
+		"$ENGINE_KIND" >&2
+	branch_jobs_before=$(k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.run/migration=${BRANCH_MIGRATION}" -o json | jq '.items | length')
+	publish_migrations "branch-late" "$BRANCH_LATE_FIXTURE_DIR" "$BRANCH_REFERENCE"
+
+	branch_blocked_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$branch_blocked_deadline" ]; do
+		k -n "$TEST_NAMESPACE" get ptahmigration "$BRANCH_MIGRATION" -o json >"$STATUS_FILE"
+		scan_for_credentials "$STATUS_FILE" "$BRANCH_MIGRATION status"
+		if jq -e '
+          .status.phase == "Blocked" and
+          (.status.conditions | any(
+            .type == "Blocked" and .status == "True" and .reason == "HistoryOutOfOrder"))
+        ' "$STATUS_FILE" >/dev/null; then
+			break
+		fi
+		sleep 5
+	done
+	jq -e '
+      .status.phase == "Blocked" and
+      .status.activeOperation == null and
+      (.status.history.outOfOrderVersions // []) == [20] and
+      .status.history.currentVersion == 30 and
+      (.status.conditions | any(
+        .type == "Blocked" and .status == "True" and .reason == "HistoryOutOfOrder")) and
+      (.status.conditions | any(
+        .type == "Ready" and .status == "False" and .reason == "HistoryOutOfOrder")) and
+      (.status | has("plan") | not)
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$BRANCH_MIGRATION did not refuse the out-of-order migration before planning"
+	# No plan means no approval to give and no Job to run: the refusal has to
+	# stop the work rather than describe it.
+	[ "$(k -n "$TEST_NAMESPACE" get ptahmigrationplan \
+		-l "operator.ptah.run/migration=${BRANCH_MIGRATION}" -o json | jq '.items | length')" -eq 1 ] ||
+		fail "$BRANCH_MIGRATION published a plan for a sequence the executor refuses"
+	branch_jobs_after=$(k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.run/migration=${BRANCH_MIGRATION}" -o json | jq '.items | length')
+	[ "$branch_jobs_after" -ge "$branch_jobs_before" ] ||
+		fail "$BRANCH_MIGRATION lost Jobs while refusing"
+	[ "$(migration_query "SELECT count(*) FROM information_schema.columns WHERE table_name = 'e2e_branch_widgets' AND column_name = 'label'" "$BRANCH_DATABASE")" = 0 ] ||
+		fail "the out-of-order migration reached the database"
+	printf 'e2e migrations: PASS %s refuses a migration numbered below the applied version\n' \
+		"$ENGINE_KIND" >&2
+}
+
+# run_branch_out_of_order_proof applies a history with room between its versions
+# and then hands the artifact a migration that lands in that room.
+run_branch_out_of_order_proof() {
+	create_branch_database
+	publish_migrations "branch" "$BRANCH_FIXTURE_DIR" "$BRANCH_REFERENCE"
+	create_branch_migration_resource
+	wait_for_branch_phase AwaitingApproval
+	approve_branch_plan
+	wait_for_branch_phase InSync
+	[ "$(k -n "$TEST_NAMESPACE" get ptahmigration "$BRANCH_MIGRATION" \
+		-o jsonpath='{.status.history.currentVersion}')" = 30 ] ||
+		fail "$BRANCH_MIGRATION did not apply its spaced history"
+	assert_late_branch_migration_blocks
+}
+
+# The matrix row an existing schema asks for is a refusal. Ptah reports every
+# migration pending on a database with an empty revision table whether or not
+# that database already carries the schema, so the operator cannot tell the two
+# apart and must not guess: it neither records the migrations as applied nor
+# calls the database up to date. The adoption is a person's, and this proof runs
+# it the way a person would, with Ptah's own baseline against a disposable
+# shadow database.
+
+database_exists() {
+	exists_database=$1
+	case "$ENGINE" in
+	postgresql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
+			sh "SELECT count(*) FROM pg_database WHERE datname='${exists_database}'" |
+			tr -d '[:space:]'
+		;;
+	mysql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -Nse "$1"' \
+			sh "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name='${exists_database}'" |
+			tr -d '[:space:]'
+		;;
+	esac
+}
+
+create_database() {
+	create_name=$1
+	[ "$(database_exists "$create_name")" = 0 ] ||
+		fail "database $create_name already exists on $ENGINE; the adoption proof builds the schema itself, so drop it before running this phase again"
+	case "$ENGINE" in
+	postgresql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "$1"' \
+			sh "CREATE DATABASE ${create_name}" >/dev/null ||
+			fail "database $create_name could not be created"
+		;;
+	mysql)
+		# The unprivileged user the Jobs connect as owns nothing by default, and
+		# MySQL grants are per schema, so the grant belongs to creating it.
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "$1"' \
+			sh "CREATE DATABASE ${create_name}; GRANT ALL PRIVILEGES ON ${create_name}.* TO '${DATABASE_USER}'@'%'; FLUSH PRIVILEGES" >/dev/null ||
+			fail "database $create_name could not be created"
+		;;
+	esac
+}
+
+database_url() {
+	url_database=$1
+	url_password=$(cat "$MIGRATION_DB_PASSWORD_FILE")
+	url_authority="${DATABASE_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
+	case "$ENGINE" in
+	postgresql)
+		printf 'postgres://%s:%s@%s:5432/%s?sslmode=disable' \
+			"$DATABASE_USER" "$url_password" "$url_authority" "$url_database"
+		;;
+	mysql)
+		printf 'mysql://%s:%s@tcp(%s:3306)/%s' \
+			"$DATABASE_USER" "$url_password" "$url_authority" "$url_database"
+		;;
+	esac
+	url_password=
+}
+
+create_adopt_databases() {
+	create_database "$ADOPT_DATABASE"
+	# baseline verifies its claim before recording it: the shadow database is
+	# where the migrations are replayed so the schema they produce can be
+	# compared with the schema the target already has. Without it Ptah falls
+	# back to reading Go entities from the working copy, which an executor image
+	# does not carry, and refuses.
+	create_database "$ADOPT_SHADOW_DATABASE"
+	database_url "$ADOPT_DATABASE" >"$ADOPT_DB_URL_FILE"
+	chmod 600 "$ADOPT_DB_URL_FILE"
+	database_url "$ADOPT_SHADOW_DATABASE" >"$ADOPT_SHADOW_DB_URL_FILE"
+	chmod 600 "$ADOPT_SHADOW_DB_URL_FILE"
+	{
+		cat "$ADOPT_DB_URL_FILE"
+		printf '\n'
+		cat "$ADOPT_SHADOW_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$ADOPT_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$ADOPT_DATABASE" \
+		--rawfile url "$ADOPT_DB_URL_FILE" \
+		--rawfile shadowURL "$ADOPT_SHADOW_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {
+        username: $username, password: $password,
+        database: $database, url: $url, shadowUrl: $shadowURL
+      }
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# build_adopt_schema_without_the_operator replays the artifact's own migration
+# SQL into a database the operator has never seen. The SQL comes from the
+# fixtures rather than from a copy written here: a second copy would part
+# company with the artifact the operator is about to read, and the row is about
+# a database whose schema already matches that artifact exactly.
+build_adopt_schema_without_the_operator() {
+	adopt_replayed=0
+	for adopt_file in "$ADOPT_FIXTURE_DIR"/*.up.sql; do
+		[ -f "$adopt_file" ] || fail "migration fixtures are missing: $ADOPT_FIXTURE_DIR"
+		adopt_sql=$(cat "$adopt_file")
+		case "$ENGINE" in
+		postgresql)
+			# shellcheck disable=SC2016 # Variables expand inside the database container.
+			k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+				sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$1" -v ON_ERROR_STOP=1 -qc "$2"' \
+				sh "$ADOPT_DATABASE" "$adopt_sql" >/dev/null ||
+				fail "$(basename "$adopt_file") could not be replayed into $ADOPT_DATABASE"
+			;;
+		mysql)
+			# shellcheck disable=SC2016 # Variables expand inside the database container.
+			k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+				sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot "$1" -e "$2"' \
+				sh "$ADOPT_DATABASE" "$adopt_sql" >/dev/null ||
+				fail "$(basename "$adopt_file") could not be replayed into $ADOPT_DATABASE"
+			;;
+		esac
+		adopt_replayed=$((adopt_replayed + 1))
+	done
+	[ "$adopt_replayed" -eq 3 ] ||
+		fail "the adoption proof replayed $adopt_replayed migrations, and the artifact carries three"
+	[ "$(migration_query "SELECT count(*) FROM e2e_migration_widgets" "$ADOPT_DATABASE")" = 3 ] ||
+		fail "the hand-built schema in $ADOPT_DATABASE does not carry the rows its migrations insert"
+	[ "$(adopt_revision_tables)" = 0 ] ||
+		fail "the hand-built schema in $ADOPT_DATABASE already carries a revision table"
+}
+
+# adopt_revision_tables counts the revision table Ptah records history in. It is
+# the one object that separates a database nothing has migrated from a database
+# that carries the schema and no account of it.
+adopt_revision_tables() {
+	case "$ENGINE" in
+	postgresql)
+		migration_query \
+			"SELECT count(*) FROM information_schema.tables WHERE table_name = 'schema_migrations'" \
+			"$ADOPT_DATABASE"
+		;;
+	mysql)
+		migration_query \
+			"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = '${ADOPT_DATABASE}' AND table_name = 'schema_migrations'" \
+			"$ADOPT_DATABASE"
+		;;
+	esac
+}
+
+adopt_apply_jobs() {
+	k -n "$TEST_NAMESPACE" get jobs \
+		-l "operator.ptah.run/migration=${ADOPT_MIGRATION},operator.ptah.run/operation=apply" \
+		-o json | jq '.items | length'
+}
+
+create_adopt_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$ADOPT_MIGRATION" \
+		--arg secret "$ADOPT_DB_SECRET" \
+		--arg reference "$ADOPT_REFERENCE" \
+		--arg coordinationKey "$ADOPT_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg interval "$INTERVAL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret, mode: "Environment",
+            usernameKey: "username", passwordKey: "password", registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {lockTimeout: "30s"},
+        interval: $interval,
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+}
+
+wait_for_adopt_phase() {
+	adopt_phase=$1
+	adopt_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$adopt_deadline" ]; do
+		adopt_observed=$(k -n "$TEST_NAMESPACE" get ptahmigration "$ADOPT_MIGRATION" \
+			-o jsonpath='{.status.phase}' 2>/dev/null || true)
+		[ "$adopt_observed" != "$adopt_phase" ] || return 0
+		sleep 5
+	done
+	fail "$ADOPT_MIGRATION did not reach $adopt_phase within ${TIMEOUT_SECONDS}s; it is in ${adopt_observed:-<none>}"
+}
+
+# assert_existing_schema_is_not_adopted is the row itself: the operator reads an
+# empty history from a database that is not empty, and publishes the whole
+# sequence for a person to decide about instead of recording any part of it as
+# already applied. Nothing reaches the database.
+assert_existing_schema_is_not_adopted() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$ADOPT_MIGRATION" -o json >"$STATUS_FILE"
+	scan_for_credentials "$STATUS_FILE" "$ADOPT_MIGRATION status"
+	jq -e '
+      .status.phase == "AwaitingApproval" and
+      (.status.history.currentVersion // 0) == 0 and
+      (.status.history.appliedCount // 0) == 0 and
+      (.status.history.pendingCount // 0) == 3 and
+      (.status.history.dirty // false) == false and
+      (.status.conditions | any(
+        .type == "ApprovalRequired" and .status == "True" and .reason == "AwaitingApproval")) and
+      (.status.conditions | any(.type == "Ready" and .status == "False"))
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$ADOPT_MIGRATION did not hold the whole sequence at the approval gate"
+	[ "$(adopt_revision_tables)" = 0 ] ||
+		fail "the operator wrote a revision table into a database it was never approved to migrate"
+	[ "$(adopt_apply_jobs)" = 0 ] ||
+		fail "the operator ran an Apply against a database that already carries the schema"
+	printf 'e2e migrations: %s held an existing schema at the approval gate and recorded nothing\n' \
+		"$ENGINE_KIND" >&2
+}
+
+# run_adoption_baseline is the path the refusal leaves open, run the way a
+# person runs it: Ptah's own baseline, verified against a shadow database before
+# a single row is recorded. Nothing in the operator takes part, and the Job
+# holds a database credential and no registry credential.
+run_adoption_baseline() {
+	adopt_mounts=$(find "$ADOPT_FIXTURE_DIR" -maxdepth 1 -type f -name '*.sql' \
+		-exec basename {} \; | LC_ALL=C sort | jq -R . | jq -s .)
+	[ "$(printf '%s' "$adopt_mounts" | jq 'length')" -gt 0 ] ||
+		fail "no migration files to baseline from $ADOPT_FIXTURE_DIR"
+	jq -n \
+		--argjson mounts "$adopt_mounts" \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$ADOPT_BASELINE_JOB" \
+		--arg image "$EXECUTOR_IMAGE" \
+		--arg configMap "$ADOPT_CONFIGMAP" \
+		--arg secret "$ADOPT_DB_SECRET" \
+		--arg registryPullSecret "$REGISTRY_PULL_SECRET" '
+    {
+      apiVersion: "batch/v1", kind: "Job",
+      metadata: {
+        namespace: $namespace, name: $name,
+        labels: {"app.kubernetes.io/component": "e2e-migration-adopter"}
+      },
+      spec: {
+        backoffLimit: 0, activeDeadlineSeconds: 300,
+        template: {
+          metadata: {labels: {"app.kubernetes.io/component": "e2e-migration-adopter"}},
+          spec: {
+            restartPolicy: "Never", automountServiceAccountToken: false,
+            imagePullSecrets: [{name: $registryPullSecret}],
+            securityContext: {
+              runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532,
+              seccompProfile: {type: "RuntimeDefault"}
+            },
+            containers: [{
+              name: "adopter", image: $image, imagePullPolicy: "IfNotPresent",
+              command: ["/usr/local/bin/ptah"],
+              args: [
+                "migrations", "baseline", "--migrations-dir", "/migrations",
+                "--dir-format", "ptah",
+                "--db-url", "$(PTAH_E2E_TARGET_URL)",
+                "--shadow-db", "$(PTAH_E2E_SHADOW_URL)"
+              ],
+              env: [
+                {name: "HOME", value: "/work"},
+                {name: "TMPDIR", value: "/work"},
+                {name: "PTAH_E2E_TARGET_URL",
+                 valueFrom: {secretKeyRef: {name: $secret, key: "url"}}},
+                {name: "PTAH_E2E_SHADOW_URL",
+                 valueFrom: {secretKeyRef: {name: $secret, key: "shadowUrl"}}}
+              ],
+              securityContext: {
+                allowPrivilegeEscalation: false, readOnlyRootFilesystem: true,
+                capabilities: {drop: ["ALL"]}
+              },
+              volumeMounts: ([$mounts[] | {
+                name: "migrations", mountPath: ("/migrations/" + .),
+                subPath: ., readOnly: true
+              }] + [{name: "work", mountPath: "/work"}])
+            }],
+            volumes: [
+              {name: "migrations", configMap: {name: $configMap}},
+              {name: "work", emptyDir: {sizeLimit: "64Mi"}}
+            ]
+          }
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	# The adopter reaches the database and must reach no registry: it is the
+	# mirror of the boundary the publisher keeps, read off the object that was
+	# actually created rather than off the text that asked for it.
+	k create -f "$RESOURCE_FILE" >/dev/null
+	k -n "$TEST_NAMESPACE" get job "$ADOPT_BASELINE_JOB" -o json |
+		jq -e --arg secret "$ADOPT_DB_SECRET" '
+      (.spec.template.spec.containers | length) == 1 and
+      (.spec.template.spec.containers[0].env
+       | map(select(.valueFrom.secretKeyRef.name != null) | .valueFrom.secretKeyRef.name)
+       | unique) == [$secret]
+    ' >/dev/null ||
+		fail "the adoption Job did not keep registry access out of the process that runs SQL"
+	adopt_baseline_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$adopt_baseline_deadline" ]; do
+		adopt_baseline_state=$(k -n "$TEST_NAMESPACE" get job "$ADOPT_BASELINE_JOB" -o json |
+			jq -r 'if (.status.succeeded // 0) > 0 then "succeeded"
+                   elif (.status.failed // 0) > 0 then "failed" else "running" end')
+		case "$adopt_baseline_state" in
+		succeeded) break ;;
+		failed)
+			# The adopter holds a database URL, so its words are printed only
+			# through the scanner that refuses one.
+			k -n "$TEST_NAMESPACE" logs job/"$ADOPT_BASELINE_JOB" >"$LOG_FILE" 2>&1 || true
+			scan_for_credentials "$LOG_FILE" "the migration adopter log"
+			printf 'e2e migrations: the adopter said:\n' >&2
+			sed 's/^/e2e migrations:   /' "$LOG_FILE" >&2
+			fail "the baseline a person runs did not record the existing schema"
+			;;
+		esac
+		sleep 3
+	done
+	[ "${adopt_baseline_state:-}" = succeeded ] ||
+		fail "the adoption baseline Job did not finish within ${TIMEOUT_SECONDS}s"
+}
+
+# assert_adopted_history_matches closes the row: once a person has recorded the
+# history, the operator settles on it without running anything, and the rows the
+# database already held are still the rows it holds.
+assert_adopted_history_matches() {
+	[ "$(adopt_revision_tables)" = 1 ] ||
+		fail "the baseline recorded no revision table in $ADOPT_DATABASE"
+	[ "$(migration_query "SELECT count(*) FROM schema_migrations" "$ADOPT_DATABASE")" = 3 ] ||
+		fail "the baseline did not record every migration the artifact carries"
+	wait_for_adopt_phase InSync
+	k -n "$TEST_NAMESPACE" get ptahmigration "$ADOPT_MIGRATION" -o json >"$STATUS_FILE"
+	scan_for_credentials "$STATUS_FILE" "$ADOPT_MIGRATION status"
+	jq -e '
+      .status.phase == "InSync" and
+      .status.history.currentVersion == 3 and
+      (.status.history.appliedCount // 0) == 3 and
+      (.status.history.pendingCount // 0) == 0 and
+      (.status.conditions | any(
+        .type == "Ready" and .status == "True" and .reason == "HistoryMatched")) and
+      (.status.conditions | any(
+        .type == "Blocked" and .status == "False" and .reason == "HistoryMatched"))
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$ADOPT_MIGRATION did not settle on the history a person recorded"
+	[ "$(adopt_apply_jobs)" = 0 ] ||
+		fail "the operator ran an Apply after a person adopted the database"
+	[ "$(migration_query "SELECT color FROM e2e_migration_widgets WHERE id = 1" "$ADOPT_DATABASE")" = blue ] ||
+		fail "the adopted database lost the rows its hand-built schema carried"
+}
+
+# run_existing_schema_adoption_proof is the matrix row "existing schema with an
+# empty revision table": no implicit bootstrap or baseline, and an adoption path
+# a person can take.
+run_existing_schema_adoption_proof() {
+	create_adopt_databases
+	build_adopt_schema_without_the_operator
+	publish_migrations "adopt" "$ADOPT_FIXTURE_DIR" "$ADOPT_REFERENCE"
+	create_adopt_migration_resource
+	wait_for_adopt_phase AwaitingApproval
+	assert_existing_schema_is_not_adopted
+	run_adoption_baseline
+	assert_adopted_history_matches
+	printf 'e2e migrations: PASS %s refuses to adopt an existing schema, and settles once a person does\n' \
+		"$ENGINE_KIND" >&2
+}
+
 # run_engine_migrations drives one engine from an empty database to a history
 # that matches the artifact, and proves each step on the way.
 run_engine_migrations() {
@@ -1251,6 +1907,8 @@ run_engine_migrations() {
 	assert_second_claimant_blocks_the_realm
 	assert_partial_run_blocks_and_recovers
 	assert_modified_file_blocks_everything
+	run_branch_out_of_order_proof
+	run_existing_schema_adoption_proof
 	printf 'e2e migrations: PASS %s approval gate, applied sequence, and matching history\n' \
 		"$ENGINE_KIND" >&2
 }

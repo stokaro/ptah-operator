@@ -1263,6 +1263,15 @@ for migration_marker in \
 	'assert_kubectl_ptah_migration InSync' \
 	'does not publish the plan a reader has to approve' \
 	'printed the order as' \
+	'run_existing_schema_adoption_proof' \
+	'build_adopt_schema_without_the_operator' \
+	'the operator wrote a revision table into a database it was never approved to migrate' \
+	'the operator ran an Apply against a database that already carries the schema' \
+	'"migrations", "baseline", "--migrations-dir", "/migrations",' \
+	'"--shadow-db", "$(PTAH_E2E_SHADOW_URL)"' \
+	'the adoption Job did not keep registry access out of the process that runs SQL' \
+	'did not settle on the history a person recorded' \
+	'the operator ran an Apply after a person adopted the database' \
 	'e2e migrations: PASS approval gate, applied sequence, matching history, and credential isolation'; do
 	grep -F -- "$migration_marker" "$ROOT_DIR/hack/e2e-migrations.sh" >/dev/null || {
 		printf 'e2e static: live migration proof marker is missing: %s\n' "$migration_marker" >&2
@@ -1314,6 +1323,38 @@ for migration_engine in postgresql-partial mysql-partial; do
 	}
 done
 
+# The out-of-order row needs versions with room between them: 10 and 30 applied,
+# and 20 arriving afterwards. A fixture that lost the gap would make the proof
+# about an ordinary pending migration.
+for branch_engine in postgresql mysql; do
+	branch_base_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${branch_engine}-branch/*.sql" | grep -c . || true)
+	[ "$branch_base_count" -eq 4 ] || {
+		printf 'e2e static: the %s-branch fixtures are %s files, and the applied history is two migrations in both directions\n' \
+			"$branch_engine" "$branch_base_count" >&2
+		exit 1
+	}
+	branch_late_count=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${branch_engine}-branch-late/*.sql" | grep -c . || true)
+	[ "$branch_late_count" -eq 6 ] || {
+		printf 'e2e static: the %s-branch-late fixtures are %s files, and the late arrival adds one migration in both directions\n' \
+			"$branch_engine" "$branch_late_count" >&2
+		exit 1
+	}
+	for branch_shared in 0000000010_create_branch_widgets 0000000030_add_branch_note; do
+		for branch_direction in up down; do
+			cmp "$ROOT_DIR/testdata/e2e/migrations/${branch_engine}-branch/${branch_shared}.${branch_direction}.sql" \
+				"$ROOT_DIR/testdata/e2e/migrations/${branch_engine}-branch-late/${branch_shared}.${branch_direction}.sql" || {
+				printf 'e2e static: %s %s differs between the branch fixtures, which would make the proof about a changed checksum\n' \
+					"$branch_engine" "$branch_shared" >&2
+				exit 1
+			}
+		done
+	done
+	git -C "$ROOT_DIR" ls-files "testdata/e2e/migrations/${branch_engine}-branch-late/0000000020_*.sql" | grep -q . || {
+		printf 'e2e static: the %s-branch-late fixtures carry no migration between the applied versions\n' \
+			"$branch_engine" >&2
+		exit 1
+	}
+done
 for approval_plan_marker in \
 	"policy_uid=\$(k -n \"\$TEST_NAMESPACE\" get configmap" \
 	"verificationPolicyUID: \$verificationPolicyUID" \

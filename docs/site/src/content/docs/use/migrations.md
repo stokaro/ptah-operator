@@ -123,6 +123,29 @@ pending. A database that was already past the checkpoint ignores it: a
 checkpoint changes where a new database starts, never what an existing one has
 run.
 
+**An existing schema with no history.** An empty revision table is not the same
+thing as an empty database, and the operator cannot tell the two apart: Ptah
+reports every migration pending either way. So it never guesses. It publishes
+the whole sequence as a plan, waits for the approval its policy asks for, and
+writes nothing to the database in the meantime. On a database that already
+carries the schema, approving that plan runs migrations the engine refuses, and
+the refusal leaves a dirty revision behind.
+
+Record the history first, with Ptah's own baseline and a disposable shadow
+database:
+
+```sh
+ptah migrations baseline \
+  --db-url "$DATABASE_URL" \
+  --migrations-dir ./migrations \
+  --shadow-db "$SHADOW_DATABASE_URL"
+```
+
+The shadow database is where the migrations are replayed, so the schema they
+produce can be compared with the schema the target already has; the revisions
+are recorded only when the two agree. The operator reads the recorded history on
+its next interval and reports `InSync`, having run nothing.
+
 ## Approving a run
 
 `spec.policy.apply` decides what a published plan may do:
