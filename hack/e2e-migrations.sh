@@ -604,7 +604,7 @@ assert_awaiting_approval() {
       ($status.lastRun // null) == null and
       (any($status.conditions[];
         .type == "ApprovalRequired" and .status == "True" and
-        .reason == "MigrationsPending")) and
+        .reason == "AwaitingApproval")) and
       (any($status.conditions[];
         .type == "ArtifactVerified" and .status == "True")) and
       (any($status.conditions[]; .type == "Ready" and .status == "True") | not) and
