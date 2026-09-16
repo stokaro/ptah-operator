@@ -24,7 +24,12 @@ const (
 	// accepted from native drift reports. Extending this vocabulary is a runner
 	// protocol change: an older controller must reject, rather than publish, a
 	// category whose disclosure contract it does not understand.
-	DriftFindingVocabularyVersion = 1
+	//
+	// Nothing reads this number. The refusal it describes is delivered by the
+	// vocabulary itself, at both ends: a controller decoding a report and a
+	// controller parsing a result frame each ask IsKnownDriftFindingCategory,
+	// and an unknown category is refused there rather than compared here.
+	DriftFindingVocabularyVersion = 2
 )
 
 var (
@@ -36,6 +41,9 @@ var (
 		"columns_removed",
 		"constraints_added",
 		"constraints_removed",
+		"data_rows_deleted",
+		"data_rows_inserted",
+		"data_rows_updated",
 		"enum_values_added",
 		"enum_values_removed",
 		"enums_added",

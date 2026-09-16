@@ -537,11 +537,16 @@ type SchemaSourceStatus struct {
 
 // DriftFindingStatus is a bounded aggregate from the native drift report. It
 // intentionally excludes object names, SQL, schema literals, and raw diffs.
+//
+// The data_rows_ categories say that declared reference rows differ and by how
+// many, and that is all a row contributes to this object: no key, no column
+// name and no value. A reader who needs to know which rows reads the plan,
+// which is data access and documented as such.
 type DriftFindingStatus struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
 	// +kubebuilder:validation:Pattern=`^[a-z][a-z0-9_]{0,63}$`
-	// +kubebuilder:validation:Enum=columns_added;columns_modified;columns_removed;constraints_added;constraints_removed;enum_values_added;enum_values_removed;enums_added;enums_removed;extensions_added;extensions_modified;extensions_removed;functions_added;functions_modified;functions_removed;indexes_added;indexes_removed;rls_enabled_tables_added;rls_enabled_tables_removed;rls_policies_added;rls_policies_modified;rls_policies_removed;roles_added;roles_modified;roles_removed;table_constraints_added;table_constraints_removed;tables_added;tables_removed;unique_protections_removed;vector_dimension_changed
+	// +kubebuilder:validation:Enum=columns_added;columns_modified;columns_removed;constraints_added;constraints_removed;data_rows_deleted;data_rows_inserted;data_rows_updated;enum_values_added;enum_values_removed;enums_added;enums_removed;extensions_added;extensions_modified;extensions_removed;functions_added;functions_modified;functions_removed;indexes_added;indexes_removed;rls_enabled_tables_added;rls_enabled_tables_removed;rls_policies_added;rls_policies_modified;rls_policies_removed;roles_added;roles_modified;roles_removed;table_constraints_added;table_constraints_removed;tables_added;tables_removed;unique_protections_removed;vector_dimension_changed
 	Category string `json:"category"`
 	// +kubebuilder:validation:Minimum=1
 	Count int32 `json:"count"`
