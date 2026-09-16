@@ -180,8 +180,13 @@ func TestHookProgressAuthorizationRejectsParentWiringBypass(t *testing.T) {
 				t.Fatal("upgrade authorization input is not unique")
 			}
 			files.harness = writeMutatedE2ESource(t, "e2e-kind.sh", source, upgrade, strings.Replace(upgrade, binding, "", 1))
-			if err := verifyE2EWiring(files); err == nil || !strings.Contains(err.Error(), "candidate upgrade lifecycle") {
-				t.Fatalf("parent wiring error = %v, want missing upgrade input", err)
+			// The refusal has to name the input that went missing. A failure
+			// that only reports the upgrade block no longer matching would be
+			// satisfied by any edit to it, this one included by accident.
+			name := strings.SplitN(binding, "=", 2)[0]
+			want := "upgrade phase must bind " + name
+			if err := verifyE2EWiring(files); err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("parent wiring error = %v, want substring %q", err, want)
 			}
 		})
 	}
