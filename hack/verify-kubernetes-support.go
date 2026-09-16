@@ -2722,6 +2722,8 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \`,
 			`E2E_CONTROLLER_STATE_VERSION=1 \`,
 			`E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \`,
+			`E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \`,
+			`E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \`,
 			`run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`,
 		}),
 		exactSourceLineSequence("reference-data lifecycle", []string{
