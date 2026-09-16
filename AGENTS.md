@@ -119,6 +119,12 @@ learned by paying that:
   touched what it measures. `pendingCount` moved when the operator started
   reading Ptah's own selection; the row that had pinned it broke, and it was not
   about pending work at all.
+- **If a phase has to be asserted, assert the document that matched it.** A
+  loop that polls until a phase appears already holds the status that satisfied
+  it; asserting against that document has no window at all, while re-reading
+  afterwards reopens one. The window is usually small -- a resource waiting for
+  a person sits there for a whole interval -- but it is the difference between
+  a proof that cannot race and one that merely usually does not.
 - **A filter has to be shown to refuse something.** Reading it again catches a
   reasoning error and misses the one that matters: a filter that passes its
   author's intent and measures something else reads correctly. `testdata/e2e/*.jq`
