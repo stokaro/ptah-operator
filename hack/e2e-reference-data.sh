@@ -623,6 +623,16 @@ assert_declared_rows() {
 
 # A repeated reconciliation with no changes issues no DML. The evidence is the
 # resource settling back into InSync with no plan, plus the rows being untouched.
+#
+# Pending belongs in the allowed set because this proof puts it there. The spec
+# patch below bumps the generation, the generation is part of the operation
+# input fingerprint, and an operation already in flight when the patch lands is
+# discarded into Pending. Demanding its absence would fail on the poll that
+# caught the harness changing the spec, and report it as the operator planning
+# something.
+#
+# The phases that would mean a plan appeared stay out: ReadyToApply,
+# AwaitingApproval and Applying each say the operator decided there was work.
 assert_repeated_reconciliation_changes_nothing() {
 	before_rows=$(reference_query "SELECT count(*) FROM countries")
 	k -n "$TEST_NAMESPACE" patch ptahschema "$REFERENCE_SCHEMA" --type=merge \
@@ -630,7 +640,7 @@ assert_repeated_reconciliation_changes_nothing() {
 	repeat_deadline=$(($(date +%s) + 90))
 	while [ "$(date +%s)" -lt "$repeat_deadline" ]; do
 		reference_status
-		jq -e '.status.phase == "InSync" or .status.phase == "Observing" or .status.phase == "Planning" or .status.phase == "VerifyingConvergence" or .status.phase == "Resolving" or .status.phase == "Verifying"' \
+		jq -e '.status.phase == "InSync" or .status.phase == "Observing" or .status.phase == "Planning" or .status.phase == "VerifyingConvergence" or .status.phase == "Resolving" or .status.phase == "Verifying" or .status.phase == "Pending"' \
 			"$STATUS_FILE" >/dev/null ||
 			fail "$REFERENCE_SCHEMA left the converged cycle while nothing had changed"
 		sleep 10
