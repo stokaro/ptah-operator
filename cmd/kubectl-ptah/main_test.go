@@ -22,9 +22,9 @@ func TestRunUsagePath(t *testing.T) {
 		{name: "version", arguments: []string{"--version"}, status: exitOK, says: "kubectl-ptah"},
 		{
 			name:      "another command",
-			arguments: []string{"schema", "storefront"},
+			arguments: []string{"apply", "storefront"},
 			status:    exitUsage,
-			says:      `unknown command "schema"`,
+			says:      `unknown command "apply"`,
 		},
 		{
 			name:      "no schema named",
@@ -163,14 +163,42 @@ func TestMigrationRefusesAnAmbiguousCommandLine(t *testing.T) {
 	}
 }
 
-func TestUsageNamesBothCommands(t *testing.T) {
+func TestSchemaRefusesAnAmbiguousCommandLine(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		arguments []string
+		want      int
+	}{
+		{name: "no schema named", arguments: []string{"schema"}, want: exitUsage},
+		{name: "two schemas named", arguments: []string{"schema", "storefront", "warehouse"}, want: exitUsage},
+		{name: "unknown format", arguments: []string{"schema", "storefront", "-o", "yaml"}, want: exitUsage},
+		{name: "sql is a plan format", arguments: []string{"schema", "storefront", "-o", "sql"}, want: exitUsage},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+			if status := run(context.Background(), test.arguments, &stdout, &stderr); status != test.want {
+				t.Fatalf("status = %d, want %d (%s)", status, test.want, stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("a refused command line printed %q", stdout.String())
+			}
+		})
+	}
+}
+
+func TestUsageNamesEveryCommand(t *testing.T) {
 	t.Parallel()
 
 	var stdout, stderr bytes.Buffer
 	if status := run(context.Background(), []string{"help"}, &stdout, &stderr); status != exitOK {
 		t.Fatalf("status = %d", status)
 	}
-	for _, want := range []string{"kubectl ptah plan", "kubectl ptah migration"} {
+	for _, want := range []string{"kubectl ptah plan", "kubectl ptah schema", "kubectl ptah migration"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("usage does not name %q:\n%s", want, stdout.String())
 		}

@@ -15,6 +15,10 @@ nothing, changes nothing, starts no Job, and never connects to your database.
 kubectl ptah plan storefront -n application
 ```
 
+Three verbs read three different things: `plan` reads the SQL a stored plan
+holds, `schema` reads where a `PtahSchema` stands and what its last observation
+found, and `migration` reads a `PtahMigration`.
+
 ## Install it {#install}
 
 `kubectl` runs any executable named `kubectl-<verb>` on your `PATH` as
@@ -103,6 +107,59 @@ rather than half its SQL.
 
 Exit status: `0` printed, `1` could not read or verify, `2` the command line,
 `3` nothing stored to print.
+
+## Where a schema stands {#schema}
+
+A plan is what the operator would run. It does not say what the operator saw,
+and a converged schema has no plan at all, which is exactly when you want to
+know what the last reading found.
+
+```sh
+kubectl ptah schema storefront -n application
+```
+
+```text
+Schema:           application/storefront
+Phase:            AwaitingApproval
+Artifact:         oci://registry.example/acme/storefront@sha256:...
+Verified:         true
+Observed:         2026-09-16T06:00:00Z
+Drift:            6 in 3 categories, highest destructive
+Reference data:   2 to insert, 1 to update, 3 to delete
+  data_rows_deleted                       3  destructive
+  data_rows_inserted                      2  safe
+  data_rows_updated                       1  destructive
+ApprovalRequired: True (AwaitingApproval)
+Ready:            False (AwaitingApproval)
+
+Plan ptah-plan-4b44084123f0958600629632, 4 statements, stored 2026-09-16T06:00:00Z
+  not approved
+
+kubectl ptah plan prints the SQL this plan holds.
+```
+
+`Observed: not yet` and `Drift: none` are different answers. The first is a
+schema nothing has read; the second is a database that matches its declaration.
+
+### The reference-data line {#reference-data}
+
+`Reference data` is how far the declared rows sit from the database, in counts:
+how many rows the declaration has and the database is missing, how many the
+database holds with a different value in a managed column, and how many it
+holds that the declaration no longer has.
+
+It carries no key, no column name and no value. Which rows those are is in the
+plan, and a data plan contains values, so reading one is data access.
+
+The line appears only when the observation carried a reference-data category. A
+schema that declares no rows says nothing here, rather than reporting three
+zeroes about a comparison that never ran.
+
+`-o json` prints the same view as a document, including `referenceData`, for a
+script that wants the counts without parsing text.
+
+Reading a schema needs `get` on `ptahschemas` in the namespace and nothing
+else: no plan object, no ConfigMap, and no Secret.
 
 ## A migration, not a plan {#migration}
 
