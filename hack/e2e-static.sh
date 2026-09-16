@@ -1279,7 +1279,6 @@ for migration_marker in \
 	'testdata/e2e/migration-history-ahead.jq' \
 	'testdata/e2e/migration-untouched-database.jq' \
 	'testdata/e2e/migration-partial-run-recorded.jq' \
-	'testdata/e2e/readings/partial-run-left-a-dirty-revision.json' \
 	'did not keep the statement the partial migration committed' \
 	'assert_no_new_apply_job' \
 	'after a partial one' \
@@ -1360,6 +1359,27 @@ done
 # turn the row into an ordinary successful pull that asserts nothing, so the
 # refusal the fixture is built to trigger is pinned to the two constants it
 # stands on.
+# The partial row's filter is measured against a document the operator really
+# produced, so the self-test can fail the way CI failed rather than the way its
+# author imagined. That document is an input to the self-test and not a file the
+# phase reads, so a marker in the phase's source can never stand for it.
+#
+# What has to hold is that the self-test still reads it. A reading the self-test
+# stopped naming is a file: the self-test keeps passing, on one case fewer, and
+# the case it dropped is the one that came from a real failure. A reading that
+# is gone at all the self-test refuses on its own, and this says so first.
+recorded_reading=partial-run-left-a-dirty-revision.json
+[ -f "$ROOT_DIR/testdata/e2e/readings/$recorded_reading" ] || {
+	printf 'e2e static: the recorded operator reading is gone: testdata/e2e/readings/%s\n' \
+		"$recorded_reading" >&2
+	exit 1
+}
+grep -F -- "$recorded_reading" "$ROOT_DIR/hack/migration-refusal-filter-selftest.sh" >/dev/null || {
+	printf 'e2e static: the filter self-test no longer measures itself against the recorded reading: %s\n' \
+		"$recorded_reading" >&2
+	exit 1
+}
+
 for unknown_layer_marker in \
 	'application/vnd.stokaro.ptah.migration.file.v1' \
 	'application/vnd.stokaro.ptah.migrations.v1' \
