@@ -91,12 +91,31 @@ for filter_file in "$ROOT_DIR"/testdata/e2e/*.jq; do
 		fail "$(basename "$filter_file") is not a jq program"
 done
 
+# The readings a proof must accept come from the operator wherever one can be
+# had. This one is the status a lifecycle printed when it failed -- run
+# 34990006879 on 23a9c4d, PostgreSQL, the partial row -- with the digests, times
+# and names of that one cluster scrubbed out. A document written by hand proves
+# the filter agrees with its author; this one proves it agrees with the operator.
+#
+# It is also the document that broke two proofs at once: the phase is Resolving
+# while the refusal holds, and the pending count is one rather than zero.
+accepts_file() {
+	filter=$1
+	description=$2
+	reading=$3
+	jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
+		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
+		-f "$ROOT_DIR/testdata/e2e/$filter" \
+		"$ROOT_DIR/testdata/e2e/readings/$reading" >/dev/null ||
+		fail "$filter refused a reading the operator produced: $description"
+}
+
+accepts_file migration-partial-refusal.jq 'the reading that broke the hold' \
+	partial-run-left-a-dirty-revision.json
+accepts_file migration-dirty-reading.jq 'the reading that broke the dirty wait' \
+	partial-run-left-a-dirty-revision.json
+
 # The refusal a stopped migration holds.
-accepts migration-partial-refusal.jq 'blocked, mid-cycle in Resolving' <<'JSON'
-{"status":{"phase":"Resolving","activeOperation":{"type":"Resolve"},
- "conditions":[{"type":"Blocked","status":"True","reason":"HistoryDirty"},
-               {"type":"Ready","status":"False","reason":"HistoryDirty"}]}}
-JSON
 accepts migration-partial-refusal.jq 'blocked, between cycles' <<'JSON'
 {"status":{"phase":"Blocked",
  "conditions":[{"type":"Blocked","status":"True","reason":"ApplyOutcomeUnknown"},
@@ -119,8 +138,8 @@ refuses migration-partial-refusal.jq 'the resource was called ready' <<'JSON'
 JSON
 
 # The reading a partially applied migration leaves behind.
-accepts migration-dirty-reading.jq 'dirty at 3, Ptah counting it pending' <<'JSON'
-{"status":{"phase":"Blocked","history":{"dirty":true,"currentVersion":3,"pendingCount":1},
+accepts migration-dirty-reading.jq 'dirty at 3, mid-cycle, Ptah counting it pending' <<'JSON'
+{"status":{"phase":"Resolving","history":{"dirty":true,"currentVersion":3,"pendingCount":1},
  "conditions":[{"type":"Blocked","status":"True","reason":"HistoryDirty"}]}}
 JSON
 accepts migration-dirty-reading.jq 'dirty at 3, counted pending by nobody' <<'JSON'

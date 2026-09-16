@@ -1,0 +1,145 @@
+{
+  "status": {
+    "activeOperation": {
+      "admissionSnapshot": {
+        "alwaysPullImagesEnabled": false,
+        "defaultNotReadyTolerationSeconds": 300,
+        "defaultTolerationsEnabled": true,
+        "defaultUnreachableTolerationSeconds": 300,
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "extendedResourceTolerationEnabled": false,
+        "limitRanges": [
+          {
+            "defaultLimits": {
+              "cpu": "100m",
+              "memory": "64Mi"
+            },
+            "defaultRequests": {
+              "cpu": "10m",
+              "memory": "16Mi"
+            },
+            "object": {
+              "name": "ptah-operation-defaults",
+              "resourceVersion": "8113",
+              "uid": "00000000-0000-0000-0000-000000000000"
+            }
+          }
+        ],
+        "priorityClass": {
+          "preemptionPolicy": "PreemptLowerPriority",
+          "value": 0
+        },
+        "serviceAccount": {
+          "imagePullSecrets": [
+            {
+              "name": "e2e-registry-pull"
+            }
+          ],
+          "object": {
+            "name": "default",
+            "resourceVersion": "8115",
+            "uid": "00000000-0000-0000-0000-000000000000"
+          }
+        },
+        "templateDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "version": "v1"
+      },
+      "attempt": 1,
+      "executionBindingID": "v1-fc38bc8939c0a258fe469f8707978a63",
+      "id": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "inputFingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "jobName": "ptah-m-resolve-e2e-migrations-postgresql-cd27f210111a471b",
+      "jobUID": "00000000-0000-0000-0000-000000000000",
+      "startedAt": "2026-01-01T00:00:00Z",
+      "type": "Resolve"
+    },
+    "artifact": {
+      "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "registryAuthFrom": {
+        "dockerConfigJSONKey": ".dockerconfigjson",
+        "mode": "Environment",
+        "name": "e2e-registry-auth",
+        "passwordKey": "password",
+        "registryKey": "registry",
+        "tokenKey": "token",
+        "usernameKey": "username"
+      },
+      "resolvedReference": "oci://registry.example:5000/migrations/postgresql@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "transport": {
+        "plainHTTP": true
+      }
+    },
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-01-01T00:00:00Z",
+        "message": "Resolve operation is in progress",
+        "observedGeneration": 2,
+        "reason": "OperationInProgress",
+        "status": "True",
+        "type": "Progressing"
+      },
+      {
+        "lastTransitionTime": "2026-01-01T00:00:00Z",
+        "message": "The resolved artifact satisfied its verification policy",
+        "observedGeneration": 2,
+        "reason": "PolicySatisfied",
+        "status": "True",
+        "type": "ArtifactVerified"
+      },
+      {
+        "lastTransitionTime": "2026-01-01T00:00:00Z",
+        "message": "Revision 4 is recorded dirty; a person has to decide what the interrupted run did",
+        "observedGeneration": 2,
+        "reason": "HistoryDirty",
+        "status": "True",
+        "type": "Blocked"
+      },
+      {
+        "lastTransitionTime": "2026-01-01T00:00:00Z",
+        "message": "The revision table holds a dirty row",
+        "observedGeneration": 2,
+        "reason": "HistoryDirty",
+        "status": "False",
+        "type": "Ready"
+      },
+      {
+        "lastTransitionTime": "2026-01-01T00:00:00Z",
+        "message": "The plan's approval requirements are satisfied",
+        "observedGeneration": 2,
+        "reason": "Satisfied",
+        "status": "False",
+        "type": "ApprovalRequired"
+      }
+    ],
+    "executionBinding": {
+      "controllerImage": "registry.example:5000/ptah-operator@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "controllerRevision": "23a9c4d7c22d4eb8a2ad12207dfcb627b3f51ab8",
+      "controllerStateVersion": 1,
+      "epoch": "v1-fc38bc8939c0a258fe469f8707978a63",
+      "executorImage": "registry.example:5000/ptah-executor@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "ptahVersion": "939c2fb",
+      "runnerImage": "registry.example:5000/ptah-runner@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "runnerProtocolVersion": 5
+    },
+    "history": {
+      "appliedCount": 3,
+      "contractVersion": 1,
+      "currentVersion": 3,
+      "dirty": true,
+      "fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "observedAt": "2026-01-01T00:00:00Z",
+      "pendingCount": 1,
+      "targetIdentityDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "lastRun": {
+      "finishedAt": "2026-01-01T00:00:00Z",
+      "jobName": "ptah-m-apply-e2e-migrations-postgresql-300c6910991650c8",
+      "jobUID": "00000000-0000-0000-0000-000000000000",
+      "message": "A migration committed some of its statements and not the rest; retrying the file would run them twice",
+      "outcome": "Partial",
+      "startedAt": "2026-01-01T00:00:00Z"
+    },
+    "observedGeneration": 2,
+    "phase": "Resolving"
+  }
+}
