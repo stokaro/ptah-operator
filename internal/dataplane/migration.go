@@ -84,7 +84,15 @@ type MigrationStatusReport struct {
 	// checkpoint bootstrap the two disagree on purpose -- a version the
 	// checkpoint replaced is reported pending once the bootstrap is no longer
 	// what the database is doing, and Ptah's own floor still skips it.
-	PendingMigrations []int64           `json:"pending_migrations,omitempty"`
+	//
+	// Carried without omitempty, because this report is decoded from Ptah and
+	// encoded again into the runner's result frame, and an empty selection is
+	// the answer that matters: it says the next run would execute nothing.
+	// Dropped from the frame, it reaches the controller as an absent field,
+	// which [MigrationStatusReport.Pending] reads as a build that reports no
+	// selection at all and answers by recounting the states. Ptah declares the
+	// field the same way for the same reason.
+	PendingMigrations []int64           `json:"pending_migrations"`
 	Migrations        []MigrationRecord `json:"migrations,omitempty"`
 	DirtyRevision     *MigrationDirty   `json:"dirty_revision,omitempty"`
 }
