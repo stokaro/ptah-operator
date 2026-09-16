@@ -1,0 +1,67 @@
+id: checkpoint-bootstrap
+title: Start a new database from a checkpoint
+tagline: A fresh database runs the snapshot and what came after it, and ends up where the long way ends.
+learn: What a checkpoint replaces, what it must record, and how the operator proves the shortcut arrived at the same place.
+tags: [Lifecycle]
+
+reset:
+  - demo/bin/lab reset
+  # The same `ptah migrations push` the versioned scene uses, over a directory
+  # that carries a checkpoint. Nothing about publishing changes: what changes is
+  # one file's name.
+  - |
+    eval "$(demo/bin/lab credentials)"
+    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+    ptah migrations push "oci://$PTAH_OCI_REGISTRY/migrations/demo:ckpt-$$" \
+      --migrations-dir demo/migrations-checkpoint --dir-format ptah --version "ckpt-$$" --plain-http \
+      | sed -n 's/^Digest: //p' > demo/.lab/checkpoint-digest
+
+steps:
+  - note: Four files, and one of them is not a migration. The name is the whole contract.
+    run: ls demo/migrations-checkpoint | grep -v down
+    expect:
+      exit: 0
+      stdout_contains: [0000000003_snapshot.checkpoint.up.sql, 0000000004_add_delivered_at.up.sql]
+
+  - note: The checkpoint records where migration 2 left the column, not where migration 1 created it.
+    run: sed -n '/CREATE TABLE/,$p' demo/migrations-checkpoint/0000000003_snapshot.checkpoint.up.sql
+    expect:
+      exit: 0
+      stdout_contains: ["carrier TEXT NOT NULL"]
+
+  - note: Apply it to a database that has run nothing at all.
+    run: APPLY=Always demo/bin/lab manifest shipments "$(cat demo/.lab/checkpoint-digest)" | kubectl apply -f -
+    sync: publishing
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: The history ends at 4, and the two the checkpoint replaced were never run.
+    await:
+      kind: ptahmigration
+      name: shipments
+      timeout: 6m
+      condition:
+        type: Ready
+        status: "True"
+        reason: HistoryMatched
+    run: kubectl ptah migration shipments -n "$NAMESPACE"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [InSync, "Current version:4", "Run applied:    3, 4"]
+      stdout_absent: ["CREATE TABLE", "ALTER TABLE"]
+
+  - note: The table is what replaying all four would have built, down to the constraint.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "\d shipments"
+    expect:
+      exit: 0
+      stdout_contains: [carrier, delivered_at, "not null"]
+
+  - note: Nothing is pending. The shortcut is finished, not paused.
+    run: |
+      kubectl -n "$NAMESPACE" get ptahmigration shipments -o json \
+        | jq -r '"pending: \(.status.history.pendingCount)", "current: \(.status.history.currentVersion)", "plan: \(.status.plan // "none")"'
+    expect:
+      exit: 0
+      stdout_contains: ["pending: 0", "current: 4", "plan: none"]
