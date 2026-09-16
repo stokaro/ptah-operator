@@ -2009,7 +2009,8 @@ func (r *SchemaReconciler) reconcileApproval(ctx context.Context, schema *operat
 		return r.verificationPolicyChanged(ctx, schema, err)
 	}
 	if plan.Spec.Destructive && !schema.Spec.Policy.AllowDestructive {
-		return r.waitBlocked(ctx, schema, operatorv1alpha1.ReasonDestructiveChangesDisabled, "Plan contains destructive changes and policy disallows them")
+		return r.waitBlocked(ctx, schema, operatorv1alpha1.ReasonDestructiveChangesDisabled, "Plan contains destructive changes and policy disallows them; read them with kubectl ptah plan, "+
+			"then either narrow the desired schema or set spec.policy.allowDestructive")
 	}
 	if schema.Spec.Policy.Apply == operatorv1alpha1.ApplyPolicyNever {
 		return r.waitBlocked(ctx, schema, operatorv1alpha1.ReasonApplyDisabled, "Policy records plans but does not apply them")
@@ -4536,7 +4537,8 @@ func setPlanPolicyStatus(schema *operatorv1alpha1.PtahSchema, plan *operatorv1al
 	switch {
 	case plan.Spec.Destructive && !schema.Spec.Policy.AllowDestructive:
 		schema.Status.Phase = operatorv1alpha1.PhaseBlocked
-		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonDestructiveChangesDisabled, "Plan contains destructive changes and policy disallows them")
+		setCondition(schema, operatorv1alpha1.ConditionApprovalRequired, metav1.ConditionFalse, operatorv1alpha1.ReasonDestructiveChangesDisabled, "Plan contains destructive changes and policy disallows them; read them with kubectl ptah plan, "+
+			"then either narrow the desired schema or set spec.policy.allowDestructive")
 		setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse, operatorv1alpha1.ReasonPolicyBlocked, "Plan is blocked by destructive-change policy")
 	case schema.Spec.Policy.Apply == operatorv1alpha1.ApplyPolicyNever:
 		schema.Status.Phase = operatorv1alpha1.PhaseBlocked
