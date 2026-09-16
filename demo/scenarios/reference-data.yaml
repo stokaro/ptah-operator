@@ -1,0 +1,154 @@
+id: reference-data
+title: Manage reference data
+tagline: Rows declared beside the tables that hold them, reconciled through the same plan.
+learn: What a declared row set owns, how a change to rows alone reaches the database, and why removing a declaration is not a delete.
+tags: [Lifecycle]
+
+reset:
+  - demo/bin/lab reset
+  # Declared rows travel in the schema artifact, so publishing is the same
+  # command the other scenes use. What differs is the source: rows are declared
+  # as Go annotations, which `--root-dir` reads, and SQL has nowhere to put them.
+  - |
+    eval "$(demo/bin/lab credentials)"
+    export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+    ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/catalog:v1-$$" \
+      --root-dir demo/reference/v1 --dialect postgres --plain-http \
+      | sed -n 's/^Digest: //p' > demo/.lab/catalog-digest
+
+steps:
+  - note: A declaration names the table, the column that identifies a row, and the file the rows live in.
+    run: sed -n '/ptah:schema:table name="regions"/,/^}/p' demo/reference/v1/catalog.go
+    expect:
+      exit: 0
+      stdout_contains: ['ptah:schema:data table="regions"', 'key="code"', 'file="regions.yaml"']
+
+  - note: The rows themselves are a list, each one a map from column name to value.
+    run: cat demo/reference/v1/regions.yaml
+    expect:
+      exit: 0
+      stdout_contains: [emea, amer]
+
+  - note: Apply it. The rows are covered by the digest, so nothing later reads the author's working copy.
+    run: APPLY=Always demo/bin/lab manifest catalog "$(cat demo/.lab/catalog-digest)" | kubectl apply -f -
+    sync: publishing
+    expect:
+      exit: 0
+      stdout_contains: [created]
+
+  - note: The tables are created and the declared rows are in them.
+    await:
+      kind: ptahschema
+      name: catalog
+      timeout: 6m
+      condition:
+        type: InSync
+        status: "True"
+        reason: ScopedConverged
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "SELECT code, name FROM regions ORDER BY code"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [amer, Americas, emea]
+
+  - note: The child table exists and holds nothing. Its rows come in the next revision.
+    # Ptah groups declared rows by table in an order that ignores the dependency
+    # order it uses for the tables themselves, so a child row can be offered
+    # before the parent row it references (stokaro/ptah#3252). The parent's rows
+    # land first, and the child's once they exist.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -qAt -c "SELECT count(*) FROM countries"
+    expect:
+      exit: 0
+      stdout_contains: ["0"]
+
+  - note: The second revision adds rows and no column. One marker, nothing else.
+    run: diff -u demo/reference/v1/catalog.go demo/reference/v2/catalog.go || true
+    expect:
+      exit: 0
+      stdout_contains: ['+//ptah:schema:data table="countries"']
+
+  - note: Publish it and point the resource at the new digest.
+    run: |
+      eval "$(demo/bin/lab credentials)"
+      export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+      ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/catalog:v2-$$" \
+        --root-dir demo/reference/v2 --dialect postgres --plain-http \
+        | sed -n 's/^Digest: //p' > demo/.lab/catalog-digest
+      kubectl -n "$NAMESPACE" patch ptahschema catalog --type=merge \
+        -p "{\"spec\":{\"desired\":{\"ociRef\":\"oci://$REGISTRY_IN_CLUSTER/schemas/catalog@$(cat demo/.lab/catalog-digest)\"}}}"
+    sync: planning
+    expect:
+      exit: 0
+      stdout_contains: [patched]
+
+  - note: An empty schema diff is no reason to skip the rest. The rows are planned and applied.
+    await:
+      kind: ptahschema
+      name: catalog
+      timeout: 6m
+      condition:
+        type: InSync
+        status: "True"
+        reason: ScopedConverged
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "SELECT code, name FROM countries ORDER BY code"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [CZ, Czech Republic, US, CA]
+
+  - note: A value edited outside the operator is drift, not a new declaration.
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -c "UPDATE countries SET name = 'Edited by hand' WHERE code = 'US'"
+    expect:
+      exit: 0
+      stdout_contains: [UPDATE]
+
+  - note: The next observation sees it, plans the difference, and the apply puts the declared value back.
+    await:
+      kind: ptahschema
+      name: catalog
+      timeout: 6m
+      condition:
+        type: InSync
+        status: "True"
+        reason: ScopedConverged
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -qAt -c "SELECT name FROM countries WHERE code = 'US'"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: [United States]
+      stdout_absent: [Edited by hand]
+
+  - note: The third revision removes the declaration on countries and keeps the table.
+    run: diff -u demo/reference/v2/catalog.go demo/reference/v3/catalog.go || true
+    expect:
+      exit: 0
+      stdout_contains: ['-//ptah:schema:data table="countries"']
+
+  - note: Publish it and point the resource at it.
+    run: |
+      eval "$(demo/bin/lab credentials)"
+      export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
+      ptah schema push "oci://$PTAH_OCI_REGISTRY/schemas/catalog:v3-$$" \
+        --root-dir demo/reference/v3 --dialect postgres --plain-http \
+        | sed -n 's/^Digest: //p' > demo/.lab/catalog-digest
+      kubectl -n "$NAMESPACE" patch ptahschema catalog --type=merge \
+        -p "{\"spec\":{\"desired\":{\"ociRef\":\"oci://$REGISTRY_IN_CLUSTER/schemas/catalog@$(cat demo/.lab/catalog-digest)\"}}}"
+    sync: planning
+    expect:
+      exit: 0
+      stdout_contains: [patched]
+
+  - note: Ending management is not deleting rows. They stay exactly as they were.
+    await:
+      kind: ptahschema
+      name: catalog
+      timeout: 6m
+      condition:
+        type: InSync
+        status: "True"
+        reason: ScopedConverged
+    run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -qAt -c "SELECT count(*) FROM countries"
+    sync: converged
+    expect:
+      exit: 0
+      stdout_contains: ["3"]

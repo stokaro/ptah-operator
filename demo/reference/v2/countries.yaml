@@ -1,0 +1,9 @@
+- code: CZ
+  name: Czech Republic
+  region_code: emea
+- code: US
+  name: United States
+  region_code: amer
+- code: CA
+  name: Canada
+  region_code: amer

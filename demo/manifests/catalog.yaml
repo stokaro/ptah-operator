@@ -1,0 +1,49 @@
+# The storefront's reference data, as a Kubernetes resource.
+#
+# The same shape as storefront.yaml, because declared rows are not a second
+# kind of resource: a PtahSchema reconciles the structure and the rows the
+# artifact declares, through one plan and one approval.
+#
+# The coordination key names the database, not the resource. This artifact
+# reaches the same PostgreSQL the storefront scenes use, so it has to carry the
+# same key -- that is how the operator refuses two resources planning against
+# one database at once. They never coexist here: every scenario resets first.
+apiVersion: operator.ptah.run/v1alpha1
+kind: PtahSchema
+metadata:
+  name: catalog
+  namespace: ${NAMESPACE}
+spec:
+  target:
+    engine: PostgreSQL
+    # Every resource that can reach this physical database, through any alias
+    # or credential, has to use this exact key. It is how two of them are kept
+    # from planning against each other.
+    coordinationKey: demo/storefront/primary
+    urlFrom:
+      name: demo-database
+      key: url
+  desired:
+    # A digest, not a tag: what was reviewed is what runs.
+    ociRef: oci://${REGISTRY}/schemas/catalog@${DIGEST}
+    registryAuthFrom:
+      name: demo-registry
+      mode: Environment
+      usernameKey: username
+      passwordKey: password
+      registryKey: registry
+    verificationPolicyFrom:
+      name: demo-verification-policy
+      key: policy.yaml
+    transport:
+      plainHTTP: true
+  policy:
+    apply: ${APPLY}
+    allowDestructive: ${ALLOW_DESTRUCTIVE}
+    driftSeverity: all
+  interval: ${INTERVAL}
+  suspend: ${SUSPEND}
+  execution:
+    activeDeadlineSeconds: 300
+    failureRetryInterval: 10s
+    connectTimeout: 30s
