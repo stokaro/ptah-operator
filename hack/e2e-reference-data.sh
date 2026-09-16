@@ -105,6 +105,7 @@ STATUS_FILE=$WORK_DIR/reference-status.json
 PLAN_FILE=$WORK_DIR/reference-plan.json
 APPROVAL_FILE=$WORK_DIR/reference-approval.json
 EVENTS_FILE=$WORK_DIR/reference-events.json
+LOG_ERROR_FILE=$WORK_DIR/reference-log-read.err
 ROW_PATTERNS_FILE=$WORK_DIR/declared-rows.txt
 REFERENCE_PLAN=
 
@@ -787,6 +788,14 @@ assert_removed_declaration_keeps_rows() {
 
 # The refusal that has to hold through every step above: no declared row value
 # reaches status, an Event, or the controller's own log.
+#
+# The log read is not allowed to fail quietly. scan_for_rows returns success on
+# an empty file, which is right for an evidence file that may legitimately carry
+# nothing, and wrong here: a selector that matches no Pod, a wrong namespace or
+# a kubectl that errored would all produce an empty file and a passing scan, and
+# the strongest of the three checks would report success about a log it never
+# read. The controller has been reconciling this schema through every step
+# above, so it has logged something.
 assert_rows_never_left_the_database() {
 	reference_status
 	k -n "$TEST_NAMESPACE" get events -o json >"$EVENTS_FILE" ||
@@ -794,7 +803,10 @@ assert_rows_never_left_the_database() {
 	scan_for_credentials "$EVENTS_FILE" "namespace Events"
 	scan_for_rows "$EVENTS_FILE" "namespace Events"
 	k -n "$OPERATOR_NAMESPACE" logs -l app.kubernetes.io/component=controller \
-		--tail=2000 >"$LOG_FILE" 2>/dev/null || true
+		--tail=2000 >"$LOG_FILE" 2>"$LOG_ERROR_FILE" ||
+		fail "the controller log could not be read: $(cat "$LOG_ERROR_FILE")"
+	[ -s "$LOG_FILE" ] ||
+		fail "the controller log is empty, so the row scan would have measured nothing"
 	scan_for_credentials "$LOG_FILE" "the controller log"
 	scan_for_rows "$LOG_FILE" "the controller log"
 }

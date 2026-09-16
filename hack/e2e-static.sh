@@ -1516,6 +1516,7 @@ for reference_marker in \
 	'assert_removed_declaration_keeps_rows' \
 	'assert_rows_never_left_the_database' \
 	'a reconciliation with no declared change rewrote the managed rows' \
+	'the controller log is empty, so the row scan would have measured nothing' \
 	'an approval naming the replaced plan was accepted' \
 	'removing the declaration changed the managed rows' \
 	'carries a declared row value'; do
