@@ -1,0 +1,7 @@
+# An explicitly declared empty row set. It is not the same statement as the
+# revision before it, which withdrew the declaration and left the rows alone:
+# this one still owns the table and says it should hold nothing.
+#
+# Measured against the pinned executor on PostgreSQL 17: the plan is three
+# DELETEs, each classified destructive, and the plan itself is destructive, so
+# the operator's policy holds it at the approval gate.

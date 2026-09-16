@@ -1525,10 +1525,12 @@ for reference_marker in \
 		exit 1
 	}
 done
-# Three revisions, because the proof is a sequence: declared, changed, and no
-# longer declared. Each carries the Go source Ptah reads and the rows it
-# declares.
-for reference_revision in v1 v2 v3; do
+# The proof is a sequence, and each step is a different statement about the same
+# tables: declared, changed, no longer declared, and declared empty. Each
+# revision carries the Go source Ptah reads and the rows it declares -- the last
+# one declares a file with no rows in it, which is the statement that separates
+# ending management from emptying a table.
+for reference_revision in v1 v2 v3 v4; do
 	reference_entities=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/reference/${reference_revision}/entities.go" | grep -c . || true)
 	[ "$reference_entities" -eq 1 ] || {
 		printf 'e2e static: reference-data revision %s has no entities.go\n' "$reference_revision" >&2

@@ -786,6 +786,39 @@ assert_removed_declaration_keeps_rows() {
 		fail "removing the declaration changed the managed rows: countries holds $remaining, want 3"
 }
 
+# Withdrawing a declaration and declaring an empty set are different statements
+# about the same table, and the row of the matrix they share exists because the
+# operator must not confuse them. The revision before this one withdrew the
+# declaration and the three rows stayed. This one declares the table again and
+# says it holds nothing.
+#
+# The claim is measured rather than expected: against the pinned executor on
+# PostgreSQL 17, this fixture plans three DELETEs, each classified destructive,
+# and the plan is destructive, so the policy holds it at the approval gate
+# instead of applying it. A run that found no plan would mean the empty set was
+# read as no declaration at all, which is the confusion this row is about.
+assert_declared_empty_set_clears_the_rows() {
+	before_countries=$(reference_query "SELECT count(*) FROM countries")
+	[ "$before_countries" = 3 ] ||
+		fail "the empty-set proof starts from $before_countries countries, and the rows the withdrawn declaration left are three"
+	publish_reference_schema v4
+	wait_for_reference_phase AwaitingApproval
+	wait_for_reference_plan
+	reference_status
+	jq -e '.status.plan.destructive == true' "$STATUS_FILE" >/dev/null ||
+		fail "the plan for an explicitly empty declared set is not marked destructive"
+	approve_reference_plan "${REFERENCE_APPROVAL}-v4" "$REFERENCE_PLAN" ||
+		fail "the empty-set plan could not be approved: $(cat "$ADMISSION_ERROR_FILE")"
+	wait_for_reference_phase InSync
+	after_countries=$(reference_query "SELECT count(*) FROM countries")
+	[ "$after_countries" = 0 ] ||
+		fail "an explicitly empty declared set left $after_countries rows in countries"
+	# The other declared table is untouched: an empty set clears the table that
+	# declares it and says nothing about any other.
+	[ "$(reference_query "SELECT count(*) FROM regions")" = 2 ] ||
+		fail "the empty countries declaration changed the regions rows"
+}
+
 # The refusal that has to hold through every step above: no declared row value
 # reaches status, an Event, or the controller's own log.
 #
@@ -832,8 +865,9 @@ run_engine_reference_data() {
 	assert_data_only_change_reconciles
 	assert_external_edit_refuses_a_stale_approval
 	assert_removed_declaration_keeps_rows
+	assert_declared_empty_set_clears_the_rows
 	assert_rows_never_left_the_database
-	printf 'e2e reference data: PASS %s declared rows, data-only change, stale approval, and ended management\n' \
+	printf 'e2e reference data: PASS %s declared rows, data-only change, stale approval, ended management, and an emptied set\n' \
 		"$ENGINE_KIND" >&2
 }
 
