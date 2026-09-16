@@ -62,6 +62,35 @@ refuses() {
 	fi
 }
 
+# Before any of that: every filter the suite carries has to compile. A jq
+# program with a syntax error is a proof that fails after a Kubernetes cluster
+# has been built and an hour of lifecycle has run, and it fails with a message
+# about jq rather than about the operator.
+#
+# jq separates the two cases by exit status -- 3 for a program it cannot
+# compile, 5 for one that compiled and then met a value it could not handle --
+# so the check refuses only the first. Running each filter against null without
+# its inputs reaches the compiler and rarely reaches anything else, and where it
+# does the runtime complaint is not this check's business.
+for filter_file in "$ROOT_DIR"/testdata/e2e/*.jq; do
+	# jq resolves a $name when it compiles, so a filter that takes inputs does
+	# not compile without them and would be reported as broken. The names it
+	# uses are read out of the file and handed back as null: what is being
+	# asked is whether the program parses, not what it decides.
+	# shellcheck disable=SC2016 # The dollar is jq's, matched literally.
+	grep -oE '\$[a-zA-Z_][a-zA-Z0-9_]*' "$filter_file" |
+		grep -vx '\$__loc__' | sort -u >"$WORK_DIR/inputs.txt" || true
+	set --
+	# Redirected rather than piped: a pipeline would build the arguments in a
+	# subshell and leave this one with none.
+	while read -r filter_input; do
+		[ -n "$filter_input" ] || continue
+		set -- "$@" --argjson "${filter_input#$}" null
+	done <"$WORK_DIR/inputs.txt"
+	jq -n "$@" -f "$filter_file" >/dev/null 2>&1 || [ "$?" -ne 3 ] ||
+		fail "$(basename "$filter_file") is not a jq program"
+done
+
 # The refusal a stopped migration holds.
 accepts migration-partial-refusal.jq 'blocked, mid-cycle in Resolving' <<'JSON'
 {"status":{"phase":"Resolving","activeOperation":{"type":"Resolve"},
