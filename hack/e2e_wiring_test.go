@@ -3135,7 +3135,7 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			name:        "upgrade lifecycle omitted",
 			old:         "E2E_PHASE=upgrade \\\n",
 			replacement: "E2E_PHASE=upgrade-omitted \\\n",
-			wantError:   "candidate upgrade lifecycle",
+			wantError:   `upgrade phase must bind E2E_PHASE to "upgrade", and binds "upgrade-omitted"`,
 		},
 		{
 			name: "upgrade child call removed",
@@ -3210,7 +3210,7 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			name:        "migration lifecycle call separated from its environment",
 			old:         `run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`,
 			replacement: "true\n\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"",
-			wantError:   "migration lifecycle",
+			wantError:   `migrations phase must bind E2E_KUBECONFIG to "$KUBECONFIG_FILE", and binds nothing`,
 		},
 		{
 			name:        "reference-data lifecycle omitted",
@@ -3222,7 +3222,7 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			name:        "reference-data lifecycle call separated from its environment",
 			old:         `run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"`,
 			replacement: "true\n\trun_recorded_phase reference-data \"$ROOT_DIR/hack/e2e-reference-data.sh\"",
-			wantError:   "reference-data lifecycle",
+			wantError:   `reference-data phase must bind E2E_KUBECONFIG to "$KUBECONFIG_FILE", and binds nothing`,
 		},
 		{
 			name: "migration lifecycle hidden in false branch",
@@ -3236,25 +3236,25 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			name:        "migration lifecycle loses the controller identity",
 			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=1 \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n",
 			replacement: "E2E_CONTROLLER_STATE_VERSION=1 \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n",
-			wantError:   "migration lifecycle",
+			wantError:   `migrations phase must bind E2E_CONTROLLER_REVISION to "$CONTROLLER_REVISION", and binds nothing`,
 		},
 		{
 			name:        "uninstall lifecycle omitted",
 			old:         "E2E_PHASE=uninstall \\\n",
 			replacement: "E2E_PHASE=uninstall-omitted \\\n",
-			wantError:   "uninstall lifecycle",
+			wantError:   `uninstall phase must bind E2E_PHASE to "uninstall", and binds "uninstall-omitted"`,
 		},
 		{
 			name:        "synthetic next chart handoff omitted",
 			old:         "E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
 			replacement: "E2E_NEXT_CHART_PACKAGE= \\\n",
-			wantError:   "uninstall lifecycle",
+			wantError:   `uninstall phase must bind E2E_NEXT_CHART_PACKAGE to "$NEXT_CHART_PACKAGE", and binds ""`,
 		},
 		{
 			name:        "current release sequence handoff omitted",
 			old:         "E2E_CURRENT_RELEASE_SEQUENCE=$CURRENT_RELEASE_SEQUENCE \\\n",
 			replacement: "E2E_CURRENT_RELEASE_SEQUENCE= \\\n",
-			wantError:   "uninstall lifecycle",
+			wantError:   `uninstall phase must bind E2E_CURRENT_RELEASE_SEQUENCE to "$CURRENT_RELEASE_SEQUENCE", and binds ""`,
 		},
 		{
 			name: "current release values handoff omitted",
@@ -3266,7 +3266,7 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 				"E2E_CANDIDATE_VALUES_FILE= \\\n" +
 				"E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
 				"E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
-			wantError: "uninstall lifecycle",
+			wantError: `uninstall phase must bind E2E_CANDIDATE_VALUES_FILE to "$CANDIDATE_VALUES_FILE", and binds ""`,
 		},
 		{
 			name: "current release image handoff omitted",
@@ -3278,7 +3278,7 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 				"E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \\\n" +
 				"E2E_CANDIDATE_IMAGE= \\\n" +
 				"E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \\\n",
-			wantError: "uninstall lifecycle",
+			wantError: `uninstall phase must bind E2E_CANDIDATE_IMAGE to "$CANDIDATE_OPERATOR_IMAGE", and binds ""`,
 		},
 		{
 			name:        "installed chart export omitted",
@@ -5616,6 +5616,130 @@ func requireHookProgressMarkers(path, contract string, contents []byte, markers 
 	return nil
 }
 
+// TestPhaseEnvironmentContractsRejectCriticalMutations measures what the audit
+// refuses, because an audit that only passes proves nothing about the source it
+// read. Each case takes away one property the lifecycle depends on and expects
+// the failure to name it: the block match this replaced could say only that a
+// block of text had moved.
+//
+// The last case is the regression that motivated the change. Reordering the
+// bindings takes nothing away, so the audit has to accept it -- an addition in
+// the middle of the block is what removed every lifecycle verdict from master.
+func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	harness := readE2ESource(t, files.harness)
+	migrations := readE2ESource(t, files.migrations)
+	tests := []struct {
+		name        string
+		script      bool
+		old         string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "binding removed",
+			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
+			replacement: "",
+			wantError:   `migrations phase must bind E2E_REGISTRY_HOST_ADDRESS to "$REMOTE_REGISTRY", and binds nothing`,
+		},
+		{
+			name: "candidate controller image redirected",
+			old: "E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \\\n" +
+				"E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\n" +
+				"E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
+				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
+			replacement: "E2E_CONTROLLER_IMAGE=$PRODUCTION_OPERATOR_IMAGE \\\n" +
+				"E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\n" +
+				"E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
+				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
+			wantError: `migrations phase must bind E2E_CONTROLLER_IMAGE to "$CANDIDATE_OPERATOR_IMAGE", and binds "$PRODUCTION_OPERATOR_IMAGE"`,
+		},
+		{
+			name: "pinned state version unpinned",
+			old: "E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
+				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
+			replacement: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
+				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
+			wantError: `migrations phase must bind E2E_CONTROLLER_STATE_VERSION to "1", and binds "$CONTROLLER_STATE_VERSION"`,
+		},
+		{
+			name:        "undeclared binding added",
+			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
+			replacement: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_MIGRATION_INTERVAL=1s \\\n",
+			wantError:   "migrations phase binds E2E_MIGRATION_INTERVAL, which no environment contract declares",
+		},
+		{
+			name:        "phase left out",
+			old:         "\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			replacement: "\t:\n",
+			wantError:   `lifecycle phase "migrations" is never invoked`,
+		},
+		{
+			name:        "phase pointed at another script",
+			old:         "\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			replacement: "\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-assert.sh\"\n",
+			wantError:   `lifecycle phase "migrations" must run hack/e2e-migrations.sh, not hack/e2e-assert.sh`,
+		},
+		{
+			name:        "phase invoked twice",
+			old:         "\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			replacement: "\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"\n\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			wantError:   `lifecycle phase "migrations" is invoked more than once`,
+		},
+		{
+			name:        "script grows an input nobody passes",
+			script:      true,
+			old:         "INTERVAL=${E2E_MIGRATION_INTERVAL:-5m}\n",
+			replacement: "INTERVAL=${E2E_MIGRATION_INTERVAL:-5m}\nSOURCE_AUTHORITY=$E2E_SOURCE_AUTHORITY\n",
+			wantError:   "hack/e2e-migrations.sh reads E2E_SOURCE_AUTHORITY without a default, and the migrations phase binds nothing to it",
+		},
+		{
+			name:        "script stops reading what it is passed",
+			script:      true,
+			old:         "REGISTRY_HOST_ADDRESS=${E2E_REGISTRY_HOST_ADDRESS:-}\n",
+			replacement: "REGISTRY_HOST_ADDRESS=\n",
+			wantError:   "migrations phase binds E2E_REGISTRY_HOST_ADDRESS, which hack/e2e-migrations.sh never reads",
+		},
+		{
+			name: "bindings reordered",
+			old: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n",
+			replacement: "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" +
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
+			wantError: "",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			if test.script {
+				mutatedFiles.migrations = writeMutatedE2ESource(
+					t, "e2e-migrations.sh", migrations, test.old, test.replacement)
+			} else {
+				mutatedFiles.harness = writeMutatedE2ESource(
+					t, "e2e-kind.sh", harness, test.old, test.replacement)
+			}
+			err := verifyPhaseEnvironmentContracts(mutatedFiles)
+			if test.wantError == "" {
+				if err != nil {
+					t.Fatalf("verifyPhaseEnvironmentContracts() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyPhaseEnvironmentContracts() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
 func repositoryE2EWiringFiles() e2eWiringFiles {
 	return e2eWiringFiles{
 		makefile:                   filepath.Join("..", makefilePath),
@@ -5630,6 +5754,8 @@ func repositoryE2EWiringFiles() e2eWiringFiles {
 		faults:                     filepath.Join("..", e2eFaultsPath),
 		highAvailability:           filepath.Join("..", e2eHAPath),
 		certRotation:               filepath.Join("..", e2eCertRotationPath),
+		migrations:                 filepath.Join("..", e2eMigrationsPath),
+		referenceData:              filepath.Join("..", e2eReferenceDataPath),
 		failedHookEvidence:         filepath.Join("..", failedHookEvidencePath),
 		failedHookEvidenceSelftest: filepath.Join("..", failedHookEvidenceSelftestPath),
 		admissionSchemaContract:    filepath.Join("..", admissionSchemaContractPath),

@@ -56,6 +56,8 @@ const (
 	e2eFaultsPath                  = "hack/e2e-faults.sh"
 	e2eHAPath                      = "hack/e2e-ha.sh"
 	e2eCertRotationPath            = "hack/e2e-cert-rotation.sh"
+	e2eMigrationsPath              = "hack/e2e-migrations.sh"
+	e2eReferenceDataPath           = "hack/e2e-reference-data.sh"
 	failedHookEvidencePath         = "hack/failed-hook-evidence.jq"
 	failedHookEvidenceSelftestPath = "hack/failed-hook-evidence-selftest.sh"
 	admissionSchemaContractPath    = "hack/admission-schema-contract.jq"
@@ -200,6 +202,8 @@ func main() {
 		faults:                     e2eFaultsPath,
 		highAvailability:           e2eHAPath,
 		certRotation:               e2eCertRotationPath,
+		migrations:                 e2eMigrationsPath,
+		referenceData:              e2eReferenceDataPath,
 		failedHookEvidence:         failedHookEvidencePath,
 		failedHookEvidenceSelftest: failedHookEvidenceSelftestPath,
 		admissionSchemaContract:    admissionSchemaContractPath,
@@ -1737,6 +1741,8 @@ type e2eWiringFiles struct {
 	admissionSchemaSelftest    string
 	controllerSchemaContract   string
 	controllerSchemaSelftest   string
+	migrations                 string
+	referenceData              string
 }
 
 type lifecycleSourceContract struct {
@@ -2688,76 +2694,14 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			`fail "infrastructure readiness loss: current-release installation failed and node readiness was absent or unqueryable immediately afterward (Helm exit $current_install_status)"`,
 			`fi`,
 		}),
-		exactSourceLineSequence("candidate upgrade bounded proof namespace and guarded API version", []string{
-			`E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \`,
-			`E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \`,
-			`E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \`,
-			`E2E_HELM_RELEASE=$HELM_RELEASE \`,
-			`E2E_CHART_PACKAGE=$CHART_PACKAGE \`,
-			`E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \`,
-			`E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \`,
-			`E2E_KUBERNETES_VERSION=$K8S_VERSION \`,
-			`E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \`,
-		}),
-		exactSourceLineSequence("candidate upgrade lifecycle", []string{
-			`E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \`,
-			`E2E_API_SERVER_NODE_INVENTORY_FILE=$NODE_READINESS_FILE \`,
-			`E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=$API_SERVER_ENDPOINT_INVENTORY_FILE \`,
-			`E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \`,
-		}),
-		exactSourceLineSequence("candidate upgrade lifecycle phase", []string{
-			`E2E_PHASE=upgrade \`,
-			`run_recorded_phase upgrade "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`,
-		}),
+		exactSourceLine("candidate upgrade lifecycle", `run_recorded_phase upgrade "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`),
 		exactSourceLine("high-availability lifecycle", `run_recorded_phase ha "$ROOT_DIR/hack/e2e-ha.sh"`),
 		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`),
 		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`),
 		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"`),
-		exactSourceLineSequence("migration lifecycle", []string{
-			`E2E_KUBECONFIG=$KUBECONFIG_FILE \`,
-			`E2E_TEST_NAMESPACE=$TEST_NAMESPACE \`,
-			`E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \`,
-			`E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \`,
-			`E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \`,
-			`E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \`,
-			`E2E_CONTROLLER_STATE_VERSION=1 \`,
-			`E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \`,
-			`E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \`,
-			`E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \`,
-			`run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`,
-		}),
-		exactSourceLineSequence("reference-data lifecycle", []string{
-			`E2E_KUBECONFIG=$KUBECONFIG_FILE \`,
-			`E2E_TEST_NAMESPACE=$TEST_NAMESPACE \`,
-			`E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \`,
-			`E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \`,
-			`E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \`,
-			`E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \`,
-			`run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"`,
-		}),
-		exactSourceLineSequence("uninstall lifecycle", []string{
-			`E2E_PROOF_NAMESPACE=$CRD_PROOF_NAMESPACE \`,
-			`E2E_HELM_RELEASE=$HELM_RELEASE \`,
-			`E2E_CHART_PACKAGE=$CHART_PACKAGE \`,
-			`E2E_CANDIDATE_VALUES_FILE=$CANDIDATE_VALUES_FILE \`,
-			`E2E_CANDIDATE_IMAGE=$CANDIDATE_OPERATOR_IMAGE \`,
-			`E2E_NEXT_CHART_PACKAGE=$NEXT_CHART_PACKAGE \`,
-			`E2E_NEXT_VALUES_FILE=$NEXT_VALUES_FILE \`,
-			`E2E_NEXT_CONTROLLER_IMAGE=$NEXT_CONTROLLER_IMAGE \`,
-			`E2E_CURRENT_RELEASE_SEQUENCE=$CURRENT_RELEASE_SEQUENCE \`,
-			`E2E_NEXT_RELEASE_SEQUENCE=$NEXT_RELEASE_SEQUENCE \`,
-			`E2E_KUBERNETES_VERSION=$K8S_VERSION \`,
-			`E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \`,
-			`E2E_DOCKER_CONTEXT=$DOCKER_CONTEXT \`,
-			`E2E_EXTERNAL_POSTGRES_CONTAINER_ID=$EXTERNAL_PG_CONTAINER_ID \`,
-			`E2E_EXTERNAL_POSTGRES_IP=$EXTERNAL_PG_IP \`,
-			`E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE=$EXTERNAL_PG_CREDENTIALS_FILE \`,
-			`E2E_KIND_CLUSTER_NAME=$CLUSTER_NAME \`,
-			`E2E_API_SERVER_NODE_INVENTORY_FILE=$NODE_READINESS_FILE \`,
-			`E2E_API_SERVER_ENDPOINT_INVENTORY_FILE=$API_SERVER_ENDPOINT_INVENTORY_FILE \`,
-			`E2E_PHASE=uninstall \`,
-			`run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`,
-		}),
+		exactSourceLine("migration lifecycle", `run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`),
+		exactSourceLine("reference-data lifecycle", `run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"`),
+		exactSourceLine("uninstall lifecycle", `run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`),
 		exactSourceLine("post-lifecycle installed chart export", `export_release_chart`),
 		// The pass line below is reachable only for a run that left no phase out.
 		// A diagnosis run says so in its own words and stops before it.
@@ -4050,7 +3994,11 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 			return fmt.Errorf("%s: late activation failure classes must flow only through private helper output and bounded synthesis", files.crdUpgrade)
 		}
 	}
-	return nil
+	// Last, so that a phase hidden behind an always-false branch or dropped
+	// from the recorded set is reported as the control-flow defect it is. This
+	// audit reads the call the shell would build and would otherwise answer a
+	// missing phase with a missing binding.
+	return verifyPhaseEnvironmentContracts(files)
 }
 
 type kindClusterTemplate struct {
@@ -5269,6 +5217,456 @@ func exactSourceLine(name, line string) sourceContractStep {
 
 func sourceLinePattern(line string) *regexp.Regexp {
 	return regexp.MustCompile(`(?m)^[ \t]*` + regexp.QuoteMeta(line) + `[ \t]*\r?$`)
+}
+
+// A lifecycle phase is a script the harness hands an environment to, and the
+// two are audited as one thing because neither half is evidence alone. What a
+// phase proves depends on what it was given: a kubeconfig that is not the
+// cluster the suite built, a controller image that is not the candidate, or a
+// state version nothing pinned would each leave the phase running and its
+// verdict meaningless.
+//
+// The audit names one property per binding rather than pinning the block of
+// source the call happens to occupy. A block match answers a question nobody
+// asked -- whether the text moved -- and answers it with `found 0`, which does
+// not say which of the guarantees above stopped being checked. It also fails on
+// an addition that takes nothing away, which is how #113 removed every
+// lifecycle verdict from master by handing the migrations phase two variables
+// it genuinely needed.
+//
+// Two independent things are checked. The declarations below pin what each
+// variable must be bound to, so a binding cannot be quietly redirected. The
+// phase script itself supplies the other half: every E2E_ variable it expands
+// without a default has to be bound at the call site, and every binding has to
+// be expanded by the script. That half is not copied from the call, so it
+// catches the case a copied block never can -- a script that grew a new input
+// nobody passes it, and a binding left behind by one that no longer reads it.
+type phaseEnvironmentBinding struct {
+	name  string
+	value string
+}
+
+type phaseEnvironmentContract struct {
+	phase    string
+	script   string
+	bindings []phaseEnvironmentBinding
+}
+
+func phaseEnvironmentContracts() []phaseEnvironmentContract {
+	return []phaseEnvironmentContract{
+		{
+			phase:  "upgrade",
+			script: "hack/e2e-crd-upgrade.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_DEBUG_LOGS", value: `$E2E_DEBUG_LOGS`},
+				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
+				{name: "E2E_PROOF_NAMESPACE", value: `$CRD_PROOF_NAMESPACE`},
+				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
+				{name: "E2E_CHART_PACKAGE", value: `$CHART_PACKAGE`},
+				{name: "E2E_CANDIDATE_VALUES_FILE", value: `$CANDIDATE_VALUES_FILE`},
+				{name: "E2E_CANDIDATE_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
+				{name: "E2E_KUBERNETES_VERSION", value: `$K8S_VERSION`},
+				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
+				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
+				{name: "E2E_KIND_CLUSTER_NAME", value: `$CLUSTER_NAME`},
+				{name: "E2E_API_SERVER_NODE_INVENTORY_FILE", value: `$NODE_READINESS_FILE`},
+				{name: "E2E_API_SERVER_ENDPOINT_INVENTORY_FILE", value: `$API_SERVER_ENDPOINT_INVENTORY_FILE`},
+				{name: "E2E_EXTERNAL_POSTGRES_CONTAINER_ID", value: `$EXTERNAL_PG_CONTAINER_ID`},
+				{name: "E2E_EXTERNAL_POSTGRES_IP", value: `$EXTERNAL_PG_IP`},
+				{name: "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE", value: `$EXTERNAL_PG_CREDENTIALS_FILE`},
+				{name: "E2E_PHASE", value: `upgrade`},
+			},
+		},
+		{
+			phase:  "ha",
+			script: "hack/e2e-ha.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
+				{name: "E2E_HA_TEST_NAMESPACE", value: `$HA_TEST_NAMESPACE`},
+				{name: "E2E_FOREIGN_NAMESPACE", value: `$FOREIGN_NAMESPACE`},
+				{name: "E2E_PROOF_NAMESPACE", value: `$CRD_PROOF_NAMESPACE`},
+				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
+				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
+			},
+		},
+		{
+			phase:  "assert",
+			script: "hack/e2e-assert.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
+				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
+				{name: "E2E_FOREIGN_NAMESPACE", value: `$FOREIGN_NAMESPACE`},
+				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
+				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
+				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
+				{name: "E2E_PTAH_VERSION", value: `$E2E_PTAH_VERSION`},
+				{name: "E2E_CONTROLLER_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
+				{name: "E2E_CONTROLLER_REVISION", value: `$CONTROLLER_REVISION`},
+				{name: "E2E_CONTROLLER_STATE_VERSION", value: `1`},
+			},
+		},
+		{
+			phase:  "cert-rotation",
+			script: "hack/e2e-cert-rotation.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
+				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
+				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
+				{name: "E2E_CHART_PACKAGE", value: `$CHART_PACKAGE`},
+			},
+		},
+		{
+			phase:  "dataplane",
+			script: "hack/e2e-dataplane.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
+				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
+				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
+				{name: "E2E_CHART_PACKAGE", value: `$CHART_PACKAGE`},
+				{name: "E2E_PTAH_VERSION", value: `$E2E_PTAH_VERSION`},
+				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
+				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
+				{name: "E2E_FIXTURE_IMAGE", value: `$E2E_FIXTURE_IMAGE`},
+				{name: "E2E_CONTROLLER_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
+				{name: "E2E_CONTROLLER_REVISION", value: `$CONTROLLER_REVISION`},
+				{name: "E2E_CONTROLLER_STATE_VERSION", value: `1`},
+				{name: "E2E_POSTGRES_IMAGE", value: `$E2E_POSTGRES_IMAGE`},
+				{name: "E2E_MYSQL_IMAGE", value: `$E2E_MYSQL_IMAGE`},
+				{name: "E2E_REGISTRY_IP", value: `$REGISTRY_IP`},
+				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
+				{name: "E2E_REGISTRY_PORT", value: `$E2E_REGISTRY_PORT`},
+				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
+				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
+				{name: "E2E_REGISTRY_CONTAINER_ID", value: `$REGISTRY_CONTAINER_ID`},
+				{name: "E2E_EXTERNAL_POSTGRES_CONTAINER_ID", value: `$EXTERNAL_PG_CONTAINER_ID`},
+				{name: "E2E_EXTERNAL_POSTGRES_IP", value: `$EXTERNAL_PG_IP`},
+				{name: "E2E_EXTERNAL_POSTGRES_SERVICE", value: `$EXTERNAL_PG_SERVICE`},
+				{name: "E2E_EXTERNAL_POSTGRES_IMAGE", value: `$E2E_POSTGRES_SOURCE_IMAGE`},
+				{name: "E2E_EXTERNAL_POSTGRES_OWNER", value: `$CLUSTER_NAME`},
+				{name: "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE", value: `$EXTERNAL_PG_CREDENTIALS_FILE`},
+				{name: "E2E_TLS_PROXY_SERVICE", value: `$TLS_PROXY_SERVICE`},
+				{name: "E2E_TLS_PROXY_CA_FILE", value: `$TLS_PROXY_CA_FILE`},
+				{name: "E2E_TLS_PROXY_CERT_FILE", value: `$TLS_PROXY_CERT_FILE`},
+				{name: "E2E_TLS_PROXY_KEY_FILE", value: `$TLS_PROXY_CERT_KEY_FILE`},
+			},
+		},
+		{
+			phase:  "migrations",
+			script: "hack/e2e-migrations.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
+				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
+				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
+				{name: "E2E_CONTROLLER_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
+				{name: "E2E_CONTROLLER_REVISION", value: `$CONTROLLER_REVISION`},
+				{name: "E2E_CONTROLLER_STATE_VERSION", value: `1`},
+				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
+				{name: "E2E_REGISTRY_HOST_ADDRESS", value: `$REMOTE_REGISTRY`},
+				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
+			},
+		},
+		{
+			phase:  "reference-data",
+			script: "hack/e2e-reference-data.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
+				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
+				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
+				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
+				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
+			},
+		},
+		{
+			phase:  "uninstall",
+			script: "hack/e2e-crd-upgrade.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_DEBUG_LOGS", value: `$E2E_DEBUG_LOGS`},
+				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
+				{name: "E2E_PROOF_NAMESPACE", value: `$CRD_PROOF_NAMESPACE`},
+				{name: "E2E_HELM_RELEASE", value: `$HELM_RELEASE`},
+				{name: "E2E_CHART_PACKAGE", value: `$CHART_PACKAGE`},
+				{name: "E2E_CANDIDATE_VALUES_FILE", value: `$CANDIDATE_VALUES_FILE`},
+				{name: "E2E_CANDIDATE_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
+				{name: "E2E_NEXT_CHART_PACKAGE", value: `$NEXT_CHART_PACKAGE`},
+				{name: "E2E_NEXT_VALUES_FILE", value: `$NEXT_VALUES_FILE`},
+				{name: "E2E_NEXT_CONTROLLER_IMAGE", value: `$NEXT_CONTROLLER_IMAGE`},
+				{name: "E2E_CURRENT_RELEASE_SEQUENCE", value: `$CURRENT_RELEASE_SEQUENCE`},
+				{name: "E2E_NEXT_RELEASE_SEQUENCE", value: `$NEXT_RELEASE_SEQUENCE`},
+				{name: "E2E_KUBERNETES_VERSION", value: `$K8S_VERSION`},
+				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
+				{name: "E2E_DOCKER_CONTEXT", value: `$DOCKER_CONTEXT`},
+				{name: "E2E_EXTERNAL_POSTGRES_CONTAINER_ID", value: `$EXTERNAL_PG_CONTAINER_ID`},
+				{name: "E2E_EXTERNAL_POSTGRES_IP", value: `$EXTERNAL_PG_IP`},
+				{name: "E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE", value: `$EXTERNAL_PG_CREDENTIALS_FILE`},
+				{name: "E2E_KIND_CLUSTER_NAME", value: `$CLUSTER_NAME`},
+				{name: "E2E_API_SERVER_NODE_INVENTORY_FILE", value: `$NODE_READINESS_FILE`},
+				{name: "E2E_API_SERVER_ENDPOINT_INVENTORY_FILE", value: `$API_SERVER_ENDPOINT_INVENTORY_FILE`},
+				{name: "E2E_PHASE", value: `uninstall`},
+			},
+		},
+	}
+}
+
+// phaseInvocationPattern matches one `run_recorded_phase <name> "$ROOT_DIR/<script>"`
+// call. The environment is read backwards from it rather than listed here, so
+// what the audit compares against is the command the shell actually builds.
+var phaseInvocationPattern = regexp.MustCompile(
+	`(?m)^[ \t]*run_recorded_phase ([a-z][a-z0-9-]*) "\$ROOT_DIR/(hack/[a-z0-9-]+\.sh)"[ \t]*\r?$`)
+
+var phaseEnvironmentAssignmentPattern = regexp.MustCompile(
+	`(?m)^[ \t]*([A-Za-z_][A-Za-z0-9_]*)=(\S*) \\[ \t]*\r?$`)
+
+// e2eVariableExpansionPattern finds an expansion of an E2E_ variable, in either
+// spelling, with the parameter operator that follows the name. It refuses a
+// longer name that merely ends in one: the migration phase's manifests carry
+// `$(PTAH_E2E_TARGET_URL)`, a Kubernetes field reference that is not a shell
+// variable at all.
+var e2eVariableExpansionPattern = regexp.MustCompile(
+	`(?:^|[^A-Za-z0-9_])\$(?:\{(E2E_[A-Z0-9_]+)(:?[-=+?])?[^}]*\}|(E2E_[A-Z0-9_]+))`)
+
+var e2eVariableAssignmentPattern = regexp.MustCompile(
+	`(?m)^[ \t]*(?:export[ \t]+)?(E2E_[A-Z0-9_]+)=`)
+
+type phaseInvocation struct {
+	phase    string
+	script   string
+	bindings []phaseEnvironmentBinding
+}
+
+// findPhaseInvocations reads each phase call and the assignments that prefix
+// it. The prefix ends at the first line that is not a backslash-continued
+// assignment, which is where the shell stops treating it as this command's
+// environment.
+func findPhaseInvocations(contents []byte) []phaseInvocation {
+	lines := strings.Split(string(contents), "\n")
+	invocations := make([]phaseInvocation, 0, len(phaseEnvironmentContracts()))
+	for index, line := range lines {
+		match := phaseInvocationPattern.FindStringSubmatch(line + "\n")
+		if match == nil {
+			continue
+		}
+		invocation := phaseInvocation{phase: match[1], script: match[2]}
+		for previous := index - 1; previous >= 0; previous-- {
+			assignment := phaseEnvironmentAssignmentPattern.FindStringSubmatch(lines[previous] + "\n")
+			if assignment == nil {
+				break
+			}
+			invocation.bindings = append([]phaseEnvironmentBinding{
+				{name: assignment[1], value: assignment[2]},
+			}, invocation.bindings...)
+		}
+		invocations = append(invocations, invocation)
+	}
+	return invocations
+}
+
+// e2eVariablesUsedByPhase separates what a phase script requires from what it
+// merely accepts, by the shell's own rules. `${X:?message}` refuses to run
+// without X, and a bare `$X` reads whatever it was given, so both are required;
+// `${X:-default}` has an answer the harness does not have to supply, and that
+// answer settles the bare reads after it.
+//
+// Whether a name is an input or the script's own is decided by which mention
+// comes first. A script reads what it was given before it defines names of its
+// own, so `X=${X:?message}` and `FIXTURE=${X:-}` are declarations of an input
+// even though one of them assigns, and a later `X=$FIXTURE` that hands the
+// value to a child phase does not take the name back.
+func e2eVariablesUsedByPhase(contents []byte) (required, accepted map[string]bool) {
+	source := string(contents)
+	required, accepted = map[string]bool{}, map[string]bool{}
+	firstMention := map[string]int{}
+	owned := map[string]bool{}
+	defaulted, refused := map[string]bool{}, map[string]bool{}
+
+	mention := func(name string, at int) bool {
+		previous, seen := firstMention[name]
+		if seen && previous <= at {
+			return false
+		}
+		firstMention[name] = at
+		return true
+	}
+	for _, match := range e2eVariableAssignmentPattern.FindAllStringSubmatchIndex(source, -1) {
+		name := source[match[2]:match[3]]
+		assignment := source[match[1]:]
+		if newline := strings.IndexByte(assignment, '\n'); newline >= 0 {
+			assignment = assignment[:newline]
+		}
+		if mention(name, match[2]) {
+			owned[name] = !strings.Contains(assignment, name)
+		}
+	}
+	for _, match := range e2eVariableExpansionPattern.FindAllStringSubmatchIndex(source, -1) {
+		name, operator := submatch(source, match, 1), submatch(source, match, 2)
+		at := match[2]
+		if name == "" {
+			name, at = submatch(source, match, 3), match[6]
+		}
+		if mention(name, at) {
+			owned[name] = false
+		}
+		accepted[name] = true
+		switch {
+		case strings.HasSuffix(operator, "?"):
+			refused[name] = true
+		case operator != "":
+			defaulted[name] = true
+		}
+	}
+	for name := range accepted {
+		if owned[name] {
+			delete(accepted, name)
+			continue
+		}
+		if refused[name] || !defaulted[name] {
+			required[name] = true
+		}
+	}
+	return required, accepted
+}
+
+func submatch(source string, match []int, group int) string {
+	if match[2*group] < 0 {
+		return ""
+	}
+	return source[match[2*group]:match[2*group+1]]
+}
+
+func verifyPhaseEnvironmentContracts(files e2eWiringFiles) error {
+	harness, err := os.ReadFile(files.harness)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", files.harness, err)
+	}
+	invocations := findPhaseInvocations(harness)
+	seen := map[string]phaseInvocation{}
+	for _, invocation := range invocations {
+		if _, duplicate := seen[invocation.phase]; duplicate {
+			return fmt.Errorf("%s: lifecycle phase %q is invoked more than once", files.harness, invocation.phase)
+		}
+		seen[invocation.phase] = invocation
+	}
+	for _, contract := range phaseEnvironmentContracts() {
+		invocation, present := seen[contract.phase]
+		if !present {
+			return fmt.Errorf("%s: lifecycle phase %q is never invoked", files.harness, contract.phase)
+		}
+		delete(seen, contract.phase)
+		if invocation.script != contract.script {
+			return fmt.Errorf("%s: lifecycle phase %q must run %s, not %s",
+				files.harness, contract.phase, contract.script, invocation.script)
+		}
+		if err := verifyPhaseBindings(files.harness, contract, invocation); err != nil {
+			return err
+		}
+		if err := verifyPhaseScriptInputs(files, contract, invocation); err != nil {
+			return err
+		}
+	}
+	for phase := range seen {
+		return fmt.Errorf("%s: lifecycle phase %q is invoked but declares no environment contract",
+			files.harness, phase)
+	}
+	return nil
+}
+
+func verifyPhaseBindings(path string, contract phaseEnvironmentContract, invocation phaseInvocation) error {
+	bound := map[string]string{}
+	for _, binding := range invocation.bindings {
+		if _, duplicate := bound[binding.name]; duplicate {
+			return fmt.Errorf("%s: %s phase binds %s twice", path, contract.phase, binding.name)
+		}
+		bound[binding.name] = binding.value
+	}
+	for _, binding := range contract.bindings {
+		value, present := bound[binding.name]
+		if !present {
+			return fmt.Errorf("%s: %s phase must bind %s to %q, and binds nothing",
+				path, contract.phase, binding.name, binding.value)
+		}
+		if value != binding.value {
+			return fmt.Errorf("%s: %s phase must bind %s to %q, and binds %q",
+				path, contract.phase, binding.name, binding.value, value)
+		}
+		delete(bound, binding.name)
+	}
+	for _, binding := range invocation.bindings {
+		if _, undeclared := bound[binding.name]; undeclared {
+			return fmt.Errorf("%s: %s phase binds %s, which no environment contract declares",
+				path, contract.phase, binding.name)
+		}
+	}
+	return nil
+}
+
+func verifyPhaseScriptInputs(files e2eWiringFiles, contract phaseEnvironmentContract, invocation phaseInvocation) error {
+	scriptPath := e2ePhaseScriptPath(files, contract.script)
+	if scriptPath == "" {
+		return fmt.Errorf("%s: lifecycle phase %q runs %s, which this audit cannot read",
+			files.harness, contract.phase, contract.script)
+	}
+	script, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", scriptPath, err)
+	}
+	required, accepted := e2eVariablesUsedByPhase(script)
+	bound := map[string]bool{}
+	for _, binding := range invocation.bindings {
+		bound[binding.name] = true
+	}
+	for _, name := range sortedKeys(required) {
+		if !bound[name] {
+			return fmt.Errorf("%s: %s reads %s without a default, and the %s phase binds nothing to it",
+				files.harness, contract.script, name, contract.phase)
+		}
+	}
+	for _, binding := range invocation.bindings {
+		if !strings.HasPrefix(binding.name, "E2E_") {
+			continue
+		}
+		if !accepted[binding.name] {
+			return fmt.Errorf("%s: %s phase binds %s, which %s never reads",
+				files.harness, contract.phase, binding.name, contract.script)
+		}
+	}
+	return nil
+}
+
+func e2ePhaseScriptPath(files e2eWiringFiles, script string) string {
+	switch script {
+	case e2eCRDUpgradePath:
+		return files.crdUpgrade
+	case e2eHAPath:
+		return files.highAvailability
+	case e2eAssertPath:
+		return files.assertions
+	case e2eCertRotationPath:
+		return files.certRotation
+	case e2eDataPlanePath:
+		return files.dataPlane
+	case e2eMigrationsPath:
+		return files.migrations
+	case e2eReferenceDataPath:
+		return files.referenceData
+	default:
+		return ""
+	}
+}
+
+func sortedKeys(set map[string]bool) []string {
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func exactSourceLineSequence(name string, lines []string) sourceContractStep {
