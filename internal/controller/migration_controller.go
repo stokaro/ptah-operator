@@ -797,7 +797,11 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonHistoryModified,
-			fmt.Sprintf("%d applied migrations no longer match their files", len(modified)))
+			fmt.Sprintf(
+				"%d applied migrations no longer match their files; restore the files the database recorded, "+
+					"or publish an artifact whose history matches it",
+				len(modified),
+			))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryModified, "An applied migration was modified after it ran")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
@@ -811,7 +815,11 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonHistoryOutOfOrder,
-			fmt.Sprintf("%d migrations sort below applied version %d; linear execution refuses them", len(outOfOrder), report.CurrentVersion))
+			fmt.Sprintf(
+				"%d migrations sort below applied version %d; linear execution refuses them, so renumber them above it "+
+					"or publish them to a database that has not passed it",
+				len(outOfOrder), report.CurrentVersion,
+			))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryOutOfOrder, "A migration arrived below the version the database has applied")
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationProgressing, metav1.ConditionFalse,
@@ -844,7 +852,9 @@ func (r *MigrationReconciler) recordMigrationHistory(
 		migration.Status.Phase = operatorv1alpha1.MigrationPhaseBlocked
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationBlocked, metav1.ConditionTrue,
 			operatorv1alpha1.ReasonHistoryAhead,
-			fmt.Sprintf("The database is at version %d and this artifact ends at version %d",
+			fmt.Sprintf(
+				"The database is at version %d and this artifact ends at version %d; publish an artifact that carries "+
+					"the versions the database already applied, because nothing here rolls it back",
 				report.CurrentVersion, artifactVersion))
 		setMigrationCondition(migration, operatorv1alpha1.ConditionMigrationReady, metav1.ConditionFalse,
 			operatorv1alpha1.ReasonHistoryAhead, "The database records a migration this artifact does not carry")

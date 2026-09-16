@@ -157,6 +157,12 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 		// (stokaro/ptah-operator#94).
 		wantProgressing       metav1.ConditionStatus
 		wantProgressingReason operatorv1alpha1.ConditionReason
+		// wantDirection is the clause of the Blocked message that tells a
+		// person what to do next. Section 6 of the epic asks an error for a
+		// safe explanation and a direction for recovery, and three of these
+		// histories answered only the first half. Empty means the history
+		// does not block, so there is nothing to recover from.
+		wantDirection string
 	}{
 		{
 			name: "every migration is applied",
@@ -211,6 +217,7 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			wantReason:            operatorv1alpha1.ReasonHistoryDirty,
 			wantProgressing:       metav1.ConditionFalse,
 			wantProgressingReason: operatorv1alpha1.ReasonHistoryDirty,
+			wantDirection:         "a person has to decide what the interrupted run did",
 		},
 		{
 			name: "an applied migration was modified after it ran",
@@ -228,6 +235,7 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			wantReason:            operatorv1alpha1.ReasonHistoryModified,
 			wantProgressing:       metav1.ConditionFalse,
 			wantProgressingReason: operatorv1alpha1.ReasonHistoryModified,
+			wantDirection:         "restore the files the database recorded",
 		},
 		{
 			// Ptah executes in linear order and refuses the whole run while a
@@ -250,6 +258,7 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			wantOutOfOrder:        []int64{2},
 			wantProgressing:       metav1.ConditionFalse,
 			wantProgressingReason: operatorv1alpha1.ReasonHistoryOutOfOrder,
+			wantDirection:         "renumber them above it",
 		},
 		{
 			// Nothing here is pending, modified or dirty, because every one of
@@ -269,6 +278,7 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			wantReason:            operatorv1alpha1.ReasonHistoryAhead,
 			wantProgressing:       metav1.ConditionFalse,
 			wantProgressingReason: operatorv1alpha1.ReasonHistoryAhead,
+			wantDirection:         "publish an artifact that carries",
 		},
 	}
 
@@ -314,6 +324,10 @@ func TestMigrationHistoryResultClassifiesWhatTheDatabaseSaid(t *testing.T) {
 			ready := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationReady)
 			if ready == nil || ready.Status != test.wantReady || ready.Reason != string(test.wantReason) {
 				t.Fatalf("Ready condition = %#v, want %s/%s", ready, test.wantReady, test.wantReason)
+			}
+			blocked := meta.FindStatusCondition(actual.Status.Conditions, operatorv1alpha1.ConditionMigrationBlocked)
+			if test.wantDirection != "" && (blocked == nil || !strings.Contains(blocked.Message, test.wantDirection)) {
+				t.Fatalf("Blocked message = %q, want it to say %q", blockedMessage(blocked), test.wantDirection)
 			}
 			progressing := meta.FindStatusCondition(
 				actual.Status.Conditions, operatorv1alpha1.ConditionMigrationProgressing)
@@ -1071,4 +1085,13 @@ func ensureMigrationAdmissionSnapshot(migration *operatorv1alpha1.PtahMigration)
 	}
 	snapshot.Digest = digest
 	operation.AdmissionSnapshot = snapshot
+}
+
+// blockedMessage keeps the failure above readable when the condition is absent
+// entirely, which is a different fault from a message that lost its direction.
+func blockedMessage(blocked *metav1.Condition) string {
+	if blocked == nil {
+		return "<no Blocked condition>"
+	}
+	return blocked.Message
 }
