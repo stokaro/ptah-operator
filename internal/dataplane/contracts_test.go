@@ -12,15 +12,16 @@ import (
 
 const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-func TestDriftFindingVocabularyV1(t *testing.T) {
+func TestDriftFindingVocabulary(t *testing.T) {
 	t.Parallel()
 
-	if dataplane.DriftFindingVocabularyVersion != 1 {
-		t.Fatalf("DriftFindingVocabularyVersion = %d, want 1", dataplane.DriftFindingVocabularyVersion)
+	if dataplane.DriftFindingVocabularyVersion != 2 {
+		t.Fatalf("DriftFindingVocabularyVersion = %d, want 2", dataplane.DriftFindingVocabularyVersion)
 	}
 	want := []string{
 		"columns_added", "columns_modified", "columns_removed",
 		"constraints_added", "constraints_removed",
+		"data_rows_deleted", "data_rows_inserted", "data_rows_updated",
 		"enum_values_added", "enum_values_removed", "enums_added", "enums_removed",
 		"extensions_added", "extensions_modified", "extensions_removed",
 		"functions_added", "functions_modified", "functions_removed",
@@ -38,12 +39,12 @@ func TestDriftFindingVocabularyV1(t *testing.T) {
 	}
 	for _, category := range got {
 		if !dataplane.IsKnownDriftFindingCategory(category) {
-			t.Errorf("v1 vocabulary rejected %q", category)
+			t.Errorf("the vocabulary rejected %q", category)
 		}
 	}
-	for _, category := range []string{"", "private_schema_name", "columns_changed", "tables-added"} {
+	for _, category := range []string{"", "private_schema_name", "columns_changed", "tables-added", "data_rows", "rows_updated"} {
 		if dataplane.IsKnownDriftFindingCategory(category) {
-			t.Errorf("v1 vocabulary accepted %q", category)
+			t.Errorf("the vocabulary accepted %q", category)
 		}
 	}
 

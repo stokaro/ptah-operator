@@ -1299,7 +1299,7 @@ for migration_marker in \
 	'printed the order as' \
 	'run_existing_schema_adoption_proof' \
 	'build_adopt_schema_without_the_operator' \
-	'the operator wrote a revision table into a database it was never approved to migrate' \
+	'the operator recorded a migration as applied in a database it was never approved to migrate' \
 	'against a database that already carries the schema' \
 	'"migrations", "baseline", "--migrations-dir", "/migrations",' \
 	'"--shadow-db", "$(PTAH_E2E_SHADOW_URL)"' \

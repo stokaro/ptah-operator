@@ -1,0 +1,126 @@
+{
+  "drift": true,
+  "failed": true,
+  "failure_threshold": "all",
+  "highest_severity": "destructive",
+  "dialect": "sqlite",
+  "findings": [
+    {
+      "category": "data_rows_inserted",
+      "count": 1,
+      "severity": "safe"
+    },
+    {
+      "category": "data_rows_updated",
+      "count": 1,
+      "severity": "destructive"
+    },
+    {
+      "category": "data_rows_deleted",
+      "count": 1,
+      "severity": "destructive"
+    }
+  ],
+  "managed_data": {
+    "tables": [
+      {
+        "table": "regions",
+        "inserts": 1,
+        "updates": 1,
+        "deletes": 1
+      }
+    ],
+    "findings": [
+      {
+        "category": "data_rows_inserted",
+        "count": 1,
+        "severity": "safe"
+      },
+      {
+        "category": "data_rows_updated",
+        "count": 1,
+        "severity": "destructive"
+      },
+      {
+        "category": "data_rows_deleted",
+        "count": 1,
+        "severity": "destructive"
+      }
+    ]
+  },
+  "diff": {
+    "identifier_semantics": {
+      "default_schema": "main",
+      "index_namespace": "schema",
+      "index_names": "ascii_case_insensitive",
+      "table_names": "ascii_case_insensitive",
+      "column_names": "ascii_case_insensitive"
+    },
+    "tables_added": null,
+    "tables_removed": null,
+    "tables_modified": null,
+    "enums_added": null,
+    "enums_removed": null,
+    "enums_modified": null,
+    "indexes_added": null,
+    "indexes_removed": null,
+    "extensions_added": [],
+    "extensions_removed": [],
+    "extensions_modified": [],
+    "functions_added": null,
+    "functions_removed": null,
+    "functions_modified": null,
+    "sequences_added": null,
+    "sequences_removed": null,
+    "sequences_modified": null,
+    "domains_added": null,
+    "domains_removed": null,
+    "domains_modified": null,
+    "composite_types_added": null,
+    "composite_types_removed": null,
+    "composite_types_modified": null,
+    "ranges_added": null,
+    "ranges_removed": null,
+    "ranges_modified": null,
+    "views_added": null,
+    "views_removed": null,
+    "hypertables_added": null,
+    "hypertables_removed": null,
+    "hypertables_modified": null,
+    "continuous_aggregates_added": null,
+    "continuous_aggregates_removed": null,
+    "continuous_aggregates_modified": null,
+    "synonyms_added": null,
+    "synonyms_removed": null,
+    "synonyms_modified": null,
+    "extended_properties_added": null,
+    "extended_properties_removed": null,
+    "extended_properties_modified": null,
+    "views_modified": null,
+    "materialized_views_added": null,
+    "materialized_views_removed": null,
+    "materialized_views_modified": null,
+    "triggers_added": null,
+    "triggers_removed": null,
+    "triggers_modified": null,
+    "rls_policies_added": null,
+    "rls_policies_removed": null,
+    "rls_policies_modified": null,
+    "rls_enabled_tables_added": null,
+    "rls_enabled_tables_removed": null,
+    "roles_added": null,
+    "roles_removed": null,
+    "roles_modified": null,
+    "grants_added": null,
+    "grants_removed": null,
+    "grant_options_added": null,
+    "grant_options_revoked": null,
+    "default_privileges_added": null,
+    "default_privileges_removed": null,
+    "default_privilege_options_added": null,
+    "default_privilege_options_revoked": null,
+    "constraints_added": null,
+    "constraints_removed": null,
+    "foreign_keys_removed_with_tables": null
+  }
+}

@@ -695,3 +695,44 @@ func TestFrameCarriesMigrationMutationMetadata(t *testing.T) {
 		t.Fatalf("ParseResultFor() = %#v", parsed)
 	}
 }
+
+// A frame carrying row drift is the other gate the vocabulary governs. The
+// controller reads a drift report and the frame validator reads the summary
+// built from it, and both ask the same vocabulary, so a category one accepts
+// and the other refuses would leave the observation unreadable after it had
+// already been decoded.
+//
+// The order is the canonical one: severity first, then the category name, which
+// puts the two destructive row categories in front of the safe one.
+func TestFrameCarriesManagedRowDriftFindings(t *testing.T) {
+	t.Parallel()
+
+	result := Result{
+		ProtocolVersion: ProtocolVersion, Operation: OperationObserve, OperationID: "observe-rows",
+		ChildExitCode: 0, CoordinationDigest: "sha256:" + strings.Repeat("9", 64),
+		TargetIdentityDigest: "sha256:" + strings.Repeat("8", 64),
+		DriftReportDigest:    "sha256:" + strings.Repeat("7", 64), ObservedDialect: "postgres",
+		ObservedDrift: true, HighestDriftSeverity: "destructive", DriftFindingCount: 3,
+		DriftFindings: []DriftFindingSummary{
+			{Category: "data_rows_deleted", Count: 1, Severity: "destructive"},
+			{Category: "data_rows_updated", Count: 1, Severity: "destructive"},
+			{Category: "data_rows_inserted", Count: 1, Severity: "safe"},
+		},
+	}
+	frame, err := MarshalFrame(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseResultFor(frame, OperationObserve, result.OperationID)
+	if err != nil {
+		t.Fatalf("ParseResultFor() rejected a frame carrying row drift: %v", err)
+	}
+	if len(parsed.DriftFindings) != len(result.DriftFindings) {
+		t.Fatalf("DriftFindings = %d, want %d", len(parsed.DriftFindings), len(result.DriftFindings))
+	}
+	for index, finding := range parsed.DriftFindings {
+		if finding != result.DriftFindings[index] {
+			t.Fatalf("DriftFindings[%d] = %+v, want %+v", index, finding, result.DriftFindings[index])
+		}
+	}
+}
