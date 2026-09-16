@@ -1153,19 +1153,11 @@ assert_partial_run_blocks_and_recovers() {
 	while [ "$(date +%s)" -lt "$dirty_deadline" ]; do
 		record_migration_jobs
 		migration_status
-		# The pending count is deliberately not asserted here. Ptah counts a
-		# migration whose revision is not recorded applied as pending, and a
-		# dirty revision is exactly that, so the number answers its bookkeeping
-		# rather than anything this row claims: the dirty reading, the version
-		# the run stopped at, and the refusal that names it.
-		if jq -e '
-          .status as $status |
-          $status.phase == "Blocked" and
-          ($status.history.dirty // false) == true and
-          $status.history.currentVersion == 3 and
-          (any($status.conditions[];
-            .type == "Blocked" and .status == "True" and .reason == "HistoryDirty"))
-        ' "$STATUS_FILE" >/dev/null; then
+		# What this reading claims, and what it deliberately leaves out, is in
+		# the filter file itself.
+		if jq -e --argjson stoppedAt 3 \
+			-f "$ROOT_DIR/testdata/e2e/migration-dirty-reading.jq" \
+			"$STATUS_FILE" >/dev/null; then
 			dirty_settled=yes
 			break
 		fi
@@ -1181,22 +1173,14 @@ assert_partial_run_blocks_and_recovers() {
 	# Jobs go on appearing, so what has to stand still is the set of Apply ones,
 	# recorded here with the partial run's own Job already in it.
 	#
-	# What is held is the refusal, not the phase. A stopped resource still
-	# resolves, verifies and reads at its interval, so it is legitimately in
-	# Resolving for part of every cycle while Blocked stays true throughout;
-	# demanding the phase on every poll fails on the poll that landed mid-cycle,
-	# which is a statement about the harness rather than about the operator.
+	# What is held is the refusal, not the phase; the filter file says why.
 	migration_apply_job_uids >"$WORK_DIR/partial-applies.txt"
 	partial_hold_deadline=$(($(date +%s) + 90))
 	while [ "$(date +%s)" -lt "$partial_hold_deadline" ]; do
 		record_migration_jobs
 		migration_status
-		jq -e '
-          .status as $status |
-          (any($status.conditions[]; .type == "Blocked" and .status == "True")) and
-          ($status.plan // null) == null and
-          (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
-        ' "$STATUS_FILE" >/dev/null ||
+		jq -e -f "$ROOT_DIR/testdata/e2e/migration-partial-refusal.jq" \
+			"$STATUS_FILE" >/dev/null ||
 			fail "$MIGRATION_NAME stopped refusing while a partial migration stood unresolved"
 		assert_no_new_apply_job "$WORK_DIR/partial-applies.txt" "after a partial one"
 		sleep 10
