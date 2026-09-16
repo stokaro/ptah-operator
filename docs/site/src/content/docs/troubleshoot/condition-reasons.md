@@ -98,6 +98,37 @@ fixed converges on its own, and a spec edit is not part of the recovery.
 [Run versioned migrations](../../use/migrations/#what-the-history-says) carries
 what each state means and which Ptah commands end it.
 
+## A migration that failed and committed nothing
+
+`OperationFailed` with a run that recorded nothing is the shape of a refusal
+rather than of a broken statement:
+
+```
+lastRun: outcome Failed
+"A migration failed and committed nothing; 0 migrations before it are recorded applied"
+```
+
+On MySQL or MariaDB the usual cause is the transaction mode. Those engines have
+no transactional DDL, so Ptah will not run a file it cannot witness as one unit
+and says so before any statement executes. The resource reports the refusal
+faithfully; what it cannot show you is the sentence, because the container that
+holds the database URL does not put its output in a status.
+
+Name the mode and the run proceeds:
+
+```yaml
+spec:
+  policy:
+    transactionMode: none
+```
+
+[Choosing a transaction mode](../../use/migrations/#choosing-a-transaction-mode)
+says what that costs — with no transaction to unwind, a file that fails halfway
+leaves what it already committed.
+
+A run that failed on a statement looks different: migrations before the failing
+one are recorded applied, and the count in the message is not zero.
+
 ## Unsupported engines
 
 `spec.target.engine` accepts a bounded engine identifier so GitOps tools can
