@@ -22,6 +22,7 @@ import (
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/migrationview"
 	"github.com/stokaro/ptah-operator/internal/planview"
+	"github.com/stokaro/ptah-operator/internal/schemaview"
 )
 
 // version is stamped at release time. A build from a checkout says so.
@@ -61,6 +62,8 @@ func run(ctx context.Context, arguments []string, stdout, stderr io.Writer) int 
 		return plan(ctx, arguments[1:], stdout, stderr)
 	case "migration":
 		return migration(ctx, arguments[1:], stdout, stderr)
+	case "schema":
+		return schema(ctx, arguments[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "kubectl-ptah: unknown command %q\n\n", arguments[0])
 		usage(stderr)
@@ -195,6 +198,71 @@ func migration(ctx context.Context, arguments []string, stdout, stderr io.Writer
 	return exitOK
 }
 
+// schema prints where one PtahSchema stands: what the last observation found,
+// including how far the declared reference rows sit from the database, and
+// which plan is waiting for a decision.
+func schema(ctx context.Context, arguments []string, stdout, stderr io.Writer) int {
+	flags := pflag.NewFlagSet("kubectl ptah schema", pflag.ContinueOnError)
+	flags.SetOutput(stderr)
+	flags.Usage = func() { usage(stderr) }
+
+	var (
+		output      = flags.StringP("output", "o", string(schemaview.Text), "output format: text or json")
+		namespace   = flags.StringP("namespace", "n", "", "namespace of the schema (default: the kubeconfig context's)")
+		kubeconfig  = flags.String("kubeconfig", "", "path to a kubeconfig file (default: KUBECONFIG, then ~/.kube/config)")
+		kubeContext = flags.String("context", "", "kubeconfig context to use (default: the current one)")
+		timeout     = flags.Duration("timeout", 30*time.Second, "how long to wait for the API server")
+	)
+	if err := flags.Parse(arguments); err != nil {
+		if errors.Is(err, pflag.ErrHelp) {
+			return exitOK
+		}
+		return exitUsage
+	}
+	if flags.NArg() != 1 {
+		fmt.Fprintf(stderr, "kubectl-ptah: name one PtahSchema\n\n")
+		usage(stderr)
+		return exitUsage
+	}
+	format := schemaview.Format(*output)
+	if !knownSchemaFormat(format) {
+		fmt.Fprintf(stderr, "kubectl-ptah: unknown output format %q; it is one of %v\n", *output, schemaview.Formats)
+		return exitUsage
+	}
+
+	reader, resolved, err := connect(*kubeconfig, *kubeContext, *namespace, *timeout)
+	if err != nil {
+		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
+		return exitFailed
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, *timeout)
+	defer cancel()
+
+	view, err := schemaview.Load(ctx, reader, resolved, flags.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "kubectl-ptah: %v\n", err)
+		if errors.Is(err, schemaview.ErrSchemaNotFound) {
+			return exitAbsent
+		}
+		return exitFailed
+	}
+	if err := schemaview.Render(stdout, view, format); err != nil {
+		fmt.Fprintf(stderr, "kubectl-ptah: write the schema: %v\n", err)
+		return exitFailed
+	}
+	return exitOK
+}
+
+func knownSchemaFormat(format schemaview.Format) bool {
+	for _, candidate := range schemaview.Formats {
+		if candidate == format {
+			return true
+		}
+	}
+	return false
+}
+
 func knownMigrationFormat(format migrationview.Format) bool {
 	for _, candidate := range migrationview.Formats {
 		if candidate == format {
@@ -257,12 +325,15 @@ func known(format planview.Format) bool {
 
 func usage(out io.Writer) {
 	fmt.Fprint(out, `usage: kubectl ptah plan <schema> [flags]
+       kubectl ptah schema <schema> [flags]
        kubectl ptah migration <migration> [flags]
 
 plan prints the SQL of a plan the Ptah operator stored, after the operator's
-own checks on it have held. migration prints where one PtahMigration stands:
-what the database's own history said, which sequence would run next, and what
-the last run did.
+own checks on it have held. schema prints where one PtahSchema stands: what the
+last observation found, how far its declared reference rows sit from the
+database, and which plan is waiting. migration prints where one PtahMigration
+stands: what the database's own history said, which sequence would run next,
+and what the last run did.
 
   --current              the plan the operator would run next (the default)
   --applied              the plan the last confirmed apply ran
@@ -281,10 +352,16 @@ log of what each statement did, and not a fresh reading of the database.
   kubectl ptah plan storefront --applied -n application -o sql
   kubectl ptah plan storefront --applied -n application -o json > plan.json
 
-migration takes -o text (the default) or json, plus the same -n, --kubeconfig,
---context and --timeout flags. It prints no SQL and no table row: a migration
-plan records versions and checksums, and the statements live in the artifact.
+schema and migration each take -o text (the default) or json, plus the same
+-n, --kubeconfig, --context and --timeout flags. Neither prints SQL or a table
+row. A migration plan records versions and checksums, and the statements live
+in the artifact. A schema reports its declared reference rows as counts -- how
+many the database is missing, holds differently, and holds that the declaration
+no longer has -- because which rows those are is in the plan, and reading a
+data plan is reading values.
 
+  kubectl ptah schema storefront -n application
+  kubectl ptah schema storefront -n application -o json
   kubectl ptah migration orders -n application
   kubectl ptah migration orders -n application -o json
 
