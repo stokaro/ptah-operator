@@ -43,7 +43,8 @@ accepts() {
 	filter=$1
 	description=$2
 	cat >"$WORK_DIR/document.json"
-	jq -e --argjson stoppedAt 3 -f "$ROOT_DIR/testdata/e2e/$filter" \
+	jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
+		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null ||
 		fail "$filter refused a reading it has to accept: $description"
 }
@@ -52,7 +53,8 @@ refuses() {
 	filter=$1
 	description=$2
 	cat >"$WORK_DIR/document.json"
-	if jq -e --argjson stoppedAt 3 -f "$ROOT_DIR/testdata/e2e/$filter" \
+	if jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
+		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null 2>&1; then
 		fail "$filter accepted a reading it has to refuse: $description"
 	fi
@@ -105,6 +107,27 @@ JSON
 refuses migration-dirty-reading.jq 'blocked for another reason' <<'JSON'
 {"status":{"phase":"Blocked","history":{"dirty":true,"currentVersion":3},
  "conditions":[{"type":"Blocked","status":"True","reason":"HistoryModified"}]}}
+JSON
+
+# The step that refused an artifact, as distinct from any other failure. The
+# rejected cases are the two this had to be told apart from: the message the
+# controller produced before it named a boundary at all, and a different step
+# failing for its own reasons.
+accepts migration-refused-boundary.jq 'the fetch step ended the run' <<'JSON'
+{"status":{"conditions":[{"type":"Progressing","status":"True","reason":"OperationFailed",
+ "message":"the fetch-migrations step exited 2, so the run never started"}]}}
+JSON
+refuses migration-refused-boundary.jq 'a missing frame, naming no boundary' <<'JSON'
+{"status":{"conditions":[{"type":"Progressing","status":"True","reason":"OperationFailed",
+ "message":"read History result: ptah runner result frame not found"}]}}
+JSON
+refuses migration-refused-boundary.jq 'a different step failed' <<'JSON'
+{"status":{"conditions":[{"type":"Progressing","status":"True","reason":"OperationFailed",
+ "message":"the install-runner step exited 1, so the run never started"}]}}
+JSON
+refuses migration-refused-boundary.jq 'the boundary named on another condition' <<'JSON'
+{"status":{"conditions":[{"type":"Ready","status":"False","reason":"OperationFailed",
+ "message":"the fetch-migrations step exited 2, so the run never started"}]}}
 JSON
 
 printf 'migration refusal filter self-test: PASS\n'

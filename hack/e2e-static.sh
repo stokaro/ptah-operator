@@ -1275,6 +1275,7 @@ for migration_marker in \
 	'stopped refusing while a partial migration stood unresolved' \
 	'testdata/e2e/migration-partial-refusal.jq' \
 	'testdata/e2e/migration-dirty-reading.jq' \
+	'testdata/e2e/migration-refused-boundary.jq' \
 	'did not keep the statement the partial migration committed' \
 	'assert_no_new_apply_job' \
 	'after a partial one' \

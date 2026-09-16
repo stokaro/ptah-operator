@@ -2460,18 +2460,14 @@ assert_uncertain_apply_blocks_without_replaying() {
 	# Nothing dispatches again. A replay would re-run the first migration, whose
 	# insert is not idempotent, so this is the assertion the row exists for.
 	migration_apply_job_uids "$UNCERTAIN_MIGRATION" >"$WORK_DIR/uncertain-applies.txt"
-	# The refusal is what has to hold, not the phase: this resource also keeps
-	# reading at its interval, and a poll that lands mid-cycle finds it
-	# Resolving with Blocked still true.
+	# The same refusal the partial row holds, and the same filter: a run that
+	# stopped and a run nobody could read owe the reader the same thing, so
+	# they are not two claims with two chances to drift.
 	uncertain_hold_deadline=$(($(date +%s) + 90))
 	while [ "$(date +%s)" -lt "$uncertain_hold_deadline" ]; do
 		uncertain_status
-		jq -e '
-          .status as $status |
-          (any($status.conditions[]; .type == "Blocked" and .status == "True")) and
-          ($status.plan // null) == null and
-          (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
-        ' "$STATUS_FILE" >/dev/null ||
+		jq -e -f "$ROOT_DIR/testdata/e2e/migration-partial-refusal.jq" \
+			"$STATUS_FILE" >/dev/null ||
 			fail "$UNCERTAIN_MIGRATION stopped refusing while its run stood unaccounted for"
 		assert_no_new_apply_job "$WORK_DIR/uncertain-applies.txt" \
 			"after one whose evidence it could not read" "$UNCERTAIN_MIGRATION"
@@ -2647,8 +2643,9 @@ assert_unknown_layer_refusal_is_named() {
 		k -n "$TEST_NAMESPACE" get ptahmigration "$UNKNOWN_LAYER_MIGRATION" -o json >"$STATUS_FILE" ||
 			fail "$UNKNOWN_LAYER_MIGRATION could not be read"
 		scan_for_credentials "$STATUS_FILE" "$UNKNOWN_LAYER_MIGRATION status"
-		if jq -e '[.status.conditions[]? | select(.type == "Progressing") | .message]
-              | any(test("fetch-migrations"))' "$STATUS_FILE" >/dev/null; then
+		if jq -e --arg step "fetch-migrations" \
+			-f "$ROOT_DIR/testdata/e2e/migration-refused-boundary.jq" \
+			"$STATUS_FILE" >/dev/null; then
 			return 0
 		fi
 		sleep 5
