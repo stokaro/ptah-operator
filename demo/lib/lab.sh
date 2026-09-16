@@ -300,6 +300,45 @@ lab_up() {
 	lab_tools >/dev/null
 }
 
+# lab_release_tunnel closes the SSH forward the bootstrap left running.
+#
+# The sweep below removes containers and volumes by owner label, and the tunnel
+# carries none: it is a process on this machine, not a Docker object, so nothing
+# there can see it. The harness that started it would have killed it from its own
+# cleanup, and the bootstrap released that cleanup on purpose, which leaves this
+# as the only place that can.
+#
+# The port comes from the run id, so it is the same port every time: a forward
+# left bound does not leak quietly, it refuses the next lab with `Address already
+# in use` and says nothing about why.
+#
+# The recorded pid is checked before it is killed. A pid file outlives the
+# process it names and the numbers are reused, so killing the number alone turns
+# a leak into a way to end somebody else's work. The forward the harness wrote
+# down is what tells this tunnel from whatever inherited its number.
+#
+# An environment written before the tunnel was recorded carries neither value,
+# and a lab reached over direct host access has no tunnel at all. Both are
+# silent: there is nothing to release, which is not a failure to release it.
+lab_release_tunnel() {
+	[ -n "${E2E_TUNNEL_PID:-}" ] || return 0
+	if ! kill -0 "$E2E_TUNNEL_PID" 2>/dev/null; then
+		return 0
+	fi
+	lab_tunnel_command=$(ps -o command= -p "$E2E_TUNNEL_PID" 2>/dev/null || true)
+	case "$lab_tunnel_command" in
+	*ssh*"${E2E_TUNNEL_FORWARD:-__absent__}"*) ;;
+	*)
+		printf 'lab: process %s no longer forwards %s; leaving it alone\n' \
+			"$E2E_TUNNEL_PID" "${E2E_TUNNEL_FORWARD:-<unrecorded>}" >&2
+		lab_down_incomplete=1
+		return 0
+		;;
+	esac
+	kill "$E2E_TUNNEL_PID" 2>/dev/null || true
+	printf 'lab: released the API tunnel on %s\n' "$E2E_TUNNEL_FORWARD"
+}
+
 # lab_down removes what the bootstrap created, and nothing else.
 #
 # The bootstrap releases the harness's cleanup trap so the environment survives,
@@ -320,6 +359,7 @@ lab_down() {
 	lab_require E2E_KIND_CLUSTER_NAME E2E_DOCKER_CONTEXT
 
 	lab_down_incomplete=0
+	lab_release_tunnel
 	printf 'lab: removing cluster %s\n' "$E2E_KIND_CLUSTER_NAME"
 	kind delete cluster --name "$E2E_KIND_CLUSTER_NAME" >/dev/null 2>&1 || true
 	# Asked again, because the delete is quiet about a daemon it could not
