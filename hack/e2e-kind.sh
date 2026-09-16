@@ -533,6 +533,7 @@ NEXT_RELEASE_SEQUENCE=
 RELEASE_CHART_OUTPUT_PARENT=
 RELEASE_CHART_OUTPUT_TEMP=
 TUNNEL_PID=
+TUNNEL_FORWARD=
 IMAGE_AUDIT_CONTAINER=$(dns_name ptah-image-audit "$identity" 63)
 TASK_CLAIM_VOLUME=$(dns_name ptah-e2e-claim "$identity" 63)
 TASK_CLAIM_TOKEN=$(openssl rand -hex 16)
@@ -1827,9 +1828,10 @@ if [ "$E2E_DIRECT_HOST_ACCESS" -eq 0 ]; then
 	if [ -n "$E2E_SSH_PORT" ]; then
 		ssh_args="$ssh_args -p $E2E_SSH_PORT"
 	fi
+	TUNNEL_FORWARD="127.0.0.1:${E2E_API_SERVER_PORT}:127.0.0.1:${E2E_API_SERVER_PORT}"
 	# shellcheck disable=SC2086 # ssh_args intentionally expands into separate options.
 	ssh $ssh_args \
-		-L "127.0.0.1:${E2E_API_SERVER_PORT}:127.0.0.1:${E2E_API_SERVER_PORT}" \
+		-L "$TUNNEL_FORWARD" \
 		-L "127.0.0.1:${E2E_REGISTRY_PORT}:127.0.0.1:${E2E_REGISTRY_PORT}" \
 		"$E2E_SSH_TARGET" >"$TUNNEL_LOG" 2>&1 &
 	TUNNEL_PID=$!
@@ -2299,6 +2301,16 @@ if [ "$E2E_STOP_AFTER" = bootstrap ]; then
 		# the directory holding the kubeconfig and the credentials.
 		printf 'E2E_TASK_CLAIM_VOLUME=%s\n' "$TASK_CLAIM_VOLUME"
 		printf 'E2E_WORK_DIR=%s\n' "$WORK_DIR"
+		# The SSH tunnel is held by this process and by nothing else: it carries
+		# no owner label, so the sweep that removes containers and volumes cannot
+		# see it, and the pid dies with the shell that recorded it. A teardown
+		# that does not know the pid leaves the forward bound, and the next lab
+		# derives the same port from the same run id and fails to bind it.
+		#
+		# The forward is written beside the pid so the teardown can tell the
+		# tunnel from whatever later took its process number.
+		printf 'E2E_TUNNEL_PID=%s\n' "$TUNNEL_PID"
+		printf 'E2E_TUNNEL_FORWARD=%s\n' "$TUNNEL_FORWARD"
 		# Comma-separated, because the caller sources this file: a value with
 		# a space in it is a command line, and the second image would be run
 		# rather than recorded.
