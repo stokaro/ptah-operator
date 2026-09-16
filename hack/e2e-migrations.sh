@@ -1746,9 +1746,9 @@ build_adopt_schema_without_the_operator() {
 		fail "the hand-built schema in $ADOPT_DATABASE already carries a revision table"
 }
 
-# adopt_revision_tables counts the revision table Ptah records history in. It is
-# the one object that separates a database nothing has migrated from a database
-# that carries the schema and no account of it.
+# adopt_revision_tables counts the revision table Ptah records history in. It
+# separates a database nothing has touched from one a history read has reached,
+# which is not the same question as whether anything was adopted.
 adopt_revision_tables() {
 	case "$ENGINE" in
 	postgresql)
@@ -1762,6 +1762,26 @@ adopt_revision_tables() {
 			"$ADOPT_DATABASE"
 		;;
 	esac
+}
+
+# adopt_recorded_revisions counts what the revision table records.
+#
+# Reading the history is what creates the table: Ptah writes schema_migrations
+# on its first read, and the operator reads history before it can plan
+# anything, so a database nobody has approved a migration against carries an
+# empty table of its own. The table's presence therefore says a read happened,
+# and nothing else.
+#
+# Adoption is a row in it -- a version recorded as applied that nothing ran --
+# so that is what the refusal is measured against. A table that is not there
+# answers zero the same way an empty one does, which keeps the one question
+# this asks from turning into two.
+adopt_recorded_revisions() {
+	if [ "$(adopt_revision_tables)" = 0 ]; then
+		printf '0\n'
+		return 0
+	fi
+	migration_query "SELECT count(*) FROM schema_migrations" "$ADOPT_DATABASE"
 }
 
 create_adopt_migration_resource() {
@@ -1818,7 +1838,12 @@ wait_for_adopt_phase() {
 # assert_existing_schema_is_not_adopted is the row itself: the operator reads an
 # empty history from a database that is not empty, and publishes the whole
 # sequence for a person to decide about instead of recording any part of it as
-# already applied. Nothing reaches the database.
+# already applied.
+#
+# What must not happen is a recorded revision, not a created table. The read
+# that establishes the history is also what creates the table, so demanding its
+# absence measures Ptah's reader and reports it as an adoption the operator
+# never performed.
 assert_existing_schema_is_not_adopted() {
 	k -n "$TEST_NAMESPACE" get ptahmigration "$ADOPT_MIGRATION" -o json >"$STATUS_FILE"
 	scan_for_credentials "$STATUS_FILE" "$ADOPT_MIGRATION status"
@@ -1834,8 +1859,8 @@ assert_existing_schema_is_not_adopted() {
       (.status | has("lastRun") | not)
     ' "$STATUS_FILE" >/dev/null ||
 		fail "$ADOPT_MIGRATION did not hold the whole sequence at the approval gate"
-	[ "$(adopt_revision_tables)" = 0 ] ||
-		fail "the operator wrote a revision table into a database it was never approved to migrate"
+	[ "$(adopt_recorded_revisions)" = 0 ] ||
+		fail "the operator recorded a migration as applied in a database it was never approved to migrate"
 	assert_no_new_apply_job "$WORK_DIR/adopt-applies.txt" \
 		"against a database that already carries the schema" "$ADOPT_MIGRATION"
 	printf 'e2e migrations: %s held an existing schema at the approval gate and recorded nothing\n' \
