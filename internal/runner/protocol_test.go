@@ -768,6 +768,26 @@ func TestParseSaysWhyItRejectedTheLastFrame(t *testing.T) {
 		want   string
 	}{
 		{
+			name: "a log that stops where the payload ends",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				return frame[:len(frame)-len(frameFooter)]
+			},
+			want: "never finished arriving",
+		},
+		{
+			// The other reason a footer can be missing, and the one a longer
+			// wait would never fix.
+			name: "a footer pushed past the bound on interleaved lines",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				cut := len(frame) - len(frameFooter)
+				noise := bytes.Repeat([]byte("diagnostic line\n"), (maxInterleavedFrameBytes/16)+16)
+				return append(append(append([]byte(nil), frame[:cut]...), noise...), frame[cut:]...)
+			},
+			want: "bound on log lines interleaved after it",
+		},
+		{
 			name: "a log that stops inside the payload",
 			mutate: func(t *testing.T, frame []byte) []byte {
 				t.Helper()

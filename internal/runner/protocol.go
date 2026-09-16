@@ -298,7 +298,17 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 		payloadEnd := payloadStart + int(payloadLength)
 		footerEnd, ok := frameFooterEnd(logs, payloadEnd)
 		if !ok {
-			reject("no footer closes the payload the frame header declares")
+			// A missing footer has two causes with different answers, and the
+			// absence alone does not separate them. A log that simply ends was
+			// read before the frame finished arriving. A log that runs on past
+			// the bound pushed the footer out of reach of the scan. How much
+			// log follows the payload says which, and it is structure, so it
+			// says so without quoting a byte of the log.
+			if len(logs)-payloadEnd <= maxInterleavedFrameBytes {
+				reject("the log ends after the payload without the footer that closes it, so the frame never finished arriving")
+			} else {
+				reject("no footer closes the payload within the bound on log lines interleaved after it")
+			}
 			searchAt = start + len(marker)
 			continue
 		}
