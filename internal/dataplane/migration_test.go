@@ -1,6 +1,7 @@
 package dataplane_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -196,5 +197,55 @@ func TestDecodeMigrationRun_FailurePath(t *testing.T) {
 				t.Fatalf("DecodeMigrationRun() error = %v, want %q", err, test.message)
 			}
 		})
+	}
+}
+
+// TestEmptySelectionSurvivesTheResultFrame measures the round trip the report
+// actually makes, because that is where the answer was lost.
+//
+// The runner decodes Ptah's document, and encodes the same value again into its
+// result frame; the controller decodes the frame. An empty selection means the
+// next run would execute nothing, which is the whole answer after a checkpoint
+// bootstrap -- the covered versions still read pending one by one, and only
+// Ptah's own selection says they will not run. A field dropped on the way
+// through reaches the controller as an absent one, and Pending falls back to
+// the states, publishes a plan for migrations that cannot run, and publishes it
+// again after every run that correctly did nothing.
+func TestEmptySelectionSurvivesTheResultFrame(t *testing.T) {
+	t.Parallel()
+
+	// The document Ptah prints for a database that bootstrapped from the
+	// checkpoint at version 3: three and four ran, one and two never will.
+	bootstrapped := []byte(`{"contract_version":1,"current_version":4,` +
+		`"pending_migrations":[],` +
+		`"migrations":[{"version":1,"state":"pending"},{"version":2,"state":"pending"},` +
+		`{"version":3,"state":"applied"},{"version":4,"state":"applied"}]}`)
+
+	var report dataplane.MigrationStatusReport
+	if err := json.Unmarshal(bootstrapped, &report); err != nil {
+		t.Fatalf("decode Ptah's document: %v", err)
+	}
+	if got := report.Pending(); len(got) != 0 {
+		t.Fatalf("Ptah's document decodes to pending %v, want none", got)
+	}
+
+	frame, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("encode the result frame: %v", err)
+	}
+	var carried map[string]json.RawMessage
+	if err := json.Unmarshal(frame, &carried); err != nil {
+		t.Fatalf("read the result frame: %v", err)
+	}
+	if _, present := carried["pending_migrations"]; !present {
+		t.Fatal("the result frame dropped pending_migrations, so an empty selection cannot be told from an absent one")
+	}
+
+	var relayed dataplane.MigrationStatusReport
+	if err := json.Unmarshal(frame, &relayed); err != nil {
+		t.Fatalf("decode the result frame: %v", err)
+	}
+	if got := relayed.Pending(); len(got) != 0 {
+		t.Fatalf("after the result frame pending is %v, want none", got)
 	}
 }
