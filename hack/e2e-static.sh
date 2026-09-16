@@ -1510,6 +1510,9 @@ for reference_marker in \
 	'assert_repeated_reconciliation_changes_nothing' \
 	'assert_data_only_change_reconciles' \
 	'assert_external_edit_refuses_a_stale_approval' \
+	'Reference data:   0 to insert, 1 to update, 0 to delete' \
+	'assert_kubectl_ptah_schema_line' \
+	'kubectl ptah schema never reported' \
 	'assert_removed_declaration_keeps_rows' \
 	'assert_rows_never_left_the_database' \
 	'a reconciliation with no declared change rewrote the managed rows' \

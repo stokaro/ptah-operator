@@ -177,6 +177,13 @@ coordination_digest() {
 # same proof against different servers, and naming the differences in one place
 # is what keeps the second engine from becoming a second proof.
 
+# The reference-data view is proved from the same build a user installs, against
+# the live resource, rather than from a golden file.
+mkdir -p "$WORK_DIR/go-cache"
+KUBECTL_PTAH_BINARY=$WORK_DIR/kubectl-ptah
+env GOCACHE="$WORK_DIR/go-cache" go build -trimpath \
+	-o "$KUBECTL_PTAH_BINARY" ./cmd/kubectl-ptah
+
 # scan_for_credentials refuses any evidence file that carries a value only the
 # Pod should ever hold. Every assertion below reads through it.
 scan_for_credentials() {
@@ -658,6 +665,46 @@ assert_data_only_change_reconciles() {
 	assert_declared_rows 2 3 "Czech Republic"
 }
 
+# assert_kubectl_ptah_schema_line holds the reference-data view to the drift
+# this proof created by hand, and to the rule that a count is all it may say.
+#
+# The whole line is the argument rather than three numbers a format string here
+# would arrange, because the renderer arranges it and this script cannot ask it
+# how. Passing the finished line puts one literal in one place, which
+# TestReferenceDataPhasePinsTheLineTheViewWrites compares with what the view
+# actually writes, offline, on every pull request.
+#
+# Two claims, and the scanners carry the second. scan_for_rows looks for the
+# values the fixtures declare, read out of the fixtures rather than listed here,
+# so a view that started printing a row fails on the value it printed instead of
+# passing a check written from memory.
+#
+# It waits rather than reads once. The phase says the operator has observed and
+# planned; the view is a second read, and a poll that lands between them would
+# report the harness. The wait is bounded, and its failure says what it wanted.
+assert_kubectl_ptah_schema_line() {
+	schema_view_want=$1
+	schema_view_label=$2
+	schema_view_file=$WORK_DIR/kubectl-ptah-schema-${ENGINE}-${schema_view_label}.txt
+	schema_view_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$schema_view_deadline" ]; do
+		"$KUBECTL_PTAH_BINARY" schema "$REFERENCE_SCHEMA" \
+			--kubeconfig "$KUBECONFIG_FILE" -n "$TEST_NAMESPACE" >"$schema_view_file" ||
+			fail "kubectl ptah schema could not read $REFERENCE_SCHEMA"
+		scan_for_credentials "$schema_view_file" "the kubectl ptah schema view"
+		scan_for_rows "$schema_view_file" "the kubectl ptah schema view"
+		grep -F "Schema:           ${TEST_NAMESPACE}/${REFERENCE_SCHEMA}" "$schema_view_file" >/dev/null ||
+			fail "kubectl ptah schema does not name the resource it read"
+		if grep -Fx "$schema_view_want" "$schema_view_file" >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	printf 'e2e reference data: the view said:\n' >&2
+	sed 's/^/e2e reference data:   /' "$schema_view_file" >&2
+	fail "kubectl ptah schema never reported [$schema_view_want] within ${TIMEOUT_SECONDS}s"
+}
+
 # A change made after approval is never silently overwritten by a stale plan.
 # The row is edited in the database between the plan and the approval, so the
 # approval names a plan whose observed state no longer holds.
@@ -666,6 +713,10 @@ assert_external_edit_refuses_a_stale_approval() {
 		fail "the external edit could not be made"
 	wait_for_reference_phase AwaitingApproval
 	wait_for_reference_plan
+	# One managed row differs, and this proof is what made it differ, so the
+	# counts are known rather than read back from the thing under test.
+	assert_kubectl_ptah_schema_line \
+		"Reference data:   0 to insert, 1 to update, 0 to delete" external-edit
 	stale_plan=$REFERENCE_PLAN
 	reference_query "UPDATE countries SET name = 'Edited again outside the operator' WHERE code = 'US'" >/dev/null ||
 		fail "the second external edit could not be made"
