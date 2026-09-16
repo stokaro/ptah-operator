@@ -1119,23 +1119,17 @@ assert_partial_run_blocks_and_recovers() {
 
 	wait_for_migration_phase Blocked
 	migration_status
-	# The run's own account stops the resource, and the reason it carries
-	# depends on whether the next history read has landed yet: the run says the
-	# outcome is unattributable, and the database then says a revision is
-	# dirty. Both are the same refusal, so neither is worth racing.
-	jq -e '
-      .status as $status |
-      $status.phase == "Blocked" and
-      $status.lastRun.outcome == "Partial" and
-      ($status.lastRun.appliedVersions // []) == [] and
-      ($status.plan // null) == null and
-      ($status.activeOperation // null) == null and
-      (any($status.conditions[];
-        .type == "Blocked" and .status == "True" and
-        (.reason == "ApplyOutcomeUnknown" or .reason == "HistoryDirty"))) and
-      (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
-    ' "$STATUS_FILE" >/dev/null ||
+	# Two readings, and neither depends on where the resource is in its cycle:
+	# what the run recorded, and that the refusal stands. The reason the refusal
+	# carries depends on whether the next history read has landed -- the run
+	# says the outcome is unattributable, the database then says a revision is
+	# dirty -- and both are the same refusal, so neither is worth racing.
+	jq -e -f "$ROOT_DIR/testdata/e2e/migration-partial-run-recorded.jq" \
+		"$STATUS_FILE" >/dev/null ||
 		fail "$MIGRATION_NAME did not stop on a migration that committed half of itself"
+	jq -e -f "$ROOT_DIR/testdata/e2e/migration-partial-refusal.jq" \
+		"$STATUS_FILE" >/dev/null ||
+		fail "$MIGRATION_NAME did not refuse after a migration that committed half of itself"
 	scan_for_credentials "$STATUS_FILE" "the partial-run refusal"
 
 	# Partial is a fact about the database, not a label the run chose: the

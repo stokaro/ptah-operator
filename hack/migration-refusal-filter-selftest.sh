@@ -180,6 +180,21 @@ refuses migration-refused-boundary.jq 'the boundary named on another condition' 
  "message":"the fetch-migrations step exited 2, so the run never started"}]}}
 JSON
 
+# What a partial run recorded. The refused cases are the readings that would
+# make the row pass while proving something else: a run that finished, a run
+# that claimed versions, and no run at all.
+accepts_file migration-partial-run-recorded.jq 'the reading the failing run printed' \
+	partial-run-left-a-dirty-revision.json
+refuses migration-partial-run-recorded.jq 'a run that finished' <<'JSON'
+{"status":{"lastRun":{"outcome":"Applied","appliedVersions":[4]}}}
+JSON
+refuses migration-partial-run-recorded.jq 'a partial that claimed a version' <<'JSON'
+{"status":{"lastRun":{"outcome":"Partial","appliedVersions":[4]}}}
+JSON
+refuses migration-partial-run-recorded.jq 'no run at all' <<'JSON'
+{"status":{"phase":"Blocked"}}
+JSON
+
 # A database that ran more than the artifact carries. The refused cases are the
 # readings this had to be told apart from: an ordinary settled database, where
 # the two numbers agree, and one where work is still pending, which is the

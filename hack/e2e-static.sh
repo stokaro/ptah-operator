@@ -1278,6 +1278,7 @@ for migration_marker in \
 	'testdata/e2e/migration-refused-boundary.jq' \
 	'testdata/e2e/migration-history-ahead.jq' \
 	'testdata/e2e/migration-untouched-database.jq' \
+	'testdata/e2e/migration-partial-run-recorded.jq' \
 	'testdata/e2e/readings/partial-run-left-a-dirty-revision.json' \
 	'did not keep the statement the partial migration committed' \
 	'assert_no_new_apply_job' \
