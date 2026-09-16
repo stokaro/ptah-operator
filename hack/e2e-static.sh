@@ -5,6 +5,7 @@ set -eu
 "$(dirname -- "$0")/failed-hook-evidence-selftest.sh"
 "$(dirname -- "$0")/admission-schema-contract-selftest.sh"
 "$(dirname -- "$0")/controller-object-schema-contract-selftest.sh"
+"$(dirname -- "$0")/migration-refusal-filter-selftest.sh"
 
 unset CDPATH
 ROOT_DIR=$(cd "$(dirname -- "$0")/.." && pwd)
@@ -1271,6 +1272,14 @@ for migration_marker in \
 	'for an artifact older than its database' \
 	'assert_partial_run_blocks_and_recovers' \
 	'did not stop on a migration that committed half of itself' \
+	'stopped refusing while a partial migration stood unresolved' \
+	'testdata/e2e/migration-partial-refusal.jq' \
+	'testdata/e2e/migration-dirty-reading.jq' \
+	'testdata/e2e/migration-refused-boundary.jq' \
+	'testdata/e2e/migration-history-ahead.jq' \
+	'testdata/e2e/migration-untouched-database.jq' \
+	'testdata/e2e/migration-partial-run-recorded.jq' \
+	'testdata/e2e/readings/partial-run-left-a-dirty-revision.json' \
 	'did not keep the statement the partial migration committed' \
 	'assert_no_new_apply_job' \
 	'after a partial one' \

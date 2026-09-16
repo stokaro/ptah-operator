@@ -1119,23 +1119,17 @@ assert_partial_run_blocks_and_recovers() {
 
 	wait_for_migration_phase Blocked
 	migration_status
-	# The run's own account stops the resource, and the reason it carries
-	# depends on whether the next history read has landed yet: the run says the
-	# outcome is unattributable, and the database then says a revision is
-	# dirty. Both are the same refusal, so neither is worth racing.
-	jq -e '
-      .status as $status |
-      $status.phase == "Blocked" and
-      $status.lastRun.outcome == "Partial" and
-      ($status.lastRun.appliedVersions // []) == [] and
-      ($status.plan // null) == null and
-      ($status.activeOperation // null) == null and
-      (any($status.conditions[];
-        .type == "Blocked" and .status == "True" and
-        (.reason == "ApplyOutcomeUnknown" or .reason == "HistoryDirty"))) and
-      (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
-    ' "$STATUS_FILE" >/dev/null ||
+	# Two readings, and neither depends on where the resource is in its cycle:
+	# what the run recorded, and that the refusal stands. The reason the refusal
+	# carries depends on whether the next history read has landed -- the run
+	# says the outcome is unattributable, the database then says a revision is
+	# dirty -- and both are the same refusal, so neither is worth racing.
+	jq -e -f "$ROOT_DIR/testdata/e2e/migration-partial-run-recorded.jq" \
+		"$STATUS_FILE" >/dev/null ||
 		fail "$MIGRATION_NAME did not stop on a migration that committed half of itself"
+	jq -e -f "$ROOT_DIR/testdata/e2e/migration-partial-refusal.jq" \
+		"$STATUS_FILE" >/dev/null ||
+		fail "$MIGRATION_NAME did not refuse after a migration that committed half of itself"
 	scan_for_credentials "$STATUS_FILE" "the partial-run refusal"
 
 	# Partial is a fact about the database, not a label the run chose: the
@@ -1153,15 +1147,11 @@ assert_partial_run_blocks_and_recovers() {
 	while [ "$(date +%s)" -lt "$dirty_deadline" ]; do
 		record_migration_jobs
 		migration_status
-		if jq -e '
-          .status as $status |
-          $status.phase == "Blocked" and
-          ($status.history.dirty // false) == true and
-          $status.history.currentVersion == 3 and
-          $status.history.pendingCount == 0 and
-          (any($status.conditions[];
-            .type == "Blocked" and .status == "True" and .reason == "HistoryDirty"))
-        ' "$STATUS_FILE" >/dev/null; then
+		# What this reading claims, and what it deliberately leaves out, is in
+		# the filter file itself.
+		if jq -e --argjson stoppedAt 3 \
+			-f "$ROOT_DIR/testdata/e2e/migration-dirty-reading.jq" \
+			"$STATUS_FILE" >/dev/null; then
 			dirty_settled=yes
 			break
 		fi
@@ -1176,12 +1166,16 @@ assert_partial_run_blocks_and_recovers() {
 	# A resource that stopped keeps reading and never runs again. The read-only
 	# Jobs go on appearing, so what has to stand still is the set of Apply ones,
 	# recorded here with the partial run's own Job already in it.
+	#
+	# What is held is the refusal, not the phase; the filter file says why.
 	migration_apply_job_uids >"$WORK_DIR/partial-applies.txt"
 	partial_hold_deadline=$(($(date +%s) + 90))
 	while [ "$(date +%s)" -lt "$partial_hold_deadline" ]; do
 		record_migration_jobs
-		[ "$(migration_phase)" = Blocked ] ||
-			fail "$MIGRATION_NAME left Blocked while a partial migration stood unresolved"
+		migration_status
+		jq -e -f "$ROOT_DIR/testdata/e2e/migration-partial-refusal.jq" \
+			"$STATUS_FILE" >/dev/null ||
+			fail "$MIGRATION_NAME stopped refusing while a partial migration stood unresolved"
 		assert_no_new_apply_job "$WORK_DIR/partial-applies.txt" "after a partial one"
 		sleep 10
 	done
@@ -1265,19 +1259,9 @@ assert_older_artifact_blocks_everything() {
 	[ "${older_blocked:-no}" = yes ] ||
 		fail "$MIGRATION_NAME did not refuse an artifact that ends before its database within ${TIMEOUT_SECONDS}s"
 
-	jq -e \
-		--arg digest "$PUBLISHED_DIGEST" '
-      .status as $status |
-      $status.artifact.digest == $digest and
-      $status.history.currentVersion == 3 and
-      $status.history.appliedCount == 2 and
-      $status.history.pendingCount == 0 and
-      ($status.history.dirty // false) == false and
-      ($status.history.modifiedVersions // []) == [] and
-      ($status.plan // null) == null and
-      ($status.activeOperation // null) == null and
-      (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
-    ' "$STATUS_FILE" >/dev/null ||
+	jq -e --arg digest "$PUBLISHED_DIGEST" --argjson databaseAt 3 --argjson artifactCovers 2 \
+		-f "$ROOT_DIR/testdata/e2e/migration-history-ahead.jq" \
+		"$STATUS_FILE" >/dev/null ||
 		fail "$MIGRATION_NAME did not report the reading that disagrees with itself"
 	# The refusal names both numbers, because only one of them is a field.
 	jq -e '[.status.conditions[] | select(.type == "Blocked") | .message]
@@ -2460,11 +2444,15 @@ assert_uncertain_apply_blocks_without_replaying() {
 	# Nothing dispatches again. A replay would re-run the first migration, whose
 	# insert is not idempotent, so this is the assertion the row exists for.
 	migration_apply_job_uids "$UNCERTAIN_MIGRATION" >"$WORK_DIR/uncertain-applies.txt"
+	# The same refusal the partial row holds, and the same filter: a run that
+	# stopped and a run nobody could read owe the reader the same thing, so
+	# they are not two claims with two chances to drift.
 	uncertain_hold_deadline=$(($(date +%s) + 90))
 	while [ "$(date +%s)" -lt "$uncertain_hold_deadline" ]; do
-		[ "$(k -n "$TEST_NAMESPACE" get ptahmigration "$UNCERTAIN_MIGRATION" \
-			-o jsonpath='{.status.phase}')" = Blocked ] ||
-			fail "$UNCERTAIN_MIGRATION left Blocked while its run stood unaccounted for"
+		uncertain_status
+		jq -e -f "$ROOT_DIR/testdata/e2e/migration-partial-refusal.jq" \
+			"$STATUS_FILE" >/dev/null ||
+			fail "$UNCERTAIN_MIGRATION stopped refusing while its run stood unaccounted for"
 		assert_no_new_apply_job "$WORK_DIR/uncertain-applies.txt" \
 			"after one whose evidence it could not read" "$UNCERTAIN_MIGRATION"
 		sleep 10
@@ -2639,8 +2627,9 @@ assert_unknown_layer_refusal_is_named() {
 		k -n "$TEST_NAMESPACE" get ptahmigration "$UNKNOWN_LAYER_MIGRATION" -o json >"$STATUS_FILE" ||
 			fail "$UNKNOWN_LAYER_MIGRATION could not be read"
 		scan_for_credentials "$STATUS_FILE" "$UNKNOWN_LAYER_MIGRATION status"
-		if jq -e '[.status.conditions[]? | select(.type == "Progressing") | .message]
-              | any(test("fetch-migrations"))' "$STATUS_FILE" >/dev/null; then
+		if jq -e --arg step "fetch-migrations" \
+			-f "$ROOT_DIR/testdata/e2e/migration-refused-boundary.jq" \
+			"$STATUS_FILE" >/dev/null; then
 			return 0
 		fi
 		sleep 5
@@ -2655,14 +2644,8 @@ assert_unknown_layer_never_reaches_the_database() {
 		k -n "$TEST_NAMESPACE" get ptahmigration "$UNKNOWN_LAYER_MIGRATION" -o json >"$STATUS_FILE" ||
 			fail "$UNKNOWN_LAYER_MIGRATION could not be read"
 		scan_for_credentials "$STATUS_FILE" "$UNKNOWN_LAYER_MIGRATION status"
-		jq -e '
-          .status as $status |
-          ($status.plan // null) == null and
-          ($status.lastRun // null) == null and
-          ($status.phase != "AwaitingApproval") and
-          ($status.phase != "InSync") and
-          (($status.history.appliedCount // 0) == 0)
-        ' "$STATUS_FILE" >/dev/null ||
+		jq -e -f "$ROOT_DIR/testdata/e2e/migration-untouched-database.jq" \
+			"$STATUS_FILE" >/dev/null ||
 			fail "$UNKNOWN_LAYER_MIGRATION acted on an artifact carrying a layer its executor cannot read"
 		[ "$(k -n "$TEST_NAMESPACE" get jobs \
 			-l "operator.ptah.run/migration=${UNKNOWN_LAYER_MIGRATION},operator.ptah.run/operation=apply" \

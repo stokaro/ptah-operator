@@ -101,6 +101,37 @@ worth stating here because no gate catches them:
   about nothing Kubernetes would have done. That belongs in `test/e2e`, against
   kind.
 
+## What a proof owes
+
+A lifecycle costs about ninety minutes on each of three Kubernetes minors, and
+the migration phase stops at its first failure, so a proof that measures the
+wrong thing hides every proof behind it and costs a day to find out. Three rules,
+learned by paying that:
+
+- **Assert the condition, never the phase it passes through.** A resource that
+  has stopped still resolves, verifies and reads at its interval, so it is
+  legitimately out of `Blocked` for part of every cycle while the refusal stays
+  true throughout. A proof that demands the phase on every poll fails on the
+  poll that lands mid-cycle, and reports the harness rather than the operator.
+- **Assert your claim, not everything the status happened to say.** A count, a
+  version or a reason that is true when the proof is written but belongs to
+  something else's bookkeeping makes the proof fail on a change that never
+  touched what it measures. `pendingCount` moved when the operator started
+  reading Ptah's own selection; the row that had pinned it broke, and it was not
+  about pending work at all.
+- **If a phase has to be asserted, assert the document that matched it.** A
+  loop that polls until a phase appears already holds the status that satisfied
+  it; asserting against that document has no window at all, while re-reading
+  afterwards reopens one. The window is usually small -- a resource waiting for
+  a person sits there for a whole interval -- but it is the difference between
+  a proof that cannot race and one that merely usually does not.
+- **A filter has to be shown to refuse something.** Reading it again catches a
+  reasoning error and misses the one that matters: a filter that passes its
+  author's intent and measures something else reads correctly. `testdata/e2e/*.jq`
+  hold the ones that earn a file, and `hack/migration-refusal-filter-selftest.sh`
+  runs each against one reading it must accept and several it must refuse, which
+  are the mistakes that were actually made.
+
 ## Language
 
 American English in code, comments, documentation, issue and PR text, and
