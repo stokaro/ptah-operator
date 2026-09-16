@@ -1265,19 +1265,9 @@ assert_older_artifact_blocks_everything() {
 	[ "${older_blocked:-no}" = yes ] ||
 		fail "$MIGRATION_NAME did not refuse an artifact that ends before its database within ${TIMEOUT_SECONDS}s"
 
-	jq -e \
-		--arg digest "$PUBLISHED_DIGEST" '
-      .status as $status |
-      $status.artifact.digest == $digest and
-      $status.history.currentVersion == 3 and
-      $status.history.appliedCount == 2 and
-      $status.history.pendingCount == 0 and
-      ($status.history.dirty // false) == false and
-      ($status.history.modifiedVersions // []) == [] and
-      ($status.plan // null) == null and
-      ($status.activeOperation // null) == null and
-      (any($status.conditions[]; .type == "Ready" and .status == "True") | not)
-    ' "$STATUS_FILE" >/dev/null ||
+	jq -e --arg digest "$PUBLISHED_DIGEST" --argjson databaseAt 3 --argjson artifactCovers 2 \
+		-f "$ROOT_DIR/testdata/e2e/migration-history-ahead.jq" \
+		"$STATUS_FILE" >/dev/null ||
 		fail "$MIGRATION_NAME did not report the reading that disagrees with itself"
 	# The refusal names both numbers, because only one of them is a field.
 	jq -e '[.status.conditions[] | select(.type == "Blocked") | .message]
@@ -2660,14 +2650,8 @@ assert_unknown_layer_never_reaches_the_database() {
 		k -n "$TEST_NAMESPACE" get ptahmigration "$UNKNOWN_LAYER_MIGRATION" -o json >"$STATUS_FILE" ||
 			fail "$UNKNOWN_LAYER_MIGRATION could not be read"
 		scan_for_credentials "$STATUS_FILE" "$UNKNOWN_LAYER_MIGRATION status"
-		jq -e '
-          .status as $status |
-          ($status.plan // null) == null and
-          ($status.lastRun // null) == null and
-          ($status.phase != "AwaitingApproval") and
-          ($status.phase != "InSync") and
-          (($status.history.appliedCount // 0) == 0)
-        ' "$STATUS_FILE" >/dev/null ||
+		jq -e -f "$ROOT_DIR/testdata/e2e/migration-untouched-database.jq" \
+			"$STATUS_FILE" >/dev/null ||
 			fail "$UNKNOWN_LAYER_MIGRATION acted on an artifact carrying a layer its executor cannot read"
 		[ "$(k -n "$TEST_NAMESPACE" get jobs \
 			-l "operator.ptah.run/migration=${UNKNOWN_LAYER_MIGRATION},operator.ptah.run/operation=apply" \

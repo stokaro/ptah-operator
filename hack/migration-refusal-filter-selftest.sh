@@ -44,6 +44,7 @@ accepts() {
 	description=$2
 	cat >"$WORK_DIR/document.json"
 	jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
+		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null ||
 		fail "$filter refused a reading it has to accept: $description"
@@ -54,6 +55,7 @@ refuses() {
 	description=$2
 	cat >"$WORK_DIR/document.json"
 	if jq -e --argjson stoppedAt 3 --arg step fetch-migrations \
+		--arg digest sha256:ff --argjson databaseAt 3 --argjson artifactCovers 2 \
 		-f "$ROOT_DIR/testdata/e2e/$filter" \
 		"$WORK_DIR/document.json" >/dev/null 2>&1; then
 		fail "$filter accepted a reading it has to refuse: $description"
@@ -128,6 +130,58 @@ JSON
 refuses migration-refused-boundary.jq 'the boundary named on another condition' <<'JSON'
 {"status":{"conditions":[{"type":"Ready","status":"False","reason":"OperationFailed",
  "message":"the fetch-migrations step exited 2, so the run never started"}]}}
+JSON
+
+# A database that ran more than the artifact carries. The refused cases are the
+# readings this had to be told apart from: an ordinary settled database, where
+# the two numbers agree, and one where work is still pending, which is the
+# reading the operator used to mistake this for.
+accepts migration-history-ahead.jq 'database at 3, artifact covers 2' <<'JSON'
+{"status":{"artifact":{"digest":"sha256:ff"},
+ "history":{"currentVersion":3,"appliedCount":2,"pendingCount":0},
+ "conditions":[{"type":"Blocked","status":"True","reason":"HistoryAhead"},
+               {"type":"Ready","status":"False","reason":"HistoryAhead"}]}}
+JSON
+refuses migration-history-ahead.jq 'an ordinary settled database' <<'JSON'
+{"status":{"artifact":{"digest":"sha256:ff"},
+ "history":{"currentVersion":3,"appliedCount":3,"pendingCount":0},
+ "conditions":[{"type":"Ready","status":"True","reason":"HistoryMatched"}]}}
+JSON
+refuses migration-history-ahead.jq 'work still pending' <<'JSON'
+{"status":{"artifact":{"digest":"sha256:ff"},
+ "history":{"currentVersion":3,"appliedCount":2,"pendingCount":1},
+ "conditions":[{"type":"Ready","status":"False","reason":"MigrationsPending"}]}}
+JSON
+refuses migration-history-ahead.jq 'a plan published anyway' <<'JSON'
+{"status":{"artifact":{"digest":"sha256:ff"},"plan":{"name":"ptah-mplan-0","uid":"u"},
+ "history":{"currentVersion":3,"appliedCount":2,"pendingCount":0},
+ "conditions":[{"type":"Ready","status":"False","reason":"HistoryAhead"}]}}
+JSON
+refuses migration-history-ahead.jq 'the tag the operator read is another one' <<'JSON'
+{"status":{"artifact":{"digest":"sha256:ee"},
+ "history":{"currentVersion":3,"appliedCount":2,"pendingCount":0},
+ "conditions":[{"type":"Ready","status":"False","reason":"HistoryAhead"}]}}
+JSON
+
+# A resource that acted on nothing. Each refused case is one clause failing on
+# its own, because a negative claim is satisfied by accident more easily than a
+# positive one.
+accepts migration-untouched-database.jq 'refused before anything was planned' <<'JSON'
+{"status":{"phase":"Reading","history":{"appliedCount":0},
+ "conditions":[{"type":"Progressing","status":"True","reason":"OperationFailed",
+ "message":"the fetch-migrations step exited 2, so the run never started"}]}}
+JSON
+refuses migration-untouched-database.jq 'a plan was published' <<'JSON'
+{"status":{"phase":"Reading","plan":{"name":"ptah-mplan-0","uid":"u"},"history":{"appliedCount":0}}}
+JSON
+refuses migration-untouched-database.jq 'a run was recorded' <<'JSON'
+{"status":{"phase":"Reading","lastRun":{"outcome":"Failed"},"history":{"appliedCount":0}}}
+JSON
+refuses migration-untouched-database.jq 'it reached the approval gate' <<'JSON'
+{"status":{"phase":"AwaitingApproval","history":{"appliedCount":0}}}
+JSON
+refuses migration-untouched-database.jq 'something was applied' <<'JSON'
+{"status":{"phase":"Reading","history":{"appliedCount":1}}}
 JSON
 
 printf 'migration refusal filter self-test: PASS\n'
