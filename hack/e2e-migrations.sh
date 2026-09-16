@@ -137,6 +137,14 @@ cleanup() {
 		# failure would put a database URL in them.
 		k -n "$TEST_NAMESPACE" get ptahmigrations -o json 2>/dev/null |
 			jq '.items[] | {name: .metadata.name, status: .status}' >&2 || true
+		# The plans a status names, by the same contract: versions, checksums
+		# and order, no SQL and no row. Without them a failure that says "two
+		# planned migrations need an approval" does not say which two, and the
+		# question that decides whether the operator or the proof was wrong
+		# cannot be answered from the run that asked it.
+		k -n "$TEST_NAMESPACE" get ptahmigrationplans -o json 2>/dev/null |
+			jq '[.items[] | {name: .metadata.name, currentVersion: .spec.currentVersion,
+			  migrations: [.spec.migrations[]? | {version, description, checkpoint}]}]' >&2 || true
 		k -n "$TEST_NAMESPACE" get jobs \
 			-l app.kubernetes.io/component=migration-operation \
 			-o json 2>/dev/null |
