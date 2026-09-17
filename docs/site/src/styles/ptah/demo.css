@@ -166,11 +166,30 @@
 .demo-btn-speed {
   padding-inline: 0.375rem;
 }
-/* The one button whose word changes reserves the width of the longer of the
- * two, so pressing it does not shuffle the buttons beside it. The speed
- * control does the same with its label below. */
+/* Each button whose word changes reserves the width of the longer of the two,
+ * so pressing it does not shuffle the buttons beside it. The speed control
+ * does the same with its label below. */
 [data-demo-toggle] {
   min-inline-size: 4.75rem;
+}
+[data-demo-full] {
+  min-inline-size: 6rem;
+}
+/* The word the button offers is what it will do next, which is the pair the
+ * play control already shows. It follows aria-pressed rather than a private
+ * attribute: the state a reader is told is then the state the page is in, and
+ * there is nothing to keep in step. */
+.demo-btn .i-collapse {
+  display: none;
+}
+[data-demo-full][aria-pressed='true'] .i-expand {
+  display: none;
+}
+[data-demo-full][aria-pressed='true'] svg.i-collapse {
+  display: block;
+}
+[data-demo-full][aria-pressed='true'] span.i-collapse {
+  display: inline;
 }
 [data-demo-speed-label] {
   min-width: 2.3em;
@@ -224,24 +243,46 @@
   white-space: pre;
   overflow-wrap: normal;
 }
+/* Containment is declared per axis, and the vertical half belongs to whichever
+ * copy is a vertical scroller.
+ *
+ * A long line scrolled to its end must not carry the page sideways, so the
+ * horizontal half holds for both. The vertical half is what a wheel over the
+ * frame meets: on a box that cannot scroll down, `contain` still stops the
+ * scroll reaching the page, and the listing at rest is exactly that box -- it
+ * is the whole session at its own height. A reader whose pointer happened to
+ * be over the frame found the page would not move. */
 .demo-screen,
 .demo-transcript {
   overflow-x: auto;
   overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--termline) transparent;
 }
 .demo-transcript {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   tab-size: 2;
 }
-/* One box for the session, whichever copy of it is showing.
+/* The fixed height belongs to the screen, and to nothing else.
  *
- * At rest the frame shows the transcript that is in the markup; playing, it
- * shows the screen the player types into. One declaration gives both the same
- * height, so the frame is the same height at rest, playing and paused, and
- * pressing Play does not move the page under the reader's hands. The height is
+ * At rest the frame shows the transcript that is in the markup, at its own
+ * height: the whole session in the page, scrolled the way every other page is
+ * scrolled. A reader who came to read gets the listing, and a box with its own
+ * scrollbar inside a page that already scrolls is the thing that stands
+ * between them and it.
+ *
+ * Playing, the frame shows the screen the player types into, and that one is a
+ * terminal: a fixed box, scrolled to the end, so the page does not reflow line
+ * by line and the newest output stays where the eye already is. The height is
  * a variable so that the narrower window changes it in one place rather than
  * in a copy of the rule that would drift.
+ *
+ * So pressing Play moves the page: the frame goes from the whole session to
+ * one screen of it. That is the trade, and it is worth it. Most readers never
+ * press anything, and the reflow is charged to the one who did -- once, at the
+ * moment they asked for a player, which is a reasonable moment for a player to
+ * appear. From that press onward the box holds still.
  *
  * Scrollable rather than clipped: a session is longer than the box, and a
  * reader who looks up mid-run should be able to go back and read what they
@@ -254,13 +295,12 @@
     --demo-screen-height: 300px;
   }
 }
-.demo-screen,
-.demo-transcript {
+.demo-screen {
   block-size: var(--demo-screen-height);
   overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--termline) transparent;
+  /* The screen is a window onto a session longer than itself, so a reader who
+   * has scrolled it to either end is reading rather than leaving. */
+  overscroll-behavior-y: contain;
 }
 .demo-cursor {
   color: var(--termamber);
@@ -400,6 +440,104 @@
   clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
+}
+
+/* ---------- The frame with the window to itself ----------
+ *
+ * A fixed overlay rather than the Fullscreen API, and the reason is the
+ * animation. Measured in chromium on a run's own page: requestFullscreen()
+ * takes the frame from 421px to the window's 800px inside 80ms with a 600ms
+ * transition declared on it, because the browser resizes the element outside
+ * the transition, so the expansion a reader asked to watch does not happen.
+ * The API also takes the browser's own chrome away, which costs a reader of a
+ * documentation page the address bar and the back gesture in exchange for a
+ * bigger terminal, and on iOS Safari it is offered for a video and for nothing
+ * else.
+ *
+ * `position: fixed` is measured from the window here: nothing between the
+ * frame and the root establishes a containing block, so a fixed child of the
+ * frame comes out at 0,0 and the window's size exactly.
+ *
+ * Painting over the page is a separate question, and the answer is why the
+ * player moves the frame to the body for the duration. Starlight's .main-pane
+ * carries `isolation: isolate`, which makes a stacking context, and the site
+ * header is fixed at z-index 10 outside it. Measured on a run's page: the
+ * expanded frame filled the window and the header went on painting over its
+ * top band, so a reader's press landed on the header's buttons. No z-index
+ * inside that context can reach past it, whatever the number.
+ */
+.demo {
+  --demo-expand-ms: 180ms;
+}
+/* The animation goes, the control stays. A reader who asked for less movement
+ * asked for less movement, not for a smaller terminal. The script waits for
+ * whatever this says, so there is one answer rather than a duration here and a
+ * copy of it in the player. */
+@media (prefers-reduced-motion: reduce) {
+  .demo {
+    --demo-expand-ms: 0ms;
+  }
+}
+/* is-expanded stays on through the collapse, so the frame is still the window
+ * while it animates back out; is-collapsing is the direction. */
+.demo.is-expanded {
+  position: fixed;
+  inset: 0;
+  /* Over everything Starlight places, once the frame is on the body. Its own
+   * scale stops at the skip link, which is 20. */
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  max-inline-size: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  animation: demo-expand var(--demo-expand-ms) ease-out;
+}
+.demo.is-expanded.is-collapsing {
+  animation: demo-collapse var(--demo-expand-ms) ease-in forwards;
+}
+/* The frame is not a control, so taking focus does not draw a ring around the
+ * whole window. Tab never reaches it; the script is what focuses it. */
+.demo[tabindex]:focus {
+  outline: none;
+}
+/* Whichever copy is showing takes what the bar and the rule leave, and scrolls
+ * inside it: the window is the box now, and a session longer than the window
+ * has to be reachable without the page behind moving. The live transcript is
+ * left alone -- it is the copy a screen reader reads, and it is clipped to a
+ * pixel above. */
+.demo.is-expanded .demo-screen,
+.demo.is-expanded:not(.is-live) .demo-transcript {
+  flex: 1;
+  block-size: auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  /* The page behind is held still while the frame has the window, and this is
+   * the other half of holding it: a scroll that ran past the end of the session
+   * would otherwise reach a page the reader cannot see. */
+  overscroll-behavior-y: contain;
+}
+.demo.is-expanded .term-bar,
+.demo.is-expanded .demo-progress {
+  flex: none;
+}
+/* Opacity and a shade of scale, not a flight from the frame's own box to the
+ * window's. At rest the frame is the whole listing and stands thousands of
+ * pixels taller than the window, so a rect-to-rect animation is a wall of text
+ * shrinking -- and the box it would fly from stops existing the moment the
+ * frame leaves the flow. */
+@keyframes demo-expand {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+}
+@keyframes demo-collapse {
+  to {
+    opacity: 0;
+    transform: scale(0.985);
+  }
 }
 
 

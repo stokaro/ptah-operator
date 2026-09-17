@@ -3,7 +3,8 @@
 //
 // What it checks is what a reader would notice and a build log would not: the
 // transcript is in the markup without the player, a tile is a link to the run's
-// own page, the player takes over and types without the frame changing size,
+// own page, the frame is the whole listing at rest and one fixed box from the
+// first press onward, the frame fills the window when asked and gives it back,
 // the controls are reachable from the keyboard, and a reader who asked for
 // reduced motion is given the session at rest instead of a typewriter.
 //
@@ -141,7 +142,64 @@ function selftest() {
     throw new Error('pausePoint took a note that follows no output');
   }
 
-  console.log('check-demo-page.mjs --selftest: OK (what a page has to carry, and where a pause is measured)');
+  framingSelftest();
+  expansionSelftest();
+
+  console.log(
+    'check-demo-page.mjs --selftest: OK (what a page has to carry, where a pause is measured, ' +
+      'and what the frame owes its reader)',
+  );
+}
+
+// The frame's contract, against readings rather than a browser. Each bad set
+// below is one of the two ways the frame can let a reader down: a listing cut
+// to a box at rest, and a box that moves once the run is under way.
+function framingSelftest() {
+  const listing = { client: 2838, scroll: 2838 };
+  const box = (extra) => ({ width: 960, height: 421, page: 2575, transcript: listing, screen: 372, ...extra });
+  const good = [
+    { state: 'at rest', box: box({ height: 2887, page: 5041, screen: 0 }) },
+    { state: 'playing', box: box() },
+    { state: 'further into the run', box: box() },
+    { state: 'paused', box: box() },
+  ];
+  const clean = framingProblems('first-apply', good, 372);
+  if (clean.length !== 0) throw new Error(`framingProblems refused a frame that holds: ${clean.join('; ')}`);
+
+  const clipped = structuredClone(good);
+  clipped[0].box.transcript = { client: 372, scroll: 2838 };
+  const cut = framingProblems('first-apply', clipped, 372);
+  if (cut.length !== 1 || !cut[0].includes('372px of a 2838px transcript')) {
+    throw new Error(`framingProblems read a clipped listing as ${JSON.stringify(cut)}`);
+  }
+
+  // A scrollbar's worth is not a clipped listing.
+  const narrow = structuredClone(good);
+  narrow[0].box.transcript = { client: 2823, scroll: 2838 };
+  if (framingProblems('first-apply', narrow, 372).length !== 0) {
+    throw new Error('framingProblems read a scrollbar as a clipped listing');
+  }
+
+  const grew = structuredClone(good);
+  grew[3].box.height = 500;
+  const moved = framingProblems('first-apply', grew, 372);
+  if (moved.length !== 1 || !moved[0].includes('960x500 paused')) {
+    throw new Error(`framingProblems read a frame that grew as ${JSON.stringify(moved)}`);
+  }
+
+  const reflowed = structuredClone(good);
+  reflowed[2].box.page = 3000;
+  const shifted = framingProblems('first-apply', reflowed, 372);
+  if (shifted.length !== 1 || !shifted[0].includes('3000px further into the run')) {
+    throw new Error(`framingProblems read a page that reflowed as ${JSON.stringify(shifted)}`);
+  }
+
+  const shrunk = structuredClone(good);
+  shrunk[1].box.screen = 300;
+  const wrong = framingProblems('first-apply', shrunk, 372);
+  if (wrong.length !== 1 || !wrong[0].includes('300px playing')) {
+    throw new Error(`framingProblems read a screen off its declared box as ${JSON.stringify(wrong)}`);
+  }
 }
 
 // measurePause drives one pause over a beat and reports what it took to come
@@ -206,16 +264,269 @@ async function measurePause(browser, origin, beat) {
   return problems;
 }
 
-// measureFrame drives one run's own page through rest, playing and paused, and
-// reports every state whose box is not the box the page started with.
+// A platform that draws a classic scrollbar puts it inside the client box, so a
+// transcript with one wide line measures a few tens of pixels short of itself.
+// What this tolerance has to separate is that from a transcript held to the
+// terminal's box, which is short by thousands.
+const SCROLLBAR = 24;
+
+// framingProblems reads the boxes one run's page had in each state and reports
+// what breaks the frame's contract.
 //
-// This is the defect a reader meets first: a frame that grows when the session
-// starts takes the page out from under the hands of whoever pressed Play, and
-// nothing in a build log can see it. The page's own scroll height is measured
-// with it, because a frame that keeps its size while the page around it moves
-// is the same complaint one step out.
-async function measureFrame(browser, origin, runId) {
+// At rest the frame is the listing: the whole transcript in the page, with
+// nothing to scroll inside it. From the first press onward it is a terminal --
+// the screen is the box the stylesheet declares, and the frame keeps that size
+// while it types and while it is paused. Growing there is the defect a reader
+// meets mid-run, and nothing in a build log can see it. The page's own scroll
+// height is measured with it, because a frame that keeps its size while the
+// page around it moves is the same complaint one step out.
+export function framingProblems(runId, states, declaredScreen) {
   const problems = [];
+  const rest = states.find((one) => one.state === 'at rest');
+  if (!rest?.box) return [`demo/${runId}/ carries no frame`];
+
+  const shown = rest.box.transcript;
+  if (shown.client === 0) {
+    problems.push(`demo/${runId}/ shows none of its transcript at rest`);
+  } else if (shown.scroll - shown.client > SCROLLBAR) {
+    problems.push(
+      `demo/${runId}/ shows ${shown.client}px of a ${shown.scroll}px transcript at rest, ` +
+        'so a reader who came to read is given a box to scroll inside a page that scrolls',
+    );
+  }
+
+  const running = states.filter((one) => one.state !== 'at rest');
+  const first = running.find((one) => one.box);
+  if (!first) return [...problems, `demo/${runId}/ lost its frame once the player took over`];
+  for (const { state, box } of running) {
+    if (!box) {
+      problems.push(`demo/${runId}/ lost its frame ${state}`);
+      continue;
+    }
+    if (box.screen !== declaredScreen) {
+      problems.push(
+        `demo/${runId}/ has a screen of ${box.screen}px ${state} and the stylesheet declares ` +
+          `${declaredScreen}px`,
+      );
+    }
+    if (box.width !== first.box.width || box.height !== first.box.height) {
+      problems.push(
+        `demo/${runId}/ has a frame of ${first.box.width}x${first.box.height} ${first.state} and ` +
+          `${box.width}x${box.height} ${state}`,
+      );
+    }
+    if (box.page !== first.box.page) {
+      problems.push(
+        `demo/${runId}/ is ${first.box.page}px tall ${first.state} and ${box.page}px ${state}`,
+      );
+    }
+  }
+  return problems;
+}
+
+// What the frame owes a reader who asked it to fill the window.
+//
+// The control has to be there before anything has played, because the reader
+// who came to read is the one who wants the session bigger. While the frame
+// holds the window it is the window, the page behind it stops scrolling, the
+// session is what scrolls, and Tab stays inside a frame that covers the page
+// and tells a screen reader the page is not there. The press gives all of it
+// back, including the reader's place in the page and their focus.
+export function expansionProblems(runId, readings) {
+  const problems = [];
+  const { rest, expanded, collapsed, tabbedOut, keptPlaying } = readings;
+
+  if (!rest.reachable) {
+    problems.push(`demo/${runId}/ hides the expand control until something has played`);
+  }
+  // The listing at rest is the whole session, so it is not a scroller and has
+  // nothing to contain. A frame that swallows the wheel stops the page under a
+  // pointer that happened to be over it, which is most of the column.
+  if (!rest.pageScrolls) {
+    problems.push(`demo/${runId}/ swallows the wheel at rest, so the page will not scroll over the frame`);
+  }
+
+  if (!expanded.filling) {
+    problems.push(`demo/${runId}/ did not take the window when the control was pressed`);
+  } else {
+    if (expanded.width !== expanded.viewportWidth || expanded.height !== expanded.viewportHeight) {
+      problems.push(
+        `demo/${runId}/ covers ${expanded.width}x${expanded.height} of a ` +
+          `${expanded.viewportWidth}x${expanded.viewportHeight} window`,
+      );
+    }
+    if (!expanded.pageHeld) {
+      problems.push(`demo/${runId}/ leaves the page behind scrolling while it covers it`);
+    }
+    if (!expanded.sessionScrolls) {
+      problems.push(`demo/${runId}/ takes the window with a session a reader cannot scroll`);
+    }
+    if (expanded.pressed !== 'true') {
+      problems.push(
+        `demo/${runId}/ reports aria-pressed=${expanded.pressed} while it holds the window`,
+      );
+    }
+  }
+
+  if (tabbedOut) {
+    problems.push(`demo/${runId}/ lets Tab reach the page behind the frame that covers it`);
+  }
+  if (collapsed.filling) {
+    problems.push(`demo/${runId}/ kept the window after Escape`);
+  }
+  if (!collapsed.pageRestored) {
+    problems.push(`demo/${runId}/ left the page unable to scroll after Escape`);
+  }
+  if (!collapsed.focusReturned) {
+    problems.push(`demo/${runId}/ dropped focus on its way back into the page`);
+  }
+  if (!keptPlaying) {
+    problems.push(`demo/${runId}/ stopped the run when the frame took the window`);
+  }
+  return problems;
+}
+
+// The expansion's contract, against readings rather than a browser. Each bad
+// set is one promise withdrawn, so a rule that stopped firing is named by the
+// case it was written for.
+function expansionSelftest() {
+  const good = {
+    rest: { reachable: true, pageScrolls: true },
+    expanded: {
+      filling: true,
+      width: 1280,
+      height: 800,
+      viewportWidth: 1280,
+      viewportHeight: 800,
+      pageHeld: true,
+      sessionScrolls: true,
+      pressed: 'true',
+    },
+    collapsed: { filling: false, pageRestored: true, focusReturned: true },
+    tabbedOut: false,
+    keptPlaying: true,
+  };
+  const clean = expansionProblems('first-apply', good);
+  if (clean.length !== 0) {
+    throw new Error(`expansionProblems refused an expansion that holds: ${clean.join('; ')}`);
+  }
+
+  const cases = [
+    ['rest.reachable', (one) => { one.rest.reachable = false; }, 'hides the expand control'],
+    ['rest.pageScrolls', (one) => { one.rest.pageScrolls = false; }, 'swallows the wheel at rest'],
+    ['expanded.filling', (one) => { one.expanded.filling = false; }, 'did not take the window'],
+    ['expanded size', (one) => { one.expanded.height = 421; }, '1280x421 of a 1280x800 window'],
+    ['expanded.pageHeld', (one) => { one.expanded.pageHeld = false; }, 'leaves the page behind scrolling'],
+    ['expanded.sessionScrolls', (one) => { one.expanded.sessionScrolls = false; }, 'cannot scroll'],
+    ['expanded.pressed', (one) => { one.expanded.pressed = 'false'; }, 'aria-pressed=false'],
+    ['tabbedOut', (one) => { one.tabbedOut = true; }, 'lets Tab reach the page behind'],
+    ['collapsed.filling', (one) => { one.collapsed.filling = true; }, 'kept the window after Escape'],
+    ['collapsed.pageRestored', (one) => { one.collapsed.pageRestored = false; }, 'unable to scroll after Escape'],
+    ['collapsed.focusReturned', (one) => { one.collapsed.focusReturned = false; }, 'dropped focus'],
+    ['keptPlaying', (one) => { one.keptPlaying = false; }, 'stopped the run'],
+  ];
+  for (const [name, spoil, want] of cases) {
+    const bad = structuredClone(good);
+    spoil(bad);
+    const found = expansionProblems('first-apply', bad);
+    if (found.length !== 1 || !found[0].includes(want)) {
+      throw new Error(`expansionProblems read a withdrawn ${name} as ${JSON.stringify(found)}`);
+    }
+  }
+}
+
+// measureExpansion drives the expand control on one run's own page: at rest,
+// filling the window, tabbing inside it, and back out through Escape.
+async function measureExpansion(browser, origin, runId) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const failures = [];
+  page.on('pageerror', (error) => failures.push(String(error)));
+  // SCROLLBAR is passed in rather than closed over: the function runs in the
+  // page, where this file's constants do not exist.
+  const stateOf = () =>
+    page.evaluate((slack) => {
+      const frame = document.querySelector('[data-demo]');
+      const session = document.querySelector('[data-demo-transcript]');
+      const rect = frame.getBoundingClientRect();
+      const control = document.querySelector('[data-demo-full]');
+      return {
+        filling: frame.classList.contains('is-expanded'),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        pageHeld: document.documentElement.style.overflow === 'hidden',
+        pageRestored: document.documentElement.style.overflow !== 'hidden',
+        sessionScrolls: session ? session.scrollHeight > session.clientHeight + slack : false,
+        pressed: control ? control.getAttribute('aria-pressed') : null,
+        focusReturned: document.activeElement !== document.body,
+      };
+    }, SCROLLBAR);
+  try {
+    await page.goto(`${origin}demo/${runId}/`, { waitUntil: 'load' });
+    // The control before anything has played. A frame whose bar waits for a
+    // press offers no way to make the session bigger to the reader who never
+    // presses one.
+    const control = page.locator('[data-demo-full]').first();
+    // The wheel over the listing, against the page's own scroll as the control:
+    // a frame that contains a scroll it has no room to take stops the page.
+    const listing = await page.locator('[data-demo-transcript]').first().boundingBox();
+    await page.mouse.move(listing.x + listing.width / 2, listing.y + Math.min(200, listing.height / 2));
+    const restedAt = await page.evaluate(() => window.scrollY);
+    await page.mouse.wheel(0, 600);
+    await page.waitForTimeout(400);
+    const rest = {
+      reachable: await control.isVisible(),
+      pageScrolls: (await page.evaluate(() => window.scrollY)) > restedAt,
+    };
+    await page.evaluate(() => window.scrollTo(0, 0));
+
+    // The run goes first, so the same press has to leave a typewriter running.
+    await page.locator('[data-demo-toggle]').first().click();
+    await page.waitForTimeout(1200);
+    const typedBefore = await page.evaluate(
+      () => document.querySelector('[data-demo-screen]').textContent.length,
+    );
+    await control.click();
+    await page.waitForTimeout(500);
+    const expanded = await stateOf();
+    await page.waitForTimeout(1500);
+    const typedAfter = await page.evaluate(
+      () => document.querySelector('[data-demo-screen]').textContent.length,
+    );
+
+    // Tab all the way round the bar and one step past it. A ring of four
+    // controls walked six times is the wrap, not a lucky stop.
+    let tabbedOut = false;
+    for (let press = 0; press < 6; press += 1) {
+      await page.keyboard.press('Tab');
+      const inside = await page.evaluate(() =>
+        document.querySelector('[data-demo]').contains(document.activeElement),
+      );
+      if (!inside) tabbedOut = true;
+    }
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(600);
+    const collapsed = await stateOf();
+
+    const problems = expansionProblems(runId, {
+      rest,
+      expanded,
+      collapsed,
+      tabbedOut,
+      keptPlaying: typedAfter > typedBefore,
+    });
+    if (failures.length > 0) problems.push(`the player threw: ${failures.join('; ')}`);
+    return problems;
+  } finally {
+    await context.close();
+  }
+}
+
+// measureFrame drives one run's own page through rest, playing and paused.
+async function measureFrame(browser, origin, runId) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const boxOf = () =>
@@ -223,15 +534,36 @@ async function measureFrame(browser, origin, runId) {
       const frame = document.querySelector('[data-demo]');
       if (!frame) return null;
       const rect = frame.getBoundingClientRect();
+      const transcript = document.querySelector('[data-demo-transcript]');
+      const screen = document.querySelector('[data-demo-screen]');
       return {
         width: Math.round(rect.width),
         height: Math.round(rect.height),
         page: document.documentElement.scrollHeight,
+        transcript: {
+          client: transcript ? transcript.clientHeight : 0,
+          scroll: transcript ? transcript.scrollHeight : 0,
+        },
+        // The border box, not the client box: a classic scrollbar is drawn
+        // inside the client box and would read as a screen short of its
+        // declared height on the platforms that draw one.
+        screen: screen ? Math.round(screen.getBoundingClientRect().height) : 0,
       };
     });
   try {
     await page.goto(`${origin}demo/${runId}/`, { waitUntil: 'load' });
     await page.waitForSelector('[data-demo-controls]:not([hidden])', { timeout: 10_000 });
+    // Read off the frame rather than written here, so this measures the box the
+    // stylesheet declares at this width and not a figure that was true once.
+    const declared = await page.evaluate(() =>
+      Math.round(
+        parseFloat(
+          getComputedStyle(document.querySelector('[data-demo]')).getPropertyValue(
+            '--demo-screen-height',
+          ),
+        ),
+      ),
+    );
     const states = [{ state: 'at rest', box: await boxOf() }];
     const toggle = page.locator('[data-demo-toggle]').first();
     await toggle.click();
@@ -242,28 +574,10 @@ async function measureFrame(browser, origin, runId) {
     await toggle.click();
     await page.waitForTimeout(400);
     states.push({ state: 'paused', box: await boxOf() });
-
-    const rest = states[0].box;
-    if (!rest) return [`demo/${runId}/ carries no frame`];
-    for (const { state, box } of states.slice(1)) {
-      if (!box) {
-        problems.push(`demo/${runId}/ lost its frame ${state}`);
-        continue;
-      }
-      if (box.width !== rest.width || box.height !== rest.height) {
-        problems.push(
-          `demo/${runId}/ has a frame of ${rest.width}x${rest.height} at rest and ` +
-            `${box.width}x${box.height} ${state}`,
-        );
-      }
-      if (box.page !== rest.page) {
-        problems.push(`demo/${runId}/ is ${rest.page}px tall at rest and ${box.page}px ${state}`);
-      }
-    }
+    return framingProblems(runId, states, declared);
   } finally {
     await context.close();
   }
-  return problems;
 }
 
 async function main() {
@@ -391,6 +705,7 @@ async function main() {
     // The frame is one box: the same width and the same height at rest, while
     // it types, and while it is paused.
     problems.push(...(await measureFrame(browser, origin, ordered[0].id)));
+    problems.push(...(await measureExpansion(browser, origin, ordered[0].id)));
 
     // A reader who asked for reduced motion gets the session, not a
     // typewriter: the transcript stays and nothing types on its own.
