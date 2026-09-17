@@ -223,6 +223,69 @@ func TestDecodePlanFailsClosed(t *testing.T) {
 	}
 }
 
+// A plan that changes declared rows carries what it read them as. The operator
+// reads plans strictly, so the fields Ptah adds for declared rows have to be
+// part of the contract rather than an unknown field that refuses the plan --
+// which is how the reference-data lifecycle failed against Ptah v0.7.0.
+func TestDecodePlanCarriesTheDeclaredRowSetsItRead(t *testing.T) {
+	t.Parallel()
+	document := `{"format_version":1,"name":"p","dialect":"postgres","from_fingerprint":"from",` +
+		`"to_fingerprint":"to","managed_rows":[{"table":"regions","keys":["code"],"columns":["code","name"]},` +
+		`{"schema":"ref","table":"countries","keys":["code"],"columns":["code","name","region_code"]}],` +
+		`"rows_fingerprint":"sha256:` + strings.Repeat("a", 64) + `","destructive":false,` +
+		`"statements":[{"sql":"INSERT INTO regions (code, name) VALUES ('emea', 'Europe')","severity":"safe","reason":"declared row"}]}`
+	decoded, err := dataplane.DecodePlan([]byte(document), "PostgreSQL")
+	if err != nil {
+		t.Fatalf("DecodePlan() error = %v", err)
+	}
+	if len(decoded.ManagedRows) != 2 || decoded.ManagedRows[0].Table != "regions" ||
+		decoded.ManagedRows[1].Schema != "ref" || decoded.ManagedRows[1].Table != "countries" {
+		t.Fatalf("declared row sets were not carried: %#v", decoded.ManagedRows)
+	}
+	if decoded.RowsFingerprint != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("rows fingerprint = %q", decoded.RowsFingerprint)
+	}
+	// Names and a digest, and nothing else: a row set describes the columns a
+	// declaration owns, and no declared value appears in it.
+	for _, rowSet := range decoded.ManagedRows {
+		for _, name := range append(append([]string(nil), rowSet.Keys...), rowSet.Columns...) {
+			if strings.ContainsAny(name, " '\"") {
+				t.Fatalf("a declared row set carries something that is not an identifier: %q", name)
+			}
+		}
+	}
+}
+
+// And a description the operator cannot carry is still refused, rather than
+// accepted because the fields are now known.
+func TestDecodePlanRefusesAnUnusableDeclaredRowDescription(t *testing.T) {
+	t.Parallel()
+	digest := "sha256:" + strings.Repeat("b", 64)
+	rows := `[{"table":"regions","keys":["code"],"columns":["code","name"]}]`
+	for name, document := range map[string]string{
+		"a fingerprint that is not one": `"managed_rows":` + rows + `,"rows_fingerprint":"not-a-digest",`,
+		"row sets with no fingerprint":  `"managed_rows":` + rows + `,`,
+		"a fingerprint with no row set": `"rows_fingerprint":"` + digest + `",`,
+		"a row set naming no table":     `"managed_rows":[{"keys":["code"],"columns":["code"]}],"rows_fingerprint":"` + digest + `",`,
+		"a row set with no key":         `"managed_rows":[{"table":"regions","keys":[],"columns":["code"]}],"rows_fingerprint":"` + digest + `",`,
+		"a row set with no column":      `"managed_rows":[{"table":"regions","keys":["code"],"columns":[]}],"rows_fingerprint":"` + digest + `",`,
+		"a table that is not an identifier": `"managed_rows":[{"table":"regions; DROP TABLE users","keys":["code"],"columns":["code"]}],` +
+			`"rows_fingerprint":"` + digest + `",`,
+		"one table described twice": `"managed_rows":[{"table":"regions","keys":["code"],"columns":["code"]},` +
+			`{"table":"regions","keys":["code"],"columns":["name"]}],"rows_fingerprint":"` + digest + `",`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			full := `{"format_version":1,"name":"p","dialect":"postgres","from_fingerprint":"from",` +
+				`"to_fingerprint":"to",` + document + `"destructive":false,` +
+				`"statements":[{"sql":"SELECT 1","severity":"safe","reason":"declared row"}]}`
+			if _, err := dataplane.DecodePlan([]byte(full), "PostgreSQL"); err == nil {
+				t.Fatalf("DecodePlan() accepted %s", name)
+			}
+		})
+	}
+}
+
 func TestDecodePlanElevatesUnderclassifiedDropIndex(t *testing.T) {
 	t.Parallel()
 

@@ -150,14 +150,34 @@ type PlanStatement struct {
 }
 
 type PlanFile struct {
-	FormatVersion   int             `json:"format_version"`
-	Name            string          `json:"name"`
-	Dialect         string          `json:"dialect"`
-	FromFingerprint string          `json:"from_fingerprint"`
-	ToFingerprint   string          `json:"to_fingerprint"`
-	Exclude         []string        `json:"exclude,omitempty"`
+	FormatVersion   int      `json:"format_version"`
+	Name            string   `json:"name"`
+	Dialect         string   `json:"dialect"`
+	FromFingerprint string   `json:"from_fingerprint"`
+	ToFingerprint   string   `json:"to_fingerprint"`
+	Exclude         []string `json:"exclude,omitempty"`
+	// ManagedRows and RowsFingerprint describe the declared row sets this plan
+	// read, and the state it read them in. A plan that changes declared rows
+	// carries both, and a plan that changes only structure carries neither.
+	//
+	// They are names and a digest: a table, its key columns and the columns the
+	// declaration owns, plus one fingerprint over the rows as they were. No row
+	// value appears here, which is what lets the operator read them, publish
+	// them and report on them while no declared value reaches status, an Event
+	// or an ordinary log.
+	ManagedRows     []PlanRowSet    `json:"managed_rows,omitempty"`
+	RowsFingerprint string          `json:"rows_fingerprint,omitempty"`
 	Destructive     bool            `json:"destructive"`
 	Statements      []PlanStatement `json:"statements"`
+}
+
+// PlanRowSet is one declared row set a plan read: the table it owns, the
+// columns that identify a row in it, and the columns the declaration writes.
+type PlanRowSet struct {
+	Schema  string   `json:"schema,omitempty"`
+	Table   string   `json:"table"`
+	Keys    []string `json:"keys"`
+	Columns []string `json:"columns"`
 }
 
 func DecodeResolve(data []byte) (ResolveReport, error) {
@@ -347,6 +367,9 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 	if len(plan.Statements) == 0 {
 		return PlanFile{}, fmt.Errorf("plan contains no statements")
 	}
+	if err := validateManagedRows(plan); err != nil {
+		return PlanFile{}, err
+	}
 	hasDestructive := false
 	for i, statement := range plan.Statements {
 		if strings.TrimSpace(statement.SQL) == "" || !knownSeverity(statement.Severity) {
@@ -368,6 +391,63 @@ func DecodePlan(data []byte, expectedDialect string) (PlanFile, error) {
 	}
 	return plan, nil
 }
+
+// validateManagedRows refuses a declared-row description the operator cannot
+// carry: a fingerprint that is not one, a row set that names no table, and a
+// row set that names no key or no column, which could not describe a row.
+//
+// The two fields arrive together or not at all. A plan that read declared rows
+// records what it read them as, and a fingerprint without the row sets it was
+// computed over is a staleness check nothing can reproduce.
+func validateManagedRows(plan PlanFile) error {
+	if plan.RowsFingerprint != "" && !validDigest(plan.RowsFingerprint) {
+		return fmt.Errorf("plan rows_fingerprint is not an exact SHA-256 digest")
+	}
+	if len(plan.ManagedRows) == 0 {
+		if plan.RowsFingerprint != "" {
+			return fmt.Errorf("plan carries a rows fingerprint and no declared row set")
+		}
+		return nil
+	}
+	if plan.RowsFingerprint == "" {
+		return fmt.Errorf("plan carries declared row sets and no rows fingerprint")
+	}
+	seen := make(map[string]bool, len(plan.ManagedRows))
+	for index, rowSet := range plan.ManagedRows {
+		if !planIdentifier(rowSet.Table) {
+			return fmt.Errorf("plan declared row set %d names no table", index)
+		}
+		if rowSet.Schema != "" && !planIdentifier(rowSet.Schema) {
+			return fmt.Errorf("plan declared row set %d names an invalid schema", index)
+		}
+		if len(rowSet.Keys) == 0 || len(rowSet.Columns) == 0 {
+			return fmt.Errorf("plan declared row set %d names no key or no column", index)
+		}
+		for _, name := range append(append([]string(nil), rowSet.Keys...), rowSet.Columns...) {
+			if !planIdentifier(name) {
+				return fmt.Errorf("plan declared row set %d names an invalid column", index)
+			}
+		}
+		qualified := rowSet.Schema + "." + rowSet.Table
+		if seen[qualified] {
+			return fmt.Errorf("plan describes the declared rows of %s twice", qualified)
+		}
+		seen[qualified] = true
+	}
+	return nil
+}
+
+// planIdentifier is the shape a table or column name may take here. It is
+// deliberately narrow: these names are read back into messages and metrics, and
+// a plan is a document another process wrote.
+func planIdentifier(name string) bool {
+	if name == "" || len(name) > 128 {
+		return false
+	}
+	return planIdentifierPattern.MatchString(name)
+}
+
+var planIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]*$`)
 
 func conservativelyDestructiveDDL(statement, dialect string) bool {
 	tokens := sqlKeywordTokens(statement, dialect)
