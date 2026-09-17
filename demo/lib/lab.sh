@@ -225,6 +225,7 @@ lab_reset() {
 	# reads that table before it reads anything else.
 	k -n "$E2E_TEST_NAMESPACE" exec deploy/demo-psql -- \
 		psql -qAt -c "DROP TABLE IF EXISTS orders, customers, shipments CASCADE;
+		              DROP TABLE IF EXISTS countries, regions CASCADE;
 		              DROP TABLE IF EXISTS schema_migrations CASCADE;
 		              DROP SCHEMA IF EXISTS atlas_schema_revisions CASCADE" >/dev/null ||
 		lab_fail "could not empty the demonstration database"

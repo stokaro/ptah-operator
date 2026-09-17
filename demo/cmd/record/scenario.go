@@ -132,7 +132,57 @@ func (s scenario) validate() error {
 	for index, current := range s.Steps {
 		problems = append(problems, current.validate(s.ID, index)...)
 	}
+	problems = append(problems, s.validateRepeatedWaits()...)
 	return errors.Join(problems...)
+}
+
+// validateRepeatedWaits refuses a second await on a condition an earlier step
+// already awaited, unless it binds the condition to the current generation.
+//
+// A condition is a latch, not an event. Once a step has waited for InSync=True,
+// that condition stays true until something makes it false, so a later step
+// awaiting the same thing is answered by the first step's residue and waits for
+// nothing. The step then reads the cluster in the state it was trying to watch
+// change, and whether it passes is a race with the reconciler.
+//
+// Where a spec changed, generation: current ties the condition to the object as
+// it is now and the wait is real. Where nothing changed the spec -- a row edited
+// in the database, a column dropped by hand -- no generation moves and no await
+// can help: re-read the thing itself with retry, which is what drift.yaml does.
+func (s scenario) validateRepeatedWaits() []error {
+	type waited struct {
+		kind, name, conditionType, status, reason string
+	}
+	first := make(map[waited]int, len(s.Steps))
+	var problems []error
+	for index, current := range s.Steps {
+		if current.Await == nil || current.Await.Condition == nil {
+			continue
+		}
+		key := waited{
+			kind:          current.Await.Kind,
+			name:          current.Await.Name,
+			conditionType: current.Await.Condition.Type,
+			status:        current.Await.Condition.Status,
+			reason:        current.Await.Condition.Reason,
+		}
+		earlier, repeated := first[key]
+		if !repeated {
+			first[key] = index + 1
+			continue
+		}
+		if current.Await.Generation == "current" {
+			continue
+		}
+		problems = append(problems, fmt.Errorf(
+			"%s step %d waits for %s=%s (%s) on %s/%s, which step %d already waited for; "+
+				"the condition has been true since, so this step waits for nothing. Say "+
+				"generation: current when a spec change is what it is waiting on, and retry "+
+				"the command itself when nothing changed the spec",
+			s.ID, index+1, key.conditionType, key.status, key.reason,
+			key.kind, key.name, earlier))
+	}
+	return problems
 }
 
 func (s step) validate(scenarioID string, index int) []error {

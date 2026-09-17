@@ -386,3 +386,74 @@ func TestEveryScenarioReadsOnlyPublishedVariables(t *testing.T) {
 		}
 	}
 }
+
+// A second wait for a condition an earlier step already waited for measures
+// nothing, because the condition stayed true in between. The rows are the three
+// answers to that: bind it to the generation a spec change produced, wait for a
+// different condition, or -- where nothing changed the spec -- do not wait on a
+// condition at all.
+func TestScenarioValidateRefusesARepeatedWait(t *testing.T) {
+	t.Parallel()
+	exit := 0
+	converged := func(generation string) *observation {
+		return &observation{
+			Kind: "ptahschema", Name: "catalog", Generation: generation,
+			Condition: &condition{Type: "InSync", Status: "True", Reason: "ScopedConverged"},
+		}
+	}
+	checked := func(await *observation) step {
+		return step{
+			Note: "A note.", Run: "kubectl get ptahschema catalog", Await: await,
+			Expect: &expectation{Exit: &exit, StdoutContains: []string{"catalog"}},
+		}
+	}
+	tests := []struct {
+		name  string
+		steps []step
+		want  string
+	}{
+		{
+			name:  "the same condition twice",
+			steps: []step{checked(converged("")), checked(converged(""))},
+			want:  "step 2 waits for InSync=True (ScopedConverged) on ptahschema/catalog, which step 1 already waited for",
+		},
+		{
+			name:  "bound to the current generation",
+			steps: []step{checked(converged("")), checked(converged("current"))},
+		},
+		{
+			name: "a different condition",
+			steps: []step{checked(converged("")), checked(&observation{
+				Kind: "ptahschema", Name: "catalog",
+				Condition: &condition{Type: "ApprovalRequired", Status: "True", Reason: "Waiting"},
+			})},
+		},
+		{
+			name:  "no second wait at all",
+			steps: []step{checked(converged("")), checked(nil)},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			subject := scenario{
+				ID: "example", Title: "Example", Tagline: "A tagline.", Learn: "A lesson.",
+				Tags: []string{"Lab"}, Steps: test.steps,
+			}
+			err := subject.validate()
+			if test.want == "" {
+				if err != nil {
+					t.Fatalf("validate refused %s: %v", test.name, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validate accepted %s", test.name)
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validate said %q, which does not carry %q", err, test.want)
+			}
+		})
+	}
+}
