@@ -13,7 +13,8 @@
 //
 // scripts/check-faq-groups.mjs holds this to the page: every anchor here must
 // exist on the built page, every question must carry at least one tag, and
-// every tag must be labelled and used.
+// every tag must be labeled and used. scripts/check-faq-page.mjs holds the
+// rendered rail to the same file.
 
 /** @type {Record<string, string[]>} */
 export const questionTags = {
@@ -21,24 +22,24 @@ export const questionTags = {
   "ptahschema-and-migration-directory": ["migrations", "scope"],
   "operator-does-not-provision": ["scope", "database-access"],
   "is-it-production-ready": ["getting-started", "compatibility"],
-  "operator-version-selector": ["compatibility", "troubleshooting"],
+  "operator-version-selector": ["troubleshooting"],
   "three-values-with-no-default": ["install", "configuration"],
   "upgrade-cli-and-operator-together": ["install", "compatibility"],
   "untested-is-not-incompatible": ["compatibility"],
   "kubernetes-version-window": ["kubernetes", "compatibility"],
   "registry-secret-authority": ["oci", "security", "troubleshooting"],
-  "moved-tag-invalidates-approval": ["oci", "planning"],
-  "digest-pin-refuses-a-tag": ["oci", "security"],
+  "moved-tag-invalidates-approval": ["oci", "integrity", "planning", "troubleshooting"],
+  "digest-pin-refuses-a-tag": ["oci", "integrity", "security", "troubleshooting"],
   "registry-outage-fail-closed": ["oci", "status", "safety"],
-  "approval-rejected": ["planning", "security"],
+  "approval-rejected": ["planning", "security", "troubleshooting"],
   "reviewer-cannot-read-sql": ["planning", "security"],
   "read-a-plan": ["planning"],
   "plan-recorded-not-applied": ["planning", "safety", "status"],
   "plan-too-large": ["planning", "troubleshooting"],
   "old-plan-objects": ["planning", "history"],
   "apply-outcome-unknown": ["recovery", "safety", "status"],
-  "no-automatic-rollback": ["recovery", "safety"],
-  "suspend-blocks-the-realm": ["scope", "safety"],
+  "no-automatic-rollback": ["rollback", "recovery", "safety"],
+  "suspend-blocks-the-realm": ["scope", "safety", "database-access"],
   "deleting-never-drops-data": ["data", "safety"],
   "unsupported-engine": ["compatibility", "status", "troubleshooting"],
   "one-database-two-urls": ["database-access", "configuration"],
@@ -60,11 +61,13 @@ export const tagLabels = {
   "getting-started": "Getting started",
   "history": "History",
   "install": "Install and upgrade",
+  "integrity": "Integrity",
   "kubernetes": "Kubernetes",
   "migrations": "Migrations",
   "oci": "OCI",
   "planning": "Plan and approve",
   "recovery": "Recovery",
+  "rollback": "Rollback",
   "safety": "Safety",
   "scope": "Scope",
   "security": "Security",

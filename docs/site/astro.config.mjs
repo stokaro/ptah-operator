@@ -45,10 +45,10 @@ export default defineConfig({
       // repository alone.
       customCss: ['./src/styles/fonts.css', './src/styles/global.css', './src/styles/ptah.css'],
       lastUpdated: true,
-      // A symptom is worth searching for as well as clicking: the FAQ's chips
-      // are words the prose does not contain, so they reach the reader only
-      // through the page's searchAliases, and a curated alias outranks an
-      // incidental body match.
+      // A symptom is the word a reader arrives with: the FAQ's symptoms are
+      // phrases its prose does not spell, so a reader searching the site
+      // reaches them only through the page's searchAliases, and a curated
+      // alias outranks an incidental body match.
       pagefind: {
         ranking: { metaWeights: { searchAliases: 16 } },
       },
