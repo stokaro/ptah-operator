@@ -41,6 +41,13 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       ptah_commit: ${{ steps.ptah.outputs.commit }}
+      # The image build validates a Kubernetes version and node image like every
+      # other harness run, and builds nothing that depends on either. It is
+      # handed the newest supported pair rather than a literal, so a minor
+      # leaving the support window cannot leave a pin behind here.
+      prepare_kubernetes_version: ${{ steps.matrix.outputs.prepare_kubernetes_version }}
+      prepare_node_image: ${{ steps.matrix.outputs.prepare_node_image }}
+      prepare_kind_version: ${{ steps.matrix.outputs.prepare_kind_version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -59,6 +66,12 @@ jobs:
           set -euo pipefail
           matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          printf 'prepare_kubernetes_version=%s\n' \
+            "$(jq -er '.[-1].kubernetes_version' <<<"$matrix")" >> "$GITHUB_OUTPUT"
+          printf 'prepare_node_image=%s\n' \
+            "$(jq -er '.[-1].node_image' <<<"$matrix")" >> "$GITHUB_OUTPUT"
+          printf 'prepare_kind_version=%s\n' \
+            "$(jq -er '.[-1].kind_version' <<<"$matrix")" >> "$GITHUB_OUTPUT"
       # The lifecycle job needs the tested Ptah commit twice -- to check the
       # source out and to build the executor from it -- and the catalog is
       # where that commit is declared. Exporting it here is what keeps the
@@ -265,9 +278,147 @@ jobs:
         shell: bash
         run: make test-race
 
+  # The four task images do not depend on the Kubernetes minor: the operator, the
+  # synthetic next release, the isolated fixture and the Ptah executor are built
+  # from one commit and one catalog pin. Building them once and handing the bytes
+  # to every lifecycle removes about four and a half minutes from each of three
+  # jobs, and is what keeps that cost flat when the matrix grows suites.
+  #
+  # It runs the same driver the lifecycle runs, stopped at the boundary where the
+  # images exist and no cluster does. There is no second build path to drift.
+  prepare-images:
+    name: Build the shared task images
+    needs: [support-matrix]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+        with:
+          version: v4.2.4
+      - name: Cache the Go build output
+        id: prepare-build-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.cache/go-build
+          key: go-build-${{ runner.os }}-prepare-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-build-${{ runner.os }}-prepare-${{ hashFiles('go.sum') }}-
+            go-build-${{ runner.os }}-prepare-
+      - name: Check out pinned Ptah executor source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: stokaro/ptah
+          ref: ${{ needs.support-matrix.outputs.ptah_commit }}
+          path: .e2e/ptah
+          fetch-depth: 1
+      - name: Stage pinned Ptah source outside the operator build context
+        run: |
+          mv "$GITHUB_WORKSPACE/.e2e/ptah" "$RUNNER_TEMP/ptah"
+          rmdir "$GITHUB_WORKSPACE/.e2e"
+      - name: Install kind
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install "sigs.k8s.io/kind@${{ needs.support-matrix.outputs.prepare_kind_version }}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Install matching kubectl
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/bin"
+          mkdir -p "$install_dir"
+          base_url="https://dl.k8s.io/release/v${{ needs.support-matrix.outputs.prepare_kubernetes_version }}/bin/linux/amd64"
+          curl --fail --location --silent --show-error --output "$install_dir/kubectl" "$base_url/kubectl"
+          curl --fail --location --silent --show-error --output "$RUNNER_TEMP/kubectl.sha256" "$base_url/kubectl.sha256"
+          echo "$(<"$RUNNER_TEMP/kubectl.sha256")  $install_dir/kubectl" | sha256sum --check
+          chmod 0755 "$install_dir/kubectl"
+          echo "$install_dir" >> "$GITHUB_PATH"
+      - name: Configure explicit Docker context
+        id: docker-context
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes apache2-utils openssh-server
+
+          ssh_key="$RUNNER_TEMP/ptah-e2e-ssh"
+          known_hosts="$RUNNER_TEMP/ptah-e2e-known-hosts"
+          install -d -m 0700 "$HOME/.ssh"
+          ssh-keygen -q -t ed25519 -N '' -f "$ssh_key"
+          install -m 0600 "$ssh_key.pub" "$HOME/.ssh/authorized_keys"
+          sudo systemctl restart ssh
+          ssh-keyscan -H 127.0.0.1 > "$known_hosts"
+          {
+            printf '%s\n' 'Host ptah-ci-docker'
+            printf '%s\n' '  HostName 127.0.0.1'
+            printf '  User %s\n' "$USER"
+            printf '  IdentityFile %s\n' "$ssh_key"
+            printf '%s\n' '  IdentitiesOnly yes'
+            printf '%s\n' '  StrictHostKeyChecking yes'
+            printf '  UserKnownHostsFile %s\n' "$known_hosts"
+          } > "$HOME/.ssh/config"
+          chmod 0600 "$HOME/.ssh/config"
+
+          context_name="ptah-ci-prepare"
+          docker context create "$context_name" --docker host=ssh://ptah-ci-docker
+          docker --context "$context_name" info >/dev/null
+          printf 'name=%s\n' "$context_name" >> "$GITHUB_OUTPUT"
+      - name: Build and export the task images
+        id: images
+        env:
+          DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
+          E2E_DIRECT_HOST_ACCESS: "1"
+          E2E_IMAGE_EXPORT_DIR: ${{ runner.temp }}/task-images
+          E2E_PTAH_REVISION: ${{ needs.support-matrix.outputs.ptah_commit }}
+          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
+          E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-images
+          E2E_STOP_AFTER: images
+          E2E_TIMING_CONTEXT: ${{ runner.temp }}/timing-context-images.json
+          E2E_TIMING_LEDGER: ${{ runner.temp }}/timings-images.jsonl
+          KIND_NODE_IMAGE: ${{ needs.support-matrix.outputs.prepare_node_image }}
+          K8S_VERSION: ${{ needs.support-matrix.outputs.prepare_kubernetes_version }}
+        shell: bash
+        run: make e2e
+      - name: Hand the images to the acceptance matrix
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shared-task-images
+          path: ${{ runner.temp }}/task-images
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 1
+          overwrite: true
+      - name: Publish what the image build spent its time on
+        if: always() && steps.images.conclusion != 'skipped'
+        shell: bash
+        run: |
+          set -uo pipefail
+          ledger="$RUNNER_TEMP/timings-images.jsonl"
+          context="$RUNNER_TEMP/timing-context-images.json"
+          if [[ ! -s "$ledger" || ! -s "$context" ]]; then
+            printf 'the image build recorded no timings\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          go run ./hack/e2etiming -ledger "$ledger" -context "$context" -summary - \
+            >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove explicit Docker context
+        if: always() && steps.docker-context.outputs.name != ''
+        run: docker context rm --force "${{ steps.docker-context.outputs.name }}"
+
   kubernetes-e2e:
     name: Kubernetes ${{ matrix.minor }} full lifecycle
-    needs: [support-matrix, verify]
+    needs: [support-matrix, verify, prepare-images]
     runs-on: ubuntu-latest
     # actions: read is what separates waiting for a runner from working on it.
     # The job's own record carries when it was created and when a runner picked
@@ -310,17 +461,14 @@ jobs:
           restore-keys: |
             go-build-${{ runner.os }}-e2e-${{ matrix.minor_slug }}-${{ hashFiles('go.sum') }}-
             go-build-${{ runner.os }}-e2e-${{ matrix.minor_slug }}-
-      - name: Check out pinned Ptah executor source
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      # The images arrive built. The harness checks each one against this run's
+      # own commit and the catalog's Ptah pin before loading it, so no Ptah
+      # source is needed here and none is checked out.
+      - name: Collect the shared task images
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          repository: stokaro/ptah
-          ref: ${{ needs.support-matrix.outputs.ptah_commit }}
-          path: .e2e/ptah
-          fetch-depth: 1
-      - name: Stage pinned Ptah source outside the operator build context
-        run: |
-          mv "$GITHUB_WORKSPACE/.e2e/ptah" "$RUNNER_TEMP/ptah"
-          rmdir "$GITHUB_WORKSPACE/.e2e"
+          name: shared-task-images
+          path: ${{ runner.temp }}/task-images
       - name: Install kind
         shell: bash
         run: |
@@ -385,13 +533,13 @@ jobs:
         id: lifecycle
         env:
           DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
-          E2E_TIMING_LEDGER: ${{ runner.temp }}/timings-${{ matrix.minor_slug }}.jsonl
-          E2E_TIMING_CONTEXT: ${{ runner.temp }}/timing-context-${{ matrix.minor_slug }}.json
           E2E_DIRECT_HOST_ACCESS: "1"
+          E2E_PREBUILT_IMAGE_DIR: ${{ runner.temp }}/task-images
           E2E_PTAH_REVISION: ${{ needs.support-matrix.outputs.ptah_commit }}
-          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
           E2E_RELEASE_CHART_OUTPUT: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz
           E2E_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}
+          E2E_TIMING_CONTEXT: ${{ runner.temp }}/timing-context-${{ matrix.minor_slug }}.json
+          E2E_TIMING_LEDGER: ${{ runner.temp }}/timings-${{ matrix.minor_slug }}.jsonl
           KIND_NODE_IMAGE: ${{ matrix.node_image }}
           K8S_VERSION: ${{ matrix.kubernetes_version }}
         shell: bash
@@ -520,7 +668,7 @@ jobs:
   kubernetes-support-gate:
     name: Kubernetes support gate
     if: ${{ !cancelled() }}
-    needs: [support-matrix, verify, race, kubernetes-e2e]
+    needs: [support-matrix, verify, race, prepare-images, kubernetes-e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -530,6 +678,7 @@ jobs:
           SUPPORT_MATRIX_RESULT: ${{ needs.support-matrix.result }}
           VERIFY_RESULT: ${{ needs.verify.result }}
           RACE_RESULT: ${{ needs.race.result }}
+          PREPARE_IMAGES_RESULT: ${{ needs.prepare-images.result }}
           KUBERNETES_E2E_RESULT: ${{ needs.kubernetes-e2e.result }}
         shell: bash
         run: |
@@ -538,6 +687,7 @@ jobs:
             "$SUPPORT_MATRIX_RESULT" \
             "$VERIFY_RESULT" \
             "$RACE_RESULT" \
+            "$PREPARE_IMAGES_RESULT" \
             "$KUBERNETES_E2E_RESULT"
           do
             if [[ "$result" != success ]]; then

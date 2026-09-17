@@ -319,6 +319,7 @@ printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_I
 
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
 "$ROOT_DIR/hack/e2e-timing-selftest.sh"
+"$ROOT_DIR/hack/e2e-shared-images-selftest.sh"
 
 # Every phase the driver runs is measured, and it is measured in the one place
 # that runs them. A phase invoked around run_recorded_phase would be missing
@@ -359,6 +360,28 @@ for timing_phase_script in e2e-dataplane e2e-faults e2e-migrations e2e-reference
 done
 printf 'e2e static: %s measured lifecycle phases, each phase script naming its scenarios\n' \
 	"$timing_recorded_phases"
+
+# The images a matrix loads are checked against the run that loads them. The
+# refusals live in the driver and are measured by the self-test above; these
+# refuse a driver that stopped labeling what it builds, because an unlabeled
+# image passes every check that reads a label.
+# shellcheck disable=SC2016 # Match the literal label arguments in the driver.
+for timing_image_label in \
+	'--label "ptah.run/e2e-role=operator"' \
+	'--label "ptah.run/e2e-role=next-operator"' \
+	'--label "ptah.run/e2e-role=fixture"' \
+	'--label "ptah.run/e2e-role=executor"' \
+	'--label "ptah.run/e2e-operator-revision=$CONTROLLER_REVISION"' \
+	'--label "ptah.run/e2e-ptah-commit=${PTAH_COMMIT}"' \
+	'--label "ptah.run/e2e-release-sequence=$CURRENT_RELEASE_SEQUENCE"' \
+	'--label "ptah.run/e2e-release-sequence=$NEXT_RELEASE_SEQUENCE"'; do
+	grep -F -- "$timing_image_label" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+		printf 'e2e static: a task image is built without its provenance: %s\n' \
+			"$timing_image_label" >&2
+		exit 1
+	}
+done
+printf '%s\n' 'e2e static: the four task images carry the commit, the Ptah pin and the role they play'
 
 # shellcheck disable=SC2016 # These checks intentionally match literal script variables.
 grep -F 'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {

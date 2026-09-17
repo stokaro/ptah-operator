@@ -73,7 +73,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "78583755c287f09ff3c027f62855c5039b62fb6158b3776e033147fa971f2b62"
+	ciWorkflowSHA256                = "0a6a978a5108c84c55f5b235eb882141e20730e1ed9bd1dcb35677808c57eb44"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -93,6 +93,7 @@ const (
 	ciVerifyTimeoutMinutes            = 20
 	ciRaceTimeoutMinutes              = 60
 	ciKubernetesE2ETimeoutMinutes     = 180
+	ciPrepareImagesTimeoutMinutes     = 45
 	ciKubernetesSupportTimeoutMinutes = 5
 	releaseQueueAPIMarginMinutes      = 5
 	releaseSupportPollTimeoutMinutes  = max(ciSupportMatrixTimeoutMinutes, ciVerifyTimeoutMinutes, ciRaceTimeoutMinutes) + ciKubernetesE2ETimeoutMinutes + ciKubernetesSupportTimeoutMinutes + releaseQueueAPIMarginMinutes
@@ -645,6 +646,13 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 	if !equalStringMap(supportMatrix.Outputs, map[string]string{
 		"matrix":      "${{ steps.matrix.outputs.matrix }}",
 		"ptah_commit": "${{ steps.ptah.outputs.commit }}",
+		// The image build needs a Kubernetes version, a node image and a kind
+		// version like any harness run, and builds nothing that depends on
+		// them. They come out of the same validated matrix rather than a
+		// literal, so a minor leaving the window cannot leave a pin behind.
+		"prepare_kubernetes_version": "${{ steps.matrix.outputs.prepare_kubernetes_version }}",
+		"prepare_node_image":         "${{ steps.matrix.outputs.prepare_node_image }}",
+		"prepare_kind_version":       "${{ steps.matrix.outputs.prepare_kind_version }}",
 	}) {
 		return fmt.Errorf("%s: support-matrix outputs must bind exactly to the matrix and Ptah pin step outputs", path)
 	}
@@ -652,9 +660,18 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 	if err != nil {
 		return err
 	}
+	// The three values the image build is handed are read out of the matrix
+	// this step just validated, with jq -e so a missing field fails the step
+	// rather than exporting an empty pin.
 	const wantMatrixRun = `set -euo pipefail
 matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
 echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+printf 'prepare_kubernetes_version=%s\n' \
+  "$(jq -er '.[-1].kubernetes_version' <<<"$matrix")" >> "$GITHUB_OUTPUT"
+printf 'prepare_node_image=%s\n' \
+  "$(jq -er '.[-1].node_image' <<<"$matrix")" >> "$GITHUB_OUTPUT"
+printf 'prepare_kind_version=%s\n' \
+  "$(jq -er '.[-1].kind_version' <<<"$matrix")" >> "$GITHUB_OUTPUT"
 `
 	if matrixStep.If != "" || matrixStep.Shell != "bash" || matrixStep.Run != wantMatrixRun {
 		return fmt.Errorf("%s: support-matrix step must unconditionally export the verified dynamic matrix", path)
@@ -880,11 +897,51 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: complete race coverage must be the audited make test-race invocation", path)
 	}
 
+	prepare := workflow.Jobs["prepare-images"]
+	if prepare.Name != "Build the shared task images" {
+		return fmt.Errorf("%s: the shared-image job must be named %q", path, "Build the shared task images")
+	}
+	if prepare.If != "" || prepare.TimeoutMinutes != ciPrepareImagesTimeoutMinutes {
+		return fmt.Errorf("%s: prepare-images must run unconditionally with a %d-minute timeout",
+			path, ciPrepareImagesTimeoutMinutes)
+	}
+	if !equalStringSet(prepare.Needs, []string{"support-matrix"}) {
+		return fmt.Errorf("%s: prepare-images dependencies are %v", path, prepare.Needs)
+	}
+	prepareStep, err := requireWorkflowStep(path, "prepare-images", prepare, "images")
+	if err != nil {
+		return err
+	}
+	if prepareStep.Run != "make e2e" || prepareStep.If != "" || prepareStep.Shell != "bash" ||
+		prepareStep.WorkingDirectory != "" {
+		return fmt.Errorf("%s: the shared images must be built by an unconditional run: make e2e", path)
+	}
+	// The same driver as a lifecycle, stopped where the images exist and no
+	// cluster does, reading the same commit and the same catalog pin.
+	if !equalStringMap(prepareStep.Env, map[string]string{
+		"DOCKER_CONTEXT":         "${{ steps.docker-context.outputs.name }}",
+		"E2E_DIRECT_HOST_ACCESS": "1",
+		"E2E_IMAGE_EXPORT_DIR":   "${{ runner.temp }}/task-images",
+		"E2E_PTAH_REVISION":      "${{ needs.support-matrix.outputs.ptah_commit }}",
+		"E2E_PTAH_SOURCE_DIR":    "${{ runner.temp }}/ptah",
+		"E2E_RUN_ID":             "ci-${{ github.run_id }}-${{ github.run_attempt }}-images",
+		"E2E_STOP_AFTER":         "images",
+		"E2E_TIMING_CONTEXT":     "${{ runner.temp }}/timing-context-images.json",
+		"E2E_TIMING_LEDGER":      "${{ runner.temp }}/timings-images.jsonl",
+		"KIND_NODE_IMAGE":        "${{ needs.support-matrix.outputs.prepare_node_image }}",
+		"K8S_VERSION":            "${{ needs.support-matrix.outputs.prepare_kubernetes_version }}",
+	}) {
+		return fmt.Errorf("%s: run: make e2e in prepare-images must use exactly the audited image-build bindings", path)
+	}
+	if err := verifySharedImageHandover(path, prepare, e2eImagesArtifactName); err != nil {
+		return err
+	}
+
 	e2e := workflow.Jobs["kubernetes-e2e"]
 	if e2e.If != "" || e2e.TimeoutMinutes != ciKubernetesE2ETimeoutMinutes {
 		return fmt.Errorf("%s: kubernetes-e2e must run unconditionally with a %d-minute timeout", path, ciKubernetesE2ETimeoutMinutes)
 	}
-	if !equalStringSet(e2e.Needs, []string{"support-matrix", "verify"}) {
+	if !equalStringSet(e2e.Needs, []string{"support-matrix", "verify", "prepare-images"}) {
 		return fmt.Errorf("%s: kubernetes-e2e dependencies are %v", path, e2e.Needs)
 	}
 	if e2e.Strategy.FailFast == nil || *e2e.Strategy.FailFast ||
@@ -892,6 +949,9 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 			"include": "${{ fromJSON(needs.support-matrix.outputs.matrix) }}",
 		}) {
 		return fmt.Errorf("%s: kubernetes-e2e strategy must consume only the verified dynamic matrix with fail-fast disabled", path)
+	}
+	if err := verifySharedImageCollection(path, e2e, e2eImagesArtifactName); err != nil {
+		return err
 	}
 	lifecycleSteps := make([]workflowStep, 0, 1)
 	lifecycleIndex := -1
@@ -909,10 +969,12 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return fmt.Errorf("%s: run: make e2e must be unconditional, run from the checkout root, and use explicit bash", path)
 	}
 	wantMatrixEnv := map[string]string{
-		"DOCKER_CONTEXT":           "${{ steps.docker-context.outputs.name }}",
-		"E2E_DIRECT_HOST_ACCESS":   "1",
+		"DOCKER_CONTEXT":         "${{ steps.docker-context.outputs.name }}",
+		"E2E_DIRECT_HOST_ACCESS": "1",
+		// No Ptah source reaches a lifecycle job: the executor arrives built,
+		// and the harness checks it against this pin before loading it.
+		"E2E_PREBUILT_IMAGE_DIR":   "${{ runner.temp }}/task-images",
 		"E2E_PTAH_REVISION":        "${{ needs.support-matrix.outputs.ptah_commit }}",
-		"E2E_PTAH_SOURCE_DIR":      "${{ runner.temp }}/ptah",
 		"E2E_RELEASE_CHART_OUTPUT": "${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
 		"E2E_RUN_ID":               "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}",
 		// The stage ledger and the run's identity are named outside the work
@@ -973,7 +1035,9 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	if gate.TimeoutMinutes != ciKubernetesSupportTimeoutMinutes {
 		return fmt.Errorf("%s: Kubernetes support gate timeout must be %d minutes", path, ciKubernetesSupportTimeoutMinutes)
 	}
-	if !equalStringSet(gate.Needs, []string{"support-matrix", "verify", "race", "kubernetes-e2e"}) {
+	if !equalStringSet(gate.Needs, []string{
+		"support-matrix", "verify", "race", "prepare-images", "kubernetes-e2e",
+	}) {
 		return fmt.Errorf("%s: Kubernetes support gate dependencies are %v", path, gate.Needs)
 	}
 	step, err := requireWorkflowStep(path, "kubernetes-support-gate", gate, "require-results")
@@ -984,6 +1048,9 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		"SUPPORT_MATRIX_RESULT": "${{ needs.support-matrix.result }}",
 		"VERIFY_RESULT":         "${{ needs.verify.result }}",
 		"RACE_RESULT":           "${{ needs.race.result }}",
+		// The images every lifecycle loaded are part of the verdict: a matrix
+		// that ran against images nobody built proved nothing about this commit.
+		"PREPARE_IMAGES_RESULT": "${{ needs.prepare-images.result }}",
 		"KUBERNETES_E2E_RESULT": "${{ needs.kubernetes-e2e.result }}",
 	}
 	if !equalStringMap(step.Env, wantEnv) {
@@ -994,6 +1061,7 @@ for result in \
   "$SUPPORT_MATRIX_RESULT" \
   "$VERIFY_RESULT" \
   "$RACE_RESULT" \
+  "$PREPARE_IMAGES_RESULT" \
   "$KUBERNETES_E2E_RESULT"
 do
   if [[ "$result" != success ]]; then
@@ -2828,6 +2896,12 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	if err != nil {
 		return err
 	}
+	// And a second: the mode that builds the shared task images and stops
+	// before the cluster. Audited the same way, and hidden after it is.
+	handoff, err = auditImageHandoff(harness, handoff)
+	if err != nil {
+		return err
+	}
 	if err := rejectEarlySuccessfulExit(harness, handoff, harnessContract[len(harnessContract)-1].pattern); err != nil {
 		return err
 	}
@@ -4505,6 +4579,9 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		// A measurement that swallowed a failure would read as a pass, so its
 		// self-test is wired here on the same terms as the others.
 		exactSourceLine("timing self-test wiring", `"$ROOT_DIR/hack/e2e-timing-selftest.sh"`),
+		// The refusals that keep a shared image from being another commit's are
+		// shell, and a shell refusal nothing exercises is a comment.
+		exactSourceLine("shared-image self-test wiring", `"$ROOT_DIR/hack/e2e-shared-images-selftest.sh"`),
 	}
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
@@ -4515,7 +4592,10 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	if bytes.Count(staticContents, []byte("e2e-timing-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: the timing self-test must be wired exactly once", files.staticChecks)
 	}
-	for _, step := range []sourceContractStep{staticContract[1], staticContract[3]} {
+	if bytes.Count(staticContents, []byte("e2e-shared-images-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: the shared-image self-test must be wired exactly once", files.staticChecks)
+	}
+	for _, step := range []sourceContractStep{staticContract[1], staticContract[3], staticContract[4]} {
 		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
 		}
@@ -4995,6 +5075,77 @@ func verifyFailurePreservingExitTrap(path string, contents []byte, cleanups ...s
 		if count != 1 {
 			return fmt.Errorf("%s: lifecycle script must have exactly one failure-preserving %s", path, trap)
 		}
+	}
+	return nil
+}
+
+// The images travel between jobs under one name, and both ends name it here so
+// a rename cannot leave the matrix silently building its own.
+const (
+	e2eImagesArtifactName = "shared-task-images"
+	e2eImagesArtifactPath = "${{ runner.temp }}/task-images"
+	uploadArtifactPin     = "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+	downloadArtifactPin   = "actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131"
+)
+
+// verifySharedImageHandover requires the built images to leave the preparation
+// job as an artifact the acceptance matrix can read, under a pinned action and
+// with a missing file treated as a failure. An upload that found nothing and
+// passed would hand every lifecycle an empty directory.
+func verifySharedImageHandover(path string, job workflowJob, name string) error {
+	for _, step := range job.Steps {
+		if !strings.HasPrefix(step.Uses, "actions/upload-artifact@") {
+			continue
+		}
+		if step.With["name"] != name {
+			continue
+		}
+		if step.Uses != uploadArtifactPin {
+			return fmt.Errorf("%s: the shared images are uploaded by %q rather than the pinned action", path, step.Uses)
+		}
+		if step.If != "" {
+			return fmt.Errorf("%s: the shared-image upload must be unconditional", path)
+		}
+		if step.With["path"] != e2eImagesArtifactPath {
+			return fmt.Errorf("%s: the shared images are uploaded from %q", path, step.With["path"])
+		}
+		if step.With["if-no-files-found"] != "error" {
+			return fmt.Errorf("%s: a shared-image upload that finds no images must fail", path)
+		}
+		return nil
+	}
+	return fmt.Errorf("%s: prepare-images does not hand the %s artifact to the matrix", path, name)
+}
+
+// verifySharedImageCollection requires every lifecycle to take its images from
+// that artifact, before it runs, under the pinned action. The images themselves
+// are checked by the harness against this run's commit and Ptah pin.
+func verifySharedImageCollection(path string, job workflowJob, name string) error {
+	collected := -1
+	lifecycle := -1
+	for index, step := range job.Steps {
+		if step.Run == "make e2e" && lifecycle < 0 {
+			lifecycle = index
+		}
+		if !strings.HasPrefix(step.Uses, "actions/download-artifact@") || step.With["name"] != name {
+			continue
+		}
+		if step.Uses != downloadArtifactPin {
+			return fmt.Errorf("%s: the shared images are collected by %q rather than the pinned action", path, step.Uses)
+		}
+		if step.If != "" {
+			return fmt.Errorf("%s: the shared-image collection must be unconditional", path)
+		}
+		if step.With["path"] != e2eImagesArtifactPath {
+			return fmt.Errorf("%s: the shared images are collected into %q", path, step.With["path"])
+		}
+		collected = index
+	}
+	if collected < 0 {
+		return fmt.Errorf("%s: the lifecycle does not collect the %s artifact", path, name)
+	}
+	if lifecycle < 0 || collected > lifecycle {
+		return fmt.Errorf("%s: the shared images are collected after the lifecycle that needs them", path)
 	}
 	return nil
 }
@@ -6166,6 +6317,59 @@ func fatal(err error) {
 // bootstrapHandoffOpener is the one block in the harness that may end in a
 // successful exit before the lifecycle has run.
 const bootstrapHandoffOpener = `if [ "$E2E_STOP_AFTER" = bootstrap ]; then`
+
+const imageHandoffOpener = `if [ "$E2E_STOP_AFTER" = images ]; then`
+
+// auditImageHandoff audits the harness's second early exit: the mode that builds
+// the four task images, writes them for the matrix to load, and stops before a
+// cluster exists.
+//
+// It is audited on the same terms as the demonstration hand-off and then hidden
+// from the early-exit scan, so every other early exit is still refused. What
+// this requires is that the mode does what its name says and nothing else: it
+// writes the images, latches the run as complete so the exit trap reports a
+// pass rather than a silent failure, and ends at its own exit.
+func auditImageHandoff(path string, contents []byte) ([]byte, error) {
+	opener := []byte("\n" + imageHandoffOpener + "\n")
+	start := bytes.Index(contents, opener)
+	if start < 0 {
+		return nil, fmt.Errorf("%s: the shared-image hand-off is missing its audited opener", path)
+	}
+	if bytes.Count(contents, opener) != 1 {
+		return nil, fmt.Errorf("%s: the shared-image hand-off opener appears more than once", path)
+	}
+	closer := []byte("\nfi\n")
+	end := bytes.Index(contents[start+len(opener):], closer)
+	if end < 0 {
+		return nil, fmt.Errorf("%s: the shared-image hand-off is not closed at column zero", path)
+	}
+	block := contents[start+len(opener) : start+len(opener)+end]
+
+	for _, required := range []string{"export_task_images", "PHASE_COMPLETED=1"} {
+		if !bytes.Contains(block, []byte(required)) {
+			return nil, fmt.Errorf(
+				"%s: the shared-image hand-off does not %s, so writing the images is not what it does",
+				path, required)
+		}
+	}
+	lines := bytes.Split(bytes.TrimRight(block, "\n"), []byte("\n"))
+	if last := bytes.TrimSpace(lines[len(lines)-1]); !bytes.Equal(last, []byte("exit 0")) {
+		return nil, fmt.Errorf(
+			"%s: the shared-image hand-off ends with %q rather than its exit", path, last)
+	}
+	if count := bytes.Count(block, []byte("exit")); count != 1 {
+		return nil, fmt.Errorf(
+			"%s: the shared-image hand-off holds %d exits; it may hold the one it ends with", path, count)
+	}
+
+	masked := append([]byte(nil), contents...)
+	for index := start + len(opener); index < start+len(opener)+end; index++ {
+		if masked[index] != '\n' {
+			masked[index] = ' '
+		}
+	}
+	return masked, nil
+}
 
 // auditBootstrapHandoff holds the demonstration lab's hand-off to its contract
 // and returns the harness with that block masked.
