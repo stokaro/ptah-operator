@@ -260,6 +260,7 @@ select_engine() {
 	BRANCH_LATE_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-branch-late"
 	ADOPT_DATABASE=ptah_e2e_adopt
 	ADOPT_SHADOW_DATABASE=ptah_e2e_adopt_shadow
+	ADOPT_SHADOW_USER=ptah_e2e_shadow
 	ADOPT_DB_SECRET="e2e-${ENGINE}-adopt-db"
 	ADOPT_MIGRATION="e2e-adopt-${ENGINE}"
 	ADOPT_COORDINATION_KEY="e2e/adopt/${ENGINE}"
@@ -1717,19 +1718,42 @@ create_database() {
 
 database_url() {
 	url_database=$1
+	url_user=${2:-$DATABASE_USER}
 	url_password=$(cat "$MIGRATION_DB_PASSWORD_FILE")
 	url_authority="${DATABASE_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local"
 	case "$ENGINE" in
 	postgresql)
 		printf 'postgres://%s:%s@%s:5432/%s?sslmode=disable' \
-			"$DATABASE_USER" "$url_password" "$url_authority" "$url_database"
+			"$url_user" "$url_password" "$url_authority" "$url_database"
 		;;
 	mysql)
 		printf 'mysql://%s:%s@tcp(%s:3306)/%s' \
-			"$DATABASE_USER" "$url_password" "$url_authority" "$url_database"
+			"$url_user" "$url_password" "$url_authority" "$url_database"
 		;;
 	esac
 	url_password=
+}
+
+# create_mysql_shadow_user gives the MySQL shadow database its own user. Before
+# baseline replays the migrations into the shadow database, Ptah empties it, and
+# on MySQL it refuses to drop objects unless the user holds the global SELECT,
+# DROP, ALTER, ALTER ROUTINE, EVENT, LOCK TABLES, PROCESS, SHOW_ROUTINE and
+# TRIGGER privileges: grants per schema cannot prove it sees every object it is
+# about to drop. The Jobs' own user keeps its per-schema grants, so every other
+# row still runs as a user that owns only its database. The password is the one
+# the database container already holds, so no credential crosses the exec.
+create_mysql_shadow_user() {
+	# shellcheck disable=SC2016 # Variables expand inside the database container.
+	k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+		sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "
+			DROP USER IF EXISTS '"'"'$1'"'"'@'"'"'%'"'"';
+			CREATE USER '"'"'$1'"'"'@'"'"'%'"'"' IDENTIFIED BY '"'"'$MYSQL_PASSWORD'"'"';
+			GRANT SELECT, DROP, ALTER, ALTER ROUTINE, EVENT, LOCK TABLES, PROCESS, SHOW_ROUTINE, TRIGGER
+				ON *.* TO '"'"'$1'"'"'@'"'"'%'"'"';
+			GRANT ALL PRIVILEGES ON $2.* TO '"'"'$1'"'"'@'"'"'%'"'"';
+			FLUSH PRIVILEGES"' \
+		sh "$ADOPT_SHADOW_USER" "$ADOPT_SHADOW_DATABASE" >/dev/null ||
+		fail "the MySQL shadow user $ADOPT_SHADOW_USER could not be created"
 }
 
 create_adopt_databases() {
@@ -1740,9 +1764,14 @@ create_adopt_databases() {
 	# back to reading Go entities from the working copy, which an executor image
 	# does not carry, and refuses.
 	create_database "$ADOPT_SHADOW_DATABASE"
+	adopt_shadow_user=$DATABASE_USER
+	if [ "$ENGINE" = mysql ]; then
+		create_mysql_shadow_user
+		adopt_shadow_user=$ADOPT_SHADOW_USER
+	fi
 	database_url "$ADOPT_DATABASE" >"$ADOPT_DB_URL_FILE"
 	chmod 600 "$ADOPT_DB_URL_FILE"
-	database_url "$ADOPT_SHADOW_DATABASE" >"$ADOPT_SHADOW_DB_URL_FILE"
+	database_url "$ADOPT_SHADOW_DATABASE" "$adopt_shadow_user" >"$ADOPT_SHADOW_DB_URL_FILE"
 	chmod 600 "$ADOPT_SHADOW_DB_URL_FILE"
 	{
 		cat "$ADOPT_DB_URL_FILE"
