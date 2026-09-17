@@ -243,10 +243,19 @@
   white-space: pre;
   overflow-wrap: normal;
 }
+/* Containment is declared per axis, and the vertical half belongs to whichever
+ * copy is a vertical scroller.
+ *
+ * A long line scrolled to its end must not carry the page sideways, so the
+ * horizontal half holds for both. The vertical half is what a wheel over the
+ * frame meets: on a box that cannot scroll down, `contain` still stops the
+ * scroll reaching the page, and the listing at rest is exactly that box -- it
+ * is the whole session at its own height. A reader whose pointer happened to
+ * be over the frame found the page would not move. */
 .demo-screen,
 .demo-transcript {
   overflow-x: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--termline) transparent;
 }
@@ -289,6 +298,9 @@
 .demo-screen {
   block-size: var(--demo-screen-height);
   overflow-y: auto;
+  /* The screen is a window onto a session longer than itself, so a reader who
+   * has scrolled it to either end is reading rather than leaving. */
+  overscroll-behavior-y: contain;
 }
 .demo-cursor {
   color: var(--termamber);
@@ -501,6 +513,10 @@
   block-size: auto;
   min-block-size: 0;
   overflow-y: auto;
+  /* The page behind is held still while the frame has the window, and this is
+   * the other half of holding it: a scroll that ran past the end of the session
+   * would otherwise reach a page the reader cannot see. */
+  overscroll-behavior-y: contain;
 }
 .demo.is-expanded .term-bar,
 .demo.is-expanded .demo-progress {

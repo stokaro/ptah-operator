@@ -339,6 +339,12 @@ export function expansionProblems(runId, readings) {
   if (!rest.reachable) {
     problems.push(`demo/${runId}/ hides the expand control until something has played`);
   }
+  // The listing at rest is the whole session, so it is not a scroller and has
+  // nothing to contain. A frame that swallows the wheel stops the page under a
+  // pointer that happened to be over it, which is most of the column.
+  if (!rest.pageScrolls) {
+    problems.push(`demo/${runId}/ swallows the wheel at rest, so the page will not scroll over the frame`);
+  }
 
   if (!expanded.filling) {
     problems.push(`demo/${runId}/ did not take the window when the control was pressed`);
@@ -385,7 +391,7 @@ export function expansionProblems(runId, readings) {
 // case it was written for.
 function expansionSelftest() {
   const good = {
-    rest: { reachable: true },
+    rest: { reachable: true, pageScrolls: true },
     expanded: {
       filling: true,
       width: 1280,
@@ -407,6 +413,7 @@ function expansionSelftest() {
 
   const cases = [
     ['rest.reachable', (one) => { one.rest.reachable = false; }, 'hides the expand control'],
+    ['rest.pageScrolls', (one) => { one.rest.pageScrolls = false; }, 'swallows the wheel at rest'],
     ['expanded.filling', (one) => { one.expanded.filling = false; }, 'did not take the window'],
     ['expanded size', (one) => { one.expanded.height = 421; }, '1280x421 of a 1280x800 window'],
     ['expanded.pageHeld', (one) => { one.expanded.pageHeld = false; }, 'leaves the page behind scrolling'],
@@ -462,7 +469,18 @@ async function measureExpansion(browser, origin, runId) {
     // press offers no way to make the session bigger to the reader who never
     // presses one.
     const control = page.locator('[data-demo-full]').first();
-    const rest = { reachable: await control.isVisible() };
+    // The wheel over the listing, against the page's own scroll as the control:
+    // a frame that contains a scroll it has no room to take stops the page.
+    const listing = await page.locator('[data-demo-transcript]').first().boundingBox();
+    await page.mouse.move(listing.x + listing.width / 2, listing.y + Math.min(200, listing.height / 2));
+    const restedAt = await page.evaluate(() => window.scrollY);
+    await page.mouse.wheel(0, 600);
+    await page.waitForTimeout(400);
+    const rest = {
+      reachable: await control.isVisible(),
+      pageScrolls: (await page.evaluate(() => window.scrollY)) > restedAt,
+    };
+    await page.evaluate(() => window.scrollTo(0, 0));
 
     // The run goes first, so the same press has to leave a typewriter running.
     await page.locator('[data-demo-toggle]').first().click();
