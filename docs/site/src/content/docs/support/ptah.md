@@ -27,8 +27,10 @@ provenance, and the supported build is exactly the one the matrix exercised.
 
 **Verified** is a measurement. Each `verified` entry names a Ptah build the
 operator was actually run against, the evidence behind it, and what ran.
-`ptahRelease` is `null` when the build is not a released Ptah, which is the case
-today: the suite builds from a development commit.
+`ptahRelease` is `null` when the build is not a released Ptah. The row names
+`v0.6.0`, and the suite builds its executor from the commit that release was cut
+at rather than pulling the image the release published, so what the measurement
+covers is the code the release carries.
 
 **Absent** is neither. A combination no row mentions is untested, and untested
 is not incompatible. A version with nothing verified carries
@@ -50,7 +52,7 @@ everything".
 | `declared.statement` | Why there is no range, when there is none. |
 | `verified[].ptahRelease` | The released Ptah version, or `null` when the verified build is not a release. |
 | `verified[].ptahCommit` | The exact Ptah commit the suite built its executor from. |
-| `verified[].ptahDescribe` | What `git describe --tags --always` calls that commit in a complete checkout, so a reader sees something other than forty hex characters. |
+| `verified[].ptahDescribe` | What `git describe --tags --always` calls that commit in a complete checkout, so a reader sees something other than forty hex characters. A tag name carries no commit to compare, so the verifier accepts one only when it repeats this row's `ptahRelease`. |
 | `verified[].runnerProtocolVersion` | The frame version the executor and the operator spoke in that run. Not a third axis — the runner is built from the operator source the row names — and checked against the constant rather than trusted. |
 | `verified[].evidence` | A key into `evidence`, which says what ran and how the tested build and this claim stay one declaration. |
 | `verified[].scope` | What the run covered. |

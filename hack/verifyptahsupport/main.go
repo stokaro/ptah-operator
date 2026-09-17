@@ -451,6 +451,14 @@ func validateMeasurement(name string, measurement verified, claim declared, evid
 // other than forty hex characters. A shallow checkout describes the same commit
 // as a bare abbreviation, so the shape is not fixed -- what must hold is that
 // whatever is written here is an identity OF this commit.
+//
+// A tag is the third shape, and it carries no commit inside it: `git describe`
+// answers `v0.6.0` for the commit a release tag points at, which neither the
+// `-g` suffix nor the abbreviation can be read out of. The row already names
+// that release in ptahRelease, and this program makes no network request, so
+// the tag-to-commit mapping is trusted there and repeating the release as the
+// identity adds no claim. Any other tag name is refused, as is a release
+// identity on a row that records no release.
 func validateDescribe(name string, measurement verified) []error {
 	described := strings.TrimSpace(measurement.PtahDescribe)
 	if described == "" {
@@ -460,6 +468,9 @@ func validateDescribe(name string, measurement verified) []error {
 		return []error{fmt.Errorf(
 			"%s describes %s in %d bytes; the chart binds at most %d",
 			name, measurement.PtahCommit, len(described), ptahVersionLimit)}
+	}
+	if measurement.PtahRelease != nil && described == *measurement.PtahRelease {
+		return nil
 	}
 	if !commitPattern.MatchString(measurement.PtahCommit) {
 		return nil
