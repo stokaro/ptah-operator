@@ -291,6 +291,22 @@ func TestValidateRefusesTheShapesThatBlurAClaim(t *testing.T) {
 			wantErr: "neither a describe of it nor an abbreviation of it",
 		},
 		{
+			name: "a release identity on a row that records no release",
+			mutate: func(c *catalog) {
+				c.Releases[0].Verified[0].PtahDescribe = "v0.6.0"
+			},
+			wantErr: "neither a describe of it nor an abbreviation of it",
+		},
+		{
+			name: "an identity naming a release other than the one recorded",
+			mutate: func(c *catalog) {
+				recorded := "v0.6.0"
+				c.Releases[0].Verified[0].PtahRelease = &recorded
+				c.Releases[0].Verified[0].PtahDescribe = "v0.7.0"
+			},
+			wantErr: "neither a describe of it nor an abbreviation of it",
+		},
+		{
 			name: "an identity longer than the chart binds",
 			mutate: func(c *catalog) {
 				c.Releases[0].Verified[0].PtahDescribe = strings.Repeat("v", ptahVersionLimit+1)
@@ -397,6 +413,24 @@ func TestValidateAcceptsAnAbbreviatedIdentity(t *testing.T) {
 
 	if err := validate(loaded, testToday(t)); err != nil {
 		t.Fatalf("an abbreviation of the verified commit was refused: %v", err)
+	}
+}
+
+// TestValidateAcceptsTheReleaseItNames keeps the describe rule from demanding a
+// shape a release cannot produce: `git describe --tags --always` answers with
+// the tag name for the commit a release tag points at, and a tag name carries
+// no commit to compare. The row's own ptahRelease is what the identity is
+// checked against.
+func TestValidateAcceptsTheReleaseItNames(t *testing.T) {
+	t.Parallel()
+
+	loaded := validCatalog()
+	released := "v0.6.0"
+	loaded.Releases[0].Verified[0].PtahRelease = &released
+	loaded.Releases[0].Verified[0].PtahDescribe = released
+
+	if err := validate(loaded, testToday(t)); err != nil {
+		t.Fatalf("the release the row records was refused as its identity: %v", err)
 	}
 }
 
