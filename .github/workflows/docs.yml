@@ -48,9 +48,9 @@ jobs:
       - name: Install site dependencies
         working-directory: docs/site
         run: npm ci
-      # Without a browser the demonstration check skips, and a skip reads as a
-      # pass. CI=1 makes it fail instead, so the browser is installed here.
-      - name: Install the browser the demonstration check drives
+      # Without a browser the checks that drive a page skip, and a skip reads as
+      # a pass. CI=1 makes them fail instead, so the browser is installed here.
+      - name: Install the browser the page checks drive
         working-directory: docs/site
         run: npx playwright install --with-deps chromium
       # Every gate proves itself before it judges anything. A checker that
@@ -63,6 +63,7 @@ jobs:
           npm run check:links:selftest
           npm run check:heading-anchors:selftest
           npm run check:faq-groups:selftest
+          npm run check:faq-page:selftest
           npm run check:navigation:selftest
           npm run check:build-info:selftest
           npm run check:versions:selftest
@@ -117,6 +118,7 @@ jobs:
           npm run check:navigation
           npm run check:heading-anchors
           npm run check:faq-groups
+          npm run check:faq-page
           npm run check:build-info
           npm run check:demo-page
       # A release's pages are built from that release's own revision, so the
