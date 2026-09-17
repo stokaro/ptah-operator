@@ -6,7 +6,15 @@ name: Notify compatibility consumers
 # This is the prompt path, not the mechanism. That repository reconciles the two
 # files on a schedule, so a run that is skipped here -- because the credential
 # is not configured, or because the dispatch failed -- makes the refresh late
-# rather than lost.
+# rather than lost. What it must not do is look like it announced when it did
+# not: this workflow was green seven times in a row while sending nothing,
+# which is why the outcome is now annotated rather than only printed.
+#
+# The credential is the organization's automation app rather than a personal
+# token. A token has an owner and an expiry, and the day it lapses this workflow
+# goes back to printing "not configured" -- the app does not. The minted token
+# is narrowed to the one repository it dispatches to, because the app itself is
+# installed on all of them.
 on:
   push:
     branches: [master]
@@ -42,20 +50,65 @@ jobs:
       # would spend a failed run there to learn what this run already knows.
       - name: Verify the catalog before announcing it
         run: go run ./hack/verifyptahsupport
+      # The app is the organization's, and its credentials are org-wide under the
+      # name the capability matrix gave them first. The name is the matrix's;
+      # the app is not, and a second pair of secrets for one app would be a
+      # second thing to rotate.
+      #
+      # owner and repositories narrow the minted token to stokaro/ptah, and
+      # permission-contents asks for the one permission the dispatch endpoint
+      # requires. The dispatch writes nothing itself -- GitHub maps the endpoint
+      # onto Contents because starting a workflow in a repository is as far
+      # reaching as writing to it, and there is no narrower permission to ask
+      # for.
+      - name: Mint a token for the one repository this announces to
+        id: app-token
+        if: vars.CAPABILITY_MATRIX_APP_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ vars.CAPABILITY_MATRIX_APP_ID }}
+          private-key: ${{ secrets.CAPABILITY_MATRIX_APP_KEY }}
+          owner: stokaro
+          repositories: ptah
+          permission-contents: write
+
       - name: Send the revision
         env:
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
           DISPATCH_TOKEN: ${{ secrets.PTAH_COMPATIBILITY_DISPATCH_TOKEN }}
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ -z "$DISPATCH_TOKEN" ]; then
-            echo "PTAH_COMPATIBILITY_DISPATCH_TOKEN is not configured, so no notification is sent."
-            echo "stokaro/ptah reconciles the catalog on its own schedule; this only makes it prompt."
+          # The app first, a token second. The token stays because an app whose
+          # installation is removed leaves no other way to announce, and it is
+          # one line to keep.
+          if [ -n "${APP_TOKEN}" ]; then
+            credential="$APP_TOKEN"
+            announced_with="the organization automation app"
+          elif [ -n "${DISPATCH_TOKEN}" ]; then
+            credential="$DISPATCH_TOKEN"
+            announced_with="PTAH_COMPATIBILITY_DISPATCH_TOKEN"
+          else
+            # Not a failure: the schedule on the receiving side finds the same
+            # difference tomorrow. Not a success either, and the annotation is
+            # the difference -- a green check that announced nothing is what
+            # hid this for a week.
+            echo "::warning title=Nothing was announced::No credential is configured, so stokaro/ptah was not told that the catalog moved. Its scheduled reconciliation will find the change within a day."
+            {
+              printf '## Nothing was announced\n\n'
+              printf 'Neither the organization automation app nor the '
+              printf 'PTAH_COMPATIBILITY_DISPATCH_TOKEN secret is available to this run, '
+              printf 'so no repository dispatch was sent for %s.\n\n' "$COMMIT"
+              printf 'This is late rather than lost: stokaro/ptah compares the two files '
+              printf 'on a schedule and will find the same difference without being told.\n'
+            } >>"$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          GH_TOKEN="$DISPATCH_TOKEN" gh api repos/stokaro/ptah/dispatches \
+          GH_TOKEN="$credential" gh api repos/stokaro/ptah/dispatches \
             --method POST \
             --field event_type=operator-compatibility \
             --field 'client_payload[repository]=stokaro/ptah-operator' \
             --field "client_payload[commit]=$COMMIT"
-          echo "announced $COMMIT"
+          printf 'announced %s using %s\n' "$COMMIT" "$announced_with"
+          printf '## Announced\n\nTold stokaro/ptah that the catalog moved to %s, using %s.\n' \
+            "$COMMIT" "$announced_with" >>"$GITHUB_STEP_SUMMARY"
