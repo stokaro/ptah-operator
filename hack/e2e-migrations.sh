@@ -177,6 +177,19 @@ REGISTRY_HOST="${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000"
 # Job, so it needs the second name.
 REGISTRY_HOST_ADDRESS=${E2E_REGISTRY_HOST_ADDRESS:-}
 REGISTRY_CREDENTIALS_FILE=${E2E_REGISTRY_CREDENTIALS_FILE:-}
+# hack/e2e-rerun-phase.sh sets E2E_PHASE_RERUN when it puts this phase back on a
+# lab an earlier run left behind. The phase then clears what that run created
+# before it starts (reset_after_an_earlier_run), and publishes under a
+# repository of its own: Ptah refuses to move a version tag that already names a
+# different digest, and the same fixture directory does not publish to the same
+# bytes twice, so the earlier run's tags can be neither reused nor replaced.
+PHASE_RERUN=${E2E_PHASE_RERUN:-}
+MIGRATION_REPOSITORY=migrations
+if [ -n "$PHASE_RERUN" ]; then
+	printf '%s\n' "$PHASE_RERUN" | grep -Eq '^r[0-9]+$' ||
+		fail "E2E_PHASE_RERUN must be r followed by digits, not $PHASE_RERUN"
+	MIGRATION_REPOSITORY="migrations-${PHASE_RERUN}"
+fi
 MIGRATION_DATABASE=ptah_e2e_migrations
 MIGRATION_POLICY=e2e-migrations-verification-policy
 MIGRATION_POLICY_KEY=policy.yaml
@@ -222,14 +235,14 @@ select_engine() {
 	MIGRATION_RIVAL_SCHEMA="e2e-migrations-${ENGINE}-rival"
 	MIGRATION_PARTIAL_APPROVAL="e2e-migrations-${ENGINE}-partial-approval"
 	MIGRATION_COORDINATION_KEY="e2e/migrations/${ENGINE}"
-	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}:stable"
+	MIGRATION_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}:stable"
 	MIGRATION_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}"
 	BRANCH_DATABASE=ptah_e2e_branch
 	BRANCH_DB_SECRET="e2e-${ENGINE}-branch-db"
 	BRANCH_MIGRATION="e2e-branch-${ENGINE}"
 	BRANCH_APPROVAL="e2e-branch-${ENGINE}-approval"
 	BRANCH_COORDINATION_KEY="e2e/branch/${ENGINE}"
-	BRANCH_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-branch:stable"
+	BRANCH_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-branch:stable"
 	BRANCH_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-branch"
 	BRANCH_LATE_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-branch-late"
 	ADOPT_DATABASE=ptah_e2e_adopt
@@ -237,7 +250,7 @@ select_engine() {
 	ADOPT_DB_SECRET="e2e-${ENGINE}-adopt-db"
 	ADOPT_MIGRATION="e2e-adopt-${ENGINE}"
 	ADOPT_COORDINATION_KEY="e2e/adopt/${ENGINE}"
-	ADOPT_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-adopt:stable"
+	ADOPT_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-adopt:stable"
 	ADOPT_CONFIGMAP="e2e-migrations-${ENGINE}-adopt"
 	ADOPT_BASELINE_JOB="e2e-adopt-baseline-${ENGINE}"
 	CHECKPOINT_DATABASE=ptah_e2e_checkpoint
@@ -245,27 +258,27 @@ select_engine() {
 	CHECKPOINT_MIGRATION="e2e-checkpoint-${ENGINE}"
 	CHECKPOINT_APPROVAL="e2e-checkpoint-${ENGINE}-approval"
 	CHECKPOINT_COORDINATION_KEY="e2e/checkpoint/${ENGINE}"
-	CHECKPOINT_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-checkpoint:stable"
+	CHECKPOINT_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-checkpoint:stable"
 	CHECKPOINT_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-checkpoint"
 	TXMODE_DATABASE=ptah_e2e_txmode
 	TXMODE_DB_SECRET="e2e-${ENGINE}-txmode-db"
 	TXMODE_MIGRATION="e2e-txmode-${ENGINE}"
 	TXMODE_APPROVAL="e2e-txmode-${ENGINE}-approval"
 	TXMODE_COORDINATION_KEY="e2e/txmode/${ENGINE}"
-	TXMODE_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-txmode:stable"
+	TXMODE_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-txmode:stable"
 	TXMODE_DB_URL_FILE="$WORK_DIR/${ENGINE}-txmode-db-url"
 	UNCERTAIN_DATABASE=ptah_e2e_uncertain
 	UNCERTAIN_DB_SECRET="e2e-${ENGINE}-uncertain-db"
 	UNCERTAIN_MIGRATION="e2e-uncertain-${ENGINE}"
 	UNCERTAIN_COORDINATION_KEY="e2e/uncertain/${ENGINE}"
-	UNCERTAIN_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-uncertain:stable"
+	UNCERTAIN_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-uncertain:stable"
 	UNCERTAIN_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-uncertain"
 	UNKNOWN_LAYER_DATABASE=ptah_e2e_unknown_layer
 	UNKNOWN_LAYER_DB_SECRET="e2e-${ENGINE}-unknown-layer-db"
 	UNKNOWN_LAYER_MIGRATION="e2e-unknown-layer-${ENGINE}"
 	UNKNOWN_LAYER_COORDINATION_KEY="e2e/unknown-layer/${ENGINE}"
-	UNKNOWN_LAYER_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-unknown:stable"
-	UNKNOWN_LAYER_PUBLISH_REFERENCE="${REGISTRY_HOST_ADDRESS}/migrations/${ENGINE}-unknown:stable"
+	UNKNOWN_LAYER_REFERENCE="oci://${REGISTRY_HOST}/${MIGRATION_REPOSITORY}/${ENGINE}-unknown:stable"
+	UNKNOWN_LAYER_PUBLISH_REFERENCE="${REGISTRY_HOST_ADDRESS}/${MIGRATION_REPOSITORY}/${ENGINE}-unknown:stable"
 	# The adoption row reads the artifact this engine already publishes. A
 	# second copy of the same three migrations would be a second thing to keep
 	# in step with the schema the proof builds out of them by hand.
@@ -413,7 +426,7 @@ create_migration_database() {
 		;;
 	esac
 	[ "$existing" = 0 ] ||
-		fail "database $MIGRATION_DATABASE already exists on $ENGINE; the migration proof needs a database nothing has migrated, so drop it before running this phase again"
+		fail "database $MIGRATION_DATABASE already exists on $ENGINE; the migration proof needs a database nothing has migrated, so rerun this phase through hack/e2e-rerun-phase.sh, which clears it"
 	case "$ENGINE" in
 	postgresql)
 		# shellcheck disable=SC2016 # Variables expand inside the database container.
@@ -1643,10 +1656,32 @@ database_exists() {
 	esac
 }
 
+# drop_database is the reset's half of create_database. FORCE on PostgreSQL ends
+# the sessions an interrupted run left open; without it the drop waits on them.
+drop_database() {
+	drop_name=$1
+	case "$ENGINE" in
+	postgresql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "$1"' \
+			sh "DROP DATABASE IF EXISTS ${drop_name} WITH (FORCE)" >/dev/null ||
+			fail "database $drop_name could not be dropped on $ENGINE"
+		;;
+	mysql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "$1"' \
+			sh "DROP DATABASE IF EXISTS ${drop_name}" >/dev/null ||
+			fail "database $drop_name could not be dropped on $ENGINE"
+		;;
+	esac
+}
+
 create_database() {
 	create_name=$1
 	[ "$(database_exists "$create_name")" = 0 ] ||
-		fail "database $create_name already exists on $ENGINE; the adoption proof builds the schema itself, so drop it before running this phase again"
+		fail "database $create_name already exists on $ENGINE; the adoption proof builds the schema itself, so rerun this phase through hack/e2e-rerun-phase.sh, which clears it"
 	case "$ENGINE" in
 	postgresql)
 		# shellcheck disable=SC2016 # Variables expand inside the database container.
@@ -2938,6 +2973,60 @@ run_transaction_mode_proof() {
 		"$ENGINE_KIND" >&2
 }
 
+# reset_after_an_earlier_run removes what an earlier run of this phase created,
+# so a rerun starts where the first run did: no PtahMigration, no database of
+# its own on either engine, and no fixture object to collide with.
+#
+# Only this phase's objects go. Every PtahMigration, PtahMigrationApproval and
+# PtahMigrationPlan in the namespace is this phase's, because no other phase
+# creates those kinds; the one PtahSchema it creates is removed by name, and the
+# data plane's schemas, Secrets and databases beside it stay. The verification
+# policy stays too: it is applied rather than created and does not change
+# between runs.
+#
+# The deletions wait for the controller to finish its finalizers. A rerun that
+# raced them would find the coordination realm still claimed by a resource on
+# its way out.
+reset_after_an_earlier_run() {
+	[ -n "$PHASE_RERUN" ] || return 0
+	printf 'e2e migrations: rerun %s: removing what an earlier run of this phase left behind\n' \
+		"$PHASE_RERUN" >&2
+	k -n "$TEST_NAMESPACE" delete ptahmigration --all \
+		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "the PtahMigrations an earlier run left behind were not removed"
+	k -n "$TEST_NAMESPACE" delete ptahmigrationapproval,ptahmigrationplan --all \
+		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "the approvals and plans an earlier run left behind were not removed"
+	for reset_engine in postgresql mysql; do
+		select_engine "$reset_engine"
+		k -n "$TEST_NAMESPACE" delete ptahschema "$MIGRATION_RIVAL_SCHEMA" \
+			--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+			fail "$MIGRATION_RIVAL_SCHEMA was not removed"
+		k -n "$TEST_NAMESPACE" delete secret --ignore-not-found \
+			"$MIGRATION_DB_SECRET" "$BRANCH_DB_SECRET" "$ADOPT_DB_SECRET" "$CHECKPOINT_DB_SECRET" \
+			"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" >/dev/null ||
+			fail "the $ENGINE_KIND database Secrets an earlier run left behind were not removed"
+		# The publisher objects carry the version they published in their names,
+		# and the versions are spread through the proofs, so they are found by the
+		# prefix publish_migrations gives them rather than listed a second time.
+		k -n "$TEST_NAMESPACE" get configmap,job -o name >"$LOG_FILE" ||
+			fail "the objects an earlier run left behind could not be listed"
+		grep -E "^(configmap/e2e-migrations-${ENGINE}-|job[.]batch/e2e-push-migrations-${ENGINE}-|job[.]batch/${ADOPT_BASELINE_JOB}\$)" \
+			"$LOG_FILE" >"$RESOURCE_FILE" || true
+		while IFS= read -r reset_object; do
+			k -n "$TEST_NAMESPACE" delete "$reset_object" \
+				--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+				fail "$reset_object was not removed"
+		done <"$RESOURCE_FILE"
+		for reset_database in "$MIGRATION_DATABASE" "$BRANCH_DATABASE" "$ADOPT_DATABASE" \
+			"$ADOPT_SHADOW_DATABASE" "$CHECKPOINT_DATABASE" "$TXMODE_DATABASE" \
+			"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE"; do
+			drop_database "$reset_database"
+		done
+	done
+}
+
+reset_after_an_earlier_run
 create_migration_policy
 run_engine_migrations postgresql
 run_transaction_mode_proof mysql
