@@ -453,8 +453,9 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "          E2E_RELEASE_CHART_OUTPUT: /tmp/unbound.tgz\n",
 		},
 		"wrong artifact action": {
-			old: "        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n",
-			new: "        uses: actions/upload-artifact@main\n",
+			old: "        id: release-chart-evidence\n" +
+				"        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n",
+			new: "        id: release-chart-evidence\n        uses: actions/upload-artifact@main\n",
 		},
 		"wrong installed chart artifact path": {
 			old: "          path: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz\n",
@@ -465,8 +466,8 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "        id: release-chart-evidence\n        if: ${{ false }}\n",
 		},
 		"rerun artifact replacement disabled": {
-			old: "          overwrite: true\n",
-			new: "          overwrite: false\n",
+			old: "          compression-level: 0\n          overwrite: true\n",
+			new: "          compression-level: 0\n          overwrite: false\n",
 		},
 		"duplicate lifecycle": {
 			old: "        run: make e2e\n      - name: Preserve exact installed release chart\n",
@@ -481,8 +482,8 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "    name: Race detector\n    runs-on: ubuntu-latest\n    timeout-minutes: 65\n",
 		},
 		"matrix timeout drift": {
-			old: "    timeout-minutes: 10\n",
-			new: "    timeout-minutes: 30\n",
+			old: "    name: Build Kubernetes support matrix\n    runs-on: ubuntu-latest\n    timeout-minutes: 10\n",
+			new: "    name: Build Kubernetes support matrix\n    runs-on: ubuntu-latest\n    timeout-minutes: 30\n",
 		},
 		"E2E timeout drift": {
 			old: "    timeout-minutes: 180\n",
@@ -497,16 +498,16 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "    name: Kubernetes support window 1.35-1.37\n",
 		},
 		"conditional gate": {
-			old: "    if: ${{ !cancelled() }}\n",
-			new: "    if: ${{ success() }}\n",
+			old: "  kubernetes-support-gate:\n    name: Kubernetes support gate\n    if: ${{ !cancelled() }}\n",
+			new: "  kubernetes-support-gate:\n    name: Kubernetes support gate\n    if: ${{ success() }}\n",
 		},
 		"uncancelable gate": {
-			old: "    if: ${{ !cancelled() }}\n",
-			new: "    if: ${{ always() }}\n",
+			old: "  kubernetes-support-gate:\n    name: Kubernetes support gate\n    if: ${{ !cancelled() }}\n",
+			new: "  kubernetes-support-gate:\n    name: Kubernetes support gate\n    if: ${{ always() }}\n",
 		},
 		"implicit success gate": {
-			old: "    if: ${{ !cancelled() }}\n",
-			new: "",
+			old: "  kubernetes-support-gate:\n    name: Kubernetes support gate\n    if: ${{ !cancelled() }}\n",
+			new: "  kubernetes-support-gate:\n    name: Kubernetes support gate\n",
 		},
 		"missing lifecycle dependency": {
 			old: "    needs: [support-matrix, verify, race, kubernetes-e2e]\n",

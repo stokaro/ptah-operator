@@ -276,7 +276,9 @@ ACTUAL_SHELLCHECK_VERSION=v$(shellcheck --version | awk '/^version:/ { print $2 
 	exit 1
 }
 printf 'e2e static: shellcheck %s\n' "$ACTUAL_SHELLCHECK_VERSION"
-shellcheck "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
+# -x so the stopwatch the driver and the phases source is checked in the
+# context that sources it, rather than reported as a file nothing followed.
+shellcheck -x "$ROOT_DIR"/hack/e2e-*.sh "$ROOT_DIR/hack/stamp-crd-schema-version.sh"
 
 # The demonstration's shell is published: a reader repeats what a scenario ran.
 # The census comes from git rather than from a glob, and holds above a floor,
@@ -316,6 +318,47 @@ done || exit 1
 printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_IMAGE_COUNT"
 
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
+"$ROOT_DIR/hack/e2e-timing-selftest.sh"
+
+# Every phase the driver runs is measured, and it is measured in the one place
+# that runs them. A phase invoked around run_recorded_phase would be missing
+# from the ledger, and a ledger with a phase missing reads as a run that never
+# spent that time.
+timing_recorded_phases=$(grep -c 'run_recorded_phase [a-z-]* ' "$ROOT_DIR/hack/e2e-kind.sh" || true)
+[ "$timing_recorded_phases" -ge 8 ] || {
+	printf 'e2e static: the driver records %s phases, and the lifecycle has eight\n' \
+		"$timing_recorded_phases" >&2
+	exit 1
+}
+# shellcheck disable=SC2016 # Match the literal call in the driver.
+grep -F 'timing_begin phase "$recorded_phase"' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+	printf '%s\n' 'e2e static: the driver does not measure the phases it runs' >&2
+	exit 1
+}
+grep -F 'timing_end fail' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+	printf '%s\n' 'e2e static: a failed phase is not recorded as failed' >&2
+	exit 1
+}
+# The longest phases carry scenario marks. Without them the report names a
+# ninety-minute phase and nothing inside it, which is the measurement the
+# critical-path work needs most.
+for timing_phase_script in e2e-dataplane e2e-faults e2e-migrations e2e-reference-data; do
+	timing_scenarios=$(grep -c '^timing_next scenario ' \
+		"$ROOT_DIR/hack/$timing_phase_script.sh" || true)
+	[ "$timing_scenarios" -ge 3 ] || {
+		printf 'e2e static: %s marks %s scenarios; the report needs its steps named\n' \
+			"$timing_phase_script.sh" "$timing_scenarios" >&2
+		exit 1
+	}
+	# shellcheck disable=SC2016 # Match the literal source line in each phase.
+	grep -F '. "$ROOT_DIR/hack/e2e-timing.sh"' "$ROOT_DIR/hack/$timing_phase_script.sh" >/dev/null || {
+		printf 'e2e static: %s marks scenarios without sourcing the stopwatch\n' \
+			"$timing_phase_script.sh" >&2
+		exit 1
+	}
+done
+printf 'e2e static: %s measured lifecycle phases, each phase script naming its scenarios\n' \
+	"$timing_recorded_phases"
 
 # shellcheck disable=SC2016 # These checks intentionally match literal script variables.
 grep -F 'git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {

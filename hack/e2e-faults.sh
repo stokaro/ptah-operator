@@ -228,6 +228,14 @@ PHASE_COMPLETED=0
 cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
+	# The scenario that was open is the one this phase died in. The call is
+	# observational and returns the status it was given, so $status below is
+	# the phase's own verdict.
+	if [ "$status" -ne 0 ]; then
+		timing_abandon fail
+	else
+		timing_abandon pass
+	fi
 	trap - EXIT HUP INT TERM
 	# The marker is unset when this handler is extracted and run on its own
 	# by hack/e2e_cert_rotation_test.go; there is nothing to report then.
@@ -310,6 +318,11 @@ cleanup() {
 	fi
 	exit "$status"
 }
+# The stopwatch this phase appends its scenarios to. It does nothing unless the
+# driver named a ledger, so running this phase by hand behaves as it always has.
+# shellcheck source=hack/e2e-timing.sh
+. "$ROOT_DIR/hack/e2e-timing.sh"
+
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
@@ -4401,6 +4414,7 @@ run_credential_principal_refusal() {
 
 create_credential_principal_secret
 materialize_fault_credential_patterns
+timing_next scenario watches
 printf '%s\n' 'e2e faults: starting resourceVersion watches and fault-injection acceptance'
 k -n "$TEST_NAMESPACE" get service "$PG_SERVICE" "$MYSQL_SERVICE" >/dev/null
 k -n "$TEST_NAMESPACE" get secret "$PG_BASE_SECRET" "$MYSQL_BASE_SECRET" "$REGISTRY_AUTH_SECRET" "$REGISTRY_PULL_SECRET" >/dev/null
@@ -4514,6 +4528,7 @@ checkpoint_operation_watch "$MYSQL_TIMEOUT_SCHEMA" observe 1 "$MYSQL_TIMEOUT_OBS
 checkpoint_operation_watch "$MYSQL_TIMEOUT_SCHEMA" plan 1 "$MYSQL_TIMEOUT_PLAN_CHECKPOINT"
 assert_database_column mysql "$MYSQL_TIMEOUT_DB" fault_token 0
 
+timing_next scenario job-deadline
 printf '%s\n' 'e2e faults: forcing one real Kubernetes Apply Job deadline'
 start_mysql_barrier "$MYSQL_TIMEOUT_DB" e2e_fault_my_timeout_barrier
 create_approval "$MYSQL_TIMEOUT_SCHEMA" "$MYSQL_TIMEOUT_APPROVAL"
@@ -4645,6 +4660,7 @@ assert_pg_apply_lock_wait "$PG_RESTART_DB"
 assert_pg_apply_lock_wait "$PG_PARALLEL_DB"
 assert_mysql_apply_lock_wait "$MYSQL_UNKNOWN_DB"
 
+timing_next scenario manager-restart
 printf '%s\n' 'e2e faults: restarting the manager while three independent Apply Pods are active'
 audit_fault_runtime
 load_ready_manager_pod_uids
@@ -4689,6 +4705,7 @@ assert_mysql_apply_lock_wait "$MYSQL_UNKNOWN_DB"
 [ "$(watch_added_uid_count "$PG_PARALLEL_SCHEMA" apply)" -eq 1 ] || fail "manager restart created a second parallel PostgreSQL Apply Job"
 [ "$(watch_added_uid_count "$MYSQL_UNKNOWN_SCHEMA" apply)" -eq 1 ] || fail "manager restart created a second MySQL Apply Job"
 
+timing_next scenario runner-termination
 printf '%s\n' 'e2e faults: terminating one active Apply runner without deleting its Pod'
 audit_fault_runtime
 start_read_workload_barrier
@@ -5240,6 +5257,7 @@ wait_for_absence ptahschema "$PG_ALIAS_SCHEMA_B"
 k -n "$TEST_NAMESPACE" get ptahschemaapproval "$ALIAS_B_APPROVAL" >/dev/null ||
 	fail "the user-owned consumed approval unexpectedly disappeared with its schema"
 
+timing_next scenario job-deletion
 printf '%s\n' 'e2e faults: removing a held read-only Job while its operation is active'
 PG_READ_LOSS_DB=e2e_fault_pg_read_loss
 PG_READ_LOSS_SECRET=e2e-fault-pg-read-loss-db
@@ -5845,5 +5863,6 @@ assert_no_overlapping_operation_jobs
 assert_fault_audit_complete
 record_fault_jobs_for_parent
 
+timing_end pass
 PHASE_COMPLETED=1
 printf '%s\n' 'e2e faults: PASS watches, Kubernetes deadline recovery, stale-plan preflight, native lock barriers, restart identity, uncertain recovery, deletion, Pod serialization, credential audit, and coordination realms'

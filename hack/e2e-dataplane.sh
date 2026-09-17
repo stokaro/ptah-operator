@@ -602,6 +602,14 @@ PHASE_COMPLETED=0
 cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
+	# The scenario that was open is the one this phase died in. The call is
+	# observational and returns the status it was given, so $status below is
+	# the phase's own verdict.
+	if [ "$status" -ne 0 ]; then
+		timing_abandon fail
+	else
+		timing_abandon pass
+	fi
 	trap - EXIT HUP INT TERM
 	# The marker is unset when this handler is extracted and run on its own
 	# by hack/e2e_cert_rotation_test.go; there is nothing to report then.
@@ -631,6 +639,11 @@ cleanup() {
 	esac
 	exit "$status"
 }
+# The stopwatch this phase appends its scenarios to. It does nothing unless the
+# driver named a ledger, so running this phase by hand behaves as it always has.
+# shellcheck source=hack/e2e-timing.sh
+. "$ROOT_DIR/hack/e2e-timing.sh"
+
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
@@ -6199,6 +6212,7 @@ run_engine_lifecycle() {
 	printf 'e2e data plane: PASS %s lifecycle\n' "$lifecycle_engine"
 }
 
+timing_next scenario databases-and-fixtures
 printf '%s\n' 'e2e data plane: creating registry endpoint and isolated databases'
 create_registry_service
 create_databases
@@ -6213,14 +6227,19 @@ report_database_versions
 create_admission_fixtures
 create_digest_pin_policy_fixture
 
+timing_next scenario postgresql-lifecycle
 run_engine_lifecycle postgresql PostgreSQL postgres "$PG_SECRET"
+timing_next scenario external-postgresql-lifecycle
 run_external_postgresql_lifecycle
+timing_next scenario mysql-lifecycle
 run_engine_lifecycle mysql MySQL mysql "$MYSQL_SECRET"
+timing_next scenario mysql-dsn-refusal
 run_mysql_dsn_refusal
 [ "$EPHEMERAL_SUBRESOURCE_TESTED" -eq 1 ] ||
 	fail "no UID-bound active operation Pod was available for the admission subresource and managed-identity tests"
 audit_runtime_credentials
 
+timing_next scenario faults
 printf '%s\n' 'e2e data plane: starting restart and fault-injection acceptance'
 E2E_AUDITED_JOBS_FILE=$AUDITED_JOBS_FILE \
 E2E_FULLY_AUDITED_JOBS_FILE=$FULLY_AUDITED_JOBS_FILE \
@@ -6232,10 +6251,12 @@ E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
 E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \
 	"$ROOT_DIR/hack/e2e-faults.sh" ||
 	fail "the restart and fault-injection phase failed; its reason is above"
+timing_next scenario closing-audits
 assert_mysql_destructive_refusal_durable
 assert_external_postgresql_catalog
 audit_runtime_credentials
 assert_observed_jobs_audited
 
+timing_end pass
 PHASE_COMPLETED=1
 printf '%s\n' 'e2e data plane: PASS PostgreSQL, external PostgreSQL, MySQL, OCI, restart, and fault lifecycle'

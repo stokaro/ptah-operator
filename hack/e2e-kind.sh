@@ -152,6 +152,10 @@ fail() {
 	exit 1
 }
 
+# The stopwatch. It reads E2E_TIMING_LEDGER, which is named below once the work
+# directory exists, and does nothing until then.
+. "$ROOT_DIR/hack/e2e-timing.sh"
+
 for requested_phase in $E2E_DIAGNOSIS_SKIP_PHASES; do
 	case $requested_phase in
 		upgrade | ha | assert | cert-rotation | dataplane | migrations | uninstall) ;;
@@ -483,6 +487,14 @@ fi
 
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ptah-operator-e2e.XXXXXX")
 chmod 700 "$WORK_DIR"
+# Where this run's stage durations land. It is exported so every phase appends
+# its own scenarios to the same ledger, and it lives beside the work directory
+# the retention branch keeps, so a failed run's timings survive with it.
+E2E_TIMING_LEDGER=${E2E_TIMING_LEDGER:-$WORK_DIR/timings.jsonl}
+E2E_TIMING_CONTEXT=${E2E_TIMING_CONTEXT:-$WORK_DIR/timing-context.json}
+export E2E_TIMING_LEDGER
+: >"$E2E_TIMING_LEDGER" || fail "the timing ledger $E2E_TIMING_LEDGER could not be created"
+timing_begin bootstrap preflight
 KUBECONFIG_FILE=$WORK_DIR/kubeconfig
 KIND_CONFIG=$WORK_DIR/kind.yaml
 TUNNEL_LOG=$WORK_DIR/ssh-tunnel.log
@@ -1294,6 +1306,30 @@ collect_diagnostics() {
 # state the phase needs before it can fail again. The record comes from env
 # itself, which reports exactly what the command received, so it cannot drift
 # from the call.
+# write_timing_context records what this run is, once, beside the ledger of what
+# it spent its time on. hack/e2etiming joins the two: a stage row stays one short
+# append, and the identity a reader needs to compare two runs is not repeated on
+# every row of either.
+write_timing_context() {
+	[ -n "${E2E_TIMING_CONTEXT:-}" ] || return 0
+	jq -n \
+		--arg runID "$E2E_RUN_ID" \
+		--arg githubRunID "${GITHUB_RUN_ID:-}" \
+		--arg githubRunAttempt "${GITHUB_RUN_ATTEMPT:-}" \
+		--arg operatorRevision "$CONTROLLER_REVISION" \
+		--arg ptahCommit "${PTAH_COMMIT:-}" \
+		--arg ptahVersion "${E2E_PTAH_VERSION:-}" \
+		--arg kubernetes "$K8S_VERSION" \
+		--arg suite "${E2E_SUITE:-lifecycle}" \
+		--arg cluster "$CLUSTER_NAME" \
+		'{runID: $runID, githubRunID: $githubRunID, githubRunAttempt: $githubRunAttempt,
+		  operatorRevision: $operatorRevision, ptahCommit: $ptahCommit, ptahVersion: $ptahVersion,
+		  kubernetes: $kubernetes, suite: $suite, cluster: $cluster}' \
+		>"$E2E_TIMING_CONTEXT" 2>/dev/null ||
+		printf 'e2e timing: %s could not be written; the ledger keeps its stages\n' \
+			"$E2E_TIMING_CONTEXT" >&2
+}
+
 run_recorded_phase() {
 	recorded_phase=$1
 	shift
@@ -1303,22 +1339,35 @@ run_recorded_phase() {
 			SKIPPED_PHASES="$SKIPPED_PHASES $recorded_phase"
 			printf 'e2e: DIAGNOSIS: phase %s left out by E2E_DIAGNOSIS_SKIP_PHASES\n' \
 				"$recorded_phase" >&2
+			timing_row phase "$recorded_phase" skipped "$(timing_instant)" "$(timing_instant)" 0
 			return 0
 			;;
 	esac
+	timing_begin phase "$recorded_phase"
 	# A phase script prints its own reason and exits non-zero. Calling it
 	# unguarded ends this driver at that command under set -e, leaving its EXIT
 	# handler to report a status and no reason for a phase that gave one. Name
 	# the phase instead, and let the reason it printed stand.
 	if ! "$@"; then
+		timing_end fail
 		fail "phase $recorded_phase failed; its reason is above"
 	fi
+	timing_end pass
 }
 
 PHASE_COMPLETED=0
 cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
+	# The stage that was open is the one the run died in, and the teardown that
+	# follows is measured as its own. Neither call can change $status: they are
+	# observational, and the exit below carries the status computed above.
+	if [ "$status" -ne 0 ]; then
+		timing_abandon fail
+	else
+		timing_abandon pass
+	fi
+	timing_begin bootstrap teardown
 	# Ahead of the retention branch, which exits on its own: a run cleaned up
 	# normally is exactly the one whose reason would otherwise go unsaid. The
 	# marker is unset when this handler is extracted and run on its own by
@@ -1584,6 +1633,7 @@ for task_image in \
 	fi
 done
 
+timing_next bootstrap tls-proxy-material
 mkdir -p "$TLS_PROXY_DIR"
 chmod 700 "$TLS_PROXY_DIR"
 printf '%s\n' \
@@ -1640,6 +1690,7 @@ if ! go -C "$ROOT_DIR" run ./test/e2e/handcraftoci verify-certificate \
 	fail "task-scoped TLS proxy certificate does not bind its exact Service DNS name"
 fi
 
+timing_next bootstrap next-release-source
 mkdir -p "$NEXT_BUILD_CONTEXT"
 git -C "$SOURCE_REPOSITORY_ROOT" archive --format=tar \
 	--output="$NEXT_SOURCE_ARCHIVE" "$CONTROLLER_REVISION"
@@ -1689,6 +1740,7 @@ chart_version=$(sed -n 's/^version: //p' "$ROOT_DIR/charts/ptah-operator/Chart.y
 chart_source_epoch=$(git -C "$SOURCE_REPOSITORY_ROOT" show -s --format=%ct "$CONTROLLER_REVISION")
 printf '%s\n' "$chart_source_epoch" | grep -Eq '^[0-9]+$' ||
 	fail "source commit does not have a valid release epoch"
+timing_next bootstrap chart-package
 printf 'e2e: reproducibly packaging Helm chart %s\n' "$chart_version"
 go -C "$ROOT_DIR" run ./hack/chartpackage \
 	-epoch "$chart_source_epoch" -destination "$CHART_PACKAGE_DIR"
@@ -1708,6 +1760,7 @@ chart_asset=${CHART_PACKAGE##*/}
 printf 'e2e: installing release-form chart %s (%s)\n' \
 	"$chart_asset" "$CHART_PACKAGE_DIGEST"
 
+timing_next bootstrap next-chart-package
 printf 'e2e: reproducibly packaging synthetic sequence-%s Helm chart from commit %s\n' \
 	"$NEXT_RELEASE_SEQUENCE" "$CONTROLLER_REVISION"
 go -C "$NEXT_BUILD_CONTEXT" run -mod=readonly ./hack/chartpackage \
@@ -1730,6 +1783,7 @@ NEXT_CHART_PACKAGE_DIGEST=$(sha256 <"$NEXT_CHART_PACKAGE")
 printf 'e2e: synthetic sequence-%s chart %s has digest %s\n' \
 	"$NEXT_RELEASE_SEQUENCE" "${NEXT_CHART_PACKAGE##*/}" "$NEXT_CHART_PACKAGE_DIGEST"
 
+timing_next bootstrap buildx-setup
 mkdir -p "$DOCKER_CLI_CONFIG/cli-plugins"
 ln -s "$BUILDX_PLUGIN_PATH" "$DOCKER_CLI_CONFIG/cli-plugins/docker-buildx"
 unset DOCKER_HOST
@@ -1741,6 +1795,7 @@ DOCKER_CONTEXT=$TASK_DOCKER_CONTEXT
 docker --context "$DOCKER_CONTEXT" buildx inspect "$DOCKER_CONTEXT" >/dev/null 2>&1 ||
 	fail "isolated Docker config cannot use its task-scoped Buildx builder"
 
+timing_next bootstrap source-image-pulls
 if ! docker --context "$DOCKER_CONTEXT" image inspect "$KIND_NODE_IMAGE" >/dev/null 2>&1; then
 	KIND_NODE_IMAGE_CREATED=1
 fi
@@ -1848,6 +1903,7 @@ fi
 # written the lab's environment. The lab command reads the empty value and says
 # where a Ptah CLI has to come from instead.
 PTAH_BUILD_CONTEXT=
+timing_next bootstrap ptah-executor-image
 if [ -z "$E2E_EXECUTOR_IMAGE" ]; then
 	if [ -z "$E2E_PTAH_SOURCE_DIR" ]; then
 		if [ -n "$E2E_PTAH_SIBLING_SOURCE_DIR" ] &&
@@ -1896,6 +1952,7 @@ else
 	RUNNER_SOURCE_IMAGE=$OPERATOR_IMAGE
 fi
 
+timing_next bootstrap operator-image
 printf 'e2e: building %s with Docker context %s\n' "$OPERATOR_IMAGE" "$SELECTED_DOCKER_CONTEXT"
 IMAGE_CREATED=1
 add_created_image "$OPERATOR_IMAGE"
@@ -1906,6 +1963,7 @@ docker --context "$DOCKER_CONTEXT" buildx build \
 	--build-arg "REVISION=$CONTROLLER_REVISION" \
 	--target operator \
 	--tag "$OPERATOR_IMAGE" "$ROOT_DIR"
+timing_next bootstrap next-operator-image
 printf 'e2e: building synthetic sequence-%s image %s from exact commit archive %s\n' \
 	"$NEXT_RELEASE_SEQUENCE" "$NEXT_OPERATOR_IMAGE" "$CONTROLLER_REVISION"
 add_created_image "$NEXT_OPERATOR_IMAGE"
@@ -1916,6 +1974,7 @@ docker --context "$DOCKER_CONTEXT" buildx build \
 	--build-arg "REVISION=$CONTROLLER_REVISION" \
 	--target operator \
 	--tag "$NEXT_OPERATOR_IMAGE" "$NEXT_BUILD_CONTEXT"
+timing_next bootstrap fixture-image
 add_created_image "$FIXTURE_BUILD_IMAGE"
 docker --context "$DOCKER_CONTEXT" buildx build \
 	--builder "$DOCKER_CONTEXT" \
@@ -1925,6 +1984,7 @@ docker --context "$DOCKER_CONTEXT" buildx build \
 	--target fixture \
 	--tag "$FIXTURE_BUILD_IMAGE" "$ROOT_DIR"
 
+timing_next bootstrap image-audit
 create_image_audit_container "$OPERATOR_IMAGE"
 docker --context "$DOCKER_CONTEXT" export "$IMAGE_AUDIT_CONTAINER_ID" >"$IMAGE_AUDIT_ARCHIVE"
 if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)e2e-handcraft-oci$'; then
@@ -1947,6 +2007,7 @@ if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)(manager|ptah-runner)$'; then
 fi
 remove_image_audit_container
 
+timing_next bootstrap kind-cluster
 printf 'e2e: creating kind cluster %s with Kubernetes %s\n' "$CLUSTER_NAME" "$K8S_VERSION"
 CLUSTER_CREATED=1
 debug_logs_start_following
@@ -2003,6 +2064,7 @@ jq -e \
 	fail "Kubernetes $K8S_VERSION Job/Pod API exceeds the reviewed controller write boundary"
 
 ensure_source_image "$E2E_REGISTRY_IMAGE"
+timing_next bootstrap registry
 printf 'e2e: starting isolated registry %s on Docker context %s\n' \
 	"$REGISTRY_CONTAINER" "$SELECTED_DOCKER_CONTEXT"
 REGISTRY_CREATED=1
@@ -2089,6 +2151,7 @@ mirror_task_image "$E2E_MYSQL_SOURCE_IMAGE" mysql
 E2E_MYSQL_IMAGE=$PUSHED_IMAGE_REF
 
 # external-postgresql-container-create-begin
+timing_next bootstrap external-postgres
 printf 'e2e: starting external PostgreSQL container %s without host ports\n' \
 	"$EXTERNAL_PG_CONTAINER"
 EXTERNAL_PG_CREATED=1
@@ -2219,6 +2282,7 @@ jq -n \
   }
 ' | kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null
 
+timing_next bootstrap chart-install
 printf 'e2e: installing current release %s/%s from chart %s (%s)\n' \
 	"$OPERATOR_NAMESPACE" "$HELM_RELEASE" "$chart_asset" "$CHART_PACKAGE_DIGEST"
 require_ready_nodes "immediately before current-release Helm install"
@@ -2242,6 +2306,7 @@ fi
 # every Pod in the cluster. A Pod nobody controls has no ownerReferences key,
 # and an expression that reads the key without has() errors there, which the
 # API server treats as a refusal. Prove the install leaves such a Pod admitted.
+timing_next bootstrap admission-proof
 printf 'e2e: proving a Pod without Ptah labels or a Ptah Job owner is admitted outside the release namespace\n'
 kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s -n default \
 	run ptah-e2e-foreign-pod-admission --image=registry.k8s.io/pause:3.10 \
@@ -2322,6 +2387,8 @@ if [ "$E2E_STOP_AFTER" = bootstrap ]; then
 		printf 'E2E_CHART_PACKAGE=%s\n' "$CHART_PACKAGE"
 		printf 'E2E_CANDIDATE_VALUES_FILE=%s\n' "$CANDIDATE_VALUES_FILE"
 	} >"$E2E_ENVIRONMENT_FILE"
+	timing_end pass
+	write_timing_context
 	trap - EXIT HUP INT TERM
 	printf 'e2e: bootstrap complete and retained\n'
 	printf 'e2e:   cluster      %s (Kubernetes %s)\n' "$CLUSTER_NAME" "$K8S_VERSION"
@@ -2331,6 +2398,9 @@ if [ "$E2E_STOP_AFTER" = bootstrap ]; then
 	printf 'e2e:   remove it    kind delete cluster --name %s\n' "$CLUSTER_NAME"
 	exit 0
 fi
+
+timing_end pass
+write_timing_context
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \
