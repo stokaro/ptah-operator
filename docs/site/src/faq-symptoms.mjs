@@ -1,8 +1,12 @@
 // The symptoms a reader arrives with, and the questions each one reaches.
 //
-// A chip is a curated route rather than a search term: somebody whose apply
-// stopped has the condition reason, not the word the answer is written in. Free
-// text in the same field still matches what a question and its answer say.
+// A reader who hits a failure has the symptom, not the vocabulary: they know
+// the operator said `Unknown`, not that the word for it is fail-closed. So a
+// symptom typed into the filter field takes this curated route instead of a
+// substring match, and reaches questions whose text never spells the phrase.
+//
+// Free text in the same field still matches what a question and its answer
+// say. The symptoms are for the words that are not in the text.
 //
 // Each label is also a `searchAliases` entry on the page, so the same word
 // typed into the site search lands here; scripts/check-faq-groups.mjs holds the

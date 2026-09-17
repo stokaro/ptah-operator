@@ -1,32 +1,63 @@
 ---
 /**
- * The FAQ's filter: one field over the questions, and the symptoms a reader is
- * more likely to arrive with than a term.
+ * The FAQ's filter: the tags every question carries, and one field over the
+ * same questions.
  *
- * The page itself carries the structure -- `## Group` with `### Question` under
- * it -- so this adds no headings and moves nothing. It hides what does not
- * match, including a group heading whose questions all went, and says how many
- * of how many are left.
+ * A tag is state, not text. Clicking one selects it, clicking a second widens
+ * the result to questions in either, and the chips under a question say which
+ * tags it carries and select from there. src/faq-tags.mjs is the one map: the
+ * rail, the chips and the filter all read it, so no tag is written twice.
  *
- * A chip is state, not text: it selects the questions it names, a second one
- * widens the result to questions under either, and the field narrows whatever
- * is left. The two lookups are different on purpose -- a reader who has the
- * failure does not have the words the answer is written in, so "status
- * Unknown" has to reach questions that never use the phrase.
- * src/faq-symptoms.mjs is that map.
+ * The field is the other way in, for a reader who has words rather than a
+ * facet. Free text matches what a question and its answer say, and a phrase
+ * from src/faq-symptoms.mjs takes a curated route instead -- "status Unknown"
+ * has to reach questions that never use the phrase. A term and a tag selection
+ * narrow together.
  *
- * Without JavaScript the field and the chips are absent and every question is
- * on the page, which is the right fallback for a page that is meant to be read.
+ * The page itself carries the structure -- `## Group` with `### Question`
+ * under it -- so this adds no headings and moves nothing. It hides what does
+ * not match, including a group heading whose questions all went and that
+ * group's entry in the contents rail, and says how many of how many are left.
+ *
+ * Without JavaScript the rail renders and every question is on the page, which
+ * is the right fallback for a page that is meant to be read.
  */
+import { questionTags, tagLabels } from '../faq-tags.mjs';
+import { faqSymptoms } from '../faq-symptoms.mjs';
+
 interface Props {
-  symptoms: { label: string; questions: string[] }[];
   count: number;
 }
 
-const { symptoms, count } = Astro.props;
+const { count } = Astro.props;
+
+const counts = new Map<string, number>();
+for (const tags of Object.values(questionTags)) {
+  for (const tag of tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+}
+
+// Most-used first, then alphabetical, so the rail opens with the facets that
+// carry the page rather than with whatever sorted first.
+const rail = [...counts.entries()]
+  .map(([id, n]) => ({ id, n, label: tagLabels[id] ?? id }))
+  .sort((left, right) => right.n - left.n || left.label.localeCompare(right.label));
+
+// The rail is a row, not a list to read: the long tail sits behind one control
+// so the questions stay on the first screen, on a phone too.
+const LEAD = 12;
+const lead = rail.slice(0, LEAD);
+const rest = rail.slice(LEAD);
 ---
 
-<ptah-faq-filter class="faq-filter" data-count={String(count)}>
+<ptah-faq-filter
+  class="faq-filter"
+  data-count={String(count)}
+  data-tags={JSON.stringify(questionTags)}
+  data-labels={JSON.stringify(tagLabels)}
+  data-symptoms={JSON.stringify(
+    Object.fromEntries(faqSymptoms.map((symptom) => [symptom.label.toLowerCase(), symptom.questions])),
+  )}
+>
   <label class="faq-filter__field">
     <span class="faq-filter__icon" aria-hidden="true">⌕</span>
     <input
@@ -39,24 +70,44 @@ const { symptoms, count } = Astro.props;
     <span class="faq-filter__count" data-faq-count>{count} questions</span>
     <button class="faq-filter__clear" type="button" data-faq-clear hidden>Clear ×</button>
   </label>
-  {
-    symptoms.length > 0 && (
-      <div class="faq-symptoms" role="group" aria-label="Filter by a symptom">
-        <span class="faq-symptoms__label">Symptoms</span>
-        {symptoms.map((symptom) => (
-          <button
-            class="faq-symptom"
-            type="button"
-            data-faq-symptom={symptom.label}
-            data-faq-questions={symptom.questions.join(' ')}
-            aria-pressed="false"
-          >
-            {symptom.label}
-          </button>
-        ))}
-      </div>
-    )
-  }
+
+  <div
+    class="faq-tags"
+    role="group"
+    aria-label="Filter by tag. Selecting more than one shows questions in any of them."
+  >
+    <span class="faq-tags__label">Tags</span>
+    {
+      lead.map((tag) => (
+        <button class="faq-tag" type="button" data-faq-tag={tag.id} aria-pressed="false">
+          {tag.label}
+          <span class="faq-tag__n">{tag.n}</span>
+        </button>
+      ))
+    }
+    {
+      rest.map((tag) => (
+        <button
+          class="faq-tag faq-tag--rest"
+          type="button"
+          data-faq-tag={tag.id}
+          aria-pressed="false"
+          hidden
+        >
+          {tag.label}
+          <span class="faq-tag__n">{tag.n}</span>
+        </button>
+      ))
+    }
+    {
+      rest.length > 0 && (
+        <button class="faq-tags__more" type="button" data-faq-more aria-expanded="false">
+          {rest.length} more
+        </button>
+      )
+    }
+  </div>
+
   <p class="faq-filter__empty" data-faq-empty hidden></p>
 </ptah-faq-filter>
 
@@ -65,6 +116,15 @@ const { symptoms, count } = Astro.props;
     connectedCallback() {
       const content = document.querySelector('.sl-markdown-content');
       if (!content) return;
+
+      const tagsByAnchor = JSON.parse(this.dataset.tags || '{}');
+      const labels = JSON.parse(this.dataset.labels || '{}');
+      const bySymptom = new Map(
+        Object.entries(JSON.parse(this.dataset.symptoms || '{}')).map(([label, anchors]) => [
+          label,
+          new Set(anchors),
+        ]),
+      );
 
       // Starlight wraps a heading in a display:contents div, so the element
       // among the content's children is that wrapper. Walking from the heading
@@ -85,11 +145,26 @@ const { symptoms, count } = Astro.props;
 
       const questions = [...content.querySelectorAll('h3[id]')].map((h) => ({
         id: h.id,
+        tags: tagsByAnchor[h.id] ?? [],
         nodes: runFrom(top(h), () => true),
         // The question and its answer, lowercased once rather than per keystroke.
         haystack: '',
       }));
       if (questions.length === 0) return;
+
+      for (const q of questions) {
+        q.haystack = q.nodes.map((n) => n.textContent).join(' ').toLowerCase();
+      }
+
+      // The chips go at the end of the answer, and are recorded with the
+      // question: a chip appended after the run is gathered belongs to no
+      // question and would stay on screen when its question is filtered away.
+      for (const q of questions) {
+        if (q.tags.length === 0) continue;
+        const chips = this.#chips(q.tags, labels);
+        q.nodes[q.nodes.length - 1].after(chips);
+        q.nodes.push(chips);
+      }
 
       const groups = [...content.querySelectorAll('h2[id]')].map((h) => ({
         id: h.id,
@@ -105,37 +180,33 @@ const { symptoms, count } = Astro.props;
           ? group.nodes.slice(0, group.nodes.indexOf(firstQuestion))
           : group.nodes;
       }
-      for (const q of questions) {
-        q.haystack = q.nodes.map((n) => n.textContent).join(' ').toLowerCase();
+
+      // The contents rail lists the groups, so it follows the filter: a rail
+      // still offering a group the page has hidden sends the reader nowhere.
+      const railEntries = new Map();
+      for (const link of document.querySelectorAll('starlight-toc a[href^="#"]')) {
+        railEntries.set(decodeURIComponent(link.getAttribute('href').slice(1)), link);
       }
 
       const field = this.querySelector('#faq-filter-input');
       const countEl = this.querySelector('[data-faq-count]');
       const clearEl = this.querySelector('[data-faq-clear]');
       const emptyEl = this.querySelector('[data-faq-empty]');
-      const chips = [...this.querySelectorAll('[data-faq-symptom]')];
+      const moreEl = this.querySelector('[data-faq-more]');
+      const railTags = [...this.querySelectorAll('[data-faq-tag]')];
       const total = Number(this.dataset.count) || questions.length;
-
-      // A chip is state, not text: it selects the questions it names, and a
-      // second one widens the result to questions under either. The field is
-      // the other way in, for a reader who has words rather than a symptom,
-      // and it narrows whatever the chips left. Both lookups exist because a
-      // reader who has the failure does not have the words the answer is
-      // written in -- the chip carries that route, the text cannot.
       const active = new Set();
-      const bySymptom = new Map(
-        chips.map((chip) => [chip.dataset.faqSymptom, new Set(chip.dataset.faqQuestions.split(' '))]),
-      );
 
       const render = () => {
         const term = field.value.trim().toLowerCase();
-        const picked = [...active].flatMap((symptom) => [...(bySymptom.get(symptom) ?? [])]);
-        const chosen = new Set(picked);
-        const shown = questions.filter(
-          (q) =>
-            (active.size === 0 || chosen.has(q.id)) &&
-            (term === '' || q.haystack.includes(term)),
-        );
+        const routed = bySymptom.get(term);
+        // Any selected tag matches, so a second facet widens the result rather
+        // than narrowing it to the overlap. The term narrows what is left.
+        const matches = (q) =>
+          (active.size === 0 || q.tags.some((tag) => active.has(tag))) &&
+          (term === '' ? true : routed ? routed.has(q.id) : q.haystack.includes(term));
+
+        const shown = questions.filter(matches);
         const visible = new Set(shown.map((q) => q.id));
 
         for (const q of questions) {
@@ -145,9 +216,16 @@ const { symptoms, count } = Astro.props;
         for (const group of groups) {
           const hide = group.questions.every((q) => !visible.has(q.id));
           for (const node of group.chrome) node.hidden = hide;
+          const entry = railEntries.get(group.id);
+          // Hide the row, not the link: the rail nests its links in list
+          // items, and hiding the anchor alone leaves an empty bullet.
+          if (entry) (entry.closest('li') ?? entry).hidden = hide;
         }
-        for (const chip of chips) {
-          chip.setAttribute('aria-pressed', String(active.has(chip.dataset.faqSymptom)));
+        for (const button of railTags) {
+          button.setAttribute('aria-pressed', String(active.has(button.dataset.faqTag)));
+        }
+        for (const chip of content.querySelectorAll('[data-faq-chip]')) {
+          chip.setAttribute('aria-pressed', String(active.has(chip.dataset.faqChip)));
         }
 
         const filtered = active.size > 0 || term !== '';
@@ -156,25 +234,40 @@ const { symptoms, count } = Astro.props;
         emptyEl.hidden = shown.length > 0;
         if (shown.length === 0) {
           emptyEl.textContent = term
-            ? `No question matches "${field.value.trim()}" under the symptoms you picked. Try the site search, or open Condition reasons.`
-            : 'No question carries those symptoms.';
+            ? `No question matches "${field.value.trim()}" in the tags you picked. Try the site search, or open Condition reasons.`
+            : 'No question carries those tags.';
         }
       };
 
+      const toggle = (tag) => {
+        if (active.has(tag)) active.delete(tag);
+        else active.add(tag);
+        // A tag picked from the long tail stays visible once it is selected.
+        if (active.has(tag)) this.#reveal(tag);
+        render();
+      };
+
       field.addEventListener('input', render);
-      for (const chip of chips) {
-        chip.addEventListener('click', () => {
-          const symptom = chip.dataset.faqSymptom;
-          if (active.has(symptom)) active.delete(symptom);
-          else active.add(symptom);
-          render();
-        });
+      for (const button of railTags) {
+        button.addEventListener('click', () => toggle(button.dataset.faqTag));
       }
+      content.addEventListener('click', (event) => {
+        const chip = event.target.closest('[data-faq-chip]');
+        if (chip) {
+          toggle(chip.dataset.faqChip);
+          this.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }
+      });
       clearEl.addEventListener('click', () => {
         active.clear();
         field.value = '';
         render();
         field.focus();
+      });
+      moreEl?.addEventListener('click', () => {
+        const expanded = moreEl.getAttribute('aria-expanded') === 'true';
+        moreEl.setAttribute('aria-expanded', String(!expanded));
+        for (const button of this.querySelectorAll('.faq-tag--rest')) button.hidden = expanded;
       });
 
       // A shared link names one question, and a filter that hid it would make
@@ -191,6 +284,26 @@ const { symptoms, count } = Astro.props;
 
       render();
       revealHash();
+    }
+
+    #chips(tags, labels) {
+      const list = document.createElement('p');
+      list.className = 'faq-chips';
+      for (const tag of tags) {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'faq-chip';
+        chip.dataset.faqChip = tag;
+        chip.setAttribute('aria-pressed', 'false');
+        chip.textContent = labels[tag] ?? tag;
+        list.append(chip);
+      }
+      return list;
+    }
+
+    #reveal(tag) {
+      const button = this.querySelector(`.faq-tag--rest[data-faq-tag="${tag}"]`);
+      if (button) button.hidden = false;
     }
   }
 
