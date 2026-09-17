@@ -395,6 +395,28 @@ wait_for_reference_phase() {
 	fail "$REFERENCE_SCHEMA did not reach $wait_phase within ${TIMEOUT_SECONDS}s; it is in ${observed_phase:-<none>}"
 }
 
+# wait_for_reference_condition waits for one condition to hold with the reason
+# that explains it, and leaves the document that satisfied it in STATUS_FILE, so
+# a caller asserts against the reading that matched rather than re-reading and
+# reopening the window.
+wait_for_reference_condition() {
+	condition_type=$1
+	condition_status=$2
+	condition_reason=$3
+	condition_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$condition_deadline" ]; do
+		reference_status
+		if jq -e --arg type "$condition_type" --arg status "$condition_status" \
+			--arg reason "$condition_reason" \
+			'[.status.conditions // [] | .[] | select(.type == $type and .status == $status and .reason == $reason)] | length == 1' \
+			"$STATUS_FILE" >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	fail "$REFERENCE_SCHEMA did not report $condition_type=$condition_status ($condition_reason) within ${TIMEOUT_SECONDS}s"
+}
+
 # scan_for_rows is the refusal this phase exists to measure: "table rows never
 # reach status, Events, or ordinary logs". The values are the declared ones, so
 # a leak is a literal match rather than a shape to recognize.
@@ -845,6 +867,55 @@ assert_declared_empty_set_clears_the_rows() {
 		fail "the empty countries declaration changed the regions rows"
 }
 
+# assert_a_protected_table_refuses_the_change is the fence.
+#
+# spec.policy.protectedTables names a declared table, and a revision that would
+# change its rows is refused rather than rated: no plan is published, no
+# approval can be offered, and the table keeps what it holds. The fence carries
+# no override, so what this measures is that the refusal is reported as itself
+# and that the database is untouched while it stands.
+#
+# Then the entry goes, and the same revision converges. A fence that refused
+# everything forever would pass a proof that only measured the refusal, and the
+# operator would have no way back to a change a person decided to make.
+assert_a_protected_table_refuses_the_change() {
+	fence_before=$(reference_query "SELECT count(*) FROM countries")
+	[ "$fence_before" = 0 ] ||
+		fail "the fence proof starts from $fence_before countries, and the emptied set left none"
+	printf 'e2e reference data: fencing the %s countries table off from the declarative path\n' \
+		"$ENGINE_KIND" >&2
+	k -n "$TEST_NAMESPACE" patch ptahschema "$REFERENCE_SCHEMA" --type=merge \
+		-p '{"spec":{"policy":{"protectedTables":["countries"]}}}' >/dev/null ||
+		fail "the protected table could not be added to $REFERENCE_SCHEMA"
+	publish_reference_schema v5
+	wait_for_reference_condition PlanReady False ProtectedTable
+	# The reading that satisfied the wait: no plan, and the refusal named on the
+	# conditions a reader looks at.
+	jq -e '.status.plan == null' "$STATUS_FILE" >/dev/null ||
+		fail "a plan was published for a change to a protected table"
+	jq -e '[.status.conditions[] | select(.type == "Ready" and .status == "False" and .reason == "ProtectedTable")] | length == 1' \
+		"$STATUS_FILE" >/dev/null ||
+		fail "the protected-table refusal is not readable on Ready"
+	scan_for_rows "$STATUS_FILE" "the status of a refused fenced change"
+	scan_for_credentials "$STATUS_FILE" "the status of a refused fenced change"
+	[ "$(reference_query "SELECT count(*) FROM countries")" = 0 ] ||
+		fail "a refused fenced change wrote rows into countries"
+	[ "$(reference_query "SELECT count(*) FROM regions")" = 2 ] ||
+		fail "a refused fenced change touched the regions rows"
+
+	printf 'e2e reference data: removing the %s fence, so the same revision may converge\n' \
+		"$ENGINE_KIND" >&2
+	k -n "$TEST_NAMESPACE" patch ptahschema "$REFERENCE_SCHEMA" --type=merge \
+		-p '{"spec":{"policy":{"protectedTables":[]}}}' >/dev/null ||
+		fail "the protected table could not be removed from $REFERENCE_SCHEMA"
+	wait_for_reference_phase AwaitingApproval
+	wait_for_reference_plan
+	approve_reference_plan "${REFERENCE_APPROVAL}-v5" "$REFERENCE_PLAN" ||
+		fail "the plan that the fence had refused could not be approved: $(cat "$ADMISSION_ERROR_FILE")"
+	wait_for_reference_phase InSync
+	assert_declared_rows 2 1 "Czechia"
+}
+
 # The refusal that has to hold through every step above: no declared row value
 # reaches status, an Event, or the controller's own log.
 #
@@ -892,8 +963,9 @@ run_engine_reference_data() {
 	assert_external_edit_refuses_a_stale_approval
 	assert_removed_declaration_keeps_rows
 	assert_declared_empty_set_clears_the_rows
+	assert_a_protected_table_refuses_the_change
 	assert_rows_never_left_the_database
-	printf 'e2e reference data: PASS %s declared rows, data-only change, stale approval, ended management, and an emptied set\n' \
+	printf 'e2e reference data: PASS %s declared rows, data-only change, stale approval, ended management, an emptied set, and a protected table\n' \
 		"$ENGINE_KIND" >&2
 }
 

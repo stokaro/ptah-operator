@@ -299,6 +299,25 @@ type ReconciliationPolicy struct {
 	// +kubebuilder:validation:Enum=all;file;none
 	// +kubebuilder:default=file
 	TransactionMode string `json:"transactionMode,omitempty"`
+
+	// ProtectedTables fences declared row sets off from the declarative path.
+	// A plan that would change a listed table is refused rather than rated, and
+	// there is no override: an approval, allowDestructive and a permissive
+	// severity are all answers to "how risky is this", and a fence is the
+	// statement that no such answer exists for these rows. Where the change is
+	// wanted, the entry goes, or the rows are written as a migration.
+	//
+	// An entry names a table, or a schema and a table, the way the declaration
+	// does. Matching is Ptah's, which is case-insensitive, and an entry on a
+	// table the artifact already agrees with refuses nothing -- which is what
+	// lets a fence sit in a policy permanently.
+	//
+	// +kubebuilder:validation:MaxItems=128
+	// +listType=set
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=256
+	// +kubebuilder:validation:items:Pattern=`^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)?$`
+	ProtectedTables []string `json:"protectedTables,omitempty"`
 }
 
 // ExecutionSpec exposes bounded scheduling and resource controls while
@@ -701,10 +720,16 @@ type PendingObservationStatus struct {
 	// immutable proof inputs now require authoritative managed-scope planning.
 	PlanRequired bool `json:"planRequired,omitempty"`
 
-	Exclude        []string        `json:"exclude,omitempty"`
-	DriftSeverity  string          `json:"driftSeverity,omitempty"`
-	ConnectTimeout metav1.Duration `json:"connectTimeout,omitempty"`
-	LockTimeout    metav1.Duration `json:"lockTimeout,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
+	// ProtectedTables is the fence the in-flight plan was computed under. A
+	// policy edit while a plan is pending must not let it execute against a
+	// fence it never saw.
+	// +kubebuilder:validation:MaxItems=128
+	// +listType=set
+	ProtectedTables []string        `json:"protectedTables,omitempty"`
+	DriftSeverity   string          `json:"driftSeverity,omitempty"`
+	ConnectTimeout  metav1.Duration `json:"connectTimeout,omitempty"`
+	LockTimeout     metav1.Duration `json:"lockTimeout,omitempty"`
 
 	// LeaseDurationSeconds is the immutable duration claimed for the Apply
 	// operation. The same holder remains active through convergence proof.
@@ -753,14 +778,17 @@ type ActiveOperationStatus struct {
 
 	// Plan and Apply operations persist their credential-free lock binding so
 	// later spec changes cannot redirect or shorten protection for a running Job.
-	CoordinationDigest        string                 `json:"coordinationDigest,omitempty"`
-	TargetIdentityDigest      string                 `json:"targetIdentityDigest,omitempty"`
-	Target                    *DatabaseTargetBinding `json:"target,omitempty"`
-	ObservationExclude        []string               `json:"observationExclude,omitempty"`
-	ObservationSeverity       string                 `json:"observationSeverity,omitempty"`
-	ObservationDev            *DatabaseTargetRef     `json:"observationDev,omitempty"`
-	ObservationConnectTimeout metav1.Duration        `json:"observationConnectTimeout,omitempty"`
-	ObservationLockTimeout    metav1.Duration        `json:"observationLockTimeout,omitempty"`
+	CoordinationDigest   string                 `json:"coordinationDigest,omitempty"`
+	TargetIdentityDigest string                 `json:"targetIdentityDigest,omitempty"`
+	Target               *DatabaseTargetBinding `json:"target,omitempty"`
+	ObservationExclude   []string               `json:"observationExclude,omitempty"`
+	// +kubebuilder:validation:MaxItems=128
+	// +listType=set
+	ObservationProtectedTables []string           `json:"observationProtectedTables,omitempty"`
+	ObservationSeverity        string             `json:"observationSeverity,omitempty"`
+	ObservationDev             *DatabaseTargetRef `json:"observationDev,omitempty"`
+	ObservationConnectTimeout  metav1.Duration    `json:"observationConnectTimeout,omitempty"`
+	ObservationLockTimeout     metav1.Duration    `json:"observationLockTimeout,omitempty"`
 	// VerificationPolicyUID and VerificationPolicyDigest bind a Verify Job to
 	// the immutable ConfigMap version inspected before dispatch.
 	VerificationPolicyUID    types.UID `json:"verificationPolicyUID,omitempty"`
@@ -834,6 +862,7 @@ const (
 	ReasonPolicyRefused                ConditionReason = "PolicyRefused"
 	ReasonPolicySatisfied              ConditionReason = "PolicySatisfied"
 	ReasonProofInputsChanged           ConditionReason = "ProofInputsChanged"
+	ReasonProtectedTable               ConditionReason = "ProtectedTable"
 	ReasonPublished                    ConditionReason = "Published"
 	ReasonRealmConflict                ConditionReason = "RealmConflict"
 	ReasonRefreshFailed                ConditionReason = "RefreshFailed"

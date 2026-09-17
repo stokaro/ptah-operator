@@ -1605,12 +1605,21 @@ func findChunkReference(
 	return operatorv1alpha1.PlanChunkReference{}, false
 }
 
+// SchemaPolicyFingerprint is the policy binding this admission side requires a
+// plan to carry, exported for the fixture that stands up a plan it must accept.
+// A fixture that spells the policy a second time agrees with nothing the day
+// the policy grows a field.
+func SchemaPolicyFingerprint(schema *operatorv1alpha1.PtahSchema) (string, error) {
+	return schemaPolicyFingerprint(schema)
+}
+
 func schemaPolicyFingerprint(schema *operatorv1alpha1.PtahSchema) (string, error) {
 	return fingerprint.DigestCanonicalJSON(struct {
 		Engine           operatorv1alpha1.DatabaseEngine `json:"engine"`
 		AllowDestructive bool                            `json:"allow_destructive"`
 		DriftSeverity    string                          `json:"drift_severity"`
 		Exclude          []string                        `json:"exclude"`
+		ProtectedTables  []string                        `json:"protected_tables"`
 		LockTimeout      string                          `json:"lock_timeout"`
 		TransactionMode  string                          `json:"transaction_mode"`
 		ConnectTimeout   string                          `json:"connect_timeout"`
@@ -1618,6 +1627,7 @@ func schemaPolicyFingerprint(schema *operatorv1alpha1.PtahSchema) (string, error
 		Engine: schema.Spec.Target.Engine, AllowDestructive: schema.Spec.Policy.AllowDestructive,
 		DriftSeverity:   schema.Spec.Policy.DriftSeverity,
 		Exclude:         fingerprint.NormalizeSet(schema.Spec.Policy.Exclude),
+		ProtectedTables: fingerprint.NormalizeSet(schema.Spec.Policy.ProtectedTables),
 		LockTimeout:     schema.Spec.Policy.LockTimeout.Duration.String(),
 		TransactionMode: schema.Spec.Policy.TransactionMode,
 		ConnectTimeout:  schema.Spec.Execution.ConnectTimeout.Duration.String(),

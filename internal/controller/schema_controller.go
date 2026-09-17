@@ -1388,6 +1388,12 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 			}
 			return r.blockVerification(ctx, schema, job, result.VerificationRequirements, operation.VerificationPolicyUID, result.VerificationPolicyDigest)
 		}
+		// A fenced plan is not a run that went wrong: Ptah refused to compute a
+		// plan that would change a table the policy protects, and it saved
+		// nothing. Naming it keeps a reader from reading a refusal as a fault.
+		if operation.Type == operatorv1alpha1.OperationPlan && result.Error.Code == "protected_table" {
+			return r.refuseProtectedTable(ctx, schema, job, result.Error.Message)
+		}
 		if operation.Type == operatorv1alpha1.OperationApply || result.Uncertain {
 			// A terminal result belongs to only one Pod attempt. Kubernetes may
 			// start a Job workload more than once, so no child-side pre-mutation
@@ -1610,6 +1616,37 @@ func (r *SchemaReconciler) blockVerification(
 	}
 	r.event(schema, corev1.EventTypeWarning, "ArtifactVerificationRefused", "%s", bounded(message, 512))
 	return ctrl.Result{RequeueAfter: interval(schema)}, nil
+}
+
+// refuseProtectedTable records a plan Ptah refused because it would change a
+// table the policy fences off.
+//
+// It is a refusal rather than a failure of the run, and it carries no override:
+// the fence is the statement that no approval, no allowDestructive and no
+// severity makes this change permissible from the declarative path. So the
+// conditions name it, and the resource keeps reconciling: the refusal stands
+// until the fence goes or the artifact stops asking for the change, and either
+// of those is a change this operator sees on its next interval.
+func (r *SchemaReconciler) refuseProtectedTable(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	message string,
+) (ctrl.Result, error) {
+	refusal := fmt.Errorf("plan refuses to change a protected table: %s", bounded(message, 512))
+	return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonProtectedTable, refusal,
+		func(refused *operatorv1alpha1.PtahSchema) {
+			setCondition(refused, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse,
+				operatorv1alpha1.ReasonProtectedTable,
+				"No plan may change a table spec.policy.protectedTables fences off")
+			setCondition(refused, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse,
+				operatorv1alpha1.ReasonProtectedTable,
+				"The artifact asks for a change to a protected table, so the managed scope cannot converge")
+			setCondition(refused, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
+				operatorv1alpha1.ReasonProtectedTable,
+				"Remove the protectedTables entry to plan the change, or write the rows as a migration")
+			r.event(refused, corev1.EventTypeWarning, "ProtectedTableRefused", "%s", bounded(message, 512))
+		})
 }
 
 func (r *SchemaReconciler) suspendActiveOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {
@@ -2137,6 +2174,7 @@ func (r *SchemaReconciler) claimAt(
 			active.Target = &target
 			active.Source = pending.Source.DeepCopy()
 			active.ObservationExclude = append([]string(nil), pending.Exclude...)
+			active.ObservationProtectedTables = append([]string(nil), pending.ProtectedTables...)
 			active.ObservationSeverity = pending.DriftSeverity
 			active.ObservationDev = pending.Dev.DeepCopy()
 			active.ObservationConnectTimeout = pending.ConnectTimeout
@@ -2151,6 +2189,7 @@ func (r *SchemaReconciler) claimAt(
 			active.Target = &target
 			active.Source = artifactAccessBinding(schema)
 			active.ObservationExclude = append([]string(nil), schema.Spec.Policy.Exclude...)
+			active.ObservationProtectedTables = append([]string(nil), schema.Spec.Policy.ProtectedTables...)
 			active.ObservationSeverity = schema.Spec.Policy.DriftSeverity
 			active.ObservationDev = schema.Spec.Dev.DeepCopy()
 			active.ObservationConnectTimeout = schema.Spec.Execution.ConnectTimeout
@@ -2173,6 +2212,7 @@ func (r *SchemaReconciler) claimAt(
 		active.Target = &target
 		active.Source = artifactAccessBinding(schema)
 		active.ObservationExclude = append([]string(nil), schema.Spec.Policy.Exclude...)
+		active.ObservationProtectedTables = append([]string(nil), schema.Spec.Policy.ProtectedTables...)
 		active.ObservationSeverity = schema.Spec.Policy.DriftSeverity
 		active.ObservationDev = schema.Spec.Dev.DeepCopy()
 		active.ObservationConnectTimeout = schema.Spec.Execution.ConnectTimeout
@@ -2189,6 +2229,7 @@ func (r *SchemaReconciler) claimAt(
 			active.Target = &target
 			active.Source = pending.Source.DeepCopy()
 			active.ObservationExclude = append([]string(nil), pending.Exclude...)
+			active.ObservationProtectedTables = append([]string(nil), pending.ProtectedTables...)
 			active.ObservationSeverity = pending.DriftSeverity
 			active.ObservationDev = pending.Dev.DeepCopy()
 			active.ObservationConnectTimeout = pending.ConnectTimeout
@@ -2204,6 +2245,7 @@ func (r *SchemaReconciler) claimAt(
 			active.Target = &target
 			active.Source = artifactAccessBinding(schema)
 			active.ObservationExclude = append([]string(nil), schema.Spec.Policy.Exclude...)
+			active.ObservationProtectedTables = append([]string(nil), schema.Spec.Policy.ProtectedTables...)
 			active.ObservationSeverity = schema.Spec.Policy.DriftSeverity
 			active.ObservationDev = schema.Spec.Dev.DeepCopy()
 			active.ObservationConnectTimeout = schema.Spec.Execution.ConnectTimeout
@@ -2260,6 +2302,21 @@ func (r *SchemaReconciler) claimAt(
 }
 
 func (r *SchemaReconciler) retryOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema, job *batchv1.Job, failure error) (ctrl.Result, error) {
+	return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonOperationFailed, failure, nil)
+}
+
+// retryOperationAs is retryOperation with the failure named, and with a chance
+// to record what else the failure means before the status is patched. A caller
+// that knows why an operation failed can say so on the conditions a reader
+// looks at, without a second path for releasing the lock and renaming the Job.
+func (r *SchemaReconciler) retryOperationAs(
+	ctx context.Context,
+	schema *operatorv1alpha1.PtahSchema,
+	job *batchv1.Job,
+	reason operatorv1alpha1.ConditionReason,
+	failure error,
+	record func(*operatorv1alpha1.PtahSchema),
+) (ctrl.Result, error) {
 	operation := schema.Status.ActiveOperation
 	if !isReadOnlyOperation(operation) {
 		operationType := operatorv1alpha1.OperationType("")
@@ -2297,7 +2354,10 @@ func (r *SchemaReconciler) retryOperation(ctx context.Context, schema *operatorv
 	schema.Status.Phase = operatorv1alpha1.PhaseFailed
 	next := metav1.NewTime(r.now().Add(failureRetry(schema)))
 	schema.Status.NextReconciliationTime = &next
-	setFailure(schema, operatorv1alpha1.ReasonOperationFailed, failure)
+	if record != nil {
+		record(schema)
+	}
+	setFailure(schema, reason, failure)
 	if operation.Type == operatorv1alpha1.OperationResolve {
 		markSourceRefreshFailed(schema)
 	}
@@ -2526,6 +2586,7 @@ func pendingObservationFor(
 		Source:               *operation.Source.DeepCopy(),
 		Dev:                  operation.ObservationDev.DeepCopy(),
 		Exclude:              append([]string(nil), operation.ObservationExclude...),
+		ProtectedTables:      append([]string(nil), operation.ObservationProtectedTables...),
 		DriftSeverity:        operation.ObservationSeverity,
 		ConnectTimeout:       operation.ObservationConnectTimeout,
 		LockTimeout:          operation.ObservationLockTimeout,
@@ -4373,6 +4434,7 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 			base["target_identity"] = pending.Plan.TargetIdentityDigest
 			base["target"] = pending.Target
 			base["exclude"] = fingerprint.NormalizeSet(pending.Exclude)
+			base["protected_tables"] = fingerprint.NormalizeSet(pending.ProtectedTables)
 			base["dev"] = pending.Dev
 			base["connect_timeout"] = pending.ConnectTimeout
 		} else {
@@ -4387,6 +4449,7 @@ func operationInputs(schema *operatorv1alpha1.PtahSchema, operation operatorv1al
 			base["target_identity"] = schema.Status.Target.IdentityDigest
 			base["target"] = databaseTargetBinding(schema.Spec.Target)
 			base["exclude"] = fingerprint.NormalizeSet(schema.Spec.Policy.Exclude)
+			base["protected_tables"] = fingerprint.NormalizeSet(schema.Spec.Policy.ProtectedTables)
 			base["dev"] = schema.Spec.Dev
 			base["connect_timeout"] = schema.Spec.Execution.ConnectTimeout
 		}
@@ -4466,6 +4529,8 @@ func pendingMatchesCurrentSchema(schema *operatorv1alpha1.PtahSchema, pending *o
 		!reflect.DeepEqual(artifactAccessBinding(schema), pending.Source.DeepCopy()) ||
 		!reflect.DeepEqual(schema.Spec.Dev, pending.Dev) ||
 		!reflect.DeepEqual(fingerprint.NormalizeSet(schema.Spec.Policy.Exclude), fingerprint.NormalizeSet(pending.Exclude)) ||
+		!reflect.DeepEqual(fingerprint.NormalizeSet(schema.Spec.Policy.ProtectedTables),
+			fingerprint.NormalizeSet(pending.ProtectedTables)) ||
 		schema.Spec.Policy.DriftSeverity != pending.DriftSeverity ||
 		schema.Spec.Execution.ConnectTimeout != pending.ConnectTimeout || schema.Spec.Policy.LockTimeout != pending.LockTimeout {
 		return false
@@ -4571,13 +4636,19 @@ func policyFingerprint(schema *operatorv1alpha1.PtahSchema) (string, error) {
 		AllowDestructive bool                            `json:"allow_destructive"`
 		DriftSeverity    string                          `json:"drift_severity"`
 		Exclude          []string                        `json:"exclude"`
+		ProtectedTables  []string                        `json:"protected_tables"`
 		LockTimeout      string                          `json:"lock_timeout"`
 		TransactionMode  string                          `json:"transaction_mode"`
 		ConnectTimeout   string                          `json:"connect_timeout"`
 	}{
 		Engine: schema.Spec.Target.Engine, AllowDestructive: schema.Spec.Policy.AllowDestructive,
 		DriftSeverity: schema.Spec.Policy.DriftSeverity,
-		Exclude:       fingerprint.NormalizeSet(schema.Spec.Policy.Exclude), LockTimeout: schema.Spec.Policy.LockTimeout.Duration.String(),
+		Exclude:       fingerprint.NormalizeSet(schema.Spec.Policy.Exclude),
+		// The fence is part of the policy a published plan was computed under:
+		// editing it makes a pending plan and its approval stale, which is the
+		// point. A plan computed without a fence must not execute under one.
+		ProtectedTables: fingerprint.NormalizeSet(schema.Spec.Policy.ProtectedTables),
+		LockTimeout:     schema.Spec.Policy.LockTimeout.Duration.String(),
 		TransactionMode: schema.Spec.Policy.TransactionMode, ConnectTimeout: schema.Spec.Execution.ConnectTimeout.Duration.String(),
 	})
 }

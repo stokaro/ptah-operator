@@ -437,6 +437,11 @@ func runPlan(
 		setResultError(&result, "invalid_input", err, redactor, config.Diagnostics)
 		return result
 	}
+	protectedTables, err := planProtectedTables(environment)
+	if err != nil {
+		setResultError(&result, "invalid_input", err, redactor, config.Diagnostics)
+		return result
+	}
 	if strings.TrimSpace(inputs.ExpectedDatabaseEngine) == "" {
 		setResultError(&result, "invalid_input", errors.New("PTAH_EXPECTED_DATABASE_ENGINE is required"), redactor, config.Diagnostics)
 		return result
@@ -447,9 +452,15 @@ func runPlan(
 		setResultError(&result, "invalid_input", err, redactor, config.Diagnostics)
 		return result
 	}
-	spec.Env = environmentWithout(childEnvironment(environment), "PTAH_EXCLUDE")
+	spec.Env = environmentWithout(childEnvironment(environment), "PTAH_EXCLUDE", "PTAH_PROTECTED_TABLES")
 	for _, selector := range planExcludes {
 		spec.Args = append(spec.Args, "--exclude="+selector)
+	}
+	// The fence is passed to the plan and to nothing else. Ptah refuses a plan
+	// that would change a fenced table rather than saving one, so a fenced
+	// change never reaches an approval or an Apply.
+	for _, table := range protectedTables {
+		spec.Args = append(spec.Args, "--protected-table="+table)
 	}
 	if err := ensureNoCredentialsInArguments(spec.Args, environmentMap(environment)); err != nil {
 		setResultError(&result, "credential_in_arguments", err, redactor, config.Diagnostics)
@@ -528,6 +539,7 @@ func runPlan(
 		envSchemaFile,
 		"PTAH_DEV_URL",
 		"PTAH_EXCLUDE",
+		"PTAH_PROTECTED_TABLES",
 	)
 	if err := ensureNoCredentialsInArguments(validationSpec.Args, environmentMap(environment)); err != nil {
 		setResultError(&result, "credential_in_arguments", err, redactor, config.Diagnostics)
@@ -562,6 +574,14 @@ func validPlanCommandOutcome(result *Result, outcome commandOutcome, redactor Re
 		return false
 	}
 	if outcome.err != nil || outcome.exitCode != 0 {
+		// One plan failure is not a fault: a plan that would change a table the
+		// caller fenced off is refused, and Ptah saves nothing. It is reported
+		// under its own code so the controller can say so, and the reason is
+		// the child's own sentence, which names the tables and no rows.
+		if refusal, fenced := protectedTableRefusal(outcome); fenced {
+			setResultError(result, "protected_table", errors.New(refusal), redactor, diagnostics)
+			return false
+		}
 		setResultError(result, "invalid_plan_output", errors.New("plan validation command did not complete successfully"), redactor, diagnostics)
 		return false
 	}
@@ -570,6 +590,25 @@ func validPlanCommandOutcome(result *Result, outcome commandOutcome, redactor Re
 		return false
 	}
 	return true
+}
+
+// protectedTableMarker is the sentence Ptah's fence refusal opens with. It is
+// the contract this reads, and a Ptah that stopped printing it would report the
+// refusal as an ordinary plan failure rather than as a fence -- which is the
+// safe direction to be wrong in.
+const protectedTableMarker = "refusing to change protected table"
+
+func protectedTableRefusal(outcome commandOutcome) (string, bool) {
+	stderr := string(outcome.stderr.bytes())
+	index := strings.Index(stderr, protectedTableMarker)
+	if index < 0 {
+		return "", false
+	}
+	refusal := strings.TrimSpace(stderr[index:])
+	if line := strings.IndexByte(refusal, '\n'); line >= 0 {
+		refusal = strings.TrimSpace(refusal[:line])
+	}
+	return refusal, true
 }
 
 func planDryRunOutput(plan dataplane.PlanFile) []byte {
@@ -582,6 +621,28 @@ func planApplyOutput(plan dataplane.PlanFile) []byte {
 	output = append(output, "Schema apply completed successfully.\n"...)
 	return output
 }
+
+// planProtectedTables reads the tables this plan may not change. An entry is a
+// table, or a schema and a table, as the declaration names it; anything else is
+// refused here rather than passed to the child, because a flag value that is
+// not an identifier is an input error and not a fence.
+func planProtectedTables(environment []string) ([]string, error) {
+	tables, err := decodeEnvironmentList(environmentMap(environment)["PTAH_PROTECTED_TABLES"])
+	if err != nil {
+		return nil, errors.New("PTAH_PROTECTED_TABLES is not a valid encoded table list")
+	}
+	for _, table := range tables {
+		if !protectedTablePattern.MatchString(table) {
+			return nil, errors.New("PTAH_PROTECTED_TABLES contains a name that is not a table or schema.table")
+		}
+	}
+	return normalizedSelectors(tables), nil
+}
+
+// protectedTablePattern is the shape the API already enforces, repeated here
+// because the runner is the process that hands the value to a command line and
+// cannot assume what admitted it.
+var protectedTablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)?$`)
 
 func planExcludeSelectors(environment []string) ([]string, error) {
 	selectors, err := decodeEnvironmentList(environmentMap(environment)["PTAH_EXCLUDE"])
