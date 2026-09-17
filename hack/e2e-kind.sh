@@ -290,14 +290,15 @@ else
 fi
 
 # The data plane is the one phase with a preparation mode, because it is the one
-# whose namespace other phases work in. A catalog that asked to prepare with any
-# other phase is refused rather than ignored: that phase has no mode to run in,
-# so it would run its own acceptance in a suite that does not cover it.
+# whose namespace other phases work in: it stands that namespace up and runs
+# none of its own acceptance. Every other preparation phase runs in full, which
+# is how a suite borrows what another phase's acceptance leaves behind. Either
+# way it is not coverage: the catalog counts a phase as covered only in the
+# suite that lists it under phases.
 DATAPLANE_MODE=full
 for prepare_phase in $SUITE_PREPARE_PHASES; do
 	case $prepare_phase in
 		dataplane) DATAPLANE_MODE=prepare ;;
-		*) fail "suite $E2E_SUITE prepares with $prepare_phase, which has no preparation mode" ;;
 	esac
 done
 

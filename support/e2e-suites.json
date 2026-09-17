@@ -21,7 +21,12 @@
     "dependency group rather than two suites.",
     "",
     "prepare names a phase a suite runs for its prerequisites rather than for",
-    "its own acceptance. The migration and reference-data phases run in the",
+    "its own acceptance. A phase with a preparation mode runs in it; a phase",
+    "without one runs in full, which is how a suite borrows the objects another",
+    "phase's acceptance leaves behind -- the certificate rotation reaches the",
+    "approval the control-plane contract creates, and repeating that phase for",
+    "forty seconds is cheaper than either copying its fixtures or tying the two",
+    "suites together. The migration and reference-data phases run in the",
     "namespace the data plane stands up -- its registry Service, its databases",
     "and its admission fixtures -- so that phase runs in preparation mode there,",
     "which creates those prerequisites and executes no operation under test.",
@@ -41,7 +46,7 @@
       "slug": "certificates",
       "summary": "Certificate rotation, recovery from a corrupt CA, and guarded recreation",
       "phases": ["cert-rotation"],
-      "prepare": []
+      "prepare": ["assert"]
     },
     {
       "name": "data-plane",

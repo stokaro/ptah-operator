@@ -100,6 +100,14 @@ RUNNING_APPLY_BARRIER_ACTIVE=0
 # The advisory key the barrier holds and the Apply's one statement asks for.
 # Both spellings are here so a reader sees the whole contention in one place.
 RUNNING_APPLY_BARRIER_KEY=742019370001
+# The database the barrier holds its advisory lock in, which has to be the one
+# the Apply connects to. A PostgreSQL advisory lock is per database: measured on
+# PostgreSQL 17, a holder and a waiter in the same database contend, and a
+# holder in the container's administrative database with a waiter in the
+# application database do not -- so a barrier held in the wrong one blocks
+# nothing and the Apply returns at once. The name comes from the same
+# credentials the fixture's Secret is built from.
+RUNNING_APPLY_BARRIER_DATABASE=
 RUNNING_APPLY_BARRIER_APPLICATION=ptah-operator-running-apply-barrier
 BLOCKED_STABILITY_SECONDS=10
 BLOCKED_FAILURE_TIMEOUT_SECONDS=150
@@ -182,8 +190,8 @@ cleanup() {
 	# past the phase, and the next phase meets a database nobody can change.
 	if [ "$RUNNING_APPLY_BARRIER_ACTIVE" -eq 1 ]; then
 		if ! docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
-			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = '"'"'$1'"'"' AND pid <> pg_backend_pid()"' \
-			sh "$RUNNING_APPLY_BARRIER_APPLICATION" >/dev/null 2>&1; then
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$2" -Atqc "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = '"'"'$1'"'"' AND pid <> pg_backend_pid()"' \
+			sh "$RUNNING_APPLY_BARRIER_APPLICATION" "$RUNNING_APPLY_BARRIER_DATABASE" >/dev/null 2>&1; then
 			printf 'e2e crd: could not release the running Apply database barrier\n' >&2
 		fi
 		RUNNING_APPLY_BARRIER_ACTIVE=0
@@ -3514,10 +3522,26 @@ prove_runtime_deployment_recovery() {
 # database barrier below provides: it holds an advisory lock, the Apply's one
 # statement asks for the same lock, and the Apply blocks inside the engine
 # until the barrier is released (stokaro/ptah-operator#7).
+#
+# resolve_running_apply_database names the database the barrier and the Apply
+# must share. It is the one the fixture's Secret is built from, read from the
+# same credentials, because the barrier starts before that Secret exists.
+resolve_running_apply_database() {
+	resolved_database=$(jq -er '.database' \
+		"${E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE:?E2E_EXTERNAL_POSTGRES_CREDENTIALS_FILE is required for the running Apply barrier}") ||
+		fail "external PostgreSQL credentials name no database for the running Apply barrier"
+	printf '%s\n' "$resolved_database" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$' ||
+		fail "external PostgreSQL credentials name an unusable database for the running Apply barrier"
+	printf '%s' "$resolved_database"
+}
+
+# Read in the database the lock lives in. pg_locks is cluster-wide, so the
+# question could be asked anywhere; asking it where the lock is keeps the
+# barrier, the waiter and the reading in one place.
 running_apply_postgres_query() {
 	docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
-		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "$1"' \
-		sh "$1"
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$2" -Atqc "$1"' \
+		sh "$1" "$RUNNING_APPLY_BARRIER_DATABASE"
 }
 
 running_apply_barrier_contention_query() {
@@ -3527,9 +3551,11 @@ running_apply_barrier_contention_query() {
 start_running_apply_barrier() {
 	[ "$RUNNING_APPLY_BARRIER_ACTIVE" -eq 0 ] ||
 		fail "running Apply database barrier is already active"
+	RUNNING_APPLY_BARRIER_DATABASE=$(resolve_running_apply_database)
 	docker --context "$E2E_DOCKER_CONTEXT" exec "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" \
-		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; PGAPPNAME="$1"; export PGAPPNAME; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -Atqc "SELECT pg_advisory_lock($2); SELECT pg_sleep(900)"' \
+		sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD"; export PGPASSWORD; PGAPPNAME="$1"; export PGAPPNAME; exec psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$3" -v ON_ERROR_STOP=1 -Atqc "SELECT pg_advisory_lock($2); SELECT pg_sleep(900)"' \
 		sh "$RUNNING_APPLY_BARRIER_APPLICATION" "$RUNNING_APPLY_BARRIER_KEY" \
+		"$RUNNING_APPLY_BARRIER_DATABASE" \
 		>"$WORK_DIR/running-apply-barrier.out" \
 		2>"$WORK_DIR/running-apply-barrier.err" &
 	RUNNING_APPLY_BARRIER_PID=$!
