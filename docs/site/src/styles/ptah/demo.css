@@ -227,21 +227,34 @@
 .demo-screen,
 .demo-transcript {
   overflow-x: auto;
-  overscroll-behavior-x: contain;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--termline) transparent;
 }
 .demo-transcript {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   tab-size: 2;
 }
-/* One box for the session, whichever copy of it is showing.
+/* The fixed height belongs to the screen, and to nothing else.
  *
- * At rest the frame shows the transcript that is in the markup; playing, it
- * shows the screen the player types into. One declaration gives both the same
- * height, so the frame is the same height at rest, playing and paused, and
- * pressing Play does not move the page under the reader's hands. The height is
+ * At rest the frame shows the transcript that is in the markup, at its own
+ * height: the whole session in the page, scrolled the way every other page is
+ * scrolled. A reader who came to read gets the listing, and a box with its own
+ * scrollbar inside a page that already scrolls is the thing that stands
+ * between them and it.
+ *
+ * Playing, the frame shows the screen the player types into, and that one is a
+ * terminal: a fixed box, scrolled to the end, so the page does not reflow line
+ * by line and the newest output stays where the eye already is. The height is
  * a variable so that the narrower window changes it in one place rather than
  * in a copy of the rule that would drift.
+ *
+ * So pressing Play moves the page: the frame goes from the whole session to
+ * one screen of it. That is the trade, and it is worth it. Most readers never
+ * press anything, and the reflow is charged to the one who did -- once, at the
+ * moment they asked for a player, which is a reasonable moment for a player to
+ * appear. From that press onward the box holds still.
  *
  * Scrollable rather than clipped: a session is longer than the box, and a
  * reader who looks up mid-run should be able to go back and read what they
@@ -254,13 +267,9 @@
     --demo-screen-height: 300px;
   }
 }
-.demo-screen,
-.demo-transcript {
+.demo-screen {
   block-size: var(--demo-screen-height);
   overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--termline) transparent;
 }
 .demo-cursor {
   color: var(--termamber);
