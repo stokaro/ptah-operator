@@ -86,6 +86,7 @@ steps:
       kind: ptahschema
       name: catalog
       timeout: 6m
+      generation: current
       condition:
         type: InSync
         status: "True"
@@ -103,14 +104,11 @@ steps:
       stdout_contains: [UPDATE]
 
   - note: The next observation sees it, plans the difference, and the apply puts the declared value back.
-    await:
-      kind: ptahschema
-      name: catalog
-      timeout: 6m
-      condition:
-        type: InSync
-        status: "True"
-        reason: ScopedConverged
+    # The command is a read, re-run until the declared value is back. Waiting on
+    # InSync would prove nothing here: no spec changed, so the condition that was
+    # true before the edit is still true during it, and generation: current
+    # cannot help for the same reason.
+    retry: 6m
     run: kubectl -n "$NAMESPACE" exec deploy/demo-psql -- psql -qAt -c "SELECT name FROM countries WHERE code = 'US'"
     sync: converged
     expect:
@@ -143,6 +141,7 @@ steps:
       kind: ptahschema
       name: catalog
       timeout: 6m
+      generation: current
       condition:
         type: InSync
         status: "True"
