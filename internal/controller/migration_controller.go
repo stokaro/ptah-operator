@@ -474,6 +474,9 @@ func (r *MigrationReconciler) reconcileActiveMigration(
 		return ctrl.Result{}, err
 	}
 	result, parseErr := runner.ParseResultFor(evidence.Logs, migrationRunnerOperation(operation.Type), operation.ID)
+	if requeue, wait := awaitFrameArrival(job, parseErr, r.now()); wait {
+		return ctrl.Result{RequeueAfter: requeue}, nil
+	}
 	if applying {
 		// The run's own evidence settles an Apply, whatever the Job's exit
 		// status said: a run that stopped is exactly the run whose controller

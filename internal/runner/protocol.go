@@ -36,7 +36,33 @@ var (
 	ErrFrameNotFound  = errors.New("ptah runner result frame not found")
 	ErrMalformedFrame = errors.New("malformed ptah runner result frame")
 	ErrFrameTooLarge  = errors.New("ptah runner result frame exceeds the configured limit")
+	// ErrIncompleteFrame marks a frame the log ends inside. Every rejection
+	// wrapping it is also ErrMalformedFrame, and its message is unchanged; what
+	// it adds is that the bytes may simply not have arrived yet (#154).
+	ErrIncompleteFrame = errors.New("ptah runner result frame has not finished arriving")
 )
+
+// incompleteFrameError is a malformed-frame rejection that describes a log
+// ending inside a frame. It reads exactly as the malformed rejection always has.
+type incompleteFrameError struct{ reason string }
+
+func (e incompleteFrameError) Error() string { return ErrMalformedFrame.Error() + ": " + e.reason }
+
+func (e incompleteFrameError) Is(target error) bool {
+	return target == ErrMalformedFrame || target == ErrIncompleteFrame
+}
+
+// MayStillArrive reports whether a parse failure could be the log being read
+// before the runner's output reached it, rather than output that is wrong.
+//
+// The runner writes its frame in one write as its last output, but the
+// container runtime copies that output into the log asynchronously, and a
+// terminated container does not promise the copy has finished. A read in that
+// window ends inside the frame or before it. Every other rejection describes
+// bytes that are present and wrong, and reading them again changes nothing.
+func MayStillArrive(err error) bool {
+	return errors.Is(err, ErrIncompleteFrame) || errors.Is(err, ErrFrameNotFound)
+}
 
 // Operation is one of the fixed operations understood by the runner.
 type Operation string
@@ -248,6 +274,7 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 	var last *Result
 	var rejection error
 	reject := func(reason string) { rejection = fmt.Errorf("%w: %s", ErrMalformedFrame, reason) }
+	rejectIncomplete := func(reason string) { rejection = incompleteFrameError{reason: reason} }
 
 	for searchAt < len(logs) {
 		relative := bytes.Index(logs[searchAt:], marker)
@@ -258,6 +285,11 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 		start := searchAt + relative
 		headerStart := start + len(marker)
 		headerEndRelative := bytes.IndexByte(logs[headerStart:], '\n')
+		if headerEndRelative < 0 && len(logs)-headerStart <= 96 {
+			rejectIncomplete("the frame header has no end of line within its bounds")
+			searchAt = start + len(marker)
+			continue
+		}
 		if headerEndRelative < 0 || headerEndRelative > 96 {
 			reject("the frame header has no end of line within its bounds")
 			searchAt = start + len(marker)
@@ -291,7 +323,7 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 
 		payloadStart := headerEnd + 1
 		if payloadLength > int64(len(logs)-payloadStart) {
-			reject("the log ends before the length the frame header declares, so the frame never finished arriving")
+			rejectIncomplete("the log ends before the length the frame header declares, so the frame never finished arriving")
 			searchAt = start + len(marker)
 			continue
 		}
@@ -305,7 +337,7 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 			// log follows the payload says which, and it is structure, so it
 			// says so without quoting a byte of the log.
 			if len(logs)-payloadEnd <= maxInterleavedFrameBytes {
-				reject("the log ends after the payload without the footer that closes it, so the frame never finished arriving")
+				rejectIncomplete("the log ends after the payload without the footer that closes it, so the frame never finished arriving")
 			} else {
 				reject("no footer closes the payload within the bound on log lines interleaved after it")
 			}

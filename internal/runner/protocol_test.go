@@ -766,6 +766,10 @@ func TestParseSaysWhyItRejectedTheLastFrame(t *testing.T) {
 		// mutate returns the log bytes a reader would hand the parser.
 		mutate func(t *testing.T, frame []byte) []byte
 		want   string
+		// stillArriving is whether reading the log again could change the
+		// answer: the log ends inside the frame, rather than holding bytes that
+		// are wrong (#154).
+		stillArriving bool
 	}{
 		{
 			name: "a log that stops where the payload ends",
@@ -773,7 +777,8 @@ func TestParseSaysWhyItRejectedTheLastFrame(t *testing.T) {
 				t.Helper()
 				return frame[:len(frame)-len(frameFooter)]
 			},
-			want: "never finished arriving",
+			want:          "never finished arriving",
+			stillArriving: true,
 		},
 		{
 			// The other reason a footer can be missing, and the one a longer
@@ -793,7 +798,17 @@ func TestParseSaysWhyItRejectedTheLastFrame(t *testing.T) {
 				t.Helper()
 				return frame[:len(frame)-len(frameFooter)-4]
 			},
-			want: "never finished arriving",
+			want:          "never finished arriving",
+			stillArriving: true,
+		},
+		{
+			name: "a log that stops inside the header",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				return frame[:len(frameHeader)+5]
+			},
+			want:          "no end of line within its bounds",
+			stillArriving: true,
 		},
 		{
 			name: "a payload edited after its digest was written",
@@ -814,8 +829,24 @@ func TestParseSaysWhyItRejectedTheLastFrame(t *testing.T) {
 			if !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("err = %q, want it to say %q", err.Error(), test.want)
 			}
+			if got := MayStillArrive(err); got != test.stillArriving {
+				t.Fatalf("MayStillArrive(%q) = %v, want %v", err.Error(), got, test.stillArriving)
+			}
+			if got := errors.Is(err, ErrIncompleteFrame); got != test.stillArriving {
+				t.Fatalf("errors.Is(%q, ErrIncompleteFrame) = %v, want %v", err.Error(), got, test.stillArriving)
+			}
 		})
 	}
+
+	// A log with no frame in it yet is the other read a later read can answer:
+	// the frame is the runner's last output, so it is the last to arrive.
+	t.Run("a log with no frame in it yet", func(t *testing.T) {
+		t.Parallel()
+		_, err := ParseResultWithOptions([]byte("diagnostic line\n"), ParseOptions{})
+		if !errors.Is(err, ErrFrameNotFound) || !MayStillArrive(err) {
+			t.Fatalf("err = %v, want a frame-not-found error that may still arrive", err)
+		}
+	})
 
 	// A reader speaking another protocol version is the rejection that is not a
 	// damaged log, and the one most likely to be read as one.

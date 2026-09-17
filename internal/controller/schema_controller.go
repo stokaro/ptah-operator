@@ -1349,6 +1349,9 @@ func (r *SchemaReconciler) reconcileActive(ctx context.Context, schema *operator
 		return ctrl.Result{}, err
 	}
 	result, parseErr := runner.ParseResultFor(evidence.Logs, runnerOperation(operation.Type), operation.ID)
+	if requeue, wait := awaitFrameArrival(job, parseErr, r.now()); wait {
+		return ctrl.Result{RequeueAfter: requeue}, nil
+	}
 	if parseErr != nil || !jobSucceeded(job) {
 		if operation.Type == operatorv1alpha1.OperationApply {
 			failure := parseErr
