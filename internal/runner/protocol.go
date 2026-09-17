@@ -227,6 +227,14 @@ func ParseResultFor(logs []byte, expectedOperation Operation, expectedOperationI
 
 // ParseResultWithOptions scans mixed Pod logs for complete valid frames. It
 // ignores marker-like diagnostic text and returns the last valid frame.
+//
+// When no frame survives, the error says why the last candidate was rejected.
+// The rejections are different failures with different answers -- a log read
+// before the frame finished arriving, a build that wrote a frame this one will
+// not accept, a payload that does not match its own digest -- and reporting all
+// of them as one sentence leaves the reader to guess which happened. The
+// reasons name structure and never payload text, so a frame carrying a
+// credential cannot disclose it here.
 func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 	limit := options.MaxFrameBytes
 	if limit <= 0 {
@@ -238,6 +246,8 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 	sawMarker := false
 	sawOversized := false
 	var last *Result
+	var rejection error
+	reject := func(reason string) { rejection = fmt.Errorf("%w: %s", ErrMalformedFrame, reason) }
 
 	for searchAt < len(logs) {
 		relative := bytes.Index(logs[searchAt:], marker)
@@ -249,18 +259,21 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 		headerStart := start + len(marker)
 		headerEndRelative := bytes.IndexByte(logs[headerStart:], '\n')
 		if headerEndRelative < 0 || headerEndRelative > 96 {
+			reject("the frame header has no end of line within its bounds")
 			searchAt = start + len(marker)
 			continue
 		}
 		headerEnd := headerStart + headerEndRelative
 		fields := bytes.Fields(logs[headerStart:headerEnd])
 		if len(fields) != 2 {
+			reject("the frame header does not carry a length and a digest")
 			searchAt = start + len(marker)
 			continue
 		}
 
 		payloadLength, err := strconv.ParseInt(string(fields[0]), 10, 64)
 		if err != nil || payloadLength < 0 {
+			reject("the frame header does not declare a length")
 			searchAt = start + len(marker)
 			continue
 		}
@@ -271,34 +284,50 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 		}
 		claimedDigest, err := hex.DecodeString(string(fields[1]))
 		if err != nil || len(claimedDigest) != sha256.Size {
+			reject("the frame header does not declare a SHA-256 digest")
 			searchAt = start + len(marker)
 			continue
 		}
 
 		payloadStart := headerEnd + 1
 		if payloadLength > int64(len(logs)-payloadStart) {
+			reject("the log ends before the length the frame header declares, so the frame never finished arriving")
 			searchAt = start + len(marker)
 			continue
 		}
 		payloadEnd := payloadStart + int(payloadLength)
 		footerEnd, ok := frameFooterEnd(logs, payloadEnd)
 		if !ok {
+			// A missing footer has two causes with different answers, and the
+			// absence alone does not separate them. A log that simply ends was
+			// read before the frame finished arriving. A log that runs on past
+			// the bound pushed the footer out of reach of the scan. How much
+			// log follows the payload says which, and it is structure, so it
+			// says so without quoting a byte of the log.
+			if len(logs)-payloadEnd <= maxInterleavedFrameBytes {
+				reject("the log ends after the payload without the footer that closes it, so the frame never finished arriving")
+			} else {
+				reject("no footer closes the payload within the bound on log lines interleaved after it")
+			}
 			searchAt = start + len(marker)
 			continue
 		}
 		payload := logs[payloadStart:payloadEnd]
 		actualDigest := sha256.Sum256(payload)
 		if !bytes.Equal(claimedDigest, actualDigest[:]) {
+			reject("the frame payload does not match the digest its header declares")
 			searchAt = start + len(marker)
 			continue
 		}
 
 		var result Result
 		if err := json.Unmarshal(payload, &result); err != nil {
+			reject("the frame payload is not a result document this build can decode")
 			searchAt = start + len(marker)
 			continue
 		}
 		if err := validateResult(result, options); err != nil {
+			rejection = err
 			searchAt = start + len(marker)
 			continue
 		}
@@ -314,6 +343,9 @@ func ParseResultWithOptions(logs []byte, options ParseOptions) (Result, error) {
 		return Result{}, ErrFrameTooLarge
 	}
 	if sawMarker {
+		if rejection != nil {
+			return Result{}, rejection
+		}
 		return Result{}, ErrMalformedFrame
 	}
 	return Result{}, ErrFrameNotFound

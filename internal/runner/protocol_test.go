@@ -736,3 +736,97 @@ func TestFrameCarriesManagedRowDriftFindings(t *testing.T) {
 		}
 	}
 }
+
+// A frame that does not survive the scan is several different failures, and the
+// one sentence they all used to produce sent a reader looking in the wrong
+// place. A log read before the frame finished arriving and a build that wrote a
+// frame this one refuses are not the same problem and do not have the same
+// answer.
+//
+// The reasons are asserted as text because text is what reaches a person: the
+// end-to-end phases print this error and nothing else about the frame.
+func TestParseSaysWhyItRejectedTheLastFrame(t *testing.T) {
+	t.Parallel()
+
+	complete := func(t *testing.T) []byte {
+		t.Helper()
+		frame, err := MarshalFrame(Result{
+			ProtocolVersion: ProtocolVersion, Operation: OperationResolve, OperationID: "why",
+			ChildExitCode: -1,
+			Error:         &ResultError{Code: "invalid_oci_access", Message: "refused before the child"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return frame
+	}
+
+	tests := []struct {
+		name string
+		// mutate returns the log bytes a reader would hand the parser.
+		mutate func(t *testing.T, frame []byte) []byte
+		want   string
+	}{
+		{
+			name: "a log that stops where the payload ends",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				return frame[:len(frame)-len(frameFooter)]
+			},
+			want: "never finished arriving",
+		},
+		{
+			// The other reason a footer can be missing, and the one a longer
+			// wait would never fix.
+			name: "a footer pushed past the bound on interleaved lines",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				cut := len(frame) - len(frameFooter)
+				noise := bytes.Repeat([]byte("diagnostic line\n"), (maxInterleavedFrameBytes/16)+16)
+				return append(append(append([]byte(nil), frame[:cut]...), noise...), frame[cut:]...)
+			},
+			want: "bound on log lines interleaved after it",
+		},
+		{
+			name: "a log that stops inside the payload",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				return frame[:len(frame)-len(frameFooter)-4]
+			},
+			want: "never finished arriving",
+		},
+		{
+			name: "a payload edited after its digest was written",
+			mutate: func(t *testing.T, frame []byte) []byte {
+				t.Helper()
+				return bytes.Replace(frame, []byte(`"operationId":"why"`), []byte(`"operationId":"whz"`), 1)
+			},
+			want: "does not match the digest",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseResultWithOptions(test.mutate(t, complete(t)), ParseOptions{})
+			if !errors.Is(err, ErrMalformedFrame) {
+				t.Fatalf("err = %v, want a malformed-frame error", err)
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("err = %q, want it to say %q", err.Error(), test.want)
+			}
+		})
+	}
+
+	// A reader speaking another protocol version is the rejection that is not a
+	// damaged log, and the one most likely to be read as one.
+	t.Run("a frame this reader does not speak", func(t *testing.T) {
+		t.Parallel()
+		_, err := ParseResultWithOptions(complete(t), ParseOptions{ExpectedProtocolVersion: legacyProtocolVersion})
+		if !errors.Is(err, ErrMalformedFrame) {
+			t.Fatalf("err = %v, want a malformed-frame error", err)
+		}
+		if !strings.Contains(err.Error(), "protocol version binding mismatch") {
+			t.Fatalf("err = %q, want it to name the version mismatch", err.Error())
+		}
+	})
+}

@@ -4688,7 +4688,10 @@ capture_blocked_refresh_boundary() {
               ((.status.nextReconciliationTime | fromdateiso8601) - $now >= $headroom) and
               (.status.conditions // [] | any(
                 .type == "ApprovalRequired" and .status == "False" and
-                .reason == "DestructiveChangesDisabled"))
+                .reason == "DestructiveChangesDisabled" and
+                # Section 6 asks a refusal for a direction, not only a cause: a
+                # person stopped here has to be told the two ways out.
+                (.message | test("allowDestructive"))))
             ' >/dev/null; then
 				blocked_persisted_deadline=$(printf '%s\n' "$blocked_candidate" |
 					jq -er '.status.nextReconciliationTime')
