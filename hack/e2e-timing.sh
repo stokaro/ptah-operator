@@ -115,17 +115,24 @@ timing_next() {
 }
 
 # timing_abandon closes whatever was open with the outcome a failing run left
-# behind. The driver's exit handler calls it, so a run that died in a stage
-# still reports where its time went.
+# behind. An exit handler calls it, so a run that died in a stage still reports
+# where its time went.
+#
+# It returns 0, unlike the two calls above, and that is the difference between
+# the two places a stage gets closed. After a measured command the status is the
+# answer, so timing_end passes it through. An exit handler has already computed
+# its own status into a variable and exits with that, and it reaches this call
+# through a branch: $? there is the status of the test that chose the branch,
+# which is 1 whenever the test was false. Passing that back ended the handler
+# under set -e, and a successful run exited 1 with nothing printed.
 timing_abandon() {
-	timing_status=$?
-	timing_enabled || return "$timing_status"
-	[ -n "$TIMING_OPEN_NAME" ] || return "$timing_status"
+	timing_enabled || return 0
+	[ -n "$TIMING_OPEN_NAME" ] || return 0
 	timing_row "$TIMING_OPEN_KIND" "$TIMING_OPEN_NAME" "${1:-fail}" \
 		"$TIMING_OPEN_STAMP" "$(timing_instant)" "$(($(timing_epoch) - TIMING_OPEN_START))"
 	TIMING_OPEN_KIND=
 	TIMING_OPEN_NAME=
 	TIMING_OPEN_START=
 	TIMING_OPEN_STAMP=
-	return "$timing_status"
+	return 0
 }

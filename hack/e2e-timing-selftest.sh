@@ -117,6 +117,51 @@ status=0
 [ "$(grep -c 'cannot be appended to' "$WORK_DIR/unwritable.err")" -eq 1 ] ||
 	fail "an unwritable ledger was reported $(grep -c 'cannot be appended to' "$WORK_DIR/unwritable.err") times, want once"
 
+# The call an exit handler makes reaches it through a branch, so $? there is the
+# status of the test that chose the branch. A run that succeeded must not exit 1
+# because the else branch was taken, which is exactly what it used to do.
+status=0
+(
+	E2E_TIMING_LEDGER=$WORK_DIR/handler.jsonl
+	export E2E_TIMING_LEDGER
+	: >"$E2E_TIMING_LEDGER"
+	# shellcheck source=hack/e2e-timing.sh
+	. "$ROOT_DIR/hack/e2e-timing.sh"
+	handler_status=0
+	if [ "$handler_status" -ne 0 ]; then
+		timing_abandon fail
+	else
+		timing_abandon pass
+	fi
+	exit "$handler_status"
+) || status=$?
+[ "$status" -eq 0 ] ||
+	fail "an exit handler that closed no open stage ended a successful run with status $status"
+
+# The same call with a stage open still records it, and still returns nothing of
+# its own to the handler.
+status=0
+# shellcheck disable=SC2030 # The ledger name is meant to be local to this probe.
+(
+	E2E_TIMING_LEDGER=$WORK_DIR/handler-open.jsonl
+	export E2E_TIMING_LEDGER
+	: >"$E2E_TIMING_LEDGER"
+	# shellcheck source=hack/e2e-timing.sh
+	. "$ROOT_DIR/hack/e2e-timing.sh"
+	timing_begin phase open-at-exit
+	handler_status=0
+	if [ "$handler_status" -ne 0 ]; then
+		timing_abandon fail
+	else
+		timing_abandon pass
+	fi
+	exit "$handler_status"
+) || status=$?
+[ "$status" -eq 0 ] ||
+	fail "an exit handler that closed an open stage ended a successful run with status $status"
+grep -q '"name":"open-at-exit","outcome":"pass"' "$WORK_DIR/handler-open.jsonl" ||
+	fail "the stage open at exit was not recorded"
+
 # A phase run by hand names no ledger. Every call is then a no-op, and the
 # phase behaves as it did before there was a stopwatch.
 status=0
