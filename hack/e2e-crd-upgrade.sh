@@ -3662,6 +3662,15 @@ prepare_running_apply_fixture() {
 		fail "could not inspect the external PostgreSQL barrier container"
 	[ "$running_apply_container_id" = "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID" ] ||
 		fail "external PostgreSQL barrier container identity changed"
+	# Inspecting a container says it exists, not that it is serving, and the two
+	# failures look identical from inside the cluster: a Pod dialing the barrier
+	# Service reports `connection refused` whether the backend is down or the
+	# Service has no programmed endpoint yet. Separating them here costs one
+	# call and names the first one before any Pod can blame the second.
+	running_apply_container_running=$(docker --context "$E2E_DOCKER_CONTEXT" container inspect \
+		--format '{{.State.Running}}' "$E2E_EXTERNAL_POSTGRES_CONTAINER_ID")
+	[ "$running_apply_container_running" = "true" ] ||
+		fail "the external PostgreSQL barrier container is not running"
 
 	# The executor the Apply will run is the one the live release configured,
 	# read from the controller it dispatched with rather than from a value file
@@ -3795,6 +3804,19 @@ EOF
 	cp "$ROOT_DIR/testdata/e2e/postgresql-v1.sql" "$running_apply_plan_source"
 	kube -n "$PROOF_NAMESPACE" create configmap running-apply-plan-source \
 		--from-file="schema.sql=$running_apply_plan_source" >/dev/null
+	# The Job dials the barrier Service seconds after the Service and its
+	# EndpointSlice were created, and a ClusterIP whose endpoint kube-proxy has
+	# not programmed yet is rejected rather than dropped, so the executor sees
+	# `connection refused` on its first packet and its connect timeout never
+	# applies. Measured on run 35282131046, `Kubernetes 1.35 lifecycle`: the
+	# diagnostics dump has the Service at AGE 5s and the Pod already in Error
+	# inside those same five seconds.
+	#
+	# backoffLimit gives the dial a second and third chance in a fresh Pod,
+	# which is the only probe of that path the fixture has. It hides nothing: a
+	# barrier that is genuinely down fails every attempt with the same message,
+	# and a barrier container that is not running is refused above, by name,
+	# before any Pod runs.
 	jq -n \
 		--arg namespace "$PROOF_NAMESPACE" \
 		--arg image "$running_apply_executor_image" \
@@ -3804,7 +3826,7 @@ EOF
         apiVersion: "batch/v1", kind: "Job",
         metadata: {namespace: $namespace, name: "running-apply-plan-source"},
         spec: {
-          backoffLimit: 0, activeDeadlineSeconds: 180, ttlSecondsAfterFinished: 300,
+          backoffLimit: 3, activeDeadlineSeconds: 180, ttlSecondsAfterFinished: 300,
           template: {
             metadata: {labels: {"app.kubernetes.io/component": "running-apply-plan-source"}},
             spec: {
@@ -3843,7 +3865,17 @@ EOF
       }
     ' | kube create -f - >/dev/null
 	wait_for_successful_fixture_job running-apply-plan-source
-	kube -n "$PROOF_NAMESPACE" logs job/running-apply-plan-source \
+	# The plan comes from the Pod that succeeded, by name. `logs job/<name>`
+	# picks one Pod of the Job's label set, and a retried Job has more than one:
+	# a failed attempt's output would be read as the plan and fail the shape
+	# check below with a reason that is about neither.
+	running_apply_plan_pod=$(kube -n "$PROOF_NAMESPACE" get pods \
+		-l app.kubernetes.io/component=running-apply-plan-source \
+		--field-selector=status.phase=Succeeded \
+		-o jsonpath='{.items[0].metadata.name}')
+	[ -n "$running_apply_plan_pod" ] ||
+		fail "the running Apply plan Job completed without a succeeded Pod"
+	kube -n "$PROOF_NAMESPACE" logs "$running_apply_plan_pod" \
 		>"$WORK_DIR/running-apply-native-plan.json"
 	jq -ce \
 		--arg plan_name "$RUNNING_APPLY_SCHEMA" \
