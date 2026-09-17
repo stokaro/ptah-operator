@@ -2039,22 +2039,10 @@ func preparedPlanFixtureWithContent(
 ) (*operatorv1alpha1.PtahSchemaPlan, [][]byte) {
 	t.Helper()
 
-	policyDigest, err := fingerprint.DigestCanonicalJSON(struct {
-		Engine           operatorv1alpha1.DatabaseEngine `json:"engine"`
-		AllowDestructive bool                            `json:"allow_destructive"`
-		DriftSeverity    string                          `json:"drift_severity"`
-		Exclude          []string                        `json:"exclude"`
-		LockTimeout      string                          `json:"lock_timeout"`
-		TransactionMode  string                          `json:"transaction_mode"`
-		ConnectTimeout   string                          `json:"connect_timeout"`
-	}{
-		Engine: schema.Spec.Target.Engine, AllowDestructive: schema.Spec.Policy.AllowDestructive,
-		DriftSeverity:   schema.Spec.Policy.DriftSeverity,
-		Exclude:         fingerprint.NormalizeSet(schema.Spec.Policy.Exclude),
-		LockTimeout:     schema.Spec.Policy.LockTimeout.Duration.String(),
-		TransactionMode: schema.Spec.Policy.TransactionMode,
-		ConnectTimeout:  schema.Spec.Execution.ConnectTimeout.Duration.String(),
-	})
+	// The admission side's own function, rather than a copy of it: a fixture
+	// that spells the policy a second time agrees with nothing the day the
+	// policy grows a field, which is exactly what happened when it did.
+	policyDigest, err := controllerwrite.SchemaPolicyFingerprint(schema)
 	if err != nil {
 		t.Fatal(err)
 	}

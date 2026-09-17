@@ -1,0 +1,10 @@
+# One country, declared again after the revision before it emptied the set. It
+# is the change a fence refuses: spec.policy.protectedTables names this table,
+# so the plan is refused rather than rated, and the table keeps the rows it has.
+#
+# Removing the entry is what lets this revision converge, which is the other
+# half of the proof: a fence that refused everything forever would pass a check
+# that only measured the refusal.
+- code: CZ
+  name: Czechia
+  region_code: emea

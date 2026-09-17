@@ -4,8 +4,8 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     operator.ptah.run/controller-state-version: "1"
-    operator.ptah.run/crd-schema-version: "11"
-    operator.ptah.run/crd-schema-digest: "sha256:3c9062e5886dff7d62094289035237758fa40f02dc0eeaec9d656194f70ba54f"
+    operator.ptah.run/crd-schema-version: "12"
+    operator.ptah.run/crd-schema-digest: "sha256:288495c9168e73c305c8865a20c64d6726096736fde5533af9e9f77b85216798"
     controller-gen.kubebuilder.io/version: v0.21.0
   name: ptahschemas.operator.ptah.run
 spec:
@@ -745,6 +745,15 @@ spec:
                     - message: lockTimeout must be between 1s and 10m
                       rule: duration(self) >= duration('1s') && duration(self) <=
                         duration('10m')
+                  protectedTables:
+                    items:
+                      maxLength: 256
+                      minLength: 1
+                      pattern: ^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)?$
+                      type: string
+                    maxItems: 128
+                    type: array
+                    x-kubernetes-list-type: set
                   transactionMode:
                     default: file
                     enum:
@@ -1093,6 +1102,12 @@ spec:
                     type: array
                   observationLockTimeout:
                     type: string
+                  observationProtectedTables:
+                    items:
+                      type: string
+                    maxItems: 128
+                    type: array
+                    x-kubernetes-list-type: set
                   observationSeverity:
                     type: string
                   source:
@@ -1790,6 +1805,12 @@ spec:
                     type: object
                   planRequired:
                     type: boolean
+                  protectedTables:
+                    items:
+                      type: string
+                    maxItems: 128
+                    type: array
+                    x-kubernetes-list-type: set
                   source:
                     properties:
                       digest:

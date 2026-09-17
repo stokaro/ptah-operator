@@ -1272,6 +1272,111 @@ func TestPlanPassesEveryExactExclusionAsASeparateArgument(t *testing.T) {
 	}
 }
 
+// The fence reaches the plan as one argument per table, and reaches nothing
+// else: an Apply executes a plan that was already refused or approved.
+func TestPlanPassesEveryProtectedTableAsASeparateArgument(t *testing.T) {
+	t.Parallel()
+
+	plan := validPlanDocument("CREATE TABLE example (id bigint);")
+	inspectPlan := func(spec CommandSpec) {
+		want := []string{"schema", "plan", "--dry-run", "--protected-table=countries", "--protected-table=ref.regions"}
+		if !reflect.DeepEqual(spec.Args, want) {
+			t.Fatalf("plan args = %q, want %q", spec.Args, want)
+		}
+		if _, present := environmentMap(spec.Env)["PTAH_PROTECTED_TABLES"]; present {
+			t.Fatal("the encoded fence adapter leaked to the Ptah child")
+		}
+	}
+	responses := stablePlanResponses(t, plan)
+	responses[0].inspect = inspectPlan
+	responses[1].inspect = inspectPlan
+	responses[2].inspect = func(spec CommandSpec) {
+		if _, present := environmentMap(spec.Env)["PTAH_PROTECTED_TABLES"]; present {
+			t.Fatal("the fence reached native plan validation, which applies a plan rather than computing one")
+		}
+		for _, argument := range spec.Args {
+			if strings.HasPrefix(argument, "--protected-table") {
+				t.Fatalf("plan validation args = %q, which asks the fence a second time", spec.Args)
+			}
+		}
+	}
+	executor := &scriptedExecutor{t: t, responses: responses}
+	result := Run(context.Background(), Config{
+		Operation:   OperationPlan,
+		Environment: append(databaseEnvironment("plan-fence"), "PTAH_PROTECTED_TABLES=ref.regions,countries"),
+		Executor:    executor,
+	})
+	if result.Error != nil || result.PlanOutcome != PlanOutcomeChanges {
+		t.Fatalf("Run() = %#v", result)
+	}
+}
+
+// A plan Ptah refused because of the fence is reported under its own code, with
+// the child's own sentence. Every other plan failure keeps the code it had, so
+// a reader cannot take a fault for a refusal or the other way round.
+func TestPlanReportsAFencedRefusalAsItsOwnOutcome(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name     string
+		stderr   string
+		wantCode string
+		wantText string
+	}{
+		{
+			name: "the fence refused the plan",
+			stderr: "Error: refusing to change protected table(s) countries, ref.regions: a protected table is fenced " +
+				"off from the declarative path, which has no override; drop the entry to plan the change\n",
+			wantCode: "protected_table",
+			wantText: "refusing to change protected table(s) countries, ref.regions",
+		},
+		{
+			name:     "the plan failed for another reason",
+			stderr:   "Error: connect to --db-url: dial tcp: connection refused\n",
+			wantCode: "invalid_plan_output",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			executor := &scriptedExecutor{t: t, responses: []scriptedResponse{
+				{stderr: test.stderr, exitCode: 1},
+			}}
+			result := Run(context.Background(), Config{
+				Operation:   OperationPlan,
+				Environment: append(databaseEnvironment("plan-refused"), "PTAH_PROTECTED_TABLES=countries"),
+				Executor:    executor,
+			})
+			if result.Error == nil || result.Error.Code != test.wantCode {
+				t.Fatalf("Run() = %#v, want code %s", result, test.wantCode)
+			}
+			if test.wantText != "" && !strings.Contains(result.Error.Message, test.wantText) {
+				t.Fatalf("refusal message = %q, want it to name the tables", result.Error.Message)
+			}
+			if result.Stdout != "" {
+				t.Fatalf("a refused plan carries executable content: %q", result.Stdout)
+			}
+		})
+	}
+}
+
+// A fence value that is not an identifier is an input error rather than a
+// fence: the runner is the process that hands it to a command line.
+func TestPlanRefusesAFenceThatIsNotATableName(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"countries; DROP TABLE users", "--allow-prod", "ref.regions.extra", "ref."} {
+		executor := &scriptedExecutor{t: t, responses: nil}
+		result := Run(context.Background(), Config{
+			Operation:   OperationPlan,
+			Environment: append(databaseEnvironment("plan-bad-fence"), "PTAH_PROTECTED_TABLES="+value),
+			Executor:    executor,
+		})
+		if result.Error == nil || result.Error.Code != "invalid_input" {
+			t.Fatalf("Run() with fence %q = %#v, want invalid_input", value, result)
+		}
+	}
+}
+
 func TestPlanRejectsOutputThatDoesNotBindRequestedScope(t *testing.T) {
 	t.Parallel()
 

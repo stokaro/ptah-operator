@@ -1526,11 +1526,12 @@ for reference_marker in \
 	}
 done
 # The proof is a sequence, and each step is a different statement about the same
-# tables: declared, changed, no longer declared, and declared empty. Each
-# revision carries the Go source Ptah reads and the rows it declares -- the last
-# one declares a file with no rows in it, which is the statement that separates
-# ending management from emptying a table.
-for reference_revision in v1 v2 v3 v4; do
+# tables: declared, changed, no longer declared, declared empty, and declared
+# again behind a fence. Each revision carries the Go source Ptah reads and the
+# rows it declares -- the emptied one declares a file with no rows in it, which
+# is the statement that separates ending management from emptying a table, and
+# the last one is the change spec.policy.protectedTables refuses.
+for reference_revision in v1 v2 v3 v4 v5; do
 	reference_entities=$(git -C "$ROOT_DIR" ls-files "testdata/e2e/reference/${reference_revision}/entities.go" | grep -c . || true)
 	[ "$reference_entities" -eq 1 ] || {
 		printf 'e2e static: reference-data revision %s has no entities.go\n' "$reference_revision" >&2

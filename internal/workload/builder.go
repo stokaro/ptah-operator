@@ -609,6 +609,13 @@ func (i buildInput) dataPlane() (
 		if len(i.operation.ObservationExclude) > 0 {
 			environment = append(environment, literalEnv("PTAH_EXCLUDE", encodeStringArray(i.operation.ObservationExclude)))
 		}
+		// The fence the plan is computed under. The runner passes it to the plan
+		// command only: an Apply executes a plan that was already refused or
+		// approved, and asking the same question there would answer it twice.
+		if len(i.operation.ObservationProtectedTables) > 0 {
+			environment = append(environment,
+				literalEnv("PTAH_PROTECTED_TABLES", encodeStringArray(i.operation.ObservationProtectedTables)))
+		}
 	case operatorv1alpha1.OperationApply:
 		target := operatorv1alpha1.DatabaseTargetBinding{
 			Engine:  i.schema.Spec.Target.Engine,
