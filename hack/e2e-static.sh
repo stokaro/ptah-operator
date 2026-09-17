@@ -320,6 +320,7 @@ printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_I
 "$ROOT_DIR/hack/e2e-dataplane-ledger-selftest.sh"
 "$ROOT_DIR/hack/e2e-timing-selftest.sh"
 "$ROOT_DIR/hack/e2e-shared-images-selftest.sh"
+"$ROOT_DIR/hack/e2e-suites-selftest.sh"
 
 # Every phase the driver runs is measured, and it is measured in the one place
 # that runs them. A phase invoked around run_recorded_phase would be missing
@@ -4716,8 +4717,25 @@ for protocol_script in e2e-dataplane.sh e2e-faults.sh; do
 		}
 	done
 done
+# The immutable verification policy is created by the bootstrap now, because
+# every suite's resources refer to it. Both halves are still required: the
+# bootstrap writes it immutable, and the control-plane phase refuses to run
+# without it and holds it to the committed file.
+grep -F "jq '.immutable = true'" "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
+	printf '%s\n' 'e2e static: the bootstrap does not create the verification policy as immutable' >&2
+	exit 1
+}
+for policy_contract_marker in \
+	'.immutable == true' \
+	'the bootstrap creates it' \
+	'does not carry the committed policy'; do
+	grep -F "$policy_contract_marker" "$ROOT_DIR/hack/e2e-assert.sh" >/dev/null || {
+		printf 'e2e static: the control-plane phase no longer holds the verification policy contract: %s\n' \
+			"$policy_contract_marker" >&2
+		exit 1
+	}
+done
 for admission_marker in \
-	'.immutable = true' \
 	'empty target Secret key' \
 	'empty development target Secret key' \
 	'empty verification policy ConfigMap key' \

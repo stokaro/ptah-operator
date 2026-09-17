@@ -38,6 +38,11 @@ RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 FIXTURE_IMAGE=${E2E_FIXTURE_IMAGE:-}
 POSTGRES_IMAGE=${E2E_POSTGRES_IMAGE:-}
 MYSQL_IMAGE=${E2E_MYSQL_IMAGE:-}
+# full runs this phase's own acceptance. prepare stands up what another suite's
+# phases need in this namespace -- the registry endpoint, the databases, the
+# TLS proxy and the admission fixtures -- and executes nothing under test. The
+# suite catalog decides which, and hack/e2e-kind.sh passes it through.
+E2E_DATAPLANE_MODE=${E2E_DATAPLANE_MODE:-full}
 REGISTRY_IP=${E2E_REGISTRY_IP:-}
 REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
 REGISTRY_PORT=${E2E_REGISTRY_PORT:-}
@@ -88,6 +93,11 @@ fail() {
 	fi
 	exit 1
 }
+
+case "$E2E_DATAPLANE_MODE" in
+	full | prepare) ;;
+	*) fail "E2E_DATAPLANE_MODE accepts full or prepare, got $E2E_DATAPLANE_MODE" ;;
+esac
 
 require_command() {
 	command -v "$1" >/dev/null 2>&1 || fail "required command is not installed: $1"
@@ -6226,6 +6236,15 @@ create_custom_ca_database
 report_database_versions
 create_admission_fixtures
 create_digest_pin_policy_fixture
+
+# The preparation boundary. A suite that only needs this namespace stops here:
+# what follows is this phase's own acceptance, which its own suite runs.
+if [ "$E2E_DATAPLANE_MODE" = prepare ]; then
+	printf '%s\n' 'e2e data plane: PASS prerequisites only: registry endpoint, isolated databases, TLS proxy, and admission fixtures'
+	timing_end pass
+	PHASE_COMPLETED=1
+	exit 0
+fi
 
 timing_next scenario postgresql-lifecycle
 run_engine_lifecycle postgresql PostgreSQL postgres "$PG_SECRET"

@@ -352,8 +352,14 @@ assert_certificate_canary mutatingwebhookconfiguration mutate exact-certificate-
 assert_certificate_canary validatingwebhookconfiguration validate exact-certificate-rotation-validating-canary
 
 printf '%s\n' 'e2e assertions: checking controller Secret isolation'
-k create namespace "$TEST_NAMESPACE" >/dev/null
-k create namespace "$FOREIGN_NAMESPACE" >/dev/null
+# The bootstrap creates these, because every suite needs them and creating a
+# namespace proves nothing. This phase still refuses to run without them: a
+# bootstrap that stopped creating them would otherwise be found by whichever
+# assertion needed one first.
+for required_namespace in "$TEST_NAMESPACE" "$FOREIGN_NAMESPACE"; do
+	k get namespace "$required_namespace" >/dev/null 2>&1 ||
+		fail "namespace $required_namespace does not exist; the bootstrap creates it"
+done
 k -n "$TEST_NAMESPACE" create secret generic local-database \
 	--from-literal=url='postgres://e2e:unused@database.invalid/e2e' >/dev/null
 k -n "$FOREIGN_NAMESPACE" create secret generic foreign-database \
@@ -430,11 +436,21 @@ PLAN_NAME=e2e-plan
 PLAN_CHUNK_NAME=e2e-plan-chunk-0
 APPROVAL_NAME=e2e-approval
 
-k -n "$TEST_NAMESPACE" create configmap "$POLICY_NAME" \
-	--from-file="${POLICY_KEY}=${ROOT_DIR}/testdata/e2e/verification-policy.yaml" \
-	--dry-run=client -o json | jq '.immutable = true' | k create -f - >/dev/null
-k -n "$TEST_NAMESPACE" get configmap "$POLICY_NAME" -o json |
-	jq -e '.immutable == true' >/dev/null || fail "verification policy ConfigMap is mutable"
+# The bootstrap creates this, because every suite's resources refer to it and
+# creating a ConfigMap from committed test data proves nothing. What this phase
+# still holds is the contract: it exists, it is immutable, and it carries the
+# committed policy rather than something a run wrote.
+policy_file=$(mktemp "${TMPDIR:-/tmp}/ptah-e2e-policy.XXXXXX")
+k -n "$TEST_NAMESPACE" get configmap "$POLICY_NAME" -o json >"$policy_file" 2>/dev/null ||
+	fail "verification policy ConfigMap $POLICY_NAME does not exist; the bootstrap creates it"
+jq -e '.immutable == true' "$policy_file" >/dev/null ||
+	fail "verification policy ConfigMap is mutable"
+# -j, because -r appends a newline of its own and the stored value already
+# ends with the file's: the comparison is byte for byte or it is not one.
+jq -jer --arg key "$POLICY_KEY" '.data[$key]' "$policy_file" |
+	cmp -s - "${ROOT_DIR}/testdata/e2e/verification-policy.yaml" ||
+	fail "verification policy ConfigMap does not carry the committed policy"
+rm -f "$policy_file"
 policy_uid=$(k -n "$TEST_NAMESPACE" get configmap "$POLICY_NAME" -o jsonpath='{.metadata.uid}')
 policy_digest="sha256:$(sha256_file "${ROOT_DIR}/testdata/e2e/verification-policy.yaml")"
 

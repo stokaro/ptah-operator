@@ -1,0 +1,61 @@
+{
+  "comment": [
+    "The acceptance suites, and the only place their membership is written down.",
+    "hack/verify-kubernetes-support.go emits the CI matrix from this file and",
+    "refuses it unless every phase hack/e2e-kind.sh runs belongs to exactly one",
+    "suite, so a suite that lost a phase is a failed check rather than a green",
+    "run that proved less. hack/e2e-kind.sh reads the same file to decide which",
+    "phases E2E_SUITE names.",
+    "",
+    "The partition follows the dependencies and the measurements on #157. A",
+    "suite runs against its own cluster, so phases that share mutable state stay",
+    "together: the CRD upgrade and the uninstall that follows it, the data plane",
+    "and the fault injection inside it, the migration rows and the reference",
+    "data that runs in the same namespace on databases of its own. High",
+    "availability belongs with the upgrade rather than with the other",
+    "control-plane phases, because it asserts what an upgrade leaves behind:",
+    "the Resolve metric sources of the release it replaced. The control-plane",
+    "contract travels with the data plane for the same kind of reason: the",
+    "fault injection inside that phase reads the suspended schema and the",
+    "approval that phase leaves, and borrowing them is what makes the two one",
+    "dependency group rather than two suites.",
+    "",
+    "prepare names a phase a suite runs for its prerequisites rather than for",
+    "its own acceptance. The migration and reference-data phases run in the",
+    "namespace the data plane stands up -- its registry Service, its databases",
+    "and its admission fixtures -- so that phase runs in preparation mode there,",
+    "which creates those prerequisites and executes no operation under test.",
+    "Preparation is not coverage: a phase is covered only where it is listed in",
+    "phases, and the completeness check counts it there and nowhere else."
+  ],
+  "suites": [
+    {
+      "name": "lifecycle",
+      "slug": "lifecycle",
+      "summary": "Installation, the CRD upgrade path, leader failover, and uninstall",
+      "phases": ["upgrade", "ha", "uninstall"],
+      "prepare": []
+    },
+    {
+      "name": "certificates",
+      "slug": "certificates",
+      "summary": "Certificate rotation, recovery from a corrupt CA, and guarded recreation",
+      "phases": ["cert-rotation"],
+      "prepare": []
+    },
+    {
+      "name": "data-plane",
+      "slug": "data-plane",
+      "summary": "The control-plane contract, both engines end to end, restart identity, and fault injection",
+      "phases": ["assert", "dataplane"],
+      "prepare": []
+    },
+    {
+      "name": "migrations",
+      "slug": "migrations",
+      "summary": "The versioned migration rows and the declared reference data",
+      "phases": ["migrations", "reference-data"],
+      "prepare": ["dataplane"]
+    }
+  ]
+}
