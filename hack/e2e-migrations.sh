@@ -2226,9 +2226,13 @@ approve_checkpoint_plan() {
 }
 
 # The row itself: what the bootstrapped database holds is what the replayed one
-# holds. The checkpoint version is gone from the reading afterwards, because it
-# describes a bootstrap that has happened rather than one that is about to, and
-# the resource settles instead of publishing the covered migrations again.
+# holds. The checkpoint stays in the reading afterwards, because it goes on
+# describing what it replaced: drop it once it has been applied and migrations 1
+# and 2 are covered by nothing, report themselves pending again, and the
+# resource publishes a plan for versions the database already holds. Ptah
+# cleared it until stokaro/ptah#3357; this suite asserted that clearing, which
+# is why the expectation moved with the pin rather than the pin waiting on the
+# expectation.
 assert_checkpoint_equals_the_long_way() {
 	checkpoint_status
 	jq -e '
@@ -2238,7 +2242,7 @@ assert_checkpoint_equals_the_long_way() {
       $status.history.pendingCount == 0 and
       ($status.history.dirty // false) == false and
       ($status.plan // null) == null and
-      ($status.history.checkpointVersion // 0) == 0 and
+      $status.history.checkpointVersion == 3 and
       $status.lastRun.outcome == "Applied" and
       ($status.lastRun.appliedVersions // []) == [3, 4] and
       (any($status.conditions[];
