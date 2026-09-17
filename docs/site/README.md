@@ -102,9 +102,26 @@ Nothing here touches the settings that serve `docs.ptah.run`.
 compatibility catalog moved, so the matrix it publishes refreshes promptly. It
 sends a repository and a commit and nothing else.
 
-It needs one secret in this repository, **`PTAH_COMPATIBILITY_DISPATCH_TOKEN`**:
-a fine-grained token scoped to `stokaro/ptah` alone with **Contents: read and
-write**, which is the permission a `repository_dispatch` requires. Without it
-the step says so and exits zero: the receiving repository reconciles the two
-files on a schedule, so a missing notification makes the refresh late rather
-than lost.
+It runs on the organization's automation app. The app is installed on every
+repository in `stokaro`, and its credentials are already organization-wide under
+the names the capability matrix gave them first: the `CAPABILITY_MATRIX_APP_ID`
+variable and the `CAPABILITY_MATRIX_APP_KEY` secret. The workflow mints a token
+narrowed to `stokaro/ptah` and to **Contents: write**, which is the permission a
+`repository_dispatch` requires. The dispatch writes nothing itself: GitHub maps
+the endpoint onto Contents because starting a workflow somewhere is as far
+reaching as writing there, and no narrower permission exists to ask for.
+
+The app needs that permission. Grant it in the app's settings and approve the
+request for the organization installation; until the installation accepts it,
+the old permissions stay in force and the mint fails.
+
+**`PTAH_COMPATIBILITY_DISPATCH_TOKEN`** remains as a fallback and is not
+required. Set it only if the app is unavailable: a fine-grained token scoped to
+`stokaro/ptah` alone with **Contents: read and write**. A personal token has an
+owner and an expiry, and the day it lapses this workflow stops announcing, which
+is the reason it is not the primary credential.
+
+With neither available the step warns, writes a job summary saying nothing was
+announced, and exits zero: the receiving repository reconciles the two files on
+a schedule, so a missing notification makes the refresh late rather than lost.
+It exits zero but it does not look like a run that announced, which it used to.

@@ -61,9 +61,14 @@ jobs:
       # onto Contents because starting a workflow in a repository is as far
       # reaching as writing to it, and there is no narrower permission to ask
       # for.
+      # continue-on-error, because a failed mint must not end the job. Without
+      # it the next step is skipped by its own success() condition and the
+      # fallback below is unreachable in exactly the case it exists for: an app
+      # whose installation was removed.
       - name: Mint a token for the one repository this announces to
         id: app-token
         if: vars.CAPABILITY_MATRIX_APP_ID != ''
+        continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           app-id: ${{ vars.CAPABILITY_MATRIX_APP_ID }}
@@ -75,6 +80,8 @@ jobs:
       - name: Send the revision
         env:
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_ID: ${{ vars.CAPABILITY_MATRIX_APP_ID }}
+          APP_MINT: ${{ steps.app-token.outcome }}
           DISPATCH_TOKEN: ${{ secrets.PTAH_COMPATIBILITY_DISPATCH_TOKEN }}
           COMMIT: ${{ github.sha }}
         run: |
@@ -82,6 +89,14 @@ jobs:
           # The app first, a token second. The token stays because an app whose
           # installation is removed leaves no other way to announce, and it is
           # one line to keep.
+          #
+          # A mint that was attempted and failed is worth saying out loud even
+          # when the fallback covers it: the app is the credential this is meant
+          # to run on, and a run that quietly fell back would hide the day it
+          # stopped working.
+          if [ "${APP_MINT}" = "failure" ]; then
+            echo "::warning title=The app token could not be minted::CAPABILITY_MATRIX_APP_ID is set to ${APP_ID}, but no installation token could be created for stokaro/ptah. Check that the app is still installed and still carries Contents: write."
+          fi
           if [ -n "${APP_TOKEN}" ]; then
             credential="$APP_TOKEN"
             announced_with="the organization automation app"
@@ -93,7 +108,7 @@ jobs:
             # difference tomorrow. Not a success either, and the annotation is
             # the difference -- a green check that announced nothing is what
             # hid this for a week.
-            echo "::warning title=Nothing was announced::No credential is configured, so stokaro/ptah was not told that the catalog moved. Its scheduled reconciliation will find the change within a day."
+            echo "::warning title=Nothing was announced::No credential is available, so stokaro/ptah was not told that the catalog moved. Its scheduled reconciliation will find the change within a day."
             {
               printf '## Nothing was announced\n\n'
               printf 'Neither the organization automation app nor the '
