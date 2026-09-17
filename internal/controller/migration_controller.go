@@ -23,7 +23,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	operatorv1alpha1 "github.com/stokaro/ptah-operator/api/v1alpha1"
 	"github.com/stokaro/ptah-operator/internal/dataplane"
@@ -1370,7 +1372,15 @@ func (r *MigrationReconciler) event(object client.Object, eventType, reason, mes
 }
 
 // SetupWithManager registers the migration controller. Jobs are watched by
-// owner so a terminal Job wakes its migration instead of waiting for the poll.
+// owner so a terminal Job wakes its migration instead of waiting for the poll,
+// and an approval wakes the migration it names for the same reason.
+//
+// Without the second watch an approval waited for the migration's next
+// scheduled reading, up to spec.interval, before the controller so much as
+// looked at it, while the schema controller acts on its approvals at once. The
+// wake does not skip the evidence: a migration whose reading is due still
+// refreshes the whole chain first, and one that is not due checks the approval
+// against the plan, history, artifact and binding it was written for.
 func (r *MigrationReconciler) SetupWithManager(manager ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(manager).
 		For(&operatorv1alpha1.PtahMigration{}, builder.WithPredicates(predicate.Or(
@@ -1379,7 +1389,23 @@ func (r *MigrationReconciler) SetupWithManager(manager ctrl.Manager) error {
 			predicate.LabelChangedPredicate{},
 		))).
 		Owns(&batchv1.Job{}).
+		Watches(&operatorv1alpha1.PtahMigrationApproval{}, handler.EnqueueRequestsFromMapFunc(migrationForApproval)).
 		Complete(r)
+}
+
+// migrationForApproval names the migration an approval was written for. The
+// name is enough to wake it: which approval counts is decided in the reconcile,
+// by UID and by every fingerprint the plan carries, so a stale or foreign
+// approval that wakes a migration changes nothing about what it runs.
+func migrationForApproval(_ context.Context, object client.Object) []reconcile.Request {
+	approval, ok := object.(*operatorv1alpha1.PtahMigrationApproval)
+	if !ok || approval.Spec.MigrationRef.Name == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: types.NamespacedName{
+		Namespace: approval.Namespace,
+		Name:      approval.Spec.MigrationRef.Name,
+	}}}
 }
 
 func migrationSourceBinding(migration *operatorv1alpha1.PtahMigration) *operatorv1alpha1.OCIArtifactAccessBinding {
