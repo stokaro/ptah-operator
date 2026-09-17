@@ -187,6 +187,14 @@ produce can be compared with the schema the target already has; the revisions
 are recorded only when the two agree. The operator reads the recorded history on
 its next interval and reports `InSync`, having run nothing.
 
+Ptah empties the shadow database before it replays anything. On MySQL it refuses
+to do that unless the shadow user holds the global `SELECT`, `DROP`, `ALTER`,
+`ALTER ROUTINE`, `EVENT`, `LOCK TABLES`, `PROCESS`, `SHOW_ROUTINE` and `TRIGGER`
+privileges (MariaDB asks for `SHOW VIEW` in place of the last two): a grant on
+one schema cannot prove the user sees every object it is about to drop. Give
+the shadow database its own user, on a server that holds nothing else of value,
+and keep the target's user on its per-schema grants.
+
 ## Approving a run
 
 `spec.policy.apply` decides what a published plan may do:
