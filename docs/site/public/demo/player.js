@@ -18,9 +18,11 @@
  * hero paths are the ones a reader of this copy will not reach.
  *
  * One page, one session. A run has a page of its own and the frame on it plays
- * where it stands, so this copy carries no overlay, no scenario picker and no
- * flight between the two: what ptah.run does by moving one frame around the
- * page, this site does by linking to the page the session is on.
+ * where it stands, so this copy carries no scenario picker and no flight from
+ * one surface to another: what ptah.run does by moving one frame around the
+ * page, this site does by linking to the page the session is on. The frame does
+ * take the whole window when a reader asks it to, and while it has the window
+ * it is the same frame, with the same run in it, parked on the body.
  */
 import { CLASS, esc, wideRuns } from "./transcript.mjs";
 
@@ -40,17 +42,23 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
   // A page may list many sessions; only one of them plays. Two typewriters in
   // one column is two things to read, and neither gets read.
   var stopOthers = null;
+  // And one of them at most has the window. The frame that takes it covers the
+  // page, so a second one would cover the first and leave the reader with two
+  // Escapes to press to get back.
+  var giveBackWindow = null;
 
   if (RUNS) $$("[data-demo]").forEach(setupDemo);
 
   function setupDemo(demo) {
     var screen = $("[data-demo-screen]", demo);
+    var transcript = $("[data-demo-transcript]", demo);
     var syncPill = $("[data-demo-sync]", demo);
     var controls = $("[data-demo-controls]", demo);
     var toggleBtn = $("[data-demo-toggle]", demo);
     var speedBtn = $("[data-demo-speed]", demo);
     var speedLabel = $("[data-demo-speed-label]", demo);
     var replayBtn = $("[data-demo-replay]", demo);
+    var fullBtn = $("[data-demo-full]", demo);
     var progress = $("[data-demo-progress]", demo);
     var progressFill = $("span", progress);
 
@@ -533,6 +541,7 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
       progress.hidden = false;
       settle();
       watchVisibility();
+      scrollerReachable();
       blink = setInterval(function () {
         var cursor = $(".demo-cursor", screen);
         if (!cursor) return;
@@ -545,6 +554,171 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
       }, 530);
     }
 
+    /* ---- The frame with the window to itself ----
+     *
+     * Expanding is a state on the frame and nothing more. The chain of
+     * timeouts is not touched, so a run that is typing goes on typing through
+     * the expansion and through the collapse, at the point it had reached.
+     *
+     * The stylesheet carries the reasoning for the overlay over the Fullscreen
+     * API, because that is where the measurement belongs.
+     */
+
+    // What the reader had focused when the frame took the window, and where in
+    // the page they were standing.
+    var returnFocusTo = null;
+    var returnScrollTo = 0;
+    var collapseTimer = null;
+    var filling = false;
+    // Where the frame lives when it is in the page, so that it goes back
+    // exactly there and not merely near there.
+    var homeParent = null;
+    var homeNext = null;
+
+    // The frame spends the expansion as a child of the body.
+    //
+    // It has to leave the content pane to be seen: Starlight's .main-pane
+    // carries `isolation: isolate`, and the site header is fixed outside that
+    // stacking context, so the header painted over the top band of a frame that
+    // otherwise filled the window and took the press meant for the terminal
+    // bar. No z-index written inside that context can reach past it.
+    //
+    // The player holds these elements, not their place in the document, so the
+    // move costs the run nothing. What a move does reset is the scroll position
+    // of a scrolling box, which is read and written back around it.
+    function moveTo(parent, before) {
+      var wasAt = { screen: screen.scrollTop, transcript: transcript.scrollTop };
+      parent.insertBefore(demo, before);
+      screen.scrollTop = wasAt.screen;
+      transcript.scrollTop = wasAt.transcript;
+    }
+
+    // How long the stylesheet says the animation runs. Reading it back is what
+    // keeps one answer: a duration written here as well would go on waiting
+    // after the reduced-motion preference had already taken the animation out.
+    function expandMs() {
+      var declared = getComputedStyle(demo).getPropertyValue("--demo-expand-ms").trim();
+      var ms = parseFloat(declared) || 0;
+      return /[^m]s$/.test(declared) ? ms * 1000 : ms;
+    }
+
+    // The word, the title and the pressed state all say what the button will do
+    // next, which is the pair Play and Pause already show.
+    function labelFull() {
+      fullBtn.setAttribute("aria-pressed", filling ? "true" : "false");
+      fullBtn.setAttribute("title", filling ? "Collapse" : "Expand");
+      fullBtn.setAttribute(
+        "aria-label",
+        filling ? "Collapse the frame back into the page" : "Expand the frame to fill the window"
+      );
+    }
+
+    // With the window to itself the session is what scrolls, and a scrolling
+    // region only a mouse can reach leaves out half the readers. The screen
+    // gets no tab stop of its own: it carries aria-hidden, and the player keeps
+    // it at the bottom without being asked.
+    function scrollerReachable() {
+      if (filling && !live) transcript.setAttribute("tabindex", "0");
+      else transcript.removeAttribute("tabindex");
+    }
+
+    // What a reader can reach with the keyboard while the frame has the window:
+    // the bar's own buttons, and the transcript when it is the scrolling region.
+    // A hidden button is out, which is what keeps Replay out of the ring while
+    // nothing is playing.
+    function reachable() {
+      return $$("button, [tabindex='0']", demo).filter(function (node) {
+        return !node.hidden && node.offsetParent !== null;
+      });
+    }
+
+    // Tab stays inside the frame while the frame is the window.
+    //
+    // aria-modal tells a screen reader that the page behind does not exist, and
+    // the overlay covers it, so focus reaching the header links behind would
+    // put a reader on controls they cannot see and a screen reader on controls
+    // it has been told are not there. The ring wraps at both ends rather than
+    // stopping, so Shift+Tab off the first control lands on the last.
+    function onKey(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        return collapse();
+      }
+      if (event.key !== "Tab") return;
+      var ring = reachable();
+      if (ring.length === 0) return;
+      var edge = event.shiftKey ? ring[0] : ring[ring.length - 1];
+      // Focus outside the frame is the case a wrap cannot handle by itself: the
+      // press that put it there came from somewhere this handler never saw.
+      if (event.target !== edge && demo.contains(event.target)) return;
+      event.preventDefault();
+      ring[event.shiftKey ? ring.length - 1 : 0].focus();
+    }
+
+    function expand() {
+      if (filling) return;
+      if (giveBackWindow && giveBackWindow !== collapse) giveBackWindow();
+      giveBackWindow = collapse;
+      clearTimeout(collapseTimer);
+      filling = true;
+      returnFocusTo = doc.activeElement;
+      returnScrollTo = window.scrollY;
+      demo.classList.remove("is-collapsing");
+      demo.classList.add("is-expanded");
+      homeParent = demo.parentNode;
+      homeNext = demo.nextSibling;
+      moveTo(doc.body, null);
+      // The page behind stops scrolling: the frame covers it, and a wheel over
+      // the terminal bar would move a page nobody can see. The frame leaves the
+      // flow with it, so the document loses the frame's height; the reader's
+      // place in it is given back on the way out.
+      doc.documentElement.style.overflow = "hidden";
+      demo.setAttribute("role", "dialog");
+      demo.setAttribute("aria-modal", "true");
+      demo.focus();
+      doc.addEventListener("keydown", onKey);
+      scrollerReachable();
+      labelFull();
+    }
+
+    function collapse() {
+      if (!filling) return;
+      filling = false;
+      doc.removeEventListener("keydown", onKey);
+      demo.removeAttribute("role");
+      demo.removeAttribute("aria-modal");
+      demo.classList.add("is-collapsing");
+      labelFull();
+      scrollerReachable();
+      collapseTimer = setTimeout(function () {
+        // Back into the page before it rejoins the flow: a frame that stopped
+        // being fixed while it was still on the body would stand at the foot of
+        // the document for as long as it took to move.
+        if (homeParent) moveTo(homeParent, homeNext);
+        homeParent = null;
+        homeNext = null;
+        demo.classList.remove("is-expanded");
+        demo.classList.remove("is-collapsing");
+        doc.documentElement.style.overflow = "";
+        // The frame is back in the flow, so the document is its own height
+        // again and the reader's place in it can be given back. Focus goes back
+        // after it and without a scroll of its own, which would otherwise take
+        // the page to whatever had focus before the frame took the window.
+        window.scrollTo(0, returnScrollTo);
+        var back =
+          returnFocusTo && returnFocusTo.isConnected && returnFocusTo !== doc.body
+            ? returnFocusTo
+            : fullBtn;
+        returnFocusTo = null;
+        back.focus({ preventScroll: true });
+        if (giveBackWindow === collapse) giveBackWindow = null;
+      }, expandMs());
+    }
+
+    fullBtn.addEventListener("click", function () {
+      if (filling) collapse();
+      else expand();
+    });
     speedBtn.addEventListener("click", function () {
       setRate(RATES[(RATES.indexOf(rate) + 1) % RATES.length]);
     });
@@ -594,6 +768,7 @@ import { CLASS, esc, wideRuns } from "./transcript.mjs";
     // A listed session waits to be asked; the one in the hero is the page. The
     // bar still offers it, because a transcript with no way to watch it play is
     // a transcript, and the point of the page is that it is both.
+    labelFull();
     if (demo.hasAttribute("data-demo-static")) {
       controls.hidden = false;
       label();

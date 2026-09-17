@@ -26,7 +26,10 @@ const firstSync = events.find(([kind]) => kind === 'sync');
 <!-- data-demo-static: the transcript stays on the page and the player waits to
 	be asked. A documentation page that started typing at a reader who scrolled
 	past it would be taking the page away from them. -->
-<div class="term demo not-content" data-demo data-demo-static data-demo-scenario={id}>
+<!-- tabindex="-1": the frame takes focus when it fills the window, so Escape
+	reaches it and a screen reader lands on the session rather than on the page
+	behind it. It is never in the tab order. -->
+<div class="term demo not-content" data-demo data-demo-static data-demo-scenario={id} tabindex="-1">
 	<div class="term-bar">
 		<span class="demo-where">{where ?? `sh · ${id}`}</span>
 		<span class="demo-sync" data-demo-sync hidden>{firstSync?.[1] ?? ''}</span>
@@ -63,6 +66,43 @@ const firstSync = events.find(([kind]) => kind === 'sync');
 						stroke-linejoin="round"></path></svg
 				>
 				<span>Replay</span>
+			</button>
+			<!-- Expand, not Full screen: the frame takes the window, and the
+				browser keeps its own chrome. A reader told Full screen and given a
+				page with an address bar still on it has been told something
+				untrue, the same way Live would be.
+
+				The bar is where this control belongs and where it is reachable: a
+				frame that carries data-demo-static offers the whole bar before
+				anything has played, so Expand stands beside Play on a page nobody
+				has pressed yet. -->
+			<button
+				class="demo-btn demo-btn-full"
+				type="button"
+				data-demo-full
+				aria-pressed="false"
+				aria-label="Expand the frame to fill the window"
+				title="Expand"
+			>
+				<svg class="i-expand" viewBox="0 0 16 16" aria-hidden="true" focusable="false"
+					><path
+						d="M6 2.5H2.5V6M10 2.5H13.5V6M13.5 10V13.5H10M2.5 10V13.5H6"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"></path></svg
+				>
+				<svg class="i-collapse" viewBox="0 0 16 16" aria-hidden="true" focusable="false"
+					><path
+						d="M2.5 6H6V2.5M13.5 6H10V2.5M13.5 10H10V13.5M2.5 10H6V13.5"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"></path></svg
+				>
+				<span class="i-expand">Expand</span><span class="i-collapse">Collapse</span>
 			</button>
 		</span>
 	</div>
