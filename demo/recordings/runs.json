@@ -1,25 +1,294 @@
 {
-  "recordedAt": "2026-09-16T05:15:25Z",
+  "recordedAt": "2026-09-17T07:43:08Z",
   "lab": {
-    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-operator@sha256:e03d3112daf706159cebbdb7debe9cc7e787b47fa10152e454ea1b032fb6eae3",
-    "CONTROLLER_REVISION": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-executor@sha256:c235358836226f4f55016c9fa2e0bd4a4a6359167aae7b948f4fafd9039c6037",
-    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-demo-03c2a0e0b9",
+    "CONTROLLER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-b0demo-09d5bbb72f.svc.cluster.local:5000/ptah-operator@sha256:5555a6974bdd523ab0b8d7c49258ffd96341010dabf44714c1896617e02e4551",
+    "CONTROLLER_REVISION": "8891fd3f616e4b83eac560cd7ff6917c31cba5a0",
+    "EXECUTOR_IMAGE": "e2e-registry.ptah-test-a-1-37-0-b0demo-09d5bbb72f.svc.cluster.local:5000/ptah-executor@sha256:7bdf0835593d861b6bc69b86e6487c360a33ae2639590fff610734b9abbb1076",
+    "KIND_CLUSTER_NAME": "ptah-e2e-1-37-0-b0demo-09d5bbb72f",
     "KUBERNETES_VERSION": "1.37.0",
-    "PTAH_REVISION": "939c2fb463e7ce56b5e4d6f08e5807647c6f5b97",
-    "PTAH_VERSION": "v0.5.0-131-g939c2fb4",
-    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-demo-03c2a0e0b9.svc.cluster.local:5000/ptah-runner@sha256:e03d3112daf706159cebbdb7debe9cc7e787b47fa10152e454ea1b032fb6eae3"
+    "PTAH_REVISION": "8fbb315cf3f8fcd8120b49fde5925ab16a45466d",
+    "PTAH_VERSION": "v0.5.0-186-g8fbb315c",
+    "RUNNER_IMAGE": "e2e-registry.ptah-test-a-1-37-0-b0demo-09d5bbb72f.svc.cluster.local:5000/ptah-runner@sha256:5555a6974bdd523ab0b8d7c49258ffd96341010dabf44714c1896617e02e4551"
   },
   "source": {
-    "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-    "describe": "03093dc"
+    "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+    "describe": "893ff18"
   },
   "scenarios": [
     {
+      "id": "checkpoint-bootstrap",
+      "source": {
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
+      },
+      "title": "Start a new database from a checkpoint",
+      "tagline": "A fresh database runs the snapshot and what came after it, and ends up where the long way ends.",
+      "learn": "What a checkpoint replaces, what it must record, and how the operator proves the shortcut arrived at the same place.",
+      "tags": [
+        "Lifecycle"
+      ],
+      "commands": 6,
+      "lines": 50,
+      "events": [
+        [
+          "note",
+          "# Four files, and one of them is not a migration. The name is the whole contract."
+        ],
+        [
+          "cmd",
+          "ls demo/migrations-checkpoint | grep -v down"
+        ],
+        [
+          "out",
+          "0000000001_create_shipments.up.sql"
+        ],
+        [
+          "out",
+          "0000000002_add_carrier.up.sql"
+        ],
+        [
+          "out",
+          "0000000003_snapshot.checkpoint.up.sql"
+        ],
+        [
+          "out",
+          "0000000004_add_delivered_at.up.sql"
+        ],
+        [
+          "note",
+          "# The checkpoint records where migration 2 left the column, not where migration 1 created it."
+        ],
+        [
+          "cmd",
+          "sed -n '/CREATE TABLE/,$p' demo/migrations-checkpoint/0000000003_snapshot.checkpoint.up.sql"
+        ],
+        [
+          "sql",
+          "CREATE TABLE shipments ("
+        ],
+        [
+          "sql",
+          "    id INTEGER PRIMARY KEY,"
+        ],
+        [
+          "sql",
+          "    reference TEXT NOT NULL,"
+        ],
+        [
+          "sql",
+          "    carrier TEXT NOT NULL"
+        ],
+        [
+          "sql",
+          ");"
+        ],
+        [
+          "sync",
+          "publishing"
+        ],
+        [
+          "note",
+          "# Apply it to a database that has run nothing at all."
+        ],
+        [
+          "cmd",
+          "APPLY=Always demo/bin/lab manifest shipments \"$(cat demo/.lab/checkpoint-digest)\" | kubectl apply -f -"
+        ],
+        [
+          "out",
+          "ptahmigration.operator.ptah.run/shipments created"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# The history ends at 4, and the two the checkpoint replaced were never run."
+        ],
+        [
+          "cmd",
+          "kubectl ptah migration shipments -n \"$NAMESPACE\""
+        ],
+        [
+          "out",
+          "Migration:      demo/shipments"
+        ],
+        [
+          "out",
+          "Phase:          InSync"
+        ],
+        [
+          "out",
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:b77e4a242853eb9c1336b9d1faed398ac72758abf5088c97e2d69b47f003d7d0"
+        ],
+        [
+          "out",
+          "History read:   \u003ctime\u003e"
+        ],
+        [
+          "out",
+          "Current version:4"
+        ],
+        [
+          "out",
+          "Checkpoint:     3"
+        ],
+        [
+          "out",
+          "Applied:        4"
+        ],
+        [
+          "out",
+          "Pending:        0"
+        ],
+        [
+          "out",
+          "Last run:       Applied at \u003ctime\u003e"
+        ],
+        [
+          "out",
+          "Run applied:    3, 4"
+        ],
+        [
+          "out",
+          "Run message:    2 migrations are recorded applied"
+        ],
+        [
+          "out",
+          "ArtifactVerified:True (PolicySatisfied)"
+        ],
+        [
+          "out",
+          "Ready:          True (HistoryMatched)"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "No plan is published."
+        ],
+        [
+          "note",
+          "# The table is what replaying all four would have built, down to the constraint."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"\\d shipments\""
+        ],
+        [
+          "out",
+          "                         Table \"public.shipments\""
+        ],
+        [
+          "out",
+          "    Column    |           Type           | Collation | Nullable | Default"
+        ],
+        [
+          "out",
+          "--------------+--------------------------+-----------+----------+---------"
+        ],
+        [
+          "out",
+          " id           | integer                  |           | not null |"
+        ],
+        [
+          "out",
+          " reference    | text                     |           | not null |"
+        ],
+        [
+          "out",
+          " carrier      | text                     |           | not null |"
+        ],
+        [
+          "out",
+          " delivered_at | timestamp with time zone |           |          |"
+        ],
+        [
+          "out",
+          "Indexes:"
+        ],
+        [
+          "out",
+          "    \"shipments_pkey\" PRIMARY KEY, btree (id)"
+        ],
+        [
+          "note",
+          "# Nothing is pending. The shortcut is finished, not paused."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" get ptahmigration shipments -o json \\"
+        ],
+        [
+          "cont",
+          "  | jq -r '\"pending: \\(.status.history.pendingCount)\", \"current: \\(.status.history.currentVersion)\", \"plan: \\(.status.plan // \"none\")\"'"
+        ],
+        [
+          "out",
+          "pending: 0"
+        ],
+        [
+          "out",
+          "current: 4"
+        ],
+        [
+          "out",
+          "plan: none"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "checkpoint-bootstrap",
+          "step": 1,
+          "claim": "exits 0, prints \"0000000003_snapshot.checkpoint.up.sql\", prints \"0000000004_add_delivered_at.up.sql\"",
+          "passed": true
+        },
+        {
+          "scenario": "checkpoint-bootstrap",
+          "step": 2,
+          "claim": "exits 0, prints \"carrier TEXT NOT NULL\"",
+          "passed": true
+        },
+        {
+          "scenario": "checkpoint-bootstrap",
+          "step": 3,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "checkpoint-bootstrap",
+          "step": 4,
+          "claim": "ptahmigration/shipments: Ready=True (HistoryMatched)",
+          "passed": true
+        },
+        {
+          "scenario": "checkpoint-bootstrap",
+          "step": 4,
+          "claim": "exits 0, prints \"InSync\", prints \"Current version:4\", prints \"Run applied:    3, 4\", never prints \"CREATE TABLE\", never prints \"ALTER TABLE\"",
+          "passed": true
+        },
+        {
+          "scenario": "checkpoint-bootstrap",
+          "step": 5,
+          "claim": "exits 0, prints \"carrier\", prints \"delivered_at\", prints \"not null\"",
+          "passed": true
+        },
+        {
+          "scenario": "checkpoint-bootstrap",
+          "step": 6,
+          "claim": "exits 0, prints \"pending: 0\", prints \"current: 4\", prints \"plan: none\"",
+          "passed": true
+        }
+      ]
+    },
+    {
       "id": "destructive-block",
       "source": {
-        "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-        "describe": "03093dc"
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
       },
       "title": "Refuse a destructive change",
       "tagline": "The third revision drops a column. The policy says no, and says so before anything runs.",
@@ -76,11 +345,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v2.sql\t2026-09-16 04:36:53.004397331 +0200"
+          "--- demo/schemas/v2.sql\t2026-09-17 09:06:31.076985772 +0200"
         ],
         [
           "out",
-          "+++ demo/schemas/v3.sql\t2026-09-16 04:36:53.004795999 +0200"
+          "+++ demo/schemas/v3.sql\t2026-09-17 09:06:31.077450353 +0200"
         ],
         [
           "out",
@@ -196,11 +465,11 @@
         ],
         [
           "out",
-          "ptah-plan-a1d9e3ae29502a0a499427fe   storefront   sha256:a1d9e3ae29502a0a499427fee7048929d213507ee90eb8313fb0992d31c2d0dc   2            true          2s"
+          "ptah-plan-5ab8159f3f149473433eab36   storefront   sha256:5ab8159f3f149473433eab36aee19c8a31a5a54288b2742fb5d6245daff2b666   2            true          1s"
         ],
         [
           "out",
-          "ptah-plan-bd791d9352d36f82dec53d6f   storefront   sha256:bd791d9352d36f82dec53d6f825bb78da8e984d7ac295154d6444d899b336207   3            false         43s"
+          "ptah-plan-63e832571f5586e24f44a612   storefront   sha256:63e832571f5586e24f44a6127bba8944b5ac0d1e18b039c0a82e9ae04bce572c   3            false         39s"
         ],
         [
           "note",
@@ -321,8 +590,8 @@
     {
       "id": "drift",
       "source": {
-        "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-        "describe": "03093dc"
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
       },
       "title": "Close the drift",
       "tagline": "Someone changes the database by hand. The operator notices and puts it back.",
@@ -483,11 +752,11 @@
         ],
         [
           "out",
-          "ptah-plan-3255569db9bbf375170e68ce   storefront   sha256:3255569db9bbf375170e68ce3f6899a51db65aefbb193b097cc15f425c9f9b5a   1            false         19s"
+          "ptah-plan-80cd9c7bfbc497b7b32eb323   storefront   sha256:80cd9c7bfbc497b7b32eb32311acc947de4d6e74f668fd65a92592b620ab1fe7   3            false         116s"
         ],
         [
           "out",
-          "ptah-plan-9f9892287176883409d6fd6d   storefront   sha256:9f9892287176883409d6fd6d3963619dff86b9d450bae6ea0333b3e7240503f5   3            false         119s"
+          "ptah-plan-92f640422b7b6733572a3e06   storefront   sha256:92f640422b7b6733572a3e0605fb10ff46e1ef32b3a9f414951a27e9203be3b4   1            false         17s"
         ]
       ],
       "checks": [
@@ -532,8 +801,8 @@
     {
       "id": "failure-recovery",
       "source": {
-        "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-        "describe": "03093dc"
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
       },
       "title": "Fail, then recover",
       "tagline": "Point it at a database that is not there. It says so, keeps trying, and converges when it is.",
@@ -602,11 +871,11 @@
         ],
         [
           "out",
-          "13s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
+          "11s         Normal    OperationCompleted   ptahschema/storefront   resolve operation completed"
         ],
         [
           "out",
-          "13s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-9c5327524cdaed58 started"
+          "11s         Normal    OperationStarted     ptahschema/storefront   Verify Job ptah-verify-storefront-b81ccf35568dc970 started"
         ],
         [
           "out",
@@ -614,11 +883,11 @@
         ],
         [
           "out",
-          "8s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-3555148fbe0e8722 started"
+          "8s          Normal    OperationStarted     ptahschema/storefront   Observe Job ptah-observe-storefront-5a46c8aaa8eece8a started"
         ],
         [
           "out",
-          "2s          Warning   OperationFailed      ptahschema/storefront   child_exit: ptah exited with code 2"
+          "1s          Warning   OperationFailed      ptahschema/storefront   child_exit: ptah exited with code 2"
         ],
         [
           "note",
@@ -630,7 +899,7 @@
         ],
         [
           "out",
-          "{\"activeOperation\":{\"attempt\":2,\"coordinationDigest\":\"sha256:1f99f1e0ceb341a5b6ca5da75161513672b13c811fc50e1725fc7dec0f8aa99f\",\"executionBindingID\":\"v1-17c25ff21eeadefbf86d4c4eabbbf880\",\"id\":\"sha256:d1f5e5f7c70fb146d77c9348a1c613b849644db9c7e7ba82223fc4800005640f\",\"inputFingerprint\":\"sha256:f6a2c049949588252f8e082676011d89d58cb51759cb4debed87f79d8451729d\",\"jobName\":\"ptah-observe-storefront-8058a4d"
+          "{\"activeOperation\":{\"attempt\":2,\"coordinationDigest\":\"sha256:1f99f1e0ceb341a5b6ca5da75161513672b13c811fc50e1725fc7dec0f8aa99f\",\"executionBindingID\":\"v1-72f97c7b85a26bce099301bf8e95c405\",\"id\":\"sha256:62a9f92e4ad0d3d1632fa18221a699bdbbc18a8cc583007c9a1fe9337c7fe077\",\"inputFingerprint\":\"sha256:995b1822e270c95e0726da56c2fcc2e3960b7fa77d554ccff9d80ae55b440edb\",\"jobName\":\"ptah-observe-storefront-ce65073"
         ],
         [
           "sync",
@@ -745,8 +1014,8 @@
     {
       "id": "first-apply",
       "source": {
-        "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-        "describe": "03093dc"
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
       },
       "title": "Apply a schema",
       "tagline": "Publish a schema as an artifact, point the operator at it, and watch it converge.",
@@ -807,7 +1076,7 @@
         ],
         [
           "out",
-          "registry: 127.0.0.1:24429"
+          "registry: 127.0.0.1:20655"
         ],
         [
           "note",
@@ -835,11 +1104,11 @@
         ],
         [
           "err",
-          "Pushed schema as oci://127.0.0.1:24429/schemas/demo:v1-26577"
+          "Pushed schema as oci://127.0.0.1:20655/schemas/demo:v1-27752"
         ],
         [
           "err",
-          "Digest: sha256:2ee9fb41e96ac028ee870335285e853789394265dac84605b51934d0bcdf446e"
+          "Digest: sha256:d93aaf0a98a386b1fed04b400f1040b1dbcc0b6693bb7892c9e5d645f68ae32c"
         ],
         [
           "err",
@@ -847,7 +1116,7 @@
         ],
         [
           "err",
-          "Tags: [v1-26577]"
+          "Tags: [v1-27752]"
         ],
         [
           "sync",
@@ -955,7 +1224,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:2ee9fb41e96ac028ee870335285e853789394265dac84605b51934d0bcdf446e"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:d93aaf0a98a386b1fed04b400f1040b1dbcc0b6693bb7892c9e5d645f68ae32c"
         ],
         [
           "out",
@@ -1151,7 +1420,7 @@
         ],
         [
           "out",
-          "ptah-plan-3c93acda52cbcf548ded3e95   storefront   sha256:3c93acda52cbcf548ded3e954a8eeb8c37c2af3972f1014401ec06c5b7e241dc   1            false         19s"
+          "ptah-plan-9730d430dd27a28b0e48e848   storefront   sha256:9730d430dd27a28b0e48e848ccee1d5a65c9984a1c3861025b684367c9934b18   1            false         19s"
         ],
         [
           "note",
@@ -1302,8 +1571,8 @@
     {
       "id": "lab-setup",
       "source": {
-        "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-        "describe": "03093dc"
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
       },
       "title": "Stand up the lab",
       "tagline": "A four-node kind cluster, the chart from a package, and every image pinned by digest.",
@@ -1336,15 +1605,15 @@
         ],
         [
           "out",
-          "operator    03093dc7138c0ead8fcbc83caf84d38cdec7c275"
+          "operator    8891fd3f616e4b83eac560cd7ff6917c31cba5a0"
         ],
         [
           "out",
-          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:c235358836226f4f55016c9fa2e0bd4a4a6359167aae7b948f4fafd9039c6037"
+          "executor    e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:7bdf0835593d861b6bc69b86e6487c360a33ae2639590fff610734b9abbb1076"
         ],
         [
           "out",
-          "ptah        v0.5.0-131-g939c2fb4"
+          "ptah        v0.5.0-186-g8fbb315c"
         ],
         [
           "note",
@@ -1360,11 +1629,11 @@
         ],
         [
           "out",
-          "ptah-operator-cert-rotator                                     1/1     1            1           22m"
+          "ptah-operator-cert-rotator                                     1/1     1            1           27m"
         ],
         [
           "out",
-          "ptah-operator                                                  2/2     2            2           22m"
+          "ptah-operator                                                  2/2     2            2           27m"
         ],
         [
           "note",
@@ -1380,11 +1649,11 @@
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:e03d3112daf706159cebbdb7debe9cc7e787b47fa10152e454ea1b032fb6eae3"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:5555a6974bdd523ab0b8d7c49258ffd96341010dabf44714c1896617e02e4551"
         ],
         [
           "out",
-          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:e03d3112daf706159cebbdb7debe9cc7e787b47fa10152e454ea1b032fb6eae3"
+          "e2e-registry.demo.svc.cluster.local:5000/ptah-operator@sha256:5555a6974bdd523ab0b8d7c49258ffd96341010dabf44714c1896617e02e4551"
         ],
         [
           "note",
@@ -1428,19 +1697,19 @@
         ],
         [
           "out",
-          "secret/demo-database          Opaque                           6      19m"
+          "secret/demo-database          Opaque                           6      25m"
         ],
         [
           "out",
-          "secret/demo-database-broken   Opaque                           1      108s"
+          "secret/demo-database-broken   Opaque                           1      106s"
         ],
         [
           "out",
-          "secret/demo-registry          Opaque                           4      19m"
+          "secret/demo-registry          Opaque                           4      25m"
         ],
         [
           "out",
-          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      19m"
+          "secret/demo-registry-pull     kubernetes.io/dockerconfigjson   1      25m"
         ],
         [
           "blank",
@@ -1452,15 +1721,15 @@
         ],
         [
           "out",
-          "configmap/demo-migration-verification-policy   1      19m"
+          "configmap/demo-migration-verification-policy   1      25m"
         ],
         [
           "out",
-          "configmap/demo-verification-policy             1      19m"
+          "configmap/demo-verification-policy             1      25m"
         ],
         [
           "out",
-          "configmap/kube-root-ca.crt                     1      19m"
+          "configmap/kube-root-ca.crt                     1      25m"
         ]
       ],
       "checks": [
@@ -1505,8 +1774,8 @@
     {
       "id": "manual-approval",
       "source": {
-        "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-        "describe": "03093dc"
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
       },
       "title": "Approve a plan",
       "tagline": "With apply set to OnApproval, nothing runs until a person approves that exact plan.",
@@ -1623,7 +1892,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:d0edbd82e1d36a22f9edd3bd5db0bba603885c1df6c7895500dab7f9c69c457c"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/schemas/demo@sha256:359cc316f07f9b022330e4ed95ff93d0df5da43d7eeaf771f8e896d1acd11271"
         ],
         [
           "out",
@@ -1847,7 +2116,7 @@
         ],
         [
           "out",
-          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-93459b26646c7a65204d86fb\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:93459b26646c7a65204d86fb8c2747ef1dc7873ca309147a3df70343b6ecfee4\"}"
+          "{\"schemaRef\":{\"name\":\"storefront\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-plan-c49b332e2a9cbab41953dfb3\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:c49b332e2a9cbab41953dfb35f71a1d984873ee96b4c16e8420994484f0943f6\"}"
         ],
         [
           "sync",
@@ -1887,19 +2156,19 @@
         ],
         [
           "out",
-          "  \"ptahVersion\": \"v0.5.0-131-g939c2fb4\","
+          "  \"ptahVersion\": \"v0.5.0-186-g8fbb315c\","
         ],
         [
           "out",
-          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:c235358836226f4f55016c9fa2e0bd4a4a6359167aae7b948f4fafd9039c6037\","
+          "  \"executorImage\": \"e2e-registry.demo.svc.cluster.local:5000/ptah-executor@sha256:7bdf0835593d861b6bc69b86e6487c360a33ae2639590fff610734b9abbb1076\","
         ],
         [
           "out",
-          "  \"artifactDigest\": \"sha256:d0edbd82e1d36a22f9edd3bd5db0bba603885c1df6c7895500dab7f9c69c457c\","
+          "  \"artifactDigest\": \"sha256:359cc316f07f9b022330e4ed95ff93d0df5da43d7eeaf771f8e896d1acd11271\","
         ],
         [
           "out",
-          "  \"executionBindingID\": \"v1-125414253c3ebc9130066765c103fc91\""
+          "  \"executionBindingID\": \"v1-2a47bc22ea9582abdaebca7fee197cf7\""
         ],
         [
           "out",
@@ -2050,10 +2319,599 @@
       ]
     },
     {
+      "id": "reference-data",
+      "source": {
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
+      },
+      "title": "Manage reference data",
+      "tagline": "Rows declared beside the tables that hold them, reconciled through the same plan.",
+      "learn": "What a declared row set owns, how a change to rows alone reaches the database, and why removing a declaration is not a delete.",
+      "tags": [
+        "Lifecycle"
+      ],
+      "commands": 13,
+      "lines": 110,
+      "events": [
+        [
+          "note",
+          "# A declaration names the table, the column that identifies a row, and the file the rows live in."
+        ],
+        [
+          "cmd",
+          "sed -n '/ptah:schema:table name=\"regions\"/,/^}/p' demo/reference/v1/catalog.go"
+        ],
+        [
+          "out",
+          "//ptah:schema:table name=\"regions\""
+        ],
+        [
+          "out",
+          "//ptah:schema:data table=\"regions\" key=\"code\" file=\"regions.yaml\""
+        ],
+        [
+          "out",
+          "type Region struct {"
+        ],
+        [
+          "out",
+          "\t//ptah:schema:field name=\"code\" type=\"VARCHAR(8)\" primary=\"true\""
+        ],
+        [
+          "out",
+          "\tCode string"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "\t//ptah:schema:field name=\"name\" type=\"VARCHAR(64)\" not_null=\"true\""
+        ],
+        [
+          "out",
+          "\tName string"
+        ],
+        [
+          "out",
+          "}"
+        ],
+        [
+          "note",
+          "# The rows themselves are a list, each one a map from column name to value."
+        ],
+        [
+          "cmd",
+          "cat demo/reference/v1/regions.yaml"
+        ],
+        [
+          "out",
+          "- code: emea"
+        ],
+        [
+          "out",
+          "  name: Europe, Middle East and Africa"
+        ],
+        [
+          "out",
+          "- code: amer"
+        ],
+        [
+          "out",
+          "  name: Americas"
+        ],
+        [
+          "sync",
+          "publishing"
+        ],
+        [
+          "note",
+          "# Apply it. The rows are covered by the digest, so nothing later reads the author's working copy."
+        ],
+        [
+          "cmd",
+          "APPLY=Always demo/bin/lab manifest catalog \"$(cat demo/.lab/catalog-digest)\" | kubectl apply -f -"
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.run/catalog created"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# The tables are created and the declared rows are in them."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"SELECT code, name FROM regions ORDER BY code\""
+        ],
+        [
+          "out",
+          " code |              name"
+        ],
+        [
+          "out",
+          "------+--------------------------------"
+        ],
+        [
+          "out",
+          " amer | Americas"
+        ],
+        [
+          "out",
+          " emea | Europe, Middle East and Africa"
+        ],
+        [
+          "out",
+          "(2 rows)"
+        ],
+        [
+          "note",
+          "# The child table exists and holds nothing. Its rows come in the next revision."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -qAt -c \"SELECT count(*) FROM countries\""
+        ],
+        [
+          "out",
+          "0"
+        ],
+        [
+          "note",
+          "# The second revision adds rows and no column. One marker, nothing else."
+        ],
+        [
+          "cmd",
+          "diff -u demo/reference/v1/catalog.go demo/reference/v2/catalog.go || true"
+        ],
+        [
+          "out",
+          "--- demo/reference/v1/catalog.go\t2026-09-17 09:09:51.104838363 +0200"
+        ],
+        [
+          "out",
+          "+++ demo/reference/v2/catalog.go\t2026-09-17 09:09:51.105131404 +0200"
+        ],
+        [
+          "out",
+          "@@ -28,6 +28,7 @@"
+        ],
+        [
+          "out",
+          " // parent rows exist, is the sequence that works today."
+        ],
+        [
+          "out",
+          " //"
+        ],
+        [
+          "out",
+          " //ptah:schema:table name=\"countries\""
+        ],
+        [
+          "out",
+          "+//ptah:schema:data table=\"countries\" key=\"code\" file=\"countries.yaml\""
+        ],
+        [
+          "out",
+          " type Country struct {"
+        ],
+        [
+          "out",
+          " \t//ptah:schema:field name=\"code\" type=\"VARCHAR(2)\" primary=\"true\""
+        ],
+        [
+          "out",
+          " \tCode string"
+        ],
+        [
+          "sync",
+          "planning"
+        ],
+        [
+          "note",
+          "# Publish it and point the resource at the new digest."
+        ],
+        [
+          "cmd",
+          "eval \"$(demo/bin/lab credentials)\""
+        ],
+        [
+          "cont",
+          "export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY"
+        ],
+        [
+          "cont",
+          "ptah schema push \"oci://$PTAH_OCI_REGISTRY/schemas/catalog:v2-$$\" \\"
+        ],
+        [
+          "cont",
+          "  --root-dir demo/reference/v2 --dialect postgres --plain-http \\"
+        ],
+        [
+          "cont",
+          "  | sed -n 's/^Digest: //p' \u003e demo/.lab/catalog-digest"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" patch ptahschema catalog --type=merge \\"
+        ],
+        [
+          "cont",
+          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$REGISTRY_IN_CLUSTER/schemas/catalog@$(cat demo/.lab/catalog-digest)\\\"}}}\""
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.run/catalog patched"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# An empty schema diff is no reason to skip the rest. The rows are planned and applied."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"SELECT code, name FROM countries ORDER BY code\""
+        ],
+        [
+          "out",
+          " code |      name"
+        ],
+        [
+          "out",
+          "------+----------------"
+        ],
+        [
+          "out",
+          " CA   | Canada"
+        ],
+        [
+          "out",
+          " CZ   | Czech Republic"
+        ],
+        [
+          "out",
+          " US   | United States"
+        ],
+        [
+          "out",
+          "(3 rows)"
+        ],
+        [
+          "note",
+          "# A value edited outside the operator is drift, not a new declaration."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -c \"UPDATE countries SET name = 'Edited by hand' WHERE code = 'US'\""
+        ],
+        [
+          "sql",
+          "UPDATE 1"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# The next observation sees it, plans the difference, and the apply puts the declared value back."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -qAt -c \"SELECT name FROM countries WHERE code = 'US'\""
+        ],
+        [
+          "out",
+          "United States"
+        ],
+        [
+          "note",
+          "# The third revision removes the declaration on countries and keeps the table."
+        ],
+        [
+          "cmd",
+          "diff -u demo/reference/v2/catalog.go demo/reference/v3/catalog.go || true"
+        ],
+        [
+          "out",
+          "--- demo/reference/v2/catalog.go\t2026-09-17 09:09:51.105131404 +0200"
+        ],
+        [
+          "out",
+          "+++ demo/reference/v3/catalog.go\t2026-09-17 09:09:51.106176065 +0200"
+        ],
+        [
+          "out",
+          "@@ -6,8 +6,7 @@"
+        ],
+        [
+          "out",
+          " // testdata/ because a reader publishes it by typing the path, and the path is"
+        ],
+        [
+          "out",
+          " // part of what the demonstration shows."
+        ],
+        [
+          "out",
+          " //"
+        ],
+        [
+          "out",
+          "-// Two tables joined by a foreign key, because a reference set is usually"
+        ],
+        [
+          "out",
+          "-// several tables that have to arrive in an order the constraint allows."
+        ],
+        [
+          "out",
+          "+// The declaration on countries is gone; the table and its rows are not."
+        ],
+        [
+          "out",
+          " package catalog"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          " //ptah:schema:table name=\"regions\""
+        ],
+        [
+          "out",
+          "@@ -20,15 +19,11 @@"
+        ],
+        [
+          "out",
+          " \tName string"
+        ],
+        [
+          "out",
+          " }"
+        ],
+        [
+          "blank",
+          null
+        ],
+        [
+          "out",
+          "-// The country rows arrive in the next revision rather than here. Ptah emits"
+        ],
+        [
+          "out",
+          "-// declared rows grouped by table, in an order that ignores the dependency"
+        ],
+        [
+          "out",
+          "-// order it uses for the tables themselves, so a child row can be offered"
+        ],
+        [
+          "out",
+          "-// before the parent row it references and the foreign key refuses it"
+        ],
+        [
+          "out",
+          "-// (stokaro/ptah#3252). Declaring the parent first, and the child once the"
+        ],
+        [
+          "out",
+          "-// parent rows exist, is the sequence that works today."
+        ],
+        [
+          "out",
+          "+// This revision drops the row declaration on countries and keeps the table."
+        ],
+        [
+          "out",
+          "+// Ending management is not deleting rows: what the operator stops doing is"
+        ],
+        [
+          "out",
+          "+// reconciling them, and what it leaves behind is exactly what was there."
+        ],
+        [
+          "out",
+          " //"
+        ],
+        [
+          "out",
+          " //ptah:schema:table name=\"countries\""
+        ],
+        [
+          "out",
+          "-//ptah:schema:data table=\"countries\" key=\"code\" file=\"countries.yaml\""
+        ],
+        [
+          "out",
+          " type Country struct {"
+        ],
+        [
+          "out",
+          " \t//ptah:schema:field name=\"code\" type=\"VARCHAR(2)\" primary=\"true\""
+        ],
+        [
+          "out",
+          " \tCode string"
+        ],
+        [
+          "sync",
+          "planning"
+        ],
+        [
+          "note",
+          "# Publish it and point the resource at it."
+        ],
+        [
+          "cmd",
+          "eval \"$(demo/bin/lab credentials)\""
+        ],
+        [
+          "cont",
+          "export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY"
+        ],
+        [
+          "cont",
+          "ptah schema push \"oci://$PTAH_OCI_REGISTRY/schemas/catalog:v3-$$\" \\"
+        ],
+        [
+          "cont",
+          "  --root-dir demo/reference/v3 --dialect postgres --plain-http \\"
+        ],
+        [
+          "cont",
+          "  | sed -n 's/^Digest: //p' \u003e demo/.lab/catalog-digest"
+        ],
+        [
+          "cont",
+          "kubectl -n \"$NAMESPACE\" patch ptahschema catalog --type=merge \\"
+        ],
+        [
+          "cont",
+          "  -p \"{\\\"spec\\\":{\\\"desired\\\":{\\\"ociRef\\\":\\\"oci://$REGISTRY_IN_CLUSTER/schemas/catalog@$(cat demo/.lab/catalog-digest)\\\"}}}\""
+        ],
+        [
+          "out",
+          "ptahschema.operator.ptah.run/catalog patched"
+        ],
+        [
+          "sync",
+          "converged"
+        ],
+        [
+          "note",
+          "# Ending management is not deleting rows. They stay exactly as they were."
+        ],
+        [
+          "cmd",
+          "kubectl -n \"$NAMESPACE\" exec deploy/demo-psql -- psql -qAt -c \"SELECT count(*) FROM countries\""
+        ],
+        [
+          "out",
+          "3"
+        ]
+      ],
+      "checks": [
+        {
+          "scenario": "reference-data",
+          "step": 1,
+          "claim": "exits 0, prints \"ptah:schema:data table=\\\"regions\\\"\", prints \"key=\\\"code\\\"\", prints \"file=\\\"regions.yaml\\\"\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 2,
+          "claim": "exits 0, prints \"emea\", prints \"amer\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 3,
+          "claim": "exits 0, prints \"created\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 4,
+          "claim": "ptahschema/catalog: InSync=True (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 4,
+          "claim": "exits 0, prints \"amer\", prints \"Americas\", prints \"emea\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 5,
+          "claim": "exits 0, prints \"0\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 6,
+          "claim": "exits 0, prints \"+//ptah:schema:data table=\\\"countries\\\"\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 7,
+          "claim": "exits 0, prints \"patched\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 8,
+          "claim": "ptahschema/catalog: InSync=True (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 8,
+          "claim": "exits 0, prints \"CZ\", prints \"Czech Republic\", prints \"US\", prints \"CA\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 9,
+          "claim": "exits 0, prints \"UPDATE\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 10,
+          "claim": "exits 0, prints \"United States\", never prints \"Edited by hand\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 11,
+          "claim": "exits 0, prints \"-//ptah:schema:data table=\\\"countries\\\"\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 12,
+          "claim": "ptahschema/catalog: DriftDetected=False (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 12,
+          "claim": "exits 0, prints \"patched\"",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 13,
+          "claim": "ptahschema/catalog: InSync=True (ScopedConverged)",
+          "passed": true
+        },
+        {
+          "scenario": "reference-data",
+          "step": 13,
+          "claim": "exits 0, prints \"3\"",
+          "passed": true
+        }
+      ]
+    },
+    {
       "id": "schema-update",
       "source": {
-        "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-        "describe": "03093dc"
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
       },
       "title": "Change the schema",
       "tagline": "A second revision, a new digest, and the difference applied as one plan.",
@@ -2106,11 +2964,11 @@
         ],
         [
           "out",
-          "--- demo/schemas/v1.sql\t2026-09-16 04:36:53.004056289 +0200"
+          "--- demo/schemas/v1.sql\t2026-09-17 09:06:31.076297317 +0200"
         ],
         [
           "out",
-          "+++ demo/schemas/v2.sql\t2026-09-16 04:36:53.004397331 +0200"
+          "+++ demo/schemas/v2.sql\t2026-09-17 09:06:31.076985772 +0200"
         ],
         [
           "out",
@@ -2194,11 +3052,11 @@
         ],
         [
           "err",
-          "Pushed schema as oci://127.0.0.1:24429/schemas/demo:v2-29355"
+          "Pushed schema as oci://127.0.0.1:20655/schemas/demo:v2-28794"
         ],
         [
           "err",
-          "Digest: sha256:555645092dcd26835aca2c4af1c0813a99926f2d2ba4ed35b1c429a2eff66691"
+          "Digest: sha256:d4226169c1443c29fc150b276d927d60fedcebe68afc4a550f99cae4adc04f8e"
         ],
         [
           "err",
@@ -2206,7 +3064,7 @@
         ],
         [
           "err",
-          "Tags: [v2-29355]"
+          "Tags: [v2-28794]"
         ],
         [
           "sync",
@@ -2246,11 +3104,11 @@
         ],
         [
           "out",
-          "ptah-plan-0584b97eea380f48b0b589b2   storefront   sha256:0584b97eea380f48b0b589b23f4c09cfc240352385c12c59be1dbad35069a1f7   3            false         20s"
+          "ptah-plan-13587a6784f9b24a57467903   storefront   sha256:13587a6784f9b24a574679034d5f83c7f29fce9abc19d3402a515f247692becd   1            false         54s"
         ],
         [
           "out",
-          "ptah-plan-283ff20a4ee91dc4c1fcabdc   storefront   sha256:283ff20a4ee91dc4c1fcabdc7e27fa9321ca63fca0ece5f67512fe5d11727d5b   1            false         61s"
+          "ptah-plan-6eb0453972880aea4e678f40   storefront   sha256:6eb0453972880aea4e678f407db292467843ac85ef5e1ee17c0f7d61f9aba533   3            false         17s"
         ],
         [
           "note",
@@ -2413,8 +3271,8 @@
     {
       "id": "stale-approval",
       "source": {
-        "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-        "describe": "03093dc"
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
       },
       "title": "Retire a used approval",
       "tagline": "An approval describes one plan against one observed state. Applying it moves that state.",
@@ -2443,7 +3301,7 @@
         ],
         [
           "out",
-          "sha256:e58af834d150322f0fbd7f0500b705f65ab69906aa96299ff877583aae7f7e3d"
+          "sha256:116747344496d9ecc280c8f10a1de7d5045ea31640d3e0f23eccc6ee57fa719c"
         ],
         [
           "sync",
@@ -2619,7 +3477,7 @@
         ],
         [
           "out",
-          "sha256:8a5a9ad1fe9aa94da99d2976ccbe39f5bf21dcdefcf2af10429bf8fb96af597d"
+          "sha256:59f8dc0aa507e249b41a92703b4bd1786e8a11df24dd1ace91ccbe4113d18300"
         ],
         [
           "note",
@@ -2730,8 +3588,8 @@
     {
       "id": "suspend-resume",
       "source": {
-        "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-        "describe": "03093dc"
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
       },
       "title": "Suspend and resume",
       "tagline": "One field stops reconciliation without deleting anything, and resuming picks up where it stopped.",
@@ -2973,8 +3831,8 @@
     {
       "id": "versioned-migration",
       "source": {
-        "commit": "03093dc7138c0ead8fcbc83caf84d38cdec7c275",
-        "describe": "03093dc"
+        "commit": "893ff1805b1969a9bfa2251bd4cfb30431dafd38",
+        "describe": "893ff18"
       },
       "title": "Run a prepared migration sequence",
       "tagline": "Numbered SQL files in an artifact, matched against the database's own record of what has run.",
@@ -3151,7 +4009,7 @@
         ],
         [
           "out",
-          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:7290761190827333ff1f7c6f1c9aac801b872f9b04f4b54dcc8fcf646378a056"
+          "    ociRef: oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:6be5a45f36df8a5592c8496426ed8ec572dd6435562893842e2bc8f10e3adb09"
         ],
         [
           "out",
@@ -3291,7 +4149,7 @@
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:7290761190827333ff1f7c6f1c9aac801b872f9b04f4b54dcc8fcf646378a056"
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:6be5a45f36df8a5592c8496426ed8ec572dd6435562893842e2bc8f10e3adb09"
         ],
         [
           "out",
@@ -3327,7 +4185,7 @@
         ],
         [
           "out",
-          "Plan ptah-mplan-7839b4c666c7c3c2b512a43a, 2 migrations from version 0:"
+          "Plan ptah-mplan-f8556fa812976e305bd42dc2, 2 migrations from version 0:"
         ],
         [
           "out",
@@ -3423,7 +4281,7 @@
         ],
         [
           "out",
-          "{\"migrationRef\":{\"name\":\"shipments\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-mplan-7839b4c666c7c3c2b512a43a\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:7839b4c666c7c3c2b512a43a48889c391a0ec6ceb36f533f1da783361cdfa292\"}"
+          "{\"migrationRef\":{\"name\":\"shipments\",\"uid\":\"\u003cuid\u003e\"},\"planRef\":{\"name\":\"ptah-mplan-f8556fa812976e305bd42dc2\",\"uid\":\"\u003cuid\u003e\"},\"planFingerprint\":\"sha256:f8556fa812976e305bd42dc200804aac35df4198c3a7e36d27c3cb73064a2a34\"}"
         ],
         [
           "sync",
@@ -3467,11 +4325,11 @@
         ],
         [
           "out",
-          "  \"artifactDigest\": \"sha256:7290761190827333ff1f7c6f1c9aac801b872f9b04f4b54dcc8fcf646378a056\","
+          "  \"artifactDigest\": \"sha256:6be5a45f36df8a5592c8496426ed8ec572dd6435562893842e2bc8f10e3adb09\","
         ],
         [
           "out",
-          "  \"ptahVersion\": \"v0.5.0-131-g939c2fb4\""
+          "  \"ptahVersion\": \"v0.5.0-186-g8fbb315c\""
         ],
         [
           "out",
@@ -3539,7 +4397,7 @@
         ],
         [
           "out",
-          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:7290761190827333ff1f7c6f1c9aac801b872f9b04f4b54dcc8fcf646378a056"
+          "Artifact:       oci://e2e-registry.demo.svc.cluster.local:5000/migrations/demo@sha256:6be5a45f36df8a5592c8496426ed8ec572dd6435562893842e2bc8f10e3adb09"
         ],
         [
           "out",
