@@ -95,9 +95,9 @@ The supported minor window is defined in [Kubernetes support](../support/kuberne
 new minor and removes the oldest one atomically, and only after the whole
 real-cluster matrix succeeds.
 
-## Artifacts and the registry {#g-registry}
-
 - [Operations](../use/operations/#kubernetes-versions)
+
+## Artifacts and the registry {#g-registry}
 
 ### Registry authentication fails even though the credentials are right. What is missing? {#registry-secret-authority}
 
@@ -133,11 +133,11 @@ as historical evidence, but they are not a claim about the present, so
 Observe, Plan, or Apply follows. After connectivity returns the operator resolves
 and verifies again.
 
+- [Operations](../use/operations/#mutable-tags-and-registry-outages)
+
 ## Plans and approvals {#g-approval}
 
 An approval names one plan, and the reviewer reads the SQL rather than a hash.
-
-- [Operations](../use/operations/#mutable-tags-and-registry-outages)
 
 ### My approval was rejected. What does it have to name? {#approval-rejected}
 
@@ -197,11 +197,11 @@ They are owned by the schema and can stay as audit evidence until garbage
 collection removes the owner. Only the exact UID and fingerprint in `status.plan`
 are current, so read that rather than the newest object you find.
 
+- [Operations](../use/operations/#plan-retention)
+
 ## When something stops {#g-failures}
 
 Every refusal here is deliberate: the operator would rather stop than mutate on an uncertain reading.
-
-- [Operations](../use/operations/#plan-retention)
 
 ### An apply failed and the operator will not retry it. Why not run the plan again? {#apply-outcome-unknown}
 
@@ -274,9 +274,9 @@ permission to read database Secrets, and registry and database credentials are
 kept apart from each other. Credentials never appear in status, Events, plan
 resources, or command arguments.
 
-## Reading status, and reporting {#g-status}
-
 - [Security model](../use/security/)
+
+## Reading status, and reporting {#g-status}
 
 ### What should my automation read to decide whether a schema is converged? {#reading-convergence-status}
 
