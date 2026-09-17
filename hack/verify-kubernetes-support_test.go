@@ -417,7 +417,7 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "    needs: [support-matrix]\n",
 		},
 		"static E2E matrix": {
-			old: "        include: ${{ fromJSON(needs.support-matrix.outputs.matrix) }}\n",
+			old: "        include: ${{ fromJSON(needs.support-matrix.outputs.acceptance) }}\n",
 			new: "        include: []\n",
 		},
 		"conditional lifecycle": {
@@ -453,25 +453,33 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "          E2E_RELEASE_CHART_OUTPUT: /tmp/unbound.tgz\n",
 		},
 		"wrong artifact action": {
-			old: "        id: release-chart-evidence\n" +
+			old: "        id: release-chart-evidence\n        if: ${{ matrix.suite == 'lifecycle' }}\n" +
 				"        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1\n",
-			new: "        id: release-chart-evidence\n        uses: actions/upload-artifact@main\n",
+			new: "        id: release-chart-evidence\n        if: ${{ matrix.suite == 'lifecycle' }}\n" +
+				"        uses: actions/upload-artifact@main\n",
 		},
 		"wrong installed chart artifact path": {
 			old: "          path: ${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz\n",
 			new: "          path: charts/ptah-operator\n",
 		},
-		"conditional installed chart evidence": {
-			old: "        id: release-chart-evidence\n",
-			new: "        id: release-chart-evidence\n        if: ${{ false }}\n",
+		// The chart is exported by one suite, and by that suite: a condition
+		// naming another leaves the minor with no chart, and none at all makes
+		// four suites upload the same artifact name.
+		"installed chart evidence from the wrong suite": {
+			old: "        if: ${{ matrix.suite == 'lifecycle' }}\n",
+			new: "        if: ${{ matrix.suite == 'data-plane' }}\n",
+		},
+		"unconditional installed chart evidence": {
+			old: "        if: ${{ matrix.suite == 'lifecycle' }}\n",
+			new: "",
 		},
 		"rerun artifact replacement disabled": {
 			old: "          compression-level: 0\n          overwrite: true\n",
 			new: "          compression-level: 0\n          overwrite: false\n",
 		},
 		"duplicate lifecycle": {
-			old: "        run: make e2e\n      - name: Preserve exact installed release chart\n",
-			new: "        run: make e2e\n      - name: Duplicate lifecycle\n        run: make e2e\n      - name: Preserve exact installed release chart\n",
+			old: "        run: make e2e\n      # One chart per minor",
+			new: "        run: make e2e\n      - name: Duplicate lifecycle\n        run: make e2e\n      # One chart per minor",
 		},
 		"verify timeout drift": {
 			old: "    name: Verify source and generated files\n    runs-on: ubuntu-latest\n    timeout-minutes: 20\n",
@@ -639,8 +647,8 @@ func TestVerifyWorkflowDigestRejectsSetupEnvironmentMutation(t *testing.T) {
 	path := writeMutatedWorkflow(
 		t,
 		workflow,
-		"          context_name=\"ptah-ci-${{ matrix.minor_slug }}\"\n",
-		"          echo 'MAKEFLAGS=--just-print' >> \"$GITHUB_ENV\"\n          context_name=\"ptah-ci-${{ matrix.minor_slug }}\"\n",
+		"          context_name=\"ptah-ci-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}\"\n",
+		"          echo 'MAKEFLAGS=--just-print' >> \"$GITHUB_ENV\"\n          context_name=\"ptah-ci-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}\"\n",
 	)
 	if err := verifyCIWorkflowSemanticsAtPath(path); err != nil {
 		t.Fatalf("semantic verifier unexpectedly caught whole-workflow mutation: %v", err)

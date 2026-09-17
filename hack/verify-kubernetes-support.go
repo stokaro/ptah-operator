@@ -38,6 +38,7 @@ import (
 
 const (
 	manifestPath                   = "support/kubernetes.json"
+	e2eSuitesPath                  = "support/e2e-suites.json"
 	goModPath                      = "go.mod"
 	chartPath                      = "charts/ptah-operator/Chart.yaml"
 	workflowPath                   = ".github/workflows/ci.yml"
@@ -73,7 +74,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "0a6a978a5108c84c55f5b235eb882141e20730e1ed9bd1dcb35677808c57eb44"
+	ciWorkflowSHA256                = "d45eeb9027b7b57f4920a105d10c47cce443afccad57e46d49d83756a600b7e6"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -138,6 +139,13 @@ type matrixEntry struct {
 	KubernetesVersion string `json:"kubernetes_version"`
 	NodeImage         string `json:"node_image"`
 	KindVersion       string `json:"kind_version"`
+	// The acceptance suite this job runs, in the acceptance matrix only. A job
+	// is one minor and one suite, so the four suites of a minor run at once
+	// against clusters of their own. The plain matrix keeps its old shape,
+	// because the release workflow reads it to enumerate supported minors.
+	Suite        string `json:"suite,omitempty"`
+	SuiteSlug    string `json:"suite_slug,omitempty"`
+	SuiteSummary string `json:"suite_summary,omitempty"`
 }
 
 type parsedRelease struct {
@@ -148,13 +156,21 @@ type parsedRelease struct {
 }
 
 func main() {
-	output := flag.String("output", "verify", "output mode: verify, proposal, matrix, or helm-range")
+	output := flag.String("output", "verify",
+		"output mode: verify, proposal, matrix, acceptance, or helm-range")
 	nowValue := flag.String("now", "", "UTC date used for freshness validation (YYYY-MM-DD; defaults to today)")
 	flag.Parse()
 	proposal := *output == "proposal"
 
 	now, err := validationDate(*nowValue)
 	if err != nil {
+		fatal(err)
+	}
+	suites, err := loadE2ESuites(e2eSuitesPath)
+	if err != nil {
+		fatal(err)
+	}
+	if err := verifyE2ESuiteCoverage(suites, e2eHarnessPath); err != nil {
 		fatal(err)
 	}
 	manifest, parsed, err := loadAndValidateManifest(manifestPath, now)
@@ -217,19 +233,24 @@ func main() {
 
 	switch *output {
 	case "verify":
-		fmt.Printf("Kubernetes support window verified: %s-%s (%d minors)\n", parsed[0].Minor, parsed[len(parsed)-1].Minor, len(parsed))
+		fmt.Printf("Kubernetes support window verified: %s-%s (%d minors), %d acceptance suites covering %d phases\n",
+			parsed[0].Minor, parsed[len(parsed)-1].Minor, len(parsed), len(suites.Suites), e2eSuiteCoveredPhases(suites))
 	case "proposal":
 		fmt.Printf("Kubernetes support proposal validated: %s-%s (%d minors); ordinary verification still enforces the frozen API boundary\n", parsed[0].Minor, parsed[len(parsed)-1].Minor, len(parsed))
-	case "matrix":
-		entries := make([]matrixEntry, 0, len(parsed))
+	case "matrix", "acceptance":
+		minors := make([]matrixEntry, 0, len(parsed))
 		for _, item := range parsed {
-			entries = append(entries, matrixEntry{
+			minors = append(minors, matrixEntry{
 				Minor:             item.Minor,
 				MinorSlug:         strings.ReplaceAll(item.Minor, ".", "-"),
 				KubernetesVersion: fmt.Sprintf("%d.%d.%d", item.major, item.minor, item.patch),
 				NodeImage:         item.NodeImage,
 				KindVersion:       manifest.KindVersion,
 			})
+		}
+		entries := minors
+		if *output == "acceptance" {
+			entries = e2eSuiteMatrix(minors, suites)
 		}
 		encoded, err := json.Marshal(entries)
 		if err != nil {
@@ -598,7 +619,7 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 	}
 	required := []string{
 		"go run ./hack/verify-kubernetes-support.go -output=matrix",
-		"fromJSON(needs.support-matrix.outputs.matrix)",
+		"fromJSON(needs.support-matrix.outputs.acceptance)",
 		"PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}",
 		"EVENT_BEFORE_SHA: ${{ github.event.before }}",
 		"CRD_SCHEMA_BASELINE_REF: ${{ steps.crd-baseline.outputs.baseline }}",
@@ -644,7 +665,10 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 		return fmt.Errorf("%s: support-matrix must run unconditionally with a %d-minute timeout", path, ciSupportMatrixTimeoutMinutes)
 	}
 	if !equalStringMap(supportMatrix.Outputs, map[string]string{
-		"matrix":      "${{ steps.matrix.outputs.matrix }}",
+		"matrix": "${{ steps.matrix.outputs.matrix }}",
+		// Every supported minor against every suite. A job is one pair, so the
+		// suites of a minor run at once against clusters of their own.
+		"acceptance":  "${{ steps.matrix.outputs.acceptance }}",
 		"ptah_commit": "${{ steps.ptah.outputs.commit }}",
 		// The image build needs a Kubernetes version, a node image and a kind
 		// version like any harness run, and builds nothing that depends on
@@ -666,6 +690,8 @@ func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents 
 	const wantMatrixRun = `set -euo pipefail
 matrix="$(go run ./hack/verify-kubernetes-support.go -output=matrix)"
 echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+acceptance="$(go run ./hack/verify-kubernetes-support.go -output=acceptance)"
+echo "acceptance=$acceptance" >> "$GITHUB_OUTPUT"
 printf 'prepare_kubernetes_version=%s\n' \
   "$(jq -er '.[-1].kubernetes_version' <<<"$matrix")" >> "$GITHUB_OUTPUT"
 printf 'prepare_node_image=%s\n' \
@@ -946,7 +972,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 	}
 	if e2e.Strategy.FailFast == nil || *e2e.Strategy.FailFast ||
 		!equalStringMap(e2e.Strategy.Matrix, map[string]string{
-			"include": "${{ fromJSON(needs.support-matrix.outputs.matrix) }}",
+			"include": "${{ fromJSON(needs.support-matrix.outputs.acceptance) }}",
 		}) {
 		return fmt.Errorf("%s: kubernetes-e2e strategy must consume only the verified dynamic matrix with fail-fast disabled", path)
 	}
@@ -976,12 +1002,15 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		"E2E_PREBUILT_IMAGE_DIR":   "${{ runner.temp }}/task-images",
 		"E2E_PTAH_REVISION":        "${{ needs.support-matrix.outputs.ptah_commit }}",
 		"E2E_RELEASE_CHART_OUTPUT": "${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
-		"E2E_RUN_ID":               "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}",
+		"E2E_RUN_ID":               "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}",
+		// The suite this job runs. The driver reads the phases it names out of
+		// support/e2e-suites.json, and runs no other.
+		"E2E_SUITE": "${{ matrix.suite }}",
 		// The stage ledger and the run's identity are named outside the work
 		// directory the harness removes when it succeeds: a passing run's
 		// timings are the baseline the next change is measured against.
-		"E2E_TIMING_LEDGER":  "${{ runner.temp }}/timings-${{ matrix.minor_slug }}.jsonl",
-		"E2E_TIMING_CONTEXT": "${{ runner.temp }}/timing-context-${{ matrix.minor_slug }}.json",
+		"E2E_TIMING_LEDGER":  "${{ runner.temp }}/timings-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}.jsonl",
+		"E2E_TIMING_CONTEXT": "${{ runner.temp }}/timing-context-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}.json",
 		"KIND_NODE_IMAGE":    "${{ matrix.node_image }}",
 		"K8S_VERSION":        "${{ matrix.kubernetes_version }}",
 	}
@@ -996,7 +1025,7 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		return err
 	}
 	if err := verifyGoBuildCacheStep(
-		path, "kubernetes-e2e", e2eCache, "e2e-${{ matrix.minor_slug }}",
+		path, "kubernetes-e2e", e2eCache, "e2e-${{ matrix.minor_slug }}-${{ matrix.suite_slug }}",
 	); err != nil {
 		return err
 	}
@@ -1008,10 +1037,22 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		lifecycleIndex+1 >= len(e2e.Steps) || e2e.Steps[lifecycleIndex+1].ID != upload.ID {
 		return fmt.Errorf("%s: installed chart evidence must immediately follow the complete lifecycle", path)
 	}
+	// One chart per minor, exported by the suite whose phases are the install,
+	// the upgrade and the uninstall. The release workflow reads these by minor,
+	// so a second suite uploading the same name would be two answers to one
+	// question -- and a condition naming any other suite would leave the minor
+	// with no chart at all.
+	if upload.If != "${{ matrix.suite == 'lifecycle' }}" {
+		return fmt.Errorf(
+			"%s: the installed chart must be exported by the lifecycle suite, and its condition is %q",
+			path, upload.If)
+	}
+	unconditionalUpload := upload
+	unconditionalUpload.If = ""
 	if err := verifyUpdaterActionStep(
 		path,
 		"kubernetes-e2e",
-		upload,
+		unconditionalUpload,
 		"actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
 		map[string]string{
 			"name":              "installed-release-chart-${{ matrix.minor_slug }}",
@@ -2729,6 +2770,10 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		}),
 		exactSourceLineSequence("release namespace and image-pull bootstrap", []string{
 			`kubectl --kubeconfig "$KUBECONFIG_FILE" create namespace "$OPERATOR_NAMESPACE" >/dev/null`,
+			// The phases' namespaces come from the bootstrap too: every suite
+			// needs them, and creating one proves nothing.
+			`kubectl --kubeconfig "$KUBECONFIG_FILE" create namespace "$TEST_NAMESPACE" >/dev/null`,
+			`kubectl --kubeconfig "$KUBECONFIG_FILE" create namespace "$FOREIGN_NAMESPACE" >/dev/null`,
 			`jq -n \`,
 			`--arg name "$MANAGER_PULL_SECRET" \`,
 			`--arg namespace "$OPERATOR_NAMESPACE" \`,
@@ -3336,7 +3381,14 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	); err != nil {
 		return err
 	}
-	if err := rejectEarlySuccessfulExit(dataPlane, dataPlaneContents, dataPlaneContract[len(dataPlaneContract)-1].pattern); err != nil {
+	// The phase has one early successful exit: the preparation mode another
+	// suite runs it in. It is audited and then hidden, so every other early
+	// exit in the phase is still refused.
+	dataPlaneScan, err := auditDataPlanePrepareHandoff(dataPlane, dataPlaneContents)
+	if err != nil {
+		return err
+	}
+	if err := rejectEarlySuccessfulExit(dataPlane, dataPlaneScan, dataPlaneContract[len(dataPlaneContract)-1].pattern); err != nil {
 		return err
 	}
 	if err := verifyFailedUpgradeEvidenceSource(files.crdUpgrade); err != nil {
@@ -4582,6 +4634,9 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		// The refusals that keep a shared image from being another commit's are
 		// shell, and a shell refusal nothing exercises is a comment.
 		exactSourceLine("shared-image self-test wiring", `"$ROOT_DIR/hack/e2e-shared-images-selftest.sh"`),
+		// A suite that stopped running a phase is a green job that proves less,
+		// so the shell that selects the phases is measured too.
+		exactSourceLine("acceptance suite self-test wiring", `"$ROOT_DIR/hack/e2e-suites-selftest.sh"`),
 	}
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
@@ -4595,7 +4650,12 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	if bytes.Count(staticContents, []byte("e2e-shared-images-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: the shared-image self-test must be wired exactly once", files.staticChecks)
 	}
-	for _, step := range []sourceContractStep{staticContract[1], staticContract[3], staticContract[4]} {
+	if bytes.Count(staticContents, []byte("e2e-suites-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: the acceptance suite self-test must be wired exactly once", files.staticChecks)
+	}
+	for _, step := range []sourceContractStep{
+		staticContract[1], staticContract[3], staticContract[4], staticContract[5],
+	} {
 		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
 		}
@@ -5510,6 +5570,9 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 				{name: "E2E_TLS_PROXY_CA_FILE", value: `$TLS_PROXY_CA_FILE`},
 				{name: "E2E_TLS_PROXY_CERT_FILE", value: `$TLS_PROXY_CERT_FILE`},
 				{name: "E2E_TLS_PROXY_KEY_FILE", value: `$TLS_PROXY_CERT_KEY_FILE`},
+				// full or prepare: the migrations suite runs this phase for the
+				// namespace it stands up and none of its own acceptance.
+				{name: "E2E_DATAPLANE_MODE", value: `$DATAPLANE_MODE`},
 			},
 		},
 		{
@@ -6320,6 +6383,61 @@ const bootstrapHandoffOpener = `if [ "$E2E_STOP_AFTER" = bootstrap ]; then`
 
 const imageHandoffOpener = `if [ "$E2E_STOP_AFTER" = images ]; then`
 
+const dataPlanePrepareOpener = `if [ "$E2E_DATAPLANE_MODE" = prepare ]; then`
+
+// auditDataPlanePrepareHandoff audits the data plane's one early exit: the mode
+// another suite runs it in to stand up the namespace its own phases need.
+//
+// The same terms as the harness hand-offs, and then hidden from the early-exit
+// scan so every other early exit in the phase is still refused. What it must be
+// is a stop rather than a shortcut: it says what it prepared, latches the phase
+// as complete so the exit trap reports a pass, and ends at its own exit. What it
+// must not do is claim the phase's acceptance, so the line it prints names the
+// prerequisites and nothing else.
+func auditDataPlanePrepareHandoff(path string, contents []byte) ([]byte, error) {
+	opener := []byte("\n" + dataPlanePrepareOpener + "\n")
+	start := bytes.Index(contents, opener)
+	if start < 0 {
+		return nil, fmt.Errorf("%s: the preparation hand-off is missing its audited opener", path)
+	}
+	if bytes.Count(contents, opener) != 1 {
+		return nil, fmt.Errorf("%s: the preparation hand-off opener appears more than once", path)
+	}
+	closer := []byte("\nfi\n")
+	end := bytes.Index(contents[start+len(opener):], closer)
+	if end < 0 {
+		return nil, fmt.Errorf("%s: the preparation hand-off is not closed at column zero", path)
+	}
+	block := contents[start+len(opener) : start+len(opener)+end]
+
+	for _, required := range []string{
+		"PASS prerequisites only",
+		"PHASE_COMPLETED=1",
+	} {
+		if !bytes.Contains(block, []byte(required)) {
+			return nil, fmt.Errorf(
+				"%s: the preparation hand-off does not %s, so stopping at the prerequisites is not what it does",
+				path, required)
+		}
+	}
+	lines := bytes.Split(bytes.TrimRight(block, "\n"), []byte("\n"))
+	if last := bytes.TrimSpace(lines[len(lines)-1]); !bytes.Equal(last, []byte("exit 0")) {
+		return nil, fmt.Errorf("%s: the preparation hand-off ends with %q rather than its exit", path, last)
+	}
+	if count := bytes.Count(block, []byte("exit")); count != 1 {
+		return nil, fmt.Errorf(
+			"%s: the preparation hand-off holds %d exits; it may hold the one it ends with", path, count)
+	}
+
+	masked := append([]byte(nil), contents...)
+	for index := start + len(opener); index < start+len(opener)+end; index++ {
+		if masked[index] != '\n' {
+			masked[index] = ' '
+		}
+	}
+	return masked, nil
+}
+
 // auditImageHandoff audits the harness's second early exit: the mode that builds
 // the four task images, writes them for the matrix to load, and stops before a
 // cluster exists.
@@ -6466,4 +6584,170 @@ func auditHandoffNames(path string, block, contents []byte) error {
 				"so give the name a top-level default", path, name)
 	}
 	return nil
+}
+
+// The acceptance suites: one source of truth for what CI runs and for the check
+// that CI runs all of it.
+
+type e2eSuite struct {
+	Name    string   `json:"name"`
+	Slug    string   `json:"slug"`
+	Summary string   `json:"summary"`
+	Phases  []string `json:"phases"`
+	Prepare []string `json:"prepare"`
+}
+
+type e2eSuiteCatalog struct {
+	Comment []string   `json:"comment"`
+	Suites  []e2eSuite `json:"suites"`
+}
+
+var (
+	e2eSuiteNamePattern = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,30}[a-z0-9])?$`)
+	// The phases the driver runs, read out of the driver rather than repeated
+	// here: a second list is how a phase ends up covered on paper only.
+	e2eDriverPhase = regexp.MustCompile(`(?m)^[ \t]*run_recorded_phase ([a-z][a-z0-9-]*) `)
+)
+
+// loadE2ESuites reads the suite catalog and refuses a shape that cannot be
+// executed: a suite with no phases, a duplicated name, a phase claimed by two
+// suites, or a preparation phase that no suite covers.
+func loadE2ESuites(path string) (e2eSuiteCatalog, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return e2eSuiteCatalog{}, fmt.Errorf("read the acceptance suite catalog: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var catalog e2eSuiteCatalog
+	if err := decoder.Decode(&catalog); err != nil {
+		return e2eSuiteCatalog{}, fmt.Errorf("%s: %w", path, err)
+	}
+	if len(catalog.Suites) == 0 {
+		return e2eSuiteCatalog{}, fmt.Errorf("%s: names no acceptance suite", path)
+	}
+	names := map[string]bool{}
+	owner := map[string]string{}
+	for _, suite := range catalog.Suites {
+		if !e2eSuiteNamePattern.MatchString(suite.Name) {
+			return e2eSuiteCatalog{}, fmt.Errorf("%s: %q is not a usable suite name", path, suite.Name)
+		}
+		if suite.Slug != suite.Name {
+			return e2eSuiteCatalog{}, fmt.Errorf(
+				"%s: suite %q has slug %q; a job, a run id and an artifact are named after the slug, so it is the name",
+				path, suite.Name, suite.Slug)
+		}
+		if strings.TrimSpace(suite.Summary) == "" {
+			return e2eSuiteCatalog{}, fmt.Errorf("%s: suite %q says nothing about what it runs", path, suite.Name)
+		}
+		if names[suite.Name] {
+			return e2eSuiteCatalog{}, fmt.Errorf("%s: suite %q appears twice", path, suite.Name)
+		}
+		names[suite.Name] = true
+		if len(suite.Phases) == 0 {
+			return e2eSuiteCatalog{}, fmt.Errorf("%s: suite %q runs no phase", path, suite.Name)
+		}
+		for _, phase := range suite.Phases {
+			if !e2eSuiteNamePattern.MatchString(phase) {
+				return e2eSuiteCatalog{}, fmt.Errorf("%s: %q is not a usable phase name", path, phase)
+			}
+			if previous, claimed := owner[phase]; claimed {
+				return e2eSuiteCatalog{}, fmt.Errorf(
+					"%s: phase %q is claimed by both %q and %q; a phase belongs to one suite so the matrix runs it once",
+					path, phase, previous, suite.Name)
+			}
+			owner[phase] = suite.Name
+		}
+	}
+	for _, suite := range catalog.Suites {
+		for _, phase := range suite.Prepare {
+			if !e2eSuiteNamePattern.MatchString(phase) {
+				return e2eSuiteCatalog{}, fmt.Errorf("%s: %q is not a usable phase name", path, phase)
+			}
+			if _, covered := owner[phase]; !covered {
+				return e2eSuiteCatalog{}, fmt.Errorf(
+					"%s: suite %q prepares with phase %q, which no suite runs for its acceptance; preparation is not coverage",
+					path, suite.Name, phase)
+			}
+			if owner[phase] == suite.Name {
+				return e2eSuiteCatalog{}, fmt.Errorf(
+					"%s: suite %q both runs and prepares with phase %q", path, suite.Name, phase)
+			}
+		}
+	}
+	return catalog, nil
+}
+
+func e2eSuiteCoveredPhases(catalog e2eSuiteCatalog) int {
+	phases := 0
+	for _, suite := range catalog.Suites {
+		phases += len(suite.Phases)
+	}
+	return phases
+}
+
+// verifyE2ESuiteCoverage refuses a partition that lost a phase.
+//
+// The driver is the authority on which phases exist: every one it runs has to
+// be some suite's acceptance, and every phase the catalog claims has to be one
+// the driver runs. Without this, sharding a suite is one edit away from a green
+// matrix that stopped running something.
+func verifyE2ESuiteCoverage(catalog e2eSuiteCatalog, driverPath string) error {
+	contents, err := os.ReadFile(driverPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", driverPath, err)
+	}
+	driverPhases := map[string]bool{}
+	for _, match := range e2eDriverPhase.FindAllSubmatch(contents, -1) {
+		driverPhases[string(match[1])] = true
+	}
+	if len(driverPhases) == 0 {
+		return fmt.Errorf("%s: no lifecycle phase invocation was found, so coverage cannot be checked", driverPath)
+	}
+	covered := map[string]string{}
+	for _, suite := range catalog.Suites {
+		for _, phase := range suite.Phases {
+			covered[phase] = suite.Name
+		}
+	}
+	var missing []string
+	for phase := range driverPhases {
+		if _, ok := covered[phase]; !ok {
+			missing = append(missing, phase)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf(
+			"%s: the driver runs %s, which no suite in %s covers; a phase outside every suite is one the matrix stopped proving",
+			driverPath, strings.Join(missing, ", "), e2eSuitesPath)
+	}
+	var unknown []string
+	for phase, suite := range covered {
+		if !driverPhases[phase] {
+			unknown = append(unknown, fmt.Sprintf("%s (in %s)", phase, suite))
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return fmt.Errorf("%s: claims phases the driver does not run: %s", e2eSuitesPath, strings.Join(unknown, ", "))
+	}
+	return nil
+}
+
+// e2eSuiteMatrix is the acceptance matrix: every supported minor against every
+// suite. The suites are the inner dimension so the newest minor stays last,
+// which is where the image build reads the pair it validates.
+func e2eSuiteMatrix(minors []matrixEntry, catalog e2eSuiteCatalog) []matrixEntry {
+	entries := make([]matrixEntry, 0, len(minors)*len(catalog.Suites))
+	for _, minor := range minors {
+		for _, suite := range catalog.Suites {
+			entry := minor
+			entry.Suite = suite.Name
+			entry.SuiteSlug = suite.Slug
+			entry.SuiteSummary = suite.Summary
+			entries = append(entries, entry)
+		}
+	}
+	return entries
 }

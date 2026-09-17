@@ -78,6 +78,36 @@ and a change that needs its own verdict — a release candidate, or a change to
 the lifecycle path itself — goes through a pull request and is merged after its
 run finishes. The pull request fans out over the same three minors.
 
+## The acceptance suites
+
+Acceptance runs as one job per Kubernetes minor and suite.
+[`support/e2e-suites.json`](support/e2e-suites.json) is where the suites and
+their phases live, and it is the only place they are written down:
+`hack/verify-kubernetes-support.go` builds the CI matrix from it and refuses it
+unless every phase the driver runs belongs to exactly one suite.
+
+```bash
+make e2e                       # every phase, in the driver's order, as before
+E2E_SUITE=data-plane make e2e  # one suite, against a cluster of its own
+```
+
+The partition follows the dependencies rather than the clock, so phases that
+share mutable state stay in one suite: the CRD upgrade and the uninstall that
+follows it, the data plane and the fault injection inside it, the migration rows
+and the reference data that runs in the same namespace.
+
+That last pair needs the namespace the data plane stands up — its registry
+Service, its databases, its admission fixtures — so the migrations suite runs
+the data-plane phase in preparation mode (`E2E_DATAPLANE_MODE=prepare`), which
+creates those prerequisites and executes none of its own acceptance. Preparation
+is not coverage: a phase counts as covered only where a suite lists it under
+`phases`, and the catalog check counts it there and nowhere else.
+
+`hack/e2e-suites-selftest.sh` measures the selection — that a suite runs the
+phases it claims, that it runs no other suite's phase, and that the preparation
+boundary sits before the data plane's own acceptance — and `make e2e-static`
+runs it.
+
 ## Where the task images come from
 
 The four images a run needs — the operator under test, the synthetic next

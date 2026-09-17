@@ -106,6 +106,11 @@ E2E_PTAH_REVISION=${E2E_PTAH_REVISION:-}
 # phase. The demonstration lab uses it, so that one bootstrap serves both the
 # suite and the recorded scenarios.
 E2E_STOP_AFTER=${E2E_STOP_AFTER:-}
+# Which acceptance suite this run is. The suites and their phases live in
+# support/e2e-suites.json, which hack/verify-kubernetes-support.go builds the CI
+# matrix from and refuses unless every phase below belongs to exactly one suite.
+# all runs them in the order they appear here, which is what make e2e does.
+E2E_SUITE=${E2E_SUITE:-all}
 # E2E_STOP_AFTER=images builds the four task images, audits them, writes them
 # and their provenance to E2E_IMAGE_EXPORT_DIR, and stops before the cluster
 # exists. E2E_PREBUILT_IMAGE_DIR reads that directory back: the images are
@@ -257,6 +262,54 @@ task_image_for_role() {
 for command_name in docker kind kubectl helm jq ssh git go tar awk sed grep tr cut cksum cmp cp ln mktemp date sleep curl htpasswd openssl mv; do
 	require_command "$command_name"
 done
+
+# The phases this run executes, and the phases it runs only to stand up what
+# they need. A suite that prepares with a phase gets that phase's prerequisites
+# and none of its acceptance: preparation is not coverage, and the catalog check
+# counts a phase as covered only where it is listed under phases.
+SUITE_CATALOG=$ROOT_DIR/support/e2e-suites.json
+[ -f "$SUITE_CATALOG" ] || fail "the acceptance suite catalog $SUITE_CATALOG is missing"
+if [ "$E2E_SUITE" = all ]; then
+	SUITE_PHASES=$(jq -r '[.suites[].phases[]] | join(" ")' "$SUITE_CATALOG") ||
+		fail "the acceptance suite catalog could not be read"
+	SUITE_PREPARE_PHASES=
+else
+	jq -e --arg suite "$E2E_SUITE" 'any(.suites[]; .name == $suite)' "$SUITE_CATALOG" >/dev/null ||
+		fail "E2E_SUITE names $E2E_SUITE, which is not a suite in $SUITE_CATALOG (or all)"
+	SUITE_PHASES=$(jq -r --arg suite "$E2E_SUITE" \
+		'.suites[] | select(.name == $suite) | .phases | join(" ")' "$SUITE_CATALOG")
+	SUITE_PREPARE_PHASES=$(jq -r --arg suite "$E2E_SUITE" \
+		'.suites[] | select(.name == $suite) | .prepare | join(" ")' "$SUITE_CATALOG")
+fi
+[ -n "$SUITE_PHASES" ] || fail "suite $E2E_SUITE runs no phase"
+if [ -n "$SUITE_PREPARE_PHASES" ]; then
+	printf 'e2e: suite %s runs phases: %s, preparing with %s\n' \
+		"$E2E_SUITE" "$SUITE_PHASES" "$SUITE_PREPARE_PHASES"
+else
+	printf 'e2e: suite %s runs phases: %s\n' "$E2E_SUITE" "$SUITE_PHASES"
+fi
+
+# The data plane is the one phase with a preparation mode, because it is the one
+# whose namespace other phases work in. A catalog that asked to prepare with any
+# other phase is refused rather than ignored: that phase has no mode to run in,
+# so it would run its own acceptance in a suite that does not cover it.
+DATAPLANE_MODE=full
+for prepare_phase in $SUITE_PREPARE_PHASES; do
+	case $prepare_phase in
+		dataplane) DATAPLANE_MODE=prepare ;;
+		*) fail "suite $E2E_SUITE prepares with $prepare_phase, which has no preparation mode" ;;
+	esac
+done
+
+# suite_runs_phase reports whether this run executes the named phase at all,
+# either for its own acceptance or to prepare for another phase.
+suite_runs_phase() {
+	case " $SUITE_PHASES $SUITE_PREPARE_PHASES " in
+		*" $1 "*) return 0 ;;
+	esac
+	return 1
+}
+
 if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
 	fail "sha256sum or shasum is required"
 fi
@@ -1499,7 +1552,7 @@ write_timing_context() {
 		--arg ptahCommit "${PTAH_COMMIT:-}" \
 		--arg ptahVersion "${E2E_PTAH_VERSION:-}" \
 		--arg kubernetes "$K8S_VERSION" \
-		--arg suite "${E2E_SUITE:-lifecycle}" \
+		--arg suite "$E2E_SUITE" \
 		--arg cluster "$CLUSTER_NAME" \
 		'{runID: $runID, githubRunID: $githubRunID, githubRunAttempt: $githubRunAttempt,
 		  operatorRevision: $operatorRevision, ptahCommit: $ptahCommit, ptahVersion: $ptahVersion,
@@ -1513,6 +1566,12 @@ run_recorded_phase() {
 	recorded_phase=$1
 	shift
 	env | grep '^E2E_' | LC_ALL=C sort >"$WORK_DIR/phase-$recorded_phase.env"
+	if ! suite_runs_phase "$recorded_phase"; then
+		printf 'e2e: phase %s belongs to another suite; %s does not run it\n' \
+			"$recorded_phase" "$E2E_SUITE" >&2
+		timing_row phase "$recorded_phase" other-suite "$(timing_instant)" "$(timing_instant)" 0
+		return 0
+	fi
 	case " $E2E_DIAGNOSIS_SKIP_PHASES " in
 		*" $recorded_phase "*)
 			SKIPPED_PHASES="$SKIPPED_PHASES $recorded_phase"
@@ -2463,7 +2522,15 @@ render_release_values \
 	"$NEXT_VALUES_FILE" "$NEXT_CONTROLLER_REPOSITORY" "$IMAGE_TAG" \
 	"$NEXT_CONTROLLER_DIGEST" "$MANAGER_PULL_SECRET"
 
+# The release namespace and the two the phases work in. They are prerequisites
+# rather than acceptance -- nothing is proved by creating a namespace -- and
+# every suite needs them, so the bootstrap creates them instead of whichever
+# phase happened to run first. The control-plane phase used to create the last
+# two, and a suite that did not run it found the data plane failing on a
+# namespace that was never there.
 kubectl --kubeconfig "$KUBECONFIG_FILE" create namespace "$OPERATOR_NAMESPACE" >/dev/null
+kubectl --kubeconfig "$KUBECONFIG_FILE" create namespace "$TEST_NAMESPACE" >/dev/null
+kubectl --kubeconfig "$KUBECONFIG_FILE" create namespace "$FOREIGN_NAMESPACE" >/dev/null
 jq -n \
 	--arg name "$MANAGER_PULL_SECRET" \
 	--arg namespace "$OPERATOR_NAMESPACE" \
@@ -2486,6 +2553,18 @@ jq -n \
     }
   }
 ' | kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null
+
+# The verification policy every phase's resources refer to. It is test data
+# rather than acceptance -- the file is committed, and the ConfigMap is
+# immutable -- and the control-plane phase used to create it, so a suite that
+# did not run that phase watched its resources fail verification against a
+# policy that was not there. The name and the key are the ones the phases name.
+kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$TEST_NAMESPACE" \
+	create configmap e2e-verification-policy \
+	--from-file="policy.yaml=$ROOT_DIR/testdata/e2e/verification-policy.yaml" \
+	--dry-run=client -o json |
+	jq '.immutable = true' |
+	kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null
 
 timing_next bootstrap chart-install
 printf 'e2e: installing current release %s/%s from chart %s (%s)\n' \
@@ -2686,6 +2765,7 @@ E2E_TLS_PROXY_SERVICE=$TLS_PROXY_SERVICE \
 E2E_TLS_PROXY_CA_FILE=$TLS_PROXY_CA_FILE \
 E2E_TLS_PROXY_CERT_FILE=$TLS_PROXY_CERT_FILE \
 E2E_TLS_PROXY_KEY_FILE=$TLS_PROXY_CERT_KEY_FILE \
+E2E_DATAPLANE_MODE=$DATAPLANE_MODE \
 	run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"
 
 # The migration path runs after the data plane and inside its namespace, on a

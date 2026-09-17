@@ -4414,6 +4414,51 @@ func TestVerifySharedImageSelftestWiringRejectsMutations(t *testing.T) {
 	}
 }
 
+// A suite that stopped running one of its phases is a green job that proves
+// less, and the shell that selects them is what this measures. So the gate has
+// to keep running the self-test that measures it.
+func TestVerifyAcceptanceSuiteSelftestWiringRejectsMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.staticChecks)
+	tests := []struct {
+		name        string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "self-test invocation removed",
+			replacement: `: # acceptance suite self-test removed`,
+			wantError:   "acceptance suite self-test wiring",
+		},
+		{
+			name:        "self-test failure ignored",
+			replacement: `"$ROOT_DIR/hack/e2e-suites-selftest.sh" || true`,
+			wantError:   "acceptance suite self-test wiring",
+		},
+		{
+			name: "self-test hidden in false branch",
+			replacement: "if false; then\n" +
+				"\t\"$ROOT_DIR/hack/e2e-suites-selftest.sh\"\n" +
+				"fi",
+			wantError: "always-false wrapper",
+		},
+	}
+	const invocation = `"$ROOT_DIR/hack/e2e-suites-selftest.sh"`
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.staticChecks = writeMutatedE2ESource(t, "e2e-static.sh", source, invocation, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
 func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 	t.Parallel()
 
