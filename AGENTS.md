@@ -55,25 +55,28 @@ separate targets under it, so run it after touching `api/` or any marker.
 
 ## What a green master says
 
-CI runs on every push to `master`, and `cancel-in-progress` is true only for a
-pull request: a master run that has started is never cancelled. What a batch of
-merges loses is the run that had not started yet. The concurrency group holds
-one pending run, so while one commit's lifecycle occupies the group, the next
-merge queues and the merge after that cancels the queued one. Measured on
-`43534c4`: its run was created at 05:56:15 and cancelled fifteen seconds later,
-when `17565ba` arrived. The commit then carries no check at all, which reads
-exactly like a commit nothing objected to.
+CI runs the complete set on every push to `master`: no job is skipped because
+the commit is on `master`. A newer run cancels the older one on every ref,
+`master` included, and this is the intended policy. Do not narrow
+`cancel-in-progress` back to pull requests; `hack/verify-kubernetes-support.go`
+accepts `true` and nothing else.
 
-That is the trade, taken on purpose. One run spends about seven hours of runner
-time (three kind lifecycles near two hours apiece, plus the race detector at
-forty minutes, measured on `75387d4`), and a commit in the middle of a batch
-would spend it re-proving what the tip proves.
+The run that counts is the one for the newest commit. The tip is what the next
+change builds on and what a release is cut from, and an older run proves a tree
+nobody builds on again. One run spends about seven hours of runner time (three
+kind lifecycles near two hours apiece, plus the race detector at forty minutes,
+measured on `75387d4`), so letting a superseded run finish only holds the newer
+one behind it. This repository used to spare a started `master` run, and the
+queue that built up held the commit that fixed a known lifecycle failure for
+hours while the run ahead of it re-proved that failure.
 
-So "master is green" is a statement about the commits whose runs survived, not
-about every commit, and a bisect cannot assume a commit it lands on was ever
-built. When one commit has to carry its own verdict, a release candidate or a
-change to the lifecycle path itself, put it on a branch and let the pull request
-run: it fans out over the same three minors.
+The cost is taken on purpose. A commit followed by another merge before its run
+finishes carries no verdict of its own, and a commit with no check reads exactly
+like one nothing objected to. So "master is green" is a statement about the tip
+whose run finished, a bisect cannot assume a commit it lands on was ever built,
+and a change that needs its own verdict — a release candidate, or a change to
+the lifecycle path itself — goes through a pull request and is merged after its
+run finishes. The pull request fans out over the same three minors.
 
 ## What a change to the API owes
 

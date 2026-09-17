@@ -330,16 +330,23 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 		new string
 	}{
 		"superseded CI not canceled": {
-			old: "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+			old: "  cancel-in-progress: true\n",
 			new: "  cancel-in-progress: false\n",
 		},
-		// The expression decides which commits reach a verdict, so only the
-		// reviewed one is accepted. A plausible-looking variant that spares
-		// every branch would leave a superseded pull-request run racing its
-		// successor over three kind clusters.
+		// The rule this repository used to have. It spares master, so every merge
+		// queues behind a run that proves a tree nobody builds on again.
+		"master spared from cancellation": {
+			old: "  cancel-in-progress: true\n",
+			new: "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+		},
 		"unreviewed cancellation expression": {
-			old: "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n",
+			old: "  cancel-in-progress: true\n",
 			new: "  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}\n",
+		},
+		// A string that reads like the boolean is not the boolean.
+		"quoted true": {
+			old: "  cancel-in-progress: true\n",
+			new: "  cancel-in-progress: 'true'\n",
 		},
 		"workflow default shell": {
 			old: "env:\n  GOFLAGS: -mod=readonly\n\njobs:\n",
