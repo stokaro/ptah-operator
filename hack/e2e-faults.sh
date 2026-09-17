@@ -611,6 +611,25 @@ materialize_fault_job_pod_uids() {
 	fi
 }
 
+# report_restarted_manager_containers names every manager container that
+# restarted, and how its previous run ended. The container's log is suppressed
+# because it can carry credentials. Its termination record cannot: a reason, an
+# exit code, a signal and two timestamps, and the free-text message is left out
+# on purpose. Without them a restart reads the same whether the process
+# crashed, was OOM-killed, or lost its lease and exited, and each of those is a
+# different defect to go looking for.
+report_restarted_manager_containers() {
+	printf '%s\n' "$1" | jq -c '
+      .items[] | select(.metadata.deletionTimestamp == null) | .metadata.name as $pod |
+      ([.status.initContainerStatuses // [], .status.containerStatuses // [],
+        .status.ephemeralContainerStatuses // []] | add)[] |
+      select((.restartCount // 0) > 0) |
+      {pod: $pod, container: .name, restartCount,
+       lastTerminated: ((.lastState.terminated // {}) |
+         {reason, exitCode, signal, startedAt, finishedAt})}
+    ' | sed 's/^/e2e faults: restarted manager container: /' >&2 || true
+}
+
 audit_fault_runtime() {
 	: >"$RESOURCE_FILE"
 	k -n "$TEST_NAMESPACE" get \
@@ -630,7 +649,10 @@ audit_fault_runtime() {
         ([.status.initContainerStatuses // [], .status.containerStatuses // [],
           .status.ephemeralContainerStatuses // []] | add) as $statuses |
         all($statuses[]; (.restartCount // 0) == 0))
-    ' >/dev/null || fail "a manager container restarted before its complete log history was audited"
+    ' >/dev/null || {
+		report_restarted_manager_containers "$manager_audit_pods"
+		fail "a manager container restarted before its complete log history was audited"
+	}
 	materialize_fault_manager_pod_names "$manager_audit_pods"
 	while IFS= read -r manager_audit_pod; do
 			[ -n "$manager_audit_pod" ] || continue
