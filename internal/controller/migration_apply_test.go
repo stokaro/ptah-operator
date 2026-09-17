@@ -80,6 +80,41 @@ func TestMigrationApplyClaimsTheApprovedPlan(t *testing.T) {
 	}
 }
 
+// An approval wakes the migration it names. The test above is what makes the
+// wake worth having: with the next reading not yet due, the reconcile it
+// produces claims the approved plan, where without it the approval waited out
+// spec.interval before the controller looked at it at all.
+func TestAnApprovalWakesTheMigrationItNames(t *testing.T) {
+	t.Parallel()
+
+	approval := func(name string) *operatorv1alpha1.PtahMigrationApproval {
+		return &operatorv1alpha1.PtahMigrationApproval{
+			ObjectMeta: metav1.ObjectMeta{Namespace: "shop", Name: "orders-approval"},
+			Spec: operatorv1alpha1.PtahMigrationApprovalSpec{
+				MigrationRef: operatorv1alpha1.ImmutableObjectReference{Name: name, UID: "migration-uid"},
+			},
+		}
+	}
+
+	requests := migrationForApproval(context.Background(), approval("orders"))
+	want := types.NamespacedName{Namespace: "shop", Name: "orders"}
+	if len(requests) != 1 || requests[0].NamespacedName != want {
+		t.Fatalf("an approval for %s woke %v", want, requests)
+	}
+	// The namespace is the approval's own. A reference cannot name a migration
+	// elsewhere, and a wake that crossed namespaces would reconcile the wrong one.
+	if got := requests[0].Namespace; got != approval("orders").Namespace {
+		t.Fatalf("the wake left the approval's namespace for %q", got)
+	}
+
+	if requests := migrationForApproval(context.Background(), approval("")); len(requests) != 0 {
+		t.Fatalf("an approval that names no migration woke %v", requests)
+	}
+	if requests := migrationForApproval(context.Background(), &operatorv1alpha1.PtahSchemaApproval{}); len(requests) != 0 {
+		t.Fatalf("an object of another kind woke %v", requests)
+	}
+}
+
 func TestMigrationApplyRunsWithoutApprovalOnlyWhenThePolicySaysAlways(t *testing.T) {
 	t.Parallel()
 
