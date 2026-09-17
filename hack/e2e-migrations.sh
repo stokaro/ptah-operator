@@ -2880,10 +2880,10 @@ approve_txmode_plan() {
         planRef: {name: $plan, uid: $planUID},
         planFingerprint: $fingerprint
       }
-    }' >"$APPROVAL_FILE"
-	k create -f "$APPROVAL_FILE" >"$ADMISSION_ERROR_FILE" 2>&1 ||
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >"$ADMISSION_ERROR_FILE" 2>&1 ||
 		fail "the transaction-mode approval was refused: $(cat "$ADMISSION_ERROR_FILE")"
-	rm -f "$APPROVAL_FILE"
+	rm -f "$RESOURCE_FILE"
 }
 
 # The claim, and the reason the row does not stop at the gate: the database
