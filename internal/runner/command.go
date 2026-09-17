@@ -235,10 +235,19 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 			verb = "up"
 		}
 		spec.Args = []string{"migrations", verb, "--migrations-dir", inputs.MigrationsDir, "--json"}
-		// Only when the resource asked. An unset mode leaves the flag off and
-		// Ptah picks, which is what every migration did before the field
-		// existed -- so a resource stored before it keeps running unchanged.
-		if mode := strings.TrimSpace(inputs.TransactionMode); mode != "" {
+		// Only on the apply, and only when the resource asked.
+		//
+		// `migrations status` does not take --tx-mode: it reads a history and
+		// wraps nothing, so the flag is not merely redundant there, it is an
+		// unknown flag and the command fails. A resource that named a mode
+		// then never left Reading, because every history read died before it
+		// produced a result.
+		//
+		// An unset mode leaves the flag off entirely and Ptah picks, which is
+		// what every migration did before the field existed -- so a resource
+		// stored before it keeps running unchanged.
+		if mode := strings.TrimSpace(inputs.TransactionMode); mode != "" &&
+			operation == OperationMigrationApply {
 			if err := validateTransactionMode(mode); err != nil {
 				return CommandSpec{}, err
 			}

@@ -129,6 +129,7 @@ func TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked(t *testing.T) {
 	const directory = "/migrations"
 	tests := []struct {
 		name      string
+		operation runner.Operation
 		mode      string
 		want      []string
 		wantError string
@@ -142,6 +143,16 @@ func TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked(t *testing.T) {
 			name: "blank is the same as unset",
 			mode: "   ",
 			want: []string{"migrations", "up", "--migrations-dir", directory, "--json"},
+		},
+		{
+			// The history read is why this case exists. `migrations status`
+			// has no --tx-mode, so carrying the mode there is an unknown flag
+			// and the read dies before it reports -- which left a resource
+			// that named a mode stuck in Reading, never reaching its gate.
+			name:      "the history read never carries the mode",
+			operation: runner.OperationMigrationHistory,
+			mode:      "none",
+			want:      []string{"migrations", "status", "--migrations-dir", directory, "--json"},
 		},
 		{
 			name: "none is carried through",
@@ -163,7 +174,11 @@ func TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			spec, err := runner.BuildCommand("/usr/local/bin/ptah", runner.OperationMigrationApply, runner.Inputs{
+			operation := test.operation
+			if operation == "" {
+				operation = runner.OperationMigrationApply
+			}
+			spec, err := runner.BuildCommand("/usr/local/bin/ptah", operation, runner.Inputs{
 				MigrationsDir:   directory,
 				TransactionMode: test.mode,
 			})
