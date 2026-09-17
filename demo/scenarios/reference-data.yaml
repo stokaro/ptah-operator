@@ -123,6 +123,21 @@ steps:
       stdout_contains: ['-//ptah:schema:data table="countries"']
 
   - note: Publish it and point the resource at it.
+    # The edit two steps ago is closed by an apply, and the value coming back is
+    # the database's answer, not the operator's: DriftDetected stays true until
+    # a later observation proves convergence. Patching the spec before that
+    # arrives makes the dispatched plan stale under its own apply, and the
+    # operator latches ApplyOutcomeUnknown and refuses to write anything until
+    # it has re-observed. This waits for the cycle to close first, the way
+    # drift.yaml does.
+    await:
+      kind: ptahschema
+      name: catalog
+      timeout: 6m
+      condition:
+        type: DriftDetected
+        status: "False"
+        reason: ScopedConverged
     run: |
       eval "$(demo/bin/lab credentials)"
       export PTAH_OCI_USERNAME PTAH_OCI_PASSWORD PTAH_OCI_REGISTRY
