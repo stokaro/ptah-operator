@@ -247,6 +247,22 @@ function selftest() {
     console.error('  readStructure read a group\'s opening prose as a list');
     failures += 1;
   }
+  // A heading ends the list above it. Every group on the page now ends with a
+  // further-reading list under its last question, so a reader of the next
+  // group's chrome arrives mid-run: without the reset the stray list below the
+  // heading joins the one above it and is reported against no group at all.
+  const boundary = readStructure(
+    '---\nx: 1\n---\n## One {#g-one}\n\n### Q one {#q-one}\n\nAnswer.\n\n' +
+      '- [Operations](../use/operations/#a)\n\n## Two {#g-two}\n\n' +
+      '- [Stray](../use/security/)\n\n### Q two {#q-two}\n',
+  );
+  if (boundary.groups[1].chromeLists.length !== 1) {
+    console.error(
+      `  readStructure read ${boundary.groups[1].chromeLists.length} chrome lists under a heading` +
+        ' that follows a list, want the stray one',
+    );
+    failures += 1;
+  }
   if (failures) {
     console.error(`check-faq-groups.mjs --selftest: ${failures} case(s) failed`);
     process.exit(1);
