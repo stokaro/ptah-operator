@@ -273,8 +273,9 @@ type MigrationHistoryStatus struct {
 	// +kubebuilder:validation:Minimum=0
 	CurrentVersion int64 `json:"currentVersion"`
 
-	// CheckpointVersion is the checkpoint a fresh database bootstraps from, and
-	// zero where none applies.
+	// CheckpointVersion is the checkpoint covering the versions below it, and
+	// zero where none applies. It stays set after the bootstrap has run: the
+	// coverage is what keeps those versions applied rather than pending.
 	// +kubebuilder:validation:Minimum=0
 	CheckpointVersion int64 `json:"checkpointVersion,omitempty"`
 
