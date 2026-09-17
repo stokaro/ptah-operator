@@ -191,6 +191,25 @@ type MigrationPolicy struct {
 	// +kubebuilder:validation:MaxLength=32
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('1s') && duration(self) <= duration('1h')",message="policy.lockTimeout must be between 1s and 1h"
 	LockTimeout metav1.Duration `json:"lockTimeout,omitempty"`
+
+	// TransactionMode is how Ptah is asked to wrap the run. The spellings are
+	// Ptah's own, because a second vocabulary for the same idea is a second
+	// place to hold in agreement with something this repository does not own.
+	//
+	// Unset means the operator passes no mode and Ptah chooses, which is what
+	// every migration does today. That is deliberate and not an oversight: a
+	// default here would change how every stored resource already runs, and it
+	// would pin this API to a default Ptah is free to move.
+	//
+	// It is on the policy rather than on the execution block because the two
+	// kinds share that block, and a PtahSchema runs no migrations and has no
+	// mode to choose. What the policy already says -- apply, lockTimeout -- is
+	// the same kind of statement: how a run is permitted to be made.
+	//
+	// A MySQL-family database refuses "file" whenever an interceptor is
+	// installed, which is why this is not a preference. See #132.
+	// +kubebuilder:validation:Enum=file;none
+	TransactionMode string `json:"transactionMode,omitempty"`
 }
 
 // PtahMigrationSpec declares a database, a migration artifact, and the terms

@@ -79,6 +79,35 @@ A policy that also listed `application/vnd.stokaro.ptah.schema.v1` would let a
 schema artifact stand in for a migration directory at the same reference, so
 give a migration its own policy rather than reusing the schema one.
 
+## Choosing a transaction mode
+
+By default the operator names no transaction mode and Ptah picks one. That is
+the right setting for PostgreSQL, where a migration file runs inside a
+transaction and either lands whole or not at all.
+
+MySQL and MariaDB have no transactional DDL. A migration that alters a table
+commits as it goes, whatever the surrounding transaction says, so Ptah cannot
+witness the file as one unit — and it refuses rather than pretending, which is
+why a migration on those engines may stop before a statement runs. Naming the
+mode is how you tell it that you know:
+
+```yaml
+spec:
+  policy:
+    transactionMode: none
+```
+
+`none` means Ptah wraps nothing, and each statement stands on its own. The
+consequence is the one worth planning for: a file that fails halfway leaves
+what it already committed, and the history records the run as dirty rather than
+as applied. Nothing rolls back for you.
+
+`file` is the other spelling, and it asks for the per-file transaction
+explicitly. It is what PostgreSQL gets when the field is unset.
+
+Leaving the field out keeps today's behavior exactly, so an existing resource
+does not change when you upgrade.
+
 ## What the history says
 
 ```sh

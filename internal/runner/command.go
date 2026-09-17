@@ -63,6 +63,12 @@ const (
 	// volume; a migration reads that volume.
 	EnvMigrationsDir = "PTAH_MIGRATIONS_DIR"
 
+	// EnvTransactionMode is the mode the resource asked Ptah to wrap the run
+	// in. Empty means the resource asked for nothing, and the flag is left off
+	// so Ptah chooses -- which is what every migration did before the field
+	// existed.
+	EnvTransactionMode = "PTAH_TRANSACTION_MODE"
+
 	envOperationID            = EnvOperationID
 	envRequestedReference     = EnvRequestedReference
 	envResolvedReference      = EnvResolvedReference
@@ -79,6 +85,7 @@ const (
 	envSchemaFile             = EnvSchemaFile
 	envExpectedDatabaseEngine = EnvExpectedDatabaseEngine
 	envMigrationsDir          = EnvMigrationsDir
+	envTransactionMode        = EnvTransactionMode
 )
 
 // Inputs are the runner-specific environment values used to construct one of
@@ -99,6 +106,7 @@ type Inputs struct {
 	ExpectedDatabaseEngine     string
 	PlanPath                   string
 	MigrationsDir              string
+	TransactionMode            string
 }
 
 func InputsFromEnvironment(environment []string) Inputs {
@@ -118,6 +126,7 @@ func InputsFromEnvironment(environment []string) Inputs {
 		ExecutionNotAfter:          values[envExecutionNotAfter],
 		ExpectedDatabaseEngine:     values[envExpectedDatabaseEngine],
 		MigrationsDir:              values[envMigrationsDir],
+		TransactionMode:            values[envTransactionMode],
 	}
 }
 
@@ -226,10 +235,43 @@ func BuildCommand(ptahBinary string, operation Operation, inputs Inputs) (Comman
 			verb = "up"
 		}
 		spec.Args = []string{"migrations", verb, "--migrations-dir", inputs.MigrationsDir, "--json"}
+		// Only on the apply, and only when the resource asked.
+		//
+		// `migrations status` does not take --tx-mode: it reads a history and
+		// wraps nothing, so the flag is not merely redundant there, it is an
+		// unknown flag and the command fails. A resource that named a mode
+		// then never left Reading, because every history read died before it
+		// produced a result.
+		//
+		// An unset mode leaves the flag off entirely and Ptah picks, which is
+		// what every migration did before the field existed -- so a resource
+		// stored before it keeps running unchanged.
+		if mode := strings.TrimSpace(inputs.TransactionMode); mode != "" &&
+			operation == OperationMigrationApply {
+			if err := validateTransactionMode(mode); err != nil {
+				return CommandSpec{}, err
+			}
+			spec.Args = append(spec.Args, "--tx-mode", mode)
+		}
 	default:
 		return CommandSpec{}, fmt.Errorf("unsupported operation %q", operation)
 	}
 	return spec, nil
+}
+
+// validateTransactionMode refuses a mode this build does not know.
+//
+// The runner assembles a command line for a process it does not control, so an
+// unrecognized value is refused here rather than passed through: Ptah would
+// reject it too, but as a child that failed for a reason this side would then
+// have to read back out of a log.
+func validateTransactionMode(mode string) error {
+	switch mode {
+	case "file", "none":
+		return nil
+	default:
+		return fmt.Errorf("unsupported transaction mode %q", mode)
+	}
 }
 
 // validateMigrationsDir refuses anything but an absolute local path.

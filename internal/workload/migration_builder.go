@@ -342,6 +342,13 @@ func migrationDataPlane(
 			// else than it says.
 			literalEnv("PTAH_MIGRATION_LOCK_TIMEOUT", durationOrDefault(migration.Spec.Policy.LockTimeout.Duration, 5*time.Minute)),
 		)
+		// Only when the resource asked for one, and the runner carries it only
+		// to the apply -- `migrations status` has no --tx-mode. An unset mode leaves the
+		// variable off, the runner leaves the flag off, and Ptah chooses --
+		// which is what every migration did before the field existed.
+		if mode := strings.TrimSpace(migration.Spec.Policy.TransactionMode); mode != "" {
+			environment = append(environment, literalEnv(runner.EnvTransactionMode, mode))
+		}
 		if operation.Type == operatorv1alpha1.MigrationOperationApply {
 			if operation.PlanRef == nil {
 				return nil, nil, nil, nil, errors.New("migration apply carries no plan reference")

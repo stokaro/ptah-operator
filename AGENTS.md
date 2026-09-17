@@ -85,6 +85,17 @@ run: it fans out over the same three minors.
 - Treat an existing object as a user. A field that was required and is now
   absent, an enum that lost a value, a default that changed — every one of them
   is a stored object that stops validating.
+- Give the field a caller before it ships. A setting nothing exercises is found
+  first by whoever needs it, which is the worst place to find it. Unit tests are
+  not that caller: they measure the plumbing, and the question is whether the
+  path works. One row that sets the field and reaches the state it is for is
+  enough, and it has to reach that state — a resource that stops at the gate
+  proves the value was carried and says nothing about what it did.
+- Prefer no default to a plausible one. An unset field that changes nothing
+  keeps every stored object running exactly as it ran, and leaves the choice
+  with whoever knows their database. A default is a silent edit to every
+  resource already in a cluster, and it pins this API to a value the thing it
+  configures is free to move.
 
 ## What a change to a controller owes
 

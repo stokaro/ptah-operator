@@ -247,6 +247,13 @@ select_engine() {
 	CHECKPOINT_COORDINATION_KEY="e2e/checkpoint/${ENGINE}"
 	CHECKPOINT_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-checkpoint:stable"
 	CHECKPOINT_FIXTURE_DIR="$ROOT_DIR/testdata/e2e/migrations/${ENGINE}-checkpoint"
+	TXMODE_DATABASE=ptah_e2e_txmode
+	TXMODE_DB_SECRET="e2e-${ENGINE}-txmode-db"
+	TXMODE_MIGRATION="e2e-txmode-${ENGINE}"
+	TXMODE_APPROVAL="e2e-txmode-${ENGINE}-approval"
+	TXMODE_COORDINATION_KEY="e2e/txmode/${ENGINE}"
+	TXMODE_REFERENCE="oci://${REGISTRY_HOST}/migrations/${ENGINE}-txmode:stable"
+	TXMODE_DB_URL_FILE="$WORK_DIR/${ENGINE}-txmode-db-url"
 	UNCERTAIN_DATABASE=ptah_e2e_uncertain
 	UNCERTAIN_DB_SECRET="e2e-${ENGINE}-uncertain-db"
 	UNCERTAIN_MIGRATION="e2e-uncertain-${ENGINE}"
@@ -2754,8 +2761,182 @@ run_engine_migrations() {
 		"$ENGINE_KIND" >&2
 }
 
+# create_txmode_database gives the row a database nothing else touches, so the
+# history it ends with is its own statement and not a side effect of the
+# engine's sequence running beside it.
+create_txmode_database() {
+	create_database "$TXMODE_DATABASE"
+	database_url "$TXMODE_DATABASE" >"$TXMODE_DB_URL_FILE"
+	chmod 600 "$TXMODE_DB_URL_FILE"
+	{
+		cat "$TXMODE_DB_URL_FILE"
+		printf '\n'
+	} >>"$CREDENTIAL_PATTERNS_FILE"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$TXMODE_DB_SECRET" \
+		--arg username "$DATABASE_USER" \
+		--rawfile password "$MIGRATION_DB_PASSWORD_FILE" \
+		--arg database "$TXMODE_DATABASE" \
+		--rawfile url "$TXMODE_DB_URL_FILE" '
+    {
+      apiVersion: "v1", kind: "Secret",
+      metadata: {namespace: $namespace, name: $name},
+      immutable: true,
+      type: "Opaque",
+      stringData: {
+        username: $username, password: $password,
+        database: $database, url: $url
+      }
+    }' >"$SECRET_FILE"
+	chmod 600 "$SECRET_FILE"
+	k apply -f "$SECRET_FILE" >/dev/null
+	rm -f "$SECRET_FILE"
+}
+
+# The resource under proof. policy.transactionMode is the whole point of the
+# row: it is the only place in this suite that names one, and without it the
+# operator passes no mode at all.
+create_txmode_migration_resource() {
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$TXMODE_MIGRATION" \
+		--arg secret "$TXMODE_DB_SECRET" \
+		--arg reference "$TXMODE_REFERENCE" \
+		--arg coordinationKey "$TXMODE_COORDINATION_KEY" \
+		--arg policy "$MIGRATION_POLICY" \
+		--arg registryAuthSecret "$REGISTRY_AUTH_SECRET" \
+		--arg interval "$INTERVAL" \
+		--arg engine "$ENGINE_KIND" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigration",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        target: {
+          engine: $engine,
+          coordinationKey: $coordinationKey,
+          urlFrom: {name: $secret, key: "url"}
+        },
+        artifact: {
+          ociRef: $reference,
+          registryAuthFrom: {
+            name: $registryAuthSecret,
+            mode: "Environment",
+            usernameKey: "username",
+            passwordKey: "password",
+            registryKey: "registry"
+          },
+          verificationPolicyFrom: {name: $policy, key: "policy.yaml"},
+          transport: {plainHTTP: true}
+        },
+        policy: {lockTimeout: "30s", transactionMode: "none"},
+        interval: $interval,
+        execution: {
+          activeDeadlineSeconds: 300, failureRetryInterval: "10s", connectTimeout: "30s"
+        }
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >/dev/null
+	rm -f "$RESOURCE_FILE"
+}
+
+wait_for_txmode_phase() {
+	txmode_phase=$1
+	txmode_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$txmode_deadline" ]; do
+		txmode_observed=$(k -n "$TEST_NAMESPACE" get ptahmigration "$TXMODE_MIGRATION" \
+			-o jsonpath='{.status.phase}' 2>/dev/null || true)
+		[ "$txmode_observed" != "$txmode_phase" ] || return 0
+		sleep 5
+	done
+	fail "$TXMODE_MIGRATION did not reach $txmode_phase within ${TIMEOUT_SECONDS}s; it is in ${txmode_observed:-<none>}"
+}
+
+approve_txmode_plan() {
+	txmode_plan=$(k -n "$TEST_NAMESPACE" get ptahmigration "$TXMODE_MIGRATION" \
+		-o jsonpath='{.status.plan.name}')
+	[ -n "$txmode_plan" ] || fail "$TXMODE_MIGRATION published no plan to approve"
+	txmode_plan_uid=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$txmode_plan" \
+		-o jsonpath='{.metadata.uid}')
+	txmode_fingerprint=$(k -n "$TEST_NAMESPACE" get ptahmigrationplan "$txmode_plan" \
+		-o jsonpath='{.spec.fingerprint}')
+	txmode_migration_uid=$(k -n "$TEST_NAMESPACE" get ptahmigration "$TXMODE_MIGRATION" \
+		-o jsonpath='{.metadata.uid}')
+	[ -n "$txmode_plan_uid" ] && [ -n "$txmode_fingerprint" ] ||
+		fail "transaction-mode plan $txmode_plan has no UID or fingerprint"
+	jq -n \
+		--arg namespace "$TEST_NAMESPACE" \
+		--arg name "$TXMODE_APPROVAL" \
+		--arg migration "$TXMODE_MIGRATION" \
+		--arg migrationUID "$txmode_migration_uid" \
+		--arg plan "$txmode_plan" \
+		--arg planUID "$txmode_plan_uid" \
+		--arg fingerprint "$txmode_fingerprint" '
+    {
+      apiVersion: "operator.ptah.run/v1alpha1", kind: "PtahMigrationApproval",
+      metadata: {namespace: $namespace, name: $name},
+      spec: {
+        migrationRef: {name: $migration, uid: $migrationUID},
+        planRef: {name: $plan, uid: $planUID},
+        planFingerprint: $fingerprint
+      }
+    }' >"$RESOURCE_FILE"
+	k create -f "$RESOURCE_FILE" >"$ADMISSION_ERROR_FILE" 2>&1 ||
+		fail "the transaction-mode approval was refused: $(cat "$ADMISSION_ERROR_FILE")"
+	rm -f "$RESOURCE_FILE"
+}
+
+# The claim, and the reason the row does not stop at the gate: the database
+# carries the whole sequence, and nothing is left pending. A flag that was
+# carried and a sequence that ran are different facts.
+assert_txmode_history_applied() {
+	k -n "$TEST_NAMESPACE" get ptahmigration "$TXMODE_MIGRATION" -o json >"$STATUS_FILE"
+	scan_for_credentials "$STATUS_FILE" "$TXMODE_MIGRATION status"
+	jq -e '
+      .status as $status |
+      $status.history.currentVersion == 3 and
+      $status.history.appliedCount == 3 and
+      ($status.history.pendingCount // 0) == 0 and
+      ($status.history.dirty // false) == false and
+      $status.lastRun.outcome == "Applied" and
+      (any($status.conditions[]; .type == "Ready" and .status == "True"))
+    ' "$STATUS_FILE" >/dev/null ||
+		fail "$TXMODE_MIGRATION did not apply its sequence under the transaction mode it named"
+}
+
+# The row #132 is about: a migration that names the transaction mode it runs
+# under, and a database that ends up carrying the history it was asked to apply.
+#
+# The operator passed no mode until #133, so every migration ran under Ptah's
+# default. On a MySQL-family database that combination is refused before a
+# statement executes, which closed the whole path rather than one scenario.
+#
+# It runs on its own database, ahead of the engine's own sequence, because the
+# phase stops at its first failure: placed inside the sequence it would never
+# execute while the default-mode rows ahead of it are refused. Ahead of them it
+# measures the field on its own terms, which is what it is for.
+#
+# It reaches applied history rather than stopping at the plan. A resource that
+# only reached the gate would prove the flag was carried and say nothing about
+# whether the migrations ran, and the flag was never the question.
+run_transaction_mode_proof() {
+	select_engine "$1"
+	printf 'e2e migrations: %s names its transaction mode and applies the sequence\n' \
+		"$ENGINE_KIND" >&2
+	create_txmode_database
+	publish_migrations "txmode" "$MIGRATION_FIXTURE_DIR" "$TXMODE_REFERENCE"
+	create_txmode_migration_resource
+	wait_for_txmode_phase AwaitingApproval
+	approve_txmode_plan
+	wait_for_txmode_phase InSync
+	assert_txmode_history_applied
+	printf 'e2e migrations: PASS %s applied its sequence under the transaction mode it named\n' \
+		"$ENGINE_KIND" >&2
+}
+
 create_migration_policy
 run_engine_migrations postgresql
+run_transaction_mode_proof mysql
 run_engine_migrations mysql
 
 PHASE_COMPLETED=1

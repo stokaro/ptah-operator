@@ -115,3 +115,85 @@ func TestOperationMutating(t *testing.T) {
 		})
 	}
 }
+
+// TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked measures both
+// directions, because the one that matters is the empty one.
+//
+// A mode nobody asked for has to leave the command exactly as it was: every
+// PtahMigration stored before the field existed runs through this code, and a
+// flag appearing for them would change how they execute without anyone editing
+// them. The set case is the easy half.
+func TestMigrationCommandCarriesTheTransactionModeOnlyWhenAsked(t *testing.T) {
+	t.Parallel()
+
+	const directory = "/migrations"
+	tests := []struct {
+		name      string
+		operation runner.Operation
+		mode      string
+		want      []string
+		wantError string
+	}{
+		{
+			name: "unset leaves the command as it was",
+			mode: "",
+			want: []string{"migrations", "up", "--migrations-dir", directory, "--json"},
+		},
+		{
+			name: "blank is the same as unset",
+			mode: "   ",
+			want: []string{"migrations", "up", "--migrations-dir", directory, "--json"},
+		},
+		{
+			// The history read is why this case exists. `migrations status`
+			// has no --tx-mode, so carrying the mode there is an unknown flag
+			// and the read dies before it reports -- which left a resource
+			// that named a mode stuck in Reading, never reaching its gate.
+			name:      "the history read never carries the mode",
+			operation: runner.OperationMigrationHistory,
+			mode:      "none",
+			want:      []string{"migrations", "status", "--migrations-dir", directory, "--json"},
+		},
+		{
+			name: "none is carried through",
+			mode: "none",
+			want: []string{"migrations", "up", "--migrations-dir", directory, "--json", "--tx-mode", "none"},
+		},
+		{
+			name: "file is carried through",
+			mode: "file",
+			want: []string{"migrations", "up", "--migrations-dir", directory, "--json", "--tx-mode", "file"},
+		},
+		{
+			name:      "a mode this build does not know is refused here",
+			mode:      "statement",
+			wantError: "unsupported transaction mode",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			operation := test.operation
+			if operation == "" {
+				operation = runner.OperationMigrationApply
+			}
+			spec, err := runner.BuildCommand("/usr/local/bin/ptah", operation, runner.Inputs{
+				MigrationsDir:   directory,
+				TransactionMode: test.mode,
+			})
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("BuildCommand() error = %v, want substring %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("BuildCommand() error = %v", err)
+			}
+			if strings.Join(spec.Args, " ") != strings.Join(test.want, " ") {
+				t.Fatalf("args = %v, want %v", spec.Args, test.want)
+			}
+		})
+	}
+}
