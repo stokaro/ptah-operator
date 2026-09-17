@@ -4324,6 +4324,51 @@ func TestVerifyFailedHookEvidenceStaticWiringRejectsMutations(t *testing.T) {
 	}
 }
 
+// The stopwatch measures the phases that decide whether the operator works, so
+// the risk it carries is a measurement that swallows a failure. Its self-test
+// is what refuses that, and this refuses a static gate that stopped running it.
+func TestVerifyTimingSelftestWiringRejectsMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.staticChecks)
+	tests := []struct {
+		name        string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "self-test invocation removed",
+			replacement: `: # timing self-test removed`,
+			wantError:   "timing self-test wiring",
+		},
+		{
+			name:        "self-test failure ignored",
+			replacement: `"$ROOT_DIR/hack/e2e-timing-selftest.sh" || true`,
+			wantError:   "timing self-test wiring",
+		},
+		{
+			name: "self-test hidden in false branch",
+			replacement: "if false; then\n" +
+				"\t\"$ROOT_DIR/hack/e2e-timing-selftest.sh\"\n" +
+				"fi",
+			wantError: "always-false wrapper",
+		},
+	}
+	const invocation = `"$ROOT_DIR/hack/e2e-timing-selftest.sh"`
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.staticChecks = writeMutatedE2ESource(t, "e2e-static.sh", source, invocation, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
 func TestVerifyE2EChildScriptsRejectCriticalMutations(t *testing.T) {
 	t.Parallel()
 

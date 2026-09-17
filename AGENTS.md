@@ -78,6 +78,31 @@ and a change that needs its own verdict — a release candidate, or a change to
 the lifecycle path itself — goes through a pull request and is merged after its
 run finishes. The pull request fans out over the same three minors.
 
+## Where a run's time went
+
+A lifecycle records one row per stage: the bootstrap steps, each phase, and the
+scenarios inside the four longest phases. The rows land in the ledger
+`E2E_TIMING_LEDGER` names, the run's identity in `E2E_TIMING_CONTEXT`, and
+`hack/e2etiming` joins them into a report and a Markdown summary:
+
+```bash
+go run ./hack/e2etiming \
+  -ledger "$WORK_DIR/timings.jsonl" \
+  -context "$WORK_DIR/timing-context.json" \
+  -summary -
+```
+
+CI names both files outside the work directory, so a run that passed keeps its
+measurements; it publishes the summary on the job, and uploads the pair together
+with the samples `hack/e2e-resource-samples.sh` took while the lifecycle ran.
+The samples are what separate a stage that was slow from one that was starved,
+and the job records are what separate waiting for a runner from working on it.
+
+Nothing in the stopwatch can decide a run: the outcome comes from the caller
+that already knows it, and the call that closes a stage returns the status it
+was given. `hack/e2e-timing-selftest.sh` is what keeps that true, and
+`make e2e-static` runs it.
+
 ## What a change to the API owes
 
 - Regenerate. `make generate manifests`, and commit what they wrote — a

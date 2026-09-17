@@ -113,6 +113,14 @@ PHASE_COMPLETED=0
 cleanup() {
 	status=$?
 	[ "$status" -ne 0 ] || [ "$PHASE_COMPLETED" -eq 1 ] || status=1
+	# The scenario that was open is the one this phase died in. The call is
+	# observational and returns the status it was given, so $status below is
+	# the phase's own verdict.
+	if [ "$status" -ne 0 ]; then
+		timing_abandon fail
+	else
+		timing_abandon pass
+	fi
 	if [ -n "${PHASE_REASON_MARKER:-}" ]; then
 		if [ "$status" -ne 0 ] && [ ! -f "$PHASE_REASON_MARKER" ]; then
 			printf 'e2e reference data: exited with status %s at a command that failed under set -e; no proof reported a reason\n' \
@@ -138,6 +146,11 @@ cleanup() {
 	rm -rf -- "$WORK_DIR"
 	exit "$status"
 }
+# The stopwatch this phase appends its scenarios to. It does nothing unless the
+# driver named a ledger, so running this phase by hand behaves as it always has.
+# shellcheck source=hack/e2e-timing.sh
+. "$ROOT_DIR/hack/e2e-timing.sh"
+
 trap cleanup EXIT
 trap 'exit 130' HUP INT TERM
 
@@ -935,10 +948,14 @@ reset_after_an_earlier_run() {
 }
 
 reset_after_an_earlier_run
+timing_next scenario declared-row-values
 collect_declared_row_values
 create_reference_policy
+timing_next scenario postgresql-reference-data
 run_engine_reference_data postgresql
+timing_next scenario mysql-reference-data
 run_engine_reference_data mysql
 
+timing_end pass
 PHASE_COMPLETED=1
 printf '%s\n' 'e2e reference data: PASS declared rows on both engines, with no row value in status, Events, or logs'

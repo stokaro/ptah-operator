@@ -73,7 +73,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "5c2442ba9fb0d127f53a5db3d586c1b47bc8f1ef988863f10b37260c6c61d758"
+	ciWorkflowSHA256                = "78583755c287f09ff3c027f62855c5039b62fb6158b3776e033147fa971f2b62"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -915,8 +915,13 @@ printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 		"E2E_PTAH_SOURCE_DIR":      "${{ runner.temp }}/ptah",
 		"E2E_RELEASE_CHART_OUTPUT": "${{ runner.temp }}/ptah-operator-${{ matrix.minor_slug }}.tgz",
 		"E2E_RUN_ID":               "ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.minor_slug }}",
-		"KIND_NODE_IMAGE":          "${{ matrix.node_image }}",
-		"K8S_VERSION":              "${{ matrix.kubernetes_version }}",
+		// The stage ledger and the run's identity are named outside the work
+		// directory the harness removes when it succeeds: a passing run's
+		// timings are the baseline the next change is measured against.
+		"E2E_TIMING_LEDGER":  "${{ runner.temp }}/timings-${{ matrix.minor_slug }}.jsonl",
+		"E2E_TIMING_CONTEXT": "${{ runner.temp }}/timing-context-${{ matrix.minor_slug }}.json",
+		"KIND_NODE_IMAGE":    "${{ matrix.node_image }}",
+		"K8S_VERSION":        "${{ matrix.kubernetes_version }}",
 	}
 	if !equalStringMap(lifecycle.Env, wantMatrixEnv) {
 		return fmt.Errorf("%s: run: make e2e must use exactly the audited lifecycle environment bindings", path)
@@ -4496,6 +4501,10 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		exactSourceLine("fail-fast shell mode", "set -eu"),
 		exactSourceLine("failed-hook evidence self-test wiring", `"$(dirname -- "$0")/failed-hook-evidence-selftest.sh"`),
 		exactSourceLine("static-check repository root setup", `unset CDPATH`),
+		// The stopwatch wraps the code that decides whether the operator works.
+		// A measurement that swallowed a failure would read as a pass, so its
+		// self-test is wired here on the same terms as the others.
+		exactSourceLine("timing self-test wiring", `"$ROOT_DIR/hack/e2e-timing-selftest.sh"`),
 	}
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
@@ -4503,10 +4512,18 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	if bytes.Count(staticContents, []byte("failed-hook-evidence-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: failed-hook evidence self-test must be wired exactly once", files.staticChecks)
 	}
-	if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, staticContract[1].pattern); err != nil {
-		return err
+	if bytes.Count(staticContents, []byte("e2e-timing-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: the timing self-test must be wired exactly once", files.staticChecks)
 	}
-	return rejectEarlySuccessfulExit(files.staticChecks, staticContents, staticContract[1].pattern)
+	for _, step := range []sourceContractStep{staticContract[1], staticContract[3]} {
+		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
+			return err
+		}
+		if err := rejectEarlySuccessfulExit(files.staticChecks, staticContents, step.pattern); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const admissionSchemaContract = `. as $document |

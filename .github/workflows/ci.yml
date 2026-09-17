@@ -269,6 +269,12 @@ jobs:
     name: Kubernetes ${{ matrix.minor }} full lifecycle
     needs: [support-matrix, verify]
     runs-on: ubuntu-latest
+    # actions: read is what separates waiting for a runner from working on it.
+    # The job's own record carries when it was created and when a runner picked
+    # it up, and no measurement inside the job can see the difference.
+    permissions:
+      contents: read
+      actions: read
     # Data-plane and fault acceptance already approach 90 minutes on hosted
     # runners. Leave a bounded budget for the subsequent upgrade and uninstall
     # proofs; their individual operation deadlines remain unchanged.
@@ -363,10 +369,24 @@ jobs:
           docker context create "$context_name" --docker host=ssh://ptah-ci-docker
           docker --context "$context_name" info >/dev/null
           printf 'name=%s\n' "$context_name" >> "$GITHUB_OUTPUT"
+      # Samples while the lifecycle runs, so a slow stage can be told from a
+      # starved one. The sampler is the same script a local run uses, and
+      # killing it is the only thing that stops it.
+      - name: Sample the machine while the lifecycle runs
+        id: resource-samples
+        shell: bash
+        run: |
+          set -euo pipefail
+          samples="$RUNNER_TEMP/resource-samples-${{ matrix.minor_slug }}.csv"
+          nohup hack/e2e-resource-samples.sh "$samples" 15 >"$RUNNER_TEMP/sampler.log" 2>&1 &
+          printf 'pid=%s\n' "$!" >> "$GITHUB_OUTPUT"
+          printf 'path=%s\n' "$samples" >> "$GITHUB_OUTPUT"
       - name: Run complete operator lifecycle
         id: lifecycle
         env:
           DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}
+          E2E_TIMING_LEDGER: ${{ runner.temp }}/timings-${{ matrix.minor_slug }}.jsonl
+          E2E_TIMING_CONTEXT: ${{ runner.temp }}/timing-context-${{ matrix.minor_slug }}.json
           E2E_DIRECT_HOST_ACCESS: "1"
           E2E_PTAH_REVISION: ${{ needs.support-matrix.outputs.ptah_commit }}
           E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah
@@ -386,9 +406,116 @@ jobs:
           retention-days: 90
           compression-level: 0
           overwrite: true
+      - name: Stop sampling
+        if: always() && steps.resource-samples.outputs.pid != ''
+        shell: bash
+        run: kill "${{ steps.resource-samples.outputs.pid }}" 2>/dev/null || true
+      # Published whether the lifecycle passed or failed: a run that failed
+      # halfway is exactly the one whose stage durations explain the failure,
+      # and this step reports rather than judges. It cannot turn a failed
+      # lifecycle into a successful job -- the lifecycle step already concluded.
+      - name: Publish what the lifecycle spent its time on
+        id: timings
+        if: always() && steps.lifecycle.conclusion != 'skipped'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          ledger="$RUNNER_TEMP/timings-${{ matrix.minor_slug }}.jsonl"
+          context="$RUNNER_TEMP/timing-context-${{ matrix.minor_slug }}.json"
+          report="$RUNNER_TEMP/timing-report-${{ matrix.minor_slug }}.json"
+          samples="${{ steps.resource-samples.outputs.path }}"
+          if [[ ! -s "$ledger" || ! -s "$context" ]]; then
+            printf 'the lifecycle recorded no timings; ledger %s, context %s\n' \
+              "$ledger" "$context" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          jobs_file="$RUNNER_TEMP/workflow-jobs.json"
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs?per_page=100" \
+            > "$jobs_file" || rm -f "$jobs_file"
+          arguments=(-ledger "$ledger" -context "$context" -output "$report" -summary -)
+          [[ -f "$jobs_file" ]] && arguments+=(-jobs "$jobs_file")
+          [[ -s "$samples" ]] && arguments+=(-samples "$samples")
+          go run ./hack/e2etiming "${arguments[@]}" >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve the measurements this run took
+        if: always() && steps.lifecycle.conclusion != 'skipped'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lifecycle-timings-${{ matrix.minor_slug }}
+          path: |
+            ${{ runner.temp }}/timings-${{ matrix.minor_slug }}.jsonl
+            ${{ runner.temp }}/timing-context-${{ matrix.minor_slug }}.json
+            ${{ runner.temp }}/timing-report-${{ matrix.minor_slug }}.json
+            ${{ runner.temp }}/resource-samples-${{ matrix.minor_slug }}.csv
+          if-no-files-found: warn
+          retention-days: 30
+          overwrite: true
       - name: Remove explicit Docker context
         if: always() && steps.docker-context.outputs.name != ''
         run: docker context rm --force "${{ steps.docker-context.outputs.name }}"
+
+  # Observational and deliberately outside the gate: it publishes where the
+  # elapsed time went across the whole matrix once every lifecycle has
+  # concluded, which is when the job records carry a queue and a duration for
+  # each of them. A measurement that could fail the run would be a reason not
+  # to measure.
+  lifecycle-timings:
+    name: Publish lifecycle timings
+    if: ${{ !cancelled() }}
+    needs: [kubernetes-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Collect what each lifecycle measured
+        id: collect
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: lifecycle-timings-*
+          path: ${{ runner.temp }}/timings
+      - name: Publish the elapsed time across the matrix
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          root="$RUNNER_TEMP/timings"
+          jobs_file="$RUNNER_TEMP/workflow-jobs.json"
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}/jobs?per_page=100" \
+            > "$jobs_file" || rm -f "$jobs_file"
+          published=0
+          for directory in "$root"/lifecycle-timings-*; do
+            [[ -d "$directory" ]] || continue
+            ledger=$(find "$directory" -name 'timings-*.jsonl' -print -quit)
+            context=$(find "$directory" -name 'timing-context-*.json' -print -quit)
+            samples=$(find "$directory" -name 'resource-samples-*.csv' -print -quit)
+            [[ -s "$ledger" && -s "$context" ]] || continue
+            arguments=(-ledger "$ledger" -context "$context" -summary -)
+            [[ -n "$samples" && -s "$samples" ]] && arguments+=(-samples "$samples")
+            # The runner table belongs to the run rather than to a minor, so it
+            # is rendered once, with the first suite that has measurements.
+            if [[ "$published" -eq 0 && -f "$jobs_file" ]]; then
+              arguments+=(-jobs "$jobs_file")
+            fi
+            go run ./hack/e2etiming "${arguments[@]}" >> "$GITHUB_STEP_SUMMARY"
+            published=$((published + 1))
+          done
+          if [[ "$published" -eq 0 ]]; then
+            printf 'No lifecycle recorded timings in this run.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   kubernetes-support-gate:
     name: Kubernetes support gate
