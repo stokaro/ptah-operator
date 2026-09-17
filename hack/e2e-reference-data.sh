@@ -154,6 +154,19 @@ deadline_from_now() {
 REGISTRY_AUTH_SECRET=e2e-registry-auth
 REGISTRY_PULL_SECRET=e2e-registry-pull
 REGISTRY_HOST="${REGISTRY_SERVICE}.${TEST_NAMESPACE}.svc.cluster.local:5000"
+# hack/e2e-rerun-phase.sh sets E2E_PHASE_RERUN when it puts this phase back on a
+# lab an earlier run left behind. The phase then clears what that run created
+# before it starts (reset_after_an_earlier_run), and publishes under a
+# repository of its own: Ptah refuses to move a version tag that already names a
+# different digest, so the earlier run's tags can be neither reused nor
+# replaced.
+PHASE_RERUN=${E2E_PHASE_RERUN:-}
+REFERENCE_REPOSITORY=schemas
+if [ -n "$PHASE_RERUN" ]; then
+	printf '%s\n' "$PHASE_RERUN" | grep -Eq '^r[0-9]+$' ||
+		fail "E2E_PHASE_RERUN must be r followed by digits, not $PHASE_RERUN"
+	REFERENCE_REPOSITORY="schemas-${PHASE_RERUN}"
+fi
 REFERENCE_DATABASE=ptah_e2e_reference
 REFERENCE_POLICY=e2e-reference-verification-policy
 REFERENCE_POLICY_KEY=policy.yaml
@@ -229,7 +242,7 @@ create_reference_database() {
 		;;
 	esac
 	[ "$existing" = 0 ] ||
-		fail "database $REFERENCE_DATABASE already exists on $ENGINE; the reference-data proof needs a database with no tables, so drop it before running this phase again"
+		fail "database $REFERENCE_DATABASE already exists on $ENGINE; the reference-data proof needs a database with no tables, so rerun this phase through hack/e2e-rerun-phase.sh, which clears it"
 	case "$ENGINE" in
 	postgresql)
 		# shellcheck disable=SC2016 # Variables expand inside the database container.
@@ -311,7 +324,7 @@ select_engine() {
 	REFERENCE_SCHEMA="e2e-reference-${ENGINE}"
 	REFERENCE_APPROVAL="e2e-reference-${ENGINE}-approval"
 	REFERENCE_COORDINATION_KEY="e2e/reference/${ENGINE}"
-	REFERENCE_ARTIFACT="oci://${REGISTRY_HOST}/schemas/reference-${ENGINE}:stable"
+	REFERENCE_ARTIFACT="oci://${REGISTRY_HOST}/${REFERENCE_REPOSITORY}/reference-${ENGINE}:stable"
 
 	# The password is read back from the Secret the data plane created rather
 	# than derived a second time here. A second derivation is a second
@@ -871,6 +884,57 @@ run_engine_reference_data() {
 		"$ENGINE_KIND" >&2
 }
 
+# reset_after_an_earlier_run removes what an earlier run of this phase created,
+# so a rerun starts where the first run did: no reference schema, and a database
+# with no tables on either engine.
+#
+# Only this phase's objects go, by the names select_engine and
+# publish_reference_schema give them. The data plane's PtahSchemas share the
+# kind and the namespace, so nothing here is deleted by kind alone. The plans the
+# reference schema published are owned by it and go with it; the approvals are
+# not owned, so they are removed by the name every one of them starts with. The
+# verification policy stays: it is applied rather than created.
+reset_after_an_earlier_run() {
+	[ -n "$PHASE_RERUN" ] || return 0
+	printf 'e2e reference data: rerun %s: removing what an earlier run of this phase left behind\n' \
+		"$PHASE_RERUN" >&2
+	for reset_engine in postgresql mysql; do
+		select_engine "$reset_engine"
+		k -n "$TEST_NAMESPACE" delete ptahschema "$REFERENCE_SCHEMA" \
+			--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+			fail "$REFERENCE_SCHEMA was not removed"
+		k -n "$TEST_NAMESPACE" delete secret "$REFERENCE_DB_SECRET" --ignore-not-found >/dev/null ||
+			fail "$REFERENCE_DB_SECRET was not removed"
+		k -n "$TEST_NAMESPACE" get ptahschemaapproval,configmap,job -o name >"$LOG_FILE" ||
+			fail "the objects an earlier run left behind could not be listed"
+		grep -E "^(ptahschemaapproval[.]operator[.]ptah[.]run/${REFERENCE_APPROVAL}|configmap/e2e-reference-${ENGINE}-|job[.]batch/e2e-push-reference-${ENGINE}-)" \
+			"$LOG_FILE" >"$RESOURCE_FILE" || true
+		while IFS= read -r reset_object; do
+			k -n "$TEST_NAMESPACE" delete "$reset_object" \
+				--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+				fail "$reset_object was not removed"
+		done <"$RESOURCE_FILE"
+		case "$ENGINE" in
+		postgresql)
+			# FORCE ends the sessions an interrupted run left open.
+			# shellcheck disable=SC2016 # Variables expand inside the database container.
+			k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+				sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "$1"' \
+				sh "DROP DATABASE IF EXISTS ${REFERENCE_DATABASE} WITH (FORCE)" >/dev/null ||
+				fail "database $REFERENCE_DATABASE could not be dropped on $ENGINE"
+			;;
+		mysql)
+			# shellcheck disable=SC2016 # Variables expand inside the database container.
+			k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+				sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "$1"' \
+				sh "DROP DATABASE IF EXISTS ${REFERENCE_DATABASE}" >/dev/null ||
+				fail "database $REFERENCE_DATABASE could not be dropped on $ENGINE"
+			;;
+		esac
+	done
+}
+
+reset_after_an_earlier_run
 collect_declared_row_values
 create_reference_policy
 run_engine_reference_data postgresql

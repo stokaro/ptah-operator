@@ -16,6 +16,16 @@ set -eu
 # were built from the commit the run snapshotted, so a change under cmd/ or
 # internal/ still needs a full run. It says so rather than pretending.
 #
+# A phase that creates state cannot simply run a second time. The migrations and
+# reference-data phases each want a database nothing has touched, create their
+# fixtures rather than apply them, and publish to version tags the registry will
+# not move. So this sets E2E_PHASE_RERUN, and those two phases clear what the
+# earlier run of themselves left behind and publish under a repository of their
+# own before they start. The other phases are rerun as they are.
+#
+# A phase that never started has no recorded environment, so it cannot be rerun
+# here: a run that failed in migrations recorded nothing for reference-data.
+#
 # Usage: hack/e2e-rerun-phase.sh <retained-work-dir> <phase>
 
 unset CDPATH
@@ -76,6 +86,12 @@ done <"$RERUN_ENV_FILE"
 kubectl --kubeconfig "$RERUN_KUBECONFIG" --request-timeout=15s version -o json >/dev/null 2>&1 ||
 	fail "the retained cluster does not answer through $RERUN_KUBECONFIG"
 
-printf 'e2e rerun: %s against the cluster in %s\n' "$RERUN_PHASE" "$RERUN_WORK_DIR"
+# Unique per rerun, because the repository a rerun publishes under has to be
+# new each time: a second rerun would meet the first rerun's tags.
+E2E_PHASE_RERUN="r$(date +%s)"
+export E2E_PHASE_RERUN
+
+printf 'e2e rerun: %s against the cluster in %s, as rerun %s\n' \
+	"$RERUN_PHASE" "$RERUN_WORK_DIR" "$E2E_PHASE_RERUN"
 printf 'e2e rerun: the manager image is the one that run built; a change under cmd/ or internal/ needs a full run\n'
 exec "$ROOT_DIR/$RERUN_SCRIPT"
