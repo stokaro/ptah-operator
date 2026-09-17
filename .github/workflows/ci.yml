@@ -13,12 +13,22 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  # A superseded pull-request run is cancelled: only the newest push is worth
-  # three kind clusters. A push to master is not, because the run a later merge
-  # cancels is the run nobody ever reads, and its commit then sits unverified
-  # while looking fine. Five consecutive master commits went without a verdict
-  # that way, which is how the port race in #37 stayed hidden.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer run cancels the older one on every ref, master included. This is
+  # the intended policy, not an oversight: do not narrow it back to pull
+  # requests, and hack/verify-kubernetes-support.go refuses any value but true.
+  #
+  # Every push to master starts the complete run -- no job is skipped because
+  # the commit is on master -- and the run that counts is the newest commit's.
+  # The tip is what the next change builds on and what a release is cut from;
+  # an older run proves a tree nobody builds on again, and letting it finish
+  # only holds the newer run behind it. Master used to let a started run finish,
+  # and the queue that built up held the commit fixing a known failure for hours
+  # while the run ahead of it re-proved that failure.
+  #
+  # The cost is taken on purpose: a commit followed by another merge before its
+  # run finishes gets no verdict of its own. A change that needs one goes
+  # through a pull request, whose run covers the same three minors.
+  cancel-in-progress: true
 
 env:
   GOFLAGS: -mod=readonly

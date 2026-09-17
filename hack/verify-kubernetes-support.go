@@ -73,7 +73,7 @@ const (
 	// These digests make workflow policy changes explicit. Semantic checks keep
 	// failures actionable; the whole-file digests also cover setup steps that
 	// could otherwise alter GITHUB_ENV, GITHUB_PATH, or later shell behavior.
-	ciWorkflowSHA256                = "a8fc7424000d3c63c2788f2d8f8be41c3db244978ec44c025512dd849b3f61fd"
+	ciWorkflowSHA256                = "5c2442ba9fb0d127f53a5db3d586c1b47bc8f1ef988863f10b37260c6c61d758"
 	updateWorkflowSHA256            = "6c26ffcdfccc60a28f16e600ec6f29b22d139f3637979d880c4623833b4b6580"
 	releaseSupportEvidenceRunSHA256 = "e4880ca682553c9ca3f26a9265d23407f3d0ebb04665f32ad5d541550a9e4dcf"
 	releaseChartPackageRunSHA256    = "fcb5ca9057f0307cd27824d1011b12ad1c7b4b5df6b534a505a70da607da37c8"
@@ -574,35 +574,24 @@ func verifyWorkflow(path string) error {
 	return verifyAuditedWorkflowDigest(path, contents, ciWorkflowSHA256)
 }
 
-// ciCancelInProgressExpression cancels a superseded pull-request run and leaves
-// a push to master alone. It is matched exactly: any other expression is an
-// unreviewed rule about which commits get a verdict.
-const ciCancelInProgressExpression = "${{ github.event_name == 'pull_request' }}"
-
-// ciCancelsSupersededPullRequests accepts the two spellings that cancel a
-// superseded pull-request run: the literal true, which cancels on every ref,
-// and the audited expression, which cancels only on a pull request. Everything
-// else is refused. `false` leaves a stale run racing the new one, and any other
-// expression decides, without review, which commits reach a verdict at all.
-func ciCancelsSupersededPullRequests(node yaml.Node) bool {
-	if node.Kind != yaml.ScalarNode {
-		return false
-	}
-	switch node.Tag {
-	case "!!bool":
-		return node.Value == "true"
-	case "!!str":
-		return node.Value == ciCancelInProgressExpression
-	default:
-		return false
-	}
+// ciCancelsEverySupersededRun accepts one value: the literal true, which cancels
+// the older run on every ref, master included.
+//
+// That is the policy, and this is where it is held. A newer commit's run is the
+// only one whose verdict anyone builds on, so an older run still going only
+// holds the queue. `false` lets a stale run race the new one, and an expression
+// that spares master -- the rule this repository used to have -- queues every
+// merge behind a run that proves a tree nobody will build on again. Any other
+// expression decides, without review, which runs get to finish.
+func ciCancelsEverySupersededRun(node yaml.Node) bool {
+	return node.Kind == yaml.ScalarNode && node.Tag == "!!bool" && node.Value == "true"
 }
 
 func verifyCIWorkflowSemantics(path string, workflow workflowDocument, contents []byte) error {
 	if workflow.Concurrency.Group != "ci-${{ github.workflow }}-${{ github.ref }}" ||
-		!ciCancelsSupersededPullRequests(workflow.Concurrency.CancelInProgress) {
+		!ciCancelsEverySupersededRun(workflow.Concurrency.CancelInProgress) {
 		return fmt.Errorf(
-			"%s: CI must cancel a superseded pull-request run, and must not let a later merge cancel a master commit's verdict",
+			"%s: CI must cancel a superseded run on every ref, master included: cancel-in-progress is true and nothing else",
 			path,
 		)
 	}
