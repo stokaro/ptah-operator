@@ -28,7 +28,7 @@ provenance, and the supported build is exactly the one the matrix exercised.
 **Verified** is a measurement. Each `verified` entry names a Ptah build the
 operator was actually run against, the evidence behind it, and what ran.
 `ptahRelease` is `null` when the build is not a released Ptah. The row names
-`v0.6.1`, and the suite builds its executor from the commit that release was cut
+`v0.7.0`, and the suite builds its executor from the commit that release was cut
 at rather than pulling the image the release published, so what the measurement
 covers is the code the release carries.
 
