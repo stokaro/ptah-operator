@@ -9,7 +9,10 @@
 // rail cannot name, and a labelled tag no question carries is a chip that
 // filters to nothing. A symptom naming an anchor that was renamed routes
 // nowhere. A sidebar badge is a number nobody regenerates, so it drifts the
-// first time a question is added.
+// first time a question is added. A further-reading list written between a
+// heading and that group's first question reads as a stray link, and the filter
+// shows and hides it with the group it landed in rather than with the question
+// it answers.
 //
 // Usage:
 //   node scripts/check-faq-groups.mjs [--selftest]
@@ -23,22 +26,43 @@ const siteRoot = join(scriptDir, '..');
 const pagePath = join(siteRoot, 'src', 'content', 'docs', 'faq.md');
 const builtPage = join(siteRoot, 'dist', 'faq', 'index.html');
 
-/** Reads the page's structure: the groups in order, each with its questions. */
+/**
+ * Reads the page's structure: the groups in order, each with its questions and
+ * with the lists written in its chrome, the region between the `##` heading and
+ * that group's first question. A run of items is read as one list, because the
+ * finding is about a list in the wrong place rather than about each line it
+ * holds.
+ */
 export function readStructure(markdown) {
   const groups = [];
   let current = null;
   const orphans = [];
+  let listing = false;
   for (const line of markdown.replace(/^---\n[\s\S]*?\n---\n/, '').split('\n')) {
     const group = line.match(/^## (.+?)\s*\{#([a-z0-9-]+)\}$/);
     if (group) {
-      current = { id: group[2], name: group[1], questions: [] };
+      current = { id: group[2], name: group[1], questions: [], chromeLists: [] };
       groups.push(current);
+      listing = false;
       continue;
     }
     const question = line.match(/^### (.+?)\s*\{#([a-z0-9-]+)\}$/);
-    if (!question) continue;
-    if (current) current.questions.push(question[2]);
-    else orphans.push(question[2]);
+    if (question) {
+      if (current) current.questions.push(question[2]);
+      else orphans.push(question[2]);
+      listing = false;
+      continue;
+    }
+    const item = line.match(/^\s*(?:[-*+]|\d+\.)\s+(.+?)\s*$/);
+    if (item) {
+      if (!listing && current && current.questions.length === 0) {
+        current.chromeLists.push(item[1]);
+      }
+      listing = true;
+      continue;
+    }
+    // A blank line keeps a loose list together; any other prose ends it.
+    if (line.trim() !== '') listing = false;
   }
   return { groups, orphans };
 }
@@ -58,6 +82,13 @@ export function structureProblems({ groups, orphans }, symptoms, badge, aliases,
   }
   for (const group of groups) {
     if (group.questions.length === 0) problems.push(`${group.id}: names a group with no questions`);
+    for (const list of group.chromeLists) {
+      problems.push(
+        `${group.id}: the list "${list}" sits between the heading and the first question, ` +
+          'so the filter carries it with this group; a group opens with prose, and a ' +
+          'further-reading list belongs under a question',
+      );
+    }
   }
   for (const symptom of symptoms) {
     if (symptom.questions.length === 0) {
@@ -108,7 +139,10 @@ function sidebarBadge(source) {
 }
 
 function selftest() {
-  const page = { groups: [{ id: 'g-a', name: 'A', questions: ['one'] }], orphans: [] };
+  const page = {
+    groups: [{ id: 'g-a', name: 'A', questions: ['one'], chromeLists: [] }],
+    orphans: [],
+  };
   const symptoms = [{ label: 'sym', questions: ['one'] }];
   const aliases = ['sym'];
   const tags = { questionTags: { one: ['alpha'] }, tagLabels: { alpha: 'Alpha' } };
@@ -130,7 +164,18 @@ function selftest() {
     { name: 'a badge that drifted', page, symptoms, badge: 7, aliases, expect: 1 },
     {
       name: 'a group with no questions',
-      page: { groups: [...page.groups, { id: 'g-b', name: 'B', questions: [] }], orphans: [] },
+      page: {
+        groups: [...page.groups, { id: 'g-b', name: 'B', questions: [], chromeLists: [] }],
+        orphans: [],
+      },
+      symptoms, badge: 1, aliases, expect: 1,
+    },
+    {
+      name: 'a further-reading list in a group\'s chrome',
+      page: {
+        groups: [{ ...page.groups[0], chromeLists: ['[Operations](../use/operations/#x)'] }],
+        orphans: [],
+      },
       symptoms, badge: 1, aliases, expect: 1,
     },
     {
@@ -180,6 +225,25 @@ function selftest() {
   const read = readStructure('---\nx: 1\n---\n## G {#g-a}\n\n### Q {#one}\n');
   if (read.groups.length !== 1 || read.groups[0].questions[0] !== 'one') {
     console.error('  readStructure did not read a group and its question');
+    failures += 1;
+  }
+  const misfiled = readStructure(
+    '---\nx: 1\n---\n## G {#g-a}\n\n- [Further](../use/operations/#x)\n' +
+      '- [More](../use/security/)\n\n### Q {#one}\n\n- [Answered here](../use/operations/#y)\n',
+  );
+  if (misfiled.groups[0].chromeLists.length !== 1) {
+    console.error(
+      `  readStructure read ${misfiled.groups[0].chromeLists.length} chrome lists, want the one` +
+        ' written above the question',
+    );
+    failures += 1;
+  }
+  // The control: a group may open with a sentence, and two groups on the page do.
+  const opening = readStructure(
+    '---\nx: 1\n---\n## G {#g-a}\n\nAn approval names one plan.\n\n### Q {#one}\n',
+  );
+  if (opening.groups[0].chromeLists.length !== 0) {
+    console.error('  readStructure read a group\'s opening prose as a list');
     failures += 1;
   }
   if (failures) {
