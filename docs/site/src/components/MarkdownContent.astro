@@ -1,6 +1,7 @@
 ---
 /**
- * Starlight's content wrapper, with the FAQ's filter in front of its questions.
+ * Starlight's content wrapper, with the FAQ's tag rail and field in front of
+ * its questions.
  *
  * The rail belongs above the content, which on every other page is exactly what
  * Starlight renders here, so this override adds one element for one route and
@@ -15,7 +16,6 @@
  */
 import '@astrojs/starlight/style/markdown.css';
 import FaqFilter from './FaqFilter.astro';
-import { faqSymptoms } from '../faq-symptoms.mjs';
 
 const { entry } = Astro.locals.starlightRoute;
 
@@ -28,7 +28,7 @@ const isFaq = entry.id === 'faq' || entry.id === 'faq.md';
 const questionCount = (entry.body?.match(/^### /gm) ?? []).length;
 ---
 
-{isFaq && <FaqFilter symptoms={faqSymptoms} count={questionCount} />}
+{isFaq && <FaqFilter count={questionCount} />}
 <div class:list={['sl-markdown-content', isFaq && 'ptah-faq']}>
   <slot />
 </div>
