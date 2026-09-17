@@ -638,6 +638,37 @@ deadline_from_now() {
 	printf '%s\n' "$(($(date +%s) + TIMEOUT_SECONDS))"
 }
 
+# read_result_transport reads a finished runner container's log and parses its
+# result frame. The frame is the runner's last output, and the container runtime
+# copies output into the log asynchronously, so a read right after the container
+# terminates can end inside the frame or before it. Such a read is repeated for a
+# bounded time, the same window the controller allows; a frame that is present
+# and wrong is refused at once, and either refusal names its reason (#154).
+read_result_transport() {
+	transport_pod=$1
+	transport_log=$2
+	transport_operation=$3
+	transport_operation_id=$4
+	transport_output=$5
+	transport_deadline=$(($(date +%s) + 30))
+	while :; do
+		k -n "$TEST_NAMESPACE" logs pod/"$transport_pod" -c ptah >"$transport_log" 2>&1 ||
+			fail "could not read the $transport_operation result transport from $transport_pod"
+		if "$RESULT_ASSERT_BINARY" --logs "$transport_log" --operation "$transport_operation" \
+			--operation-id "$transport_operation_id" >"$transport_output" 2>"$transport_output.err"; then
+			rm -f "$transport_output.err"
+			return 0
+		fi
+		if ! grep -Eq 'never finished arriving|frame not found|no end of line within its bounds' \
+			"$transport_output.err" || [ "$(date +%s)" -ge "$transport_deadline" ]; then
+			sed 's/^/e2e data plane:   /' "$transport_output.err" >&2
+			rm -f "$transport_output.err"
+			fail "the $transport_operation result frame from $transport_pod could not be read"
+		fi
+		sleep 2
+	done
+}
+
 scan_file_for_credentials() {
 	scan_file=$1
 	scan_context=$2
@@ -2195,14 +2226,9 @@ capture_one_new_job_result() {
         select(.name == "ptah" and .state.terminated.exitCode == 0)] | length) == 1
     ' >/dev/null || fail "$CAPTURED_POD_NAME did not preserve one zero-restart result transport"
 
-	if ! k -n "$TEST_NAMESPACE" logs pod/"$CAPTURED_POD_NAME" -c ptah >"$RESULT_LOG_FILE" 2>&1; then
-		fail "could not read the exact result transport from $CAPTURED_POD_NAME"
-	fi
+	read_result_transport "$CAPTURED_POD_NAME" "$RESULT_LOG_FILE" "$result_operation" \
+		"$CAPTURED_OPERATION_ID" "$result_output"
 	scan_file_for_credentials "$RESULT_LOG_FILE" "the exact $result_operation result transport"
-	"$RESULT_ASSERT_BINARY" \
-		--logs "$RESULT_LOG_FILE" \
-		--operation "$result_operation" \
-		--operation-id "$CAPTURED_OPERATION_ID" >"$result_output"
 	chmod 600 "$result_output"
 	scan_file_for_credentials "$result_output" "the validated $result_operation result"
 	jq -e \
@@ -3687,19 +3713,15 @@ run_mysql_dsn_refusal() {
               if length == 1 then .[0].metadata.name
               else error("invalid-DSN Job does not own one Pod") end
             ')
-		if ! k -n "$TEST_NAMESPACE" logs pod/"$refusal_pod" -c ptah >"$RESULT_LOG_FILE" 2>&1; then
-			fail "could not read $refusal_operation invalid-DSN runner result"
-		fi
+		refusal_result=$WORK_DIR/${refusal_name}-result.json
+		read_result_transport "$refusal_pod" "$RESULT_LOG_FILE" "$refusal_operation" \
+			"$refusal_operation_id" "$refusal_result"
 		scan_file_for_credentials "$RESULT_LOG_FILE" \
 			"the $refusal_operation invalid-DSN runner transport"
 		if grep -Ei 'DROP[[:space:]]+TABLE|%3B|side_effecting_function' \
 			"$RESULT_LOG_FILE" >/dev/null; then
 			fail "$refusal_operation invalid-DSN result disclosed the encoded server-session payload"
 		fi
-		refusal_result=$WORK_DIR/${refusal_name}-result.json
-		"$RESULT_ASSERT_BINARY" --logs "$RESULT_LOG_FILE" \
-			--operation "$refusal_operation" --operation-id "$refusal_operation_id" \
-			>"$refusal_result"
 		chmod 600 "$refusal_result"
 		jq -e \
 			--arg operation "$refusal_operation" \

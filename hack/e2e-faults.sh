@@ -630,6 +630,37 @@ report_restarted_manager_containers() {
     ' | sed 's/^/e2e faults: restarted manager container: /' >&2 || true
 }
 
+# read_result_transport reads a finished runner container's log and parses its
+# result frame. The frame is the runner's last output, and the container runtime
+# copies output into the log asynchronously, so a read right after the container
+# terminates can end inside the frame or before it. Such a read is repeated for a
+# bounded time, the same window the controller allows; a frame that is present
+# and wrong is refused at once, and either refusal names its reason (#154).
+read_result_transport() {
+	transport_pod=$1
+	transport_log=$2
+	transport_operation=$3
+	transport_operation_id=$4
+	transport_output=$5
+	transport_deadline=$(($(date +%s) + 30))
+	while :; do
+		k -n "$TEST_NAMESPACE" logs pod/"$transport_pod" -c ptah >"$transport_log" 2>&1 ||
+			fail "could not read the $transport_operation result transport from $transport_pod"
+		if "$RESULT_ASSERT_BINARY" --logs "$transport_log" --operation "$transport_operation" \
+			--operation-id "$transport_operation_id" >"$transport_output" 2>"$transport_output.err"; then
+			rm -f "$transport_output.err"
+			return 0
+		fi
+		if ! grep -Eq 'never finished arriving|frame not found|no end of line within its bounds' \
+			"$transport_output.err" || [ "$(date +%s)" -ge "$transport_deadline" ]; then
+			sed 's/^/e2e faults:   /' "$transport_output.err" >&2
+			rm -f "$transport_output.err"
+			fail "the $transport_operation result frame from $transport_pod could not be read"
+		fi
+		sleep 2
+	done
+}
+
 audit_fault_runtime() {
 	: >"$RESOURCE_FILE"
 	k -n "$TEST_NAMESPACE" get \
@@ -2156,14 +2187,9 @@ capture_exact_job_result() {
       then .metadata.uid else error("result Pod did not terminate exactly once") end
     ')
 	result_log=$WORK_DIR/exact-result.log
-	if ! k -n "$TEST_NAMESPACE" logs pod/"$FAULT_RESULT_POD" -c ptah >"$result_log" 2>&1; then
-		fail "could not read exact $result_operation result from $FAULT_RESULT_POD"
-	fi
+	read_result_transport "$FAULT_RESULT_POD" "$result_log" "$result_operation" \
+		"$FAULT_RESULT_OPERATION_ID" "$result_output"
 	scan_fault_file "$result_log" "the exact $result_operation runner transport"
-	"$RESULT_ASSERT_BINARY" \
-		--logs "$result_log" \
-		--operation "$result_operation" \
-		--operation-id "$FAULT_RESULT_OPERATION_ID" >"$result_output"
 	chmod 600 "$result_output"
 	scan_fault_file "$result_output" "the validated $result_operation runner result"
 	jq -e \
