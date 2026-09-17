@@ -106,6 +106,14 @@ E2E_PTAH_REVISION=${E2E_PTAH_REVISION:-}
 # phase. The demonstration lab uses it, so that one bootstrap serves both the
 # suite and the recorded scenarios.
 E2E_STOP_AFTER=${E2E_STOP_AFTER:-}
+# E2E_STOP_AFTER=images builds the four task images, audits them, writes them
+# and their provenance to E2E_IMAGE_EXPORT_DIR, and stops before the cluster
+# exists. E2E_PREBUILT_IMAGE_DIR reads that directory back: the images are
+# loaded and checked against this run's own commit and Ptah pin instead of being
+# built again. One driver, so a matrix that builds once and a local run that
+# builds for itself execute the same code.
+E2E_IMAGE_EXPORT_DIR=${E2E_IMAGE_EXPORT_DIR:-}
+E2E_PREBUILT_IMAGE_DIR=${E2E_PREBUILT_IMAGE_DIR:-}
 E2E_ENVIRONMENT_FILE=${E2E_ENVIRONMENT_FILE:-}
 E2E_PTAH_GIT_URL=${E2E_PTAH_GIT_URL:-https://github.com/stokaro/ptah.git}
 E2E_REGISTRY_IMAGE=${E2E_REGISTRY_IMAGE:-registry:3@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33}
@@ -155,6 +163,11 @@ fail() {
 # The stopwatch. It reads E2E_TIMING_LEDGER, which is named below once the work
 # directory exists, and does nothing until then.
 . "$ROOT_DIR/hack/e2e-timing.sh"
+
+case "$E2E_STOP_AFTER" in
+	'' | bootstrap | images) ;;
+	*) fail "E2E_STOP_AFTER accepts bootstrap or images, got $E2E_STOP_AFTER" ;;
+esac
 
 for requested_phase in $E2E_DIAGNOSIS_SKIP_PHASES; do
 	case $requested_phase in
@@ -222,6 +235,24 @@ dns_name() {
 is_pinned_image() {
 	printf '%s\n' "$1" | grep -Eq '^[^[:space:]@]+@sha256:[0-9a-f]{64}$'
 }
+
+# The four images this task builds, each with the role it is loaded back as. The
+# role is what keeps the synthetic next release from being taken for the
+# candidate: they are built from the same commit and differ only in the release
+# sequence compiled into them, so a transfer that mixed them up would install
+# one as the other and prove the upgrade path against nothing.
+TASK_IMAGE_ROLES='operator next-operator fixture executor'
+
+task_image_for_role() {
+	case $1 in
+		operator) printf '%s' "$OPERATOR_IMAGE" ;;
+		next-operator) printf '%s' "$NEXT_OPERATOR_IMAGE" ;;
+		fixture) printf '%s' "$FIXTURE_BUILD_IMAGE" ;;
+		executor) printf '%s' "$PTAH_IMAGE" ;;
+		*) fail "no task image has the role $1" ;;
+	esac
+}
+
 
 for command_name in docker kind kubectl helm jq ssh git go tar awk sed grep tr cut cksum cmp cp ln mktemp date sleep curl htpasswd openssl mv; do
 	require_command "$command_name"
@@ -296,6 +327,24 @@ ACTUAL_KIND_VERSION=$(kind version | awk '{print $2}')
 [ "$ACTUAL_KIND_VERSION" = "$EXPECTED_KIND_VERSION" ] ||
 	fail "kind $EXPECTED_KIND_VERSION is required, got $ACTUAL_KIND_VERSION"
 
+if [ -n "$E2E_IMAGE_EXPORT_DIR" ] && [ -n "$E2E_PREBUILT_IMAGE_DIR" ]; then
+	fail "E2E_IMAGE_EXPORT_DIR writes the task images and E2E_PREBUILT_IMAGE_DIR reads them; name one"
+fi
+if [ -n "$E2E_PREBUILT_IMAGE_DIR" ] && [ -n "$E2E_EXECUTOR_IMAGE" ]; then
+	fail "E2E_PREBUILT_IMAGE_DIR carries the executor; E2E_EXECUTOR_IMAGE would name a second one"
+fi
+if [ "$E2E_STOP_AFTER" = images ] && [ -n "$E2E_EXECUTOR_IMAGE" ]; then
+	fail "E2E_STOP_AFTER=images writes the four images it built, and an external executor is not one of them"
+fi
+if [ -n "$E2E_IMAGE_EXPORT_DIR" ] && [ "$E2E_STOP_AFTER" != images ]; then
+	fail "E2E_IMAGE_EXPORT_DIR is written by E2E_STOP_AFTER=images, which this run is not"
+fi
+if [ "$E2E_STOP_AFTER" = images ] && [ -z "$E2E_IMAGE_EXPORT_DIR" ]; then
+	fail "E2E_STOP_AFTER=images requires E2E_IMAGE_EXPORT_DIR to name where to write them"
+fi
+if [ -n "$E2E_PREBUILT_IMAGE_DIR" ] && [ ! -f "$E2E_PREBUILT_IMAGE_DIR/images.json" ]; then
+	fail "E2E_PREBUILT_IMAGE_DIR must hold the images.json an E2E_STOP_AFTER=images run wrote"
+fi
 if [ -n "$E2E_EXECUTOR_IMAGE" ]; then
 	is_pinned_image "$E2E_EXECUTOR_IMAGE" ||
 		fail "E2E_EXECUTOR_IMAGE must be pinned with @sha256:<64 lowercase hex> when provided"
@@ -598,6 +647,136 @@ chmod 600 \
 	"$EXTERNAL_PG_PASSWORD_FILE" "$EXTERNAL_PG_CREDENTIALS_FILE" \
 	"$EXTERNAL_PG_BOOTSTRAP_SQL_FILE"
 unset EXTERNAL_PG_ADMIN_PASSWORD EXTERNAL_PG_PASSWORD EXTERNAL_PG_URL
+
+image_identity() {
+	docker --context "$DOCKER_CONTEXT" image inspect --format '{{ .Id }}' "$1" 2>/dev/null
+}
+
+image_label_value() {
+	docker --context "$DOCKER_CONTEXT" image inspect \
+		--format "{{ index .Config.Labels \"$2\" }}" "$1" 2>/dev/null
+}
+
+# load_prebuilt_images reads the images an E2E_STOP_AFTER=images run wrote and
+# refuses anything that is not this run's own inputs.
+#
+# The manifest names the commit the images were built from and the Ptah commit
+# the executor carries, and each image repeats both as labels of its own. Both
+# are checked: a manifest is a file next to the images, and a label travels
+# inside the image a registry or a transfer would have to rewrite to forge. A
+# mismatch on either is a refusal rather than a rebuild, because a run that
+# quietly rebuilt would report a pass for images nobody transferred.
+load_prebuilt_images() {
+	prebuilt_manifest=$E2E_PREBUILT_IMAGE_DIR/images.json
+	prebuilt_revision=$(jq -r '.operatorRevision // empty' "$prebuilt_manifest")
+	[ -n "$prebuilt_revision" ] ||
+		fail "$prebuilt_manifest names no operator revision"
+	[ "$prebuilt_revision" = "$CONTROLLER_REVISION" ] ||
+		fail "the prepared images were built from $prebuilt_revision and this run tests $CONTROLLER_REVISION"
+	prebuilt_ptah_commit=$(jq -r '.ptahCommit // empty' "$prebuilt_manifest")
+	[ "$prebuilt_ptah_commit" = "$E2E_PTAH_REVISION" ] ||
+		fail "the prepared executor carries Ptah $prebuilt_ptah_commit and the catalog pins $E2E_PTAH_REVISION"
+	prebuilt_sequence=$(jq -r '.nextReleaseSequence // empty' "$prebuilt_manifest")
+	[ "$prebuilt_sequence" = "$NEXT_RELEASE_SEQUENCE" ] ||
+		fail "the prepared next release is sequence $prebuilt_sequence and this run expects $NEXT_RELEASE_SEQUENCE"
+	if [ -z "$E2E_PTAH_VERSION" ]; then
+		E2E_PTAH_VERSION=$(jq -r '.ptahVersion // empty' "$prebuilt_manifest")
+	fi
+	[ -n "$E2E_PTAH_VERSION" ] ||
+		fail "$prebuilt_manifest names no Ptah version, and none was supplied"
+	PTAH_COMMIT=$prebuilt_ptah_commit
+	PTAH_SHORT_COMMIT=$(printf '%s' "$PTAH_COMMIT" | cut -c1-12)
+
+	for prebuilt_role in $TASK_IMAGE_ROLES; do
+		prebuilt_file=$(jq -r --arg role "$prebuilt_role" \
+			'.images[] | select(.role == $role) | .file // empty' "$prebuilt_manifest")
+		prebuilt_reference=$(jq -r --arg role "$prebuilt_role" \
+			'.images[] | select(.role == $role) | .reference // empty' "$prebuilt_manifest")
+		prebuilt_identity=$(jq -r --arg role "$prebuilt_role" \
+			'.images[] | select(.role == $role) | .identity // empty' "$prebuilt_manifest")
+		[ -n "$prebuilt_file" ] && [ -n "$prebuilt_reference" ] && [ -n "$prebuilt_identity" ] ||
+			fail "$prebuilt_manifest carries no complete entry for the $prebuilt_role image"
+		[ -f "$E2E_PREBUILT_IMAGE_DIR/$prebuilt_file" ] ||
+			fail "the $prebuilt_role image file $prebuilt_file is missing from $E2E_PREBUILT_IMAGE_DIR"
+		prebuilt_target=$(task_image_for_role "$prebuilt_role")
+		docker --context "$DOCKER_CONTEXT" load \
+			--input "$E2E_PREBUILT_IMAGE_DIR/$prebuilt_file" >/dev/null ||
+			fail "the $prebuilt_role image could not be loaded from $prebuilt_file"
+		prebuilt_loaded=$(image_identity "$prebuilt_reference")
+		[ "$prebuilt_loaded" = "$prebuilt_identity" ] ||
+			fail "the loaded $prebuilt_role image is $prebuilt_loaded and the manifest declares $prebuilt_identity"
+		[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-role)" = "$prebuilt_role" ] ||
+			fail "the loaded $prebuilt_role image does not declare that role"
+		case $prebuilt_role in
+			executor)
+				[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-ptah-commit)" = "$PTAH_COMMIT" ] ||
+					fail "the loaded executor image does not declare Ptah commit $PTAH_COMMIT"
+				;;
+			*)
+				[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-operator-revision)" = "$CONTROLLER_REVISION" ] ||
+					fail "the loaded $prebuilt_role image does not declare revision $CONTROLLER_REVISION"
+				;;
+		esac
+		case $prebuilt_role in
+			operator)
+				[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-release-sequence)" = "$CURRENT_RELEASE_SEQUENCE" ] ||
+					fail "the loaded candidate image is not sequence $CURRENT_RELEASE_SEQUENCE"
+				;;
+			next-operator)
+				[ "$(image_label_value "$prebuilt_reference" ptah.run/e2e-release-sequence)" = "$NEXT_RELEASE_SEQUENCE" ] ||
+					fail "the loaded next-release image is not sequence $NEXT_RELEASE_SEQUENCE"
+				;;
+		esac
+		add_created_image "$prebuilt_target"
+		docker --context "$DOCKER_CONTEXT" tag "$prebuilt_reference" "$prebuilt_target" ||
+			fail "the $prebuilt_role image could not be tagged as $prebuilt_target"
+		if [ "$prebuilt_reference" != "$prebuilt_target" ]; then
+			add_created_image "$prebuilt_reference"
+		fi
+		printf 'e2e: loaded the prepared %s image %s as %s\n' \
+			"$prebuilt_role" "$prebuilt_identity" "$prebuilt_target"
+	done
+	IMAGE_CREATED=1
+}
+
+# export_task_images writes the four images and their provenance, for a matrix
+# that builds them once. The references are this run's own, so the manifest
+# carries them: a reader tags what it loaded under its own names, and the
+# identity it checks is the image's rather than a tag anyone can move.
+export_task_images() {
+	mkdir -p "$E2E_IMAGE_EXPORT_DIR" ||
+		fail "the image export directory $E2E_IMAGE_EXPORT_DIR could not be created"
+	export_entries=$WORK_DIR/exported-images.json
+	printf '[]' >"$export_entries"
+	for export_role in $TASK_IMAGE_ROLES; do
+		export_reference=$(task_image_for_role "$export_role")
+		export_identity=$(image_identity "$export_reference")
+		[ -n "$export_identity" ] ||
+			fail "the $export_role image $export_reference has no identity to record"
+		export_file="$export_role.tar"
+		docker --context "$DOCKER_CONTEXT" save \
+			--output "$E2E_IMAGE_EXPORT_DIR/$export_file" "$export_reference" ||
+			fail "the $export_role image could not be written to $export_file"
+		jq --arg role "$export_role" --arg file "$export_file" \
+			--arg reference "$export_reference" --arg identity "$export_identity" \
+			'. + [{role: $role, file: $file, reference: $reference, identity: $identity}]' \
+			"$export_entries" >"$export_entries.next" ||
+			fail "the $export_role image entry could not be recorded"
+		mv "$export_entries.next" "$export_entries"
+	done
+	jq -n \
+		--arg operatorRevision "$CONTROLLER_REVISION" \
+		--arg ptahCommit "$PTAH_COMMIT" \
+		--arg ptahVersion "$E2E_PTAH_VERSION" \
+		--arg currentReleaseSequence "$CURRENT_RELEASE_SEQUENCE" \
+		--arg nextReleaseSequence "$NEXT_RELEASE_SEQUENCE" \
+		--slurpfile images "$export_entries" \
+		'{operatorRevision: $operatorRevision, ptahCommit: $ptahCommit, ptahVersion: $ptahVersion,
+		  currentReleaseSequence: $currentReleaseSequence, nextReleaseSequence: $nextReleaseSequence,
+		  images: $images[0]}' >"$E2E_IMAGE_EXPORT_DIR/images.json" ||
+		fail "the image manifest could not be written"
+	printf 'e2e: wrote the four task images and their provenance to %s\n' "$E2E_IMAGE_EXPORT_DIR"
+}
 
 add_created_image() {
 	if [ -z "$CREATED_IMAGE_REFS" ]; then
@@ -1904,7 +2083,10 @@ fi
 # where a Ptah CLI has to come from instead.
 PTAH_BUILD_CONTEXT=
 timing_next bootstrap ptah-executor-image
-if [ -z "$E2E_EXECUTOR_IMAGE" ]; then
+if [ -n "$E2E_PREBUILT_IMAGE_DIR" ]; then
+	load_prebuilt_images
+	EXECUTOR_SOURCE_IMAGE=$PTAH_IMAGE
+elif [ -z "$E2E_EXECUTOR_IMAGE" ]; then
 	if [ -z "$E2E_PTAH_SOURCE_DIR" ]; then
 		if [ -n "$E2E_PTAH_SIBLING_SOURCE_DIR" ] &&
 			git -C "$E2E_PTAH_SIBLING_SOURCE_DIR" rev-parse --git-dir >/dev/null 2>&1; then
@@ -1941,6 +2123,8 @@ if [ -z "$E2E_EXECUTOR_IMAGE" ]; then
 		--build-arg "PTAH_BUILD_VERSION=${E2E_PTAH_VERSION}" \
 		--build-arg "PTAH_BUILD_COMMIT=${PTAH_SHORT_COMMIT}" \
 		--build-arg "PTAH_BUILD_DATE=${PTAH_BUILD_DATE}" \
+		--label "ptah.run/e2e-role=executor" \
+		--label "ptah.run/e2e-ptah-commit=${PTAH_COMMIT}" \
 		--tag "$PTAH_IMAGE" "$PTAH_BUILD_CONTEXT"
 	EXECUTOR_SOURCE_IMAGE=$PTAH_IMAGE
 else
@@ -1953,36 +2137,46 @@ else
 fi
 
 timing_next bootstrap operator-image
-printf 'e2e: building %s with Docker context %s\n' "$OPERATOR_IMAGE" "$SELECTED_DOCKER_CONTEXT"
-IMAGE_CREATED=1
-add_created_image "$OPERATOR_IMAGE"
-docker --context "$DOCKER_CONTEXT" buildx build \
-	--builder "$DOCKER_CONTEXT" \
-	--load \
-	--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \
-	--build-arg "REVISION=$CONTROLLER_REVISION" \
-	--target operator \
-	--tag "$OPERATOR_IMAGE" "$ROOT_DIR"
-timing_next bootstrap next-operator-image
-printf 'e2e: building synthetic sequence-%s image %s from exact commit archive %s\n' \
-	"$NEXT_RELEASE_SEQUENCE" "$NEXT_OPERATOR_IMAGE" "$CONTROLLER_REVISION"
-add_created_image "$NEXT_OPERATOR_IMAGE"
-docker --context "$DOCKER_CONTEXT" buildx build \
-	--builder "$DOCKER_CONTEXT" \
-	--load \
-	--file "$NEXT_BUILD_CONTEXT/test/e2e/Dockerfile.operator" \
-	--build-arg "REVISION=$CONTROLLER_REVISION" \
-	--target operator \
-	--tag "$NEXT_OPERATOR_IMAGE" "$NEXT_BUILD_CONTEXT"
-timing_next bootstrap fixture-image
-add_created_image "$FIXTURE_BUILD_IMAGE"
-docker --context "$DOCKER_CONTEXT" buildx build \
-	--builder "$DOCKER_CONTEXT" \
-	--load \
-	--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \
-	--build-arg "REVISION=$CONTROLLER_REVISION" \
-	--target fixture \
-	--tag "$FIXTURE_BUILD_IMAGE" "$ROOT_DIR"
+if [ -z "$E2E_PREBUILT_IMAGE_DIR" ]; then
+	printf 'e2e: building %s with Docker context %s\n' "$OPERATOR_IMAGE" "$SELECTED_DOCKER_CONTEXT"
+	IMAGE_CREATED=1
+	add_created_image "$OPERATOR_IMAGE"
+	docker --context "$DOCKER_CONTEXT" buildx build \
+		--builder "$DOCKER_CONTEXT" \
+		--load \
+		--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \
+		--build-arg "REVISION=$CONTROLLER_REVISION" \
+		--label "ptah.run/e2e-role=operator" \
+		--label "ptah.run/e2e-operator-revision=$CONTROLLER_REVISION" \
+		--label "ptah.run/e2e-release-sequence=$CURRENT_RELEASE_SEQUENCE" \
+		--target operator \
+		--tag "$OPERATOR_IMAGE" "$ROOT_DIR"
+	timing_next bootstrap next-operator-image
+	printf 'e2e: building synthetic sequence-%s image %s from exact commit archive %s\n' \
+		"$NEXT_RELEASE_SEQUENCE" "$NEXT_OPERATOR_IMAGE" "$CONTROLLER_REVISION"
+	add_created_image "$NEXT_OPERATOR_IMAGE"
+	docker --context "$DOCKER_CONTEXT" buildx build \
+		--builder "$DOCKER_CONTEXT" \
+		--load \
+		--file "$NEXT_BUILD_CONTEXT/test/e2e/Dockerfile.operator" \
+		--build-arg "REVISION=$CONTROLLER_REVISION" \
+		--label "ptah.run/e2e-role=next-operator" \
+		--label "ptah.run/e2e-operator-revision=$CONTROLLER_REVISION" \
+		--label "ptah.run/e2e-release-sequence=$NEXT_RELEASE_SEQUENCE" \
+		--target operator \
+		--tag "$NEXT_OPERATOR_IMAGE" "$NEXT_BUILD_CONTEXT"
+	timing_next bootstrap fixture-image
+	add_created_image "$FIXTURE_BUILD_IMAGE"
+	docker --context "$DOCKER_CONTEXT" buildx build \
+		--builder "$DOCKER_CONTEXT" \
+		--load \
+		--file "$ROOT_DIR/test/e2e/Dockerfile.operator" \
+		--build-arg "REVISION=$CONTROLLER_REVISION" \
+		--label "ptah.run/e2e-role=fixture" \
+		--label "ptah.run/e2e-operator-revision=$CONTROLLER_REVISION" \
+		--target fixture \
+		--tag "$FIXTURE_BUILD_IMAGE" "$ROOT_DIR"
+fi
 
 timing_next bootstrap image-audit
 create_image_audit_container "$OPERATOR_IMAGE"
@@ -2006,6 +2200,17 @@ if tar -tf "$IMAGE_AUDIT_ARCHIVE" | grep -Eq '(^|/)(manager|ptah-runner)$'; then
 	fail "the isolated fixture image contains an operator binary"
 fi
 remove_image_audit_container
+
+# The images are built and audited, and no cluster exists yet, which is what
+# makes this the boundary a matrix can share: one runner writes the four images
+# and every Kubernetes minor loads the same bytes instead of building its own.
+if [ "$E2E_STOP_AFTER" = images ]; then
+	export_task_images
+	timing_end pass
+	write_timing_context
+	PHASE_COMPLETED=1
+	exit 0
+fi
 
 timing_next bootstrap kind-cluster
 printf 'e2e: creating kind cluster %s with Kubernetes %s\n' "$CLUSTER_NAME" "$K8S_VERSION"

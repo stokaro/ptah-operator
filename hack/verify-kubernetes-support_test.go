@@ -413,7 +413,7 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "",
 		},
 		"E2E dependencies": {
-			old: "    needs: [support-matrix, verify]\n",
+			old: "    needs: [support-matrix, verify, prepare-images]\n",
 			new: "    needs: [support-matrix]\n",
 		},
 		"static E2E matrix": {
@@ -437,12 +437,12 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "    timeout-minutes: 180\n    defaults:\n      run:\n        working-directory: /tmp\n    strategy:\n",
 		},
 		"bypassed lifecycle shell": {
-			old: "        shell: bash\n        run: make e2e\n",
-			new: "        shell: 'true {0}'\n        run: make e2e\n",
+			old: "          K8S_VERSION: ${{ matrix.kubernetes_version }}\n        shell: bash\n        run: make e2e\n",
+			new: "          K8S_VERSION: ${{ matrix.kubernetes_version }}\n        shell: 'true {0}'\n        run: make e2e\n",
 		},
 		"make dry-run environment": {
-			old: "        env:\n          DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}\n",
-			new: "        env:\n          MAKEFLAGS: --just-print\n          DOCKER_CONTEXT: ${{ steps.docker-context.outputs.name }}\n",
+			old: "          E2E_DIRECT_HOST_ACCESS: \"1\"\n          E2E_PREBUILT_IMAGE_DIR: ${{ runner.temp }}/task-images\n",
+			new: "          E2E_DIRECT_HOST_ACCESS: \"1\"\n          MAKEFLAGS: --just-print\n          E2E_PREBUILT_IMAGE_DIR: ${{ runner.temp }}/task-images\n",
 		},
 		"wrong node image binding": {
 			old: "          KIND_NODE_IMAGE: ${{ matrix.node_image }}\n",
@@ -510,12 +510,41 @@ func TestVerifyWorkflowRejectsSupportGateMutations(t *testing.T) {
 			new: "  kubernetes-support-gate:\n    name: Kubernetes support gate\n",
 		},
 		"missing lifecycle dependency": {
-			old: "    needs: [support-matrix, verify, race, kubernetes-e2e]\n",
-			new: "    needs: [support-matrix, verify, race]\n",
+			old: "    needs: [support-matrix, verify, race, prepare-images, kubernetes-e2e]\n",
+			new: "    needs: [support-matrix, verify, race, prepare-images]\n",
 		},
 		"missing race dependency": {
-			old: "    needs: [support-matrix, verify, race, kubernetes-e2e]\n",
-			new: "    needs: [support-matrix, verify, kubernetes-e2e]\n",
+			old: "    needs: [support-matrix, verify, race, prepare-images, kubernetes-e2e]\n",
+			new: "    needs: [support-matrix, verify, prepare-images, kubernetes-e2e]\n",
+		},
+		// The images every lifecycle loaded are part of the verdict.
+		"missing image preparation dependency": {
+			old: "    needs: [support-matrix, verify, race, prepare-images, kubernetes-e2e]\n",
+			new: "    needs: [support-matrix, verify, race, kubernetes-e2e]\n",
+		},
+		"unbound image preparation result": {
+			old: "          PREPARE_IMAGES_RESULT: ${{ needs.prepare-images.result }}\n",
+			new: "          PREPARE_IMAGES_RESULT: success\n",
+		},
+		"lifecycle runs without prepared images": {
+			old: "    needs: [support-matrix, verify, prepare-images]\n",
+			new: "    needs: [support-matrix, verify]\n",
+		},
+		"images collected from another run": {
+			old: "          name: shared-task-images\n          path: ${{ runner.temp }}/task-images\n      - name: Install kind\n",
+			new: "          name: shared-task-images\n          path: ${{ runner.temp }}/other-images\n      - name: Install kind\n",
+		},
+		"image upload accepts an empty directory": {
+			old: "          if-no-files-found: error\n          retention-days: 1\n",
+			new: "          if-no-files-found: warn\n          retention-days: 1\n",
+		},
+		"images built by something other than the driver": {
+			old: "          E2E_STOP_AFTER: images\n",
+			new: "          E2E_STOP_AFTER: bootstrap\n",
+		},
+		"prepared images unbound from the catalog pin": {
+			old: "          E2E_PTAH_REVISION: ${{ needs.support-matrix.outputs.ptah_commit }}\n          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah\n",
+			new: "          E2E_PTAH_REVISION: main\n          E2E_PTAH_SOURCE_DIR: ${{ runner.temp }}/ptah\n",
 		},
 		"unbound lifecycle result": {
 			old: "          KUBERNETES_E2E_RESULT: ${{ needs.kubernetes-e2e.result }}\n",
@@ -557,7 +586,10 @@ func TestSupportGateRequiresEverySuccessfulDependency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dependencies := []string{"SUPPORT_MATRIX_RESULT", "VERIFY_RESULT", "RACE_RESULT", "KUBERNETES_E2E_RESULT"}
+	dependencies := []string{
+		"SUPPORT_MATRIX_RESULT", "VERIFY_RESULT", "RACE_RESULT",
+		"PREPARE_IMAGES_RESULT", "KUBERNETES_E2E_RESULT",
+	}
 	run := func(t *testing.T, changedDependency, result string, wantSuccess bool) {
 		t.Helper()
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -607,8 +639,8 @@ func TestVerifyWorkflowDigestRejectsSetupEnvironmentMutation(t *testing.T) {
 	path := writeMutatedWorkflow(
 		t,
 		workflow,
-		"          set -euo pipefail\n          sudo apt-get update\n",
-		"          set -euo pipefail\n          echo 'MAKEFLAGS=--just-print' >> \"$GITHUB_ENV\"\n          sudo apt-get update\n",
+		"          context_name=\"ptah-ci-${{ matrix.minor_slug }}\"\n",
+		"          echo 'MAKEFLAGS=--just-print' >> \"$GITHUB_ENV\"\n          context_name=\"ptah-ci-${{ matrix.minor_slug }}\"\n",
 	)
 	if err := verifyCIWorkflowSemanticsAtPath(path); err != nil {
 		t.Fatalf("semantic verifier unexpectedly caught whole-workflow mutation: %v", err)
