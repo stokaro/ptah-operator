@@ -1,7 +1,7 @@
 id: checkpoint-bootstrap
 title: Start a new database from a checkpoint
 tagline: A fresh database runs the snapshot and what came after it, and ends up where the long way ends.
-learn: What a checkpoint replaces, what it must record, and how the operator proves the shortcut arrived at the same place.
+learn: What a checkpoint replaces, who selects it, and how the operator proves the shortcut arrived at the same place.
 tags: [Lifecycle]
 
 reset:
@@ -29,14 +29,23 @@ steps:
       exit: 0
       stdout_contains: ["carrier TEXT NOT NULL"]
 
-  - note: Apply it to a database that has run nothing at all.
+  - note: The resource points at the whole artifact. Nothing in it names the checkpoint.
+    run: APPLY=Always demo/bin/lab manifest shipments "$(cat demo/.lab/checkpoint-digest)" | grep -v '^ *#'
+    expect:
+      exit: 0
+      stdout_contains: ["kind: PtahMigration", "ociRef: oci://", "apply: Always"]
+      # The claim the step is here to make: a reader who looks for checkpoint 3
+      # in the resource does not find it, because selecting one is Ptah's job.
+      stdout_absent: ["0000000003", checkpoint]
+
+  - note: Apply that resource to a database with no migration history.
     run: APPLY=Always demo/bin/lab manifest shipments "$(cat demo/.lab/checkpoint-digest)" | kubectl apply -f -
     sync: publishing
     expect:
       exit: 0
       stdout_contains: [created]
 
-  - note: The history ends at 4, and the two the checkpoint replaced were never run.
+  - note: An empty history let the checkpoint stand in for 1 and 2, and 4 ran after it.
     await:
       kind: ptahmigration
       name: shipments
