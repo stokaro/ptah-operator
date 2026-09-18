@@ -4261,6 +4261,24 @@ for runtime_audit_script in e2e-dataplane.sh e2e-faults.sh; do
 			"$runtime_resource_scan_marker" "$runtime_log_scan_marker" \
 			"$runtime_post_get_marker" "fail \"unaudited fault-test Pod \$audit_pod_name UID \$audit_pod_uid disappeared during its log audit\"" \
 			"$runtime_uid_marker" "fail \"unaudited fault-test Pod \$audit_pod_name changed identity during its log audit\""
+		# A Pod the running-deadline proof destroys on purpose may vanish between
+		# the snapshot and the live read. Only the Pod under the live protected
+		# follower may be skipped for that, and only by asking the follower, so
+		# the guard is pinned here and its own test is pinned below.
+		# shellcheck disable=SC2016 # Exact source marker intentionally retains the Pod UID variable literally.
+		static_require_count "$runtime_audit_generic_section" \
+			'if fault_pod_logs_are_followed "$audit_pod_uid"; then' 3 \
+			'fault vanished-Pod follower authorization'
+		fault_follower_guard_section=$(sed -n \
+			'/^fault_pod_logs_are_followed()/,/^}/p' "$ROOT_DIR/hack/e2e-faults.sh")
+		# shellcheck disable=SC2016 # Exact source markers intentionally retain the follower variables literally.
+		static_require_order "$fault_follower_guard_section" 'fault follower-authorized Pod skip' \
+			'[ -n "$FOLLOW_LOG_PID" ] || return 1' \
+			'[ "$FOLLOW_LOG_RECORD_POD" -eq 1 ] || return 1' \
+			'[ -n "$FOLLOW_LOG_POD_UID" ] || return 1' \
+			'[ "$FOLLOW_LOG_POD_UID" = "$1" ] || return 1'
+		static_reject_marker "$fault_follower_guard_section" 'audit_pod_name' \
+			'fault follower-authorized Pod skip by name'
 	;;
 	esac
 done
