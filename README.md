@@ -19,8 +19,16 @@ PostgreSQL and MySQL schemas from immutable OCI artifacts. Database work runs
 in short-lived, hardened Jobs; the controller itself has no permission to read
 database Secrets.
 
-The API is currently `v1alpha1`. Treat it as an implementation preview until
-the complete database end-to-end matrix is green and a release is published.
+`PtahSchema` converges the database structure and the reference rows a
+declaration names. `PtahMigration` executes a prepared migration sequence and
+holds the recorded history to the artifact it selected, including a checkpoint
+bootstrap. Both run on PostgreSQL and MySQL.
+
+The API is currently `v1alpha1`. The end-to-end matrix is green -- every
+supported Kubernetes minor, both engines, both artifact formats -- so what is
+still missing before this stops being an implementation preview is a published
+release. What a run measured, and against which Ptah build, is recorded in
+[`support/ptah.json`](support/ptah.json).
 
 ## Reconciliation model
 
@@ -112,10 +120,11 @@ documented at [docs.ptah.run](https://docs.ptah.run/edge/), and which Ptah
 builds have been verified with this operator is published as the
 [compatibility matrix](https://docs.ptah.run/compatibility/operator/).
 
-`PtahMigration` is deliberately not folded into `PtahSchema`. A future
-versioned-migration controller can reuse the OCI transport, credential
-isolation, execution protocol, and target coordination primitives while
-retaining its own API and state machine.
+`PtahMigration` is deliberately not folded into `PtahSchema`. A declared row
+set describes desired rows and a migration sequence describes a transition
+between states, so the two keep their own APIs and their own state machines
+while sharing the OCI transport, the credential isolation, the execution
+protocol and the target coordination.
 
 ## License and help
 
