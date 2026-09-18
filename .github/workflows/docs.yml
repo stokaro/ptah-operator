@@ -74,6 +74,12 @@ jobs:
       - name: The values table matches the chart
         working-directory: docs/site
         run: npm run check:values
+      # The field reference is generated from the API types, so a field added
+      # to a Go type without regenerating leaves a page the API has moved past.
+      # This is the step that says so, and it runs on every pull request
+      # because this workflow filters no paths.
+      - name: The field reference matches the API types
+        run: make docs-reference-check
       # The recording the site plays is held against the scenarios it claims to
       # be of, and against its own checks. A run published with a failed check
       # would be a demonstration of something that did not happen.

@@ -94,6 +94,22 @@ function replaceBlock(page, table) {
   return `${page.slice(0, begin + BEGIN.length)}\n${table}\n${page.slice(end)}`;
 }
 
+// requireNotes refuses a key nobody wrote a sentence for.
+//
+// The table renders an empty cell for such a key, which reads as a setting
+// with nothing to say rather than as a setting nobody documented, and it is
+// the shape a new key arrives in. So the absence fails here, next to the key,
+// rather than being published.
+function requireNotes(rows) {
+  const silent = rows.filter((row) => row.note === '').map((row) => row.key);
+  if (silent.length > 0) {
+    throw new Error(
+      `charts/ptah-operator/values.yaml: no comment above ${silent.length} key(s): ${silent.join(', ')}`,
+    );
+  }
+  return rows;
+}
+
 function selftest() {
   const rows = parseValues(['# what it is', 'top: "1"', 'group:', '  # nested note', '  inner: 2', ''].join('\n'));
   const keys = rows.map((row) => row.key).join(',');
@@ -108,7 +124,15 @@ function selftest() {
     threw = true;
   }
   if (!threw) throw new Error('an unexpected indentation was accepted');
-  console.log('build-values-reference.mjs --selftest: OK (paths, comments, mappings, refusal)');
+  let silent = false;
+  try {
+    requireNotes(parseValues(['# said', 'top: 1', 'quiet: 2', ''].join('\n')));
+  } catch (error) {
+    silent = /no comment above 1 key\(s\): quiet/.test(error.message);
+  }
+  if (!silent) throw new Error('a key with no comment was accepted');
+  requireNotes(parseValues(['# said', 'top: 1', ''].join('\n')));
+  console.log('build-values-reference.mjs --selftest: OK (paths, comments, mappings, refusals)');
 }
 
 function main() {
@@ -117,7 +141,7 @@ function main() {
     selftest();
     return;
   }
-  const table = render(parseValues(readFileSync(valuesPath, 'utf8')));
+  const table = render(requireNotes(parseValues(readFileSync(valuesPath, 'utf8'))));
   const page = readFileSync(pagePath, 'utf8');
   const updated = replaceBlock(page, table);
   if (arguments_.includes('--write')) {

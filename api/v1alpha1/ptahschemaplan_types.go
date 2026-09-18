@@ -8,18 +8,27 @@ import (
 // ImmutableObjectReference binds a name to the UID that existed when the
 // reference was created, preventing delete-and-recreate aliasing.
 type ImmutableObjectReference struct {
-	Name string    `json:"name"`
-	UID  types.UID `json:"uid"`
+	// Name of the referenced object in the same namespace.
+	Name string `json:"name"`
+	// UID the object had when the reference was written. An object deleted and
+	// recreated under the same name is a different object, and this says so.
+	UID types.UID `json:"uid"`
 }
 
 // PlanChunkReference identifies one ordered immutable ConfigMap chunk.
 type PlanChunkReference struct {
+	// Name of the immutable ConfigMap holding this chunk.
 	Name string `json:"name"`
-	Key  string `json:"key"`
+	// Key inside that ConfigMap the chunk bytes are stored under.
+	Key string `json:"key"`
+	// Index of this chunk in the plan, counting from zero. The chunks are
+	// concatenated in this order and in no other.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=15
-	Index  int32  `json:"index"`
+	Index int32 `json:"index"`
+	// Digest of this chunk's bytes, checked when the plan is read back.
 	Digest string `json:"digest"`
+	// Size of this chunk in bytes, checked with the digest.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=524288
 	Size int32 `json:"size"`
@@ -34,46 +43,91 @@ type PtahSchemaPlanSpec struct {
 	// +kubebuilder:validation:Maximum=3
 	ContractVersion int32 `json:"contractVersion"`
 
+	// SchemaRef is the PtahSchema this plan was computed for.
 	SchemaRef ImmutableObjectReference `json:"schemaRef"`
 
-	Fingerprint   string `json:"fingerprint"`
+	// Fingerprint is the complete approval identity of this plan: every binding
+	// below hashed together. An approval names this value, and an apply runs
+	// only while the live bindings still produce it.
+	Fingerprint string `json:"fingerprint"`
+	// ContentDigest is the digest of the plan bytes the chunks reconstruct.
 	ContentDigest string `json:"contentDigest"`
+	// Size is the length of those bytes, summed across the chunks.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=8388608
 	Size int64 `json:"size"`
 
-	ArtifactDigest           string    `json:"artifactDigest"`
-	CoordinationDigest       string    `json:"coordinationDigest"`
-	TargetIdentityDigest     string    `json:"targetIdentityDigest"`
-	ActualStateFingerprint   string    `json:"actualStateFingerprint"`
-	DesiredStateFingerprint  string    `json:"desiredStateFingerprint"`
-	PolicyFingerprint        string    `json:"policyFingerprint"`
-	VerificationPolicyUID    types.UID `json:"verificationPolicyUID"`
-	VerificationPolicyDigest string    `json:"verificationPolicyDigest"`
+	// ArtifactDigest is the OCI artifact this plan was computed from, pinned to
+	// content rather than to the tag it was resolved through.
+	ArtifactDigest string `json:"artifactDigest"`
+	// CoordinationDigest is the database realm this plan takes its turn in: the
+	// engine and the coordination key, hashed. Resources that share it never
+	// run against the database at the same time.
+	CoordinationDigest string `json:"coordinationDigest"`
+	// TargetIdentityDigest identifies the database this plan was computed
+	// against without carrying anything that could reach it.
+	TargetIdentityDigest string `json:"targetIdentityDigest"`
+	// ActualStateFingerprint is the observed database state the plan was
+	// computed from. Drift since then retires the plan rather than applying it.
+	ActualStateFingerprint string `json:"actualStateFingerprint"`
+	// DesiredStateFingerprint is the state the verified artifact declared when
+	// the plan was computed.
+	DesiredStateFingerprint string `json:"desiredStateFingerprint"`
+	// PolicyFingerprint is the spec.policy the plan was computed under. Editing
+	// the policy -- a protected table included -- retires a plan waiting for a
+	// person rather than letting it apply under rules nobody approved.
+	PolicyFingerprint string `json:"policyFingerprint"`
+	// VerificationPolicyUID is the policy object that accepted the artifact.
+	VerificationPolicyUID types.UID `json:"verificationPolicyUID"`
+	// VerificationPolicyDigest is that policy's content, so replacing the
+	// object or editing it in place both retire the plan.
+	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
 	// ExecutionBindingID is a per-transition epoch. It changes even when an
 	// operator rollout returns to byte-identical component versions.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID,omitempty"`
-	// ControllerImage, ControllerRevision, and ControllerStateVersion are
-	// required by the current plan contract. They remain optional on the wire so
-	// legacy v1/v2 plans can still be read and retired safely during an upgrade.
+	// ControllerImage is the digest-pinned manager that published this plan.
+	// It, ControllerRevision and ControllerStateVersion are required by the
+	// current plan contract and stay optional on the wire only so legacy v1 and
+	// v2 plans can still be read and retired during an upgrade.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
 	ControllerImage string `json:"controllerImage,omitempty"`
+	// ControllerRevision is that manager's revision, which distinguishes two
+	// deployments of the same image.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
 	ControllerRevision string `json:"controllerRevision,omitempty"`
+	// ControllerStateVersion is the state semantics that manager writes, so a
+	// plan is never applied by a controller that reads status differently.
 	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32  `json:"controllerStateVersion,omitempty"`
-	PtahVersion            string `json:"ptahVersion"`
-	ExecutorImage          string `json:"executorImage"`
-	RunnerImage            string `json:"runnerImage"`
-	RunnerProtocolVersion  int32  `json:"runnerProtocolVersion"`
+	// +kubebuilder:validation:Minimum=1
+	ControllerStateVersion int32 `json:"controllerStateVersion,omitempty"`
+	// PtahVersion is the Ptah build that computed this plan, as the executor
+	// image reports it.
+	PtahVersion string `json:"ptahVersion"`
+	// ExecutorImage is the digest-pinned image that ran Ptah.
+	ExecutorImage string `json:"executorImage"`
+	// RunnerImage is the digest-pinned image that supervised the executor and
+	// returned its result.
+	RunnerImage string `json:"runnerImage"`
+	// RunnerProtocolVersion is the result-frame protocol that runner speaks. A
+	// runner answering in another version has its result rejected rather than
+	// interpreted.
+	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 
-	Dialect        string `json:"dialect"`
-	Destructive    bool   `json:"destructive"`
-	StatementCount int32  `json:"statementCount"`
+	// Dialect is the SQL dialect the statements are written in.
+	Dialect string `json:"dialect"`
+	// Destructive says the plan drops or rewrites something. Such a plan needs
+	// spec.policy.allowDestructive and an approval naming these exact bytes.
+	Destructive bool `json:"destructive"`
+	// StatementCount is how many statements the plan holds. Read them with
+	// kubectl ptah plan rather than by fetching the chunks.
+	StatementCount int32 `json:"statementCount"`
 
+	// Chunks are the immutable ConfigMaps the plan bytes are stored in. The
+	// plan is the concatenation of their contents in index order, and nothing
+	// reads them without checking each digest and size.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=16
 	// +listType=map
@@ -84,19 +138,28 @@ type PtahSchemaPlanSpec struct {
 // PtahSchemaPlanStatus is the commit record for non-transactional chunk
 // publication. Approval and apply require Ready=True.
 type PtahSchemaPlanStatus struct {
+	// ObservedGeneration is the plan generation this status was written for.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// PublishedChunks are the ConfigMaps that were found to exist, by UID,
+	// before Ready became true. Chunk publication is not transactional, so this
+	// is the record that every chunk the manifest names was really written.
 	// +kubebuilder:validation:MaxItems=16
 	// +listType=map
 	// +listMapKey=index
 	PublishedChunks []PublishedPlanChunkStatus `json:"publishedChunks,omitempty"`
-	Conditions      []metav1.Condition         `json:"conditions,omitempty"`
+	// Conditions carry Ready, which is what approval and apply require.
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 // PublishedPlanChunkStatus binds the immutable manifest to the concrete
 // ConfigMap instances verified before Ready became true.
 type PublishedPlanChunkStatus struct {
-	Name string    `json:"name"`
-	UID  types.UID `json:"uid"`
+	// Name of the ConfigMap that was verified.
+	Name string `json:"name"`
+	// UID it had when it was verified, so a chunk deleted and recreated is not
+	// mistaken for the one the plan was published with.
+	UID types.UID `json:"uid"`
+	// Index of the chunk this record is for.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:Maximum=15
 	Index int32 `json:"index"`

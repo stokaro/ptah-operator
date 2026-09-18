@@ -92,6 +92,30 @@ manifests:
 	@rm -f internal/crdupgrade/assets/*.yaml
 	@cp config/crd/bases/*.yaml internal/crdupgrade/assets/
 
+.PHONY: docs-reference docs-reference-check
+
+# The field reference the site publishes, generated from the API types.
+#
+# The shipped CRDs drop descriptions (crd:maxDescLen=0 above), so this runs the
+# same generator once more into a directory nothing keeps, reads the schemas
+# with their doc comments, and writes the pages. -write updates them;
+# docs-reference-check refuses a page the API has moved past.
+docs-reference:
+	@tmp=$$(mktemp -d); \
+	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
+		crd paths=./api/... output:crd:artifacts:config=$$tmp; \
+	$(GO) run ./hack/crdreference -crds $$tmp \
+		-out docs/site/src/content/docs/reference -write; \
+	rm -rf $$tmp
+
+docs-reference-check:
+	@tmp=$$(mktemp -d); \
+	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
+		crd paths=./api/... output:crd:artifacts:config=$$tmp; \
+	$(GO) run ./hack/crdreference -crds $$tmp \
+		-out docs/site/src/content/docs/reference -require-descriptions; \
+	status=$$?; rm -rf $$tmp; exit $$status
+
 verify: verify-source test-race
 
 verify-source: fmt-check generate manifests verify-crd-schema-history verify-kubernetes-support verify-ptah-support verify-release e2e-static vet build test

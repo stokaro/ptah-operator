@@ -95,6 +95,7 @@ const (
 // mid-dispatch tell the Job it created from one it has not created yet -- and
 // what lets admission refuse a Job that no claim asked for.
 type MigrationOperationStatus struct {
+	// Type is the operation this claim authorizes.
 	Type MigrationOperationType `json:"type"`
 
 	// ID is this attempt's identity, distinct from every other attempt of the
@@ -118,8 +119,10 @@ type MigrationOperationStatus struct {
 	// with the right name and another UID is a different Job.
 	JobUID types.UID `json:"jobUID,omitempty"`
 
+	// StartedAt is when the claim was written, which is before the Job exists.
 	StartedAt metav1.Time `json:"startedAt"`
 
+	// Attempt counts this claim among the retries of the same operation.
 	// +kubebuilder:validation:Minimum=1
 	Attempt int32 `json:"attempt"`
 
@@ -137,8 +140,9 @@ type MigrationOperationStatus struct {
 
 	// Target is the key-free database binding, and CoordinationDigest the realm
 	// the operation serializes against.
-	Target             *DatabaseTargetBinding `json:"target,omitempty"`
-	CoordinationDigest string                 `json:"coordinationDigest,omitempty"`
+	Target *DatabaseTargetBinding `json:"target,omitempty"`
+	// CoordinationDigest is that realm, hashed.
+	CoordinationDigest string `json:"coordinationDigest,omitempty"`
 
 	// PlanRef is the immutable plan an Apply carries out.
 	PlanRef *ImmutableObjectReference `json:"planRef,omitempty"`
@@ -149,7 +153,8 @@ type MigrationOperationStatus struct {
 	DispatchStarted bool `json:"dispatchStarted,omitempty"`
 
 	// DispatchNotAfter and ExecutionNotAfter bound the claim in time.
-	DispatchNotAfter  *metav1.Time `json:"dispatchNotAfter,omitempty"`
+	DispatchNotAfter *metav1.Time `json:"dispatchNotAfter,omitempty"`
+	// ExecutionNotAfter is when the authorized run itself expires.
 	ExecutionNotAfter *metav1.Time `json:"executionNotAfter,omitempty"`
 
 	// LeaseEpoch is the database lock acquisition this claim was authorized
@@ -158,6 +163,7 @@ type MigrationOperationStatus struct {
 	// the lock it held was somebody else's by then.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	LeaseEpoch string `json:"leaseEpoch,omitempty"`
+	// LeaseDurationSeconds is how long that acquisition was taken for.
 	// +kubebuilder:validation:Minimum=1
 	LeaseDurationSeconds int32 `json:"leaseDurationSeconds,omitempty"`
 	// LeaseContinuityLost records that the epoch changed under this claim.
@@ -225,6 +231,8 @@ type MigrationPolicy struct {
 // +kubebuilder:validation:XValidation:rule="self.artifact.verificationPolicyFrom.name.size() > 0 && self.artifact.verificationPolicyFrom.key.size() > 0 && (!has(self.artifact.verificationPolicyFrom.optional) || !self.artifact.verificationPolicyFrom.optional)",message="artifact.verificationPolicyFrom must name a required ConfigMap key"
 // +kubebuilder:validation:XValidation:rule="!has(self.artifact.transport) || !has(self.artifact.transport.caFrom) || (self.artifact.transport.caFrom.name.size() > 0 && self.artifact.transport.caFrom.key.size() > 0 && (!has(self.artifact.transport.caFrom.optional) || !self.artifact.transport.caFrom.optional))",message="artifact.transport.caFrom must name a required ConfigMap key"
 type PtahMigrationSpec struct {
+	// Target is the database this sequence runs against, named through a Secret
+	// the manager never reads.
 	Target DatabaseTargetSpec `json:"target"`
 
 	// Artifact is the OCI migration directory this history is matched against.
@@ -232,6 +240,8 @@ type PtahMigrationSpec struct {
 	// an artifact never hands registry credentials to the process that runs SQL.
 	Artifact OCIArtifactSourceSpec `json:"artifact"`
 
+	// Policy decides what may run without a person: the apply mode, the
+	// approval requirement, and the locks a run takes.
 	// +kubebuilder:default={}
 	Policy MigrationPolicy `json:"policy,omitempty"`
 
@@ -243,6 +253,8 @@ type PtahMigrationSpec struct {
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('10s') && duration(self) <= duration('24h')",message="interval must be between 10s and 24h"
 	Interval metav1.Duration `json:"interval,omitempty"`
 
+	// Execution shapes the Job a run happens in: its deadlines, its resources
+	// and the scheduling it inherits.
 	// +kubebuilder:default={}
 	Execution ExecutionSpec `json:"execution,omitempty"`
 
@@ -282,6 +294,8 @@ type MigrationHistoryStatus struct {
 	// AppliedCount and PendingCount describe the artifact against this history.
 	// +kubebuilder:validation:Minimum=0
 	AppliedCount int32 `json:"appliedCount"`
+	// PendingCount is how many the artifact still has to apply, as Ptah selects
+	// them rather than as a subtraction of the two counts.
 	// +kubebuilder:validation:Minimum=0
 	PendingCount int32 `json:"pendingCount"`
 
@@ -325,10 +339,13 @@ type MigrationRunStatus struct {
 
 	// JobName and JobUID identify the execution this evidence came from. The
 	// UID is what makes a replacement Job with the same name a different run.
-	JobName string    `json:"jobName,omitempty"`
-	JobUID  types.UID `json:"jobUID,omitempty"`
+	JobName string `json:"jobName,omitempty"`
+	// JobUID is that Job's UID.
+	JobUID types.UID `json:"jobUID,omitempty"`
 
-	StartedAt  metav1.Time  `json:"startedAt"`
+	// StartedAt is when the run began.
+	StartedAt metav1.Time `json:"startedAt"`
+	// FinishedAt is when its result was read. An unfinished run has none.
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 
 	// AppliedVersions names the selected migrations the history recorded
@@ -349,8 +366,13 @@ type PtahMigrationStatus struct {
 	// ObservedGeneration is the spec generation this status describes.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// Phase is where the resource stands. It is a summary for a reader: the
+	// conditions below are what a decision reads.
 	Phase MigrationPhase `json:"phase,omitempty"`
 
+	// Conditions are the readable verdicts: whether the artifact resolved and
+	// verified, whether the history could be read, whether a plan is ready,
+	// whether an approval is required, and whether the sequence is in sync.
 	// +listType=map
 	// +listMapKey=type
 	// +kubebuilder:validation:MaxItems=16
