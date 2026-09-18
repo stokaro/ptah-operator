@@ -1624,36 +1624,72 @@ func (r *SchemaReconciler) blockVerification(
 // It is a refusal rather than a failure of the run, and it carries no override:
 // the fence is the statement that no approval, no allowDestructive and no
 // severity makes this change permissible from the declarative path. So the
-// conditions name it, and the resource keeps reconciling: the refusal stands
-// until the fence goes or the artifact stops asking for the change, and either
-// of those is a change this operator sees on its next interval.
+// conditions name it, the resource reads as blocked the way a refused
+// verification policy does, and no failure is reported for a run that did
+// exactly what the policy asked.
+//
+// It also ends the operation rather than retrying it. A retry would re-plan
+// within the second and be refused again for as long as the fence and the
+// artifact disagree, which is a loop that reads as progress and holds a
+// database lock on every pass. The refusal stands until the fence goes or the
+// artifact stops asking for the change, and the blocked interval is when this
+// operator looks for either.
 func (r *SchemaReconciler) refuseProtectedTable(
 	ctx context.Context,
 	schema *operatorv1alpha1.PtahSchema,
 	job *batchv1.Job,
 	message string,
 ) (ctrl.Result, error) {
-	refusal := fmt.Errorf("plan refuses to change a protected table: %s", bounded(message, 512))
-	return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonProtectedTable, refusal,
-		func(refused *operatorv1alpha1.PtahSchema) {
-			// A fence is a refusal, not a fault: nothing went wrong, and the
-			// answer will not change until the policy or the artifact does. So
-			// the resource reads as blocked rather than failed, the way a
-			// refused verification policy does, and the reason on the
-			// conditions is what says which.
-			clearFailure(refused)
-			refused.Status.Phase = operatorv1alpha1.PhaseBlocked
-			setCondition(refused, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse,
-				operatorv1alpha1.ReasonProtectedTable,
-				"No plan may change a table spec.policy.protectedTables fences off")
-			setCondition(refused, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse,
-				operatorv1alpha1.ReasonProtectedTable,
-				"The artifact asks for a change to a protected table, so the managed scope cannot converge")
-			setCondition(refused, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
-				operatorv1alpha1.ReasonProtectedTable,
-				"Remove the protectedTables entry to plan the change, or write the rows as a migration")
-			r.event(refused, corev1.EventTypeWarning, "ProtectedTableRefused", "%s", bounded(message, 512))
-		})
+	if err := r.markJobHarvested(ctx, job); err != nil {
+		return ctrl.Result{}, err
+	}
+	// No plan survives the refusal, so an approval recorded for the plan this
+	// operation replaced may not stay approvable.
+	if err := r.markRecordedApprovalStale(ctx, schema); err != nil {
+		return ctrl.Result{}, err
+	}
+	operation := schema.Status.ActiveOperation
+	now := metav1.NewTime(r.now())
+	next := metav1.NewTime(r.now().Add(interval(schema)))
+	before := schema.DeepCopy()
+	if operation != nil && schema.Status.PendingObservation == nil {
+		release, err := targetLockReleaseForOperation(operation)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		schema.Status.PendingLockRelease = release
+	}
+	schema.Status.ActiveOperation = nil
+	schema.Status.Plan = nil
+	schema.Status.LastAttemptTime = &now
+	schema.Status.NextReconciliationTime = &next
+	schema.Status.Phase = operatorv1alpha1.PhaseBlocked
+	clearFailure(schema)
+	setCondition(schema, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonProtectedTable,
+		"No plan may change a table spec.policy.protectedTables fences off")
+	setCondition(schema, operatorv1alpha1.ConditionInSync, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonProtectedTable,
+		"The artifact asks for a change to a protected table, so the managed scope cannot converge")
+	setCondition(schema, operatorv1alpha1.ConditionReady, metav1.ConditionFalse,
+		operatorv1alpha1.ReasonProtectedTable,
+		"Remove the protectedTables entry to plan the change, or write the rows as a migration")
+	if err := r.patchStatus(ctx, before, schema); err != nil {
+		return ctrl.Result{}, err
+	}
+	if schema.Status.PendingLockRelease != nil {
+		if err := r.completePendingLockRelease(ctx, schema); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	r.observeOperation(operation, telemetry.OperationSucceeded)
+	if schema.Status.PendingObservation == nil {
+		if err := r.removeActiveFinalizer(ctx, schema); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	r.event(schema, corev1.EventTypeWarning, "ProtectedTableRefused", "%s", bounded(message, 512))
+	return requeueAtDeadline(&next, r.now()), nil
 }
 
 func (r *SchemaReconciler) suspendActiveOperation(ctx context.Context, schema *operatorv1alpha1.PtahSchema) (ctrl.Result, error) {

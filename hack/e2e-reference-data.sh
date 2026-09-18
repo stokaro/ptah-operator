@@ -399,6 +399,33 @@ wait_for_reference_phase() {
 # that explains it, and leaves the document that satisfied it in STATUS_FILE, so
 # a caller asserts against the reading that matched rather than re-reading and
 # reopening the window.
+# wait_for_reference_refusal waits for one reading that carries the whole
+# protected-table refusal.
+#
+# A blocked resource still resolves, verifies and observes at its interval, and
+# each of those passes legitimately writes Ready while the refusal stands. So a
+# wait on one condition can return a document whose other conditions belong to
+# the pass that came after it -- measured in run 35299958793, where PlanReady
+# still named the fence and Ready already said an Observe was in progress. The
+# refusal is written in a single status patch, so waiting for all of it at once
+# is a reading that cannot be half of two.
+wait_for_reference_refusal() {
+	refusal_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$refusal_deadline" ]; do
+		reference_status
+		if jq -e '
+          .status.plan == null and .status.phase == "Blocked" and
+          ([.status.conditions // [] | .[] |
+            select(.status == "False" and .reason == "ProtectedTable") | .type] |
+            sort) == ["InSync", "PlanReady", "Ready"]
+        ' "$STATUS_FILE" >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	fail "$REFERENCE_SCHEMA never reported a complete protected-table refusal within ${TIMEOUT_SECONDS}s"
+}
+
 wait_for_reference_condition() {
 	condition_type=$1
 	condition_status=$2
@@ -888,7 +915,7 @@ assert_a_protected_table_refuses_the_change() {
 		-p '{"spec":{"policy":{"protectedTables":["countries"]}}}' >/dev/null ||
 		fail "the protected table could not be added to $REFERENCE_SCHEMA"
 	publish_reference_schema v5
-	wait_for_reference_condition PlanReady False ProtectedTable
+	wait_for_reference_refusal
 	# The reading that satisfied the wait: no plan, and the refusal named on the
 	# conditions a reader looks at.
 	jq -e '.status.plan == null' "$STATUS_FILE" >/dev/null ||
