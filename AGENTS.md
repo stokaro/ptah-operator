@@ -63,12 +63,14 @@ accepts `true` and nothing else.
 
 The run that counts is the one for the newest commit. The tip is what the next
 change builds on and what a release is cut from, and an older run proves a tree
-nobody builds on again. One run spends about seven hours of runner time (three
-kind lifecycles near two hours apiece, plus the race detector at forty minutes,
-measured on `75387d4`), so letting a superseded run finish only holds the newer
-one behind it. This repository used to spare a started `master` run, and the
-queue that built up held the commit that fixed a known lifecycle failure for
-hours while the run ahead of it re-proved that failure.
+nobody builds on again. One run spends about ten hours of runner time and
+reaches its verdict in about an hour and a half (measured on `d67d9ee`: twelve
+acceptance jobs between twelve minutes and an hour and a quarter, the race
+detector at fifty-five minutes, and one image build at five), so letting a
+superseded run finish only holds the newer one behind it. This repository used
+to spare a started `master` run, and the queue that built up held the commit
+that fixed a known lifecycle failure for hours while the run ahead of it
+re-proved that failure.
 
 The cost is taken on purpose. A commit followed by another merge before its run
 finishes carries no verdict of its own, and a commit with no check reads exactly
@@ -76,7 +78,8 @@ like one nothing objected to. So "master is green" is a statement about the tip
 whose run finished, a bisect cannot assume a commit it lands on was ever built,
 and a change that needs its own verdict — a release candidate, or a change to
 the lifecycle path itself — goes through a pull request and is merged after its
-run finishes. The pull request fans out over the same three minors.
+run finishes. The pull request fans out over the same three minors and the same
+four suites.
 
 ## The acceptance suites
 
