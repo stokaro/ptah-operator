@@ -68,11 +68,11 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 	}{
 		"a phase claimed by two suites": {
 			old:       `"phases": ["assert", "dataplane"],`,
-			new:       `"phases": ["assert", "dataplane", "migrations"],`,
-			wantError: `phase "migrations" is claimed by both`,
+			new:       `"phases": ["assert", "dataplane", "migrations-mysql"],`,
+			wantError: `phase "migrations-mysql" is claimed by both`,
 		},
 		"a suite that runs nothing": {
-			old:       `"phases": ["migrations", "reference-data"],`,
+			old:       `"phases": ["migrations-mysql", "reference-data-mysql"],`,
 			new:       `"phases": [],`,
 			wantError: `runs no phase`,
 		},
@@ -92,17 +92,21 @@ func TestASuiteCatalogThatCannotBeExecutedIsRefused(t *testing.T) {
 			wantError: `says nothing about what it runs`,
 		},
 		"preparation standing in for coverage": {
-			old:       `"prepare": ["dataplane"]`,
-			new:       `"prepare": ["smoke"]`,
+			old: `"phases": ["migrations-mysql", "reference-data-mysql"],
+      "prepare": ["dataplane"]`,
+			new: `"phases": ["migrations-mysql", "reference-data-mysql"],
+      "prepare": ["smoke"]`,
 			wantError: `which no suite runs for its acceptance; preparation is not coverage`,
 		},
 		"a suite preparing with its own phase": {
-			old:       `"prepare": ["dataplane"]`,
-			new:       `"prepare": ["migrations"]`,
-			wantError: `both runs and prepares with phase "migrations"`,
+			old: `"phases": ["migrations-mysql", "reference-data-mysql"],
+      "prepare": ["dataplane"]`,
+			new: `"phases": ["migrations-mysql", "reference-data-mysql"],
+      "prepare": ["migrations-mysql"]`,
+			wantError: `both runs and prepares with phase "migrations-mysql"`,
 		},
 		"an unknown field": {
-			old:       `"summary": "The versioned migration rows and the declared reference data",`,
+			old:       `"summary": "The versioned migration rows and the declared reference data, on MySQL",`,
 			new:       `"shard": 2,`,
 			wantError: `unknown field "shard"`,
 		},
@@ -128,14 +132,14 @@ func TestAPartitionThatLostAPhaseIsRefused(t *testing.T) {
 	t.Run("a mandatory suite removed", func(t *testing.T) {
 		t.Parallel()
 		path := writeSuiteCatalog(t,
-			`"phases": ["migrations", "reference-data"],`,
-			`"phases": ["migrations"],`)
+			`"phases": ["migrations-mysql", "reference-data-mysql"],`,
+			`"phases": ["migrations-mysql"],`)
 		catalog, err := loadE2ESuites(path)
 		if err != nil {
 			t.Fatalf("load the mutated catalog: %v", err)
 		}
 		err = verifyE2ESuiteCoverage(catalog, repositoryFile(t, e2eHarnessPath))
-		if err == nil || !strings.Contains(err.Error(), "reference-data, which no suite") {
+		if err == nil || !strings.Contains(err.Error(), "reference-data-mysql, which no suite") {
 			t.Fatalf("verifyE2ESuiteCoverage() error = %v, want the uncovered phase named", err)
 		}
 	})

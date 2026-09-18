@@ -90,14 +90,24 @@ their phases live, and it is the only place they are written down:
 unless every phase the driver runs belongs to exactly one suite.
 
 ```bash
-make e2e                       # every phase, in the driver's order, as before
-E2E_SUITE=data-plane make e2e  # one suite, against a cluster of its own
+make e2e                                   # every phase, in the driver's order, as before
+E2E_SUITE=data-plane make e2e              # one suite, against a cluster of its own
+E2E_SUITE=migrations-postgresql make e2e   # one engine's migration rows and reference data
 ```
 
 The partition follows the dependencies rather than the clock, so phases that
 share mutable state stay in one suite: the CRD upgrade and the uninstall that
 follows it, the data plane and the fault injection inside it, the migration rows
 and the reference data that runs in the same namespace.
+
+Where the clock decides is between engines, which share nothing but the
+namespace a suite stands up for itself. PostgreSQL and MySQL in one job made
+that suite the longest stage of the matrix -- fifty-five minutes of the
+migration path and twenty-two of the reference data, measured on run
+35299742747 -- so each engine's phases are a suite of their own and the two run
+at once. The engine is a phase input rather than a default: the driver names it,
+and a phase asked to run with none refuses instead of covering one engine and
+reporting two.
 
 That last pair needs the namespace the data plane stands up — its registry
 Service, its databases, its admission fixtures — so the migrations suite runs

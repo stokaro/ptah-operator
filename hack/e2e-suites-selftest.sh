@@ -51,14 +51,20 @@ runs_phase() {
 	)
 }
 
-[ "$(runs_phase 'migrations reference-data' 'dataplane' migrations)" = yes ] ||
+[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' migrations-postgresql)" = yes ] ||
 	fail "a suite does not run a phase it claims"
-[ "$(runs_phase 'migrations reference-data' 'dataplane' dataplane)" = yes ] ||
+[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' dataplane)" = yes ] ||
 	fail "a suite does not run the phase it prepares with"
-[ "$(runs_phase 'migrations reference-data' 'dataplane' assert)" = no ] ||
+[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' assert)" = no ] ||
 	fail "a suite runs a phase that belongs to another suite"
-[ "$(runs_phase 'migrations reference-data' '' dataplane)" = no ] ||
+[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' '' dataplane)" = no ] ||
 	fail "a suite with no preparation runs another suite's phase"
+# The engine split is two suites over the same two scripts, so the phase names
+# are what keeps them apart. One engine's suite must not reach the other's.
+[ "$(runs_phase 'migrations-postgresql reference-data-postgresql' 'dataplane' migrations-mysql)" = no ] ||
+	fail "an engine's suite runs the other engine's migration phase"
+[ "$(runs_phase 'migrations-mysql reference-data-mysql' 'dataplane' reference-data-postgresql)" = no ] ||
+	fail "an engine's suite runs the other engine's reference-data phase"
 # A phase whose name is a prefix or a suffix of a claimed one is not claimed:
 # the membership test is on whole words, and " $list " is what makes it so.
 [ "$(runs_phase 'reference-data' '' reference)" = no ] ||
@@ -112,6 +118,40 @@ for acceptance_call in 'run_engine_lifecycle postgresql' 'run_engine_lifecycle m
 		fail "the data plane no longer runs $acceptance_call"
 	[ "$acceptance_line" -gt "$boundary_line" ] ||
 		fail "$acceptance_call runs before the preparation boundary, so preparation would execute it"
+done
+
+# Two suites run the same two scripts, so the engine is an input rather than a
+# default: a phase that picked one on its own would cover one engine and report
+# the coverage of two. Each script reads the engine the driver names and refuses
+# a run that names none.
+for engine_phase_script in e2e-migrations.sh e2e-reference-data.sh; do
+	# shellcheck disable=SC2016 # Match the literal import in each phase.
+	grep -Fq 'PHASE_ENGINE=${E2E_ENGINE:-}' "$ROOT_DIR/hack/$engine_phase_script" ||
+		fail "$engine_phase_script does not read the engine the driver names"
+	grep -Fq 'fail "E2E_ENGINE must name postgresql or mysql, and names' \
+		"$ROOT_DIR/hack/$engine_phase_script" ||
+		fail "$engine_phase_script does not refuse a run with no engine named"
+	# shellcheck disable=SC2016 # Match the literal selection in each phase.
+	grep -Fq 'case "$PHASE_ENGINE" in' "$ROOT_DIR/hack/$engine_phase_script" ||
+		fail "$engine_phase_script does not select its scenarios by engine"
+	# An if/else would hand the stopwatch the branch test's own failure, and the
+	# stopwatch returns what it is handed, so the phase would end under set -e
+	# with no proof and no reason. A case leaves the previous command's status.
+	# shellcheck disable=SC2016 # Match the shape that must not come back.
+	! grep -Fq 'if [ "$PHASE_ENGINE" = postgresql ]; then' \
+		"$ROOT_DIR/hack/$engine_phase_script" ||
+		fail "$engine_phase_script selects its scenarios in a branch whose test reaches the stopwatch"
+done
+# Every engine-named phase the driver runs binds the engine its name says. A
+# name and a binding that disagree would run one engine twice and skip the
+# other, and both jobs would pass.
+for engine_phase in migrations reference-data; do
+	for phase_engine in postgresql mysql; do
+		engine_binding=$(grep -B1 -E "^[[:space:]]*run_recorded_phase ${engine_phase}-${phase_engine} " \
+			"$ROOT_DIR/hack/e2e-kind.sh" | head -1)
+		[ "$engine_binding" = "E2E_ENGINE=$phase_engine \\" ] ||
+			fail "phase ${engine_phase}-${phase_engine} is invoked with [$engine_binding] rather than its own engine"
+	done
 done
 
 printf '%s\n' 'e2e suites self-test: PASS every suite runs the phases it claims, and the driver runs no phase outside one'

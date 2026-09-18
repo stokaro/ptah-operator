@@ -2806,8 +2806,10 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		exactSourceLine("control-plane lifecycle", `run_recorded_phase assert "$ROOT_DIR/hack/e2e-assert.sh"`),
 		exactSourceLine("certificate lifecycle", `run_recorded_phase cert-rotation "$ROOT_DIR/hack/e2e-cert-rotation.sh"`),
 		exactSourceLine("data-plane and OCI lifecycle", `run_recorded_phase dataplane "$ROOT_DIR/hack/e2e-dataplane.sh"`),
-		exactSourceLine("migration lifecycle", `run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`),
-		exactSourceLine("reference-data lifecycle", `run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"`),
+		exactSourceLine("PostgreSQL migration lifecycle", `run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"`),
+		exactSourceLine("MySQL migration lifecycle", `run_recorded_phase migrations-mysql "$ROOT_DIR/hack/e2e-migrations.sh"`),
+		exactSourceLine("PostgreSQL reference-data lifecycle", `run_recorded_phase reference-data-postgresql "$ROOT_DIR/hack/e2e-reference-data.sh"`),
+		exactSourceLine("MySQL reference-data lifecycle", `run_recorded_phase reference-data-mysql "$ROOT_DIR/hack/e2e-reference-data.sh"`),
 		exactSourceLine("uninstall lifecycle", `run_recorded_phase uninstall "$ROOT_DIR/hack/e2e-crd-upgrade.sh"`),
 		exactSourceLine("post-lifecycle installed chart export", `export_release_chart`),
 		// The pass line below is reachable only for a run that left no phase out.
@@ -5576,7 +5578,7 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 			},
 		},
 		{
-			phase:  "migrations",
+			phase:  "migrations-postgresql",
 			script: "hack/e2e-migrations.sh",
 			bindings: []phaseEnvironmentBinding{
 				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
@@ -5589,10 +5591,34 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
 				{name: "E2E_REGISTRY_HOST_ADDRESS", value: `$REMOTE_REGISTRY`},
 				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
+				// One engine per phase: the suite that ran both was the longest
+				// stage of the matrix, and a phase with no engine named refuses
+				// to run rather than quietly covering one of the two.
+				{name: "E2E_ENGINE", value: `postgresql`},
 			},
 		},
 		{
-			phase:  "reference-data",
+			phase:  "migrations-mysql",
+			script: "hack/e2e-migrations.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
+				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
+				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
+				{name: "E2E_CONTROLLER_IMAGE", value: `$CANDIDATE_OPERATOR_IMAGE`},
+				{name: "E2E_CONTROLLER_REVISION", value: `$CONTROLLER_REVISION`},
+				{name: "E2E_CONTROLLER_STATE_VERSION", value: `1`},
+				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
+				{name: "E2E_REGISTRY_HOST_ADDRESS", value: `$REMOTE_REGISTRY`},
+				{name: "E2E_REGISTRY_CREDENTIALS_FILE", value: `$REGISTRY_CREDENTIALS_FILE`},
+				// One engine per phase: the suite that ran both was the longest
+				// stage of the matrix, and a phase with no engine named refuses
+				// to run rather than quietly covering one of the two.
+				{name: "E2E_ENGINE", value: `mysql`},
+			},
+		},
+		{
+			phase:  "reference-data-postgresql",
 			script: "hack/e2e-reference-data.sh",
 			bindings: []phaseEnvironmentBinding{
 				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
@@ -5601,6 +5627,20 @@ func phaseEnvironmentContracts() []phaseEnvironmentContract {
 				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
 				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
 				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
+				{name: "E2E_ENGINE", value: `postgresql`},
+			},
+		},
+		{
+			phase:  "reference-data-mysql",
+			script: "hack/e2e-reference-data.sh",
+			bindings: []phaseEnvironmentBinding{
+				{name: "E2E_KUBECONFIG", value: `$KUBECONFIG_FILE`},
+				{name: "E2E_TEST_NAMESPACE", value: `$TEST_NAMESPACE`},
+				{name: "E2E_OPERATOR_NAMESPACE", value: `$OPERATOR_NAMESPACE`},
+				{name: "E2E_EXECUTOR_IMAGE", value: `$E2E_EXECUTOR_IMAGE`},
+				{name: "E2E_RUNNER_IMAGE", value: `$E2E_RUNNER_IMAGE`},
+				{name: "E2E_REGISTRY_SERVICE", value: `$REGISTRY_SERVICE`},
+				{name: "E2E_ENGINE", value: `mysql`},
 			},
 		},
 		{
