@@ -18,6 +18,7 @@ type PlannedMigration struct {
 	// +kubebuilder:validation:MaxLength=128
 	VersionKey string `json:"versionKey,omitempty"`
 
+	// Description is the migration's own description, as the artifact spells it.
 	// +kubebuilder:validation:MaxLength=128
 	Description string `json:"description,omitempty"`
 
@@ -56,6 +57,7 @@ type PtahMigrationPlanSpec struct {
 	// +kubebuilder:validation:Maximum=1
 	ContractVersion int32 `json:"contractVersion"`
 
+	// MigrationRef is the PtahMigration this plan was computed for.
 	MigrationRef ImmutableObjectReference `json:"migrationRef"`
 
 	// Fingerprint binds this plan to everything that decided it. An approval
@@ -88,39 +90,61 @@ type PtahMigrationPlanSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	CurrentVersion int64 `json:"currentVersion"`
 
-	ArtifactDigest       string `json:"artifactDigest"`
-	CoordinationDigest   string `json:"coordinationDigest"`
+	// ArtifactDigest is the OCI migration artifact this plan reads its files
+	// from, pinned to content rather than to the tag it was resolved through.
+	ArtifactDigest string `json:"artifactDigest"`
+	// CoordinationDigest is the database realm this plan takes its turn in.
+	CoordinationDigest string `json:"coordinationDigest"`
+	// TargetIdentityDigest identifies the database it was computed against
+	// without carrying anything that could reach it.
 	TargetIdentityDigest string `json:"targetIdentityDigest"`
-	PolicyFingerprint    string `json:"policyFingerprint"`
+	// PolicyFingerprint is the spec.policy the plan was computed under, so an
+	// edited policy retires a plan waiting for a person.
+	PolicyFingerprint string `json:"policyFingerprint"`
 
-	VerificationPolicyUID    types.UID `json:"verificationPolicyUID"`
-	VerificationPolicyDigest string    `json:"verificationPolicyDigest"`
+	// VerificationPolicyUID is the policy object that accepted the artifact.
+	VerificationPolicyUID types.UID `json:"verificationPolicyUID"`
+	// VerificationPolicyDigest is that policy's content at the time.
+	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
 
 	// ExecutionBindingID is a per-transition epoch. It changes even when an
 	// operator rollout returns to byte-identical component versions.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID"`
+	// ControllerImage is the digest-pinned manager that published this plan.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
 	ControllerImage string `json:"controllerImage"`
+	// ControllerRevision is that manager's revision, which distinguishes two
+	// deployments of the same image.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
 	ControllerRevision string `json:"controllerRevision"`
+	// ControllerStateVersion is the state semantics that manager writes.
 	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32  `json:"controllerStateVersion"`
-	PtahVersion            string `json:"ptahVersion"`
-	ExecutorImage          string `json:"executorImage"`
-	RunnerImage            string `json:"runnerImage"`
+	ControllerStateVersion int32 `json:"controllerStateVersion"`
+	// PtahVersion is the Ptah build that computed the sequence.
+	PtahVersion string `json:"ptahVersion"`
+	// ExecutorImage is the digest-pinned image that ran Ptah.
+	ExecutorImage string `json:"executorImage"`
+	// RunnerImage is the digest-pinned image that supervised it.
+	RunnerImage string `json:"runnerImage"`
+	// RunnerProtocolVersion is the result-frame protocol that runner speaks.
 	// +kubebuilder:validation:Minimum=1
 	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
 
+	// CreatedAt is when the controller published this plan.
 	CreatedAt metav1.Time `json:"createdAt"`
 }
 
 // PtahMigrationPlanStatus reports whether the plan is still the one the
 // controller would publish today.
 type PtahMigrationPlanStatus struct {
+	// ObservedGeneration is the plan generation this status was written for.
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// Conditions carry Current, which says the plan still matches the artifact
+	// and the history it was computed against, and Executed, which says its
+	// sequence ran.
 	// +listType=map
 	// +listMapKey=type
 	// +kubebuilder:validation:MaxItems=16

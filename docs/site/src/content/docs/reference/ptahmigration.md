@@ -221,8 +221,8 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.activeOperation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. |
 | `status.activeOperation.admissionSnapshot.version` | `string`, required, one of `v1` |  |
 | `status.activeOperation.approvalRef` | `object` | ApprovalRef is the approval that authorized this Apply, recorded before dispatch so the run is attributable to the decision that permitted it. |
-| `status.activeOperation.approvalRef.name` | `string`, required |  |
-| `status.activeOperation.approvalRef.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
+| `status.activeOperation.approvalRef.name` | `string`, required | Name of the referenced object in the same namespace. |
+| `status.activeOperation.approvalRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `status.activeOperation.attempt` | `integer`, required |  |
 | `status.activeOperation.coordinationDigest` | `string` |  |
 | `status.activeOperation.dispatchNotAfter` | `string` | DispatchNotAfter and ExecutionNotAfter bound the claim in time. |
@@ -237,8 +237,8 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.activeOperation.leaseDurationSeconds` | `integer` |  |
 | `status.activeOperation.leaseEpoch` | `string` | LeaseEpoch is the database lock acquisition this claim was authorized under, and LeaseDurationSeconds how long that acquisition was taken for. A result produced across an epoch change is discarded rather than read: the lock it held was somebody else's by then. |
 | `status.activeOperation.planRef` | `object` | PlanRef is the immutable plan an Apply carries out. |
-| `status.activeOperation.planRef.name` | `string`, required |  |
-| `status.activeOperation.planRef.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
+| `status.activeOperation.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
+| `status.activeOperation.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `status.activeOperation.source` | `object` | Source is the credential-free artifact binding this operation uses: the resolved digest and the selectors needed to fetch it. Every operation after Resolve carries one, so a newer generation cannot send newly selected credentials to the old artifact's registry. |
 | `status.activeOperation.source.digest` | `string`, required |  |
 | `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthSource describes a Secret without requiring the controller to read it. The kubelet projects only the selected credential representation into a Job, while every mode also projects the fixed registry authority grant to the runner. |
@@ -329,6 +329,6 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.observedGeneration` | `integer` | ObservedGeneration is the spec generation this status describes. |
 | `status.phase` | `string`, one of `Pending`, `Resolving`, `Verifying`, `Reading`, `Planning`, `AwaitingApproval`, `Blocked`, `Applying`, `VerifyingHistory`, `InSync`, `Suspended`, `Failed` | MigrationPhase is the coarse state of one PtahMigration, for a person reading `kubectl get`. Conditions carry the machine-readable account. |
 | `status.plan` | `object` | Plan names the immutable plan object the controller published for the current pending sequence, and is cleared once that sequence is gone. |
-| `status.plan.name` | `string`, required |  |
-| `status.plan.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
+| `status.plan.name` | `string`, required | Name of the referenced object in the same namespace. |
+| `status.plan.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 

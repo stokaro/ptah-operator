@@ -296,8 +296,8 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.applied.executorImage` | `string`, required |  |
 | `status.applied.planFingerprint` | `string`, required |  |
 | `status.applied.planRef` | `object` | PlanRef names the stored plan this apply ran. It is what a reader addresses to see the SQL that was applied, instead of searching the namespace for a fingerprint. Optional, because a record written before the field existed carries only PlanFingerprint. It does not replace that fingerprint: the reference says which object to read and the fingerprint says whether the object read is the one this record was written for. |
-| `status.applied.planRef.name` | `string`, required |  |
-| `status.applied.planRef.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
+| `status.applied.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
+| `status.applied.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `status.applied.ptahVersion` | `string`, required |  |
 | `status.applied.runnerImage` | `string`, required |  |
 | `status.applied.runnerProtocolVersion` | `integer`, required |  |
@@ -399,9 +399,9 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.pendingObservation.plan.approval` | `object` | ConsumedApprovalStatus records the immutable approval object and identity. |
 | `status.pendingObservation.plan.approval.approvedAt` | `string`, required |  |
 | `status.pendingObservation.plan.approval.approver` | `object`, required | ApprovalIdentity is stamped from the authenticated admission request. The API client does not choose these fields. |
-| `status.pendingObservation.plan.approval.approver.groups` | `[]string` |  |
-| `status.pendingObservation.plan.approval.approver.uid` | `string` |  |
-| `status.pendingObservation.plan.approval.approver.username` | `string`, required |  |
+| `status.pendingObservation.plan.approval.approver.groups` | `[]string` | Groups the authenticated user belonged to at that moment. |
+| `status.pendingObservation.plan.approval.approver.uid` | `string` | UID of that user, where the authenticator provides one. |
+| `status.pendingObservation.plan.approval.approver.username` | `string`, required | Username the API server authenticated the request as. |
 | `status.pendingObservation.plan.approval.name` | `string`, required |  |
 | `status.pendingObservation.plan.approval.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
 | `status.pendingObservation.plan.artifactDigest` | `string`, required |  |
@@ -461,9 +461,9 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.plan.approval` | `object` | ConsumedApprovalStatus records the immutable approval object and identity. |
 | `status.plan.approval.approvedAt` | `string`, required |  |
 | `status.plan.approval.approver` | `object`, required | ApprovalIdentity is stamped from the authenticated admission request. The API client does not choose these fields. |
-| `status.plan.approval.approver.groups` | `[]string` |  |
-| `status.plan.approval.approver.uid` | `string` |  |
-| `status.plan.approval.approver.username` | `string`, required |  |
+| `status.plan.approval.approver.groups` | `[]string` | Groups the authenticated user belonged to at that moment. |
+| `status.plan.approval.approver.uid` | `string` | UID of that user, where the authenticator provides one. |
+| `status.plan.approval.approver.username` | `string`, required | Username the API server authenticated the request as. |
 | `status.plan.approval.name` | `string`, required |  |
 | `status.plan.approval.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
 | `status.plan.artifactDigest` | `string`, required |  |
