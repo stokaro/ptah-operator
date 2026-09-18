@@ -1,34 +1,61 @@
+# Manager replicas. Scaling this release is how the operator runs highly
+# available; a second release in the same cluster is not supported. More than
+# one replica requires leaderElection.
 replicaCount: 2
 
+# The image every runtime component runs from: the manager, the certificate
+# rotator and the CRD manager are three commands in one image.
 image:
+  # Repository the manager image is pulled from.
   repository: ghcr.io/stokaro/ptah-operator
+  # Recorded for a reader. The digest below is what is actually pulled.
   tag: "0.1.0"
   # Required registry manifest digest, including for local development.
   # A Docker image ID is not a registry manifest digest.
   digest: ""
+  # Pull policy for the manager image. AlwaysPullImages in the cluster
+  # rewrites this, which is what admission.alwaysPullImagesEnabled declares.
   pullPolicy: IfNotPresent
 
+# Pull Secrets added to every Pod this chart creates.
 imagePullSecrets: []
+# Replaces the chart name in generated object names.
 nameOverride: ""
+# Replaces the complete generated name, release prefix included.
 fullnameOverride: ""
 
+# The data plane: the images a database operation runs in, and the Ptah build
+# they carry. The manager dispatches Jobs from these and runs no SQL itself.
 execution:
   # Both execution images are required and must include @sha256:<64 hex>.
   # ptahVersion is also required, is limited to 128 bytes, and must identify
   # the Ptah build verified for the exact executorImage digest; the chart
   # deliberately has no default.
   executorImage: ""
+  # The runner image, built from this operator's source, which supervises the
+  # executor inside a task Pod and returns its result frame.
   runnerImage: ""
+  # The Ptah build the executorImage digest carries. A plan records it, and an
+  # apply is refused when it no longer matches.
   ptahVersion: ""
 
+# What the cluster's own admission plugins do to the Pods this operator
+# creates. The chart's guards assert the resulting Pod rather than the intent,
+# so these declare what the API server is configured to do.
 admission:
   # These values must match kube-apiserver's enabled admission plugins and
   # DefaultTolerationSeconds flags. Zero means an exact zero-second NoExecute
   # toleration; it does not disable the plugin.
   defaultTolerationsEnabled: true
+  # The DefaultTolerationSeconds value for node.kubernetes.io/not-ready.
   defaultNotReadyTolerationSeconds: 300
+  # The DefaultTolerationSeconds value for node.kubernetes.io/unreachable.
   defaultUnreachableTolerationSeconds: 300
+  # Whether ExtendedResourceToleration is enabled, which adds a toleration for
+  # every extended resource a Pod requests.
   extendedResourceTolerationEnabled: false
+  # Whether AlwaysPullImages is enabled, which rewrites every imagePullPolicy
+  # to Always. The guards accept that rewrite only when this says so.
   alwaysPullImagesEnabled: false
 
 # Required whenever replicaCount is greater than one. Disable only for an
@@ -36,12 +63,14 @@ admission:
 # per cluster; scale this release for high availability.
 leaderElection: true
 
+# Where the operator's Leases live.
 coordination:
   # Leave empty to use the Helm release namespace. This namespace contains
   # both database target Leases and the manager leader-election Lease for the
   # cluster's one supported operator release.
   namespace: ""
 
+# The identity the runtime components run as.
 serviceAccount:
   # With create=false, name is a stable base, not a complete object name. For
   # every release sequence N, pre-create the dedicated ServiceAccount
@@ -49,21 +78,40 @@ serviceAccount:
   # Any additional RoleBinding or ClusterRoleBinding for an active or retained
   # epoch blocks fail-closed upgrade and uninstall.
   create: true
+  # Base name for the per-sequence ServiceAccounts. Empty means the generated
+  # release name.
   name: ""
+  # Annotations added to the ServiceAccounts the chart creates, which is where
+  # a cloud identity binding goes.
   annotations: {}
 
+# Annotations added to the manager and rotator Pods.
 podAnnotations: {}
+# Labels added to the manager and rotator Pods, beside the chart's own.
 podLabels: {}
 
+# Manager container resources. The manager reconciles and dispatches; the
+# database work happens in task Pods with resources of their own.
 resources:
+  # What the manager container is guaranteed.
   requests:
+    # CPU request for the manager container.
     cpu: 50m
+    # Memory request for the manager container.
     memory: 96Mi
+  # The ceiling. CPU is deliberately unlimited: throttling a leader is how a
+  # Lease is lost.
   limits:
+    # Memory limit for the manager container.
     memory: 256Mi
 
+# Node labels the manager and rotator Pods are scheduled onto.
 nodeSelector: {}
+# Taints the manager and rotator Pods tolerate, beside the ones
+# admission.defaultTolerations describes.
 tolerations: []
+# Affinity for the manager and rotator Pods. Replicas already spread across
+# nodes by default; this is for anything narrower.
 affinity: {}
 # Assign this class to the runtime Deployments and to the weight-zero CRD
 # reconcile hook after preflight verifies the live class. Earlier bootstrap,
@@ -75,16 +123,28 @@ priorityClassName: ""
 # named class whose live value or effective preemption policy differs, so a
 # PriorityClass change cannot silently alter an approved runtime contract.
 priorityClassValue: 0
+# The preemption policy the live PriorityClass must declare, checked the same
+# way as priorityClassValue.
 priorityClassPreemptionPolicy: PreemptLowerPriority
 
+# The manager's metrics endpoint.
 metrics:
+  # Address the manager serves metrics on. The guards expect port 8080 on the
+  # Pod, so change the Service below rather than this.
   bindAddress: ":8080"
+  # A Service in front of the metrics port, for a scraper that needs one.
   service:
+    # Whether to create the metrics Service.
     enabled: true
+    # Port the metrics Service listens on.
     port: 8080
 
+# The admission webhook server inside the manager, which is what refuses an
+# approval that does not name an exact plan.
 webhook:
+  # Port the manager serves admission on.
   port: 9443
+  # Timeout the API server applies to the fast admission paths.
   timeoutSeconds: 5
   # The manager-write validator may read one schema, one plan, and up to 16
   # immutable plan chunks. Kubernetes caps admission timeouts at 30 seconds;
@@ -97,6 +157,8 @@ webhook:
   # connected Helm install to read ca.crt from that Secret.
   caBundle: ""
 
+# The serving certificates the webhook presents, and the component that issues
+# and replaces them without anybody holding a private key.
 certificateRotation:
   # Built-in management is automatically omitted when webhook.existingSecret
   # is set. The manager never receives Secret-read permission.
@@ -105,36 +167,68 @@ certificateRotation:
   # grants the rotator namespace-wide Secret CREATE in RBAC; a fail-closed
   # admission policy narrows its use to the exact generated TLS Secret.
   recreateMissingSecret: false
+  # How long the rotator waits after a reconciliation that changed nothing.
   interval: "6h"
+  # Ceiling on one reconciliation, including the probes that prove every
+  # endpoint serves the new certificate.
   operationTimeout: "15m"
+  # First backoff delay after a failed reconciliation.
   retryInitial: "5s"
+  # Ceiling on the backoff after repeated failures.
   retryMax: "5m"
+  # Port the rotator serves its own health and readiness probes on.
   healthPort: 8081
+  # Port the rotator serves candidate admission TLS on while it proves a new
+  # certificate before adopting it.
   candidatePort: 9444
   # A transition is accepted only after every directly addressed API server
   # observes both canary webhooks continuously for this stability window.
   admissionConvergence:
+    # How long the candidate must be observed continuously, unbroken.
     stabilityDuration: "10s"
+    # How often the rotator asks each API-server endpoint during that window.
     pollInterval: "1s"
     # Bounds one endpoint observation: marker GET plus both denial probes.
     requestTimeout: "5s"
+  # Rotate a certificate once no more than this much validity remains.
   renewalThreshold: "720h"
+  # Validity of a newly issued serving certificate.
   servingCertificateValidity: "2160h"
+  # Validity of a newly issued CA certificate.
   caCertificateValidity: "26280h"
+  # Ceiling on waiting for every webhook endpoint to serve a replacement
+  # certificate before the rotation is abandoned.
   probeTimeout: "5m"
+  # How often those endpoints are probed while waiting.
   probeInterval: "2s"
+  # Duration of the Lease that makes one rotator the one doing the work.
   leaseDuration: "10m"
+  # How long a rotator waits for that Lease before giving up this pass.
   leaseAcquireTimeout: "30s"
+  # Rotator container resources. It sleeps between passes and does a few
+  # seconds of work in each.
   resources:
+    # What the rotator container is guaranteed.
     requests:
+      # CPU request for the rotator container.
       cpu: 10m
+      # Memory request for the rotator container.
       memory: 32Mi
+    # The ceiling, memory only, for the same reason as the manager.
     limits:
+      # Memory limit for the rotator container.
       memory: 64Mi
 
+# A ClusterRole for the people who approve changes: read schemas, plans and
+# approvals, and create an approval. Bind it yourself; the chart binds nobody.
 approverClusterRole:
+  # Whether to create that ClusterRole.
   create: true
 
+# A PodDisruptionBudget for the manager, so a drain cannot take every replica
+# at once.
 podDisruptionBudget:
+  # Whether to create the PodDisruptionBudget.
   enabled: true
+  # Replicas that must stay available during a voluntary disruption.
   minAvailable: 1
