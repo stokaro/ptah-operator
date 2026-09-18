@@ -20,6 +20,13 @@
     "approval that phase leaves, and borrowing them is what makes the two one",
     "dependency group rather than two suites.",
     "",
+    "The migration path and the reference data run one engine per suite. Both",
+    "engines in one job made that suite the longest stage of the matrix by half",
+    "an hour -- fifty-five minutes of migrations and twenty-two of reference",
+    "data, measured on run 35299742747 -- and the two engines share nothing but",
+    "the namespace a suite stands up for itself, so each engine's phases are a",
+    "suite of their own and run at the same time.",
+    "",
     "prepare names a phase a suite runs for its prerequisites rather than for",
     "its own acceptance. A phase with a preparation mode runs in it; a phase",
     "without one runs in full, which is how a suite borrows the objects another",
@@ -56,10 +63,17 @@
       "prepare": []
     },
     {
-      "name": "migrations",
-      "slug": "migrations",
-      "summary": "The versioned migration rows and the declared reference data",
-      "phases": ["migrations", "reference-data"],
+      "name": "migrations-postgresql",
+      "slug": "migrations-postgresql",
+      "summary": "The versioned migration rows and the declared reference data, on PostgreSQL",
+      "phases": ["migrations-postgresql", "reference-data-postgresql"],
+      "prepare": ["dataplane"]
+    },
+    {
+      "name": "migrations-mysql",
+      "slug": "migrations-mysql",
+      "summary": "The versioned migration rows and the declared reference data, on MySQL",
+      "phases": ["migrations-mysql", "reference-data-mysql"],
       "prepare": ["dataplane"]
     }
   ]

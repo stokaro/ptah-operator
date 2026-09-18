@@ -3201,42 +3201,67 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 			wantError:   "always-false wrapper",
 		},
 		{
-			name:        "migration lifecycle omitted",
-			old:         `run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`,
+			name:        "PostgreSQL migration lifecycle omitted",
+			old:         `run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"`,
 			replacement: `true # migration lifecycle omitted`,
-			wantError:   "migration lifecycle",
+			wantError:   "PostgreSQL migration lifecycle",
+		},
+		{
+			name:        "MySQL migration lifecycle omitted",
+			old:         `run_recorded_phase migrations-mysql "$ROOT_DIR/hack/e2e-migrations.sh"`,
+			replacement: `true # migration lifecycle omitted`,
+			wantError:   "MySQL migration lifecycle",
 		},
 		{
 			name:        "migration lifecycle call separated from its environment",
-			old:         `run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"`,
-			replacement: "true\n\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"",
-			wantError:   `migrations phase must bind E2E_KUBECONFIG to "$KUBECONFIG_FILE", and binds nothing`,
+			old:         `run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"`,
+			replacement: "true\n\trun_recorded_phase migrations-postgresql \"$ROOT_DIR/hack/e2e-migrations.sh\"",
+			wantError:   `migrations-postgresql phase must bind E2E_KUBECONFIG to "$KUBECONFIG_FILE", and binds nothing`,
 		},
 		{
-			name:        "reference-data lifecycle omitted",
-			old:         `run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"`,
+			name:        "PostgreSQL reference-data lifecycle omitted",
+			old:         `run_recorded_phase reference-data-postgresql "$ROOT_DIR/hack/e2e-reference-data.sh"`,
 			replacement: `true # reference-data lifecycle omitted`,
-			wantError:   "reference-data lifecycle",
+			wantError:   "PostgreSQL reference-data lifecycle",
+		},
+		{
+			name:        "MySQL reference-data lifecycle omitted",
+			old:         `run_recorded_phase reference-data-mysql "$ROOT_DIR/hack/e2e-reference-data.sh"`,
+			replacement: `true # reference-data lifecycle omitted`,
+			wantError:   "MySQL reference-data lifecycle",
 		},
 		{
 			name:        "reference-data lifecycle call separated from its environment",
-			old:         `run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"`,
-			replacement: "true\n\trun_recorded_phase reference-data \"$ROOT_DIR/hack/e2e-reference-data.sh\"",
-			wantError:   `reference-data phase must bind E2E_KUBECONFIG to "$KUBECONFIG_FILE", and binds nothing`,
+			old:         `run_recorded_phase reference-data-mysql "$ROOT_DIR/hack/e2e-reference-data.sh"`,
+			replacement: "true\n\trun_recorded_phase reference-data-mysql \"$ROOT_DIR/hack/e2e-reference-data.sh\"",
+			wantError:   `reference-data-mysql phase must bind E2E_KUBECONFIG to "$KUBECONFIG_FILE", and binds nothing`,
 		},
 		{
 			name: "migration lifecycle hidden in false branch",
-			old: "E2E_KUBECONFIG=$KUBECONFIG_FILE \\\nE2E_TEST_NAMESPACE=$TEST_NAMESPACE \\\n" +
-				"E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \\\n",
-			replacement: "if false; then\nE2E_KUBECONFIG=$KUBECONFIG_FILE \\\nE2E_TEST_NAMESPACE=$TEST_NAMESPACE \\\n" +
-				"E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \\\n",
+			old:  "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-postgresql",
+			replacement: "if false; then\nE2E_ENGINE=postgresql \\\n" +
+				"\trun_recorded_phase migrations-postgresql",
 			wantError: "always-false wrapper",
 		},
 		{
 			name:        "migration lifecycle loses the controller identity",
-			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=1 \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n",
-			replacement: "E2E_CONTROLLER_STATE_VERSION=1 \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n",
-			wantError:   `migrations phase must bind E2E_CONTROLLER_REVISION to "$CONTROLLER_REVISION", and binds nothing`,
+			old:         "E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\nE2E_CONTROLLER_STATE_VERSION=1 \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			replacement: "E2E_CONTROLLER_STATE_VERSION=1 \\\nE2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\nE2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			wantError:   `migrations-postgresql phase must bind E2E_CONTROLLER_REVISION to "$CONTROLLER_REVISION", and binds nothing`,
+		},
+		{
+			// A phase that ran the engine its name does not say would cover one
+			// engine twice and leave the other unproven, with both jobs green.
+			name:        "a migration phase bound to the other engine",
+			old:         "E2E_ENGINE=mysql \\\n\trun_recorded_phase migrations-mysql",
+			replacement: "E2E_ENGINE=postgresql \\\n\trun_recorded_phase migrations-mysql",
+			wantError:   `migrations-mysql phase must bind E2E_ENGINE to "mysql", and binds "postgresql"`,
+		},
+		{
+			name:        "a reference-data phase bound to the other engine",
+			old:         "E2E_ENGINE=postgresql \\\n\trun_recorded_phase reference-data-postgresql",
+			replacement: "E2E_ENGINE=mysql \\\n\trun_recorded_phase reference-data-postgresql",
+			wantError:   `reference-data-postgresql phase must bind E2E_ENGINE to "postgresql", and binds "mysql"`,
 		},
 		{
 			name:        "uninstall lifecycle omitted",
@@ -5775,9 +5800,9 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 	}{
 		{
 			name:        "binding removed",
-			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
-			replacement: "",
-			wantError:   `migrations phase must bind E2E_REGISTRY_HOST_ADDRESS to "$REMOTE_REGISTRY", and binds nothing`,
+			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			replacement: "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			wantError:   `migrations-postgresql phase must bind E2E_REGISTRY_HOST_ADDRESS to "$REMOTE_REGISTRY", and binds nothing`,
 		},
 		{
 			name: "candidate controller image redirected",
@@ -5785,68 +5810,74 @@ func TestPhaseEnvironmentContractsRejectCriticalMutations(t *testing.T) {
 				"E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\n" +
 				"E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
-				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
 			replacement: "E2E_CONTROLLER_IMAGE=$PRODUCTION_OPERATOR_IMAGE \\\n" +
 				"E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \\\n" +
 				"E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
-				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
-			wantError: `migrations phase must bind E2E_CONTROLLER_IMAGE to "$CANDIDATE_OPERATOR_IMAGE", and binds "$PRODUCTION_OPERATOR_IMAGE"`,
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			wantError: `migrations-postgresql phase must bind E2E_CONTROLLER_IMAGE to "$CANDIDATE_OPERATOR_IMAGE", and binds "$PRODUCTION_OPERATOR_IMAGE"`,
 		},
 		{
 			name: "pinned state version unpinned",
 			old: "E2E_CONTROLLER_STATE_VERSION=1 \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
-				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
 			replacement: "E2E_CONTROLLER_STATE_VERSION=$CONTROLLER_STATE_VERSION \\\n" +
 				"E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \\\n" +
-				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
-			wantError: `migrations phase must bind E2E_CONTROLLER_STATE_VERSION to "1", and binds "$CONTROLLER_STATE_VERSION"`,
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			wantError: `migrations-postgresql phase must bind E2E_CONTROLLER_STATE_VERSION to "1", and binds "$CONTROLLER_STATE_VERSION"`,
 		},
 		{
 			name:        "undeclared binding added",
-			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
-			replacement: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_MIGRATION_INTERVAL=1s \\\n",
-			wantError:   "migrations phase binds E2E_MIGRATION_INTERVAL, which no environment contract declares",
+			old:         "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			replacement: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\nE2E_MIGRATION_INTERVAL=1s \\\n" + "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\nE2E_ENGINE=postgresql \\\n",
+			wantError:   "migrations-postgresql phase binds E2E_MIGRATION_INTERVAL, which no environment contract declares",
 		},
 		{
 			name:        "phase left out",
-			old:         "\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			old:         "\trun_recorded_phase migrations-postgresql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
 			replacement: "\t:\n",
-			wantError:   `lifecycle phase "migrations" is never invoked`,
+			wantError:   `lifecycle phase "migrations-postgresql" is never invoked`,
 		},
 		{
 			name:        "phase pointed at another script",
-			old:         "\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
-			replacement: "\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-assert.sh\"\n",
-			wantError:   `lifecycle phase "migrations" must run hack/e2e-migrations.sh, not hack/e2e-assert.sh`,
+			old:         "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			replacement: "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-assert.sh\"\n",
+			wantError:   `lifecycle phase "migrations-mysql" must run hack/e2e-migrations.sh, not hack/e2e-assert.sh`,
 		},
 		{
 			name:        "phase invoked twice",
-			old:         "\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
-			replacement: "\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"\n\trun_recorded_phase migrations \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
-			wantError:   `lifecycle phase "migrations" is invoked more than once`,
+			old:         "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			replacement: "\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n\trun_recorded_phase migrations-mysql \"$ROOT_DIR/hack/e2e-migrations.sh\"\n",
+			wantError:   `lifecycle phase "migrations-mysql" is invoked more than once`,
 		},
 		{
 			name:        "script grows an input nobody passes",
 			script:      true,
 			old:         "INTERVAL=${E2E_MIGRATION_INTERVAL:-5m}\n",
 			replacement: "INTERVAL=${E2E_MIGRATION_INTERVAL:-5m}\nSOURCE_AUTHORITY=$E2E_SOURCE_AUTHORITY\n",
-			wantError:   "hack/e2e-migrations.sh reads E2E_SOURCE_AUTHORITY without a default, and the migrations phase binds nothing to it",
+			wantError:   "hack/e2e-migrations.sh reads E2E_SOURCE_AUTHORITY without a default, and the migrations-postgresql phase binds nothing to it",
 		},
 		{
 			name:        "script stops reading what it is passed",
 			script:      true,
 			old:         "REGISTRY_HOST_ADDRESS=${E2E_REGISTRY_HOST_ADDRESS:-}\n",
 			replacement: "REGISTRY_HOST_ADDRESS=\n",
-			wantError:   "migrations phase binds E2E_REGISTRY_HOST_ADDRESS, which hack/e2e-migrations.sh never reads",
+			wantError:   "migrations-postgresql phase binds E2E_REGISTRY_HOST_ADDRESS, which hack/e2e-migrations.sh never reads",
 		},
 		{
 			name: "bindings reordered",
 			old: "E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
-				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n",
+				"E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" +
+				"E2E_ENGINE=postgresql \\\n",
 			replacement: "E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \\\n" +
-				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n",
+				"E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \\\n" +
+				"E2E_ENGINE=postgresql \\\n",
 			wantError: "",
 		},
 	}

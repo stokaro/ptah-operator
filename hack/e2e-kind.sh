@@ -2774,6 +2774,12 @@ E2E_DATAPLANE_MODE=$DATAPLANE_MODE \
 # admission fixtures the earlier phase stood up are what a migration needs too,
 # and standing them up a second time would be a second answer to every one of
 # them.
+#
+# One engine per phase, because the two together were the longest stage of the
+# matrix: fifty-five minutes of the migration path and twenty-two of the
+# reference data, measured on the green run 35299742747. A suite runs one
+# engine's phases against a cluster of its own, so the two halves now run at
+# once and neither waits for the other's databases.
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
@@ -2784,7 +2790,21 @@ E2E_CONTROLLER_STATE_VERSION=1 \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
 E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
 E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
-	run_recorded_phase migrations "$ROOT_DIR/hack/e2e-migrations.sh"
+E2E_ENGINE=postgresql \
+	run_recorded_phase migrations-postgresql "$ROOT_DIR/hack/e2e-migrations.sh"
+
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
+E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE \
+E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION \
+E2E_CONTROLLER_STATE_VERSION=1 \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_REGISTRY_HOST_ADDRESS=$REMOTE_REGISTRY \
+E2E_REGISTRY_CREDENTIALS_FILE=$REGISTRY_CREDENTIALS_FILE \
+E2E_ENGINE=mysql \
+	run_recorded_phase migrations-mysql "$ROOT_DIR/hack/e2e-migrations.sh"
 
 # Reference data runs after the migration path and inside the same namespace, on
 # a database of its own, because "works on first creation of a database, when
@@ -2796,7 +2816,17 @@ E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
 E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
 E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
 E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
-	run_recorded_phase reference-data "$ROOT_DIR/hack/e2e-reference-data.sh"
+E2E_ENGINE=postgresql \
+	run_recorded_phase reference-data-postgresql "$ROOT_DIR/hack/e2e-reference-data.sh"
+
+E2E_KUBECONFIG=$KUBECONFIG_FILE \
+E2E_TEST_NAMESPACE=$TEST_NAMESPACE \
+E2E_OPERATOR_NAMESPACE=$OPERATOR_NAMESPACE \
+E2E_EXECUTOR_IMAGE=$E2E_EXECUTOR_IMAGE \
+E2E_RUNNER_IMAGE=$E2E_RUNNER_IMAGE \
+E2E_REGISTRY_SERVICE=$REGISTRY_SERVICE \
+E2E_ENGINE=mysql \
+	run_recorded_phase reference-data-mysql "$ROOT_DIR/hack/e2e-reference-data.sh"
 
 E2E_KUBECONFIG=$KUBECONFIG_FILE \
 E2E_DEBUG_LOGS=$E2E_DEBUG_LOGS \

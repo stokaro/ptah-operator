@@ -33,6 +33,7 @@ CONTROLLER_REVISION=${E2E_CONTROLLER_REVISION:-}
 CONTROLLER_STATE_VERSION=${E2E_CONTROLLER_STATE_VERSION:-}
 REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
 INTERVAL=${E2E_MIGRATION_INTERVAL:-5m}
+PHASE_ENGINE=${E2E_ENGINE:-}
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
 
 # Imported variables retain their export attribute across reassignment in POSIX
@@ -91,6 +92,17 @@ printf '%s\n' "$CONTROLLER_STATE_VERSION" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "E2E_CONTROLLER_STATE_VERSION must be a positive integer"
 printf '%s\n' "$TIMEOUT_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "E2E_TIMEOUT_SECONDS must be a positive integer"
+
+# The suite a phase runs in names one engine, and this phase runs that one.
+# Both engines in one job made this the longest stage of the matrix by half an
+# hour, so the suites are split by engine and a phase that ran both would put
+# that stage back on the critical path. The value is checked here rather than
+# defaulted: a phase that silently ran one engine because the driver forgot to
+# name it is coverage nobody would notice was gone.
+case "$PHASE_ENGINE" in
+postgresql | mysql) ;;
+*) fail "E2E_ENGINE must name postgresql or mysql, and names \"$PHASE_ENGINE\"" ;;
+esac
 
 k() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" "$@"
@@ -3039,45 +3051,49 @@ reset_after_an_earlier_run() {
 	k -n "$TEST_NAMESPACE" delete ptahmigrationapproval,ptahmigrationplan --all \
 		--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
 		fail "the approvals and plans an earlier run left behind were not removed"
-	for reset_engine in postgresql mysql; do
-		select_engine "$reset_engine"
-		k -n "$TEST_NAMESPACE" delete ptahschema "$MIGRATION_RIVAL_SCHEMA" \
-			--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
-			fail "$MIGRATION_RIVAL_SCHEMA was not removed"
-		k -n "$TEST_NAMESPACE" delete secret --ignore-not-found \
-			"$MIGRATION_DB_SECRET" "$BRANCH_DB_SECRET" "$ADOPT_DB_SECRET" "$CHECKPOINT_DB_SECRET" \
-			"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" >/dev/null ||
-			fail "the $ENGINE_KIND database Secrets an earlier run left behind were not removed"
-		# The publisher objects carry the version they published in their names,
-		# and the versions are spread through the proofs, so they are found by the
-		# prefix publish_migrations gives them rather than listed a second time.
-		k -n "$TEST_NAMESPACE" get configmap,job -o name >"$LOG_FILE" ||
-			fail "the objects an earlier run left behind could not be listed"
-		grep -E "^(configmap/e2e-migrations-${ENGINE}-|job[.]batch/e2e-push-migrations-${ENGINE}-|job[.]batch/${ADOPT_BASELINE_JOB}\$)" \
-			"$LOG_FILE" >"$RESOURCE_FILE" || true
-		while IFS= read -r reset_object; do
-			k -n "$TEST_NAMESPACE" delete "$reset_object" \
-				--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
-				fail "$reset_object was not removed"
-		done <"$RESOURCE_FILE"
-		for reset_database in "$MIGRATION_DATABASE" "$BRANCH_DATABASE" "$ADOPT_DATABASE" \
-			"$ADOPT_SHADOW_DATABASE" "$CHECKPOINT_DATABASE" "$TXMODE_DATABASE" \
-			"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE"; do
-			drop_database "$reset_database"
-		done
+	select_engine "$PHASE_ENGINE"
+	k -n "$TEST_NAMESPACE" delete ptahschema "$MIGRATION_RIVAL_SCHEMA" \
+		--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "$MIGRATION_RIVAL_SCHEMA was not removed"
+	k -n "$TEST_NAMESPACE" delete secret --ignore-not-found \
+		"$MIGRATION_DB_SECRET" "$BRANCH_DB_SECRET" "$ADOPT_DB_SECRET" "$CHECKPOINT_DB_SECRET" \
+		"$TXMODE_DB_SECRET" "$UNCERTAIN_DB_SECRET" "$UNKNOWN_LAYER_DB_SECRET" >/dev/null ||
+		fail "the $ENGINE_KIND database Secrets an earlier run left behind were not removed"
+	# The publisher objects carry the version they published in their names,
+	# and the versions are spread through the proofs, so they are found by the
+	# prefix publish_migrations gives them rather than listed a second time.
+	k -n "$TEST_NAMESPACE" get configmap,job -o name >"$LOG_FILE" ||
+		fail "the objects an earlier run left behind could not be listed"
+	grep -E "^(configmap/e2e-migrations-${ENGINE}-|job[.]batch/e2e-push-migrations-${ENGINE}-|job[.]batch/${ADOPT_BASELINE_JOB}\$)" \
+		"$LOG_FILE" >"$RESOURCE_FILE" || true
+	while IFS= read -r reset_object; do
+		k -n "$TEST_NAMESPACE" delete "$reset_object" \
+			--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+			fail "$reset_object was not removed"
+	done <"$RESOURCE_FILE"
+	for reset_database in "$MIGRATION_DATABASE" "$BRANCH_DATABASE" "$ADOPT_DATABASE" \
+		"$ADOPT_SHADOW_DATABASE" "$CHECKPOINT_DATABASE" "$TXMODE_DATABASE" \
+		"$UNCERTAIN_DATABASE" "$UNKNOWN_LAYER_DATABASE"; do
+		drop_database "$reset_database"
 	done
 }
 
 reset_after_an_earlier_run
 timing_next scenario migration-policy
 create_migration_policy
-timing_next scenario postgresql-migrations
-run_engine_migrations postgresql
-timing_next scenario mysql-transaction-mode
-run_transaction_mode_proof mysql
-timing_next scenario mysql-migrations
-run_engine_migrations mysql
+if [ "$PHASE_ENGINE" = postgresql ]; then
+	timing_next scenario postgresql-migrations
+	run_engine_migrations postgresql
+else
+	# The transaction-mode proof runs first, because it is the row that says
+	# which mode a MySQL sequence may name, and the sequence below names one.
+	timing_next scenario mysql-transaction-mode
+	run_transaction_mode_proof mysql
+	timing_next scenario mysql-migrations
+	run_engine_migrations mysql
+fi
 
 timing_end pass
 PHASE_COMPLETED=1
-printf '%s\n' 'e2e migrations: PASS approval gate, applied sequence, matching history, and credential isolation'
+printf 'e2e migrations: PASS %s approval gate, applied sequence, matching history, and credential isolation\n' \
+	"$ENGINE_KIND"

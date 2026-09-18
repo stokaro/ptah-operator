@@ -30,6 +30,7 @@ EXECUTOR_IMAGE=${E2E_EXECUTOR_IMAGE:-}
 RUNNER_IMAGE=${E2E_RUNNER_IMAGE:-}
 OPERATOR_NAMESPACE=${E2E_OPERATOR_NAMESPACE:-}
 REGISTRY_SERVICE=${E2E_REGISTRY_SERVICE:-registry}
+PHASE_ENGINE=${E2E_ENGINE:-}
 INTERVAL=${E2E_REFERENCE_DATA_INTERVAL:-45s}
 TIMEOUT_SECONDS=${E2E_TIMEOUT_SECONDS:-600}
 
@@ -86,6 +87,17 @@ for image in "$EXECUTOR_IMAGE" "$RUNNER_IMAGE"; do
 done
 printf '%s\n' "$TIMEOUT_SECONDS" | grep -Eq '^[1-9][0-9]*$' ||
 	fail "E2E_TIMEOUT_SECONDS must be a positive integer"
+
+# The suite a phase runs in names one engine, and this phase runs that one.
+# Both engines in one job made this the longest stage of the matrix by half an
+# hour, so the suites are split by engine and a phase that ran both would put
+# that stage back on the critical path. The value is checked here rather than
+# defaulted: a phase that silently ran one engine because the driver forgot to
+# name it is coverage nobody would notice was gone.
+case "$PHASE_ENGINE" in
+postgresql | mysql) ;;
+*) fail "E2E_ENGINE must name postgresql or mysql, and names \"$PHASE_ENGINE\"" ;;
+esac
 
 k() {
 	kubectl --kubeconfig "$KUBECONFIG_FILE" "$@"
@@ -1025,51 +1037,53 @@ reset_after_an_earlier_run() {
 	[ -n "$PHASE_RERUN" ] || return 0
 	printf 'e2e reference data: rerun %s: removing what an earlier run of this phase left behind\n' \
 		"$PHASE_RERUN" >&2
-	for reset_engine in postgresql mysql; do
-		select_engine "$reset_engine"
-		k -n "$TEST_NAMESPACE" delete ptahschema "$REFERENCE_SCHEMA" \
-			--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
-			fail "$REFERENCE_SCHEMA was not removed"
-		k -n "$TEST_NAMESPACE" delete secret "$REFERENCE_DB_SECRET" --ignore-not-found >/dev/null ||
-			fail "$REFERENCE_DB_SECRET was not removed"
-		k -n "$TEST_NAMESPACE" get ptahschemaapproval,configmap,job -o name >"$LOG_FILE" ||
-			fail "the objects an earlier run left behind could not be listed"
-		grep -E "^(ptahschemaapproval[.]operator[.]ptah[.]run/${REFERENCE_APPROVAL}|configmap/e2e-reference-${ENGINE}-|job[.]batch/e2e-push-reference-${ENGINE}-)" \
-			"$LOG_FILE" >"$RESOURCE_FILE" || true
-		while IFS= read -r reset_object; do
-			k -n "$TEST_NAMESPACE" delete "$reset_object" \
-				--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
-				fail "$reset_object was not removed"
-		done <"$RESOURCE_FILE"
-		case "$ENGINE" in
-		postgresql)
-			# FORCE ends the sessions an interrupted run left open.
-			# shellcheck disable=SC2016 # Variables expand inside the database container.
-			k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
-				sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "$1"' \
-				sh "DROP DATABASE IF EXISTS ${REFERENCE_DATABASE} WITH (FORCE)" >/dev/null ||
-				fail "database $REFERENCE_DATABASE could not be dropped on $ENGINE"
-			;;
-		mysql)
-			# shellcheck disable=SC2016 # Variables expand inside the database container.
-			k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
-				sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "$1"' \
-				sh "DROP DATABASE IF EXISTS ${REFERENCE_DATABASE}" >/dev/null ||
-				fail "database $REFERENCE_DATABASE could not be dropped on $ENGINE"
-			;;
-		esac
-	done
+	select_engine "$PHASE_ENGINE"
+	k -n "$TEST_NAMESPACE" delete ptahschema "$REFERENCE_SCHEMA" \
+		--ignore-not-found --wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+		fail "$REFERENCE_SCHEMA was not removed"
+	k -n "$TEST_NAMESPACE" delete secret "$REFERENCE_DB_SECRET" --ignore-not-found >/dev/null ||
+		fail "$REFERENCE_DB_SECRET was not removed"
+	k -n "$TEST_NAMESPACE" get ptahschemaapproval,configmap,job -o name >"$LOG_FILE" ||
+		fail "the objects an earlier run left behind could not be listed"
+	grep -E "^(ptahschemaapproval[.]operator[.]ptah[.]run/${REFERENCE_APPROVAL}|configmap/e2e-reference-${ENGINE}-|job[.]batch/e2e-push-reference-${ENGINE}-)" \
+		"$LOG_FILE" >"$RESOURCE_FILE" || true
+	while IFS= read -r reset_object; do
+		k -n "$TEST_NAMESPACE" delete "$reset_object" \
+			--wait=true --timeout="${TIMEOUT_SECONDS}s" >/dev/null ||
+			fail "$reset_object was not removed"
+	done <"$RESOURCE_FILE"
+	case "$ENGINE" in
+	postgresql)
+		# FORCE ends the sessions an interrupted run left open.
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -qc "$1"' \
+			sh "DROP DATABASE IF EXISTS ${REFERENCE_DATABASE} WITH (FORCE)" >/dev/null ||
+			fail "database $REFERENCE_DATABASE could not be dropped on $ENGINE"
+		;;
+	mysql)
+		# shellcheck disable=SC2016 # Variables expand inside the database container.
+		k -n "$TEST_NAMESPACE" exec deployment/"$DATABASE_SERVICE" -- \
+			sh -ec 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql --protocol=tcp -h 127.0.0.1 -uroot -e "$1"' \
+			sh "DROP DATABASE IF EXISTS ${REFERENCE_DATABASE}" >/dev/null ||
+			fail "database $REFERENCE_DATABASE could not be dropped on $ENGINE"
+		;;
+	esac
 }
 
 reset_after_an_earlier_run
 timing_next scenario declared-row-values
 collect_declared_row_values
 create_reference_policy
-timing_next scenario postgresql-reference-data
-run_engine_reference_data postgresql
-timing_next scenario mysql-reference-data
-run_engine_reference_data mysql
+if [ "$PHASE_ENGINE" = postgresql ]; then
+	timing_next scenario postgresql-reference-data
+	run_engine_reference_data postgresql
+else
+	timing_next scenario mysql-reference-data
+	run_engine_reference_data mysql
+fi
 
 timing_end pass
 PHASE_COMPLETED=1
-printf '%s\n' 'e2e reference data: PASS declared rows on both engines, with no row value in status, Events, or logs'
+printf 'e2e reference data: PASS %s declared rows, with no row value in status, Events, or logs\n' \
+	"$ENGINE_KIND"

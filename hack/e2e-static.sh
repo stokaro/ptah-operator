@@ -345,7 +345,9 @@ grep -F 'timing_end fail' "$ROOT_DIR/hack/e2e-kind.sh" >/dev/null || {
 # ninety-minute phase and nothing inside it, which is the measurement the
 # critical-path work needs most.
 for timing_phase_script in e2e-dataplane e2e-faults e2e-migrations e2e-reference-data; do
-	timing_scenarios=$(grep -c '^timing_next scenario ' \
+	# Indented too: a phase that selects its scenarios by engine marks them
+	# inside the branch that runs them.
+	timing_scenarios=$(grep -cE '^[[:space:]]*timing_next scenario ' \
 		"$ROOT_DIR/hack/$timing_phase_script.sh" || true)
 	[ "$timing_scenarios" -ge 3 ] || {
 		printf 'e2e static: %s marks %s scenarios; the report needs its steps named\n' \
@@ -1374,7 +1376,7 @@ for migration_marker in \
 	'did not settle on the history a person recorded' \
 	'after a person adopted the database' \
 	'(.status | has("lastRun") | not)' \
-	'e2e migrations: PASS approval gate, applied sequence, matching history, and credential isolation'; do
+	'e2e migrations: PASS %s approval gate, applied sequence, matching history, and credential isolation'; do
 	grep -F -- "$migration_marker" "$ROOT_DIR/hack/e2e-migrations.sh" >/dev/null || {
 		printf 'e2e static: live migration proof marker is missing: %s\n' "$migration_marker" >&2
 		exit 1
@@ -7048,16 +7050,22 @@ grep -F '| kubectl --kubeconfig "$KUBECONFIG_FILE" create -f - >/dev/null' \
 	exit 1
 }
 # Each phase that dispatches operations is handed the controller identity in
-# full, spelled the same way: the data plane, the migration path, and the
-# uninstall proof. The count is exact so a phase that stopped receiving one of
-# the three is a failure here rather than a Job the admission guards refuse in
-# a cluster an hour later.
+# full, spelled the same way: the data plane, the two migration paths -- one per
+# engine -- and the uninstall proof. The count is exact so a phase that stopped
+# receiving one of the three is a failure here rather than a Job the admission
+# guards refuse in a cluster an hour later.
 # shellcheck disable=SC2016 # Match literal runtime controller identity expressions.
 for controller_identity_assignment in \
 	'E2E_CONTROLLER_IMAGE=$CANDIDATE_OPERATOR_IMAGE' \
 	'E2E_CONTROLLER_REVISION=$CONTROLLER_REVISION' \
 	'E2E_CONTROLLER_STATE_VERSION=1'; do
-	[ "$(grep -Fc -- "$controller_identity_assignment" "$ROOT_DIR/hack/e2e-kind.sh")" -eq 3 ]
+	controller_identity_count=$(grep -Fc -- "$controller_identity_assignment" \
+		"$ROOT_DIR/hack/e2e-kind.sh")
+	[ "$controller_identity_count" -eq 4 ] || {
+		printf 'e2e static: %s is handed to %s phases, and four dispatch operations\n' \
+			"$controller_identity_assignment" "$controller_identity_count" >&2
+		exit 1
+	}
 done
 
 if make -s -C "$ROOT_DIR" docker-build REVISION=not-a-git-commit \
