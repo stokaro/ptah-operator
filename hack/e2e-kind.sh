@@ -2050,7 +2050,24 @@ ensure_source_image() {
 	fi
 	printf 'e2e: pulling source image %s through Docker context %s\n' \
 		"$source_image" "$SELECTED_DOCKER_CONTEXT"
-	docker --context "$DOCKER_CONTEXT" pull "$source_image"
+	# Three attempts, because the registry is the one input here that answers
+	# for reasons of its own: run 35335451239 lost a fifty-minute job to one
+	# "Error response from daemon" from Docker Hub, three minutes in. The image
+	# is pinned by digest, so a retry can only fetch the same bytes or fail
+	# again -- there is no outcome a retry could invent.
+	source_pull_attempt=1
+	while :; do
+		if docker --context "$DOCKER_CONTEXT" pull "$source_image"; then
+			break
+		fi
+		if [ "$source_pull_attempt" -ge 3 ]; then
+			fail "source image $source_image could not be pulled in $source_pull_attempt attempts"
+		fi
+		printf 'e2e: pull attempt %s for %s failed; retrying\n' \
+			"$source_pull_attempt" "$source_image"
+		source_pull_attempt=$((source_pull_attempt + 1))
+		sleep 5
+	done
 	add_created_image "$source_image"
 }
 
