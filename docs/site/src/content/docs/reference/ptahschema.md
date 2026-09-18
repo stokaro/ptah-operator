@@ -11,7 +11,7 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 
 | Field | Type | What it does |
 | --- | --- | --- |
-| `spec.desired` | `object`, required | OCIArtifactSourceSpec is the reusable, credential-isolated OCI source shape. The schema and future versioned-migration APIs intentionally reuse the transport contract while keeping their reconciliation lifecycles separate. |
+| `spec.desired` | `object`, required | Desired is the OCI artifact that declares the schema, and the rows a declaration names, to converge it to. |
 | `spec.desired.ociRef` | `string`, required | OCIRef is a desired-schema artifact reference. It may name a tag or a digest; every later operation receives only the resolved digest. |
 | `spec.desired.registryAuthFrom` | `object` | RegistryAuthSource describes a Secret without requiring the controller to read it. The kubelet projects only the selected credential representation into a Job, while every mode also projects the fixed registry authority grant to the runner. |
 | `spec.desired.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` |  |
@@ -35,14 +35,14 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `spec.desired.verificationPolicyFrom.key` | `string`, required | The key to select. |
 | `spec.desired.verificationPolicyFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.desired.verificationPolicyFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
-| `spec.dev` | `object` | DatabaseTargetRef is a database URL reference used for optional rehearsal. |
+| `spec.dev` | `object` | Dev is a scratch database Ptah may use where a comparison needs one. It is never the target, and nothing it holds is kept. |
 | `spec.dev.urlFrom` | `object`, required | SecretKeySelector selects a key of a Secret. |
 | `spec.dev.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `spec.dev.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.dev.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
 | `spec.execution` | `object`, default `{}` | Default the object itself so the API server also applies the nested execution defaults when a manifest omits the whole block. |
-| `spec.execution.activeDeadlineSeconds` | `integer`, default `900` |  |
-| `spec.execution.affinity` | `object` | Affinity is a group of affinity scheduling rules. |
+| `spec.execution.activeDeadlineSeconds` | `integer`, default `900` | ActiveDeadlineSeconds is how long one operation Job may run before Kubernetes ends it. An apply that hits this leaves an uncertain outcome, which returns to observation rather than to a replay. |
+| `spec.execution.affinity` | `object` | Affinity is scheduling affinity for those Pods. |
 | `spec.execution.affinity.nodeAffinity` | `object` | Describes node affinity scheduling rules for the pod. |
 | `spec.execution.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution` | `[]object` | The scheduler will prefer to schedule pods to nodes that satisfy the affinity expressions specified by this field, but it may choose a node that violates one or more of the expressions. The node that is most preferred is the one with the greatest sum of weights, i.e. for each node that meets all of the scheduling requirements (resource request, requiredDuringScheduling affinity expressions, etc.), compute a sum by iterating through the elements of this field and adding "weight" to the sum if the node matches the corresponding matchExpressions; the node(s) with the highest sum are the most preferred. |
 | `spec.execution.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].preference` | `object`, required | A node selector term, associated with the corresponding weight. |
@@ -139,37 +139,37 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `spec.execution.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[].namespaceSelector.matchLabels` | `object` | matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels map is equivalent to an element of matchExpressions, whose key field is "key", the operator is "In", and the values array contains only "value". The requirements are ANDed. |
 | `spec.execution.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[].namespaces` | `[]string` | namespaces specifies a static list of namespace names that the term applies to. The term is applied to the union of the namespaces listed in this field and the ones selected by namespaceSelector. null or empty namespaces list and null namespaceSelector means "this pod's namespace". |
 | `spec.execution.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[].topologyKey` | `string`, required | This pod should be co-located (affinity) or not co-located (anti-affinity) with the pods matching the labelSelector in the specified namespaces, where co-located is defined as running on a node whose value of the label with key topologyKey matches that of any node on which any of the selected pods is running. Empty topologyKey is not allowed. |
-| `spec.execution.connectTimeout` | `string`, default `10s` |  |
-| `spec.execution.failureRetryInterval` | `string`, default `30s` |  |
-| `spec.execution.imagePullSecrets` | `[]object` |  |
+| `spec.execution.connectTimeout` | `string`, default `10s` | ConnectTimeout bounds opening the database connection, so an unreachable database fails in seconds rather than holding the Job to its deadline. |
+| `spec.execution.failureRetryInterval` | `string`, default `30s` | FailureRetryInterval is how long the controller waits after a failed operation before trying the same one again. |
+| `spec.execution.imagePullSecrets` | `[]object` | ImagePullSecrets are the pull Secrets those Pods use. |
 | `spec.execution.imagePullSecrets[].name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
-| `spec.execution.nodeSelector` | `object` |  |
-| `spec.execution.priorityClassName` | `string` |  |
-| `spec.execution.resources` | `object` | ResourceRequirements describes the compute resource requirements. |
+| `spec.execution.nodeSelector` | `object` | NodeSelector restricts where operation Pods may be scheduled. |
+| `spec.execution.priorityClassName` | `string` | PriorityClassName is the scheduling priority they run at. |
+| `spec.execution.resources` | `object` | Resources are the requests and limits of the container that runs SQL. |
 | `spec.execution.resources.claims` | `[]object` | Claims lists the names of resources, defined in spec.resourceClaims, that are used by this container. This field depends on the DynamicResourceAllocation feature gate. This field is immutable. It can only be set for containers. |
 | `spec.execution.resources.claims[].name` | `string`, required | Name must match the name of one entry in pod.spec.resourceClaims of the Pod where this field is used. It makes that resource available inside a container. |
 | `spec.execution.resources.claims[].request` | `string` | Request is the name chosen for a request in the referenced claim. If empty, everything from the claim is made available, otherwise only the result of this request. |
 | `spec.execution.resources.limits` | `object` | Limits describes the maximum amount of compute resources allowed. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/ |
 | `spec.execution.resources.requests` | `object` | Requests describes the minimum amount of compute resources required. If Requests is omitted for a container, it defaults to Limits if that is explicitly specified, otherwise to an implementation-defined value. Requests cannot exceed Limits. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/ |
-| `spec.execution.runtimeClassName` | `string` |  |
-| `spec.execution.serviceAccountName` | `string` |  |
-| `spec.execution.tolerations` | `[]object` |  |
+| `spec.execution.runtimeClassName` | `string` | RuntimeClassName selects the container runtime they use. The admission snapshot records what the cluster resolved, so a class that changed under a claim is refused rather than run. |
+| `spec.execution.serviceAccountName` | `string` | ServiceAccountName is the identity operation Pods run as. It is theirs rather than the manager's, and it needs no Kubernetes permission at all. |
+| `spec.execution.tolerations` | `[]object` | Tolerations are the taints those Pods tolerate. |
 | `spec.execution.tolerations[].effect` | `string` | Effect indicates the taint effect to match. Empty means match all taint effects. When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute. |
 | `spec.execution.tolerations[].key` | `string` | Key is the taint key that the toleration applies to. Empty means match all taint keys. If the key is empty, operator must be Exists; this combination means to match all values and all keys. |
 | `spec.execution.tolerations[].operator` | `string` | Operator represents a key's relationship to the value. Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal. Exists is equivalent to wildcard for value, so that a pod can tolerate all taints of a particular category. Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators). |
 | `spec.execution.tolerations[].tolerationSeconds` | `integer` | TolerationSeconds represents the period of time the toleration (which must be of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default, it is not set, which means tolerate the taint forever (do not evict). Zero and negative values will be treated as 0 (evict immediately) by the system. |
 | `spec.execution.tolerations[].value` | `string` | Value is the taint value the toleration matches to. If the operator is Exists, the value should be empty, otherwise just a regular string. |
 | `spec.interval` | `string`, default `10m` | Interval is the cadence for resolving mutable tags and observing drift. |
-| `spec.policy` | `object`, default `{}` | ReconciliationPolicy defines safety decisions. Destructive plans always need both allowDestructive=true and a matching approval, even in Always mode. |
-| `spec.policy.allowDestructive` | `boolean`, default `false` |  |
-| `spec.policy.apply` | `string`, one of `Never`, `OnApproval`, `Always`, default `OnApproval` | ApplyPolicy controls when a current, non-stale plan may execute. |
-| `spec.policy.driftSeverity` | `string`, one of `all`, `destructive`, default `all` |  |
+| `spec.policy` | `object`, default `{}` | Policy decides what may happen without a person: whether a plan applies itself, whether a destructive one is permitted at all, what counts as drift, and which tables are fenced off entirely. |
+| `spec.policy.allowDestructive` | `boolean`, default `false` | AllowDestructive permits a plan that drops or rewrites something. It is permission for the category, not for a plan: a destructive plan still needs an approval where the apply policy asks for one. |
+| `spec.policy.apply` | `string`, one of `Never`, `OnApproval`, `Always`, default `OnApproval` | Apply decides when a current plan may run: never, only with an approval naming its exact bytes, or as soon as it is ready. |
+| `spec.policy.driftSeverity` | `string`, one of `all`, `destructive`, default `all` | DriftSeverity decides which differences count as drift worth applying: every difference, or only the destructive ones. |
 | `spec.policy.exclude` | `[]string` | Exclude defines the single authoritative managed scope. Raw drift is observed without exclusions, then a read-only plan classifies this exact scope as changed or converged. |
-| `spec.policy.lockTimeout` | `string`, default `30s` |  |
+| `spec.policy.lockTimeout` | `string`, default `30s` | LockTimeout is how long an operation waits for the database's own lock before giving up, so a busy database delays a run rather than stalling it for the Job's whole deadline. |
 | `spec.policy.protectedTables` | `[]string` | ProtectedTables fences declared row sets off from the declarative path. A plan that would change a listed table is refused rather than rated, and there is no override: an approval, allowDestructive and a permissive severity are all answers to "how risky is this", and a fence is the statement that no such answer exists for these rows. Where the change is wanted, the entry goes, or the rows are written as a migration. An entry names a table, or a schema and a table, the way the declaration does. Matching is Ptah's, which is case-insensitive, and an entry on a table the artifact already agrees with refuses nothing -- which is what lets a fence sit in a policy permanently. |
-| `spec.policy.transactionMode` | `string`, one of `all`, `file`, `none`, default `file` |  |
+| `spec.policy.transactionMode` | `string`, one of `all`, `file`, `none`, default `file` | TransactionMode is how the statements are wrapped: all in one transaction, one per file, or none at all. An engine that refuses a mode decides over this rather than around it. |
 | `spec.suspend` | `boolean`, default `false` | Suspend prevents new Jobs. A Job already applying is observed to a terminal result and is never replaced by a destructive cleanup action. |
-| `spec.target` | `object`, required | DatabaseTargetSpec identifies a supported engine, a namespaced Secret key, and the stable coordination realm shared by every route to the same physical database. There is deliberately no namespace field. |
+| `spec.target` | `object`, required | Target is the database to converge, named through a Secret the manager itself has no permission to read. |
 | `spec.target.coordinationKey` | `string`, required | CoordinationKey is a non-secret, stable identifier for the physical database realm. Every schema that can reach the same database through an alias, proxy, or different credential must use exactly the same key. |
 | `spec.target.engine` | `string`, required | DatabaseEngine names a database family. The API accepts bounded engine names so the controller can report unsupported families through status instead of turning a durable desired-state object into an admission-time dead end. |
 | `spec.target.sharedRealm` | `boolean`, default `false` | SharedRealm declares that this resource manages only part of the database its coordination key names, and that every other resource managing that database has declared the same. It defaults to false, and a realm that more than one resource claims is refused while any claimant leaves it false. Serialization is not ownership: two resources that never run at the same time still undo each other's work by taking turns, so the operator blocks them rather than letting them alternate. A resource that runs nothing claims nothing. Deleting one leaves the realm, and so does suspending it: suspension is how a resource steps aside without being deleted. Resuming it puts it back in the census, and the conflict is refused then, before any Job. The declaration is what is verified, not the disjointness. No analyzer can tell whether two sets of arbitrary SQL touch the same rows, and a field that claimed otherwise would be the wrong kind of assurance. What it buys is that sharing is deliberate on every side: one resource that has not declared it blocks all of them, itself included. |
@@ -182,7 +182,7 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 
 | Field | Type | What it does |
 | --- | --- | --- |
-| `status.activeOperation` | `object` | ActiveOperationStatus makes controller restarts resume one deterministic Job. |
+| `status.activeOperation` | `object` | ActiveOperation is the claim for the operation in flight. It is written before the Job exists, which is what lets the controller tell a Job it created from one it has not created yet. |
 | `status.activeOperation.admissionSnapshot` | `object` | AdmissionSnapshot is persisted before dispatch and is bound into the Job and Pod template annotations. It permits only modeled, safe built-in admission mutations while retaining exact validation for executable and security-sensitive Pod fields. |
 | `status.activeOperation.admissionSnapshot.alwaysPullImagesEnabled` | `boolean`, required | AlwaysPullImagesEnabled records whether kube-apiserver runs the AlwaysPullImages admission plugin. |
 | `status.activeOperation.admissionSnapshot.defaultNotReadyTolerationSeconds` | `integer`, required |  |
@@ -285,7 +285,7 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.activeOperation.type` | `string`, required, one of `Resolve`, `Verify`, `Observe`, `Plan`, `Apply` | OperationType identifies one serialized execution Job. |
 | `status.activeOperation.verificationPolicyDigest` | `string` |  |
 | `status.activeOperation.verificationPolicyUID` | `string` | VerificationPolicyUID and VerificationPolicyDigest bind a Verify Job to the immutable ConfigMap version inspected before dispatch. |
-| `status.applied` | `object` | AppliedStatus is written only after post-apply observation proves convergence. |
+| `status.applied` | `object` | Applied is the last apply that was independently observed to have converged, which is a different claim from a Job that exited zero. |
 | `status.applied.artifactDigest` | `string`, required |  |
 | `status.applied.completedAt` | `string`, required |  |
 | `status.applied.controllerImage` | `string` |  |
@@ -302,7 +302,7 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.applied.runnerImage` | `string`, required |  |
 | `status.applied.runnerProtocolVersion` | `integer`, required |  |
 | `status.applied.targetIdentityDigest` | `string`, required |  |
-| `status.conditions` | `[]object` |  |
+| `status.conditions` | `[]object` | Conditions are the readable verdicts: whether the engine is supported, the artifact resolved and verified, the database was reachable, drift was found, a plan is ready, an approval is required, the schema is in sync, and whether the last reconciliation failed. |
 | `status.conditions[].lastTransitionTime` | `string`, required | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
 | `status.conditions[].message` | `string`, required | message is a human readable message indicating details about the transition. This may be an empty string. |
 | `status.conditions[].observedGeneration` | `integer` | observedGeneration represents the .metadata.generation that the condition was set based upon. For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date with respect to the current state of the instance. |
@@ -318,10 +318,10 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.executionBinding.ptahVersion` | `string`, required |  |
 | `status.executionBinding.runnerImage` | `string`, required |  |
 | `status.executionBinding.runnerProtocolVersion` | `integer`, required |  |
-| `status.lastAttemptTime` | `string` |  |
-| `status.lastSuccessfulReconciliation` | `string` |  |
+| `status.lastAttemptTime` | `string` | LastAttemptTime is when the controller last tried to do something. |
+| `status.lastSuccessfulReconciliation` | `string` | LastSuccessfulReconciliation is when it last completed a cycle with nothing left to do. |
 | `status.nextReconciliationTime` | `string` | NextReconciliationTime is the durable earliest time for the next scheduled read-only reconciliation. Event-driven safety work may run sooner. |
-| `status.observedGeneration` | `integer` |  |
+| `status.observedGeneration` | `integer` | ObservedGeneration is the spec generation this status describes. |
 | `status.pendingLockRelease` | `object` | PendingLockRelease keeps the exact Lease owner and epoch durable until an idempotent release succeeds. It closes the manager-crash window between a terminal status transition and clearing the owner-neutral Lease. |
 | `status.pendingLockRelease.coordinationDigest` | `string`, required |  |
 | `status.pendingLockRelease.leaseDurationSeconds` | `integer`, required |  |
@@ -395,8 +395,8 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.pendingObservation.observeAfter` | `string` | ObserveAfter delays proof when the Kubernetes Job identity or create result is uncertain. Until this time, the original mutating Pod could still be within its immutable active deadline. |
 | `status.pendingObservation.outcome` | `string`, required, one of `ApplySucceeded`, `OutcomeUnknown` | PendingObservationOutcome records why read-only convergence proof is mandatory before another mutation may be considered. |
 | `status.pendingObservation.plan` | `object`, required | CurrentPlanStatus is a compact reference to an immutable PtahSchemaPlan. |
-| `status.pendingObservation.plan.actualStateFingerprint` | `string`, required |  |
-| `status.pendingObservation.plan.approval` | `object` | ConsumedApprovalStatus records the immutable approval object and identity. |
+| `status.pendingObservation.plan.actualStateFingerprint` | `string`, required | ActualStateFingerprint is the observed state it was planned from. |
+| `status.pendingObservation.plan.approval` | `object` | Approval is the decision that authorized this plan, where one was made. |
 | `status.pendingObservation.plan.approval.approvedAt` | `string`, required |  |
 | `status.pendingObservation.plan.approval.approver` | `object`, required | ApprovalIdentity is stamped from the authenticated admission request. The API client does not choose these fields. |
 | `status.pendingObservation.plan.approval.approver.groups` | `[]string` | Groups the authenticated user belonged to at that moment. |
@@ -404,28 +404,28 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.pendingObservation.plan.approval.approver.username` | `string`, required | Username the API server authenticated the request as. |
 | `status.pendingObservation.plan.approval.name` | `string`, required |  |
 | `status.pendingObservation.plan.approval.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
-| `status.pendingObservation.plan.artifactDigest` | `string`, required |  |
-| `status.pendingObservation.plan.contentDigest` | `string`, required |  |
-| `status.pendingObservation.plan.controllerImage` | `string` |  |
-| `status.pendingObservation.plan.controllerRevision` | `string` |  |
-| `status.pendingObservation.plan.controllerStateVersion` | `integer` |  |
-| `status.pendingObservation.plan.coordinationDigest` | `string`, required |  |
+| `status.pendingObservation.plan.artifactDigest` | `string`, required | ArtifactDigest is the artifact the plan was computed from. |
+| `status.pendingObservation.plan.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes. |
+| `status.pendingObservation.plan.controllerImage` | `string` | ControllerImage is the digest-pinned manager that published it. |
+| `status.pendingObservation.plan.controllerRevision` | `string` | ControllerRevision is that manager's revision. |
+| `status.pendingObservation.plan.controllerStateVersion` | `integer` | ControllerStateVersion is the state semantics it writes. |
+| `status.pendingObservation.plan.coordinationDigest` | `string`, required | CoordinationDigest is the database realm it takes its turn in. |
 | `status.pendingObservation.plan.createdAt` | `string`, required | CreatedAt is the plan object's own creation time, copied like every other field here, so an audit of this record and of the plan it names cannot disagree about when the plan came into being. |
-| `status.pendingObservation.plan.desiredStateFingerprint` | `string`, required |  |
-| `status.pendingObservation.plan.destructive` | `boolean`, required |  |
-| `status.pendingObservation.plan.executionBindingID` | `string` |  |
-| `status.pendingObservation.plan.executorImage` | `string`, required |  |
-| `status.pendingObservation.plan.fingerprint` | `string`, required |  |
-| `status.pendingObservation.plan.name` | `string`, required |  |
-| `status.pendingObservation.plan.policyFingerprint` | `string`, required |  |
-| `status.pendingObservation.plan.ptahVersion` | `string`, required |  |
-| `status.pendingObservation.plan.runnerImage` | `string`, required |  |
-| `status.pendingObservation.plan.runnerProtocolVersion` | `integer`, required |  |
-| `status.pendingObservation.plan.statementCount` | `integer`, required |  |
-| `status.pendingObservation.plan.targetIdentityDigest` | `string`, required |  |
-| `status.pendingObservation.plan.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
-| `status.pendingObservation.plan.verificationPolicyDigest` | `string`, required |  |
-| `status.pendingObservation.plan.verificationPolicyUID` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
+| `status.pendingObservation.plan.desiredStateFingerprint` | `string`, required | DesiredStateFingerprint is the state the artifact declared. |
+| `status.pendingObservation.plan.destructive` | `boolean`, required | Destructive says the plan drops or rewrites something. |
+| `status.pendingObservation.plan.executionBindingID` | `string` | ExecutionBindingID is the execution epoch it belongs to. |
+| `status.pendingObservation.plan.executorImage` | `string`, required | ExecutorImage is the digest-pinned image that ran it. |
+| `status.pendingObservation.plan.fingerprint` | `string`, required | Fingerprint is the plan's complete approval identity, and the fields below are that identity spelled out. They are copied here so a reader -- and an audit -- can see what is waiting without fetching the plan. |
+| `status.pendingObservation.plan.name` | `string`, required | Name of the PtahSchemaPlan this record is about. |
+| `status.pendingObservation.plan.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy it was computed under. |
+| `status.pendingObservation.plan.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the plan. |
+| `status.pendingObservation.plan.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised it. |
+| `status.pendingObservation.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
+| `status.pendingObservation.plan.statementCount` | `integer`, required | StatementCount is how many statements it holds. The statements themselves are not here: read them with kubectl ptah plan. |
+| `status.pendingObservation.plan.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
+| `status.pendingObservation.plan.uid` | `string`, required | UID it had when this record was written. |
+| `status.pendingObservation.plan.verificationPolicyDigest` | `string`, required | VerificationPolicyDigest is that policy's content at the time. |
+| `status.pendingObservation.plan.verificationPolicyUID` | `string`, required | VerificationPolicyUID is the policy object that accepted the artifact. |
 | `status.pendingObservation.planRequired` | `boolean` | PlanRequired records that the raw drift read completed and the same immutable proof inputs now require authoritative managed-scope planning. |
 | `status.pendingObservation.protectedTables` | `[]string` | ProtectedTables is the fence the in-flight plan was computed under. A policy edit while a plan is pending must not let it execute against a fence it never saw. |
 | `status.pendingObservation.source` | `object`, required | OCIArtifactAccessBinding is a credential-free, immutable snapshot of the exact artifact and Kubernetes credential selectors needed to fetch it. It is persisted across post-Apply proof so a newer generation cannot send newly selected credentials to the old artifact's registry. |
@@ -455,10 +455,10 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.pendingObservation.target.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `status.pendingObservation.target.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.pendingObservation.target.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
-| `status.phase` | `string`, one of `Pending`, `Resolving`, `Verifying`, `Observing`, `Planning`, `ReadyToApply`, `AwaitingApproval`, `Blocked`, `Applying`, `VerifyingConvergence`, `InSync`, `Suspended`, `Failed` | ReconciliationPhase is the externally visible state-machine phase. |
-| `status.plan` | `object` | CurrentPlanStatus is a compact reference to an immutable PtahSchemaPlan. |
-| `status.plan.actualStateFingerprint` | `string`, required |  |
-| `status.plan.approval` | `object` | ConsumedApprovalStatus records the immutable approval object and identity. |
+| `status.phase` | `string`, one of `Pending`, `Resolving`, `Verifying`, `Observing`, `Planning`, `ReadyToApply`, `AwaitingApproval`, `Blocked`, `Applying`, `VerifyingConvergence`, `InSync`, `Suspended`, `Failed` | Phase is where the resource stands, as one word for a reader. The conditions below are what a decision reads: a resource legitimately passes through several phases while one refusal stays true. |
+| `status.plan` | `object` | Plan is the published plan waiting to run, where there is one. |
+| `status.plan.actualStateFingerprint` | `string`, required | ActualStateFingerprint is the observed state it was planned from. |
+| `status.plan.approval` | `object` | Approval is the decision that authorized this plan, where one was made. |
 | `status.plan.approval.approvedAt` | `string`, required |  |
 | `status.plan.approval.approver` | `object`, required | ApprovalIdentity is stamped from the authenticated admission request. The API client does not choose these fields. |
 | `status.plan.approval.approver.groups` | `[]string` | Groups the authenticated user belonged to at that moment. |
@@ -466,29 +466,29 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.plan.approval.approver.username` | `string`, required | Username the API server authenticated the request as. |
 | `status.plan.approval.name` | `string`, required |  |
 | `status.plan.approval.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
-| `status.plan.artifactDigest` | `string`, required |  |
-| `status.plan.contentDigest` | `string`, required |  |
-| `status.plan.controllerImage` | `string` |  |
-| `status.plan.controllerRevision` | `string` |  |
-| `status.plan.controllerStateVersion` | `integer` |  |
-| `status.plan.coordinationDigest` | `string`, required |  |
+| `status.plan.artifactDigest` | `string`, required | ArtifactDigest is the artifact the plan was computed from. |
+| `status.plan.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes. |
+| `status.plan.controllerImage` | `string` | ControllerImage is the digest-pinned manager that published it. |
+| `status.plan.controllerRevision` | `string` | ControllerRevision is that manager's revision. |
+| `status.plan.controllerStateVersion` | `integer` | ControllerStateVersion is the state semantics it writes. |
+| `status.plan.coordinationDigest` | `string`, required | CoordinationDigest is the database realm it takes its turn in. |
 | `status.plan.createdAt` | `string`, required | CreatedAt is the plan object's own creation time, copied like every other field here, so an audit of this record and of the plan it names cannot disagree about when the plan came into being. |
-| `status.plan.desiredStateFingerprint` | `string`, required |  |
-| `status.plan.destructive` | `boolean`, required |  |
-| `status.plan.executionBindingID` | `string` |  |
-| `status.plan.executorImage` | `string`, required |  |
-| `status.plan.fingerprint` | `string`, required |  |
-| `status.plan.name` | `string`, required |  |
-| `status.plan.policyFingerprint` | `string`, required |  |
-| `status.plan.ptahVersion` | `string`, required |  |
-| `status.plan.runnerImage` | `string`, required |  |
-| `status.plan.runnerProtocolVersion` | `integer`, required |  |
-| `status.plan.statementCount` | `integer`, required |  |
-| `status.plan.targetIdentityDigest` | `string`, required |  |
-| `status.plan.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
-| `status.plan.verificationPolicyDigest` | `string`, required |  |
-| `status.plan.verificationPolicyUID` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
-| `status.source` | `object` | SchemaSourceStatus binds the requested reference to verified immutable data. |
+| `status.plan.desiredStateFingerprint` | `string`, required | DesiredStateFingerprint is the state the artifact declared. |
+| `status.plan.destructive` | `boolean`, required | Destructive says the plan drops or rewrites something. |
+| `status.plan.executionBindingID` | `string` | ExecutionBindingID is the execution epoch it belongs to. |
+| `status.plan.executorImage` | `string`, required | ExecutorImage is the digest-pinned image that ran it. |
+| `status.plan.fingerprint` | `string`, required | Fingerprint is the plan's complete approval identity, and the fields below are that identity spelled out. They are copied here so a reader -- and an audit -- can see what is waiting without fetching the plan. |
+| `status.plan.name` | `string`, required | Name of the PtahSchemaPlan this record is about. |
+| `status.plan.policyFingerprint` | `string`, required | PolicyFingerprint is the spec.policy it was computed under. |
+| `status.plan.ptahVersion` | `string`, required | PtahVersion is the Ptah build that computed the plan. |
+| `status.plan.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised it. |
+| `status.plan.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
+| `status.plan.statementCount` | `integer`, required | StatementCount is how many statements it holds. The statements themselves are not here: read them with kubectl ptah plan. |
+| `status.plan.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it was computed against. |
+| `status.plan.uid` | `string`, required | UID it had when this record was written. |
+| `status.plan.verificationPolicyDigest` | `string`, required | VerificationPolicyDigest is that policy's content at the time. |
+| `status.plan.verificationPolicyUID` | `string`, required | VerificationPolicyUID is the policy object that accepted the artifact. |
+| `status.source` | `object` | Source is what the desired artifact resolved and verified to. |
 | `status.source.artifactType` | `string` |  |
 | `status.source.digest` | `string` |  |
 | `status.source.mediaType` | `string` |  |
@@ -500,7 +500,7 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.source.verificationPolicyUID` | `string` | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
 | `status.source.verified` | `boolean` |  |
 | `status.source.verifiedAt` | `string` |  |
-| `status.target` | `object` | TargetStatus identifies the Secret value and observed schema without disclosing either the connection string or its credentials. |
+| `status.target` | `object` | Target is what the last observation found in the database. |
 | `status.target.coordinationDigest` | `string` |  |
 | `status.target.driftFindingCount` | `integer` |  |
 | `status.target.driftFindings` | `[]object` | DriftFindings contains only category-level aggregates. The total count above covers the complete report even when this list is truncated. |

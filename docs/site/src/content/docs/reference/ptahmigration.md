@@ -36,8 +36,8 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `spec.artifact.verificationPolicyFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.verificationPolicyFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `spec.execution` | `object`, default `{}` | Execution shapes the Job a run happens in: its deadlines, its resources and the scheduling it inherits. |
-| `spec.execution.activeDeadlineSeconds` | `integer`, default `900` |  |
-| `spec.execution.affinity` | `object` | Affinity is a group of affinity scheduling rules. |
+| `spec.execution.activeDeadlineSeconds` | `integer`, default `900` | ActiveDeadlineSeconds is how long one operation Job may run before Kubernetes ends it. An apply that hits this leaves an uncertain outcome, which returns to observation rather than to a replay. |
+| `spec.execution.affinity` | `object` | Affinity is scheduling affinity for those Pods. |
 | `spec.execution.affinity.nodeAffinity` | `object` | Describes node affinity scheduling rules for the pod. |
 | `spec.execution.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution` | `[]object` | The scheduler will prefer to schedule pods to nodes that satisfy the affinity expressions specified by this field, but it may choose a node that violates one or more of the expressions. The node that is most preferred is the one with the greatest sum of weights, i.e. for each node that meets all of the scheduling requirements (resource request, requiredDuringScheduling affinity expressions, etc.), compute a sum by iterating through the elements of this field and adding "weight" to the sum if the node matches the corresponding matchExpressions; the node(s) with the highest sum are the most preferred. |
 | `spec.execution.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[].preference` | `object`, required | A node selector term, associated with the corresponding weight. |
@@ -134,21 +134,21 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `spec.execution.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[].namespaceSelector.matchLabels` | `object` | matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels map is equivalent to an element of matchExpressions, whose key field is "key", the operator is "In", and the values array contains only "value". The requirements are ANDed. |
 | `spec.execution.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[].namespaces` | `[]string` | namespaces specifies a static list of namespace names that the term applies to. The term is applied to the union of the namespaces listed in this field and the ones selected by namespaceSelector. null or empty namespaces list and null namespaceSelector means "this pod's namespace". |
 | `spec.execution.affinity.podAntiAffinity.requiredDuringSchedulingIgnoredDuringExecution[].topologyKey` | `string`, required | This pod should be co-located (affinity) or not co-located (anti-affinity) with the pods matching the labelSelector in the specified namespaces, where co-located is defined as running on a node whose value of the label with key topologyKey matches that of any node on which any of the selected pods is running. Empty topologyKey is not allowed. |
-| `spec.execution.connectTimeout` | `string`, default `10s` |  |
-| `spec.execution.failureRetryInterval` | `string`, default `30s` |  |
-| `spec.execution.imagePullSecrets` | `[]object` |  |
+| `spec.execution.connectTimeout` | `string`, default `10s` | ConnectTimeout bounds opening the database connection, so an unreachable database fails in seconds rather than holding the Job to its deadline. |
+| `spec.execution.failureRetryInterval` | `string`, default `30s` | FailureRetryInterval is how long the controller waits after a failed operation before trying the same one again. |
+| `spec.execution.imagePullSecrets` | `[]object` | ImagePullSecrets are the pull Secrets those Pods use. |
 | `spec.execution.imagePullSecrets[].name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
-| `spec.execution.nodeSelector` | `object` |  |
-| `spec.execution.priorityClassName` | `string` |  |
-| `spec.execution.resources` | `object` | ResourceRequirements describes the compute resource requirements. |
+| `spec.execution.nodeSelector` | `object` | NodeSelector restricts where operation Pods may be scheduled. |
+| `spec.execution.priorityClassName` | `string` | PriorityClassName is the scheduling priority they run at. |
+| `spec.execution.resources` | `object` | Resources are the requests and limits of the container that runs SQL. |
 | `spec.execution.resources.claims` | `[]object` | Claims lists the names of resources, defined in spec.resourceClaims, that are used by this container. This field depends on the DynamicResourceAllocation feature gate. This field is immutable. It can only be set for containers. |
 | `spec.execution.resources.claims[].name` | `string`, required | Name must match the name of one entry in pod.spec.resourceClaims of the Pod where this field is used. It makes that resource available inside a container. |
 | `spec.execution.resources.claims[].request` | `string` | Request is the name chosen for a request in the referenced claim. If empty, everything from the claim is made available, otherwise only the result of this request. |
 | `spec.execution.resources.limits` | `object` | Limits describes the maximum amount of compute resources allowed. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/ |
 | `spec.execution.resources.requests` | `object` | Requests describes the minimum amount of compute resources required. If Requests is omitted for a container, it defaults to Limits if that is explicitly specified, otherwise to an implementation-defined value. Requests cannot exceed Limits. More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/ |
-| `spec.execution.runtimeClassName` | `string` |  |
-| `spec.execution.serviceAccountName` | `string` |  |
-| `spec.execution.tolerations` | `[]object` |  |
+| `spec.execution.runtimeClassName` | `string` | RuntimeClassName selects the container runtime they use. The admission snapshot records what the cluster resolved, so a class that changed under a claim is refused rather than run. |
+| `spec.execution.serviceAccountName` | `string` | ServiceAccountName is the identity operation Pods run as. It is theirs rather than the manager's, and it needs no Kubernetes permission at all. |
+| `spec.execution.tolerations` | `[]object` | Tolerations are the taints those Pods tolerate. |
 | `spec.execution.tolerations[].effect` | `string` | Effect indicates the taint effect to match. Empty means match all taint effects. When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute. |
 | `spec.execution.tolerations[].key` | `string` | Key is the taint key that the toleration applies to. Empty means match all taint keys. If the key is empty, operator must be Exists; this combination means to match all values and all keys. |
 | `spec.execution.tolerations[].operator` | `string` | Operator represents a key's relationship to the value. Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal. Exists is equivalent to wildcard for value, so that a pod can tolerate all taints of a particular category. Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators). |

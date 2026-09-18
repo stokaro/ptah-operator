@@ -95,9 +95,18 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.dev) || (self.dev.urlFrom.name.size() > 0 && self.dev.urlFrom.key.size() > 0 && (!has(self.dev.urlFrom.optional) || !self.dev.urlFrom.optional))",message="dev.urlFrom must name a required Secret key"
 // +kubebuilder:validation:XValidation:rule="!has(self.desired.transport) || !has(self.desired.transport.caFrom) || (self.desired.transport.caFrom.name.size() > 0 && self.desired.transport.caFrom.key.size() > 0 && (!has(self.desired.transport.caFrom.optional) || !self.desired.transport.caFrom.optional))",message="desired.transport.caFrom must name a required ConfigMap key"
 type PtahSchemaSpec struct {
-	Target  DatabaseTargetSpec    `json:"target"`
+	// Target is the database to converge, named through a Secret the manager
+	// itself has no permission to read.
+	Target DatabaseTargetSpec `json:"target"`
+	// Desired is the OCI artifact that declares the schema, and the rows a
+	// declaration names, to converge it to.
 	Desired OCIArtifactSourceSpec `json:"desired"`
-	Dev     *DatabaseTargetRef    `json:"dev,omitempty"`
+	// Dev is a scratch database Ptah may use where a comparison needs one. It
+	// is never the target, and nothing it holds is kept.
+	Dev *DatabaseTargetRef `json:"dev,omitempty"`
+	// Policy decides what may happen without a person: whether a plan applies
+	// itself, whether a destructive one is permitted at all, what counts as
+	// drift, and which tables are fenced off entirely.
 	// +kubebuilder:default={}
 	Policy ReconciliationPolicy `json:"policy,omitempty"`
 
@@ -270,12 +279,19 @@ type TLSSecretReference struct {
 // ReconciliationPolicy defines safety decisions. Destructive plans always
 // need both allowDestructive=true and a matching approval, even in Always mode.
 type ReconciliationPolicy struct {
+	// Apply decides when a current plan may run: never, only with an approval
+	// naming its exact bytes, or as soon as it is ready.
 	// +kubebuilder:default=OnApproval
 	Apply ApplyPolicy `json:"apply,omitempty"`
 
+	// AllowDestructive permits a plan that drops or rewrites something. It is
+	// permission for the category, not for a plan: a destructive plan still
+	// needs an approval where the apply policy asks for one.
 	// +kubebuilder:default=false
 	AllowDestructive bool `json:"allowDestructive,omitempty"`
 
+	// DriftSeverity decides which differences count as drift worth applying:
+	// every difference, or only the destructive ones.
 	// +kubebuilder:validation:Enum=all;destructive
 	// +kubebuilder:default=all
 	DriftSeverity string `json:"driftSeverity,omitempty"`
@@ -290,12 +306,18 @@ type ReconciliationPolicy struct {
 	// +kubebuilder:validation:items:Pattern=`^[^\p{Z}\x00-\x20\x7f\x{0085}](?:[^\x00-\x1f\x7f]*[^\p{Z}\x00-\x20\x7f\x{0085}])?$`
 	Exclude []string `json:"exclude,omitempty"`
 
+	// LockTimeout is how long an operation waits for the database's own lock
+	// before giving up, so a busy database delays a run rather than stalling it
+	// for the Job's whole deadline.
 	// +kubebuilder:default="30s"
 	// +kubebuilder:validation:Type=string
 	// +kubebuilder:validation:MaxLength=32
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('1s') && duration(self) <= duration('10m')",message="lockTimeout must be between 1s and 10m"
 	LockTimeout metav1.Duration `json:"lockTimeout,omitempty"`
 
+	// TransactionMode is how the statements are wrapped: all in one
+	// transaction, one per file, or none at all. An engine that refuses a mode
+	// decides over this rather than around it.
 	// +kubebuilder:validation:Enum=all;file;none
 	// +kubebuilder:default=file
 	TransactionMode string `json:"transactionMode,omitempty"`
@@ -323,38 +345,60 @@ type ReconciliationPolicy struct {
 // ExecutionSpec exposes bounded scheduling and resource controls while
 // withholding arbitrary Pod/container command customization.
 type ExecutionSpec struct {
+	// ActiveDeadlineSeconds is how long one operation Job may run before
+	// Kubernetes ends it. An apply that hits this leaves an uncertain outcome,
+	// which returns to observation rather than to a replay.
 	// +kubebuilder:validation:Minimum=30
 	// +kubebuilder:validation:Maximum=86400
 	// +kubebuilder:default=900
 	ActiveDeadlineSeconds int64 `json:"activeDeadlineSeconds,omitempty"`
 
+	// FailureRetryInterval is how long the controller waits after a failed
+	// operation before trying the same one again.
 	// +kubebuilder:default="30s"
 	// +kubebuilder:validation:Type=string
 	// +kubebuilder:validation:MaxLength=32
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('5s') && duration(self) <= duration('1h')",message="failureRetryInterval must be between 5s and 1h"
 	FailureRetryInterval metav1.Duration `json:"failureRetryInterval,omitempty"`
 
+	// ConnectTimeout bounds opening the database connection, so an unreachable
+	// database fails in seconds rather than holding the Job to its deadline.
 	// +kubebuilder:default="10s"
 	// +kubebuilder:validation:Type=string
 	// +kubebuilder:validation:MaxLength=32
 	// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('1s') && duration(self) <= duration('10m')",message="connectTimeout must be between 1s and 10m"
 	ConnectTimeout metav1.Duration `json:"connectTimeout,omitempty"`
 
+	// Resources are the requests and limits of the container that runs SQL.
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	ServiceAccountName string                        `json:"serviceAccountName,omitempty"`
-	ImagePullSecrets   []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
-	NodeSelector       map[string]string             `json:"nodeSelector,omitempty"`
-	Tolerations        []corev1.Toleration           `json:"tolerations,omitempty"`
-	Affinity           *corev1.Affinity              `json:"affinity,omitempty"`
-	RuntimeClassName   *string                       `json:"runtimeClassName,omitempty"`
-	PriorityClassName  string                        `json:"priorityClassName,omitempty"`
+	// ServiceAccountName is the identity operation Pods run as. It is theirs
+	// rather than the manager's, and it needs no Kubernetes permission at all.
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+	// ImagePullSecrets are the pull Secrets those Pods use.
+	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
+	// NodeSelector restricts where operation Pods may be scheduled.
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+	// Tolerations are the taints those Pods tolerate.
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+	// Affinity is scheduling affinity for those Pods.
+	Affinity *corev1.Affinity `json:"affinity,omitempty"`
+	// RuntimeClassName selects the container runtime they use. The admission
+	// snapshot records what the cluster resolved, so a class that changed under
+	// a claim is refused rather than run.
+	RuntimeClassName *string `json:"runtimeClassName,omitempty"`
+	// PriorityClassName is the scheduling priority they run at.
+	PriorityClassName string `json:"priorityClassName,omitempty"`
 }
 
 // PtahSchemaStatus records only credential-free reconciliation evidence.
 type PtahSchemaStatus struct {
-	ObservedGeneration int64               `json:"observedGeneration,omitempty"`
-	Phase              ReconciliationPhase `json:"phase,omitempty"`
+	// ObservedGeneration is the spec generation this status describes.
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// Phase is where the resource stands, as one word for a reader. The
+	// conditions below are what a decision reads: a resource legitimately
+	// passes through several phases while one refusal stays true.
+	Phase ReconciliationPhase `json:"phase,omitempty"`
 
 	// ExecutionBinding is the durable identity of the controller/runtime epoch
 	// authorized to produce new reconciliation evidence. Retained evidence stays
@@ -362,10 +406,15 @@ type PtahSchemaStatus struct {
 	// including a rollback to identical values.
 	ExecutionBinding *ExecutionBindingStatus `json:"executionBinding,omitempty"`
 
-	Source  SchemaSourceStatus `json:"source,omitempty"`
-	Target  TargetStatus       `json:"target,omitempty"`
-	Plan    *CurrentPlanStatus `json:"plan,omitempty"`
-	Applied *AppliedStatus     `json:"applied,omitempty"`
+	// Source is what the desired artifact resolved and verified to.
+	Source SchemaSourceStatus `json:"source,omitempty"`
+	// Target is what the last observation found in the database.
+	Target TargetStatus `json:"target,omitempty"`
+	// Plan is the published plan waiting to run, where there is one.
+	Plan *CurrentPlanStatus `json:"plan,omitempty"`
+	// Applied is the last apply that was independently observed to have
+	// converged, which is a different claim from a Job that exited zero.
+	Applied *AppliedStatus `json:"applied,omitempty"`
 
 	// PendingObservation is durable proof work created after an Apply Job may
 	// have mutated the database. It is independent of Phase so retries and
@@ -376,15 +425,25 @@ type PtahSchemaStatus struct {
 	// terminal status transition and clearing the owner-neutral Lease.
 	PendingLockRelease *TargetLockReleaseStatus `json:"pendingLockRelease,omitempty"`
 
+	// ActiveOperation is the claim for the operation in flight. It is written
+	// before the Job exists, which is what lets the controller tell a Job it
+	// created from one it has not created yet.
 	ActiveOperation *ActiveOperationStatus `json:"activeOperation,omitempty"`
 
-	LastAttemptTime              *metav1.Time `json:"lastAttemptTime,omitempty"`
+	// LastAttemptTime is when the controller last tried to do something.
+	LastAttemptTime *metav1.Time `json:"lastAttemptTime,omitempty"`
+	// LastSuccessfulReconciliation is when it last completed a cycle with
+	// nothing left to do.
 	LastSuccessfulReconciliation *metav1.Time `json:"lastSuccessfulReconciliation,omitempty"`
 	// NextReconciliationTime is the durable earliest time for the next
 	// scheduled read-only reconciliation. Event-driven safety work may run
 	// sooner.
 	NextReconciliationTime *metav1.Time `json:"nextReconciliationTime,omitempty"`
 
+	// Conditions are the readable verdicts: whether the engine is supported,
+	// the artifact resolved and verified, the database was reachable, drift was
+	// found, a plan is ready, an approval is required, the schema is in sync,
+	// and whether the last reconciliation failed.
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
@@ -595,40 +654,66 @@ type TargetStatus struct {
 
 // CurrentPlanStatus is a compact reference to an immutable PtahSchemaPlan.
 type CurrentPlanStatus struct {
-	Name string    `json:"name"`
-	UID  types.UID `json:"uid"`
+	// Name of the PtahSchemaPlan this record is about.
+	Name string `json:"name"`
+	// UID it had when this record was written.
+	UID types.UID `json:"uid"`
 
-	Fingerprint              string    `json:"fingerprint"`
-	ContentDigest            string    `json:"contentDigest"`
-	ArtifactDigest           string    `json:"artifactDigest"`
-	CoordinationDigest       string    `json:"coordinationDigest"`
-	TargetIdentityDigest     string    `json:"targetIdentityDigest"`
-	ActualStateFingerprint   string    `json:"actualStateFingerprint"`
-	DesiredStateFingerprint  string    `json:"desiredStateFingerprint"`
-	PolicyFingerprint        string    `json:"policyFingerprint"`
-	VerificationPolicyUID    types.UID `json:"verificationPolicyUID"`
-	VerificationPolicyDigest string    `json:"verificationPolicyDigest"`
+	// Fingerprint is the plan's complete approval identity, and the fields
+	// below are that identity spelled out. They are copied here so a reader --
+	// and an audit -- can see what is waiting without fetching the plan.
+	Fingerprint string `json:"fingerprint"`
+	// ContentDigest is the digest of the plan bytes.
+	ContentDigest string `json:"contentDigest"`
+	// ArtifactDigest is the artifact the plan was computed from.
+	ArtifactDigest string `json:"artifactDigest"`
+	// CoordinationDigest is the database realm it takes its turn in.
+	CoordinationDigest string `json:"coordinationDigest"`
+	// TargetIdentityDigest is the database it was computed against.
+	TargetIdentityDigest string `json:"targetIdentityDigest"`
+	// ActualStateFingerprint is the observed state it was planned from.
+	ActualStateFingerprint string `json:"actualStateFingerprint"`
+	// DesiredStateFingerprint is the state the artifact declared.
+	DesiredStateFingerprint string `json:"desiredStateFingerprint"`
+	// PolicyFingerprint is the spec.policy it was computed under.
+	PolicyFingerprint string `json:"policyFingerprint"`
+	// VerificationPolicyUID is the policy object that accepted the artifact.
+	VerificationPolicyUID types.UID `json:"verificationPolicyUID"`
+	// VerificationPolicyDigest is that policy's content at the time.
+	VerificationPolicyDigest string `json:"verificationPolicyDigest"`
+	// ExecutionBindingID is the execution epoch it belongs to.
 	// +kubebuilder:validation:Pattern=`^v1-[0-9a-f]{32}$`
 	ExecutionBindingID string `json:"executionBindingID,omitempty"`
+	// ControllerImage is the digest-pinned manager that published it.
 	// +kubebuilder:validation:Pattern=`^[^[:space:]@]+@sha256:[0-9a-f]{64}$`
 	ControllerImage string `json:"controllerImage,omitempty"`
+	// ControllerRevision is that manager's revision.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
 	// +kubebuilder:validation:Pattern=`^[^[:space:][:cntrl:]]([^[:cntrl:]]*[^[:space:][:cntrl:]])?$`
 	ControllerRevision string `json:"controllerRevision,omitempty"`
+	// ControllerStateVersion is the state semantics it writes.
 	// +kubebuilder:validation:Minimum=1
-	ControllerStateVersion int32  `json:"controllerStateVersion,omitempty"`
-	PtahVersion            string `json:"ptahVersion"`
-	ExecutorImage          string `json:"executorImage"`
-	RunnerImage            string `json:"runnerImage"`
-	RunnerProtocolVersion  int32  `json:"runnerProtocolVersion"`
-	Destructive            bool   `json:"destructive"`
-	StatementCount         int32  `json:"statementCount"`
+	ControllerStateVersion int32 `json:"controllerStateVersion,omitempty"`
+	// PtahVersion is the Ptah build that computed the plan.
+	PtahVersion string `json:"ptahVersion"`
+	// ExecutorImage is the digest-pinned image that ran it.
+	ExecutorImage string `json:"executorImage"`
+	// RunnerImage is the digest-pinned image that supervised it.
+	RunnerImage string `json:"runnerImage"`
+	// RunnerProtocolVersion is the result-frame protocol that runner speaks.
+	RunnerProtocolVersion int32 `json:"runnerProtocolVersion"`
+	// Destructive says the plan drops or rewrites something.
+	Destructive bool `json:"destructive"`
+	// StatementCount is how many statements it holds. The statements
+	// themselves are not here: read them with kubectl ptah plan.
+	StatementCount int32 `json:"statementCount"`
 	// CreatedAt is the plan object's own creation time, copied like every
 	// other field here, so an audit of this record and of the plan it names
 	// cannot disagree about when the plan came into being.
 	CreatedAt metav1.Time `json:"createdAt"`
 
+	// Approval is the decision that authorized this plan, where one was made.
 	Approval *ConsumedApprovalStatus `json:"approval,omitempty"`
 }
 
