@@ -1075,13 +1075,22 @@ reset_after_an_earlier_run
 timing_next scenario declared-row-values
 collect_declared_row_values
 create_reference_policy
-if [ "$PHASE_ENGINE" = postgresql ]; then
+# A case, not an if: the stopwatch call below returns the status it was handed,
+# because nothing in the measurement may decide a run. In an else branch that
+# status is the branch test's own failure, which under set -e ends the phase
+# with no proof and no reason -- measured on run 35312461077, where every
+# migrations-mysql job died here in silence. A case leaves the status of the
+# command before it, which is the one that matters.
+case "$PHASE_ENGINE" in
+postgresql)
 	timing_next scenario postgresql-reference-data
 	run_engine_reference_data postgresql
-else
+	;;
+*)
 	timing_next scenario mysql-reference-data
 	run_engine_reference_data mysql
-fi
+	;;
+esac
 
 timing_end pass
 PHASE_COMPLETED=1

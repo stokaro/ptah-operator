@@ -132,8 +132,15 @@ for engine_phase_script in e2e-migrations.sh e2e-reference-data.sh; do
 		"$ROOT_DIR/hack/$engine_phase_script" ||
 		fail "$engine_phase_script does not refuse a run with no engine named"
 	# shellcheck disable=SC2016 # Match the literal selection in each phase.
-	grep -Fq 'if [ "$PHASE_ENGINE" = postgresql ]; then' "$ROOT_DIR/hack/$engine_phase_script" ||
+	grep -Fq 'case "$PHASE_ENGINE" in' "$ROOT_DIR/hack/$engine_phase_script" ||
 		fail "$engine_phase_script does not select its scenarios by engine"
+	# An if/else would hand the stopwatch the branch test's own failure, and the
+	# stopwatch returns what it is handed, so the phase would end under set -e
+	# with no proof and no reason. A case leaves the previous command's status.
+	# shellcheck disable=SC2016 # Match the shape that must not come back.
+	! grep -Fq 'if [ "$PHASE_ENGINE" = postgresql ]; then' \
+		"$ROOT_DIR/hack/$engine_phase_script" ||
+		fail "$engine_phase_script selects its scenarios in a branch whose test reaches the stopwatch"
 done
 # Every engine-named phase the driver runs binds the engine its name says. A
 # name and a binding that disagree would run one engine twice and skip the
