@@ -908,6 +908,19 @@ assert_a_protected_table_refuses_the_change() {
 	k -n "$TEST_NAMESPACE" patch ptahschema "$REFERENCE_SCHEMA" --type=merge \
 		-p '{"spec":{"policy":{"protectedTables":[]}}}' >/dev/null ||
 		fail "the protected table could not be removed from $REFERENCE_SCHEMA"
+	# The step above leaves the resource in Failed, and that verdict belongs to
+	# the generation that carried the fence. wait_for_reference_phase treats any
+	# Failed reading as this step's, and its first poll lands within a second of
+	# the patch -- long before the controller looks at the spec again -- so the
+	# step could never pass. Measured in run 35282131046 on all three minors:
+	# the failure is logged 0.2 to 0.5 seconds after the patch, with the
+	# resource's own nextReconciliationTime still half a minute out.
+	#
+	# So the wait is for the claim this step makes, which is that the plan the
+	# fence refused is published. The status patch that carries PlanReady True
+	# carries the phase with it, so the phase wait below reads this generation's
+	# outcome rather than the previous one's.
+	wait_for_reference_condition PlanReady True Published
 	wait_for_reference_phase AwaitingApproval
 	wait_for_reference_plan
 	approve_reference_plan "${REFERENCE_APPROVAL}-v5" "$REFERENCE_PLAN" ||
