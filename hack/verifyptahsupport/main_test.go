@@ -63,6 +63,9 @@ func validCatalog() catalog {
 						Scope:                 "the full lifecycle",
 					},
 				},
+				// A development pin publishes no image, so the accepted shape
+				// names none. releasedCatalog is where a limitation may.
+				Limitations: []string{"the suite builds the executor from the verified commit"},
 			},
 		},
 		Evidence: map[string]evidence{
@@ -129,6 +132,27 @@ func TestValidateRefusesTheShapesThatBlurAClaim(t *testing.T) {
 			name:    "a version that is neither edge nor a tag",
 			mutate:  func(c *catalog) { c.Releases[0].Operator = "nightly" },
 			wantErr: "is neither edge nor vMAJOR.MINOR.PATCH",
+		},
+		{
+			name: "a limitation naming a published image the row did not verify",
+			mutate: func(c *catalog) {
+				release := "v0.7.0"
+				c.Releases[0].Verified[0].PtahRelease = &release
+				c.Releases[0].Verified[0].PtahDescribe = "v0.7.0"
+				c.Releases[0].Limitations = []string{
+					"the matrix measures the code v0.6.1 carries, not the bytes ghcr.io/stokaro/ptah:0.6.1 serves",
+				}
+			},
+			wantErr: "is not a release this row verified",
+		},
+		{
+			name: "a limitation naming a published image beside a development pin",
+			mutate: func(c *catalog) {
+				c.Releases[0].Limitations = []string{
+					"the bytes ghcr.io/stokaro/ptah:0.7.0 serves are a different build",
+				}
+			},
+			wantErr: "while the verified pin names no release",
 		},
 		{
 			name:    "documentation published with no source",
