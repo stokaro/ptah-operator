@@ -35,7 +35,7 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `spec.artifact.verificationPolicyFrom.key` | `string`, required | The key to select. |
 | `spec.artifact.verificationPolicyFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.verificationPolicyFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
-| `spec.execution` | `object`, default `{}` | ExecutionSpec exposes bounded scheduling and resource controls while withholding arbitrary Pod/container command customization. |
+| `spec.execution` | `object`, default `{}` | Execution shapes the Job a run happens in: its deadlines, its resources and the scheduling it inherits. |
 | `spec.execution.activeDeadlineSeconds` | `integer`, default `900` |  |
 | `spec.execution.affinity` | `object` | Affinity is a group of affinity scheduling rules. |
 | `spec.execution.affinity.nodeAffinity` | `object` | Describes node affinity scheduling rules for the pod. |
@@ -155,12 +155,12 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `spec.execution.tolerations[].tolerationSeconds` | `integer` | TolerationSeconds represents the period of time the toleration (which must be of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default, it is not set, which means tolerate the taint forever (do not evict). Zero and negative values will be treated as 0 (evict immediately) by the system. |
 | `spec.execution.tolerations[].value` | `string` | Value is the taint value the toleration matches to. If the operator is Exists, the value should be empty, otherwise just a regular string. |
 | `spec.interval` | `string`, default `10m` | Interval is the cadence for resolving a mutable tag and re-reading the history. |
-| `spec.policy` | `object`, default `{}` | MigrationPolicy decides when a planned sequence may execute. |
+| `spec.policy` | `object`, default `{}` | Policy decides what may run without a person: the apply mode, the approval requirement, and the locks a run takes. |
 | `spec.policy.apply` | `string`, one of `Never`, `OnApproval`, `Always`, default `OnApproval` | Apply defaults to OnApproval. A migration artifact carries arbitrary SQL, and no analyzer classifies arbitrary SQL as safe, so the conservative setting is the default one rather than the one an operator opts into. |
 | `spec.policy.lockTimeout` | `string`, default `5m` | LockTimeout bounds the wait for the database's own migration lock. It is the lock the engine takes, not the Kubernetes Lease: two controllers that never run at the same time still need the database to serialize them. |
 | `spec.policy.transactionMode` | `string`, one of `file`, `none` | TransactionMode is how Ptah is asked to wrap the run. The spellings are Ptah's own, because a second vocabulary for the same idea is a second place to hold in agreement with something this repository does not own. Unset means the operator passes no mode and Ptah chooses, which is what every migration does today. That is deliberate and not an oversight: a default here would change how every stored resource already runs, and it would pin this API to a default Ptah is free to move. It is on the policy rather than on the execution block because the two kinds share that block, and a PtahSchema runs no migrations and has no mode to choose. What the policy already says -- apply, lockTimeout -- is the same kind of statement: how a run is permitted to be made. A MySQL-family database refuses "file" whenever an interceptor is installed, which is why this is not a preference. See #132. |
 | `spec.suspend` | `boolean`, default `false` | Suspend prevents new Jobs. A Job already applying is observed to a terminal result: a migration that is running is never abandoned, because the database would be left in a state nothing recorded. |
-| `spec.target` | `object`, required | DatabaseTargetSpec identifies a supported engine, a namespaced Secret key, and the stable coordination realm shared by every route to the same physical database. There is deliberately no namespace field. |
+| `spec.target` | `object`, required | Target is the database this sequence runs against, named through a Secret the manager never reads. |
 | `spec.target.coordinationKey` | `string`, required | CoordinationKey is a non-secret, stable identifier for the physical database realm. Every schema that can reach the same database through an alias, proxy, or different credential must use exactly the same key. |
 | `spec.target.engine` | `string`, required | DatabaseEngine names a database family. The API accepts bounded engine names so the controller can report unsupported families through status instead of turning a durable desired-state object into an admission-time dead end. |
 | `spec.target.sharedRealm` | `boolean`, default `false` | SharedRealm declares that this resource manages only part of the database its coordination key names, and that every other resource managing that database has declared the same. It defaults to false, and a realm that more than one resource claims is refused while any claimant leaves it false. Serialization is not ownership: two resources that never run at the same time still undo each other's work by taking turns, so the operator blocks them rather than letting them alternate. A resource that runs nothing claims nothing. Deleting one leaves the realm, and so does suspending it: suspension is how a resource steps aside without being deleted. Resuming it puts it back in the census, and the conflict is refused then, before any Job. The declaration is what is verified, not the disjointness. No analyzer can tell whether two sets of arbitrary SQL touch the same rows, and a field that claimed otherwise would be the wrong kind of assurance. What it buys is that sharing is deliberate on every side: one resource that has not declared it blocks all of them, itself included. |
@@ -223,18 +223,18 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.activeOperation.approvalRef` | `object` | ApprovalRef is the approval that authorized this Apply, recorded before dispatch so the run is attributable to the decision that permitted it. |
 | `status.activeOperation.approvalRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.activeOperation.approvalRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
-| `status.activeOperation.attempt` | `integer`, required |  |
-| `status.activeOperation.coordinationDigest` | `string` |  |
+| `status.activeOperation.attempt` | `integer`, required | Attempt counts this claim among the retries of the same operation. |
+| `status.activeOperation.coordinationDigest` | `string` | CoordinationDigest is that realm, hashed. |
 | `status.activeOperation.dispatchNotAfter` | `string` | DispatchNotAfter and ExecutionNotAfter bound the claim in time. |
 | `status.activeOperation.dispatchStarted` | `boolean` | DispatchStarted records that the one permitted Job create attempt was made. An Apply that crossed this boundary is never recreated, because whether it ran is a question for the database rather than for a retry. |
 | `status.activeOperation.executionBindingID` | `string` | ExecutionBindingID is the epoch this claim was authorized under. A rollout that changes any execution component retires the claim rather than letting its Job finish under new bytes. |
-| `status.activeOperation.executionNotAfter` | `string` |  |
+| `status.activeOperation.executionNotAfter` | `string` | ExecutionNotAfter is when the authorized run itself expires. |
 | `status.activeOperation.id` | `string`, required | ID is this attempt's identity, distinct from every other attempt of the same operation. |
 | `status.activeOperation.inputFingerprint` | `string`, required | InputFingerprint is what the operation was decided from. An input that changed while the Job ran is what makes its result stale rather than wrong. |
 | `status.activeOperation.jobName` | `string`, required | JobName is the deterministic name this claim's Job takes. It is written before the Job is created. |
 | `status.activeOperation.jobUID` | `string` | JobUID is the exact Job the claim is bound to, once one exists. A Job with the right name and another UID is a different Job. |
 | `status.activeOperation.leaseContinuityLost` | `boolean` | LeaseContinuityLost records that the epoch changed under this claim. |
-| `status.activeOperation.leaseDurationSeconds` | `integer` |  |
+| `status.activeOperation.leaseDurationSeconds` | `integer` | LeaseDurationSeconds is how long that acquisition was taken for. |
 | `status.activeOperation.leaseEpoch` | `string` | LeaseEpoch is the database lock acquisition this claim was authorized under, and LeaseDurationSeconds how long that acquisition was taken for. A result produced across an epoch change is discarded rather than read: the lock it held was somebody else's by then. |
 | `status.activeOperation.planRef` | `object` | PlanRef is the immutable plan an Apply carries out. |
 | `status.activeOperation.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
@@ -260,14 +260,14 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.activeOperation.source.transport.clientCertificateFrom.name` | `string`, required |  |
 | `status.activeOperation.source.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` |  |
 | `status.activeOperation.source.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
-| `status.activeOperation.startedAt` | `string`, required |  |
+| `status.activeOperation.startedAt` | `string`, required | StartedAt is when the claim was written, which is before the Job exists. |
 | `status.activeOperation.target` | `object` | Target is the key-free database binding, and CoordinationDigest the realm the operation serializes against. |
 | `status.activeOperation.target.engine` | `string`, required | DatabaseEngine names a database family. The API accepts bounded engine names so the controller can report unsupported families through status instead of turning a durable desired-state object into an admission-time dead end. |
 | `status.activeOperation.target.urlFrom` | `object`, required | SecretKeySelector selects a key of a Secret. |
 | `status.activeOperation.target.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `status.activeOperation.target.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.activeOperation.target.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
-| `status.activeOperation.type` | `string`, required, one of `Resolve`, `Verify`, `History`, `Apply` | MigrationOperationType is one step of a migration lifecycle. Each one is a Job, and each Job belongs to exactly one claim. |
+| `status.activeOperation.type` | `string`, required, one of `Resolve`, `Verify`, `History`, `Apply` | Type is the operation this claim authorizes. |
 | `status.artifact` | `object` | Artifact is the resolved, credential-free artifact binding every later operation of this cycle uses. A tag resolves once; the digest is what travels. |
 | `status.artifact.digest` | `string`, required |  |
 | `status.artifact.registryAuthFrom` | `object` | RegistryAuthSource describes a Secret without requiring the controller to read it. The kubelet projects only the selected credential representation into a Job, while every mode also projects the fixed registry authority grant to the runner. |
@@ -289,7 +289,7 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.artifact.transport.clientCertificateFrom.name` | `string`, required |  |
 | `status.artifact.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` |  |
 | `status.artifact.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
-| `status.conditions` | `[]object` |  |
+| `status.conditions` | `[]object` | Conditions are the readable verdicts: whether the artifact resolved and verified, whether the history could be read, whether a plan is ready, whether an approval is required, and whether the sequence is in sync. |
 | `status.conditions[].lastTransitionTime` | `string`, required | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
 | `status.conditions[].message` | `string`, required | message is a human readable message indicating details about the transition. This may be an empty string. |
 | `status.conditions[].observedGeneration` | `integer` | observedGeneration represents the .metadata.generation that the condition was set based upon. For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date with respect to the current state of the instance. |
@@ -315,19 +315,19 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.history.modifiedVersions` | `[]integer` | ModifiedVersions names applied migrations whose files no longer account for them. It is the refusal a versioned workflow exists to make, so the versions are published rather than summarized. |
 | `status.history.observedAt` | `string`, required | ObservedAt is when the history was read. |
 | `status.history.outOfOrderVersions` | `[]integer` | OutOfOrderVersions names migrations the artifact carries below a version the database has already applied. Linear execution refuses them, so the versions are published rather than counted: what a person decides here depends on which migration arrived late. |
-| `status.history.pendingCount` | `integer`, required |  |
+| `status.history.pendingCount` | `integer`, required | PendingCount is how many the artifact still has to apply, as Ptah selects them rather than as a subtraction of the two counts. |
 | `status.history.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the credential-free identity of the database this history was read from, as the executor derived it. A plan that was made against one database is never executed against another. |
 | `status.lastRun` | `object` | LastRun is the evidence of the most recent execution, kept across later reconciliations so an operator can see what happened without the Job. |
 | `status.lastRun.appliedVersions` | `[]integer` | AppliedVersions names the selected migrations the history recorded afterwards, so a migration the history already held is not reported as this run's work. |
-| `status.lastRun.finishedAt` | `string` |  |
+| `status.lastRun.finishedAt` | `string` | FinishedAt is when its result was read. An unfinished run has none. |
 | `status.lastRun.jobName` | `string` | JobName and JobUID identify the execution this evidence came from. The UID is what makes a replacement Job with the same name a different run. |
-| `status.lastRun.jobUID` | `string` | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
+| `status.lastRun.jobUID` | `string` | JobUID is that Job's UID. |
 | `status.lastRun.message` | `string` | Message is a safe explanation. It never carries database rows, and never carries the SQL a migration ran. |
 | `status.lastRun.outcome` | `string`, required, one of `UpToDate`, `Applied`, `Failed`, `Partial`, `Unknown` | Outcome is the verdict Ptah read from the revision table. |
-| `status.lastRun.startedAt` | `string`, required |  |
+| `status.lastRun.startedAt` | `string`, required | StartedAt is when the run began. |
 | `status.nextReconciliationTime` | `string` | NextReconciliationTime is when the controller intends to look again. |
 | `status.observedGeneration` | `integer` | ObservedGeneration is the spec generation this status describes. |
-| `status.phase` | `string`, one of `Pending`, `Resolving`, `Verifying`, `Reading`, `Planning`, `AwaitingApproval`, `Blocked`, `Applying`, `VerifyingHistory`, `InSync`, `Suspended`, `Failed` | MigrationPhase is the coarse state of one PtahMigration, for a person reading `kubectl get`. Conditions carry the machine-readable account. |
+| `status.phase` | `string`, one of `Pending`, `Resolving`, `Verifying`, `Reading`, `Planning`, `AwaitingApproval`, `Blocked`, `Applying`, `VerifyingHistory`, `InSync`, `Suspended`, `Failed` | Phase is where the resource stands. It is a summary for a reader: the conditions below are what a decision reads. |
 | `status.plan` | `object` | Plan names the immutable plan object the controller published for the current pending sequence, and is cleared once that sequence is gone. |
 | `status.plan.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.plan.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
