@@ -46,6 +46,21 @@ export const sidebar = [
       { label: 'Security model', link: '/use/security/' },
     ],
   },
+  // The field reference, generated from the API types by make docs-reference.
+  // It sits after the task pages because it is what a reader returns to once
+  // they know which resource they are holding, and before the support pages
+  // because those are about builds rather than about fields.
+  {
+    label: 'Reference',
+    items: [
+      { label: 'PtahSchema', link: '/reference/ptahschema/' },
+      { label: 'PtahSchemaPlan', link: '/reference/ptahschemaplan/' },
+      { label: 'PtahSchemaApproval', link: '/reference/ptahschemaapproval/' },
+      { label: 'PtahMigration', link: '/reference/ptahmigration/' },
+      { label: 'PtahMigrationPlan', link: '/reference/ptahmigrationplan/' },
+      { label: 'PtahMigrationApproval', link: '/reference/ptahmigrationapproval/' },
+    ],
+  },
   {
     label: 'Support',
     items: [

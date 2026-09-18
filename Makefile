@@ -11,7 +11,7 @@ DOCKER_CONTEXT ?= remote-dev-container
 IMG ?= ghcr.io/stokaro/ptah-operator:dev
 REVISION ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
 
-.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build e2e-static e2e
+.PHONY: all build test validate-race-shards test-race test-race-base test-race-mutation vet fmt-check generate manifests verify verify-source verify-crd-schema-history verify-kubernetes-support verify-ptah-support update-kubernetes-support verify-release docker-build e2e-static e2e docs-reference docs-reference-check
 
 # A second declaration rather than a longer first one: the lifecycle targets
 # above are audited as one line, and appending to it is a change to that audit
@@ -91,6 +91,28 @@ manifests:
 	@mkdir -p internal/crdupgrade/assets
 	@rm -f internal/crdupgrade/assets/*.yaml
 	@cp config/crd/bases/*.yaml internal/crdupgrade/assets/
+
+# The field reference the site publishes, generated from the API types.
+#
+# The shipped CRDs drop descriptions (crd:maxDescLen=0 above), so this runs the
+# same generator once more into a directory nothing keeps, reads the schemas
+# with their doc comments, and writes the pages. -write updates them;
+# docs-reference-check refuses a page the API has moved past.
+docs-reference:
+	@tmp=$$(mktemp -d); \
+	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
+		crd paths=./api/... output:crd:artifacts:config=$$tmp; \
+	$(GO) run ./hack/crdreference -crds $$tmp \
+		-out docs/site/src/content/docs/reference -write; \
+	rm -rf $$tmp
+
+docs-reference-check:
+	@tmp=$$(mktemp -d); \
+	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
+		crd paths=./api/... output:crd:artifacts:config=$$tmp; \
+	$(GO) run ./hack/crdreference -crds $$tmp \
+		-out docs/site/src/content/docs/reference; \
+	status=$$?; rm -rf $$tmp; exit $$status
 
 verify: verify-source test-race
 
