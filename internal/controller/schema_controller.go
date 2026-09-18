@@ -1636,6 +1636,13 @@ func (r *SchemaReconciler) refuseProtectedTable(
 	refusal := fmt.Errorf("plan refuses to change a protected table: %s", bounded(message, 512))
 	return r.retryOperationAs(ctx, schema, job, operatorv1alpha1.ReasonProtectedTable, refusal,
 		func(refused *operatorv1alpha1.PtahSchema) {
+			// A fence is a refusal, not a fault: nothing went wrong, and the
+			// answer will not change until the policy or the artifact does. So
+			// the resource reads as blocked rather than failed, the way a
+			// refused verification policy does, and the reason on the
+			// conditions is what says which.
+			clearFailure(refused)
+			refused.Status.Phase = operatorv1alpha1.PhaseBlocked
 			setCondition(refused, operatorv1alpha1.ConditionPlanReady, metav1.ConditionFalse,
 				operatorv1alpha1.ReasonProtectedTable,
 				"No plan may change a table spec.policy.protectedTables fences off")
@@ -2354,10 +2361,12 @@ func (r *SchemaReconciler) retryOperationAs(
 	schema.Status.Phase = operatorv1alpha1.PhaseFailed
 	next := metav1.NewTime(r.now().Add(failureRetry(schema)))
 	schema.Status.NextReconciliationTime = &next
+	setFailure(schema, reason, failure)
+	// After the failure is recorded, so a caller reporting a refusal rather
+	// than a fault can replace what it says.
 	if record != nil {
 		record(schema)
 	}
-	setFailure(schema, reason, failure)
 	if operation.Type == operatorv1alpha1.OperationResolve {
 		markSourceRefreshFailed(schema)
 	}

@@ -92,10 +92,15 @@ func TestAPlanThatWouldChangeAProtectedTableIsRefusedByName(t *testing.T) {
 			t.Fatalf("%s does not name the fence: %#v", expected.condition, actual.Status.Conditions)
 		}
 	}
+	// A refusal is not a fault: nothing went wrong, and the answer will not
+	// change until the policy or the artifact does. The resource reads as
+	// blocked, and no failure is reported for it.
+	if actual.Status.Phase != operatorv1alpha1.PhaseBlocked {
+		t.Fatalf("a fenced plan left the resource in phase %s", actual.Status.Phase)
+	}
 	failed := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
-	if failed == nil || failed.Reason != string(operatorv1alpha1.ReasonProtectedTable) ||
-		!strings.Contains(failed.Message, "protected table") {
-		t.Fatalf("the failure does not name the fence: %#v", failed)
+	if failed != nil && failed.Status == metav1.ConditionTrue {
+		t.Fatalf("a refusal was reported as a failure: %#v", failed)
 	}
 	// The next attempt is a fresh read-only plan, so removing the entry or
 	// publishing an artifact that agrees with the rows converges without a

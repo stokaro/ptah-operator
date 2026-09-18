@@ -893,6 +893,9 @@ assert_a_protected_table_refuses_the_change() {
 	# conditions a reader looks at.
 	jq -e '.status.plan == null' "$STATUS_FILE" >/dev/null ||
 		fail "a plan was published for a change to a protected table"
+	# A refusal is not a fault, and the phase a reader sees says so.
+	jq -e '.status.phase == "Blocked"' "$STATUS_FILE" >/dev/null ||
+		fail "a fenced change left the resource in phase $(jq -r '.status.phase' "$STATUS_FILE")"
 	jq -e '[.status.conditions[] | select(.type == "Ready" and .status == "False" and .reason == "ProtectedTable")] | length == 1' \
 		"$STATUS_FILE" >/dev/null ||
 		fail "the protected-table refusal is not readable on Ready"
@@ -908,13 +911,12 @@ assert_a_protected_table_refuses_the_change() {
 	k -n "$TEST_NAMESPACE" patch ptahschema "$REFERENCE_SCHEMA" --type=merge \
 		-p '{"spec":{"policy":{"protectedTables":[]}}}' >/dev/null ||
 		fail "the protected table could not be removed from $REFERENCE_SCHEMA"
-	# The step above leaves the resource in Failed, and that verdict belongs to
-	# the generation that carried the fence. wait_for_reference_phase treats any
-	# Failed reading as this step's, and its first poll lands within a second of
-	# the patch -- long before the controller looks at the spec again -- so the
-	# step could never pass. Measured in run 35282131046 on all three minors:
-	# the failure is logged 0.2 to 0.5 seconds after the patch, with the
-	# resource's own nextReconciliationTime still half a minute out.
+	# The step above leaves the refusal's own verdict standing, and that verdict
+	# belongs to the generation that carried the fence. A phase wait that starts
+	# within a second of the patch reads it long before the controller looks at
+	# the spec again: measured in run 35282131046 on all three minors, the
+	# refusal is logged 0.2 to 0.5 seconds after the patch, with the resource's
+	# own nextReconciliationTime still half a minute out.
 	#
 	# So the wait is for the claim this step makes, which is that the plan the
 	# fence refused is published. The status patch that carries PlanReady True
