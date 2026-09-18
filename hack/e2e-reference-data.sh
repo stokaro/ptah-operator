@@ -399,6 +399,33 @@ wait_for_reference_phase() {
 # that explains it, and leaves the document that satisfied it in STATUS_FILE, so
 # a caller asserts against the reading that matched rather than re-reading and
 # reopening the window.
+# wait_for_reference_refusal waits for one reading that carries the whole
+# protected-table refusal.
+#
+# A blocked resource still resolves, verifies and observes at its interval, and
+# each of those passes legitimately writes Ready while the refusal stands. So a
+# wait on one condition can return a document whose other conditions belong to
+# the pass that came after it -- measured in run 35299958793, where PlanReady
+# still named the fence and Ready already said an Observe was in progress. The
+# refusal is written in a single status patch, so waiting for all of it at once
+# is a reading that cannot be half of two.
+wait_for_reference_refusal() {
+	refusal_deadline=$(deadline_from_now)
+	while [ "$(date +%s)" -lt "$refusal_deadline" ]; do
+		reference_status
+		if jq -e '
+          .status.plan == null and .status.phase == "Blocked" and
+          ([.status.conditions // [] | .[] |
+            select(.status == "False" and .reason == "ProtectedTable") | .type] |
+            sort) == ["InSync", "PlanReady", "Ready"]
+        ' "$STATUS_FILE" >/dev/null; then
+			return 0
+		fi
+		sleep 5
+	done
+	fail "$REFERENCE_SCHEMA never reported a complete protected-table refusal within ${TIMEOUT_SECONDS}s"
+}
+
 wait_for_reference_condition() {
 	condition_type=$1
 	condition_status=$2
@@ -888,11 +915,14 @@ assert_a_protected_table_refuses_the_change() {
 		-p '{"spec":{"policy":{"protectedTables":["countries"]}}}' >/dev/null ||
 		fail "the protected table could not be added to $REFERENCE_SCHEMA"
 	publish_reference_schema v5
-	wait_for_reference_condition PlanReady False ProtectedTable
+	wait_for_reference_refusal
 	# The reading that satisfied the wait: no plan, and the refusal named on the
 	# conditions a reader looks at.
 	jq -e '.status.plan == null' "$STATUS_FILE" >/dev/null ||
 		fail "a plan was published for a change to a protected table"
+	# A refusal is not a fault, and the phase a reader sees says so.
+	jq -e '.status.phase == "Blocked"' "$STATUS_FILE" >/dev/null ||
+		fail "a fenced change left the resource in phase $(jq -r '.status.phase' "$STATUS_FILE")"
 	jq -e '[.status.conditions[] | select(.type == "Ready" and .status == "False" and .reason == "ProtectedTable")] | length == 1' \
 		"$STATUS_FILE" >/dev/null ||
 		fail "the protected-table refusal is not readable on Ready"
@@ -908,13 +938,12 @@ assert_a_protected_table_refuses_the_change() {
 	k -n "$TEST_NAMESPACE" patch ptahschema "$REFERENCE_SCHEMA" --type=merge \
 		-p '{"spec":{"policy":{"protectedTables":[]}}}' >/dev/null ||
 		fail "the protected table could not be removed from $REFERENCE_SCHEMA"
-	# The step above leaves the resource in Failed, and that verdict belongs to
-	# the generation that carried the fence. wait_for_reference_phase treats any
-	# Failed reading as this step's, and its first poll lands within a second of
-	# the patch -- long before the controller looks at the spec again -- so the
-	# step could never pass. Measured in run 35282131046 on all three minors:
-	# the failure is logged 0.2 to 0.5 seconds after the patch, with the
-	# resource's own nextReconciliationTime still half a minute out.
+	# The step above leaves the refusal's own verdict standing, and that verdict
+	# belongs to the generation that carried the fence. A phase wait that starts
+	# within a second of the patch reads it long before the controller looks at
+	# the spec again: measured in run 35282131046 on all three minors, the
+	# refusal is logged 0.2 to 0.5 seconds after the patch, with the resource's
+	# own nextReconciliationTime still half a minute out.
 	#
 	# So the wait is for the claim this step makes, which is that the plan the
 	# fence refused is published. The status patch that carries PlanReady True

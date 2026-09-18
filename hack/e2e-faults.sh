@@ -747,6 +747,9 @@ audit_fault_runtime() {
 		fi
 		if ! audit_pod_object=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" \
 			-o json 2>/dev/null); then
+			if fault_pod_logs_are_followed "$audit_pod_uid"; then
+				continue
+			fi
 			fail "unaudited fault-test Pod $audit_pod_name UID $audit_pod_uid disappeared before its log audit"
 		fi
 		printf '%s\n' "$audit_pod_object" | jq -e \
@@ -785,12 +788,18 @@ audit_fault_runtime() {
       ')
 		for audit_container in $audit_started_containers; do
 			if ! k -n "$TEST_NAMESPACE" logs pod/"$audit_pod_name" -c "$audit_container" >"$LOG_FILE" 2>&1; then
+				if fault_pod_logs_are_followed "$audit_pod_uid"; then
+					continue 2
+				fi
 				fail "could not audit logs for started container $audit_container in fault-test Pod $audit_pod_name"
 			fi
 			scan_fault_file "$LOG_FILE" "logs for container $audit_container in fault-test Pod $audit_pod_name"
 		done
 		if ! audit_pod_after=$(k -n "$TEST_NAMESPACE" get pod "$audit_pod_name" \
 			-o json 2>/dev/null); then
+			if fault_pod_logs_are_followed "$audit_pod_uid"; then
+				continue
+			fi
 			fail "unaudited fault-test Pod $audit_pod_name UID $audit_pod_uid disappeared during its log audit"
 		fi
 		printf '%s\n' "$audit_pod_after" | jq -e \
@@ -957,6 +966,24 @@ finish_follow_logs() {
 	FOLLOW_LOG_STATUS_FILE=
 	FOLLOW_LOG_POD_UID=
 	FOLLOW_LOG_RECORD_POD=0
+}
+
+# Kubernetes deletes the Pods of a Job that exceeds its active deadline, so the
+# running-deadline proof destroys, on purpose, a Pod the periodic credential
+# audit may have listed a moment earlier. That is the one Pod whose
+# disappearance loses no evidence: a protected follower is streaming its
+# complete log history while it runs, finish_follow_logs scans the whole stream,
+# and audit_running_deadline_pod_watch scans the watch-confirmed deletion before
+# the UID reaches any ledger. Only that exact UID qualifies, and only while the
+# follower is alive, so every other Pod that vanishes unaudited still ends the
+# phase -- and assert_fault_audit_complete still refuses a watched UID whose
+# evidence never arrived.
+fault_pod_logs_are_followed() {
+	[ -n "$FOLLOW_LOG_PID" ] || return 1
+	[ "$FOLLOW_LOG_RECORD_POD" -eq 1 ] || return 1
+	[ -n "$FOLLOW_LOG_POD_UID" ] || return 1
+	[ "$FOLLOW_LOG_POD_UID" = "$1" ] || return 1
+	return 0
 }
 
 assert_fault_audit_complete() {

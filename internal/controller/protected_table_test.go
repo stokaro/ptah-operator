@@ -92,18 +92,26 @@ func TestAPlanThatWouldChangeAProtectedTableIsRefusedByName(t *testing.T) {
 			t.Fatalf("%s does not name the fence: %#v", expected.condition, actual.Status.Conditions)
 		}
 	}
-	failed := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
-	if failed == nil || failed.Reason != string(operatorv1alpha1.ReasonProtectedTable) ||
-		!strings.Contains(failed.Message, "protected table") {
-		t.Fatalf("the failure does not name the fence: %#v", failed)
+	// A refusal is not a fault: nothing went wrong, and the answer will not
+	// change until the policy or the artifact does. The resource reads as
+	// blocked, and no failure is reported for it.
+	if actual.Status.Phase != operatorv1alpha1.PhaseBlocked {
+		t.Fatalf("a fenced plan left the resource in phase %s", actual.Status.Phase)
 	}
-	// The next attempt is a fresh read-only plan, so removing the entry or
+	failed := findCondition(actual.Status.Conditions, operatorv1alpha1.ConditionReconciliationFailed)
+	if failed != nil && failed.Status == metav1.ConditionTrue {
+		t.Fatalf("a refusal was reported as a failure: %#v", failed)
+	}
+	// The operation ends here rather than retrying: a re-plan would be refused
+	// again for as long as the fence and the artifact disagree. The blocked
+	// interval is what picks the answer up again, so removing the entry or
 	// publishing an artifact that agrees with the rows converges without a
 	// person touching the resource.
-	if actual.Status.ActiveOperation == nil ||
-		actual.Status.ActiveOperation.Type != operatorv1alpha1.OperationPlan ||
-		actual.Status.NextReconciliationTime == nil {
-		t.Fatalf("the refusal did not leave a retry behind: %#v", actual.Status)
+	if actual.Status.ActiveOperation != nil {
+		t.Fatalf("the refusal left an operation to retry: %#v", actual.Status.ActiveOperation)
+	}
+	if actual.Status.NextReconciliationTime == nil {
+		t.Fatalf("the refusal named no next reconciliation: %#v", actual.Status)
 	}
 }
 
