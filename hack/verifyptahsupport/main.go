@@ -69,6 +69,9 @@ var (
 	// looseCommit finds a bare commit anywhere in a file. The cross-file checks
 	// use it to refuse a second copy of the pin rather than to read one.
 	looseCommit = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
+	// publishedPtahImage finds a reference to the Ptah image a release
+	// publishes, wherever a limitation mentions one, and captures its tag.
+	publishedPtahImage = regexp.MustCompile(`ghcr\.io/stokaro/ptah:([0-9A-Za-z._-]+)`)
 )
 
 // catalog is support/ptah.json.
@@ -294,6 +297,51 @@ func validateRelease(entry release, evidenceByName map[string]evidence) []error 
 	for index, limitation := range entry.Limitations {
 		if strings.TrimSpace(limitation) == "" {
 			problems = append(problems, fmt.Errorf("%s limitation %d is empty", name, index))
+		}
+	}
+	problems = append(problems, validateLimitationImages(name, entry)...)
+	return problems
+}
+
+// validateLimitationImages holds a limitation that names the published Ptah
+// image to a release the row actually verified.
+//
+// A limitation is prose standing beside a measurement, and prose that repeats a
+// version is how the two come apart. stokaro/ptah-operator#150 moved the pin
+// from v0.6.1 to v0.7.0 and left a limitation naming
+// ghcr.io/stokaro/ptah:0.6.1 next to a verified row naming v0.7.0; every reader
+// of the published table saw both, and nothing here compared them. The image
+// tag is the one version inside a limitation a machine can judge without
+// reading the sentence around it, so it is the one this refuses.
+//
+// A row pinned to a development commit names no release at all, and no
+// published image answers to it, so naming one there is refused rather than
+// skipped.
+func validateLimitationImages(name string, entry release) []error {
+	var problems []error
+	verifiedTags := make(map[string]struct{}, len(entry.Verified))
+	for _, measurement := range entry.Verified {
+		if measurement.PtahRelease == nil {
+			continue
+		}
+		verifiedTags[strings.TrimPrefix(*measurement.PtahRelease, "v")] = struct{}{}
+	}
+	for index, limitation := range entry.Limitations {
+		for _, match := range publishedPtahImage.FindAllStringSubmatch(limitation, -1) {
+			if _, ok := verifiedTags[match[1]]; ok {
+				continue
+			}
+			if len(verifiedTags) == 0 {
+				problems = append(problems, fmt.Errorf(
+					"%s limitation %d names the published image %s while the verified pin names no release",
+					name, index, match[0],
+				))
+				continue
+			}
+			problems = append(problems, fmt.Errorf(
+				"%s limitation %d names the published image %s, which is not a release this row verified",
+				name, index, match[0],
+			))
 		}
 	}
 	return problems

@@ -120,7 +120,9 @@ omission. Every other mechanism here rates a change and can answer yes: an
 approval, `allowDestructive`, a permissive `driftSeverity`. A fenced table is
 the statement that no such yes exists for it from this path. The resource
 reports `Ready=False` with reason `ProtectedTable`, publishes no plan, and
-leaves the rows as they are.
+leaves the rows as they are. It reads as blocked rather than failed: nothing
+went wrong, and the answer does not change until the policy or the artifact
+does.
 
 Where the change is wanted, the fence is what changes: remove the entry, or
 write the rows as a migration, which is the path that asks a person for
