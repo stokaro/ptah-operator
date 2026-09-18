@@ -113,7 +113,7 @@ docs-reference-check:
 	$(GO) run sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION) \
 		crd paths=./api/... output:crd:artifacts:config=$$tmp; \
 	$(GO) run ./hack/crdreference -crds $$tmp \
-		-out docs/site/src/content/docs/reference; \
+		-out docs/site/src/content/docs/reference -require-descriptions; \
 	status=$$?; rm -rf $$tmp; exit $$status
 
 verify: verify-source test-race

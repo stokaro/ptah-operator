@@ -13,25 +13,25 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | --- | --- | --- |
 | `spec.artifact` | `object`, required | Artifact is the OCI migration directory this history is matched against. It reuses the schema path's credential-isolated source contract: fetching an artifact never hands registry credentials to the process that runs SQL. |
 | `spec.artifact.ociRef` | `string`, required | OCIRef is a desired-schema artifact reference. It may name a tag or a digest; every later operation receives only the resolved digest. |
-| `spec.artifact.registryAuthFrom` | `object` | RegistryAuthSource describes a Secret without requiring the controller to read it. The kubelet projects only the selected credential representation into a Job, while every mode also projects the fixed registry authority grant to the runner. |
-| `spec.artifact.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` |  |
-| `spec.artifact.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | RegistryAuthMode selects one standard Kubernetes Secret representation. |
-| `spec.artifact.registryAuthFrom.name` | `string`, required |  |
-| `spec.artifact.registryAuthFrom.passwordKey` | `string`, default `password` |  |
-| `spec.artifact.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. |
-| `spec.artifact.registryAuthFrom.tokenKey` | `string`, default `token` |  |
-| `spec.artifact.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. |
-| `spec.artifact.transport` | `object` | OCITransportSpec configures private and air-gapped registries without allowing arbitrary files or commands into the execution Pod. |
+| `spec.artifact.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. The process that runs SQL never receives it. |
+| `spec.artifact.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
+| `spec.artifact.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
+| `spec.artifact.registryAuthFrom.name` | `string`, required | Name of the Secret the registry credential is read from. The manager never reads it; the operation Pod does. |
+| `spec.artifact.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
+| `spec.artifact.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. RegistryKey is the Secret key naming the registry the credential is for. |
+| `spec.artifact.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
+| `spec.artifact.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
+| `spec.artifact.transport` | `object` | Transport is how the registry is reached: plain HTTP, a custom CA, a client certificate. |
 | `spec.artifact.transport.caFrom` | `object` | CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `spec.artifact.transport.caFrom.key` | `string`, required | The key to select. |
 | `spec.artifact.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `spec.artifact.transport.clientCertificateFrom` | `object` | ClientCertificateFrom is reserved for a future executor contract that can select a client certificate by the effective TLS authority on every request, including redirects. The current API rejects this field. |
-| `spec.artifact.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` |  |
-| `spec.artifact.transport.clientCertificateFrom.name` | `string`, required |  |
-| `spec.artifact.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` |  |
+| `spec.artifact.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` | CertificateKey is the Secret key holding the certificate. |
+| `spec.artifact.transport.clientCertificateFrom.name` | `string`, required | Name of the Secret holding the client certificate. |
+| `spec.artifact.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` | PrivateKeyKey is the Secret key holding its private key. |
 | `spec.artifact.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
-| `spec.artifact.verificationPolicyFrom` | `object`, required | Selects a key from a ConfigMap. |
+| `spec.artifact.verificationPolicyFrom` | `object`, required | VerificationPolicyFrom names the immutable ConfigMap holding the policy the artifact must satisfy. Editing it retires the plans computed under the previous version rather than letting them apply. |
 | `spec.artifact.verificationPolicyFrom.key` | `string`, required | The key to select. |
 | `spec.artifact.verificationPolicyFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.artifact.verificationPolicyFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
@@ -162,9 +162,9 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `spec.suspend` | `boolean`, default `false` | Suspend prevents new Jobs. A Job already applying is observed to a terminal result: a migration that is running is never abandoned, because the database would be left in a state nothing recorded. |
 | `spec.target` | `object`, required | Target is the database this sequence runs against, named through a Secret the manager never reads. |
 | `spec.target.coordinationKey` | `string`, required | CoordinationKey is a non-secret, stable identifier for the physical database realm. Every schema that can reach the same database through an alias, proxy, or different credential must use exactly the same key. |
-| `spec.target.engine` | `string`, required | DatabaseEngine names a database family. The API accepts bounded engine names so the controller can report unsupported families through status instead of turning a durable desired-state object into an admission-time dead end. |
+| `spec.target.engine` | `string`, required | Engine is the database this target speaks. An engine outside the supported set is refused with a condition rather than attempted. |
 | `spec.target.sharedRealm` | `boolean`, default `false` | SharedRealm declares that this resource manages only part of the database its coordination key names, and that every other resource managing that database has declared the same. It defaults to false, and a realm that more than one resource claims is refused while any claimant leaves it false. Serialization is not ownership: two resources that never run at the same time still undo each other's work by taking turns, so the operator blocks them rather than letting them alternate. A resource that runs nothing claims nothing. Deleting one leaves the realm, and so does suspending it: suspension is how a resource steps aside without being deleted. Resuming it puts it back in the census, and the conflict is refused then, before any Job. The declaration is what is verified, not the disjointness. No analyzer can tell whether two sets of arbitrary SQL touch the same rows, and a field that claimed otherwise would be the wrong kind of assurance. What it buys is that sharing is deliberate on every side: one resource that has not declared it blocks all of them, itself included. |
-| `spec.target.urlFrom` | `object`, required | SecretKeySelector selects a key of a Secret. |
+| `spec.target.urlFrom` | `object`, required | URLFrom names the Secret key holding the connection URL. The manager has no permission to read it: the operation Pod resolves it, and the URL never reaches status, an Event or a command line. |
 | `spec.target.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `spec.target.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.target.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
@@ -175,51 +175,51 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | --- | --- | --- |
 | `status.activeOperation` | `object` | ActiveOperation is the claim the controller is currently carrying out, and nil when nothing is in flight. |
 | `status.activeOperation.admissionSnapshot` | `object` | AdmissionSnapshot is the Pod envelope resolved before dispatch and bound into the Job and its Pod template. It is what lets Pod admission permit the built-in mutations that are modeled and safe while refusing any other change to what the Pod executes. A migration Pod is judged by the same envelope as a schema Pod, because it is the same kind of Pod. |
-| `status.activeOperation.admissionSnapshot.alwaysPullImagesEnabled` | `boolean`, required | AlwaysPullImagesEnabled records whether kube-apiserver runs the AlwaysPullImages admission plugin. |
-| `status.activeOperation.admissionSnapshot.defaultNotReadyTolerationSeconds` | `integer`, required |  |
-| `status.activeOperation.admissionSnapshot.defaultTolerationsEnabled` | `boolean`, required | DefaultTolerationsEnabled records whether kube-apiserver runs the DefaultTolerationSeconds admission plugin. |
-| `status.activeOperation.admissionSnapshot.defaultUnreachableTolerationSeconds` | `integer`, required |  |
-| `status.activeOperation.admissionSnapshot.digest` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.extendedResourceTolerationEnabled` | `boolean`, required | ExtendedResourceTolerationEnabled records whether kube-apiserver runs the ExtendedResourceToleration admission plugin. |
-| `status.activeOperation.admissionSnapshot.limitRanges` | `[]object` |  |
-| `status.activeOperation.admissionSnapshot.limitRanges[].defaultLimits` | `object` |  |
-| `status.activeOperation.admissionSnapshot.limitRanges[].defaultRequests` | `object` |  |
-| `status.activeOperation.admissionSnapshot.limitRanges[].object` | `object`, required | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.activeOperation.admissionSnapshot.limitRanges[].object.name` | `string`, required |  |
+| `status.activeOperation.admissionSnapshot.alwaysPullImagesEnabled` | `boolean`, required | AlwaysPullImagesEnabled records whether kube-apiserver runs the AlwaysPullImages admission plugin. AlwaysPullImagesEnabled records whether the cluster rewrites every imagePullPolicy to Always. |
+| `status.activeOperation.admissionSnapshot.defaultNotReadyTolerationSeconds` | `integer`, required | DefaultNotReadyTolerationSeconds is that plugin's not-ready value. |
+| `status.activeOperation.admissionSnapshot.defaultTolerationsEnabled` | `boolean`, required | DefaultTolerationsEnabled records whether kube-apiserver runs the DefaultTolerationSeconds admission plugin. DefaultTolerationsEnabled and the two values below record what the cluster's DefaultTolerationSeconds plugin does, so a toleration the Pod did not ask for is recognized rather than refused. |
+| `status.activeOperation.admissionSnapshot.defaultUnreachableTolerationSeconds` | `integer`, required | DefaultUnreachableTolerationSeconds is that plugin's unreachable value. |
+| `status.activeOperation.admissionSnapshot.digest` | `string`, required | Digest covers this whole snapshot, so a Pod can be checked against it without re-reading the cluster objects it describes. |
+| `status.activeOperation.admissionSnapshot.extendedResourceTolerationEnabled` | `boolean`, required | ExtendedResourceTolerationEnabled records whether kube-apiserver runs the ExtendedResourceToleration admission plugin. ExtendedResourceTolerationEnabled records whether the cluster adds a toleration per extended resource a Pod requests. |
+| `status.activeOperation.admissionSnapshot.limitRanges` | `[]object` | LimitRanges are the namespace defaults that would be applied to the Pod. |
+| `status.activeOperation.admissionSnapshot.limitRanges[].defaultLimits` | `object` | DefaultLimits are the limits it would add. |
+| `status.activeOperation.admissionSnapshot.limitRanges[].defaultRequests` | `object` | DefaultRequests are the requests it would add to a container that asks for none. |
+| `status.activeOperation.admissionSnapshot.limitRanges[].object` | `object`, required | Object is the LimitRange this was read from. |
+| `status.activeOperation.admissionSnapshot.limitRanges[].object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.activeOperation.admissionSnapshot.limitRanges[].object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.activeOperation.admissionSnapshot.limitRanges[].object.uid` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.priorityClass` | `object`, required | PriorityClassAdmissionSnapshot records the exact values injected by the Priority admission plugin. Object is absent only when the cluster has no global default and the Job does not request a named PriorityClass. |
-| `status.activeOperation.admissionSnapshot.priorityClass.name` | `string` |  |
-| `status.activeOperation.admissionSnapshot.priorityClass.object` | `object` | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.activeOperation.admissionSnapshot.priorityClass.object.name` | `string`, required |  |
+| `status.activeOperation.admissionSnapshot.limitRanges[].object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.activeOperation.admissionSnapshot.priorityClass` | `object`, required | PriorityClass is the scheduling priority it resolved to. |
+| `status.activeOperation.admissionSnapshot.priorityClass.name` | `string` | Name is that class, as the Pod requests it. |
+| `status.activeOperation.admissionSnapshot.priorityClass.object` | `object` | Object is the PriorityClass this was read from, where a class was named. |
+| `status.activeOperation.admissionSnapshot.priorityClass.object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.activeOperation.admissionSnapshot.priorityClass.object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.activeOperation.admissionSnapshot.priorityClass.object.uid` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.priorityClass.preemptionPolicy` | `string`, one of `Never`, `PreemptLowerPriority` | PreemptionPolicy describes a policy for if/when to preempt a pod. |
-| `status.activeOperation.admissionSnapshot.priorityClass.value` | `integer`, required |  |
-| `status.activeOperation.admissionSnapshot.runtimeClass` | `object` | RuntimeClassAdmissionSnapshot records the exact scheduling and overhead mutation selected before dispatch. Handler is deliberately retained as credential-free audit evidence even though it is not copied into PodSpec. |
-| `status.activeOperation.admissionSnapshot.runtimeClass.handler` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.runtimeClass.nodeSelector` | `object` |  |
-| `status.activeOperation.admissionSnapshot.runtimeClass.object` | `object`, required | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.activeOperation.admissionSnapshot.runtimeClass.object.name` | `string`, required |  |
+| `status.activeOperation.admissionSnapshot.priorityClass.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.activeOperation.admissionSnapshot.priorityClass.preemptionPolicy` | `string`, one of `Never`, `PreemptLowerPriority` | PreemptionPolicy is what that class says about preempting others. |
+| `status.activeOperation.admissionSnapshot.priorityClass.value` | `integer`, required | Value is the priority it resolved to. |
+| `status.activeOperation.admissionSnapshot.runtimeClass` | `object` | RuntimeClass is the container runtime it resolved to, where one is named. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.handler` | `string`, required | Handler is the runtime handler it names. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.nodeSelector` | `object` | NodeSelector is the scheduling the class forces. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.object` | `object`, required | Object is the RuntimeClass this was read from, by name and UID. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.activeOperation.admissionSnapshot.runtimeClass.object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.activeOperation.admissionSnapshot.runtimeClass.object.uid` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.runtimeClass.overhead` | `object` |  |
-| `status.activeOperation.admissionSnapshot.runtimeClass.overheadDefined` | `boolean` | OverheadDefined distinguishes an absent RuntimeClass overhead stanza from a present but empty one; Kubernetes admission preserves that distinction. |
-| `status.activeOperation.admissionSnapshot.runtimeClass.tolerations` | `[]object` |  |
+| `status.activeOperation.admissionSnapshot.runtimeClass.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.overhead` | `object` | Overhead is the per-Pod resource overhead the class adds. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.overheadDefined` | `boolean` | OverheadDefined distinguishes an absent RuntimeClass overhead stanza from a present but empty one; Kubernetes admission preserves that distinction. OverheadDefined separates a class with no overhead from one whose overhead is zero. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.tolerations` | `[]object` | Tolerations are the tolerations it adds. |
 | `status.activeOperation.admissionSnapshot.runtimeClass.tolerations[].effect` | `string` | Effect indicates the taint effect to match. Empty means match all taint effects. When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute. |
 | `status.activeOperation.admissionSnapshot.runtimeClass.tolerations[].key` | `string` | Key is the taint key that the toleration applies to. Empty means match all taint keys. If the key is empty, operator must be Exists; this combination means to match all values and all keys. |
 | `status.activeOperation.admissionSnapshot.runtimeClass.tolerations[].operator` | `string` | Operator represents a key's relationship to the value. Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal. Exists is equivalent to wildcard for value, so that a pod can tolerate all taints of a particular category. Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators). |
 | `status.activeOperation.admissionSnapshot.runtimeClass.tolerations[].tolerationSeconds` | `integer` | TolerationSeconds represents the period of time the toleration (which must be of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default, it is not set, which means tolerate the taint forever (do not evict). Zero and negative values will be treated as 0 (evict immediately) by the system. |
 | `status.activeOperation.admissionSnapshot.runtimeClass.tolerations[].value` | `string` | Value is the taint value the toleration matches to. If the operator is Exists, the value should be empty, otherwise just a regular string. |
-| `status.activeOperation.admissionSnapshot.serviceAccount` | `object`, required | ServiceAccountAdmissionSnapshot binds the non-secret ServiceAccount fields that built-in admission may copy into a Pod. |
-| `status.activeOperation.admissionSnapshot.serviceAccount.imagePullSecrets` | `[]object` |  |
+| `status.activeOperation.admissionSnapshot.serviceAccount` | `object`, required | ServiceAccount is the identity the Pod runs as, as it resolved. |
+| `status.activeOperation.admissionSnapshot.serviceAccount.imagePullSecrets` | `[]object` | ImagePullSecrets are the pull Secrets it contributes to the Pod. |
 | `status.activeOperation.admissionSnapshot.serviceAccount.imagePullSecrets[].name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
-| `status.activeOperation.admissionSnapshot.serviceAccount.object` | `object`, required | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.activeOperation.admissionSnapshot.serviceAccount.object.name` | `string`, required |  |
+| `status.activeOperation.admissionSnapshot.serviceAccount.object` | `object`, required | Object is the ServiceAccount the Pod runs as. |
+| `status.activeOperation.admissionSnapshot.serviceAccount.object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.activeOperation.admissionSnapshot.serviceAccount.object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.activeOperation.admissionSnapshot.serviceAccount.object.uid` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. |
-| `status.activeOperation.admissionSnapshot.version` | `string`, required, one of `v1` |  |
+| `status.activeOperation.admissionSnapshot.serviceAccount.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.activeOperation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. TemplateDigest covers the Pod template the operator asked for, before the cluster's own admission had a chance to change it. |
+| `status.activeOperation.admissionSnapshot.version` | `string`, required, one of `v1` | Version is the snapshot format this record was written in. |
 | `status.activeOperation.approvalRef` | `object` | ApprovalRef is the approval that authorized this Apply, recorded before dispatch so the run is attributable to the decision that permitted it. |
 | `status.activeOperation.approvalRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.activeOperation.approvalRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
@@ -240,54 +240,54 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.activeOperation.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.activeOperation.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
 | `status.activeOperation.source` | `object` | Source is the credential-free artifact binding this operation uses: the resolved digest and the selectors needed to fetch it. Every operation after Resolve carries one, so a newer generation cannot send newly selected credentials to the old artifact's registry. |
-| `status.activeOperation.source.digest` | `string`, required |  |
-| `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthSource describes a Secret without requiring the controller to read it. The kubelet projects only the selected credential representation into a Job, while every mode also projects the fixed registry authority grant to the runner. |
-| `status.activeOperation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` |  |
-| `status.activeOperation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | RegistryAuthMode selects one standard Kubernetes Secret representation. |
-| `status.activeOperation.source.registryAuthFrom.name` | `string`, required |  |
-| `status.activeOperation.source.registryAuthFrom.passwordKey` | `string`, default `password` |  |
-| `status.activeOperation.source.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. |
-| `status.activeOperation.source.registryAuthFrom.tokenKey` | `string`, default `token` |  |
-| `status.activeOperation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. |
-| `status.activeOperation.source.resolvedReference` | `string`, required |  |
-| `status.activeOperation.source.transport` | `object` | OCITransportSpec configures private and air-gapped registries without allowing arbitrary files or commands into the execution Pod. |
+| `status.activeOperation.source.digest` | `string`, required | Digest is that digest on its own. |
+| `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
+| `status.activeOperation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
+| `status.activeOperation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
+| `status.activeOperation.source.registryAuthFrom.name` | `string`, required | Name of the Secret the registry credential is read from. The manager never reads it; the operation Pod does. |
+| `status.activeOperation.source.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
+| `status.activeOperation.source.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. RegistryKey is the Secret key naming the registry the credential is for. |
+| `status.activeOperation.source.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
+| `status.activeOperation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
+| `status.activeOperation.source.resolvedReference` | `string`, required | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.activeOperation.source.transport` | `object` | Transport is how the registry is reached: plain HTTP, a custom CA. |
 | `status.activeOperation.source.transport.caFrom` | `object` | CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `status.activeOperation.source.transport.caFrom.key` | `string`, required | The key to select. |
 | `status.activeOperation.source.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.activeOperation.source.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `status.activeOperation.source.transport.clientCertificateFrom` | `object` | ClientCertificateFrom is reserved for a future executor contract that can select a client certificate by the effective TLS authority on every request, including redirects. The current API rejects this field. |
-| `status.activeOperation.source.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` |  |
-| `status.activeOperation.source.transport.clientCertificateFrom.name` | `string`, required |  |
-| `status.activeOperation.source.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` |  |
+| `status.activeOperation.source.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` | CertificateKey is the Secret key holding the certificate. |
+| `status.activeOperation.source.transport.clientCertificateFrom.name` | `string`, required | Name of the Secret holding the client certificate. |
+| `status.activeOperation.source.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` | PrivateKeyKey is the Secret key holding its private key. |
 | `status.activeOperation.source.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
 | `status.activeOperation.startedAt` | `string`, required | StartedAt is when the claim was written, which is before the Job exists. |
 | `status.activeOperation.target` | `object` | Target is the key-free database binding, and CoordinationDigest the realm the operation serializes against. |
-| `status.activeOperation.target.engine` | `string`, required | DatabaseEngine names a database family. The API accepts bounded engine names so the controller can report unsupported families through status instead of turning a durable desired-state object into an admission-time dead end. |
-| `status.activeOperation.target.urlFrom` | `object`, required | SecretKeySelector selects a key of a Secret. |
+| `status.activeOperation.target.engine` | `string`, required | Engine is the database this binding speaks. |
+| `status.activeOperation.target.urlFrom` | `object`, required | URLFrom is the Secret key the operation Pod reads the URL from. |
 | `status.activeOperation.target.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `status.activeOperation.target.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.activeOperation.target.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
 | `status.activeOperation.type` | `string`, required, one of `Resolve`, `Verify`, `History`, `Apply` | Type is the operation this claim authorizes. |
 | `status.artifact` | `object` | Artifact is the resolved, credential-free artifact binding every later operation of this cycle uses. A tag resolves once; the digest is what travels. |
-| `status.artifact.digest` | `string`, required |  |
-| `status.artifact.registryAuthFrom` | `object` | RegistryAuthSource describes a Secret without requiring the controller to read it. The kubelet projects only the selected credential representation into a Job, while every mode also projects the fixed registry authority grant to the runner. |
-| `status.artifact.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` |  |
-| `status.artifact.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | RegistryAuthMode selects one standard Kubernetes Secret representation. |
-| `status.artifact.registryAuthFrom.name` | `string`, required |  |
-| `status.artifact.registryAuthFrom.passwordKey` | `string`, default `password` |  |
-| `status.artifact.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. |
-| `status.artifact.registryAuthFrom.tokenKey` | `string`, default `token` |  |
-| `status.artifact.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. |
-| `status.artifact.resolvedReference` | `string`, required |  |
-| `status.artifact.transport` | `object` | OCITransportSpec configures private and air-gapped registries without allowing arbitrary files or commands into the execution Pod. |
+| `status.artifact.digest` | `string`, required | Digest is that digest on its own. |
+| `status.artifact.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
+| `status.artifact.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
+| `status.artifact.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
+| `status.artifact.registryAuthFrom.name` | `string`, required | Name of the Secret the registry credential is read from. The manager never reads it; the operation Pod does. |
+| `status.artifact.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
+| `status.artifact.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. RegistryKey is the Secret key naming the registry the credential is for. |
+| `status.artifact.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
+| `status.artifact.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
+| `status.artifact.resolvedReference` | `string`, required | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.artifact.transport` | `object` | Transport is how the registry is reached: plain HTTP, a custom CA. |
 | `status.artifact.transport.caFrom` | `object` | CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `status.artifact.transport.caFrom.key` | `string`, required | The key to select. |
 | `status.artifact.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.artifact.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `status.artifact.transport.clientCertificateFrom` | `object` | ClientCertificateFrom is reserved for a future executor contract that can select a client certificate by the effective TLS authority on every request, including redirects. The current API rejects this field. |
-| `status.artifact.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` |  |
-| `status.artifact.transport.clientCertificateFrom.name` | `string`, required |  |
-| `status.artifact.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` |  |
+| `status.artifact.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` | CertificateKey is the Secret key holding the certificate. |
+| `status.artifact.transport.clientCertificateFrom.name` | `string`, required | Name of the Secret holding the client certificate. |
+| `status.artifact.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` | PrivateKeyKey is the Secret key holding its private key. |
 | `status.artifact.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
 | `status.conditions` | `[]object` | Conditions are the readable verdicts: whether the artifact resolved and verified, whether the history could be read, whether a plan is ready, whether an approval is required, and whether the sequence is in sync. |
 | `status.conditions[].lastTransitionTime` | `string`, required | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
@@ -300,11 +300,11 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.executionBinding.controllerImage` | `string` | ControllerImage identifies the exact manager container content that interpreted controller state and authorized this evidence epoch. |
 | `status.executionBinding.controllerRevision` | `string` | ControllerRevision identifies the exact manager build that interpreted controller state. It is provenance metadata in addition to ControllerImage, not a substitute for the image content digest. |
 | `status.executionBinding.controllerStateVersion` | `integer` | ControllerStateVersion versions manager-side reconciliation semantics independently of the data-plane runner protocol. |
-| `status.executionBinding.epoch` | `string`, required |  |
-| `status.executionBinding.executorImage` | `string`, required |  |
-| `status.executionBinding.ptahVersion` | `string`, required |  |
-| `status.executionBinding.runnerImage` | `string`, required |  |
-| `status.executionBinding.runnerProtocolVersion` | `integer`, required |  |
+| `status.executionBinding.epoch` | `string`, required | Epoch is this binding's identity. It changes on every component transition, a rollback to identical versions included, so evidence from before a rollout is historical rather than current. |
+| `status.executionBinding.executorImage` | `string`, required | ExecutorImage is the digest-pinned image carrying that build. |
+| `status.executionBinding.ptahVersion` | `string`, required | PtahVersion is the Ptah build this epoch executes with. |
+| `status.executionBinding.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervises it. |
+| `status.executionBinding.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
 | `status.history` | `object` | History is the last reading of the database's own revision table. |
 | `status.history.appliedCount` | `integer`, required | AppliedCount and PendingCount describe the artifact against this history. |
 | `status.history.checkpointVersion` | `integer` | CheckpointVersion is the checkpoint covering the versions below it, and zero where none applies. It stays set after the bootstrap has run: the coverage is what keeps those versions applied rather than pending. |

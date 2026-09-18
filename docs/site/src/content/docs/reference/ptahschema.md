@@ -13,30 +13,30 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | --- | --- | --- |
 | `spec.desired` | `object`, required | Desired is the OCI artifact that declares the schema, and the rows a declaration names, to converge it to. |
 | `spec.desired.ociRef` | `string`, required | OCIRef is a desired-schema artifact reference. It may name a tag or a digest; every later operation receives only the resolved digest. |
-| `spec.desired.registryAuthFrom` | `object` | RegistryAuthSource describes a Secret without requiring the controller to read it. The kubelet projects only the selected credential representation into a Job, while every mode also projects the fixed registry authority grant to the runner. |
-| `spec.desired.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` |  |
-| `spec.desired.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | RegistryAuthMode selects one standard Kubernetes Secret representation. |
-| `spec.desired.registryAuthFrom.name` | `string`, required |  |
-| `spec.desired.registryAuthFrom.passwordKey` | `string`, default `password` |  |
-| `spec.desired.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. |
-| `spec.desired.registryAuthFrom.tokenKey` | `string`, default `token` |  |
-| `spec.desired.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. |
-| `spec.desired.transport` | `object` | OCITransportSpec configures private and air-gapped registries without allowing arbitrary files or commands into the execution Pod. |
+| `spec.desired.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. The process that runs SQL never receives it. |
+| `spec.desired.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
+| `spec.desired.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
+| `spec.desired.registryAuthFrom.name` | `string`, required | Name of the Secret the registry credential is read from. The manager never reads it; the operation Pod does. |
+| `spec.desired.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
+| `spec.desired.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. RegistryKey is the Secret key naming the registry the credential is for. |
+| `spec.desired.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
+| `spec.desired.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
+| `spec.desired.transport` | `object` | Transport is how the registry is reached: plain HTTP, a custom CA, a client certificate. |
 | `spec.desired.transport.caFrom` | `object` | CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `spec.desired.transport.caFrom.key` | `string`, required | The key to select. |
 | `spec.desired.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.desired.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `spec.desired.transport.clientCertificateFrom` | `object` | ClientCertificateFrom is reserved for a future executor contract that can select a client certificate by the effective TLS authority on every request, including redirects. The current API rejects this field. |
-| `spec.desired.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` |  |
-| `spec.desired.transport.clientCertificateFrom.name` | `string`, required |  |
-| `spec.desired.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` |  |
+| `spec.desired.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` | CertificateKey is the Secret key holding the certificate. |
+| `spec.desired.transport.clientCertificateFrom.name` | `string`, required | Name of the Secret holding the client certificate. |
+| `spec.desired.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` | PrivateKeyKey is the Secret key holding its private key. |
 | `spec.desired.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
-| `spec.desired.verificationPolicyFrom` | `object`, required | Selects a key from a ConfigMap. |
+| `spec.desired.verificationPolicyFrom` | `object`, required | VerificationPolicyFrom names the immutable ConfigMap holding the policy the artifact must satisfy. Editing it retires the plans computed under the previous version rather than letting them apply. |
 | `spec.desired.verificationPolicyFrom.key` | `string`, required | The key to select. |
 | `spec.desired.verificationPolicyFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.desired.verificationPolicyFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `spec.dev` | `object` | Dev is a scratch database Ptah may use where a comparison needs one. It is never the target, and nothing it holds is kept. |
-| `spec.dev.urlFrom` | `object`, required | SecretKeySelector selects a key of a Secret. |
+| `spec.dev.urlFrom` | `object`, required | URLFrom names the Secret key holding this database's connection URL. |
 | `spec.dev.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `spec.dev.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.dev.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
@@ -164,16 +164,16 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `spec.policy.allowDestructive` | `boolean`, default `false` | AllowDestructive permits a plan that drops or rewrites something. It is permission for the category, not for a plan: a destructive plan still needs an approval where the apply policy asks for one. |
 | `spec.policy.apply` | `string`, one of `Never`, `OnApproval`, `Always`, default `OnApproval` | Apply decides when a current plan may run: never, only with an approval naming its exact bytes, or as soon as it is ready. |
 | `spec.policy.driftSeverity` | `string`, one of `all`, `destructive`, default `all` | DriftSeverity decides which differences count as drift worth applying: every difference, or only the destructive ones. |
-| `spec.policy.exclude` | `[]string` | Exclude defines the single authoritative managed scope. Raw drift is observed without exclusions, then a read-only plan classifies this exact scope as changed or converged. |
+| `spec.policy.exclude` | `[]string` | Exclude defines the single authoritative managed scope. Raw drift is observed without exclusions, then a read-only plan classifies this exact scope as changed or converged. Exclude is the managed scope the apply was computed under. |
 | `spec.policy.lockTimeout` | `string`, default `30s` | LockTimeout is how long an operation waits for the database's own lock before giving up, so a busy database delays a run rather than stalling it for the Job's whole deadline. |
 | `spec.policy.protectedTables` | `[]string` | ProtectedTables fences declared row sets off from the declarative path. A plan that would change a listed table is refused rather than rated, and there is no override: an approval, allowDestructive and a permissive severity are all answers to "how risky is this", and a fence is the statement that no such answer exists for these rows. Where the change is wanted, the entry goes, or the rows are written as a migration. An entry names a table, or a schema and a table, the way the declaration does. Matching is Ptah's, which is case-insensitive, and an entry on a table the artifact already agrees with refuses nothing -- which is what lets a fence sit in a policy permanently. |
 | `spec.policy.transactionMode` | `string`, one of `all`, `file`, `none`, default `file` | TransactionMode is how the statements are wrapped: all in one transaction, one per file, or none at all. An engine that refuses a mode decides over this rather than around it. |
 | `spec.suspend` | `boolean`, default `false` | Suspend prevents new Jobs. A Job already applying is observed to a terminal result and is never replaced by a destructive cleanup action. |
 | `spec.target` | `object`, required | Target is the database to converge, named through a Secret the manager itself has no permission to read. |
 | `spec.target.coordinationKey` | `string`, required | CoordinationKey is a non-secret, stable identifier for the physical database realm. Every schema that can reach the same database through an alias, proxy, or different credential must use exactly the same key. |
-| `spec.target.engine` | `string`, required | DatabaseEngine names a database family. The API accepts bounded engine names so the controller can report unsupported families through status instead of turning a durable desired-state object into an admission-time dead end. |
+| `spec.target.engine` | `string`, required | Engine is the database this target speaks. An engine outside the supported set is refused with a condition rather than attempted. |
 | `spec.target.sharedRealm` | `boolean`, default `false` | SharedRealm declares that this resource manages only part of the database its coordination key names, and that every other resource managing that database has declared the same. It defaults to false, and a realm that more than one resource claims is refused while any claimant leaves it false. Serialization is not ownership: two resources that never run at the same time still undo each other's work by taking turns, so the operator blocks them rather than letting them alternate. A resource that runs nothing claims nothing. Deleting one leaves the realm, and so does suspending it: suspension is how a resource steps aside without being deleted. Resuming it puts it back in the census, and the conflict is refused then, before any Job. The declaration is what is verified, not the disjointness. No analyzer can tell whether two sets of arbitrary SQL touch the same rows, and a field that claimed otherwise would be the wrong kind of assurance. What it buys is that sharing is deliberate on every side: one resource that has not declared it blocks all of them, itself included. |
-| `spec.target.urlFrom` | `object`, required | SecretKeySelector selects a key of a Secret. |
+| `spec.target.urlFrom` | `object`, required | URLFrom names the Secret key holding the connection URL. The manager has no permission to read it: the operation Pod resolves it, and the URL never reaches status, an Event or a command line. |
 | `spec.target.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `spec.target.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `spec.target.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
@@ -184,124 +184,124 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | --- | --- | --- |
 | `status.activeOperation` | `object` | ActiveOperation is the claim for the operation in flight. It is written before the Job exists, which is what lets the controller tell a Job it created from one it has not created yet. |
 | `status.activeOperation.admissionSnapshot` | `object` | AdmissionSnapshot is persisted before dispatch and is bound into the Job and Pod template annotations. It permits only modeled, safe built-in admission mutations while retaining exact validation for executable and security-sensitive Pod fields. |
-| `status.activeOperation.admissionSnapshot.alwaysPullImagesEnabled` | `boolean`, required | AlwaysPullImagesEnabled records whether kube-apiserver runs the AlwaysPullImages admission plugin. |
-| `status.activeOperation.admissionSnapshot.defaultNotReadyTolerationSeconds` | `integer`, required |  |
-| `status.activeOperation.admissionSnapshot.defaultTolerationsEnabled` | `boolean`, required | DefaultTolerationsEnabled records whether kube-apiserver runs the DefaultTolerationSeconds admission plugin. |
-| `status.activeOperation.admissionSnapshot.defaultUnreachableTolerationSeconds` | `integer`, required |  |
-| `status.activeOperation.admissionSnapshot.digest` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.extendedResourceTolerationEnabled` | `boolean`, required | ExtendedResourceTolerationEnabled records whether kube-apiserver runs the ExtendedResourceToleration admission plugin. |
-| `status.activeOperation.admissionSnapshot.limitRanges` | `[]object` |  |
-| `status.activeOperation.admissionSnapshot.limitRanges[].defaultLimits` | `object` |  |
-| `status.activeOperation.admissionSnapshot.limitRanges[].defaultRequests` | `object` |  |
-| `status.activeOperation.admissionSnapshot.limitRanges[].object` | `object`, required | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.activeOperation.admissionSnapshot.limitRanges[].object.name` | `string`, required |  |
+| `status.activeOperation.admissionSnapshot.alwaysPullImagesEnabled` | `boolean`, required | AlwaysPullImagesEnabled records whether kube-apiserver runs the AlwaysPullImages admission plugin. AlwaysPullImagesEnabled records whether the cluster rewrites every imagePullPolicy to Always. |
+| `status.activeOperation.admissionSnapshot.defaultNotReadyTolerationSeconds` | `integer`, required | DefaultNotReadyTolerationSeconds is that plugin's not-ready value. |
+| `status.activeOperation.admissionSnapshot.defaultTolerationsEnabled` | `boolean`, required | DefaultTolerationsEnabled records whether kube-apiserver runs the DefaultTolerationSeconds admission plugin. DefaultTolerationsEnabled and the two values below record what the cluster's DefaultTolerationSeconds plugin does, so a toleration the Pod did not ask for is recognized rather than refused. |
+| `status.activeOperation.admissionSnapshot.defaultUnreachableTolerationSeconds` | `integer`, required | DefaultUnreachableTolerationSeconds is that plugin's unreachable value. |
+| `status.activeOperation.admissionSnapshot.digest` | `string`, required | Digest covers this whole snapshot, so a Pod can be checked against it without re-reading the cluster objects it describes. |
+| `status.activeOperation.admissionSnapshot.extendedResourceTolerationEnabled` | `boolean`, required | ExtendedResourceTolerationEnabled records whether kube-apiserver runs the ExtendedResourceToleration admission plugin. ExtendedResourceTolerationEnabled records whether the cluster adds a toleration per extended resource a Pod requests. |
+| `status.activeOperation.admissionSnapshot.limitRanges` | `[]object` | LimitRanges are the namespace defaults that would be applied to the Pod. |
+| `status.activeOperation.admissionSnapshot.limitRanges[].defaultLimits` | `object` | DefaultLimits are the limits it would add. |
+| `status.activeOperation.admissionSnapshot.limitRanges[].defaultRequests` | `object` | DefaultRequests are the requests it would add to a container that asks for none. |
+| `status.activeOperation.admissionSnapshot.limitRanges[].object` | `object`, required | Object is the LimitRange this was read from. |
+| `status.activeOperation.admissionSnapshot.limitRanges[].object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.activeOperation.admissionSnapshot.limitRanges[].object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.activeOperation.admissionSnapshot.limitRanges[].object.uid` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.priorityClass` | `object`, required | PriorityClassAdmissionSnapshot records the exact values injected by the Priority admission plugin. Object is absent only when the cluster has no global default and the Job does not request a named PriorityClass. |
-| `status.activeOperation.admissionSnapshot.priorityClass.name` | `string` |  |
-| `status.activeOperation.admissionSnapshot.priorityClass.object` | `object` | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.activeOperation.admissionSnapshot.priorityClass.object.name` | `string`, required |  |
+| `status.activeOperation.admissionSnapshot.limitRanges[].object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.activeOperation.admissionSnapshot.priorityClass` | `object`, required | PriorityClass is the scheduling priority it resolved to. |
+| `status.activeOperation.admissionSnapshot.priorityClass.name` | `string` | Name is that class, as the Pod requests it. |
+| `status.activeOperation.admissionSnapshot.priorityClass.object` | `object` | Object is the PriorityClass this was read from, where a class was named. |
+| `status.activeOperation.admissionSnapshot.priorityClass.object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.activeOperation.admissionSnapshot.priorityClass.object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.activeOperation.admissionSnapshot.priorityClass.object.uid` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.priorityClass.preemptionPolicy` | `string`, one of `Never`, `PreemptLowerPriority` | PreemptionPolicy describes a policy for if/when to preempt a pod. |
-| `status.activeOperation.admissionSnapshot.priorityClass.value` | `integer`, required |  |
-| `status.activeOperation.admissionSnapshot.runtimeClass` | `object` | RuntimeClassAdmissionSnapshot records the exact scheduling and overhead mutation selected before dispatch. Handler is deliberately retained as credential-free audit evidence even though it is not copied into PodSpec. |
-| `status.activeOperation.admissionSnapshot.runtimeClass.handler` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.runtimeClass.nodeSelector` | `object` |  |
-| `status.activeOperation.admissionSnapshot.runtimeClass.object` | `object`, required | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.activeOperation.admissionSnapshot.runtimeClass.object.name` | `string`, required |  |
+| `status.activeOperation.admissionSnapshot.priorityClass.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.activeOperation.admissionSnapshot.priorityClass.preemptionPolicy` | `string`, one of `Never`, `PreemptLowerPriority` | PreemptionPolicy is what that class says about preempting others. |
+| `status.activeOperation.admissionSnapshot.priorityClass.value` | `integer`, required | Value is the priority it resolved to. |
+| `status.activeOperation.admissionSnapshot.runtimeClass` | `object` | RuntimeClass is the container runtime it resolved to, where one is named. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.handler` | `string`, required | Handler is the runtime handler it names. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.nodeSelector` | `object` | NodeSelector is the scheduling the class forces. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.object` | `object`, required | Object is the RuntimeClass this was read from, by name and UID. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.activeOperation.admissionSnapshot.runtimeClass.object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.activeOperation.admissionSnapshot.runtimeClass.object.uid` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.runtimeClass.overhead` | `object` |  |
-| `status.activeOperation.admissionSnapshot.runtimeClass.overheadDefined` | `boolean` | OverheadDefined distinguishes an absent RuntimeClass overhead stanza from a present but empty one; Kubernetes admission preserves that distinction. |
-| `status.activeOperation.admissionSnapshot.runtimeClass.tolerations` | `[]object` |  |
+| `status.activeOperation.admissionSnapshot.runtimeClass.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.overhead` | `object` | Overhead is the per-Pod resource overhead the class adds. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.overheadDefined` | `boolean` | OverheadDefined distinguishes an absent RuntimeClass overhead stanza from a present but empty one; Kubernetes admission preserves that distinction. OverheadDefined separates a class with no overhead from one whose overhead is zero. |
+| `status.activeOperation.admissionSnapshot.runtimeClass.tolerations` | `[]object` | Tolerations are the tolerations it adds. |
 | `status.activeOperation.admissionSnapshot.runtimeClass.tolerations[].effect` | `string` | Effect indicates the taint effect to match. Empty means match all taint effects. When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute. |
 | `status.activeOperation.admissionSnapshot.runtimeClass.tolerations[].key` | `string` | Key is the taint key that the toleration applies to. Empty means match all taint keys. If the key is empty, operator must be Exists; this combination means to match all values and all keys. |
 | `status.activeOperation.admissionSnapshot.runtimeClass.tolerations[].operator` | `string` | Operator represents a key's relationship to the value. Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal. Exists is equivalent to wildcard for value, so that a pod can tolerate all taints of a particular category. Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators). |
 | `status.activeOperation.admissionSnapshot.runtimeClass.tolerations[].tolerationSeconds` | `integer` | TolerationSeconds represents the period of time the toleration (which must be of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default, it is not set, which means tolerate the taint forever (do not evict). Zero and negative values will be treated as 0 (evict immediately) by the system. |
 | `status.activeOperation.admissionSnapshot.runtimeClass.tolerations[].value` | `string` | Value is the taint value the toleration matches to. If the operator is Exists, the value should be empty, otherwise just a regular string. |
-| `status.activeOperation.admissionSnapshot.serviceAccount` | `object`, required | ServiceAccountAdmissionSnapshot binds the non-secret ServiceAccount fields that built-in admission may copy into a Pod. |
-| `status.activeOperation.admissionSnapshot.serviceAccount.imagePullSecrets` | `[]object` |  |
+| `status.activeOperation.admissionSnapshot.serviceAccount` | `object`, required | ServiceAccount is the identity the Pod runs as, as it resolved. |
+| `status.activeOperation.admissionSnapshot.serviceAccount.imagePullSecrets` | `[]object` | ImagePullSecrets are the pull Secrets it contributes to the Pod. |
 | `status.activeOperation.admissionSnapshot.serviceAccount.imagePullSecrets[].name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
-| `status.activeOperation.admissionSnapshot.serviceAccount.object` | `object`, required | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.activeOperation.admissionSnapshot.serviceAccount.object.name` | `string`, required |  |
+| `status.activeOperation.admissionSnapshot.serviceAccount.object` | `object`, required | Object is the ServiceAccount the Pod runs as. |
+| `status.activeOperation.admissionSnapshot.serviceAccount.object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.activeOperation.admissionSnapshot.serviceAccount.object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.activeOperation.admissionSnapshot.serviceAccount.object.uid` | `string`, required |  |
-| `status.activeOperation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. |
-| `status.activeOperation.admissionSnapshot.version` | `string`, required, one of `v1` |  |
-| `status.activeOperation.attempt` | `integer`, required |  |
+| `status.activeOperation.admissionSnapshot.serviceAccount.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.activeOperation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. TemplateDigest covers the Pod template the operator asked for, before the cluster's own admission had a chance to change it. |
+| `status.activeOperation.admissionSnapshot.version` | `string`, required, one of `v1` | Version is the snapshot format this record was written in. |
+| `status.activeOperation.attempt` | `integer`, required | Attempt counts this claim among the retries of the same operation. |
 | `status.activeOperation.coordinationDigest` | `string` | Plan and Apply operations persist their credential-free lock binding so later spec changes cannot redirect or shorten protection for a running Job. |
 | `status.activeOperation.dispatchNotAfter` | `string` | DispatchNotAfter is the immutable last instant at which the Apply runner may start its mutating child. Missing or untrusted terminal Pod evidence keeps proof behind the complete execution horizon below. |
 | `status.activeOperation.dispatchStarted` | `boolean` | DispatchStarted is persisted immediately before the one permitted Job create attempt. A missing Apply Job after this boundary is outcome-unknown and must never be recreated. |
 | `status.activeOperation.executionBindingID` | `string` | ExecutionBindingID binds every Job and result to the durable evidence epoch that authorized its claim. |
 | `status.activeOperation.executionNotAfter` | `string` | ExecutionNotAfter is enforced by the runner as the mutating child context deadline, independently of relative Job and Pod deadlines. |
-| `status.activeOperation.id` | `string`, required |  |
-| `status.activeOperation.inputFingerprint` | `string`, required |  |
-| `status.activeOperation.jobName` | `string`, required |  |
-| `status.activeOperation.jobUID` | `string` | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
+| `status.activeOperation.id` | `string`, required | ID is this attempt's identity, distinct from every other attempt. |
+| `status.activeOperation.inputFingerprint` | `string`, required | InputFingerprint is everything the claim was computed from. A changed input produces a new claim rather than reusing this one. |
+| `status.activeOperation.jobName` | `string`, required | JobName is the Job this claim authorizes, named before it is created. |
+| `status.activeOperation.jobUID` | `string` | JobUID is that Job's UID once it exists. A Job with the right name and another UID is somebody else's. |
 | `status.activeOperation.leaseContinuityLost` | `boolean` | LeaseContinuityLost is set before any result can be harvested when the persisted epoch no longer owns an uninterrupted lock interval. |
-| `status.activeOperation.leaseDurationSeconds` | `integer` |  |
+| `status.activeOperation.leaseDurationSeconds` | `integer` | LeaseDurationSeconds is how long the database lock was taken for. |
 | `status.activeOperation.leaseEpoch` | `string` | LeaseEpoch is persisted before dispatch. A different epoch invalidates every result produced by this operation. |
-| `status.activeOperation.observationConnectTimeout` | `string` |  |
-| `status.activeOperation.observationDev` | `object` | DatabaseTargetRef is a database URL reference used for optional rehearsal. |
-| `status.activeOperation.observationDev.urlFrom` | `object`, required | SecretKeySelector selects a key of a Secret. |
+| `status.activeOperation.observationConnectTimeout` | `string` | ObservationConnectTimeout is the connect timeout it was dispatched with. |
+| `status.activeOperation.observationDev` | `object` | ObservationDev is the scratch database it may use, where one is configured. |
+| `status.activeOperation.observationDev.urlFrom` | `object`, required | URLFrom names the Secret key holding this database's connection URL. |
 | `status.activeOperation.observationDev.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `status.activeOperation.observationDev.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.activeOperation.observationDev.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
-| `status.activeOperation.observationExclude` | `[]string` |  |
-| `status.activeOperation.observationLockTimeout` | `string` |  |
-| `status.activeOperation.observationProtectedTables` | `[]string` |  |
-| `status.activeOperation.observationSeverity` | `string` |  |
+| `status.activeOperation.observationExclude` | `[]string` | ObservationExclude is the managed scope the operation was given, copied so a later spec edit cannot change what a running Job was asked to read. |
+| `status.activeOperation.observationLockTimeout` | `string` | ObservationLockTimeout is the database lock timeout it was dispatched with. |
+| `status.activeOperation.observationProtectedTables` | `[]string` | ObservationProtectedTables is the fence the operation was dispatched under, so an edit to the policy cannot reach a Job already running. |
+| `status.activeOperation.observationSeverity` | `string` | ObservationSeverity is the drift severity it was asked to report. |
 | `status.activeOperation.source` | `object` | Source snapshots artifact access for mandatory post-Apply observation. It contains Kubernetes selectors only, never Secret contents. |
-| `status.activeOperation.source.digest` | `string`, required |  |
-| `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthSource describes a Secret without requiring the controller to read it. The kubelet projects only the selected credential representation into a Job, while every mode also projects the fixed registry authority grant to the runner. |
-| `status.activeOperation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` |  |
-| `status.activeOperation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | RegistryAuthMode selects one standard Kubernetes Secret representation. |
-| `status.activeOperation.source.registryAuthFrom.name` | `string`, required |  |
-| `status.activeOperation.source.registryAuthFrom.passwordKey` | `string`, default `password` |  |
-| `status.activeOperation.source.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. |
-| `status.activeOperation.source.registryAuthFrom.tokenKey` | `string`, default `token` |  |
-| `status.activeOperation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. |
-| `status.activeOperation.source.resolvedReference` | `string`, required |  |
-| `status.activeOperation.source.transport` | `object` | OCITransportSpec configures private and air-gapped registries without allowing arbitrary files or commands into the execution Pod. |
+| `status.activeOperation.source.digest` | `string`, required | Digest is that digest on its own. |
+| `status.activeOperation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
+| `status.activeOperation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
+| `status.activeOperation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
+| `status.activeOperation.source.registryAuthFrom.name` | `string`, required | Name of the Secret the registry credential is read from. The manager never reads it; the operation Pod does. |
+| `status.activeOperation.source.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
+| `status.activeOperation.source.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. RegistryKey is the Secret key naming the registry the credential is for. |
+| `status.activeOperation.source.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
+| `status.activeOperation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
+| `status.activeOperation.source.resolvedReference` | `string`, required | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.activeOperation.source.transport` | `object` | Transport is how the registry is reached: plain HTTP, a custom CA. |
 | `status.activeOperation.source.transport.caFrom` | `object` | CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `status.activeOperation.source.transport.caFrom.key` | `string`, required | The key to select. |
 | `status.activeOperation.source.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.activeOperation.source.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `status.activeOperation.source.transport.clientCertificateFrom` | `object` | ClientCertificateFrom is reserved for a future executor contract that can select a client certificate by the effective TLS authority on every request, including redirects. The current API rejects this field. |
-| `status.activeOperation.source.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` |  |
-| `status.activeOperation.source.transport.clientCertificateFrom.name` | `string`, required |  |
-| `status.activeOperation.source.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` |  |
+| `status.activeOperation.source.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` | CertificateKey is the Secret key holding the certificate. |
+| `status.activeOperation.source.transport.clientCertificateFrom.name` | `string`, required | Name of the Secret holding the client certificate. |
+| `status.activeOperation.source.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` | PrivateKeyKey is the Secret key holding its private key. |
 | `status.activeOperation.source.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
-| `status.activeOperation.startedAt` | `string`, required |  |
-| `status.activeOperation.target` | `object` | DatabaseTargetBinding is the key-free immutable target snapshot stored in status. CoordinationKey must never be copied into status; its digest is persisted separately. |
-| `status.activeOperation.target.engine` | `string`, required | DatabaseEngine names a database family. The API accepts bounded engine names so the controller can report unsupported families through status instead of turning a durable desired-state object into an admission-time dead end. |
-| `status.activeOperation.target.urlFrom` | `object`, required | SecretKeySelector selects a key of a Secret. |
+| `status.activeOperation.startedAt` | `string`, required | StartedAt is when the claim was written. |
+| `status.activeOperation.target` | `object` | Target is the key-free binding the Job resolves its credential through. |
+| `status.activeOperation.target.engine` | `string`, required | Engine is the database this binding speaks. |
+| `status.activeOperation.target.urlFrom` | `object`, required | URLFrom is the Secret key the operation Pod reads the URL from. |
 | `status.activeOperation.target.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `status.activeOperation.target.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.activeOperation.target.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
-| `status.activeOperation.targetIdentityDigest` | `string` |  |
-| `status.activeOperation.terminationGracePeriodSeconds` | `integer` |  |
-| `status.activeOperation.type` | `string`, required, one of `Resolve`, `Verify`, `Observe`, `Plan`, `Apply` | OperationType identifies one serialized execution Job. |
-| `status.activeOperation.verificationPolicyDigest` | `string` |  |
+| `status.activeOperation.targetIdentityDigest` | `string` | TargetIdentityDigest is the database that claim is for. |
+| `status.activeOperation.terminationGracePeriodSeconds` | `integer` | TerminationGracePeriodSeconds is how long the operation Pod is given to stop on its own before it is killed. |
+| `status.activeOperation.type` | `string`, required, one of `Resolve`, `Verify`, `Observe`, `Plan`, `Apply` | Type is the operation this claim authorizes: resolving the artifact, verifying it, observing the database, planning, or applying. |
+| `status.activeOperation.verificationPolicyDigest` | `string` | VerificationPolicyDigest is that ConfigMap's content at dispatch. |
 | `status.activeOperation.verificationPolicyUID` | `string` | VerificationPolicyUID and VerificationPolicyDigest bind a Verify Job to the immutable ConfigMap version inspected before dispatch. |
 | `status.applied` | `object` | Applied is the last apply that was independently observed to have converged, which is a different claim from a Job that exited zero. |
-| `status.applied.artifactDigest` | `string`, required |  |
-| `status.applied.completedAt` | `string`, required |  |
-| `status.applied.controllerImage` | `string` |  |
-| `status.applied.controllerRevision` | `string` |  |
-| `status.applied.controllerStateVersion` | `integer` |  |
-| `status.applied.coordinationDigest` | `string`, required |  |
-| `status.applied.executionBindingID` | `string` |  |
-| `status.applied.executorImage` | `string`, required |  |
-| `status.applied.planFingerprint` | `string`, required |  |
+| `status.applied.artifactDigest` | `string`, required | ArtifactDigest is the artifact that was applied. |
+| `status.applied.completedAt` | `string`, required | CompletedAt is when convergence was independently observed, not when the Job exited. |
+| `status.applied.controllerImage` | `string` | ControllerImage is the digest-pinned manager that dispatched it. |
+| `status.applied.controllerRevision` | `string` | ControllerRevision is that manager's revision. |
+| `status.applied.controllerStateVersion` | `integer` | ControllerStateVersion is the state semantics it wrote. |
+| `status.applied.coordinationDigest` | `string`, required | CoordinationDigest is the realm the apply held while it ran. |
+| `status.applied.executionBindingID` | `string` | ExecutionBindingID is the epoch the apply ran under. |
+| `status.applied.executorImage` | `string`, required | ExecutorImage is the digest-pinned image it ran in. |
+| `status.applied.planFingerprint` | `string`, required | PlanFingerprint says whether the plan object read today is the one this record was written for. |
 | `status.applied.planRef` | `object` | PlanRef names the stored plan this apply ran. It is what a reader addresses to see the SQL that was applied, instead of searching the namespace for a fingerprint. Optional, because a record written before the field existed carries only PlanFingerprint. It does not replace that fingerprint: the reference says which object to read and the fingerprint says whether the object read is the one this record was written for. |
 | `status.applied.planRef.name` | `string`, required | Name of the referenced object in the same namespace. |
 | `status.applied.planRef.uid` | `string`, required | UID the object had when the reference was written. An object deleted and recreated under the same name is a different object, and this says so. |
-| `status.applied.ptahVersion` | `string`, required |  |
-| `status.applied.runnerImage` | `string`, required |  |
-| `status.applied.runnerProtocolVersion` | `integer`, required |  |
-| `status.applied.targetIdentityDigest` | `string`, required |  |
+| `status.applied.ptahVersion` | `string`, required | PtahVersion is the Ptah build that executed the statements. |
+| `status.applied.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervised it. |
+| `status.applied.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner spoke. |
+| `status.applied.targetIdentityDigest` | `string`, required | TargetIdentityDigest is the database it converged. |
 | `status.conditions` | `[]object` | Conditions are the readable verdicts: whether the engine is supported, the artifact resolved and verified, the database was reachable, drift was found, a plan is ready, an approval is required, the schema is in sync, and whether the last reconciliation failed. |
 | `status.conditions[].lastTransitionTime` | `string`, required | lastTransitionTime is the last time the condition transitioned from one status to another. This should be when the underlying condition changed. If that is not known, then using the time when the API field changed is acceptable. |
 | `status.conditions[].message` | `string`, required | message is a human readable message indicating details about the transition. This may be an empty string. |
@@ -313,97 +313,97 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.executionBinding.controllerImage` | `string` | ControllerImage identifies the exact manager container content that interpreted controller state and authorized this evidence epoch. |
 | `status.executionBinding.controllerRevision` | `string` | ControllerRevision identifies the exact manager build that interpreted controller state. It is provenance metadata in addition to ControllerImage, not a substitute for the image content digest. |
 | `status.executionBinding.controllerStateVersion` | `integer` | ControllerStateVersion versions manager-side reconciliation semantics independently of the data-plane runner protocol. |
-| `status.executionBinding.epoch` | `string`, required |  |
-| `status.executionBinding.executorImage` | `string`, required |  |
-| `status.executionBinding.ptahVersion` | `string`, required |  |
-| `status.executionBinding.runnerImage` | `string`, required |  |
-| `status.executionBinding.runnerProtocolVersion` | `integer`, required |  |
+| `status.executionBinding.epoch` | `string`, required | Epoch is this binding's identity. It changes on every component transition, a rollback to identical versions included, so evidence from before a rollout is historical rather than current. |
+| `status.executionBinding.executorImage` | `string`, required | ExecutorImage is the digest-pinned image carrying that build. |
+| `status.executionBinding.ptahVersion` | `string`, required | PtahVersion is the Ptah build this epoch executes with. |
+| `status.executionBinding.runnerImage` | `string`, required | RunnerImage is the digest-pinned image that supervises it. |
+| `status.executionBinding.runnerProtocolVersion` | `integer`, required | RunnerProtocolVersion is the result-frame protocol that runner speaks. |
 | `status.lastAttemptTime` | `string` | LastAttemptTime is when the controller last tried to do something. |
 | `status.lastSuccessfulReconciliation` | `string` | LastSuccessfulReconciliation is when it last completed a cycle with nothing left to do. |
 | `status.nextReconciliationTime` | `string` | NextReconciliationTime is the durable earliest time for the next scheduled read-only reconciliation. Event-driven safety work may run sooner. |
 | `status.observedGeneration` | `integer` | ObservedGeneration is the spec generation this status describes. |
 | `status.pendingLockRelease` | `object` | PendingLockRelease keeps the exact Lease owner and epoch durable until an idempotent release succeeds. It closes the manager-crash window between a terminal status transition and clearing the owner-neutral Lease. |
-| `status.pendingLockRelease.coordinationDigest` | `string`, required |  |
-| `status.pendingLockRelease.leaseDurationSeconds` | `integer`, required |  |
-| `status.pendingLockRelease.leaseEpoch` | `string`, required |  |
-| `status.pendingLockRelease.operationID` | `string`, required |  |
+| `status.pendingLockRelease.coordinationDigest` | `string`, required | CoordinationDigest is the realm whose lock is still to be released. |
+| `status.pendingLockRelease.leaseDurationSeconds` | `integer`, required | LeaseDurationSeconds is how long it was taken for. |
+| `status.pendingLockRelease.leaseEpoch` | `string`, required | LeaseEpoch identifies that acquisition, so a release cannot free a lock somebody else acquired in the meantime. |
+| `status.pendingLockRelease.operationID` | `string`, required | OperationID is the operation that took it. |
 | `status.pendingObservation` | `object` | PendingObservation is durable proof work created after an Apply Job may have mutated the database. It is independent of Phase so retries and suspension cannot accidentally permit another mutation first. |
 | `status.pendingObservation.admissionSnapshot` | `object` | AdmissionSnapshot retains the exact pre-admission Pod template identity after ActiveOperation is cleared. Current-format Apply Job cleanup after an execution-binding change fails closed when this evidence is absent; older supported Job envelopes use their separate compatibility contract. |
-| `status.pendingObservation.admissionSnapshot.alwaysPullImagesEnabled` | `boolean`, required | AlwaysPullImagesEnabled records whether kube-apiserver runs the AlwaysPullImages admission plugin. |
-| `status.pendingObservation.admissionSnapshot.defaultNotReadyTolerationSeconds` | `integer`, required |  |
-| `status.pendingObservation.admissionSnapshot.defaultTolerationsEnabled` | `boolean`, required | DefaultTolerationsEnabled records whether kube-apiserver runs the DefaultTolerationSeconds admission plugin. |
-| `status.pendingObservation.admissionSnapshot.defaultUnreachableTolerationSeconds` | `integer`, required |  |
-| `status.pendingObservation.admissionSnapshot.digest` | `string`, required |  |
-| `status.pendingObservation.admissionSnapshot.extendedResourceTolerationEnabled` | `boolean`, required | ExtendedResourceTolerationEnabled records whether kube-apiserver runs the ExtendedResourceToleration admission plugin. |
-| `status.pendingObservation.admissionSnapshot.limitRanges` | `[]object` |  |
-| `status.pendingObservation.admissionSnapshot.limitRanges[].defaultLimits` | `object` |  |
-| `status.pendingObservation.admissionSnapshot.limitRanges[].defaultRequests` | `object` |  |
-| `status.pendingObservation.admissionSnapshot.limitRanges[].object` | `object`, required | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.pendingObservation.admissionSnapshot.limitRanges[].object.name` | `string`, required |  |
+| `status.pendingObservation.admissionSnapshot.alwaysPullImagesEnabled` | `boolean`, required | AlwaysPullImagesEnabled records whether kube-apiserver runs the AlwaysPullImages admission plugin. AlwaysPullImagesEnabled records whether the cluster rewrites every imagePullPolicy to Always. |
+| `status.pendingObservation.admissionSnapshot.defaultNotReadyTolerationSeconds` | `integer`, required | DefaultNotReadyTolerationSeconds is that plugin's not-ready value. |
+| `status.pendingObservation.admissionSnapshot.defaultTolerationsEnabled` | `boolean`, required | DefaultTolerationsEnabled records whether kube-apiserver runs the DefaultTolerationSeconds admission plugin. DefaultTolerationsEnabled and the two values below record what the cluster's DefaultTolerationSeconds plugin does, so a toleration the Pod did not ask for is recognized rather than refused. |
+| `status.pendingObservation.admissionSnapshot.defaultUnreachableTolerationSeconds` | `integer`, required | DefaultUnreachableTolerationSeconds is that plugin's unreachable value. |
+| `status.pendingObservation.admissionSnapshot.digest` | `string`, required | Digest covers this whole snapshot, so a Pod can be checked against it without re-reading the cluster objects it describes. |
+| `status.pendingObservation.admissionSnapshot.extendedResourceTolerationEnabled` | `boolean`, required | ExtendedResourceTolerationEnabled records whether kube-apiserver runs the ExtendedResourceToleration admission plugin. ExtendedResourceTolerationEnabled records whether the cluster adds a toleration per extended resource a Pod requests. |
+| `status.pendingObservation.admissionSnapshot.limitRanges` | `[]object` | LimitRanges are the namespace defaults that would be applied to the Pod. |
+| `status.pendingObservation.admissionSnapshot.limitRanges[].defaultLimits` | `object` | DefaultLimits are the limits it would add. |
+| `status.pendingObservation.admissionSnapshot.limitRanges[].defaultRequests` | `object` | DefaultRequests are the requests it would add to a container that asks for none. |
+| `status.pendingObservation.admissionSnapshot.limitRanges[].object` | `object`, required | Object is the LimitRange this was read from. |
+| `status.pendingObservation.admissionSnapshot.limitRanges[].object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.pendingObservation.admissionSnapshot.limitRanges[].object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.pendingObservation.admissionSnapshot.limitRanges[].object.uid` | `string`, required |  |
-| `status.pendingObservation.admissionSnapshot.priorityClass` | `object`, required | PriorityClassAdmissionSnapshot records the exact values injected by the Priority admission plugin. Object is absent only when the cluster has no global default and the Job does not request a named PriorityClass. |
-| `status.pendingObservation.admissionSnapshot.priorityClass.name` | `string` |  |
-| `status.pendingObservation.admissionSnapshot.priorityClass.object` | `object` | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.pendingObservation.admissionSnapshot.priorityClass.object.name` | `string`, required |  |
+| `status.pendingObservation.admissionSnapshot.limitRanges[].object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.pendingObservation.admissionSnapshot.priorityClass` | `object`, required | PriorityClass is the scheduling priority it resolved to. |
+| `status.pendingObservation.admissionSnapshot.priorityClass.name` | `string` | Name is that class, as the Pod requests it. |
+| `status.pendingObservation.admissionSnapshot.priorityClass.object` | `object` | Object is the PriorityClass this was read from, where a class was named. |
+| `status.pendingObservation.admissionSnapshot.priorityClass.object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.pendingObservation.admissionSnapshot.priorityClass.object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.pendingObservation.admissionSnapshot.priorityClass.object.uid` | `string`, required |  |
-| `status.pendingObservation.admissionSnapshot.priorityClass.preemptionPolicy` | `string`, one of `Never`, `PreemptLowerPriority` | PreemptionPolicy describes a policy for if/when to preempt a pod. |
-| `status.pendingObservation.admissionSnapshot.priorityClass.value` | `integer`, required |  |
-| `status.pendingObservation.admissionSnapshot.runtimeClass` | `object` | RuntimeClassAdmissionSnapshot records the exact scheduling and overhead mutation selected before dispatch. Handler is deliberately retained as credential-free audit evidence even though it is not copied into PodSpec. |
-| `status.pendingObservation.admissionSnapshot.runtimeClass.handler` | `string`, required |  |
-| `status.pendingObservation.admissionSnapshot.runtimeClass.nodeSelector` | `object` |  |
-| `status.pendingObservation.admissionSnapshot.runtimeClass.object` | `object`, required | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.pendingObservation.admissionSnapshot.runtimeClass.object.name` | `string`, required |  |
+| `status.pendingObservation.admissionSnapshot.priorityClass.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.pendingObservation.admissionSnapshot.priorityClass.preemptionPolicy` | `string`, one of `Never`, `PreemptLowerPriority` | PreemptionPolicy is what that class says about preempting others. |
+| `status.pendingObservation.admissionSnapshot.priorityClass.value` | `integer`, required | Value is the priority it resolved to. |
+| `status.pendingObservation.admissionSnapshot.runtimeClass` | `object` | RuntimeClass is the container runtime it resolved to, where one is named. |
+| `status.pendingObservation.admissionSnapshot.runtimeClass.handler` | `string`, required | Handler is the runtime handler it names. |
+| `status.pendingObservation.admissionSnapshot.runtimeClass.nodeSelector` | `object` | NodeSelector is the scheduling the class forces. |
+| `status.pendingObservation.admissionSnapshot.runtimeClass.object` | `object`, required | Object is the RuntimeClass this was read from, by name and UID. |
+| `status.pendingObservation.admissionSnapshot.runtimeClass.object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.pendingObservation.admissionSnapshot.runtimeClass.object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.pendingObservation.admissionSnapshot.runtimeClass.object.uid` | `string`, required |  |
-| `status.pendingObservation.admissionSnapshot.runtimeClass.overhead` | `object` |  |
-| `status.pendingObservation.admissionSnapshot.runtimeClass.overheadDefined` | `boolean` | OverheadDefined distinguishes an absent RuntimeClass overhead stanza from a present but empty one; Kubernetes admission preserves that distinction. |
-| `status.pendingObservation.admissionSnapshot.runtimeClass.tolerations` | `[]object` |  |
+| `status.pendingObservation.admissionSnapshot.runtimeClass.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.pendingObservation.admissionSnapshot.runtimeClass.overhead` | `object` | Overhead is the per-Pod resource overhead the class adds. |
+| `status.pendingObservation.admissionSnapshot.runtimeClass.overheadDefined` | `boolean` | OverheadDefined distinguishes an absent RuntimeClass overhead stanza from a present but empty one; Kubernetes admission preserves that distinction. OverheadDefined separates a class with no overhead from one whose overhead is zero. |
+| `status.pendingObservation.admissionSnapshot.runtimeClass.tolerations` | `[]object` | Tolerations are the tolerations it adds. |
 | `status.pendingObservation.admissionSnapshot.runtimeClass.tolerations[].effect` | `string` | Effect indicates the taint effect to match. Empty means match all taint effects. When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute. |
 | `status.pendingObservation.admissionSnapshot.runtimeClass.tolerations[].key` | `string` | Key is the taint key that the toleration applies to. Empty means match all taint keys. If the key is empty, operator must be Exists; this combination means to match all values and all keys. |
 | `status.pendingObservation.admissionSnapshot.runtimeClass.tolerations[].operator` | `string` | Operator represents a key's relationship to the value. Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal. Exists is equivalent to wildcard for value, so that a pod can tolerate all taints of a particular category. Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators). |
 | `status.pendingObservation.admissionSnapshot.runtimeClass.tolerations[].tolerationSeconds` | `integer` | TolerationSeconds represents the period of time the toleration (which must be of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default, it is not set, which means tolerate the taint forever (do not evict). Zero and negative values will be treated as 0 (evict immediately) by the system. |
 | `status.pendingObservation.admissionSnapshot.runtimeClass.tolerations[].value` | `string` | Value is the taint value the toleration matches to. If the operator is Exists, the value should be empty, otherwise just a regular string. |
-| `status.pendingObservation.admissionSnapshot.serviceAccount` | `object`, required | ServiceAccountAdmissionSnapshot binds the non-secret ServiceAccount fields that built-in admission may copy into a Pod. |
-| `status.pendingObservation.admissionSnapshot.serviceAccount.imagePullSecrets` | `[]object` |  |
+| `status.pendingObservation.admissionSnapshot.serviceAccount` | `object`, required | ServiceAccount is the identity the Pod runs as, as it resolved. |
+| `status.pendingObservation.admissionSnapshot.serviceAccount.imagePullSecrets` | `[]object` | ImagePullSecrets are the pull Secrets it contributes to the Pod. |
 | `status.pendingObservation.admissionSnapshot.serviceAccount.imagePullSecrets[].name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
-| `status.pendingObservation.admissionSnapshot.serviceAccount.object` | `object`, required | AdmissionObjectBinding identifies one API object whose credential-free contents contributed to the resolved Pod admission envelope. |
-| `status.pendingObservation.admissionSnapshot.serviceAccount.object.name` | `string`, required |  |
+| `status.pendingObservation.admissionSnapshot.serviceAccount.object` | `object`, required | Object is the ServiceAccount the Pod runs as. |
+| `status.pendingObservation.admissionSnapshot.serviceAccount.object.name` | `string`, required | Name of the cluster object this snapshot was read from. |
 | `status.pendingObservation.admissionSnapshot.serviceAccount.object.resourceVersion` | `string`, required | ResourceVersion is opaque, but bounded here so hostile metadata cannot make the status object grow without limit. |
-| `status.pendingObservation.admissionSnapshot.serviceAccount.object.uid` | `string`, required |  |
-| `status.pendingObservation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. |
-| `status.pendingObservation.admissionSnapshot.version` | `string`, required, one of `v1` |  |
-| `status.pendingObservation.applyGeneration` | `integer`, required |  |
+| `status.pendingObservation.admissionSnapshot.serviceAccount.object.uid` | `string`, required | UID it had, so a recreated object is a different one. |
+| `status.pendingObservation.admissionSnapshot.templateDigest` | `string`, required | TemplateDigest binds the canonical, API-defaulted pre-admission Job Pod template. The self-referential snapshot annotation and four exact API-server-generated Job identity labels are omitted and validated separately against the current Job name and UID. TemplateDigest covers the Pod template the operator asked for, before the cluster's own admission had a chance to change it. |
+| `status.pendingObservation.admissionSnapshot.version` | `string`, required, one of `v1` | Version is the snapshot format this record was written in. |
+| `status.pendingObservation.applyGeneration` | `integer`, required | ApplyGeneration is the spec generation the apply was dispatched for, so a newer desired state does not inherit this proof. |
 | `status.pendingObservation.applyJobName` | `string` | ApplyJobName and ApplyJobUID identify the Kubernetes Job independently of mutable labels so every exact-owner Pod can be tracked until the immutable execution horizon has elapsed. |
-| `status.pendingObservation.applyJobUID` | `string` | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
-| `status.pendingObservation.applyOperationID` | `string`, required |  |
-| `status.pendingObservation.applyPodCount` | `integer` |  |
+| `status.pendingObservation.applyJobUID` | `string` | ApplyJobUID is that Job's UID. |
+| `status.pendingObservation.applyOperationID` | `string`, required | ApplyOperationID is the apply attempt this proof belongs to. |
+| `status.pendingObservation.applyPodCount` | `integer` | ApplyPodCount is how many of them there were. |
 | `status.pendingObservation.applyPodUIDs` | `[]string` | ApplyPodUIDs and ApplyPodCount preserve the terminal Pod evidence seen at the mutation boundary. More than one Pod always forces outcome-unknown proof even for a one-shot Job. |
-| `status.pendingObservation.connectTimeout` | `string` |  |
-| `status.pendingObservation.coordinationDigest` | `string`, required |  |
-| `status.pendingObservation.dev` | `object` | DatabaseTargetRef is a database URL reference used for optional rehearsal. |
-| `status.pendingObservation.dev.urlFrom` | `object`, required | SecretKeySelector selects a key of a Secret. |
+| `status.pendingObservation.connectTimeout` | `string` | ConnectTimeout is the connect timeout the proof is dispatched with. |
+| `status.pendingObservation.coordinationDigest` | `string`, required | CoordinationDigest is the realm the apply held, kept so the proof runs under the same lock rather than racing somebody else's turn. |
+| `status.pendingObservation.dev` | `object` | Dev is the scratch database the proof may use. |
+| `status.pendingObservation.dev.urlFrom` | `object`, required | URLFrom names the Secret key holding this database's connection URL. |
 | `status.pendingObservation.dev.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `status.pendingObservation.dev.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.pendingObservation.dev.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
-| `status.pendingObservation.driftSeverity` | `string` |  |
-| `status.pendingObservation.exclude` | `[]string` |  |
+| `status.pendingObservation.driftSeverity` | `string` | DriftSeverity is the severity the proof reads at. |
+| `status.pendingObservation.exclude` | `[]string` | Exclude is the managed scope the apply was computed under. |
 | `status.pendingObservation.leaseDurationSeconds` | `integer`, required | LeaseDurationSeconds is the immutable duration claimed for the Apply operation. The same holder remains active through convergence proof. |
 | `status.pendingObservation.leaseEpoch` | `string` | LeaseEpoch identifies the uninterrupted database-realm lock acquisition carried from Apply through its complete read-only convergence proof. |
-| `status.pendingObservation.lockTimeout` | `string` |  |
+| `status.pendingObservation.lockTimeout` | `string` | LockTimeout is the database lock timeout it is dispatched with. |
 | `status.pendingObservation.observeAfter` | `string` | ObserveAfter delays proof when the Kubernetes Job identity or create result is uncertain. Until this time, the original mutating Pod could still be within its immutable active deadline. |
-| `status.pendingObservation.outcome` | `string`, required, one of `ApplySucceeded`, `OutcomeUnknown` | PendingObservationOutcome records why read-only convergence proof is mandatory before another mutation may be considered. |
-| `status.pendingObservation.plan` | `object`, required | CurrentPlanStatus is a compact reference to an immutable PtahSchemaPlan. |
+| `status.pendingObservation.outcome` | `string`, required, one of `ApplySucceeded`, `OutcomeUnknown` | Outcome is what is known about the apply this proof is for: that it succeeded, or that nobody can say. |
+| `status.pendingObservation.plan` | `object`, required | Plan is the plan the apply carried out, kept here after the active operation is cleared so the proof knows what it is proving. |
 | `status.pendingObservation.plan.actualStateFingerprint` | `string`, required | ActualStateFingerprint is the observed state it was planned from. |
 | `status.pendingObservation.plan.approval` | `object` | Approval is the decision that authorized this plan, where one was made. |
-| `status.pendingObservation.plan.approval.approvedAt` | `string`, required |  |
-| `status.pendingObservation.plan.approval.approver` | `object`, required | ApprovalIdentity is stamped from the authenticated admission request. The API client does not choose these fields. |
+| `status.pendingObservation.plan.approval.approvedAt` | `string`, required | ApprovedAt is when the decision was stamped. |
+| `status.pendingObservation.plan.approval.approver` | `object`, required | Approver is who the API server authenticated. |
 | `status.pendingObservation.plan.approval.approver.groups` | `[]string` | Groups the authenticated user belonged to at that moment. |
 | `status.pendingObservation.plan.approval.approver.uid` | `string` | UID of that user, where the authenticator provides one. |
 | `status.pendingObservation.plan.approval.approver.username` | `string`, required | Username the API server authenticated the request as. |
-| `status.pendingObservation.plan.approval.name` | `string`, required |  |
-| `status.pendingObservation.plan.approval.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
+| `status.pendingObservation.plan.approval.name` | `string`, required | Name of the approval that authorized the apply. |
+| `status.pendingObservation.plan.approval.uid` | `string`, required | UID it had, so a recreated approval is not read as the same decision. |
 | `status.pendingObservation.plan.artifactDigest` | `string`, required | ArtifactDigest is the artifact the plan was computed from. |
 | `status.pendingObservation.plan.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes. |
 | `status.pendingObservation.plan.controllerImage` | `string` | ControllerImage is the digest-pinned manager that published it. |
@@ -428,30 +428,30 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.pendingObservation.plan.verificationPolicyUID` | `string`, required | VerificationPolicyUID is the policy object that accepted the artifact. |
 | `status.pendingObservation.planRequired` | `boolean` | PlanRequired records that the raw drift read completed and the same immutable proof inputs now require authoritative managed-scope planning. |
 | `status.pendingObservation.protectedTables` | `[]string` | ProtectedTables is the fence the in-flight plan was computed under. A policy edit while a plan is pending must not let it execute against a fence it never saw. |
-| `status.pendingObservation.source` | `object`, required | OCIArtifactAccessBinding is a credential-free, immutable snapshot of the exact artifact and Kubernetes credential selectors needed to fetch it. It is persisted across post-Apply proof so a newer generation cannot send newly selected credentials to the old artifact's registry. |
-| `status.pendingObservation.source.digest` | `string`, required |  |
-| `status.pendingObservation.source.registryAuthFrom` | `object` | RegistryAuthSource describes a Secret without requiring the controller to read it. The kubelet projects only the selected credential representation into a Job, while every mode also projects the fixed registry authority grant to the runner. |
-| `status.pendingObservation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` |  |
-| `status.pendingObservation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | RegistryAuthMode selects one standard Kubernetes Secret representation. |
-| `status.pendingObservation.source.registryAuthFrom.name` | `string`, required |  |
-| `status.pendingObservation.source.registryAuthFrom.passwordKey` | `string`, default `password` |  |
-| `status.pendingObservation.source.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. |
-| `status.pendingObservation.source.registryAuthFrom.tokenKey` | `string`, default `token` |  |
-| `status.pendingObservation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. |
-| `status.pendingObservation.source.resolvedReference` | `string`, required |  |
-| `status.pendingObservation.source.transport` | `object` | OCITransportSpec configures private and air-gapped registries without allowing arbitrary files or commands into the execution Pod. |
+| `status.pendingObservation.source` | `object`, required | Source is the artifact access the proof needs to re-read the desired state. It holds Kubernetes selectors, never Secret contents. |
+| `status.pendingObservation.source.digest` | `string`, required | Digest is that digest on its own. |
+| `status.pendingObservation.source.registryAuthFrom` | `object` | RegistryAuthFrom names the Secret an operation Pod reads the registry credential from. It is a selector, never the credential. |
+| `status.pendingObservation.source.registryAuthFrom.dockerConfigJSONKey` | `string`, default `.dockerconfigjson` | DockerConfigJSONKey is the Secret key holding a Docker config document. |
+| `status.pendingObservation.source.registryAuthFrom.mode` | `string`, one of `Environment`, `DockerConfigJSON`, default `Environment` | Mode says how the credential reaches the executor: as environment variables, or as a Docker config file. |
+| `status.pendingObservation.source.registryAuthFrom.name` | `string`, required | Name of the Secret the registry credential is read from. The manager never reads it; the operation Pod does. |
+| `status.pendingObservation.source.registryAuthFrom.passwordKey` | `string`, default `password` | PasswordKey is the Secret key holding the password. |
+| `status.pendingObservation.source.registryAuthFrom.registryKey` | `string`, one of `registry`, default `registry` | RegistryKey is retained for source compatibility. The key is fixed so the Secret owner, rather than a PtahSchema author, controls the authority grant. The referenced Secret must contain an authority-only host[:port] value. RegistryKey is the Secret key naming the registry the credential is for. |
+| `status.pendingObservation.source.registryAuthFrom.tokenKey` | `string`, default `token` | TokenKey is the Secret key holding a bearer token, where one is used instead of a username and password. |
+| `status.pendingObservation.source.registryAuthFrom.usernameKey` | `string`, default `username` | Environment mode supports username/password or an identity token. Keys are optional so a single Secret shape can use either credential form. UsernameKey is the Secret key holding the username. |
+| `status.pendingObservation.source.resolvedReference` | `string`, required | ResolvedReference is the artifact with its tag replaced by a digest. |
+| `status.pendingObservation.source.transport` | `object` | Transport is how the registry is reached: plain HTTP, a custom CA. |
 | `status.pendingObservation.source.transport.caFrom` | `object` | CAFrom selects a custom CA bundle. When registryAuthFrom is present, that same Secret must contain caSHA256 with the exact lowercase SHA-256 digest of the selected bytes. |
 | `status.pendingObservation.source.transport.caFrom.key` | `string`, required | The key to select. |
 | `status.pendingObservation.source.transport.caFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.pendingObservation.source.transport.caFrom.optional` | `boolean` | Specify whether the ConfigMap or its key must be defined |
 | `status.pendingObservation.source.transport.clientCertificateFrom` | `object` | ClientCertificateFrom is reserved for a future executor contract that can select a client certificate by the effective TLS authority on every request, including redirects. The current API rejects this field. |
-| `status.pendingObservation.source.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` |  |
-| `status.pendingObservation.source.transport.clientCertificateFrom.name` | `string`, required |  |
-| `status.pendingObservation.source.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` |  |
+| `status.pendingObservation.source.transport.clientCertificateFrom.certificateKey` | `string`, default `tls.crt` | CertificateKey is the Secret key holding the certificate. |
+| `status.pendingObservation.source.transport.clientCertificateFrom.name` | `string`, required | Name of the Secret holding the client certificate. |
+| `status.pendingObservation.source.transport.clientCertificateFrom.privateKeyKey` | `string`, default `tls.key` | PrivateKeyKey is the Secret key holding its private key. |
 | `status.pendingObservation.source.transport.plainHTTP` | `boolean`, default `false` | PlainHTTP is intended only for explicitly trusted test or air-gapped networks. HTTPS remains the default. When registryAuthFrom is present, its Secret must also contain allowPlainHTTP with the exact value "true". |
-| `status.pendingObservation.target` | `object`, required | DatabaseTargetBinding is the key-free immutable target snapshot stored in status. CoordinationKey must never be copied into status; its digest is persisted separately. |
-| `status.pendingObservation.target.engine` | `string`, required | DatabaseEngine names a database family. The API accepts bounded engine names so the controller can report unsupported families through status instead of turning a durable desired-state object into an admission-time dead end. |
-| `status.pendingObservation.target.urlFrom` | `object`, required | SecretKeySelector selects a key of a Secret. |
+| `status.pendingObservation.target` | `object`, required | Target is the key-free binding the proof reads the database through. |
+| `status.pendingObservation.target.engine` | `string`, required | Engine is the database this binding speaks. |
+| `status.pendingObservation.target.urlFrom` | `object`, required | URLFrom is the Secret key the operation Pod reads the URL from. |
 | `status.pendingObservation.target.urlFrom.key` | `string`, required | The key of the secret to select from. Must be a valid secret key. |
 | `status.pendingObservation.target.urlFrom.name` | `string`, default `` | Name of the referent. This field is effectively required, but due to backwards compatibility is allowed to be empty. Instances of this type with an empty value here are almost certainly wrong. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names |
 | `status.pendingObservation.target.urlFrom.optional` | `boolean` | Specify whether the Secret or its key must be defined |
@@ -459,13 +459,13 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.plan` | `object` | Plan is the published plan waiting to run, where there is one. |
 | `status.plan.actualStateFingerprint` | `string`, required | ActualStateFingerprint is the observed state it was planned from. |
 | `status.plan.approval` | `object` | Approval is the decision that authorized this plan, where one was made. |
-| `status.plan.approval.approvedAt` | `string`, required |  |
-| `status.plan.approval.approver` | `object`, required | ApprovalIdentity is stamped from the authenticated admission request. The API client does not choose these fields. |
+| `status.plan.approval.approvedAt` | `string`, required | ApprovedAt is when the decision was stamped. |
+| `status.plan.approval.approver` | `object`, required | Approver is who the API server authenticated. |
 | `status.plan.approval.approver.groups` | `[]string` | Groups the authenticated user belonged to at that moment. |
 | `status.plan.approval.approver.uid` | `string` | UID of that user, where the authenticator provides one. |
 | `status.plan.approval.approver.username` | `string`, required | Username the API server authenticated the request as. |
-| `status.plan.approval.name` | `string`, required |  |
-| `status.plan.approval.uid` | `string`, required | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
+| `status.plan.approval.name` | `string`, required | Name of the approval that authorized the apply. |
+| `status.plan.approval.uid` | `string`, required | UID it had, so a recreated approval is not read as the same decision. |
 | `status.plan.artifactDigest` | `string`, required | ArtifactDigest is the artifact the plan was computed from. |
 | `status.plan.contentDigest` | `string`, required | ContentDigest is the digest of the plan bytes. |
 | `status.plan.controllerImage` | `string` | ControllerImage is the digest-pinned manager that published it. |
@@ -489,28 +489,28 @@ This page is generated from the API types by `make docs-reference`. The shipped 
 | `status.plan.verificationPolicyDigest` | `string`, required | VerificationPolicyDigest is that policy's content at the time. |
 | `status.plan.verificationPolicyUID` | `string`, required | VerificationPolicyUID is the policy object that accepted the artifact. |
 | `status.source` | `object` | Source is what the desired artifact resolved and verified to. |
-| `status.source.artifactType` | `string` |  |
-| `status.source.digest` | `string` |  |
-| `status.source.mediaType` | `string` |  |
-| `status.source.requestedReference` | `string` |  |
-| `status.source.resolvedAt` | `string` |  |
-| `status.source.resolvedReference` | `string` |  |
-| `status.source.size` | `integer` |  |
-| `status.source.verificationPolicyDigest` | `string` |  |
-| `status.source.verificationPolicyUID` | `string` | UID is a type that holds unique ID values, including UUIDs. Because we don't ONLY use UUIDs, this is an alias to string. Being a type captures intent and helps make sure that UIDs and names do not get conflated. |
-| `status.source.verified` | `boolean` |  |
-| `status.source.verifiedAt` | `string` |  |
+| `status.source.artifactType` | `string` | ArtifactType says which format this is: a declared schema or a versioned migration directory. |
+| `status.source.digest` | `string` | Digest is that digest on its own. |
+| `status.source.mediaType` | `string` | MediaType is the manifest's media type. |
+| `status.source.requestedReference` | `string` | RequestedReference is what spec.desired asked for, tag and all. |
+| `status.source.resolvedAt` | `string` | ResolvedAt is when the tag was last resolved. |
+| `status.source.resolvedReference` | `string` | ResolvedReference is the same artifact with the tag replaced by the digest it resolved to. Every later read uses this. |
+| `status.source.size` | `integer` | Size is the manifest's size in bytes. |
+| `status.source.verificationPolicyDigest` | `string` | VerificationPolicyDigest is that policy's content at the time. |
+| `status.source.verificationPolicyUID` | `string` | VerificationPolicyUID is the policy object that accepted it. |
+| `status.source.verified` | `boolean` | Verified says the verification policy accepted it. It goes false again when the policy changes, because the old answer was about the old rules. |
+| `status.source.verifiedAt` | `string` | VerifiedAt is when the policy last accepted it. |
 | `status.target` | `object` | Target is what the last observation found in the database. |
-| `status.target.coordinationDigest` | `string` |  |
-| `status.target.driftFindingCount` | `integer` |  |
+| `status.target.coordinationDigest` | `string` | CoordinationDigest is the realm this target serializes against, so two resources pointed at one database take turns. |
+| `status.target.driftFindingCount` | `integer` | DriftFindingCount is how many findings the complete report held, whether or not the list below was truncated. |
 | `status.target.driftFindings` | `[]object` | DriftFindings contains only category-level aggregates. The total count above covers the complete report even when this list is truncated. |
-| `status.target.driftFindings[].category` | `string`, required, one of `columns_added`, `columns_modified`, `columns_removed`, `constraints_added`, `constraints_removed`, `data_rows_deleted`, `data_rows_inserted`, `data_rows_updated`, `enum_values_added`, `enum_values_removed`, `enums_added`, `enums_removed`, `extensions_added`, `extensions_modified`, `extensions_removed`, `functions_added`, `functions_modified`, `functions_removed`, `indexes_added`, `indexes_removed`, `rls_enabled_tables_added`, `rls_enabled_tables_removed`, `rls_policies_added`, `rls_policies_modified`, `rls_policies_removed`, `roles_added`, `roles_modified`, `roles_removed`, `table_constraints_added`, `table_constraints_removed`, `tables_added`, `tables_removed`, `unique_protections_removed`, `vector_dimension_changed` |  |
-| `status.target.driftFindings[].count` | `integer`, required |  |
-| `status.target.driftFindings[].severity` | `string`, required, one of `safe`, `info`, `warning`, `error`, `destructive` |  |
-| `status.target.driftFindingsTruncated` | `boolean` |  |
-| `status.target.driftReportDigest` | `string` |  |
-| `status.target.engine` | `string` | DatabaseEngine names a database family. The API accepts bounded engine names so the controller can report unsupported families through status instead of turning a durable desired-state object into an admission-time dead end. |
-| `status.target.highestDriftSeverity` | `string` |  |
-| `status.target.identityDigest` | `string` |  |
-| `status.target.lastObservedAt` | `string` |  |
+| `status.target.driftFindings[].category` | `string`, required, one of `columns_added`, `columns_modified`, `columns_removed`, `constraints_added`, `constraints_removed`, `data_rows_deleted`, `data_rows_inserted`, `data_rows_updated`, `enum_values_added`, `enum_values_removed`, `enums_added`, `enums_removed`, `extensions_added`, `extensions_modified`, `extensions_removed`, `functions_added`, `functions_modified`, `functions_removed`, `indexes_added`, `indexes_removed`, `rls_enabled_tables_added`, `rls_enabled_tables_removed`, `rls_policies_added`, `rls_policies_modified`, `rls_policies_removed`, `roles_added`, `roles_modified`, `roles_removed`, `table_constraints_added`, `table_constraints_removed`, `tables_added`, `tables_removed`, `unique_protections_removed`, `vector_dimension_changed` | Category is the kind of difference, never the object it was found in: a table name is part of the schema, and the status does not carry it. |
+| `status.target.driftFindings[].count` | `integer`, required | Count is how many differences of that kind the report held. |
+| `status.target.driftFindings[].severity` | `string`, required, one of `safe`, `info`, `warning`, `error`, `destructive` | Severity is how the category rates. |
+| `status.target.driftFindingsTruncated` | `boolean` | DriftFindingsTruncated says the list above is a prefix of the report. |
+| `status.target.driftReportDigest` | `string` | DriftReportDigest is the observed state the last plan was computed from. |
+| `status.target.engine` | `string` | Engine is the database engine this target speaks. |
+| `status.target.highestDriftSeverity` | `string` | HighestDriftSeverity is the worst category the report found. |
+| `status.target.identityDigest` | `string` | IdentityDigest identifies the database without carrying anything that could reach it. |
+| `status.target.lastObservedAt` | `string` | LastObservedAt is when that observation ran. |
 
