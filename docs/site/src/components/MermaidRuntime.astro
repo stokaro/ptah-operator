@@ -1,0 +1,66 @@
+---
+/**
+ * Draws the diagrams on a page that has any.
+ *
+ * MarkdownContent.astro includes this only when the page source carries a
+ * ```mermaid fence, so the library -- which is large -- is fetched by the
+ * pages that need it and by no others.
+ *
+ * The diagrams follow the site's theme rather than picking one: a dark page
+ * with a white diagram on it is worse than no diagram. Starlight writes the
+ * choice to `data-theme` on the root element, so that is what this reads, and
+ * what it watches for a later change.
+ */
+---
+
+<script>
+  import mermaid from 'mermaid';
+
+  const diagrams = Array.from(document.querySelectorAll('pre.mermaid[data-diagram]'));
+
+  if (diagrams.length > 0) {
+    // The author's source, kept before Mermaid replaces the element's content,
+    // so a theme change can redraw from the same text rather than from an SVG.
+    const sources = new Map(diagrams.map((node) => [node, node.textContent ?? '']));
+
+    const siteTheme = () =>
+      document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default';
+
+    let generation = 0;
+
+    const draw = async () => {
+      const pass = ++generation;
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: siteTheme(),
+        securityLevel: 'strict',
+        fontFamily: 'inherit',
+      });
+      for (const [node, source] of sources) {
+        const id = `ptah-diagram-${pass}-${sources.size}-${Math.random().toString(36).slice(2)}`;
+        try {
+          const { svg } = await mermaid.render(id, source);
+          // A redraw that started later has already won; dropping this one
+          // keeps two passes from interleaving their writes.
+          if (pass !== generation) return;
+          node.innerHTML = svg;
+          node.dataset.rendered = 'true';
+        } catch {
+          // A diagram that will not parse stays as its own source, which is
+          // readable, rather than becoming an empty box.
+          node.textContent = source;
+          node.dataset.rendered = 'failed';
+        }
+      }
+    };
+
+    void draw();
+
+    let theme = siteTheme();
+    new MutationObserver(() => {
+      if (siteTheme() === theme) return;
+      theme = siteTheme();
+      void draw();
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  }
+</script>

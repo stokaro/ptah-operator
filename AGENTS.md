@@ -5,11 +5,16 @@ Repository-local guidance for coding agents working in `ptah-operator`.
 ## What this is
 
 A Kubernetes operator for Ptah, scaffolded with Kubebuilder v4 under the group
-`ptah.run`. The API is `api/v1alpha1` — `PtahSchema`, `PtahSchemaPlan`,
-`PtahSchemaApproval` — and the work happens in `internal/`, which holds the
+`ptah.run`. The API is `api/v1alpha1`, and it serves two families of three
+kinds: `PtahSchema`, `PtahSchemaPlan` and `PtahSchemaApproval` for a declared
+schema, `PtahMigration`, `PtahMigrationPlan` and `PtahMigrationApproval` for a
+versioned sequence. The work happens in `internal/`, which holds the
 controllers, admission, certificate rotation, the CRD upgrade path, the plan
-store and the runner. Four programs ship from `cmd/`: the manager, the
-certificate rotator, the CRD manager and the runner.
+store and the runner. Five programs ship from `cmd/`: the manager, the
+certificate rotator, the CRD manager, the runner and the `kubectl ptah` plugin.
+
+[The architecture page](docs/site/src/content/docs/reference/architecture.md)
+says how those pieces fit together and which invariant each one holds.
 
 Read the versions out of `go.mod` rather than out of prose here. At the time of
 writing they are `sigs.k8s.io/controller-runtime v0.24.1`, `k8s.io/api v0.36.1`,

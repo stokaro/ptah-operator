@@ -16,6 +16,7 @@
  */
 import '@astrojs/starlight/style/markdown.css';
 import FaqFilter from './FaqFilter.astro';
+import MermaidRuntime from './MermaidRuntime.astro';
 
 const { entry } = Astro.locals.starlightRoute;
 
@@ -23,12 +24,18 @@ const { entry } = Astro.locals.starlightRoute;
 // prefix cannot change the answer.
 const isFaq = entry.id === 'faq' || entry.id === 'faq.md';
 
+// Read from the source for the same reason the count below is: the rendered
+// tree is downstream of this component, so the page cannot be asked whether it
+// drew any diagrams. A page with no fence never fetches the library.
+const hasDiagrams = /^```mermaid\s*$/m.test(entry.body ?? '');
+
 // The questions are `###` under a `##` group, so the count comes from the
 // source rather than from a number kept in step by hand.
 const questionCount = (entry.body?.match(/^### /gm) ?? []).length;
 ---
 
 {isFaq && <FaqFilter count={questionCount} />}
+{hasDiagrams && <MermaidRuntime />}
 <div class:list={['sl-markdown-content', isFaq && 'ptah-faq']}>
   <slot />
 </div>

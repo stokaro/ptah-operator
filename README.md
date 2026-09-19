@@ -110,10 +110,11 @@ knowing before somebody reads it as current.
 
 The user guide is published at
 [operator.ptah.run](https://operator.ptah.run/) and its pages live in
-`docs/site/src/content/docs`. One document is deliberately not part of it:
+`docs/site/src/content/docs`. One of them is written for somebody changing this
+code rather than for somebody running it:
 
-- [Architecture and state machine](docs/architecture.md), which is written for
-  somebody changing this code rather than for somebody running it.
+- [Architecture](https://operator.ptah.run/edge/reference/architecture/) -- the
+  pieces, where they live, and which invariant each one holds.
 
 Ptah itself -- the schema formats, the OCI artifact layout, the CLI -- is
 documented at [docs.ptah.run](https://docs.ptah.run/edge/), and which Ptah

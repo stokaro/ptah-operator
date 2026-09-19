@@ -46,13 +46,15 @@ export const sidebar = [
       { label: 'Security model', link: '/use/security/' },
     ],
   },
-  // The field reference, generated from the API types by make docs-reference.
-  // It sits after the task pages because it is what a reader returns to once
-  // they know which resource they are holding, and before the support pages
-  // because those are about builds rather than about fields.
+  // Architecture first, then the field reference generated from the API types
+  // by make docs-reference. The group sits after the task pages because it is
+  // what a reader returns to once they know which resource they are holding,
+  // and before the support pages because those are about builds rather than
+  // about the model.
   {
     label: 'Reference',
     items: [
+      { label: 'Architecture', link: '/reference/architecture/' },
       { label: 'PtahSchema', link: '/reference/ptahschema/' },
       { label: 'PtahSchemaPlan', link: '/reference/ptahschemaplan/' },
       { label: 'PtahSchemaApproval', link: '/reference/ptahschemaapproval/' },

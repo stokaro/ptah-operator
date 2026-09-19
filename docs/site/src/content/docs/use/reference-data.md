@@ -132,11 +132,13 @@ approval, because a plan carries the policy it was computed under.
 ## Rows do not leave the database
 
 No declared value reaches the resource's status, an Event, or the controller's
-log. Reading the rows means reading the artifact or querying the database, and
-`kubectl ptah plan` does not print them either.
+log. Reading the rows means reading the artifact, querying the database, or
+reading the plan.
 
-A full SQL plan for a data change contains values, so access to one is access
-to data. Treat it that way when you decide who may read plans.
+The plan is the exception, and deliberately so: `kubectl ptah plan` prints the
+statements a plan holds, and for a data change those statements carry the
+values. Access to a plan is access to data. Treat it that way when you decide
+who may read plans.
 
 ## Order between tables
 
