@@ -204,14 +204,61 @@ func (r *MigrationReconciler) reconcile(ctx context.Context, request ctrl.Reques
 }
 
 // reconcileMigrationDeletion releases the resource once no Job of its claim can
-// still be running. Every operation here is read-only, so a claim in flight is
-// discarded rather than waited on; its Job keeps its own deadline and can no
-// longer attribute a result to a claim that is gone.
+// still be running. A read-only claim is discarded rather than waited on: its
+// Job reads and reports, and a result nobody is waiting for costs nothing.
+//
+// An Apply is not that. Its Job is owned by this resource, so removing the
+// finalizer hands the Job to cascading deletion, which stops an executor in the
+// middle of a statement; and the claim dropped with it is the only record that
+// the run may have changed the database, and the only thing that hands the
+// database back. So the claim is kept until nothing it dispatched can write.
+//
+// Whether that is still possible is the same question an uncertain outcome
+// asks before it releases the Lease, and it is asked here through the same
+// function rather than a second one: a Job that is not terminal, a Pod that has
+// not stopped, and a read that could not say all keep the resource. The Job's
+// activeDeadlineSeconds ends a run that hangs, so that much of the wait is
+// bounded; a Pod on a node the API server cannot reach is not, and it takes
+// the node going, the Pod force-deleted, or a person removing the finalizer.
 func (r *MigrationReconciler) reconcileMigrationDeletion(
 	ctx context.Context,
 	migration *operatorv1alpha1.PtahMigration,
 ) (ctrl.Result, error) {
-	if migration.Status.ActiveOperation != nil {
+	if operation := migration.Status.ActiveOperation; operation != nil {
+		if operation.Type == operatorv1alpha1.MigrationOperationApply {
+			job, err := r.dispatchedMigrationApplyJob(ctx, migration, operation)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, operation, job) {
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+			// A dispatch this claim started, or a Job it can account for under
+			// the name it reserved. The JobUID is the companion this file gives
+			// DispatchStarted everywhere it asks that, rather than a third
+			// case: DispatchStarted is written before the create and never
+			// cleared, and a UID is only recorded afterwards, so no state holds
+			// one without the other and no mutation can separate them.
+			if operation.DispatchStarted || operation.JobUID != "" || job != nil {
+				// Something ran under this claim and nothing read what it did.
+				// The unknown outcome and the database go back first; the next
+				// pass finds no claim and lets the resource go.
+				//
+				// That pass has to be asked for. The primary watch takes a
+				// generation, a label or an annotation, so the status this
+				// writes wakes nothing, and a deleting resource whose Job has
+				// stopped changing gets no other event. Without the requeue the
+				// finalizer would sit until the manager restarted.
+				if _, err := r.finishUncertainMigrationApply(ctx, migration, job,
+					errors.New("the PtahMigration was deleted while a dispatched Apply was in flight"), ""); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: time.Second}, nil
+			}
+			// Nothing stands under the name the claim reserved, so nothing can
+			// have written. The database is handed back without a verdict.
+			r.releaseMigrationApplyLock(ctx, migration, operation)
+		}
 		before := migration.DeepCopy()
 		migration.Status.ActiveOperation = nil
 		if err := r.patchMigrationStatus(ctx, before, migration); err != nil {
@@ -222,6 +269,32 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
+}
+
+// dispatchedMigrationApplyJob returns the Job this Apply claim dispatched, and
+// nil when nothing the claim can account for stands under the name it reserved.
+//
+// A Job under that name carrying another UID belongs to a later attempt: this
+// claim's own Job is gone, and only the Pods it owned can still be running. A
+// claim that recorded no UID is not evidence that nothing was created either,
+// so the name is read rather than assumed empty.
+func (r *MigrationReconciler) dispatchedMigrationApplyJob(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) (*batchv1.Job, error) {
+	job := &batchv1.Job{}
+	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.JobName}
+	switch err := r.directReader().Get(ctx, key, job); {
+	case apierrors.IsNotFound(err):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("read the dispatched Apply Job during deletion: %w", err)
+	}
+	if operation.JobUID != "" && job.UID != operation.JobUID {
+		return nil, nil
+	}
+	return job, nil
 }
 
 // reconcileMigrationExecutionBinding publishes the component identity this

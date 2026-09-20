@@ -1067,6 +1067,27 @@ observe an already active operation and release coordination safely. Once no
 operation is active, deletion removes Kubernetes-owned plans and Jobs through
 normal garbage collection; database objects remain untouched.
 
+Deleting a `PtahMigration` follows the same rule, and an Apply is where it is
+visible. The Job is owned by the resource, so releasing the finalizer under a
+running Apply hands a live executor to cascading deletion and stops it between
+statements. So `kubectl delete ptahmigration` blocks while the dispatched Job
+is unfinished or a Pod it owns has not stopped. Once nothing can write, a claim
+that dispatched something records the run `Unknown`, because nothing read what
+it did; a claim that only reserved a Job name records nothing, because nothing
+ran. Both hand the database Lease back and then release the resource. A
+read-only operation is not waited on: its Job reads and reports, and deletion
+discards the claim and goes.
+
+How long that block lasts is bounded for the Job and not for the Pod.
+`spec.execution.activeDeadlineSeconds` is what turns an executor that hangs
+into a terminal Job, so a run that is merely slow ends on its own deadline. A
+Pod on a node the API server cannot reach is a different case: it stays
+`Running` until the node object goes or the Pod is force-deleted, and the
+deletion waits with it for as long as that takes. Nothing the operator holds
+ends that wait. Recover the node or force-delete the Pod; removing the
+`operator.ptah.run/migration-operation` finalizer by hand is the last resort,
+and it is a statement that nothing is executing against that database any more.
+
 ## Failure recovery
 
 - Read-only Resolve, Verify, Observe, and Plan failures retry after the bounded
