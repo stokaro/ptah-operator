@@ -107,7 +107,7 @@ docs-reference:
 	$(GO) run ./hack/crdreference -crds $$tmp \
 		-examples docs/reference-examples \
 		-out docs/site/src/content/docs/reference -write; \
-	rm -rf $$tmp
+	status=$$?; rm -rf $$tmp; exit $$status
 
 docs-reference-check:
 	@tmp=$$(mktemp -d); \
