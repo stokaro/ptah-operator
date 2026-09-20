@@ -1402,3 +1402,67 @@ func (failingMigrationBuildJobs) BuildMigration(
 ) (*batchv1.Job, error) {
 	return nil, errors.New("injected migration Job build failure")
 }
+
+// An uncertain run whose Job is already gone still has to say what ran.
+//
+// status.lastRun exists so a person can see what happened without the Job, and
+// the commonest way a run becomes uncertain is the Job being missing -- which
+// is when the claim is the only thing left that knows its name and UID. A
+// record that named neither would send that person looking with nothing to
+// search for.
+func TestAnUncertainRunNamesTheJobFromItsClaimWhenTheJobIsGone(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = true
+	operation.JobUID = "the-job-that-ran"
+	// No Job object: this is the claim after its Job was collected.
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	actual := readMigration(t, api, migration)
+	run := actual.Status.LastRun
+	if run == nil || run.Outcome != operatorv1alpha1.MigrationRunOutcomeUnknown {
+		t.Fatalf("last run = %#v, want the unknown outcome recorded", run)
+	}
+	if run.JobName != operation.JobName || run.JobUID != operation.JobUID {
+		t.Fatalf("the record names Job %q/%q, want the one the claim dispatched %q/%q",
+			run.JobName, run.JobUID, operation.JobName, operation.JobUID)
+	}
+	unresolved := actual.Status.UnresolvedRun
+	if unresolved == nil || unresolved.JobName != operation.JobName || unresolved.JobUID != operation.JobUID {
+		t.Fatalf("the unresolved record names Job %#v, want the one the claim dispatched", unresolved)
+	}
+}
+
+// The mirror: a claim that started a dispatch and never recorded a UID names no
+// Job at all. The name it reserved is not evidence that anything was created
+// under it, and a record that named one would point a person at a Job that may
+// never have existed.
+func TestAnUncertainRunNamesNoJobWhenTheClaimRecordedNone(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = true
+	operation.JobUID = ""
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	run := readMigration(t, api, migration).Status.LastRun
+	if run == nil {
+		t.Fatal("a dispatch whose answer never came back recorded no run at all")
+	}
+	if run.JobName != "" || run.JobUID != "" {
+		t.Fatalf("the record names Job %q/%q for a claim that never recorded one", run.JobName, run.JobUID)
+	}
+}

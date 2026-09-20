@@ -606,9 +606,24 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		FinishedAt: &finishedAt,
 		Message:    bounded(failure.Error(), 1024),
 	}
-	if job != nil {
+	switch {
+	case job != nil:
 		run.JobName = job.Name
 		run.JobUID = job.UID
+	case operation.JobUID != "":
+		// The Job is gone -- collected, or removed by hand -- and the claim is
+		// the only thing left that knows what ran. That is exactly when naming
+		// it matters: status.lastRun exists so a person can see what happened
+		// without the Job, and the commonest way into this branch is the Job
+		// being missing. The UID is taken from the claim rather than the name
+		// alone, because it is what separates this attempt from a later one
+		// that reused the name.
+		//
+		// A recorded UID is also the proof a Job existed. A claim that started
+		// a dispatch and never recorded one names nothing here, because the
+		// name it reserved is not evidence that anything was created under it.
+		run.JobName = operation.JobName
+		run.JobUID = operation.JobUID
 	}
 	migration.Status.LastRun = run
 	recordUnresolvedMigrationRun(migration, operation, run, reportedTarget, r.now())
