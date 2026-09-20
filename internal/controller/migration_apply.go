@@ -9,6 +9,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -383,6 +384,70 @@ func (r *MigrationReconciler) releaseMigrationApplyLock(
 	}
 }
 
+// dispatchedApplyMayStillWrite reports whether the Apply this claim dispatched
+// could still be executing SQL: its Job has not reached a terminal condition,
+// or a Pod that Job owns has not stopped. The identity it asks that about comes
+// from the claim, from the Job the caller already read, or -- when the claim
+// never recorded a UID -- from the API server under the name the claim
+// reserved.
+//
+// It decides whether the database may be handed back. An uncertain outcome
+// says nothing about whether the executor is still running, and releasing the
+// Lease under a live Pod is the one thing the Lease exists to prevent -- the
+// next claimant acquires it and runs DDL beside that executor. So a Pod that
+// has not stopped, and a read that could not say, both keep the Lease until it
+// expires; migrationApplyLeaseGrace is what makes the expiry outlive the Pod.
+func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
+	ctx context.Context,
+	namespace string,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+	job *batchv1.Job,
+) bool {
+	jobName, jobUID := operation.JobName, operation.JobUID
+	if jobUID == "" && job != nil {
+		jobName, jobUID = job.Name, job.UID
+	}
+	if jobUID == "" {
+		// The claim never learned a UID, which is not evidence that nothing
+		// was created. A create that fails with anything other than
+		// AlreadyExists leaves the question open: a client timeout or a 5xx
+		// after the write persisted leaves a Job running under the name this
+		// claim reserved, and nothing collects it while the migration lives.
+		// The name is derived from the claim, so the object under it is this
+		// claim's Job, and reading it is what settles the identity.
+		if jobName == "" {
+			return false
+		}
+		dispatched := &batchv1.Job{}
+		key := types.NamespacedName{Namespace: namespace, Name: jobName}
+		err := r.directReader().Get(ctx, key, dispatched)
+		switch {
+		case apierrors.IsNotFound(err):
+			// The name this claim reserved holds nothing, which is as close as
+			// the controller comes to proof that the create never landed.
+			return false
+		case err != nil:
+			ctrl.LoggerFrom(ctx).Info("could not read the dispatched Apply Job", "error", err.Error())
+			return true
+		}
+		job, jobName, jobUID = dispatched, dispatched.Name, dispatched.UID
+	}
+	if job != nil && job.UID == jobUID && !jobTerminal(job) {
+		return true
+	}
+	pods, err := podsOwnedByJob(ctx, r.directReader(), namespace, jobName, jobUID)
+	if err != nil {
+		ctrl.LoggerFrom(ctx).Info("could not read the dispatched Apply's Pods", "error", err.Error())
+		return true
+	}
+	for _, pod := range pods {
+		if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+			return true
+		}
+	}
+	return false
+}
+
 // finishUncertainMigrationApply is where an Apply goes when the controller
 // cannot read what it did. The claim is retired and the resource is blocked:
 // the database is the only thing that can settle it, and nothing dispatches
@@ -427,7 +492,9 @@ func (r *MigrationReconciler) finishUncertainMigrationApply(
 		return ctrl.Result{}, err
 	}
 	r.event(migration, corev1.EventTypeWarning, "MigrationRunUncertain", "%v", failure)
-	r.releaseMigrationApplyLock(ctx, migration, operation)
+	if !r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, operation, job) {
+		r.releaseMigrationApplyLock(ctx, migration, operation)
+	}
 	return ctrl.Result{}, nil
 }
 

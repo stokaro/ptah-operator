@@ -558,6 +558,30 @@ func assertDatabaseHandedBack(t *testing.T, reconciler *MigrationReconciler, api
 	}
 }
 
+// assertDatabaseStillHeld is the inverse: it fails once a database Lease the
+// reconciler coordinates through has lost its holder.
+//
+// The release is only safe after nothing can write any more. While the
+// dispatched Pod may still be executing SQL, handing the database back is
+// permission for a second writer, and the Lease is the only thing standing
+// between them.
+func assertDatabaseStillHeld(t *testing.T, reconciler *MigrationReconciler, api client.Client) {
+	t.Helper()
+
+	leases := &coordinationv1.LeaseList{}
+	if err := api.List(context.Background(), leases, client.InNamespace(reconciler.LockNamespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(leases.Items) == 0 {
+		t.Fatal("no database Lease exists, so this proved nothing about holding one")
+	}
+	for _, lease := range leases.Items {
+		if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity == "" {
+			t.Fatalf("Lease %s was handed back while the dispatched Apply's Pod could still be running", lease.Name)
+		}
+	}
+}
+
 // holdMigrationApplyLease puts the database lock in the state a dispatched
 // Apply left it: held by this claim, under the epoch the claim recorded.
 func holdMigrationApplyLease(
@@ -642,4 +666,150 @@ func TestMigrationApplyOutlivingItsComponentsIsUncertainNotDiscarded(t *testing.
 	if actual.Status.ActiveOperation != nil {
 		t.Fatal("a claim was taken while the resource is blocked on an unknown run")
 	}
+}
+
+// runningExecutorPod puts the Pod in the state the API server reports while
+// the executor is still there: a phase that is not terminal, and a container
+// that has not exited.
+func runningExecutorPod(pod *corev1.Pod) {
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name: executorContainerName, State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}},
+	}}
+}
+
+// uncertainApplyUnderBindingChange stands up a dispatched Apply that a rollout
+// retires: the claim is in flight, an execution component moved under it, and
+// the database Lease is still held by the claim. The reconcile that follows
+// takes the uncertain path with whatever workload the caller left in the
+// namespace, which is what each row varies.
+func uncertainApplyUnderBindingChange(
+	t *testing.T,
+	migration *operatorv1alpha1.PtahMigration,
+	plan *operatorv1alpha1.PtahMigrationPlan,
+	dispatched ...client.Object,
+) (*MigrationReconciler, client.Client) {
+	t.Helper()
+
+	migration.Status.ExecutionBinding.ExecutorImage = "example.invalid/ptah@" + strings.Repeat("9", 64)
+	objects := append([]client.Object{migration, plan, verificationPolicyConfigMap()}, dispatched...)
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, objects...)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	return reconciler, api
+}
+
+// An Apply the controller cannot read is still an Apply that may be running.
+// Handing the database back there is the one thing the Lease exists to
+// prevent: the next claimant acquires it and runs DDL beside a live executor.
+//
+// Two separate facts keep it, and each row rests on one of them alone. A row
+// that satisfied both would pass with either half of the gate deleted, which
+// is how the Pod read came to be unproven in the first place.
+func TestUncertainMigrationApplyKeepsTheDatabaseWhileItsPodMayRun(t *testing.T) {
+	t.Parallel()
+
+	for _, row := range []struct {
+		name     string
+		workload func(job *batchv1.Job, pod *corev1.Pod)
+	}{
+		{
+			// Both facts: the Job is unfinished and its Pod is executing SQL.
+			name: "the Job has not finished and its Pod is running",
+			workload: func(job *batchv1.Job, pod *corev1.Pod) {
+				job.Status.Conditions = nil
+				job.Status.Active = 1
+				runningExecutorPod(pod)
+			},
+		},
+		{
+			// Only the Pod says so. A Job reports Complete once its successes
+			// are counted, and the API server has not finished with the Pod
+			// that earned them.
+			name: "the Job reports Complete before its Pod has stopped",
+			workload: func(_ *batchv1.Job, pod *corev1.Pod) {
+				runningExecutorPod(pod)
+			},
+		},
+		{
+			// Only the Job says so. Every Pod it owns has stopped, and under a
+			// backoff limit an unfinished Job starts the next one.
+			name: "the Job has not finished and will start another Pod",
+			workload: func(job *batchv1.Job, pod *corev1.Pod) {
+				job.Status.Conditions = nil
+				job.Status.Failed = 1
+				pod.Status.Phase = corev1.PodFailed
+			},
+		},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			t.Parallel()
+
+			migration, plan := awaitingApprovalFixture(t)
+			applyClaimFor(t, migration, plan)
+			job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+			row.workload(job, pod)
+			reconciler, api := uncertainApplyUnderBindingChange(t, migration, plan, job, pod)
+
+			if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			actual := readMigration(t, api, migration)
+			if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+				t.Fatalf("phase = %q, want Blocked", actual.Status.Phase)
+			}
+			assertDatabaseStillHeld(t, reconciler, api)
+		})
+	}
+}
+
+// A create that fails is not proof that nothing was created: a client timeout
+// or a 5xx after the write persisted leaves a Job running under the name the
+// claim reserved, and no UID on the claim to recognize it by. The name is
+// derived from the claim, so reading it is what tells the two apart.
+func TestUncertainMigrationApplyKeepsTheDatabaseWhenItsCreateMayHaveLanded(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	job.Status.Conditions = nil
+	job.Status.Active = 1
+	runningExecutorPod(pod)
+	// The create never reported back, so the claim carries the name it reserved
+	// and nothing else -- while the Job under that name executes SQL.
+	operation.JobUID = ""
+	reconciler, api := uncertainApplyUnderBindingChange(t, migration, plan, job, pod)
+
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("phase = %q, want Blocked", actual.Status.Phase)
+	}
+	assertDatabaseStillHeld(t, reconciler, api)
+}
+
+// The other direction of the same read, and the reason it is a read rather
+// than a refusal to release: a claim whose reserved name holds nothing
+// dispatched nothing. Keeping the database there would strand it for a whole
+// lease duration over a run that never started, which is the common uncertain
+// case rather than the rare one.
+func TestUncertainMigrationApplyHandsTheDatabaseBackWhenNothingWasCreated(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	// applyClaimFor leaves the claim as dispatch does before the create: a
+	// reserved Job name, no UID, and no object in the namespace.
+	applyClaimFor(t, migration, plan)
+	reconciler, api := uncertainApplyUnderBindingChange(t, migration, plan)
+
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.Phase != operatorv1alpha1.MigrationPhaseBlocked {
+		t.Fatalf("phase = %q, want Blocked", actual.Status.Phase)
+	}
+	assertDatabaseHandedBack(t, reconciler, api)
 }
