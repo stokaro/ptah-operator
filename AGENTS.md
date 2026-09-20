@@ -263,9 +263,9 @@ active voice. Say what changed and why, once.
 image and badge addresses in order. Every file links to all other languages
 near the top. Japanese gives the reading `Ptah（プタハ）` once, then uses
 `Ptah`; German and French use `Ptah` throughout. Translate prose and
-accessibility text; keep commands and addresses byte for byte. Mark links to
-English documentation as English. Review meaning against the English source;
-the gate checks structure and preserved bytes. stokaro/ptah carries the same
+accessibility text; keep commands and addresses byte for byte. Use concise
+translated link labels without parenthetical language notices. Review meaning
+against the English source; the gate checks structure and preserved bytes. stokaro/ptah carries the same
 gate, so change a shared rule in both copies.
 
 No AI attribution anywhere in git or on the forge — no co-author trailer, no

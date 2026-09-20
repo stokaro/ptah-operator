@@ -14,7 +14,7 @@
   <a href="https://github.com/stokaro/ptah-operator/blob/master/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/stokaro/ptah-operator?label=go%20%E2%89%A5&logo=go&logoColor=white" alt="Version minimale de Go permettant de compiler ce module, déclarée dans go.mod"></a>
 </p>
 
-<p align="center"><a href="https://operator.ptah.run/edge/start/install/">Installation (en anglais)</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">Premier schéma (en anglais)</a> · <a href="https://operator.ptah.run/demo/">Exécutions enregistrées (en anglais)</a> · <a href="https://operator.ptah.run/">Documentation (en anglais)</a> · <a href="https://docs.ptah.run/compatibility/operator/">Compatibilité Ptah (en anglais)</a></p>
+<p align="center"><a href="https://operator.ptah.run/edge/start/install/">Installation</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">Premier schéma</a> · <a href="https://operator.ptah.run/demo/">Exécutions enregistrées</a> · <a href="https://operator.ptah.run/">Documentation</a> · <a href="https://docs.ptah.run/compatibility/operator/">Compatibilité Ptah</a></p>
 
 Ptah Operator est un plan de contrôle natif de Kubernetes qui fait converger
 en continu les schémas PostgreSQL et MySQL à partir d’artefacts OCI immuables.
@@ -79,13 +79,12 @@ kubectl ptah plan storefront --applied -n application -o sql
 Ce client en lecture seule est publié avec chaque version sous forme de plugin
 `kubectl` pour les plateformes clientes prises en charge.
 [Lire un plan](https://operator.ptah.run/edge/use/read-a-plan/#install)
-(en anglais) décrit son installation et les droits RBAC requis dans le namespace.
+décrit son installation et les droits RBAC requis dans le namespace.
 
 ## Installation et premier schéma
 
-Le guide se trouve sur [operator.ptah.run](https://operator.ptah.run/)
-(en anglais). Il couvre l’installation, les trois valeurs que le chart exige
-explicitement, un premier schéma complet, la configuration, l’exploitation,
+Le guide se trouve sur [operator.ptah.run](https://operator.ptah.run/).
+Il couvre l’installation, les trois valeurs que le chart exige explicitement, un premier schéma complet, la configuration, l’exploitation,
 le modèle de sécurité, les motifs des Conditions et les périodes de support.
 
 ```sh
@@ -96,7 +95,7 @@ Cette commande construit la documentation à partir de cette copie du dépôt.
 
 ## Voir l’opérateur fonctionner
 
-Les [exécutions enregistrées](https://operator.ptah.run/demo/) (en anglais)
+Les [exécutions enregistrées](https://operator.ptah.run/demo/)
 sont des sessions de terminal réalisées sur un véritable cluster : appliquer
 et modifier un schéma, approuver un plan, refuser une modification destructive,
 corriger une dérive, rencontrer une erreur et reprendre l’exécution. Les
@@ -119,8 +118,8 @@ Le guide en anglais est publié sur
 `docs/site/src/content/docs`. Une page s’adresse aux personnes qui modifient
 le code :
 
-- [Architecture](https://operator.ptah.run/edge/reference/architecture/)
-  (en anglais) : les composants, leur emplacement et les invariants qu’ils maintiennent.
+- [Architecture](https://operator.ptah.run/edge/reference/architecture/) :
+  les composants, leur emplacement et les invariants qu’ils maintiennent.
 
 Ptah lui-même, ses formats de schéma, la structure des artefacts OCI et la CLI
 sont documentés sur [docs.ptah.run](https://docs.ptah.run/edge/). La

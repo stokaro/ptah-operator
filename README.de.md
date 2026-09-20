@@ -14,7 +14,7 @@
   <a href="https://github.com/stokaro/ptah-operator/blob/master/go.mod"><img src="https://img.shields.io/github/go-mod/go-version/stokaro/ptah-operator?label=go%20%E2%89%A5&logo=go&logoColor=white" alt="Die in go.mod angegebene niedrigste Go-Version, mit der sich dieses Modul kompilieren lässt"></a>
 </p>
 
-<p align="center"><a href="https://operator.ptah.run/edge/start/install/">Installation (Englisch)</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">Erstes Schema (Englisch)</a> · <a href="https://operator.ptah.run/demo/">Aufgezeichnete Abläufe (Englisch)</a> · <a href="https://operator.ptah.run/">Dokumentation (Englisch)</a> · <a href="https://docs.ptah.run/compatibility/operator/">Ptah-Kompatibilität (Englisch)</a></p>
+<p align="center"><a href="https://operator.ptah.run/edge/start/install/">Installation</a> · <a href="https://operator.ptah.run/edge/start/first-schema/">Erstes Schema</a> · <a href="https://operator.ptah.run/demo/">Aufgezeichnete Abläufe</a> · <a href="https://operator.ptah.run/">Dokumentation</a> · <a href="https://docs.ptah.run/compatibility/operator/">Ptah-Kompatibilität</a></p>
 
 Ptah Operator ist eine Kubernetes-native Steuerungsebene, die PostgreSQL- und
 MySQL-Schemas fortlaufend mit unveränderlichen OCI-Artefakten abgleicht.
@@ -75,14 +75,13 @@ kubectl ptah plan storefront --applied -n application -o sql
 Dieser ausschließlich lesende Client wird mit jedem Release als `kubectl`-Plugin
 für die unterstützten Clientplattformen veröffentlicht.
 [Einen Plan lesen](https://operator.ptah.run/edge/use/read-a-plan/#install)
-(Englisch) beschreibt die Installation und die benötigten RBAC-Berechtigungen
+beschreibt die Installation und die benötigten RBAC-Berechtigungen
 im jeweiligen Namespace.
 
 ## Installation und erstes Schema
 
-Die Anleitung steht auf [operator.ptah.run](https://operator.ptah.run/)
-(Englisch). Sie behandelt die Installation, die drei ausdrücklich anzugebenden
-Chart-Werte, ein vollständiges Schemabeispiel, Konfiguration, Betrieb,
+Die Anleitung steht auf [operator.ptah.run](https://operator.ptah.run/).
+Sie behandelt die Installation, die drei ausdrücklich anzugebenden Chart-Werte, ein vollständiges Schemabeispiel, Konfiguration, Betrieb,
 Sicherheitsmodell, Condition-Gründe und Supportzeiträume.
 
 ```sh
@@ -93,7 +92,7 @@ Dieser Befehl baut die Dokumentation aus diesem Checkout.
 
 ## Abläufe ansehen
 
-Die [aufgezeichneten Abläufe](https://operator.ptah.run/demo/) (Englisch) zeigen
+Die [aufgezeichneten Abläufe](https://operator.ptah.run/demo/) zeigen
 Terminalsitzungen mit einem echten Cluster: ein Schema anwenden und ändern,
 einen Plan freigeben, eine destruktive Änderung ablehnen, Drift beheben sowie
 Fehler und Wiederherstellung. Bei der Aufzeichnung werden die beschriebenen
@@ -116,8 +115,8 @@ Die englische Anleitung wird auf
 liegen in `docs/site/src/content/docs`. Eine Seite richtet sich an Personen,
 die den Code ändern:
 
-- [Architektur](https://operator.ptah.run/edge/reference/architecture/)
-  (Englisch): Komponenten, ihre Speicherorte und ihre jeweiligen Invarianten.
+- [Architektur](https://operator.ptah.run/edge/reference/architecture/):
+  Komponenten, ihre Speicherorte und ihre jeweiligen Invarianten.
 
 Ptah selbst, seine Schemaformate, das OCI-Artefaktlayout und die CLI sind auf
 [docs.ptah.run](https://docs.ptah.run/edge/) dokumentiert. Die
