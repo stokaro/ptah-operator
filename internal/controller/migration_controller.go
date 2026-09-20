@@ -563,21 +563,21 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
 	if migration.Spec.Suspend {
-		return r.discardMigrationOperation(ctx, migration, errors.New("reconciliation was suspended before dispatch"))
+		return r.discardUndispatchedMigrationOperation(ctx, migration, errors.New("reconciliation was suspended before dispatch"))
 	}
 	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
 	if currentErr != nil || current != operation.InputFingerprint {
 		if currentErr == nil {
 			currentErr = errors.New("the operation inputs changed after the claim")
 		}
-		return r.discardMigrationOperation(ctx, migration, currentErr)
+		return r.discardUndispatchedMigrationOperation(ctx, migration, currentErr)
 	}
 	if operation.Type == operatorv1alpha1.MigrationOperationApply {
 		// An Apply reaches here only before its dispatch boundary: a claim that
 		// already crossed it is retired as uncertain rather than re-examined.
 		// So discarding here cannot abandon a run that is executing SQL.
 		if err := r.claimedApplyPolicyStillBinds(ctx, migration, operation); err != nil {
-			return r.discardMigrationOperation(ctx, migration, err)
+			return r.discardUndispatchedMigrationOperation(ctx, migration, err)
 		}
 	}
 	if operation.JobUID != "" {
@@ -602,7 +602,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	}
 	plan, planErr := r.migrationPlanForJob(ctx, migration, operation)
 	if planErr != nil {
-		return r.discardMigrationOperation(ctx, migration, planErr)
+		return r.discardUndispatchedMigrationOperation(ctx, migration, planErr)
 	}
 	job, err := r.Jobs.BuildMigration(migration, *operation, plan)
 	if err != nil {
@@ -633,7 +633,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("digest rebuilt Job Pod template: %w", digestErr))
 	}
 	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-		return r.discardMigrationOperation(ctx, migration,
+		return r.discardUndispatchedMigrationOperation(ctx, migration,
 			errors.New("the rebuilt Job Pod template differs from the persisted admission snapshot"))
 	}
 	if operation.Type == operatorv1alpha1.MigrationOperationApply && !operation.DispatchStarted {
@@ -1232,6 +1232,38 @@ func (r *MigrationReconciler) discardMigrationOperation(
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{Requeue: true}, nil
+}
+
+// discardUndispatchedMigrationOperation retires a claim that never became a
+// Job, and hands back the database that claim had already taken.
+//
+// Every discard inside dispatchMigrationJob is pre-dispatch. That function runs
+// only while no Job exists under the name the claim reserved, and an Apply that
+// already crossed its dispatch boundary is retired as uncertain well before
+// reaching it, so nothing is executing SQL and the Lease has no run left to
+// protect. Clearing the claim alone would leave it held anyway: the next Apply
+// carries a new operation ID, so it contends with a holder that will never
+// come back, and so does every other Ptah resource addressing that database --
+// for the whole lease duration, sixteen minutes by default and as much as a
+// day where the claim asked for one.
+//
+// The release follows the status write rather than leading it. A crash in
+// between then leaves a Lease nobody needs, which expires on its own; the other
+// order leaves a database handed back under a claim that still reads as live.
+func (r *MigrationReconciler) discardUndispatchedMigrationOperation(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	failure error,
+) (ctrl.Result, error) {
+	operation := migration.Status.ActiveOperation
+	result, err := r.discardMigrationOperation(ctx, migration, failure)
+	if err != nil {
+		return result, err
+	}
+	if operation != nil && operation.Type == operatorv1alpha1.MigrationOperationApply {
+		r.releaseMigrationApplyLock(ctx, migration, operation)
+	}
+	return result, nil
 }
 
 // migrationOperationFailure records a configuration or dispatch failure the

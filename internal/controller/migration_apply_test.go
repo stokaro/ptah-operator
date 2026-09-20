@@ -1239,3 +1239,39 @@ func TestMigrationApplyKeepsADispatchedRunWhenTheTransactionModeChanges(t *testi
 		t.Fatalf("a running Apply was retired by a policy edit: %#v", actual.Status.ActiveOperation)
 	}
 }
+
+// A claim refused at the dispatch boundary has already taken the database: the
+// Lease is acquired on the pass that reaches dispatch, before any Job exists.
+// Clearing the claim without handing it back leaves every claimant on that
+// database -- this one included, under the new operation ID its next Apply
+// carries -- waiting out the full lease duration for a run that never started.
+func TestMigrationApplyRefusedAtDispatchHandsBackTheDatabase(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := undispatchedApplyClaim(t, migration, plan)
+	replaced := verificationPolicyConfigMap()
+	replaced.UID = "replacement-policy-uid"
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, replaced)
+
+	actual := reconcileUntilTheApplyClaimIsGone(t, reconciler, api, migration)
+	if actual.Status.ActiveOperation != nil {
+		t.Fatalf("the Apply claim survived a replaced verification policy: %#v", actual.Status.ActiveOperation)
+	}
+	assertNoMigrationJobDispatched(t, api)
+
+	// Another resource addressing the same database must be able to take it
+	// immediately. Nothing ran, so nothing is left to serialize against.
+	other, err := reconciler.Locks.Acquire(context.Background(), targetlock.Request{
+		CoordinationNamespace: reconciler.LockNamespace,
+		CoordinationDigest:    operation.CoordinationDigest,
+		Holder:                targetlock.Holder{SchemaUID: "other-resource", OperationID: "other-apply"},
+		Duration:              time.Duration(operation.LeaseDurationSeconds) * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !other.Acquired {
+		t.Fatal("the database stayed held by a claim that was refused before it dispatched anything")
+	}
+}
