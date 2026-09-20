@@ -1855,3 +1855,71 @@ func (w *failFirstMigrationStatusPatchWriter) Patch(
 	}
 	return w.SubResourceWriter.Patch(ctx, object, patch, options...)
 }
+
+// The Lease has to keep being renewed for as long as the deletion waits.
+//
+// It is sized to outlive the Job's own deadline and no further, and every
+// ordinary pass over a live Apply renews it. This wait can outlast that
+// deadline: a Pod on a node the API server cannot reach stays Running with no
+// bound at all. A Lease that lapses under that Pod hands the realm to the next
+// claimant, which then runs DDL beside an executor that never stopped, which is
+// the one thing the Lease exists to prevent.
+func TestDeletingAMigrationKeepsRenewingTheDatabaseLease(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	job, pod := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	// Dispatched, and the executor has not stopped.
+	job.Status.Conditions = nil
+	job.Status.Active = 1
+	runningExecutorPod(pod)
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap(), job, pod)
+	holdMigrationApplyLease(t, reconciler, api, migration)
+	clock := movableMigrationClock(reconciler, api)
+	if err := api.Delete(ctx, migration); err != nil {
+		t.Fatal(err)
+	}
+
+	renewedAt := func() time.Time {
+		t.Helper()
+		leases := &coordinationv1.LeaseList{}
+		if err := api.List(ctx, leases, client.InNamespace(reconciler.LockNamespace)); err != nil {
+			t.Fatal(err)
+		}
+		for _, lease := range leases.Items {
+			if lease.Spec.HolderIdentity != nil && *lease.Spec.HolderIdentity != "" {
+				if lease.Spec.RenewTime == nil {
+					t.Fatalf("Lease %s is held and carries no renewal time", lease.Name)
+				}
+				return lease.Spec.RenewTime.Time
+			}
+		}
+		t.Fatal("no database Lease is held, so there is no renewal to measure")
+		return time.Time{}
+	}
+
+	before := renewedAt()
+	// Past the whole lease, which is the Job's deadline plus the grace. Without
+	// a renewal here the realm is free while the Pod is still running.
+	clock.now = clock.now.Add(migrationLeaseDuration(migration) + time.Minute)
+	result, err := reconciler.Reconcile(ctx, migrationRequest(migration))
+	if err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	if result.RequeueAfter <= 0 {
+		t.Fatalf("the deletion stopped watching a Pod that has not stopped: result = %#v", result)
+	}
+	after := renewedAt()
+	if !after.After(before) {
+		t.Fatalf("the Lease was not renewed while the deletion waited: renewed at %s, was %s", after, before)
+	}
+
+	// And the claim is still here, holding the resource, which is what the
+	// renewal is for.
+	waiting := readMigration(t, api, migration)
+	if waiting.Status.ActiveOperation == nil || waiting.Status.ActiveOperation.ID != operation.ID {
+		t.Fatalf("the claim went while its Pod was still running: %#v", waiting.Status.ActiveOperation)
+	}
+}

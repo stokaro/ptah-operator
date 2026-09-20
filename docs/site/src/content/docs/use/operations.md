@@ -1084,7 +1084,9 @@ into a terminal Job, so a run that is merely slow ends on its own deadline. A
 Pod on a node the API server cannot reach is a different case: it stays
 `Running` until the node object goes or the Pod is force-deleted, and the
 deletion waits with it for as long as that takes. Nothing the operator holds
-ends that wait. Recover the node or force-delete the Pod; removing the
+ends that wait. The database Lease is renewed for the whole of it, so no other
+resource takes that database while a Pod that may still be executing SQL is
+unaccounted for -- which is the reason the wait is worth its cost. Recover the node or force-delete the Pod; removing the
 `operator.ptah.run/migration-operation` finalizer by hand is the last resort,
 and it is a statement that nothing is executing against that database any more.
 

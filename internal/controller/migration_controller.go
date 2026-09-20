@@ -231,6 +231,23 @@ func (r *MigrationReconciler) reconcileMigrationDeletion(
 				return ctrl.Result{}, err
 			}
 			if r.dispatchedApplyMayStillWrite(ctx, migration.Namespace, operation, job) {
+				// Renew while waiting, the way every other pass over a live
+				// Apply does. The Lease is sized to outlive the Job's own
+				// deadline and no further, and this wait can outlast that: a
+				// Pod on a node the API server cannot reach stays Running with
+				// no bound at all. A Lease that lapses under that Pod hands the
+				// realm to the next claimant, which then runs DDL beside an
+				// executor that never stopped -- the one thing the Lease is for.
+				//
+				// What the renewal returns does not change what happens next.
+				// The Pod is still there either way, so the resource is kept
+				// either way; a realm somebody else has taken is recorded on
+				// the claim rather than acted on, and the release below names
+				// the claim's epoch, so it cannot clear a holder that is not
+				// this one.
+				if _, _, err := r.acquireMigrationApplyLock(ctx, migration); err != nil {
+					return ctrl.Result{}, err
+				}
 				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}
 			// A dispatch this claim started, or a Job it can account for under
