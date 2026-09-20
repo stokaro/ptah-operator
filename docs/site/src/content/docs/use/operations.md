@@ -105,9 +105,9 @@ The hook never creates, deletes, or force-applies a CRD. A missing CRD, an API
 identity conflict, a stored version absent from the candidate, a rejected
 dry-run, or an incompatible schema identity introduced concurrently makes the
 Helm operation fail. The
-dedicated hook ServiceAccount can `get` and `update` only the three exact Ptah
-CRD names. Separate read-only `list` grants for `PtahSchema`, `PtahSchemaPlan`,
-and `PtahSchemaApproval` exist solely for the downgrade preflight. Kubernetes
+dedicated hook ServiceAccount can `get` and `update` only the six exact Ptah
+CRD names. Separate read-only `list` grants for every kind that stores a
+controller-state version exist solely for the downgrade preflight. Kubernetes
 RBAC cannot restrict `create` by `resourceNames`, so the hook also receives a
 temporary namespace-wide `create` grant for Deployments after the rollout
 guard is installed. The guard admits that identity only for server-side
@@ -159,11 +159,14 @@ published release after backing up every CRD and custom resource. The
 operator intentionally provides no value that labels an unknown schema as
 trusted.
 
-Before starting a manager, the init verifier scans every `PtahSchema`,
-`PtahSchemaPlan`, and `PtahSchemaApproval` across the cluster. It checks
-controller-state versions in `PtahSchema.status.executionBinding`,
-`status.plan`, `status.applied`, and `status.pendingObservation.plan`, plus the
-immutable `spec.controllerStateVersion` carried by every plan and approval.
+Before starting a manager, the init verifier scans every kind that stores a
+controller-state version across the cluster: `PtahSchema`, `PtahSchemaPlan`,
+`PtahSchemaApproval`, `PtahMigration`, `PtahMigrationPlan`, and
+`PtahMigrationApproval`. It checks controller-state versions in
+`PtahSchema.status.executionBinding`, `status.plan`, `status.applied`, and
+`status.pendingObservation.plan`, in `PtahMigration.status.executionBinding`,
+and in the immutable `spec.controllerStateVersion` carried by every plan and
+approval.
 Every kind is read through exhaustive pagination anchored to its own single
 collection `resourceVersion`. A nonzero version newer than the binary's
 supported controller-state version blocks the rollout, even if another stored

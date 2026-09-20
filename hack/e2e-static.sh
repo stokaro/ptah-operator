@@ -6147,7 +6147,7 @@ for crd_name in \
 done
 printf '%s\n' "$crd_role_section" | grep -F 'verbs: ["get", "update"]' >/dev/null
 printf '%s\n' "$crd_role_section" |
-	grep -F 'resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]' >/dev/null
+	grep -F 'resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals", "ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals"]' >/dev/null
 [ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["list"]')" -eq 3 ]
 # Only the stable ClusterRoleBinding is mutable through cluster-wide RBAC.
 # Namespaced transition rules are checked against the compiled Role inventory.

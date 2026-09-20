@@ -334,7 +334,7 @@ rules:
   # cover every kind that can persist controller-written state and are required
   # to reject controller downgrades before changing any CRD schema.
   - apiGroups: ["operator.ptah.run"]
-    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]
+    resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals", "ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals"]
     verbs: ["list"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]

@@ -102,12 +102,15 @@ type ControllerStateListClient interface {
 }
 
 // StoredControllerStateClients contains every resource collection that can
-// persist controller-written state. All three clients are mandatory whenever
+// persist controller-written state. All six clients are mandatory whenever
 // the downgrade preflight is enabled.
 type StoredControllerStateClients struct {
-	Schemas   ControllerStateListClient
-	Plans     ControllerStateListClient
-	Approvals ControllerStateListClient
+	Schemas            ControllerStateListClient
+	Plans              ControllerStateListClient
+	Approvals          ControllerStateListClient
+	Migrations         ControllerStateListClient
+	MigrationPlans     ControllerStateListClient
+	MigrationApprovals ControllerStateListClient
 }
 
 type controllerStateLocation struct {
@@ -124,6 +127,62 @@ var schemaControllerStateLocations = []controllerStateLocation{
 
 var immutableControllerStateLocation = []controllerStateLocation{
 	{name: "spec", path: []string{"spec", "controllerStateVersion"}},
+}
+
+// A migration records its controller-state version only where the run is bound
+// to the components that executed it. Its plan and approval are immutable, so
+// they carry theirs in the spec, like the schema family does.
+var migrationControllerStateLocations = []controllerStateLocation{
+	{name: "status.executionBinding", path: []string{"status", "executionBinding", "controllerStateVersion"}},
+}
+
+// storedControllerStateKind is one namespaced kind the downgrade preflight
+// scans, and where in its objects controller-written state can sit.
+type storedControllerStateKind struct {
+	kind      string
+	plural    string
+	client    func(StoredControllerStateClients) ControllerStateListClient
+	locations []controllerStateLocation
+}
+
+// storedControllerStateKinds must name every CRD whose schema carries a
+// controllerStateVersion, at every path that carries one.
+// TestStoredControllerStateScanCoversEveryCRDThatStoresIt derives both sets
+// from the embedded CRDs and fails when this table disagrees, so a kind that
+// starts storing controller state cannot be left unscanned.
+var storedControllerStateKinds = []storedControllerStateKind{
+	{
+		kind: "PtahSchema", plural: "PtahSchemas",
+		client:    func(clients StoredControllerStateClients) ControllerStateListClient { return clients.Schemas },
+		locations: schemaControllerStateLocations,
+	},
+	{
+		kind: "PtahSchemaPlan", plural: "PtahSchemaPlans",
+		client:    func(clients StoredControllerStateClients) ControllerStateListClient { return clients.Plans },
+		locations: immutableControllerStateLocation,
+	},
+	{
+		kind: "PtahSchemaApproval", plural: "PtahSchemaApprovals",
+		client:    func(clients StoredControllerStateClients) ControllerStateListClient { return clients.Approvals },
+		locations: immutableControllerStateLocation,
+	},
+	{
+		kind: "PtahMigration", plural: "PtahMigrations",
+		client:    func(clients StoredControllerStateClients) ControllerStateListClient { return clients.Migrations },
+		locations: migrationControllerStateLocations,
+	},
+	{
+		kind: "PtahMigrationPlan", plural: "PtahMigrationPlans",
+		client:    func(clients StoredControllerStateClients) ControllerStateListClient { return clients.MigrationPlans },
+		locations: immutableControllerStateLocation,
+	},
+	{
+		kind: "PtahMigrationApproval", plural: "PtahMigrationApprovals",
+		client: func(clients StoredControllerStateClients) ControllerStateListClient {
+			return clients.MigrationApprovals
+		},
+		locations: immutableControllerStateLocation,
+	},
 }
 
 // RuntimeInvariants identify the only Helm release allowed to run a manager or
@@ -833,23 +892,13 @@ func VerifyStoredControllerState(ctx context.Context, clients StoredControllerSt
 	if supported <= 0 {
 		return fmt.Errorf("supported controller state version must be positive")
 	}
-	kinds := []struct {
-		kind      string
-		plural    string
-		client    ControllerStateListClient
-		locations []controllerStateLocation
-	}{
-		{kind: "PtahSchema", plural: "PtahSchemas", client: clients.Schemas, locations: schemaControllerStateLocations},
-		{kind: "PtahSchemaPlan", plural: "PtahSchemaPlans", client: clients.Plans, locations: immutableControllerStateLocation},
-		{kind: "PtahSchemaApproval", plural: "PtahSchemaApprovals", client: clients.Approvals, locations: immutableControllerStateLocation},
-	}
-	for _, resourceKind := range kinds {
-		if isNilControllerStateClient(resourceKind.client) {
+	for _, resourceKind := range storedControllerStateKinds {
+		if isNilControllerStateClient(resourceKind.client(clients)) {
 			return fmt.Errorf("%s client is required", resourceKind.kind)
 		}
 	}
-	for _, resourceKind := range kinds {
-		if err := verifyStoredControllerStateKind(ctx, resourceKind.kind, resourceKind.plural, resourceKind.client, resourceKind.locations, supported); err != nil {
+	for _, resourceKind := range storedControllerStateKinds {
+		if err := verifyStoredControllerStateKind(ctx, resourceKind.kind, resourceKind.plural, resourceKind.client(clients), resourceKind.locations, supported); err != nil {
 			return err
 		}
 	}

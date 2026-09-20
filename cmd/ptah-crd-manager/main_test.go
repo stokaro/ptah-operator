@@ -8,6 +8,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -43,6 +45,21 @@ func TestStoredControllerStateClientsUseEveryDurableResource(t *testing.T) {
 			client: clients.Approvals,
 			want:   schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahschemaapprovals"},
 		},
+		{
+			name:   "migrations",
+			client: clients.Migrations,
+			want:   schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahmigrations"},
+		},
+		{
+			name:   "migration plans",
+			client: clients.MigrationPlans,
+			want:   schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahmigrationplans"},
+		},
+		{
+			name:   "migration approvals",
+			client: clients.MigrationApprovals,
+			want:   schema.GroupVersionResource{Group: "operator.ptah.run", Version: "v1alpha1", Resource: "ptahmigrationapprovals"},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -52,9 +69,36 @@ func TestStoredControllerStateClientsUseEveryDurableResource(t *testing.T) {
 			}
 		})
 	}
-	if len(dynamicClient.resources) != len(tests) {
-		t.Fatalf("dynamic Resource calls = %d, want %d", len(dynamicClient.resources), len(tests))
+	// The complete set comes from the shipped CRDs, not from the rows above.
+	// Counting those rows against themselves is what certified three kinds as
+	// every kind that can store controller-written state.
+	durable, err := crdupgrade.ControllerStateBearingResources()
+	if err != nil {
+		t.Fatal(err)
 	}
+	want := make(map[schema.GroupVersionResource]struct{}, len(durable))
+	for _, resource := range durable {
+		want[schema.GroupVersionResource{Group: resource.Group, Version: resource.Version, Resource: resource.Resource}] = struct{}{}
+	}
+	got := make(map[schema.GroupVersionResource]struct{}, len(dynamicClient.resources))
+	for _, resource := range dynamicClient.resources {
+		if _, duplicate := got[resource.gvr]; duplicate {
+			t.Fatalf("dynamic client asked for %s twice", resource.gvr)
+		}
+		got[resource.gvr] = struct{}{}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("state clients read %s, want one client per CRD that stores controller state: %s", sortedResources(got), sortedResources(want))
+	}
+}
+
+func sortedResources(set map[schema.GroupVersionResource]struct{}) []string {
+	names := make([]string, 0, len(set))
+	for resource := range set {
+		names = append(names, resource.String())
+	}
+	sort.Strings(names)
+	return names
 }
 
 type recordingDynamicClient struct {
