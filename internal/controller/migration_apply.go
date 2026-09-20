@@ -20,6 +20,7 @@ import (
 	"github.com/stokaro/ptah-operator/internal/dataplane"
 	"github.com/stokaro/ptah-operator/internal/fingerprint"
 	"github.com/stokaro/ptah-operator/internal/migrationplan"
+	"github.com/stokaro/ptah-operator/internal/policy"
 	"github.com/stokaro/ptah-operator/internal/runner"
 	"github.com/stokaro/ptah-operator/internal/targetlock"
 )
@@ -108,7 +109,62 @@ func (r *MigrationReconciler) currentMigrationPlan(
 	if err != nil || policyFingerprint != plan.Spec.PolicyFingerprint {
 		return nil, errors.New("the apply policy changed after the plan was published")
 	}
+	if err := r.verificationPolicyStillBinds(ctx, migration, plan); err != nil {
+		return nil, err
+	}
 	return plan, nil
+}
+
+// verificationPolicyStillBinds re-reads the live verification policy and
+// refuses a plan that was decided under another one.
+//
+// The plan records the policy object's UID and the digest of its content, and
+// the admission that accepted the approval compared both -- once. Nothing
+// repeated that comparison afterwards, so deleting the immutable ConfigMap and
+// recreating it under the same name left the approval authorizing an Apply
+// under terms that no longer exist. The UID is what catches exactly that: a
+// replacement carries a new one even when the bytes are identical.
+func (r *MigrationReconciler) verificationPolicyStillBinds(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	plan *operatorv1alpha1.PtahMigrationPlan,
+) error {
+	binding, err := policy.ConfigMapBinding(
+		ctx, r.directReader(), migration.Namespace, migration.Spec.Artifact.VerificationPolicyFrom,
+	)
+	if err != nil {
+		return fmt.Errorf("read the verification policy the plan was decided under: %w", err)
+	}
+	if binding.UID != plan.Spec.VerificationPolicyUID || binding.Digest != plan.Spec.VerificationPolicyDigest {
+		return errors.New("the verification policy was replaced after the plan was published")
+	}
+	return nil
+}
+
+// claimedApplyPolicyStillBinds is the same question at the dispatch boundary,
+// asked about the plan the claim itself named.
+//
+// The claim's input fingerprint names the policy object -- its ConfigMap name
+// and key -- and never its identity or its content, so a policy replaced
+// between the decision and this instant is invisible to it. An undispatched
+// claim is therefore re-checked here rather than trusted.
+func (r *MigrationReconciler) claimedApplyPolicyStillBinds(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	operation *operatorv1alpha1.MigrationOperationStatus,
+) error {
+	if operation.PlanRef == nil {
+		return errors.New("the Apply claim names no plan to check the verification policy against")
+	}
+	plan := &operatorv1alpha1.PtahMigrationPlan{}
+	key := types.NamespacedName{Namespace: migration.Namespace, Name: operation.PlanRef.Name}
+	if err := r.directReader().Get(ctx, key, plan); err != nil {
+		return fmt.Errorf("read the plan the Apply claim named: %w", err)
+	}
+	if plan.UID != operation.PlanRef.UID {
+		return errors.New("the plan the Apply claim named was replaced")
+	}
+	return r.verificationPolicyStillBinds(ctx, migration, plan)
 }
 
 // findMigrationApproval returns the one approval that authorizes this exact

@@ -363,6 +363,12 @@ migration's version, version key, checksum, checkpoint flag and transaction
 mode, the history fingerprint it was computed against, and the version the
 history stood at.
 
+Those two transaction modes are different statements and both are bound. The
+one inside the sequence is what each file declares; the one inside the apply
+policy is what `spec.policy.transactionMode` asks Ptah to do, and unset is its
+own value there. Editing the second retires the plan and its approval, because
+a sequence approved under one wrapping is a different execution under another.
+
 Plan bytes are split into immutable ConfigMaps: at most sixteen chunks of at
 most 512 KiB, for a plan of at most 8 MiB, with the chunk count derived from
 those two limits so storage cannot advertise more capacity than the runner can

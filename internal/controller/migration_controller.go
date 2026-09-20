@@ -42,6 +42,7 @@ import (
 const (
 	migrationOperationFinalizer = "operator.ptah.run/migration-operation"
 	defaultMigrationInterval    = 10 * time.Minute
+	migrationPolicyIndex        = "spec.artifact.verificationPolicyFrom.name"
 )
 
 // MigrationJobBuilder turns one already-persisted migration claim into a
@@ -562,14 +563,22 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 ) (ctrl.Result, error) {
 	operation := migration.Status.ActiveOperation
 	if migration.Spec.Suspend {
-		return r.discardMigrationOperation(ctx, migration, errors.New("reconciliation was suspended before dispatch"))
+		return r.discardUndispatchedMigrationOperation(ctx, migration, errors.New("reconciliation was suspended before dispatch"))
 	}
 	current, currentErr := r.migrationInputFingerprint(ctx, migration, operation.Type)
 	if currentErr != nil || current != operation.InputFingerprint {
 		if currentErr == nil {
 			currentErr = errors.New("the operation inputs changed after the claim")
 		}
-		return r.discardMigrationOperation(ctx, migration, currentErr)
+		return r.discardUndispatchedMigrationOperation(ctx, migration, currentErr)
+	}
+	if operation.Type == operatorv1alpha1.MigrationOperationApply {
+		// An Apply reaches here only before its dispatch boundary: a claim that
+		// already crossed it is retired as uncertain rather than re-examined.
+		// So discarding here cannot abandon a run that is executing SQL.
+		if err := r.claimedApplyPolicyStillBinds(ctx, migration, operation); err != nil {
+			return r.discardUndispatchedMigrationOperation(ctx, migration, err)
+		}
 	}
 	if operation.JobUID != "" {
 		// A persisted UID proves this attempt already crossed its dispatch
@@ -593,7 +602,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 	}
 	plan, planErr := r.migrationPlanForJob(ctx, migration, operation)
 	if planErr != nil {
-		return r.discardMigrationOperation(ctx, migration, planErr)
+		return r.discardUndispatchedMigrationOperation(ctx, migration, planErr)
 	}
 	job, err := r.Jobs.BuildMigration(migration, *operation, plan)
 	if err != nil {
@@ -624,7 +633,7 @@ func (r *MigrationReconciler) dispatchMigrationJob(
 		return r.migrationOperationFailure(ctx, migration, fmt.Errorf("digest rebuilt Job Pod template: %w", digestErr))
 	}
 	if templateDigest != operation.AdmissionSnapshot.TemplateDigest {
-		return r.discardMigrationOperation(ctx, migration,
+		return r.discardUndispatchedMigrationOperation(ctx, migration,
 			errors.New("the rebuilt Job Pod template differs from the persisted admission snapshot"))
 	}
 	if operation.Type == operatorv1alpha1.MigrationOperationApply && !operation.DispatchStarted {
@@ -1068,6 +1077,12 @@ func migrationPolicyFingerprint(migration *operatorv1alpha1.PtahMigration) (stri
 	return fingerprint.DigestCanonicalJSON(map[string]string{
 		"apply":        string(migration.Spec.Policy.Apply),
 		"lock_timeout": migration.Spec.Policy.LockTimeout.Duration.String(),
+		// The mode decides how the run is wrapped, so a sequence approved under
+		// one mode is not the same execution under another. Unset is carried as
+		// the empty string and is its own value: it means the operator passes
+		// no mode and Ptah chooses, which is a different run from one that
+		// asked for "file" even where Ptah would have picked it.
+		"transaction_mode": migration.Spec.Policy.TransactionMode,
 	})
 }
 
@@ -1095,6 +1110,12 @@ func (r *MigrationReconciler) migrationInputFingerprint(
 		"execution_id":    migrationBindingEpoch(migration),
 		"lock_timeout":    migration.Spec.Policy.LockTimeout.Duration.String(),
 		"connect_timeout": migration.Spec.Execution.ConnectTimeout.Duration.String(),
+		// The Pod the claim names carries this mode, so it belongs among the
+		// inputs the claim was decided from, beside lock_timeout. It refuses
+		// nothing by itself: generation is in this map too, and the API server
+		// bumps it on every spec edit, so an edited mode already retired an
+		// undispatched claim before this entry existed.
+		"transaction_mode": migration.Spec.Policy.TransactionMode,
 	}
 	if operationType != operatorv1alpha1.MigrationOperationResolve {
 		if migration.Status.Artifact == nil {
@@ -1211,6 +1232,38 @@ func (r *MigrationReconciler) discardMigrationOperation(
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{Requeue: true}, nil
+}
+
+// discardUndispatchedMigrationOperation retires a claim that never became a
+// Job, and hands back the database that claim had already taken.
+//
+// Every discard inside dispatchMigrationJob is pre-dispatch. That function runs
+// only while no Job exists under the name the claim reserved, and an Apply that
+// already crossed its dispatch boundary is retired as uncertain well before
+// reaching it, so nothing is executing SQL and the Lease has no run left to
+// protect. Clearing the claim alone would leave it held anyway: the next Apply
+// carries a new operation ID, so it contends with a holder that will never
+// come back, and so does every other Ptah resource addressing that database --
+// for the whole lease duration, sixteen minutes by default and as much as a
+// day where the claim asked for one.
+//
+// The release follows the status write rather than leading it. A crash in
+// between then leaves a Lease nobody needs, which expires on its own; the other
+// order leaves a database handed back under a claim that still reads as live.
+func (r *MigrationReconciler) discardUndispatchedMigrationOperation(
+	ctx context.Context,
+	migration *operatorv1alpha1.PtahMigration,
+	failure error,
+) (ctrl.Result, error) {
+	operation := migration.Status.ActiveOperation
+	result, err := r.discardMigrationOperation(ctx, migration, failure)
+	if err != nil {
+		return result, err
+	}
+	if operation != nil && operation.Type == operatorv1alpha1.MigrationOperationApply {
+		r.releaseMigrationApplyLock(ctx, migration, operation)
+	}
+	return result, nil
 }
 
 // migrationOperationFailure records a configuration or dispatch failure the
@@ -1409,7 +1462,8 @@ func (r *MigrationReconciler) event(object client.Object, eventType, reason, mes
 
 // SetupWithManager registers the migration controller. Jobs are watched by
 // owner so a terminal Job wakes its migration instead of waiting for the poll,
-// and an approval wakes the migration it names for the same reason.
+// an approval wakes the migration it names for the same reason, and the
+// verification policy ConfigMap wakes every migration that names it.
 //
 // Without the second watch an approval waited for the migration's next
 // scheduled reading, up to spec.interval, before the controller so much as
@@ -1417,7 +1471,27 @@ func (r *MigrationReconciler) event(object client.Object, eventType, reason, mes
 // wake does not skip the evidence: a migration whose reading is due still
 // refreshes the whole chain first, and one that is not due checks the approval
 // against the plan, history, artifact and binding it was written for.
+//
+// The third watch is how soon a replaced policy is noticed, and nothing more.
+// It decides nothing: the plan and the undispatched claim are each re-checked
+// against the live policy where they are acted on, so a wake that never
+// arrives -- a missed event, a restarted manager, a cache that lagged -- delays
+// the refusal to the next reading rather than losing it.
 func (r *MigrationReconciler) SetupWithManager(manager ctrl.Manager) error {
+	if err := manager.GetFieldIndexer().IndexField(
+		context.Background(),
+		&operatorv1alpha1.PtahMigration{},
+		migrationPolicyIndex,
+		func(object client.Object) []string {
+			migration, ok := object.(*operatorv1alpha1.PtahMigration)
+			if !ok || migration.Spec.Artifact.VerificationPolicyFrom.Name == "" {
+				return nil
+			}
+			return []string{migration.Spec.Artifact.VerificationPolicyFrom.Name}
+		},
+	); err != nil {
+		return fmt.Errorf("index migrations by verification policy: %w", err)
+	}
 	return ctrl.NewControllerManagedBy(manager).
 		For(&operatorv1alpha1.PtahMigration{}, builder.WithPredicates(predicate.Or(
 			predicate.GenerationChangedPredicate{},
@@ -1426,7 +1500,36 @@ func (r *MigrationReconciler) SetupWithManager(manager ctrl.Manager) error {
 		))).
 		Owns(&batchv1.Job{}).
 		Watches(&operatorv1alpha1.PtahMigrationApproval{}, handler.EnqueueRequestsFromMapFunc(migrationForApproval)).
+		Watches(&corev1.ConfigMap{}, handler.EnqueueRequestsFromMapFunc(r.migrationsForVerificationPolicy)).
 		Complete(r)
+}
+
+// migrationsForVerificationPolicy names every migration that reads this
+// ConfigMap as its verification policy.
+func (r *MigrationReconciler) migrationsForVerificationPolicy(
+	ctx context.Context,
+	object client.Object,
+) []reconcile.Request {
+	configMap, ok := object.(*corev1.ConfigMap)
+	if !ok || configMap.Name == "" {
+		return nil
+	}
+	migrations := &operatorv1alpha1.PtahMigrationList{}
+	if err := r.Client.List(
+		ctx,
+		migrations,
+		client.InNamespace(configMap.Namespace),
+		client.MatchingFields{migrationPolicyIndex: configMap.Name},
+	); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(migrations.Items))
+	for index := range migrations.Items {
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKeyFromObject(&migrations.Items[index]),
+		})
+	}
+	return requests
 }
 
 // migrationForApproval names the migration an approval was written for. The
