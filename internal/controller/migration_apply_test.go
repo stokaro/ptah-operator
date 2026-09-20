@@ -926,3 +926,23 @@ func TestUncertainMigrationApplyHandsTheDatabaseBackWhenAnotherJobHoldsTheName(t
 	}
 	assertDatabaseHandedBack(t, reconciler, api)
 }
+
+// Losing lock continuity retires the claim without the Job in hand: the
+// reconcile that handles it passes nil, and the claim's UID is all that names
+// what was dispatched. A Job the scheduler has not reached owns no Pod yet, so
+// reading Pods alone answers "nothing is running" about a run that is about to
+// start, and the database would be handed to the next claimant in front of it.
+func TestDispatchedApplyMayStillWriteReadsTheJobTheCallerDidNotPass(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	job, _ := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	// Dispatched, not finished, and owning no Pod yet.
+	job.Status.Conditions = nil
+	reconciler, _ := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap(), job)
+
+	if !reconciler.dispatchedApplyMayStillWrite(context.Background(), migration.Namespace, operation, nil) {
+		t.Fatal("the gate handed the database back for a dispatched Job it never read")
+	}
+}

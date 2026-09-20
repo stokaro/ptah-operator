@@ -407,30 +407,48 @@ func (r *MigrationReconciler) dispatchedApplyMayStillWrite(
 	if jobUID == "" && job != nil {
 		jobName, jobUID = job.Name, job.UID
 	}
-	if jobUID == "" {
-		// The claim never learned a UID, which is not evidence that nothing
-		// was created. A create that fails with anything other than
-		// AlreadyExists leaves the question open: a client timeout or a 5xx
-		// after the write persisted leaves a Job running under the name this
-		// claim reserved, and nothing collects it while the migration lives.
-		// The name is derived from the claim, so the object under it is this
-		// claim's Job, and reading it is what settles the identity.
-		if jobName == "" {
-			return false
+	if jobUID == "" && jobName == "" {
+		// Nothing was named and nothing was created, so nothing can be writing.
+		return false
+	}
+	if job == nil || job.UID != jobUID {
+		// The caller had no snapshot of this claim's Job, or held a different
+		// object under the same name. Either way whether that Job can still
+		// start a Pod is unanswered, and the Pod list does not answer it: a Job
+		// the scheduler has not reached owns no Pod yet and is still about to
+		// run SQL. The continuity-loss path reaches here with a UID and no
+		// snapshot, so reading the Job is what keeps the Lease held.
+		//
+		// A claim with no UID is not evidence that nothing was created either.
+		// A create that fails with anything other than AlreadyExists leaves the
+		// question open: a client timeout or a 5xx after the write persisted
+		// leaves a Job running under the name this claim reserved, and nothing
+		// collects it while the migration lives.
+		job = nil
+		if jobName != "" {
+			dispatched := &batchv1.Job{}
+			key := types.NamespacedName{Namespace: namespace, Name: jobName}
+			switch err := r.directReader().Get(ctx, key, dispatched); {
+			case apierrors.IsNotFound(err):
+				// Nothing stands under the reserved name. With no UID recorded
+				// that is as close as the controller comes to proof the create
+				// never landed; with one, this claim's Job is gone and only the
+				// Pods it owned can still be running, which the read below
+				// settles.
+				if jobUID == "" {
+					return false
+				}
+			case err != nil:
+				ctrl.LoggerFrom(ctx).Info("could not read the dispatched Apply Job", "error", err.Error())
+				return true
+			default:
+				if jobUID == "" || dispatched.UID == jobUID {
+					job, jobName, jobUID = dispatched, dispatched.Name, dispatched.UID
+				}
+				// Otherwise a different object holds the name, so this claim's
+				// Job is gone and only its Pods matter.
+			}
 		}
-		dispatched := &batchv1.Job{}
-		key := types.NamespacedName{Namespace: namespace, Name: jobName}
-		err := r.directReader().Get(ctx, key, dispatched)
-		switch {
-		case apierrors.IsNotFound(err):
-			// The name this claim reserved holds nothing, which is as close as
-			// the controller comes to proof that the create never landed.
-			return false
-		case err != nil:
-			ctrl.LoggerFrom(ctx).Info("could not read the dispatched Apply Job", "error", err.Error())
-			return true
-		}
-		job, jobName, jobUID = dispatched, dispatched.Name, dispatched.UID
 	}
 	if job != nil && job.UID == jobUID && !jobTerminal(job) {
 		return true
