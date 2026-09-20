@@ -266,7 +266,9 @@ func TestControllerObjectGuardCELContracts(t *testing.T) {
 		`object.metadata.ownerReferences[0].kind == "PtahSchemaPlan"`,
 		`dyn(object).immutable`,
 		`dyn(object).binaryData.size() == 1`,
-		`dyn(object).binaryData["chunk"].size() <= 524288`,
+		// The size ceiling is measured rather than named, in
+		// TestControllerChunkWriteGuardAdmitsTheChunksThePlanStoreWrites:
+		// a literal here reads correct whatever number it carries.
 	} {
 		if !strings.Contains(chunk, marker) {
 			t.Fatalf("chunk structural contract lacks %q", marker)

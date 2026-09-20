@@ -6390,7 +6390,7 @@ for controller_object_marker in \
 	'resources: ["ptahmigrationplans"]' \
 	'Ptah controller migration plan write guard rejected an unsafe manifest shape' \
 	'dyn(object).spec.ttlSecondsAfterFinished == 300' \
-	'dyn(object).binaryData[\"chunk\"].size() <= 524288' \
+	'dyn(object).binaryData[\"chunk\"].size() <= 699052' \
 	'dyn(object).spec.contractVersion == 2' \
 	'dyn(object).spec.contractVersion == 3' \
 	'Ptah controller Job write guard rejected an unsafe workload shape' \
