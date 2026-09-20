@@ -314,10 +314,16 @@ Three durable claims live in status, and they are independent on purpose:
 
 A terminal Job stays the active operation until the controller has both read
 its result and scheduled its bounded cleanup TTL, so a transient API or RBAC
-failure retries the transition instead of orphaning the Job. The controller
-waits for the Job's terminal condition before it reads a result at all, and the
-typed policy requires that condition too: a TTL is the one field the manager
-may add to a Job it already created, and only once the Job has finished.
+failure retries the transition instead of orphaning the Job. That TTL is the
+one field the manager may add to a Job it already created, and no result is
+read before the Job carries its terminal condition.
+
+One case adds the field to a Job that is still running, and both admission
+layers name it: losing database lock continuity during an Apply retires the
+operation at once, and the Job left behind would otherwise hold its whole
+deadline with nothing left to schedule its collection. The timing changes
+nothing -- Kubernetes starts that timer when a Job finishes either way -- so
+the exception is written for a schema Apply and for no other shape.
 
 ## Immutable bindings
 
