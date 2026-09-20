@@ -1001,3 +1001,241 @@ func TestMigrationPlanForJobBindsDispatchToTheApprovedPlan(t *testing.T) {
 		})
 	}
 }
+
+func TestAcceptanceReviewReplacedPolicyInvalidatesApprovedMigration(t *testing.T) {
+	ctx := context.Background()
+	migration, plan := awaitingApprovalFixture(t)
+	approval := migrationApprovalFor(migration, plan)
+	policy := verificationPolicyConfigMap()
+	policy.UID = "replacement-policy-uid"
+	policy.Data["policy.yaml"] = "requireDigestPin: true\nrequireSignature: true"
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, approval, policy)
+	if _, err := reconciler.Reconcile(ctx, migrationRequest(migration)); err != nil {
+		t.Fatal(err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.ActiveOperation != nil && actual.Status.ActiveOperation.Type == operatorv1alpha1.MigrationOperationApply {
+		t.Fatalf("approved Apply was claimed using deleted policy UID %q while live policy UID is %q", plan.Spec.VerificationPolicyUID, policy.UID)
+	}
+}
+
+func TestAcceptanceReviewTransactionModeInvalidatesPlan(t *testing.T) {
+	migration, plan := awaitingApprovalFixture(t)
+	before, err := migrationPolicyFingerprint(migration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migration.Spec.Policy.TransactionMode = "none"
+	after, err := migrationPolicyFingerprint(migration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Error("changing PostgreSQL migration transaction mode from default per-file to none does not change the policy fingerprint")
+	}
+	reconciler, _ := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+	if _, err := reconciler.currentMigrationPlan(context.Background(), migration); err == nil {
+		t.Error("the old plan remains current after changing migration transaction semantics")
+	}
+}
+
+// undispatchedApplyClaim is the claim as it stands between the decision and
+// the Job: a reserved name, no Job UID, and nothing consumed.
+func undispatchedApplyClaim(
+	t *testing.T,
+	migration *operatorv1alpha1.PtahMigration,
+	plan *operatorv1alpha1.PtahMigrationPlan,
+) *operatorv1alpha1.MigrationOperationStatus {
+	t.Helper()
+
+	operation := applyClaimFor(t, migration, plan)
+	operation.DispatchStarted = false
+	operation.JobUID = ""
+	return operation
+}
+
+// reconcileUntilTheApplyClaimIsGone runs the reconciler until the Apply claim
+// is retired, and stops there so a later pass cannot claim something else and
+// muddy what the Job list proves.
+func reconcileUntilTheApplyClaimIsGone(
+	t *testing.T,
+	reconciler *MigrationReconciler,
+	api client.Client,
+	migration *operatorv1alpha1.PtahMigration,
+) *operatorv1alpha1.PtahMigration {
+	t.Helper()
+
+	actual := migration
+	for pass := 0; pass < 4; pass++ {
+		if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+			t.Fatalf("Reconcile() error = %v", err)
+		}
+		actual = readMigration(t, api, migration)
+		operation := actual.Status.ActiveOperation
+		if operation == nil || operation.Type != operatorv1alpha1.MigrationOperationApply {
+			return actual
+		}
+	}
+	return actual
+}
+
+func assertNoMigrationJobDispatched(t *testing.T, api client.Client) {
+	t.Helper()
+
+	jobs := &batchv1.JobList{}
+	if err := api.List(context.Background(), jobs); err != nil {
+		t.Fatal(err)
+	}
+	if len(jobs.Items) != 0 {
+		t.Fatalf("%d Jobs were dispatched from a claim that should have been discarded", len(jobs.Items))
+	}
+}
+
+// The decision boundary is not the last one. A policy that stops binding after
+// the claim was written and before the Job exists has to be caught here too,
+// because the claim's input fingerprint names the policy object and never its
+// identity or its bytes.
+//
+// Each way of stopping is measured on its own. A deletion and a recreation
+// carries the same bytes under a new UID, and only the UID half of the
+// comparison sees it; bytes that differ under the same UID are what the digest
+// half is for; a check that kept one half would pass the other case unchanged.
+// A policy deleted and not recreated is neither: there is nothing to compare,
+// and failing to read the terms the plan was decided under is itself a refusal.
+func TestMigrationApplyWillNotDispatchUnderAVerificationPolicyThatNoLongerBinds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		// live is the verification policy as it stands when the claim reaches
+		// the dispatch boundary. A nil return is the object deleted and left
+		// deleted, which is the case the issue names first.
+		live func() *corev1.ConfigMap
+	}{
+		{
+			name: "recreated under a new UID",
+			live: func() *corev1.ConfigMap {
+				policy := verificationPolicyConfigMap()
+				policy.UID = "replacement-policy-uid"
+				return policy
+			},
+		},
+		{
+			name: "different content under the same UID",
+			live: func() *corev1.ConfigMap {
+				policy := verificationPolicyConfigMap()
+				policy.Data["policy.yaml"] = "requireDigestPin: true\nrequireSignature: true"
+				return policy
+			},
+		},
+		{
+			name: "deleted and not recreated",
+			live: func() *corev1.ConfigMap { return nil },
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			migration, plan := awaitingApprovalFixture(t)
+			undispatchedApplyClaim(t, migration, plan)
+			objects := []client.Object{migration, plan}
+			if live := test.live(); live != nil {
+				objects = append(objects, live)
+			}
+			reconciler, api := fakeMigrationReconciler(t, staticLogs{}, objects...)
+
+			actual := reconcileUntilTheApplyClaimIsGone(t, reconciler, api, migration)
+			if actual.Status.ActiveOperation != nil {
+				t.Fatalf("the Apply claim survived a verification policy that no longer binds: %#v",
+					actual.Status.ActiveOperation)
+			}
+			assertNoMigrationJobDispatched(t, api)
+		})
+	}
+}
+
+// The watch is how soon a replaced policy is noticed, so it has to name the
+// migrations that read this ConfigMap and no others. A map that woke every
+// migration in the namespace would read as working and measure nothing.
+func TestVerificationPolicyWakesOnlyTheMigrationsThatReadIt(t *testing.T) {
+	t.Parallel()
+
+	scheme := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{operatorv1alpha1.AddToScheme, corev1.AddToScheme} {
+		if err := add(scheme); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reader := migrationFixture()
+	other := migrationFixture()
+	other.Name = "invoices"
+	other.UID = "other-migration-uid"
+	other.Spec.Artifact.VerificationPolicyFrom.Name = "other-verification"
+	api := fake.NewClientBuilder().WithScheme(scheme).
+		WithIndex(&operatorv1alpha1.PtahMigration{}, migrationPolicyIndex, func(object client.Object) []string {
+			migration := object.(*operatorv1alpha1.PtahMigration)
+			if migration.Spec.Artifact.VerificationPolicyFrom.Name == "" {
+				return nil
+			}
+			return []string{migration.Spec.Artifact.VerificationPolicyFrom.Name}
+		}).
+		WithObjects(reader, other).Build()
+	reconciler := &MigrationReconciler{Client: api, APIReader: api, Scheme: scheme}
+
+	requests := reconciler.migrationsForVerificationPolicy(context.Background(), verificationPolicyConfigMap())
+	if len(requests) != 1 || requests[0].Name != reader.Name || requests[0].Namespace != reader.Namespace {
+		t.Fatalf("the policy woke %#v, want only %s/%s", requests, reader.Namespace, reader.Name)
+	}
+	if woken := reconciler.migrationsForVerificationPolicy(context.Background(), &corev1.Secret{}); woken != nil {
+		t.Fatalf("a Secret woke %#v", woken)
+	}
+}
+
+// A claim decided under one transaction mode does not dispatch once the mode
+// is edited. What catches that is generation, not the mode: the API server
+// bumps generation on every spec edit and migrationInputFingerprint already
+// carried it, so this boundary was never open for a spec field. Deleting
+// transaction_mode from that fingerprint leaves this test passing.
+//
+// The bump is written out for that reason. A fixture that edits the spec and
+// leaves generation alone measures a state Kubernetes cannot produce, and a
+// test standing on it would read as proof of a hole that was never there.
+func TestMigrationApplyWillNotDispatchUnderAChangedTransactionMode(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	undispatchedApplyClaim(t, migration, plan)
+	migration.Spec.Policy.TransactionMode = "none"
+	migration.Generation++ // what the API server stamps on a spec edit
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap())
+
+	actual := reconcileUntilTheApplyClaimIsGone(t, reconciler, api, migration)
+	if actual.Status.ActiveOperation != nil {
+		t.Fatalf("the Apply claim survived a changed transaction mode: %#v", actual.Status.ActiveOperation)
+	}
+	assertNoMigrationJobDispatched(t, api)
+}
+
+// An Apply that is already running is left alone. Editing the mode under it
+// cannot unrun the SQL, and retiring the claim while its Pod writes is how the
+// database ends up with a run nothing is waiting for.
+func TestMigrationApplyKeepsADispatchedRunWhenTheTransactionModeChanges(t *testing.T) {
+	t.Parallel()
+
+	migration, plan := awaitingApprovalFixture(t)
+	operation := applyClaimFor(t, migration, plan)
+	job, _ := terminalMigrationWorkload(migration, batchv1.JobComplete)
+	// Dispatched and still running.
+	job.Status.Conditions = nil
+	migration.Spec.Policy.TransactionMode = "none"
+	reconciler, api := fakeMigrationReconciler(t, staticLogs{}, migration, plan, verificationPolicyConfigMap(), job)
+
+	if _, err := reconciler.Reconcile(context.Background(), migrationRequest(migration)); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+	actual := readMigration(t, api, migration)
+	if actual.Status.ActiveOperation == nil || actual.Status.ActiveOperation.JobUID != operation.JobUID {
+		t.Fatalf("a running Apply was retired by a policy edit: %#v", actual.Status.ActiveOperation)
+	}
+}
