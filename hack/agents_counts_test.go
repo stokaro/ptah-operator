@@ -70,21 +70,15 @@ func TestAgentsGuideCountsTheAcceptanceSuites(t *testing.T) {
 
 // assertCountedAs reads the number the guide spells in one sentence and
 // compares it with the number the repository actually holds.
+// assertCountedAs is the guide checks' entry point, and it delegates rather
+// than repeating the comparison. A second copy would be the thing the
+// mutations below measure, and the copy is not what runs against AGENTS.md: a
+// production assertion that stopped refusing would leave them green.
 func assertCountedAs(t *testing.T, guide string, want int, pattern *regexp.Regexp, subject string) {
 	t.Helper()
 
-	word, ok := numberWords[want]
-	if !ok {
-		t.Fatalf("the repository holds %d %s, which this check cannot spell; add it to numberWords", want, subject)
-	}
-	match := pattern.FindStringSubmatch(guide)
-	if match == nil {
-		t.Fatalf("%s no longer says how many %s there are (looking for %s); "+
-			"restore the sentence or update this check", agentsGuidePath, subject, pattern)
-	}
-	if !strings.EqualFold(match[1], word) {
-		t.Fatalf("%s says %q %s; the repository holds %d (%q)",
-			agentsGuidePath, match[1], subject, want, word)
+	if err := checkCountedAs(guide, want, pattern); err != nil {
+		t.Fatalf("%s, %s: %v", agentsGuidePath, subject, err)
 	}
 }
 
@@ -226,7 +220,8 @@ func checkCountedAs(guide string, want int, pattern *regexp.Regexp) error {
 	}
 	match := pattern.FindStringSubmatch(guide)
 	if match == nil {
-		return fmt.Errorf("the guide no longer says how many (%s)", pattern)
+		return fmt.Errorf("the guide no longer says how many (looking for %s); "+
+			"restore the sentence or update this check", pattern)
 	}
 	if !strings.EqualFold(match[1], word) {
 		return fmt.Errorf("the guide says %q, the repository holds %d (%q)", match[1], want, word)

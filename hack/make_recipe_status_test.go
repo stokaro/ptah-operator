@@ -73,12 +73,33 @@ func recipeReportsItsOwnStatus(body string) error {
 		return fmt.Errorf("the recipe is empty")
 	}
 	last := commands[len(commands)-1]
-	if !strings.HasPrefix(last, "exit ") {
+	if last != "exit $$status" {
 		return fmt.Errorf("ends with %q; a recipe that cleans up last reports the cleanup's status, "+
 			"so capture the work's status first and end with `exit $$status`", last)
 	}
-	if !strings.Contains(body, "status=$$?") {
+	capture := -1
+	for index, command := range commands {
+		if command != "status=$$?" {
+			continue
+		}
+		if capture != -1 {
+			return fmt.Errorf("captures a status twice; only the one taken after the work says anything")
+		}
+		capture = index
+	}
+	if capture == -1 {
 		return fmt.Errorf("ends with %q but never captures a status to exit with", last)
+	}
+	// Everything between the capture and the exit has to be cleanup. A recipe
+	// that captures early -- mktemp's own status, say -- then does the work and
+	// exits that stale value reports success whatever the work did, which is
+	// the failure this check exists to refuse and the one it used to accept.
+	for _, command := range commands[capture+1 : len(commands)-1] {
+		if strings.HasPrefix(command, "rm ") {
+			continue
+		}
+		return fmt.Errorf("runs %q after capturing the status, so what it exits with is not that command's; "+
+			"capture immediately after the work and clean up between", command)
 	}
 	return nil
 }
@@ -167,6 +188,25 @@ func TestTheMakeRecipeStatusCheckRefusesARecipeThatSwallowsIt(t *testing.T) {
 			body: "@tmp=$$(mktemp -d); \\\n" +
 				"$(GO) run ./hack/crdreference -crds $$tmp -write; \\\n" +
 				"rm -rf $$tmp; exit $$status\n",
+			wants: true,
+		},
+		{
+			// Review found this one: the capture is taken before the work, so
+			// the recipe exits mktemp's status and reports success whatever
+			// the generator did.
+			name: "captures a status taken before the work",
+			body: "@tmp=$$(mktemp -d); \\\n" +
+				"status=$$?; \\\n" +
+				"$(GO) run ./hack/crdreference -crds $$tmp -write; \\\n" +
+				"rm -rf $$tmp; exit $$status\n",
+			wants: true,
+		},
+		{
+			// And this one: a literal exit passes whatever was captured.
+			name: "exits a literal rather than the captured status",
+			body: "@tmp=$$(mktemp -d); \\\n" +
+				"$(GO) run ./hack/crdreference -crds $$tmp -write; \\\n" +
+				"status=$$?; rm -rf $$tmp; exit 0\n",
 			wants: true,
 		},
 		{
