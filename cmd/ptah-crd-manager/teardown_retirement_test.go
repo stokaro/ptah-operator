@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net"
 	"reflect"
 	"strconv"
 	"strings"
@@ -162,6 +163,200 @@ func TestTeardownRetirementAdmissionBarrierDefersDynamicObservationsUntilWait(t 
 	}
 	if storedCalls != 0 || factoryCalls != 0 {
 		t.Fatalf("constructor performed dynamic observations: stored=%d factory=%d", storedCalls, factoryCalls)
+	}
+}
+
+func TestTeardownRetirementGateWaitsForAFenceTheServerHasNotCompiled(t *testing.T) {
+	t.Parallel()
+
+	guard := teardownRetirementManagerTestGuard()
+	probes := teardownRetirementManagerTestProbes(t, guard)
+	client := newTeardownRetirementSweepClient(t, guard, probes, probes[1].FieldManager)
+	client.updates = []teardownRetirementSweepAnswer{{admit: true}, {admit: true}}
+	barrier := newTestTeardownRetirementBarrier(t, guard, probes, client)
+	clock := &teardownRetirementBarrierClock{current: time.Unix(100, 0), maxSleeps: 20}
+	barrier.pollEvery = time.Second
+	barrier.stabilityDuration = 2 * time.Second
+	barrier.requestTimeout = time.Second
+	barrier.now = clock.Now
+	barrier.sleep = clock.Sleep
+
+	if err := barrier.Wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.updatesUsed != len(client.updates) {
+		t.Fatalf("scripted admissions consumed = %d, want %d", client.updatesUsed, len(client.updates))
+	}
+}
+
+func TestTeardownRetirementGateSurvivesATransientAnswer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		transient error
+	}{
+		{name: "service unavailable", transient: apierrors.NewServiceUnavailable("etcd leader election")},
+		{
+			name: "server error",
+			transient: &apierrors.StatusError{ErrStatus: metav1.Status{
+				Status:  metav1.StatusFailure,
+				Code:    500,
+				Reason:  metav1.StatusReasonInternalError,
+				Message: "internal server error",
+			}},
+		},
+		{name: "network error", transient: &net.DNSError{Err: "connection refused", Name: "kubernetes.default.svc"}},
+		{
+			name: "client rate limit budget",
+			transient: fmt.Errorf("client rate limiter Wait returned an error: %w",
+				errors.New("rate: Wait(n=1) would exceed context deadline")),
+		},
+	}
+	for _, test := range tests {
+		test := test
+		for _, call := range []string{"marker read", "fence probe"} {
+			call := call
+			t.Run(test.name+" on the "+call, func(t *testing.T) {
+				t.Parallel()
+				guard := teardownRetirementManagerTestGuard()
+				probes := teardownRetirementManagerTestProbes(t, guard)
+				client := newTeardownRetirementSweepClient(t, guard, probes, probes[1].FieldManager)
+				if call == "marker read" {
+					client.gets = []error{test.transient}
+				} else {
+					client.updates = []teardownRetirementSweepAnswer{{err: test.transient}}
+				}
+				barrier := newTestTeardownRetirementBarrier(t, guard, probes, client)
+				clock := &teardownRetirementBarrierClock{current: time.Unix(100, 0), maxSleeps: 20}
+				barrier.pollEvery = time.Second
+				barrier.stabilityDuration = 2 * time.Second
+				barrier.requestTimeout = time.Second
+				barrier.now = clock.Now
+				barrier.sleep = clock.Sleep
+
+				if err := barrier.Wait(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				if client.getsUsed != len(client.gets) || client.updatesUsed != len(client.updates) {
+					t.Fatalf("scripted answers consumed = %d reads, %d probes", client.getsUsed, client.updatesUsed)
+				}
+			})
+		}
+	}
+}
+
+func TestTeardownRetirementCredentialObserverPollsThroughATransientAnswer(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		final   teardownRetirementCredentialState
+		wantErr string
+	}{
+		{name: "unauthorized after a transient", final: teardownRetirementCredentialState{unauthorized: true}},
+		{
+			name:    "foreign phase stays fatal",
+			final:   teardownRetirementCredentialState{active: true},
+			wantErr: "foreign teardown retirement phase",
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			guard := teardownRetirementManagerTestGuard()
+			probes := teardownRetirementManagerTestProbes(t, guard)
+			client := newTeardownRetirementCredentialClient(t, guard, probes,
+				teardownRetirementCredentialState{transient: apierrors.NewServiceUnavailable("etcd leader election")},
+				test.final,
+			)
+			observer, _ := newTestTeardownRetirementCredentialObserver(t, guard, probes, client)
+			defer observer.Close()
+			clock := &teardownRetirementTestClock{now: time.Unix(100, 0)}
+			observer.pollEvery = time.Second
+			observer.stabilityDuration = time.Second
+			observer.retirementTimeout = 10 * time.Second
+			observer.now = clock.Now
+			observer.sleep = clock.Sleep
+
+			err := observer.Wait(context.Background())
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("Wait() error = %v, want containing %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// The phase call is the observer's first request, so a fake that fails only
+// there never reaches the fence probes. These rows answer the phase call and
+// fail the dry-run marker update instead, which is the state the probe loop's
+// own retry branch exists for: a transport or server answer is no verdict on
+// the fence, and anything else still ends the observation.
+func TestTeardownRetirementCredentialObserverPollsThroughATransientFenceProbe(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		probeError error
+		wantErr    string
+	}{
+		{name: "service unavailable", probeError: apierrors.NewServiceUnavailable("etcd leader election")},
+		{
+			name: "server error",
+			probeError: &apierrors.StatusError{ErrStatus: metav1.Status{
+				Status:  metav1.StatusFailure,
+				Code:    500,
+				Reason:  metav1.StatusReasonInternalError,
+				Message: "internal server error",
+			}},
+		},
+		{name: "network error", probeError: &net.DNSError{Err: "connection refused", Name: "kubernetes.default.svc"}},
+		{
+			name:       "bad request stays fatal",
+			probeError: apierrors.NewBadRequest("dry-run is not supported"),
+			wantErr:    "probe post-retirement fence",
+		},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			guard := teardownRetirementManagerTestGuard()
+			probes := teardownRetirementManagerTestProbes(t, guard)
+			client := newTeardownRetirementCredentialClient(t, guard, probes,
+				teardownRetirementCredentialState{probeError: test.probeError},
+				teardownRetirementCredentialState{unauthorized: true},
+			)
+			observer, _ := newTestTeardownRetirementCredentialObserver(t, guard, probes, client)
+			defer observer.Close()
+			clock := &teardownRetirementTestClock{now: time.Unix(100, 0)}
+			observer.pollEvery = time.Second
+			observer.stabilityDuration = time.Second
+			observer.retirementTimeout = 10 * time.Second
+			observer.now = clock.Now
+			observer.sleep = clock.Sleep
+
+			err := observer.Wait(context.Background())
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("Wait() error = %v, want containing %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(client.updateManagers) == 0 {
+				t.Fatal("the fence probe loop was never reached")
+			}
+		})
 	}
 }
 
@@ -971,9 +1166,133 @@ func (c *teardownRetirementProbeClient) Update(_ context.Context, object *corev1
 	return object, nil
 }
 
+// teardownRetirementSweepAnswer is one answer an endpoint gives before its
+// fence takes effect: an admitted dry-run update, or a transient error.
+type teardownRetirementSweepAnswer struct {
+	admit bool
+	err   error
+}
+
+// teardownRetirementSweepClient replays scripted answers and then denies every
+// probe exactly, the way an API server does once it has loaded the policy.
+type teardownRetirementSweepClient struct {
+	marker      *corev1.ConfigMap
+	probes      []crdupgrade.TeardownRetirementProbe
+	manager     string
+	gets        []error
+	getsUsed    int
+	updates     []teardownRetirementSweepAnswer
+	updatesUsed int
+}
+
+func newTeardownRetirementSweepClient(
+	t *testing.T,
+	guard *crdupgrade.TeardownRetirementGuard,
+	probes []crdupgrade.TeardownRetirementProbe,
+	manager string,
+) *teardownRetirementSweepClient {
+	t.Helper()
+	marker, err := guard.Marker()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker.UID, marker.ResourceVersion = "marker-uid", "7"
+	return &teardownRetirementSweepClient{
+		marker:  marker,
+		probes:  append([]crdupgrade.TeardownRetirementProbe(nil), probes...),
+		manager: manager,
+	}
+}
+
+func (c *teardownRetirementSweepClient) Get(context.Context, string, metav1.GetOptions) (*corev1.ConfigMap, error) {
+	if c.getsUsed < len(c.gets) {
+		err := c.gets[c.getsUsed]
+		c.getsUsed++
+		if err != nil {
+			return nil, err
+		}
+	}
+	return c.marker.DeepCopy(), nil
+}
+
+func (c *teardownRetirementSweepClient) Update(
+	_ context.Context,
+	object *corev1.ConfigMap,
+	options metav1.UpdateOptions,
+) (*corev1.ConfigMap, error) {
+	if options.FieldManager == c.manager && c.updatesUsed < len(c.updates) {
+		answer := c.updates[c.updatesUsed]
+		c.updatesUsed++
+		if answer.admit {
+			return object.DeepCopy(), nil
+		}
+		return nil, answer.err
+	}
+	for _, probe := range c.probes {
+		if options.FieldManager == probe.FieldManager {
+			return nil, directAdmissionPolicyDenialError(probe.PolicyName, probe.BindingName, probe.Message)
+		}
+	}
+	return nil, errors.New("unexpected teardown retirement fence probe")
+}
+
+func newTestTeardownRetirementBarrier(
+	t *testing.T,
+	guard *crdupgrade.TeardownRetirementGuard,
+	probes []crdupgrade.TeardownRetirementProbe,
+	client crdupgrade.AdmissionConvergenceMarkerClient,
+) *admissionConvergenceBarrier {
+	t.Helper()
+	slice := validAPIEndpointSlice(
+		"kubernetes",
+		discoveryv1.AddressTypeIPv4,
+		6443,
+		discoveryv1.Endpoint{Addresses: []string{"10.0.0.1"}},
+	)
+	lister := &sequencedEndpointSliceLister{results: []endpointSliceListResult{{list: oneEndpointSlicePage(slice)[""]}}}
+	barrier, err := newTeardownRetirementAdmissionBarrierWith(
+		context.Background(),
+		validRBACRESTConfig(),
+		lister,
+		guard,
+		probes,
+		func(context.Context) error { return nil },
+		func(*rest.Config) (crdupgrade.AdmissionConvergenceMarkerClient, error) { return client, nil },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return barrier
+}
+
+// teardownRetirementBarrierClock advances instantly and gives up after a bounded
+// number of sweeps, so a barrier that never closes fails the test instead of
+// spinning until the go test deadline.
+type teardownRetirementBarrierClock struct {
+	current   time.Time
+	sleeps    int
+	maxSleeps int
+}
+
+func (c *teardownRetirementBarrierClock) Now() time.Time { return c.current }
+
+func (c *teardownRetirementBarrierClock) Sleep(_ context.Context, duration time.Duration) error {
+	c.sleeps++
+	if c.sleeps > c.maxSleeps {
+		return fmt.Errorf("barrier swept %d times without closing", c.sleeps)
+	}
+	c.current = c.current.Add(duration)
+	return nil
+}
+
 type teardownRetirementCredentialState struct {
-	unauthorized        bool
-	active              bool
+	unauthorized bool
+	active       bool
+	// transient answers the activation read, so the phase call fails before the
+	// fence probes run. probeError answers the dry-run marker update instead,
+	// which is the only way to reach the probe loop with a failure of its own.
+	transient           error
+	probeError          error
 	admittedManager     string
 	unauthorizedManager string
 }
@@ -1016,6 +1335,9 @@ func (c *teardownRetirementCredentialClient) Get(_ context.Context, name string,
 		c.currentState = min(c.phaseCalls, len(c.states)-1)
 		c.phaseCalls++
 		state := c.states[c.currentState]
+		if state.transient != nil {
+			return nil, state.transient
+		}
 		if state.unauthorized {
 			return nil, fmt.Errorf("wrapped endpoint authorization: %w", apierrors.NewUnauthorized("expired cleanup credential"))
 		}
@@ -1037,6 +1359,9 @@ func (c *teardownRetirementCredentialClient) Update(
 ) (*corev1.ConfigMap, error) {
 	c.updateManagers = append(c.updateManagers, options.FieldManager)
 	state := c.states[c.currentState]
+	if state.probeError != nil {
+		return nil, state.probeError
+	}
 	if state.unauthorizedManager == options.FieldManager {
 		return nil, fmt.Errorf("wrapped endpoint authorization: %w", apierrors.NewUnauthorized("expired cleanup credential"))
 	}

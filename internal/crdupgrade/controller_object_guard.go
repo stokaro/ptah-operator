@@ -540,10 +540,20 @@ func controllerJobPreviousObjectExpression(expression string) string {
 	return `request.operation != "UPDATE" || (oldObject != null && ` + expression + `)`
 }
 
+// controllerChunkWriteValidations bounds the ConfigMap the controller may
+// write for one plan chunk.
+//
+// The size ceiling is the base64 length of plancontract.ChunkBytes, because a
+// policy sees binaryData as the encoded string the API server transports, and
+// that is also the length counted against the 1 MiB object limit this bound
+// exists to keep. There is no decoder to compare raw bytes with: the API
+// server's CEL environment does not enable the encoder extension. The raw-byte
+// contract is enforced where the value is already an integer, on
+// spec.chunks[].size below and in the controller write webhook.
 func controllerChunkWriteValidations(message string) []admissionregistrationv1.Validation {
 	return controllerObjectValidations(message,
 		`has(object.metadata.labels) && object.metadata.labels.size() == 2 && ["operator.ptah.run/plan", "operator.ptah.run/schema"].all(key, key in object.metadata.labels && object.metadata.labels[key] != "") && object.metadata.name.matches("^ptah-plan-[0-9a-f]{24}-[0-9]{3}$") && object.metadata.name.startsWith(object.metadata.labels["operator.ptah.run/plan"] + "-") && (!has(object.metadata.annotations) || object.metadata.annotations.size() == 0) && (!has(object.metadata.finalizers) || object.metadata.finalizers.size() == 0) && (!has(object.metadata.generateName) || object.metadata.generateName == "") && !has(object.metadata.deletionTimestamp) && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.size() == 1 && object.metadata.ownerReferences[0].apiVersion == "operator.ptah.run/v1alpha1" && object.metadata.ownerReferences[0].kind == "PtahSchemaPlan" && object.metadata.ownerReferences[0].name == object.metadata.labels["operator.ptah.run/plan"] && object.metadata.ownerReferences[0].uid != "" && has(object.metadata.ownerReferences[0].controller) && object.metadata.ownerReferences[0].controller && has(object.metadata.ownerReferences[0].blockOwnerDeletion) && object.metadata.ownerReferences[0].blockOwnerDeletion`,
-		`has(dyn(object).immutable) && dyn(object).immutable && (!has(dyn(object).data) || dyn(object).data.size() == 0) && has(dyn(object).binaryData) && dyn(object).binaryData.size() == 1 && "chunk" in dyn(object).binaryData && dyn(object).binaryData["chunk"].size() >= 1 && dyn(object).binaryData["chunk"].size() <= 524288`,
+		`has(dyn(object).immutable) && dyn(object).immutable && (!has(dyn(object).data) || dyn(object).data.size() == 0) && has(dyn(object).binaryData) && dyn(object).binaryData.size() == 1 && "chunk" in dyn(object).binaryData && dyn(object).binaryData["chunk"].size() >= 1 && dyn(object).binaryData["chunk"].size() <= 699052`,
 	)
 }
 

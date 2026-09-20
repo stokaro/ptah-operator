@@ -673,8 +673,28 @@ func (g *TeardownRetirementGuard) VerifyFinalActivation(object *corev1.ConfigMap
 }
 
 // Probe submits one unchanged dry-run marker update and accepts only the
-// unique denial emitted by the exact named policy/binding pair.
+// unique denial emitted by the exact named policy/binding pair. Every other
+// answer is fatal: this form is for a caller that has already proven the fence,
+// where an admitted request means enforcement was lost.
 func (g *TeardownRetirementGuard) Probe(ctx context.Context, client AdmissionConvergenceMarkerClient, probe TeardownRetirementProbe) (bool, error) {
+	return g.probeFence(ctx, client, probe, false)
+}
+
+// ProbeConverging is the same probe for a caller still waiting for the fence to
+// take effect. There an admitted request is the ordinary state of a policy the
+// API server has accepted and not yet compiled, and a transient transport or
+// server error is no verdict at all, so both report the endpoint as unproven
+// and leave the caller to sweep again inside its own deadline.
+func (g *TeardownRetirementGuard) ProbeConverging(ctx context.Context, client AdmissionConvergenceMarkerClient, probe TeardownRetirementProbe) (bool, error) {
+	return g.probeFence(ctx, client, probe, true)
+}
+
+func (g *TeardownRetirementGuard) probeFence(
+	ctx context.Context,
+	client AdmissionConvergenceMarkerClient,
+	probe TeardownRetirementProbe,
+	converging bool,
+) (bool, error) {
 	if err := g.validate(); err != nil {
 		return false, err
 	}
@@ -686,6 +706,9 @@ func (g *TeardownRetirementGuard) Probe(ctx context.Context, client AdmissionCon
 	}
 	marker, err := client.Get(ctx, g.markerName(), metav1.GetOptions{})
 	if err != nil {
+		if converging && retryableAdmissionConvergenceError(err) {
+			return false, nil
+		}
 		return false, fmt.Errorf("get teardown retirement marker: %w", err)
 	}
 	if err := g.VerifyMarker(marker); err != nil {
@@ -693,9 +716,15 @@ func (g *TeardownRetirementGuard) Probe(ctx context.Context, client AdmissionCon
 	}
 	_, err = client.Update(ctx, marker.DeepCopy(), metav1.UpdateOptions{DryRun: []string{metav1.DryRunAll}, FieldManager: probe.FieldManager})
 	if err == nil {
+		if converging {
+			return false, nil
+		}
 		return false, errors.New("teardown retirement marker update was admitted")
 	}
 	if !apierrors.IsInvalid(err) && !apierrors.IsForbidden(err) {
+		if converging && retryableAdmissionConvergenceError(err) {
+			return false, nil
+		}
 		return false, fmt.Errorf("probe teardown retirement policy %s: %w", probe.PolicyName, err)
 	}
 	if !hasExactValidatingAdmissionPolicyDenial(err, probe.PolicyName, probe.BindingName, probe.Message) {

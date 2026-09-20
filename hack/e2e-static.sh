@@ -321,6 +321,7 @@ printf 'e2e static: %s built images, each recorded for the teardown\n' "$BUILT_I
 "$ROOT_DIR/hack/e2e-timing-selftest.sh"
 "$ROOT_DIR/hack/e2e-shared-images-selftest.sh"
 "$ROOT_DIR/hack/e2e-suites-selftest.sh"
+"$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"
 
 # Every phase the driver runs is measured, and it is measured in the one place
 # that runs them. A phase invoked around run_recorded_phase would be missing
@@ -1105,8 +1106,8 @@ done
 # shellcheck disable=SC2016 # Exact source markers intentionally retain shell variables literally.
 for api_server_ha_marker in \
 	'API_SERVER_ENDPOINT_ADDRESS_FILE=$WORK_DIR/api-server-endpoint-addresses.txt' \
-	'        (($pod.metadata.annotations["kubernetes.io/config.mirror"] // "") | length) > 0 and' \
-	'        ($pod.metadata.name == ($container_name + "-" + $pod.spec.nodeName)) and' \
+	'        elif (($pod.metadata.annotations["kubernetes.io/config.mirror"] // "") | length) == 0 then' \
+	'        elif $pod.metadata.name != ($component + "-" + $pod.spec.nodeName) then' \
 	'        ($pod.status.phase == "Running") and' \
 	'        ($pod.status.containerStatuses[0].ready == true) and' \
 	'        (($pod.status.containerStatuses[0].state.running | type) == "object");' \
@@ -6147,7 +6148,7 @@ for crd_name in \
 done
 printf '%s\n' "$crd_role_section" | grep -F 'verbs: ["get", "update"]' >/dev/null
 printf '%s\n' "$crd_role_section" |
-	grep -F 'resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals"]' >/dev/null
+	grep -F 'resources: ["ptahschemas", "ptahschemaplans", "ptahschemaapprovals", "ptahmigrations", "ptahmigrationplans", "ptahmigrationapprovals"]' >/dev/null
 [ "$(printf '%s\n' "$crd_role_section" | grep -Fc 'verbs: ["list"]')" -eq 3 ]
 # Only the stable ClusterRoleBinding is mutable through cluster-wide RBAC.
 # Namespaced transition rules are checked against the compiled Role inventory.
@@ -6390,7 +6391,7 @@ for controller_object_marker in \
 	'resources: ["ptahmigrationplans"]' \
 	'Ptah controller migration plan write guard rejected an unsafe manifest shape' \
 	'dyn(object).spec.ttlSecondsAfterFinished == 300' \
-	'dyn(object).binaryData[\"chunk\"].size() <= 524288' \
+	'dyn(object).binaryData[\"chunk\"].size() <= 699052' \
 	'dyn(object).spec.contractVersion == 2' \
 	'dyn(object).spec.contractVersion == 3' \
 	'Ptah controller Job write guard rejected an unsafe workload shape' \

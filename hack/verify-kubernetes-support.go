@@ -1940,58 +1940,88 @@ const controllerGuardedFieldVersionCaseContract = `case "$KUBERNETES_MAJOR_MINOR
 		;;
 	esac`
 
-const apiServerFeatureGateScopeContract = `assert_api_server_feature_gate_scope() {
+const controlPlaneComponentShapeContract = `wait_for_control_plane_component_shape() {
 	expected_api_server_feature_gates=$1
 	control_plane_pods_file=$WORK_DIR/control-plane-pods.json
-	component_configs_file=$WORK_DIR/component-configs.json
-	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
-		-n kube-system get pods -o json >"$control_plane_pods_file"
-	jq -e --arg expected "$expected_api_server_feature_gates" --arg cluster "$CLUSTER_NAME" '
+	control_plane_shape_deadline=$(($(date +%s) + CONTROL_PLANE_SHAPE_DEADLINE_SECONDS))
+	control_plane_shape_counts="no kube-system snapshot was read"
+	while :; do
+		if kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
+			-n kube-system get pods -o json >"$control_plane_pods_file" &&
+			control_plane_shape_reading=$(jq -r --arg expected "$expected_api_server_feature_gates" --arg cluster "$CLUSTER_NAME" '
       def component_pods($component):
         [.items[] | select(.metadata.labels.component == $component)];
       def command_options($pod; $prefix):
-        [$pod.spec.containers[].command[] | select(startswith($prefix))];
-      def exact_control_plane_nodes($pods):
-        ([$pods[].spec.nodeName] | sort) ==
-          ([$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3"] | sort);
-      def component_is_ready($pod; $container_name):
+        [$pod.spec.containers[] | (.command // [])[] | select(startswith($prefix))];
+      def control_plane_nodes:
+        [$cluster + "-control-plane", $cluster + "-control-plane2", $cluster + "-control-plane3"] | sort;
+      def expected_options($component):
+        if $component == "kube-apiserver" and $expected != "" then ["--feature-gates=" + $expected] else [] end;
+      def spoken($options):
+        if ($options | length) == 0 then "no feature gates" else ($options | join(" ")) end;
+      def refusal($pod; $component):
+        if (control_plane_nodes | index($pod.spec.nodeName)) == null then
+          "\($component) pod \($pod.metadata.name) runs on \($pod.spec.nodeName // "no node"), which is not a control plane"
+        elif (($pod.metadata.annotations["kubernetes.io/config.mirror"] // "") | length) == 0 then
+          "\($component) pod \($pod.metadata.name) is not a static-pod mirror"
+        elif $pod.metadata.name != ($component + "-" + $pod.spec.nodeName) then
+          "\($component) pod \($pod.metadata.name) is not the static pod of \($pod.spec.nodeName)"
+        elif (($pod.spec.containers // []) | length) != 1 or ($pod.spec.containers[0].name != $component) then
+          "\($component) pod \($pod.metadata.name) does not run exactly one \($component) container"
+        elif command_options($pod; "--feature-gates=") != expected_options($component) then
+          "\($component) pod \($pod.metadata.name) carries \(spoken(command_options($pod; "--feature-gates="))), expected \(spoken(expected_options($component)))"
+        elif $component == "kube-apiserver" and (command_options($pod; "--runtime-config=") | length) != 1 then
+          "kube-apiserver pod \($pod.metadata.name) carries \(command_options($pod; "--runtime-config=") | length) --runtime-config options, and kind sets exactly one"
+        else null end;
+      def settled($pod; $component):
         ($pod.metadata.deletionTimestamp == null) and
-        (($pod.metadata.annotations["kubernetes.io/config.mirror"] // "") | length) > 0 and
-        ($pod.metadata.name == ($container_name + "-" + $pod.spec.nodeName)) and
         ($pod.status.phase == "Running") and
         ([($pod.status.conditions // [])[] | select(.type == "Ready" and .status == "True")] | length) == 1 and
-        (($pod.spec.containers // []) | length) == 1 and
-        ($pod.spec.containers[0].name == $container_name) and
         (($pod.status.containerStatuses // []) | length) == 1 and
-        ($pod.status.containerStatuses[0].name == $container_name) and
+        ($pod.status.containerStatuses[0].name == $component) and
         ($pod.status.containerStatuses[0].ready == true) and
         (($pod.status.containerStatuses[0].state.running | type) == "object");
 
-      (component_pods("kube-apiserver")) as $api_servers |
-      (component_pods("kube-controller-manager")) as $controller_managers |
-      (component_pods("kube-scheduler")) as $schedulers |
-      ($api_servers | length) == 3 and
-      ($controller_managers | length) == 3 and
-      ($schedulers | length) == 3 and
-      exact_control_plane_nodes($api_servers) and
-      exact_control_plane_nodes($controller_managers) and
-      exact_control_plane_nodes($schedulers) and
-      all($api_servers[];
-        component_is_ready(.; "kube-apiserver") and
-        command_options(.; "--feature-gates=") ==
-          (if $expected == "" then [] else ["--feature-gates=" + $expected] end) and
-        (command_options(.; "--runtime-config=") | length) == 1
-      ) and
-      all($controller_managers[];
-        component_is_ready(.; "kube-controller-manager") and
-        command_options(.; "--feature-gates=") == []
-      ) and
-      all($schedulers[];
-        component_is_ready(.; "kube-scheduler") and
-        command_options(.; "--feature-gates=") == []
-      )
-	' "$control_plane_pods_file" >/dev/null ||
-		fail "control-plane feature gates are not confined to the API server or kind runtime-config was replaced"
+      . as $snapshot |
+      ["kube-apiserver", "kube-controller-manager", "kube-scheduler"] |
+      map(. as $component |
+        ($snapshot | component_pods($component)) as $pods |
+        {
+          component: $component,
+          seen: ($pods | length),
+          ready: ([$pods[] | select(refusal(.; $component) == null and settled(.; $component))] | length),
+          nodes: ([$pods[] | select(refusal(.; $component) == null and settled(.; $component)) | .spec.nodeName] | sort),
+          refusal: ([$pods[] | refusal(.; $component) | select(. != null)] | first)
+        }
+      ) as $components |
+      ([$components[].refusal | select(. != null)] | first) as $wrong |
+      ([$components[] | "\(.component) \(.seen) seen \(.ready) ready"] | join(", ")) as $counts |
+      if $wrong != null then "wrong " + $wrong
+      elif all($components[]; .seen == 3 and .ready == 3 and .nodes == control_plane_nodes) then "ready " + $counts
+      else "incomplete " + $counts
+      end
+	' "$control_plane_pods_file"); then
+			case "$control_plane_shape_reading" in
+				"ready "*) return 0 ;;
+				"wrong "*)
+					fail "the control plane is not the one this cluster was created with: ${control_plane_shape_reading#wrong }"
+				;;
+				"incomplete "*)
+					control_plane_shape_counts=${control_plane_shape_reading#incomplete }
+				;;
+			esac
+		fi
+		[ "$(date +%s)" -lt "$control_plane_shape_deadline" ] || break
+		sleep 2
+	done
+	fail "the control plane did not reach three ready kube-apiserver, kube-controller-manager and kube-scheduler pods in ${CONTROL_PLANE_SHAPE_DEADLINE_SECONDS}s; the last snapshot held $control_plane_shape_counts"
+}
+`
+
+const apiServerFeatureGateScopeContract = `assert_api_server_feature_gate_scope() {
+	expected_api_server_feature_gates=$1
+	component_configs_file=$WORK_DIR/component-configs.json
+	wait_for_control_plane_component_shape "$expected_api_server_feature_gates"
 	kubectl --kubeconfig "$KUBECONFIG_FILE" --request-timeout=15s \
 		-n kube-system get configmaps kubelet-config kube-proxy -o json >"$component_configs_file"
 	jq -e '
@@ -2010,7 +2040,8 @@ const apiServerFeatureGateScopeContract = `assert_api_server_feature_gate_scope(
       all(.[]; . as $gate | ($configs | contains($gate) | not)))
     ' "$component_configs_file" >/dev/null ||
 		fail "API-server-only feature gates leaked into kubelet or kube-proxy configuration"
-}`
+}
+`
 
 const kindHATopologyContract = `assert_kind_ha_topology() {
 	kind get nodes --name "$CLUSTER_NAME" | LC_ALL=C sort >"$KIND_NODE_INVENTORY_FILE"
@@ -2863,6 +2894,22 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 	); err != nil {
 		return err
 	}
+	// The control planes start their static pods after their nodes report
+	// Ready, so this waits for the shape rather than sampling it. The wait is
+	// audited with the assertion it serves: a snapshot that is wrong has to
+	// stay a refusal instead of becoming a timeout.
+	if err := verifyExactShellFunctionContract(
+		harness,
+		harnessContents,
+		"wait_for_control_plane_component_shape",
+		controlPlaneComponentShapeContract,
+		"control-plane component shape contract",
+	); err != nil {
+		return err
+	}
+	if !bytes.Contains(harnessContents, []byte("\nCONTROL_PLANE_SHAPE_DEADLINE_SECONDS=180\n")) {
+		return fmt.Errorf("%s: the control-plane shape wait must carry a bounded, stated deadline", harness)
+	}
 	if err := verifyExactShellFunctionContract(
 		harness,
 		harnessContents,
@@ -2916,6 +2963,7 @@ func verifyE2EWiring(files e2eWiringFiles) error {
 		"require_ready_nodes",
 		"append_api_server_feature_gate_patch",
 		"assert_api_server_feature_gate_scope",
+		"wait_for_control_plane_component_shape",
 		"task_claim_matches_owner",
 		"acquire_task_claim",
 		"image_audit_container_matches_task",
@@ -4639,6 +4687,10 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 		// A suite that stopped running a phase is a green job that proves less,
 		// so the shell that selects the phases is measured too.
 		exactSourceLine("acceptance suite self-test wiring", `"$ROOT_DIR/hack/e2e-suites-selftest.sh"`),
+		// The bootstrap waits for a control plane that is still joining and
+		// refuses one that is wrong, and those are two behaviors of the same
+		// loop. A loop that stopped refusing would still look like it waited.
+		exactSourceLine("control-plane shape self-test wiring", `"$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"`),
 	}
 	if err := verifyOrderedSourceContract(files.staticChecks, staticContents, staticContract); err != nil {
 		return err
@@ -4655,8 +4707,12 @@ func verifyFailedHookEvidenceAssets(files e2eWiringFiles) error {
 	if bytes.Count(staticContents, []byte("e2e-suites-selftest.sh")) != 1 {
 		return fmt.Errorf("%s: the acceptance suite self-test must be wired exactly once", files.staticChecks)
 	}
+	if bytes.Count(staticContents, []byte("e2e-control-plane-shape-selftest.sh")) != 1 {
+		return fmt.Errorf("%s: the control-plane shape self-test must be wired exactly once", files.staticChecks)
+	}
 	for _, step := range []sourceContractStep{
 		staticContract[1], staticContract[3], staticContract[4], staticContract[5],
+		staticContract[6],
 	} {
 		if err := rejectStaticControlFlowBypass(files.staticChecks, staticContents, step.pattern); err != nil {
 			return err
