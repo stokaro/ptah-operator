@@ -144,6 +144,27 @@ func pageName(kind string) string {
 	return strings.ToLower(kind) + ".md"
 }
 
+// kubectlNames says what to type. A kind is what the YAML carries, and it is
+// not what a command line takes: `kubectl get PtahSchema` works by accident of
+// case-insensitive matching, while the names the CRD actually declares -- the
+// plural, and the short names -- appear nowhere a reader would look. They come
+// from the CRD here so they cannot drift from the ones a cluster answers to.
+func kubectlNames(names apiextensionsv1.CustomResourceDefinitionNames) string {
+	sentence := fmt.Sprintf("`kubectl` knows it as `%s`", names.Plural)
+	switch len(names.ShortNames) {
+	case 0:
+		return sentence + "."
+	case 1:
+		return fmt.Sprintf("%s, or `%s` for short.", sentence, names.ShortNames[0])
+	default:
+		quoted := make([]string, 0, len(names.ShortNames))
+		for _, short := range names.ShortNames {
+			quoted = append(quoted, "`"+short+"`")
+		}
+		return fmt.Sprintf("%s, and by the short names %s.", sentence, strings.Join(quoted, ", "))
+	}
+}
+
 // readExamples returns the example fragment written for one kind.
 //
 // The fragment is required rather than optional: a resource with no worked
@@ -189,8 +210,8 @@ func render(crd *apiextensionsv1.CustomResourceDefinition, examples string) (str
 	if crd.Spec.Scope == apiextensionsv1.ClusterScoped {
 		scope = "cluster-scoped"
 	}
-	fmt.Fprintf(&page, "`%s` is a %s resource in `%s`, served as `%s`.\n\n",
-		kind, scope, crd.Spec.Group, version.Name)
+	fmt.Fprintf(&page, "`%s` is a %s resource in `%s`, served as `%s`. %s\n\n",
+		kind, scope, crd.Spec.Group, version.Name, kubectlNames(crd.Spec.Names))
 	fmt.Fprintf(&page, "This page is generated from the API types by `make docs-reference`. "+
 		"The shipped CRDs carry no descriptions, so this is where the field documentation lives.\n\n")
 

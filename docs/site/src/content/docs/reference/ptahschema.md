@@ -3,7 +3,7 @@ title: PtahSchema
 description: Every field of the PtahSchema resource, generated from the API types.
 ---
 
-`PtahSchema` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`.
+`PtahSchema` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`. `kubectl` knows it as `ptahschemas`, or `ptahs` for short.
 
 This page is generated from the API types by `make docs-reference`. The shipped CRDs carry no descriptions, so this is where the field documentation lives.
 

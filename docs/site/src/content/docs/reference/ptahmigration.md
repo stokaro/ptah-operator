@@ -3,7 +3,7 @@ title: PtahMigration
 description: Every field of the PtahMigration resource, generated from the API types.
 ---
 
-`PtahMigration` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`.
+`PtahMigration` is a namespaced resource in `operator.ptah.run`, served as `v1alpha1`. `kubectl` knows it as `ptahmigrations`, or `ptahm` for short.
 
 This page is generated from the API types by `make docs-reference`. The shipped CRDs carry no descriptions, so this is where the field documentation lives.
 
