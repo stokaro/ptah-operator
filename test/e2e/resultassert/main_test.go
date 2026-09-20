@@ -179,6 +179,22 @@ func logShapes(t *testing.T) []logShape {
 			reason:   "the log ends after the payload without the footer that closes it, so the frame never finished arriving",
 		},
 		{
+			// A diagnostic ahead of the payload adds no header and no footer,
+			// so the counts this command pre-checks are unmoved and the parser
+			// reads the frame it can verify. Refusing it sent the transport
+			// wait around its whole window re-reading a log that was complete.
+			name: "a diagnostic line ahead of the payload",
+			logs: append(append(append([]byte{}, frame[:headerEnd]...),
+				"ptah: registry certificate authority bytes do not match the grant\n"...), frame[headerEnd:]...),
+		},
+		{
+			name: "a payload with no footer behind it, and a diagnostic line ahead of it",
+			logs: append(append(append([]byte{}, frame[:headerEnd]...),
+				"ptah: registry certificate authority bytes do not match the grant\n"...), frame[headerEnd:payloadEnd]...),
+			arriving: true,
+			reason:   "the log ends after the payload without the footer that closes it, so the frame never finished arriving",
+		},
+		{
 			name:     "a payload that does not match the digest its header declares",
 			logs:     append(append([]byte{}, frame[:headerEnd]...), divergent[headerEnd:]...),
 			arriving: false,
