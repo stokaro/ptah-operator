@@ -66,11 +66,14 @@ IDENTITY_HOOK_PODS_FILE=$WORK_DIR/identity-hook-pods.json
 IDENTITY_HOOK_RECHECK_FILE=$WORK_DIR/identity-hook-recheck.json
 IDENTITY_HOOK_JOB_FILE=$WORK_DIR/identity-hook-job.json
 IDENTITY_HOOK_CREDENTIAL_PATTERNS_FILE=$WORK_DIR/identity-hook-credential-patterns
-# How long the hook log is worth asking for again. It has to fit inside the
-# window the phase grants the capture -- what is left of the upgrade after the
-# hook Pod appears, plus the ten-second grace in
-# finish_identity_hook_log_capture -- and a read that is still failing this
+# How long the hook log is worth asking for again. A read still failing this
 # long against a Pod that is still the one we validated is not losing a race.
+#
+# finish_identity_hook_log_capture waits this long too, rather than a figure of
+# its own. Helm can return while the worker is mid-retry -- an identity-hook
+# failure returns almost at once -- and a grace shorter than this deadline
+# would kill the worker before the window it was given had run out, which is
+# the undiagnosed capture this whole path exists to stop.
 IDENTITY_HOOK_LOG_READ_DEADLINE_SECONDS=30
 LATE_ACTIVATION_HOOK_CAPTURE_BINARY=$WORK_DIR/hooklogcapture
 LATE_ACTIVATION_PREFLIGHT_CAPTURE_PID=
@@ -1539,7 +1542,7 @@ finish_identity_hook_log_capture() {
 	identity_capture_grace=0
 	while [ ! -s "$IDENTITY_HOOK_CAPTURE_STATUS_FILE" ] && \
 		kill -0 "$IDENTITY_HOOK_CAPTURE_PID" >/dev/null 2>&1 && \
-		[ "$identity_capture_grace" -lt 10 ]; do
+		[ "$identity_capture_grace" -lt "$IDENTITY_HOOK_LOG_READ_DEADLINE_SECONDS" ]; do
 		sleep 1
 		identity_capture_grace=$((identity_capture_grace + 1))
 	done

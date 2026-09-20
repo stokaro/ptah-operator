@@ -266,5 +266,17 @@ UNREACHED=$(grep -Fxv -f "$ASSIGNED_FILE" "$ACCEPTED_FILE" | tr '\n' ' ' || true
 grep -Fqx pod-deleted "$ASSIGNED_FILE" ||
 	test_fail "the capture no longer distinguishes a deleted Pod from a failed read"
 
+# The finisher kills the worker, so a grace of its own would silently shorten
+# the window the reader was given. Helm returns almost at once on an identity
+# hook failure, and a worker killed mid-retry records an empty log -- the
+# undiagnosed capture this path exists to stop. One number, referenced twice.
+GRACE_BOUND=$(sed -n '/^finish_identity_hook_log_capture()/,/^}/p' "$SOURCE_FILE" |
+	sed -n 's/.*identity_capture_grace" -lt \(.*\) \]; do$/\1/p')
+[ -n "$GRACE_BOUND" ] ||
+	test_fail "the capture finisher no longer bounds its wait, or the bound moved"
+# shellcheck disable=SC2016 # The literal source text is what is compared.
+[ "$GRACE_BOUND" = '"$IDENTITY_HOOK_LOG_READ_DEADLINE_SECONDS"' ] ||
+	test_fail "the finisher waits $GRACE_BOUND, not the reader's deadline; a shorter grace kills a retry that had time left"
+
 printf '%s\n' 'e2e hook-log self-test: PASS a racing read is retried, a deleted Pod is named as one, and a missing log still fails'
 PHASE_COMPLETED=1
