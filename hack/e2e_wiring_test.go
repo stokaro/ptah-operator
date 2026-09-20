@@ -566,7 +566,11 @@ func TestVerifyAPIServerEndpointInventoryFilterRejectsMutation(t *testing.T) {
 	}
 }
 
-func TestAPIServerFeatureGateScopeFilterRejectsUnreadyStaticPods(t *testing.T) {
+// The filter decides two things at once: whether the control plane has reached
+// the shape the bootstrap waits for, and whether it is one waiting cannot
+// repair. A reading sorted into the wrong one of those costs either a real
+// refusal or ninety minutes of a lifecycle, so each is pinned here.
+func TestControlPlaneShapeFilterSeparatesUnreadyFromWrong(t *testing.T) {
 	t.Parallel()
 
 	jqPath, err := exec.LookPath("jq")
@@ -624,32 +628,31 @@ func TestAPIServerFeatureGateScopeFilterRejectsUnreadyStaticPods(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		mutate func(map[string]any)
-		want   bool
+		want   string
 	}{
-		{name: "all exact static Pods are running and ready", want: true},
+		{name: "all exact static Pods are running and ready", want: "ready"},
+		// A control plane that is still joining holds fewer pods than this
+		// asserts. Every one of these is a cluster the bootstrap waits for.
 		{
-			name: "non-static API server Pod",
+			name: "one control plane has not started its static Pods",
 			mutate: func(pod map[string]any) {
-				delete(pod["metadata"].(map[string]any), "annotations")
+				pod["metadata"].(map[string]any)["labels"] = map[string]any{"component": "etcd"}
 			},
-		},
-		{
-			name: "misnamed API server Pod",
-			mutate: func(pod map[string]any) {
-				pod["metadata"].(map[string]any)["name"] = "replacement-api-server"
-			},
+			want: "incomplete",
 		},
 		{
 			name: "deleting API server Pod",
 			mutate: func(pod map[string]any) {
 				pod["metadata"].(map[string]any)["deletionTimestamp"] = "2026-09-05T00:01:00Z"
 			},
+			want: "incomplete",
 		},
 		{
 			name: "non-running API server Pod",
 			mutate: func(pod map[string]any) {
 				pod["status"].(map[string]any)["phase"] = "Failed"
 			},
+			want: "incomplete",
 		},
 		{
 			name: "API server Pod Ready is false",
@@ -657,6 +660,7 @@ func TestAPIServerFeatureGateScopeFilterRejectsUnreadyStaticPods(t *testing.T) {
 				conditions := pod["status"].(map[string]any)["conditions"].([]any)
 				conditions[0].(map[string]any)["status"] = "False"
 			},
+			want: "incomplete",
 		},
 		{
 			name: "API server container is not ready",
@@ -664,6 +668,7 @@ func TestAPIServerFeatureGateScopeFilterRejectsUnreadyStaticPods(t *testing.T) {
 				statuses := pod["status"].(map[string]any)["containerStatuses"].([]any)
 				statuses[0].(map[string]any)["ready"] = false
 			},
+			want: "incomplete",
 		},
 		{
 			name: "API server container is not running",
@@ -671,6 +676,51 @@ func TestAPIServerFeatureGateScopeFilterRejectsUnreadyStaticPods(t *testing.T) {
 				statuses := pod["status"].(map[string]any)["containerStatuses"].([]any)
 				statuses[0].(map[string]any)["state"] = map[string]any{"terminated": map[string]any{"exitCode": 1}}
 			},
+			want: "incomplete",
+		},
+		// Waiting repairs none of these, so each is a refusal on the reading
+		// that shows it.
+		{
+			name: "non-static API server Pod",
+			mutate: func(pod map[string]any) {
+				delete(pod["metadata"].(map[string]any), "annotations")
+			},
+			want: "wrong",
+		},
+		{
+			name: "misnamed API server Pod",
+			mutate: func(pod map[string]any) {
+				pod["metadata"].(map[string]any)["name"] = "replacement-api-server"
+			},
+			want: "wrong",
+		},
+		{
+			name: "API server Pod off the control plane",
+			mutate: func(pod map[string]any) {
+				pod["metadata"].(map[string]any)["name"] = "kube-apiserver-" + cluster + "-worker"
+				pod["spec"].(map[string]any)["nodeName"] = cluster + "-worker"
+			},
+			want: "wrong",
+		},
+		{
+			name: "API server runtime-config replaced",
+			mutate: func(pod map[string]any) {
+				container := pod["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+				container["command"] = []any{"/usr/local/bin/kube-apiserver", "--feature-gates=GenericWorkload=true"}
+			},
+			want: "wrong",
+		},
+		{
+			name: "API server feature gates replaced",
+			mutate: func(pod map[string]any) {
+				container := pod["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+				container["command"] = []any{
+					"/usr/local/bin/kube-apiserver",
+					"--feature-gates=ExpandedDNSConfig=true",
+					"--runtime-config=api/all=true",
+				}
+			},
+			want: "wrong",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -685,15 +735,22 @@ func TestAPIServerFeatureGateScopeFilterRejectsUnreadyStaticPods(t *testing.T) {
 			}
 			command := exec.Command(
 				jqPath,
-				"-e",
+				"-r",
 				"--arg", "expected", "GenericWorkload=true",
 				"--arg", "cluster", cluster,
 				apiServerFeatureGateScopeFilter(t),
 			)
 			command.Stdin = strings.NewReader(string(encoded))
 			output, runErr := command.CombinedOutput()
-			if got := runErr == nil; got != test.want {
-				t.Fatalf("API server component readiness result = %t, want %t; jq output = %q", got, test.want, output)
+			if runErr != nil {
+				t.Fatalf("control-plane shape filter failed: %v; jq output = %q", runErr, output)
+			}
+			verdict, detail, _ := strings.Cut(strings.TrimSpace(string(output)), " ")
+			if verdict != test.want {
+				t.Fatalf("control-plane shape verdict = %q, want %q; detail = %q", verdict, test.want, detail)
+			}
+			if detail == "" {
+				t.Fatalf("control-plane shape verdict %q carries nothing a reader can act on", verdict)
 			}
 		})
 	}
@@ -2269,15 +2326,15 @@ func apiServerFeatureGateScopeFilter(t *testing.T) string {
 	source := extractE2EShellFunction(
 		t,
 		readE2ESource(t, repositoryE2EWiringFiles().harness),
-		"assert_api_server_feature_gate_scope",
+		"wait_for_control_plane_component_shape",
 	)
-	const startMarker = `jq -e --arg expected "$expected_api_server_feature_gates" --arg cluster "$CLUSTER_NAME" '` + "\n"
+	const startMarker = `control_plane_shape_reading=$(jq -r --arg expected "$expected_api_server_feature_gates" --arg cluster "$CLUSTER_NAME" '` + "\n"
 	start := strings.Index(source, startMarker)
 	if start < 0 {
 		t.Fatal("API server component readiness filter start is missing")
 	}
 	start += len(startMarker)
-	const endMarker = "\n\t' \"$control_plane_pods_file\" >/dev/null ||"
+	const endMarker = "\n\t' \"$control_plane_pods_file\"); then"
 	end := strings.Index(source[start:], endMarker)
 	if end < 0 {
 		t.Fatal("API server component readiness filter end is missing")
@@ -2596,21 +2653,30 @@ func TestVerifyE2EHarnessRejectsCriticalMutations(t *testing.T) {
 		},
 		{
 			name:        "runtime-config preservation assertion omitted",
-			old:         `        (command_options(.; "--runtime-config=") | length) == 1`,
-			replacement: `      true and`,
-			wantError:   "API-server feature gate contract",
+			old:         `        elif $component == "kube-apiserver" and (command_options($pod; "--runtime-config=") | length) != 1 then`,
+			replacement: `        elif false then`,
+			wantError:   "control-plane component shape contract",
 		},
 		{
 			name:        "static component running status accepted as stale",
 			old:         `        ($pod.status.phase == "Running") and`,
 			replacement: `        ($pod.status.phase != "") and`,
-			wantError:   "API-server feature gate contract",
+			wantError:   "control-plane component shape contract",
 		},
 		{
 			name:        "static component container readiness omitted",
 			old:         `        ($pod.status.containerStatuses[0].ready == true) and`,
 			replacement: `        true and`,
-			wantError:   "API-server feature gate contract",
+			wantError:   "control-plane component shape contract",
+		},
+		// A wrong control plane that is waited for instead of refused turns a
+		// real refusal into a timeout with a vague message, which is the worse
+		// gate this change had to avoid.
+		{
+			name:        "a wrong control plane is waited for",
+			old:         "\t\t\t\t\"wrong \"*)",
+			replacement: "\t\t\t\t\"never \"*)",
+			wantError:   "control-plane component shape contract",
 		},
 		{
 			name:        "kubelet and kube-proxy scope assertion omitted",
@@ -4471,6 +4537,52 @@ func TestVerifyAcceptanceSuiteSelftestWiringRejectsMutations(t *testing.T) {
 		},
 	}
 	const invocation = `"$ROOT_DIR/hack/e2e-suites-selftest.sh"`
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			mutatedFiles := files
+			mutatedFiles.staticChecks = writeMutatedE2ESource(t, "e2e-static.sh", source, invocation, test.replacement)
+			err := verifyE2EWiring(mutatedFiles)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("verifyE2EWiring() error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+// The bootstrap waits for a control plane that is still joining and refuses one
+// that is wrong, in the same loop. A loop that stopped refusing still looks
+// like it waits, so the gate has to keep running the self-test that separates
+// them.
+func TestVerifyControlPlaneShapeSelftestWiringRejectsMutations(t *testing.T) {
+	t.Parallel()
+
+	files := repositoryE2EWiringFiles()
+	source := readE2ESource(t, files.staticChecks)
+	tests := []struct {
+		name        string
+		replacement string
+		wantError   string
+	}{
+		{
+			name:        "self-test invocation removed",
+			replacement: `: # control-plane shape self-test removed`,
+			wantError:   "control-plane shape self-test wiring",
+		},
+		{
+			name:        "self-test failure ignored",
+			replacement: `"$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh" || true`,
+			wantError:   "control-plane shape self-test wiring",
+		},
+		{
+			name: "self-test hidden in false branch",
+			replacement: "if false; then\n" +
+				"\t\"$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh\"\n" +
+				"fi",
+			wantError: "always-false wrapper",
+		},
+	}
+	const invocation = `"$ROOT_DIR/hack/e2e-control-plane-shape-selftest.sh"`
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
