@@ -36,10 +36,10 @@ release. What a run measured, and against which Ptah build, is recorded in
 
 ```text
 resolve tag to digest -> verify artifact -> observe database -> publish plan
-^                                                               |
-|                          approval (when required) <-----------+
-|                                                               |
-+--- verify convergence <- apply exact approved plan <----------+
+          ^                                                          |
+          |                 approval (when required) <---------------+
+          |                                                          |
+          +--- verify convergence <- apply exact approved plan <-----+
 ```
 
 The controller records a claim before creating each Job, permits at most one

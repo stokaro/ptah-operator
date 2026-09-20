@@ -36,10 +36,10 @@ Kubernetes マイナーバージョン、両方のエンジン、両方のアー
 
 ```text
 resolve tag to digest -> verify artifact -> observe database -> publish plan
-^                                                               |
-|                          approval (when required) <-----------+
-|                                                               |
-+--- verify convergence <- apply exact approved plan <----------+
+          ^                                                          |
+          |                 approval (when required) <---------------+
+          |                                                          |
+          +--- verify convergence <- apply exact approved plan <-----+
 ```
 
 コントローラーは各 Job を作成する前にクレームを記録し、`PtahSchema` ごとに同時に動く Job
